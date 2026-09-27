@@ -740,14 +740,18 @@ describe('Claude section', () => {
     expect(q('reviewer-mac-callout')).toBeNull()
   })
 
-  it('on macOS marks the account that cannot review, never as the reviewer, and offers Make reviewer only on the other', () => {
+  // P3.2: Make reviewer is in the Claude row's menu, like every provider's.
+  it('on macOS marks the account that cannot review, never as the reviewer, and offers Make reviewer only on the other', async () => {
     ;(window as any).electronPlatform = 'darwin'
     const homeRefused = { ...claudeHome, isReviewerDefault: true, reviewRefusal: { reason: 'platform' as const, message: 'On macOS only the normal sign-in can review.' } }
     render(snapshot({ accounts: [claudeMain, homeRefused] }))
     expect(q('claude-review-refusal-profile-home')?.textContent).toBe("Can't run Claude reviews on macOS")
     expect(q('claude-reviewer-badge-profile-home')).toBeNull()
-    expect(q('claude-make-reviewer-profile-home')).toBeNull()
-    expect(q('claude-make-reviewer-profile-primary')).toBeTruthy()
+    await click('profile-menu-btn-profile-home')
+    expect(q('profile-menu-make-reviewer-profile-home')).toBeNull()
+    await click('profile-menu-btn-profile-home')
+    await click('profile-menu-btn-profile-primary')
+    expect(q('profile-menu-make-reviewer-profile-primary')).toBeTruthy()
     expect(q('claude-review-refusal-profile-primary')).toBeNull()
   })
 
@@ -757,27 +761,32 @@ describe('Claude section', () => {
     expect(q('claude-review-refusal-profile-home')?.textContent).toBe('Only the normal sign-in can review here.')
   })
 
-  it('says when the app could not tell whether an account can review', () => {
+  it('says when the app could not tell whether an account can review', async () => {
     const homeUnknown = { ...claudeHome, reviewRefusal: { reason: 'unknown' as const, message: 'x' } }
     render(snapshot({ accounts: [claudeMain, homeUnknown] }))
     expect(q('claude-review-refusal-profile-home')?.textContent).toBe("Can't check whether this account can run reviews right now")
-    expect(q('claude-make-reviewer-profile-home')).toBeNull()
+    await click('profile-menu-btn-profile-home')
+    expect(q('profile-menu-make-reviewer-profile-home')).toBeNull()
   })
 
   it('shows the Reviewer badge on the chosen Claude reviewer and makes another one the reviewer', async () => {
     const homeReviewer = { ...claudeHome, isReviewerDefault: true }
     render(snapshot({ accounts: [claudeMain, homeReviewer] }))
     expect(q('claude-reviewer-badge-profile-home')?.textContent).toBe('Reviewer')
-    expect(q('claude-make-reviewer-profile-home')).toBeNull()
-    await click('claude-make-reviewer-profile-primary')
+    await click('profile-menu-btn-profile-home')
+    expect(q('profile-menu-make-reviewer-profile-home')).toBeNull()
+    await click('profile-menu-btn-profile-home')
+    await click('profile-menu-btn-profile-primary')
+    await click('profile-menu-make-reviewer-profile-primary')
     expect(pa.setReviewerDefault).toHaveBeenCalledWith({ providerId: 'claude', accountId: 'acc-claude-main' })
   })
 
   it('shows why a Claude account could not be made the reviewer', async () => {
     pa.setReviewerDefault.mockResolvedValue({ ok: false, code: 'review-unavailable', message: 'This account cannot run reviews on this computer.' })
     render(snapshot({ accounts: [claudeMain, claudeHome] }))
-    await click('claude-make-reviewer-profile-primary')
-    expect(q('claude-reviewer-error-profile-primary')?.textContent).toBe('This account cannot run reviews on this computer.')
+    await click('profile-menu-btn-profile-primary')
+    await click('profile-menu-make-reviewer-profile-primary')
+    expect(q('profile-error-profile-primary')?.textContent).toBe('This account cannot run reviews on this computer.')
   })
 
   it('shows the cleared-reviewer notice once, in the macOS wording', () => {

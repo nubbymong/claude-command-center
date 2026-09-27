@@ -930,6 +930,9 @@ describe('contrast: the page header breadcrumb, the selected Settings tab and sm
   const PAGE_FRAME = read('PageFrame.tsx')
   const SETTINGS = read('SettingsPage.tsx')
   const ACCOUNTS = read('AccountsPanel.tsx')
+  // P3.2: the name and colour fields moved from the Claude row into the
+  // identity editor every account row's chip opens.
+  const EDITOR = read('settings/accounts/IdentityEditor.tsx')
   /** A text colour utility, as a token name: text-[var(--x)] -> x. */
   const tokenClass = (cls: string) => cls.match(/(?:^|\s)text-\[var\(--([a-z0-9-]+)\)\]/)?.[1]
 
@@ -1003,7 +1006,7 @@ describe('contrast: the page header breadcrumb, the selected Settings tab and sm
     const outset = ruleOf(CSS, '.focus-ring-strong-outset:focus-visible')
     expect(prop(outset, 'outline'), 'the same ring as the strong form').toBe(prop(ruleOf(CSS, '.focus-ring-strong:focus-visible'), 'outline'))
     const offset = Number(prop(outset, 'outline-offset')?.match(/^(\d+)px$/)?.[1])
-    const swatch = ACCOUNTS.slice(ACCOUNTS.indexOf('data-testid={`colour-swatch-'))
+    const swatch = EDITOR.slice(EDITOR.indexOf('data-testid={`${testId}-colour-'))
     const el = swatch.slice(0, swatch.indexOf('/>'))
     expect(el.match(/className="([^"]*)"/)?.[1]?.split(/\s+/), 'the swatch draws the outset ring').toContain('focus-ring-strong-outset')
     const shadow = el.match(/boxShadow: isSelected \? `([^`]*)`/)?.[1]
@@ -1015,7 +1018,7 @@ describe('contrast: the page header breadcrumb, the selected Settings tab and sm
     // The swatches sit far enough apart that the ring (offset plus width) stays
     // clear of the next swatch, with room to spare (Tailwind gap-N is N x 4px).
     const width = Number(prop(outset, 'outline')?.match(/^(\d+)px /)?.[1])
-    const row = ACCOUNTS.slice(0, ACCOUNTS.indexOf('data-testid={`colour-swatch-'))
+    const row = EDITOR.slice(0, EDITOR.indexOf('data-testid={`${testId}-colour-'))
     const gap = Number(row.slice(row.lastIndexOf('<div className="flex flex-wrap gap-')).match(/^<div className="flex flex-wrap gap-(\d+(?:\.\d+)?)"/)?.[1]) * 4
     expect(gap - (offset + width), `the swatch gap (${gap}px) clears the focus ring (${offset + width}px) by 2px`).toBeGreaterThanOrEqual(2)
   })
@@ -1038,6 +1041,9 @@ describe('contrast: the page header breadcrumb, the selected Settings tab and sm
     const sources: [string, string][] = [
       ['SettingsPage.tsx', SETTINGS.slice(0, start) + SETTINGS.slice(end)],
       ['AccountsPanel.tsx', ACCOUNTS],
+      // The row every account uses, and the identity editor its chip opens (P3.2).
+      ['settings/accounts/AccountRow.tsx', read('settings/accounts/AccountRow.tsx')],
+      ['settings/accounts/IdentityEditor.tsx', EDITOR],
       // Drawn inside each Claude account row of the Accounts panel.
       ['settings/AccountWebSession.tsx', read('settings/AccountWebSession.tsx')],
       ['settings/AccountIsolationNotice.tsx', read('settings/AccountIsolationNotice.tsx')],

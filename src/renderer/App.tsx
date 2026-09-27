@@ -102,6 +102,7 @@ import { handleAutoDetectAccept } from './utils/githubAutoDetectAccept'
 import type { SessionState } from './types/electron'
 import { buildSessionState, buildSessionStateWithResumeTargets, persistDetachedOnlyOrClear, hydrateDetachedFromSavedState, loadSavedStateAtStartup, closeWithNoSessions, discardAndClose, restoreSavedSessions } from './session-persistence'
 import { useSessionAutosave, cancelSessionAutosave } from './hooks/useSessionAutosave'
+import { listenGoToSession } from './lib/goToSession'
 
 import type { ViewType } from './types/views'
 
@@ -245,6 +246,11 @@ export default function App() {
     window.addEventListener('app:openAccountPane', onOpenAccountPane)
     return () => window.removeEventListener('app:openAccountPane', onOpenAccountPane)
   }, [])
+
+  // Settings → Accounts "Go to <session>" (P3.2, design 5.3): a refused
+  // inactivate, archive or removal names the sessions holding the account;
+  // each one's button brings its tab forward. A stale id is a no-op.
+  useEffect(() => listenGoToSession(() => setView('sessions')), [])
 
   const [showGuidedConfig, setShowGuidedConfig] = useState(false)
   /** The provider card the first-config dialog opens on. Set only by Hello
