@@ -502,6 +502,23 @@ describe('a Claude profile a live session runs on (P3.2 review: the in-use refus
     expect(await h.service.setLifecycle({ accountId: b.id, lifecycle: 'inactive' })).toEqual({ ok: true })
   })
 
+  it('a no-op writes nothing to Claude\'s own list, even when that list has since moved (P3.2 ADR-009 confirmation, R1)', async () => {
+    let busy = new Set<string>()
+    const h = await harness({
+      claude: [claudeSnapshot('profile-a1', { isDefault: true }), claudeSnapshot('profile-b2')],
+      legacyRecordInUse: (_p, legacyId) => busy.has(legacyId),
+    })
+    const b = h.doc().accounts.find((a) => a.providerId === 'claude' && !a.isProviderDefault)!
+    expect((await h.service.setLifecycle({ accountId: b.id, lifecycle: 'inactive' })).ok).toBe(true)
+    // The profile was made active again on Claude's own surface (the registry
+    // learns it at the next reconcile), and a session now runs on it.
+    h.setClaude([claudeSnapshot('profile-a1', { isDefault: true }), claudeSnapshot('profile-b2', { lifecycle: 'active' })])
+    busy = new Set(['profile-b2'])
+    const before = h.legacyWrites.length
+    expect(await h.service.setLifecycle({ accountId: b.id, lifecycle: 'inactive' })).toEqual({ ok: true })
+    expect(h.legacyWrites.slice(before)).toEqual([])
+  })
+
   it('a check that throws counts as in use (fail closed); a managed account is not asked', async () => {
     const asked: string[] = []
     const h = await harness({

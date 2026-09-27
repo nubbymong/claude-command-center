@@ -182,3 +182,23 @@ describe('sessionsOnProfile follows a session to the profile it runs on now (P3.
     expect(sessionsOnProfile('p-new')).toEqual(['s1'])
   })
 })
+
+describe('a profile in use agrees with the sessions it names (P3.2 ADR-009 confirmation, R2)', () => {
+  beforeEach(() => { _resetClaudeAccounts(); _resetProfileConsumersForTest() })
+  afterEach(() => { _resetClaudeAccounts(); _resetProfileConsumersForTest() })
+
+  it('a session restarted onto the default account, or another profile, no longer holds its first profile', () => {
+    captureClaudeAccount('z', 'prof-c')
+    startWatchingAccountIdentity('z', undefined) // restarted on the default account
+    expect(sessionsOnProfile('prof-c')).toEqual([])
+    expect(isProfileInUseByLiveSession('prof-c')).toBe(false)
+    captureClaudeAccount('x', 'prof-a')
+    startWatchingAccountIdentity('x', 'prof-b') // restarted on another profile
+    expect(isProfileInUseByLiveSession('prof-a')).toBe(false)
+    expect(isProfileInUseByLiveSession('prof-b')).toBe(true)
+    // A transient consumer still holds a profile with no session on it.
+    const release = acquireProfileConsumer('prof-c', { maxAgeMs: Infinity })
+    expect(isProfileInUseByLiveSession('prof-c')).toBe(true)
+    release()
+  })
+})

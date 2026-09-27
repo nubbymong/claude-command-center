@@ -1448,7 +1448,9 @@ export class AccountsService {
       let unnamed = 0
       let held = false
       let inUse = false
+      let noop = false
       const r = await ctx.store.mutate((d, t) => {
+        noop = findAccount(d, a.id)?.lifecycle === next
         // Under the lock that applies it: a sign-out, archive or abandon
         // holding the account is never overtaken by a lifecycle change.
         if (this.deps.leases.isHeld(a.id)) { held = true; return { ok: false, code: 'blocked-by-consumers', message: 'held' } }
@@ -1457,7 +1459,7 @@ export class AccountsService {
         // surface, whichever channel asks. Checked at the moment of the
         // request: a UX rule, not an isolation boundary. Already at the
         // requested state: a no-op, never refused (as the registry treats it).
-        if (next !== 'active' && findAccount(d, a.id)?.lifecycle !== next && this.legacyRecordInUse(d, a.id)) { inUse = true; return { ok: false, code: 'blocked-by-consumers', message: 'in use' } }
+        if (next !== 'active' && !noop && this.legacyRecordInUse(d, a.id)) { inUse = true; return { ok: false, code: 'blocked-by-consumers', message: 'in use' } }
         consumers = this.deps.leases.count(a.id)
         // Which sessions hold it, read with the count: the refusal names them.
         sessions = this.deps.leases.sessionsHolding(a.id)
@@ -1469,8 +1471,9 @@ export class AccountsService {
       const bad = this.fromStore(r, consumers, sessions, unnamed)
       if (bad) return bad
       // A mirrored account's lifecycle is the provider's own list's too:
-      // write it there now, not at the next start.
-      if (ctx.legacy) await this.writeThroughProviders([a.providerId])
+      // write it there now, not at the next start. A no-op changed nothing,
+      // so it writes nothing.
+      if (ctx.legacy && !noop) await this.writeThroughProviders([a.providerId])
       return { ok: true }
     }
     if (next === 'inactive') return apply()
