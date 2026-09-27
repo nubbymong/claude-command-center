@@ -15,7 +15,7 @@ describe('tk-db querySummary', () => {
     db.insertEvents([ev({ dedupKey: 'c:1:1' })])
     const s = db.querySummary(PRICING, {})
     expect(s.kpis.lifeToDateCostUsd).toBeCloseTo(5, 5)
-    expect(s.dailySeries).toEqual([{ day: '2026-06-01', costUsd: 5 }])
+    expect(s.dailySeries).toEqual([{ day: '2026-06-01', costUsd: 5, byProvider: { claude: 5, codex: 0 } }])
     expect(s.costByConfig[0]).toMatchObject({ configId: 'a', label: 'App', costUsd: 5, sessions: 1 })
   })
 
@@ -74,4 +74,85 @@ describe('tk-db querySummary', () => {
     expect(byId['a']).toBe(1)
     expect(byId['b']).toBe(2)
   })
+})
+
+// Usage track MP11: a model with no price is "no price", never $0, and its
+// cost is in no figure; the figures split by provider.
+describe('tk-db querySummary: unpriced models and the provider split (MP11)', () => {
+  const PRICED = { ...PRICING, 'gpt-5.5': { input: 1, output: 2, cacheRead: 0.25, cacheWrite: 0 } }
+  const codex = (p: Record<string, unknown>) => ev({ provider: 'codex', model: 'gpt-5.5', priceModel: 'gpt-5.5', ...p })
+  const NOW = Date.parse('2026-06-03T12:00:00Z')
+  function seed() {
+    const db = openTkDb(':memory:')
+    db.insertEvents([
+      ev({ dedupKey: 'c:1:1', sessionId: 's-claude' }),
+      ev({ dedupKey: 'c:2:2', sessionId: 's-claude', ts: Date.parse('2026-06-02T10:00:00Z') }),
+      // A Claude model with no price, in a session of its own and beside a priced one.
+      ev({ dedupKey: 'c:3:3', sessionId: 's-new', model: 'claude-new-9', priceModel: 'claude-new-9', inTok: 300, outTok: 20 }),
+      ev({ dedupKey: 'c:4:4', sessionId: 's-claude', model: 'claude-new-9', priceModel: 'claude-new-9', inTok: 100, outTok: 0, cacheReadTok: 7 }),
+      codex({ dedupKey: 'x:c:0', sessionId: 'cx-1', inTok: 2_000_000 }),
+      codex({ dedupKey: 'x:c:1', sessionId: 'cx-1', model: 'gpt-9-unpriced', priceModel: 'gpt-9-unpriced', inTok: 50, ts: Date.parse('2026-06-02T11:00:00Z') }),
+    ])
+    return db
+  }
+
+  it('a model with no price has no cost: never $0, in no total, listed with its tokens', () => {
+    const s = seed().querySummary(PRICED, {}, NOW)
+    expect(s.kpis.lifeToDateCostUsd).toBeCloseTo(5 + 5 + 2, 6)
+    expect(s.modelSplit.find((m) => m.model === 'claude-new-9')).toEqual({ model: 'claude-new-9', costUsd: null, tokens: 427 })
+    expect(s.modelSplit.find((m) => m.model === 'gpt-9-unpriced')?.costUsd).toBeNull()
+    expect(s.modelSplit.find((m) => m.model === 'claude-opus-4-8')?.costUsd).toBeCloseTo(10, 6)
+    expect(s.unpriced).toEqual([{ model: 'claude-new-9', tokens: 427 }, { model: 'gpt-9-unpriced', tokens: 50 }])
+    expect(s.costByConfig[0].costUsd).toBeCloseTo(12, 6)
+    expect(s.cacheSplit.inputUsd).toBeCloseTo(12, 6)
+    // Every model priced: none listed.
+    expect(seed().querySummary({ ...PRICED, 'claude-new-9': PRICING['claude-opus-4-8'], 'gpt-9-unpriced': PRICED['gpt-5.5'] }, {}, NOW).unpriced).toEqual([])
+  })
+
+  it('the unpriced list follows the filters', () => {
+    const db = seed()
+    expect(db.querySummary(PRICED, { provider: 'codex' }, NOW).unpriced).toEqual([{ model: 'gpt-9-unpriced', tokens: 50 }])
+    expect(db.querySummary(PRICED, { provider: 'claude' }, NOW).unpriced).toEqual([{ model: 'claude-new-9', tokens: 427 }])
+    expect(db.querySummary(PRICED, { model: 'claude-opus-4-8' }, NOW).unpriced).toEqual([])
+  })
+
+  it('a session with no priced model has no cost; one with some carries the priced part and the tokens without a price', () => {
+    const db = seed()
+    const rows = Object.fromEntries(db.querySessions(PRICED, {}).rows.map((r) => [r.sessionId, r]))
+    expect(rows['s-new']).toMatchObject({ costUsd: null, unpricedTokens: 320 })
+    expect(rows['s-claude'].costUsd).toBeCloseTo(10, 6)
+    expect(rows['s-claude'].unpricedTokens).toBe(107)
+    expect(rows['cx-1'].costUsd).toBeCloseTo(2, 6)
+    expect(rows['cx-1'].unpricedTokens).toBe(50)
+    const none = db.querySessionDetail(PRICED, 's-new')!
+    expect(none).toMatchObject({ costUsd: null, unpricedTokens: 320 })
+    expect(none.byModel).toEqual([expect.objectContaining({ model: 'claude-new-9', costUsd: null })])
+    const some = db.querySessionDetail(PRICED, 's-claude')!
+    expect(some.costUsd).toBeCloseTo(10, 6)
+    expect(some.unpricedTokens).toBe(107)
+    expect(some.byModel.find((m) => m.model === 'claude-new-9')?.costUsd).toBeNull()
+  })
+
+  it('the headline figures and the daily series split by provider, and the parts make the whole', () => {
+    const s = seed().querySummary(PRICED, {}, NOW)
+    expect(s.kpisByProvider.claude.lifeToDateCostUsd).toBeCloseTo(10, 6)
+    expect(s.kpisByProvider.codex.lifeToDateCostUsd).toBeCloseTo(2, 6)
+    for (const k of ['lifeToDateCostUsd', 'last7dCostUsd', 'prev7dCostUsd', 'cacheSavingsUsd'] as const) {
+      expect(s.kpisByProvider.claude[k] + s.kpisByProvider.codex[k], k).toBeCloseTo(s.kpis[k], 6)
+    }
+    expect(s.kpisByProvider.claude.cacheEfficiencyPct).toBeCloseTo((7 / (7 + 2_000_400)) * 100, 6)
+    expect(s.kpisByProvider.codex.cacheEfficiencyPct).toBe(0)
+    expect(s.dailySeries).toEqual([
+      { day: '2026-06-01', costUsd: expect.closeTo(7, 6), byProvider: { claude: expect.closeTo(5, 6), codex: expect.closeTo(2, 6) } },
+      { day: '2026-06-02', costUsd: expect.closeTo(5, 6), byProvider: { claude: expect.closeTo(5, 6), codex: 0 } },
+    ])
+    // One provider's summary: the other's part is empty.
+    const onlyCodex = seedOnly('codex')
+    expect(onlyCodex.kpisByProvider.claude.lifeToDateCostUsd).toBe(0)
+    expect(onlyCodex.kpisByProvider.codex.lifeToDateCostUsd).toBeCloseTo(onlyCodex.kpis.lifeToDateCostUsd, 6)
+  })
+
+  function seedOnly(provider: 'codex') {
+    return seed().querySummary(PRICED, { provider }, NOW)
+  }
 })

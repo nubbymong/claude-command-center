@@ -1021,6 +1021,17 @@ Owner decisions: `docs/wp1/owner-decisions-2026-09-27.md` and ADR-022.
   folder reached by its own path owns what a link elsewhere also reaches.
   The one-off re-read is settled only after the app has named its account
   folders.
+- **Decision (MP11, no price):** a model with no price has no cost (null),
+  never $0, and its cost is in no figure. The summary lists such models
+  with their tokens (`unpriced`, over the filters without the date range,
+  which every figure falls within); a session with no priced model has no
+  cost, and one with some carries the priced part and `unpricedTokens`.
+  The figures split by provider (`kpisByProvider`, and `byProvider` on each
+  day of the series). A Codex model with no cached tier charges cached
+  input at its input rate in Tokenomics, as the session strip always did.
+  Until MP12 the page shows "no price" in the sessions table and drawer and
+  leaves such a model out of the cost donut; the notice and the split are
+  MP12's.
 - **Owed to MP12 (decided 2026-09-27, MP9 round 1):**
   - The Account filter lists a "Not recorded" entry under Codex as well as
     under Claude (parity; Codex usage from before the account folders were

@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import type { TkEvent, TkPricing, TkProvider, TkSummary, TkSummaryFilter, TkSessionsQuery, TkSessionsPage, TkSessionDetail, TkAccountPresent } from './tk-types'
+import type { TkEvent, TkPricing, TkProvider, TkSummary, TkKpis, TkSummaryFilter, TkSessionsQuery, TkSessionsPage, TkSessionDetail, TkAccountPresent } from './tk-types'
 import { tkAccountKeyOk, tkClaudeAccountKeyOk, TK_ACCOUNT_NOT_RECORDED } from './tk-types'
 
 function dayOf(ts: number): string {
@@ -113,7 +113,12 @@ const V1_HEATMAP_UPSERT = `INSERT INTO tk_heatmap(bucket,model,priceModel,config
 /** Rows the rollup rebuild replays per step (usage track MP9). */
 export const TK_REBUILD_PAGE = 5000
 
-const COST = (a: string) => `((${a}.inTok*COALESCE(p.pin,0)+${a}.outTok*COALESCE(p.pout,0)+${a}.cacheReadTok*COALESCE(p.pcr,0)+${a}.cacheCreateTok*COALESCE(p.pcw,0))/1000000.0)`
+/** A row's cost at its model's price, or NULL when its model has no price
+ *  (usage track MP11): sums then cover the priced models only, and a model
+ *  or session with no price reads as none, never as $0. */
+const COST = (a: string) => `(CASE WHEN p.pm IS NULL THEN NULL ELSE (${a}.inTok*p.pin+${a}.outTok*p.pout+${a}.cacheReadTok*p.pcr+${a}.cacheCreateTok*p.pcw)/1000000.0 END)`
+/** The providers a summary splits its figures by (MP11). */
+const PROVIDERS: readonly TkProvider[] = ['claude', 'codex']
 
 const DDL = `
 PRAGMA journal_mode=WAL;
@@ -838,19 +843,41 @@ export function openTkDb(dbPath: string): TkDb {
 
       const dailyJoin = `${DAILY} d LEFT JOIN pricing p ON d.priceModel = p.pm`
 
-      // KPIs: config+model scope, NO range (life-to-date / cache are all-time)
-      const life = sqlite.prepare(`WITH ${cte} SELECT
+      // KPIs: config+model scope, NO range (life-to-date / cache are all-time).
+      // MP11: per provider, and in all; costs of priced models only.
+      const life = sqlite.prepare(`WITH ${cte} SELECT d.provider AS provider,
           COALESCE(SUM(${COST('d')}),0) AS cost,
           COALESCE(SUM(d.cacheReadTok),0) AS cr,
           COALESCE(SUM(d.inTok),0) AS inp,
           COALESCE(SUM(d.cacheReadTok*(COALESCE(p.pin,0)-COALESCE(p.pcr,0))/1000000.0),0) AS savings
-        FROM ${dailyJoin} WHERE 1=1 ${frag('d','model',false)}`).get(binds) as any
+        FROM ${dailyJoin} WHERE 1=1 ${frag('d','model',false)} GROUP BY d.provider`).all(binds) as any[]
+      const l7 = sqlite.prepare(`WITH ${cte} SELECT d.provider AS provider, COALESCE(SUM(${COST('d')}),0) AS c FROM ${dailyJoin} WHERE d.day > @last7Cut ${frag('d','model',false)} GROUP BY d.provider`).all(binds) as any[]
+      const p7 = sqlite.prepare(`WITH ${cte} SELECT d.provider AS provider, COALESCE(SUM(${COST('d')}),0) AS c FROM ${dailyJoin} WHERE d.day > @prev7Cut AND d.day <= @last7Cut ${frag('d','model',false)} GROUP BY d.provider`).all(binds) as any[]
+      const kpisOf = (keep: (provider: string) => boolean): TkKpis => {
+        const sum = (rows: any[], k: string): number => rows.filter((r) => keep(String(r.provider))).reduce((a, r) => a + (Number(r[k]) || 0), 0)
+        const cr = sum(life, 'cr'), inp = sum(life, 'inp')
+        return {
+          lifeToDateCostUsd: sum(life, 'cost'),
+          last7dCostUsd: sum(l7, 'c'),
+          prev7dCostUsd: sum(p7, 'c'),
+          cacheEfficiencyPct: (cr + inp) > 0 ? (cr / (cr + inp)) * 100 : 0,
+          cacheSavingsUsd: sum(life, 'savings'),
+        }
+      }
 
-      const l7 = (sqlite.prepare(`WITH ${cte} SELECT COALESCE(SUM(${COST('d')}),0) AS c FROM ${dailyJoin} WHERE d.day > @last7Cut ${frag('d','model',false)}`).get(binds) as any).c
-      const p7 = (sqlite.prepare(`WITH ${cte} SELECT COALESCE(SUM(${COST('d')}),0) AS c FROM ${dailyJoin} WHERE d.day > @prev7Cut AND d.day <= @last7Cut ${frag('d','model',false)}`).get(binds) as any).c
-
-      // Charts: config+model+range scope
-      const daily = sqlite.prepare(`WITH ${cte} SELECT d.day AS day, SUM(${COST('d')}) AS costUsd FROM ${dailyJoin} WHERE 1=1 ${frag('d','model',true)} GROUP BY d.day ORDER BY d.day`).all(binds) as any[]
+      // Charts: config+model+range scope. MP11: the daily series per provider.
+      const dailyRows = sqlite.prepare(`WITH ${cte} SELECT d.day AS day, d.provider AS provider, SUM(${COST('d')}) AS costUsd FROM ${dailyJoin} WHERE 1=1 ${frag('d','model',true)} GROUP BY d.day, d.provider ORDER BY d.day`).all(binds) as any[]
+      const daily: TkSummary['dailySeries'] = []
+      for (const r of dailyRows) {
+        let day = daily[daily.length - 1]
+        if (!day || day.day !== r.day) { day = { day: r.day, costUsd: 0, byProvider: { claude: 0, codex: 0 } }; daily.push(day) }
+        const c = Number(r.costUsd) || 0
+        day.costUsd += c
+        if ((PROVIDERS as readonly string[]).includes(r.provider)) day.byProvider[r.provider as TkProvider] += c
+      }
+      // MP11: the models in these figures with no price, and their tokens
+      // (the life-to-date scope, which every figure falls within).
+      const unpriced = sqlite.prepare(`WITH ${cte} SELECT d.model AS model, SUM(d.inTok+d.outTok+d.cacheReadTok+d.cacheCreateTok) AS tokens FROM ${dailyJoin} WHERE p.pm IS NULL ${frag('d','model',false)} GROUP BY d.model ORDER BY tokens DESC, d.model`).all(binds) as any[]
       const models = sqlite.prepare(`WITH ${cte} SELECT d.model AS model, SUM(${COST('d')}) AS costUsd, SUM(d.inTok+d.outTok+d.cacheReadTok+d.cacheCreateTok) AS tokens FROM ${dailyJoin} WHERE 1=1 ${frag('d','model',true)} GROUP BY d.model ORDER BY costUsd DESC`).all(binds) as any[]
       const cache = sqlite.prepare(`WITH ${cte} SELECT
           COALESCE(SUM(d.inTok*COALESCE(p.pin,0)/1000000.0),0) AS inputUsd,
@@ -877,17 +904,13 @@ export function openTkDb(dbPath: string): TkDb {
         sessions: sessByCfg.get(r.configId) ?? 0,
       })).sort((a: any, b: any) => b.costUsd - a.costUsd)
 
-      const cr = life.cr ?? 0, inp = life.inp ?? 0
       return {
-        kpis: {
-          lifeToDateCostUsd: life.cost ?? 0,
-          last7dCostUsd: l7 ?? 0,
-          prev7dCostUsd: p7 ?? 0,
-          cacheEfficiencyPct: (cr + inp) > 0 ? (cr / (cr + inp)) * 100 : 0,
-          cacheSavingsUsd: life.savings ?? 0,
-        },
-        dailySeries: daily.map((d: any) => ({ day: d.day, costUsd: d.costUsd ?? 0 })),
-        modelSplit: models.map((m: any) => ({ model: m.model, costUsd: m.costUsd ?? 0, tokens: m.tokens ?? 0 })),
+        kpis: kpisOf(() => true),
+        kpisByProvider: { claude: kpisOf((p) => p === 'claude'), codex: kpisOf((p) => p === 'codex') },
+        dailySeries: daily,
+        // A model with no price has no cost (null), never $0.
+        modelSplit: models.map((m: any) => ({ model: m.model, costUsd: m.costUsd ?? null, tokens: m.tokens ?? 0 })),
+        unpriced: unpriced.map((u: any) => ({ model: String(u.model), tokens: Number(u.tokens) || 0 })),
         cacheSplit: { inputUsd: cache.inputUsd ?? 0, outputUsd: cache.outputUsd ?? 0, cacheReadUsd: cache.cacheReadUsd ?? 0, cacheCreateUsd: cache.cacheCreateUsd ?? 0 },
         costByConfig,
         heatmap: heat.map((h: any) => ({ bucket: h.bucket, tokens: h.tokens ?? 0 })),
@@ -919,7 +942,8 @@ export function openTkDb(dbPath: string): TkDb {
           page.lastModel AS model, page.inTok AS inTok, page.outTok AS outTok,
           page.cacheReadTok AS cacheReadTok, page.cacheCreateTok AS cacheCreateTok,
           page.msgCount AS msgCount, page.lastTs AS lastTs, page.accountKey AS accountKey,
-          COALESCE((SELECT SUM(${COST('sm')}) FROM tk_session_models sm LEFT JOIN pricing p ON sm.priceModel=p.pm WHERE sm.sessionId = page.sessionId), 0) AS costUsd,
+          (SELECT SUM(${COST('sm')}) FROM tk_session_models sm LEFT JOIN pricing p ON sm.priceModel=p.pm WHERE sm.sessionId = page.sessionId) AS costUsd,
+          (SELECT COALESCE(SUM(sm.inTok+sm.outTok+sm.cacheReadTok+sm.cacheCreateTok), 0) FROM tk_session_models sm LEFT JOIN pricing p ON sm.priceModel=p.pm WHERE sm.sessionId = page.sessionId AND p.pm IS NULL) AS unpricedTokens,
           c.label AS cfgLabel
         FROM page LEFT JOIN tk_configs c ON page.configId = c.configId
         ORDER BY page.lastTs DESC, page.sessionId DESC`
@@ -932,7 +956,9 @@ export function openTkDb(dbPath: string): TkDb {
         configId: (r.configId === '' ? null : r.configId) as string | null,
         configLabel: (r.cfgLabel && r.cfgLabel !== '') ? r.cfgLabel as string : 'External / no config',
         model: r.model as string,
-        costUsd: (r.costUsd ?? 0) as number,
+        // MP11: null when none of its models has a price.
+        costUsd: (r.costUsd ?? null) as number | null,
+        unpricedTokens: Number(r.unpricedTokens) || 0,
         inTok: r.inTok as number,
         outTok: r.outTok as number,
         cacheReadTok: r.cacheReadTok as number,
@@ -960,7 +986,11 @@ export function openTkDb(dbPath: string): TkDb {
         FROM tk_session_models sm LEFT JOIN pricing p ON sm.priceModel=p.pm
         WHERE sm.sessionId=@sid ORDER BY costUsd DESC`
       ).all({ ...pb, sid: sessionId }) as any[]
-      const costUsd = byModel.reduce((a: number, m: any) => a + ((m.costUsd as number) ?? 0), 0)
+      // MP11: the priced models' cost; none when no model has a price.
+      const priced = byModel.filter((m: any) => m.costUsd !== null && m.costUsd !== undefined)
+      const costUsd = priced.length ? priced.reduce((a: number, m: any) => a + (m.costUsd as number), 0) : null
+      const unpricedTokens = byModel.filter((m: any) => m.costUsd === null || m.costUsd === undefined)
+        .reduce((a: number, m: any) => a + (m.inTok as number) + (m.outTok as number) + (m.cacheReadTok as number) + (m.cacheCreateTok as number), 0)
       return {
         sessionId: s.sessionId as string,
         provider: s.provider as TkProvider,
@@ -968,6 +998,7 @@ export function openTkDb(dbPath: string): TkDb {
         configLabel: (s.cfgLabel && s.cfgLabel !== '') ? s.cfgLabel as string : 'External / no config',
         model: s.lastModel as string,
         costUsd,
+        unpricedTokens,
         inTok: s.inTok as number,
         outTok: s.outTok as number,
         cacheReadTok: s.cacheReadTok as number,
@@ -979,7 +1010,7 @@ export function openTkDb(dbPath: string): TkDb {
         projectDir: s.projectDir as string,
         byModel: byModel.map((m: any) => ({
           model: m.model as string,
-          costUsd: (m.costUsd ?? 0) as number,
+          costUsd: (m.costUsd ?? null) as number | null,
           inTok: m.inTok as number,
           outTok: m.outTok as number,
           cacheReadTok: m.cacheReadTok as number,

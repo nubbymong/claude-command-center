@@ -676,16 +676,26 @@ export interface CodexReviewDailyShard {
 // ── Tokenomics v2 (worker-backed) cross-process contract ──
 export type TkProvider = 'claude' | 'codex'
 
+/** The headline figures; costs cover models with a price only (MP11). */
+export interface TkKpis {
+  lifeToDateCostUsd: number
+  last7dCostUsd: number
+  prev7dCostUsd: number
+  cacheEfficiencyPct: number
+  cacheSavingsUsd: number
+}
+
 export interface TkSummary {
-  kpis: {
-    lifeToDateCostUsd: number
-    last7dCostUsd: number
-    prev7dCostUsd: number
-    cacheEfficiencyPct: number
-    cacheSavingsUsd: number
-  }
-  dailySeries: Array<{ day: string; costUsd: number }>
-  modelSplit: Array<{ model: string; costUsd: number; tokens: number }>
+  kpis: TkKpis
+  /** Usage track MP11: the same figures for each provider. */
+  kpisByProvider: Record<TkProvider, TkKpis>
+  /** Priced models only; `byProvider` splits each day (MP11). */
+  dailySeries: Array<{ day: string; costUsd: number; byProvider: Record<TkProvider, number> }>
+  /** `costUsd` is null for a model with no price (MP11), never 0. */
+  modelSplit: Array<{ model: string; costUsd: number | null; tokens: number }>
+  /** MP11: the models in these figures that have no price, with their
+   *  tokens; their cost is in no figure. */
+  unpriced: Array<{ model: string; tokens: number }>
   cacheSplit: { inputUsd: number; outputUsd: number; cacheReadUsd: number; cacheCreateUsd: number }
   costByConfig: Array<{ configId: string | null; label: string; costUsd: number; sessions: number }>
   heatmap: Array<{ bucket: number; tokens: number }>
@@ -697,7 +707,10 @@ export interface TkSessionRow {
   configId: string | null
   configLabel: string
   model: string
-  costUsd: number
+  /** Null when none of its models has a price (usage track MP11). */
+  costUsd: number | null
+  /** Tokens of its models that have no price (MP11); 0 when all are priced. */
+  unpricedTokens: number
   inTok: number
   outTok: number
   cacheReadTok: number
@@ -717,7 +730,7 @@ export interface TkSessionsPage {
 export interface TkSessionDetail extends TkSessionRow {
   firstTs: number
   projectDir: string
-  byModel: Array<{ model: string; costUsd: number; inTok: number; outTok: number; cacheReadTok: number; cacheCreateTok: number; msgCount: number }>
+  byModel: Array<{ model: string; costUsd: number | null; inTok: number; outTok: number; cacheReadTok: number; cacheCreateTok: number; msgCount: number }>
 }
 
 export interface TkIndexStatus {

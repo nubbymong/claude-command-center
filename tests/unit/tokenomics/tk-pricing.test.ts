@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { getAllPricing, normalizeModelForPricing, registryFallbackPricing } from '../../../src/main/tokenomics/tk-pricing'
+import { computeCodexCostUsd, priceForModel, codexCachedInputPer1M, codexPricingKeys } from '../../../src/main/providers/codex/pricing'
 
 describe('getAllPricing', () => {
   it('includes claude-fable-5 and opus-4-8 with per-1M rates', () => {
@@ -12,6 +13,32 @@ describe('getAllPricing', () => {
     const codexKey = Object.keys(map).find((k) => k.startsWith('gpt-'))
     expect(codexKey).toBeTruthy()
     expect(map[codexKey!].cacheWrite).toBe(0)
+  })
+})
+
+// Usage track MP11: one rule for a missing cached tier, in the session strip
+// and in Tokenomics: it costs the full input rate.
+describe('the Codex cached-input rate (MP11)', () => {
+  it('a model with no cached tier charges cached input at its input rate; one with a tier, at the tier', () => {
+    expect(codexCachedInputPer1M({ inputPer1M: 30, cachedInputPer1M: null })).toBe(30)
+    expect(codexCachedInputPer1M({ inputPer1M: 5, cachedInputPer1M: 1.25 })).toBe(1.25)
+    const map = getAllPricing()
+    const noTier = codexPricingKeys().find((k) => priceForModel(k)!.cachedInputPer1M === null)
+    expect(noTier).toBeTruthy()
+    expect(map[noTier!].cacheRead).toBe(priceForModel(noTier!)!.inputPer1M)
+    const tier = codexPricingKeys().find((k) => priceForModel(k)!.cachedInputPer1M !== null)!
+    expect(map[tier].cacheRead).toBe(priceForModel(tier)!.cachedInputPer1M)
+  })
+
+  it('Tokenomics prices a Codex turn exactly as the session strip does, for every Codex model', () => {
+    const map = getAllPricing()
+    // A turn: 1000 input of which 400 cached, 50 output. Tokenomics stores
+    // the non-cached input and the cached input apart.
+    for (const k of codexPricingKeys()) {
+      const p = map[k]
+      const tokenomics = (600 * p.input + 400 * p.cacheRead + 50 * p.output) / 1e6
+      expect(tokenomics, k).toBeCloseTo(computeCodexCostUsd(k, { inputTokens: 1000, cachedInputTokens: 400, outputTokens: 50 })!, 12)
+    }
   })
 })
 

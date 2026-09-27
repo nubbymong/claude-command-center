@@ -72,7 +72,10 @@ export function buildCostSlices(
 ): DonutSlice[] {
   if (!modelSplit || modelSplit.length === 0) return []
 
-  const sorted = modelSplit.filter((m) => m.costUsd > 0).sort((a, b) => b.costUsd - a.costUsd)
+  // A model with no price (MP11) has no slice.
+  const sorted = modelSplit
+    .filter((m): m is typeof m & { costUsd: number } => m.costUsd !== null && m.costUsd > 0)
+    .sort((a, b) => b.costUsd - a.costUsd)
   const total = sorted.reduce((s, x) => s + x.costUsd, 0)
 
   // Collapse tail into "Other"

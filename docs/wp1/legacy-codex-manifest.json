@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-27T08:58:24.462Z",
-  "head": "fa2907e770c95db5eb14d1a7276426c78bb3081a",
-  "tree": "3699488a0d8fb4887044aa690719898d398dbcc1",
+  "generatedAt": "2026-09-27T09:04:16.888Z",
+  "head": "2881dc723d816e8fa0f003caa9387964261f8d97",
+  "tree": "e7acd8318900a6ba3ca289dd782b7d833e9e270e",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 406,
-  "pathDigest": "be8e1b88b82ac232bc5942d46377707be0d10cd226c404d891cb6a7ae2ed97b0",
+  "matchedPathCount": 407,
+  "pathDigest": "007adc30c880a8743e0666da9662f7a54f88f7638e8dffa37ef9415663104aa8",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -203,7 +203,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 145
+      "lineCount": 146
     },
     {
       "path": "package.json",
@@ -662,7 +662,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 5
+      "lineCount": 7
     },
     {
       "path": "src/main/providers/codex/process-env.ts",
@@ -835,7 +835,7 @@
         "P05",
         "P14"
       ],
-      "lineCount": 50
+      "lineCount": 53
     },
     {
       "path": "src/main/tokenomics/tk-parse.ts",
@@ -849,7 +849,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 6
+      "lineCount": 7
     },
     {
       "path": "src/main/tokenomics/tk-supervisor.ts",
@@ -2298,6 +2298,14 @@
       "lineCount": 43
     },
     {
+      "path": "tests/unit/native/tk-db-summary.native.test.ts",
+      "predicates": [
+        "P04",
+        "P13"
+      ],
+      "lineCount": 18
+    },
+    {
       "path": "tests/unit/native/tokenomics-attribution.native.test.ts",
       "predicates": [
         "P13"
@@ -3289,7 +3297,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 4
+      "lineCount": 13
     },
     {
       "path": "tests/unit/tokenomics/tk-supervisor.test.ts",
