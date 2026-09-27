@@ -108,8 +108,8 @@ more; a throwing lease or hold release never replaces a review's result. On
 the host the four touched unit files pass 244/244 (10 red before, 11 mutants
 red), `npm run typecheck` is clean and the WP1 gate passes 16/16. The fake-CLI
 file is CI and VM only. CI at `040ad456` and `1dbd39f3` passed on Windows and
-macOS (the Desktop test gate aside); the confirmation review is not recorded
-here.
+macOS (the Desktop test gate aside). The spec, code-quality and ADR-009
+confirmation reviews passed at `1dbd39f3`.
 
 Usage track (P3, 2026-09-27). CI at `67b7aa90` passes on Windows and macOS;
 the Desktop test gate stays red until the owner attests (#309). The VM e2e
