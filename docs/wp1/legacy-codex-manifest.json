@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-27T04:37:43.709Z",
-  "head": "02c1280bb7ee708697287b7c363d84ffe0233209",
-  "tree": "9d1a67b838fb4c80288b5978cd348335569072ba",
+  "generatedAt": "2026-09-27T04:50:38.669Z",
+  "head": "8b41cb4f4d5178274ba941ca74c507e9c9d28aa1",
+  "tree": "10faca61b6f48e435ca2dd25d01f4ce4cebfbcdf",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2338,
+  "trackedFileCount": 2342,
   "excludedFileCount": 381,
-  "scannedFileCount": 1957,
+  "scannedFileCount": 1961,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 391,
-  "pathDigest": "96edfce440b31ba38bf6e4d73d106231e9e691cae81299c1ac7314cda21453ff",
+  "matchedPathCount": 395,
+  "pathDigest": "ce6927c634ecb156d0b1c59d7ec73c227ce6f3d50e348d0e61d77a025a5ce88f",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -553,6 +553,14 @@
       "lineCount": 1
     },
     {
+      "path": "src/main/providers/codex/app-server-client.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "lineCount": 13
+    },
+    {
       "path": "src/main/providers/codex/auth-operations.ts",
       "predicates": [
         "P01",
@@ -560,7 +568,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 79
+      "lineCount": 90
     },
     {
       "path": "src/main/providers/codex/cli-contract.ts",
@@ -585,7 +593,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 104
+      "lineCount": 107
     },
     {
       "path": "src/main/providers/codex/discovery.ts",
@@ -1773,7 +1781,7 @@
         "P09",
         "P13"
       ],
-      "lineCount": 36
+      "lineCount": 38
     },
     {
       "path": "tests/e2e/session-dialog-permutations.spec.ts",
@@ -2285,6 +2293,33 @@
         "P13"
       ],
       "lineCount": 1
+    },
+    {
+      "path": "tests/unit/providers/codex/app-server-client.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 18
+    },
+    {
+      "path": "tests/unit/providers/codex/app-server-read.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P09",
+        "P13"
+      ],
+      "lineCount": 40
+    },
+    {
+      "path": "tests/unit/providers/codex/cli-runner-open-stdin.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 16
     },
     {
       "path": "tests/unit/providers/codex/mcp-config.test.ts",

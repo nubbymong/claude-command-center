@@ -76,6 +76,35 @@ if (a === 'exec --json --ephemeral --skip-git-repo-check --sandbox read-only -m 
   })
   return
 }
+if (a === 'app-server') {
+  // Usage track MP7 (ADR-022): the protocol helper. Logs every message it is
+  // sent, answers initialize naming its CODEX_HOME (or another folder) and the
+  // usage read, and exits when its stdin closes -- unless the realm's
+  // APP_SERVER file says 'stay' (it must then be killed) or 'silent' (it
+  // answers nothing).
+  const NL = String.fromCharCode(10)
+  let mode = 'ok'
+  try { mode = fs.readFileSync(path.join(home, 'APP_SERVER'), 'utf8').trim() } catch {}
+  fs.writeFileSync(path.join(home, 'app-server.pid'), String(process.pid))
+  fs.writeFileSync(path.join(home, 'app-server.env'), JSON.stringify({ home, conductorVars: Object.keys(process.env).filter((k) => /^(CCC_|CONDUCTOR_|CLAUDE_MULTI_)/i.test(k)) }))
+  let buf = ''
+  process.stdin.setEncoding('utf8')
+  process.stdin.on('data', (c) => {
+    buf += c
+    let i
+    while ((i = buf.indexOf(NL)) >= 0) {
+      const line = buf.slice(0, i); buf = buf.slice(i + 1)
+      fs.appendFileSync(path.join(home, 'app-server.log'), line + NL)
+      if (mode === 'silent') continue
+      const m = JSON.parse(line)
+      if (m.method === 'initialize') process.stdout.write(JSON.stringify({ id: m.id, result: { codexHome: mode === 'wrong-home' ? path.dirname(home) : home, platformFamily: 'x', platformOs: 'x', userAgent: 'fake' } }) + NL)
+      if (m.method === 'account/rateLimits/read') process.stdout.write(JSON.stringify({ id: m.id, result: { rateLimits: { limitId: 'codex', primary: { usedPercent: 33, windowDurationMins: 300, resetsAt: Math.floor(Date.now() / 1000) + 3600 }, planType: 'plus' } } }) + NL)
+    }
+  })
+  process.stdin.on('end', () => { if (mode !== 'stay' && mode !== 'silent') process.exit(0) })
+  setInterval(() => {}, 1000)
+  return
+}
 if (a === 'login --with-api-key') {
   if (process.stdin.isTTY) { process.stderr.write('refuses a TTY\\n'); process.exit(2) }
   let d = ''
@@ -402,6 +431,94 @@ process.stdin.on('end', () => {
   process.stdout.write(JSON.stringify(r) + '\\n'); process.exit(0)
 })
 `
+
+// Usage track MP7 (ADR-022; the owner's scoped WP1.41 exception): a usage
+// read through the real runner, the real npm shim and cmd.exe, with stdin
+// kept open: exactly the three messages, CODEX_HOME the realm, no Conductor
+// variable, and the helper gone afterwards, killed with its chain when it
+// does not exit on its own.
+describe('a Codex usage read against the fake app-server (real processes)', () => {
+  const ports = {
+    resolve: () => exe,
+    realpath: (p: string) => fs.realpathSync.native(p),
+    stat: (p: string) => {
+      const s = fs.statSync(p, { bigint: true })
+      return { size: Number(s.size), mtimeMs: Number(s.mtimeMs), ctimeMs: Number(s.ctimeMs), dev: String(s.dev), ino: String(s.ino), isFile: s.isFile() }
+    },
+    platform: process.platform,
+  }
+  let proven: CodexDiscovery | null = null
+  let next = 0
+  const realm = () => {
+    const id = 'realm-' + (0xa000 + ++next).toString(16).padStart(16, '0')
+    fs.mkdirSync(path.join(dir, 'codex-realms', id), { recursive: true })
+    return id
+  }
+  const homeOf = (id: string) => path.join(dir, 'codex-realms', id)
+  const deps = (): CodexAuthDeps => ({
+    lookupRealm: async (r) => (/^realm-[0-9a-f]{16}$/.test(r.authRealmId)
+      ? { ok: true, realm: { id: r.authRealmId, providerId: 'codex', kind: 'codex-home', ownership: 'conductor-managed', pathRef: `managed:${r.authRealmId}` }, roots: { resourcesDir: dir, externalDefaultHome: null } }
+      : { ok: false }),
+    realmIdentity: (h) => {
+      const canonical = fs.realpathSync.native(h)
+      const s = fs.statSync(canonical, { bigint: true })
+      return { canonical, dev: String(s.dev), ino: String(s.ino), isDirectory: s.isDirectory() }
+    },
+    proven: () => proven,
+    executablePorts: ports,
+    baseEnv: async () => ({ ...poisoned, CCC_SESSION_ID: 'x', CONDUCTOR_PORT: 'y' }),
+    run: (cmd, opts) => runCodexCli(cmd, opts),
+    envFilePresent: (h) => { try { fs.lstatSync(path.join(h, '.env')); return true } catch (e) { return (e as NodeJS.ErrnoException).code !== 'ENOENT' } },
+  })
+  const alive = (pid: number) => { try { process.kill(pid, 0); return true } catch { return false } }
+  const goneWithin = async (pid: number, ms: number) => {
+    const until = Date.now() + ms
+    while (alive(pid) && Date.now() < until) await new Promise((r) => setTimeout(r, 100))
+    return !alive(pid)
+  }
+
+  beforeAll(async () => {
+    const r = await discoverCodex({ ...ports, run: (cmd, env) => runCodexCli(cmd, { env, timeoutMs: 20_000 }), env: poisoned, versionHome: () => ({ home: home('usage-version'), dispose: () => {} }), now: () => 1 })
+    proven = r.state === 'found' ? r : null
+  })
+
+  it('reads the allowance with exactly the three messages, in the realm, with no Conductor variable, and the helper exits', async () => {
+    expect(proven, 'discovery through the shim').not.toBeNull()
+    const id = realm()
+    const r = await createCodexAuthOperations(deps()).readUsage({ authRealmId: id })
+    expect(r.ok, JSON.stringify(r)).toBe(true)
+    const methods = fs.readFileSync(path.join(homeOf(id), 'app-server.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l).method)
+    expect(methods).toEqual(['initialize', 'initialized', 'account/rateLimits/read'])
+    const seen = JSON.parse(fs.readFileSync(path.join(homeOf(id), 'app-server.env'), 'utf8'))
+    expect(fs.realpathSync.native(seen.home)).toBe(fs.realpathSync.native(homeOf(id)))
+    expect(seen.conductorVars).toEqual([])
+    expect(await goneWithin(Number(fs.readFileSync(path.join(homeOf(id), 'app-server.pid'), 'utf8')), GONE_MS)).toBe(true)
+  }, 60_000)
+
+  it('a helper that stays up after its answer is killed with its chain, and the reading still returns', async () => {
+    const id = realm()
+    fs.writeFileSync(path.join(homeOf(id), 'APP_SERVER'), 'stay')
+    const r = await createCodexAuthOperations(deps()).readUsage({ authRealmId: id })
+    expect(r.ok, JSON.stringify(r)).toBe(true)
+    expect(await goneWithin(Number(fs.readFileSync(path.join(homeOf(id), 'app-server.pid'), 'utf8')), CODEX_KILL_WORST_MS + GONE_MS)).toBe(true)
+  }, CODEX_KILL_WORST_MS + 60_000)
+
+  it('a helper that names another folder is refused and shut down', async () => {
+    const id = realm()
+    fs.writeFileSync(path.join(homeOf(id), 'APP_SERVER'), 'wrong-home')
+    const r = await createCodexAuthOperations(deps()).readUsage({ authRealmId: id })
+    expect(r).toEqual({ ok: false, kind: 'unsupported', reason: 'codex-home' })
+    expect(await goneWithin(Number(fs.readFileSync(path.join(homeOf(id), 'app-server.pid'), 'utf8')), CODEX_KILL_WORST_MS + GONE_MS)).toBe(true)
+  }, CODEX_KILL_WORST_MS + 60_000)
+
+  it('a helper that answers nothing is killed at the initialize bound', async () => {
+    const id = realm()
+    fs.writeFileSync(path.join(homeOf(id), 'APP_SERVER'), 'silent')
+    const r = await createCodexAuthOperations(deps()).readUsage({ authRealmId: id })
+    expect(r).toEqual({ ok: false, kind: 'transient', reason: 'timeout' })
+    expect(await goneWithin(Number(fs.readFileSync(path.join(homeOf(id), 'app-server.pid'), 'utf8')), CODEX_KILL_WORST_MS + GONE_MS)).toBe(true)
+  }, CODEX_KILL_WORST_MS + 60_000)
+})
 
 describe('the Claude reviewer against a fake Claude CLI (real processes)', () => {
   let claude: string

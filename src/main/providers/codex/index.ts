@@ -35,7 +35,7 @@ export {
   codexChainPids, parseWindowsProcessTable, parsePosixProcessTable, parseLinuxStat, WINDOWS_PROCESS_QUERY,
   CODEX_KILL_SETTLE_MS, CODEX_PROCESS_TABLE_TIMEOUT_MS, CODEX_TASKKILL_TIMEOUT_MS, CODEX_TREE_PRIME_MS, CODEX_PRIME_TABLE_TIMEOUT_MS, codexWrapperLinePids, CODEX_KILL_WORST_MS, flushPendingCodexKills,
 } from './cli-runner'
-export type { CodexCliOperation, CodexCommand, CodexRunResult, CodexRunOptions, CodexRunDeps, CodexProcessEntry, CodexKillTree } from './cli-runner'
+export type { CodexCliOperation, CodexCommand, CodexRunResult, CodexRunOptions, CodexRunDeps, CodexProcessEntry, CodexKillTree, CodexStdinWriter } from './cli-runner'
 export { discoverCodex, verifyCodexExecutable, codexCompatibilityAllowsUse } from './discovery'
 export { createCodexReviewOperations, createCodexExecEventReader, parseCodexExecEvents, REVIEW_MAX_TEXT } from './review'
 export type { CodexDiscovery, CodexDiscoveryDeps, CodexExecutableIdentity, CodexExecutableCheck, CodexFileStat } from './discovery'
@@ -48,7 +48,12 @@ export type { CodexLoginStatus, CodexLoginVia } from './cli-contract'
 export { codexInstallRecipes, codexInstallKind, CODEX_INSTALL_SOURCE_URL, CODEX_README_COMMIT } from './install-recipes'
 export type { CodexInstallKind } from './install-recipes'
 export { createCodexAuthOperations, createCodexOutputRedactor } from './auth-operations'
-export type { CodexAuthDeps, CodexRealmLookup, CodexRealmIdentity, CodexOutputRedactor } from './auth-operations'
+export type { CodexAuthDeps, CodexRealmLookup, CodexRealmIdentity, CodexOutputRedactor, CodexUsageRead } from './auth-operations'
+// Usage track MP7 (ADR-022): the app-server usage read's client.
+export {
+  createAppServerUsageClient, appServerMessages, APP_SERVER_MAX_LINE, APP_SERVER_READ_DEADLINE_MS, APP_SERVER_INITIALIZE_TIMEOUT_MS, APP_SERVER_EXIT_GRACE_MS, APP_SERVER_CLIENT_NAME,
+} from './app-server-client'
+export type { AppServerVerdict, AppServerFailure, AppServerClientDeps, AppServerUsageClient } from './app-server-client'
 export { codexCliEnv, codexCliEnvAllowlist } from './cli-env'
 export {
   codexRealmHome, codexExternalDefaultHome, codexExternalHomeCandidate, codexManagedRealmsRoot, codexHomesOverlap, isFullyQualifiedPath, codexHomeDisplay, CODEX_REALMS_DIRNAME,

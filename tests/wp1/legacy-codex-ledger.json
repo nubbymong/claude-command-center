@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "96edfce440b31ba38bf6e4d73d106231e9e691cae81299c1ac7314cda21453ff",
-  "manifestHead": "02c1280bb7ee708697287b7c363d84ffe0233209",
+  "manifestPathDigest": "ce6927c634ecb156d0b1c59d7ec73c227ce6f3d50e348d0e61d77a025a5ce88f",
+  "manifestHead": "8b41cb4f4d5178274ba941ca74c507e9c9d28aa1",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -749,6 +749,17 @@
       "note": ""
     },
     {
+      "path": "src/main/providers/codex/app-server-client.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "added",
+      "evidence": "new WP2 P3 usage track MP7 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): the app-server usage read client, a pure state machine that sends exactly initialize, initialized and account/rateLimits/read (no capability, no parameter, never a thread or turn method, never an answer to a server request), reads only its two answers by id within a line bound, validates them against the schema excerpts, requires the answer to name the realm, and fails closed (WP1.41, WP1.68); tests/unit/providers/codex/app-server-client.test.ts",
+      "note": ""
+    },
+    {
       "path": "src/main/providers/codex/auth-operations.ts",
       "predicates": [
         "P01",
@@ -758,7 +769,7 @@
       ],
       "category": "AUTH",
       "disposition": "added",
-      "evidence": "new WP2 Codex sign-in, status and logout operations: the realm record looked up by an injected port and its home derived by the package, which must exist at its canonical path and is locked by file identity; the proven executable re-verified before every run; sign-in refused over an existing sign-in or into an external realm, one browser sign-in at a time, a managed .env refused; the API key taken single-use, validated and written only to stdin; machine-readable result codes; output redacted per stream; covered by tests/wp1/codex-auth-adapter.test.ts and tests/wp1/fake-cli.test.ts (WP1.20, WP1.22, WP1.49, WP1.62); WP2 P3 usage track MP3 round-1 review fixes: usageSessionsDir locates a realm as a launch does and holds it to the launch canonical-home check, so usage reads nothing a launch would refuse (WP1.68); tests/unit/main/provider-account-usage.test.ts",
+      "evidence": "new WP2 Codex sign-in, status and logout operations: the realm record looked up by an injected port and its home derived by the package, which must exist at its canonical path and is locked by file identity; the proven executable re-verified before every run; sign-in refused over an existing sign-in or into an external realm, one browser sign-in at a time, a managed .env refused; the API key taken single-use, validated and written only to stdin; machine-readable result codes; output redacted per stream; covered by tests/wp1/codex-auth-adapter.test.ts and tests/wp1/fake-cli.test.ts (WP1.20, WP1.22, WP1.49, WP1.62); WP2 P3 usage track MP3 round-1 review fixes: usageSessionsDir locates a realm as a launch does and holds it to the launch canonical-home check, so usage reads nothing a launch would refuse (WP1.68); tests/unit/main/provider-account-usage.test.ts; WP2 P3 usage track MP7 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): readUsage: one app-server read of a managed realm on a CLI whose version is supported, with a status run's realm checks, CODEX_HOME the realm, the realm held as a reader until the chain has ended, one helper at a time, bounded, shut down after the verdict, failing closed (WP1.41, WP1.68); tests/unit/providers/codex/app-server-read.test.ts",
       "note": "created by WP2; replaces the legacy codexLoginWithApiKey/codexLoginChatgpt/codexLoginDeviceAuth/codexLogout/codexTestConnection in auth.ts once the accounts service and renderer slices retire those callers"
     },
     {
@@ -804,7 +815,7 @@
       ],
       "category": "AUTH",
       "disposition": "added",
-      "evidence": "new WP2 Codex CLI runner: constant argv per operation, allowlisted env, Windows shim through absolute cmd.exe, a kill limited to the run's own cmd/node/codex chain that settles once it lands; covered by tests/wp1/cli-discovery.test.ts and tests/wp1/fake-cli.test.ts (WP1.17, WP1.62)",
+      "evidence": "new WP2 Codex CLI runner: constant argv per operation, allowlisted env, Windows shim through absolute cmd.exe, a kill limited to the run's own cmd/node/codex chain that settles once it lands; covered by tests/wp1/cli-discovery.test.ts and tests/wp1/fake-cli.test.ts (WP1.17, WP1.62); WP2 P3 usage track MP7 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): the constant app-server operation and an open-stdin mode (a writer handed to the caller after the spawn; the deadline, cancel and kill chain unchanged; exclusive with stdin) (WP1.41, WP1.68); tests/unit/providers/codex/cli-runner-open-stdin.test.ts",
       "note": "created by WP2; replaces the legacy runCodexProcess/runCodexStreaming in auth.ts once the auth slice lands"
     },
     {
@@ -842,7 +853,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "move",
-      "evidence": "CodexProvider class contract pinned by tests/wp1/codex-characterization.test.ts C2 (WP1.54); entry-point rule tests/wp1/dependency-boundaries.test.ts (WP1.66); WP2 final fixes: CodexProvider.resolveBinary and resumeCommand, which nothing called, refuse instead of resolving the codex on PATH (not used for Codex: launches go through the managed launch; C2 inverted), and cli.discovery and install.recipes are declared supported, what the package implements; realm.isolated stays unknown because the contract backs it with realms.realmEnvPatch, which Codex does not expose (WP1.17, WP1.18); tests/unit/providers/codex/spawn.test.ts, tests/wp1/provider-conformance.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): the wired package exposes the usage port (account.usage supported, unknown unwired) and CodexProvider records each session's allowance by its sessions folder (WP1.41); tests/wp1/provider-conformance.test.ts; tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP3 round-1 review fixes: the usage port uses the checked sessions folder, and a session opens and releases its realm's live figure (WP1.68); tests/unit/providers/codex/telemetry.test.ts; tests/unit/main/provider-account-usage.test.ts; WP2 P3 usage track MP3 round-2 review fixes: exports the lookup that tells unavailable from no reading, and the day-entry and timeout bounds (WP1.68); tests/unit/providers/codex/usage-last-seen.test.ts",
+      "evidence": "CodexProvider class contract pinned by tests/wp1/codex-characterization.test.ts C2 (WP1.54); entry-point rule tests/wp1/dependency-boundaries.test.ts (WP1.66); WP2 final fixes: CodexProvider.resolveBinary and resumeCommand, which nothing called, refuse instead of resolving the codex on PATH (not used for Codex: launches go through the managed launch; C2 inverted), and cli.discovery and install.recipes are declared supported, what the package implements; realm.isolated stays unknown because the contract backs it with realms.realmEnvPatch, which Codex does not expose (WP1.17, WP1.18); tests/unit/providers/codex/spawn.test.ts, tests/wp1/provider-conformance.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): the wired package exposes the usage port (account.usage supported, unknown unwired) and CodexProvider records each session's allowance by its sessions folder (WP1.41); tests/wp1/provider-conformance.test.ts; tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP3 round-1 review fixes: the usage port uses the checked sessions folder, and a session opens and releases its realm's live figure (WP1.68); tests/unit/providers/codex/telemetry.test.ts; tests/unit/main/provider-account-usage.test.ts; WP2 P3 usage track MP3 round-2 review fixes: exports the lookup that tells unavailable from no reading, and the day-entry and timeout bounds (WP1.68); tests/unit/providers/codex/usage-last-seen.test.ts; WP2 P3 usage track MP7 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): exports the app-server client and the read result type (WP1.41); tests/unit/providers/codex/app-server-client.test.ts",
       "note": "becomes the Codex package public entry point; CodexProvider (session parity surface) retained for the runtime work package, its two PATH lookups refused; auth/setup/realm operations exported alongside"
     },
     {
@@ -2544,7 +2555,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "WP2 visual fixes (VM audit 2026-09-25), round 2: the e2e fake Codex CLI, the observable contract of the wp1 fake (tests/wp1/fake-cli.test.ts) cut to --version at the pinned version and login status, behind the same npm .cmd shim; put first on the app instance's PATH with every real Codex taken off it, so the adapted e2e never depends on the host's Codex (WP1.58, WP1.2); tests/e2e/codex-session-creation.spec.ts",
+      "evidence": "WP2 visual fixes (VM audit 2026-09-25), round 2: the e2e fake Codex CLI, the observable contract of the wp1 fake (tests/wp1/fake-cli.test.ts) cut to --version at the pinned version and login status, behind the same npm .cmd shim; put first on the app instance's PATH with every real Codex taken off it, so the adapted e2e never depends on the host's Codex (WP1.58, WP1.2); tests/e2e/codex-session-creation.spec.ts; WP2 P3 usage track MP7 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): the fake answers an app-server usage read (WP1.41); tests/unit/providers/codex/app-server-read.test.ts",
       "note": "P04: the instance gets a CODEX_HOME of its own, never ~/.codex; P09: the fake refuses an ambient OPENAI_API_KEY, as the wp1 fake does"
     },
     {
@@ -3306,6 +3317,31 @@
       "note": ""
     },
     {
+      "path": "tests/unit/providers/codex/app-server-client.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 P3 usage track MP7 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): the client: its exact messages, the realm check, schema, errors, server requests, line bounds and verdicts (WP1.41, WP1.68); tests/unit/providers/codex/app-server-client.test.ts",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/providers/codex/app-server-read.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P09",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 P3 usage track MP7 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): the read through the auth operations: supported versions only, managed realms only, the realm environment, one helper at a time, the grace and initialize bounds, cancel and the kill chain (WP1.41, WP1.68); tests/unit/providers/codex/app-server-read.test.ts",
+      "note": ""
+    },
+    {
       "path": "tests/unit/providers/codex/auth-login.test.ts",
       "predicates": [
         "P01",
@@ -3329,6 +3365,17 @@
       "category": "TEST",
       "disposition": "delete",
       "evidence": "WP1.58 mapping: the module is deleted (WP2 commit 6g): the JWT decoder and readCodexAuthStatus are gone, and the module's exported getCodexHome with them (src/main/providers/codex/mcp-config.ts keeps a private one for its config.toml heal) (the realm sessions folder is required: tests/unit/providers/codex/telemetry.test.ts); installed/version reporting re-asserted by tests/wp1/cli-discovery.test.ts and sign-in state by tests/wp1/codex-auth-adapter.test.ts",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/providers/codex/cli-runner-open-stdin.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 P3 usage track MP7 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): the runner's open-stdin mode and the constant app-server command line (WP1.41, WP1.68); tests/unit/providers/codex/cli-runner-open-stdin.test.ts",
       "note": ""
     },
     {

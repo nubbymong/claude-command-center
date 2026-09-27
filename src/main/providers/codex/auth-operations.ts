@@ -52,10 +52,14 @@ import type {
 } from '../core'
 import { redactSecrets } from '../../hooks/hook-payload-redactor'
 import { redactTokens } from '../../github/security/token-redactor'
-import { parseCodexLoginStatus } from './cli-contract'
+import { parseCodexLoginStatus, classifyCodexVersion } from './cli-contract'
+import {
+  createAppServerUsageClient, APP_SERVER_READ_DEADLINE_MS, APP_SERVER_INITIALIZE_TIMEOUT_MS, APP_SERVER_EXIT_GRACE_MS, APP_SERVER_MAX_LINE,
+} from './app-server-client'
+import type { AppServerVerdict } from './app-server-client'
 import type { CodexLoginVia } from './cli-contract'
 import { codexCommandLine, codexShellEnv } from './cli-runner'
-import type { CodexCliOperation, CodexCommand, CodexRunOptions, CodexRunResult } from './cli-runner'
+import type { CodexCliOperation, CodexCommand, CodexRunOptions, CodexRunResult, CodexStdinWriter } from './cli-runner'
 import { codexCliEnv } from './cli-env'
 import { verifyCodexExecutable, codexCompatibilityAllowsUse } from './discovery'
 import type { CodexDiscovery, CodexDiscoveryDeps } from './discovery'
@@ -164,12 +168,18 @@ function normaliseApiKey(raw: string): string | null {
   return v.length >= MIN_API_KEY_LENGTH && v.length <= MAX_API_KEY_LENGTH && /^[\x21-\x7e]+$/.test(v) ? v : null
 }
 
+/** A usage read's answer (usage track MP7): the helper's verdict, or why no
+ *  helper was started. Every non-ok answer means: show the last-seen
+ *  reading. */
+export type CodexUsageRead = AppServerVerdict | { ok: false; kind: 'refused'; reason: string }
+
 /** The auth operations plus the launch preparation that shares their realm
  *  and executable checks. */
 export type CodexAuthOperations = ProviderAuthOperations & {
   prepareLaunch(realm: RealmRef): Promise<LaunchPreparation | Refusal>
   sessionsDir(realm: RealmRef): Promise<string | null>
   usageSessionsDir(realm: RealmRef): Promise<string | null>
+  readUsage(realm: RealmRef, opts?: { signal?: AbortSignal }): Promise<CodexUsageRead>
 }
 
 export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperations {
@@ -182,6 +192,8 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
   }
   const locks = deps.locks ?? createCodexRealmLocks()
   let browserRunning = false
+  // Usage track MP7 (ADR-022, bound 4): one app-server helper at a time.
+  let usageReadRunning = false
 
   /** The executable setup proved, re-verified now; the path to run. */
   function currentExecutable(): { ok: true; executable: string } | Refusal {
@@ -304,6 +316,53 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
     void Promise.all(r.kills).then(letGo, letGo)
   }
 
+  /** One helper run for readUsage, in a realm prepared and held. */
+  async function runUsageRead(r: Ready, version: string, signal: AbortSignal | undefined): Promise<AppServerVerdict> {
+    const stop = new AbortController()
+    const onAbort = () => stop.abort()
+    if (signal) signal.addEventListener('abort', onAbort, { once: true })
+    let io: CodexStdinWriter | null = null
+    let grace: ReturnType<typeof setTimeout> | null = null
+    const client = createAppServerUsageClient({
+      send: (line) => { if (!io || !io.write(line)) throw new Error('stdin closed') },
+      // The verdict closes stdin; the helper then has the grace period to
+      // exit before its chain is killed (a cancel of the run).
+      finish: () => {
+        io?.end()
+        if (!grace) { grace = setTimeout(() => stop.abort(), APP_SERVER_EXIT_GRACE_MS); (grace as unknown as { unref?: () => void }).unref?.() }
+      },
+      realmHome: r.home,
+      platform,
+      cliVersion: version,
+      now: () => Date.now(),
+    })
+    const initTimer = setTimeout(() => {
+      if (!client.verdict && !client.initialized) { client.ended('timeout'); stop.abort() }
+    }, APP_SERVER_INITIALIZE_TIMEOUT_MS)
+    ;(initTimer as unknown as { unref?: () => void }).unref?.()
+    try {
+      if (signal?.aborted) { client.ended('cancelled'); return client.verdict as AppServerVerdict }
+      const out = await run(r, 'app-server', {
+        timeoutMs: APP_SERVER_READ_DEADLINE_MS,
+        signal: stop.signal,
+        maxOutput: APP_SERVER_MAX_LINE,
+        onChunk: (text, stream) => { if (stream === 'stdout') client.receive(text) },
+        openStdin: (w) => { io = w; client.begin() },
+      })
+      if (!client.verdict) {
+        client.ended(isRefusal(out) ? 'spawn'
+          : out.timedOut ? 'timeout'
+            : signal?.aborted || out.stopped === 'cancel' ? 'cancelled'
+              : out.spawnError ? 'spawn' : 'exit')
+      }
+      return client.verdict as AppServerVerdict
+    } finally {
+      clearTimeout(initTimer)
+      if (grace) clearTimeout(grace)
+      if (signal) signal.removeEventListener('abort', onAbort)
+    }
+  }
+
   /** Nothing escapes as a rejection: an unexpected throw is a refusal. */
   async function guard<T extends AuthOperationResult>(body: () => Promise<T>, extra: Partial<T> = {}): Promise<T | (Refusal & Partial<T>)> {
     try { return await body() } catch { return { ...extra, ...refuse('not-started') } }
@@ -358,6 +417,57 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
         return isRefusal(where) ? null : pathApi.join(where.home, 'sessions')
       } catch {
         return null
+      }
+    },
+
+    /**
+     * Usage track MP7 (ADR-022; the owner's scoped WP1.41 exception): one
+     * short-lived `codex app-server` read of a managed realm's allowance, and
+     * nothing else. Only a CLI discovery proved whose version is `supported`
+     * (never too-new, too-old or unknown); only a managed realm (this
+     * computer's own Codex folder is never read); the realm's checks are a
+     * status run's (canonical home, the executable re-verified, no `.env`),
+     * CODEX_HOME is the realm, the environment is the allowlisted one, and the
+     * realm is held as a reader. The client (app-server-client.ts) sends
+     * exactly initialize, initialized and account/rateLimits/read, and
+     * requires the helper to name this realm. After its verdict it closes
+     * stdin; the helper then has APP_SERVER_EXIT_GRACE_MS to exit before its
+     * process chain is killed, and the whole run is bounded by
+     * APP_SERVER_READ_DEADLINE_MS (the `initialize` answer by
+     * APP_SERVER_INITIALIZE_TIMEOUT_MS). The realm hold is let go only once
+     * the chain has ended. One helper at a time. Any failure fails closed:
+     * the caller shows the last-seen reading. Never rejects.
+     */
+    async readUsage(realm: RealmRef, opts: { signal?: AbortSignal } = {}): Promise<CodexUsageRead> {
+      const refused = (reason: string): CodexUsageRead => ({ ok: false, kind: 'refused', reason })
+      try {
+        const signal = opts?.signal
+        if (signal?.aborted) return refused('cancelled')
+        let p: CodexDiscovery | null
+        try { p = deps.proven() } catch { p = null }
+        const version = p && p.state === 'found' && typeof p.version === 'string' ? p.version : null
+        if (!p || p.compatibility !== 'supported' || classifyCodexVersion(version) !== 'supported' || !version) return refused('version')
+        if (usageReadRunning) return refused('busy')
+        usageReadRunning = true
+        let freed = false
+        const free = () => { if (!freed) { freed = true; usageReadRunning = false } }
+        try {
+          const r = await prepare(realm, 'status')
+          if (isRefusal(r)) { free(); return refused(r.code) }
+          if (r.ownership !== 'conductor-managed') { free(); return refused('external-realm') }
+          const release = holdRealm(r, 'reader')
+          if (isRefusal(release)) { free(); return refused(release.code) }
+          try {
+            return await runUsageRead(r, version, signal)
+          } finally {
+            releaseAfterKills(r, () => { release(); free() })
+          }
+        } catch {
+          free()
+          return refused('not-started')
+        }
+      } catch {
+        return refused('not-started')
       }
     },
 

@@ -33,7 +33,7 @@ import fs from 'node:fs'
 import { spawn as nodeSpawn, execFile, execFileSync } from 'node:child_process'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 
-export type CodexCliOperation = 'version' | 'status' | 'logout' | 'login-browser' | 'login-device' | 'login-api-key' | 'review'
+export type CodexCliOperation = 'version' | 'status' | 'logout' | 'login-browser' | 'login-device' | 'login-api-key' | 'review' | 'app-server'
 
 const ARGS: Readonly<Record<CodexCliOperation, readonly string[]>> = {
   'version': ['--version'],
@@ -47,6 +47,11 @@ const ARGS: Readonly<Record<CodexCliOperation, readonly string[]>> = {
   // stdout, nothing persisted, read-only sandbox; the prompt arrives on stdin
   // (`-`), never here. The caller runs it in the project folder.
   'review': ['exec', '--json', '--ephemeral', '--skip-git-repo-check', '--sandbox', 'read-only', '-m', 'gpt-5.5', '-'],
+  // Usage track MP7 (ADR-022; the owner's scoped WP1.41 exception): the
+  // protocol helper for one usage read, on its default stdio transport only:
+  // never `daemon`, `proxy`, `--listen` or `--enable`. Its messages arrive
+  // on stdin (the runner's open-stdin mode), never here.
+  'app-server': ['app-server'],
 }
 
 export interface CodexCommand {
@@ -159,11 +164,26 @@ export interface CodexRunResult {
   killSettled?: Promise<void>
 }
 
+/** Usage track MP7: the writer an open-stdin run hands its caller. */
+export interface CodexStdinWriter {
+  /** Writes to the child's stdin; false (and nothing written) once the run
+   *  has settled, begun stopping or had its stdin ended. */
+  write(text: string): boolean
+  /** Closes the child's stdin (once). */
+  end(): void
+}
+
 export interface CodexRunOptions {
   env: Record<string, string>
   timeoutMs: number
-  /** Written to the child's stdin pipe once, then closed. Absent: stdin is ignored. */
+  /** Written to the child's stdin pipe once, then closed. Absent (and no
+   *  `openStdin`): stdin is ignored. */
   stdin?: string
+  /** Usage track MP7 (ADR-022): stdin kept open for a protocol helper. Called
+   *  once, just after the spawn, with a writer; the caller writes whole
+   *  messages and ends stdin when it is done. The deadline, cancel and kill
+   *  chain are the runner's as for any run. Exclusive with `stdin`. */
+  openStdin?: (io: CodexStdinWriter) => void
   /** Per stream; the rest is dropped (default 64 KiB). */
   maxOutput?: number
   onOutput?: (text: string, stream: 'stdout' | 'stderr') => void
@@ -671,6 +691,11 @@ export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: Code
       finish({ exitCode: null, timedOut: false, spawnError: 'cancelled' })
       return
     }
+    if (opts.stdin !== undefined && opts.openStdin !== undefined) {
+      finish({ exitCode: null, timedOut: false, spawnError: 'invalid stdin' })
+      return
+    }
+    const stdinPiped = opts.stdin !== undefined || typeof opts.openStdin === 'function'
     // A prototype-free copy of exactly the caller's own variables: spawn walks
     // inherited keys, so a polluted Object.prototype must add nothing.
     const env: Record<string, string> = Object.create(null) as Record<string, string>
@@ -679,7 +704,7 @@ export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: Code
       child = deps.spawn(cmd.file, cmd.args, {
         cwd: cmd.cwd,
         env,
-        stdio: [opts.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+        stdio: [stdinPiped ? 'pipe' : 'ignore', 'pipe', 'pipe'],
         windowsHide: true,
         windowsVerbatimArguments: cmd.verbatim,
         shell: false,
@@ -724,6 +749,24 @@ export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: Code
     if (opts.stdin !== undefined && child.stdin) {
       child.stdin.on('error', () => { /* the child closed its stdin early; its exit code tells */ })
       child.stdin.end(opts.stdin)
+    }
+    if (typeof opts.openStdin === 'function' && child.stdin) {
+      const pipe = child.stdin
+      pipe.on('error', () => { /* the child closed its stdin early; its exit code tells */ })
+      let ended = false
+      const io: CodexStdinWriter = {
+        write: (text) => {
+          if (settled || stopping || ended || typeof text !== 'string') return false
+          try { pipe.write(text); return true } catch { return false }
+        },
+        end: () => {
+          if (ended) return
+          ended = true
+          try { pipe.end() } catch { /* already closed */ }
+        },
+      }
+      // A caller that throws gets its stdin closed; the deadline still bounds the run.
+      try { opts.openStdin(io) } catch { io.end() }
     }
   })
 }
