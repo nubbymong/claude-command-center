@@ -53,13 +53,18 @@ export class TokenomicsSupervisor {
   /** MP10: the Claude session attributions sent so far, first wins, sent
    *  again to a restarted worker (one that died before storing them). */
   private sessionAccounts = new Map<string, TkAccountKey>()
+  /** MP9 round 1 (Q-4): the Codex account folders have been named (given at
+   *  construction, or set since); a restarted worker is told so. */
+  private realmDirsKnown: boolean
   // Set when the worker reports an UNCORRELATED error (e.g. a failed DB open,
   // which leaves the worker alive but never `ready` — no exit, no restart). The
   // renderer consumes this so the tokenomics page can stop showing 'indexing'
   // forever and surface a fault instead of a perpetual spinner.
   private lastError: { message: string; ts: number } | null = null
 
-  constructor(private opts: TokenomicsSupervisorOptions) {}
+  constructor(private opts: TokenomicsSupervisorOptions) {
+    this.realmDirsKnown = Array.isArray(opts.codexRealmSessionsDirs)
+  }
   private now(): number { return this.opts.now ? this.opts.now() : Date.now() }
 
   start(): void {
@@ -87,6 +92,7 @@ export class TokenomicsSupervisor {
       type: 'open', dbPath: this.opts.dbPath, pricing: this.opts.pricing, configs: this.opts.configs,
       claudeProjectsDir: this.opts.claudeProjectsDir, codexSessionsDir: this.opts.codexSessionsDir,
       codexRealmSessionsDirs: this.opts.codexRealmSessionsDirs ?? [],
+      codexRealmDirsKnown: this.realmDirsKnown,
     })
   }
 
@@ -180,6 +186,7 @@ export class TokenomicsSupervisor {
   setCodexRealmSessionsDirs(dirs: TkSessionsRoot[]): void {
     const copy = dirs.map((d) => ({ dir: d.dir, accountKey: d.accountKey }))
     this.opts.codexRealmSessionsDirs = copy
+    this.realmDirsKnown = true
     this.sendOrBuffer({ type: 'set-codex-realm-dirs', dirs: copy.map((d) => ({ ...d })) })
   }
   reindex(): void { this.sendOrBuffer({ type: 'reindex' }) }

@@ -688,6 +688,20 @@ describe('the package keeps its own proof and exposes auth only when wired (T13,
     expect([real, rogue]).toEqual([2, 0])
   })
 
+  // MP9 round 1 (B-F1): the usage index reads a realm's folder only when its
+  // home is a folder at exactly its own path, as a launch requires.
+  it('the usage index gets a realm\'s sessions folder only when its home is not linked elsewhere', async () => {
+    // The folder port's own reading of the home, not the world's.
+    const { source, ports: { realmIdentity: _own, ...ports } } = authPorts()
+    const plain = createCodexPackage({ realms: source, realmFs: flatFs(), authPorts: ports })
+    expect(await plain.launch!.sessionsDir(MANAGED)).toBe(`${HOME_A}\\sessions`)
+    expect(await plain.launch!.sessionsDir(MANAGED_B)).toBe(`${HOME_B}\\sessions`)
+    // B's home is a junction into A's.
+    const linked = createCodexPackage({ realms: source, realmFs: flatFs((p) => (p.toLowerCase() === HOME_B.toLowerCase() ? HOME_A : p)), authPorts: ports })
+    expect(await linked.launch!.sessionsDir(MANAGED_B)).toBeNull()
+    expect(await linked.launch!.sessionsDir(MANAGED)).toBe(`${HOME_A}\\sessions`)
+  })
+
   it('the package canonicalises the resources directory before it derives a CODEX_HOME (a SUBST or mapped drive)', async () => {
     const { source, ports, w } = authPorts()
     const pkg = createCodexPackage({

@@ -66,6 +66,50 @@ const heatmapUpsert = (name: string) => `INSERT INTO ${name}(bucket,model,priceM
     ON CONFLICT(bucket,model,provider,configId,accountKey) DO UPDATE SET
       inTok=inTok+excluded.inTok, outTok=outTok+excluded.outTok,
       cacheReadTok=cacheReadTok+excluded.cacheReadTok, cacheCreateTok=cacheCreateTok+excluded.cacheCreateTok`
+/** The v2 rollups' own tables (MP9 round 1, Q-1): new names, so the v1
+ *  tables below stay exactly as a build from before MP9 knows them. */
+const DAILY = 'tk_daily2'
+const HEAT = 'tk_heatmap2'
+/** The rollups of schema v1, exactly as a build from before MP9 creates and
+ *  writes them, and still written beside the v2 ones: such a build opening
+ *  this database after a downgrade prepares its own statements against its
+ *  own tables and keeps working, with totals that include what this build
+ *  stored. */
+const V1_DAILY_DDL = `CREATE TABLE IF NOT EXISTS tk_daily (
+  day            TEXT NOT NULL,
+  model          TEXT NOT NULL,
+  priceModel     TEXT NOT NULL,
+  provider       TEXT NOT NULL,
+  configId       TEXT,
+  inTok          INTEGER NOT NULL DEFAULT 0,
+  outTok         INTEGER NOT NULL DEFAULT 0,
+  cacheReadTok   INTEGER NOT NULL DEFAULT 0,
+  cacheCreateTok INTEGER NOT NULL DEFAULT 0,
+  msgCount       INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, model, provider, configId)
+);`
+const V1_HEATMAP_DDL = `CREATE TABLE IF NOT EXISTS tk_heatmap (
+  bucket         INTEGER NOT NULL,
+  model          TEXT NOT NULL,
+  priceModel     TEXT NOT NULL,
+  configId       TEXT,
+  inTok          INTEGER NOT NULL DEFAULT 0,
+  outTok         INTEGER NOT NULL DEFAULT 0,
+  cacheReadTok   INTEGER NOT NULL DEFAULT 0,
+  cacheCreateTok INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (bucket, model, configId)
+);`
+const V1_DAILY_UPSERT = `INSERT INTO tk_daily(day,model,priceModel,provider,configId,inTok,outTok,cacheReadTok,cacheCreateTok,msgCount)
+    VALUES(@day,@model,@priceModel,@provider,@configId,@inTok,@outTok,@cacheReadTok,@cacheCreateTok,1)
+    ON CONFLICT(day,model,provider,configId) DO UPDATE SET
+      inTok=inTok+excluded.inTok, outTok=outTok+excluded.outTok,
+      cacheReadTok=cacheReadTok+excluded.cacheReadTok, cacheCreateTok=cacheCreateTok+excluded.cacheCreateTok,
+      msgCount=msgCount+1`
+const V1_HEATMAP_UPSERT = `INSERT INTO tk_heatmap(bucket,model,priceModel,configId,inTok,outTok,cacheReadTok,cacheCreateTok)
+    VALUES(@bucket,@model,@priceModel,@configId,@inTok,@outTok,@cacheReadTok,@cacheCreateTok)
+    ON CONFLICT(bucket,model,configId) DO UPDATE SET
+      inTok=inTok+excluded.inTok, outTok=outTok+excluded.outTok,
+      cacheReadTok=cacheReadTok+excluded.cacheReadTok, cacheCreateTok=cacheCreateTok+excluded.cacheCreateTok`
 /** Rows the rollup rebuild replays per step (usage track MP9). */
 export const TK_REBUILD_PAGE = 5000
 
@@ -153,9 +197,9 @@ CREATE TABLE IF NOT EXISTS tk_session_models (
   PRIMARY KEY (sessionId, model)
 );
 
-${dailyTable('tk_daily')}
+${V1_DAILY_DDL}
 
-${heatmapTable('tk_heatmap')}
+${V1_HEATMAP_DDL}
 
 CREATE TABLE IF NOT EXISTS tk_configs (
   configId        TEXT PRIMARY KEY,
@@ -293,12 +337,19 @@ export function openTkDb(dbPath: string): TkDb {
   // columns, so it is quick however large the database:
   //  - tk_events, tk_sessions and tk_files gain `accountKey` ('' = not
   //    recorded); tk_files gains `accountReread`;
-  //  - tk_daily gains `accountKey` in its key and tk_heatmap `provider` and
-  //    `accountKey` in its: both are copied over as they are ('' for what
-  //    was not recorded; the hourly rollup never recorded its provider), and
-  //    rebuilt from the stored events later, worker-side and in steps
-  //    (beginRollupRebuild), once the Codex re-read below has finished;
-  //  - Codex cursors are rewound (the #307 mechanism) so each rollout still on
+  //  - the rollups by account are NEW tables (MP9 round 1, Q-1): tk_daily2,
+  //    keyed by account too, and tk_heatmap2, by provider and account too.
+  //    The v1 tk_daily and tk_heatmap stay exactly as they were and are
+  //    still written, so a build from before MP9 opening this file after a
+  //    downgrade keeps working on its own tables. The new tables start as
+  //    copies of the v1 ones ('' for what was not recorded; the hourly
+  //    rollup never recorded its provider) and are rebuilt from the stored
+  //    events later, worker-side and in steps (beginRollupRebuild), once
+  //    the Codex re-read below has finished;
+  //  - a database an earlier build of this work upgraded in place (its
+  //    tk_daily and tk_heatmap carry the account) has those tables moved to
+  //    the new names and its v1 tables derived back from them;
+  //  - coming from v1, Codex cursors are rewound (the #307 mechanism) so each rollout still on
   //    disk is re-read and its stored rows stamped with the account of the
   //    folder it lives in. Unlike #307 no row is deleted: a re-read turn
   //    carries the same dedup key, so it stamps the stored row instead of
@@ -306,36 +357,53 @@ export function openTkDb(dbPath: string): TkDb {
   //    rollout since pruned stays, not recorded. Claude history is not
   //    re-read (its attribution starts from now on, MP10).
   const colsOf = (t: string) => new Set((sqlite.pragma(`table_info(${t})`) as Array<{ name: string }>).map((c) => c.name))
-  const version = (sqlite.prepare("SELECT value FROM tk_meta WHERE key = 'schemaVersion'").get() as { value?: string } | undefined)?.value
-  if (version !== '2' || !colsOf('tk_events').has('accountKey') || !colsOf('tk_sessions').has('accountKey')
-    || !colsOf('tk_daily').has('accountKey') || !colsOf('tk_heatmap').has('provider') || !colsOf('tk_heatmap').has('accountKey')) {
+  const tableExists = (t: string) => !!sqlite.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t)
+  const maxEventRowid = () => Number((sqlite.prepare('SELECT COALESCE(MAX(rowid), 0) AS m FROM tk_events').get() as { m: number | bigint }).m)
+  const setMetaAtOpen = (key: string, value: string) => { sqlite.prepare('INSERT INTO tk_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, value) }
+  if (!colsOf('tk_events').has('accountKey') || !colsOf('tk_sessions').has('accountKey') || !tableExists(DAILY) || !tableExists(HEAT)
+    || colsOf('tk_daily').has('accountKey') || colsOf('tk_heatmap').has('accountKey')) {
     const v2 = sqlite.transaction(() => {
-      if (!colsOf('tk_events').has('accountKey')) sqlite.exec("ALTER TABLE tk_events ADD COLUMN accountKey TEXT NOT NULL DEFAULT ''")
+      const fromV1 = !colsOf('tk_events').has('accountKey')
+      if (fromV1) sqlite.exec("ALTER TABLE tk_events ADD COLUMN accountKey TEXT NOT NULL DEFAULT ''")
       if (!colsOf('tk_sessions').has('accountKey')) sqlite.exec("ALTER TABLE tk_sessions ADD COLUMN accountKey TEXT NOT NULL DEFAULT ''")
       let dirty = false
-      if (!colsOf('tk_daily').has('accountKey')) {
-        sqlite.exec(`ALTER TABLE tk_daily RENAME TO tk_daily_v1;
-          ${dailyTable('tk_daily')}
-          INSERT INTO tk_daily(day,model,priceModel,provider,configId,accountKey,inTok,outTok,cacheReadTok,cacheCreateTok,msgCount)
-            SELECT day,model,priceModel,provider,COALESCE(configId,''),'',inTok,outTok,cacheReadTok,cacheCreateTok,msgCount FROM tk_daily_v1;
-          DROP TABLE tk_daily_v1;`)
+      // Upgraded in place by an earlier build of this work: its tables move
+      // to the new names, and the v1 ones are derived back from them.
+      if (colsOf('tk_daily').has('accountKey')) {
+        sqlite.exec(`DROP TABLE IF EXISTS ${DAILY}; DROP TABLE IF EXISTS tk_daily_next;
+          ALTER TABLE tk_daily RENAME TO ${DAILY};
+          ${V1_DAILY_DDL}
+          INSERT INTO tk_daily(day,model,priceModel,provider,configId,inTok,outTok,cacheReadTok,cacheCreateTok,msgCount)
+            SELECT day,model,MIN(priceModel),provider,configId,SUM(inTok),SUM(outTok),SUM(cacheReadTok),SUM(cacheCreateTok),SUM(msgCount)
+            FROM ${DAILY} GROUP BY day,model,provider,configId;`)
       }
-      const heat = colsOf('tk_heatmap')
-      if (!heat.has('provider') || !heat.has('accountKey')) {
-        sqlite.exec(`ALTER TABLE tk_heatmap RENAME TO tk_heatmap_v1;
-          ${heatmapTable('tk_heatmap')}
-          INSERT INTO tk_heatmap(bucket,model,priceModel,provider,configId,accountKey,inTok,outTok,cacheReadTok,cacheCreateTok)
-            SELECT bucket,model,priceModel,'',COALESCE(configId,''),'',inTok,outTok,cacheReadTok,cacheCreateTok FROM tk_heatmap_v1;
-          DROP TABLE tk_heatmap_v1;`)
-        dirty = (sqlite.prepare('SELECT COUNT(*) AS n FROM tk_heatmap').get() as { n: number }).n > 0
+      if (colsOf('tk_heatmap').has('accountKey')) {
+        sqlite.exec(`DROP TABLE IF EXISTS ${HEAT}; DROP TABLE IF EXISTS tk_heatmap_next;
+          ALTER TABLE tk_heatmap RENAME TO ${HEAT};
+          ${V1_HEATMAP_DDL}
+          INSERT INTO tk_heatmap(bucket,model,priceModel,configId,inTok,outTok,cacheReadTok,cacheCreateTok)
+            SELECT bucket,model,MIN(priceModel),configId,SUM(inTok),SUM(outTok),SUM(cacheReadTok),SUM(cacheCreateTok)
+            FROM ${HEAT} GROUP BY bucket,model,configId;`)
       }
-      const rewound = sqlite.prepare(`UPDATE tk_files SET lastOffset = 0, scannedTo = 0, codexTurns = 0,
-          codexSessionId = '', codexModel = '', codexCwd = '', accountReread = 1
-          WHERE codexSessionId <> '' OR path LIKE '%rollout-%'`).run().changes
-      const set = sqlite.prepare('INSERT INTO tk_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value')
-      if (rewound > 0) { set.run('accountReread', 'pending'); dirty = true }
-      if (dirty) set.run('rollupsDirty', '1')
-      set.run('schemaVersion', '2')
+      if (!tableExists(DAILY)) {
+        sqlite.exec(`${dailyTable(DAILY)}
+          INSERT INTO ${DAILY}(day,model,priceModel,provider,configId,accountKey,inTok,outTok,cacheReadTok,cacheCreateTok,msgCount)
+            SELECT day,model,priceModel,provider,COALESCE(configId,''),'',inTok,outTok,cacheReadTok,cacheCreateTok,msgCount FROM tk_daily;`)
+      }
+      if (!tableExists(HEAT)) {
+        sqlite.exec(`${heatmapTable(HEAT)}
+          INSERT INTO ${HEAT}(bucket,model,priceModel,provider,configId,accountKey,inTok,outTok,cacheReadTok,cacheCreateTok)
+            SELECT bucket,model,priceModel,'',COALESCE(configId,''),'',inTok,outTok,cacheReadTok,cacheCreateTok FROM tk_heatmap;`)
+        dirty = (sqlite.prepare(`SELECT COUNT(*) AS n FROM ${HEAT}`).get() as { n: number }).n > 0
+      }
+      if (fromV1) {
+        const rewound = sqlite.prepare(`UPDATE tk_files SET lastOffset = 0, scannedTo = 0, codexTurns = 0,
+            codexSessionId = '', codexModel = '', codexCwd = '', accountReread = 1
+            WHERE codexSessionId <> '' OR path LIKE '%rollout-%'`).run().changes
+        if (rewound > 0) { setMetaAtOpen('accountReread', 'pending'); dirty = true }
+      }
+      if (dirty) setMetaAtOpen('rollupsDirty', '1')
+      setMetaAtOpen('schemaVersion', '2')
     })
     try {
       v2()
@@ -346,6 +414,31 @@ export function openTkDb(dbPath: string): TkDb {
     }
   }
   sqlite.exec('CREATE INDEX IF NOT EXISTS idx_sessions_account ON tk_sessions(provider, accountKey)')
+
+  // MP9 round 1 (Q-1): after a downgrade, a build from before MP9 stores
+  // events and writes only its own (v1) rollups. `rollupRowid` says how far
+  // the v2 rollups have seen; rows past it were stored by such a build. Its
+  // Claude rows of attributed sessions take their account (MP10), and the
+  // v2 rollups are rebuilt from the events. Its Codex rows stay not recorded.
+  {
+    const seen = Number((sqlite.prepare("SELECT value FROM tk_meta WHERE key = 'rollupRowid'").get() as { value?: string } | undefined)?.value)
+    const stored = maxEventRowid()
+    // None yet (a database just upgraded, or from an earlier build of this
+    // work): the rollups hold everything stored so far.
+    if (!Number.isFinite(seen)) setMetaAtOpen('rollupRowid', String(stored))
+    else if (stored > seen) {
+      sqlite.transaction(() => {
+        const attributed = "SELECT sessionId FROM tk_session_accounts WHERE accountKey LIKE 'claude:%'"
+        const accountOf = (t: string) => `(SELECT a.accountKey FROM tk_session_accounts a WHERE a.sessionId = ${t}.sessionId)`
+        sqlite.prepare(`UPDATE tk_events SET accountKey = ${accountOf('tk_events')}
+          WHERE rowid > ? AND provider = 'claude' AND accountKey = '' AND sessionId IN (${attributed})`).run(seen)
+        sqlite.prepare(`UPDATE tk_sessions SET accountKey = ${accountOf('tk_sessions')}
+          WHERE provider = 'claude' AND accountKey = '' AND sessionId IN (${attributed})`).run()
+        setMetaAtOpen('rollupsDirty', '1')
+        setMetaAtOpen('rollupRowid', String(stored))
+      })()
+    }
+  }
 
   const getMetaStmt = sqlite.prepare('SELECT value FROM tk_meta WHERE key = ?')
   const setMetaStmt = sqlite.prepare('INSERT INTO tk_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value')
@@ -382,11 +475,14 @@ export function openTkDb(dbPath: string): TkDb {
   // MP9: a row stored before its account was known is stamped by the re-read
   // of its rollout (same dedup key), never re-stamped once known.
   const restampEvent = sqlite.prepare("UPDATE tk_events SET accountKey = @accountKey WHERE dedupKey = @dedupKey AND accountKey = ''")
-  const restampSession = sqlite.prepare("UPDATE tk_sessions SET accountKey = @accountKey WHERE sessionId = @sessionId AND accountKey = ''")
+  // MP9 round 1 (B-F2): only a Codex session row: a rollout names its own
+  // session id, and one naming a Claude session's never stamps it.
+  const restampSession = sqlite.prepare("UPDATE tk_sessions SET accountKey = @accountKey WHERE sessionId = @sessionId AND provider = 'codex' AND accountKey = ''")
   /** Bumped by every stamp: a rebuild begun before one is not the last word. */
   let dirtyEpoch = 0
 
-  const upDaily = sqlite.prepare(dailyUpsert('tk_daily'))
+  const upDaily = sqlite.prepare(dailyUpsert(DAILY))
+  const upDailyV1 = sqlite.prepare(V1_DAILY_UPSERT)
 
   const upSessionModel = sqlite.prepare(`INSERT INTO tk_session_models(sessionId,model,priceModel,inTok,outTok,cacheReadTok,cacheCreateTok,msgCount)
     VALUES(@sessionId,@model,@priceModel,@inTok,@outTok,@cacheReadTok,@cacheCreateTok,1)
@@ -395,7 +491,8 @@ export function openTkDb(dbPath: string): TkDb {
       cacheReadTok=cacheReadTok+excluded.cacheReadTok, cacheCreateTok=cacheCreateTok+excluded.cacheCreateTok,
       msgCount=msgCount+1`)
 
-  const upHeat = sqlite.prepare(heatmapUpsert('tk_heatmap'))
+  const upHeat = sqlite.prepare(heatmapUpsert(HEAT))
+  const upHeatV1 = sqlite.prepare(V1_HEATMAP_UPSERT)
 
   const upSession = sqlite.prepare(`INSERT INTO tk_sessions(sessionId,provider,configId,projectDir,firstTs,lastTs,lastModel,inTok,outTok,cacheReadTok,cacheCreateTok,msgCount,accountKey)
     VALUES(@sessionId,@provider,@configId,@projectDir,@ts,@ts,@model,@inTok,@outTok,@cacheReadTok,@cacheCreateTok,1,@accountKey)
@@ -408,7 +505,7 @@ export function openTkDb(dbPath: string): TkDb {
       lastModel=CASE WHEN excluded.lastTs >= lastTs THEN excluded.lastModel ELSE lastModel END,
       configId=CASE WHEN tk_sessions.configId='' THEN excluded.configId ELSE tk_sessions.configId END,
       projectDir=CASE WHEN tk_sessions.projectDir='' THEN excluded.projectDir ELSE tk_sessions.projectDir END,
-      accountKey=CASE WHEN tk_sessions.accountKey='' THEN excluded.accountKey ELSE tk_sessions.accountKey END`)
+      accountKey=CASE WHEN tk_sessions.accountKey='' AND tk_sessions.provider=excluded.provider THEN excluded.accountKey ELSE tk_sessions.accountKey END`)
 
   const upConfig = sqlite.prepare(`INSERT INTO tk_configs(configId,label,workingDirectory) VALUES(@configId,@label,@workingDirectory)
     ON CONFLICT(configId) DO UPDATE SET label=excluded.label, workingDirectory=excluded.workingDirectory`)
@@ -418,6 +515,8 @@ export function openTkDb(dbPath: string): TkDb {
   const sessionAccountStmt = sqlite.prepare('SELECT accountKey FROM tk_session_accounts WHERE sessionId = ?')
   const insertEventsTxn = sqlite.transaction((events: Array<TkEvent & { configId?: string | null }>) => {
     let inserted = 0
+    let restamped = false
+    let lastRowid = 0
     const attributed = new Map<string, string>()
     const sessionAccount = (sessionId: string): string => {
       let key = attributed.get(sessionId)
@@ -445,17 +544,23 @@ export function openTkDb(dbPath: string): TkDb {
         // resumed transcript repeats earlier turns under the same keys).
         if (stamped !== TK_ACCOUNT_NOT_RECORDED && restampEvent.run({ dedupKey: e.dedupKey, accountKey: stamped }).changes > 0) {
           restampSession.run({ sessionId: e.sessionId, accountKey: stamped })
-          dirtyEpoch++
-          setMetaStmt.run('rollupsDirty', '1')
+          restamped = true
         }
         continue
       }
       inserted++
+      lastRowid = Number(info.lastInsertRowid)
       upSession.run({ ...e, configId, projectDir: e.cwd, accountKey })
       upSessionModel.run(e)
       upDaily.run({ ...e, day, configId, accountKey })
       upHeat.run({ ...e, bucket, configId, accountKey })
+      // MP9 round 1 (Q-1): the v1 rollups too, for a build from before MP9.
+      upDailyV1.run({ ...e, day, configId })
+      upHeatV1.run({ ...e, bucket, configId })
     }
+    // Once per transaction (MP9 round 1, Q-3).
+    if (restamped) { dirtyEpoch++; setMetaStmt.run('rollupsDirty', '1') }
+    if (lastRowid > 0) setMetaStmt.run('rollupRowid', String(lastRowid))
     return inserted
   })
 
@@ -503,8 +608,10 @@ export function openTkDb(dbPath: string): TkDb {
     sqlite.exec(`
       DELETE FROM tk_events WHERE provider = 'codex';
       DELETE FROM tk_daily;
+      DELETE FROM ${DAILY};
       DELETE FROM tk_session_models;
       DELETE FROM tk_heatmap;
+      DELETE FROM ${HEAT};
       DELETE FROM tk_sessions;
       UPDATE tk_files SET lastOffset = 0, scannedTo = 0, codexTurns = 0,
         codexSessionId = '', codexModel = '', codexCwd = ''
@@ -541,6 +648,8 @@ export function openTkDb(dbPath: string): TkDb {
       upSessionModel.run(e)
       upDaily.run({ ...e, day: (row.day as string | null) || dayOf(e.ts) })
       upHeat.run({ ...e, bucket: bucketOf(e.ts) })
+      upDailyV1.run({ ...e, day: (row.day as string | null) || dayOf(e.ts) })
+      upHeatV1.run({ ...e, bucket: bucketOf(e.ts) })
       }
     }
     setMetaStmt.run('codexReindex307', 'done')
@@ -569,10 +678,10 @@ export function openTkDb(dbPath: string): TkDb {
   const rebuildPageStmt = sqlite.prepare('SELECT rowid AS rid,provider,model,priceModel,ts,day,configId,accountKey,inTok,outTok,cacheReadTok,cacheCreateTok FROM tk_events WHERE rowid > ? ORDER BY rowid ASC LIMIT ?')
   let rebuild: { lastRid: number; done: number; total: number; epoch: number; upD: Database.Statement; upH: Database.Statement } | null = null
   const beginRebuild = (): void => {
-    sqlite.exec(`DROP TABLE IF EXISTS tk_daily_next; DROP TABLE IF EXISTS tk_heatmap_next;
-      ${dailyTable('tk_daily_next')}
-      ${heatmapTable('tk_heatmap_next')}`)
-    rebuild = { lastRid: 0, done: 0, total: (countStmt.get() as { n: number }).n, epoch: dirtyEpoch, upD: sqlite.prepare(dailyUpsert('tk_daily_next')), upH: sqlite.prepare(heatmapUpsert('tk_heatmap_next')) }
+    sqlite.exec(`DROP TABLE IF EXISTS ${DAILY}_next; DROP TABLE IF EXISTS ${HEAT}_next;
+      ${dailyTable(`${DAILY}_next`)}
+      ${heatmapTable(`${HEAT}_next`)}`)
+    rebuild = { lastRid: 0, done: 0, total: (countStmt.get() as { n: number }).n, epoch: dirtyEpoch, upD: sqlite.prepare(dailyUpsert(`${DAILY}_next`)), upH: sqlite.prepare(heatmapUpsert(`${HEAT}_next`)) }
   }
   const stepRebuildTxn = sqlite.transaction((maxRows: number): TkRebuildStep => {
     const r = rebuild
@@ -599,8 +708,8 @@ export function openTkDb(dbPath: string): TkDb {
     // Events stored meanwhile are replayed too: the total grows with them.
     const total = Math.max(r.total, r.done)
     if (page.length === maxRows) return { done: r.done, total, finished: false }
-    sqlite.exec(`DROP TABLE tk_daily; ALTER TABLE tk_daily_next RENAME TO tk_daily;
-      DROP TABLE tk_heatmap; ALTER TABLE tk_heatmap_next RENAME TO tk_heatmap;`)
+    sqlite.exec(`DROP TABLE ${DAILY}; ALTER TABLE ${DAILY}_next RENAME TO ${DAILY};
+      DROP TABLE ${HEAT}; ALTER TABLE ${HEAT}_next RENAME TO ${HEAT};`)
     if (dirtyEpoch === r.epoch) setMetaStmt.run('rollupsDirty', '0')
     rebuild = null
     return { done: r.done, total: r.done, finished: true }
@@ -625,15 +734,15 @@ export function openTkDb(dbPath: string): TkDb {
   const TAKE_TOKENS = 'inTok = inTok - @inTok, outTok = outTok - @outTok, cacheReadTok = cacheReadTok - @cacheReadTok, cacheCreateTok = cacheCreateTok - @cacheCreateTok'
   const ADD_TOKENS = 'inTok=inTok+excluded.inTok, outTok=outTok+excluded.outTok, cacheReadTok=cacheReadTok+excluded.cacheReadTok, cacheCreateTok=cacheCreateTok+excluded.cacheCreateTok'
   const dailyWhere = "day = @day AND model = @model AND provider = @provider AND configId = @configId AND accountKey = ''"
-  const dailyTake = sqlite.prepare(`UPDATE tk_daily SET ${TAKE_TOKENS}, msgCount = msgCount - @msgCount WHERE ${dailyWhere} AND msgCount >= @msgCount AND ${TOKENS_AT_LEAST}`)
-  const dailyPrune = sqlite.prepare(`DELETE FROM tk_daily WHERE ${dailyWhere} AND msgCount <= 0`)
-  const dailyGive = sqlite.prepare(`INSERT INTO tk_daily(day,model,priceModel,provider,configId,accountKey,inTok,outTok,cacheReadTok,cacheCreateTok,msgCount)
+  const dailyTake = sqlite.prepare(`UPDATE ${DAILY} SET ${TAKE_TOKENS}, msgCount = msgCount - @msgCount WHERE ${dailyWhere} AND msgCount >= @msgCount AND ${TOKENS_AT_LEAST}`)
+  const dailyPrune = sqlite.prepare(`DELETE FROM ${DAILY} WHERE ${dailyWhere} AND msgCount <= 0`)
+  const dailyGive = sqlite.prepare(`INSERT INTO ${DAILY}(day,model,priceModel,provider,configId,accountKey,inTok,outTok,cacheReadTok,cacheCreateTok,msgCount)
     VALUES(@day,@model,@priceModel,@provider,@configId,@accountKey,@inTok,@outTok,@cacheReadTok,@cacheCreateTok,@msgCount)
     ON CONFLICT(day,model,provider,configId,accountKey) DO UPDATE SET ${ADD_TOKENS}, msgCount=msgCount+excluded.msgCount`)
   const heatWhere = "bucket = @bucket AND model = @model AND provider = @provider AND configId = @configId AND accountKey = ''"
-  const heatTake = sqlite.prepare(`UPDATE tk_heatmap SET ${TAKE_TOKENS} WHERE ${heatWhere} AND ${TOKENS_AT_LEAST}`)
-  const heatPrune = sqlite.prepare(`DELETE FROM tk_heatmap WHERE ${heatWhere} AND inTok <= 0 AND outTok <= 0 AND cacheReadTok <= 0 AND cacheCreateTok <= 0`)
-  const heatGive = sqlite.prepare(`INSERT INTO tk_heatmap(bucket,model,priceModel,provider,configId,accountKey,inTok,outTok,cacheReadTok,cacheCreateTok)
+  const heatTake = sqlite.prepare(`UPDATE ${HEAT} SET ${TAKE_TOKENS} WHERE ${heatWhere} AND ${TOKENS_AT_LEAST}`)
+  const heatPrune = sqlite.prepare(`DELETE FROM ${HEAT} WHERE ${heatWhere} AND inTok <= 0 AND outTok <= 0 AND cacheReadTok <= 0 AND cacheCreateTok <= 0`)
+  const heatGive = sqlite.prepare(`INSERT INTO ${HEAT}(bucket,model,priceModel,provider,configId,accountKey,inTok,outTok,cacheReadTok,cacheCreateTok)
     VALUES(@bucket,@model,@priceModel,@provider,@configId,@accountKey,@inTok,@outTok,@cacheReadTok,@cacheCreateTok)
     ON CONFLICT(bucket,model,provider,configId,accountKey) DO UPDATE SET ${ADD_TOKENS}`)
   type RollupDelta = { model: string; priceModel: string; provider: string; configId: string; inTok: number; outTok: number; cacheReadTok: number; cacheCreateTok: number; msgCount: number }
@@ -727,7 +836,7 @@ export function openTkDb(dbPath: string): TkDb {
         last7Cut, prev7Cut,
       }
 
-      const dailyJoin = `tk_daily d LEFT JOIN pricing p ON d.priceModel = p.pm`
+      const dailyJoin = `${DAILY} d LEFT JOIN pricing p ON d.priceModel = p.pm`
 
       // KPIs: config+model scope, NO range (life-to-date / cache are all-time)
       const life = sqlite.prepare(`WITH ${cte} SELECT
@@ -755,7 +864,7 @@ export function openTkDb(dbPath: string): TkDb {
       const sessCounts = sqlite.prepare(`SELECT configId, COUNT(*) AS sessions FROM tk_sessions s WHERE 1=1 ${frag('s','lastModel',false)} GROUP BY configId`).all(binds) as any[]
 
       // Heatmap (config+model scope; no range — heatmap has no day col)
-      const heat = sqlite.prepare(`SELECT bucket, SUM(inTok+outTok+cacheReadTok+cacheCreateTok) AS tokens FROM tk_heatmap h WHERE 1=1 ${frag('h','model',false)} GROUP BY bucket`).all(binds) as any[]
+      const heat = sqlite.prepare(`SELECT bucket, SUM(inTok+outTok+cacheReadTok+cacheCreateTok) AS tokens FROM ${HEAT} h WHERE 1=1 ${frag('h','model',false)} GROUP BY bucket`).all(binds) as any[]
 
       const cfgRows = sqlite.prepare(`SELECT configId, label FROM tk_configs`).all() as any[]
       const labelOf = new Map(cfgRows.map((r: any) => [r.configId, r.label]))
@@ -885,7 +994,7 @@ export function openTkDb(dbPath: string): TkDb {
       return setSessionAccountTxn(sessionId, accountKey, now)
     },
     queryAccounts() {
-      const rows = sqlite.prepare('SELECT provider, accountKey FROM tk_daily GROUP BY provider, accountKey ORDER BY provider, accountKey').all() as Array<{ provider: TkProvider; accountKey: string }>
+      const rows = sqlite.prepare(`SELECT provider, accountKey FROM ${DAILY} GROUP BY provider, accountKey ORDER BY provider, accountKey`).all() as Array<{ provider: TkProvider; accountKey: string }>
       return rows.map((r) => ({ provider: r.provider, accountKey: r.accountKey ?? '' }))
     },
     accountRereadPending: () => (getMetaStmt.get('accountReread') as { value?: string } | undefined)?.value === 'pending',

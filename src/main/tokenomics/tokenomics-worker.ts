@@ -150,6 +150,11 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
    *  Each with whose sessions it holds (usage track MP9): the user's own is
    *  `codex:external`, an account's is its key. */
   let codexDirs: TkSessionsRoot[] = []
+  /** MP9 round 1 (Q-4): whether the app has named its Codex account folders
+   *  yet. Until it has, the one-off attribution is not settled: a folder
+   *  named after the first drained sweep would otherwise be re-read after
+   *  the re-read was declared done, and the rollups rebuilt twice. */
+  let realmDirsKnown = false
   let sweeping = false
   /** MP9: the one-off account attribution, while it runs (index status). */
   let rereadProgress: TkAccountReread | null = null
@@ -218,8 +223,24 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     return out
   }
 
-  /** Every rollout with whose sessions it holds: the first folder that lists
-   *  a path wins (the user's own home first). */
+  /** A file or folder's identity: its volume and file id, or its path where
+   *  the file system gives no id (MP9 round 1, B-F1). */
+  const fileIdOf = (st: { dev: bigint | number; ino: bigint | number }, p: string): string =>
+    BigInt(st.ino) !== 0n ? `${st.dev}:${st.ino}` : `path:${p}`
+  /** Whether a folder is reached by its own path, not through a link. */
+  const reachedDirectly = (dir: string): boolean => {
+    let real: string
+    try { real = fs.realpathSync.native(dir) } catch { return true }
+    const norm = (p: string) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p))
+    return norm(real) === norm(dir)
+  }
+
+  /** Every rollout with whose sessions it holds. One folder is walked once,
+   *  and one file listed once, however many paths reach it (MP9 round 1,
+   *  B-F1): a folder reached by its own path is walked before one reached
+   *  through a link (a junction from one account's folder, or the user's own,
+   *  into another's never takes that account's files), then in order (the
+   *  user's own home first). */
   function enumerateCodex(): Array<{ file: string; accountKey: string }> {
     const out: Array<{ file: string; accountKey: string }> = []
     const seen = new Set<string>()
@@ -238,15 +259,27 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
         const full = path.join(dir, e.name)
         if (e.isDirectory()) { walk(full, depth + 1); continue }
         if (!e.isFile() || !e.name.startsWith('rollout-') || !e.name.endsWith('.jsonl')) continue
-        let st: nodeFs.Stats
-        try { st = fs.statSync(full) } catch { continue }
-        // One rollout, one cursor: never the same path twice.
-        if (st.size > 0 && !seen.has(full)) { seen.add(full); out.push({ file: full, accountKey }) }
+        let st: nodeFs.BigIntStats
+        try { st = fs.statSync(full, { bigint: true }) } catch { continue }
+        // One rollout, one cursor: never the same file twice, by any path.
+        const id = fileIdOf(st, full)
+        if (BigInt(st.size) > 0n && !seen.has(id)) { seen.add(id); out.push({ file: full, accountKey }) }
       }
     }
-    for (const root of codexDirs) {
-      accountKey = root.accountKey
-      try { if (fs.existsSync(root.dir)) walk(root.dir, 0) } catch (err) { logw('warn', `enumerateCodex failed: ${String(err)}`) }
+    const roots: Array<{ root: TkSessionsRoot; order: number; id: string; direct: boolean }> = []
+    codexDirs.forEach((root, order) => {
+      try {
+        if (!fs.existsSync(root.dir)) return
+        roots.push({ root, order, id: fileIdOf(fs.statSync(root.dir, { bigint: true }), root.dir), direct: reachedDirectly(root.dir) })
+      } catch (err) { logw('warn', `enumerateCodex failed: ${String(err)}`) }
+    })
+    roots.sort((a, b) => Number(b.direct) - Number(a.direct) || a.order - b.order)
+    const walked = new Set<string>()
+    for (const r of roots) {
+      if (walked.has(r.id)) continue
+      walked.add(r.id)
+      accountKey = r.root.accountKey
+      try { walk(r.root.dir, 0) } catch (err) { logw('warn', `enumerateCodex failed: ${String(err)}`) }
     }
     return out
   }
@@ -618,7 +651,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
       // re-read is done; then the rollups are rebuilt if they need it. Inside
       // the sweep, so nothing is ingested while they are rebuilt; queries are
       // answered between its steps.
-      if (drained) await settleAccounts(phase)
+      if (drained && realmDirsKnown) await settleAccounts(phase)
       if (!db) return
       if (drained && !firstSweepDone) {
         firstSweepDone = true
@@ -766,6 +799,8 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     claudeDir = msg.claudeProjectsDir
     // The user's own Codex home: this computer's sign-in (MP9).
     codexDirs = [{ dir: msg.codexSessionsDir, accountKey: TK_CODEX_EXTERNAL }]
+    // A caller that does not say (one predating the flag) has named them.
+    realmDirsKnown = msg.codexRealmDirsKnown !== false
     firstSweepDone = db.getMeta('firstIndexComplete') === '1'
     // Ready BEFORE the sweep so queries work during indexing - and it carries
     // what the DB already knows, so an index completed on a previous run reads
@@ -786,7 +821,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     switch (msg.type) {
       case 'set-pricing': setPricing(msg.pricing); return
       case 'set-configs': configs = msg.configs; db.upsertConfigs(configs); return
-      case 'set-codex-realm-dirs': setCodexRealmDirs(Array.isArray(msg.dirs) ? msg.dirs : []); scheduleIncremental(); return
+      case 'set-codex-realm-dirs': setCodexRealmDirs(Array.isArray(msg.dirs) ? msg.dirs : []); realmDirsKnown = true; scheduleIncremental(); return
       case 'set-session-account': setSessionAccount(msg); return
       case 'reindex': void ingestAll('incremental'); return
       case 'query': handleQuery(msg.id, msg.kind, msg.args); return

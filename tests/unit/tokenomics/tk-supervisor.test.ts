@@ -183,6 +183,34 @@ describe('TokenomicsSupervisor', () => {
     sup.shutdown()
   })
 
+  // MP9 round 1 (Q-4): the worker is told whether the account folders have
+  // been named, so it does not settle the one-off attribution before.
+  it('opens the worker saying whether the account folders are named yet, and a restarted one as they are now', async () => {
+    const t = new FakeTkWorkerTransport()
+    const seen: any[] = []
+    let exit: () => void = () => {}
+    t.onWorker((m) => {
+      seen.push(m)
+      if (m.type === 'open') t.emitToMain({ type: 'ready', firstIndexComplete: false, eventsTotal: 0 })
+    })
+    const sup = new TokenomicsSupervisor({ forkChild: (() => ({ transport: t, kill: () => {}, onExit: (cb: () => void) => { exit = cb } })) as any, ...baseOpts() })
+    sup.start()
+    expect(seen.find((m) => m.type === 'open').codexRealmDirsKnown).toBe(false)
+    sup.setCodexRealmSessionsDirs([])
+    exit()
+    for (let i = 0; i < 100 && seen.filter((m) => m.type === 'open').length < 2; i++) await new Promise((r) => setTimeout(r, 10))
+    expect(seen.filter((m) => m.type === 'open').at(-1).codexRealmDirsKnown).toBe(true)
+    sup.shutdown()
+    // Given at construction: named from the start.
+    const t2 = new FakeTkWorkerTransport()
+    const seen2: any[] = []
+    t2.onWorker((m) => { seen2.push(m) })
+    const sup2 = new TokenomicsSupervisor({ forkChild: (() => ({ transport: t2, kill: () => {}, onExit: () => {} })) as any, ...baseOpts(), codexRealmSessionsDirs: [] })
+    sup2.start()
+    expect(seen2.find((m) => m.type === 'open').codexRealmDirsKnown).toBe(true)
+    sup2.shutdown()
+  })
+
   it('reports the one-off account attribution while the worker says it runs, and not after', () => {
     const t = new FakeTkWorkerTransport()
     t.onWorker((m) => { if (m.type === 'open') t.emitToMain({ type: 'ready', firstIndexComplete: true, eventsTotal: 3 }) })

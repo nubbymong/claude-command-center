@@ -340,7 +340,11 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
 function withRealms(ops: CodexAuthOperations, usageFs: CodexUsageFsPort, liveUsage: CodexLiveUsage, proven: () => CodexDiscovery | null): Pick<ProviderPackage, 'auth' | 'launch' | 'usage'> {
   return {
     auth: ops,
-    launch: { kinds: ['session', 'review'], prepare: (realm) => ops.prepareLaunch(realm), sessionsDir: (realm) => ops.sessionsDir(realm) },
+    // MP9 round 1 (B-F1): the usage index reads a realm's folder held to the
+    // launch's canonical-home check (no junction or link), as the Account
+    // usage page does: a home linked into another realm's is never read as
+    // its own.
+    launch: { kinds: ['session', 'review'], prepare: (realm) => ops.prepareLaunch(realm), sessionsDir: (realm) => ops.usageSessionsDir(realm) },
     usage: createCodexUsageOperations({
       sessionsDir: (realm) => ops.usageSessionsDir(realm), fs: usageFs, live: liveUsage,
       // MP8: the one helper read, and the executable it would run.

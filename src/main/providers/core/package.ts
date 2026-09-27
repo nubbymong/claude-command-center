@@ -240,7 +240,9 @@ export interface ProviderLaunchOperations {
    *  the service then offers nothing on that account, but clears nothing. */
   reviewRefusal?(realm: AuthRealm): string | null
   /** Where a realm writes its session transcripts (plan A13: what the usage
-   *  index reads), or null when the realm cannot be located now. A path
+   *  index reads), or null when the realm cannot be located now or its home
+   *  is not a folder at exactly its own path (usage track MP9 round 1: a
+   *  home linked into another realm's is never read as its own). A path
    *  only: no CLI, no executable check. */
   sessionsDir(realm: RealmRef): Promise<string | null>
 }

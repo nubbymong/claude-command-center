@@ -1003,6 +1003,40 @@ Owner decisions: `docs/wp1/owner-decisions-2026-09-27.md` and ADR-022.
   MP9), and the Tokenomics channels, the new accounts query included, do
   not check their sender (as before MP9); it takes no arguments and answers
   provider names and account keys only.
+- **Resolved (MP9 round 1, downgrade):** the rollups by account are new
+  tables (`tk_daily2`, `tk_heatmap2`); the v1 `tk_daily` and `tk_heatmap`
+  are kept exactly as the build released before MP9 has them and are still
+  written beside the new ones. That build opens a database this one wrote
+  and keeps working with whole totals (tested with its module verbatim,
+  `tests/fixtures/tokenomics/tk-db-v1.ts`). Back on this build, the rows it
+  stored meanwhile are caught by a watermark (`rollupRowid`): attributed
+  Claude sessions' rows take their account and the new rollups are rebuilt.
+- **Residual, accepted (MP9 round 1, downgrade):** Codex usage the released
+  build stores after a downgrade stays not recorded (its cursors move past
+  those rollouts and the one-off re-read is not repeated), and every stored
+  event costs two more small upserts (the v1 rollups).
+- **Resolved (MP9 round 1, linked folders):** the index reads an account's
+  Codex folder only when its home passes the launch's canonical-home check,
+  walks one folder once and lists one rollout once by its file id, and a
+  folder reached by its own path owns what a link elsewhere also reaches.
+  The one-off re-read is settled only after the app has named its account
+  folders.
+- **Owed to MP12 (decided 2026-09-27, MP9 round 1):**
+  - The Account filter lists a "Not recorded" entry under Codex as well as
+    under Claude (parity; Codex usage from before the account folders were
+    known, or from pruned rollouts, is not recorded), with a test.
+  - While the one-off attribution runs (`accountReread` in the index
+    status), the totals are complete and only the split is filling in, so
+    the notice says so, one line per stage:
+    re-read: "Sorting Codex history by account: N of M files. Totals are
+    complete; the per-account split fills in as it goes."
+    rebuild: "Sorting usage by account and provider: N of M entries. Totals
+    are complete; the split fills in as it goes."
+  - The hourly heatmap's provider and account split is part of what is
+    still filling in during either stage (the v1 hourly rollup never
+    recorded its provider): the page shows it under the same notice and
+    does not present a per-provider heatmap as final until the attribution
+    has finished.
 - **Residual, accepted (MP10, whole sessions):** Claude usage is attributed
   per session id, from the transcript path the session reports (a hook or
   the statusline) and the launch profile recorded at its spawn. A transcript

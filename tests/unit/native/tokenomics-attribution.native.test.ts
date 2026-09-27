@@ -35,12 +35,12 @@ const xev = (i: number): any => ({ dedupKey: `x:cx-1:${i}`, sessionId: 'cx-1', p
 
 type Db = ReturnType<typeof openTkDb>
 const rollups = (db: Db) => ({
-  daily: db.raw.prepare('SELECT day, model, priceModel, provider, configId, accountKey, inTok, outTok, cacheReadTok, cacheCreateTok, msgCount FROM tk_daily ORDER BY day, model, provider, configId, accountKey').all(),
-  heat: db.raw.prepare('SELECT bucket, model, priceModel, provider, configId, accountKey, inTok, outTok, cacheReadTok, cacheCreateTok FROM tk_heatmap ORDER BY bucket, model, provider, configId, accountKey').all(),
+  daily: db.raw.prepare('SELECT day, model, priceModel, provider, configId, accountKey, inTok, outTok, cacheReadTok, cacheCreateTok, msgCount FROM tk_daily2 ORDER BY day, model, provider, configId, accountKey').all(),
+  heat: db.raw.prepare('SELECT bucket, model, priceModel, provider, configId, accountKey, inTok, outTok, cacheReadTok, cacheCreateTok FROM tk_heatmap2 ORDER BY bucket, model, provider, configId, accountKey').all(),
 })
 const totals = (db: Db) => ({
-  daily: db.raw.prepare('SELECT SUM(inTok) AS i, SUM(outTok) AS o, SUM(cacheReadTok) AS r, SUM(cacheCreateTok) AS c, SUM(msgCount) AS n FROM tk_daily').get(),
-  heat: db.raw.prepare('SELECT SUM(inTok) AS i, SUM(outTok) AS o, SUM(cacheReadTok) AS r, SUM(cacheCreateTok) AS c FROM tk_heatmap').get(),
+  daily: db.raw.prepare('SELECT SUM(inTok) AS i, SUM(outTok) AS o, SUM(cacheReadTok) AS r, SUM(cacheCreateTok) AS c, SUM(msgCount) AS n FROM tk_daily2').get(),
+  heat: db.raw.prepare('SELECT SUM(inTok) AS i, SUM(outTok) AS o, SUM(cacheReadTok) AS r, SUM(cacheCreateTok) AS c FROM tk_heatmap2').get(),
 })
 const rebuild = (db: Db) => { db.beginRollupRebuild(); for (let i = 0; i < 1000 && !db.stepRollupRebuild(3).finished; i++) { /* step */ } }
 const accountsOf = (db: Db, sessionId: string) => (db.raw.prepare('SELECT DISTINCT accountKey FROM tk_events WHERE sessionId = ?').all(sessionId) as Array<{ accountKey: string }>).map((r) => r.accountKey)
@@ -97,8 +97,8 @@ describe('recording a Claude session\'s account in the index (MP10)', () => {
     const db = open(':memory:')
     db.insertEvents([0, 1, 2, 3].map((i) => cev(i, U1)))
     db.setSessionAccount(U1, K, 1)
-    expect(db.raw.prepare("SELECT COUNT(*) AS n FROM tk_daily WHERE accountKey = ''").get()).toEqual({ n: 0 })
-    expect(db.raw.prepare("SELECT COUNT(*) AS n FROM tk_heatmap WHERE accountKey = ''").get()).toEqual({ n: 0 })
+    expect(db.raw.prepare("SELECT COUNT(*) AS n FROM tk_daily2 WHERE accountKey = ''").get()).toEqual({ n: 0 })
+    expect(db.raw.prepare("SELECT COUNT(*) AS n FROM tk_heatmap2 WHERE accountKey = ''").get()).toEqual({ n: 0 })
     expect(db.queryAccounts()).toEqual([{ provider: 'claude', accountKey: K }])
   })
 
@@ -178,8 +178,8 @@ describe('recording a Claude session\'s account in the index (MP10)', () => {
   })
 
   for (const [table, corrupt] of [
-    ['daily', "UPDATE tk_daily SET msgCount = 0 WHERE accountKey = '' AND day = (SELECT MIN(day) FROM tk_daily)"],
-    ['hourly', "UPDATE tk_heatmap SET inTok = 0 WHERE accountKey = ''"],
+    ['daily', "UPDATE tk_daily2 SET msgCount = 0 WHERE accountKey = '' AND day = (SELECT MIN(day) FROM tk_daily2)"],
+    ['hourly', "UPDATE tk_heatmap2 SET inTok = 0 WHERE accountKey = ''"],
   ] as const) {
     it(`a ${table} group the not-recorded row cannot cover is left alone and the rollups dirty; totals never move`, () => {
       const db = open(':memory:')

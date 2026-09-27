@@ -191,7 +191,6 @@ export interface CodexUsageReadOptions {
  *  and executable checks. */
 export type CodexAuthOperations = ProviderAuthOperations & {
   prepareLaunch(realm: RealmRef): Promise<LaunchPreparation | Refusal>
-  sessionsDir(realm: RealmRef): Promise<string | null>
   usageSessionsDir(realm: RealmRef): Promise<string | null>
   readUsage(realm: RealmRef, opts?: CodexUsageReadOptions): Promise<CodexUsageRead>
 }
@@ -414,7 +413,8 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
     },
 
     /** The realm's transcript folder for the Account usage page (usage track
-     *  MP3): located as a launch locates it AND held to the launch's own
+     *  MP3) and the usage index (plan A13; MP9 round 1, B-F1): located as a
+     *  launch locates it AND held to the launch's own
      *  canonical-home check (the realm's home, resolved, must be a folder at
      *  exactly its path: no junction or link), so usage reads nothing a
      *  launch would refuse. No CLI, no executable or environment check. Null
@@ -427,17 +427,6 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
         try { fsid = deps.realmIdentity(where.home) } catch { return null }
         if (!fsid || fsid.isDirectory !== true || typeof fsid.canonical !== 'string' || !samePath(fsid.canonical, where.home)) return null
         return pathApi.join(where.home, 'sessions')
-      } catch {
-        return null
-      }
-    },
-
-    /** The realm's transcript folder, for the usage index (plan A13): located
-     *  exactly as a launch locates it, and nothing else checked. */
-    async sessionsDir(realm: RealmRef): Promise<string | null> {
-      try {
-        const where = await locate(realm)
-        return isRefusal(where) ? null : pathApi.join(where.home, 'sessions')
       } catch {
         return null
       }

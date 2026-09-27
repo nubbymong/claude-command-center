@@ -88,6 +88,7 @@ const tk = vi.hoisted(() => ({
   listeners: [] as Array<() => void>,
   current: [] as Array<{ dir: string; accountId: string | null; external: boolean }>,
   sessionsRoots: vi.fn(async (_id: string) => [] as Array<{ dir: string; accountId: string | null; external: boolean }>),
+  noService: false,
 }))
 vi.mock('../../src/main/tokenomics/tk-supervisor', () => ({
   TokenomicsSupervisor: class {
@@ -104,7 +105,7 @@ vi.mock('../../src/main/model-registry-service', () => ({ onRegistryReload: () =
 vi.mock('../../src/main/data-paths', () => ({ getDataDirectory: () => 'C:\\data', getResourcesDirectory: () => 'C:\\res' }))
 vi.mock('../../src/main/config-manager', () => ({ readConfig: () => [] }))
 vi.mock('../../src/main/provider-accounts', () => ({
-  getAccountsService: () => ({
+  getAccountsService: () => (tk.noService ? null : {
     sessionsRoots: tk.sessionsRoots,
     subscribe: (l: () => void) => { tk.listeners.push(l); return () => { tk.listeners.splice(tk.listeners.indexOf(l), 1) } },
   }),
@@ -115,6 +116,7 @@ describe('tokenomics follows the accounts (tokenomics-service)', () => {
     tk.dirs = []
     tk.listeners = []
     tk.current = []
+    tk.noService = false
     tk.sessionsRoots.mockReset()
     tk.sessionsRoots.mockImplementation(async () => tk.current.map((r) => ({ ...r })))
   })
@@ -136,6 +138,30 @@ describe('tokenomics follows the accounts (tokenomics-service)', () => {
     await vi.waitFor(() => expect(tk.dirs.at(-1)).toEqual([{ dir: R1.dir, accountKey: 'codex:acct-1' }, { dir: R2.dir, accountKey: 'codex:acct-2' }]))
     shutdownTokenomics()
     expect(tk.listeners).toHaveLength(0)
+  })
+
+  // MP9 round 1 (Q-4): the index is always told the folders once, so it can
+  // settle its one-off attribution: none when there is nothing to ask.
+  it('names no folders when there is no accounts service, and none for now when the first look fails', async () => {
+    const { initTokenomics, shutdownTokenomics } = await import('../../src/main/tokenomics/tokenomics-service')
+    tk.noService = true
+    initTokenomics({ emit: () => {} })
+    expect(tk.dirs).toEqual([[]])
+    shutdownTokenomics()
+    tk.dirs = []
+    tk.noService = false
+    tk.sessionsRoots.mockImplementationOnce(async () => { throw new Error('registry busy') })
+    initTokenomics({ emit: () => {} })
+    await vi.waitFor(() => expect(tk.dirs).toEqual([[]]))
+    // A later look names them; a later failure does not take them away.
+    tk.current = [R1]
+    tk.listeners.forEach((l) => l())
+    await vi.waitFor(() => expect(tk.dirs.at(-1)).toEqual([{ dir: R1.dir, accountKey: 'codex:acct-1' }]))
+    tk.sessionsRoots.mockImplementationOnce(async () => { throw new Error('registry busy') })
+    tk.listeners.forEach((l) => l())
+    await new Promise((r) => setTimeout(r, 10))
+    expect(tk.dirs).toHaveLength(2)
+    shutdownTokenomics()
   })
 
   it('names each folder\'s account: this computer\'s own sign-in as codex:external, a folder no account owns as not recorded', async () => {

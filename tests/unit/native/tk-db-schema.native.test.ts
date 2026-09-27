@@ -67,12 +67,15 @@ describe('tk-db schema v2 (usage track MP9)', () => {
   beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tkv2-')); opened = [] })
   afterEach(() => { for (const db of opened) { try { db.close() } catch { /* closed */ } } fs.rmSync(tmp, { recursive: true, force: true }) })
 
-  it('a fresh database is v2: accounts on events, sessions and files; the rollups keyed by account, the hourly one by provider too', () => {
+  it('a fresh database is v2: accounts on events, sessions and files; the rollups keyed by account (the hourly one by provider too) in their own tables, beside the v1 ones as released', () => {
     const db = open(':memory:')
     expect(db.getMeta('schemaVersion')).toBe('2')
     for (const t of ['tk_events', 'tk_sessions', 'tk_files']) expect(cols(db, t).map((c) => c.name), t).toContain('accountKey')
-    expect(pkOf(db, 'tk_daily')).toEqual(['day', 'model', 'provider', 'configId', 'accountKey'])
-    expect(pkOf(db, 'tk_heatmap')).toEqual(['bucket', 'model', 'provider', 'configId', 'accountKey'])
+    expect(pkOf(db, 'tk_daily2')).toEqual(['day', 'model', 'provider', 'configId', 'accountKey'])
+    expect(pkOf(db, 'tk_heatmap2')).toEqual(['bucket', 'model', 'provider', 'configId', 'accountKey'])
+    // MP9 round 1 (Q-1): the v1 rollups exactly as a build from before MP9 has them.
+    expect(pkOf(db, 'tk_daily')).toEqual(['day', 'model', 'provider', 'configId'])
+    expect(pkOf(db, 'tk_heatmap')).toEqual(['bucket', 'model', 'configId'])
     expect(db.accountRereadPending()).toBe(false)
     expect(db.rollupsDirty()).toBe(false)
   })
@@ -95,10 +98,14 @@ describe('tk-db schema v2 (usage track MP9)', () => {
     const db = open(p)
     expect(db.getMeta('schemaVersion')).toBe('2')
     expect(db.eventCount()).toBe(4)
+    expect(sums(db, 'tk_daily2')).toEqual({ n: 2, inTok: 4_000_000, outTok: 0 })
+    expect(sums(db, 'tk_heatmap2')).toEqual({ n: 2, inTok: 4_000_000, outTok: 0 })
+    expect(db.raw.prepare("SELECT COUNT(*) AS n FROM tk_heatmap2 WHERE provider = '' AND accountKey = ''").get()).toEqual({ n: 2 })
+    expect(pkOf(db, 'tk_daily2')).toContain('accountKey')
+    // The v1 tables are left exactly as they were (MP9 round 1, Q-1).
     expect(sums(db, 'tk_daily')).toEqual({ n: 2, inTok: 4_000_000, outTok: 0 })
     expect(sums(db, 'tk_heatmap')).toEqual({ n: 2, inTok: 4_000_000, outTok: 0 })
-    expect(db.raw.prepare("SELECT COUNT(*) AS n FROM tk_heatmap WHERE provider = '' AND accountKey = ''").get()).toEqual({ n: 2 })
-    expect(pkOf(db, 'tk_daily')).toContain('accountKey')
+    expect(pkOf(db, 'tk_daily')).toEqual(['day', 'model', 'provider', 'configId'])
     expect(db.raw.prepare("SELECT COUNT(*) AS n FROM tk_events WHERE accountKey = ''").get()).toEqual({ n: 4 })
     // The totals read the same as before the upgrade.
     expect(db.querySummary(PRICING2, {}, T1 + 86_400_000).kpis.lifeToDateCostUsd).toBeCloseTo(12, 5)
@@ -161,7 +168,7 @@ describe('tk-db schema v2 (usage track MP9)', () => {
     expect(db.querySummary(PRICING2, { accountKey: 'codex:acct-a' }, T1 + 86_400_000).kpis.lifeToDateCostUsd).toBeCloseTo(2, 5)
     expect(db.querySummary(PRICING2, { provider: 'claude' }, T1 + 86_400_000).kpis.lifeToDateCostUsd).toBeCloseTo(10, 5)
     expect(db.querySummary(PRICING2, { provider: 'codex' }, T1 + 86_400_000).heatmap.reduce((a, h) => a + h.tokens, 0)).toBe(2_000_000)
-    expect(db.raw.prepare("SELECT COUNT(*) AS n FROM tk_heatmap WHERE provider = ''").get()).toEqual({ n: 0 })
+    expect(db.raw.prepare("SELECT COUNT(*) AS n FROM tk_heatmap2 WHERE provider = ''").get()).toEqual({ n: 0 })
     expect(db.queryAccounts()).toEqual([{ provider: 'claude', accountKey: '' }, { provider: 'codex', accountKey: 'codex:acct-a' }])
     expect(db.raw.prepare("SELECT name FROM sqlite_master WHERE name LIKE '%_next'").all()).toEqual([])
   })
@@ -187,7 +194,7 @@ describe('tk-db schema v2 (usage track MP9)', () => {
     db.insertEvents([cev(3), cev(4), cev(5)])
     expect(db.stepRollupRebuild(2)).toEqual({ done: 3, total: 3, finished: false })
     expect(db.stepRollupRebuild(10)).toEqual({ done: 5, total: 5, finished: true })
-    expect(sums(db, 'tk_daily')).toMatchObject({ inTok: 5_000_000 })
+    expect(sums(db, 'tk_daily2')).toMatchObject({ inTok: 5_000_000 })
   })
 
   it('a v1 database with no Codex history still gets its hourly rollup rebuilt (its provider was never recorded)', () => {
@@ -209,6 +216,38 @@ describe('tk-db schema v2 (usage track MP9)', () => {
     const db = open(p)
     expect(db.getMeta('schemaVersion')).toBe('2')
     expect(db.rollupsDirty()).toBe(false)
+  })
+
+  // MP9 round 1 (B-F2): a rollout names its own session id; one naming a
+  // Claude session's never stamps that session, on insert or on re-read.
+  it('a rollout naming a Claude session\'s id never stamps that session', () => {
+    const db = open(':memory:')
+    db.insertEvents([cev(1)])
+    db.insertEvents([xev(0, 's-claude', 'codex:acct-a')])
+    const account = () => (db.raw.prepare('SELECT provider, accountKey FROM tk_sessions WHERE sessionId = ?').get('s-claude'))
+    expect(account()).toEqual({ provider: 'claude', accountKey: '' })
+    // Stored unstamped, then re-read from an account's folder.
+    db.insertEvents([xev(5, 's-claude')])
+    expect(db.insertEvents([xev(5, 's-claude', 'codex:acct-a')])).toBe(0)
+    expect(db.raw.prepare('SELECT accountKey FROM tk_events WHERE dedupKey = ?').get('x:s-claude:5')).toEqual({ accountKey: 'codex:acct-a' })
+    expect(account()).toEqual({ provider: 'claude', accountKey: '' })
+    // A Codex session is still stamped by its re-read.
+    db.insertEvents([xev(0, 'cx-9')])
+    db.insertEvents([xev(0, 'cx-9', 'codex:acct-a')])
+    expect(db.raw.prepare('SELECT accountKey FROM tk_sessions WHERE sessionId = ?').get('cx-9')).toEqual({ accountKey: 'codex:acct-a' })
+  })
+
+  // MP9 round 1 (Q-3): a transaction that stamps many rows marks the rollups
+  // dirty once.
+  it('the rollups are marked dirty once per transaction, however many rows it stamps', () => {
+    const db = open(':memory:')
+    db.insertEvents([xev(0, 'cx-1'), xev(1, 'cx-1'), xev(2, 'cx-1')])
+    db.raw.exec(`CREATE TABLE dirty_writes (n INTEGER NOT NULL); INSERT INTO dirty_writes VALUES (0);
+      CREATE TRIGGER dirty_ins AFTER INSERT ON tk_meta WHEN NEW.key = 'rollupsDirty' BEGIN UPDATE dirty_writes SET n = n + 1; END;
+      CREATE TRIGGER dirty_upd AFTER UPDATE ON tk_meta WHEN NEW.key = 'rollupsDirty' BEGIN UPDATE dirty_writes SET n = n + 1; END;`)
+    expect(db.insertEvents([xev(0, 'cx-1', 'codex:acct-a'), xev(1, 'cx-1', 'codex:acct-a'), xev(2, 'cx-1', 'codex:acct-a')])).toBe(0)
+    expect(db.raw.prepare('SELECT n FROM dirty_writes').get()).toEqual({ n: 1 })
+    expect(db.rollupsDirty()).toBe(true)
   })
 
   it('a file waiting for the re-read is done once scanned to its end; the re-read finishes the rest (pruned files)', () => {

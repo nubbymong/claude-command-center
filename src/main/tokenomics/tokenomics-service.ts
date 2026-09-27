@@ -39,7 +39,10 @@ export function codexSessionsRoot(r: { dir: string; accountId: string | null; ex
  *  goes with its account's key (MP9). */
 function followCodexRealmDirs(): void {
   const svc = getAccountsService()
-  if (!svc) return
+  // MP9 round 1 (Q-4): the index settles its one-off attribution only once
+  // it has been told the account folders, so it is told "none" when there
+  // is no accounts service to ask.
+  if (!svc) { _sup?.setCodexRealmSessionsDirs([]); return }
   let lastKey = ''
   let running = false
   let again = false
@@ -55,6 +58,9 @@ function followCodexRealmDirs(): void {
       } while (again)
     } catch (err) {
       logError(`[tokenomics] Codex account folders not refreshed: ${(err as Error)?.message ?? err}`)
+      // Never named yet: none for now (Q-4), so the index is not held back;
+      // a later refresh names them.
+      if (lastKey === '') { lastKey = '[]'; _sup?.setCodexRealmSessionsDirs([]) }
     } finally {
       running = false
     }

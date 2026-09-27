@@ -4,8 +4,9 @@ export type ToTkWorker =
   /** `codexSessionsDir` is the user's own Codex home's (this computer's
    *  sign-in, `codex:external`); `codexRealmSessionsDirs` (WP2, plan A13)
    *  are those of the app's Codex accounts, each in its own realm, with the
-   *  account's key (usage track MP9). Indexed together. */
-  | { type: 'open'; dbPath: string; pricing: Record<string, TkPricing>; configs: TkConfigDim[]; claudeProjectsDir: string; codexSessionsDir: string; codexRealmSessionsDirs?: TkSessionsRoot[] }
+   *  account's key (usage track MP9). Indexed together. `codexRealmDirsKnown`
+   *  (MP9 round 1, Q-4): whether the app has named those folders yet. */
+  | { type: 'open'; dbPath: string; pricing: Record<string, TkPricing>; configs: TkConfigDim[]; claudeProjectsDir: string; codexSessionsDir: string; codexRealmSessionsDirs?: TkSessionsRoot[]; codexRealmDirsKnown?: boolean }
   | { type: 'set-pricing'; pricing: Record<string, TkPricing> }
   /** The Codex accounts' transcript folders changed (an account added, removed or signed out). */
   | { type: 'set-codex-realm-dirs'; dirs: TkSessionsRoot[] }

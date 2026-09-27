@@ -46,13 +46,13 @@ describe('the one-off Codex account attribution (usage track MP9)', () => {
     fs.rmSync(tmp, { recursive: true, force: true })
   })
 
-  function start(dbPath: string, dirs: Array<{ dir: string; accountKey: string }>) {
+  function start(dbPath: string, dirs: Array<{ dir: string; accountKey: string }>, extra: { codexRealmDirsKnown?: boolean } = {}, workerFs?: typeof fs) {
     const fake = new FakeTkWorkerTransport()
     const msgs: FromTkWorker[] = []
     fake.onMessage((m) => msgs.push(m))
-    const w = createTokenomicsWorker(fake.asWorkerSide(), {})
+    const w = createTokenomicsWorker(fake.asWorkerSide(), workerFs ? { fs: workerFs } : {})
     workers.push(w)
-    fake.post({ type: 'open', dbPath, pricing: PRICING, configs: [], claudeProjectsDir: path.join(tmp, 'claude'), codexSessionsDir: path.join(tmp, 'home-codex'), codexRealmSessionsDirs: dirs })
+    fake.post({ type: 'open', dbPath, pricing: PRICING, configs: [], claudeProjectsDir: path.join(tmp, 'claude'), codexSessionsDir: path.join(tmp, 'home-codex'), codexRealmSessionsDirs: dirs, ...extra })
     let qid = 1000
     const ask = async (kind: string, args: Record<string, unknown> = {}): Promise<any> => {
       const id = ++qid
@@ -97,9 +97,16 @@ describe('the one-off Codex account attribution (usage track MP9)', () => {
     expect(before.kpis.lifeToDateCostUsd).toBeCloseTo(3 + 2 + 4 + 5, 5)
     a.w.stop()
     await new Promise((r) => setTimeout(r, 30))
-    // ...as a schema v1 database, and the rollout since pruned.
+    // ...as a schema v1 database (what this build adds taken away; the v1
+    // rollups it keeps writing are the v1 build's own), and the rollout
+    // since pruned.
     const raw = new Database(dbPath)
-    raw.prepare("UPDATE tk_meta SET value = '1' WHERE key = 'schemaVersion'").run()
+    raw.exec(`DROP INDEX IF EXISTS idx_sessions_account;
+      ALTER TABLE tk_events DROP COLUMN accountKey; ALTER TABLE tk_sessions DROP COLUMN accountKey;
+      ALTER TABLE tk_files DROP COLUMN accountKey; ALTER TABLE tk_files DROP COLUMN accountReread;
+      DROP TABLE tk_daily2; DROP TABLE tk_heatmap2; DROP TABLE tk_session_accounts;
+      UPDATE tk_meta SET value = '1' WHERE key = 'schemaVersion';
+      DELETE FROM tk_meta WHERE key IN ('rollupRowid', 'rollupsDirty', 'accountReread');`)
     const claudeCursorBefore = raw.prepare('SELECT lastOffset, lastIngestedAt FROM tk_files WHERE path = ?').get(claudeFile)
     raw.close()
     fs.rmSync(gone)
@@ -172,5 +179,107 @@ describe('the one-off Codex account attribution (usage track MP9)', () => {
     const stages = s.msgs.filter((m) => m.type === 'index-progress').map((m) => (m as { accountReread?: { stage: string } | null }).accountReread?.stage ?? null)
     expect(stages.every((x) => x === null)).toBe(true)
     expect(await s.ask('accounts')).toEqual([{ provider: 'codex', accountKey: 'codex:acct-a' }])
+  })
+
+  // MP9 round 1 (B-F1): one folder walked once and one file listed once,
+  // however many paths reach it; a folder reached by its own path owns it.
+  const link = (target: string, at: string) => {
+    fs.mkdirSync(path.dirname(at), { recursive: true })
+    fs.symlinkSync(target, at, process.platform === 'win32' ? 'junction' : 'dir')
+  }
+
+  it('an account folder linked into another account\'s never takes that account\'s sessions', async () => {
+    const realmA = path.join(tmp, 'realms', 'a', 'sessions')
+    const realmB = path.join(tmp, 'realms', 'b', 'sessions')
+    writeRollout(path.join(realmB, '2026', '08', '01'), 'rollout-2026-08-01T00-00-00-b.jsonl', 'cx-b', 2)
+    link(realmB, realmA)
+    // A is listed first, and is reached only through the link.
+    // The folder is walked once, by its own path (the link is never listed).
+    const listed: string[] = []
+    const tracing = new Proxy(fs, {
+      get(target, k) {
+        if (k === 'readdirSync') return (p: string, o: unknown) => { listed.push(String(p)); return (fs.readdirSync as (p: string, o: unknown) => unknown)(p, o) }
+        return (target as unknown as Record<PropertyKey, unknown>)[k]
+      },
+    })
+    const t = start(path.join(tmp, 'tk.db'), [{ dir: realmA, accountKey: 'codex:acct-a' }, { dir: realmB, accountKey: 'codex:acct-b' }], {}, tracing as unknown as typeof fs)
+    await t.settle()
+    expect(await t.ask('accounts')).toEqual([{ provider: 'codex', accountKey: 'codex:acct-b' }])
+    expect((await t.ask('index-status')).eventsTotal).toBe(2)
+    expect(listed.filter((p) => p.startsWith(realmA))).toEqual([])
+    expect(listed.filter((p) => p.startsWith(realmB)).length).toBeGreaterThan(0)
+  })
+
+  it('this computer\'s own folder linked into an account\'s never takes that account\'s sessions', async () => {
+    const realmB = path.join(tmp, 'realms', 'b', 'sessions')
+    writeRollout(path.join(realmB, '2026', '08', '01'), 'rollout-2026-08-01T00-00-00-b.jsonl', 'cx-b', 2)
+    link(realmB, path.join(tmp, 'home-codex'))
+    const t = start(path.join(tmp, 'tk.db'), [{ dir: realmB, accountKey: 'codex:acct-b' }])
+    await t.settle()
+    expect(await t.ask('accounts')).toEqual([{ provider: 'codex', accountKey: 'codex:acct-b' }])
+    expect((await t.ask('index-status')).eventsTotal).toBe(2)
+  })
+
+  it('one rollout reached by two paths (a hard link) is read once', async () => {
+    const realmA = path.join(tmp, 'realms', 'a', 'sessions')
+    const realmB = path.join(tmp, 'realms', 'b', 'sessions')
+    const file = writeRollout(path.join(realmB, '2026', '08', '01'), 'rollout-2026-08-01T00-00-00-b.jsonl', 'cx-b', 2)
+    fs.mkdirSync(path.join(realmA, '2026', '08', '01'), { recursive: true })
+    fs.linkSync(file, path.join(realmA, '2026', '08', '01', 'rollout-2026-08-01T00-00-00-b.jsonl'))
+    const t = start(path.join(tmp, 'tk.db'), [{ dir: realmA, accountKey: 'codex:acct-a' }, { dir: realmB, accountKey: 'codex:acct-b' }])
+    await t.settle()
+    expect((await t.ask('index-status')).eventsTotal).toBe(2)
+    expect((await t.ask('summary')).kpis.lifeToDateCostUsd).toBeCloseTo(2, 5)
+    // One file, one cursor.
+    const last = t.msgs.filter((m) => m.type === 'index-progress').at(-1) as { filesTotal: number }
+    expect(last.filesTotal).toBe(1)
+  })
+
+  it('where the file system gives no file id, files are told apart by path', async () => {
+    const realmA = path.join(tmp, 'realms', 'a', 'sessions')
+    writeRollout(path.join(realmA, '2026', '08', '01'), 'rollout-2026-08-01T00-00-00-a.jsonl', 'cx-a', 2)
+    writeRollout(path.join(realmA, '2026', '08', '01'), 'rollout-2026-08-01T00-00-00-b.jsonl', 'cx-b', 3)
+    const noIds = new Proxy(fs, {
+      get(target, k) {
+        if (k === 'statSync') return (p: string, o?: { bigint?: boolean }) => {
+          const st = (fs.statSync as (p: string, o?: unknown) => fs.Stats)(p, o)
+          return o?.bigint ? Object.assign(Object.create(Object.getPrototypeOf(st)), st, { ino: 0n }) : st
+        }
+        return (target as unknown as Record<PropertyKey, unknown>)[k]
+      },
+    })
+    const t = start(path.join(tmp, 'tk.db'), [{ dir: realmA, accountKey: 'codex:acct-a' }], {}, noIds as unknown as typeof fs)
+    await t.settle()
+    expect((await t.ask('index-status')).eventsTotal).toBe(5)
+  })
+
+  // MP9 round 1 (Q-4): the one-off attribution is settled only once the app
+  // has named its account folders.
+  it('the re-read is not declared done, nor the rollups rebuilt, before the account folders are named', async () => {
+    const dbPath = path.join(tmp, 'tk.db')
+    const realmA = path.join(tmp, 'realms', 'a', 'sessions')
+    writeRollout(path.join(realmA, '2026', '08', '01'), 'rollout-2026-08-01T00-00-00-a.jsonl', 'cx-a', 3)
+    const a = start(dbPath, [{ dir: realmA, accountKey: '' }])
+    await a.settle()
+    a.w.stop()
+    await new Promise((r) => setTimeout(r, 30))
+    const raw = new Database(dbPath)
+    raw.exec(`DROP INDEX IF EXISTS idx_sessions_account;
+      ALTER TABLE tk_events DROP COLUMN accountKey; ALTER TABLE tk_sessions DROP COLUMN accountKey;
+      ALTER TABLE tk_files DROP COLUMN accountKey; ALTER TABLE tk_files DROP COLUMN accountReread;
+      DROP TABLE tk_daily2; DROP TABLE tk_heatmap2; DROP TABLE tk_session_accounts;
+      UPDATE tk_meta SET value = '1' WHERE key = 'schemaVersion';
+      DELETE FROM tk_meta WHERE key IN ('rollupRowid', 'rollupsDirty', 'accountReread');`)
+    raw.close()
+    // Not named yet: sweeps drain, the re-read waits.
+    const b = start(dbPath, [], { codexRealmDirsKnown: false })
+    for (let i = 0; i < 6; i++) { b.fake.post({ type: 'reindex' }); await new Promise((r) => setTimeout(r, 25)) }
+    expect(b.msgs.some((m) => m.type === 'index-complete' && (m as { drained: boolean }).drained)).toBe(true)
+    expect((await b.ask('index-status')).accountReread).toMatchObject({ stage: 'reread' })
+    expect(b.msgs.some((m) => m.type === 'index-progress' && (m as { accountReread?: { stage: string } | null }).accountReread?.stage === 'rebuild')).toBe(false)
+    // Named: the folder is re-read into its account, then settled.
+    b.fake.post({ type: 'set-codex-realm-dirs', dirs: [{ dir: realmA, accountKey: 'codex:acct-a' }] })
+    await b.settle()
+    expect(await b.ask('accounts')).toEqual([{ provider: 'codex', accountKey: 'codex:acct-a' }])
   })
 })
