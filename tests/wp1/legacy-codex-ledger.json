@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "0c798deb708274eb568d9340fc60db6f194e2b22fd74dc0588ade7265ce225ac",
-  "manifestHead": "031541122444af1872cf13838f0a007128bf3444",
+  "manifestPathDigest": "d8c656fed35b19f344745faca786e6717be04c4b4cc86f19ef68ae4b082c8fe7",
+  "manifestHead": "db7be3e7a258a814234c1444a54654cb3616d762",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -193,6 +193,16 @@
       "disposition": "added",
       "evidence": "WP2 completion plan (owner instruction 2026-09-27: no interim release; finish the agreed 2.1.1 parity first): the 75 parity checklist rows reconciled with the recorded owner decisions (docs/wp1/owner-decisions-2026-09-20.md, docs/wp1/owner-decisions-2026-09-26.md, docs/wp1/owner-decisions-2026-09-27.md), each with its status, settling record, gap and PR, the package and release completion criteria and the PR 3 and PR 4 phases; no Codex code path (WP1.70)",
       "note": "release plan text, not a user-facing claim"
+    },
+    {
+      "path": "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "predicates": [
+        "P12"
+      ],
+      "category": "DOCS",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 evidence record: what Codex CLI 0.153.4 and 0.155.1 do for the rows marked evidence first, executed on the Windows test VM (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt",
+      "note": "evidence record, not a user-facing claim"
     },
     {
       "path": "docs/wp2/hello-codex-spec.md",
@@ -2730,6 +2740,757 @@
       "disposition": "delete",
       "evidence": "WP1.58: no test references this fixture on the base (git grep at 6bafcc33); auth.json is never parsed after WP1 (docs/wp1/baseline-2026-09-19.md)",
       "note": ""
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/exec-edit-json.jsonl",
+      "predicates": [
+        "P01"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/exec-json.jsonl",
+      "predicates": [
+        "P01"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/exec-resume-json.jsonl",
+      "predicates": [
+        "P01"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/apply-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/cloud-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/completion-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/debug-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/exec-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/exec-resume-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/features-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/features-list.txt",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/login-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P09",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/mcp-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/mcp-server-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/resume-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/sandbox-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/version.txt",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/hooks/PostToolUse.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/hooks/PreToolUse.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/hooks/SessionEnd.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/hooks/SessionStart-resume.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/hooks/SessionStart-startup.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/hooks/Stop.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/hooks/UserPromptSubmit.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/mcp-client-handshake-codewords.jsonl",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/mcp-client-handshake.jsonl",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/notify-agent-turn-complete.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/rollout-edit.jsonl",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/rollout-exec-then-resume.jsonl",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/tui-slash-popup.txt",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.153.4 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/exec-edit-json.jsonl",
+      "predicates": [
+        "P01"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/exec-edit-sandbox-refused-json.jsonl",
+      "predicates": [
+        "P01"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/exec-ephemeral-developer-instructions-json.jsonl",
+      "predicates": [
+        "P01"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/exec-json.jsonl",
+      "predicates": [
+        "P01"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/exec-resume-json.jsonl",
+      "predicates": [
+        "P01"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/apply-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/cloud-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/completion-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/debug-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/exec-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/exec-resume-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/features-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/features-list.txt",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/login-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P09",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/mcp-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/mcp-server-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/resume-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/sandbox-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/version.txt",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/hooks/PostToolUse.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/hooks/PreToolUse.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/hooks/SessionEnd.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/hooks/SessionStart-resume.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/hooks/SessionStart-startup.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/hooks/Stop.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/hooks/UserPromptSubmit.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/mcp-client-handshake-codewords.jsonl",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/mcp-client-handshake.jsonl",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/notify-agent-turn-complete.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/rollout-edit-sandbox-refused.jsonl",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/rollout-edit.jsonl",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/rollout-exec-then-resume.jsonl",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/tui-slash-popup.txt",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): an anonymised capture from Codex 0.155.1 on the Windows test VM, evidence for the rows P3.1 informs (WP1.71); tests/fixtures/codex/cli/ANONYMISED.txt; docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "note": "fixture data, no Codex code path"
+    },
+    {
+      "path": "tests/fixtures/codex/cli/ANONYMISED.txt",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.1 (completion plan section 8): the anonymisation report of the Codex CLI capability fixtures, recorded on the Windows test VM (WP1.71); docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md; tests/fixtures/codex/cli/0.155.1/rollout-exec-then-resume.jsonl",
+      "note": "fixture data, no Codex code path"
     },
     {
       "path": "tests/fixtures/codex/rollout-sample.jsonl",

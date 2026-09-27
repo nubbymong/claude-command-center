@@ -1,0 +1,6 @@
+exit=0
+--- stdout
+codex-cli 0.153.4
+
+--- stderr
+

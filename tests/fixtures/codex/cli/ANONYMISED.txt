@@ -1,0 +1,6 @@
+P3.1 fixture anonymisation report (anon.cjs, run on the VM before any file left it)
+replacements {"uuid":233,"path":123,"base-instructions-trimmed":5,"prefixed-id":73,"encrypted_content":3,"credit-balance":10,"tui-box-repad":80,"help-normalised":30}
+ids mapped 86
+scan patterns: uuid, email, jwt, sk- key, base64 (48+ chars), hex (24+ chars), user-home paths, host and user names, IPv4, known original values
+allowed hits: uuid 27 distinct; base64 7 distinct; hex 7 distinct (uuid = the 00000000-0000-7000-8000- placeholders; email = example.com; hex = 32- or 40-character content hashes and catalogue app ids written by Codex itself; base64 = anonymised rollout file names and the placeholder realm path, which the 48-character pattern also matches)
+findings: none

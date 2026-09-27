@@ -1,0 +1,51 @@
+exit=0
+--- stdout
+Run commands within a Codex-provided sandbox
+
+Usage: codex sandbox [OPTIONS] [COMMAND]...
+
+Arguments:
+  [COMMAND]...
+          Full command args to run under Windows restricted token sandbox
+
+Options:
+  -c, --config <key=value>
+          Override a configuration value that would otherwise be loaded from `~/.codex/config.toml`.
+          Use a dotted path (`foo.bar.baz`) to override nested values. The `value` portion is parsed
+          as TOML. If it fails to parse as TOML, the raw string is used as a literal.
+          
+          Examples: - `-c model="o3"` - `-c 'sandbox_permissions=["disk-full-read-access"]'` - `-c
+          shell_environment_policy.inherit=all`
+
+      --sandbox-state-json <JSON>
+          JSON value from `codex/sandbox-state-meta` to apply directly
+
+      --enable <FEATURE>
+          Enable a feature (repeatable). Equivalent to `-c features.<name>=true`
+
+      --sandbox-state-readable-root <SANDBOX_STATE_READABLE_ROOT>
+          Add a readable root to the supplied sandbox state. Repeat for multiple roots
+
+      --disable <FEATURE>
+          Disable a feature (repeatable). Equivalent to `-c features.<name>=false`
+
+      --sandbox-state-disable-network
+          Disable direct network access in the supplied sandbox state
+
+  -P, --permission-profile <NAME>
+          Named permissions profile to apply from the active configuration stack
+
+  -p, --profile <CONFIG_PROFILE>
+          Layer $CODEX_HOME/<name>.config.toml on top of the base user config
+
+  -C, --cd <DIR>
+          Working directory used for profile resolution and command execution
+
+      --include-managed-config
+          Include managed requirements while resolving an explicit permissions profile
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+--- stderr
+

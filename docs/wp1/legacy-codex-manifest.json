@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-27T22:56:25.060Z",
-  "head": "031541122444af1872cf13838f0a007128bf3444",
-  "tree": "4210c5381b792dbc6bd714ed2efb4f013505b6bf",
+  "generatedAt": "2026-09-27T22:59:10.298Z",
+  "head": "db7be3e7a258a814234c1444a54654cb3616d762",
+  "tree": "c690c9d9af357b3ead02fe0950045d97b4534247",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2364,
+  "trackedFileCount": 2431,
   "excludedFileCount": 382,
-  "scannedFileCount": 1982,
+  "scannedFileCount": 2049,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 418,
-  "pathDigest": "0c798deb708274eb568d9340fc60db6f194e2b22fd74dc0588ade7265ce225ac",
+  "matchedPathCount": 485,
+  "pathDigest": "d8c656fed35b19f344745faca786e6717be04c4b4cc86f19ef68ae4b082c8fe7",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -189,7 +189,14 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 125
+      "lineCount": 128
+    },
+    {
+      "path": "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+      "predicates": [
+        "P12"
+      ],
+      "lineCount": 57
     },
     {
       "path": "docs/wp2/hello-codex-spec.md",
@@ -203,7 +210,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 73
+      "lineCount": 81
     },
     {
       "path": "docs/wp2/plan.md",
@@ -1893,6 +1900,559 @@
         "P13"
       ],
       "lineCount": 9
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/exec-edit-json.jsonl",
+      "predicates": [
+        "P01"
+      ],
+      "lineCount": 0
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/exec-json.jsonl",
+      "predicates": [
+        "P01"
+      ],
+      "lineCount": 0
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/exec-resume-json.jsonl",
+      "predicates": [
+        "P01"
+      ],
+      "lineCount": 0
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/apply-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 4
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/cloud-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 9
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/completion-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 3
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/debug-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 3
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/exec-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 11
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/exec-resume-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 7
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/features-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 3
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/features-list.txt",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 17
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/login-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P09",
+        "P13"
+      ],
+      "lineCount": 6
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/mcp-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 4
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/mcp-server-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 5
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/resume-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 6
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/sandbox-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 7
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/help/version.txt",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/hooks/PostToolUse.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/hooks/PreToolUse.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/hooks/SessionEnd.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/hooks/SessionStart-resume.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/hooks/SessionStart-startup.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/hooks/Stop.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/hooks/UserPromptSubmit.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/mcp-client-handshake-codewords.jsonl",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/mcp-client-handshake.jsonl",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/notify-agent-turn-complete.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/rollout-edit.jsonl",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 8
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/rollout-exec-then-resume.jsonl",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 12
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/tui-slash-popup.txt",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 22
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/exec-edit-json.jsonl",
+      "predicates": [
+        "P01"
+      ],
+      "lineCount": 0
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/exec-edit-sandbox-refused-json.jsonl",
+      "predicates": [
+        "P01"
+      ],
+      "lineCount": 0
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/exec-ephemeral-developer-instructions-json.jsonl",
+      "predicates": [
+        "P01"
+      ],
+      "lineCount": 0
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/exec-json.jsonl",
+      "predicates": [
+        "P01"
+      ],
+      "lineCount": 0
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/exec-resume-json.jsonl",
+      "predicates": [
+        "P01"
+      ],
+      "lineCount": 0
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/apply-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 4
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/cloud-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 9
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/completion-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 3
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/debug-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 3
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/exec-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 11
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/exec-resume-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 7
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/features-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 3
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/features-list.txt",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 2
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 16
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/login-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P09",
+        "P13"
+      ],
+      "lineCount": 6
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/mcp-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 4
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/mcp-server-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 16
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/resume-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 6
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/sandbox-help.txt",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 7
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/help/version.txt",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/hooks/PostToolUse.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/hooks/PreToolUse.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/hooks/SessionEnd.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/hooks/SessionStart-resume.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/hooks/SessionStart-startup.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/hooks/Stop.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/hooks/UserPromptSubmit.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/mcp-client-handshake-codewords.jsonl",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/mcp-client-handshake.jsonl",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/notify-agent-turn-complete.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/rollout-edit-sandbox-refused.jsonl",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 11
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/rollout-edit.jsonl",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 8
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/rollout-exec-then-resume.jsonl",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 12
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.155.1/tui-slash-popup.txt",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 22
+    },
+    {
+      "path": "tests/fixtures/codex/cli/ANONYMISED.txt",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 1
     },
     {
       "path": "tests/fixtures/codex/rollout-sample.jsonl",

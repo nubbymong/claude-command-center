@@ -498,8 +498,11 @@ owner as a section 19 record.
 session in the Services snapshot; Alt+V image paste reaching Codex (and the tip
 fixed); copy, paste, scrollback and mouse re-captured
 (`tests/fixtures/codex/tui-trace.txt`); channel rules delivered into the Codex
-terminal. A failure becomes a fix in this phase with its own reviews, and its
-own ADR-009 pass if it touches a listed path.
+terminal. On Windows, Codex 0.155.1 under workspace-write with the unelevated
+sandbox refused a file edit (`docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md`, answer 5): P3.15 checks that the app's
+default sandbox settings let a Codex session edit files. A failure becomes a
+fix in this phase with its own reviews, and its own ADR-009 pass if it touches
+a listed path.
 
 **P3.16 PR 3 records and user-facing sweep.** App knowledge (with known
 issues), tips, tour and Feature Guide, the changelog entry, the user guide,
