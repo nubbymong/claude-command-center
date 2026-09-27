@@ -1,8 +1,11 @@
 // WP2 commit 6 (F4, Codex card): a provider whose accounts this app manages
-// itself. One row per account (archived ones hidden), the reviewer line,
-// setups an interruption left behind, what the app found about the
-// provider's own sign-in on this computer, and Add account. While the
-// provider is off, the accounts are listed but not managed.
+// itself. One row per account, the reviewer line, setups an interruption
+// left behind, what the app found about the provider's own sign-in on this
+// computer, and Add account. While the provider is off, the accounts are
+// listed but not managed. P3.2: each row is the shared AccountRow (the chip
+// opens the identity editor; "N running"; a refused inactivate or archive
+// names the sessions holding the account, with Go to), and archived accounts
+// are listed under "Archived (N)" with Restore (design 5.3).
 import React, { useEffect, useRef, useState } from 'react'
 import type { AccountView, AccountsResult, AccountsSnapshot, KnownAuthState, PendingSetupView, ProviderId, ProviderInstallationView } from '../../../../shared/providers'
 import type { IdentityColorKey } from '../../../../shared/identity-colors'
@@ -11,12 +14,16 @@ import {
   useProviderAccountsStore, providerAccountActions, providerView, selectProviderAccounts, accountDisplayName, canOfferMakeReviewer,
   showsReviewerBadge, accountFailureText, accountState, signInMethodLabel, externalHomeLabel, externalHomeFolder, canOfferSignInAgain,
   canOfferMakeInactive, canOfferMakeActive, canOfferArchive, externalAdoption, canOfferCheckSignIn, signInCheckText, externalSignInHint,
+  selectArchivedAccounts, canOfferRestore, linkedAccounts, linkedAccountLabel, blockerSessions, sessionTitle,
 } from '../../../stores/providerAccountsStore'
+import { useSessionStore } from '../../../stores/sessionStore'
 import { useResolvedTheme } from '../../../hooks/useThemeController'
 import { ProviderMark } from '../../sidebar/Badges'
 import { Section } from '../../SettingsPage'
 import { DialogHeader, DialogBody, DialogFooter, DialogButton, useDialogEscape } from '../../ui/Dialog'
-import { Pill, StatusText, MutedLine, ErrorLine, RowButton, ReviewerLineBlock, AccountsModal } from './accounts-ui'
+import { Pill, StatusText, MutedLine, ErrorLine, RowButton, ReviewerLineBlock, AccountsModal, RunningPill } from './accounts-ui'
+import { AccountRow, AccountChip, LinkedLine, BlockerLine } from './AccountRow'
+import { IdentityEditor } from './IdentityEditor'
 import { RowMenu, type MenuItem } from '../../ui/RowMenu'
 import { AddProviderAccountDialog, SignInAgainDialog } from './AddProviderAccountDialog'
 
@@ -61,6 +68,10 @@ function ManagedAccountRow({ account, provider, snapshot }: { account: AccountVi
   const [ack, setAck] = useState<ExternalAck | null>(null)
   const [signingInAgain, setSigningInAgain] = useState(false)
   const [checked, setChecked] = useState<KnownAuthState | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [blocker, setBlocker] = useState<{ verb: string; sessions: { id: string; title: string }[] } | null>(null)
+  const chipRef = useRef<HTMLButtonElement>(null)
+  const sessions = useSessionStore((st) => st.sessions)
   const id = account.id
   const manageable = provider.enabled
   const name = accountDisplayName(snapshot, account)
@@ -75,13 +86,19 @@ function ManagedAccountRow({ account, provider, snapshot }: { account: AccountVi
   const identity = snapshot.identities.find((i) => i.id === account.identityId)
   const tint = identity ? resolveIdentityColor(identity.colourKey as IdentityColorKey, theme) : 'var(--text-secondary)'
 
-  const run = async (op: () => Promise<AccountsResult>) => {
+  // `verb` names a lifecycle change: refused for the sessions holding the
+  // account, the row names them with Go to rather than a count.
+  const run = async (op: () => Promise<AccountsResult>, verb?: string) => {
     setBusy(true)
     setError(null)
+    setBlocker(null)
     setChecked(null)
     const r = await op()
     setBusy(false)
-    if (!r.ok) setError(accountFailureText(r, account))
+    if (r.ok) return
+    const holding = verb && r.code === 'consumers' ? blockerSessions(sessions, r.sessions) : []
+    if (holding.length) setBlocker({ verb: verb!, sessions: holding.map((x) => ({ id: x.id, title: sessionTitle(x) })) })
+    else setError(accountFailureText(r, account))
   }
 
   // A check's answer stands only while the record agrees with it: once the
@@ -139,7 +156,7 @@ function ManagedAccountRow({ account, provider, snapshot }: { account: AccountVi
     }
     const lifecycle: MenuItem[] = []
     if (canOfferMakeInactive(snapshot, account)) {
-      lifecycle.push({ key: 'make-inactive', label: 'Make inactive', onSelect: () => { void run(() => providerAccountActions.setLifecycle({ accountId: id, lifecycle: 'inactive' })) } })
+      lifecycle.push({ key: 'make-inactive', label: 'Make inactive', onSelect: () => { void run(() => providerAccountActions.setLifecycle({ accountId: id, lifecycle: 'inactive' }), 'made inactive') } })
     }
     if (canOfferMakeActive(account)) {
       lifecycle.push({ key: 'make-active', label: 'Make active', onSelect: () => { void run(() => providerAccountActions.setLifecycle({ accountId: id, lifecycle: 'active' })) } })
@@ -148,7 +165,7 @@ function ManagedAccountRow({ account, provider, snapshot }: { account: AccountVi
       lifecycle.push({
         key: 'archive',
         label: 'Archive',
-        onSelect: () => { if (account.external) setAck('archive'); else void run(() => providerAccountActions.setLifecycle({ accountId: id, lifecycle: 'archived' })) },
+        onSelect: () => { if (account.external) setAck('archive'); else void run(() => providerAccountActions.setLifecycle({ accountId: id, lifecycle: 'archived' }), 'archived') },
       })
     }
     if (lifecycle.length && items.length) lifecycle[0] = { ...lifecycle[0], separated: true }
@@ -159,46 +176,68 @@ function ManagedAccountRow({ account, provider, snapshot }: { account: AccountVi
     const kind = ack
     setAck(null)
     if (kind === 'logout') void run(() => providerAccountActions.logout({ accountId: id, acknowledgeExternal: true }))
-    else if (kind === 'archive') void run(() => providerAccountActions.setLifecycle({ accountId: id, lifecycle: 'archived', acknowledgeExternal: true }))
+    else if (kind === 'archive') void run(() => providerAccountActions.setLifecycle({ accountId: id, lifecycle: 'archived', acknowledgeExternal: true }), 'archived')
   }
 
+  const links = linkedAccounts(snapshot, account)
   return (
-    <div className="py-3" style={{ borderTop: '1px solid var(--border-subtle)' }} data-testid={`provider-account-row-${id}`}>
-      <div className="grid items-center gap-3 text-[13px] grid-cols-[26px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1.5fr)_28px]">
-        <span
-          className="w-[26px] h-[26px] rounded-full inline-grid place-items-center text-[11px] font-bold"
-          style={{ background: 'var(--surface-overlay)', color: tint }}
-          aria-hidden
-        >
-          {account.external ? '~' : (name.charAt(0).toUpperCase() || '?')}
-        </span>
-        <div className="flex flex-col items-start gap-0.5 min-w-0">
-          <span className="font-semibold truncate max-w-full" style={{ color: account.lifecycle === 'active' ? 'var(--text-primary)' : 'var(--text-muted)' }} title={name} data-testid={`account-name-${id}`}>{name}</span>
-          {email && <span className="font-mono text-[12px] truncate max-w-full" style={{ color: 'var(--text-secondary)' }} title={email}>{email}</span>}
-        </div>
+    <AccountRow
+      testId={`provider-account-row-${id}`}
+      chip={(
+        <AccountChip
+          letter={account.external ? '~' : (name.charAt(0).toUpperCase() || '?')}
+          tint={tint}
+          onOpen={manageable ? () => setEditing((e) => !e) : undefined}
+          open={editing}
+          label={`Edit ${name}: name, colour, group and linked accounts`}
+          testId={`account-chip-${id}`}
+          chipRef={chipRef}
+        />
+      )}
+      name={name}
+      nameMuted={account.lifecycle !== 'active'}
+      nameTestId={`account-name-${id}`}
+      secondary={email && <span className="font-mono text-[12px] truncate max-w-full" style={{ color: 'var(--text-secondary)' }} title={email}>{email}</span>}
+      linked={links.map((a) => (
+        <LinkedLine
+          key={a.id}
+          providerId={a.providerId}
+          providerName={providerView(snapshot, a.providerId)?.displayName ?? a.providerId}
+          label={linkedAccountLabel(snapshot, a)}
+          testId={`account-linked-${id}-${a.id}`}
+        />
+      ))}
+      planCell={(
         <div className="flex flex-col items-start gap-0.5 min-w-0" data-testid={`account-plan-cell-${id}`}>
           {account.planLabel && <span className="truncate max-w-full" style={{ color: 'var(--text-primary)' }} data-testid={`account-plan-${id}`}>{account.planLabel}</span>}
           {method && <MutedLine testId={`account-method-${id}`}>{method}</MutedLine>}
         </div>
-        <div className="flex flex-col items-start gap-1 min-w-0">
+      )}
+      badges={(
+        <>
           {account.isProviderDefault && <Pill tone="default" testId={`account-badge-default-${id}`}>Default</Pill>}
           {showsReviewerBadge(account) && <Pill tone="reviewer" testId={`account-badge-reviewer-${id}`}>Reviewer</Pill>}
           {cannotReview && <Pill tone="warn" testId={`account-badge-confirm-${id}`}>Confirm each launch</Pill>}
           {cannotReview && <MutedLine testId={`account-no-reviews-${id}`}>Cannot run reviews</MutedLine>}
           {account.lifecycle === 'inactive' && <Pill tone="muted" testId={`account-badge-inactive-${id}`}>Inactive</Pill>}
-        </div>
-        <div className="flex flex-col items-start gap-1 min-w-0">
+        </>
+      )}
+      stateCell={(
+        <>
           <StatusText tone={state.tone} testId={`account-state-${id}`}>{state.text}</StatusText>
           {/* Never on a blocked row, whichever lands first: the answer or the
               snapshot that blocked the account. */}
           {checked && !blocked && <MutedLine testId={`account-checked-${id}`}>{signInCheckText(checked)}</MutedLine>}
           {externalHint && <MutedLine testId={`account-external-hint-${id}`}>{externalHint}</MutedLine>}
+          <RunningPill count={account.runningSessions} testId={`account-running-${id}`} />
           {blocked && manageable && (
             <RowButton onClick={() => { void run(() => providerAccountActions.reconcileSignIn(id)) }} disabled={busy} testId={`account-reconcile-${id}`}>
               This is still my account
             </RowButton>
           )}
-        </div>
+        </>
+      )}
+      menu={(
         <RowMenu
           items={items}
           label={`Actions for ${name}`}
@@ -206,10 +245,41 @@ function ManagedAccountRow({ account, provider, snapshot }: { account: AccountVi
           testId={`account-menu-btn-${id}`}
           itemTestId={(key) => `account-menu-${key}-${id}`}
         />
-      </div>
-      {error && <div className="pl-[38px]"><ErrorLine testId={`account-error-${id}`}>{error}</ErrorLine></div>}
+      )}
+    >
+      {error && <ErrorLine testId={`account-error-${id}`}>{error}</ErrorLine>}
+      {blocker && <BlockerLine name={name} verb={blocker.verb} sessions={blocker.sessions} testId={`account-blocker-${id}`} />}
       {ack && <ExternalAckDialog kind={ack} provider={provider} onConfirm={confirmAck} onCancel={() => setAck(null)} />}
       {signingInAgain && <SignInAgainDialog provider={provider} account={account} name={name} onClose={() => setSigningInAgain(false)} />}
+      {editing && <IdentityEditor anchor={chipRef} account={account} snapshot={snapshot} onClose={() => setEditing(false)} testId={`identity-editor-${id}`} />}
+    </AccountRow>
+  )
+}
+
+/** One archived account under "Archived (N)": its name, how it signed in,
+ *  and Restore (it comes back inactive; Make active then checks it). */
+function ArchivedAccountRow({ account, provider, snapshot }: { account: AccountView; provider: ProviderInstallationView; snapshot: AccountsSnapshot }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const name = accountDisplayName(snapshot, account)
+  const method = signInMethodLabel(account, provider)
+  const restore = async () => {
+    setBusy(true)
+    setError(null)
+    const r = await providerAccountActions.restore(account.id)
+    setBusy(false)
+    if (!r.ok) setError(accountFailureText(r))
+  }
+  return (
+    <div className="pl-[38px] pt-2" data-testid={`archived-account-${account.id}`}>
+      <div className="flex items-center gap-3 text-[12.5px]" style={{ color: 'var(--text-muted)' }}>
+        <span className="truncate" title={name}>{name}</span>
+        {method && <span className="truncate">{method}</span>}
+        {provider.enabled && canOfferRestore(account) && (
+          <span className="ml-auto"><RowButton onClick={() => { void restore() }} disabled={busy} testId={`archived-restore-${account.id}`}>Restore</RowButton></span>
+        )}
+      </div>
+      {error && <ErrorLine testId={`archived-error-${account.id}`}>{error}</ErrorLine>}
     </div>
   )
 }
@@ -322,6 +392,7 @@ export function ManagedAccountsSection({ providerId }: { providerId: ProviderId 
   if (!snapshot || !provider || !provider.managedAccounts) return null
 
   const accounts = selectProviderAccounts(snapshot, providerId)
+  const archived = selectArchivedAccounts(snapshot, providerId)
   const pending = snapshot.pendingSetups.filter((p) => p.providerId === providerId)
   const manageable = provider.enabled
 
@@ -334,6 +405,12 @@ export function ManagedAccountsSection({ providerId }: { providerId: ProviderId 
       <div>
         {accounts.map((a) => <ManagedAccountRow key={a.id} account={a} provider={provider} snapshot={snapshot} />)}
       </div>
+      {archived.length > 0 && (
+        <div className="pt-2.5" style={{ borderTop: '1px solid var(--border-subtle)' }} data-testid={`archived-accounts-${providerId}`}>
+          <div className="text-[12px] font-semibold" style={{ color: 'var(--text-secondary)' }}>Archived ({archived.length})</div>
+          {archived.map((a) => <ArchivedAccountRow key={a.id} account={a} provider={provider} snapshot={snapshot} />)}
+        </div>
+      )}
       {pending.length > 0 && (
         <div data-testid={`pending-setups-${providerId}`}>
           <div className="text-[11.5px] font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>Unfinished setups</div>

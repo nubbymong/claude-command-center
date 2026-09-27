@@ -11,7 +11,7 @@ import { create } from 'zustand'
 import type {
   AccountsSnapshot, AccountView, AccountsResult, AccountsFailure, ProviderInstallationView, ProviderId,
   BeginSetupRequest, SignInRequest, CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, ResolveConflictRequest,
-  SetReviewerDefaultRequest, KnownAuthState, SignInMethod, InstallRecipeView,
+  SetReviewerDefaultRequest, KnownAuthState, SignInMethod, InstallRecipeView, UpdateIdentityRequest, IdentityView,
 } from '../../shared/providers'
 import { SIGN_IN_METHODS } from '../../shared/providers'
 import { useSettingsStore } from './settingsStore'
@@ -201,6 +201,18 @@ export const providerAccountActions = {
   checkSignIn: (accountId: string) => call<{ state: KnownAuthState }>(() => api().refreshStatus(accountId)),
   resolveConflict: (req: ResolveConflictRequest) => call(() => api().resolveConflict(req)),
   setReviewerDefault: (req: SetReviewerDefaultRequest) => call(() => api().setReviewerDefault(req)),
+  /** The identity editor (P3.2, design 5.1, 5.2): name, colour and group
+   *  are the identity's, shown on every account linked to it. */
+  updateIdentity: (req: UpdateIdentityRequest) => call(() => api().updateIdentity(req)),
+  createGroup: (name: string) => call<{ groupId: string }>(() => api().createGroup(name)),
+  /** Point an account at another identity (link), or give it a private copy
+   *  of its current one (unlink). Main refuses what the rules forbid (an
+   *  unverified sign-in is never linked). */
+  linkIdentity: (accountId: string, identityId: string) => call(() => api().linkIdentity(accountId, identityId)),
+  unlinkIdentity: (accountId: string) => call<{ identityId: string }>(() => api().unlinkIdentity(accountId)),
+  /** "Restore" on an archived account: main brings it back INACTIVE, with
+   *  nothing about its sign-in trusted; "Make active" then checks it. */
+  restore: (accountId: string) => call(() => api().setLifecycle({ accountId, lifecycle: 'inactive' })),
 }
 
 // ---------------------------------------------------------------------------
@@ -219,6 +231,83 @@ export function providerView(snapshot: AccountsSnapshot | null, providerId: Prov
 export function selectProviderAccounts(snapshot: AccountsSnapshot | null, providerId: ProviderId): AccountView[] {
   const mine = (snapshot?.accounts ?? []).filter((a) => a.providerId === providerId && a.lifecycle !== 'archived')
   return [...mine.filter((a) => a.lifecycle === 'active'), ...mine.filter((a) => a.lifecycle === 'inactive')]
+}
+
+/** A provider's archived accounts ("Archived (N)", design 5.3), in the
+ *  snapshot's order. */
+export function selectArchivedAccounts(snapshot: AccountsSnapshot | null, providerId: ProviderId): AccountView[] {
+  return (snapshot?.accounts ?? []).filter((a) => a.providerId === providerId && a.lifecycle === 'archived')
+}
+
+/** "Restore": an archived account that is not mirrored from the provider's
+ *  own list (that one comes back where it was removed). */
+export function canOfferRestore(account: AccountView): boolean {
+  return account.lifecycle === 'archived' && !account.legacyLinked
+}
+
+export function identityOf(snapshot: AccountsSnapshot | null, account: Pick<AccountView, 'identityId'>): IdentityView | undefined {
+  return snapshot?.identities.find((i) => i.id === account.identityId)
+}
+
+/** The other live accounts that share this account's identity: the "Linked
+ *  with" line and the identity editor's list. Archived ones are history. */
+export function linkedAccounts(snapshot: AccountsSnapshot | null, account: AccountView): AccountView[] {
+  return (snapshot?.accounts ?? []).filter((a) => a.id !== account.id && a.identityId === account.identityId && a.lifecycle !== 'archived')
+}
+
+/** What the "Linked with" line names for a linked account: the provider's
+ *  label for it (Claude: the email), else its display name. */
+export function linkedAccountLabel(snapshot: AccountsSnapshot | null, account: AccountView): string {
+  return account.providerLabel?.trim() || accountDisplayName(snapshot, account)
+}
+
+/** Whether an account's identity can be linked at all: an unverified or
+ *  external sign-in keeps its own identity (its attribution is a guess). */
+export function canLinkIdentity(account: Pick<AccountView, 'unverified' | 'external'>): boolean {
+  return !account.unverified && !account.external
+}
+
+/** Accounts the identity editor offers under "Link another account": live,
+ *  vouched-for accounts on another identity. Main has the final word (two
+ *  records of one provider's own list never share an identity). */
+export function linkCandidates(snapshot: AccountsSnapshot | null, account: AccountView): AccountView[] {
+  if (!canLinkIdentity(account)) return []
+  return (snapshot?.accounts ?? []).filter((a) => a.identityId !== account.identityId && a.lifecycle !== 'archived' && canLinkIdentity(a))
+}
+
+/** The session facts the Accounts rows read (a structural subset of the
+ *  renderer's Session, so this module imports no session store). */
+export interface AccountSessionFacts {
+  id: string
+  label: string
+  customName?: string
+  provider?: ProviderId
+  sessionType?: string
+  shellOnly?: boolean
+  profileId?: string
+  ptyExited?: boolean
+  neverStarted?: boolean
+}
+
+export function sessionTitle(s: Pick<AccountSessionFacts, 'label' | 'customName'>): string {
+  return s.customName?.trim() || s.label
+}
+
+/** The Claude sessions running on a Claude profile now: local, not a plain
+ *  shell, started and not ended, on that profile (a session that names none
+ *  runs on the primary, as the header's account pill resolves it). Claude
+ *  sessions hold no account lease, so this is the "N running" for a Claude
+ *  row. */
+export function claudeSessionsOnProfile(sessions: readonly AccountSessionFacts[], profileId: string, primaryId: string | undefined): AccountSessionFacts[] {
+  return sessions.filter((s) => (s.provider ?? 'claude') === 'claude' && s.sessionType === 'local' && !s.shellOnly && !s.ptyExited && !s.neverStarted
+    && (s.profileId ?? primaryId) === profileId)
+}
+
+/** The sessions a refusal named that this window has open, for "Go to". */
+export function blockerSessions(sessions: readonly AccountSessionFacts[], ids: readonly string[] | undefined): AccountSessionFacts[] {
+  if (!ids?.length) return []
+  const wanted = new Set(ids)
+  return sessions.filter((s) => wanted.has(s.id))
 }
 
 /** The registry account mirroring one of the provider's own accounts (a

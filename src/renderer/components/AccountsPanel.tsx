@@ -1,24 +1,36 @@
 // src/renderer/components/AccountsPanel.tsx
 // Shared "Accounts" panel rendered inside Settings when multi-account is on.
 // Every account is a profile; the primary profile (captured global) is shown
-// with a "primary" badge and cannot be deleted. All other profiles are
-// renameable and deletable.
+// as "Primary" and cannot be removed. All other profiles can be made
+// inactive and removed. P3.2: each profile is the shared AccountRow the
+// managed providers use (design 5.3, canvas "Accounts: identities across
+// providers" v1, option B): its chip opens the identity editor, which now
+// holds the name and colour fields this row used to show inline; "N
+// running" counts its Claude sessions; a removal refused while sessions run
+// on it names them with Go to. With Claude Code off the accounts are listed
+// but not managed, as every provider's are.
 import React, { useState, useEffect, useRef } from 'react'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSettingsStore } from '../stores/settingsStore'
+import { useSessionStore } from '../stores/sessionStore'
 import { middleTruncateEmail, canonicaliseEmail, resolveAccountColourKey } from '../../shared/account-chip-color'
 import { useResolvedTheme } from '../hooks/useThemeController'
-import { resolveIdentityColor, IDENTITY_COLOR_KEYS } from '../../shared/identity-colors'
+import { resolveIdentityColor } from '../../shared/identity-colors'
 import type { IdentityColorKey } from '../../shared/identity-colors'
 import { isAccountActive, type AccountProfile } from '../../shared/account-types'
-import ToggleSwitch from './github/config/ToggleSwitch'
 import { Section } from './SettingsPage'
 import { AccountWebSession } from './settings/AccountWebSession'
 import { AccountIsolationNotice } from './settings/AccountIsolationNotice'
-import { useProviderAccountsStore, providerAccountActions, accountForLegacyId, canOfferMakeReviewer, showsReviewerBadge, accountFailureText } from '../stores/providerAccountsStore'
+import {
+  useProviderAccountsStore, providerAccountActions, accountForLegacyId, canOfferMakeReviewer, showsReviewerBadge, accountFailureText,
+  accountDisplayName, identityOf, linkedAccounts, linkedAccountLabel, providerView, claudeSessionsOnProfile, sessionTitle,
+} from '../stores/providerAccountsStore'
 import { claudeCodeOn } from '../onboarding/hello-codex'
 import { ProviderMark } from './sidebar/Badges'
-import { Pill, MutedLine, ErrorLine, RowButton, ReviewerLineBlock } from './settings/accounts/accounts-ui'
+import { Pill, MutedLine, ErrorLine, ReviewerLineBlock, RunningPill } from './settings/accounts/accounts-ui'
+import { AccountRow, AccountChip, LinkedLine, BlockerLine } from './settings/accounts/AccountRow'
+import { IdentityEditor, type LegacyIdentityEdit } from './settings/accounts/IdentityEditor'
+import { RowMenu, type MenuItem } from './ui/RowMenu'
 
 // ---- props ------------------------------------------------------------------
 
@@ -28,132 +40,59 @@ export interface AccountsPanelProps {
 
 // ---- sub-components ---------------------------------------------------------
 
-/** Labelled, obviously-editable friendly-name field. Commits on blur/Enter. */
-function NameField({
-  initialValue,
-  onCommit,
-}: {
-  initialValue: string
-  onCommit: (value: string) => void | Promise<void>
-}) {
-  const [value, setValue] = useState(initialValue)
-  // Last committed value so an unchanged blur/Enter is a no-op.
-  const lastCommitted = useRef(initialValue)
-
-  // Sync if the source changes externally (e.g. another surface renamed it).
-  useEffect(() => {
-    setValue(initialValue)
-    lastCommitted.current = initialValue
-  }, [initialValue])
-
-  const commit = () => {
-    if (value.trim() === lastCommitted.current.trim()) return
-    lastCommitted.current = value
-    onCommit(value)
-  }
-
-  return (
-    <div className="flex items-center gap-2 mt-1.5">
-      <span className="text-[11px] text-subtext0 w-10 shrink-0">Name</span>
-      <input
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault()
-            ;(e.currentTarget as HTMLInputElement).blur()
-          }
-        }}
-        placeholder="Optional friendly name"
-        className="flex-1 bg-crust/60 border border-surface0/80 rounded-lg px-3 py-1.5 text-sm text-text focus-ring-strong focus:border-blue/50 placeholder:text-[var(--text-muted)] transition-colors"
-      />
-    </div>
-  )
-}
-
-/** Compact colour-swatch palette picker for a profile's identity colour. Only
- *  shown when the profile has a resolved accountEmail (incomplete profiles have
- *  no identity to colour yet). */
-function ColourPicker({
-  profile,
-  currentKey,
-  onPick,
-}: {
-  profile: AccountProfile
-  currentKey: IdentityColorKey
-  onPick: (key: IdentityColorKey) => void
-}) {
-  const theme = useResolvedTheme()
-  return (
-    <div className="flex items-center gap-2 mt-1.5" data-testid={`colour-picker-${profile.id}`}>
-      <span className="text-[11px] text-subtext0 w-10 shrink-0">Colour</span>
-      <div className="flex flex-wrap gap-3">
-        {IDENTITY_COLOR_KEYS.map((key) => {
-          const hex = resolveIdentityColor(key, theme)
-          const isSelected = key === currentKey
-          return (
-            <button
-              key={key}
-              data-testid={`colour-swatch-${profile.id}-${key}`}
-              title={key}
-              aria-label={`Set colour to ${key}${isSelected ? ' (current)' : ''}`}
-              aria-pressed={isSelected}
-              onClick={() => onPick(key)}
-              className="w-4 h-4 rounded-full transition-transform focus-ring-strong-outset"
-              style={{
-                backgroundColor: hex,
-                boxShadow: isSelected ? `0 0 0 2px var(--surface-raised), 0 0 0 4px ${hex}` : undefined,
-                transform: isSelected ? 'scale(1.2)' : undefined,
-              }}
-            />
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-/** One row per profile. Primary profile shows a "primary" badge and has no delete button. */
-function ProfileRow({ profile }: { profile: AccountProfile }) {
+/** One row per profile. The primary shows "Primary" and cannot be removed. */
+function ProfileRow({ profile, primaryId, claudeOn }: { profile: AccountProfile; primaryId: string | undefined; claudeOn: boolean }) {
   const theme = useResolvedTheme()
   const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
   const updateSettings = useSettingsStore((s) => s.updateSettings)
+  const sessions = useSessionStore((s) => s.sessions)
+  const [error, setError] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [blocker, setBlocker] = useState<{ id: string; title: string }[] | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const chipRef = useRef<HTMLButtonElement>(null)
 
   // WP2: this profile's account in the provider registry (it mirrors the
-  // profile id), for its reviewer state. Absent until the registry lists it.
+  // profile id), for its reviewer state, identity and links. Absent until
+  // the registry lists it.
   const snapshot = useProviderAccountsStore((s) => s.snapshot)
   const registryAccount = accountForLegacyId(snapshot, 'claude', profile.id)
-  const [reviewerBusy, setReviewerBusy] = useState(false)
-  const [reviewerError, setReviewerError] = useState<string | null>(null)
-  const makeReviewer = async () => {
-    if (!registryAccount) return
-    setReviewerBusy(true)
-    setReviewerError(null)
-    const r = await providerAccountActions.setReviewerDefault({ providerId: 'claude', accountId: registryAccount.id })
-    setReviewerBusy(false)
-    if (!r.ok) setReviewerError(accountFailureText(r))
-  }
+  const identity = registryAccount ? identityOf(snapshot, registryAccount) : undefined
   const refusal = registryAccount?.reviewRefusal
   const refusalText = !refusal ? null
     : refusal.reason === 'platform'
       ? (window.electronPlatform === 'darwin' ? "Can't run Claude reviews on macOS" : refusal.message)
       : "Can't check whether this account can run reviews right now"
 
-  // Active/inactive: an inactive account stays listed here but cannot be chosen
-  // when switching a session's account. The primary account is always active.
   const active = isAccountActive(profile)
-  const setActive = async (next: boolean) => {
-    await window.electronAPI.accountProfiles.setActive(profile.id, next)
-    await useAccountProfilesStore.getState().hydrate()
+  const hasEmail = !!profile.accountEmail
+  const running = claudeSessionsOnProfile(sessions, profile.id, primaryId)
+
+  const act = async (op: () => Promise<string | null>) => {
+    setBusy(true)
+    setError(null)
+    setBlocker(null)
+    const failed = await op()
+    setBusy(false)
+    if (failed) setError(failed)
   }
 
-  const commitName = async (raw: string) => {
-    const name = raw.trim()
-    await window.electronAPI.accountProfiles.rename(profile.id, name)
+  const makeReviewer = () => act(async () => {
+    if (!registryAccount) return null
+    const r = await providerAccountActions.setReviewerDefault({ providerId: 'claude', accountId: registryAccount.id })
+    return r.ok ? null : accountFailureText(r)
+  })
+
+  // Active/inactive: an inactive account stays listed here but cannot be chosen
+  // when switching a session's account. The primary account is always active.
+  const setActive = (next: boolean) => act(async () => {
+    const res = await window.electronAPI.accountProfiles.setActive(profile.id, next)
+    // Nothing changed on a refusal: the row stays as it is, with the reason.
+    if (res && res.ok === false) return res.error || 'That did not work.'
     await useAccountProfilesStore.getState().hydrate()
-  }
+    return null
+  })
 
   const handleDelete = async () => {
     const confirmed = window.confirm(
@@ -161,13 +100,17 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
     )
     if (!confirmed) return
     setDeleteError(null)
+    setBlocker(null)
     // Surface a failed delete instead of swallowing it: the main process refuses
     // to delete a profile that a live session is running under, and a teardown can
-    // throw on a Windows file lock. Both come back as { ok:false, error }.
+    // throw on a Windows file lock. Both come back as { ok:false, error }. Refused
+    // while this window's sessions run on it, the row names them (design 5.3).
     try {
       const res = await window.electronAPI.accountProfiles.delete(profile.id)
       if (!res?.ok) {
-        setDeleteError(res?.error || 'Could not remove this account. Please try again.')
+        const holding = claudeSessionsOnProfile(useSessionStore.getState().sessions, profile.id, primaryId)
+        if (holding.length) setBlocker(holding.map((s) => ({ id: s.id, title: sessionTitle(s) })))
+        else setDeleteError(res?.error || 'Could not remove this account. Please try again.')
         return
       }
     } catch {
@@ -177,127 +120,137 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
     await useAccountProfilesStore.getState().hydrate()
   }
 
-  const handlePickColour = async (key: IdentityColorKey) => {
-    if (!profile.accountEmail) return
-    const emailKey = canonicaliseEmail(profile.accountEmail)
-    const next = { ...(accountColourOverrides ?? {}), [emailKey]: key }
-    await updateSettings({ accountColourOverrides: next })
+  // The legacy colour: the email-keyed override wins over the profile's key.
+  const legacyColourKey = resolveAccountColourKey(profile.accountEmail, accountColourOverrides, profile.colourKey)
+  const colourKey = (identity?.colourKey as IdentityColorKey | undefined) ?? legacyColourKey
+  const tint = resolveIdentityColor(colourKey, theme)
+  const email = hasEmail ? profile.accountEmail : ''
+  const name = registryAccount ? accountDisplayName(snapshot, registryAccount) : (profile.name?.trim() || (hasEmail ? middleTruncateEmail(email) : 'Account'))
+
+  // The account list not available: the name and colour are edited the way
+  // this row always did (profiles.json and the email-keyed colour).
+  const legacy: LegacyIdentityEdit = {
+    name: profile.name ?? '',
+    colourKey: legacyColourKey,
+    canColour: hasEmail,
+    rename: async (next) => {
+      await window.electronAPI.accountProfiles.rename(profile.id, next)
+      await useAccountProfilesStore.getState().hydrate()
+      return null
+    },
+    recolour: async (key) => {
+      if (!profile.accountEmail) return null
+      await updateSettings({ accountColourOverrides: { ...(accountColourOverrides ?? {}), [canonicaliseEmail(profile.accountEmail)]: key } })
+      return null
+    },
   }
 
-  // Colour dot: user override (by email) wins over the profile's stored key.
-  const activeColourKey = resolveAccountColourKey(
-    profile.accountEmail,
-    accountColourOverrides,
-    profile.colourKey,
-  )
-  const dot = resolveIdentityColor(activeColourKey, theme)
-  const hasEmail = !!profile.accountEmail
+  const items: MenuItem[] = []
+  if (claudeOn) {
+    if (registryAccount && canOfferMakeReviewer(snapshot, registryAccount)) {
+      items.push({ key: 'make-reviewer', label: 'Make reviewer', onSelect: () => { void makeReviewer() } })
+    }
+    if (!profile.isPrimary) {
+      items.push(active
+        ? { key: 'make-inactive', label: 'Make inactive', onSelect: () => { void setActive(false) }, separated: items.length > 0 }
+        : { key: 'make-active', label: 'Make active', onSelect: () => { void setActive(true) }, separated: items.length > 0 })
+      items.push({ key: 'remove', label: 'Remove', onSelect: () => { void handleDelete() } })
+    }
+  }
 
+  const links = registryAccount ? linkedAccounts(snapshot, registryAccount) : []
   return (
-    <div className="py-2 px-1 rounded-lg" data-testid={`profile-row-${profile.id}`}>
-      <div className="flex items-center gap-3">
-        <span
-          className="w-2 h-2 rounded-full shrink-0"
-          style={{ backgroundColor: dot }}
-          aria-hidden
+    <AccountRow
+      testId={`profile-row-${profile.id}`}
+      chip={(
+        <AccountChip
+          letter={(profile.name?.trim() || email || '?').charAt(0).toUpperCase()}
+          tint={tint}
+          onOpen={claudeOn ? () => setEditing((e) => !e) : undefined}
+          open={editing}
+          label={`Edit ${name}: name, colour, group and linked accounts`}
+          testId={`profile-chip-${profile.id}`}
+          chipRef={chipRef}
         />
-        <div className="flex-1 min-w-0 flex items-center gap-2">
-          <span
-            className="text-sm font-mono truncate"
-            style={{ color: !active ? 'var(--text-muted)' : (hasEmail ? 'var(--text-secondary)' : undefined) }}
-            title={hasEmail ? profile.accountEmail : undefined}
-          >
-            {hasEmail ? (
-              middleTruncateEmail(profile.accountEmail)
-            ) : (
-              <span className="text-[var(--text-muted)] italic">setup incomplete</span>
-            )}
-          </span>
-          {profile.isPrimary && (
-            <span className="text-[10px] text-[var(--text-muted)] border border-overlay0/30 rounded px-1 shrink-0">
-              primary
-            </span>
-          )}
-          {!active && (
-            <span
-              className="text-[10px] text-[var(--text-muted)] border border-overlay0/30 rounded px-1 shrink-0"
-              data-testid={`inactive-badge-${profile.id}`}
-            >
-              inactive
-            </span>
-          )}
+      )}
+      name={name}
+      nameMuted={!active}
+      nameTestId={`profile-name-${profile.id}`}
+      secondary={hasEmail
+        ? <span className="font-mono text-[12px] truncate max-w-full" style={{ color: 'var(--text-secondary)' }} title={email}>{middleTruncateEmail(email)}</span>
+        : <span className="text-[12px] italic" style={{ color: 'var(--text-muted)' }}>setup incomplete</span>}
+      linked={links.map((a) => (
+        <LinkedLine
+          key={a.id}
+          providerId={a.providerId}
+          providerName={providerView(snapshot, a.providerId)?.displayName ?? a.providerId}
+          label={linkedAccountLabel(snapshot, a)}
+          testId={`profile-linked-${profile.id}-${a.id}`}
+        />
+      ))}
+      planCell={profile.isPrimary ? <MutedLine testId={`primary-badge-${profile.id}`}>Primary</MutedLine> : null}
+      badges={(
+        <>
           {registryAccount && showsReviewerBadge(registryAccount) && (
             <Pill tone="reviewer" testId={`claude-reviewer-badge-${profile.id}`}>Reviewer</Pill>
           )}
-        </div>
-        {registryAccount && canOfferMakeReviewer(snapshot, registryAccount) && (
-          <RowButton onClick={() => { void makeReviewer() }} disabled={reviewerBusy} testId={`claude-make-reviewer-${profile.id}`}>
-            Make reviewer
-          </RowButton>
-        )}
-        {!profile.isPrimary && (
-          <ToggleSwitch
-            state={active ? 'on' : 'off'}
-            onToggle={() => { void setActive(!active) }}
-            label={active ? 'Deactivate this account' : 'Activate this account'}
-            title={active
-              ? 'Active: selectable when switching a session’s account'
-              : 'Inactive: still shown in the switcher, but can’t be selected'}
-          />
-        )}
-        {!profile.isPrimary && (
-          <button
-            onClick={handleDelete}
-            title="Remove this account from AI Code Conductor"
-            data-testid={`delete-profile-${profile.id}`}
-            className="ml-1 p-1 rounded text-overlay1 hover:text-red hover:bg-red/10 transition-colors focus-ring-strong shrink-0"
-            aria-label="Remove account"
-          >
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
-              <path d="M3 4h10M5 4V2.5h6V4M6.5 7v5M9.5 7v5M4 4l.75 8.5a1 1 0 001 .9h4.5a1 1 0 001-.9L12 4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-        )}
-      </div>
-      <div className="ml-5">
-        {refusalText && <MutedLine className="mt-1" testId={`claude-review-refusal-${profile.id}`}>{refusalText}</MutedLine>}
-        {reviewerError && <ErrorLine testId={`claude-reviewer-error-${profile.id}`}>{reviewerError}</ErrorLine>}
-        <NameField initialValue={profile.name} onCommit={commitName} />
-        {hasEmail && (
-          <ColourPicker
-            profile={profile}
-            currentKey={activeColourKey}
-            onPick={handlePickColour}
-          />
-        )}
-        {/* #216: both halves of this account's authentication. Shown per account
-            because the claude.ai web session is per account by construction —
-            one partition each — and because the code-session token and the web
-            session fail in ways that look nothing alike. */}
+          {!active && <Pill tone="muted" testId={`inactive-badge-${profile.id}`}>Inactive</Pill>}
+        </>
+      )}
+      stateCell={<RunningPill count={running.length} testId={`profile-running-${profile.id}`} />}
+      menu={(
+        <RowMenu
+          items={items}
+          label={`Actions for ${name}`}
+          disabled={busy}
+          testId={`profile-menu-btn-${profile.id}`}
+          itemTestId={(key) => `profile-menu-${key}-${profile.id}`}
+        />
+      )}
+    >
+      {refusalText && claudeOn && <MutedLine className="mt-1" testId={`claude-review-refusal-${profile.id}`}>{refusalText}</MutedLine>}
+      {error && <ErrorLine testId={`profile-error-${profile.id}`}>{error}</ErrorLine>}
+      {/* #216: both halves of this account's authentication. Shown per account
+          because the claude.ai web session is per account by construction —
+          one partition each — and because the code-session token and the web
+          session fail in ways that look nothing alike. Not while Claude Code
+          is off: its accounts are listed, not managed. */}
+      {claudeOn && (
         <div className="mt-2">
           <AccountWebSession profileId={profile.id} accountName={profile.name} />
         </div>
-        {/* Layer 4 of the account-isolation hardening: whatever the
-            managed-launch preflight could not confirm FOR THIS ACCOUNT. Per
-            row, not once for the panel: a single merged notice folded every
-            account's findings into one list and deduped by finding id, so a
-            second account's occurrence was invisible rather than merely
-            unattributed, and the detail text carried that account's stripped
-            settings keys across the boundary this panel exists to defend
-            (adversarial review, MAJOR 5). Renders nothing when there is nothing
-            to say, so a healthy install pays no space for it. */}
-        <AccountIsolationNotice profileId={profile.id} />
-        {deleteError && (
-          <p
-            className="text-[11px] text-red mt-1.5"
-            role="alert"
-            data-testid={`delete-error-${profile.id}`}
-          >
-            {deleteError}
-          </p>
-        )}
-      </div>
-    </div>
+      )}
+      {/* Layer 4 of the account-isolation hardening: whatever the
+          managed-launch preflight could not confirm FOR THIS ACCOUNT. Per
+          row, not once for the panel: a single merged notice folded every
+          account's findings into one list and deduped by finding id, so a
+          second account's occurrence was invisible rather than merely
+          unattributed, and the detail text carried that account's stripped
+          settings keys across the boundary this panel exists to defend
+          (adversarial review, MAJOR 5). Renders nothing when there is nothing
+          to say, so a healthy install pays no space for it. */}
+      {claudeOn && <AccountIsolationNotice profileId={profile.id} />}
+      {blocker && <BlockerLine name={name} verb="removed" sessions={blocker} testId={`profile-blocker-${profile.id}`} />}
+      {deleteError && (
+        <p
+          className="text-[11px] text-red mt-1.5"
+          role="alert"
+          data-testid={`delete-error-${profile.id}`}
+        >
+          {deleteError}
+        </p>
+      )}
+      {editing && (
+        <IdentityEditor
+          anchor={chipRef}
+          account={registryAccount ?? null}
+          snapshot={snapshot}
+          legacy={registryAccount && identity ? undefined : legacy}
+          onClose={() => setEditing(false)}
+          testId={`identity-editor-${profile.id}`}
+        />
+      )}
+    </AccountRow>
   )
 }
 
@@ -307,12 +260,13 @@ export default function AccountsPanel({ onAdd }: AccountsPanelProps) {
   const profiles = useAccountProfilesStore((s) => s.profiles)
   // Claude Code on (claudeCodeOn: the saved setting says so, absent meaning
   // on, and main has not switched it off). While it is off no Claude session
-  // starts, so an account added then could not be used: the card offers no
-  // add and says how to turn it on instead, as the other providers' cards do
-  // (ManagedAccountsSection).
+  // starts, so an account added then could not be used: the card lists its
+  // accounts without managing them and says how to turn it on instead, as
+  // the other providers' cards do (ManagedAccountsSection).
   const claudeEnabled = useSettingsStore((s) => s.settings.claudeEnabled)
   const snapshot = useProviderAccountsStore((s) => s.snapshot)
   const claudeOn = claudeCodeOn({ claudeEnabled }, snapshot)
+  const primaryId = profiles.find((p) => p.isPrimary)?.id
 
   // On open, reconcile any "setup incomplete" account: the user's /login may have
   // finished after the live add-account poll's window, so re-read each empty
@@ -344,12 +298,12 @@ export default function AccountsPanel({ onAdd }: AccountsPanelProps) {
           provider's sessions) use. Renders nothing until the registry says
           Claude reviews here. */}
       <ReviewerLineBlock providerId="claude" />
-      <div className="space-y-1 divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
-        {/* One ProfileRow per profile; primary shows badge and has no delete */}
+      {!claudeOn && (
+        <MutedLine testId="provider-off-note-claude">Turn Claude Code on to manage its accounts.</MutedLine>
+      )}
+      <div>
         {profiles.map((profile) => (
-          <div key={profile.id} className="pt-1">
-            <ProfileRow profile={profile} />
-          </div>
+          <ProfileRow key={profile.id} profile={profile} primaryId={primaryId} claudeOn={claudeOn} />
         ))}
       </div>
 
@@ -359,14 +313,12 @@ export default function AccountsPanel({ onAdd }: AccountsPanelProps) {
           (Mac readiness review 2026-07-02). "Another" only when there is one
           already. The notes are --text-muted: --color-overlay0 measured 2.1:1
           (dark) and 3.2:1 (light) on this card (VM audit 2026-09-25). */}
-      {window.electronPlatform === 'darwin' ? (
+      {claudeOn && (window.electronPlatform === 'darwin' ? (
         <p className="mt-3 text-[11px] leading-relaxed rounded-lg border border-dashed border-surface1 py-2 px-4" style={{ color: 'var(--text-muted)' }} data-testid="accounts-mac-note">
           Multiple accounts are not available on macOS yet: Claude Code stores its sign-in
           token in the macOS Keychain, which is shared across the whole app, so added
           accounts could not be kept separate. Your single account works exactly as normal.
         </p>
-      ) : !claudeOn ? (
-        <MutedLine testId="provider-off-note-claude" className="mt-3">Turn Claude Code on to add an account.</MutedLine>
       ) : (
         <button
           onClick={onAdd}
@@ -378,16 +330,18 @@ export default function AccountsPanel({ onAdd }: AccountsPanelProps) {
           </svg>
           {profiles.length === 0 ? 'Add an account' : 'Add another account'}
         </button>
-      )}
+      ))}
 
 
       {/* Informational note - no em dashes */}
-      <p className="text-[11px] leading-relaxed mt-2" style={{ color: 'var(--text-muted)' }} data-testid="accounts-claude-note">
-        The email is the account; the name is just a friendly label for you. Signing in or
-        out of an added account never touches the others or your default, and memory,
-        settings and history stay shared. You pick which account a session runs under when
-        it starts.
-      </p>
+      {claudeOn && (
+        <p className="text-[11px] leading-relaxed mt-2" style={{ color: 'var(--text-muted)' }} data-testid="accounts-claude-note">
+          The email is the account; the name is just a friendly label for you. Signing in or
+          out of an added account never touches the others or your default, and memory,
+          settings and history stay shared. You pick which account a session runs under when
+          it starts.
+        </p>
+      )}
     </Section>
   )
 }

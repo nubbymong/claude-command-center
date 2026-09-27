@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "2118cff682f2c6d95196c57bd126129bc3d93cec32751326add5fb59f1505c9d",
-  "manifestHead": "e0d4ddbc5590fb42783454bd27099cb0cf910184",
+  "manifestPathDigest": "5a90bed0908c9ba82055e6efc12e32c96ca4fa3e0770eae07d6e1134437fe395",
+  "manifestHead": "fd8e01c9e88cdbda9c84f02e9b1e17b35e38e114",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -3721,6 +3721,28 @@
       "disposition": "replace",
       "evidence": "WP1.33 mapping: adapted in place for WP2 P3 usage track MP4 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, Account usage option A, D2, D4, D5): new cases for the Claude card's identity name and chip, D2 and ages, and the Codex card; the existing cases are kept (WP1.60 enable/disable); tests/unit/renderer/account-usage-panel.test.tsx; WP2 P3 usage track MP4 review fixes: cases for the Errors-state Claude Code cards and the bars' names (WP1.60 enable/disable); tests/unit/renderer/account-usage-panel.test.tsx",
       "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/accounts-identity-lifecycle.test.tsx",
+      "predicates": [
+        "P04",
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "P3.2 Accounts (completion plan rows 7, 8, 10, 24): one account row for both providers, the identity editor with groups and links, N running, blockers that name their sessions, Archived with Restore (WP1.39, WP1.40); tests/unit/renderer/accounts-identity-lifecycle.test.tsx",
+      "note": "fixture snapshots name Codex accounts"
+    },
+    {
+      "path": "tests/unit/renderer/accounts-p32-selectors.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "P3.2 Accounts selectors: running Claude sessions per profile, the sessions a refusal names, archived accounts and Restore, link candidates, Go to (WP1.39, WP1.40); tests/unit/renderer/accounts-p32-selectors.test.ts",
+      "note": "fixture accounts name Codex"
     },
     {
       "path": "tests/unit/renderer/accounts-panel-claude-card.test.tsx",

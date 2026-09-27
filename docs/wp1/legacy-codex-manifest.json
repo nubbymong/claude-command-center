@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-27T18:54:08.062Z",
-  "head": "e0d4ddbc5590fb42783454bd27099cb0cf910184",
-  "tree": "30d43031915a1fe35c0d6bc321f8f429f7e80850",
+  "generatedAt": "2026-09-27T19:35:17.154Z",
+  "head": "fd8e01c9e88cdbda9c84f02e9b1e17b35e38e114",
+  "tree": "8ac6bfc922527e62bae4612d187cc8e744ace282",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2358,
+  "trackedFileCount": 2363,
   "excludedFileCount": 382,
-  "scannedFileCount": 1976,
+  "scannedFileCount": 1981,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 416,
-  "pathDigest": "2118cff682f2c6d95196c57bd126129bc3d93cec32751326add5fb59f1505c9d",
+  "matchedPathCount": 418,
+  "pathDigest": "5a90bed0908c9ba82055e6efc12e32c96ca4fa3e0770eae07d6e1134437fe395",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -1591,7 +1591,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 31
+      "lineCount": 32
     },
     {
       "path": "src/renderer/stores/sessionStore.ts",
@@ -2202,7 +2202,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 19
+      "lineCount": 20
     },
     {
       "path": "tests/unit/main/pty-managed-deferral-carries-launch.test.ts",
@@ -2570,12 +2570,28 @@
       "lineCount": 6
     },
     {
+      "path": "tests/unit/renderer/accounts-identity-lifecycle.test.tsx",
+      "predicates": [
+        "P04",
+        "P05",
+        "P13"
+      ],
+      "lineCount": 23
+    },
+    {
+      "path": "tests/unit/renderer/accounts-p32-selectors.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 8
+    },
+    {
       "path": "tests/unit/renderer/accounts-panel-claude-card.test.tsx",
       "predicates": [
         "P05",
         "P13"
       ],
-      "lineCount": 10
+      "lineCount": 12
     },
     {
       "path": "tests/unit/renderer/accounts-snapshot-harness.ts",

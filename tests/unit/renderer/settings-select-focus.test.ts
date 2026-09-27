@@ -68,19 +68,20 @@ describe('Settings, Accounts fields: a clearly visible keyboard focus (WP2 final
   // (sign-in flow, where claude.ai sign-in and artifacts open, the sign-in
   // browser) switched their outline off and showed only a faint border tint.
   const read = (rel: string) => fs.readFileSync(path.resolve(__dirname, '../../../src/renderer/components', rel), 'utf8')
-  const FILES = ['AccountsPanel.tsx', 'settings/AccountWebSession.tsx']
+  // P3.2: the rename field moved into the identity editor.
+  const FILES = ['AccountsPanel.tsx', 'settings/AccountWebSession.tsx', 'settings/accounts/IdentityEditor.tsx']
 
   it('no field switches its outline off, and every tinted field draws the strong focus ring', () => {
     const classes = FILES.flatMap((f) => [...fieldClassNames(read(f)), ...selectClassNames(read(f))].map((c) => [f, c] as const))
     const tinted = classes.filter(([, c]) => c.includes('focus:border-blue/50'))
-    expect(tinted.length, 'the rename field and the four web session selects').toBeGreaterThanOrEqual(5)
+    expect(tinted.length, 'the rename field, the four web session selects and the editor\'s group and link fields').toBeGreaterThanOrEqual(8)
     for (const [f, c] of classes) expect(c, `${f}: ${c}`).not.toContain('focus:outline-none')
     for (const [f, c] of tinted) expect(c, `${f}: ${c}`).toContain('focus-ring-strong')
   })
 
   it('the account rename field is one of them', () => {
-    const src = read('AccountsPanel.tsx')
-    const at = src.indexOf('placeholder="Optional friendly name"')
+    const src = read('settings/accounts/IdentityEditor.tsx')
+    const at = src.indexOf('placeholder="A name you will recognise"')
     expect(at, 'the rename field').toBeGreaterThan(-1)
     const cls = src.slice(at).match(/className="([^"]*)"/)?.[1] ?? ''
     expect(cls).toContain('focus-ring-strong')
@@ -102,7 +103,11 @@ describe('Settings and Accounts: no control trades its outline for a faint ring 
   // swatches show selection as a box-shadow, and their focus ring sits outside
   // it: .focus-ring-strong-outset).
   const read = (rel: string) => fs.readFileSync(path.resolve(__dirname, '../../../src/renderer/components', rel), 'utf8')
-  const FILES = ['SettingsPage.tsx', 'AccountsPanel.tsx', 'settings/AccountIsolationNotice.tsx', 'settings/AccountWebSession.tsx']
+  const FILES = [
+    'SettingsPage.tsx', 'AccountsPanel.tsx', 'settings/AccountIsolationNotice.tsx', 'settings/AccountWebSession.tsx',
+    // P3.2: the row every account uses, and the identity editor its chip opens.
+    'settings/accounts/AccountRow.tsx', 'settings/accounts/IdentityEditor.tsx',
+  ]
   /** The outline switched off, hidden, zero-width or transparent, under any
    *  variant (focus:, focus-visible:) or none, with the important mark before
    *  (v3, !outline-none) or after (v4, outline-none!). */
@@ -158,9 +163,13 @@ describe('Settings and Accounts: no control trades its outline for a faint ring 
 
   it('the controls that had the faint ring or none draw the strong one', () => {
     const cases: [string, string, number, string][] = [
-      // The colour swatches: the outset form, outside a selected swatch's own ring.
-      ['AccountsPanel.tsx', 'data-testid={`colour-swatch-', 1, 'focus-ring-strong-outset'],
-      ['AccountsPanel.tsx', 'data-testid={`delete-profile-', 1, 'focus-ring-strong'],
+      // The colour swatches (in the identity editor since P3.2): the outset
+      // form, outside a selected swatch's own ring.
+      ['settings/accounts/IdentityEditor.tsx', 'data-testid={`${testId}-colour-', 1, 'focus-ring-strong-outset'],
+      // The account chip that opens it: outside its open ring. Remove is a
+      // row menu item since P3.2; "Go to" names a session holding the account.
+      ['settings/accounts/AccountRow.tsx', 'onClick={onOpen}', 1, 'focus-ring-strong-outset'],
+      ['settings/accounts/AccountRow.tsx', 'onClick={() => goToSession(s.id)}', 1, 'focus-ring-strong'],
       ['AccountsPanel.tsx', 'data-testid="add-account-btn"', 1, 'focus-ring-strong'],
       ['settings/AccountIsolationNotice.tsx', 'data-testid="isolation-info-toggle"', 1, 'focus-ring-strong'],
       // The shortcut capture boxes, focused by the app when a capture starts.
