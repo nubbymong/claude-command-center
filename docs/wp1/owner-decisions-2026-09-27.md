@@ -6,6 +6,9 @@ This record supplements `owner-decisions-2026-09-20.md` and
 footer, the session strip and Tokenomics), and the one scoped exception to
 WP1.41 they need. Where the earlier records disagree, this one wins for usage.
 
+M4 records the owner's decision of the same day on Ask Conductor with both
+providers on (parity checklist row 53).
+
 The work is the multi-provider usage track of package P3, phases MP1 to MP13
 (parity checklist rows 17 to 21, 26 and 28 to 30). The architecture decision is
 ADR-022 (`architecture/decisions/2026-09-27-adr-022-codex-app-server-usage-read.md`).
@@ -95,3 +98,23 @@ Device-code sign-in stays off (`owner-decisions-2026-09-26.md`, U3).
   (MP8). A 0.155.1 rollout fixture: the test VM has no 0.155.1 session (its
   sessions are from 0.137.0 and 0.142.4), and making one needs a real signed-in
   session, so it is owed for MP8.
+
+## M4. Ask Conductor with both providers on (row 53)
+
+The question: with Claude Code and Codex both on, which assistant runs Ask
+Conductor? Until now there was one provider, so there was no Claude behaviour
+to copy, and the choice was the owner's (`owner-decisions-2026-09-26.md`, P1,
+second case). A Codex-only install was already settled: Ask runs on the one
+provider that is on.
+
+The owner approved the mockup (canvas review "Ask Conductor provider choice",
+version 1, with no notes; the mockup and its brief are local and not in the
+repo). Option B is approved as drawn, which is the recommended option.
+
+| Decision | As approved |
+| --- | --- |
+| Q1 = B (drawn) | A row in Settings, General, beside "Show Ask Conductor": "Ask Conductor runs on: Claude Code / Codex". It shows only while both providers are on, and its default is Claude Code. A Codex-only install uses Codex without asking. While both are on, the Ask Conductor dock row wears the provider's type badge. Turning a provider off never rewrites the saved choice. |
+
+With both providers on, Sentinel's analysis runs on the provider this setting
+names (completion plan, P3.9). The setting and Ask Conductor on Codex are built
+in PR 4 (row 53).

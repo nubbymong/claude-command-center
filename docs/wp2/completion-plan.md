@@ -62,8 +62,9 @@ still owes recorded in 4. "2; 3" means partly built in 2, the rest in 3.
 ## 2. Summary
 
 - 75 rows: **25 DONE, 27 PARTIAL, 23 OPEN**.
-- The 50 rows not DONE, by gap: **implementation 41, verification 6, owner 3**
-  (rows 15, 53 and 58).
+- The 50 rows not DONE, by gap: **implementation 42, verification 6, owner 2**
+  (rows 15 and 58). Row 53 moved from owner to implementation when the owner
+  decided it (`docs/wp1/owner-decisions-2026-09-27.md`, M4).
 - By PR: **35 in PR 3, 15 in PR 4**. No row changes package. The Ask Conductor
   part of row 14 goes with row 53 into PR 4, because it is the same change.
 - 20 DONE rows still owe real-CLI, per-OS or packaged verification, recorded
@@ -76,8 +77,9 @@ still owes recorded in 4. "2; 3" means partly built in 2, the rest in 3.
   three models; the agreed source is the live one Claude uses). The checklist
   moves both in the same change as this plan, and moves rows 52, 68 and 69
   from OWNER to MISSING, since parity settles them (section 10).
-- Genuinely unresolved UX decisions: **one** (row 53, both providers on).
-  Section 10.
+- Genuinely unresolved UX decisions: **none**. The one there was (row 53,
+  both providers on) was decided by the owner on 2026-09-27 (option B; OD27
+  M4). Section 10.
 - Nothing in PR 3 waits on the owner. PR 3 can start.
 
 ## 3. Where the draft plan disagreed with the record
@@ -168,7 +170,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 50 | `claude_review` | DONE | PLAN commit 5b, owner decisions 1 to 3 (2026-09-24) | verification: a live wait past 300 s | 2, v4 |
 | 51 | Agent Canvas from Codex | OPEN: withheld (`src/main/conductor-mcp-server.ts:1106`) because a Codex session had no bound id; `/mcp` binds one since commit 5b | Parity: the tools, roots, instruction delivery and the live loop | implementation | 4 |
 | 52 | Browser and vision tools | OPEN: withheld (`conductor-mcp-server.ts:911-913`, `:1042`, a "Claude-only for now" call of 2026-07-02) | Parity; the later owner decisions (the 2.1.1 gate, OD26 P1) end a call worded "for now" (section 10) | implementation | 4 |
-| 53 | Ask Conductor on Codex | OPEN: pinned to Claude (`src/renderer/lib/askConductor.ts:255`) and blocked with Claude Code off (`askConductorGate.ts`) | Codex only: design section 2 and parity (Ask runs on the provider that is on). Both on: open (section 10) | owner (the both-on choice); implementation | 4 |
+| 53 | Ask Conductor on Codex | OPEN: pinned to Claude (`src/renderer/lib/askConductor.ts:255`) and blocked with Claude Code off (`askConductorGate.ts`) | Codex only: design section 2 and parity (Ask runs on the provider that is on). Both on: OD27 M4 (option B, canvas "Ask Conductor provider choice" v1): a Settings, General row "Ask Conductor runs on", shown only while both are on, Claude Code by default | implementation | 4 |
 | 54 | App knowledge, tour, tips | PARTIAL: the P2 fixes are done | The AGENTS.md surface sweep; recorded 2026-09-26: the Codex "Beta" labels come off in the release where parity lands | implementation (the final sweep) | 2; 4 |
 | 55 | Memory | OPEN: a banner only (`MemoryPage.tsx:204-206`) | Parity: each realm's Codex memories on the Memory page | implementation | 4 |
 | 56 | Codex logs | OPEN | Parity: each realm's `log` folder offered where the app offers its own log folder (Settings, Debug Logging) | implementation | 4 |
@@ -447,7 +449,8 @@ raises a finding; flags and the rollout format are checked; the analysis
 whichever provider is on. With both on it follows question 1 (the provider
 that runs Ask Conductor); until the owner answers, Claude Code, as today.
 Likely files: `src/main/sentinel/*`, the Sentinel page and dot,
-`providers/codex/discovery.ts`. ADR-009: yes (a new CLI run).
+`providers/codex/discovery.ts`. ADR-009: yes (a new CLI run). With both providers on, the analysis runs on the provider the
+"Ask Conductor runs on" setting names (OD27 M4); with one on, on that one.
 
 **P3.10 Activity, attention, Watchdog and hooks.** Codex `notify` and hook
 events feed the attention dot, waiting-for-input, the busy sweep and the sleep
@@ -543,12 +546,16 @@ Two notes that bind the build:
 | Row | Check made | Conclusion |
 |---|---|---|
 | 52 Browser and vision tools | `conductor-mcp-server.ts:911-913` withholds vision from Codex on a call of 2026-07-02 worded "Claude-only for now"; `:1042` withholds `open_in_app_browser` to match. A Claude session gets both. The later owner decisions (the 2.1.1 gate of zero unsupported shared features; OD26 P1) end a "for now". No record asks to keep them Claude only | **Settled by parity.** A one-line notice to the owner, not a question: Codex sessions get the vision and in-app browser tools in PR 4. |
-| 53 Ask Conductor | Ask is a real Claude session (`askConductor.ts:255` pins the provider; `help-workspace.ts` stages a `CLAUDE.md`), blocked with Claude Code off (`askConductorGate.ts`). Design section 2: the app works fully in Codex-only mode | **Codex only: settled** (Ask runs on the one provider that is on). **Both on: genuinely open.** Today there is one provider, so there is no Claude behaviour to copy (OD26 P1, second case). |
+| 53 Ask Conductor | Ask is a real Claude session (`askConductor.ts:255` pins the provider; `help-workspace.ts` stages a `CLAUDE.md`), blocked with Claude Code off (`askConductorGate.ts`). Design section 2: the app works fully in Codex-only mode | **Codex only: settled** (Ask runs on the one provider that is on). **Both on: decided by the owner** on 2026-09-27 (OD27 M4, option B), below. There was no Claude behaviour to copy (OD26 P1, second case). |
 | 58 Web sign-in and artifacts | `src/main/account-web/artifacts.ts` opens claude.ai artifacts as an account; `account-pane.ts` gives the browser pane an account surface on claude.ai; the checklist's limits: nothing assumes a CLI sign-in gives ChatGPT browser cookies or an artifacts equivalent | **Web session: settled by parity** (chatgpt.com in the pane's account surface, signed in per Codex account). **Artifacts: not a UX choice.** No Codex equivalent is known (the checklist assumes none), so this is a section 19 record for the owner to sign, with the command lists of 0.153.4 and 0.155.1 as its evidence (P3.1). Should P3.1 find an equivalent, parity settles it instead. |
 | 68 Insights | `insights-runner.ts:234-237` types Claude Code's own `/insights` into a terminal and reads the report it writes; `InsightsPage.tsx:277-296` tells a Codex-only user that Insights come from Claude sessions. The parity reset of 2026-09-26 resolved it in its "Resolved by parity" list (sessions batch): a Conductor-native Codex report, run with `codex exec`; it was not one of that day's open questions | **Settled by parity (2026-09-26).** A one-line notice to the owner, not a question: Insights gets a Codex report the app makes with `codex exec`, shown in the page's existing layout, figures and run history, on the account's own Codex allowance as Claude's report uses Claude's. A mockup goes on the Agent Canvas before the build (P4.7), made from `src/renderer/components/InsightsPage.tsx`, `src/main/insights-runner.ts` and `src/main/insights-cross-account.ts` (ADR-013). |
 | 69 Plan mode | Claude's launch options include "Plan mode" (`claude-cli-options.ts:85`), a launch option only; the Codex form offers permission presets only (`CodexFormFields.tsx:162-170`); the capability leads say Codex documents a plan command | **Decidable by parity.** Codex gets Plan mode as a launch option, as Claude has it (P3.8), once P3.1 confirms the command on the supported versions. If it is absent, that is a section 19 record, not a UX question. |
 
-### Question 1 (row 53): which assistant runs Ask Conductor when both are on?
+No unresolved UX decisions remain. Question 1 below was decided by the owner
+on 2026-09-27: option B, approved as drawn (`docs/wp1/owner-decisions-2026-09-27.md`,
+M4; canvas "Ask Conductor provider choice" v1, no notes).
+
+### Question 1 (row 53), resolved: B. Which assistant runs Ask Conductor when both are on?
 
 With Claude Code and Codex both on, should Ask Conductor run on Claude Code,
 on Codex, or on the user's choice?
@@ -567,6 +574,10 @@ prompt stands between a user and their question. A is the fallback if the
 owner wants no new control. (The proposal noted on 2026-09-26 was C; this plan
 recommends B for the reasons above.) The answer also decides which provider
 runs Sentinel's analysis when both are on (P3.9).
+
+**Decided: B** (owner, 2026-09-27; OD27 M4). The row shows only while both
+providers are on; while both are on the dock row wears the provider's type
+badge; turning a provider off never rewrites the saved choice. Built in PR 4.
 
 Mockup: needed for B or C (a new control); none for A. Mock from the current
 code: `src/renderer/components/SettingsPage.tsx:254-272` (the Show tips and
