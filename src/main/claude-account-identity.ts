@@ -36,6 +36,15 @@ export function getDefaultAccountEmail(): string | null {
 /** Capture once at spawn. profileId undefined => single-account/default.
  *  Reads the account's shared PROFILE home (Bug 2: sessions of an account share it). */
 export function captureClaudeAccount(sessionId: string, profileId: string | undefined): void {
+  // A capture under another profile than the one recorded (the default account
+  // counting as one) is a new spawn of this session on that profile -- Switch
+  // account restarts the same session id -- so the session now runs there: its
+  // profile and account are read afresh, and every reader (live usage,
+  // Tokenomics' local check, sessionsOnProfile) follows it.
+  if ((bySession.has(sessionId) || profileBySession.has(sessionId)) && profileBySession.get(sessionId) !== profileId) {
+    bySession.delete(sessionId)
+    profileBySession.delete(sessionId)
+  }
   // Record the profileId first (before the email guard) so it is captured even on a
   // retry tick where the email read failed the first time. First-write-wins.
   if (profileId && !profileBySession.has(sessionId)) profileBySession.set(sessionId, profileId)

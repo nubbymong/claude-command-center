@@ -12,6 +12,7 @@ import { _setRootsForTest, getProfileConfigDir } from '../../../src/main/account
 import {
   captureClaudeAccount,
   getClaudeAccount,
+  getClaudeProfileId,
   recheckSessionIdentity,
   startWatchingAccountIdentity,
   stopWatchingAccountIdentity,
@@ -200,5 +201,43 @@ describe('a profile in use agrees with the sessions it names (P3.2 ADR-009 confi
     const release = acquireProfileConsumer('prof-c', { maxAgeMs: Infinity })
     expect(isProfileInUseByLiveSession('prof-c')).toBe(true)
     release()
+  })
+})
+
+describe('a session captured again under another profile (P3.2 ADR-009 confirmation: Switch account keeps the session id)', () => {
+  let sandbox: string
+  beforeEach(() => {
+    sandbox = mkdtempSync(join(tmpdir(), 'claude-acct-switch-'))
+    _setRootsForTest({ resourcesDir: sandbox, sharedRoot: join(sandbox, '.claude') })
+    _resetClaudeAccounts()
+  })
+  afterEach(() => {
+    _setRootsForTest(null)
+    _resetClaudeAccounts()
+    rmSync(sandbox, { recursive: true, force: true })
+  })
+
+  it('runs on the new profile, with the new account, for every reader', () => {
+    writeProfileEmail('p-old', 'old@x.com', 1_000_000)
+    writeProfileEmail('p-new', 'new@x.com', 1_000_000)
+    captureClaudeAccount('s', 'p-old')
+    expect([getClaudeProfileId('s'), getClaudeAccount('s')]).toEqual(['p-old', 'old@x.com'])
+    // Restarted under another profile, with no clear between.
+    captureClaudeAccount('s', 'p-new')
+    expect([getClaudeProfileId('s'), getClaudeAccount('s')]).toEqual(['p-new', 'new@x.com'])
+    expect(sessionsOnProfile('p-old')).toEqual([])
+    expect(isProfileInUseByLiveSession('p-old')).toBe(false)
+    // Restarted on the default account: no profile of its own any more.
+    captureClaudeAccount('s', undefined)
+    expect(getClaudeProfileId('s')).toBeUndefined()
+    expect(isProfileInUseByLiveSession('p-new')).toBe(false)
+  })
+
+  it('a second capture under the same profile keeps the first reading (a retry, not a switch)', () => {
+    writeProfileEmail('p-old', 'first@x.com', 1_000_000)
+    captureClaudeAccount('s', 'p-old')
+    writeProfileEmail('p-old', 'later@x.com', 2_000_000)
+    captureClaudeAccount('s', 'p-old')
+    expect([getClaudeProfileId('s'), getClaudeAccount('s')]).toEqual(['p-old', 'first@x.com'])
   })
 })
