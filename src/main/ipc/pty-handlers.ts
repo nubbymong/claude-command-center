@@ -749,6 +749,7 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
           kind: 'session',
           providerId: 'codex',
           ownerId: `${sessionId}:${++codexLaunchSeq}`,
+          sessionId,
           ...(options?.providerAccountId !== undefined ? { providerAccountId: options.providerAccountId } : {}),
           ...(options?.acknowledgeRealmOnly === true ? { acknowledgeRealmOnly: true } : {}),
           remote: !!options?.ssh,

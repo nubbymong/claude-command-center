@@ -1015,3 +1015,103 @@ describe('a status check that rejects frees its single-flight entry (WP1.10; WP2
     expect(statusRuns() - before).toBe(1)
   })
 })
+
+describe('Archived (N) with Restore, and a refusal that names its sessions (P3.2; design 5.3)', () => {
+  const archive = async (h: Awaited<ReturnType<typeof harness>>, id: string) => {
+    expect((await h.service.setLifecycle({ accountId: id, lifecycle: 'inactive' })).ok).toBe(true)
+    expect(await h.service.setLifecycle({ accountId: id, lifecycle: 'archived' })).toEqual({ ok: true })
+  }
+
+  it('a managed archived account comes back inactive without running anything; making it active checks its sign-in', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    const b = await addCodexAccount(h, 'B')
+    await h.service.setDefault({ accountId: b })
+    await archive(h, a)
+    const realmId = h.doc().accounts.find((x) => x.id === a)!.authRealmId
+    const before = h.runs.length
+    expect(await h.service.setLifecycle({ accountId: a, lifecycle: 'inactive' })).toEqual({ ok: true })
+    expect(h.runs.length).toBe(before)
+    expect(h.doc().accounts.find((x) => x.id === a)).toMatchObject({ lifecycle: 'inactive', lastKnownAuthState: 'unknown', operationalState: 'attention', isProviderDefault: false })
+    expect(findRealm(h.doc(), realmId)).toMatchObject({ lifecycle: 'active' })
+    expect(h.service.snapshot().accounts.find((x) => x.id === a)).toMatchObject({ lifecycle: 'inactive', realmLifecycle: 'active' })
+    // The archive signed it out: making it active checks, and it needs attention.
+    expect((await h.service.setLifecycle({ accountId: a, lifecycle: 'active' })).ok).toBe(true)
+    expect(h.args().slice(before)).toEqual(['login status'])
+    expect(h.doc().accounts.find((x) => x.id === a)).toMatchObject({ lifecycle: 'active', lastKnownAuthState: 'signed-out', operationalState: 'attention' })
+  })
+
+  it('an archived account cannot jump straight back to active', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    const b = await addCodexAccount(h, 'B')
+    await h.service.setDefault({ accountId: b })
+    await archive(h, a)
+    const before = h.runs.length
+    expect(await h.service.setLifecycle({ accountId: a, lifecycle: 'active' })).toMatchObject({ ok: false, code: 'lifecycle' })
+    expect(h.runs.length).toBe(before)
+    expect(h.doc().accounts.find((x) => x.id === a)).toMatchObject({ lifecycle: 'archived' })
+  })
+
+  it('is refused while the provider is off: its accounts are listed, never managed', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    const b = await addCodexAccount(h, 'B')
+    await h.service.setDefault({ accountId: b })
+    await archive(h, a)
+    expect(await h.service.setProviderEnabled('codex', false)).toEqual({ ok: true })
+    expect(await h.service.setLifecycle({ accountId: a, lifecycle: 'inactive' })).toMatchObject({ ok: false, code: 'provider-disabled' })
+    expect(h.doc().accounts.find((x) => x.id === a)).toMatchObject({ lifecycle: 'archived' })
+  })
+
+  it('an archived external home whose home was adopted again is not restored over the newer account', async () => {
+    const h = await harness()
+    const m = await addCodexAccount(h, 'M')
+    const e1 = await withExternal(h)
+    await h.service.setDefault({ accountId: m })
+    await h.service.setLifecycle({ accountId: e1, lifecycle: 'inactive' })
+    expect(await h.service.setLifecycle({ accountId: e1, lifecycle: 'archived', acknowledgeExternal: true })).toEqual({ ok: true })
+    const again = await h.service.adoptExternalDefault({ providerId: 'codex' })
+    if (!again.ok) throw new Error(again.code)
+    expect(await h.service.setLifecycle({ accountId: e1, lifecycle: 'inactive' })).toMatchObject({ ok: false, code: 'realm-conflict' })
+    // Once the newer one is archived too, the older one can come back.
+    await h.service.setLifecycle({ accountId: again.accountId, lifecycle: 'inactive' })
+    expect(await h.service.setLifecycle({ accountId: again.accountId, lifecycle: 'archived', acknowledgeExternal: true })).toEqual({ ok: true })
+    expect(await h.service.setLifecycle({ accountId: e1, lifecycle: 'inactive' })).toEqual({ ok: true })
+    expect(h.doc().accounts.find((x) => x.id === e1)).toMatchObject({ lifecycle: 'inactive', identityAssurance: 'realm-only' })
+  })
+
+  it('a Claude record comes back where it was removed, never through Restore', async () => {
+    const h = await harness({ claude: [claudeSnapshot('profile-a1', { isDefault: true }), claudeSnapshot('profile-b2')] })
+    const b = h.doc().accounts.find((a) => a.providerId === 'claude' && !a.isProviderDefault)!
+    const r = await h.store.reconcileLegacy({ providerId: 'claude', read: () => [claudeSnapshot('profile-a1', { isDefault: true })], apply: () => {} })
+    expect(r.ok).toBe(true)
+    expect(h.doc().accounts.find((a) => a.id === b.id)).toMatchObject({ lifecycle: 'archived' })
+    expect(await h.service.setLifecycle({ accountId: b.id, lifecycle: 'inactive' })).toMatchObject({ ok: false, code: 'legacy-owned' })
+  })
+
+  it('a refusal for consumers names the app sessions whose sessions or reviews hold the account', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    await addCodexAccount(h, 'B')
+    await h.service.setDefault({ accountId: h.doc().accounts[1].id })
+    for (const [owner, sessionId] of [['tab-1:1', 'tab-1'], ['tab-2:1', 'tab-2']]) {
+      expect((await h.service.acquireLaunchLease({ kind: 'session', providerId: 'codex', providerAccountId: a, ownerId: owner, sessionId })).ok).toBe(true)
+    }
+    expect((await h.service.acquireLaunchLease({ kind: 'review', providerId: 'codex', providerAccountId: a, ownerId: 'review:tab-1:1', sessionId: 'tab-1' })).ok).toBe(true)
+    const prepared = await h.service.prepareLaunch({ kind: 'session', providerId: 'codex', providerAccountId: a, ownerId: 'tab-3:1', sessionId: 'tab-3' })
+    expect(prepared.ok).toBe(true)
+    const r = await h.service.setLifecycle({ accountId: a, lifecycle: 'inactive' })
+    expect(r).toMatchObject({ ok: false, code: 'consumers', consumers: 4 })
+    expect(r.ok === false && r.sessions ? [...r.sessions].sort() : null).toEqual(['tab-1', 'tab-2', 'tab-3'])
+    // Nothing holding it by session: the count alone, and no list.
+    h.service.releaseLaunch('session', 'tab-1:1')
+    h.service.releaseLaunch('session', 'tab-2:1')
+    h.service.releaseLaunch('review', 'review:tab-1:1')
+    h.service.releaseLaunch('session', 'tab-3:1')
+    expect((await h.service.acquireLaunchLease({ kind: 'session', providerId: 'codex', providerAccountId: a, ownerId: 'bare' })).ok).toBe(true)
+    const bare = await h.service.setLifecycle({ accountId: a, lifecycle: 'inactive' })
+    expect(bare).toMatchObject({ ok: false, code: 'consumers', consumers: 1 })
+    expect(bare.ok === false && 'sessions' in bare).toBe(false)
+  })
+})

@@ -378,7 +378,7 @@ async function runReview(
       }
       diff = d.diff
     }
-    const prepared = await accounts.prepareLaunch({ kind: 'review', providerId: spec.providerId, ownerId: `review:${cccSessionId}:${++reviewSeq}`, remote: false })
+    const prepared = await accounts.prepareLaunch({ kind: 'review', providerId: spec.providerId, ownerId: `review:${cccSessionId}:${++reviewSeq}`, sessionId: cccSessionId, remote: false })
     if (!prepared.ok) return { isError: true, text: spec.refusal(prepared.code, prepared.message) }
     if (stop.signal.aborted) { prepared.lease.release(); return { isError: true, text: `${name} review was cancelled.` } }
     // A stopped run whose kill was still under way when it settled (a slow

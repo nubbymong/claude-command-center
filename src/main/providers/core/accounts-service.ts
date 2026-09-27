@@ -30,7 +30,7 @@
 //   nothing: its record may name a home a live account now uses.
 import {
   beginAccountSetup, abandonAccountSetup, commitAccountSetup, markSetupCredentialsWritten, createIdentity, updateIdentity,
-  createGroup, renameGroup, deleteGroup, linkAccountIdentity, unlinkAccountIdentity, setAccountLifecycle, setProviderDefault,
+  createGroup, renameGroup, deleteGroup, linkAccountIdentity, unlinkAccountIdentity, setAccountLifecycle, restoreArchivedAccount, setProviderDefault,
   recordAuthCheck, recordAccountPlan, reconcileAccountSignIn, resolveIdentityConflict, setReviewerDefault, chooseReviewerAccount, chooseSessionAccount,
   recordProviderMigration, resolveLaunchBinding, findAccount, findRealm, findIdentity, isLegacyLinked,
   resolveCapability, makeOpaqueId, providerRealmKind, isIdentityColourKey,
@@ -214,7 +214,7 @@ const FAIL_MESSAGES: Partial<Record<AccountsFailureCode, string>> = {
 /** A package's platform review rule for one realm (see reviewRefusalOf). */
 type PlatformReviewRule = { kind: 'allowed' } | { kind: 'refused'; message: string } | { kind: 'unknown' }
 
-function failure(code: AccountsFailureCode, message?: string, extra: { consumers?: number; state?: KnownAuthState } = {}): AccountsFailure {
+function failure(code: AccountsFailureCode, message?: string, extra: { consumers?: number; sessions?: string[]; state?: KnownAuthState } = {}): AccountsFailure {
   return { ok: false, code, message: message ?? FAIL_MESSAGES[code] ?? 'That did not work.', ...extra }
 }
 
@@ -639,11 +639,11 @@ export class AccountsService {
     return { store, doc }
   }
 
-  private fromStore(r: StoreResult, consumers?: number): AccountsFailure | null {
+  private fromStore(r: StoreResult, consumers?: number, sessions?: string[]): AccountsFailure | null {
     if (r.ok) return null
     if (r.code === 'recovery') return failure('registry-unavailable')
     if (r.code === 'persist-failed') return failure('persist-failed', 'The change could not be saved.')
-    if (r.code === 'blocked-by-consumers') return failure('consumers', undefined, { consumers: consumers ?? 1 })
+    if (r.code === 'blocked-by-consumers') return failure('consumers', undefined, { consumers: consumers ?? 1, ...(sessions?.length ? { sessions } : {}) })
     return failure(r.code, r.message)
   }
 
@@ -1424,18 +1424,31 @@ export class AccountsService {
     if ('ok' in ctx) return ctx
     const a = findAccount(ctx.doc, input.accountId)!
     const next = input.lifecycle
+    if (a.lifecycle === 'archived' && next === 'inactive') {
+      // Restore (design 5.3): back to inactive, its realm live again, and
+      // nothing about its sign-in trusted until making it active checks it.
+      // Only while the provider is on: an account of a provider that is off
+      // is listed, never managed.
+      const notNow = this.cliRefusal(a.providerId)
+      if (notNow) return notNow
+      const r = await ctx.store.mutate((d, t) => restoreArchivedAccount(d, a.id, t))
+      return this.fromStore(r) ?? { ok: true }
+    }
     const apply = async (): Promise<AccountsResult> => {
       let consumers = 0
+      let sessions: string[] = []
       let held = false
       const r = await ctx.store.mutate((d, t) => {
         // Under the lock that applies it: a sign-out, archive or abandon
         // holding the account is never overtaken by a lifecycle change.
         if (this.deps.leases.isHeld(a.id)) { held = true; return { ok: false, code: 'blocked-by-consumers', message: 'held' } }
         consumers = this.deps.leases.count(a.id)
+        // Which sessions hold it, read with the count: the refusal names them.
+        sessions = this.deps.leases.sessionsHolding(a.id)
         return setAccountLifecycle(d, a.id, next, { consumers }, t)
       })
       if (held) return failure('busy')
-      const bad = this.fromStore(r, consumers)
+      const bad = this.fromStore(r, consumers, sessions)
       if (bad) return bad
       // A mirrored account's lifecycle is the provider's own list's too:
       // write it there now, not at the next start.
@@ -1880,6 +1893,8 @@ export class AccountsService {
     providerAccountId?: string
     /** The session id or review id: one lease per owner. */
     ownerId: string
+    /** The app session the launch runs for (a review: the session that asked). */
+    sessionId?: string
     acknowledgeRealmOnly?: boolean
   }): Promise<LaunchLeaseResult> {
     if (!LAUNCH_LEASE_KINDS.includes(input.kind)) return failure('invalid-request')
@@ -1912,7 +1927,9 @@ export class AccountsService {
       if (this.unrecordedSignIns.has(b.binding.providerAccountId)) {
         return failure('sign-in-changed', 'This account signed in again, but the app could not record it. Check it in Accounts before using it.')
       }
-      const added = this.deps.leases.add(b.binding.providerAccountId, input.providerId, { kind: input.kind, ownerId: input.ownerId })
+      const added = this.deps.leases.add(b.binding.providerAccountId, input.providerId, {
+        kind: input.kind, ownerId: input.ownerId, ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
+      })
       if (!added.ok) return added.code === 'held' ? failure('busy') : failure('invalid-request', 'That launch is already bound to another account.')
       return { ok: true, lease: added.lease, binding: b.binding, realmOnly: b.realmOnly, ...(reviewer ? { reviewer } : {}) }
     })
@@ -2476,6 +2493,8 @@ export class AccountsService {
     providerId: ProviderId
     providerAccountId?: string
     ownerId: string
+    /** The app session the launch runs for (a review: the session that asked). */
+    sessionId?: string
     acknowledgeRealmOnly?: boolean
     /** The launch would run on another machine (an SSH session). */
     remote?: boolean
@@ -2526,6 +2545,7 @@ export class AccountsService {
     await this.ensureDiscovered(p)
     const leased = await this.acquireLaunchLease({
       kind: input.kind, providerId: p.id, providerAccountId: chosen.accountId, ownerId: input.ownerId,
+      ...(typeof input.sessionId === 'string' ? { sessionId: input.sessionId } : {}),
       ...(acknowledged ? { acknowledgeRealmOnly: true } : {}),
     })
     if (!leased.ok) return leased
