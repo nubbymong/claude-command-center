@@ -8,13 +8,16 @@
  * Exports:
  *   parseCodexRollout       -- parse raw JSONL text into typed events
  *   mapTokenCountToStatusline -- convert a TokenCountEvent to StatuslineData
+ *   withAllowance           -- put the validated allowance on an update (MP2)
  *   watchAndClaimRollout    -- 250ms-poll claim + 500ms-poll tail pipeline
  */
 
 import { readFileSync, readdirSync, existsSync } from 'fs'
 import { join } from 'path'
 import { computeCodexCostUsd } from './pricing'
+import { normaliseCodexRateLimits, mergeAllowanceReadings, readingToBuckets, CODEX_DEFAULT_LIMIT_ID } from './rate-limits'
 import type { StatuslineData } from '../../../shared/types'
+import type { AllowanceReading } from '../../../shared/usage-types'
 import type { TelemetrySource } from '../types'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -43,11 +46,30 @@ export interface RolloutMeta {
  *   { type: "event_msg", payload: {
  *       type: "token_count",
  *       info: { total_token_usage: {...}, last_token_usage: {...}, model_context_window: N } | null,
- *       rate_limits: { primary?: {...}, secondary?: {...}, ... }
+ *       rate_limits: { limit_id, limit_name, primary?: {...}, secondary?: {...}, plan_type, ... }
  *   }}
  *
- * Events where info is null (pre-response placeholders) are skipped by parseCodexRollout.
+ * Events where info is null (pre-response placeholders) are skipped here, but
+ * their rate_limits still count: parseCodexRollout reads the allowance from
+ * every token_count (usage track MP2).
  */
+export interface CodexRolloutWindow {
+  used_percent: number
+  window_minutes?: number | null
+  resets_at?: number | null
+}
+
+/** A token_count's rate_limits as the CLI writes it. `plan_type` sits on the
+ *  snapshot, beside the windows, never inside `primary`. Untrusted: read it
+ *  through normaliseCodexRateLimits. */
+export interface CodexRolloutRateLimits {
+  limit_id?: string | null
+  limit_name?: string | null
+  primary?: CodexRolloutWindow | null
+  secondary?: CodexRolloutWindow | null
+  plan_type?: string | null
+}
+
 export interface TokenCountEvent {
   total_token_usage: {
     input_tokens: number
@@ -63,10 +85,7 @@ export interface TokenCountEvent {
     reasoning_output_tokens?: number
     total_tokens?: number
   }
-  rate_limits?: {
-    primary?: { used_percent: number; window_minutes: number; resets_at: number; plan_type?: string }
-    secondary?: { used_percent: number; window_minutes: number; resets_at: number }
-  }
+  rate_limits?: CodexRolloutRateLimits | null
 }
 
 // ── Parser ───────────────────────────────────────────────────────────────────
@@ -78,6 +97,10 @@ export interface TokenCountEvent {
  *   meta          -- session_meta fields (id, cwd, model, cli_version, timestamp)
  *   tokenCounts   -- all token_count events that have real usage data (info != null)
  *   contextWindow -- model_context_window from the task_started event, or null
+ *   allowance     -- the account's allowances from EVERY token_count that carries
+ *                    rate_limits (the pre-response info-null one included): the
+ *                    newest reading of each limit, stamped with the time of the
+ *                    newest event that had one; null when none did
  *
  * Throws if no session_meta line is found.
  */
@@ -85,11 +108,13 @@ export function parseCodexRollout(text: string): {
   meta: RolloutMeta
   tokenCounts: TokenCountEvent[]
   contextWindow: number | null
+  allowance: AllowanceReading | null
 } {
   const lines = text.split('\n').filter(Boolean)
   let meta: RolloutMeta | null = null
   const tokenCounts: TokenCountEvent[] = []
   let contextWindow: number | null = null
+  const readings: (AllowanceReading | null)[] = []
 
   for (const line of lines) {
     let evt: Record<string, unknown>
@@ -136,7 +161,12 @@ export function parseCodexRollout(text: string): {
     }
 
     if (payload.type === 'token_count') {
-      // info is null for pre-response token_count events -- skip those
+      // The allowance first: a pre-response event (info null) already carries it.
+      if (payload.rate_limits != null) {
+        const at = Date.parse(String(evt.timestamp ?? ''))
+        readings.push(normaliseCodexRateLimits(payload.rate_limits, 'rollout', Number.isFinite(at) ? at : null))
+      }
+      // info is null for pre-response token_count events -- no usage in those
       const info = payload.info as Record<string, unknown> | null
       if (!info) continue
 
@@ -170,7 +200,7 @@ export function parseCodexRollout(text: string): {
   }
 
   if (!meta) throw new Error('rollout missing session_meta')
-  return { meta, tokenCounts, contextWindow }
+  return { meta, tokenCounts, contextWindow, allowance: mergeAllowanceReadings(readings) }
 }
 
 // ── Mapper ───────────────────────────────────────────────────────────────────
@@ -228,21 +258,58 @@ export function mapTokenCountToStatusline(
 
   if (tc.rate_limits?.primary) {
     sl.rateLimitCurrent = Math.round(tc.rate_limits.primary.used_percent)
-    const ra = tc.rate_limits.primary.resets_at
-    if (Number.isFinite(ra)) {
-      sl.rateLimitCurrentResets = new Date(ra * 1000).toISOString()
-    }
+    const iso = isoFromEpochSeconds(tc.rate_limits.primary.resets_at)
+    if (iso) sl.rateLimitCurrentResets = iso
   }
 
   if (tc.rate_limits?.secondary) {
     sl.rateLimitWeekly = Math.round(tc.rate_limits.secondary.used_percent)
-    const ra = tc.rate_limits.secondary.resets_at
-    if (Number.isFinite(ra)) {
-      sl.rateLimitWeeklyResets = new Date(ra * 1000).toISOString()
-    }
+    const iso = isoFromEpochSeconds(tc.rate_limits.secondary.resets_at)
+    if (iso) sl.rateLimitWeeklyResets = iso
   }
 
   return sl
+}
+
+/** ISO time for epoch seconds, or undefined for anything that is not a finite
+ *  number inside the Date range: `toISOString` throws on an invalid Date, and a
+ *  throw here used to drop the whole status update. */
+function isoFromEpochSeconds(s: unknown): string | undefined {
+  if (typeof s !== 'number' || !Number.isFinite(s)) return undefined
+  const d = new Date(s * 1000)
+  return Number.isNaN(d.getTime()) ? undefined : d.toISOString()
+}
+
+/**
+ * Put a session's allowance on a status line update (usage track MP2), from
+ * the validated reading only: `usageBuckets` (one per window, labelled from
+ * its length), `rateLimitsAt` (the time of the event that carried it), and the
+ * legacy `rateLimitCurrent` / `rateLimitWeekly` pair from the default limit,
+ * replacing whatever the raw event said. With no reading none of them is set.
+ * Exported for tests.
+ */
+export function withAllowance(sl: StatuslineData, reading: AllowanceReading | null): StatuslineData {
+  const out: StatuslineData = { ...sl }
+  delete out.rateLimitCurrent
+  delete out.rateLimitCurrentResets
+  delete out.rateLimitWeekly
+  delete out.rateLimitWeeklyResets
+  delete out.usageBuckets
+  delete out.rateLimitsAt
+  if (!reading) return out
+  const buckets = readingToBuckets(reading)
+  if (buckets.length > 0) out.usageBuckets = buckets
+  if (reading.readingAt !== null) out.rateLimitsAt = reading.readingAt
+  const main = reading.limits.find((l) => l.limitId === CODEX_DEFAULT_LIMIT_ID)
+  if (main?.primary) {
+    out.rateLimitCurrent = Math.round(main.primary.usedPercent)
+    if (main.primary.resetsAt !== null) out.rateLimitCurrentResets = new Date(main.primary.resetsAt).toISOString()
+  }
+  if (main?.secondary) {
+    out.rateLimitWeekly = Math.round(main.secondary.usedPercent)
+    if (main.secondary.resetsAt !== null) out.rateLimitWeeklyResets = new Date(main.secondary.resetsAt).toISOString()
+  }
+  return out
 }
 
 // ── Watch-and-claim pipeline ─────────────────────────────────────────────────
@@ -385,14 +452,17 @@ export function watchAndClaimRollout(
       lastSize = text.length
 
       try {
-        const { meta: parsedMeta, tokenCounts, contextWindow: cw } = parseCodexRollout(text)
+        const { meta: parsedMeta, tokenCounts, contextWindow: cw, allowance } = parseCodexRollout(text)
         // Refresh meta on each parse so turn_context model updates are captured.
         // session_meta.payload has no model field; turn_context carries the resolved model name.
         meta = parsedMeta
         if (cw != null && contextWindow == null) contextWindow = cw
         if (tokenCounts.length > 0 && meta) {
           const latest = tokenCounts[tokenCounts.length - 1]
-          onUpdate(mapTokenCountToStatusline(latest, meta, sessionId, contextWindow))
+          onUpdate(withAllowance(mapTokenCountToStatusline(latest, meta, sessionId, contextWindow), allowance))
+        } else if (allowance) {
+          // Only the pre-response event so far: its allowance is already real.
+          onUpdate(withAllowance({ sessionId }, allowance))
         }
       } catch {
         // Partial read or missing session_meta -- will retry on next change
@@ -440,6 +510,8 @@ export function watchAndClaimRollout(
         clearInterval(intervalHandle)
         intervalHandle = null
       }
+      // Nothing will report this session's allowance (D3: "no reading").
+      try { onUpdate({ sessionId, usageUnavailable: 'no-reading' }) } catch { /* the sink must not break the watcher */ }
     }
   }, 30_000)
 

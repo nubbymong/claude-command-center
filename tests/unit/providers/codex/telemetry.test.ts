@@ -6,6 +6,7 @@ import { mkdirSync } from 'fs'
 
 import { parseCodexRollout, mapTokenCountToStatusline, contextTokensInWindow, watchAndClaimRollout } from '../../../../src/main/providers/codex/telemetry'
 import type { TokenCountEvent } from '../../../../src/main/providers/codex/telemetry'
+import { CODEX_DEFAULT_LIMIT_ID as DEFAULT_ID } from '../../../../src/main/providers/codex/rate-limits'
 
 const FIXTURE = readFileSync(join(__dirname, '../../../fixtures/codex/rollout-sample.jsonl'), 'utf-8')
 
@@ -715,5 +716,178 @@ describe('mapTokenCountToStatusline NaN guards', () => {
     const sl = mapTokenCountToStatusline(tc, baseMeta, 'sid')
     expect(sl.rateLimitCurrent).toBe(75)
     expect(sl.rateLimitCurrentResets).toBe(new Date(1777544035 * 1000).toISOString())
+  })
+})
+
+// Usage track MP2: the allowance a session reports, from every token_count that
+// carries rate_limits (the pre-response one included), as validated usage
+// buckets with the event time, and a one-time "no reading" when no rollout is
+// ever claimed.
+describe('allowance from the rollout (usage track MP2)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+  })
+
+  const ymdOf = (d: Date) => [String(d.getUTCFullYear()), String(d.getUTCMonth() + 1).padStart(2, '0'), String(d.getUTCDate()).padStart(2, '0')]
+  const S = (ms: number) => Math.floor(ms / 1000)
+  const meta = (ts: string, cwd: string) => JSON.stringify({ timestamp: ts, type: 'session_meta', payload: { id: 'mp2', timestamp: ts, cwd, model: 'gpt-5.5', cli_version: '0.155.1' } })
+  const tokenCount = (ts: string, info: unknown, rateLimits: unknown) =>
+    JSON.stringify({ timestamp: ts, type: 'event_msg', payload: { type: 'token_count', info, rate_limits: rateLimits } })
+  const usage = (input: number) => ({ total_token_usage: { input_tokens: input, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0, total_tokens: input + 1 }, last_token_usage: null, model_context_window: 200000 })
+
+  // Fake timers first, so the spawn time and the event times share the fake clock.
+  function startClock(): number {
+    vi.useFakeTimers({ shouldAdvanceTime: false })
+    return Date.now()
+  }
+
+  async function watchRollout(spawnTs: number, lines: string[], advance = 800) {
+    const sessions = join(mkdtempSync(join(tmpdir(), 'ccc-test-codex-mp2-')), 'sessions')
+    const day = join(sessions, ...ymdOf(new Date()))
+    mkdirSync(day, { recursive: true })
+    writeFileSync(join(day, 'rollout-mp2.jsonl'), lines.join('\n') + '\n', 'utf-8')
+    const updates: import('../../../../src/shared/types').StatuslineData[] = []
+    const src = watchAndClaimRollout('sess-mp2', '/mp2/cwd', spawnTs, (d) => updates.push(d), sessions)
+    await vi.advanceTimersByTimeAsync(advance)
+    src.stop()
+    return updates
+  }
+
+  it('parseCodexRollout returns the allowance from the fixture, the info-null event included', () => {
+    const { allowance } = parseCodexRollout(FIXTURE)
+    expect(allowance).not.toBeNull()
+    expect(allowance!.planType).toBe('plus')
+    // The newest event that carried rate_limits is line 11.
+    expect(allowance!.readingAt).toBe(Date.parse('2026-04-30T05:13:55.184Z'))
+    expect(allowance!.limits.map((l) => [l.limitId, l.primary?.windowMinutes, l.secondary?.windowMinutes])).toEqual([['codex', 300, 10080]])
+  })
+
+  it('parseCodexRollout reads the allowance of a rollout whose only token_count has info null', () => {
+    const ts = '2026-09-27T10:00:00.000Z'
+    const { tokenCounts, allowance } = parseCodexRollout([
+      meta(ts, '/x'),
+      tokenCount(ts, null, { limit_id: DEFAULT_ID, primary: { used_percent: 9, window_minutes: 300 }, plan_type: 'plus' }),
+    ].join('\n'))
+    expect(tokenCounts).toEqual([])
+    expect(allowance!.limits[0].primary!.usedPercent).toBe(9)
+    expect(allowance!.readingAt).toBe(Date.parse(ts))
+  })
+
+  it('reports the allowance from a pre-response token_count before any usage exists', async () => {
+    const spawn = startClock()
+    const ts = new Date(spawn + 100).toISOString()
+    const updates = await watchRollout(spawn, [
+      meta(ts, '/mp2/cwd'),
+      tokenCount(ts, null, { limit_id: DEFAULT_ID, limit_name: null, primary: { used_percent: 7, window_minutes: 300, resets_at: S(spawn + 3_600_000) }, secondary: { used_percent: 41, window_minutes: 10080, resets_at: S(spawn + 86_400_000) }, credits: null, plan_type: 'pro' }),
+    ])
+    expect(updates.length).toBeGreaterThan(0)
+    const u = updates[updates.length - 1]
+    expect(u.sessionId).toBe('sess-mp2')
+    expect(u.inputTokens).toBeUndefined()
+    expect(u.usageBuckets!.map((b) => [b.key, b.label, b.percent])).toEqual([['codex/300:', '5h', 7], ['codex/10080:', 'Weekly', 41]])
+    expect(u.rateLimitsAt).toBe(Date.parse(ts))
+    expect(u.rateLimitCurrent).toBe(7)
+    expect(u.rateLimitWeekly).toBe(41)
+    expect(u.rateLimitCurrentResets).toBe(new Date(S(spawn + 3_600_000) * 1000).toISOString())
+  })
+
+  it('keeps the allowance when the newest token_count has none, and stamps the event that had it', async () => {
+    const spawn = startClock()
+    const t1 = new Date(spawn + 100).toISOString()
+    const t2 = new Date(spawn + 200).toISOString()
+    const updates = await watchRollout(spawn, [
+      meta(t1, '/mp2/cwd'),
+      tokenCount(t1, null, { limit_id: DEFAULT_ID, primary: { used_percent: 12, window_minutes: 300 }, plan_type: 'plus' }),
+      tokenCount(t2, usage(1500), null),
+    ])
+    const u = updates[updates.length - 1]
+    expect(u.inputTokens).toBe(1500)
+    expect(u.usageBuckets!.map((b) => [b.label, b.percent])).toEqual([['5h', 12]])
+    expect(u.rateLimitsAt).toBe(Date.parse(t1))
+  })
+
+  it('shows every limit seen in the session, the newest reading of each', async () => {
+    const spawn = startClock()
+    const t = (n: number) => new Date(spawn + 100 * n).toISOString()
+    const updates = await watchRollout(spawn, [
+      meta(t(1), '/mp2/cwd'),
+      tokenCount(t(1), usage(10), { limit_id: DEFAULT_ID, primary: { used_percent: 10, window_minutes: 300 } }),
+      tokenCount(t(2), usage(20), { limit_id: 'codex_spark', limit_name: 'Spark', primary: { used_percent: 3, window_minutes: 300 } }),
+      tokenCount(t(3), usage(30), { limit_id: DEFAULT_ID, primary: { used_percent: 11, window_minutes: 300 } }),
+    ])
+    const u = updates[updates.length - 1]
+    expect(u.usageBuckets!.map((b) => [b.key, b.label, b.percent])).toEqual([['codex/300:', '5h', 11], ['codex_spark/300:Spark', 'Spark 5h', 3]])
+    expect(u.rateLimitCurrent).toBe(11)
+  })
+
+  it('sends only validated figures, the legacy fields included', async () => {
+    const spawn = startClock()
+    const ts = new Date(spawn + 100).toISOString()
+    const updates = await watchRollout(spawn, [
+      meta(ts, '/mp2/cwd'),
+      tokenCount(ts, usage(5), { limit_id: DEFAULT_ID, primary: { used_percent: 250, window_minutes: 300, resets_at: 1e30 }, secondary: { used_percent: 'x', window_minutes: 10080 } }),
+    ])
+    const u = updates[updates.length - 1]
+    expect(u.rateLimitCurrent).toBe(100)
+    expect(u.rateLimitCurrentResets).toBeUndefined()
+    expect(u.rateLimitWeekly).toBeUndefined()
+    expect(u.usageBuckets!.map((b) => [b.label, b.percent, b.resetsAt])).toEqual([['5h', 100, '']])
+  })
+
+  it('mapTokenCountToStatusline survives a reset time outside the Date range (it used to throw and drop the update)', () => {
+    const tc: TokenCountEvent = {
+      total_token_usage: { input_tokens: 3, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 3 },
+      rate_limits: { primary: { used_percent: 20, window_minutes: 300, resets_at: 1e30 }, secondary: { used_percent: 30, window_minutes: 10080, resets_at: -1e30 } },
+    }
+    const sl = mapTokenCountToStatusline(tc, { id: 's', cwd: '/x', model: 'm', cli_version: '1', timestamp: '' }, 'sid')
+    expect(sl.inputTokens).toBe(3)
+    expect(sl.rateLimitCurrentResets).toBeUndefined()
+    expect(sl.rateLimitWeeklyResets).toBeUndefined()
+  })
+
+  it('sends no usage fields when the rollout carries no rate limits', async () => {
+    const spawn = startClock()
+    const ts = new Date(spawn + 100).toISOString()
+    const updates = await watchRollout(spawn, [meta(ts, '/mp2/cwd'), tokenCount(ts, usage(5), null)])
+    const u = updates[updates.length - 1]
+    expect(u.inputTokens).toBe(5)
+    expect(u.usageBuckets).toBeUndefined()
+    expect(u.rateLimitsAt).toBeUndefined()
+    expect(u.rateLimitCurrent).toBeUndefined()
+  })
+
+  it('reports no reading once, at the 30 s give-up, when no rollout is ever claimed', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const spawn = startClock()
+    const sessions = join(mkdtempSync(join(tmpdir(), 'ccc-test-codex-mp2-none-')), 'sessions')
+    mkdirSync(join(sessions, ...ymdOf(new Date())), { recursive: true })
+    const updates: unknown[] = []
+    const src = watchAndClaimRollout('sess-none', '/none/cwd', spawn, (d) => updates.push(d), sessions)
+    await vi.advanceTimersByTimeAsync(29_000)
+    expect(updates).toEqual([])
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(updates).toEqual([{ sessionId: 'sess-none', usageUnavailable: 'no-reading' }])
+    await vi.advanceTimersByTimeAsync(60_000)
+    src.stop()
+    expect(updates).toHaveLength(1)
+  })
+
+  it('does not report no reading when stopped before the give-up, or once a rollout was claimed', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const spawn = startClock()
+    const sessions = join(mkdtempSync(join(tmpdir(), 'ccc-test-codex-mp2-stop-')), 'sessions')
+    mkdirSync(join(sessions, ...ymdOf(new Date())), { recursive: true })
+    const stopped: unknown[] = []
+    const early = watchAndClaimRollout('sess-stop', '/none/cwd', spawn, (d) => stopped.push(d), sessions)
+    await vi.advanceTimersByTimeAsync(5_000)
+    early.stop()
+    await vi.advanceTimersByTimeAsync(40_000)
+    expect(stopped).toEqual([])
+
+    const spawn2 = Date.now()
+    const ts = new Date(spawn2 + 100).toISOString()
+    const updates = await watchRollout(spawn2, [meta(ts, '/mp2/cwd')], 40_000)
+    expect(updates.filter((u) => u.usageUnavailable)).toEqual([])
   })
 })

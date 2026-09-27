@@ -1,29 +1,15 @@
 import React from 'react'
 import { formatResetTime } from '../../utils/terminalFormatting'
+import { shortBucketLabel } from '../../../shared/usage-labels'
 
 // Slim contiguous bar instead of a row of dots. Easier to scan in
 // peripheral vision and uses less horizontal space — UX audit 2026-04-25
 // flagged the dot row as the hardest-to-parse element on the status line.
-/**
- * Short code for a bucket label, for the compact (multi-account footer) form.
- *
- * The footer shows one row per account, each with every bucket, so the words
- * repeat across the whole strip and crowd out the thing you actually read — the
- * coloured bar. Labels come from the API and are open-ended (5h, Weekly, then a
- * bucket per model), so this is a rule rather than a fixed list.
- *
- * Only the fixed TIME windows shorten. "5h" is already minimal and Weekly goes
- * to a single "W" — both are positional and unambiguous once seen. Model
- * buckets keep their full name: "Fable" is the label actually worth scanning
- * for, and truncating it ("Fab") saves a few pixels at the cost of the one
- * label that has to stay legible as new models are added.
- */
-export function shortBucketLabel(label: string): string {
-  const l = label.trim()
-  if (/^\d+\s*h$/i.test(l)) return l.replace(/\s+/g, '').toLowerCase()  // "5h", "5 H" -> 5h
-  if (/^week(ly)?$/i.test(l)) return 'W'
-  return l
-}
+
+// The compact label rule lives in src/shared/usage-labels.ts so main (which
+// builds the buckets) and the renderer share one rule; re-exported here so
+// existing imports keep working.
+export { shortBucketLabel }
 
 /**
  * Placeholder meter for a statusline that has not reported yet.

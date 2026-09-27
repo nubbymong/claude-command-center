@@ -39,6 +39,69 @@ export interface ParsedUsage {
   credits?: CreditsInfo
 }
 
+/**
+ * One allowance window of a provider reading, already validated: whatever
+ * produced it dropped anything it could not trust (usage track MP2).
+ */
+export interface AllowanceWindow {
+  /** Length in minutes (300 = 5 hours, 10080 = a week); null when not reported. */
+  windowMinutes: number | null
+  /** Share used, 0-100. */
+  usedPercent: number
+  /** When the window resets, epoch ms; null when not reported. */
+  resetsAt: number | null
+}
+
+/** One metered limit of an account and its windows (at least one is set). */
+export interface AllowanceLimit {
+  /** The provider's id for the limit; the account-wide default comes first. */
+  limitId: string
+  /** The display name the provider gives a separate limit, or null. */
+  limitName: string | null
+  primary: AllowanceWindow | null
+  secondary: AllowanceWindow | null
+}
+
+/** An account's allowances as one reading, provider-neutral. */
+export interface AllowanceReading {
+  limits: AllowanceLimit[]
+  /** The plan as the provider reports it ('plus', 'pro', ...), from the known list only. */
+  planType: string | null
+  /** When the reading was taken, epoch ms: the event time for a session's
+   *  transcript, the read time for a live read; null when unknown. */
+  readingAt: number | null
+}
+
+// ChatGPT plans as a ChatGPT sign-in reports them: the PlanType list of the
+// app-server schema, identical in CLI 0.153.4, 0.155.1 and 0.157.1. 'unknown'
+// is left out on purpose: an unknown plan shows no pill rather than the word
+// "Unknown".
+const PLAN_LABELS: Readonly<Record<string, string>> = Object.freeze({
+  free: 'Free',
+  go: 'Go',
+  plus: 'Plus',
+  pro: 'Pro',
+  prolite: 'Pro Lite',
+  team: 'Team',
+  self_serve_business_prolite: 'Business',
+  self_serve_business_usage_based: 'Business',
+  business: 'Business',
+  ent26: 'Enterprise',
+  enterprise_cbp_automation: 'Enterprise',
+  enterprise_cbp_usage_based: 'Enterprise',
+  enterprise: 'Enterprise',
+  edu: 'Edu',
+  edu_plus: 'Edu Plus',
+  edu_pro: 'Edu Pro',
+})
+
+/** The plan pill's text for a reported plan type, or null when the plan is
+ *  missing or not one this build knows (unknown stays unknown). */
+export function planLabelFor(planType: unknown): string | null {
+  if (typeof planType !== 'string' || !Object.prototype.hasOwnProperty.call(PLAN_LABELS, planType)) return null
+  return PLAN_LABELS[planType]
+}
+
 // 'inactive' = the account is parked (isAccountActive false): the usage page
 // still lists it, greyed, but it is never network-polled or token-refreshed and
 // offers no sign-in. See fetchAccountUsage's early return.

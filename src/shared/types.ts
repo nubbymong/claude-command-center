@@ -399,6 +399,13 @@ export interface StatuslineData {
    *  returns limits[]; the strip renders one bar per bucket (minus the user's
    *  hidden set). Legacy rateLimit* fields stay for older CLIs + the footer. */
   usageBuckets?: import('./usage-types').UsageBucket[]
+  /** When the allowance in `usageBuckets` was reported, epoch ms: the time of
+   *  the event that carried it (Codex: the rollout's token_count), so a figure
+   *  from an idle session can be told apart from a fresh one. */
+  rateLimitsAt?: number
+  /** Sent once when nothing will report this session's allowance: 'no-reading'
+   *  (Codex: no rollout was claimed within 30 s). D3 of the usage UX. */
+  usageUnavailable?: 'no-reading'
   /** Active-account email surfaced by the bridge script. Renderer displays it left of the model name. */
   accountEmail?: string
   /** Pre-computed by main process via `colourForEmail()` as an identity-palette KEY;

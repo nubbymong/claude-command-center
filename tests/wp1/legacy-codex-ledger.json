@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "ca572c50930d3fa731206319b83639f5aef65eec79e19f1db6ffecf15f5631a5",
-  "manifestHead": "1dbd39f31cb4926eedbbb121f9b07bad8bc522b5",
+  "manifestPathDigest": "2bb1d601d804bde3c197deba8dd988e30af1e189789e167cc7239787a7e5db5b",
+  "manifestHead": "4c2e5a945dc059b1f91c7c4af81ef25f6aa6e75e",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -887,6 +887,17 @@
       "note": "created by WP2"
     },
     {
+      "path": "src/main/providers/codex/rate-limits.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "category": "TELEMETRY",
+      "disposition": "added",
+      "evidence": "WP2 P3 usage track MP2 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): one validated allowance reading from a rollout rate_limits or the app-server account/rateLimits/read result (ADR-022), and the usage buckets drawn from it; own properties of plain objects only, percentages clamped, window lengths, reset times, plan, limit id and name bounded, 16 guard mutants red (WP1.68 rollout telemetry); tests/unit/providers/codex/rate-limits.test.ts",
+      "note": "new module; parsing only, no process, no file read"
+    },
+    {
       "path": "src/main/providers/codex/realm-folders.ts",
       "predicates": [
         "P01",
@@ -961,9 +972,9 @@
         "P14"
       ],
       "category": "TELEMETRY",
-      "disposition": "move",
-      "evidence": "WP1.68 rollout telemetry ADAPTED: tests/unit/providers/codex/telemetry.test.ts keeps every parsing case and gains a realm-sessions-dir case; WP2 commit 6g: the sessions folder is required, with no fallback to the ambient home (getCodexHome deleted); without one nothing is watched (WP1.68); tests/unit/providers/codex/telemetry.test.ts",
-      "note": "watchAndClaimRollout takes the sessions directory of the launch binding realm instead of getCodexHome(); parsing and claim logic unchanged",
+      "disposition": "replace",
+      "evidence": "WP1.68 rollout telemetry ADAPTED: tests/unit/providers/codex/telemetry.test.ts keeps every parsing case and gains a realm-sessions-dir case; WP2 commit 6g: the sessions folder is required, with no fallback to the ambient home (getCodexHome deleted); without one nothing is watched (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP2: the allowance is read from every token_count, the pre-response one (info null) included, through normaliseCodexRateLimits; plan_type typed on the snapshot, not under primary; updates carry usageBuckets labelled from window_minutes, rateLimitsAt (the event time) and the legacy rateLimitCurrent/Weekly from the validated reading only; an out-of-range reset time no longer throws and drops the update; the 30 s give-up sends usageUnavailable no-reading once (WP1.68); tests/unit/providers/codex/telemetry.test.ts",
+      "note": "watchAndClaimRollout takes the sessions directory of the launch binding realm instead of getCodexHome(); parsing and claim logic unchanged; MP2 rebuilt the rate-limit contract (replace): parsing of token usage, the claim and the realm rule unchanged",
       "adaptsTests": [
         "tests/unit/providers/codex/telemetry.test.ts"
       ]
@@ -2417,7 +2428,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "replace",
-      "evidence": "type-level; binding types exercised by tests/wp1/launch-handoff.test.ts (WP1.42); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): TerminalOptions.noCommandSecrets for the install tab; tests/unit/main/install-tab-command-secrets.test.ts",
+      "evidence": "type-level; binding types exercised by tests/wp1/launch-handoff.test.ts (WP1.42); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): TerminalOptions.noCommandSecrets for the install tab; tests/unit/main/install-tab-command-secrets.test.ts; WP2 P3 usage track MP2: StatuslineData gains rateLimitsAt and usageUnavailable, set by the rollout telemetry (WP1.68); tests/unit/providers/codex/telemetry.test.ts",
       "note": "binding/identity types added; CodexOptions retained"
     },
     {
@@ -3299,6 +3310,17 @@
       "note": ""
     },
     {
+      "path": "tests/unit/providers/codex/rate-limits.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 P3 usage track MP2 test (tests/unit/providers/codex/rate-limits.test.ts): fixture lines 8 (info null) and 11, the camelCase app-server shape checked against the committed 0.153.4, 0.155.1 and 0.157.1 schema excerpts, missing and hostile fields, several limits, and the bucket keys and labels (WP1.68, WP1.71)",
+      "note": "host-safe: pure functions, no process"
+    },
+    {
       "path": "tests/unit/providers/codex/resume-picker-deploy.test.ts",
       "predicates": [
         "P01",
@@ -3333,7 +3355,7 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.58/WP1.68: every watch is handed its realm sessions folder (the auth-module mock is gone with the module, WP2 commit 6g); a watch with no folder reads nothing even with CODEX_HOME pointing at a matching transcript; parsing cases retained; adapted in place: tests/unit/providers/codex/telemetry.test.ts",
+      "evidence": "WP1.58/WP1.68: every watch is handed its realm sessions folder (the auth-module mock is gone with the module, WP2 commit 6g); a watch with no folder reads nothing even with CODEX_HOME pointing at a matching transcript; parsing cases retained; adapted in place: tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP2: new cases for the allowance from the fixture and from an info-null-only rollout, the pre-response update, the allowance kept when the newest event has none, several limits, validated legacy fields, an out-of-range reset time, no usage fields without rate limits, and no-reading once at the 30 s give-up only (WP1.68); tests/unit/providers/codex/telemetry.test.ts",
       "note": ""
     },
     {

@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-27T01:44:29.079Z",
-  "head": "1dbd39f31cb4926eedbbb121f9b07bad8bc522b5",
-  "tree": "d2fdb264af64db0bbc031fce7914ae607d46a3f2",
+  "generatedAt": "2026-09-27T01:57:19.927Z",
+  "head": "4c2e5a945dc059b1f91c7c4af81ef25f6aa6e75e",
+  "tree": "e7cc601f67db4196035be28147e27a1af2f45054",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2322,
+  "trackedFileCount": 2326,
   "excludedFileCount": 381,
-  "scannedFileCount": 1941,
+  "scannedFileCount": 1945,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 377,
-  "pathDigest": "ca572c50930d3fa731206319b83639f5aef65eec79e19f1db6ffecf15f5631a5",
+  "matchedPathCount": 379,
+  "pathDigest": "2bb1d601d804bde3c197deba8dd988e30af1e189789e167cc7239787a7e5db5b",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -658,6 +658,14 @@
       "lineCount": 8
     },
     {
+      "path": "src/main/providers/codex/rate-limits.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "lineCount": 13
+    },
+    {
       "path": "src/main/providers/codex/realm-folders.ts",
       "predicates": [
         "P01",
@@ -713,7 +721,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 26
+      "lineCount": 35
     },
     {
       "path": "src/main/providers/codex/ui-detection.ts",
@@ -1691,7 +1699,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 21
+      "lineCount": 23
     },
     {
       "path": "tests/e2e/codex-reconfirm-upgrade.spec.ts",
@@ -2275,6 +2283,14 @@
       "lineCount": 11
     },
     {
+      "path": "tests/unit/providers/codex/rate-limits.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 65
+    },
+    {
       "path": "tests/unit/providers/codex/resume-picker-deploy.test.ts",
       "predicates": [
         "P01",
@@ -2301,7 +2317,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 59
+      "lineCount": 74
     },
     {
       "path": "tests/unit/providers/codex/ui-detection.test.ts",
