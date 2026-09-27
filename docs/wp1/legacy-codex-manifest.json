@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-27T05:30:12.091Z",
-  "head": "949d0b79382fbbdea692623afb1d0d1e62eff7e4",
-  "tree": "a3dad3386f61ec05f97dd0b59f83e8391f9a54e5",
+  "generatedAt": "2026-09-27T05:49:07.013Z",
+  "head": "886253cccab823ad70f3e46c022680796bcd6b61",
+  "tree": "d763043af5fd50af193bd65f313394ba5a2eb52e",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -568,7 +568,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 91
+      "lineCount": 93
     },
     {
       "path": "src/main/providers/codex/cli-contract.ts",
@@ -2032,7 +2032,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 99
+      "lineCount": 101
     },
     {
       "path": "tests/unit/main/conductor-mcp-auth.test.ts",
@@ -2310,7 +2310,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 18
+      "lineCount": 22
     },
     {
       "path": "tests/unit/providers/codex/app-server-read.test.ts",
@@ -2320,7 +2320,7 @@
         "P09",
         "P13"
       ],
-      "lineCount": 40
+      "lineCount": 53
     },
     {
       "path": "tests/unit/providers/codex/cli-runner-open-stdin.test.ts",
@@ -2328,7 +2328,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 16
+      "lineCount": 17
     },
     {
       "path": "tests/unit/providers/codex/mcp-config.test.ts",

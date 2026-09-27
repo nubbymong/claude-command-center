@@ -51,7 +51,8 @@ function fakeScript(version: string): string {
     '    let i',
     '    while ((i = buf.indexOf(NL)) >= 0) {',
     '      const m = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1)',
-    "      if (m.method === 'initialize') process.stdout.write(JSON.stringify({ id: m.id, result: { codexHome: home, platformFamily: 'x', platformOs: 'x', userAgent: 'fake' } }) + NL)",
+    // The helper names its own version in its user agent (MP7 round 1, C-F1).
+    `      if (m.method === 'initialize') process.stdout.write(JSON.stringify({ id: m.id, result: { codexHome: home, platformFamily: 'x', platformOs: 'x', userAgent: 'codex_cli_rs/${version} (fake)' } }) + NL)`,
     "      if (m.method === 'account/rateLimits/read') process.stdout.write(JSON.stringify({ id: m.id, result: { rateLimits: { limitId: 'codex', primary: { usedPercent: 33, windowDurationMins: 300, resetsAt: Math.floor(Date.now() / 1000) + 3600 }, planType: 'plus' } } }) + NL)",
     '    }',
     '  })',

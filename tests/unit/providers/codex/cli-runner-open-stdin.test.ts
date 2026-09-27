@@ -11,6 +11,7 @@
 // PURE: an injected spawn returning a scripted child; no process starts.
 import { describe, it, expect, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
+import { PassThrough } from 'node:stream'
 import type { ChildProcess } from 'node:child_process'
 import { runCodexCli, codexCommandLine } from '../../../../src/main/providers/codex/cli-runner'
 import type { CodexCommand, CodexRunDeps, CodexStdinWriter } from '../../../../src/main/providers/codex/cli-runner'
@@ -109,6 +110,34 @@ describe('open-stdin mode (usage track MP7)', () => {
     expect((spawn.mock.calls[0] as unknown[])[2]).toMatchObject({ stdio: ['ignore', 'pipe', 'pipe'] })
     child.emit('exit', 0); child.emit('close', 0)
     await done
+  })
+})
+
+// MP7 round 1, quality nit 2: a helper's output arrives in pipe-sized
+// chunks, and a UTF-8 character may be split between two of them. The
+// runner reads its output through the stream's own decoder, so the text the
+// caller gets is whole.
+describe('output decoding', () => {
+  it('a multi-byte character split across two chunks reaches the caller whole', async () => {
+    const child = fakeChild()
+    const out = new PassThrough()
+    Object.assign(child, { stdout: out })
+    const { d } = deps(child)
+    const text: string[] = []
+    const done = runCodexCli(CMD, { env: {}, timeoutMs: 5000, openStdin: () => {}, onChunk: (s, stream) => { if (stream === 'stdout') text.push(s) } }, d)
+    const line = Buffer.from('{"limitName":"Plan ' + String.fromCharCode(0x20ac) + String.fromCodePoint(0x1f600) + '"}\n', 'utf8')
+    // Cut inside the three-byte euro sign, then inside the four-byte emoji.
+    const euro = line.indexOf(0xe2)
+    const emoji = line.indexOf(0xf0)
+    out.write(line.subarray(0, euro + 1))
+    out.write(line.subarray(euro + 1, emoji + 2))
+    out.write(line.subarray(emoji + 2))
+    await new Promise((r) => setTimeout(r, 0))
+    child.emit('exit', 0); child.emit('close', 0)
+    const r = await done
+    expect(text.join('')).toBe(line.toString('utf8'))
+    expect(text.join('')).not.toContain(String.fromCharCode(0xfffd))
+    expect(r.stdout).toBe(line.toString('utf8'))
   })
 })
 

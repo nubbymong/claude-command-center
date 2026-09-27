@@ -19,6 +19,8 @@ import { createCodexAuthOperations } from '../../../../src/main/providers/codex/
 import type { CodexAuthDeps } from '../../../../src/main/providers/codex/auth-operations'
 import type { CodexCommand, CodexRunOptions, CodexRunResult, CodexStdinWriter } from '../../../../src/main/providers/codex/cli-runner'
 import { codexRealmHome } from '../../../../src/main/providers/codex/realm-paths'
+import { createCodexRealmLocks, codexRealmLockKey } from '../../../../src/main/providers/codex/realm-folders'
+import type { CodexDiscovery } from '../../../../src/main/providers/codex/discovery'
 import {
   APP_SERVER_EXIT_GRACE_MS, APP_SERVER_INITIALIZE_TIMEOUT_MS, APP_SERVER_READ_DEADLINE_MS,
 } from '../../../../src/main/providers/codex/app-server-client'
@@ -89,21 +91,27 @@ function helper(o: { home?: (env: Record<string, string>) => string; stay?: bool
   }
 }
 
-function setup(o: { version?: string; compatibility?: string; helper?: Helper; env?: Record<string, string> } = {}) {
+function setup(o: { version?: string; compatibility?: string; helper?: Helper; env?: Record<string, string>; proven?: () => CodexDiscovery | null; beforeEnv?: () => void } = {}) {
   const fr = fakeRun(o.helper ?? helper())
+  const locks = createCodexRealmLocks()
   const deps: CodexAuthDeps = {
     lookupRealm: async (r) => {
       const { realm } = homeOf(r.authRealmId)
       return { ok: true, realm: realm as never, roots: { resourcesDir: RES, externalDefaultHome: EXT } }
     },
     realmIdentity: (home) => ({ canonical: home, dev: '9', ino: String(home.length), isDirectory: true }),
-    proven: () => ({ state: 'found', executable: EXE, version: o.version ?? '0.155.1', compatibility: (o.compatibility ?? 'supported') as never, checkedAt: 1, identity: { path: EXE, ...STAT } }) as never,
+    proven: o.proven ?? (() => proven(o.version ?? '0.155.1', o.compatibility ?? 'supported')),
     executablePorts: { resolve: () => EXE, realpath: (p) => p, stat: () => STAT, platform: 'win32' },
-    baseEnv: async () => ({ PATH: 'C:\\Tools', SystemRoot: 'C:\\Windows', OPENAI_API_KEY: 'sk-ambient-0000000000000000', CODEX_HOME: EXT, ...o.env }),
+    baseEnv: async () => { o.beforeEnv?.(); return { PATH: 'C:\\Tools', SystemRoot: 'C:\\Windows', OPENAI_API_KEY: 'sk-ambient-0000000000000000', CODEX_HOME: EXT, ...o.env } },
     run: fr.run as unknown as CodexAuthDeps['run'],
     envFilePresent: () => false,
+    locks,
   }
-  return { ops: createCodexAuthOperations(deps), ...fr }
+  return { ops: createCodexAuthOperations(deps), locks, ...fr }
+}
+/** What discovery proved: this executable, at this version. */
+function proven(version: string, compatibility = 'supported', stat: typeof STAT = STAT, exe = EXE): CodexDiscovery {
+  return { state: 'found', executable: exe, version, compatibility, checkedAt: 1, identity: { path: exe, ...stat } } as unknown as CodexDiscovery
 }
 
 afterEach(() => { vi.useRealTimers() })
@@ -118,6 +126,9 @@ describe('readUsage: who may be read (ADR-022 bounds 2, 5)', () => {
     expect(t.runs[0].opts.env.CODEX_HOME).toBe(homeOf(MANAGED).home)
     expect(t.runs[0].opts.env.OPENAI_API_KEY).toBeUndefined()
     expect(t.runs[0].opts.timeoutMs).toBe(APP_SERVER_READ_DEADLINE_MS)
+    // MP7 round 1, S-1: the values themselves (ADR-022 bounds 4 and 8).
+    expect(t.runs[0].opts.timeoutMs).toBe(20_000)
+    expect(t.runs[0].opts.maxOutput).toBe(65_536)
     expect(t.runs[0].opts.stdin).toBeUndefined()
     // Exactly the three messages, in order.
     expect(t.runs[0].messages.map((m) => JSON.parse(m).method)).toEqual(['initialize', 'initialized', 'account/rateLimits/read'])
@@ -180,12 +191,12 @@ describe('readUsage: the helper is always shut down (ADR-022 bound 4)', () => {
     expect(t.runs[0].killed).toBe(true)
   })
 
-  it('a helper that names another home fails as unsupported and is shut down', async () => {
+  it('a helper that names another home fails (transient: it is about the realm) and is shut down', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const t = setup({ helper: helper({ home: () => EXT, stay: true }) })
     const p = t.ops.readUsage({ authRealmId: MANAGED })
     await vi.advanceTimersByTimeAsync(APP_SERVER_EXIT_GRACE_MS + 10)
-    expect(await p).toEqual({ ok: false, kind: 'unsupported', reason: 'codex-home' })
+    expect(await p).toEqual({ ok: false, kind: 'transient', reason: 'codex-home' })
     expect(t.runs[0].killed).toBe(true)
     expect(t.runs[0].messages.map((m) => JSON.parse(m).method)).toEqual(['initialize'])
   })
@@ -203,6 +214,152 @@ describe('readUsage: the helper is always shut down (ADR-022 bound 4)', () => {
   it('a helper that exits early is transient; a run that could not start is transient', async () => {
     const early = setup({ helper: (io) => { io.exit(1) } })
     expect(await early.ops.readUsage({ authRealmId: MANAGED })).toEqual({ ok: false, kind: 'transient', reason: 'exit' })
+  })
+})
+
+// MP7 round 1, C-F1: the executable is captured once; the helper starts only
+// if discovery still names that same executable and version.
+describe('readUsage: the proven executable, captured once (C-F1)', () => {
+  it('discovery naming a newer version while the read was prepared starts nothing', async () => {
+    let now = proven('0.155.1')
+    const t = setup({ proven: () => now, beforeEnv: () => { now = proven('0.157.1', 'too-new') } })
+    expect(await t.ops.readUsage({ authRealmId: MANAGED })).toEqual({ ok: false, kind: 'refused', reason: 'version' })
+    expect(t.runs).toHaveLength(0)
+  })
+
+  it('discovery naming another executable at the same version, the same one no longer supported, or none, starts nothing', async () => {
+    const others = [
+      proven('0.155.1', 'supported', { ...STAT, size: 11 }), proven('0.155.1', 'supported', { ...STAT, mtimeMs: 2 }), proven('0.155.1', 'supported', { ...STAT, ctimeMs: 2 }),
+      proven('0.155.1', 'supported', { ...STAT, dev: '7' }), proven('0.155.1', 'supported', { ...STAT, ino: '7' }), proven('0.155.1', 'supported', STAT, 'C:\\Other\\codex.exe'),
+      proven('0.155.1', 'unknown'), { ...proven('0.155.1'), state: 'missing' } as CodexDiscovery, null,
+      // The same file read as another supported version.
+      proven('0.156.1'),
+    ]
+    for (const next of others) {
+      let now: CodexDiscovery | null = proven('0.155.1')
+      const t = setup({ proven: () => now, beforeEnv: () => { now = next } })
+      expect(await t.ops.readUsage({ authRealmId: MANAGED }), JSON.stringify(next)).toEqual({ ok: false, kind: 'refused', reason: 'version' })
+      expect(t.runs).toHaveLength(0)
+    }
+  })
+
+  it('the same executable proved again reads as before', async () => {
+    const t = setup({ proven: () => proven('0.155.1') })
+    expect((await t.ops.readUsage({ authRealmId: MANAGED })).ok).toBe(true)
+  })
+
+  it('a helper reporting another version than the one proved fails closed', async () => {
+    const t = setup({ helper: (io, opts) => {
+      const on = (opts as unknown as { __onStdin: (l: (x: string) => void) => void }).__onStdin
+      const onEnd = (opts as unknown as { __onEnd: (l: () => void) => void }).__onEnd
+      on((x) => {
+        const m = JSON.parse(x)
+        if (m.method === 'initialize') io.write(JSON.stringify({ id: m.id, result: { codexHome: opts.env.CODEX_HOME, platformFamily: 'windows', platformOs: 'windows', userAgent: 'codex_cli_rs/0.157.1 (Windows)' } }) + '\n')
+      })
+      onEnd(() => io.exit(0))
+    } })
+    expect(await t.ops.readUsage({ authRealmId: MANAGED })).toEqual({ ok: false, kind: 'transient', reason: 'version-mismatch' })
+    expect(t.runs[0].messages.map((m) => JSON.parse(m).method)).toEqual(['initialize'])
+  })
+})
+
+// MP7 round 1, C-F2 and S-2: the read holds the realm with its sign-in lock.
+describe('readUsage: the realm is held against sign-in, sign-out and removal (C-F2)', () => {
+  /** A read in flight: its helper answers nothing and stays; a stop leaves
+   *  its kill under way until `endKill`. Status and sign-out runs answer. */
+  async function reading() {
+    let endKill: () => void = () => {}
+    const kill = new Promise<void>((r) => { endKill = r })
+    const t = setup({ helper: helper({ silent: true, stay: true }) })
+    const orig = t.run.getMockImplementation()!
+    let signedOut = false
+    t.run.mockImplementation(async (cmd, opts) => {
+      if (cmd.args[0] === 'logout') signedOut = true
+      if (cmd.args[0] === 'login' && cmd.args[1] === 'status' && signedOut) return { exitCode: 1, stdout: '', stderr: 'Not logged in' + String.fromCharCode(10), timedOut: false, truncated: false }
+      if (cmd.args[0] === 'logout') return { exitCode: 0, stdout: 'Successfully logged out\n', stderr: '', timedOut: false, truncated: false }
+      if (cmd.args[0] === 'login' && cmd.args[1] === 'status') return { exitCode: 0, stdout: '', stderr: 'Logged in using ChatGPT\n', timedOut: false, truncated: false }
+      const out = await orig(cmd, opts)
+      return out.stopped ? { ...out, killSettled: kill } : out
+    })
+    const stop = new AbortController()
+    const read = t.ops.readUsage({ authRealmId: MANAGED }, { signal: stop.signal })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(t.runs).toHaveLength(1)
+    const home = homeOf(MANAGED).home
+    const lockKey = codexRealmLockKey(home, '9', String(home.length))
+    return { t, stop, read, endKill, lockKey }
+  }
+
+  it('a sign-out meeting a read is refused as busy, and runs once the read\'s chain has ended', async () => {
+    const r = await reading()
+    expect(await r.t.ops.logout({ authRealmId: MANAGED })).toMatchObject({ ok: false, code: 'busy' })
+    r.stop.abort()
+    expect(await r.read).toEqual({ ok: false, kind: 'transient', reason: 'cancelled' })
+    // Stopped, but its kill is still under way: the realm is still held.
+    expect(await r.t.ops.logout({ authRealmId: MANAGED })).toMatchObject({ ok: false, code: 'busy' })
+    r.endKill()
+    await new Promise((x) => setTimeout(x, 0))
+    expect(await r.t.ops.logout({ authRealmId: MANAGED })).toMatchObject({ ok: true, state: 'signed-out' })
+  })
+
+  it('a status check still runs beside a read', async () => {
+    const r = await reading()
+    expect(await r.t.ops.status({ authRealmId: MANAGED })).toMatchObject({ ok: true, state: 'signed-in' })
+    r.stop.abort(); r.endKill()
+    await r.read
+  })
+
+  it('a folder removal meeting a read is refused until its chain has ended', async () => {
+    const r = await reading()
+    expect(r.t.locks.holdRemoval(r.lockKey)).toBeNull()
+    r.stop.abort()
+    await r.read
+    expect(r.t.locks.holdRemoval(r.lockKey)).toBeNull()
+    r.endKill()
+    await new Promise((x) => setTimeout(x, 0))
+    const removal = r.t.locks.holdRemoval(r.lockKey)
+    expect(removal).not.toBeNull()
+    removal!()
+  })
+
+  it('a read meeting a sign-in or sign-out in its realm starts nothing', async () => {
+    const t = setup()
+    const home = homeOf(MANAGED).home
+    const held = t.locks.hold(codexRealmLockKey(home, '9', String(home.length)))!
+    expect(await t.ops.readUsage({ authRealmId: MANAGED })).toEqual({ ok: false, kind: 'refused', reason: 'busy' })
+    expect(t.runs).toHaveLength(0)
+    held()
+    expect((await t.ops.readUsage({ authRealmId: MANAGED })).ok).toBe(true)
+  })
+
+  // C-nit: once the run is handed to the release, only the release lets the
+  // one helper slot go, even when the read ends in an exception.
+  it('a read that throws after its helper ran frees the helper slot only once the kill has settled', async () => {
+    let endKill: () => void = () => {}
+    const kill = new Promise<void>((r) => { endKill = r })
+    const t = setup({ helper: helper({ silent: true, stay: true }) })
+    const orig = t.run.getMockImplementation()!
+    t.run.mockImplementation(async (cmd, opts) => {
+      const out = await orig(cmd, opts)
+      return out.stopped ? { ...out, killSettled: kill } : out
+    })
+    let fire: () => void = () => {}
+    const signal = {
+      aborted: false,
+      addEventListener: (_t: string, fn: () => void) => { fire = fn },
+      removeEventListener: () => { throw new Error('gone') },
+    } as unknown as AbortSignal
+    const first = t.ops.readUsage({ authRealmId: MANAGED }, { signal })
+    await new Promise((r) => setTimeout(r, 0))
+    fire()
+    expect(await first).toEqual({ ok: false, kind: 'refused', reason: 'not-started' })
+    // Another realm, so its own realm lock cannot be what refuses it: the
+    // one helper slot is still taken while the kill runs.
+    expect(await t.ops.readUsage({ authRealmId: EXTERNAL })).toEqual({ ok: false, kind: 'refused', reason: 'busy' })
+    endKill()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(await t.ops.readUsage({ authRealmId: EXTERNAL })).toEqual({ ok: false, kind: 'refused', reason: 'external-realm' })
+    t.run.mockImplementation(orig)
   })
 })
 

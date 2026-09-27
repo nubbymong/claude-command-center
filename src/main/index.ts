@@ -1001,6 +1001,9 @@ try { getWatchdogManager()?.disposeAll() } catch { /* never init */ }
     // Kill any GUI-subsystem tool still being captured (#379). Its stdio is
     // piped to us, so leaving it running orphans a process nobody can see.
     try { stopAllCapturedRuns() } catch { /* never started */ }
+    // Usage track MP8: a fresh usage read under way is stopped first, so the
+    // flush below kills its helper too, and none starts again.
+    try { getAccountsService()?.stopUsageReads() } catch { /* no accounts service */ }
     // A headless CLI run stopped but still reading its process table would
     // otherwise leave its chain below cmd.exe running once the app is gone.
     try { flushPendingProviderCliKills() } catch { /* nothing pending */ }

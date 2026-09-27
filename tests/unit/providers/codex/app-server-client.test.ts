@@ -14,6 +14,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   createAppServerUsageClient, appServerMessages, APP_SERVER_MAX_LINE, APP_SERVER_CLIENT_NAME,
+  APP_SERVER_READ_DEADLINE_MS, APP_SERVER_INITIALIZE_TIMEOUT_MS, APP_SERVER_EXIT_GRACE_MS,
 } from '../../../../src/main/providers/codex/app-server-client'
 
 const HOME = 'C:\\Users\\u\\AppData\\Roaming\\conductor\\codex-realms\\realm-0000000000000001'
@@ -103,10 +104,12 @@ describe('the answer (ADR-022 bounds 3, 5, 8)', () => {
     expect(c.verdict?.ok).toBe(true)
   })
 
-  it('the realm must be named: another home fails as unsupported and nothing more is sent', () => {
+  // MP7 round 1, D-1: a wrong home is about the realm, not the CLI, so it is
+  // never the sticky per-executable verdict.
+  it('the realm must be named: another home fails (transient) and nothing more is sent', () => {
     const { c, sent } = client()
     c.begin(); c.receive(initAnswer('C:\\Users\\u\\.codex'))
-    expect(c.verdict).toEqual({ ok: false, kind: 'unsupported', reason: 'codex-home' })
+    expect(c.verdict).toEqual({ ok: false, kind: 'transient', reason: 'codex-home' })
     expect(sent).toHaveLength(1)
   })
 
@@ -119,7 +122,37 @@ describe('the answer (ADR-022 bounds 3, 5, 8)', () => {
     expect(verbatim.c.initialized).toBe(true)
     const linux = client({ platform: 'linux', home: '/home/u/.local/share/conductor/codex-realms/realm-1' })
     linux.c.begin(); linux.c.receive(initAnswer('/home/u/.local/share/conductor/codex-realms/REALM-1'))
-    expect(linux.c.verdict).toEqual({ ok: false, kind: 'unsupported', reason: 'codex-home' })
+    expect(linux.c.verdict).toEqual({ ok: false, kind: 'transient', reason: 'codex-home' })
+  })
+
+  // MP7 round 1, D-1: a realm on a share, answered in the verbatim UNC form.
+  it('a verbatim UNC home (\\\\?\\UNC\\server\\share) names the same folder as \\\\server\\share, in either case', () => {
+    const share = '\\\\fs1\\users\\u\\conductor\\codex-realms\\realm-0000000000000001'
+    for (const answered of [`\\\\?\\UNC\\${share.slice(2)}`, `\\\\?\\unc\\${share.slice(2).toUpperCase()}`, share]) {
+      const unc = client({ home: share })
+      unc.c.begin(); unc.c.receive(initAnswer(answered))
+      expect(unc.c.initialized, answered).toBe(true)
+    }
+    // Not a way to name another share or a local folder.
+    for (const other of [`\\\\?\\UNC\\fs2\\${share.slice(6)}`, `\\\\?\\C:${share.slice(1)}`]) {
+      const unc = client({ home: share })
+      unc.c.begin(); unc.c.receive(initAnswer(other))
+      expect(unc.c.verdict, other).toEqual({ ok: false, kind: 'transient', reason: 'codex-home' })
+    }
+  })
+
+  // MP7 round 1, C-F1: the helper names its own version; it must be the one
+  // the client was started for (the proven executable), else fail closed.
+  it('the helper\'s user agent must name the version the client was started for', () => {
+    const ok = client()
+    ok.c.begin(); ok.c.receive(initAnswer(HOME, { userAgent: 'codex_cli_rs/0.155.1 (Windows 10.0.26100; x86_64) WindowsTerminal' }))
+    expect(ok.c.initialized).toBe(true)
+    for (const userAgent of ['codex_cli_rs/0.157.1 (Windows 10.0.26100; x86_64)', 'codex_cli_rs/0.155.10', 'fake', '', ' codex_cli_rs/0.155.1', 'codex_cli_rs 0.155.1']) {
+      const { c, sent } = client()
+      c.begin(); c.receive(initAnswer(HOME, { userAgent }))
+      expect(c.verdict, userAgent).toEqual({ ok: false, kind: 'transient', reason: 'version-mismatch' })
+      expect(sent, userAgent).toHaveLength(1)
+    }
   })
 
   it('a request from the server is never answered and fails the read', () => {
@@ -168,11 +201,12 @@ describe('the answer (ADR-022 bounds 3, 5, 8)', () => {
     }
   })
 
-  it('a line that is not JSON, or not an object, fails as unsupported', () => {
+  // MP7 round 1, D-1: only a version or protocol answer is sticky.
+  it('a line that is not JSON, or not an object, fails (transient)', () => {
     for (const text of ['not json\n', '[1,2]\n', '"x"\n', '{"id":true}\n']) {
       const { c } = client()
       c.begin(); c.receive(text)
-      expect(c.verdict, text).toEqual({ ok: false, kind: 'unsupported', reason: 'malformed' })
+      expect(c.verdict, text).toEqual({ ok: false, kind: 'transient', reason: 'malformed' })
     }
   })
 
@@ -180,10 +214,22 @@ describe('the answer (ADR-022 bounds 3, 5, 8)', () => {
     const long = 'x'.repeat(APP_SERVER_MAX_LINE + 1)
     const ended = client()
     ended.c.begin(); ended.c.receive(long + '\n')
-    expect(ended.c.verdict).toEqual({ ok: false, kind: 'unsupported', reason: 'oversized' })
+    expect(ended.c.verdict).toEqual({ ok: false, kind: 'transient', reason: 'oversized' })
     const open = client()
     open.c.begin(); open.c.receive(long)
-    expect(open.c.verdict).toEqual({ ok: false, kind: 'unsupported', reason: 'oversized' })
+    expect(open.c.verdict).toEqual({ ok: false, kind: 'transient', reason: 'oversized' })
+  })
+
+  // MP7 round 1, S-1 (ADR-022: every bound is a test): the values themselves.
+  it('the bounds are the ADR\'s: 64 KiB a line, 12 s for initialize, 20 s a read, 3 s to exit', () => {
+    expect(APP_SERVER_MAX_LINE).toBe(65_536)
+    expect(APP_SERVER_INITIALIZE_TIMEOUT_MS).toBe(12_000)
+    expect(APP_SERVER_READ_DEADLINE_MS).toBe(20_000)
+    expect(APP_SERVER_EXIT_GRACE_MS).toBe(3_000)
+    // A line of exactly the bound is read.
+    const { c } = client()
+    c.begin(); c.receive(initAnswer(HOME, { pad: 'x'.repeat(65_536 - initAnswer().length - 10) }))
+    expect(c.initialized).toBe(true)
   })
 
   it('an answer with nothing to show is no reading (transient)', () => {

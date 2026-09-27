@@ -51,8 +51,9 @@
  *   `codex app-server` helper (readUsage, which holds every other bound).
  *   Tried only for a CLI discovery proved whose version is `supported`
  *   (classifyCodexVersion: never too-new, too-old or unknown). A CLI that
- *   answered `unsupported` (method not found, an invalid request, a schema
- *   mismatch, a wrong `codexHome`) is not asked again until the executable
+ *   answered `unsupported` (only an answer about its version or protocol:
+ *   method not found, an invalid request, a schema mismatch; a wrong
+ *   `codexHome` is transient) is not asked again until the executable
  *   changes: the verdict is kept in memory keyed by the executable's
  *   identity (path, size, times, file id) and version. A transient failure
  *   is not kept. The accounts service decides when it may run.

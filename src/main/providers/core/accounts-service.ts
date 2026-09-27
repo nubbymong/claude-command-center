@@ -299,6 +299,8 @@ export class AccountsService {
   private usageReadQueue: Promise<void> = Promise.resolve()
   private usageReadEndedAt = Number.NEGATIVE_INFINITY
   private usageReadSeq = 0
+  /** The app is quitting: no fresh read starts again (stopUsageReads). */
+  private usageStopped = false
   private subscribedStore: AccountRegistryStore | null = null
   private unsubscribeStore: (() => void) | null = null
 
@@ -2067,7 +2069,29 @@ export class AccountsService {
 
   // -------------------------------------------------------------------------
   // Usage track MP8: the fresh read of a closed account (ADR-022)
+  //
+  // One rule for what may run beside a read. A read holds its account (an
+  // operation lease) and, inside the package, its realm's sign-in lock (a
+  // status check still runs beside it). Anything that changes who the
+  // account is, where it lives, or whether it is open -- a launch, a sign
+  // in again, a sign-out, a lifecycle change -- first stops the read and
+  // waits for its process chain here (settleUsageRead, #49), so it is never
+  // refused because of one; anything that still meets a read at the realm
+  // lock is refused as busy, never run beside it. The rule that lets a read
+  // start (the provider on, nothing open on the account, the record) is
+  // asked under the registry lock when the lease is taken and again right
+  // before the spawn, after every wait (usageMayStart).
   // -------------------------------------------------------------------------
+
+  /** At app quit: every fresh read under way is stopped now, so the
+   *  runner's pending-kill flush that follows kills what they started, and
+   *  none starts again. */
+  stopUsageReads(): void {
+    this.usageStopped = true
+    for (const run of this.usageReads.values()) {
+      try { run.stop.abort() } catch { /* best effort at quit */ }
+    }
+  }
 
   private usageNow(): number {
     try {
@@ -2123,6 +2147,7 @@ export class AccountsService {
       if (kept && age >= 0 && age < this.usageSetting('reuseMs', USAGE_READ_REUSE_MS)) return kept.reading
     }
     if (mode.pass && mode.pass.transient >= USAGE_READ_TRANSIENT_LIMIT) return null
+    if (this.usageStopped) return null
     const run = this.usageReads.get(a.id) ?? this.startUsageRead(p, a.id, a.providerId, realmId, mode.signal)
     let outcome: UsageReadOutcome
     try { outcome = await run.outcome } catch { outcome = { ok: false, failure: 'refused' } }
@@ -2230,14 +2255,21 @@ export class AccountsService {
     }
   }
 
-  /** The rule once more, right before the process starts: the provider is
-   *  on and answered, and the read's own lease is the only thing on the
-   *  account (a session, review or sign-in taken since refuses it). A
-   *  launch, sign-in, sign-out or lifecycle change stops the read instead
-   *  (settleUsageRead). */
+  /** The rule once more, right before the process starts (after every
+   *  wait: the queue, discovery, the package's own checks): the provider is
+   *  on and answered; the read's own lease is the only thing on the account
+   *  (a session, review or sign-in taken since refuses it); and its record,
+   *  as it is now, still allows a read (signed in with ChatGPT, not an API
+   *  key, managed, not blocked). A launch, sign-in, sign-out or lifecycle
+   *  change stops the read instead (settleUsageRead). */
   private usageMayStart(accountId: string, providerId: ProviderId): boolean {
     try {
-      return !this.launchRefusal(providerId) && this.deps.leases.count(accountId) === 1
+      if (this.launchRefusal(providerId) || this.deps.leases.count(accountId) !== 1) return false
+      const doc = this.currentStore()?.current()
+      const a = doc ? findAccount(doc, accountId) : undefined
+      const realm = doc && a ? findRealm(doc, a.authRealmId) : undefined
+      const p = this.usagePackage(providerId)
+      return !!a && !!realm && !!p && this.usageReadable(p, a, realm)
     } catch {
       return false
     }

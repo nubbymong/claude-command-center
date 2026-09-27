@@ -81,7 +81,9 @@ if (a === 'app-server') {
   // sent, answers initialize naming its CODEX_HOME (or another folder) and the
   // usage read, and exits when its stdin closes -- unless the realm's
   // APP_SERVER file says 'stay' (it must then be killed) or 'silent' (it
-  // answers nothing).
+  // answers nothing). 'error' answers the read with an error; 'server-request'
+  // sends a request of its own after the initialize answer (MP7 round 1).
+  // Its user agent names its version, as the real helper's does.
   const NL = String.fromCharCode(10)
   let mode = 'ok'
   try { mode = fs.readFileSync(path.join(home, 'APP_SERVER'), 'utf8').trim() } catch {}
@@ -97,8 +99,11 @@ if (a === 'app-server') {
       fs.appendFileSync(path.join(home, 'app-server.log'), line + NL)
       if (mode === 'silent') continue
       const m = JSON.parse(line)
-      if (m.method === 'initialize') process.stdout.write(JSON.stringify({ id: m.id, result: { codexHome: mode === 'wrong-home' ? path.dirname(home) : home, platformFamily: 'x', platformOs: 'x', userAgent: 'fake' } }) + NL)
-      if (m.method === 'account/rateLimits/read') process.stdout.write(JSON.stringify({ id: m.id, result: { rateLimits: { limitId: 'codex', primary: { usedPercent: 33, windowDurationMins: 300, resetsAt: Math.floor(Date.now() / 1000) + 3600 }, planType: 'plus' } } }) + NL)
+      if (m.method === 'initialize') process.stdout.write(JSON.stringify({ id: m.id, result: { codexHome: mode === 'wrong-home' ? path.dirname(home) : home, platformFamily: 'x', platformOs: 'x', userAgent: 'codex_cli_rs/0.155.1 (fake)' } }) + NL)
+      if (m.method === 'initialize' && mode === 'server-request') process.stdout.write(JSON.stringify({ id: 'srv-1', method: 'account/chatgptAuthTokens/refresh', params: {} }) + NL)
+      if (m.method === 'account/rateLimits/read') process.stdout.write(JSON.stringify(mode === 'error'
+        ? { id: m.id, error: { code: -32000, message: 'failed to fetch codex rate limits' } }
+        : { id: m.id, result: { rateLimits: { limitId: 'codex', primary: { usedPercent: 33, windowDurationMins: 300, resetsAt: Math.floor(Date.now() / 1000) + 3600 }, planType: 'plus' } } }) + NL)
     }
   })
   process.stdin.on('end', () => { if (mode !== 'stay' && mode !== 'silent') process.exit(0) })
@@ -516,6 +521,25 @@ describe('a Codex usage read against the fake app-server (real processes)', () =
     fs.writeFileSync(path.join(homeOf(id), 'APP_SERVER'), 'silent')
     const r = await createCodexAuthOperations(deps()).readUsage({ authRealmId: id })
     expect(r).toEqual({ ok: false, kind: 'transient', reason: 'timeout' })
+    expect(await goneWithin(Number(fs.readFileSync(path.join(homeOf(id), 'app-server.pid'), 'utf8')), CODEX_KILL_WORST_MS + GONE_MS)).toBe(true)
+  }, CODEX_KILL_WORST_MS + 60_000)
+
+  it('an error answer to the read is transient, and the helper exits', async () => {
+    const id = realm()
+    fs.writeFileSync(path.join(homeOf(id), 'APP_SERVER'), 'error')
+    const r = await createCodexAuthOperations(deps()).readUsage({ authRealmId: id })
+    expect(r).toEqual({ ok: false, kind: 'transient', reason: 'error-response' })
+    expect(await goneWithin(Number(fs.readFileSync(path.join(homeOf(id), 'app-server.pid'), 'utf8')), CODEX_KILL_WORST_MS + GONE_MS)).toBe(true)
+  }, CODEX_KILL_WORST_MS + 60_000)
+
+  it('a request from the helper is never answered: the read fails and the helper is shut down', async () => {
+    const id = realm()
+    fs.writeFileSync(path.join(homeOf(id), 'APP_SERVER'), 'server-request')
+    const r = await createCodexAuthOperations(deps()).readUsage({ authRealmId: id })
+    expect(r).toEqual({ ok: false, kind: 'transient', reason: 'server-request' })
+    const sent = fs.readFileSync(path.join(homeOf(id), 'app-server.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { id?: unknown; method?: string })
+    expect(sent.some((m) => m.id === 'srv-1')).toBe(false)
+    expect(sent.every((m) => m.method === 'initialize' || m.method === 'initialized' || m.method === 'account/rateLimits/read')).toBe(true)
     expect(await goneWithin(Number(fs.readFileSync(path.join(homeOf(id), 'app-server.pid'), 'utf8')), CODEX_KILL_WORST_MS + GONE_MS)).toBe(true)
   }, CODEX_KILL_WORST_MS + 60_000)
 

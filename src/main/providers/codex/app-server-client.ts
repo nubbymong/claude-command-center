@@ -15,8 +15,10 @@
  * What it accepts: one JSON message per line, at most APP_SERVER_MAX_LINE
  * characters; only its two responses by id (a notification is ignored); the
  * `initialize` answer must name the realm the helper was started in
- * (`codexHome`, compared canonically, caseless on Windows and macOS), and
- * both answers must match the schema excerpts
+ * (`codexHome`, compared canonically, caseless on Windows and macOS) and
+ * the version the client was started for (its `userAgent`,
+ * `<name>/<version> ...`: the executable run is the one discovery proved),
+ * and both answers must match the schema excerpts
  * (tests/fixtures/codex/app-server/<version>/usage-schema.json): their required
  * fields present with their types, own plain properties only, anything extra
  * accepted and ignored. The allowance then goes through the same normaliser
@@ -24,10 +26,12 @@
  * the known list).
  *
  * The verdict, once, fails closed: `unsupported` (sticky for that CLI until it
- * changes: method not found, an invalid request, a schema mismatch, a wrong
- * home, a malformed or oversized line) or `transient` (a timeout, an early
- * exit, a spawn failure, a cancel, an error answer from the backend, a
- * request from the server, or no reading at all). On any verdict the client
+ * changes; only an answer about the CLI's version or protocol: method not
+ * found, an invalid request, a schema mismatch, a version the client cannot
+ * name) or `transient` (a wrong home, which is about the realm and not the
+ * CLI; a malformed or oversized line; a helper reporting another version; a
+ * timeout, an early exit, a spawn failure, a cancel, an error answer from the
+ * backend, a request from the server, or no reading at all). On any verdict the client
  * closes the helper's stdin (`finish`), and the caller ends the process chain.
  */
 
@@ -56,9 +60,11 @@ const INVALID_PARAMS = -32602
 
 export type AppServerFailure =
   | 'version' | 'method-not-found' | 'invalid-request' | 'schema' | 'malformed' | 'oversized' | 'codex-home'
-  | 'server-request' | 'error-response' | 'no-reading' | 'timeout' | 'exit' | 'spawn' | 'cancelled'
+  | 'version-mismatch' | 'server-request' | 'error-response' | 'no-reading' | 'timeout' | 'exit' | 'spawn' | 'cancelled'
 
-const UNSUPPORTED: ReadonlySet<AppServerFailure> = new Set<AppServerFailure>(['version', 'method-not-found', 'invalid-request', 'schema', 'malformed', 'oversized', 'codex-home'])
+/** The only sticky verdicts: answers about the CLI's version or protocol
+ *  (usage track MP7 round 1, D-1). */
+const UNSUPPORTED: ReadonlySet<AppServerFailure> = new Set<AppServerFailure>(['version', 'method-not-found', 'invalid-request', 'schema'])
 
 export type AppServerVerdict =
   | { ok: true; reading: AllowanceReading }
@@ -136,18 +142,20 @@ function readResultOk(r: unknown): boolean {
 }
 
 /** The `initialize` answer: its four required strings. */
-function initializeResultOk(r: unknown): r is Record<string, unknown> & { codexHome: string } {
+function initializeResultOk(r: unknown): r is Record<string, unknown> & { codexHome: string; userAgent: string } {
   return isPlain(r) && ['codexHome', 'platformFamily', 'platformOs', 'userAgent'].every((k) => isStr(own(r, k)) && (k !== 'codexHome' || (own(r, k) as string).length > 0))
 }
 
 /** A path as the comparison reads it: separators unified on Windows, a
+ *  `\\?\UNC\` prefix read as the `\\` of the share it names and any other
  *  `\\?\` prefix dropped, trailing separators trimmed; caseless on Windows
  *  and macOS. */
 function canonicalHome(p: string, platform: NodeJS.Platform): string {
   let s = p
   if (platform === 'win32') {
     s = s.replace(/\//g, '\\')
-    if (s.startsWith('\\\\?\\')) s = s.slice(4)
+    if (s.toLowerCase().startsWith('\\\\?\\unc\\')) s = `\\\\${s.slice(8)}`
+    else if (s.startsWith('\\\\?\\')) s = s.slice(4)
   }
   s = s.replace(/[\\/]+$/, '')
   return platform === 'win32' || platform === 'darwin' ? s.toLowerCase() : s
@@ -180,6 +188,11 @@ export function createAppServerUsageClient(deps: AppServerClientDeps): AppServer
     if (state === 'initializing') {
       if (!initializeResultOk(result)) { fail('schema'); return }
       if (canonicalHome(result.codexHome, deps.platform) !== canonicalHome(deps.realmHome, deps.platform)) { fail('codex-home'); return }
+      // The helper names its own version first in its user agent
+      // (`codex_cli_rs/0.155.1 (...)`): it must be the version the client was
+      // started for, else the executable run is not the one proved.
+      const agent = /^[^\s/]+\/(\S+)/.exec(result.userAgent)
+      if (!agent || agent[1] !== deps.cliVersion) { fail('version-mismatch'); return }
       state = 'reading'
       const m = appServerMessages(deps.cliVersion)
       send(m.initialized)

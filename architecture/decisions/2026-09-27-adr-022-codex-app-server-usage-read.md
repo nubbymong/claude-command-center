@@ -58,36 +58,54 @@ owner decision and a new ADR.
    whose primary profile is never refreshed). A read may refresh that
    account's sign-in, as Codex itself does when it runs (and as Claude's
    guarded refresh does); that is why an account in use is never read, and
-   why a launch, sign-in, sign-out, archive or inactivate on an account with a
-   read in flight aborts the read and waits for its process chain to end
-   first.
+   why nothing that changes the sign-in runs beside a read. One rule: the
+   read holds its account (an operation lease) and its realm's sign-in lock
+   (the lock a sign-in or sign-out takes; a status check still runs beside
+   it). A launch, a sign in again, a sign-out and every lifecycle change
+   (inactivate, archive) first stop a read of that account and wait for its
+   process chain to end, so none of them is refused because of one;
+   anything that still meets a read at the realm lock (a sign-in, a
+   sign-out, a folder removal) is refused as busy, never run beside it. The
+   rule that lets a read start (Codex on, nothing open on the account, its
+   record signed in with ChatGPT, managed, not blocked) is asked when the
+   lease is taken and again right before the spawn, after every wait.
 
 3. **Isolated to that account's realm.** The helper runs in the account's own
    folder: `CODEX_HOME` is the realm, the environment is the allowlisted one
    the other CLI runs use (ambient OpenAI and Codex authority stripped), and
-   the run holds the realm as a reader under an operation lease. The
-   `initialize` answer's `codexHome` must equal the realm folder
-   (canonicalised, case-insensitive on Windows and macOS); anything else
-   refuses the read and marks that CLI unsupported.
+   the run holds the realm's sign-in lock under an operation lease (bound
+   2). The `initialize` answer's `codexHome` must equal the realm folder
+   (canonicalised: case-insensitive on Windows and macOS, a `\\?\` prefix
+   dropped and `\\?\UNC\` read as the `\\` share it names); anything else
+   refuses the read. That failure is about the realm, not the CLI, so it is
+   transient, never the sticky verdict of bound 5.
 
 4. **Shut down after each read.** After the answer the client closes stdin and
    gives the helper 3 s to exit, then the Codex runner's deadline kill ends the
    whole process chain (the same kill chain as every other Codex CLI run,
    bounded by `CODEX_KILL_WORST_MS`). The realm hold and the lease are released
    only once the chain has ended. One helper at a time app-wide; a deadline of
-   20 s per read.
+   20 s per read. At app quit every read under way is stopped before the
+   Codex runner's pending-kill flush, so the flush kills its helper too, and
+   no read starts again.
 
 5. **Supported versions only, proven by probe.** The owner said "Test the
    supported versions": a read is tried only when discovery proved the CLI and
    its version classifies as `supported` (`classifyCodexVersion`, today
    0.153.4 to 0.156.1, `cli-contract.ts`). A `too-new` CLI (0.157.1
    included), a `too-old` one or an `unknown` version is never read; it shows
-   the last-seen reading. The run itself is then the probe: a schema-valid
-   `initialize` answer within 12 s naming the realm, then a schema-valid
-   `rateLimits`. Method-not-found, an invalid request, a schema mismatch or a
-   wrong `codexHome` marks that executable unsupported until it changes; a
-   timeout, early exit, spawn error, sign-in or backend error, or cancel is
-   transient. Widening the supported range is the version work's own
+   the last-seen reading. The executable discovery proved is captured when
+   the read begins, and the helper starts only if discovery still names that
+   same executable (path, size, times, file id) at the same version, still
+   `supported`, asked in the same turn as the spawn's own executable check.
+   The run itself is then the probe: a schema-valid `initialize` answer
+   within 12 s naming the realm and, first in its `userAgent`, the proven
+   version, then a schema-valid `rateLimits`. Only an answer about the CLI's
+   version or protocol (method-not-found, an invalid request, a schema
+   mismatch) marks that executable unsupported until it changes; a wrong
+   `codexHome`, another version in the `userAgent`, a malformed or
+   oversized line, a timeout, early exit, spawn error, sign-in or backend
+   error, a request from the server, or a cancel is transient. Widening the supported range is the version work's own
    evidence step (real-CLI qualification), not this ADR's.
 
 6. **Fail closed to the last-known usage.** Every failure, refusal or version

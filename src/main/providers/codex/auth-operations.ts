@@ -329,6 +329,15 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
     void Promise.all(r.kills).then(letGo, letGo)
   }
 
+  /** The same executable, proved the same way: identity and version, and
+   *  still `supported` (usage track MP7 round 1, C-F1). */
+  function sameProven(a: CodexDiscovery, b: CodexDiscovery | null): boolean {
+    if (!b || b.state !== 'found' || b.compatibility !== 'supported' || b.version !== a.version || !a.identity || !b.identity) return false
+    const x = a.identity
+    const y = b.identity
+    return x.path === y.path && x.size === y.size && x.mtimeMs === y.mtimeMs && x.ctimeMs === y.ctimeMs && x.dev === y.dev && x.ino === y.ino
+  }
+
   /** One helper run for readUsage, in a realm prepared and held. */
   async function runUsageRead(r: Ready, version: string, signal: AbortSignal | undefined): Promise<AppServerVerdict> {
     const stop = new AbortController()
@@ -440,8 +449,18 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
      * (never too-new, too-old or unknown); only a managed realm (this
      * computer's own Codex folder is never read); the realm's checks are a
      * status run's (canonical home, the executable re-verified, no `.env`),
-     * CODEX_HOME is the realm, the environment is the allowlisted one, and the
-     * realm is held as a reader. The client (app-server-client.ts) sends
+     * CODEX_HOME is the realm, and the environment is the allowlisted one.
+     * The executable discovery proved is captured once, and the helper
+     * starts only if discovery still names that same executable and version
+     * (still `supported`), asked in the same turn as the spawn's own
+     * executable check; the helper must then report that version itself.
+     * The realm is held with its sign-in lock (as a sign-in or sign-out
+     * holds it): a status check still runs beside the read, while a sign-in,
+     * a sign-out or a folder removal meeting it is refused as busy (the
+     * accounts service stops a read and waits for it before any of those,
+     * MP8). A read may refresh the realm's sign-in, as Codex does when it
+     * runs, so nothing that changes the sign-in may run beside it. The
+     * client (app-server-client.ts) sends
      * exactly initialize, initialized and account/rateLimits/read, and
      * requires the helper to name this realm. After its verdict it closes
      * stdin; the helper then has APP_SERVER_EXIT_GRACE_MS to exit before its
@@ -456,23 +475,34 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
       try {
         const signal = opts?.signal
         if (signal?.aborted) return refused('cancelled')
+        // Captured once: the executable this read is for.
         let p: CodexDiscovery | null
         try { p = deps.proven() } catch { p = null }
         const version = p && p.state === 'found' && typeof p.version === 'string' ? p.version : null
         if (!p || p.compatibility !== 'supported' || classifyCodexVersion(version) !== 'supported' || !version) return refused('version')
+        const pinned = p
         if (usageReadRunning) return refused('busy')
         usageReadRunning = true
         let freed = false
         const free = () => { if (!freed) { freed = true; usageReadRunning = false } }
+        // Once the run is handed to releaseAfterKills, only that lets the
+        // helper slot go: never before its kills have settled.
+        let handedOff = false
         try {
           const r = await prepare(realm, 'status')
           if (isRefusal(r)) { free(); return refused(r.code) }
           if (r.ownership !== 'conductor-managed') { free(); return refused('external-realm') }
-          const release = holdRealm(r, 'reader')
+          const release = holdRealm(r, 'exclusive')
           if (isRefusal(release)) { free(); return refused(release.code) }
-          // The caller's last word (MP8: the account is still closed and the
-          // provider still on), asked with nothing awaited between it and
-          // the spawn in runUsageRead.
+          // The last words, asked with nothing awaited between them and the
+          // spawn in runUsageRead (whose run() re-checks the executable in
+          // this same turn): discovery still names the executable captured
+          // above, at the same version, still supported (C-F1); then the
+          // caller's (MP8: the account still closed, the provider still on,
+          // its record still allowing a read).
+          let same = false
+          try { same = sameProven(pinned, deps.proven()) } catch { same = false }
+          if (!same) { release(); free(); return refused('version') }
           let allowed = false
           try { allowed = !opts.mayStart || opts.mayStart() === true } catch { allowed = false }
           if (!allowed) { release(); free(); return refused('may-not-start') }
@@ -482,10 +512,11 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
           try {
             return await runUsageRead(r, version, signal)
           } finally {
+            handedOff = true
             releaseAfterKills(r, () => { release(); free(); ended() })
           }
         } catch {
-          free()
+          if (!handedOff) free()
           return refused('not-started')
         }
       } catch {

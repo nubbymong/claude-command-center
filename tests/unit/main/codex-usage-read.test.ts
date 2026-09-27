@@ -456,6 +456,25 @@ describe('who is read (ADR-022, bound 2)', () => {
     expect(helperRuns(t.h)).toEqual([])
   })
 
+  // MP7 round 1, C-F2: at the moment of the spawn, the record too.
+  it('the rule is asked once more right before the helper starts: a record that no longer allows a read starts nothing', async () => {
+    for (const over of [{ authMethod: 'apiKey' as const }, { lastKnownAuthState: 'signed-out' as const }, { operationalState: 'blocked' as const }]) {
+      const t = await setup()
+      const a = await addCodexAccount(t.h, 'A')
+      const has = t.h.state.envFile.has.bind(t.h.state.envFile)
+      const current = t.h.store.current.bind(t.h.store)
+      t.h.state.envFile.has = (home: string) => {
+        // Between the lease and the spawn, the record changes (a check that
+        // did not settle the read).
+        const doc = current()!
+        t.h.store.current = () => ({ ...doc, accounts: doc.accounts.map((x) => (x.id === a ? { ...x, ...over } : x)) })
+        return has(home)
+      }
+      await t.h.service.readAccountUsage({ accountId: a })
+      expect(helperRuns(t.h), JSON.stringify(over)).toEqual([])
+    }
+  })
+
   it('the rule is asked once more right before the helper starts: an account opened meanwhile is not read', async () => {
     const t = await setup()
     const a = await addCodexAccount(t.h, 'A')
@@ -778,6 +797,24 @@ describe('settling an account (#49): what is kept, what is bounded', () => {
     expect(launched.ok).toBe(true)
     await reading
     await until(() => t.h.leases.countKind(a, 'operation') === 0, 'the read lease to go')
+  })
+})
+
+describe('the app quitting (MP7 round 1)', () => {
+  it('stops every read under way at once, and none starts again', async () => {
+    const t = await setup()
+    const a = await addCodexAccount(t.h, 'A')
+    t.use(appServer({ hold: true }))
+    const reading = t.h.service.readAccountUsage({ accountId: a })
+    await until(() => t.helper().seen.length === 1, 'the helper to start')
+    t.h.service.stopUsageReads()
+    expect(t.helper().seen[0].stopped).toBe(true)
+    await reading
+    await until(() => t.h.leases.count(a) === 0, 'the read lease to go')
+    t.use(appServer())
+    await t.h.service.readAccountUsage({ accountId: a })
+    await stream(t)
+    expect(helperRuns(t.h)).toHaveLength(1)
   })
 })
 

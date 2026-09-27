@@ -969,12 +969,16 @@ Owner decisions: `docs/wp1/owner-decisions-2026-09-27.md` and ADR-022.
   in again, sign-out, archive and inactivate stop and wait for a read
   first (#49), so none of those is refused because of one.
 - **Residual, accepted (MP8, status check):** a "Check sign-in" on an
-  account with a fresh read under way runs beside it: both hold the realm
-  as readers, and neither changes the sign-in on purpose.
+  account with a fresh read under way runs beside it: the read holds the
+  realm's sign-in lock, which admits a status check (a reader) but refuses
+  a sign-in, a sign-out or a folder removal, and a status check changes no
+  sign-in on purpose.
 - **Owed (MP8, VM, before the live read ships):** the real read on 0.153.4
   and 0.155.1 with a signed-in ChatGPT account, the hosts it contacts, the
-  realm isolation, the helper's exit, no conversation started, and the
-  0.155.1 rollout fixture, as the MP8 section of the usage plan lists them.
+  realm isolation, the helper's exit, no conversation started, the
+  version the helper's userAgent names (the read requires the proven one),
+  and the 0.155.1 rollout fixture, as the MP8 section of the usage plan
+  lists them.
 
 ## Out of this PR (remaining Codex-parity work, carried to PR3/PR4 or 2.1.1 gates)
 
