@@ -197,9 +197,13 @@ function ProfileRow({ profile, primaryId, claudeOn }: { profile: AccountProfile;
       name={name}
       nameMuted={!active}
       nameTestId={`profile-name-${profile.id}`}
-      secondary={hasEmail
-        ? <span className="font-mono text-[12px] truncate max-w-full" style={{ color: 'var(--text-secondary)' }} title={email}>{middleTruncateEmail(email)}</span>
-        : <span className="text-[12px] italic" style={{ color: 'var(--text-muted)' }}>setup incomplete</span>}
+      secondary={!hasEmail
+        ? <span className="text-[12px] italic" style={{ color: 'var(--text-muted)' }}>setup incomplete</span>
+        // The email once: not again under a name that is the email (an
+        // unnamed profile), as the managed rows leave out a label equal to the name.
+        : name !== email && name !== middleTruncateEmail(email)
+          ? <span className="font-mono text-[12px] truncate max-w-full" style={{ color: 'var(--text-secondary)' }} title={email} data-testid={`profile-email-${profile.id}`}>{middleTruncateEmail(email)}</span>
+          : null}
       linked={links.map((a) => (
         <LinkedLine
           key={a.id}

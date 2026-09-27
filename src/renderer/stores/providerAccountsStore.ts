@@ -268,11 +268,20 @@ export function canLinkIdentity(account: Pick<AccountView, 'unverified' | 'exter
 }
 
 /** Accounts the identity editor offers under "Link another account": live,
- *  vouched-for accounts on another identity. Main has the final word (two
- *  records of one provider's own list never share an identity). */
+ *  vouched-for accounts of another provider that is on, whose provider has no
+ *  account on this identity yet, and that are not already linked with an
+ *  account of this one's provider (one account of each provider per
+ *  identity, which is also what main accepts for a provider's own list). A
+ *  provider that is off offers nothing, as it manages nothing. */
 export function linkCandidates(snapshot: AccountsSnapshot | null, account: AccountView): AccountView[] {
   if (!canLinkIdentity(account)) return []
-  return (snapshot?.accounts ?? []).filter((a) => a.identityId !== account.identityId && a.lifecycle !== 'archived' && canLinkIdentity(a))
+  const accounts = snapshot?.accounts ?? []
+  const here = new Set(accounts.filter((a) => a.identityId === account.identityId && a.lifecycle !== 'archived').map((a) => a.providerId))
+  // An account already linked with one of this provider's accounts stays
+  // where it is: it is unlinked there first, never moved from here.
+  const pairedWithMine = (a: AccountView) => accounts.some((b) => b.id !== a.id && b.identityId === a.identityId && b.lifecycle !== 'archived' && b.providerId === account.providerId)
+  return accounts.filter((a) => a.identityId !== account.identityId && a.lifecycle !== 'archived' && canLinkIdentity(a)
+    && !here.has(a.providerId) && !pairedWithMine(a) && providerView(snapshot, a.providerId)?.enabled !== false)
 }
 
 /** The session facts the Accounts rows read (a structural subset of the
@@ -337,6 +346,10 @@ export function accountDisplayName(snapshot: AccountsSnapshot | null, account: A
   if (friendly) return friendly
   const label = account.providerLabel?.trim()
   if (label) return label
+  // An unnamed identity shared with a labelled account (a Claude profile's
+  // email): that label names the person here too.
+  const linked = (snapshot?.accounts ?? []).find((a) => a.id !== account.id && a.identityId === account.identityId && a.lifecycle !== 'archived' && a.providerLabel?.trim())
+  if (linked) return linked.providerLabel!.trim()
   return ACCOUNT_NAME_FALLBACK
 }
 

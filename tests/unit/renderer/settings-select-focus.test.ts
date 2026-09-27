@@ -74,7 +74,9 @@ describe('Settings, Accounts fields: a clearly visible keyboard focus (WP2 final
   it('no field switches its outline off, and every tinted field draws the strong focus ring', () => {
     const classes = FILES.flatMap((f) => [...fieldClassNames(read(f)), ...selectClassNames(read(f))].map((c) => [f, c] as const))
     const tinted = classes.filter(([, c]) => c.includes('focus:border-blue/50'))
-    expect(tinted.length, 'the rename field, the four web session selects and the editor\'s group and link fields').toBeGreaterThanOrEqual(8)
+    // The identity editor's fields use the dialog tokens (no tint); they are
+    // held to the strong ring by the rename-field case and the file scan below.
+    expect(tinted.length, 'the four web session selects').toBeGreaterThanOrEqual(4)
     for (const [f, c] of classes) expect(c, `${f}: ${c}`).not.toContain('focus:outline-none')
     for (const [f, c] of tinted) expect(c, `${f}: ${c}`).toContain('focus-ring-strong')
   })

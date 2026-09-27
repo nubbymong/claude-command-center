@@ -237,6 +237,18 @@ describe('AccountsPanel', () => {
     expect(menuItem('remove', profileWithEmail.id)?.textContent).toBe('Remove')
   })
 
+  it('an unnamed profile shows its email once (VM finding 1)', () => {
+    const unnamed: AccountProfile = { id: 'profile-unnamed', name: '', accountEmail: 'solo@example.com', createdAt: 3 }
+    useAccountProfilesStore.setState({ profiles: [unnamed, profileWithEmail] })
+    const { container, unmount: u } = renderComponent(React.createElement(AccountsPanel, { onAdd: vi.fn() }))
+    unmount = u
+    const row = container.querySelector(`[data-testid="profile-row-${unnamed.id}"]`)!
+    expect(row.textContent!.split('solo@example.com').length - 1).toBe(1)
+    expect(row.querySelector(`[data-testid="profile-email-${unnamed.id}"]`)).toBeNull()
+    // A named profile keeps its email under its name.
+    expect(container.querySelector(`[data-testid="profile-email-${profileWithEmail.id}"]`)!.textContent).toBe('work@corp.com')
+  })
+
   it('renders one row per profile', () => {
     useAccountProfilesStore.setState({ profiles: [profileWithEmail, profileWithoutEmail] })
 
