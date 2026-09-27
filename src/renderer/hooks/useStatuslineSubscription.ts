@@ -40,9 +40,8 @@ export function useStatuslineSubscription(sessionId: string) {
       // Dynamic usage buckets (limits[] discovery). Copy even when empty so a
       // bucket that disappeared upstream clears from the strip.
       if (data.usageBuckets) updates.usageBuckets = data.usageBuckets
-      // Usage track MP5: when the allowance was reported, and that nothing
-      // will report it (D3), for the multi-account footer.
-      if (data.rateLimitsAt != null) updates.rateLimitsAt = data.rateLimitsAt
+      // Usage track MP5: that nothing will report the allowance (D3), for the
+      // multi-account footer and the strip.
       if (data.usageUnavailable) updates.usageUnavailable = data.usageUnavailable
       // v1.5.9: do NOT copy accountEmail / accountColour into the session
       // store FOR LOCAL SESSIONS. The local bridge reads

@@ -26,8 +26,11 @@ import type { Session } from '../../../src/renderer/stores/sessionStore'
 vi.mock('../../../src/renderer/hooks/useThemeController', () => ({ useResolvedTheme: () => 'dark', useThemeController: () => {} }))
 
 const {
-  default: MultiAccountStatusline, liveIdentityUsage, liveAccountUsage,
+  default: MultiAccountStatusline, liveIdentityUsage, preferBucket,
 } = await import('../../../src/renderer/components/MultiAccountStatusline')
+const { formatResetTime } = await import('../../../src/renderer/utils/terminalFormatting')
+const { SCENARIO } = await import('../../fixtures/footer/claude-only-scenario')
+const { default: PRE_MP5 } = (await import('../../fixtures/footer/pre-mp5-claude-only.json')) as { default: { meters: string; dots: string } }
 const { useSessionStore } = await import('../../../src/renderer/stores/sessionStore')
 const { useAccountProfilesStore } = await import('../../../src/renderer/stores/accountProfilesStore')
 const { useSettingsStore, DEFAULT_SETTINGS } = await import('../../../src/renderer/stores/settingsStore')
@@ -69,6 +72,8 @@ const snapshot: AccountsSnapshot = {
     account('cx-2', 'codex', 'i-c', { authMethod: 'apiKey' }),
     account('cx-3', 'codex', 'i-d'),
     account('cx-4', 'codex', 'i-e', { authMethod: 'device' }),
+    account('cx-5', 'codex', 'i-a', { authMethod: 'apiKey', providerLabel: 'Team key' }),
+    account('cl-9', 'claude', 'i-b', { legacyId: 'p9', legacyLinked: true }),
   ],
   pendingSetups: [], externalDefaults: [], conflicts: [], reviewerNotices: [],
 }
@@ -88,7 +93,7 @@ const codex = (over: Partial<Session> = {}): Session =>
 // ------------------------------------------------------------ pure grouping --
 
 describe('liveIdentityUsage (usage track MP5)', () => {
-  it('Claude Code only: the same pills as before identities, whatever the registry calls them', () => {
+  it('Claude Code only: named from the aliases and coloured from the email overrides, whatever the registry calls them', () => {
     const sessions = [
       claude('b@x.com', { usageBuckets: [bucket('5h', 10), bucket('Weekly', 20), bucket('Fable', 30, { key: 'weekly:Fable' })] }),
       claude('a@x.com', { rateLimitCurrent: 30, rateLimitWeekly: 12 }),
@@ -96,13 +101,67 @@ describe('liveIdentityUsage (usage track MP5)', () => {
       // An SSH session reports its remote account (#571).
       claude('', { accountEmail: undefined, sshRemoteAccount: 'C@X.com', sessionType: 'ssh', rateLimitCurrent: 5 } as Partial<Session>),
     ]
-    const withRegistry = liveIdentityUsage(sessions, profiles, aliases, overrides, snapshot)
-    const before = liveAccountUsage(sessions, profiles, aliases, overrides)
-    expect(withRegistry.map((i) => ({ email: i.email, name: i.name, colourKey: i.colourKey, count: i.count, isPrimary: i.isPrimary, buckets: i.groups[0].buckets })))
-      .toEqual(before.map((a) => ({ email: a.email, name: a.name, colourKey: a.colourKey, count: a.count, isPrimary: a.isPrimary, buckets: a.buckets })))
-    expect(withRegistry.map((i) => i.name)).toEqual(['Alpha', 'Bravo', 'Charlie'])
-    expect(withRegistry.map((i) => i.colourKey)).toEqual([resolveAccountColourKey('a@x.com', overrides, undefined), 'rose', resolveAccountColourKey('C@X.com', overrides, undefined)])
-    expect(withRegistry.every((i) => i.plain && i.groups.length === 1)).toBe(true)
+    const out = liveIdentityUsage(sessions, profiles, aliases, overrides, snapshot)
+    expect(out.map((i) => [i.name, i.email, i.count, i.isPrimary])).toEqual([['Alpha', 'a@x.com', 2, true], ['Bravo', 'b@x.com', 1, false], ['Charlie', 'C@X.com', 1, false]])
+    expect(out.map((i) => i.colourKey)).toEqual([resolveAccountColourKey('a@x.com', overrides, undefined), 'rose', resolveAccountColourKey('C@X.com', overrides, undefined)])
+    expect(out.every((i) => i.plain && i.groups.length === 1)).toBe(true)
+  })
+
+  // MP5 review Q1: an idle session's passed window never hides the current one.
+  it('of two readings of one label, the one whose reset is still ahead wins, whatever its percentage', () => {
+    const past = new Date(Date.now() - 60_000).toISOString()
+    const ahead = future(2)
+    const out = liveIdentityUsage([
+      claude('a@x.com', { status: 'idle', usageBuckets: [bucket('5h', 95, { resetsAt: past })] }),
+      claude('a@x.com', { usageBuckets: [bucket('5h', 5, { resetsAt: ahead })] }),
+    ], profiles, aliases, overrides, snapshot)
+    expect(out[0].groups[0].buckets.map((b) => [b.percent, b.resetsAt])).toEqual([[5, ahead]])
+  })
+
+  it('within one window the worst case; of two windows ahead, the later', () => {
+    const at = future(2)
+    const soon = new Date(Date.parse(at) + 2 * 60_000).toISOString() // the same window, reported a little apart
+    const n = Date.now()
+    expect(preferBucket(bucket('5h', 30, { resetsAt: at }), bucket('5h', 60, { resetsAt: soon }), n)).toBe(true)
+    expect(preferBucket(bucket('5h', 60, { resetsAt: at }), bucket('5h', 30, { resetsAt: soon }), n)).toBe(false)
+    expect(preferBucket(bucket('5h', 60, { resetsAt: future(1) }), bucket('5h', 10, { resetsAt: future(6) }), n)).toBe(true)
+    expect(preferBucket(bucket('5h', 10, { resetsAt: future(6) }), bucket('5h', 60, { resetsAt: future(1) }), n)).toBe(false)
+    // No reset time to compare: the worst case, as before.
+    expect(preferBucket(bucket('5h', 10, { resetsAt: '' }), bucket('5h', 60, { resetsAt: '' }), n)).toBe(true)
+    // A reading known to be past its reset loses to one not known to be.
+    const gone = new Date(n - 60_000).toISOString()
+    expect(preferBucket(bucket('5h', 95, { resetsAt: gone }), bucket('5h', 5, { resetsAt: '' }), n)).toBe(true)
+    expect(preferBucket(bucket('5h', 5, { resetsAt: '' }), bucket('5h', 95, { resetsAt: gone }), n)).toBe(false)
+  })
+
+  // MP5 review Q2.
+  it('an email no profile has is its own pill, never merged into the session\'s profile', () => {
+    const out = liveIdentityUsage([
+      claude('new@x.com', { profileId: 'p1', rateLimitCurrent: 3 }),
+      claude('a@x.com', { profileId: 'p1', rateLimitCurrent: 4 }),
+    ], profiles, aliases, overrides, snapshot)
+    expect(out.map((i) => i.key).sort()).toEqual(['email:new@x.com', 'identity:i-a'])
+    // A profile with no email of its own still takes its session's email.
+    const noEmail = [...profiles, { id: 'p9', accountEmail: '', name: 'Nine', createdAt: 0 } as AccountProfile]
+    const nine = liveIdentityUsage([claude('z@x.com', { profileId: 'p9', rateLimitCurrent: 1 })], noEmail, aliases, overrides, snapshot)
+    expect(nine[0].key).toBe('identity:i-b')
+  })
+
+  // MP5 review Q3.
+  it('two Codex accounts on one identity are two groups, each named, their allowances apart', () => {
+    const out = liveIdentityUsage([
+      codex({ providerAccountId: 'cx-1', usageBuckets: cxBuckets(20, 30) }),
+      codex({ providerAccountId: 'cx-5' }),
+      claude('b@x.com', { rateLimitCurrent: 1 }),
+    ], profiles, aliases, overrides, snapshot)
+    const ann = out.find((i) => i.name === 'Ann')!
+    expect(ann.groups.map((g) => [g.key, g.accountName, g.word, g.buckets.length])).toEqual([
+      ['codex:cx-1', 'ChatGPT sign-in', undefined, 2],
+      ['codex:cx-5', 'Team key', 'per token', 0],
+    ])
+    // One Codex account: one group, not named.
+    const one = liveIdentityUsage([codex({ providerAccountId: 'cx-1', usageBuckets: cxBuckets(20, 30) })], profiles, aliases, overrides, snapshot)
+    expect(one[0].groups.map((g) => [g.key, g.accountName])).toEqual([['codex:cx-1', undefined]])
   })
 
   it('one identity, both providers live: one pill with a group per provider, named and coloured from the identity', () => {
@@ -197,6 +256,19 @@ function measure(available: number, pill: number) {
 }
 
 describe('MultiAccountStatusline, one pill per identity (usage track MP5)', () => {
+  // MP5 review Q5: the footer before MP5 (895ee237) rendered this scenario to
+  // the recorded HTML; the footer now renders it byte for byte the same, with a
+  // registry whose identities have other names and colours.
+  it('Claude Code only: the same HTML as the footer before MP5, in both display modes', () => {
+    useAccountProfilesStore.setState({ profiles: SCENARIO.profiles as AccountProfile[] })
+    for (const mode of ['meters', 'dots'] as const) {
+      useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, ...SCENARIO.settings, footerAccountDisplay: mode } as typeof DEFAULT_SETTINGS, isLoaded: true })
+      useSessionStore.setState({ sessions: SCENARIO.sessions as unknown as Session[] })
+      act(() => { root.render(<MultiAccountStatusline />) })
+      expect(container.innerHTML, mode).toBe(PRE_MP5[mode])
+    }
+  })
+
   it('Claude Code only: the pills read as before (emails with meters, names with dots, no marks, the same order)', () => {
     settings({}, false)
     const sessions = [claude('b@x.com', { rateLimitCurrent: 10, rateLimitWeekly: 20 }), claude('a@x.com', { rateLimitCurrent: 30, rateLimitWeekly: 12 })]
@@ -344,6 +416,52 @@ describe('MultiAccountStatusline, one pill per identity (usage track MP5)', () =
     expect(pillOf('a@x.com').title).not.toContain('Waiting for the status line')
   })
 
+  // MP5 review S1.
+  it('a linked pill\'s tooltip says the reset time; a plain pill keeps its text as before', () => {
+    const at = future(3)
+    show([
+      claude('a@x.com', { usageBuckets: [bucket('5h', 30, { resetsAt: at })] }),
+      codex({ providerAccountId: 'cx-1', usageBuckets: [bucket('5h', 60, { key: 'codex/300:', resetsAt: at })] }),
+      claude('b@x.com', { usageBuckets: [bucket('5h', 10, { resetsAt: at })] }),
+    ])
+    expect(pillOf('Ann').title).toContain(`resets ${formatResetTime(at)}`)
+    expect(pillOf('Ann').title).not.toContain(at)
+    expect(pillOf('b@x.com').title).toContain(`resets ${at}`)
+  })
+
+  // MP5 review S2: a waiting account in the "+N" popover shows the placeholder
+  // bars while the status line is on (as drawn), and none while it is off.
+  it('the overflow shows a waiting account\'s placeholder bars only while the status line is on', () => {
+    for (const on of [true, false]) {
+      settings({ statusLineEnabled: on }, false)
+      measure(300, 200)
+      show([claude('a@x.com', { rateLimitCurrent: 1 }), claude('b@x.com', { rateLimitCurrent: 2 }), claude('c@x.com')])
+      const toggle = container.querySelector('[data-testid="multi-account-overflow-toggle"]') as HTMLElement
+      act(() => { toggle.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+      const row = container.querySelector('[data-testid="multi-account-overflow-row"]') as HTMLElement
+      expect(row.textContent, String(on)).toContain('c@x.com')
+      expect(row.querySelectorAll('[data-testid="rate-limit-pending"]').length, String(on)).toBe(on ? 2 : 0)
+      act(() => { toggle.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+      vi.restoreAllMocks()
+    }
+  })
+
+  // MP5 review S3: a dot's title in the drawn form, no dash.
+  it('a no-reading dot\'s title reads "5h reset <time>, no reading since"', () => {
+    settings({ footerAccountDisplay: 'dots' })
+    const past = new Date(Date.now() - 60_000).toISOString()
+    show([codex({ providerAccountId: 'cx-3', usageBuckets: [bucket('5h', 10, { key: 'codex/300:', resetsAt: past })] }), claude('b@x.com', { rateLimitCurrent: 1 })])
+    expect((pillOf('Dee').querySelector('[data-testid="account-usage-dot-no-reading"]') as HTMLElement).title).toBe(`5h reset ${formatResetTime(past)}, no reading since`)
+  })
+
+  it('two Codex accounts on one identity: a group each, each named', () => {
+    show([codex({ providerAccountId: 'cx-1', usageBuckets: cxBuckets(20, 30) }), codex({ providerAccountId: 'cx-5' }), claude('b@x.com', { rateLimitCurrent: 1 })])
+    const ann = pillOf('Ann')
+    expect(Array.from(ann.querySelectorAll('[data-testid="multi-account-group-account"]')).map((n) => n.textContent)).toEqual(['ChatGPT sign-in', 'Team key'])
+    expect(ann.querySelector('[data-testid="multi-account-word"]')?.textContent).toBe('per token')
+    expect(ann.title).toContain(`Codex ${String.fromCharCode(0xb7)} Team key ${String.fromCharCode(0xb7)} API key`)
+  })
+
   it('shows nothing with fewer than two identities live, however many sessions', () => {
     show([claude('a@x.com', { rateLimitCurrent: 1 }), codex({ providerAccountId: 'cx-1', usageBuckets: cxBuckets(1, 1) })])
     expect(container.querySelector('[data-testid="multi-account-statusline"]')).toBeNull()
@@ -358,16 +476,14 @@ function hexToRgb(hex: string): string {
 // ------------------------------------------------ the statusline subscription --
 
 describe('useStatuslineSubscription carries the reading time and D3 (usage track MP5)', () => {
-  it('copies rateLimitsAt and usageUnavailable onto the session', () => {
+  it('copies usageUnavailable onto the session', () => {
     let cb: ((d: unknown) => void) | null = null
     ;(window as any).electronAPI = { statusline: { onUpdate: (fn: (d: unknown) => void) => { cb = fn; return () => { cb = null } } } }
     useSessionStore.setState({ sessions: [{ id: 's-sub', label: 'a', status: 'idle', provider: 'codex' } as Session] })
     const Host: React.FC = () => { useStatuslineSubscription('s-sub'); return null }
     act(() => { root.render(<Host />) })
-    act(() => { cb!({ sessionId: 's-sub', rateLimitsAt: 1234 }) })
     act(() => { cb!({ sessionId: 's-sub', usageUnavailable: 'no-reading' }) })
     const s = useSessionStore.getState().sessions[0]
-    expect(s.rateLimitsAt).toBe(1234)
     expect(s.usageUnavailable).toBe('no-reading')
   })
 })

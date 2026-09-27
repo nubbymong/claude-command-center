@@ -96,12 +96,20 @@ export const USAGE_WORD_TIP: Readonly<Record<UsageGroupWord, string>> = {
   'no reading': 'No reading from this session.',
 }
 
-/** One provider's meters in an identity's pill. */
+/** One provider account's meters in an identity's pill: one group per
+ *  provider, or one per account when an identity has two accounts of one
+ *  provider live (their allowances are separate, so never merged). */
 export interface LiveUsageGroup {
+  /** Unique within the pill: the provider, or the provider and account. */
+  key: string
   providerId: ProviderId
-  /** Worst-case (max %) bucket per label across the identity's live sessions
-   *  of this provider, in first-seen order. Never mixed with another
-   *  provider's: percentages are not comparable across providers. */
+  /** The account's name, shown in the group when its provider has another
+   *  group in the same pill. */
+  accountName?: string
+  /** One bucket per label across the group's live sessions, in first-seen
+   *  order (preferBucket: the current window, then its worst case). Never
+   *  mixed with another provider's or account's: percentages are not
+   *  comparable across them. */
   buckets: UsageBucket[]
   /** D3: nothing will ever report for it. */
   word?: UsageGroupWord
@@ -129,6 +137,28 @@ export interface LiveIdentity {
   plain: boolean
 }
 
+/** Two readings of one window whose reset times are this close are the same
+ *  window (reports of one window can differ by the seconds between them). */
+const SAME_WINDOW_MS = 10 * 60_000
+
+/**
+ * Of two buckets of one label from sessions of one account, whether `next`
+ * should replace `prev`. A reading whose reset is still ahead beats one whose
+ * reset has passed (an idle session's old window must not hide the current
+ * one, D2 would then show no reading at all); percentages are compared only
+ * within the same window (worst case, so a stale tick never reads low); of
+ * two different windows, the later one.
+ */
+export function preferBucket(prev: UsageBucket, next: UsageBucket, now: number): boolean {
+  const prevPast = bucketPastReset(prev, now)
+  const nextPast = bucketPastReset(next, now)
+  if (prevPast !== nextPast) return prevPast
+  const pt = Date.parse(prev.resetsAt)
+  const nt = Date.parse(next.resetsAt)
+  if (Number.isFinite(pt) && Number.isFinite(nt) && Math.abs(nt - pt) > SAME_WINDOW_MS) return nt > pt
+  return next.percent > prev.percent
+}
+
 function identityOf(snapshot: AccountsSnapshot | null, account: AccountView | undefined): IdentityView | undefined {
   if (!account) return undefined
   return snapshot?.identities.find((i) => i.id === account.identityId)
@@ -151,8 +181,11 @@ function identityOf(snapshot: AccountsSnapshot | null, account: AccountView | un
  * other provider (Codex) is grouped by the registry account it runs under,
  * else that provider's default account; with neither, it is skipped.
  *
- * Per provider, per bucket label, the WORST-CASE (max) utilisation, so the
- * number is never falsely low when one session has a stale tick. A pill that
+ * Per provider account, per bucket label, the current window's WORST-CASE
+ * (max) utilisation (preferBucket), so the number is never falsely low when
+ * one session has a stale tick, and an idle session's passed window never
+ * hides the current one. Two accounts of one provider in one identity are two
+ * groups, each named. A pill that
  * holds only Claude Code sessions reads as it always has (name and colour
  * from the email, aliases and overrides included); a linked or Codex pill
  * takes the identity's name and colour. Ordered primary-first, then by name.
@@ -165,10 +198,11 @@ export function liveIdentityUsage(
   aliases: Record<string, string> | undefined,
   colourOverrides: Record<string, IdentityColorKey> | undefined,
   snapshot: AccountsSnapshot | null,
+  now: number = Date.now(),
 ): LiveIdentity[] {
   const primaryEmail = profiles.find((p) => p.isPrimary)?.accountEmail
   const primaryCanon = primaryEmail ? canonicaliseEmail(primaryEmail) : undefined
-  interface GroupAcc { group: LiveUsageGroup; labels: Map<string, UsageBucket>; sessions: number; unavailable: number; perToken: boolean }
+  interface GroupAcc { group: LiveUsageGroup; name: string; labels: Map<string, UsageBucket>; sessions: number; unavailable: number; perToken: boolean }
   interface Acc {
     key: string
     identity?: IdentityView
@@ -179,7 +213,7 @@ export function liveIdentityUsage(
     accountColour?: IdentityColorKey
     count: number
     isPrimary: boolean
-    groups: Map<ProviderId, GroupAcc>
+    groups: Map<string, GroupAcc>
   }
   const byKey = new Map<string, Acc>()
 
@@ -196,9 +230,12 @@ export function liveIdentityUsage(
       email = s.accountEmail || s.sshRemoteAccount
       if (!email) continue
       const canon = canonicaliseEmail(email)
+      // The session's own profile only when that profile has no email of its
+      // own: an email no profile has is another account (a sign-in the app
+      // has not taken in yet), keyed by that email, never merged into it.
       const profile =
         profiles.find((p) => !!p.accountEmail && canonicaliseEmail(p.accountEmail) === canon) ??
-        (s.profileId ? profiles.find((p) => p.id === s.profileId) : undefined)
+        (s.profileId ? profiles.find((p) => p.id === s.profileId && !p.accountEmail) : undefined)
       account = profile ? accountForLegacyId(snapshot, providerId, profile.id) : undefined
       identity = identityOf(snapshot, account)
       key = identity ? `identity:${identity.id}` : `email:${canon}`
@@ -222,24 +259,26 @@ export function liveIdentityUsage(
     }
     if (email && primaryCanon === canonicaliseEmail(email)) acc.isPrimary = true
     if (!how.byEmail && !acc.account) acc.account = account
-    let g = acc.groups.get(providerId)
+    const groupKey = how.byEmail || !account ? providerId : `${providerId}:${account.id}`
+    let g = acc.groups.get(groupKey)
     if (!g) {
       const provider = providerView(snapshot, providerId) ?? { providerId, displayName: PROVIDER_NAME[providerId] }
       const method = !how.byEmail && account && !account.external ? signInMethodLabel(account, provider) : null
       g = {
-        group: { providerId, buckets: [], ...(email ? { email } : {}), ...(method ? { method } : {}) },
+        group: { key: groupKey, providerId, buckets: [], ...(email ? { email } : {}), ...(method ? { method } : {}) },
+        name: account?.providerLabel?.trim() || method || ACCOUNT_NAME_FALLBACK,
         labels: new Map(),
         sessions: 0,
         unavailable: 0,
         perToken: account?.authMethod === 'apiKey',
       }
-      acc.groups.set(providerId, g)
+      acc.groups.set(groupKey, g)
     }
     g.sessions++
     if (s.usageUnavailable === 'no-reading') g.unavailable++
     for (const b of sessionUsageBuckets(s)) {
       const prev = g.labels.get(b.label)
-      if (!prev || b.percent > prev.percent) g.labels.set(b.label, b)
+      if (!prev || preferBucket(prev, b, now)) g.labels.set(b.label, b)
     }
   }
 
@@ -247,14 +286,16 @@ export function liveIdentityUsage(
   for (const acc of byKey.values()) {
     const groups: LiveUsageGroup[] = []
     for (const providerId of PROVIDER_ORDER) {
-      const g = acc.groups.get(providerId)
-      if (!g) continue
-      const group: LiveUsageGroup = { ...g.group, buckets: Array.from(g.labels.values()) }
-      if (FOOTER_PROVIDER[providerId].words && group.buckets.length === 0) {
-        if (g.perToken) group.word = 'per token'
-        else if (g.unavailable === g.sessions) group.word = 'no reading'
+      const mine = Array.from(acc.groups.values()).filter((g) => g.group.providerId === providerId)
+      for (const g of mine) {
+        const group: LiveUsageGroup = { ...g.group, buckets: Array.from(g.labels.values()) }
+        if (mine.length > 1) group.accountName = g.name
+        if (FOOTER_PROVIDER[providerId].words && group.buckets.length === 0) {
+          if (g.perToken) group.word = 'per token'
+          else if (g.unavailable === g.sessions) group.word = 'no reading'
+        }
+        groups.push(group)
       }
-      groups.push(group)
     }
     const plain = groups.length === 1 && FOOTER_PROVIDER[groups[0].providerId].plainAlone && !!acc.email
     const name = plain
@@ -515,9 +556,14 @@ function providerNameOf(providerId: ProviderId, snapshot: AccountsSnapshot | nul
   return providerView(snapshot, providerId)?.displayName ?? PROVIDER_NAME[providerId]
 }
 
-/** A reset time as the tooltips say it ("reset 3:10 pm, no reading since"). */
+/** A reset time as the pill tooltips say it ("5h -- reset 3:10 pm, no reading since"). */
 function pastLine(b: UsageBucket): string {
   return `${b.label} ${DASH} reset ${formatResetTime(b.resetsAt)}, no reading since`
+}
+
+/** The same for a dot's own title, as drawn ("5h reset 3:10 pm, no reading since"). */
+function pastDotLine(b: UsageBucket): string {
+  return `${b.label} reset ${formatResetTime(b.resetsAt)}, no reading since`
 }
 
 function tooltip(
@@ -534,7 +580,8 @@ function tooltip(
       if (a.email && a.name !== a.email) lines.push(a.email)
     } else {
       const sub = g.email ?? g.method
-      lines.push(`${providerNameOf(g.providerId, snapshot)}${sub ? ` ${MIDDOT} ${sub}` : ''}`)
+      const parts = [providerNameOf(g.providerId, snapshot), g.accountName, sub && sub !== g.accountName ? sub : undefined].filter(Boolean)
+      lines.push(parts.join(` ${MIDDOT} `))
       if (g.word) { lines.push(USAGE_WORD_TIP[g.word]); continue }
     }
     // Usage track MP6 (as drawn): a pill still waiting for its first reading
@@ -547,7 +594,8 @@ function tooltip(
       // a supplement to a visible bar.
       const parts = [b.label]
       if (opts?.withPercent) parts.push(`${Math.round(b.percent)}%`)
-      if (b.resetsAt) parts.push(`resets ${b.resetsAt}`)
+      // A plain pill keeps its text as it always was; the others say the time.
+      if (b.resetsAt) parts.push(`resets ${a.plain ? b.resetsAt : formatResetTime(b.resetsAt)}`)
       if (parts.length > 1) lines.push(parts.join(` ${DASH} `))
     }
   }
@@ -796,11 +844,11 @@ function groupContent(
             label={`Usage ${RAG_WORD[ragFor(summary.usage.worst.percent)]} ${DASH} worst is ${summary.usage.worst.label} at ${Math.round(summary.usage.worst.percent)}%`}
           />
         ) : pastWindows.length > 0 ? (
-          <NoReadingDot title={pastWindows.map(pastLine).join(` ${MIDDOT} `)} />
+          <NoReadingDot title={pastWindows.map(pastDotLine).join(` ${MIDDOT} `)} />
         ) : null}
         {shown.filter(isModelBucket).map((b) =>
           past(b) ? (
-            <NoReadingDot key={b.key} title={pastLine(b)} />
+            <NoReadingDot key={b.key} title={pastDotLine(b)} />
           ) : (
             <UsageDot
               key={b.key}
@@ -817,6 +865,15 @@ function groupContent(
     past(b)
       ? <RateLimitBarNoReading key={b.key} label={b.label} resetsAt={b.resetsAt} compact={compact} />
       : <RateLimitBar key={b.key} label={b.label} pct={b.percent} resets={b.resetsAt || undefined} compact={compact} />,
+  )
+}
+
+/** Which of an identity's two accounts of one provider a group is. */
+function GroupAccountName({ name }: { name: string }) {
+  return (
+    <span className="whitespace-nowrap" style={{ color: 'var(--text-secondary)' }} data-testid="multi-account-group-account">
+      {name}
+    </span>
   )
 }
 
@@ -906,12 +963,13 @@ function IdentityPill({
         {groups.length === 1 && !groupMarked(identity, groups[0].g)
           ? groups[0].node
           : groups.map(({ g, node }, i) => (
-              <React.Fragment key={g.providerId}>
+              <React.Fragment key={g.key}>
                 {i > 0 && (
                   <span aria-hidden="true" className="shrink-0" style={{ width: 1, height: 10, background: 'var(--border-strong)' }} data-testid="multi-account-group-rule" />
                 )}
                 <span className={`flex items-center ${gap}`} data-testid={`multi-account-group-${g.providerId}`}>
                   {groupMarked(identity, g) && <ProviderMark providerId={g.providerId} size={13} title={providerNameOf(g.providerId, snapshot)} />}
+                  {g.accountName && <GroupAccountName name={g.accountName} />}
                   {node}
                 </span>
               </React.Fragment>
@@ -1074,8 +1132,9 @@ function IdentityOverflow({
                 const node = groupContent(g, { hidden, minimal: false, showPending, now, full: true })
                 if (node === null) return null
                 return (
-                  <span key={g.providerId} className="flex flex-wrap items-center gap-2 pl-4" data-testid={`multi-account-overflow-group-${g.providerId}`}>
+                  <span key={g.key} className="flex flex-wrap items-center gap-2 pl-4" data-testid={`multi-account-overflow-group-${g.providerId}`}>
                     {groupMarked(a, g) && <ProviderMark providerId={g.providerId} size={13} title={providerNameOf(g.providerId, snapshot)} />}
+                    {g.accountName && <GroupAccountName name={g.accountName} />}
                     {node}
                   </span>
                 )
@@ -1125,19 +1184,19 @@ export default function MultiAccountStatusline() {
   const snapshot = useProviderAccountsStore((s) => s.snapshot)
   const theme = useResolvedTheme()
 
-  const identities = React.useMemo(
-    () => liveIdentityUsage(sessions, profiles, aliases, overrides, snapshot),
-    [sessions, profiles, aliases, overrides, snapshot],
-  )
+  // Grouped at the time it is drawn: which of two readings of a label is
+  // current depends on which resets have passed (preferBucket).
+  const now = Date.now()
+  const identities = liveIdentityUsage(sessions, profiles, aliases, overrides, snapshot, now)
 
   // D2: a window whose reset passes while nothing else changes still turns to
-  // "no reading since" on time.
-  const resets = React.useMemo(
-    () => identities.flatMap((i) => i.groups.flatMap((g) => g.buckets.map((b) => b.resetsAt).filter(Boolean))),
-    [identities],
-  )
+  // "no reading since" on time. Every reported reset, not only the ones shown.
+  const resets = React.useMemo(() => {
+    const out: string[] = []
+    for (const s of sessions) for (const b of sessionUsageBuckets(s)) if (b.resetsAt) out.push(b.resetsAt)
+    return out
+  }, [sessions])
   useRenderAtNextReset(resets)
-  const now = Date.now()
 
   // What a pill SHOWS decides its width: the denylist, minimal mode, the
   // pending placeholder and a window past its reset all change it without
