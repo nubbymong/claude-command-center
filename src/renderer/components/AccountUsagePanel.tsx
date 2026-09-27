@@ -199,6 +199,11 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate, onOpenTok
 
   useEffect(() => { void loadClaude() }, [loadClaude])
   useEffect(() => { void loadCodex() }, [loadCodex])
+  // Usage track MP8: the page closing stops its Codex stream in main, and a
+  // fresh read under way with it: nothing is read for a page no one sees.
+  useEffect(() => () => {
+    try { void window.electronAPI?.providerAccounts?.usageStreamStop?.(CODEX)?.catch(() => {}) } catch { /* the page is going anyway */ }
+  }, [])
   // Refresh (and a window focus) reloads both.
   const load = useCallback(async (opts: { quiet?: boolean } = {}) => {
     await Promise.all([loadClaude(opts), loadCodex(opts)])

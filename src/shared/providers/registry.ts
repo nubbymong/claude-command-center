@@ -753,6 +753,20 @@ export function recordAuthCheck(doc: ProviderRegistryDoc, accountId: string, inp
   return done({ ...doc, accounts: doc.accounts.map((a) => (a.id === accountId ? compact(next) : a)) })
 }
 
+/** The plan an account's own allowance reading named (usage track MP8: a
+ *  fresh read of a closed account, or an open session's figure): its display
+ *  name, cleaned as every label is. Written only when it changes: the same
+ *  plan again returns the document untouched (nothing to save). Only the
+ *  plan: nothing else on the record moves. */
+export function recordAccountPlan(doc: ProviderRegistryDoc, accountId: string, planLabel: string, now: number): RegistryResult {
+  const account = findAccount(doc, accountId)
+  if (!account) return fail('not-found', `account ${accountId} does not exist`)
+  const plan = normaliseLabel(planLabel, PLAN_MAX)
+  if (plan === undefined) return fail('invalid-value', 'the plan name is empty or not text')
+  if (account.planLabel === plan) return done(doc)
+  return done({ ...doc, accounts: doc.accounts.map((a) => (a.id === accountId ? { ...a, planLabel: plan, updatedAt: now } : a)) })
+}
+
 /** The explicit "this is still my account" after a blocked check (design
  *  5.3, 5.5): the ONLY transition that clears `blocked`. It takes a status
  *  the provider answered just now and makes the record say what the realm

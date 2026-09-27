@@ -9,7 +9,7 @@ import type { CodexRealmFsPort, CodexCommand, CodexRunOptions, CodexRunResult, C
 import { createClaudePackage } from '../../src/main/providers/claude'
 import type { ClaudeReviewPorts } from '../../src/main/providers/claude'
 import { AccountRegistryStore, AccountsService, ConsumerLeaseRegistry, SecretHandleStore, registerProviderPackage, _resetProviderRegistryForTest } from '../../src/main/providers/core'
-import type { RegistryFsPort, ProviderPackage, LegacyAccountsPort } from '../../src/main/providers/core'
+import type { RegistryFsPort, ProviderPackage, LegacyAccountsPort, AccountsServiceDeps } from '../../src/main/providers/core'
 import { findRealm } from '../../src/shared/providers'
 import type { LegacyAccountSnapshot, ProviderId, ProviderPreference, ScopedCapabilityKey, ProviderRegistryDoc, ProviderCapabilities } from '../../src/shared/providers'
 
@@ -113,6 +113,8 @@ export interface HarnessOpts {
   usageFs?: CodexUsageFsPort
   /** The live usage figures, shared with the test (MP3). */
   liveUsage?: CodexLiveUsage
+  /** The fresh usage reads' clock and pacing (MP8). Absent: the shipped values. */
+  usageReads?: AccountsServiceDeps['usageReads']
 }
 
 /** A usage filesystem with nothing in it. */
@@ -149,8 +151,9 @@ export async function harness(o: HarnessOpts = {}) {
   // PATH on macOS and Linux (a process started for the operation).
   let baseEnvReads = 0
   // `envFile`: homes holding a `.env`; `exeStat`: the executable as re-read
-  // now (a different one = replaced after setup proved it).
-  const state = { cli: o.cli !== false, envFile: new Set<string>(), exeStat: STAT }
+  // now (a different one = replaced after setup proved it); `cliVersion`:
+  // what the next discovery's version check reports (MP8).
+  const state = { cli: o.cli !== false, envFile: new Set<string>(), exeStat: STAT, cliVersion: 'codex-cli 0.155.1' }
   const status = (home: string): Partial<CodexRunResult> => {
     const v = signedIn.get(home.toLowerCase())
     if (v === 'chatgpt') return { exitCode: 0, stderr: 'Logged in using ChatGPT\n' }
@@ -199,7 +202,7 @@ export async function harness(o: HarnessOpts = {}) {
       await o.beforeDiscovery?.()
       return {
         resolve: () => (state.cli ? EXE : null), realpath: (p) => p, stat: () => STAT,
-        run: async () => ({ exitCode: 0, stdout: 'codex-cli 0.155.1\n', stderr: '', timedOut: false, truncated: false }),
+        run: async () => ({ exitCode: 0, stdout: `${state.cliVersion}\n`, stderr: '', timedOut: false, truncated: false }),
         env: { SystemRoot: 'C:\\Windows' }, platform: 'win32',
         versionHome: () => ({ home: 'C:\\tmp\\v', dispose: () => {} }), now: () => 1,
       }
@@ -256,6 +259,7 @@ export async function harness(o: HarnessOpts = {}) {
     randomHex: nextHex,
     reconcileLegacy: async () => { await store.reconcileLegacy(claudeLegacy) },
     ...(o.unleasedSessions ? { unleasedSessions: o.unleasedSessions } : {}),
+    ...(o.usageReads ? { usageReads: o.usageReads } : {}),
     log: (m) => logs.push(m),
   })
   return {

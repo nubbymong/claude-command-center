@@ -200,7 +200,10 @@ describe('a provider that is off makes no call (D5; owner decision 2026-09-26)',
 })
 
 describe('what each account shows (plan section 3)', () => {
-  it('a closed managed account shows its last-seen reading, read only from its own sessions folder', async () => {
+  // MP8: a closed ChatGPT account is read afresh first (codex-usage-read
+  // tests); the fake CLI's helper here exits at once, so the read fails and
+  // the card falls to the last-seen reading.
+  it('a closed managed account whose fresh read fails shows its last-seen reading, read only from its own sessions folder', async () => {
     const t = await setup()
     const a = await addCodexAccount(t.h, 'A')
     t.fs.rollout(sessionsOf(t.h, a), 37, 'pro')
@@ -210,7 +213,8 @@ describe('what each account shows (plan section 3)', () => {
     if (!r.ok) throw new Error(r.code)
     expect(r.usage.buckets.map((b) => [b.label, b.percent])).toEqual([['5h', 37]])
     for (const c of t.fs.calls) expect(c.toLowerCase()).toContain(sessionsOf(t.h, a).toLowerCase())
-    expect(t.h.runs.length).toBe(runs)
+    const realmId = t.h.doc().accounts.find((x) => x.id === a)!.authRealmId
+    expect(t.h.runs.slice(runs).map((x) => [x.args, x.home])).toEqual([['app-server', managedHome(realmId)]])
   })
 
   it('an account with no reading yet says so', async () => {

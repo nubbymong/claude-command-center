@@ -31,7 +31,7 @@
 import {
   beginAccountSetup, abandonAccountSetup, commitAccountSetup, markSetupCredentialsWritten, createIdentity, updateIdentity,
   createGroup, renameGroup, deleteGroup, linkAccountIdentity, unlinkAccountIdentity, setAccountLifecycle, setProviderDefault,
-  recordAuthCheck, reconcileAccountSignIn, resolveIdentityConflict, setReviewerDefault, chooseReviewerAccount, chooseSessionAccount,
+  recordAuthCheck, recordAccountPlan, reconcileAccountSignIn, resolveIdentityConflict, setReviewerDefault, chooseReviewerAccount, chooseSessionAccount,
   recordProviderMigration, resolveLaunchBinding, findAccount, findRealm, findIdentity, isLegacyLinked,
   resolveCapability, makeOpaqueId, providerRealmKind, isIdentityColourKey,
   MANAGED_PATH_REF_PREFIX, EXTERNAL_DEFAULT_PATH_REF, SIGN_IN_METHODS, SIGN_IN_CAPABILITY, providerOffMessage, providerStateUnknownMessage,
@@ -45,7 +45,7 @@ import type {
   ResolveConflictRequest, SetReviewerDefaultRequest, ReviewerChoice, ReviewRefusalView, ReviewReadinessView, ProviderLaunchRefusal,
   ProviderAccountUsageView, ProviderUsageStreamResult,
 } from '../../../shared/providers'
-import type { ProviderPackage, DiscoveryResult, AuthCredentialKind, AuthOperationResult, AuthLoginInput, InstallRecipe, ExternalDefaultRealmSpec, RealmRef, UsageReading } from './package'
+import type { ProviderPackage, DiscoveryResult, AuthCredentialKind, AuthOperationResult, AuthLoginInput, InstallRecipe, ExternalDefaultRealmSpec, RealmRef, UsageReading, UsageReadOutcome } from './package'
 import type { AccountRegistryStore, StoreResult } from './account-registry-store'
 import type { ConsumerLeaseRegistry, AccountLease, LaunchLeaseKind } from './consumer-leases'
 import { LAUNCH_LEASE_KINDS } from './consumer-leases'
@@ -80,6 +80,71 @@ export interface AccountsServiceDeps {
    *  closed). */
   unleasedSessions?: (providerId: ProviderId) => number
   log?: (message: string) => void
+  /** Usage track MP8: the fresh reads' clock and pacing. Absent: the
+   *  shipped values (tests shorten them). */
+  usageReads?: { now?: () => number; gapMs?: number; reuseMs?: number; settleMaxMs?: number }
+}
+
+/** Usage track MP8 (ADR-022, bound 7): the least time between two fresh
+ *  reads, app-wide (one account after another). */
+export const USAGE_READ_GAP_MS = 300
+/** A fresh reading is shown again for this long without a read; a card's
+ *  Retry reads again. */
+export const USAGE_READ_REUSE_MS = 60_000
+/** Transient failures in one stream after which the rest of it shows the
+ *  last-seen readings without trying (offline). */
+export const USAGE_READ_TRANSIENT_LIMIT = 3
+/** The longest anything waits for a stopped read's process chain to end.
+ *  The package bounds it itself (the Codex runner: CODEX_KILL_WORST_MS);
+ *  past this, a package that never says goes on without it. */
+export const USAGE_READ_SETTLE_MAX_MS = 60_000
+
+/** One fresh read of one account (MP8): joined by a second asker, stopped
+ *  by a launch, sign-in, sign-out, archive or inactivate on it. `done`
+ *  settles once its process chain has ended and its lease is let go. */
+interface UsageReadRun {
+  stop: AbortController
+  outcome: Promise<UsageReadOutcome>
+  done: Promise<void>
+  /** The account's settle count when it began (settleUsageRead). */
+  epoch: number
+}
+
+/** How a usage view may read (MP8): only the page's own asks read at all.
+ *  `reuse`: a fresh reading under USAGE_READ_REUSE_MS old is shown again
+ *  (a stream); a card's Retry reads again. `pass`: one stream's transient
+ *  failures. `signal`: the stream stopped (the page closed, a newer stream). */
+interface UsageReadMode {
+  reuse: boolean
+  pass?: { transient: number }
+  signal?: AbortSignal
+}
+
+/** `p`, or nothing more to wait for once `ms` have passed. */
+function boundedWait(p: Promise<unknown>, ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms)
+    ;(timer as { unref?: () => void }).unref?.()
+    p.then(() => { clearTimeout(timer); resolve() }, () => { clearTimeout(timer); resolve() })
+  })
+}
+
+/** `p`, or at once when `signal` aborts first. */
+function untilAborted(p: Promise<unknown>, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve()
+  return new Promise<void>((resolve) => {
+    const onAbort = () => resolve()
+    signal.addEventListener('abort', onAbort, { once: true })
+    p.then(() => { signal.removeEventListener('abort', onAbort); resolve() }, () => { signal.removeEventListener('abort', onAbort); resolve() })
+  })
+}
+
+/** `ms`, or less when `signal` aborts. */
+function pause(ms: number, signal: AbortSignal): Promise<void> {
+  return untilAborted(new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms)
+    ;(timer as { unref?: () => void }).unref?.()
+  }), signal)
 }
 
 /** A launch's hold on its account: an interactive session (commit 4) or a
@@ -219,6 +284,21 @@ export class AccountsService {
    *  switch-off, or an answer lost, stops them (stopChecks). */
   private readonly checkRuns = new Map<AbortController, ProviderId>()
   private opSeq = 0
+  /** Usage track MP8: fresh reads in flight, by account. */
+  private readonly usageReads = new Map<string, UsageReadRun>()
+  /** Accounts a sign-out, archive or inactivate is settling: no fresh read
+   *  starts on them (counted: two may overlap). */
+  private readonly usageBarred = new Map<string, number>()
+  /** The last fresh reading of each account. */
+  private readonly usageFresh = new Map<string, { at: number; reading: UsageReading }>()
+  /** How often each account has been settled: a reading from a read that
+   *  began before the last settle is never kept. */
+  private readonly usageEpoch = new Map<string, number>()
+  /** Fresh reads run one at a time app-wide, each after the last one's
+   *  process chain ended and USAGE_READ_GAP_MS after it. */
+  private usageReadQueue: Promise<void> = Promise.resolve()
+  private usageReadEndedAt = Number.NEGATIVE_INFINITY
+  private usageReadSeq = 0
   private subscribedStore: AccountRegistryStore | null = null
   private unsubscribeStore: (() => void) | null = null
 
@@ -920,6 +1000,9 @@ export class AccountsService {
     let recorded: StoreResult | null = null
     let observedClass: CredentialClass | undefined
     try {
+      // Usage track MP8 (#49): claimed above, so no fresh read starts on
+      // the account; one under way is stopped and has ended first.
+      ;(await this.settleUsageRead(a.id))()
       const leased = await ctx.store.exclusive((): { refused: AccountsFailure } | { added: ReturnType<ConsumerLeaseRegistry['add']> } => {
         const notNow = this.cliRefusal(p.id)
         if (notNow) return { refused: notNow }
@@ -1265,7 +1348,12 @@ export class AccountsService {
     if (refused) return refused
     if (ctx.external && input.acknowledgeExternal !== true) return failure('acknowledgement-required')
     const p = ctx.p!
-    const release = await this.exclusiveHold(ctx.store, a.id, a.providerId)
+    // Usage track MP8 (#49): a fresh read under way is stopped and has
+    // ended, and none starts, before the hold: it never makes a sign-out
+    // refuse as "in use".
+    const unbar = await this.settleUsageRead(a.id)
+    let release: (() => void) | AccountsFailure
+    try { release = await this.exclusiveHold(ctx.store, a.id, a.providerId) } finally { unbar() }
     if (typeof release !== 'function') return release
     try {
       if (ctx.external) {
@@ -1289,6 +1377,19 @@ export class AccountsService {
   }
 
   async setLifecycle(input: { accountId: string; lifecycle: AccountLifecycle; acknowledgeExternal?: boolean }): Promise<AccountsResult> {
+    // Usage track MP8 (#49): a lifecycle change (an inactivate or archive
+    // above all) stops a fresh read of the account and waits for its
+    // process chain first, and none starts while it runs: a read never makes
+    // either refuse as "in use".
+    const unbar = await this.settleUsageRead(String(input?.accountId))
+    try {
+      return await this.changeLifecycle(input)
+    } finally {
+      unbar()
+    }
+  }
+
+  private async changeLifecycle(input: { accountId: string; lifecycle: AccountLifecycle; acknowledgeExternal?: boolean }): Promise<AccountsResult> {
     const ctx = this.accountContext(input.accountId)
     if ('ok' in ctx) return ctx
     const a = findAccount(ctx.doc, input.accountId)!
@@ -1755,7 +1856,7 @@ export class AccountsService {
     if (input.kind === 'session' && input.providerAccountId === undefined) return failure('invalid-request', 'A session must name its account.')
     const store = this.currentStore()
     if (!store) return failure('registry-unavailable')
-    return store.exclusive((): LaunchLeaseResult => {
+    const leased = await store.exclusive((): LaunchLeaseResult => {
       const doc = store.current()
       if (!doc || store.status().mode !== 'ready') return failure('registry-unavailable')
       let accountId = input.providerAccountId
@@ -1785,6 +1886,11 @@ export class AccountsService {
       if (!added.ok) return added.code === 'held' ? failure('busy') : failure('invalid-request', 'That launch is already bound to another account.')
       return { ok: true, lease: added.lease, binding: b.binding, realmOnly: b.realmOnly, ...(reviewer ? { reviewer } : {}) }
     })
+    // Usage track MP8 (#49): held now, so no fresh read starts on the
+    // account; one under way is stopped and its process chain has ended
+    // before the launch goes on.
+    if (leased.ok) (await this.settleUsageRead(leased.lease.accountId))()
+    return leased
   }
 
   /** Why a session of this provider cannot run on another machine (an SSH
@@ -1840,10 +1946,11 @@ export class AccountsService {
     return p as ProviderPackage & { usage: NonNullable<ProviderPackage['usage']> }
   }
 
-  /** One account's allowance view (plan section 3, without the fresh read
-   *  MP8 adds). Reads only: no process starts. A provider that is off, not
-   *  set up, or whose setting cannot be read reads nothing at all (D5). An
-   *  archived account is not served. */
+  /** One account's allowance view (plan section 3): a card's Retry, or an
+   *  account the page saw change. A closed account may be read afresh
+   *  (usage track MP8), never from a kept reading. A provider that is off,
+   *  not set up, or whose setting cannot be read reads nothing at all (D5).
+   *  An archived account is not served. */
   async readAccountUsage(input: { accountId: string }): Promise<AccountsResult<{ usage: ProviderAccountUsageView }>> {
     const id = input && typeof input === 'object' ? (input as { accountId?: unknown }).accountId : undefined
     if (typeof id !== 'string' || !id) return failure('not-found')
@@ -1854,7 +1961,7 @@ export class AccountsService {
     const p = this.usagePackage(a.providerId)
     if (!p) return failure('unsupported')
     if (this.launchRefusal(p.id)) return { ok: true, usage: { accountId: a.id, providerId: a.providerId, status: 'off', buckets: [] } }
-    return { ok: true, usage: await this.usageView(p, ready.doc, a) }
+    return { ok: true, usage: await this.usageView(p, ready.doc, a, { reuse: false }) }
   }
 
   /** Every listed account of a provider, one view each, sent as it is ready.
@@ -1864,11 +1971,13 @@ export class AccountsService {
    *  the rule is asked again before each account, and `shouldContinue` too (a
    *  page that closed, or a newer stream), after the event loop has had a turn
    *  (so the event that closed the page has been delivered), so a switch-off
-   *  or a closed page stops the stream before the next account is read. */
+   *  or a closed page stops the stream before the next account is read.
+   *  `signal` (MP8) also stops a fresh read under way: the page closed, or
+   *  a newer stream began. */
   async streamAccountUsage(
     input: { providerId: ProviderId },
     onResult: (view: ProviderAccountUsageView) => void,
-    opts: { shouldContinue?: () => boolean } = {},
+    opts: { shouldContinue?: () => boolean; signal?: AbortSignal } = {},
   ): Promise<ProviderUsageStreamResult> {
     const p = this.usagePackage(input?.providerId)
     if (!p) return failure('unsupported')
@@ -1876,9 +1985,11 @@ export class AccountsService {
     const ready = this.ready()
     if ('ok' in ready) return ready
     const wanted = () => {
+      if (opts.signal?.aborted) return false
       try { return !opts.shouldContinue || opts.shouldContinue() === true } catch { return false }
     }
     const listed = ready.doc.accounts.filter((a) => a.providerId === p.id && a.lifecycle !== 'archived').map((a) => a.id)
+    const mode: UsageReadMode = { reuse: true, pass: { transient: 0 }, ...(opts.signal ? { signal: opts.signal } : {}) }
     let sent = 0
     for (const id of listed) {
       await yieldTurn()
@@ -1890,7 +2001,7 @@ export class AccountsService {
       if ('ok' in now) break
       const a = findAccount(now.doc, id)
       if (!a || a.providerId !== p.id || a.lifecycle === 'archived') continue
-      const view = await this.usageView(p, now.doc, a)
+      const view = await this.usageView(p, now.doc, a, mode)
       if (!wanted() || this.launchRefusal(p.id)) break
       onResult(view)
       sent++
@@ -1903,6 +2014,7 @@ export class AccountsService {
     p: ProviderPackage & { usage: NonNullable<ProviderPackage['usage']> },
     doc: ProviderRegistryDoc,
     a: ProviderRegistryDoc['accounts'][number],
+    mode: UsageReadMode,
   ): Promise<ProviderAccountUsageView> {
     const base: ProviderAccountUsageView = { accountId: a.id, providerId: a.providerId, status: 'error', buckets: [] }
     if (a.lifecycle === 'inactive') return { ...base, status: 'inactive' }
@@ -1930,7 +2042,19 @@ export class AccountsService {
       if (inUse) {
         const live = await p.usage.live(ref)
         if (!live || live.ok !== true) return base
-        if (live.reading) return shown(live.reading, 'live')
+        if (live.reading) {
+          await this.keepPlan(a, live.reading)
+          return shown(live.reading, 'live')
+        }
+      }
+      // Closed (MP8): a fresh reading where the rule allows one; any
+      // failure shows the last-seen reading below.
+      if (!inUse && this.usageReadable(p, a, realm)) {
+        const fresh = await this.freshUsage(p, a, realm.id, mode)
+        if (fresh) {
+          await this.keepPlan(a, fresh)
+          return shown(fresh, 'read')
+        }
       }
       const seen = await p.usage.lastSeen(ref)
       if (!seen || seen.ok !== true) return base
@@ -1938,6 +2062,225 @@ export class AccountsService {
       return seen.reading ? shown(seen.reading, 'last-seen') : shown(null, undefined, 'no-session-yet')
     } catch {
       return base
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Usage track MP8: the fresh read of a closed account (ADR-022)
+  // -------------------------------------------------------------------------
+
+  private usageNow(): number {
+    try {
+      const n = this.deps.usageReads?.now ? this.deps.usageReads.now() : Date.now()
+      return Number.isFinite(n) ? n : Date.now()
+    } catch {
+      return Date.now()
+    }
+  }
+
+  private usageSetting(key: 'gapMs' | 'reuseMs' | 'settleMaxMs', shipped: number): number {
+    const v = this.deps.usageReads?.[key]
+    return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : shipped
+  }
+
+  /** May this account be read afresh (ADR-022, bound 2)? Only a package
+   *  with a read; only an account signed in with the provider's own account
+   *  sign-in (browser or device: never an API key or an unknown method), not
+   *  blocked and not waiting for its sign-in to be recorded; only in a realm
+   *  this app manages (never the user's own home, which their own tools
+   *  share); and not while a launch, sign-in, sign-out or lifecycle change
+   *  settles it. The callers have already refused an inactive account and a
+   *  realm that is not live, asked the launch rule and found nothing using
+   *  the account. */
+  private usageReadable(
+    p: ProviderPackage & { usage: NonNullable<ProviderPackage['usage']> },
+    a: ProviderRegistryDoc['accounts'][number],
+    realm: ProviderRegistryDoc['realms'][number],
+  ): boolean {
+    return typeof p.usage.read === 'function'
+      && a.operationalState !== 'blocked'
+      && (a.authMethod === 'browser' || a.authMethod === 'device')
+      && a.lastKnownAuthState === 'signed-in'
+      && realm.ownership === 'conductor-managed'
+      && !this.unrecordedSignIns.has(a.id)
+      && !this.usageBarred.has(a.id)
+  }
+
+  /** A fresh reading of a closed account, or null (show the last-seen one).
+   *  A stream shows a reading under USAGE_READ_REUSE_MS old again; after
+   *  USAGE_READ_TRANSIENT_LIMIT transient failures in one stream the rest
+   *  are not tried. A read already under way for the account is joined. */
+  private async freshUsage(
+    p: ProviderPackage & { usage: NonNullable<ProviderPackage['usage']> },
+    a: ProviderRegistryDoc['accounts'][number],
+    realmId: string,
+    mode: UsageReadMode,
+  ): Promise<UsageReading | null> {
+    if (mode.reuse) {
+      const kept = this.usageFresh.get(a.id)
+      const age = kept ? this.usageNow() - kept.at : Number.NaN
+      // A clock that went back reads as old.
+      if (kept && age >= 0 && age < this.usageSetting('reuseMs', USAGE_READ_REUSE_MS)) return kept.reading
+    }
+    if (mode.pass && mode.pass.transient >= USAGE_READ_TRANSIENT_LIMIT) return null
+    const run = this.usageReads.get(a.id) ?? this.startUsageRead(p, a.id, a.providerId, realmId, mode.signal)
+    let outcome: UsageReadOutcome
+    try { outcome = await run.outcome } catch { outcome = { ok: false, failure: 'refused' } }
+    if (outcome.ok === true) {
+      if (!outcome.reading) return null
+      // Kept only when nothing settled the account since the read began: a
+      // sign-in or sign-out may have changed whose reading this is.
+      if ((this.usageEpoch.get(a.id) ?? 0) === run.epoch) this.usageFresh.set(a.id, { at: this.usageNow(), reading: outcome.reading })
+      return outcome.reading
+    }
+    if (outcome.failure === 'transient' && mode.pass) mode.pass.transient++
+    return null
+  }
+
+  /** Start one fresh read of an account and record it as under way. It
+   *  waits its turn (one at a time app-wide, USAGE_READ_GAP_MS after the
+   *  last one's chain ended), takes an operation lease on the account under
+   *  the registry lock only while the rule still holds, proves the CLI if it
+   *  is not yet (only now, after the rule passed), and asks the rule once
+   *  more right before the process would start (`mayStart`). Its lease and
+   *  its turn are let go only once the package says its process chain has
+   *  ended. `signal` stops it (so does settleUsageRead). */
+  private startUsageRead(
+    p: ProviderPackage & { usage: NonNullable<ProviderPackage['usage']> },
+    accountId: string,
+    providerId: ProviderId,
+    realmId: string,
+    signal: AbortSignal | undefined,
+  ): UsageReadRun {
+    const stop = new AbortController()
+    const onAbort = () => stop.abort()
+    if (signal) {
+      if (signal.aborted) stop.abort()
+      else signal.addEventListener('abort', onAbort, { once: true })
+    }
+    let finish: () => void = () => {}
+    const done = new Promise<void>((resolve) => { finish = resolve })
+    const refused: UsageReadOutcome = { ok: false, failure: 'refused' }
+    const prev = this.usageReadQueue
+    let free: () => void = () => {}
+    const mine = new Promise<void>((resolve) => { free = resolve })
+    this.usageReadQueue = prev.then(() => mine)
+    const run: UsageReadRun = { stop, outcome: Promise.resolve(refused), done, epoch: this.usageEpoch.get(accountId) ?? 0 }
+    this.usageReads.set(accountId, run)
+    run.outcome = (async (): Promise<UsageReadOutcome> => {
+      let lease: AccountLease | null = null
+      let ended: Promise<void> = Promise.resolve()
+      try {
+        await untilAborted(prev, stop.signal)
+        // At most one gap: a clock that went back never makes a read wait longer.
+        const gap = this.usageSetting('gapMs', USAGE_READ_GAP_MS)
+        const wait = this.usageReadEndedAt + gap - this.usageNow()
+        if (wait > 0) await pause(Math.min(wait, gap), stop.signal)
+        // Stopped while it waited its turn: no lease, nothing started.
+        if (stop.signal.aborted) return refused
+        lease = await this.usageReadLease(accountId, providerId)
+        if (!lease) return refused
+        await this.ensureDiscovered(p)
+        const r = await p.usage.read!({ authRealmId: realmId }, { signal: stop.signal, mayStart: () => this.usageMayStart(accountId, providerId) })
+        if (r && r.ended instanceof Promise) ended = r.ended
+        const o = r?.outcome
+        if (!o) return refused
+        return o.ok === true ? { ok: true, reading: o.reading ?? null } : { ok: false, failure: o.failure }
+      } catch {
+        return refused
+      } finally {
+        const leased = lease
+        void boundedWait(ended, this.usageSetting('settleMaxMs', USAGE_READ_SETTLE_MAX_MS)).then(() => {
+          try { leased?.release() } catch { /* a release never breaks the read */ }
+          this.usageReadEndedAt = this.usageNow()
+          if (signal) signal.removeEventListener('abort', onAbort)
+          this.usageReads.delete(accountId)
+          free()
+          finish()
+        })
+      }
+    })()
+    return run
+  }
+
+  /** The read's operation lease (owner `usage:<accountId>:<n>`), taken under
+   *  the registry lock only while the provider is on and answered, NOTHING
+   *  else uses the account, and its record, as it is now, still allows a
+   *  read (a check, a reconcile or a sign-in recorded while the read waited
+   *  its turn may have changed it; a lifecycle change stops the read
+   *  instead). Null when any of that fails. */
+  private async usageReadLease(accountId: string, providerId: ProviderId): Promise<AccountLease | null> {
+    const store = this.currentStore()
+    if (!store) return null
+    const ownerId = `usage:${accountId}:${++this.usageReadSeq}`
+    try {
+      return await store.exclusive((): AccountLease | null => {
+        if (this.cliRefusal(providerId)) return null
+        if (this.deps.leases.count(accountId) > 0) return null
+        const doc = store.current()
+        const a = doc ? findAccount(doc, accountId) : undefined
+        const realm = doc && a ? findRealm(doc, a.authRealmId) : undefined
+        const p = this.usagePackage(providerId)
+        if (!a || !realm || !p || !this.usageReadable(p, a, realm)) return null
+        const added = this.deps.leases.add(accountId, providerId, { kind: 'operation', ownerId })
+        return added.ok ? added.lease : null
+      })
+    } catch {
+      return null
+    }
+  }
+
+  /** The rule once more, right before the process starts: the provider is
+   *  on and answered, and the read's own lease is the only thing on the
+   *  account (a session, review or sign-in taken since refuses it). A
+   *  launch, sign-in, sign-out or lifecycle change stops the read instead
+   *  (settleUsageRead). */
+  private usageMayStart(accountId: string, providerId: ProviderId): boolean {
+    try {
+      return !this.launchRefusal(providerId) && this.deps.leases.count(accountId) === 1
+    } catch {
+      return false
+    }
+  }
+
+  /** Stop a fresh read of this account and wait until its process chain has
+   *  ended (#49: the read may refresh the realm's sign-in, so a launch,
+   *  sign-in, sign-out, archive or inactivate never runs beside it and never
+   *  refuses because of it). Until the returned release is called, no new
+   *  read starts on the account. Its kept reading is dropped: whose account
+   *  the realm holds may be about to change. Never rejects. */
+  private async settleUsageRead(accountId: string): Promise<() => void> {
+    this.usageBarred.set(accountId, (this.usageBarred.get(accountId) ?? 0) + 1)
+    this.usageEpoch.set(accountId, (this.usageEpoch.get(accountId) ?? 0) + 1)
+    this.usageFresh.delete(accountId)
+    let open = true
+    const unbar = () => {
+      if (!open) return
+      open = false
+      const n = (this.usageBarred.get(accountId) ?? 1) - 1
+      if (n > 0) this.usageBarred.set(accountId, n)
+      else this.usageBarred.delete(accountId)
+    }
+    const run = this.usageReads.get(accountId)
+    if (run) {
+      try { run.stop.abort() } catch { /* stopping never fails the caller */ }
+      await boundedWait(run.done, this.usageSetting('settleMaxMs', USAGE_READ_SETTLE_MAX_MS))
+    }
+    return unbar
+  }
+
+  /** The plan a current reading (a fresh read, an open session) names,
+   *  recorded when it differs from the record. A last-seen reading may be
+   *  older than the record and never writes. A failed write is logged. */
+  private async keepPlan(a: ProviderRegistryDoc['accounts'][number], r: UsageReading): Promise<void> {
+    if (typeof r.planLabel !== 'string' || !r.planLabel || r.planLabel === a.planLabel) return
+    const store = this.currentStore()
+    if (!store) return
+    try {
+      const saved = await store.mutate((d, t) => recordAccountPlan(d, a.id, r.planLabel as string, t))
+      if (!saved.ok) this.log(`an account's plan was not saved (${saved.code})`)
+    } catch {
+      this.log("an account's plan was not saved")
     }
   }
 

@@ -280,8 +280,11 @@ export const IPC = {
   // Usage track MP3: allowance views, provider-neutral. The stream sends each
   // account's view on the caller's private reply channel
   // (PROVIDER_USAGE_RESULT_PREFIX + 24 hex) as it is ready; nothing for a
-  // provider that is off. Reads only: no process starts.
+  // provider that is off. A closed account may be read afresh (MP8,
+  // ADR-022: one short-lived helper of the provider's own CLI); the page
+  // closing stops the caller's stream and its read (USAGE_STREAM_STOP).
   PROVIDER_ACCOUNTS_USAGE_STREAM: 'providerAccounts:usageStream',
+  PROVIDER_ACCOUNTS_USAGE_STREAM_STOP: 'providerAccounts:usageStreamStop',
   PROVIDER_ACCOUNTS_USAGE_ONE: 'providerAccounts:usageOne',
 
   // Memory

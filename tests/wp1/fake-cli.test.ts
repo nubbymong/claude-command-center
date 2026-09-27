@@ -518,6 +518,30 @@ describe('a Codex usage read against the fake app-server (real processes)', () =
     expect(r).toEqual({ ok: false, kind: 'transient', reason: 'timeout' })
     expect(await goneWithin(Number(fs.readFileSync(path.join(homeOf(id), 'app-server.pid'), 'utf8')), CODEX_KILL_WORST_MS + GONE_MS)).toBe(true)
   }, CODEX_KILL_WORST_MS + 60_000)
+
+  // Usage track MP8 (#49): a launch, sign-in, sign-out or lifecycle change
+  // stops a read and waits for the end the read hands over; by then the real
+  // helper's process chain has gone, and nothing started it past mayStart.
+  it('a stopped read hands over an end that settles only once the real helper has gone; mayStart saying no starts nothing', async () => {
+    const id = realm()
+    fs.writeFileSync(path.join(homeOf(id), 'APP_SERVER'), 'silent')
+    const stop = new AbortController()
+    let ended: Promise<void> | null = null
+    const reading = createCodexAuthOperations(deps()).readUsage({ authRealmId: id }, { signal: stop.signal, onEnded: (e) => { ended = e } })
+    const pidFile = path.join(homeOf(id), 'app-server.pid')
+    const until = Date.now() + 20_000
+    while (!fs.existsSync(pidFile) && Date.now() < until) await new Promise((r) => setTimeout(r, 50))
+    const pid = Number(fs.readFileSync(pidFile, 'utf8'))
+    expect(alive(pid)).toBe(true)
+    stop.abort()
+    expect(await reading).toEqual({ ok: false, kind: 'transient', reason: 'cancelled' })
+    expect(ended).not.toBeNull()
+    await ended
+    expect(await goneWithin(pid, 250)).toBe(true)
+    const other = realm()
+    expect(await createCodexAuthOperations(deps()).readUsage({ authRealmId: other }, { mayStart: () => false })).toEqual({ ok: false, kind: 'refused', reason: 'may-not-start' })
+    expect(fs.existsSync(path.join(homeOf(other), 'app-server.pid'))).toBe(false)
+  }, CODEX_KILL_WORST_MS + 60_000)
 })
 
 describe('the Claude reviewer against a fake Claude CLI (real processes)', () => {

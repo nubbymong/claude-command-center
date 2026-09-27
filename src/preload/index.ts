@@ -623,6 +623,7 @@ export interface ElectronAPI {
     /** Usage track MP3: each listed account's allowance view as it is ready,
      *  on a private per-call channel; nothing for a provider that is off. */
     usageStream: (providerId: ProviderId, onResult: (view: ProviderAccountUsageView) => void) => Promise<ProviderUsageStreamResult>
+    usageStreamStop: (providerId: ProviderId) => Promise<AccountsResult>
     usageOne: (accountId: string) => Promise<AccountsResult<{ usage: ProviderAccountUsageView }>>
   }
   github: GitHubBridge
@@ -1335,6 +1336,7 @@ const electronAPI: ElectronAPI = {
       return ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId, channel })
         .finally(() => ipcRenderer.removeListener(channel, handler))
     },
+    usageStreamStop: (providerId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM_STOP, { providerId }),
     usageOne: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_USAGE_ONE, { accountId }),
   },
   github: {

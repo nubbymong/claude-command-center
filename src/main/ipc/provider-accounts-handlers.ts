@@ -186,30 +186,49 @@ export function registerProviderAccountsHandlers(getWindow: () => BrowserWindow 
   handle(IPC.PROVIDER_ACCOUNTS_RESOLVE_CONFLICT, S.resolveConflict, (i, svc) => svc.resolveIdentityConflict(i))
   handle(IPC.PROVIDER_ACCOUNTS_SET_REVIEWER_DEFAULT, S.setReviewerDefault, (i, svc) => svc.setReviewerDefault(i))
 
-  // Usage track MP3: allowance views, reads only. A stream's views go to the
-  // CALLER's own renderer on its private reply channel, and only while it is
-  // the newest stream that renderer opened for that provider (a reopened
-  // page stops the older one at its next account) and the renderer is alive.
+  // Usage track MP3: allowance views. A stream's views go to the CALLER's
+  // own renderer on its private reply channel, and only while it is the
+  // newest stream that renderer opened for that provider (a reopened page
+  // stops the older one at its next account) and the renderer is alive.
   // Generations come from one counter that only grows, so a finished stream's
   // number is never handed out again: an old stream can never read as current
-  // again, and its end can never clear a newer stream's entry.
-  const usageStreamGen = new Map<string, number>()
+  // again, and its end can never clear a newer stream's entry. MP8: a stream
+  // may read a closed account afresh; a newer stream, the page closing
+  // (USAGE_STREAM_STOP) or the renderer going away also stops the read under
+  // way (its signal), not only the next account.
+  const usageStreams = new Map<string, { gen: number; stop: AbortController }>()
   let usageStreamSeq = 0
   handle(IPC.PROVIDER_ACCOUNTS_USAGE_ONE, S.account, (i, svc) => svc.readAccountUsage(i))
   handle(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, S.usageStream, async (i, svc, e) => {
     const sender = e.sender
     const key = `${sender.id}|${i.providerId}`
     const gen = ++usageStreamSeq
-    usageStreamGen.set(key, gen)
-    const live = () => !sender.isDestroyed() && usageStreamGen.get(key) === gen
+    usageStreams.get(key)?.stop.abort()
+    const stop = new AbortController()
+    usageStreams.set(key, { gen, stop })
+    const gone = () => stop.abort()
+    sender.once('destroyed', gone)
+    const live = () => !sender.isDestroyed() && usageStreams.get(key)?.gen === gen
     try {
       return await svc.streamAccountUsage({ providerId: i.providerId }, (view) => {
         if (!live()) return
         try { sender.send(i.channel, view) } catch { /* a renderer going away never breaks the stream */ }
-      }, { shouldContinue: live })
+      }, { shouldContinue: live, signal: stop.signal })
     } finally {
-      if (usageStreamGen.get(key) === gen) usageStreamGen.delete(key)
+      try { sender.removeListener('destroyed', gone) } catch { /* a renderer gone already */ }
+      if (usageStreams.get(key)?.gen === gen) usageStreams.delete(key)
     }
+  })
+  // The page closed: its stream for that provider stops now, a read under
+  // way included. Only the caller's own stream; nothing else is touched.
+  handle(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM_STOP, S.provider, (i, _svc, e) => {
+    const key = `${e.sender.id}|${i.providerId}`
+    const running = usageStreams.get(key)
+    if (running) {
+      usageStreams.delete(key)
+      running.stop.abort()
+    }
+    return { ok: true }
   })
 
   // One-way: no reply, no log, nothing kept here. A malformed deposit is

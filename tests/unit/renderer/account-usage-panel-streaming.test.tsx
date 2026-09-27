@@ -40,10 +40,11 @@ const usageStream = vi.fn((_providerId: string, onResult: (v: ProviderAccountUsa
   providerStreams.push({ emit: (v) => act(() => onResult(v)), done: (r) => resolve(r ?? { ok: true, provider: 'on', accounts: 0 }), reject: (e) => reject(e) })
 }))
 const usageOne = vi.fn(async (_accountId: string): Promise<unknown> => ({ ok: false, code: 'not-found' }))
+const usageStreamStop = vi.fn(async (_providerId: string) => ({ ok: true }))
 
 Object.defineProperty(window, 'electronAPI', {
   writable: true, configurable: true,
-  value: { accountProfiles: { list, authInfo }, accountUsage: { fetchAllStream, fetchOne }, providerAccounts: { usageStream, usageOne } },
+  value: { accountProfiles: { list, authInfo }, accountUsage: { fetchAllStream, fetchOne }, providerAccounts: { usageStream, usageOne, usageStreamStop } },
 })
 
 const { default: AccountUsagePanel, FOCUS_REFRESH_MS } = await import('../../../src/renderer/components/AccountUsagePanel')
@@ -64,7 +65,7 @@ const flush = async () => { await act(async () => { await Promise.resolve(); awa
 
 beforeEach(() => {
   list.mockReset(); authInfo.mockReset(); fetchAllStream.mockClear(); fetchOne.mockReset(); streams.length = 0
-  usageStream.mockClear(); usageOne.mockClear(); providerStreams.length = 0
+  usageStream.mockClear(); usageOne.mockClear(); usageStreamStop.mockClear(); providerStreams.length = 0
   authInfo.mockResolvedValue([]); fetchOne.mockResolvedValue(null)
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container)
 })
@@ -278,6 +279,19 @@ describe('AccountUsagePanel by provider (usage track MP4)', () => {
     useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, ...saved, codexAnswered: true }, isLoaded: true })
     useProviderAccountsStore.setState({ snapshot: snapshotOf(accounts), loaded: true })
   }
+
+  // Usage track MP8: a closed Codex account may be read afresh while the page
+  // streams; the page closing stops that stream in main, and the read with it.
+  it('the page closing stops its Codex stream in main (the fresh read under way with it), and only then', async () => {
+    modes({ claude: false, withCodex: true }, [cxAccount('w')])
+    await mount()
+    expect(usageStream).toHaveBeenCalledTimes(1)
+    expect(usageStreamStop).not.toHaveBeenCalled()
+    act(() => root.unmount())
+    expect(usageStreamStop).toHaveBeenCalledTimes(1)
+    expect(usageStreamStop).toHaveBeenCalledWith('codex')
+    root = createRoot(container)
+  })
 
   it('Claude-only: no headings, the foot says allowances only and keeps the countdown sentence', async () => {
     modes({ claude: true, withCodex: false }, [cxAccount('x')])

@@ -4,7 +4,7 @@ export type {
   ProviderPackage, ProviderPackageFactory, ProviderSetupOperations, ProviderAuthOperations, ProviderRealmOperations,
   ProviderManagedLaunchOperations, ProviderRealmFolderOperations, ProviderLaunchOperations, LaunchPreparation, ProviderReviewOperations, ReviewRunInput, ReviewRunResult, ReviewUsage, RealmFolderResult, RealmFolderFailureCode, ExternalDefaultRealmSpec, ProviderEnablementSpec,
   DiscoveryResult, InstallRecipe, InstalledCli, RealmRef, AuthOperationResult, AuthLoginInput, AuthLogoutOptions, AuthStatusOptions, AuthFailureCode, AuthCredentialKind,
-  ProviderUsageOperations, UsageReading, UsageLookup,
+  ProviderUsageOperations, UsageReading, UsageLookup, UsageReadOutcome, UsageReadResult, UsageReadOptions,
 } from './package'
 export {
   registerProvider, getProvider, tryGetProvider,
@@ -28,7 +28,7 @@ export type { ProviderPreference } from '../../../shared/providers'
 export { ConsumerLeaseRegistry, LAUNCH_LEASE_KINDS } from './consumer-leases'
 export type { LeaseKind, LaunchLeaseKind, LeaseOwner, AccountLease, LeaseAddResult } from './consumer-leases'
 export { SecretHandleStore, SECRET_HANDLE_TTL_MS, SECRET_HANDLES_PER_RENDERER } from './secret-handles'
-export { AccountsService } from './accounts-service'
+export { AccountsService, USAGE_READ_GAP_MS, USAGE_READ_REUSE_MS, USAGE_READ_TRANSIENT_LIMIT, USAGE_READ_SETTLE_MAX_MS } from './accounts-service'
 export type { AccountsServiceDeps, LaunchLeaseResult, PreparedLaunchResult } from './accounts-service'
 // WP2 commit 6e: the shell line a terminal tab types for a recipe main allows to run.
 export { recipeRunLine } from './recipe-run-line'

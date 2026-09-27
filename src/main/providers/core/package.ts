@@ -296,12 +296,37 @@ export interface UsageReading {
  *  canonical-home check), else the reading, or null when there is none. */
 export type UsageLookup = { ok: true; reading: UsageReading | null } | { ok: false }
 
-/** A package's per-account usage (usage track MP3; plan section 3). Reads
- *  only: neither starts a process. The accounts service decides WHEN they may
- *  run (never for a provider that is off or not set up, never for an inactive
- *  or API-key account); these decide only where the figure comes from. Both
- *  hold the realm to the same check a launch makes before reading anything.
- *  Never reject: anything unexpected is no reading. */
+/** A fresh read's answer (usage track MP8; ADR-022). `unsupported`: the
+ *  provider's tool cannot answer it (kept until that tool changes);
+ *  `transient`: it could not answer now (offline, a sign-in or backend
+ *  error, a timeout, a cancel); `refused`: nothing was started (a rule
+ *  said no). Every failure means: show the last-seen reading. */
+export type UsageReadOutcome =
+  | { ok: true; reading: UsageReading | null }
+  | { ok: false; failure: 'unsupported' | 'transient' | 'refused' }
+
+/** A fresh read and the end of what it started: `ended` settles once every
+ *  process the read started has ended and its hold on the realm is let go
+ *  (at once when none started). Never rejects. */
+export interface UsageReadResult {
+  outcome: UsageReadOutcome
+  ended: Promise<void>
+}
+
+export interface UsageReadOptions {
+  /** Stops the read: a process already started is ended, its whole chain. */
+  signal?: AbortSignal
+  /** Asked right before a process would start, after every check that may
+   *  wait: anything but `true` starts none (`refused`). */
+  mayStart?: () => boolean
+}
+
+/** A package's per-account usage (usage track MP3; plan section 3). `live`
+ *  and `lastSeen` only read: neither starts a process. The accounts service
+ *  decides WHEN each may run (never for a provider that is off or not set up,
+ *  never for an inactive or API-key account); these decide only where the
+ *  figure comes from. All hold the realm to the same check a launch makes
+ *  before reading anything. Never reject: anything unexpected is no reading. */
 export interface ProviderUsageOperations {
   /** The newest allowance an open session in this realm reported, from
    *  memory only: no file and no process. */
@@ -309,6 +334,11 @@ export interface ProviderUsageOperations {
   /** The last allowance in the realm's own session history: a bounded read of
    *  its transcripts only, nothing else in the realm. */
   lastSeen(realm: RealmRef): Promise<UsageLookup>
+  /** A fresh reading of a closed account (usage track MP8; ADR-022): it
+   *  starts the provider's own tool in the realm, so the accounts service
+   *  asks for it only for an enabled, signed-in, managed account nothing
+   *  uses, under an operation lease on it. Absent: the provider has none. */
+  read?(realm: RealmRef, opts?: UsageReadOptions): Promise<UsageReadResult>
 }
 
 export interface ProviderRealmOperations {

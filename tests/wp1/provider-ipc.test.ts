@@ -187,6 +187,10 @@ describe('the Accounts IPC boundary (WP1.42)', () => {
       [IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: USAGE_CH + ':x' }],
       [IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: 42 }],
       [IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: USAGE_CH, accountId: ACC }],
+      // MP8: a stop names a known provider and nothing else.
+      [IPC.PROVIDER_ACCOUNTS_USAGE_STREAM_STOP, { providerId: 'gemini' }],
+      [IPC.PROVIDER_ACCOUNTS_USAGE_STREAM_STOP, { providerId: 'codex', channel: USAGE_CH }],
+      [IPC.PROVIDER_ACCOUNTS_USAGE_STREAM_STOP, undefined],
       // Oversized labels.
       [IPC.PROVIDER_ACCOUNTS_CREATE_GROUP, { name: 'x'.repeat(10_000) }],
       [IPC.PROVIDER_ACCOUNTS_UPDATE_IDENTITY, { identityId: IDN, friendlyName: 'y'.repeat(10_000) }],
@@ -535,6 +539,74 @@ describe('the usage stream over IPC (usage track MP3)', () => {
     await running
     expect(usageSent(w)).toEqual([])
     expect(produced).toEqual([])
+  })
+
+  // Usage track MP8: a stream may read a closed account afresh, so what
+  // stops it must reach the read under way, not only the next account.
+  function signalService() {
+    const signals: Array<{ providerId: string; signal: AbortSignal | undefined }> = []
+    const releases: Array<() => void> = []
+    const svc = new Proxy({}, {
+      get: (_t, prop) => {
+        if (prop === 'subscribe') return () => () => {}
+        if (prop === 'then') return undefined
+        if (prop === 'streamAccountUsage') {
+          return (input: { providerId: string }, _onResult: unknown, opts: { signal?: AbortSignal }) => {
+            signals.push({ providerId: input.providerId, signal: opts?.signal })
+            return new Promise((resolve) => {
+              const done = () => resolve({ ok: true, provider: 'on', accounts: 0 })
+              releases.push(done)
+              opts?.signal?.addEventListener('abort', done, { once: true })
+            })
+          }
+        }
+        return () => ({ ok: true })
+      },
+    }) as unknown as AccountsService
+    return { svc, signals, releaseAll: () => { for (const r of releases) r() } }
+  }
+
+  it('the page closing (usageStreamStop) stops the caller\'s stream for that provider, the read under way included; the other provider\'s is left alone', async () => {
+    const s = signalService()
+    const w = wire(s.svc)
+    const codex = w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: USAGE_CH })
+    const claude = w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'claude', channel: 'providerAccounts:usageResult:' + 'c'.repeat(24) })
+    await new Promise((r) => setTimeout(r, 0))
+    // Another frame of the window is refused and stops nothing.
+    expect(await w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM_STOP, { providerId: 'codex' }, { sender: w.wc, senderFrame: { parent: null } })).toMatchObject({ ok: false, code: 'untrusted-sender' })
+    expect(s.signals[0].signal?.aborted).toBe(false)
+    expect(await w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM_STOP, { providerId: 'codex' })).toEqual({ ok: true })
+    expect(s.signals.map((x) => [x.providerId, x.signal?.aborted])).toEqual([['codex', true], ['claude', false]])
+    await codex
+    // A stop with nothing running changes nothing.
+    expect(await w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM_STOP, { providerId: 'codex' })).toEqual({ ok: true })
+    expect(s.signals[1].signal?.aborted).toBe(false)
+    s.releaseAll()
+    await claude
+  })
+
+  it('after usageStreamStop the stream is no longer current: it stops at its next account and sends nothing more', async () => {
+    const { svc, produced } = streamingService(['a', 'b', 'c'])
+    const w = wire(svc)
+    const running = w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: USAGE_CH })
+    await w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM_STOP, { providerId: 'codex' })
+    await running
+    expect(usageSent(w)).toEqual([])
+    expect(produced).toEqual([])
+  })
+
+  it('a newer stream for the same provider stops the older one\'s read, and a renderer going away stops its stream\'s', async () => {
+    const s = signalService()
+    const w = wire(s.svc)
+    const first = w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: USAGE_CH })
+    await new Promise((r) => setTimeout(r, 0))
+    const second = w.call(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: 'providerAccounts:usageResult:' + 'b'.repeat(24) })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(s.signals.map((x) => x.signal?.aborted)).toEqual([true, false])
+    await first
+    w.wc.destroy()
+    expect(s.signals[1].signal?.aborted).toBe(true)
+    await second
   })
 
   it('the real service streams views with no path, and nothing for a provider that is off', async () => {

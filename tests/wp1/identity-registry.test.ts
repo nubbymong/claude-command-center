@@ -6,6 +6,7 @@ import {
   emptyRegistry, parseRegistryDoc, checkRegistryInvariants, REGISTRY_SCHEMA_VERSION,
   createIdentity, updateIdentity, createGroup, renameGroup, deleteGroup,
   linkAccountIdentity, unlinkAccountIdentity, beginAccountSetup, commitAccountSetup, normaliseLabel, FRIENDLY_NAME_MAX,
+  recordAccountPlan,
 } from '../../src/shared/providers'
 import type { ProviderRegistryDoc } from '../../src/shared/providers'
 
@@ -226,5 +227,39 @@ describe('the parser bounds every number and requires every list (adversarial ro
     const raw = base()
     raw.conflicts = [{ identityId: idn(1), field: 'colourKey', providerId: 'claude', legacyId: 'profile-a1', legacyValue: '#ff0000', registryValue: 'pink', detectedAt: 1 }]
     expect(parseRegistryDoc(raw).ok).toBe(false)
+  })
+})
+
+// Usage track MP8: the plan an allowance reading names, recorded on the
+// account when it changes (the Accounts plan cell and the usage card show it).
+describe('recordAccountPlan (usage track MP8)', () => {
+  it('records the plan, cleaned as every label is, and moves nothing else', () => {
+    const doc = withCodexAccount()
+    const before = doc.accounts[0]
+    const next = ok(recordAccountPlan(doc, acct(1), '  Pro' + String.fromCharCode(0x202e) + '  ', 40))
+    expect(next.accounts[0]).toEqual({ ...before, planLabel: 'Pro', updatedAt: 40 })
+    expect(next.identities).toBe(doc.identities)
+    expect(next.realms).toBe(doc.realms)
+    expect(checkRegistryInvariants(next)).toEqual([])
+  })
+
+  it('the same plan again returns the document untouched: nothing to save', () => {
+    const doc = ok(recordAccountPlan(withCodexAccount(), acct(1), 'Plus', 40))
+    expect(recordAccountPlan(doc, acct(1), 'Plus', 50)).toEqual({ ok: true, doc })
+    expect((recordAccountPlan(doc, acct(1), 'Plus', 50) as { doc: ProviderRegistryDoc }).doc).toBe(doc)
+    expect(ok(recordAccountPlan(doc, acct(1), 'Team', 60)).accounts[0]).toMatchObject({ planLabel: 'Team', updatedAt: 60 })
+  })
+
+  it('refuses an unknown account, an empty plan and anything not text', () => {
+    const doc = withCodexAccount()
+    expect(recordAccountPlan(doc, acct(9), 'Pro', 1)).toMatchObject({ ok: false, code: 'not-found' })
+    for (const bad of ['', '   ', 42 as unknown as string, null as unknown as string]) {
+      expect(recordAccountPlan(doc, acct(1), bad, 1), String(bad)).toMatchObject({ ok: false, code: 'invalid-value' })
+    }
+  })
+
+  it('a plan name is held to the plan bound', () => {
+    const next = ok(recordAccountPlan(withCodexAccount(), acct(1), 'P'.repeat(500), 1))
+    expect(next.accounts[0].planLabel!.length).toBeLessThanOrEqual(60)
   })
 })

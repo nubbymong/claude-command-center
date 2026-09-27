@@ -44,8 +44,18 @@
  * changing the tree while it is read; that process can already write every
  * file here.
  *
- * Both read only; the accounts service decides when they may run. The fresh
- * read of a closed account (ADR-022) is not here: it lands in MP8.
+ * Both read only; the accounts service decides when they may run.
+ *
+ * - `read(realm)` (usage track MP8; ADR-022): a fresh reading of a closed
+ *   managed account through the auth operations' one short-lived
+ *   `codex app-server` helper (readUsage, which holds every other bound).
+ *   Tried only for a CLI discovery proved whose version is `supported`
+ *   (classifyCodexVersion: never too-new, too-old or unknown). A CLI that
+ *   answered `unsupported` (method not found, an invalid request, a schema
+ *   mismatch, a wrong `codexHome`) is not asked again until the executable
+ *   changes: the verdict is kept in memory keyed by the executable's
+ *   identity (path, size, times, file id) and version. A transient failure
+ *   is not kept. The accounts service decides when it may run.
  */
 
 import path from 'node:path'
@@ -53,8 +63,10 @@ import fsp from 'node:fs/promises'
 import fs from 'node:fs'
 import type { AllowanceReading } from '../../../shared/usage-types'
 import { planLabelFor } from '../../../shared/usage-types'
-import type { ProviderUsageOperations, RealmRef, UsageLookup, UsageReading } from '../core'
+import type { ProviderUsageOperations, RealmRef, UsageLookup, UsageReading, UsageReadResult, UsageReadOptions } from '../core'
 import { normaliseCodexRateLimits, mergeAllowanceReadings, readingToBuckets } from './rate-limits'
+import { classifyCodexVersion } from './cli-contract'
+import type { CodexUsageRead, CodexUsageReadOptions } from './auth-operations'
 
 /** The first tail read of a rollout. */
 export const CODEX_USAGE_TAIL_BYTES = 256 * 1024
@@ -73,6 +85,8 @@ export const CODEX_USAGE_DAY_ENTRIES = 4096
 export const CODEX_USAGE_READ_TIMEOUT_MS = 10_000
 /** Realms kept in the live figure and in the last-seen cache. */
 const MAX_REALMS = 64
+/** Executables whose `unsupported` verdict is kept (MP8). */
+const MAX_VERDICTS = 8
 
 const YEAR_RE = /^\d{4}$/
 const MONTH_DAY_RE = /^\d{2}$/
@@ -444,6 +458,12 @@ export interface CodexUsageDeps {
   now?: () => number
   /** The longest a caller waits (tests shorten it). */
   timeoutMs?: number
+  /** Usage track MP8: the auth operations' one helper read. Absent: the
+   *  port has no `read`. */
+  readUsage?(realm: RealmRef, opts: CodexUsageReadOptions): Promise<CodexUsageRead>
+  /** The executable discovery proved, now: a key naming its identity and
+   *  version, and the version. Null when none is proved. */
+  executable?(): { key: string; version: string | null } | null
 }
 
 /** `p`, or `late` once `ms` have passed or when it rejects. */
@@ -497,6 +517,18 @@ export function createCodexUsageOperations(deps: CodexUsageDeps): ProviderUsageO
     return typeof dir === 'string' && dir ? dir : null
   }
   const realmKey = (realm: RealmRef) => String((realm as { authRealmId?: unknown } | null)?.authRealmId ?? '')
+  // MP8: executables that answered `unsupported`, oldest dropped first.
+  const unsupported = new Set<string>()
+  const executable = (): { key: string; version: string | null } | null => {
+    try {
+      const e = deps.executable?.()
+      return e && typeof e.key === 'string' && e.key ? { key: e.key, version: typeof e.version === 'string' ? e.version : null } : null
+    } catch {
+      return null
+    }
+  }
+  const settledNow: Promise<void> = Promise.resolve()
+  const readUsage = deps.readUsage
   return {
     // Memory only, but locating the realm checks its home on disk: that goes
     // through the same guard.
@@ -513,5 +545,40 @@ export function createCodexUsageOperations(deps: CodexUsageDeps): ProviderUsageO
         return r.ok ? { ok: true, reading: toUsageReading(r.reading) } : { ok: false }
       }, { ok: false })
     },
+    // MP8: present only when the helper read is wired (absent, the port has
+    // no fresh read at all). Never rejects; `ended` is the helper's own end
+    // when one started.
+    ...(readUsage ? { read: async (realm: RealmRef, opts: UsageReadOptions = {}): Promise<UsageReadResult> => {
+      let ended: Promise<void> = settledNow
+      const answer = (outcome: UsageReadResult['outcome']): UsageReadResult => ({ outcome, ended })
+      try {
+        const exe = executable()
+        if (!exe || classifyCodexVersion(exe.version) !== 'supported') return answer({ ok: false, failure: 'refused' })
+        if (unsupported.has(exe.key)) return answer({ ok: false, failure: 'unsupported' })
+        const v = await readUsage(realm, {
+          ...(opts.signal ? { signal: opts.signal } : {}),
+          ...(opts.mayStart ? { mayStart: opts.mayStart } : {}),
+          onEnded: (p) => { ended = Promise.resolve(p).then(() => undefined, () => undefined) },
+        })
+        if (v && v.ok === true) return answer({ ok: true, reading: toUsageReading(v.reading) })
+        const kind = v && v.ok === false ? v.kind : 'refused'
+        if (kind === 'unsupported') {
+          // Kept only for the executable that answered: one replaced
+          // meanwhile is asked afresh.
+          if (executable()?.key === exe.key) {
+            unsupported.add(exe.key)
+            while (unsupported.size > MAX_VERDICTS) {
+              const oldest = unsupported.values().next().value
+              if (oldest === undefined) break
+              unsupported.delete(oldest)
+            }
+          }
+          return answer({ ok: false, failure: 'unsupported' })
+        }
+        return answer({ ok: false, failure: kind === 'transient' ? 'transient' : 'refused' })
+      } catch {
+        return answer({ ok: false, failure: 'refused' })
+      }
+    } } : {}),
   }
 }

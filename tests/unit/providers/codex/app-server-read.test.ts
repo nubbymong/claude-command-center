@@ -205,3 +205,65 @@ describe('readUsage: the helper is always shut down (ADR-022 bound 4)', () => {
     expect(await early.ops.readUsage({ authRealmId: MANAGED })).toEqual({ ok: false, kind: 'transient', reason: 'exit' })
   })
 })
+
+// Usage track MP8: the caller's last word before the spawn, and the end of
+// the helper's chain it waits for (#49).
+describe('readUsage: the last word before the spawn, and the chain end (MP8)', () => {
+  it('mayStart saying no starts nothing, and frees the one helper slot', async () => {
+    const t = setup()
+    expect(await t.ops.readUsage({ authRealmId: MANAGED }, { mayStart: () => false })).toEqual({ ok: false, kind: 'refused', reason: 'may-not-start' })
+    expect(await t.ops.readUsage({ authRealmId: MANAGED }, { mayStart: () => { throw new Error('gone') } })).toEqual({ ok: false, kind: 'refused', reason: 'may-not-start' })
+    expect(t.runs).toHaveLength(0)
+    expect((await t.ops.readUsage({ authRealmId: MANAGED })).ok).toBe(true)
+    expect(t.runs).toHaveLength(1)
+  })
+
+  it('mayStart is asked after every check that awaits, with nothing awaited between it and the spawn', async () => {
+    const t = setup()
+    let asked = 0
+    let turnPassed = false
+    let passedAtSpawn: boolean | null = null
+    const run = t.run.getMockImplementation()!
+    t.run.mockImplementation((cmd, opts) => { passedAtSpawn = turnPassed; return run(cmd, opts) })
+    const r = await t.ops.readUsage({ authRealmId: MANAGED }, {
+      mayStart: () => { asked++; queueMicrotask(() => { turnPassed = true }); return true },
+    })
+    expect(r.ok).toBe(true)
+    expect(asked).toBe(1)
+    expect(passedAtSpawn).toBe(false)
+  })
+
+  it('onEnded settles only once the stopped helper\'s kill has finished; it is not called when nothing was held', async () => {
+    let releaseKill: () => void = () => {}
+    const kill = new Promise<void>((r) => { releaseKill = r })
+    const t = setup({ helper: helper({ silent: true, stay: true }) })
+    const run = t.run.getMockImplementation()!
+    t.run.mockImplementation(async (cmd, opts) => ({ ...(await run(cmd, opts)), killSettled: kill }))
+    const ac = new AbortController()
+    let ended: Promise<void> | null = null
+    const p = t.ops.readUsage({ authRealmId: MANAGED }, { signal: ac.signal, onEnded: (e) => { ended = e } })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(ended).not.toBeNull()
+    ac.abort()
+    expect(await p).toEqual({ ok: false, kind: 'transient', reason: 'cancelled' })
+    let settled = false
+    void ended!.then(() => { settled = true })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(settled).toBe(false)
+    // The one helper slot is still taken while the kill runs.
+    expect(await t.ops.readUsage({ authRealmId: MANAGED })).toEqual({ ok: false, kind: 'refused', reason: 'busy' })
+    releaseKill()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(settled).toBe(true)
+    let notCalled = true
+    await t.ops.readUsage({ authRealmId: EXTERNAL }, { onEnded: () => { notCalled = false } })
+    await t.ops.readUsage({ authRealmId: MANAGED }, { mayStart: () => false, onEnded: () => { notCalled = false } })
+    expect(notCalled).toBe(true)
+  })
+
+  it('a throwing onEnded never stops the read', async () => {
+    const t = setup()
+    const r = await t.ops.readUsage({ authRealmId: MANAGED }, { onEnded: () => { throw new Error('hook') } })
+    expect(r.ok).toBe(true)
+  })
+})

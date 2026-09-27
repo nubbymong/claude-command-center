@@ -956,6 +956,25 @@ Owner decisions: `docs/wp1/owner-decisions-2026-09-27.md` and ADR-022.
   again until they are hidden again there. Upgrading again re-migrates any
   bare entry the older build wrote (the migration is idempotent), and the
   per-session strip's own list is never touched.
+- **Residual, accepted (MP8, window focus):** the Account usage page's
+  quiet Codex reload when its window regains focus (at most once per
+  `FOCUS_REFRESH_MS`, MP4) is a page stream, so a closed account may be
+  read afresh on it. It happens only while the page is open, and the 60 s
+  reuse keeps it to one read per account per minute at most, the same as
+  pressing Refresh.
+- **Residual, accepted (MP8, switch-off):** switching Codex off while a
+  fresh read runs is refused as in use (the read's operation lease counts,
+  as a status check's does) for at most that read's own bound (20 s, then
+  its kill chain). Closing the page stops the read at once. A launch, sign
+  in again, sign-out, archive and inactivate stop and wait for a read
+  first (#49), so none of those is refused because of one.
+- **Residual, accepted (MP8, status check):** a "Check sign-in" on an
+  account with a fresh read under way runs beside it: both hold the realm
+  as readers, and neither changes the sign-in on purpose.
+- **Owed (MP8, VM, before the live read ships):** the real read on 0.153.4
+  and 0.155.1 with a signed-in ChatGPT account, the hosts it contacts, the
+  realm isolation, the helper's exit, no conversation started, and the
+  0.155.1 rollout fixture, as the MP8 section of the usage plan lists them.
 
 ## Out of this PR (remaining Codex-parity work, carried to PR3/PR4 or 2.1.1 gates)
 

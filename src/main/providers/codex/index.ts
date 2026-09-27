@@ -48,7 +48,7 @@ export type { CodexLoginStatus, CodexLoginVia } from './cli-contract'
 export { codexInstallRecipes, codexInstallKind, CODEX_INSTALL_SOURCE_URL, CODEX_README_COMMIT } from './install-recipes'
 export type { CodexInstallKind } from './install-recipes'
 export { createCodexAuthOperations, createCodexOutputRedactor } from './auth-operations'
-export type { CodexAuthDeps, CodexRealmLookup, CodexRealmIdentity, CodexOutputRedactor, CodexUsageRead } from './auth-operations'
+export type { CodexAuthDeps, CodexRealmLookup, CodexRealmIdentity, CodexOutputRedactor, CodexUsageRead, CodexUsageReadOptions } from './auth-operations'
 // Usage track MP7 (ADR-022): the app-server usage read's client.
 export {
   createAppServerUsageClient, appServerMessages, APP_SERVER_MAX_LINE, APP_SERVER_READ_DEADLINE_MS, APP_SERVER_INITIALIZE_TIMEOUT_MS, APP_SERVER_EXIT_GRACE_MS, APP_SERVER_CLIENT_NAME,
@@ -319,6 +319,7 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
         createCodexAuthOperations({ ...realAuthDeps({ lookupRealm, takeSecret: deps.auth?.takeSecret }, realmFs), ...testAuthPorts(deps.authPorts), locks, proven: () => proven }),
         deps.usageFs ?? realCodexUsageFsPort(realmFs.platform),
         liveUsage,
+        () => proven,
       ),
       realmFolders: createCodexRealmFolders({ lookupRealm, fs: realmFs, locks }),
       // The user's own ~/.codex (or inherited CODEX_HOME), adopted only when
@@ -336,12 +337,27 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
 /** The auth operations, the launch preparation that shares their realm and
  *  executable checks, and the usage port that locates a realm's sessions
  *  folder exactly as a launch does: one package, one proof. */
-function withRealms(ops: CodexAuthOperations, usageFs: CodexUsageFsPort, liveUsage: CodexLiveUsage): Pick<ProviderPackage, 'auth' | 'launch' | 'usage'> {
+function withRealms(ops: CodexAuthOperations, usageFs: CodexUsageFsPort, liveUsage: CodexLiveUsage, proven: () => CodexDiscovery | null): Pick<ProviderPackage, 'auth' | 'launch' | 'usage'> {
   return {
     auth: ops,
     launch: { kinds: ['session', 'review'], prepare: (realm) => ops.prepareLaunch(realm), sessionsDir: (realm) => ops.sessionsDir(realm) },
-    usage: createCodexUsageOperations({ sessionsDir: (realm) => ops.usageSessionsDir(realm), fs: usageFs, live: liveUsage }),
+    usage: createCodexUsageOperations({
+      sessionsDir: (realm) => ops.usageSessionsDir(realm), fs: usageFs, live: liveUsage,
+      // MP8: the one helper read, and the executable it would run.
+      readUsage: (realm, opts) => ops.readUsage(realm, opts),
+      executable: () => codexExecutableKey(proven()),
+    }),
   }
+}
+
+/** The executable discovery proved, as the usage read's verdict key: its
+ *  canonical path, size, times, file id and version (MP8). Null when none
+ *  is proved. */
+export function codexExecutableKey(p: CodexDiscovery | null): { key: string; version: string | null } | null {
+  if (!p || p.state !== 'found' || !p.identity) return null
+  const id = p.identity
+  const version = typeof p.version === 'string' ? p.version : null
+  return { key: JSON.stringify([id.path, id.size, id.mtimeMs, id.ctimeMs, id.dev, id.ino, version]), version }
 }
 
 /** The real filesystem behind the managed folders. */

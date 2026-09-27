@@ -173,13 +173,26 @@ function normaliseApiKey(raw: string): string | null {
  *  reading. */
 export type CodexUsageRead = AppServerVerdict | { ok: false; kind: 'refused'; reason: string }
 
+export interface CodexUsageReadOptions {
+  /** Stops the read; a helper already started is ended, its whole chain. */
+  signal?: AbortSignal
+  /** Usage track MP8: asked right before the helper would start, after every
+   *  check that awaits, with nothing awaited between it and the spawn:
+   *  anything but `true` starts none (refused `may-not-start`). */
+  mayStart?: () => boolean
+  /** Usage track MP8: handed, once the realm is held for a helper, the
+   *  promise that settles when the helper's process chain has ended and the
+   *  hold is let go. Not called when nothing was held. */
+  onEnded?: (ended: Promise<void>) => void
+}
+
 /** The auth operations plus the launch preparation that shares their realm
  *  and executable checks. */
 export type CodexAuthOperations = ProviderAuthOperations & {
   prepareLaunch(realm: RealmRef): Promise<LaunchPreparation | Refusal>
   sessionsDir(realm: RealmRef): Promise<string | null>
   usageSessionsDir(realm: RealmRef): Promise<string | null>
-  readUsage(realm: RealmRef, opts?: { signal?: AbortSignal }): Promise<CodexUsageRead>
+  readUsage(realm: RealmRef, opts?: CodexUsageReadOptions): Promise<CodexUsageRead>
 }
 
 export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperations {
@@ -438,7 +451,7 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
      * the chain has ended. One helper at a time. Any failure fails closed:
      * the caller shows the last-seen reading. Never rejects.
      */
-    async readUsage(realm: RealmRef, opts: { signal?: AbortSignal } = {}): Promise<CodexUsageRead> {
+    async readUsage(realm: RealmRef, opts: CodexUsageReadOptions = {}): Promise<CodexUsageRead> {
       const refused = (reason: string): CodexUsageRead => ({ ok: false, kind: 'refused', reason })
       try {
         const signal = opts?.signal
@@ -457,10 +470,19 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
           if (r.ownership !== 'conductor-managed') { free(); return refused('external-realm') }
           const release = holdRealm(r, 'reader')
           if (isRefusal(release)) { free(); return refused(release.code) }
+          // The caller's last word (MP8: the account is still closed and the
+          // provider still on), asked with nothing awaited between it and
+          // the spawn in runUsageRead.
+          let allowed = false
+          try { allowed = !opts.mayStart || opts.mayStart() === true } catch { allowed = false }
+          if (!allowed) { release(); free(); return refused('may-not-start') }
+          let ended: () => void = () => {}
+          const settled = new Promise<void>((resolve) => { ended = resolve })
+          try { opts.onEnded?.(settled) } catch { /* the caller's hook never stops the read */ }
           try {
             return await runUsageRead(r, version, signal)
           } finally {
-            releaseAfterKills(r, () => { release(); free() })
+            releaseAfterKills(r, () => { release(); free(); ended() })
           }
         } catch {
           free()
