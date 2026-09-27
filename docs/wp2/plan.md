@@ -936,6 +936,20 @@ only the other provider's tool.
   - Mutation proofs: 78/78 host mutants and 7/7 real-process mutants (on the
     VM) of the 5b guards killed, each test red under its mutant.
 
+## Usage track (P3, MP1-MP13): residuals (2026-09-27)
+
+Owner decisions: `docs/wp1/owner-decisions-2026-09-27.md` and ADR-022.
+
+- **Residual, accepted (MP3 round 2, R3):** a Codex last-seen read that
+  never settles (a network share that stops answering) keeps its realm's
+  in-flight entry until it does. No caller waits for it longer than
+  `CODEX_USAGE_READ_TIMEOUT_MS` (10 s): the account shows as unavailable,
+  with Retry. The hung read is never started again beside itself, so one
+  realm holds at most one of the main process's few file-work threads for
+  it (two while locating the realm for its live figure hangs too); once it
+  settles, the next request reads afresh. Releasing the entry at the
+  timeout instead would let every Refresh add another hung read.
+
 ## Out of this PR (remaining Codex-parity work, carried to PR3/PR4 or 2.1.1 gates)
 
 - Staged re-authentication into a replacement realm while signed in (WP1.52);
