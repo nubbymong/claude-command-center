@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "5a90bed0908c9ba82055e6efc12e32c96ca4fa3e0770eae07d6e1134437fe395",
-  "manifestHead": "92072198de7362cf757d2af4b45247605017a173",
+  "manifestPathDigest": "0c798deb708274eb568d9340fc60db6f194e2b22fd74dc0588ade7265ce225ac",
+  "manifestHead": "031541122444af1872cf13838f0a007128bf3444",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -3737,6 +3737,7 @@
     {
       "path": "tests/unit/renderer/accounts-p32-selectors.test.ts",
       "predicates": [
+        "P05",
         "P13"
       ],
       "category": "TEST",

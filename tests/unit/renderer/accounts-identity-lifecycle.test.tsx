@@ -285,10 +285,9 @@ describe('the identity editor (row 7)', () => {
     await click('account-chip-acc-spare')
     const select = q('identity-editor-acc-spare-link-select') as HTMLSelectElement
     const offered = [...select.options].map((o) => o.value).filter(Boolean)
-    // Another provider's accounts only (never another Codex one), not one
-    // already linked with a Codex account (Claude work is, with acc-work),
-    // never this computer's own sign-in, an archived account, or one already here.
-    expect(offered.sort()).toEqual(['acc-claude-main'])
+    // What main accepts: never this computer's own sign-in, an archived
+    // account, or one already on this identity.
+    expect(offered.sort()).toEqual(['acc-claude-main', 'acc-claude-work', 'acc-work'])
     await choose(select, 'acc-claude-main')
     await click('identity-editor-acc-spare-link')
     expect(pa.linkIdentity).toHaveBeenCalledWith('acc-claude-main', 'id-spare')
@@ -336,6 +335,19 @@ describe('the identity editor (row 7)', () => {
     expect(q('identity-editor-acc-work')).not.toBeNull()
   })
 
+  it('is placed again when a change moves its chip without a scroll (a Link adds a line to the row)', async () => {
+    render(snapshot())
+    await click('account-chip-acc-work')
+    const panel = q('identity-editor-acc-work')!
+    const chip = q('account-chip-acc-work')!
+    chip.getBoundingClientRect = () => ({ top: 200, bottom: 226, left: 40, right: 66, width: 26, height: 26, x: 40, y: 200, toJSON: () => ({}) }) as DOMRect
+    const next = snapshot({ revision: 2 })
+    await act(async () => { useProviderAccountsStore.setState({ snapshot: next, loaded: true }) })
+    await flush()
+    expect(panel.style.top).toBe('232px')
+    expect(panel.style.left).toBe('40px')
+  })
+
   it('with Codex off, the Claude editor offers no Codex account (VM finding 3)', async () => {
     const s = snapshot({ accounts: [codexWork, codexSpare, claudeMain, claudeWork], identities: [...snapshot().identities] })
     s.providers[1] = { ...s.providers[1], enabled: false }
@@ -350,7 +362,8 @@ describe('the identity editor (row 7)', () => {
     await click('profile-chip-profile-primary')
     const select = q('identity-editor-profile-primary-link-select') as HTMLSelectElement
     const offered = [...select.options].map((o) => o.value).filter(Boolean)
-    expect(offered).toEqual(['acc-spare'])
+    // Main refuses a second profile on a profile's identity: none is offered.
+    expect(offered).toEqual(['acc-work', 'acc-spare'])
     await choose(select, 'acc-spare')
     await click('identity-editor-profile-primary-link')
     expect(q('identity-editor-profile-primary-error')?.textContent).toBe('This identity already has a Codex account.')

@@ -81,6 +81,19 @@ describe('Settings, Accounts fields: a clearly visible keyboard focus (WP2 final
     for (const [f, c] of tinted) expect(c, `${f}: ${c}`).toContain('focus-ring-strong')
   })
 
+  it('every identity editor field on the dialog tokens draws the strong ring (P3.2)', () => {
+    const src = read('settings/accounts/IdentityEditor.tsx')
+    const fields = src.split(/<(?:input|select)\b/).slice(1)
+      .map((chunk) => chunk.slice(0, chunk.search(/\/>|>\s*\n/)))
+      .filter((f) => f.includes('DIALOG_INPUT_STYLE'))
+    expect(fields.length, 'the name, group, new group and link fields').toBe(4)
+    for (const f of fields) {
+      const cls = f.match(/className="([^"]*)"/)?.[1] ?? ''
+      expect(cls.split(/\s+/), f).toContain('focus-ring-strong')
+      expect(cls).not.toMatch(/outline-none/)
+    }
+  })
+
   it('the account rename field is one of them', () => {
     const src = read('settings/accounts/IdentityEditor.tsx')
     const at = src.indexOf('placeholder="A name you will recognise"')

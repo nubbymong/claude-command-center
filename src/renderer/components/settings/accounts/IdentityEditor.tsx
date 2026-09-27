@@ -111,9 +111,12 @@ export function IdentityEditor({ anchor, account, snapshot, legacy, onClose, tes
     const w = panel.getBoundingClientRect().width
     const below = a.bottom + GAP
     const top = below + h <= window.innerHeight || a.top - GAP - h < 0 ? below : a.top - GAP - h
-    setPos({ top, left: Math.max(0, Math.min(a.left, window.innerWidth - w)) })
+    const left = Math.max(0, Math.min(a.left, window.innerWidth - w))
+    setPos((prev) => (prev && prev.top === top && prev.left === left ? prev : { top, left }))
   }, [anchor])
-  useLayoutEffect(() => { place() }, [place])
+  // Again after every change the snapshot brings: a Link or Unlink adds or
+  // removes a line in the row, which moves the chip without any scroll.
+  useLayoutEffect(() => { place() }, [place, snapshot])
 
   useLayoutEffect(() => {
     if (!pos) return
@@ -337,7 +340,7 @@ export function IdentityEditor({ anchor, account, snapshot, legacy, onClose, tes
               disabled={busy}
               aria-label="Group"
               className="w-full h-8 px-2.5 rounded-lg border text-[12.5px] focus-ring-strong transition-colors"
-            style={DIALOG_INPUT_STYLE}
+              style={DIALOG_INPUT_STYLE}
               data-testid={`${testId}-group`}
             >
               <option value="">None</option>
@@ -354,7 +357,7 @@ export function IdentityEditor({ anchor, account, snapshot, legacy, onClose, tes
                   placeholder="Group name"
                   aria-label="New group name"
                   className="w-full h-8 px-2.5 rounded-lg border text-[12.5px] focus-ring-strong transition-colors"
-            style={DIALOG_INPUT_STYLE}
+                  style={DIALOG_INPUT_STYLE}
                   data-testid={`${testId}-new-group`}
                 />
                 <RowButton onClick={addGroup} disabled={busy || !newGroup.trim()} testId={`${testId}-add-group`}>Add</RowButton>
@@ -385,7 +388,7 @@ export function IdentityEditor({ anchor, account, snapshot, legacy, onClose, tes
                 disabled={busy}
                 aria-label="Link another account"
                 className="w-full h-8 px-2.5 rounded-lg border text-[12.5px] focus-ring-strong transition-colors"
-            style={DIALOG_INPUT_STYLE}
+                style={DIALOG_INPUT_STYLE}
                 data-testid={`${testId}-link-select`}
               >
                 <option value="">Link another account</option>

@@ -97,12 +97,10 @@ describe('linking', () => {
     expect(linkedAccountLabel(snap, work)).toBe('A')
   })
 
-  it('candidates are live, vouched-for accounts of another provider with none on this identity yet; an unverified sign-in links nothing', () => {
-    // work's identity already has a Claude account (cw): no other Claude account is offered.
-    expect(linkCandidates(snap, work).map((a) => a.id)).toEqual([])
-    // o's identity has only o (Claude): an unlinked Codex account is offered;
-    // w is already linked with a Claude account (cw) and stays there.
-    expect(linkCandidates(snap, other).map((a) => a.id)).toEqual(['w2'])
+  it('candidates are what main accepts: live, vouched-for accounts on another identity; an unverified sign-in links nothing', () => {
+    // None of these is a record of a provider's own list: main accepts each.
+    expect(linkCandidates(snap, work).map((a) => a.id)).toEqual(['o', 'w2'])
+    expect(linkCandidates(snap, other).map((a) => a.id)).toEqual(['w', 'cw', 'w2'])
     expect(linkCandidates(snap, ext)).toEqual([])
     expect(linkCandidates(snap, unv)).toEqual([])
     expect(canLinkIdentity(ext)).toBe(false)
@@ -111,7 +109,23 @@ describe('linking', () => {
 
   it('a provider that is off offers nothing to link (VM finding 3)', () => {
     const off = { ...snap, providers: [{ providerId: 'codex', enabled: false } as never] }
-    expect(linkCandidates(off, other)).toEqual([])
+    expect(linkCandidates(off, other).filter((a) => a.providerId === 'codex')).toEqual([])
+    expect(linkCandidates(off, other).map((a) => a.id)).toEqual(['cw'])
+  })
+
+  it('a record of a provider\'s own list is not offered where a record of that list already is, live or archived (main\'s rule)', () => {
+    const p1 = account({ id: 'p1', providerId: 'claude', identityId: 'id-L', legacyLinked: true })
+    const p2 = account({ id: 'p2', providerId: 'claude', identityId: 'id-M', legacyLinked: true })
+    const cx = account({ id: 'cx', providerId: 'codex', identityId: 'id-L' })
+    const cy = account({ id: 'cy', providerId: 'codex', identityId: 'id-N' })
+    const s = snapshot([p1, p2, cx, cy])
+    // Codex cx shares id-L with profile p1: another profile is not offered; a Codex account is.
+    expect(linkCandidates(s, cx).map((a) => a.id)).toEqual(['cy'])
+    // Codex cy's identity has no profile: either profile is offered.
+    expect(linkCandidates(s, cy).map((a) => a.id)).toEqual(['p1', 'p2', 'cx'])
+    // An archived profile on the identity counts too.
+    const gone = account({ id: 'g', providerId: 'claude', identityId: 'id-N', lifecycle: 'archived' })
+    expect(linkCandidates(snapshot([p1, p2, cx, cy, gone]), cy).map((a) => a.id)).toEqual(['cx'])
   })
 
   it('an account with no name or label on an unnamed identity takes a linked account\'s label, not "Unnamed account" (VM finding 3)', () => {
