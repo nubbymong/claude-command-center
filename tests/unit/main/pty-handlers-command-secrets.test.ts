@@ -103,12 +103,14 @@ describe('pty:spawn and command secrets', () => {
     // ...and with one ready, the launch the service prepared is the one that
     // reaches the spawn, never the one the request carried.
     const lease = { release: vi.fn() }
-    acct.service = {
-      prepareLaunch: async () => ({ ok: true, lease, binding: {}, realmOnly: false, home: 'C:/res/r1', executable: 'C:/proven/codex.exe', env: { CODEX_HOME: 'C:/res/r1' }, sessionsDir: 'C:/res/r1/sessions' }),
-    }
+    const prepareLaunch = vi.fn(async (_input: Record<string, unknown>) => ({ ok: true, lease, binding: {}, realmOnly: false, home: 'C:/res/r1', executable: 'C:/proven/codex.exe', env: { CODEX_HOME: 'C:/res/r1' }, sessionsDir: 'C:/res/r1/sessions' }))
+    acct.service = { prepareLaunch }
     await spawn({}, SID, { cwd: 'C:/w', provider: 'codex', codexOptions: { permissionsPreset: 'read-only' }, codexLaunch: forged })
     expect(spawnPty).toHaveBeenCalledTimes(2)
     expect(spawnPty.mock.calls[1][2].codexLaunch).toEqual({ lease, executable: 'C:/proven/codex.exe', env: { CODEX_HOME: 'C:/res/r1' }, sessionsDir: 'C:/res/r1/sessions' })
+    // P3.2: the lease names the session it runs for, so a refused
+    // inactivate or archive can offer "Go to" that session.
+    expect(prepareLaunch.mock.calls[0][0]).toMatchObject({ kind: 'session', providerId: 'codex', sessionId: SID })
   })
 
   it('rebuilds them from the commands file on disk and the keychain, for a SHELL spawn with a config', async () => {

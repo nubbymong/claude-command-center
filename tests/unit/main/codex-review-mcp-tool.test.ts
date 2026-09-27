@@ -137,6 +137,8 @@ describe('codex_review tool', () => {
       expect(a.acknowledgeRealmOnly).toBeUndefined()
       expect(a.ownerId).toMatch(/^review:sess-allowed:\d+$/)
       expect(b.ownerId).not.toBe(a.ownerId)
+      // P3.2: the review's lease names the session that asked for it.
+      expect(a.sessionId).toBe('sess-allowed')
     })
 
     it('runs the prepared executable in the prepared realm environment, in the project, with the request on stdin -- never argv', async () => {
@@ -457,7 +459,7 @@ describe('claude_review tool (WP2 5b)', () => {
     expect(diff).toHaveBeenCalledWith({ cwd: gitCwd, mode: 'range', range: 'HEAD~1..HEAD', signal: expect.any(AbortSignal) })
     // The diff runs under the review's own stop: a cancel or the session's end stops git too.
     expect((diff.mock.calls[0][0] as { signal: AbortSignal }).signal).toBe((h.run.mock.calls[0][0] as { signal: AbortSignal }).signal)
-    expect(h.prepareLaunch).toHaveBeenCalledWith({ kind: 'review', providerId: 'claude', ownerId: expect.stringMatching(/^review:sess-allowed:\d+$/), remote: false })
+    expect(h.prepareLaunch).toHaveBeenCalledWith({ kind: 'review', providerId: 'claude', ownerId: expect.stringMatching(/^review:sess-allowed:\d+$/), sessionId: 'sess-allowed', remote: false })
     const run = h.run.mock.calls[0][0] as Record<string, unknown>
     expect(run.realm).toEqual({ authRealmId: 'realm-1' })
     expect(run.cwd).toBe(gitCwd)

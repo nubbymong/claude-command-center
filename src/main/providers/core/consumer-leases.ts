@@ -41,6 +41,9 @@ export interface LeaseOwner {
   ownerId: string
   /** The renderer that started it, when its lifetime is that renderer's. */
   webContentsId?: number
+  /** The app session this consumer runs for (a session's own id; for a
+   *  review, the session that asked for it), so a refusal can name it. */
+  sessionId?: string
 }
 
 export interface AccountLease {
@@ -61,6 +64,7 @@ export type LeaseAddResult =
 interface Entry {
   lease: AccountLease
   webContentsId?: number
+  sessionId?: string
 }
 
 export class ConsumerLeaseRegistry {
@@ -111,6 +115,18 @@ export class ConsumerLeaseRegistry {
     return out
   }
 
+  /** The app sessions whose sessions or reviews hold the account, each once,
+   *  for a refusal that names them (design 5.3). Consumers that belong to no
+   *  session (a sign-in, an operation) are not listed: `count` has them. */
+  sessionsHolding(accountId: string): string[] {
+    const out = new Set<string>()
+    for (const e of this.byKey.values()) {
+      if (e.lease.accountId !== accountId || e.sessionId === undefined) continue
+      if (e.lease.kind === 'session' || e.lease.kind === 'review') out.add(e.sessionId)
+    }
+    return [...out]
+  }
+
   isHeld(accountId: string): boolean {
     return this.exclusive.has(accountId)
   }
@@ -137,7 +153,11 @@ export class ConsumerLeaseRegistry {
         this.emit(accountId)
       },
     }
-    this.byKey.set(key, { lease, ...(owner.webContentsId !== undefined ? { webContentsId: owner.webContentsId } : {}) })
+    this.byKey.set(key, {
+      lease,
+      ...(owner.webContentsId !== undefined ? { webContentsId: owner.webContentsId } : {}),
+      ...(typeof owner.sessionId === 'string' && owner.sessionId ? { sessionId: owner.sessionId } : {}),
+    })
     this.emit(accountId)
     return { ok: true, lease, existing: false }
   }

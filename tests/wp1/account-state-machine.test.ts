@@ -8,7 +8,7 @@ import {
   emptyRegistry, checkRegistryInvariants, createIdentity, beginAccountSetup, commitAccountSetup,
   abandonAccountSetup, markSetupCredentialsWritten, setAccountLifecycle, setProviderDefault,
   recordAuthCheck, resolveLaunchBinding, providerDefaultAccount, selectableAccounts,
-  reconcileAccountSignIn, setReviewerDefault, chooseReviewerAccount, parseRegistryDoc, linkAccountIdentity,
+  reconcileAccountSignIn, setReviewerDefault, chooseReviewerAccount, parseRegistryDoc, linkAccountIdentity, restoreArchivedAccount,
 } from '../../src/shared/providers'
 import type { ProviderRegistryDoc, AccountLifecycle } from '../../src/shared/providers'
 
@@ -361,5 +361,51 @@ describe('ADR-009 round 1 regressions: unverified identities', () => {
     doc.accounts[0].isReviewerDefault = true
     expect(checkRegistryInvariants(doc).join()).toMatch(/reviewer default .* is an unverified sign-in/)
     expect(parseRegistryDoc(doc)).toMatchObject({ ok: false, reason: 'invalid' })
+  })
+})
+
+describe('restoring an archived account (design 5.3; P3.2, "Archived (N)" with Restore)', () => {
+  // Account 1 archived (via inactive), with a verified subject recorded before.
+  const archivedOne = () => {
+    let doc = two()
+    doc = ok(setProviderDefault(doc, acct(2), 40))
+    doc = { ...doc, accounts: doc.accounts.map((a) => (a.id === acct(1) ? { ...a, providerSubject: 'sub-1', providerAuthorityId: 'auth-1', identityAssurance: 'verified-subject' as const } : a)) }
+    doc = ok(setAccountLifecycle(doc, acct(1), 'inactive', { consumers: 0 }, 50))
+    return ok(setAccountLifecycle(doc, acct(1), 'archived', { consumers: 0 }, 51))
+  }
+
+  it('comes back inactive, its realm live again, and nothing about its sign-in trusted', () => {
+    const doc = ok(restoreArchivedAccount(archivedOne(), acct(1), 60))
+    expect(doc.accounts.find((a) => a.id === acct(1))).toMatchObject({
+      lifecycle: 'inactive', isProviderDefault: false, lastKnownAuthState: 'unknown', operationalState: 'attention', identityAssurance: 'user-asserted', updatedAt: 60,
+    })
+    const a = doc.accounts.find((x) => x.id === acct(1))!
+    expect(a.providerSubject).toBeUndefined()
+    expect(a.providerAuthorityId).toBeUndefined()
+    expect(doc.realms.find((r) => r.id === realm(1))).toMatchObject({ lifecycle: 'active' })
+    expect(selectableAccounts(doc, 'codex').map((x) => x.id)).toEqual([acct(2)])
+    expect(checkRegistryInvariants(doc)).toEqual([])
+  })
+
+  it('a blocked account stays blocked: restore is not a way round the reconcile', () => {
+    let doc = archivedOne()
+    doc = { ...doc, accounts: doc.accounts.map((a) => (a.id === acct(1) ? { ...a, operationalState: 'blocked' as const } : a)) }
+    expect(ok(restoreArchivedAccount(doc, acct(1), 60)).accounts.find((a) => a.id === acct(1))).toMatchObject({ lifecycle: 'inactive', operationalState: 'blocked' })
+  })
+
+  it('only an archived account is restored', () => {
+    const doc = two()
+    expect(restoreArchivedAccount(doc, acct(1), 60)).toMatchObject({ ok: false, code: 'lifecycle' })
+    expect(restoreArchivedAccount(ok(setAccountLifecycle(ok(setProviderDefault(doc, acct(2), 40)), acct(1), 'inactive', { consumers: 0 }, 50)), acct(1), 60)).toMatchObject({ ok: false, code: 'lifecycle' })
+    expect(restoreArchivedAccount(doc, acct(9), 60)).toMatchObject({ ok: false, code: 'not-found' })
+  })
+
+  it('is refused when another live realm now holds the same sign-in location, or the realm is gone', () => {
+    const base = archivedOne()
+    // A newer account set up on the same location (the external home adopted again).
+    const reused = { ...base, realms: base.realms.map((r) => (r.id === realm(2) ? { ...r, pathRef: base.realms.find((x) => x.id === realm(1))!.pathRef } : r)) }
+    expect(restoreArchivedAccount(reused, acct(1), 60)).toMatchObject({ ok: false, code: 'realm-conflict' })
+    const gone = { ...base, realms: base.realms.filter((r) => r.id !== realm(1)) }
+    expect(restoreArchivedAccount(gone, acct(1), 60)).toMatchObject({ ok: false, code: 'realm-conflict' })
   })
 })

@@ -608,8 +608,9 @@ export function recordProviderMigration(
  *  the caller under the same lock that applies this result.
  *
  *  Allowed: active -> inactive, inactive -> active, inactive -> archived.
- *  Restoring an archived account needs provider verification and is a separate
- *  operation (not offered in WP2). */
+ *  Restoring an archived account is a separate operation
+ *  (restoreArchivedAccount): it comes back inactive, and making it active
+ *  again is the provider-verified step. */
 export function setAccountLifecycle(
   doc: ProviderRegistryDoc,
   accountId: string,
@@ -653,6 +654,40 @@ export function setAccountLifecycle(
   const realms = next === 'archived'
     ? doc.realms.map((r) => (r.id === account.authRealmId ? { ...r, lifecycle: 'retired' as const } : r))
     : doc.realms
+  return done({ ...doc, accounts, realms })
+}
+
+/** Bring an archived account back (design 5.3, "Archived (N)" with Restore).
+ *  It returns INACTIVE with its realm live again, and nothing about who is
+ *  signed in there is trusted any more -- exactly as a legacy record that
+ *  comes back is restored: the subject is dropped (another account may hold
+ *  it by now), the sign-in state is unknown, and a vouched-for identity drops
+ *  to user-asserted. Making it active is the provider-verified step: it checks
+ *  the sign-in first (the accounts service's re-activation).
+ *
+ *  Refused: an account that is not archived; a legacy record (it comes back
+ *  where it was removed, through the legacy store); a realm that is gone, is
+ *  another provider's, or whose location another live realm now holds (the
+ *  same home adopted again as a new account). */
+export function restoreArchivedAccount(doc: ProviderRegistryDoc, accountId: string, now: number): RegistryResult {
+  const account = findAccount(doc, accountId)
+  if (!account) return fail('not-found', `account ${accountId} does not exist`)
+  if (account.lifecycle !== 'archived') return fail('lifecycle', `an ${account.lifecycle} account is not archived`)
+  if (isLegacyRecord(doc, account)) return fail('legacy-owned', 'this account comes back where it was removed')
+  const realm = findRealm(doc, account.authRealmId)
+  if (!realm || realm.providerId !== account.providerId) return fail('realm-conflict', 'this account has no sign-in location to come back to')
+  if (doc.realms.some((r) => r.id !== realm.id && r.providerId === realm.providerId && r.pathRef === realm.pathRef && holdsPath(r))) {
+    return fail('realm-conflict', 'another account now uses this sign-in location')
+  }
+  const realms = doc.realms.map((r) => (r.id === realm.id ? { ...r, lifecycle: 'active' as const } : r))
+  const accounts = doc.accounts.map((a) => (a.id === accountId
+    ? compact({
+      ...a, lifecycle: 'inactive' as const, isProviderDefault: false, updatedAt: now,
+      providerSubject: undefined, providerAuthorityId: undefined, lastKnownAuthState: 'unknown' as const,
+      operationalState: a.operationalState === 'blocked' ? 'blocked' as const : 'attention' as const,
+      identityAssurance: a.identityAssurance === 'verified-subject' ? 'user-asserted' as const : a.identityAssurance,
+    })
+    : a))
   return done({ ...doc, accounts, realms })
 }
 

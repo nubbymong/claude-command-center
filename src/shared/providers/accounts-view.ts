@@ -232,6 +232,9 @@ export type AccountsFailure = {
   message: string
   /** With `consumers`: how many hold it. */
   consumers?: number
+  /** With `consumers` from a lifecycle change: the app sessions whose
+   *  sessions or reviews hold it (ids only), so the refusal can name them. */
+  sessions?: string[]
   /** The sign-in state the operation observed, when it read one. */
   state?: KnownAuthState
 }
