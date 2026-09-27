@@ -322,6 +322,28 @@ chat-style transcript viewer with search and a timeline. Slots are labeled by
 the session's work name (or config label), so a renamed session is easy to
 find later.
 
+### Codex usage
+
+The **Usage page** (the person icon on the left rail, once you have two or
+more accounts) has a Codex section beside the Claude Code one. Each Codex
+account shows its 5-hour and weekly allowance and its plan:
+
+- from an open session on the account, when there is one (**Updated**);
+- otherwise, for an account signed in with ChatGPT, from a short check CCC
+  asks Codex to run in that account's own folder when you open the page,
+  press **Refresh** or use the card's **Retry** (about a second, one account
+  at a time). It never runs for an API-key account, for *This computer's
+  Codex*, or for an account a session or review is using;
+- otherwise from the account's latest session, marked **As of** with its age.
+
+An account with no session yet says its allowance shows after the first one;
+an API-key account is billed per token, so it has no plan allowance. The
+usage strip at the foot of the window shows one pill per person, grouped by
+provider. Token use and cost are in Tokenomics, where the **Provider** and
+**Account** filters and the Account column show Codex usage by account
+(*This computer's sign-in* for `~/.codex`, *Not recorded* for usage from
+before accounts were recorded).
+
 ## Tokenomics, Memory, and the rest
 
 The README covers these in depth: **Tokenomics** (cost/usage analytics),

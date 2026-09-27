@@ -87,11 +87,13 @@ export const trainingSteps: TrainingStep[] = [
       '**Per-session isolation** -- each session gets its own private home, so two sessions on different accounts never cross over',
       'Your **primary** account (the one captured on first run) is protected and can never be deleted',
       'Memory, settings, and history stay **shared** across all accounts',
+      'The **Usage page** (the person icon on the rail, once you have two or more accounts) shows every Claude and Codex account\'s 5-hour and weekly limits, grouped by assistant; the usage strip at the foot shows one pill per person, grouped by provider',
     ],
     howToTrigger: [
       { label: 'Choose at launch', value: 'Start a session → account dialog' },
       { label: 'Add an account', value: 'run /login in a session, or Settings → Accounts → Add' },
       { label: 'Manage', value: 'Settings → Accounts (name + colour each one)' },
+      { label: 'Usage', value: 'Click the person icon on the left rail' },
     ],
     proTip:
       'Give each account a friendly name and a distinct colour in Settings, Accounts. The colour follows the account onto the session card, the statusline, and the launch picker so you always know which login a session is on.',
@@ -100,6 +102,7 @@ export const trainingSteps: TrainingStep[] = [
       'Add accounts by running **/login** in a session, or from Settings, Accounts',
       'Each session is **isolated** -- signing in to one never touches the others or your default',
       'Name and colour each account in **Settings, Accounts**; memory and history stay shared',
+      'Every account\'s limits on one **Usage page**, Claude Code and Codex side by side',
     ],
     // No dedicated account-picker capture exists yet. (Future capture:
     // step-accounts.jpg / the launch-time account picker.)
@@ -210,7 +213,7 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '1.5.0',
     section: 'integrations',
     summary:
-      "OpenAI's Codex CLI runs beside Claude, or on its own. A saved config picks Codex and the Codex account it runs under; gpt-5 series models, permission presets, the resume picker, and tokenomics segmenting are all wired in.",
+      "OpenAI's Codex CLI runs beside Claude, or on its own. A saved config picks Codex and the Codex account it runs under; gpt-5 series models, permission presets, the resume picker, and Tokenomics by account are all wired in.",
     highlights: [
       'In this release, Codex sessions and Codex reviews run on this computer only, not over SSH -- the SSH options are off for Codex, and the dialog says why',
       'Each Codex account has its **own sign-in folder**. New sessions use the default account. Code reviews use the reviewer default, or the default if none is set',
@@ -218,7 +221,7 @@ export const trainingSteps: TrainingStep[] = [
       'Sign in with ChatGPT or an API key -- the key goes to Codex, and this app never stores it',
       'The session header has a **Restart** menu: Restart for a new conversation, or **Restart and pick a conversation** to resume a recent one',
       'Six gpt-5 models in the dropdown: gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, gpt-5.3-codex-spark, gpt-5.2; permission presets, model and reasoning effort are set on the Codex config',
-      '**Tokenomics** segments Codex spend automatically alongside Claude, per-day and per-model; the Logs page does not index Codex conversations yet',
+      '**Tokenomics** shows Codex spend beside Claude, per account (the Provider and Account filters), per day and per model; each Codex account\'s allowance is on the **Usage page**; the Logs page does not index Codex conversations yet',
     ],
     howToTrigger: [
       { label: 'Spawn', value: '+ New -> Config -> provider card -> Codex -> account' },
@@ -227,13 +230,13 @@ export const trainingSteps: TrainingStep[] = [
       { label: 'Introduction', value: 'Show the Codex introduction, on this card once you have said you use Codex and a Codex account you added is signed in' },
     ],
     proTip:
-      'Sign in once per Codex account in Settings, Accounts; each Codex session runs under the account its config picks (the default unless you choose another). Spend lands in tokenomics under the Codex provider tag, side by side with Claude.',
+      'Sign in once per Codex account in Settings, Accounts; each Codex session runs under the account its config picks (the default unless you choose another). Spend lands in Tokenomics under the account it ran on, side by side with Claude, and each account\'s allowance is on the Usage page.',
     bullets: [
       '**Provider per config** -- Claude Code, Codex or Terminal only, with the Codex account it runs under',
       '**Several Codex accounts**, each with its own sign-in, a default and a reviewer',
       '**gpt-5 series** model dropdown plus **permission presets** on the Codex config',
       '**Restart and pick a conversation** to resume a recent Codex conversation',
-      '**Tokenomics** segments Codex spend automatically alongside Claude',
+      '**Tokenomics** shows Codex spend by account beside Claude, and the **Usage page** each account\'s allowance',
     ],
     screenshotFilename: 'v2-shell-hero.jpg',
   },
@@ -503,22 +506,24 @@ export const trainingSteps: TrainingStep[] = [
     summary:
       'Track every dollar Claude and Codex cost you across every session. A background indexer reads all of your transcripts (including subagent and sidechain files), dedups globally, and computes cost at query time from live pricing, so the dashboard opens instantly with a KPI row, charts, and a sessions table you can filter.',
     highlights: [
-      '**KPI row** -- total spend, tokens, sessions, and daily burn at the top',
-      '**Charts** for daily spend and a per-model breakdown',
-      '**Sessions table** with cost, model, and config attribution per session',
-      '**Filters** -- config, date range (7d / 30d / all), and a free-text search over model and project',
+      '**KPI row** -- total spend, tokens, sessions, and daily burn at the top, each split between Claude Code and Codex',
+      '**Charts** for daily spend, one line per provider, and a per-model breakdown',
+      '**Sessions table** with cost, model, account and config attribution per session',
+      '**Filters** -- provider, account, config, date range (7d / 30d / all), and a free-text search over model and project',
+      'A model with no price yet reads **no price**, never $0, and a notice names it',
       'Pricing from BerriAI`s LiteLLM (cached 24h); a green nav badge shows when the index is fresh',
     ],
     howToTrigger: [
       { label: 'Open', value: 'Click  $  in the sidebar nav' },
-      { label: 'Filter', value: 'Header → date / model / account / project' },
+      { label: 'Filter', value: 'Header -> provider / account / date / model / project' },
     ],
     proTip:
       'Filter by account to see which login is burning the budget, or by model to compare Opus vs Sonnet vs Haiku spend across the same projects. Life-to-date may read lower than the old page -- the rebuild dedups and prices at current rates.',
     bullets: [
       'Instant-open dashboard: **KPI row**, **charts**, and a filterable **sessions table**',
       'Track **token usage and costs** across all your Claude and Codex sessions',
-      '**Filter** by date, model, account, or project',
+      '**Filter** by provider, account, date, model, or project',
+      'A model with no price reads **no price**, never $0',
       'Cost computed at query time from **live pricing** over a deduped index of every transcript',
     ],
     screenshotFilename: 'step-tokenomics.jpg',

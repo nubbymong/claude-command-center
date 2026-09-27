@@ -331,9 +331,9 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['tokenomics.dashboard'],
     variants: {
       primary: {
-        shortText: 'See where your Claude money is going',
+        shortText: 'See where your Claude and Codex money is going',
         title: 'Tokenomics',
-        body: 'The **Tokenomics** page is a spend dashboard for every Claude and Codex session: today, this week, all time.\n\nA background indexer reads all of your transcripts (including subagent and sidechain files), dedups globally, and computes cost at query time from live pricing, so the page opens instantly. You get:\n\n• A **KPI row** with total spend, tokens, sessions, and daily burn\n• **Charts** for daily spend and per-model breakdown\n• A **sessions table** with cost, model, and config attribution\n• **Filters** for config, date range (7d / 30d / all) and a free-text search over model and project\n\nModel pricing is fetched from BerriAI\'s LiteLLM repo on GitHub (cached for 24h) so costs stay accurate.',
+        body: 'The **Tokenomics** page is a spend dashboard for every Claude and Codex session: today, this week, all time.\n\nA background indexer reads all of your transcripts (including subagent and sidechain files), dedups globally, and computes cost at query time from live pricing, so the page opens instantly. You get:\n\n• A **KPI row** with total spend, tokens, sessions, and daily burn, each split between Claude Code and Codex\n• **Charts** for daily spend, one line per provider, and a per-model breakdown\n• A **sessions table** with cost, model, account and config attribution\n• **Filters** for provider, account, config, date range (7d / 30d / all) and a free-text search over model and project\n\nA model with no price yet reads **no price** instead of costing $0, and a notice names it. Model pricing is fetched from BerriAI\'s LiteLLM repo on GitHub (cached for 24h) so costs stay accurate.',
         actionLabel: 'Open Tokenomics',
         actionTarget: 'tokenomics',
       },
@@ -1065,7 +1065,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Run more than one Claude account, session by session',
         title: 'Multi-Account',
-        body: 'Each session runs as **one account**, and different sessions can run as different ones -- work on one, personal on another, a spare for when the first hits its weekly limit.\n\n**Right-click a session** and pick an account to move it. The footer strip shows every live account with its usage, so you can see which one has room before you choose.\n\nEach account keeps its own credentials, its own browser session and its own limits -- switching a session is not switching your whole app.',
+        body: 'Each session runs as **one account**, and different sessions can run as different ones -- work on one, personal on another, a spare for when the first hits its weekly limit.\n\n**Right-click a session** and pick an account to move it. The footer strip shows every live account with its usage, one pill per person grouped by provider, so you can see which one has room before you choose.\n\nEach account keeps its own credentials, its own browser session and its own limits -- switching a session is not switching your whole app.',
         focusHint: 'Right-click a session in the sidebar -- the account list is in the menu',
       },
     },
@@ -1195,7 +1195,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'The Usage page reuses what your sessions already know',
         title: 'Account Usage, Without the Extra Calls',
-        body: 'The **Usage page** (the person icon on the left rail, once you have two or more accounts) shows the 5-hour and weekly limits for every account. It is cheaper than it looks: an account with an **open session** shows the figures that session already reported on its status line, so it makes no request at all; the primary account is the exception and is always fetched. Accounts with no session open are fetched one at a time, each row filling in as its answer arrives.\n\nThat is also why the page never refreshes a signed-in account\'s token while anything is using it: sessions, shells, Insights runs and cloud agents all count.\n\nOne more exception: an account on extra usage (paid credits) still makes a single request for its credits figure, which the status line cannot carry.',
+        body: 'The **Usage page** (the person icon on the left rail, once you have two or more accounts) shows the 5-hour and weekly limits for every account. It is cheaper than it looks: an account with an **open session** shows the figures that session already reported on its status line, so it makes no request at all; the primary account is the exception and is always fetched. Accounts with no session open are fetched one at a time, each row filling in as its answer arrives.\n\nThat is also why the page never refreshes a signed-in account\'s token while anything is using it: sessions, shells, Insights runs and cloud agents all count.\n\nOne more exception: an account on extra usage (paid credits) still makes a single request for its credits figure, which the status line cannot carry.\n\n**Codex accounts** work the same way: an open session\'s figures first. For an account signed in with ChatGPT and no session open, opening the page (or Refresh, or Retry) asks Codex to run its own usage check once in that account\'s folder; otherwise the card shows the last reading from its latest session, marked **As of**.',
         actionLabel: 'Open the Usage page',
         actionTarget: 'account-usage',
       },

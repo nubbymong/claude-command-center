@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-27T10:00:28.435Z",
-  "head": "7e561aa3b2f0496554f7b27a967acb1d16a4c47a",
-  "tree": "6650073b7dd0b7158da9d2f4e185c842d34abe71",
+  "generatedAt": "2026-09-27T10:11:01.729Z",
+  "head": "394b09c7eadd0ce9f6914e3bc6627e00dd8eccb1",
+  "tree": "238347c503d6ff4aff4a02d38ca339db57251040",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,8 +116,8 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2353,
-  "excludedFileCount": 381,
+  "trackedFileCount": 2354,
+  "excludedFileCount": 382,
   "scannedFileCount": 1972,
   "unscopedFileCount": 15,
   "unscoped": [
@@ -161,14 +161,14 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 37
+      "lineCount": 41
     },
     {
       "path": "README.md",
       "predicates": [
         "P12"
       ],
-      "lineCount": 16
+      "lineCount": 17
     },
     {
       "path": "SECURITY.md",
@@ -182,7 +182,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 92
+      "lineCount": 98
     },
     {
       "path": "docs/wp2/hello-codex-spec.md",
@@ -196,7 +196,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 69
+      "lineCount": 71
     },
     {
       "path": "docs/wp2/plan.md",
@@ -1617,14 +1617,14 @@
         "P11",
         "P12"
       ],
-      "lineCount": 95
+      "lineCount": 99
     },
     {
       "path": "src/renderer/training-steps.ts",
       "predicates": [
         "P11"
       ],
-      "lineCount": 45
+      "lineCount": 48
     },
     {
       "path": "src/renderer/types/electron.d.ts",
@@ -1665,7 +1665,7 @@
         "P12",
         "P14"
       ],
-      "lineCount": 57
+      "lineCount": 69
     },
     {
       "path": "src/shared/canvas.ts",

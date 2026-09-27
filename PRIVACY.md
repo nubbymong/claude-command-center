@@ -53,7 +53,8 @@ during installation (and can change later in Settings):
 - an index of your Claude Code session transcripts, used to power the Logs
   and Tokenomics views, and of your Codex session transcripts, used for
   Tokenomics
-- cost and usage figures calculated locally from those transcripts
+- cost and usage figures calculated locally from those transcripts, with the
+  account each Claude and Codex session ran under
 - application logs
 - screenshots and drawings you create in the app
 
@@ -112,6 +113,13 @@ is not affected by that switch.
 | `status.claude.com` | Anthropic's public service-status page | Periodically, to show service health |
 | `api.github.com`, `github.com` | Checks for app updates and downloads them; powers the optional GitHub integration | On update checks, and when you use the GitHub features |
 | `raw.githubusercontent.com` | Fetches a public model-pricing table (LiteLLM's open dataset) so cost figures are accurate | At most once every 24 hours, cached locally |
+| OpenAI: `chatgpt.com`, and with Codex 0.155.1 also `sdmntprsouthcentralus.oaiusercontent.com` (OpenAI's content storage) | Codex's own usage check for a Codex account with no session open, run by the Codex command-line tool in that account's folder with that account's own sign-in. Codex reads the account's usage allowance, and on the same start refreshes its list of models and checks its plugin cache, as it does whenever it runs | Only when you open the Usage page, press Refresh or use an account card's Retry; about a second, one account at a time. Never for an API-key account, for your own Codex folder, or for an account a session or review is using |
+
+To avoid the Codex usage check, leave the Usage page closed: it runs only on
+the three actions above, and an account with a session open or an API key is
+never checked. Turning Codex off in Settings, Accounts stops it as well. The
+check talks to OpenAI only, and the app keeps only the allowance figures and
+the plan name it returns.
 
 The app also runs a small server bound to `127.0.0.1` (localhost) so that Claude
 and Codex sessions can use its built-in tools. It is not reachable from the

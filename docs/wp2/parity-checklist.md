@@ -156,20 +156,20 @@ scoped app-server read of ADR-022.
 
 | # | Feature | Status | Mocked | Real CLI | Packaged | Pkg | Still owed |
 |---|---|---|---|---|---|---|---|
-| 17 | All-accounts usage page | MISSING | no | no | no | P3 | Usage track MP3, MP4 (layout approved 2026-09-27); a closed Codex account's read MP7, MP8 (ADR-022) |
-| 18 | Session-strip meters | PARTIAL | yes | no | no | P3 | Done in usage track MP2: Codex meters labelled from `window_minutes` (5h, Weekly, one per separate limit; `tests/unit/renderer/session-status-strip.test.ts`). Remaining in MP6: the D2 no-reading meter and the pending state for Codex. Owed for MP8: a 0.155.1 rollout fixture (the test VM has no 0.155.1 session) |
-| 19 | Strip cost wording | PARTIAL | no | no | no | P3 | Usage track MP6: wording per provider and sign-in method |
-| 20 | Account chip (strip and sidebar) | MISSING | no | no | no | P3 | Chip from the account's identity; the usage track (MP4, MP5) uses the same identity chip on the usage page and footer |
-| 21 | Multi-account footer | MISSING | no | no | no | P3 | Usage track MP5, MP6 (approved 2026-09-27): one pill per identity; percentages never merged across providers |
+| 17 | All-accounts usage page | VERIFIED | yes | partial (Win) | no | P3 | Usage track MP3, MP4, MP8: a Codex section with the live, fresh-read and last-seen figures, per-token and no-session notes (`tests/unit/renderer/account-usage-panel-streaming.test.tsx`, `tests/unit/main/codex-usage-read.test.ts`). Real CLI: the MP8 VM walk (Windows, unsigned candidates at 81ed64a8 and fa2907e7, AUTHENTICATED managed) read a ChatGPT account on 0.153.4 and 0.155.1 and never read 0.157.1. Owed: macOS and Linux, packaged, the VM screenshots in three modes |
+| 18 | Session-strip meters | VERIFIED | yes | no | no | P3 | Usage track MP2, MP6: Codex meters labelled from `window_minutes` (5h, Weekly, one per separate limit), the no-reading meter after a reset, and the pending state (`tests/unit/renderer/session-status-strip.test.ts`, `tests/unit/renderer/strip-usage-consistency.test.ts`). Owed: a 0.155.1 rollout fixture from a real session, and a real-CLI run |
+| 19 | Strip cost wording | VERIFIED | yes | no | no | P3 | Usage track MP6: API-equivalent estimate, or Estimate at API list prices for an API-key account (`tests/unit/renderer/strip-usage-consistency.test.ts`); Tokenomics words each session's cost the same way (MP12, `tests/unit/renderer/tokenomics-mp12.test.tsx`) |
+| 20 | Account chip (strip and sidebar) | PARTIAL | yes | no | no | P3 | The usage page and the footer carry the account's identity chip (usage track MP4, MP5; `tests/unit/renderer/multi-account-statusline-render.test.tsx`). Owed: the chip on the session strip and in the sidebar |
+| 21 | Multi-account footer | VERIFIED | yes | no | no | P3 | Usage track MP5, MP6: one pill per identity, grouped by provider, percentages never merged across providers; bars hidden per provider (`tests/unit/renderer/multi-account-statusline-render.test.tsx`). Owed: a real-CLI and packaged run |
 | 22 | Switch the account of a running session | MISSING | no | no | no | P3 | Keep the conversation, as Claude does |
 | 23 | Choose the account at launch | VERIFIED | yes | partial (Win) | partial (Win) | P4 | Per OS. Windows (AUTHENTICATED managed): the new-config picker defaulted to the managed account with no confirmation box, and real Codex 0.157.1 launched. Upgrade walk (AUTHENTICATED, this computer's Codex): Create waited for its launch confirmation, then real Codex 0.157.1 launched |
 | 24 | Running sessions per account | PARTIAL | no | no | no | P3 | Shown on the account row |
-| 25 | Tokenomics reads managed realms and `~/.codex` | VERIFIED | yes | no | no | P4 | Real rollouts |
-| 26 | Tokenomics per-account attribution and filters | MISSING | no | no | no | P3 | Usage track MP9, MP10, MP12 (approved 2026-09-27): attribution, Provider and Account filters |
+| 25 | Tokenomics reads managed realms and `~/.codex` | VERIFIED | yes | no | no | P4 | Real rollouts. MP9 round 1: a realm's folder is read only through the canonical-home check, and a folder or rollout reached twice (a junction, a hard link) is read once (`tests/unit/native/tokenomics-reindex-accounts.native.test.ts`) |
+| 26 | Tokenomics per-account attribution and filters | VERIFIED | yes | no | no | P3 | Usage track MP9, MP10, MP12: Codex by the realm folder, Claude by the profile folder its transcript is in (from now on), Provider and Account filters with Not recorded under both providers and This computer's sign-in (`tests/unit/native/tokenomics-reindex-accounts.native.test.ts`, `tests/unit/native/tokenomics-attribution.native.test.ts`, `tests/unit/renderer/tokenomics-mp12.test.tsx`). Owed: the VM screenshots in three modes |
 | 27 | Subagent collision fix | VERIFIED | yes | no | no | P4 | A real 0.155.1 subagent rollout |
-| 28 | Codex pricing | PARTIAL | no | no | no | P3 | Usage track MP11: every pickable model priced or shown as "no price"; one price source |
-| 29 | Plan type | MISSING | no | no | no | P3 | Usage track MP2, MP8: fill the plan label from each reading's plan |
-| 30 | Tokenomics totals split by provider | PARTIAL | no | no | no | P3 | Usage track MP11, MP12, with row 26 |
+| 28 | Codex pricing | VERIFIED | yes | no | no | P3 | Usage track MP11: a model with no price reads "no price" and is in no total; one cached-input rule for the strip and Tokenomics (`tests/unit/tokenomics/tk-pricing.test.ts`, `tests/unit/native/tk-db-summary.native.test.ts`) |
+| 29 | Plan type | VERIFIED | yes | partial (Win) | no | P3 | Usage track MP2, MP8: the plan from each reading, recorded on the account (`tests/unit/main/codex-usage-read.test.ts`); the MP8 VM walk showed Pro on 0.153.4 and 0.155.1. Owed: macOS and Linux, packaged |
+| 30 | Tokenomics totals split by provider | VERIFIED | yes | no | no | P3 | Usage track MP11, MP12: every KPI and the daily series per provider, shown as a two-segment split and two chart lines (`tests/unit/native/tk-db-summary.native.test.ts`, `tests/unit/renderer/tokenomics-mp12.test.tsx`). Owed: the VM screenshots |
 
 ## C. Sessions, statusline, model, Sentinel, Watchdog, status
 

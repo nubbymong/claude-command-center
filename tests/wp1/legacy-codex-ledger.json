@@ -2,7 +2,7 @@
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "manifestPathDigest": "3a7edc0131127dad802ee359ccffeef189ce49117010b5eff18f74b557bb3f3b",
-  "manifestHead": "7e561aa3b2f0496554f7b27a967acb1d16a4c47a",
+  "manifestHead": "394b09c7eadd0ce9f6914e3bc6627e00dd8eccb1",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -151,7 +151,7 @@
       ],
       "category": "DOCS",
       "disposition": "replace",
-      "evidence": "WP1.36 documentation sweep recorded in docs/wp1/evidence/release-qualification.md",
+      "evidence": "WP1.36 documentation sweep recorded in docs/wp1/evidence/release-qualification.md; WP2 P3 usage track MP13 (the user-facing sweep for the usage UX the owner approved 2026-09-27): the network table lists the Codex usage check (OpenAI hosts, the model list refresh and the plugin cache check, when it runs and how to avoid it), and the stored data the account each session ran under (WP1.36)",
       "note": "describe managed Codex homes under the app data root"
     },
     {
@@ -161,7 +161,7 @@
       ],
       "category": "DOCS",
       "disposition": "replace",
-      "evidence": "WP1.35 documentation sweep recorded in docs/wp1/evidence/release-qualification.md; WP2 reconfirm (owner decision 2026-09-26) (WP1.35): the upgrade sentence says the app asks once whether you use Codex, nothing carries over, and the sign-in already on the machine is used only after Use this sign-in; docs/wp1/evidence/release-qualification.md",
+      "evidence": "WP1.35 documentation sweep recorded in docs/wp1/evidence/release-qualification.md; WP2 reconfirm (owner decision 2026-09-26) (WP1.35): the upgrade sentence says the app asks once whether you use Codex, nothing carries over, and the sign-in already on the machine is used only after Use this sign-in; docs/wp1/evidence/release-qualification.md; WP2 P3 usage track MP13 (the user-facing sweep for the usage UX the owner approved 2026-09-27): Tokenomics by provider and account with no price, and the usage strip and Usage page for both assistants (WP1.35)",
       "note": "stop claiming unsupported Codex account behaviour; describe provider selection"
     },
     {
@@ -181,7 +181,7 @@
       ],
       "category": "DOCS",
       "disposition": "replace",
-      "evidence": "WP1.36 documentation sweep recorded in docs/wp1/evidence/release-qualification.md; WP2 reconfirm (owner decision 2026-09-26) (WP1.36): the upgrade note, this computer's sign-in and the known issue describe the one-time question and the explicit adoption; docs/wp1/evidence/release-qualification.md",
+      "evidence": "WP1.36 documentation sweep recorded in docs/wp1/evidence/release-qualification.md; WP2 reconfirm (owner decision 2026-09-26) (WP1.36): the upgrade note, this computer's sign-in and the known issue describe the one-time question and the explicit adoption; docs/wp1/evidence/release-qualification.md; WP2 P3 usage track MP13 (the user-facing sweep for the usage UX the owner approved 2026-09-27): a Codex usage section: the Usage page figures, the check and where it never runs, and Tokenomics by account (WP1.36)",
       "note": "provider selection, account vs identity, managed vs external Codex homes, recovery"
     },
     {
@@ -201,7 +201,7 @@
       ],
       "category": "DOCS",
       "disposition": "added",
-      "evidence": "WP2 P2 (owner decision 2026-09-26, P1): the tracked 2.1.1 Codex parity checklist the owner decisions name as the release-wide list; one row per shared Conductor feature with its Mocked, Real CLI and Packaged evidence kept apart, mapping each row to its test or record; no Codex code path (WP1.70); docs/wp1/owner-decisions-2026-09-26.md; WP2 P3 usage track, MP1/MP2 review fixes: row 18 says what MP2 finished and what MP6 and MP8 still owe (WP1.70); docs/wp1/owner-decisions-2026-09-27.md",
+      "evidence": "WP2 P2 (owner decision 2026-09-26, P1): the tracked 2.1.1 Codex parity checklist the owner decisions name as the release-wide list; one row per shared Conductor feature with its Mocked, Real CLI and Packaged evidence kept apart, mapping each row to its test or record; no Codex code path (WP1.70); docs/wp1/owner-decisions-2026-09-26.md; WP2 P3 usage track, MP1/MP2 review fixes: row 18 says what MP2 finished and what MP6 and MP8 still owe (WP1.70); docs/wp1/owner-decisions-2026-09-27.md; WP2 P3 usage track MP13 (the user-facing sweep for the usage UX the owner approved 2026-09-27): rows 17 to 21 and 25 to 30 from the usage track evidence (WP1.70)",
       "note": "release checklist text, not a user-facing claim"
     },
     {
@@ -1368,8 +1368,8 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "disposition": "replace",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); WP1.33 mapping: adapted in place for WP2 P3 usage track MP13 (the user-facing sweep for the usage UX the owner approved 2026-09-27): the rail step names the Usage page; the tour is otherwise unchanged (WP1.33); tests/unit/renderer/guided-tour-counter.test.tsx",
       "note": ""
     },
     {
@@ -2328,7 +2328,7 @@
       ],
       "category": "DOCS",
       "disposition": "replace",
-      "evidence": "WP1.35 sweep; tips suites in docs/wp1/baseline-test-inventory.json; WP1.35 WP2 commit 6g: the Codex sessions tip points at Settings, Accounts; tests/unit/renderer/settings-codex-tab-retired.test.tsx",
+      "evidence": "WP1.35 sweep; tips suites in docs/wp1/baseline-test-inventory.json; WP1.35 WP2 commit 6g: the Codex sessions tip points at Settings, Accounts; tests/unit/renderer/settings-codex-tab-retired.test.tsx; WP2 P3 usage track MP13 (the user-facing sweep for the usage UX the owner approved 2026-09-27): the Tokenomics, account usage and multi-account tips for both assistants (WP1.35)",
       "note": "tips for the provider setup surface"
     },
     {
@@ -2338,7 +2338,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "replace",
-      "evidence": "WP2 commit 6g: the Codex step's Auth line and tip point at Settings, Accounts (WP1.6); tests/unit/renderer/settings-codex-tab-retired.test.tsx",
+      "evidence": "WP2 commit 6g: the Codex step's Auth line and tip point at Settings, Accounts (WP1.6); tests/unit/renderer/settings-codex-tab-retired.test.tsx; WP2 P3 usage track MP13 (the user-facing sweep for the usage UX the owner approved 2026-09-27): the Multiple Accounts, Codex Provider and Tokenomics cards name the Usage page and Tokenomics by account (WP1.6)",
       "note": "re-dispositioned in WP2 commit 6g (was retain)"
     },
     {
@@ -2394,7 +2394,7 @@
       ],
       "category": "DOCS",
       "disposition": "replace",
-      "evidence": "WP1.35/WP1.36 documentation sweep; app-knowledge suites in docs/wp1/baseline-test-inventory.json; WP2 commit 6g (WP1.35/WP1.36): the Codex section and the troubleshooting section point at Settings, Accounts, and the troubleshooting section names Check sign-in; tests/unit/renderer/settings-codex-tab-retired.test.tsx; WP2 reconfirm (owner decision 2026-09-26) (WP1.35/WP1.36): the upgrade paragraph, this computer's sign-in and the known issue describe the one-time Codex question and the explicit Use this sign-in; tests/unit/shared/app-knowledge.test.ts, tests/unit/renderer/settings-codex-tab-retired.test.tsx",
+      "evidence": "WP1.35/WP1.36 documentation sweep; app-knowledge suites in docs/wp1/baseline-test-inventory.json; WP2 commit 6g (WP1.35/WP1.36): the Codex section and the troubleshooting section point at Settings, Accounts, and the troubleshooting section names Check sign-in; tests/unit/renderer/settings-codex-tab-retired.test.tsx; WP2 reconfirm (owner decision 2026-09-26) (WP1.35/WP1.36): the upgrade paragraph, this computer's sign-in and the known issue describe the one-time Codex question and the explicit Use this sign-in; tests/unit/shared/app-knowledge.test.ts, tests/unit/renderer/settings-codex-tab-retired.test.tsx; WP2 P3 usage track MP13 (the user-facing sweep for the usage UX the owner approved 2026-09-27): the Usage page, status line, Codex, Tokenomics and privacy sections for both assistants, and known issues for the Codex figures, a failed check, the credits row and a downgrade (WP1.35, WP1.36)",
       "note": "feature guide + Ask Conductor knowledge for provider setup, identity vs account, managed vs external Codex homes; known-issues entry for D10"
     },
     {
