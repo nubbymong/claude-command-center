@@ -56,7 +56,7 @@ describe('the Codex transcript folders with their accounts (AccountsService.sess
     h.signedIn.set(EXT_HOME.toLowerCase(), 'chatgpt')
     const ext = await h.service.adoptExternalDefault({ providerId: 'codex' })
     if (!ext.ok) throw new Error(ext.code)
-    const byDir = (roots: Awaited<ReturnType<typeof h.service.sessionsRoots>>) => [...roots].sort((x, y) => x.dir.localeCompare(y.dir))
+    const byDir = (roots: Awaited<ReturnType<typeof h.service.sessionsRoots>>) => [...(roots ?? [])].sort((x, y) => x.dir.localeCompare(y.dir))
     expect(byDir(await h.service.sessionsRoots('codex'))).toEqual(byDir([
       { dir: `${managedHome(realmOf(h, a))}\\sessions`, accountId: a, external: false },
       { dir: `${managedHome(realmOf(h, b))}\\sessions`, accountId: b, external: false },
@@ -65,7 +65,7 @@ describe('the Codex transcript folders with their accounts (AccountsService.sess
     expect(await h.service.sessionsRoots('claude')).toEqual([])
     expect((await h.service.setLifecycle({ accountId: b, lifecycle: 'inactive' })).ok).toBe(true)
     expect((await h.service.setLifecycle({ accountId: b, lifecycle: 'archived' })).ok).toBe(true)
-    expect((await h.service.sessionsRoots('codex')).map((r) => r.accountId)).not.toContain(b)
+    expect((await h.service.sessionsRoots('codex'))?.map((r) => r.accountId)).not.toContain(b)
   })
 
   it('lists nothing while the registry is unavailable, and not a setup still under way', async () => {
@@ -74,8 +74,19 @@ describe('the Codex transcript folders with their accounts (AccountsService.sess
     if (!begun.ok) throw new Error(begun.code)
     expect(await h.service.sessionsRoots('codex')).toEqual([])
     await addCodexAccount(h, 'A')
+    // MP9 round 1 (lens B): no registry yet, or one not read yet, names
+    // nothing yet (null); one that cannot be read names none.
+    const store = h.store
     h.useStore(null)
+    expect(await h.service.sessionsRoots('codex')).toBeNull()
+    h.useStore(store)
+    const status = store.status.bind(store)
+    store.status = () => ({ mode: 'recovery', reason: 'unloaded', problems: [] })
+    expect(await h.service.sessionsRoots('codex')).toBeNull()
+    store.status = () => ({ mode: 'recovery', reason: 'invalid', problems: ['bad'] })
     expect(await h.service.sessionsRoots('codex')).toEqual([])
+    store.status = status
+    expect(await h.service.sessionsRoots('claude')).toEqual([])
   })
 })
 
@@ -142,6 +153,18 @@ describe('tokenomics follows the accounts (tokenomics-service)', () => {
 
   // MP9 round 1 (Q-4): the index is always told the folders once, so it can
   // settle its one-off attribution: none when there is nothing to ask.
+  it('names nothing while the registry is not read yet, then names the folders once it is', async () => {
+    const { initTokenomics, shutdownTokenomics } = await import('../../src/main/tokenomics/tokenomics-service')
+    tk.sessionsRoots.mockImplementationOnce(async () => null as never)
+    initTokenomics({ emit: () => {} })
+    await new Promise((r) => setTimeout(r, 10))
+    expect(tk.dirs).toEqual([])
+    tk.current = [R1]
+    tk.listeners.forEach((l) => l())
+    await vi.waitFor(() => expect(tk.dirs).toEqual([[{ dir: R1.dir, accountKey: 'codex:acct-1' }]]))
+    shutdownTokenomics()
+  })
+
   it('names no folders when there is no accounts service, and none for now when the first look fails', async () => {
     const { initTokenomics, shutdownTokenomics } = await import('../../src/main/tokenomics/tokenomics-service')
     tk.noService = true

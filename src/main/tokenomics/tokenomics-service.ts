@@ -52,7 +52,10 @@ function followCodexRealmDirs(): void {
     try {
       do {
         again = false
-        const dirs = (await svc.sessionsRoots('codex')).map(codexSessionsRoot)
+        const roots = await svc.sessionsRoots('codex')
+        // The registry not read yet: nothing is named until it is (lens B).
+        if (roots === null) continue
+        const dirs = roots.map(codexSessionsRoot)
         const key = JSON.stringify(dirs)
         if (key !== lastKey) { lastKey = key; _sup?.setCodexRealmSessionsDirs(dirs) }
       } while (again)

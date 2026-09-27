@@ -152,6 +152,32 @@ describe('tk-db querySummary: unpriced models and the provider split (MP11)', ()
     expect(onlyCodex.kpisByProvider.codex.lifeToDateCostUsd).toBeCloseTo(onlyCodex.kpis.lifeToDateCostUsd, 6)
   })
 
+  // MP11 round 1 (Q-2): a config whose usage has no price has no cost.
+  it('a config whose usage has no price has no cost, listed after the priced ones', () => {
+    const db = openTkDb(':memory:')
+    db.insertEvents([
+      ev({ dedupKey: 'c:1:1', configId: 'a' }),
+      ev({ dedupKey: 'c:2:2', configId: 'b', model: 'claude-new-9', priceModel: 'claude-new-9', inTok: 300 }),
+      // A priced config that cost nothing is $0, and comes before no price.
+      ev({ dedupKey: 'c:3:3', configId: 'z', inTok: 0 }),
+    ])
+    const s = db.querySummary(PRICED, {}, NOW)
+    expect(s.costByConfig.map((c) => [c.configId, c.costUsd])).toEqual([['a', 5], ['z', 0], ['b', null]])
+  })
+
+  // MP11 round 1 (spec): the unpriced list covers the range shown, as the
+  // charts do, so the notice names what the view holds.
+  it('the unpriced list covers the range shown', () => {
+    const db = openTkDb(':memory:')
+    db.insertEvents([
+      ev({ dedupKey: 'c:1:1', model: 'claude-old-1', priceModel: 'claude-old-1', inTok: 70, ts: Date.parse('2026-05-01T10:00:00Z') }),
+      ev({ dedupKey: 'c:2:2', model: 'claude-new-9', priceModel: 'claude-new-9', inTok: 30, ts: Date.parse('2026-06-02T10:00:00Z') }),
+    ])
+    const week = Date.parse('2026-05-27T00:00:00Z')
+    expect(db.querySummary(PRICED, { from: week }, NOW).unpriced).toEqual([{ model: 'claude-new-9', provider: 'claude', tokens: 30 }])
+    expect(db.querySummary(PRICED, {}, NOW).unpriced.map((u) => u.model)).toEqual(['claude-old-1', 'claude-new-9'])
+  })
+
   function seedOnly(provider: 'codex') {
     return seed().querySummary(PRICED, { provider }, NOW)
   }

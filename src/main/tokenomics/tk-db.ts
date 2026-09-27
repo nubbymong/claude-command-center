@@ -881,9 +881,10 @@ export function openTkDb(dbPath: string): TkDb {
         day.costUsd += c
         if ((PROVIDERS as readonly string[]).includes(r.provider)) day.byProvider[r.provider as TkProvider] += c
       }
-      // MP11: the models in these figures with no price, and their tokens
-      // (the life-to-date scope, which every figure falls within).
-      const unpriced = sqlite.prepare(`WITH ${cte} SELECT d.model AS model, d.provider AS provider, SUM(d.inTok+d.outTok+d.cacheReadTok+d.cacheCreateTok) AS tokens FROM ${dailyJoin} WHERE p.pm IS NULL ${frag('d','model',false)} GROUP BY d.model, d.provider ORDER BY tokens DESC, d.model`).all(binds) as any[]
+      // MP11: the models in these figures with no price, and their tokens,
+      // over the range shown (MP11 round 1: as the charts are), so the notice
+      // names what the view holds.
+      const unpriced = sqlite.prepare(`WITH ${cte} SELECT d.model AS model, d.provider AS provider, SUM(d.inTok+d.outTok+d.cacheReadTok+d.cacheCreateTok) AS tokens FROM ${dailyJoin} WHERE p.pm IS NULL ${frag('d','model',true)} GROUP BY d.model, d.provider ORDER BY tokens DESC, d.model`).all(binds) as any[]
       const models = sqlite.prepare(`WITH ${cte} SELECT d.model AS model, SUM(${COST('d')}) AS costUsd, SUM(d.inTok+d.outTok+d.cacheReadTok+d.cacheCreateTok) AS tokens FROM ${dailyJoin} WHERE 1=1 ${frag('d','model',true)} GROUP BY d.model ORDER BY costUsd DESC`).all(binds) as any[]
       const cache = sqlite.prepare(`WITH ${cte} SELECT
           COALESCE(SUM(d.inTok*COALESCE(p.pin,0)/1000000.0),0) AS inputUsd,
@@ -906,9 +907,10 @@ export function openTkDb(dbPath: string): TkDb {
       const costByConfig = cbcRaw.map((r: any) => ({
         configId: r.configId === '' ? null : r.configId,
         label: (r.configId === '' ? '' : (labelOf.get(r.configId) || '')) || 'External / no config',
-        costUsd: r.costUsd ?? 0,
+        // MP11 round 1: null when none of its usage has a price, never $0.
+        costUsd: (r.costUsd ?? null) as number | null,
         sessions: sessByCfg.get(r.configId) ?? 0,
-      })).sort((a: any, b: any) => b.costUsd - a.costUsd)
+      })).sort((a: any, b: any) => (b.costUsd ?? -1) - (a.costUsd ?? -1))
 
       return {
         kpis: kpisOf(() => true),

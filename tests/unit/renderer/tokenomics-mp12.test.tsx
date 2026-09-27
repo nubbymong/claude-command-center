@@ -27,6 +27,7 @@ import { ModelCacheDonut } from '../../../src/renderer/components/tokenomics/Mod
 import { ActivityHeatmap } from '../../../src/renderer/components/tokenomics/ActivityHeatmap'
 import { SessionsTable } from '../../../src/renderer/components/tokenomics/SessionsTable'
 import { SessionDetailDrawer } from '../../../src/renderer/components/tokenomics/SessionDetailDrawer'
+import { CostByConfig } from '../../../src/renderer/components/tokenomics/CostByConfig'
 import pageSource from '../../../src/renderer/components/TokenomicsPage.tsx?raw'
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
@@ -239,6 +240,36 @@ describe('the components (MP12)', () => {
     expect(container.querySelectorAll('[data-testid="provider-mark-codex"]')).toHaveLength(2)
     const titles = [...container.querySelectorAll('tbody tr')].map((tr) => (tr.querySelectorAll('td')[3] as HTMLElement).title)
     expect(titles).toEqual(['API equivalent cost (not billed on Max plan)', 'Estimate at API list prices', 'This model has no price yet, so its cost is not in the totals.'])
+  })
+
+  // MP11 round 1 (Q-1): costs of $100 and more keep their dollar sign.
+  it('costs of $100 and more keep their dollar sign in the table and the drawer', () => {
+    useTokenomicsStore.setState({ sessions: [
+      row({ sessionId: 'a', costUsd: 99.5 }), row({ sessionId: 'b', costUsd: 100 }), row({ sessionId: 'c', costUsd: 150.4 }), row({ sessionId: 'd', costUsd: 1234.6 }),
+    ] })
+    render(createElement(SessionsTable))
+    const costs = [...container.querySelectorAll('tbody tr')].map((tr) => tr.querySelectorAll('td')[3].textContent)
+    expect(costs).toEqual(['$99.5', '$100', '$150', '$1235'])
+    const detail: TkSessionDetail = { ...row({ costUsd: 150.4 }), firstTs: 1, projectDir: '', byModel: [{ model: 'gpt-5.5', costUsd: 120, inTok: 1, outTok: 1, cacheReadTok: 0, cacheCreateTok: 0, msgCount: 1 }] }
+    useTokenomicsStore.setState({ selected: detail })
+    render(createElement(SessionDetailDrawer))
+    expect(container.textContent).toContain('$150')
+    expect(container.textContent).toContain('$120')
+    expect(container.textContent).not.toMatch(/(^|[^$\d.])150([^\d.]|$)/)
+  })
+
+  // MP11 round 1 (Q-2): a config whose usage has no price reads "no price".
+  it('cost by config: "no price" for a config with no price, and dollar amounts otherwise', () => {
+    render(createElement(CostByConfig, { data: [
+      { configId: 'a', label: 'App', costUsd: 1234.5, sessions: 3 },
+      { configId: 'b', label: 'Site', costUsd: 150, sessions: 1 },
+      { configId: 'c', label: 'Lab', costUsd: null, sessions: 2 },
+    ] }))
+    const text = container.textContent ?? ''
+    expect(text).toContain('$1.2k')
+    expect(text).toContain('$150')
+    expect(text).toContain('no price')
+    expect(text).not.toContain('$0.00')
   })
 
   it('the drawer names the session\'s account', () => {

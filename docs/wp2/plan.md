@@ -1021,6 +1021,19 @@ Owner decisions: `docs/wp1/owner-decisions-2026-09-27.md` and ADR-022.
   build stores after a downgrade stays not recorded (its cursors move past
   those rollouts and the one-off re-read is not repeated), and every stored
   event costs two more small upserts (the v1 rollups).
+- **Residual, accepted (MP9 round 1, lens B, a build from before #307):** the
+  watermark compares event row ids. A downgrade to a build so old that it
+  still runs the #307 re-index deletes the Codex rows and stores new ones,
+  which may take row ids at or below the watermark; back on this build those
+  rows are not seen as foreign, so the rollups are not rebuilt for them
+  (their totals are right; their split by account may lag until the next
+  rebuild). Only builds from before #307, long superseded, can do this.
+- **Resolved (MP9 round 1, lens B, folders named too early):** while the
+  account registry has not been read (no registry yet, or one not loaded),
+  `sessionsRoots` answers null and the index is told nothing, so the
+  one-off attribution is not settled against an empty folder list; a
+  registry that cannot be read lists none, and its folders arrive once it
+  is repaired.
 - **Resolved (MP9 round 1, linked folders):** the index reads an account's
   Codex folder only when its home passes the launch's canonical-home check,
   walks one folder once and lists one rollout once by its file id, and a
@@ -1029,9 +1042,10 @@ Owner decisions: `docs/wp1/owner-decisions-2026-09-27.md` and ADR-022.
   folders.
 - **Decision (MP11, no price):** a model with no price has no cost (null),
   never $0, and its cost is in no figure. The summary lists such models
-  with their tokens (`unpriced`, over the filters without the date range,
-  which every figure falls within); a session with no priced model has no
-  cost, and one with some carries the priced part and `unpricedTokens`.
+  with their tokens (`unpriced`, over the filters and the date range shown,
+  as the charts are: MP11 round 1, so the notice names what the view
+  holds); a session or config with no priced usage has no cost, and a
+  session with some carries the priced part and `unpricedTokens`.
   The figures split by provider (`kpisByProvider`, and `byProvider` on each
   day of the series). A Codex model with no cached tier charges cached
   input at its input rate in Tokenomics, as the session strip always did.

@@ -2393,10 +2393,17 @@ export class AccountsService {
    *  record naming none), and whether it is this computer's own home
    *  (`external`), which the user's own tools share. Paths and opaque ids
    *  only. */
-  async sessionsRoots(providerId: ProviderId): Promise<Array<{ dir: string; accountId: string | null; external: boolean }>> {
+  async sessionsRoots(providerId: ProviderId): Promise<Array<{ dir: string; accountId: string | null; external: boolean }> | null> {
     const p = this.pkg(providerId)
+    if (!p?.launch || !launchKindsOf(p).includes('session')) return []
+    // Null while the registry has not been read (no store yet, or one not
+    // loaded): the index is not told "no folders" before it could know
+    // (MP9 round 1, lens B). A registry that cannot be read lists none.
+    const store = this.currentStore()
+    const status = store?.status()
+    if (!store || (status?.mode === 'recovery' && status.reason === 'unloaded')) return null
     const ready = this.ready()
-    if (!p?.launch || !launchKindsOf(p).includes('session') || 'ok' in ready) return []
+    if ('ok' in ready) return []
     const out: Array<{ dir: string; accountId: string | null; external: boolean }> = []
     for (const realm of ready.doc.realms) {
       if (realm.providerId !== p.id || realm.lifecycle !== 'active') continue

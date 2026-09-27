@@ -12,7 +12,7 @@ import { scrim } from '../ui/Dialog'
 function formatCost(usd: number | null): string {
   // No price for its model (usage track MP11): never shown as $0.
   if (usd === null) return 'no price'
-  if (usd >= 100) return `${usd.toFixed(0)}`
+  if (usd >= 100) return `$${usd.toFixed(0)}`
   if (usd >= 10) return `$${usd.toFixed(1)}`
   return `$${usd.toFixed(2)}`
 }

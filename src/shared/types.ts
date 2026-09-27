@@ -697,7 +697,8 @@ export interface TkSummary {
    *  provider and tokens; their cost is in no figure. */
   unpriced: Array<{ model: string; provider: TkProvider; tokens: number }>
   cacheSplit: { inputUsd: number; outputUsd: number; cacheReadUsd: number; cacheCreateUsd: number }
-  costByConfig: Array<{ configId: string | null; label: string; costUsd: number; sessions: number }>
+  /** `costUsd` is null for a config whose usage has no price (MP11). */
+  costByConfig: Array<{ configId: string | null; label: string; costUsd: number | null; sessions: number }>
   heatmap: Array<{ bucket: number; tokens: number }>
 }
 
