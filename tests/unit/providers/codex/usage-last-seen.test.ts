@@ -19,8 +19,9 @@
 // started.
 import { describe, it, expect } from 'vitest'
 import {
-  readLastSeenAllowance, createCodexLiveUsage, createCodexUsageOperations, realCodexUsageFsPort,
+  readLastSeenAllowance, lookupLastSeenAllowance, createCodexLiveUsage, createCodexUsageOperations, realCodexUsageFsPort,
   CODEX_USAGE_TAIL_BYTES, CODEX_USAGE_TAIL_MAX_BYTES, CODEX_USAGE_MAX_FILES, CODEX_USAGE_WALK_BUDGET, CODEX_USAGE_MAX_DAYS,
+  CODEX_USAGE_DAY_ENTRIES,
 } from '../../../../src/main/providers/codex/usage'
 import type { CodexUsageFsPort, CodexUsageEntry, CodexUsageFsApi } from '../../../../src/main/providers/codex/usage'
 import { CODEX_DEFAULT_LIMIT_ID } from '../../../../src/main/providers/codex/rate-limits'
@@ -32,7 +33,9 @@ interface FakeNode { kind: 'file' | 'dir' | 'link' | 'other'; ino: number; nlink
 
 /** A Windows-shaped in-memory tree: folders, files, links and other things,
  *  every call logged. `afterList` runs after a folder is listed (to swap
- *  something in the gap). */
+ *  something in the gap); `readFails` makes a rollout's read throw;
+ *  `listed.entries` counts the names the reader took from a listing. Names
+ *  are listed in the order they were added. */
 function fakeFs() {
   const norm = (p: string) => p.replace(/[\\/]+$/, '').toLowerCase()
   const nodes = new Map<string, FakeNode>()
@@ -40,7 +43,7 @@ function fakeFs() {
   const calls: string[] = []
   const listed = { entries: 0 }
   let seq = 0
-  const hooks: { afterList?: (dir: string) => void; afterLstat?: (p: string) => void } = {}
+  const hooks: { afterList?: (dir: string) => void; afterLstat?: (p: string) => void; readFails?: (file: string) => string | null } = {}
   const parentOf = (p: string) => p.replace(/[\\/]+$/, '').split('\\').slice(0, -1).join('\\')
   const put = (p: string, n: FakeNode) => { const s = p.replace(/[\\/]+$/, ''); nodes.set(norm(s), n); spelled.set(norm(s), s.split('\\').pop()!) }
   const addDir = (p: string) => {
@@ -62,19 +65,22 @@ function fakeFs() {
       hooks.afterLstat?.(p)
       return e
     },
-    readdir: async (dir, limit) => {
+    readdir: async (dir, visit) => {
       calls.push(`readdir ${dir}`)
       const n = nodes.get(norm(dir))
       if (!n || n.kind !== 'dir') throw err('ENOTDIR')
       const key = norm(dir)
       const names = [...nodes.keys()].filter((x) => parentOf(x) === key).map((x) => spelled.get(x)!)
+      for (const name of names) {
+        if (visit(name) === false) break
+        listed.entries++
+      }
       hooks.afterList?.(dir)
-      const shown = names.slice(0, limit)
-      listed.entries += shown.length
-      return { names: shown, more: names.length > limit }
     },
     readTail: async (file, maxBytes, expected) => {
       calls.push(`readTail ${file} ${maxBytes}`)
+      const failure = hooks.readFails?.(file)
+      if (failure) throw err(failure)
       const n = nodes.get(norm(file))
       if (!n || n.kind !== 'file' || !n.data) throw err('ENOENT')
       if (expected.dev !== '9' || expected.ino !== String(n.ino)) throw err('ECHANGED')
@@ -91,6 +97,8 @@ function fakeFs() {
     link: (p: string) => { addDir(parentOf(p)); put(p, { kind: 'link', ino: ++seq, nlink: 1, mtimeMs: 1 }) },
     other: (p: string) => { addDir(parentOf(p)); put(p, { kind: 'other', ino: ++seq, nlink: 1, mtimeMs: 1 }) },
     swap: (p: string) => { const n = nodes.get(norm(p))!; n.ino = ++seq },
+    /** An identity that proves nothing (inode 0). */
+    zero: (p: string) => { const n = nodes.get(norm(p))!; n.ino = 0 },
     reads: () => calls.filter((c) => c.startsWith('readTail ')),
   }
 }
@@ -302,6 +310,35 @@ describe('readLastSeenAllowance: what it may open', () => {
     expect(visits + months.listed.entries).toBeLessThanOrEqual(CODEX_USAGE_WALK_BUDGET)
     expect(months.calls.length).toBeLessThanOrEqual(3 * CODEX_USAGE_WALK_BUDGET)
   })
+
+  // Review Q3 (MP3 round 2): a day folder with more entries than the walk has
+  // budget left is still listed to its end, holding only its newest names, so
+  // a crowded day yields its newest rollouts instead of ending the walk empty.
+  it('finds the newest rollouts of a day folder more crowded than the budget left', async () => {
+    const f = fakeFs()
+    const d = day('2026', '09', '27')
+    for (let i = 0; i < 1100; i++) f.file(`${d}\\note-${String(i).padStart(4, '0')}.txt`, 'x')
+    // Listed last, after every note.
+    const hour = (h: number) => String(h).padStart(2, '0')
+    for (let h = 0; h < 10; h++) f.file(`${d}\\rollout-2026-09-27T${hour(h)}-00-00-a.jsonl`, rollout(tokenCount(`2026-09-27T${hour(h)}:00:01Z`, limits(h))))
+    expect(pct(await read(f))).toBe(9)
+    expect(f.reads().map((x) => x.split('\\').pop()!.split(' ')[0])).toEqual(
+      Array.from({ length: CODEX_USAGE_MAX_FILES }, (_, i) => `rollout-2026-09-27T${hour(9 - i)}-00-00-a.jsonl`))
+  })
+
+  it(`lists at most ${CODEX_USAGE_DAY_ENTRIES} entries of one day folder, and a day that spends the budget ends the walk`, async () => {
+    const f = fakeFs()
+    const d = day('2026', '09', '27')
+    f.file(`${d}\\rollout-2026-09-27T08-00-00-a.jsonl`, rollout(tokenCount('2026-09-27T08:00:01Z', limits(8))))
+    for (let i = 0; i < CODEX_USAGE_DAY_ENTRIES + 500; i++) f.file(`${d}\\note-${String(i).padStart(5, '0')}.txt`, 'x')
+    f.file(`${d}\\rollout-2026-09-27T09-00-00-late.jsonl`, rollout(tokenCount('2026-09-27T09:00:01Z', limits(9))))
+    // An older day whose rollout reported later: it would win if it were listed.
+    f.file(`${day('2026', '09', '26')}\\rollout-2026-09-26T23-00-00-old.jsonl`, rollout(tokenCount('2026-09-27T11:00:00Z', limits(26))))
+    expect(pct(await read(f))).toBe(8)
+    // The sessions, year and month folders' entries, then the capped day.
+    expect(f.listed.entries).toBe(1 + 1 + 2 + CODEX_USAGE_DAY_ENTRIES)
+    expect(f.calls.some((c) => c === `readdir ${day('2026', '09', '26')}`)).toBe(false)
+  })
 })
 
 describe('the live figure (memory only)', () => {
@@ -413,6 +450,95 @@ describe('createCodexUsageOperations', () => {
     expect(await ops.lastSeen(realm)).toEqual({ ok: true, reading: null })
   })
 
+  // Review Q2 (MP3 round 2): a rollout that could not be read (busy, too many
+  // open files) may hold the newest figure: nothing is kept, the next request
+  // reads again, and with nothing found the answer is unavailable.
+  it('keeps nothing when a rollout could not be read, and reads again next time', async () => {
+    const f = fakeFs()
+    const newer = `${day('2026', '09', '27')}\\rollout-2026-09-27T10-00-00-b.jsonl`
+    f.file(`${day('2026', '09', '27')}\\rollout-2026-09-27T09-00-00-a.jsonl`, rollout(tokenCount('2026-09-27T09:00:01Z', limits(33))))
+    f.file(newer, rollout(tokenCount('2026-09-27T10:00:01Z', limits(55))))
+    let busy = true
+    f.hooks.readFails = (file) => (busy && file === newer ? 'EMFILE' : null)
+    const { live } = livePair()
+    const ops = createCodexUsageOperations({ sessionsDir: async () => SESSIONS, fs: f.port, live, now: () => NOW })
+    const first = await ops.lastSeen(realm)
+    expect(first.ok && first.reading?.buckets[0].percent).toBe(33)
+    busy = false
+    const second = await ops.lastSeen(realm)
+    expect(second.ok && second.reading?.buckets[0].percent).toBe(55)
+  })
+
+  it('is unavailable, not "no session yet", when the only rollout could not be read', async () => {
+    const f = fakeFs()
+    f.file(`${day('2026', '09', '27')}\\rollout-2026-09-27T09-00-00-a.jsonl`, rollout(tokenCount('2026-09-27T09:00:01Z', limits(33))))
+    f.hooks.readFails = () => 'EBUSY'
+    const { live } = livePair()
+    const ops = createCodexUsageOperations({ sessionsDir: async () => SESSIONS, fs: f.port, live, now: () => NOW })
+    expect(await ops.lastSeen(realm)).toEqual({ ok: false })
+  })
+
+  // Review Q4 (MP3 round 2): a failure inside the read is an error card, never
+  // "no session yet".
+  it('a failure inside the read is unavailable, not "no session yet"', async () => {
+    const f = fakeFs()
+    f.file(`${day('2026', '09', '27')}\\rollout-2026-09-27T09-00-00-a.jsonl`, rollout(tokenCount('2026-09-27T09:00:01Z', limits(33))))
+    let asked = 0
+    const port = Object.defineProperty({ ...f.port }, 'platform', { get() { if (++asked > 1) throw new Error('boom'); return 'win32' } }) as CodexUsageFsPort
+    const { live } = livePair()
+    const ops = createCodexUsageOperations({ sessionsDir: async () => SESSIONS, fs: port, live, now: () => NOW })
+    expect(await ops.lastSeen(realm)).toEqual({ ok: false })
+  })
+
+  // Review R2 (MP3 round 2): inode 0 cannot tell two things apart (some
+  // network and FAT volumes report it), so the identity checks would prove
+  // nothing: the read is refused and the account shows as unavailable.
+  it('refuses the read when an identity on the way is inode 0: the sessions folder, a year or day folder, or a rollout', async () => {
+    const file = `${day('2026', '09', '27')}\\rollout-2026-09-27T09-00-00-a.jsonl`
+    for (const zeroed of [SESSIONS, `${SESSIONS}\\2026`, day('2026', '09', '27'), file]) {
+      const f = fakeFs()
+      f.file(file, rollout(tokenCount('2026-09-27T09:00:01Z', limits(33))))
+      f.zero(zeroed)
+      const { live } = livePair()
+      const ops = createCodexUsageOperations({ sessionsDir: async () => SESSIONS, fs: f.port, live, now: () => NOW })
+      expect(await ops.lastSeen(realm), zeroed).toEqual({ ok: false })
+      expect(f.reads(), zeroed).toEqual([])
+    }
+  })
+
+  // Review R3 (MP3 round 2): a read that never settles (a hung share) holds
+  // no caller past the timeout and is not started again beside itself; once
+  // it settles the next request reads afresh.
+  const race = <T,>(p: Promise<T>) => Promise.race([p, new Promise<'hung'>((r) => setTimeout(() => r('hung'), 1000))])
+  it('answers unavailable once the timeout passes on a read that hangs, and never starts a second beside it', async () => {
+    const f = fakeFs()
+    f.file(`${day('2026', '09', '27')}\\rollout-2026-09-27T09-00-00-a.jsonl`, rollout(tokenCount('2026-09-27T09:00:01Z', limits(33))))
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    let started = 0
+    const port: CodexUsageFsPort = { ...f.port, lstat: async (p) => { if (p === SESSIONS) { started++; await gate } return f.port.lstat(p) } }
+    const { live } = livePair()
+    const ops = createCodexUsageOperations({ sessionsDir: async () => SESSIONS, fs: port, live, now: () => NOW, timeoutMs: 20 })
+    expect(await race(ops.lastSeen(realm))).toEqual({ ok: false })
+    expect(await race(ops.lastSeen(realm))).toEqual({ ok: false })
+    expect(started).toBe(1)
+    release()
+    await new Promise((r) => setTimeout(r, 10))
+    const after = await race(ops.lastSeen(realm))
+    expect(after !== 'hung' && after.ok && after.reading?.buckets[0].percent).toBe(33)
+    // The held walk finished, then one new walk: two listings in all.
+    expect(f.calls.filter((x) => x === `readdir ${SESSIONS}`)).toHaveLength(2)
+  })
+
+  it('live answers unavailable once the timeout passes on locating a realm that hangs', async () => {
+    let asked = 0
+    const never = new Promise<string | null>(() => {})
+    const ops = createCodexUsageOperations({ sessionsDir: () => { asked++; return never }, fs: fakeFs().port, live: createCodexLiveUsage('win32'), now: () => NOW, timeoutMs: 20 })
+    expect(await race(ops.live(realm))).toEqual({ ok: false })
+    expect(await race(ops.live(realm))).toEqual({ ok: false })
+    expect(asked).toBe(1)
+  })
+
   it('never throws on a reading it cannot draw: it is no reading', async () => {
     const f = fakeFs()
     const { live } = livePair()
@@ -492,12 +618,25 @@ describe('realCodexUsageFsPort (through an injected fs api)', () => {
     }
   })
 
-  it('lists at most the names asked for, says whether there were more, and closes the folder', async () => {
+  it('hands each name to the visitor until it says stop, and closes the folder either way', async () => {
     const { a, log } = api({ names: ['a', 'b', 'c', 'd'] })
     const port = realCodexUsageFsPort('linux', a)
-    expect(await port.readdir('/x', 2)).toEqual({ names: ['a', 'b'], more: true })
+    const seen: string[] = []
+    await port.readdir('/x', (n) => { seen.push(n); return seen.length < 2 })
+    expect(seen).toEqual(['a', 'b'])
     expect(log[log.length - 1]).toBe('closedir')
-    expect(await port.readdir('/x', 4)).toEqual({ names: ['a', 'b', 'c', 'd'], more: false })
+    const all: string[] = []
+    await port.readdir('/x', (n) => { all.push(n); return true })
+    expect(all).toEqual(['a', 'b', 'c', 'd'])
+    await expect(port.readdir('/x', () => { throw new Error('visitor') })).rejects.toThrow('visitor')
+    expect(log.filter((l) => l === 'closedir')).toHaveLength(3)
+  })
+
+  // Review R2 (MP3 round 2).
+  it('refuses a rollout whose identity is inode 0, without opening it', async () => {
+    const zero = api({ data: Buffer.from('x'), fstat: stat({ ino: 0n, size: 1n }) })
+    await expect(realCodexUsageFsPort('win32', zero.a).readTail('C:\\x\\f', 10, { ...expected, ino: '0', size: 1 })).rejects.toThrow()
+    expect(zero.log.some((l) => l.startsWith('open '))).toBe(false)
   })
 
   it('lstat reports kind, identity, links, size and time', async () => {

@@ -20,6 +20,10 @@ const h = vi.hoisted(() => ({
   clearWebSession: vi.fn(async (_id: string) => {}),
   removeWebSession: vi.fn(),
   readProfileCredentialStamp: vi.fn((_id: string) => ({ stamp: '1:2', signedIn: true })),
+  claudeOn: vi.fn<() => boolean>(() => true),
+  readAllProfileAuthInfo: vi.fn(() => [{ profileId: 'p1', credentialsMissing: false }] as unknown[]),
+  /** Awaited by the scripted source before each account, per call (index). */
+  holds: [] as (Promise<void> | undefined)[],
 }))
 
 // A scripted streaming source: emits the profiles listed in `emit`, yielding to
@@ -32,9 +36,12 @@ const usage = (profileId: string): AccountUsage => ({
   profileId, email: null, name: profileId, isPrimary: false, active: true,
   status: 'ok', buckets: [], fetchedAt: 0,
 })
+let calls = 0
 const fetchAllAccountsUsageStreaming = vi.fn(async (onResult: (u: AccountUsage) => void, opts?: { shouldContinue?: () => boolean }) => {
+  const call = calls++
   for (const u of emit) {
     await new Promise((r) => setTimeout(r, 0))
+    await h.holds[call]
     if (opts?.shouldContinue && !opts.shouldContinue()) return
     produced.push(u.profileId)
     onResult(u)
@@ -44,6 +51,7 @@ const knownUsageLabels = vi.fn(() => ['5h', 'Weekly', 'Fable'])
 vi.mock('../../../src/main/usage/account-usage', () => ({
   fetchAllAccountsUsage: vi.fn(), fetchAccountUsage: vi.fn(),
   knownUsageLabels: () => knownUsageLabels(),
+  claudeUsageAllowed: () => h.claudeOn(),
   fetchAllAccountsUsageStreaming: (cb: (u: AccountUsage) => void, opts?: { shouldContinue?: () => boolean }) => fetchAllAccountsUsageStreaming(cb, opts),
 }))
 vi.mock('../../../src/main/account-profiles', () => ({
@@ -57,7 +65,7 @@ vi.mock('../../../src/main/claude-account-identity', () => ({
   getAccountIdentity: vi.fn(), getDefaultAccountEmail: vi.fn(),
   getWatchedProfileId: vi.fn(), isProfileInUseByLiveSession: (id: string) => h.inUse(id),
 }))
-vi.mock('../../../src/main/account-auth-info', () => ({ readAllProfileAuthInfo: vi.fn(() => []) }))
+vi.mock('../../../src/main/account-auth-info', () => ({ readAllProfileAuthInfo: () => h.readAllProfileAuthInfo() }))
 vi.mock('../../../src/main/debug-logger', () => ({ logError: vi.fn(), logInfo: vi.fn() }))
 vi.mock('../../../src/main/account-web/sign-in', () => ({ clearWebSession: (id: string) => h.clearWebSession(id) }))
 vi.mock('../../../src/main/account-web/session-store', () => ({ removeWebSession: h.removeWebSession }))
@@ -90,6 +98,10 @@ beforeEach(() => {
   h.clearWebSession.mockReset().mockImplementation(async () => {})
   h.removeWebSession.mockClear()
   h.readProfileCredentialStamp.mockClear()
+  h.claudeOn.mockReset().mockImplementation(() => true)
+  h.readAllProfileAuthInfo.mockClear()
+  h.holds.length = 0
+  calls = 0
   registerAccountProfilesHandlers()
 })
 
@@ -170,6 +182,33 @@ describe('accountUsage:fetchAllStream — one stream per caller (adversarial pas
     expect(ids(ev2)).toEqual(['a', 'b'])
   })
 
+  // Review G (MP3 round 2): generations come from one counter that only
+  // grows. A sender's number restarting at 1 once its newest stream finished
+  // made an older stream, still pacing, read as current again.
+  it('an older stream never reads as current again after a newer one finished', async () => {
+    emit.push(usage('a'), usage('b'))
+    let releaseOld!: () => void
+    let releaseThird!: () => void
+    h.holds[0] = new Promise<void>((r) => { releaseOld = r })
+    h.holds[2] = new Promise<void>((r) => { releaseThird = r })
+    const ev1 = fakeEvent(5)
+    const first = runStream(ev1, { channel: CH }) // held before its first account
+    await tick()
+    const ev2 = fakeEvent(5)
+    await runStream(ev2, { channel: CH }) // runs to the end, clearing its entry
+    expect(ids(ev2)).toEqual(['a', 'b'])
+    const ev3 = fakeEvent(5)
+    const third = runStream(ev3, { channel: CH }) // held, so it is current
+    await tick()
+    releaseOld()
+    await first
+    expect(ids(ev1)).toEqual([])
+    releaseThird()
+    await third
+    expect(ids(ev3)).toEqual(['a', 'b'])
+    expect(produced).toEqual(['a', 'b', 'a', 'b'])
+  })
+
   it('a completed stream does not shadow the sender\'s next one', async () => {
     emit.push(usage('a'))
     const ev1 = fakeEvent(9)
@@ -177,6 +216,31 @@ describe('accountUsage:fetchAllStream — one stream per caller (adversarial pas
     const ev2 = fakeEvent(9)
     await runStream(ev2, { channel: CH })
     expect(ids(ev2)).toEqual(['a'])
+  })
+})
+
+// Review L-A (MP3 round 2): while Claude Code is switched off the credential
+// state is not read at all (no credential file is opened); the answer is no
+// accounts, which Insights reads as no sign-in warning. A rule that cannot be
+// answered is a no.
+describe('accountProfiles:authInfo handler, Claude Code off (D5)', () => {
+  const authInfo = () => handlers.get(IPC.ACCOUNT_PROFILES_AUTH_INFO)!({})
+
+  it('reads nothing and answers no accounts while Claude Code is off', async () => {
+    h.claudeOn.mockImplementation(() => false)
+    expect(await authInfo()).toEqual([])
+    expect(h.readAllProfileAuthInfo).not.toHaveBeenCalled()
+  })
+
+  it('reads the credential state while Claude Code is on', async () => {
+    expect(await authInfo()).toEqual([{ profileId: 'p1', credentialsMissing: false }])
+    expect(h.readAllProfileAuthInfo).toHaveBeenCalledTimes(1)
+  })
+
+  it('a rule that throws reads nothing (fail closed)', async () => {
+    h.claudeOn.mockImplementation(() => { throw new Error('settings unreadable') })
+    expect(await authInfo()).toEqual([])
+    expect(h.readAllProfileAuthInfo).not.toHaveBeenCalled()
   })
 })
 

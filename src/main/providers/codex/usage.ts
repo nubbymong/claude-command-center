@@ -11,10 +11,14 @@
  *   day folder first and newest file name first in it, examines at most
  *   CODEX_USAGE_MAX_FILES of them and takes the one whose allowance was
  *   reported last, reads a bounded tail of each (256 KiB, once growing to
- *   2 MiB), and keeps the whole walk inside one budget of folder visits and
- *   entries (and at most CODEX_USAGE_MAX_DAYS day folders). A reading is kept
- *   while the rollouts it came from are unchanged, and concurrent requests
- *   for one realm share one read. No process.
+ *   2 MiB), and keeps the walk inside one budget of folder visits and
+ *   entries (and at most CODEX_USAGE_MAX_DAYS day folders). A day folder is
+ *   listed to its end (up to CODEX_USAGE_DAY_ENTRIES entries) keeping only
+ *   its newest names, so a crowded day still yields its newest rollouts. A
+ *   reading is kept while the rollouts it came from are unchanged and every
+ *   one of them could be read; concurrent requests for one realm share one
+ *   read, and no caller waits for it longer than CODEX_USAGE_READ_TIMEOUT_MS.
+ *   No process.
  *
  * Links. Both first locate the realm exactly as a launch does AND hold it to
  * the launch's canonical-home check (the realm's home must be a real folder
@@ -22,14 +26,23 @@
  * would refuse is read. Below the home, the sessions folder and every year,
  * month and day folder are checked with lstat before they are listed and
  * again, by device and inode, after; every rollout is checked with lstat and
- * opened only when, after opening, it is still that same regular file with a
- * single link. On macOS and Linux it is opened with O_NOFOLLOW and O_NONBLOCK
- * (a link or a FIFO swapped in never follows or blocks). Windows has neither
- * flag: there the identity comparison after opening is the check (a link
- * swapped in opens its target, whose identity differs), and a named pipe does
- * not live in the file tree. The threat this bounds is another process of the
- * same user changing the tree while it is read; that process can already
- * write every file here.
+ * read only when, after opening, it is still that same regular file with a
+ * single link. An identity of inode 0 proves nothing, so it refuses the read
+ * (the account shows as unavailable).
+ *
+ * What that does not promise. Node has no openat: every open and listing
+ * names a full path, resolved again by the system. A folder swapped for a
+ * link after its check is still followed by the next path under it, and the
+ * checks then compare the far side with itself. They narrow the window; they
+ * do not close it. What always holds is what is read: a regular, singly
+ * linked file named rollout-*.jsonl, a bounded tail of it, and only its
+ * token_count allowance lines. On macOS and Linux a rollout is opened with
+ * O_NOFOLLOW and O_NONBLOCK (a link or a FIFO in its own place never follows
+ * or blocks). Windows has neither flag: there the identity comparison after
+ * opening is the check for the file itself, and a named pipe does not live in
+ * the file tree. The threat this bounds is another process of the same user
+ * changing the tree while it is read; that process can already write every
+ * file here.
  *
  * Both read only; the accounts service decides when they may run. The fresh
  * read of a closed account (ADR-022) is not here: it lands in MP8.
@@ -51,8 +64,13 @@ export const CODEX_USAGE_TAIL_MAX_BYTES = 2 * 1024 * 1024
 export const CODEX_USAGE_MAX_FILES = 8
 /** Day folders listed, newest first. */
 export const CODEX_USAGE_MAX_DAYS = 64
-/** Folder visits plus entries listed, across the whole walk. */
+/** Folder visits plus entries listed, across the whole walk. A day folder
+ *  being listed is finished (up to CODEX_USAGE_DAY_ENTRIES) even past it. */
 export const CODEX_USAGE_WALK_BUDGET = 1024
+/** Entries listed in one day folder; past them its listing stops. */
+export const CODEX_USAGE_DAY_ENTRIES = 4096
+/** The longest any caller waits for one realm's reading. */
+export const CODEX_USAGE_READ_TIMEOUT_MS = 10_000
 /** Realms kept in the live figure and in the last-seen cache. */
 const MAX_REALMS = 64
 
@@ -77,8 +95,10 @@ export interface CodexUsageFsPort {
   platform: NodeJS.Platform
   /** The path itself, without following a link. Rejects when absent. */
   lstat(p: string): Promise<CodexUsageEntry>
-  /** Up to `limit` names in the folder, and whether it holds more. */
-  readdir(dir: string, limit: number): Promise<{ names: string[]; more: boolean }>
+  /** Hands the folder's names to `visit` one at a time, until there are none
+   *  left or `visit` returns false; the folder is closed either way. Only
+   *  what `visit` keeps is held. */
+  readdir(dir: string, visit: (name: string) => boolean): Promise<void>
   /** The last `maxBytes` of the file, and whether that is all of it. Rejects
    *  unless, once open, it is still the regular, singly linked file
    *  `expected` describes (same device and inode). */
@@ -122,6 +142,10 @@ const entryOf = (s: BigStat): CodexUsageEntry => ({
   mtimeMs: Number(s.mtimeMs),
 })
 
+/** Whether an identity can tell two things apart: inode 0 (some network and
+ *  FAT volumes) or none at all cannot. */
+const verifiable = (e: CodexUsageEntry): boolean => typeof e.ino === 'string' && e.ino !== '' && e.ino !== '0'
+
 /** The real filesystem, asynchronous throughout. See the module comment for
  *  what each platform can and cannot promise. */
 export function realCodexUsageFsPort(platform: NodeJS.Platform = process.platform, api: CodexUsageFsApi = nodeFsApi): CodexUsageFsPort {
@@ -129,23 +153,19 @@ export function realCodexUsageFsPort(platform: NodeJS.Platform = process.platfor
   return {
     platform,
     lstat: async (p) => entryOf(await api.lstat(p)),
-    readdir: async (dir, limit) => {
+    readdir: async (dir, visit) => {
       const d = await api.opendir(dir)
-      const names: string[] = []
-      let more = false
       try {
         for (;;) {
           const e = await d.read()
-          if (!e) break
-          if (names.length >= limit) { more = true; break }
-          names.push(e.name)
+          if (!e || visit(e.name) === false) break
         }
       } finally {
         await d.close()
       }
-      return { names, more }
     },
     readTail: async (file, maxBytes, expected) => {
+      if (!verifiable(expected)) throw new Error('an identity that proves nothing')
       const fh = await api.open(file, flags)
       try {
         const now = entryOf(await fh.stat())
@@ -192,12 +212,14 @@ function allowanceInTail(text: string, whole: boolean, now: number): AllowanceRe
   return merged && merged.limits.length > 0 ? merged : null
 }
 
-/** One rollout's allowance: a 256 KiB tail, then once a 2 MiB one. */
-async function allowanceInRollout(port: CodexUsageFsPort, file: string, entry: CodexUsageEntry, now: number): Promise<AllowanceReading | null> {
+/** One rollout's allowance: a 256 KiB tail, then once a 2 MiB one.
+ *  'unread' when it could not be read (busy, too many open files, changed or
+ *  unverifiable): not the same as a rollout with no allowance in it. */
+async function allowanceInRollout(port: CodexUsageFsPort, file: string, entry: CodexUsageEntry, now: number): Promise<AllowanceReading | null | 'unread'> {
   for (const max of [CODEX_USAGE_TAIL_BYTES, CODEX_USAGE_TAIL_MAX_BYTES]) {
     let tail: { text: string; whole: boolean }
-    try { tail = await port.readTail(file, max, entry) } catch { return null }
-    if (!tail || typeof tail.text !== 'string') return null
+    try { tail = await port.readTail(file, max, entry) } catch { return 'unread' }
+    if (!tail || typeof tail.text !== 'string') return 'unread'
     const found = allowanceInTail(tail.text, tail.whole === true, now)
     if (found || tail.whole === true) return found
   }
@@ -208,56 +230,84 @@ interface Candidate { file: string; entry: CodexUsageEntry }
 
 /** The newest rollouts under a sessions folder, at most CODEX_USAGE_MAX_FILES,
  *  each a regular, singly linked file as lstat saw it. The walk spends one
- *  budget on folder visits and entries; running out ends it with what it has. */
-async function newestRollouts(sessionsDir: string, port: CodexUsageFsPort): Promise<Candidate[]> {
+ *  budget on folder visits and entries; running out ends it with what it has.
+ *  `unverifiable`: something on the way had an identity that proves nothing,
+ *  so the walk stopped and nothing it found may be read. */
+async function newestRollouts(sessionsDir: string, port: CodexUsageFsPort): Promise<{ candidates: Candidate[]; unverifiable: boolean }> {
   const p = port.platform === 'win32' ? path.win32 : path.posix
   let budget = CODEX_USAGE_WALK_BUDGET
   let days = 0
+  let unverifiable = false
   const out: Candidate[] = []
   const same = (a: CodexUsageEntry, b: CodexUsageEntry) => a.dev === b.dev && a.ino === b.ino
   /** The folder's matching names, newest first; null to stop the walk (the
-   *  budget ran out). An unusable folder (a link, not a folder, changed while
-   *  listed) lists nothing. */
-  const list = async (dir: string, re: RegExp): Promise<string[] | null> => {
+   *  budget ran out, or an identity proves nothing). An unusable folder (a
+   *  link, not a folder, changed while listed) lists nothing. A day folder
+   *  (`top` given) is listed to its end, up to CODEX_USAGE_DAY_ENTRIES
+   *  entries, even past the budget, holding only its `top` newest names. */
+  const list = async (dir: string, re: RegExp, top?: number): Promise<string[] | null> => {
     if (--budget < 0) return null
     let before: CodexUsageEntry
     try { before = await port.lstat(dir) } catch { return [] }
     if (before.kind !== 'dir') return []
-    let listed: { names: string[]; more: boolean }
-    try { listed = await port.readdir(dir, Math.max(0, budget)) } catch { return [] }
-    const names = Array.isArray(listed?.names) ? listed.names : []
-    budget -= names.length
-    if (listed.more === true || budget < 0) return null
+    if (!verifiable(before)) { unverifiable = true; return null }
+    const held: string[] = []
+    let over = false
+    let seen = 0
+    try {
+      await port.readdir(dir, (name) => {
+        if (top === undefined) {
+          if (budget <= 0) { over = true; return false }
+        } else if (seen >= CODEX_USAGE_DAY_ENTRIES) {
+          return false
+        }
+        seen++
+        budget--
+        if (typeof name !== 'string' || !re.test(name)) return true
+        if (top === undefined || held.length < top) {
+          held.push(name)
+        } else {
+          // Keep only the `top` greatest names: replace the least if this is greater.
+          let least = 0
+          for (let i = 1; i < held.length; i++) if (held[i] < held[least]) least = i
+          if (name > held[least]) held[least] = name
+        }
+        return true
+      })
+    } catch { return [] }
+    if (over) return null
     let after: CodexUsageEntry
     try { after = await port.lstat(dir) } catch { return [] }
     if (after.kind !== 'dir' || !same(before, after)) return []
-    return names.filter((n) => typeof n === 'string' && re.test(n)).sort().reverse()
+    return held.sort().reverse()
   }
+  const done = () => ({ candidates: unverifiable ? [] : out, unverifiable })
   const years = await list(sessionsDir, YEAR_RE)
-  if (!years) return out
+  if (!years) return done()
   for (const year of years) {
     const months = await list(p.join(sessionsDir, year), MONTH_DAY_RE)
-    if (!months) return out
+    if (!months) return done()
     for (const month of months) {
       const dayNames = await list(p.join(sessionsDir, year, month), MONTH_DAY_RE)
-      if (!dayNames) return out
+      if (!dayNames) return done()
       for (const d of dayNames) {
-        if (++days > CODEX_USAGE_MAX_DAYS) return out
+        if (++days > CODEX_USAGE_MAX_DAYS) return done()
         const dayDir = p.join(sessionsDir, year, month, d)
-        const files = await list(dayDir, ROLLOUT_RE)
-        if (!files) return out
+        const files = await list(dayDir, ROLLOUT_RE, CODEX_USAGE_MAX_FILES)
+        if (!files) return done()
         for (const name of files) {
           const file = p.join(dayDir, name)
           let entry: CodexUsageEntry
           try { entry = await port.lstat(file) } catch { continue }
           if (entry.kind !== 'file' || entry.nlink !== 1) continue
+          if (!verifiable(entry)) { unverifiable = true; return done() }
           out.push({ file, entry })
-          if (out.length >= CODEX_USAGE_MAX_FILES) return out
+          if (out.length >= CODEX_USAGE_MAX_FILES) return done()
         }
       }
     }
   }
-  return out
+  return done()
 }
 
 /** What the reading of these rollouts depends on: their paths and, as lstat
@@ -271,27 +321,47 @@ export interface LastSeenCache {
   set(dir: string, value: { fingerprint: string; reading: AllowanceReading | null }): void
 }
 
+/** A last-seen lookup: a reading or none, or `ok: false` when the history
+ *  could not be read (the account shows as unavailable, not as having no
+ *  session yet). */
+export type LastSeenLookup = { ok: true; reading: AllowanceReading | null } | { ok: false }
+
 /**
- * The last allowance recorded under a realm's sessions folder, or null: of
- * the newest rollouts examined, the one reported last. Never rejects. See the
- * module comment for exactly what it may open.
+ * The last allowance recorded under a realm's sessions folder: of the newest
+ * rollouts examined, the one reported last. Unavailable when an identity on
+ * the way proves nothing, when nothing could be read and a rollout could
+ * not be, or on any failure. A result is kept in `cache` only when every
+ * rollout examined could be read. Never rejects. See the module comment for
+ * exactly what it may open.
  */
-export async function readLastSeenAllowance(sessionsDir: string, port: CodexUsageFsPort, now: number = Date.now(), cache?: LastSeenCache): Promise<AllowanceReading | null> {
+export async function lookupLastSeenAllowance(sessionsDir: string, port: CodexUsageFsPort, now: number = Date.now(), cache?: LastSeenCache): Promise<LastSeenLookup> {
   try {
-    const candidates = await newestRollouts(sessionsDir, port)
-    const fingerprint = fingerprintOf(candidates)
+    const walk = await newestRollouts(sessionsDir, port)
+    if (walk.unverifiable) return { ok: false }
+    const fingerprint = fingerprintOf(walk.candidates)
     const held = cache?.get(sessionsDir)
-    if (held && held.fingerprint === fingerprint) return held.reading
+    if (held && held.fingerprint === fingerprint) return { ok: true, reading: held.reading }
     let best: AllowanceReading | null = null
-    for (const c of candidates) {
+    let unread = false
+    for (const c of walk.candidates) {
       const r = await allowanceInRollout(port, c.file, c.entry, now)
+      if (r === 'unread') { unread = true; continue }
       if (r && (best === null || (r.readingAt ?? -Infinity) > (best.readingAt ?? -Infinity))) best = r
     }
+    // A rollout that could not be read may hold the newest figure: nothing
+    // is kept, and with nothing found the answer is unavailable.
+    if (unread) return best ? { ok: true, reading: best } : { ok: false }
     cache?.set(sessionsDir, { fingerprint, reading: best })
-    return best
+    return { ok: true, reading: best }
   } catch {
-    return null
+    return { ok: false }
   }
+}
+
+/** The reading lookupLastSeenAllowance finds, or null (none, or unavailable). */
+export async function readLastSeenAllowance(sessionsDir: string, port: CodexUsageFsPort, now: number = Date.now(), cache?: LastSeenCache): Promise<AllowanceReading | null> {
+  const r = await lookupLastSeenAllowance(sessionsDir, port, now, cache)
+  return r.ok ? r.reading : null
 }
 
 /** The newest allowance each realm's open sessions reported, in memory. */
@@ -372,10 +442,22 @@ export interface CodexUsageDeps {
   fs: CodexUsageFsPort
   live: CodexLiveUsage
   now?: () => number
+  /** The longest a caller waits (tests shorten it). */
+  timeoutMs?: number
+}
+
+/** `p`, or `late` once `ms` have passed or when it rejects. */
+function within<T>(p: Promise<T>, ms: number, late: T): Promise<T> {
+  return new Promise<T>((resolve) => {
+    const timer = setTimeout(() => resolve(late), ms)
+    ;(timer as { unref?: () => void }).unref?.()
+    p.then((v) => { clearTimeout(timer); resolve(v) }, () => { clearTimeout(timer); resolve(late) })
+  })
 }
 
 export function createCodexUsageOperations(deps: CodexUsageDeps): ProviderUsageOperations {
   const now = () => { try { const n = deps.now ? deps.now() : Date.now(); return Number.isFinite(n) ? n : Date.now() } catch { return Date.now() } }
+  const timeoutMs = typeof deps.timeoutMs === 'number' && deps.timeoutMs > 0 ? deps.timeoutMs : CODEX_USAGE_READ_TIMEOUT_MS
   const keyOf = keyer(deps.fs.platform)
   const held = new Map<string, { fingerprint: string; reading: AllowanceReading | null }>()
   const cache: LastSeenCache = {
@@ -391,35 +473,45 @@ export function createCodexUsageOperations(deps: CodexUsageDeps): ProviderUsageO
       }
     },
   }
-  const inFlight = new Map<string, Promise<UsageLookup>>()
-  const locate = async (realm: RealmRef): Promise<string | null> => {
-    try {
-      const dir = await deps.sessionsDir(realm)
-      return typeof dir === 'string' && dir ? dir : null
-    } catch {
-      return null
+  /**
+   * One run per realm at a time, shared by every caller, none of whom waits
+   * for it longer than `timeoutMs` (then it is `late`). A run that never
+   * settles (a hung network share) is not started again beside itself: each
+   * would hold one of the few threads the main process has for file work.
+   * Once it settles, the next call starts a fresh one.
+   */
+  const shared = <T>(runs: Map<string, Promise<T>>, key: string, start: () => Promise<T>, late: T): Promise<T> => {
+    let run = runs.get(key)
+    if (!run) {
+      const p = Promise.resolve().then(start).catch(() => late)
+      runs.set(key, p)
+      void p.finally(() => { if (runs.get(key) === p) runs.delete(key) })
+      run = p
     }
+    return within(run, timeoutMs, late)
+  }
+  const locating = new Map<string, Promise<string | null>>()
+  const reading = new Map<string, Promise<UsageLookup>>()
+  const locate = async (realm: RealmRef): Promise<string | null> => {
+    const dir = await deps.sessionsDir(realm)
+    return typeof dir === 'string' && dir ? dir : null
   }
   const realmKey = (realm: RealmRef) => String((realm as { authRealmId?: unknown } | null)?.authRealmId ?? '')
   return {
+    // Memory only, but locating the realm checks its home on disk: that goes
+    // through the same guard.
     async live(realm) {
-      const dir = await locate(realm)
+      const dir = await shared(locating, realmKey(realm), () => locate(realm), null)
       if (!dir) return { ok: false }
       return { ok: true, reading: toUsageReading(deps.live.get(dir)) }
     },
     lastSeen(realm) {
-      const key = realmKey(realm)
-      const running = inFlight.get(key)
-      if (running) return running
-      const run = (async (): Promise<UsageLookup> => {
+      return shared(reading, realmKey(realm), async (): Promise<UsageLookup> => {
         const dir = await locate(realm)
         if (!dir) return { ok: false }
-        const r = await readLastSeenAllowance(dir, deps.fs, now(), cache)
-        return { ok: true, reading: toUsageReading(r) }
-      })().catch((): UsageLookup => ({ ok: true, reading: null }))
-      inFlight.set(key, run)
-      void run.finally(() => { if (inFlight.get(key) === run) inFlight.delete(key) })
-      return run
+        const r = await lookupLastSeenAllowance(dir, deps.fs, now(), cache)
+        return r.ok ? { ok: true, reading: toUsageReading(r.reading) } : { ok: false }
+      }, { ok: false })
     },
   }
 }

@@ -20,6 +20,8 @@ function usageFs() {
   const dirs = new Set<string>()
   const files = new Map<string, string>()
   const calls: string[] = []
+  /** Awaited before a rollout's read returns (a test changes the registry there). */
+  const hooks: { beforeTail?: (file: string) => Promise<void> } = {}
   const parent = (p: string) => norm(p).split('\\').slice(0, -1).join('\\')
   const ino = (p: string) => String([...norm(p)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7))
   const port: CodexUsageFsPort = {
@@ -32,22 +34,23 @@ function usageFs() {
       if (t !== undefined) return { kind: 'file', dev: '9', ino: ino(p), nlink: 1, size: t.length, mtimeMs: 1 }
       throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
     },
-    readdir: async (dir, limit) => {
+    readdir: async (dir, visit) => {
       calls.push(`readdir ${dir}`)
       const n = norm(dir)
       if (!dirs.has(n)) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
       const names = [...new Set([...dirs, ...files.keys()].filter((x) => parent(x) === n).map((x) => x.slice(n.length + 1)))]
-      return { names: names.slice(0, limit), more: names.length > limit }
+      for (const name of names) if (visit(name) === false) break
     },
     readTail: async (file) => {
       calls.push(`readTail ${file}`)
+      await hooks.beforeTail?.(file)
       const t = files.get(norm(file))
       if (t === undefined) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
       return { text: t, whole: true }
     },
   }
   return {
-    port, calls,
+    port, calls, hooks,
     rollout: (sessions: string, pct: number, plan = 'plus') => {
       // A past day: a reading time later than now would be held to now.
       const d = `${sessions}\\2026\\09\\20`
@@ -153,6 +156,46 @@ describe('a provider that is off makes no call (D5; owner decision 2026-09-26)',
     const got: ProviderAccountUsageView[] = []
     await t.h.service.streamAccountUsage({ providerId: 'codex' }, (v) => { got.push(v); setImmediate(() => { wanted = false }) }, { shouldContinue: () => wanted })
     expect(got).toHaveLength(1)
+  })
+
+  // Review Q1 (MP3 round 2): each account is found again in the registry as
+  // it is when its turn comes, not as it was when the stream began.
+  it('an account archived while the stream runs is skipped, and nothing of it is read', async () => {
+    const t = await setup()
+    const a = await addCodexAccount(t.h, 'A')
+    const b = await addCodexAccount(t.h, 'B')
+    t.fs.rollout(sessionsOf(t.h, a), 10)
+    t.fs.rollout(sessionsOf(t.h, b), 20)
+    const bSessions = sessionsOf(t.h, b).toLowerCase()
+    let once = false
+    t.fs.hooks.beforeTail = async () => {
+      if (once) return
+      once = true
+      expect(await t.h.service.setLifecycle({ accountId: b, lifecycle: 'inactive' })).toEqual({ ok: true })
+      expect(await t.h.service.setLifecycle({ accountId: b, lifecycle: 'archived' })).toEqual({ ok: true })
+    }
+    const s = await stream(t.h)
+    expect(s.got.map((v) => v.accountId)).toEqual([a])
+    expect(s.r).toMatchObject({ ok: true, provider: 'on', accounts: 1 })
+    expect(t.fs.calls.some((c) => c.toLowerCase().includes(bSessions))).toBe(false)
+  })
+
+  it('an account made inactive while the stream runs shows as inactive, and nothing of it is read', async () => {
+    const t = await setup()
+    const a = await addCodexAccount(t.h, 'A')
+    const b = await addCodexAccount(t.h, 'B')
+    t.fs.rollout(sessionsOf(t.h, a), 10)
+    t.fs.rollout(sessionsOf(t.h, b), 20)
+    const bSessions = sessionsOf(t.h, b).toLowerCase()
+    let once = false
+    t.fs.hooks.beforeTail = async () => {
+      if (once) return
+      once = true
+      expect(await t.h.service.setLifecycle({ accountId: b, lifecycle: 'inactive' })).toEqual({ ok: true })
+    }
+    const s = await stream(t.h)
+    expect(s.got.map((v) => [v.accountId, v.status])).toEqual([[a, 'ok'], [b, 'inactive']])
+    expect(t.fs.calls.some((c) => c.toLowerCase().includes(bSessions))).toBe(false)
   })
 })
 

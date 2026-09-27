@@ -1878,12 +1878,19 @@ export class AccountsService {
     const wanted = () => {
       try { return !opts.shouldContinue || opts.shouldContinue() === true } catch { return false }
     }
-    const listed = ready.doc.accounts.filter((a) => a.providerId === p.id && a.lifecycle !== 'archived')
+    const listed = ready.doc.accounts.filter((a) => a.providerId === p.id && a.lifecycle !== 'archived').map((a) => a.id)
     let sent = 0
-    for (const a of listed) {
+    for (const id of listed) {
       await yieldTurn()
       if (!wanted() || this.launchRefusal(p.id)) break
-      const view = await this.usageView(p, ready.doc, a)
+      // The registry as it is now, not as it was when the stream began: an
+      // account archived or removed meanwhile is skipped, one made inactive
+      // is read as inactive (nothing read).
+      const now = this.ready()
+      if ('ok' in now) break
+      const a = findAccount(now.doc, id)
+      if (!a || a.providerId !== p.id || a.lifecycle === 'archived') continue
+      const view = await this.usageView(p, now.doc, a)
       if (!wanted() || this.launchRefusal(p.id)) break
       onResult(view)
       sent++

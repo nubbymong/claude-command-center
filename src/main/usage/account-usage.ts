@@ -464,7 +464,9 @@ export function setClaudeUsageAllowed(allowed: () => boolean): void {
   usageAllowed = allowed
 }
 
-function claudeUsageAllowed(): boolean {
+/** Whether anything of Claude Code may be read for the usage surfaces now
+ *  (the Account usage page and the credential state it and Insights show). */
+export function claudeUsageAllowed(): boolean {
   try { return usageAllowed() === true } catch { return false }
 }
 

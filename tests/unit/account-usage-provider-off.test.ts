@@ -61,7 +61,7 @@ vi.mock('https', () => {
 })
 
 const {
-  fetchAccountUsage, fetchAllAccountsUsageStreaming, setClaudeUsageAllowed, knownUsageLabels,
+  fetchAccountUsage, fetchAllAccountsUsageStreaming, setClaudeUsageAllowed, claudeUsageAllowed, knownUsageLabels,
   recordLiveUsageForSession, _resetLiveUsageForTest, _resetSnapshotsForTest,
 } = await import('../../src/main/usage/account-usage')
 
@@ -105,6 +105,16 @@ describe('Claude Code off: the usage page makes no Claude call (D5)', () => {
     expect((await fetchAccountUsage('profile-a-1')).status).toBe('off')
     expect(configDirAsked).toEqual([])
     expect(requestedHosts).toEqual([])
+  })
+
+  // Review L-A (MP3 round 2): the credential-state handler asks the same rule.
+  it('the rule the credential-state handler asks is this one, and a rule that throws is a no', () => {
+    setClaudeUsageAllowed(() => true)
+    expect(claudeUsageAllowed()).toBe(true)
+    setClaudeUsageAllowed(() => false)
+    expect(claudeUsageAllowed()).toBe(false)
+    setClaudeUsageAllowed(() => { throw new Error('settings unreadable') })
+    expect(claudeUsageAllowed()).toBe(false)
   })
 
   it('the stream delivers every account off, with no call and no pacing', async () => {

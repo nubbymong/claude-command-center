@@ -61,10 +61,10 @@ export type { CodexRealmFsPort, CodexFsEntry, CodexRealmLocks, CodexFolderLookup
 // Usage track MP2/MP3: the allowance reading and the usage port.
 export { normaliseCodexRateLimits, mergeAllowanceReadings, readingToBuckets, CODEX_DEFAULT_LIMIT_ID } from './rate-limits'
 export {
-  readLastSeenAllowance, createCodexLiveUsage, createCodexUsageOperations, realCodexUsageFsPort,
-  CODEX_USAGE_TAIL_BYTES, CODEX_USAGE_TAIL_MAX_BYTES, CODEX_USAGE_MAX_FILES, CODEX_USAGE_MAX_DAYS, CODEX_USAGE_WALK_BUDGET,
+  readLastSeenAllowance, lookupLastSeenAllowance, createCodexLiveUsage, createCodexUsageOperations, realCodexUsageFsPort,
+  CODEX_USAGE_TAIL_BYTES, CODEX_USAGE_TAIL_MAX_BYTES, CODEX_USAGE_MAX_FILES, CODEX_USAGE_MAX_DAYS, CODEX_USAGE_WALK_BUDGET, CODEX_USAGE_DAY_ENTRIES, CODEX_USAGE_READ_TIMEOUT_MS,
 } from './usage'
-export type { CodexUsageFsPort, CodexUsageEntry, CodexUsageFsApi, CodexLiveUsage, CodexUsageDeps, LastSeenCache } from './usage'
+export type { CodexUsageFsPort, CodexUsageEntry, CodexUsageFsApi, CodexLiveUsage, CodexUsageDeps, LastSeenCache, LastSeenLookup } from './usage'
 
 /** Why the two session-contract methods a Codex launch never uses refuse: a
  *  Codex session runs only the executable its managed launch proved (the
