@@ -33,7 +33,7 @@ import type {
   TrailEntry,
 } from '../shared/canvas'
 import type {
-  AccountsSnapshot, AccountsResult, ProviderInstallationView, InstallRecipeView, SignInOutputEvent, BeginSetupRequest, SignInRequest, SignInAgainRequest,
+  AccountsSnapshot, AccountsResult, ProviderInstallationView, InstallRecipeView, SignInOutputEvent, BeginSetupRequest, SignInRequest, SignInAgainRequest, SignInAgainResult,
   CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, UpdateIdentityRequest, SecretDeposit, KnownAuthState, ProviderId,
   ResolveConflictRequest, SetReviewerDefaultRequest, ProviderAccountUsageView, ProviderUsageStreamResult,
 } from '../shared/providers'
@@ -643,7 +643,7 @@ export interface ElectronAPI {
     sendSecret: (deposit: SecretDeposit) => void
     signIn: (req: SignInRequest) => Promise<AccountsResult<{ state: KnownAuthState }>>
     /** Sign an existing managed account in again, in its own realm. */
-    signInAgain: (req: SignInAgainRequest) => Promise<AccountsResult<{ state: KnownAuthState; separateAccountId?: string }>>
+    signInAgain: (req: SignInAgainRequest) => Promise<AccountsResult<SignInAgainResult>>
     onSignInOutput: (cb: (event: SignInOutputEvent) => void) => () => void
     cancelSignIn: (accountId: string) => Promise<AccountsResult>
     completeSetup: (req: CompleteSetupRequest) => Promise<AccountsResult<{ accountId: string }>>

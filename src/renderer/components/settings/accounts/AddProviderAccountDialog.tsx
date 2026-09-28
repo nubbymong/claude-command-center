@@ -24,11 +24,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   AccountView, AccountsFailure, AccountsResult, KnownAuthState, ProviderInstallationView, PendingSetupView, SignInMethod, SignInRequest, SetupIdentityChoice,
+  SignInAgainResult, SignInPhase,
 } from '../../../../shared/providers'
 import { SIGN_IN_METHODS } from '../../../../shared/providers'
 import { IDENTITY_COLOR_KEYS, resolveIdentityColor, type IdentityColorKey } from '../../../../shared/identity-colors'
 import {
   useProviderAccountsStore, providerAccountActions, accountDisplayName, signInAgainFailureText, signInAgainMethods, answerYesIfUnanswered,
+  signInPhaseText, notCarriedOverText,
 } from '../../../stores/providerAccountsStore'
 import { useResolvedTheme } from '../../../hooks/useThemeController'
 import {
@@ -69,12 +71,14 @@ const isSignInMethod = (m: string): m is SignInMethod => (SIGN_IN_METHODS as rea
 
 /** `separateAccountId`: a sign in again that main found to be someone else;
  *  that sign-in waits, as an unfinished setup, to be named as a new account. */
-type SignInAnswer = AccountsResult<{ state: KnownAuthState; separateAccountId?: string }>
+type SignInAnswer = AccountsResult<SignInAgainResult>
 
 interface SignInRun {
   /** The account being signed in; set as soon as the main process names it. */
   accountIdRef: React.MutableRefObject<string | null>
   lines: string[]
+  /** The step main says the run moved on to (no output of its own), if any. */
+  phase: SignInPhase | null
   /** True once leaving has begun or the dialog is gone: stop, whatever
    *  the answer was. */
   closing: () => boolean
@@ -105,6 +109,7 @@ function useSignInRun(opts: {
   const optsRef = useRef(opts)
   optsRef.current = opts
   const [lines, setLines] = useState<string[]>([])
+  const [phase, setPhase] = useState<SignInPhase | null>(null)
   const [leaving, setLeaving] = useState(false)
   const closingRef = useRef(false)
   const completedRef = useRef(false)
@@ -117,6 +122,8 @@ function useSignInRun(opts: {
   useEffect(() => {
     const off = window.electronAPI.providerAccounts.onSignInOutput((ev) => {
       if (ev.accountId !== accountIdRef.current) return
+      if (ev.phase === 'carrying-history') setPhase(ev.phase)
+      if (typeof ev.text !== 'string' || !ev.text) return
       setLines((prev) => [...prev, ...ev.text.split(/\r?\n/).filter((l) => l.trim() !== '')].slice(-MAX_LINES))
     })
     return () => { off() }
@@ -151,6 +158,7 @@ function useSignInRun(opts: {
     const accountId = accountIdRef.current
     if (!accountId || gone()) return null
     setLines([])
+    setPhase(null)
     const running = optsRef.current.run(secretHandle !== undefined ? { accountId, method, secretHandle } : { accountId, method })
     runningRef.current = running
     const r = await running
@@ -203,7 +211,7 @@ function useSignInRun(opts: {
     }
   }, [cleanup])
 
-  return { accountIdRef, lines, closing, leaving, track, start, sendKey, exit, done }
+  return { accountIdRef, lines, phase, closing, leaving, track, start, sendKey, exit, done }
 }
 
 // ---------------------------------------------------------------------------
@@ -242,12 +250,12 @@ function KeyField({ prefix, inputRef, providerName, onHasKey, onSubmit }: {
 
 /** A running sign-in: the login URL and device code when the output carries
  *  them, and the output itself. */
-function SignInProgress({ prefix, lines, method, providerName }: { prefix: string; lines: string[]; method: SignInMethod | null; providerName: string }) {
+function SignInProgress({ prefix, lines, method, providerName, phase }: { prefix: string; lines: string[]; method: SignInMethod | null; providerName: string; phase?: SignInPhase | null }) {
   const url = lastMatch(lines, URL_RE)
   const code = method === 'device' ? lastMatch(lines, CODE_RE) : undefined
   return (
     <div className="space-y-3" data-testid={`${prefix}-step-signing-in`}>
-      <div className="text-[12.5px]" style={{ color: 'var(--text-secondary)' }}>Waiting for the sign-in to finish...</div>
+      <div className="text-[12.5px]" style={{ color: 'var(--text-secondary)' }} data-testid={`${prefix}-status`}>{phase ? signInPhaseText(phase) : 'Waiting for the sign-in to finish...'}</div>
       {(url || code) && (
         <div className="rounded-[9px] border px-3 py-2.5 space-y-1.5" style={{ borderColor: 'var(--border-strong)', background: 'var(--surface-base)' }} data-testid={`${prefix}-prompt`}>
           {url && (
@@ -607,7 +615,7 @@ export interface SignInAgainDialogProps {
   onSeparate: (setup: PendingSetupView) => void
 }
 
-type AgainStep = 'method' | 'key' | 'signing-in' | 'failed'
+type AgainStep = 'method' | 'key' | 'signing-in' | 'failed' | 'left'
 
 /**
  * "Sign in again" for an existing managed account: its recorded method family
@@ -655,7 +663,17 @@ export function SignInAgainDialog({ provider, account, name, onClose, onNewAccou
       runner.done()
       return
     }
-    if (r.ok && r.state === 'signed-in') { runner.done(); return }
+    if (r.ok && r.state === 'signed-in') {
+      // Signed in again, with earlier conversation files left behind: said
+      // before the dialog closes, never only logged.
+      if (typeof r.notCarriedOver === 'number' && r.notCarriedOver > 0) {
+        setError(notCarriedOverText(r.notCarriedOver))
+        setStep('left')
+        return
+      }
+      runner.done()
+      return
+    }
     setError(r.ok ? 'Still not signed in. Try again, or cancel.' : signInAgainFailureText(r))
     setStep('failed')
   }
@@ -732,14 +750,20 @@ export function SignInAgainDialog({ provider, account, name, onClose, onNewAccou
             {step === 'key' && (
               <KeyField prefix="sign-in-again" inputRef={keyRef} providerName={provider.displayName} onHasKey={setHasKey} onSubmit={() => { void submitKey() }} />
             )}
-            {step === 'signing-in' && <SignInProgress prefix="sign-in-again" lines={runner.lines} method={method} providerName={provider.displayName} />}
+            {step === 'signing-in' && <SignInProgress prefix="sign-in-again" lines={runner.lines} method={method} providerName={provider.displayName} phase={runner.phase} />}
             {step === 'failed' && <DialogCallout tone="warning" role="alert" testId="sign-in-again-error">{error ?? 'The sign-in did not finish.'}</DialogCallout>}
-            {error && step !== 'failed' && <div className="mt-3"><DialogCallout tone="danger" role="alert" testId="sign-in-again-error">{error}</DialogCallout></div>}
+            {step === 'left' && <DialogCallout tone="warning" role="status" testId="sign-in-again-left">{error}</DialogCallout>}
+            {error && step !== 'failed' && step !== 'left' && <div className="mt-3"><DialogCallout tone="danger" role="alert" testId="sign-in-again-error">{error}</DialogCallout></div>}
           </>
         )}
       </DialogBody>
       <DialogFooter>
-        <DialogButton variant="ghost" onClick={() => { void runner.exit() }} disabled={runner.leaving} testId="sign-in-again-cancel" data-autofocus={step === 'signing-in' ? '' : undefined}>Cancel</DialogButton>
+        {step !== 'left' && (
+          <DialogButton variant="ghost" onClick={() => { void runner.exit() }} disabled={runner.leaving} testId="sign-in-again-cancel" data-autofocus={step === 'signing-in' ? '' : undefined}>Cancel</DialogButton>
+        )}
+        {!runner.leaving && step === 'left' && (
+          <DialogButton variant="primary" onClick={runner.done} testId="sign-in-again-done" data-autofocus="">Close</DialogButton>
+        )}
         {!runner.leaving && step === 'method' && (
           <DialogButton variant="primary" onClick={proceed} disabled={!method} testId="sign-in-again-continue">{method === 'apiKey' ? 'Continue' : 'Sign in'}</DialogButton>
         )}

@@ -41,7 +41,7 @@ import type { ModelRegistry } from '../../shared/model-registry'
 export type { ModelRegistry } from '../../shared/model-registry'
 import type {
   AccountsSnapshot as ProviderAccountsSnapshot, AccountsResult as ProviderAccountsResult, ProviderInstallationView, InstallRecipeView,
-  SignInOutputEvent, BeginSetupRequest, SignInRequest, SignInAgainRequest, CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, UpdateIdentityRequest,
+  SignInOutputEvent, BeginSetupRequest, SignInRequest, SignInAgainRequest, SignInAgainResult, CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, UpdateIdentityRequest,
   SecretDeposit, KnownAuthState, ProviderId as ProviderAccountsProviderId, ResolveConflictRequest, SetReviewerDefaultRequest,
   ProviderAccountUsageView, ProviderUsageStreamResult,
 } from '../../shared/providers'
@@ -908,7 +908,7 @@ export interface ElectronAPI {
     sendSecret: (deposit: SecretDeposit) => void
     signIn: (req: SignInRequest) => Promise<ProviderAccountsResult<{ state: KnownAuthState }>>
     /** Sign an existing managed account in again, in its own realm. */
-    signInAgain: (req: SignInAgainRequest) => Promise<ProviderAccountsResult<{ state: KnownAuthState; separateAccountId?: string }>>
+    signInAgain: (req: SignInAgainRequest) => Promise<ProviderAccountsResult<SignInAgainResult>>
     onSignInOutput: (cb: (event: SignInOutputEvent) => void) => () => void
     cancelSignIn: (accountId: string) => Promise<ProviderAccountsResult>
     completeSetup: (req: CompleteSetupRequest) => Promise<ProviderAccountsResult<{ accountId: string }>>

@@ -179,6 +179,7 @@ export type RealmFolderFailureCode =
   | 'unsafe-contents'        // a removal found a link, another volume or too much: nothing removed
   | 'changed'                // the folder changed while in use, and the operation stopped
   | 'too-large'              // a history copy found more than it carries over: nothing changed
+  | 'cancelled'              // a history copy stopped on request
   | 'io-failed'
 
 export interface RealmFolderResult {
@@ -220,9 +221,9 @@ export interface ProviderRealmFolderOperations {
    *  a time). A file is carried over only when every name it has is one the
    *  app gave it (`earlier`: the account's earlier realms, compared only);
    *  others are `skipped`. `copied` counts the files carried over, `linked`
-   *  those that became a second name of the same file. Absent: the provider
-   *  keeps no such history. */
-  copyHistory?(from: RealmRef, to: RealmRef, opts?: { earlier?: readonly RealmRef[] }): Promise<RealmFolderResult & { copied?: number; linked?: number; skipped?: number }>
+   *  those that became a second name of the same file. `signal` stops it at
+   *  the next batch (cancelled). Absent: the provider keeps no such history. */
+  copyHistory?(from: RealmRef, to: RealmRef, opts?: { earlier?: readonly RealmRef[]; signal?: AbortSignal }): Promise<RealmFolderResult & { copied?: number; linked?: number; skipped?: number }>
 }
 
 /** What a launch in a bound realm needs, proven at launch time (plan A10):

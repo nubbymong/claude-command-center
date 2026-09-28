@@ -250,6 +250,9 @@ describe('Sign in again needs the answer of the user at the boundary (WP1.52; P3
     expect(JSON.stringify(h.doc())).toBe(before)
     expect(await w.call(IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, { accountId: a, method: 'browser', sameAccount: true })).toEqual({ ok: true, state: 'signed-in' })
     expect(h.doc().accounts).toHaveLength(1)
+    // The step with no output of its own reaches the renderer that started
+    // it, on the same channel (P3.3 final review round, F3).
+    expect(w.wc.sent.filter(([c]) => c === IPC.PROVIDER_ACCOUNTS_SIGN_IN_OUTPUT).map(([, e]) => e)).toContainEqual({ accountId: a, text: '', phase: 'carrying-history' })
   })
 })
 

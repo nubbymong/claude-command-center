@@ -10,8 +10,8 @@
 import { create } from 'zustand'
 import type {
   AccountsSnapshot, AccountView, AccountsResult, AccountsFailure, ProviderInstallationView, ProviderId,
-  BeginSetupRequest, SignInRequest, SignInAgainRequest, CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, ResolveConflictRequest,
-  SetReviewerDefaultRequest, KnownAuthState, SignInMethod, InstallRecipeView, UpdateIdentityRequest, IdentityView,
+  BeginSetupRequest, SignInRequest, SignInAgainRequest, SignInAgainResult, CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, ResolveConflictRequest,
+  SetReviewerDefaultRequest, KnownAuthState, SignInMethod, InstallRecipeView, UpdateIdentityRequest, IdentityView, SignInPhase,
 } from '../../shared/providers'
 import { SIGN_IN_METHODS } from '../../shared/providers'
 import { useSettingsStore } from './settingsStore'
@@ -174,7 +174,7 @@ export const providerAccountActions = {
   issueSecretHandle: (accountId: string) => call<{ handle: string }>(() => api().issueSecretHandle(accountId)),
   signIn: (req: SignInRequest) => call<{ state: KnownAuthState }>(() => api().signIn(req)),
   /** An existing managed account's sign-in, run again in its own realm. */
-  signInAgain: (req: SignInAgainRequest) => call<{ state: KnownAuthState; separateAccountId?: string }>(() => api().signInAgain(req)),
+  signInAgain: (req: SignInAgainRequest) => call<SignInAgainResult>(() => api().signInAgain(req)),
   cancelSignIn: (accountId: string) => call(() => api().cancelSignIn(accountId)),
   completeSetup: (req: CompleteSetupRequest) => call<{ accountId: string }>(() => api().completeSetup(req)),
   abandonSetup: (accountId: string) => call(() => api().abandonSetup(accountId)),
@@ -601,6 +601,22 @@ export function oldSignInText(reason: NonNullable<AccountView['oldSignInLeft']>,
     case 'unavailable': return `It is removed once ${providerName} can sign it out here.`
     case 'failed': return 'Removing it did not finish. Check sign-in tries again.'
   }
+}
+
+/** The Sign in again dialog's status line for a step with no output of its
+ *  own: carrying the earlier conversations over can take minutes. */
+export function signInPhaseText(phase: SignInPhase): string {
+  switch (phase) {
+    case 'carrying-history': return 'Signed in. Carrying your earlier conversations over to the new sign-in; with a long history this can take a few minutes...'
+  }
+}
+
+/** A sign in again that left earlier conversation files behind, in plain
+ *  words: how many, and where they still are. */
+export function notCarriedOverText(count: number): string {
+  const files = count === 1 ? '1 earlier conversation file was' : `${count} earlier conversation files were`
+  const where = count === 1 ? 'It stays' : 'They stay'
+  return `Signed in again. ${files} not carried over to the new sign-in, because each is also linked from somewhere else on this computer. ${where} in the account's old folder while that folder is kept.`
 }
 
 /** "Check sign-in" is offered on an account the provider can check now: the
