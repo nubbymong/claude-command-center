@@ -12,7 +12,7 @@
  *   watchAndClaimRollout    -- 250ms-poll claim + 500ms-poll tail pipeline
  */
 
-import { readdirSync, lstatSync, statSync, unlinkSync, rmdirSync, openSync, fstatSync, readSync, closeSync, constants as fsConstants } from 'fs'
+import { readdirSync, lstatSync, unlinkSync, rmdirSync, openSync, fstatSync, readSync, closeSync, constants as fsConstants } from 'fs'
 import { join, relative, isAbsolute, sep, dirname, basename } from 'path'
 import { computeCodexCostUsd } from './pricing'
 import { CODEX_CONVERSATION_ID_RE, codexDayFolders, codexFolderIdentity, findCodexRollout, isRealFolder, parseSessionMetaLine, readRolloutFirstLine } from './rollout-lookup'
@@ -340,7 +340,7 @@ export interface CodexClaimOptions {
    *  when it starts a new one (a New conversation choice, nothing to list,
    *  or the fallback after a resume failed). Read each poll, removed once
    *  read; the latest decision wins. Before the first, nothing is claimed;
-   *  after `{ id }` only that conversation, once its rollout grows; after
+   *  after `{ id }` only that conversation, claimed at once (VM finding V2); after
    *  `{ fresh }` only a new rollout created from the decision on. */
   pickFile?: string
   /** The pick file's folder as the builder made it (fix round 3): a pick
@@ -421,7 +421,7 @@ function realFolderChain(sessionsDir: string, dir: string): boolean {
  *      conversation's rollout wherever it is in the realm (rollout-lookup's
  *      findCodexRollout), and nothing else;
  *    - a launch through the resume picker (`pickFile`) claims the
- *      conversation the picker opened once its rollout grows, or a new one;
+ *      conversation the picker opened, at its decision, or a new one;
  *    - a new conversation: a rollout in one of the day folders (recomputed on
  *      every poll: today and yesterday, each by UTC and by local date, so a
  *      session crossing midnight is found) whose session_meta.cwd matches
@@ -488,10 +488,8 @@ export function watchAndClaimRollout(
   /** Files whose first line settled as not this session's: never read again. */
   const settled = new Set<string>()
   let lastLookupAt = Number.NEGATIVE_INFINITY
-  /** The picker's latest decision (none yet: nothing is claimed), and for a
-   *  resume, the picked rollout and its size when first seen. */
+  /** The picker's latest decision (none yet: nothing is claimed). */
   let decision: PickDecision | null = null
-  let picked: { path: string; meta: RolloutSessionMeta; size: number } | null = null
   /** A pick entry already dealt with (read, or refused), by its identity: never read again. */
   let handledPick: string | null = null
 
@@ -519,7 +517,7 @@ export function watchAndClaimRollout(
       // the protocol.
       if (pickFile && !resumeId) {
         const next = readPick()
-        if (next) { release(); decision = next; picked = null; startClaimPolling(); return }
+        if (next) { release(); decision = next; startClaimPolling(); return }
       }
       if (readNew(claimedPath)) emit()
     }, 500)
@@ -735,22 +733,24 @@ export function watchAndClaimRollout(
     let since = spawnTimestamp - 5000
     if (pickFile) {
       const next = readPick()
-      if (next) { decision = next; picked = null }
+      if (next) decision = next
       if (!decision) return
       if (decision.kind === 'fresh') {
         // A new conversation: only a rollout created from the decision on.
         since = decision.at - FRESH_DECISION_TOLERANCE_MS
       } else {
-        if (!picked) {
-          const found = lookup(decision.id)
-          if (found) {
-            try { picked = { ...found, size: statSync(found.path).size } } catch { picked = null }
-          }
-        } else if (!claimed.has(picked.path)) {
-          try {
-            if (statSync(picked.path).size > picked.size) { claim(picked.path, picked.meta); return }
-          } catch { /* gone: nothing to claim */ }
-        }
+        // The conversation the picker opened (P3.5 VM finding V2): claimed at
+        // the decision, as a resume by id is at its launch, so its status
+        // line shows at once rather than at its first new turn. Only its own
+        // rollout, with the checks a launch's chosen rollout gets: inside this
+        // realm's real folders, a plain file whose session_meta names the id
+        // (the walk, or stillTheConversation once another session lets it
+        // go), and not held by another session (lookup never returns one
+        // another session holds). A resume that then fails
+        // falls back to a new conversation, and that decision lets this
+        // claim go (release).
+        const found = lookup(decision.id)
+        if (found && realFolderChain(sessionsDir, dirname(found.path))) claim(found.path, found.meta)
         // Only the named conversation is this session's.
         return
       }
