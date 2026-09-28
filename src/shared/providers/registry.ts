@@ -471,26 +471,30 @@ export function linkAccountIdentity(doc: ProviderRegistryDoc, accountId: string,
     // An archived record counts too: its profile may come back.
     return fail('legacy-owned', 'two accounts from the same provider list cannot share one identity')
   }
-  return done({ ...doc, accounts: doc.accounts.map((a) => (a.id === accountId ? { ...a, identityId, updatedAt: now } : a)) })
+  if (account.identityId === identityId) return done(doc)
+  // Its own name, kept to give back on unlink: the name of the identity it
+  // is on at its first link (a later link keeps the first).
+  const own = account.nameBeforeLink ?? findIdentity(doc, account.identityId)?.friendlyName
+  return done({ ...doc, accounts: doc.accounts.map((a) => (a.id === accountId ? compact({ ...a, identityId, nameBeforeLink: own, updatedAt: now }) : a)) })
 }
 
 /** Give an account a new private identity, copied from its current one. The
  *  old identity is retained: history may still name it.
  *
- *  The copy carries the identity's own name. An identity with no name (a
- *  Claude profile often has none) gives the copy the account's OWN label
- *  as its name, when it has one; never another account's label (that is
- *  someone else's address), so an account with no label of its own is left
- *  unnamed and its row shows its own fallback. */
+ *  The copy takes the account's own name from before it was linked, when
+ *  it had one (kept at the link); else the identity's name; else the
+ *  account's OWN label. Never another account's label (that is someone
+ *  else's address): an account with none of these is left unnamed and its
+ *  row shows its own fallback. */
 export function unlinkAccountIdentity(doc: ProviderRegistryDoc, accountId: string, newIdentityId: string, now: number): RegistryResult {
   const account = findAccount(doc, accountId)
   if (!account) return fail('not-found', `account ${accountId} does not exist`)
   if (isRealmOnly(account, findRealm(doc, account.authRealmId))) return fail('not-linkable', 'an unverified external sign-in keeps its own identity')
   const from = findIdentity(doc, account.identityId)
   if (!from) return fail('not-found', `identity ${account.identityId} does not exist`)
-  const created = createIdentity(doc, { id: newIdentityId, friendlyName: from.friendlyName ?? account.providerLabel, colourKey: from.colourKey, groupId: from.groupId }, now)
+  const created = createIdentity(doc, { id: newIdentityId, friendlyName: account.nameBeforeLink ?? from.friendlyName ?? account.providerLabel, colourKey: from.colourKey, groupId: from.groupId }, now)
   if (!created.ok) return created
-  return done({ ...created.doc, accounts: created.doc.accounts.map((a) => (a.id === accountId ? { ...a, identityId: newIdentityId, updatedAt: now } : a)) })
+  return done({ ...created.doc, accounts: created.doc.accounts.map((a) => (a.id === accountId ? compact({ ...a, identityId: newIdentityId, nameBeforeLink: undefined, updatedAt: now }) : a)) })
 }
 
 // ---------------------------------------------------------------------------
@@ -1372,7 +1376,8 @@ function parseAccount(o: unknown): Parsed<ProviderAccount> {
   const lastAuth = optTime(o.lastAuthenticatedAt, 'lastAuthenticatedAt')
   const lastVal = optTime(o.lastValidatedAt, 'lastValidatedAt')
   const archivedAt = optTime(o.archivedAt, 'archivedAt')
-  for (const r of [authority, subject, label, plan, lastAuth, lastVal, archivedAt]) if (!r.ok) return X(`${where}: ${r.problem}`)
+  const nameBeforeLink = optLabel(o.nameBeforeLink, FRIENDLY_NAME_MAX)
+  for (const r of [authority, subject, label, plan, lastAuth, lastVal, archivedAt, nameBeforeLink]) if (!r.ok) return X(`${where}: ${r.problem}`)
   if (!oneOf(AUTH_METHODS, o.authMethod)) return X(`${where}: unknown sign-in method`)
   if (!oneOf(LIFECYCLES, o.lifecycle)) return X(`${where}: unknown lifecycle`)
   if (typeof o.isProviderDefault !== 'boolean') return X(`${where}: isProviderDefault is not a boolean`)
@@ -1401,6 +1406,7 @@ function parseAccount(o: unknown): Parsed<ProviderAccount> {
     lastAuthenticatedAt: lastAuth.ok ? lastAuth.value : undefined,
     lastValidatedAt: lastVal.ok ? lastVal.value : undefined,
     archivedAt: archivedAt.ok ? archivedAt.value : undefined,
+    nameBeforeLink: nameBeforeLink.ok ? nameBeforeLink.value : undefined,
     lastKnownAuthState: o.lastKnownAuthState,
     operationalState: o.operationalState,
     identityAssurance: o.identityAssurance,
