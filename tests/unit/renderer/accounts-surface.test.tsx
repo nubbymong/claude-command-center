@@ -1346,6 +1346,15 @@ describe('registry, conflicts, adoption and pending setups', () => {
     expect(pa.abandonSetup).not.toHaveBeenCalled()
   })
 
+  it('a Discard that did not finish is listed as such, with Discard only (P3.3 review round 2)', async () => {
+    const cut = { accountId: 'acc-cut', providerId: 'codex' as const, method: 'browser' as const, state: 'discarding' as const, external: false, createdAt: 1, signingIn: false }
+    render(snapshot({ pendingSetups: [cut] }))
+    expect(q('pending-setup-acc-cut')?.textContent).toContain('Discarding did not finish; Discard finishes it')
+    expect(q('pending-setup-resume-acc-cut')).toBeNull()
+    await click('pending-setup-discard-acc-cut')
+    expect(pa.abandonSetup).toHaveBeenCalledWith('acc-cut')
+  })
+
   it('a sign in again the app did not finish is named for its account, with Discard only, and not listed while its dialog runs it (P3.3)', async () => {
     const again = { accountId: 'acc-stg', providerId: 'codex' as const, method: 'browser' as const, state: 'credentials-written' as const, external: false, createdAt: 1, signingIn: false, replacesAccountId: 'acc-work' }
     render(snapshot({ pendingSetups: [again] }))
