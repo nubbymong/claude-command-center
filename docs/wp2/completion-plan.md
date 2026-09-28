@@ -284,11 +284,12 @@ released from it until section 7 holds.
 5. **Dependabot PRs:** every Dependabot PR open at the cut (today #620 to
    #624) rolled in (owner decision recorded 2026-09-26); #621, the Electron 44
    major, with its own ADR-009 pass and a VM packaging run.
-6. **Known defects settled.** The five C items in the checklist's P2
+6. **Known defects settled.** The six C items in the checklist's P2
    acceptance section (the narrow-window overlap of the partner label, the
    renderer-only one-at-a-time rule, Resume replacing the tab list while its
    prompt is open, a session file written while the resume prompt is
-   unanswered, the untracked local Claude spawn) and the Codex statusline's
+   unanswered, a launch needing a dialog while that prompt is open, the
+   untracked local Claude spawn) and the Codex statusline's
    midnight-UTC limitation (row 38) are fixed or each given an explicit owner
    disposition; the one pre-existing e2e failure, reproduced on beta, routed
    privately, is settled through that route (owner rule: no release with known
@@ -597,10 +598,11 @@ A conversation switched inside the Codex TUI (its own resume or new) is not
 followed until P3.10. A file with a second hard name is accepted (a staged
 Sign in again links each carried file, and copies it where linking is
 refused) and checked like any other. The pick file is writable by the same
-user; it can only name a conversation in the session's own account folder,
-and the resume folder and id are checked again by main. Its folder is
-looked at before each use, so a same-user swap between that look and the
-act is not excluded.
+user. Since b969e828 an `{ id }` pick is taken when the decision is read,
+not once its rollout grows; it can still only name a conversation in the
+session's own account folder, and the resume folder and id are checked again
+by main. Its folder is looked at before each use, so a same-user swap
+between that look and the act is not excluded.
 Row 35 deviates from Claude by the F7 menu: with no known conversation
 Claude's Restart opens the picker, Codex's plain Restart starts a new
 conversation ("Restart and pick a conversation" is the picker). Switch
@@ -622,12 +624,20 @@ only at its first new turn; it is now claimed at the pick with the checks a
 launch's chosen rollout gets, as a resume by id is at its launch (b969e828).
 For Claude the app claims no transcript (Claude Code sends its own status
 line), so its picker and exact resumes reach the status line the same way.
-Owed: the reviews and ADR-009 pass of V1 and V2 (V2 changes the claim); the
+V1 and V2 reviewed: spec PASS, quality PASS, ADR-009 lens A PASS.
+Final round (mocked): a picked conversation that cannot be found (removed
+after the picker listed it) is walked for with a growing wait, 1 s doubling
+to 30 s, and at most ten times until a new decision or a claim let go; the
+tail re-checks it is still reading the claimed file: each read compares the
+opened file with the one claimed (device and file id, recorded at the
+claim), and another file at that path is not read, the claim is let go as a
+new decision would let it go, and claiming goes on by the same rules.
+Owed: the final round review; the
 SSH live matrix at the final head (`pty-manager.ts` edited); a VM recheck of
 V1 and V2; the carried-over conversation after a staged Sign in again (P3.3)
 on the VM, an owner action, since it needs a second real sign-in; whether
 `codex resume <id>` in the recorded directory asks anything; the owner's
-review of VM screenshots of the picker with worktrees and names.
+approval of the P3.5 VM screenshots (the picker with worktrees and names).
 
 **P3.6 Account chip and Switch account** (after P3.5). The strip's Codex
 account pill with its Switch account menu (inactive accounts greyed, this
