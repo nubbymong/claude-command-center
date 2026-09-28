@@ -89,7 +89,6 @@ export interface ServiceComponentStatus {
   id: string
   label: string
   status: string
-  name: string
 }
 export interface ServiceStatusPayload {
   fetchedAt: string

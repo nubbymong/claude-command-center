@@ -10,30 +10,37 @@
  * Codex: OpenAI's status page, which serves the same components list. Tracks
  * the Codex CLI and the Codex API; OpenAI's other products are not read.
  *
- * A reply is read defensively: a 200 only, a bounded body, a status the app
- * knows (anything else is no status), and the app's own labels.
+ * A reply is read defensively: a 200 only (a redirect is never followed), a
+ * bounded body, a status the app knows (anything else is no status), and
+ * only the app's own ids and labels reach the renderer, never remote text.
+ * Time is bounded: each read has an overall deadline besides the socket's
+ * idle timeout, each provider's page is read and published on its own, and
+ * a provider switched off, or the poller stopped, aborts its read in flight.
  */
 import * as https from 'https'
-import type { BrowserWindow } from 'electron'
+import type { ClientRequest } from 'http'
+import { ipcMain, type BrowserWindow } from 'electron'
 import { IPC } from '../shared/ipc-channels'
 import type { ProviderId } from '../shared/providers'
+import { appWindowSender } from './ipc/trusted-sender'
 import { logInfo } from './debug-logger'
 
 const POLL_INTERVAL = 5 * 60 * 1000 // 5 minutes
+/** The socket's idle timeout. */
 const REQUEST_TIMEOUT = 8000
+/** The whole read, however the bytes arrive: a reply that drips slower than
+ *  the idle timeout is cut here. */
+const REQUEST_DEADLINE = 15_000
 /** A components list is a few KB; anything this large is not one. */
 const MAX_BODY_BYTES = 1024 * 1024
-const MAX_NAME_CHARS = 100
 
 export interface ServiceComponentStatus {
-  /** The status page's component ID */
+  /** The status page's component ID (the app's own constant) */
   id: string
-  /** Display name for the title bar (short) */
+  /** Display name for the title bar (the app's own label) */
   label: string
   /** "operational" | "degraded_performance" | "partial_outage" | "major_outage" | "under_maintenance" */
   status: string
-  /** Component name from the status page (bounded) */
-  name: string
 }
 
 export interface ServiceStatusPayload {
@@ -115,37 +122,63 @@ function worstStatus(statuses: (string | undefined)[]): string {
   return max
 }
 
-/** GET a JSON document: a 200 with a body under the cap, parsed; else null. */
-function fetchJson(url: string): Promise<unknown> {
-  return new Promise((resolve) => {
-    let done = false
-    const finish = (v: unknown) => { if (!done) { done = true; resolve(v) } }
-    const req = https.get(url, { timeout: REQUEST_TIMEOUT }, (res) => {
-      if (res.statusCode !== 200) { res.resume(); finish(null); return }
+interface Read {
+  /** The parsed JSON, or null for any failure, the deadline or an abort. */
+  result: Promise<unknown>
+  /** Give up now: the socket is destroyed and the result is null. */
+  abort: () => void
+}
+
+/** GET a JSON document: a 200 with a body under the cap, inside the
+ *  deadline, parsed; else null. Never follows a redirect. */
+function fetchJson(url: string): Read {
+  let req: ClientRequest | null = null
+  let done = false
+  let deadline: ReturnType<typeof setTimeout> | null = null
+  let settle: (v: unknown) => void = () => {}
+  const result = new Promise<unknown>((resolve) => { settle = resolve })
+  const finish = (v: unknown, destroy: boolean) => {
+    if (done) return
+    done = true
+    if (deadline) clearTimeout(deadline)
+    if (destroy) { try { req?.destroy() } catch { /* already gone */ } }
+    settle(v)
+  }
+  const fail = () => finish(null, true)
+  try {
+    req = https.get(url, { timeout: REQUEST_TIMEOUT }, (res) => {
+      if (res.statusCode !== 200) { res.resume(); fail(); return }
       const chunks: Buffer[] = []
       let size = 0
       res.on('data', (chunk: Buffer) => {
         if (done) return
         size += chunk.length
-        if (size > MAX_BODY_BYTES) { finish(null); res.destroy(); req.destroy(); return }
+        if (size > MAX_BODY_BYTES) { fail(); return }
         chunks.push(chunk)
       })
       res.on('end', () => {
         if (done) return
-        try { finish(JSON.parse(Buffer.concat(chunks).toString('utf8'))) } catch { finish(null) }
+        let json: unknown = null
+        try { json = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch { json = null }
+        finish(json, false)
       })
-      res.on('error', () => finish(null))
+      res.on('error', fail)
     })
-    req.on('error', () => finish(null))
-    req.on('timeout', () => { req.destroy(); finish(null) })
-  })
+    req.on('error', fail)
+    req.on('timeout', fail)
+    deadline = setTimeout(fail, REQUEST_DEADLINE)
+  } catch {
+    fail()
+  }
+  return { result, abort: fail }
 }
 
 type SourceReading = Partial<Record<ComponentKey, ServiceComponentStatus | null>>
 
 /** One source's components, or null when the reply is not a components list.
  *  A tracked component missing, or with a status the app does not know,
- *  reads as no status (null). */
+ *  reads as no status (null). Nothing from the reply is kept but the status,
+ *  and that only as one of the known values. */
 function parseComponents(source: StatusSource, json: unknown): SourceReading | null {
   const list = (json as { components?: unknown } | null)?.components
   if (!Array.isArray(list)) return null
@@ -153,9 +186,7 @@ function parseComponents(source: StatusSource, json: unknown): SourceReading | n
   for (const tracked of source.components) {
     const c = list.find((x): x is Record<string, unknown> => !!x && typeof x === 'object' && (x as { id?: unknown }).id === tracked.id)
     const status = typeof c?.status === 'string' && Object.hasOwn(SEVERITY, c.status) ? c.status : null
-    reading[tracked.key] = c && status
-      ? { id: tracked.id, label: tracked.label, status, name: typeof c.name === 'string' ? c.name.slice(0, MAX_NAME_CHARS) : tracked.label }
-      : null
+    reading[tracked.key] = status ? { id: tracked.id, label: tracked.label, status } : null
   }
   return reading
 }
@@ -165,23 +196,28 @@ export interface ServiceStatusDeps {
   providerOn: (providerId: ProviderId) => boolean
 }
 
+interface SourceState {
+  reading: SourceReading | null
+  at: string | null
+  read: Read | null
+  pending: Promise<void>
+}
+
 let timer: ReturnType<typeof setInterval> | null = null
 let started = false
 let deps: ServiceStatusDeps | null = null
 let getWin: (() => BrowserWindow | null) | null = null
-// Each source's last good reading and when it was taken; dropped while its
-// provider is off.
-const readings = new Map<ReadKey, { reading: SourceReading; at: string }>()
+// Each source's last good reading, when it was taken, and its read in
+// flight; the reading is dropped while its provider is off.
+const states = new Map<ReadKey, SourceState>()
 // The providers on at the last poll: a settings save polls again only when
 // this changed.
 let lastOn = ''
-let inFlight: Promise<void> | null = null
-let pollAgain = false
 // Last payload. Cached so a renderer that mounts AFTER the immediate poll has
 // already fired (e.g. behind the startup splash) can pull the current status
-// synchronously via getLastServiceStatus() instead of waiting up to a full
-// poll interval for the next push. Fixes the title-bar status pills not
-// appearing until ~5 min after launch.
+// synchronously instead of waiting up to a full poll interval for the next
+// push. Fixes the title-bar status pills not appearing until ~5 min after
+// launch.
 let lastPayload: ServiceStatusPayload | null = null
 
 /** The most recent status payload, or null if none built yet. */
@@ -197,10 +233,16 @@ function onSet(): string {
   return SOURCES.filter((s) => isOn(s.providerId)).map((s) => s.providerId).join(',')
 }
 
+function stateOf(source: StatusSource): SourceState {
+  let s = states.get(source.readKey)
+  if (!s) { s = { reading: null, at: null, read: null, pending: Promise.resolve() }; states.set(source.readKey, s) }
+  return s
+}
+
 function buildPayload(): ServiceStatusPayload {
   const component = (key: ComponentKey): ServiceComponentStatus | null => {
-    for (const r of readings.values()) {
-      const c = r.reading[key]
+    for (const s of states.values()) {
+      const c = s.reading?.[key]
       if (c) return c
     }
     return null
@@ -217,66 +259,96 @@ function buildPayload(): ServiceStatusPayload {
     api,
     codexCli,
     codexApi,
-    claudeReadAt: readings.get('claudeReadAt')?.at ?? null,
-    codexReadAt: readings.get('codexReadAt')?.at ?? null,
+    claudeReadAt: states.get('claudeReadAt')?.at ?? null,
+    codexReadAt: states.get('codexReadAt')?.at ?? null,
     worst: worstStatus([claudeCode, claudeAi, api, codexCli, codexApi].map((c) => c?.status)),
   }
 }
 
-async function pollOnce(): Promise<void> {
-  lastOn = onSet()
-  let changed = false
-  await Promise.all(SOURCES.map(async (source) => {
-    if (!isOn(source.providerId)) {
-      // Off: no call, and its last reading leaves the payload.
-      if (readings.delete(source.readKey)) changed = true
-      return
-    }
-    const reading = parseComponents(source, await fetchJson(source.url))
-    // A provider switched off while its read was out keeps nothing from it.
-    if (reading && isOn(source.providerId)) {
-      readings.set(source.readKey, { reading, at: new Date().toISOString() })
-      changed = true
-    }
-  }))
-  // A failed read changes nothing: the last payload stands.
-  if (!changed) return
+function publish(): void {
   lastPayload = buildPayload()
   const win = getWin?.()
   if (win && !win.isDestroyed()) win.webContents.send(IPC.SERVICE_STATUS, lastPayload)
 }
 
-/** Poll now, or once more after the poll already running. */
-function poll(): Promise<void> {
-  if (inFlight) { pollAgain = true; return inFlight }
-  inFlight = (async () => {
-    try {
-      do { pollAgain = false; await pollOnce() } while (pollAgain)
-    } finally {
-      inFlight = null
-    }
-  })()
-  return inFlight
+/** Stop a source's read in flight; its late reply is ignored. */
+function abortRead(s: SourceState): void {
+  const read = s.read
+  s.read = null
+  read?.abort()
+}
+
+/** One source, on its own: off aborts its read and drops its reading (no
+ *  call); on reads it, one read at a time, and publishes when it lands. */
+function pollSource(source: StatusSource): Promise<void> {
+  const s = stateOf(source)
+  if (!started || !isOn(source.providerId)) {
+    abortRead(s)
+    if (s.reading) { s.reading = null; s.at = null; publish() }
+    return Promise.resolve()
+  }
+  if (s.read) return s.pending
+  const read = fetchJson(source.url)
+  s.read = read
+  s.pending = read.result.then((json) => {
+    // Aborted (switched off, stopped) or superseded: nothing from it is kept.
+    if (s.read !== read) return
+    s.read = null
+    let reading: SourceReading | null = null
+    try { reading = parseComponents(source, json) } catch { reading = null }
+    // A failed read changes nothing: the last reading stands.
+    if (!reading || !started || !isOn(source.providerId)) return
+    s.reading = reading
+    s.at = new Date().toISOString()
+    publish()
+  })
+  return s.pending
+}
+
+/** Every source, each settling on its own (the promise is only for callers
+ *  that want to wait for all of them). */
+function pollAll(): Promise<void> {
+  lastOn = onSet()
+  return Promise.all(SOURCES.map(pollSource)).then(() => undefined)
+}
+
+/** Only the sources whose provider was switched on or off since the last
+ *  poll: on reads it at once, off aborts its read and drops its reading. */
+function pollSwitched(): Promise<void> {
+  const was = new Set(lastOn.split(',').filter(Boolean))
+  lastOn = onSet()
+  const now = new Set(lastOn.split(',').filter(Boolean))
+  const switched = SOURCES.filter((s) => was.has(s.providerId) !== now.has(s.providerId))
+  return Promise.all(switched.map(pollSource)).then(() => undefined)
 }
 
 export function startServiceStatusPoller(
   getWindow: () => BrowserWindow | null,
   serviceDeps: ServiceStatusDeps,
 ): void {
+  if (started) return
   getWin = getWindow
   deps = serviceDeps
   started = true
   logInfo('[service-status] Starting poller (5 min interval, each provider\'s status page while it is on)')
-  void poll() // fetch immediately
-  timer = setInterval(() => { void poll() }, POLL_INTERVAL)
+  void pollAll() // fetch immediately
+  timer = setInterval(() => { void pollAll() }, POLL_INTERVAL)
 }
 
 /** The saved settings changed: a provider switched on is read at once, and
- *  one switched off leaves the payload. Nothing is read when no provider's
- *  on/off changed. */
+ *  one switched off leaves the payload, its read in flight aborted. Nothing
+ *  is read when no provider's on/off changed, and a provider whose on/off
+ *  did not change is not read again. */
 export function refreshServiceStatus(): Promise<void> {
-  if (!started || onSet() === lastOn) return Promise.resolve()
-  return poll()
+  if (!started) return Promise.resolve()
+  return pollSwitched()
+}
+
+/** The renderer's pull of the cached payload: the app's own window, its top
+ *  frame only (trusted-sender.ts); anything else gets nothing. */
+export function registerServiceStatusHandlers(getWindow: () => BrowserWindow | null): void {
+  const trusted = appWindowSender(getWindow)
+  ipcMain.handle(IPC.SERVICE_STATUS_GET, (e) => (trusted(e) ? lastPayload : null))
 }
 
 export function stopServiceStatusPoller(): void {
@@ -285,4 +357,5 @@ export function stopServiceStatusPoller(): void {
     timer = null
   }
   started = false
+  for (const s of states.values()) abortRead(s)
 }

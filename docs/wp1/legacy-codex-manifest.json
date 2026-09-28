@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-28T06:26:37.783Z",
-  "head": "aa0411b097e7b3df22554bbe20a9c400e68123f5",
-  "tree": "447401b5320da2d4a694dd269f3da614661350c8",
+  "generatedAt": "2026-09-28T07:15:39.807Z",
+  "head": "3a78d13c6e4153c55bc181f8aa3f489f8aa2fd48",
+  "tree": "b44b18735e98885f7a5eea06b3111f8ece1f29d8",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2438,
+  "trackedFileCount": 2439,
   "excludedFileCount": 383,
-  "scannedFileCount": 2055,
+  "scannedFileCount": 2056,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 491,
-  "pathDigest": "4d3a4228ddd3ca680f166f071ad6876122ee984baae5556d6f07915cc118b190",
+  "matchedPathCount": 492,
+  "pathDigest": "9ebf71461aa027044c2d56a2f0f14ef78b46c4e7cb6524058c3f29dd8db3683c",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 131
+      "lineCount": 145
     },
     {
       "path": "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
@@ -1549,7 +1549,7 @@
       "predicates": [
         "P11"
       ],
-      "lineCount": 2
+      "lineCount": 4
     },
     {
       "path": "src/renderer/onboarding/steps.ts",
@@ -2753,6 +2753,15 @@
       "lineCount": 76
     },
     {
+      "path": "tests/unit/main/provider-on-now.test.ts",
+      "predicates": [
+        "P05",
+        "P10",
+        "P13"
+      ],
+      "lineCount": 22
+    },
+    {
       "path": "tests/unit/main/provider-startup-no-adoption.test.ts",
       "predicates": [
         "P04",
@@ -2830,7 +2839,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 41
+      "lineCount": 72
     },
     {
       "path": "tests/unit/main/session-resume-enrich.test.ts",
@@ -3914,7 +3923,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 5
+      "lineCount": 6
     },
     {
       "path": "tests/unit/renderer/window-close-dialogs.test.tsx",

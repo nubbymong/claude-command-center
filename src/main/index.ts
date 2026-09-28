@@ -92,7 +92,7 @@ import { isSentinelEnabled } from '../shared/sentinel-enabled'
 import { resolveHooksPort } from './hooks/hooks-types'
 import { fetchModelPricing } from './tokenomics/tk-pricing'
 import { killAllAgents } from './cloud-agent-manager'
-import { startServiceStatusPoller, stopServiceStatusPoller, getLastServiceStatus, refreshServiceStatus } from './service-status'
+import { startServiceStatusPoller, stopServiceStatusPoller, registerServiceStatusHandlers, refreshServiceStatus } from './service-status'
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
 import { startUpdateServer, stopUpdateServer } from './update-server'
 import { saveSessionState, loadSessionState, clearSessionState, hasSavedSessionState, SessionState } from './session-state'
@@ -1001,8 +1001,9 @@ if (!gotTheLock) {
     // Let a freshly-mounted renderer pull the cached status immediately, rather
     // than waiting up to a full poll interval for the next push (the title-bar
     // status pills were blank until the next poll because the immediate poll
-    // fired before the renderer subscribed, behind the startup splash).
-    ipcMain.handle(IPC.SERVICE_STATUS_GET, () => getLastServiceStatus())
+    // fired before the renderer subscribed, behind the startup splash). The
+    // app's own window, top frame only (P3.4, trusted-sender.ts).
+    registerServiceStatusHandlers(getWindow)
   }).catch((err) => {
     // A throw anywhere in the boot sequence above abandons every subsequent
     // subsystem registration (handlers, logging, hooks gateway, statusline,

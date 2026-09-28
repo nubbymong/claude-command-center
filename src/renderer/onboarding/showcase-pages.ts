@@ -57,7 +57,10 @@ export interface ShowcasePage {
   mark?: string
   /** P3.4 (row 14): the page is about something that needs Claude Code in
    *  this release (Claude sessions only), so it is not shown while Claude
-   *  Code is off. Lift it when the feature reaches Codex. */
+   *  Code is off. The phase that brings the feature to Codex lifts it (named
+   *  in that phase's entry of docs/wp2/completion-plan.md: accounts P3.6,
+   *  watchdog P3.10, canvas P4.1, askConductor P4.3); remoteResume keeps it,
+   *  since Codex over SSH is outside this release. */
   needsClaude?: boolean
 }
 
@@ -115,7 +118,7 @@ export const SHOWCASES_21: ShowcasePage[] = [
   },
   {
     id: 'remoteResume',
-    needsClaude: true,
+    needsClaude: true, // kept: resuming a remote Claude; Codex over SSH is excluded in this release
     heading: 'Pick a remote session back up',
     tagline: 'Leave a persistent SSH session running on its host and it waits for you in the sidebar. One click puts you back in the same Claude, in the same conversation.',
     points: [
