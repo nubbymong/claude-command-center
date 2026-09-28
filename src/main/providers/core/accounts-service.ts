@@ -45,7 +45,7 @@ import type {
   AccountsFailureCode, AccountsResult, AccountView, ProviderInstallationView, CapabilityView, PendingSetupView, ExternalDefaultView,
   SetupIdentityChoice, IdentityPatch, RegistryModeView, InstallRecipeView, CredentialClass,
   ResolveConflictRequest, SetReviewerDefaultRequest, ReviewerChoice, ReviewRefusalView, ReviewReadinessView, ProviderLaunchRefusal,
-  ProviderAccountUsageView, ProviderUsageStreamResult, AuthRealm,
+  ProviderAccountUsageView, ProviderUsageStreamResult, AuthRealm, SignInAgainResult, SignInPhase,
 } from '../../../shared/providers'
 import type { ProviderPackage, DiscoveryResult, AuthCredentialKind, AuthOperationResult, AuthLoginInput, InstallRecipe, ExternalDefaultRealmSpec, RealmRef, UsageReading, UsageReadOutcome } from './package'
 import type { AccountRegistryStore, StoreResult } from './account-registry-store'
@@ -280,6 +280,9 @@ function signOutLeft(out: AuthOperationResult): KnownAuthState | null {
   if (out.ran === true) return 'unknown'
   return out.code !== undefined && SIGN_OUT_NOT_RUN.has(out.code) ? null : 'unknown'
 }
+
+/** A sign in again cancelled before its switch. */
+const REAUTH_CANCELLED = 'The sign-in was cancelled. This account keeps its earlier sign-in.'
 
 /** Why this computer's own sign-in is not signed in again without a yes. */
 const EXTERNAL_REAUTH_ACK = 'Signing in again here signs this computer\'s sign-in out first, for every app that uses it; if the new sign-in does not finish, it stays signed out. Confirm to continue.'
@@ -1060,7 +1063,8 @@ export class AccountsService {
     input: { accountId: string; method: SignInMethod; secretHandle?: string; sameAccount?: boolean; acknowledgeExternal?: boolean },
     senderId: number,
     onOutput?: (text: string) => void,
-  ): Promise<AccountsResult<{ state: KnownAuthState; separateAccountId?: string }>> {
+    onPhase?: (phase: SignInPhase) => void,
+  ): Promise<AccountsResult<SignInAgainResult>> {
     const handle = input.secretHandle
     // Single-use, as for signIn: whatever this call decides, the handle does
     // not stay parked, unless a run already in flight is using it.
@@ -1103,7 +1107,7 @@ export class AccountsService {
     let result: AuthOperationResult = { ok: false, code: 'not-started' }
     let recorded: StoreResult | null = null
     let observedClass: CredentialClass | undefined
-    let staged: AccountsResult<{ state: KnownAuthState; separateAccountId?: string }> | null = null
+    let staged: AccountsResult<SignInAgainResult> | null = null
     let inPlaceExternal: AccountsResult<{ state: KnownAuthState }> | null = null
     try {
       // A staged sign-in of this account an earlier run left (the app
@@ -1137,7 +1141,7 @@ export class AccountsService {
         } else if (findAccount(ctx.store.current() ?? ctx.doc, a.id)?.lastKnownAuthState === 'signed-in') {
           // Signed in now: staged, so a sign-in that fails or is someone
           // else never costs the account the one it has.
-          staged = await this.stagedSignInAgain(ctx.store, p, a.id, input.method, handle, run, onOutput)
+          staged = await this.stagedSignInAgain(ctx.store, p, a.id, input.method, handle, run, onOutput, onPhase)
         } else {
           const ran = await this.loginUnderCliRule(p, { authRealmId: a.authRealmId }, input.method, {
             ...(handle !== undefined ? { secretHandle: handle } : {}),
@@ -1210,8 +1214,8 @@ export class AccountsService {
    *  under the unfinished setups, where Discard finishes it. */
   private async stagedSignInAgain(
     store: AccountRegistryStore, p: ProviderPackage, accountId: string, method: SignInMethod,
-    secretHandle: string | undefined, run: SignInRun, onOutput?: (text: string) => void,
-  ): Promise<AccountsResult<{ state: KnownAuthState; separateAccountId?: string }>> {
+    secretHandle: string | undefined, run: SignInRun, onOutput?: (text: string) => void, onPhase?: (phase: SignInPhase) => void,
+  ): Promise<AccountsResult<SignInAgainResult>> {
     if (!p.auth || !p.realmFolders) return failure('unsupported')
     const stagedId = makeOpaqueId('account', this.deps.randomHex())
     const realmId = makeOpaqueId('realm', this.deps.randomHex())
@@ -1312,21 +1316,35 @@ export class AccountsService {
       // left behind (logged), never carried over.
       const account = store.current() ? findAccount(store.current()!, accountId) : undefined
       if (!account) { await drop(); return failure('not-found') }
+      // Cancelled: nothing moves (final review round, F1). Asked again after
+      // the copy and inside the switch's lock.
+      const cancelled = (): AccountsFailure | null => (run.controller.signal.aborted ? failure('cancelled', REAUTH_CANCELLED) : null)
+      let notCarriedOver = 0
       if (p.realmFolders.copyHistory) {
+        // The dialog says what the run is doing now: a long history takes a while.
+        try { onPhase?.('carrying-history') } catch { /* display only */ }
         // The account's earlier realms: a file an earlier sign in again
         // carried over has its name there too, and only there.
         const earlier = earlierManagedRealms(store.current()!, accountId).map((r) => ({ authRealmId: r.id }))
-        const copied = await p.realmFolders.copyHistory({ authRealmId: account.authRealmId }, { authRealmId: realmId }, { earlier })
+        const copied = await p.realmFolders.copyHistory({ authRealmId: account.authRealmId }, { authRealmId: realmId }, { earlier, signal: run.controller.signal })
           .catch((): { ok: false; code: 'io-failed'; message?: string } => ({ ok: false, code: 'io-failed' }))
         if (!copied.ok) {
           await drop()
-          const message = copied.code === 'too-large' && typeof copied.message === 'string' ? copied.message : 'The earlier conversations could not be carried over to the new sign-in, so nothing was changed.'
+          if (copied.code === 'cancelled') return failure('cancelled', REAUTH_CANCELLED)
+          // Too much to carry over: the bound, and the way that keeps them
+          // (signed out, a sign in again runs in the account's own folder).
+          const message = copied.code === 'too-large' && typeof copied.message === 'string'
+            ? `${copied.message} To keep them, sign out of this account first, then sign in again: it then signs in within the account's own folder, where they stay.`
+            : 'The earlier conversations could not be carried over to the new sign-in, so nothing was changed.'
           return failure((copied.code ?? 'io-failed') as AccountsFailureCode, message)
         }
         if ('skipped' in copied && typeof copied.skipped === 'number' && copied.skipped > 0) {
+          notCarriedOver = copied.skipped
           this.log(`a sign in again left ${copied.skipped} earlier conversation file(s) behind: each has another name the app did not give it`)
         }
       }
+      const stop = cancelled()
+      if (stop) { await drop(); return stop }
       // The switch, under the registry lock, while this run's lease still
       // holds the account: nothing uses it, and nothing can start. The
       // provider's rule once more, inside that lock (review round 3, C2): a
@@ -1334,7 +1352,7 @@ export class AccountsService {
       // nothing; the replacement is removed once the provider is back.
       const atSwitch: { refused: AccountsFailure | null } = { refused: null }
       let switched = await store.mutate((d, t) => {
-        atSwitch.refused = this.cliRefusal(p.id)
+        atSwitch.refused = this.cliRefusal(p.id) ?? cancelled()
         return atSwitch.refused ? { ok: false, code: 'lifecycle', message: atSwitch.refused.message } : rebindAccountRealm(d, stagedId, check, t)
       })
       if (atSwitch.refused) { await drop(); return atSwitch.refused }
@@ -1365,7 +1383,8 @@ export class AccountsService {
       await this.settleOldSignIns(store, p, accountId, { revalidate: true })
       const now = store.current() ? findAccount(store.current()!, accountId) : undefined
       if (now?.operationalState === 'blocked') return failure('sign-in-changed', undefined, { state: 'signed-in' })
-      return { ok: true, state: now?.lastKnownAuthState ?? 'signed-in' }
+      // Files left behind are said, never only logged (final review round, F2).
+      return { ok: true, state: now?.lastKnownAuthState ?? 'signed-in', ...(notCarriedOver > 0 ? { notCarriedOver } : {}) }
     } catch {
       if (!keep) await drop()
       return failure('internal')

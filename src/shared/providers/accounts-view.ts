@@ -236,7 +236,7 @@ export type AuthOperationCode =
 /** The realm folder codes the surface can see (mirrors the core contract). */
 export type RealmFolderCode =
   | 'not-managed' | 'resources-unavailable' | 'overlaps-external' | 'unsafe-path' | 'permissions' | 'credentials-present'
-  | 'not-empty' | 'unsafe-contents' | 'changed' | 'too-large' | 'io-failed'
+  | 'not-empty' | 'unsafe-contents' | 'changed' | 'too-large' | 'cancelled' | 'io-failed'
 
 export type AccountsFailure = {
   ok: false
@@ -326,7 +326,18 @@ export const PROVIDER_USAGE_RESULT_RE = /^providerAccounts:usageResult:[0-9a-f]{
 export interface SignInOutputEvent {
   accountId: string
   text: string
+  /** Set when the run moved on to a step with no output of its own (text
+   *  is then empty): a sign in again carrying the account's earlier
+   *  conversations over to the new sign-in. */
+  phase?: SignInPhase
 }
+
+/** A step of a sign-in the dialog says in its status line. */
+export type SignInPhase = 'carrying-history'
+
+/** A sign in again's answer. `notCarriedOver`: earlier conversation files
+ *  left in the old folder (each has another name the app did not give it). */
+export type SignInAgainResult = { state: KnownAuthState; separateAccountId?: string; notCarriedOver?: number }
 
 // --- Requests (validated again in the main process; these are only types) ---
 

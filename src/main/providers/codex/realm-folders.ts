@@ -347,6 +347,7 @@ const MSG: Readonly<Record<RealmFolderFailureCode, string>> = {
   'not-empty': 'The Codex account folder is not empty, so it was kept.',
   'unsafe-contents': 'The Codex account folder holds a link, another disk or more than expected, so the app removed nothing.',
   'changed': 'The Codex account folder changed while it was being used; the app stopped.',
+  'cancelled': 'Stopped on request; nothing was changed.',
   'too-large': 'This Codex account has more earlier conversation files than the app carries over to a new sign-in, so nothing was changed.',
   'io-failed': 'The Codex account folder could not be created or removed.',
 }
@@ -534,8 +535,8 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
   interface Planned { p: string; e: CodexFsEntry; parent: CodexFsEntry }
 
   /** How far a walk may go: at most `max` entries (else `over`), letting
-   *  the event loop run every batch. */
-  interface WalkBound { max: number; over: Failure; pace: () => Promise<boolean> }
+   *  the event loop run every batch, and stopping there once `stop` says. */
+  interface WalkBound { max: number; over: Failure; pace: () => Promise<boolean>; stop?: () => boolean }
 
   /** Every entry below `dir`, children before their directory; a failure
    *  when the tree is not plainly files and folders on one volume, each at
@@ -561,7 +562,7 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
         if (below) return below
       }
       out.push({ p, e, parent: dirEntry })
-      await bound.pace()
+      if ((await bound.pace()) && bound.stop?.()) return fail('cancelled')
     }
     return null
   }
@@ -666,6 +667,8 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
           if (!samePath(settled.home, now.home)) return fail('changed')
           const pace = pacer()
           for (const entry of planned) {
+            // Checked immediately before it goes, as close to the delete as
+            // calls by path allow.
             if (!(await asPlanned(entry))) return fail('changed')
             let gone: boolean
             if (entry.e.kind === 'dir') {
@@ -746,10 +749,13 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
    *  anything already there, and only when every name it already has is one
    *  the app gave it (`earlier`: the account's earlier realms, compared
    *  only); any other is skipped and counted. Folders are made owner-only in
-   *  the destination. */
-  function copyHistory(from: RealmRef, to: RealmRef, opts?: { earlier?: readonly RealmRef[] }): Promise<RealmFolderResult & { copied?: number; linked?: number; skipped?: number }> {
+   *  the destination. `signal`: once aborted, the copy stops at the next
+   *  batch (cancelled). */
+  function copyHistory(from: RealmRef, to: RealmRef, opts?: { earlier?: readonly RealmRef[]; signal?: AbortSignal }): Promise<RealmFolderResult & { copied?: number; linked?: number; skipped?: number }> {
     return guard(async () => {
       if (!fs.promises) return fail('io-failed')
+      const stopped = () => opts?.signal?.aborted === true
+      if (stopped()) return fail('cancelled')
       const src = await locate(from, ['active'])
       if (isFailure(src)) return src
       const dst = await locate(to, ['pending'])
@@ -778,7 +784,7 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
         try { sessionsEntry = await afs.lstat(sessions) } catch (e) { if (errCode(e) !== 'ENOENT') return fail('io-failed') }
         if (sessionsEntry) {
           if (sessionsEntry.kind !== 'dir' || otherVolume(sessionsEntry, s.home) || !(await canonicalNow(sessions))) return fail('unsafe-contents')
-          const refused = await walk(sessions, sessionsEntry, 2, planned, { max: limits.historyEntries, over: tooLarge(), pace: pacer() })
+          const refused = await walk(sessions, sessionsEntry, 2, planned, { max: limits.historyEntries, over: tooLarge(), pace: pacer(), stop: stopped })
           if (refused) return refused
           planned.push({ p: sessions, e: sessionsEntry, parent: s.home })
         }
@@ -793,6 +799,7 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
         // Parents before children: the walk lists every entry after
         // everything below it, so the reverse lists it before.
         planned.reverse()
+        if (stopped()) return fail('cancelled')
         const pace = pacer()
         let linked = 0
         let byteCopies = 0
@@ -823,20 +830,35 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
               how = 'copy'
               try { await afs.copyFile(entry.p, target) } catch (err2) { return fail(errCode(err2) === 'EEXIST' ? 'not-empty' : 'io-failed') }
             }
-            // What was made is the file that was checked: a link has its file
-            // id, and a copy's source did not change meanwhile. Otherwise it
-            // goes again, and the copy stops.
             let made: CodexFsEntry | null
             try { made = await afs.lstat(target) } catch { made = null }
-            const same = !!made && made.kind === 'file' && (how === 'link' ? !hasIdentity(cur) || sameIdentity(made, cur) : !!(await unchangedNow(entry.p, cur)))
-            if (!same) {
-              try { await afs.unlink(target) } catch { /* the replacement is removed with its setup */ }
-              return fail('changed')
+            /** The new name goes again: only while it is still the file made here. */
+            const takeBack = async () => {
+              if (!made) return
+              try {
+                const now = await afs.lstat(target)
+                if (!hasIdentity(made) || sameIdentity(now, made)) await afs.unlink(target)
+              } catch { /* the replacement is removed with its setup */ }
             }
-            if (how === 'link') linked++
+            // It landed in the replacement: no folder on the way was swapped
+            // for a link or junction since the checks. Otherwise it goes, and
+            // the copy stops.
+            if (!(await canonicalNow(pathApi.dirname(target)))) { await takeBack(); return fail('unsafe-path') }
+            // It is the file that was checked: a link has its file id, and a
+            // copy's source did not change meanwhile. Otherwise it goes, and
+            // the copy stops.
+            const same = !!made && made.kind === 'file' && (how === 'link' ? !hasIdentity(cur) || sameIdentity(made, cur) : !!(await unchangedNow(entry.p, cur)))
+            if (!same) { await takeBack(); return fail('changed') }
+            // A link adds exactly one name to those counted: any more, and a
+            // name appeared meanwhile that the count did not see. It goes,
+            // and the file is left behind as one with another name.
+            if (how === 'link' && made!.nlink !== (cur.nlink ?? 0) + 1) {
+              await takeBack()
+              skipped++
+            } else if (how === 'link') linked++
             else byteCopies++
           }
-          await pace()
+          if ((await pace()) && stopped()) return fail('cancelled')
         }
         return { ok: true, copied: linked + byteCopies, linked, skipped }
       } finally {

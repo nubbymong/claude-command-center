@@ -17,7 +17,7 @@ import {
 } from '../../src/shared/providers'
 import type { ProviderRegistryDoc } from '../../src/shared/providers'
 import type { ProviderPackage } from '../../src/main/providers/core'
-import { harness, addCodexAccount, managedHome, EXT_HOME, KEY, MemoryPort } from './accounts-harness'
+import { harness, addCodexAccount, managedHome, EXT_HOME, KEY, MemoryPort, USER } from './accounts-harness'
 import { codexCapabilities, codexWiredCapabilities, CODEX_REMOVE_MAX_ENTRIES } from '../../src/main/providers/codex'
 import { claudeCapabilities } from '../../src/main/providers/claude'
 
@@ -845,7 +845,8 @@ describe('signing in again while signed in, through the service (WP1.52)', () =>
     const planted = `${oldHome}\\sessions\\2026\\09\\01\\rollout-planted.jsonl`
     h.folders.ops.link(auth, planted)
     expect(h.folders.fs.lstat(planted).nlink).toBe(2)
-    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    // Said in the answer, for the dialog to tell the user (final review round, F2).
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in', notCarriedOver: 1 })
     const newHome = homeOf(realmIdOf(h, a))
     expect(h.folders.files.has(kept.replace(oldHome, newHome))).toBe(true)
     expect(h.folders.files.has(planted.replace(oldHome, newHome))).toBe(false)
@@ -876,7 +877,7 @@ describe('signing in again while signed in, through the service (WP1.52)', () =>
     expect(await k.service.signInAgain({ sameAccount: true, accountId: b, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
     const bSecond = homeOf(realmIdOf(k, b))
     k.folders.ops.link(one, `${bFirst}\\sessions\\2026\\09\\01\\rollout-renamed.jsonl`)
-    expect(await k.service.signInAgain({ sameAccount: true, accountId: b, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    expect(await k.service.signInAgain({ sameAccount: true, accountId: b, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in', notCarriedOver: 1 })
     const bThird = homeOf(realmIdOf(k, b))
     expect(k.folders.files.has(one.replace(bFirst, bThird))).toBe(false)
     expect(k.folders.files.has(one.replace(bFirst, bSecond))).toBe(true)
@@ -889,7 +890,7 @@ describe('signing in again while signed in, through the service (WP1.52)', () =>
     expect(await m.service.signInAgain({ sameAccount: true, accountId: c, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
     const realpath = m.folders.fs.realpath
     m.folders.fs.realpath = (p) => (p.toLowerCase() === two ? 'C:\\elsewhere\\rollout-0.jsonl' : realpath(p))
-    expect(await m.service.signInAgain({ sameAccount: true, accountId: c, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    expect(await m.service.signInAgain({ sameAccount: true, accountId: c, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in', notCarriedOver: 1 })
     expect(m.folders.files.has(two.replace(cFirst, homeOf(realmIdOf(m, c))))).toBe(false)
   })
 
@@ -929,6 +930,15 @@ describe('signing in again while signed in, through the service (WP1.52)', () =>
     expect(h.doc().journals).toEqual([])
     expect(h.folders.log.filter((l) => l.startsWith('link ') || l.startsWith('copyFile '))).toEqual([])
     expect([...h.folders.dirs].filter((x) => x.startsWith('c:\\res\\codex-realms\\') && !x.startsWith(homeOf(oldRealm)))).toEqual([])
+    // The refusal says what keeps them (final review round, F4), and it is
+    // so: signed out, a sign in again runs in the account's own folder.
+    expect(r).toMatchObject({ message: expect.stringContaining('To keep them, sign out of this account first, then sign in again') })
+    expect(await h.service.logout({ accountId: a })).toEqual({ ok: true, state: 'signed-out' })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    expect(realmIdOf(h, a)).toBe(oldRealm)
+    expect(h.signedIn.get(homeOf(oldRealm))).toBe('chatgpt')
+    expect(h.folders.files.has(`${homeOf(oldRealm)}\\history.jsonl`)).toBe(true)
+    expect(h.folders.files.has(`${homeOf(oldRealm)}\\sessions\\2026\\09\\01\\rollout-0.jsonl`)).toBe(true)
   })
 
   it('a history larger than the removal\'s own bound is carried over, and a replacement holding it is removed whole when the switch is not saved (C1)', async () => {
@@ -972,6 +982,107 @@ describe('signing in again while signed in, through the service (WP1.52)', () =>
     expect(h.folders.exists(managedHome(staged.realmId))).toBe(false)
     // The earlier conversations stay where they were.
     expect(h.folders.files.has(`${homeOf(oldRealm)}\\history.jsonl`)).toBe(true)
+  })
+
+  it('Cancel while the history is carried over, or just after, switches nothing: the replacement goes and the account keeps its sign-in (final review round, F1)', async () => {
+    // During the copy: it stops at the next batch.
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    const oldRealm = realmIdOf(h, a)
+    plantHistory(h, homeOf(oldRealm), 300)
+    const { link } = h.folders.ops
+    let links = 0
+    h.folders.ops.link = (s, d) => { if (++links === 1) expect(h.service.cancelSignIn({ accountId: a }, 1)).toEqual({ ok: true }); link(s, d) }
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'cancelled' })
+    expect(links).toBeLessThan(301)
+    expect(realmIdOf(h, a)).toBe(oldRealm)
+    expect(findRealm(h.doc(), oldRealm)!.lifecycle).toBe('active')
+    expect(h.doc().journals).toEqual([])
+    expect([...h.folders.dirs].filter((x) => x.startsWith('c:\\res\\codex-realms\\') && !x.startsWith(homeOf(oldRealm)))).toEqual([])
+    // Just after it: the switch is not made.
+    const k = await harness()
+    const b = await addCodexAccount(k, 'B')
+    const bOld = realmIdOf(k, b)
+    plantHistory(k, homeOf(bOld), 2)
+    const copy = k.codex.realmFolders!.copyHistory!
+    k.codex.realmFolders!.copyHistory = async (from, to, opts) => { const r = await copy(from, to, opts); k.service.cancelSignIn({ accountId: b }, 1); return r }
+    expect(await k.service.signInAgain({ sameAccount: true, accountId: b, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'cancelled' })
+    expect(realmIdOf(k, b)).toBe(bOld)
+    expect(k.doc().journals).toEqual([])
+  })
+
+  it('says when it moves on to carrying the history over, before the switch, for the dialog\'s status line (final review round, F3)', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    const oldRealm = realmIdOf(h, a)
+    plantHistory(h, homeOf(oldRealm), 2)
+    const phases: Array<{ phase: string; realm: string; links: number }> = []
+    const said = (phase: string) => { phases.push({ phase, realm: realmIdOf(h, a), links: h.folders.log.filter((l) => l.startsWith('link ')).length }) }
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1, undefined, said)).toEqual({ ok: true, state: 'signed-in' })
+    expect(phases).toEqual([{ phase: 'carrying-history', realm: oldRealm, links: 0 }])
+    // A display that throws never breaks the run.
+    const k = await harness()
+    const b = await addCodexAccount(k, 'B')
+    expect(await k.service.signInAgain({ sameAccount: true, accountId: b, method: 'browser' }, 1, undefined, () => { throw new Error('gone') })).toEqual({ ok: true, state: 'signed-in' })
+  })
+
+  it('a name added while the names were counted, at the earlier place, is caught by the count after the link: the new name goes and the file is left behind (final review round, F5)', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    const first = homeOf(realmIdOf(h, a))
+    plantHistory(h, first, 1)
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    const second = homeOf(realmIdOf(h, a))
+    // In the folder in use, a file that is also a name of a file outside.
+    const outside = `${USER.toLowerCase()}\\victim.txt`
+    h.folders.files.add(outside)
+    const race = `${second}\\sessions\\2026\\09\\01\\rollout-race.jsonl`
+    h.folders.ops.link(outside, race)
+    // The earlier realm's place is given the same file just as it is looked at.
+    const twin = race.replace(second, first)
+    const lstat = h.folders.fs.lstat
+    let armed = true
+    h.folders.fs.lstat = (p) => {
+      if (armed && p.toLowerCase() === twin) { armed = false; h.folders.ops.link(outside, twin) }
+      return lstat(p)
+    }
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in', notCarriedOver: 1 })
+    expect(armed).toBe(false)
+    const third = homeOf(realmIdOf(h, a))
+    expect(h.folders.files.has(race.replace(second, third))).toBe(false)
+    // Made, counted, and taken back: the file has the names it had.
+    expect(h.folders.log).toContain(`unlink ${managedHome(realmIdOf(h, a))}\\sessions\\2026\\09\\01\\rollout-race.jsonl`)
+    expect(h.folders.fs.lstat(outside).nlink).toBe(3)
+  })
+
+  it('a folder in the replacement swapped for a link or junction while a file is linked into it: the new name goes, and nothing changes (final review round, F5)', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    const oldRealm = realmIdOf(h, a)
+    const [one] = plantHistory(h, homeOf(oldRealm), 1)
+    const realpath = h.folders.fs.realpath
+    const { link } = h.folders.ops
+    let swapped = ''
+    h.folders.ops.link = (s, d) => {
+      link(s, d)
+      // The folder it went into now resolves somewhere else.
+      if (!swapped && s.toLowerCase() === one) swapped = d.toLowerCase().replace(/\\[^\\]+$/, '')
+    }
+    h.folders.fs.realpath = (p) => (swapped && p.toLowerCase() === swapped ? 'C:\\elsewhere\\01' : realpath(p))
+    const copy = h.codex.realmFolders!.copyHistory!
+    let made = ''
+    h.codex.realmFolders!.copyHistory = async (from, to, opts) => {
+      made = homeOf(to.authRealmId)
+      const r = await copy(from, to, opts)
+      h.folders.fs.realpath = realpath
+      return r
+    }
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'unsafe-path' })
+    expect(swapped).not.toBe('')
+    expect(h.folders.files.has(one.replace(homeOf(oldRealm), made))).toBe(false)
+    expect(realmIdOf(h, a)).toBe(oldRealm)
+    expect(h.doc().journals).toEqual([])
+    expect(h.folders.fs.lstat(one).nlink).toBe(1)
   })
 
   it('never a folder it did not make, nor a sign-in it did not perform: refused, the folder left as found (review round 2, L2-2)', async () => {

@@ -31,7 +31,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
 import type { AccountsSnapshot, AccountView, ProviderInstallationView, SignInOutputEvent } from '../../../src/shared/providers'
 import type { AccountProfile } from '../../../src/shared/account-types'
-import { useProviderAccountsStore, canOfferSignInAgain } from '../../../src/renderer/stores/providerAccountsStore'
+import { useProviderAccountsStore, canOfferSignInAgain, signInPhaseText, notCarriedOverText } from '../../../src/renderer/stores/providerAccountsStore'
 import { useAccountProfilesStore } from '../../../src/renderer/stores/accountProfilesStore'
 import { useSettingsStore, DEFAULT_SETTINGS } from '../../../src/renderer/stores/settingsStore'
 
@@ -1002,6 +1002,35 @@ describe('Sign in again', () => {
     expect(pa.beginSetup).not.toHaveBeenCalled()
     expect(q('sign-in-again-dialog')).toBeNull()
     expect(q('add-account-dialog')).toBeNull()
+  })
+
+  it('says in its status line that it is carrying the earlier conversations over, and what it left behind before it closes (P3.3 final review round, F2, F3)', async () => {
+    let answer: (v: unknown) => void = () => {}
+    pa.signInAgain.mockImplementation(() => new Promise((r) => { answer = r }))
+    render(snapshot({ accounts: [work] }))
+    await openFor('acc-work')
+    await click('sign-in-again-continue')
+    expect(q('sign-in-again-status')?.textContent).toBe('Waiting for the sign-in to finish...')
+    const log = q('sign-in-again-log')?.textContent
+    // The step main names, in the same status line; no output line of its own.
+    act(() => { signInOutput?.({ accountId: 'acc-work', text: '', phase: 'carrying-history' }) })
+    expect(q('sign-in-again-status')?.textContent).toBe(signInPhaseText('carrying-history'))
+    expect(q('sign-in-again-status')?.textContent).toContain('earlier conversations')
+    expect(q('sign-in-again-log')?.textContent).toBe(log)
+    // Another account's step is not this dialog's.
+    act(() => { signInOutput?.({ accountId: 'acc-other', text: '', phase: 'carrying-history' }) })
+    await act(async () => { answer({ ok: true, state: 'signed-in', notCarriedOver: 2 }) })
+    await flush()
+    // Files left behind are said before it closes.
+    expect(q('sign-in-again-dialog')).toBeTruthy()
+    expect(q('sign-in-again-left')?.textContent).toBe(notCarriedOverText(2))
+    expect(q('sign-in-again-cancel')).toBeNull()
+    await click('sign-in-again-done')
+    expect(q('sign-in-again-dialog')).toBeNull()
+    expect(notCarriedOverText(1)).toContain('1 earlier conversation file was not carried over')
+    expect(notCarriedOverText(1)).toContain("It stays in the account's old folder while that folder is kept.")
+    expect(notCarriedOverText(2)).toContain("2 earlier conversation files were not carried over")
+    expect(notCarriedOverText(2)).toContain("They stay in the account's old folder while that folder is kept.")
   })
 
   it('when main finds someone else signed in, it hands over to naming that new account (P3.3)', async () => {

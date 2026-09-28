@@ -166,6 +166,9 @@ export function registerProviderAccountsHandlers(getWindow: () => BrowserWindow 
     const sender = e.sender
     return svc.signInAgain(i, sender.id, (text) => {
       if (!sender.isDestroyed()) sender.send(IPC.PROVIDER_ACCOUNTS_SIGN_IN_OUTPUT, { accountId: i.accountId, text })
+    }, (phase) => {
+      // The step the run moved on to, for the dialog's status line.
+      if (!sender.isDestroyed()) sender.send(IPC.PROVIDER_ACCOUNTS_SIGN_IN_OUTPUT, { accountId: i.accountId, text: '', phase })
     })
   })
   handle(IPC.PROVIDER_ACCOUNTS_CANCEL_SIGN_IN, S.account, (i, svc, e) => svc.cancelSignIn(i, e.sender.id))
