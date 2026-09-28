@@ -91,7 +91,7 @@ describe('GuidedTour: every card, per assistants in use', () => {
     useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })
   })
 
-  /** Each card's title and body, first to last, as the tour shows them. */
+  /** Each card's body text by its title, first to last, as the tour shows them. */
   function walk(on: { claudeEnabled?: boolean; codexEnabled?: boolean }): Map<string, string> {
     useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, ...on }, isLoaded: true })
     act(() => { root.render(React.createElement(GuidedTour, { onCreateConfig: () => {}, onClose: () => {} })) })
@@ -99,7 +99,9 @@ describe('GuidedTour: every card, per assistants in use', () => {
     for (let n = 0; n < 7; n++) {
       const text = container.textContent ?? ''
       const title = ['This is your workbench', 'Everything has a home', 'Saved configs live here', 'Review what your agent builds', 'Change anything, anytime', 'Help lives here', 'Ready to go'].find((t) => text.includes(t))!
-      cards.set(title, text)
+      // The body is the element right after the title.
+      const titleEl = [...container.querySelectorAll('div')].find((d) => d.children.length === 0 && d.textContent === title)!
+      cards.set(title, titleEl.nextElementSibling?.textContent ?? '')
       if (n < 6) act(() => { [...container.querySelectorAll('button')].find((b) => b.textContent?.startsWith('Next'))!.click() })
     }
     expect(cards.size).toBe(7)
@@ -128,11 +130,19 @@ describe('GuidedTour: every card, per assistants in use', () => {
     }
   })
 
+  // The canvas card as it read before this sweep, less its last sentence
+  // (the Codex note 21fff8bc added), which is also how it read before that.
+  const CANVAS_BEFORE_NOTE = `Every session has a Canvas button beside Snap. Your agent renders a mockup, a plan, or the site it just built, and you review it by pointing: click an element to leave a note, draw over it, then decide ${DASH} approve that version, or send it back for another round. Testing mode goes further ${DASH} click through a running build and every note saves the screen, the page state and how you got there. A small dot on the button means there is unfinished canvas work anyone here can pick up.`
+
+  it('Claude Code only: the canvas card reads as it did before the Codex note, whole', () => {
+    expect(walk(CLAUDE_ONLY).get('Review what your agent builds')).toBe(CANVAS_BEFORE_NOTE)
+  })
+
   it('both on: every card word for word as before', () => {
     const cards = walk(BOTH)
-    expect(cards.get('Saved configs live here')).toContain(`whenever you want (Claude or Codex here, or Claude on another machine over SSH ${DASH} plain, or persistent so a dropped link does not kill it).`)
-    expect(cards.get('Review what your agent builds')).toContain('anyone here can pick up. Claude sessions draw on it; a Codex agent cannot put work there yet.')
-    expect(cards.get('Help lives here')).toContain('The Feature Guide explains every feature in depth whenever you want it and, with Claude Code on, can hand your question to Ask Conductor, a Claude session that knows the app.')
+    expect(cards.get('Saved configs live here')).toBe(`The left panel has two modes ${DASH} Saved is your launcher, Running is your live sessions. A saved config is a reusable launcher: project folder, model, account. Open the Saved tab, press "+ New" and pick Config to create one, then start a session from it whenever you want (Claude or Codex here, or Claude on another machine over SSH ${DASH} plain, or persistent so a dropped link does not kill it).`)
+    expect(cards.get('Review what your agent builds')).toBe(`${CANVAS_BEFORE_NOTE} Claude sessions draw on it; a Codex agent cannot put work there yet.`)
+    expect(cards.get('Help lives here')).toBe('The Feature Guide explains every feature in depth whenever you want it and, with Claude Code on, can hand your question to Ask Conductor, a Claude session that knows the app.')
     expect(cards.get('Everything has a home')).toContain('Cloud Agents, Insights, Tokenomics, Memory, Logs and the built-in tools (Conductor MCP) all live on this rail')
     expect(cards.get('Change anything, anytime')).toContain('Everything you just set up lives in Settings: your assistants and their accounts under Accounts, GitHub, the status line and the built-in tools.')
   })

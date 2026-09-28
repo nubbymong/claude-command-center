@@ -481,7 +481,15 @@ re-check at f65de184 PASS (e2e 80 passed and 1 flaky, terminal-links.spec.ts
 line 110, passed on retry and in 3 more runs of that spec alone; the VM-only
 files as at c7f9a34a; What's New, the SSH dialog and the pills PASS). CI at
 f65de184 is green but for the Desktop test gate, which the owner attests.
-P3.4 is complete bar that gate.
+After that re-check, d2ea6e66 and 7811229f made the guided tour's cards 1,
+3, 4 and 6 and the Feature Guide's productivity hero name only the
+assistants in use (both on unchanged; guided-tour-provider-copy.test.tsx,
+claude-off-launch.test.tsx), on the one rule both read
+(onlyAssistantInUse). Unit-tested only so far. Owed: a VM screenshot check
+of those cards with Codex only, Claude Code only and both on, for the
+owner's approval, riding with the next phase's VM gallery; and the Desktop
+test gate. The Feature Guide catalogue cards that name both providers are
+P3.16's (see there).
 
 **P3.5 History and resume.** The claimed session id kept with the tab; exact
 resume on relaunch in the same realm; Restart resumes the same conversation
@@ -605,7 +613,10 @@ a listed path.
 **P3.16 PR 3 records and user-facing sweep.** App knowledge (with known
 issues), tips, tour and Feature Guide, the changelog entry, the user guide,
 `PRIVACY.md`; the `CONTEXT.d/` fragment; the WP1 ledger and traceability; the
-PR body, the ADR-009 verdict and the SSH matrix.
+PR body, the ADR-009 verdict and the SSH matrix. Left to this sweep by
+P3.4: the Feature Guide catalogue cards that name both providers,
+`training-steps.ts` lines 90 (the Usage page), 132 (the Accounts section)
+and 748 (the usage meter).
 
 ## 9. PR 4 outline
 
