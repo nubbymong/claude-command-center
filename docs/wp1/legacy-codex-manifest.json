@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-28T20:10:09.895Z",
-  "head": "506faf1933ab72b350734206c1f343f6dd196ad8",
-  "tree": "f28644960626e96938adf79f9d050e33681e603f",
+  "generatedAt": "2026-09-28T21:41:58.877Z",
+  "head": "57ce396a71fde4191ecabc3069c4b38cd3beb6e0",
+  "tree": "f3bc4d0297fb5ad3d8e0c7e3e7add097f8fc84f3",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2451,
+  "trackedFileCount": 2454,
   "excludedFileCount": 383,
-  "scannedFileCount": 2068,
+  "scannedFileCount": 2071,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 502,
-  "pathDigest": "cd50346c7f97f7cfd3772d1ba25799acfe3cb60da44b98125b2c4c8ccec6b122",
+  "matchedPathCount": 504,
+  "pathDigest": "cb0381575a280fae4ec3f62031fbd7be6c55193694f0e463a702716a1d74ef62",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 162
+      "lineCount": 163
     },
     {
       "path": "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
@@ -1120,7 +1120,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 22
+      "lineCount": 24
     },
     {
       "path": "src/renderer/components/SettingsPage.tsx",
@@ -1301,7 +1301,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 4
+      "lineCount": 6
     },
     {
       "path": "src/renderer/components/sidebar/SidebarNav.tsx",
@@ -1679,6 +1679,14 @@
         "P11"
       ],
       "lineCount": 14
+    },
+    {
+      "path": "src/renderer/utils/accountChip.ts",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "lineCount": 3
     },
     {
       "path": "src/renderer/utils/bootGates.ts",
@@ -3323,6 +3331,14 @@
         "P13"
       ],
       "lineCount": 113
+    },
+    {
+      "path": "tests/unit/renderer/codex-account-chip.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 16
     },
     {
       "path": "tests/unit/renderer/codex-mini-icon.test.ts",

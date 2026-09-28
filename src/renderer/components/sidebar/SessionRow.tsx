@@ -13,8 +13,8 @@ import { useResolvedTheme } from '../../hooks/useThemeController'
 import { useAccountProfilesStore } from '../../stores/accountProfilesStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { resolveAccountNameByEmail } from '../../../shared/account-chip-color'
-import { useProviderAccountsStore } from '../../stores/providerAccountsStore'
-import { chipColourKeyForEmail } from '../../utils/accountChip'
+import { useProviderAccountsStore, accountDisplayName } from '../../stores/providerAccountsStore'
+import { chipColourKeyForEmail, providerAccountChip } from '../../utils/accountChip'
 
 interface SessionRowProps {
   session: Session
@@ -103,16 +103,24 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
   // P3.6 (row 7): the colour is the account's identity's when the account
   // list names it (utils/accountChip), else the email override as before.
   const accountsSnapshot = useProviderAccountsStore((s) => s.snapshot)
-  const accountEmail = session.accountEmail || session.sshRemoteAccount
-  const accountName = accountEmail
-    ? resolveAccountNameByEmail(accountEmail, profiles, accountAliases)
-    : null
-  const accountDot = accountEmail
-    ? resolveIdentityColor(
-        chipColourKeyForEmail(accountEmail, { profiles, snapshot: accountsSnapshot, overrides: accountColourOverrides }, session.accountColour),
-        theme,
-      )
-    : null
+  // P3.6 (row 20): a session that runs under a registry account (Codex)
+  // carries that account's identity on this line too, as the strip does.
+  const providerChip = providerAccountChip(session, accountsSnapshot, accountDisplayName)
+  const accountEmail = providerChip ? undefined : (session.accountEmail || session.sshRemoteAccount)
+  const accountName = providerChip
+    ? providerChip.name
+    : accountEmail
+      ? resolveAccountNameByEmail(accountEmail, profiles, accountAliases)
+      : null
+  const accountDot = providerChip
+    ? resolveIdentityColor(providerChip.colourKey, theme)
+    : accountEmail
+      ? resolveIdentityColor(
+          chipColourKeyForEmail(accountEmail, { profiles, snapshot: accountsSnapshot, overrides: accountColourOverrides }, session.accountColour),
+          theme,
+        )
+      : null
+  const accountTitle = providerChip ? providerChip.title : accountEmail
 
   // #398: when renaming, render a plain <div> (NOT a <button>) so the text input
   // is never nested inside interactive button content (invalid HTML / a11y).
@@ -265,13 +273,14 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
 
       {/* Line 3: account on its own row, under the model (spans 1 / 3 so it aligns
           under the name/meta and never clips the way the cramped line-2 chip did).
-          Rendered only when accountEmail is set so accountless sessions stay 2 lines. */}
+          Rendered only when the account is known (an email, or a Codex session's
+          registry account) so accountless sessions stay 2 lines. */}
       {accountName && (
         <div className="relative z-10 row-start-3 flex items-center gap-1.5 min-w-0" style={{ gridColumn: '1 / 3', opacity: asleep ? 0.7 : undefined }} data-testid="card-line3">
           {accountDot && (
-            <span data-testid="account-dot" className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: accountDot }} role="img" aria-label={accountName ? `Account: ${accountName}` : 'Account'} title={accountEmail} />
+            <span data-testid="account-dot" className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: accountDot }} role="img" aria-label={accountName ? `Account: ${accountName}` : 'Account'} title={accountTitle} />
           )}
-          <span className="meta truncate min-w-0" style={{ color: 'var(--text-muted)' }} title={accountEmail} data-testid="account-name">
+          <span className="meta truncate min-w-0" style={{ color: 'var(--text-muted)' }} title={accountTitle} data-testid="account-name">
             {accountName}
           </span>
         </div>

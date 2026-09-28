@@ -5,7 +5,7 @@ import { usesCodex } from '../onboarding/provider-choice'
 import RateLimitBar, { RateLimitBarPending, RateLimitBarNoReading } from './terminal/RateLimitBar'
 import { bucketPastReset } from '../../shared/usage-labels'
 import { useRenderAtNextReset } from '../hooks/useRenderAtNextReset'
-import { useProviderAccountsStore } from '../stores/providerAccountsStore'
+import { useProviderAccountsStore, accountDisplayName } from '../stores/providerAccountsStore'
 import { formatTokens, formatDuration } from '../utils/terminalFormatting'
 import { canSwitchAccountForSession } from '../utils/sessionLaunch'
 import { useCodexReviewUsage } from '../hooks/useCodexReviewUsage'
@@ -16,7 +16,7 @@ import { useRegionTypography } from '../hooks/useTypography'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { isAccountActive } from '../../shared/account-types'
 import { resolveAccountName, resolveAccountNameByEmail, middleTruncateEmail } from '../../shared/account-chip-color'
-import { chipColourKeyForEmail } from '../utils/accountChip'
+import { chipColourKeyForEmail, providerAccountChip } from '../utils/accountChip'
 import { resolveIdentityColor } from '../../shared/identity-colors'
 import ToolbarPopup from './ToolbarPopup'
 import {
@@ -203,9 +203,13 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
     )
   }
 
-  // A Codex strip is telemetry-only (no controls cluster), so with the master
-  // off there is nothing left to show — collapse the band entirely.
-  if (!statusLineEnabled && !isClaude) return null
+  // P3.6 (row 20): a session that runs under a registry account (Codex) shows
+  // that account's identity chip, by the footer's label rule.
+  const providerChip = providerAccountChip(session, accountsSnapshot, accountDisplayName)
+  // A Codex strip has no controls cluster, so with the master off only its
+  // account item is left (always-on, as Claude's): with nothing to show at the
+  // far left either, collapse the band entirely.
+  if (!statusLineEnabled && !isClaude && !(canSwitchAccount || (sl.showAccount && providerChip))) return null
 
   // "The meters should appear, but nothing has arrived yet." Shimmering forever
   // on a session that has nothing to say is worse than the blank it replaces, so
@@ -255,15 +259,21 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   // and colour are resolved by live email: a mid-session /login that updates
   // session.accountEmail immediately shows the right name/colour. Override
   // wins over the spawn-time colour key.
-  const accountName = session.accountEmail
-    ? resolveAccountNameByEmail(session.accountEmail, profiles, accountAliases)
-    : null
+  // A Codex session's is its registry account's (providerChip, above).
+  const accountName = !isClaude
+    ? (providerChip?.name ?? null)
+    : session.accountEmail
+      ? resolveAccountNameByEmail(session.accountEmail, profiles, accountAliases)
+      : null
   // P3.6 (row 7): the identity's colour when the account list names it
   // (utils/accountChip), else the email override as before.
   const accountDot = resolveIdentityColor(
-    chipColourKeyForEmail(session.accountEmail, { profiles, snapshot: accountsSnapshot, overrides: accountColourOverrides }, session.accountColour),
+    providerChip
+      ? providerChip.colourKey
+      : chipColourKeyForEmail(session.accountEmail, { profiles, snapshot: accountsSnapshot, overrides: accountColourOverrides }, session.accountColour),
     theme,
   )
+  const accountTitle = providerChip ? providerChip.title : session.accountEmail
 
   // Account chooser: every profile (resolved name + truncated email hint).
   // The current account is marked active; selecting it is a no-op in switchAccount.
@@ -332,7 +342,7 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
         <span
           className="flex items-center gap-1 shrink-0"
           style={{ color: 'var(--text-muted)' }}
-          title={session.accountEmail}
+          title={accountTitle}
           data-testid="account-chip"
         >
           <span
