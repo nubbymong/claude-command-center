@@ -569,6 +569,20 @@ still not recorded is said in the terminal and the launch goes on (the
 watcher claims nothing new, never a conversation the picker did not name).
 The picker starts a conversation in its worktree only when that is a
 directory, as main checks.
+Fix round 3 (2026-09-28; 17c6d1ab, 2989d876, 770a4fb6): the walk stops
+early only at a rollout in its own date folder that records the directory
+the session kept (with none kept, at the end of that rollout's day folder);
+a copy recording another directory, dated in a newer folder or listed first
+in the same one, no longer hides it. When no rollout records the kept
+directory the walk goes on to its bounds (once per lookup). The pick folder's
+identity (its device and file id, and its real path) is recorded when it is
+made; the watcher reads a pick, removes it and at stop empties and removes
+the folder, and the picker writes there, only while it is still that folder,
+never a link, a junction or another folder in its place. A claim let go
+clears the status line's tokens, cost and context until the next claim
+reports; at stop a pick file a picker left half-written is removed before
+the folder, never recursively. The tests remove recursively only folders
+they made themselves.
 Limits and deviations, recorded, none a UX decision: the name file Claude's
 picker prefers (written by the logs binder against an exact bind) is not
 written for Codex, so a Codex name comes from the session state while the
@@ -584,7 +598,9 @@ followed until P3.10. A file with a second hard name is accepted (a staged
 Sign in again links each carried file, and copies it where linking is
 refused) and checked like any other. The pick file is writable by the same
 user; it can only name a conversation in the session's own account folder,
-and the resume folder and id are checked again by main.
+and the resume folder and id are checked again by main. Its folder is
+looked at before each use, so a same-user swap between that look and the
+act is not excluded.
 Row 35 deviates from Claude by the F7 menu: with no known conversation
 Claude's Restart opens the picker, Codex's plain Restart starts a new
 conversation ("Restart and pick a conversation" is the picker). Switch
