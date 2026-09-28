@@ -2,7 +2,7 @@
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "manifestPathDigest": "5d8d88d92b5a32069c886c98c4877d343b345cff40eb96c00c84d59e0b371bc2",
-  "manifestHead": "0cb779407cc1283c3f2f1d1c8e5689c0e49881ce",
+  "manifestHead": "1609133621f04b32489131966c82207440b5d8a8",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -297,7 +297,7 @@
       ],
       "category": "RESUME-PICKER",
       "disposition": "replace",
-      "evidence": "WP2 commit 4: launchTarget (the cmd.exe /s route, as spawn.ts codexCmdExeTarget) and isResumeId added; buildResumeArgs resumes only a UUID; parsing unchanged; tests/unit/scripts/codex-resume-picker.test.ts (WP1.68, WP1.38); WP2 PR 3 P3.5 (row 32, parity): walkRollouts takes the project's git worktrees (listWorktrees, parseWorktrees, worktreeLabelFor, as the Claude picker) and the local date folders too; loadWorkNames, displayText and buildPickerRows build every shown row as plain text; writePick, childEnv and resolveRetargetCwd (WP1.68); tests/unit/scripts/codex-resume-picker-worktrees.test.ts; WP2 PR 3 P3.5 fix round 1: every decision is recorded whole (a new owner-only file renamed over the pick file), and the walk follows no link at any level (WP1.68); tests/unit/scripts/codex-resume-picker-worktrees.test.ts",
+      "evidence": "WP2 commit 4: launchTarget (the cmd.exe /s route, as spawn.ts codexCmdExeTarget) and isResumeId added; buildResumeArgs resumes only a UUID; parsing unchanged; tests/unit/scripts/codex-resume-picker.test.ts (WP1.68, WP1.38); WP2 PR 3 P3.5 (row 32, parity): walkRollouts takes the project's git worktrees (listWorktrees, parseWorktrees, worktreeLabelFor, as the Claude picker) and the local date folders too; loadWorkNames, displayText and buildPickerRows build every shown row as plain text; writePick, childEnv and resolveRetargetCwd (WP1.68); tests/unit/scripts/codex-resume-picker-worktrees.test.ts; WP2 PR 3 P3.5 fix round 1: every decision is recorded whole (a new owner-only file renamed over the pick file), and the walk follows no link at any level (WP1.68); tests/unit/scripts/codex-resume-picker-worktrees.test.ts; WP2 PR 3 P3.5 fix round 1 (thesis 19): listWorktrees runs git by an absolute path from PATH's absolute entries (findGit, as the reviewer), never by bare name or through a shell, with NoDefaultCurrentDirectoryInExePath=1 on Windows and a hardened command line, keeps only absolute worktree paths with no control character, and fails safe to the configured folder (WP1.68); tests/unit/scripts/codex-resume-picker-worktrees.test.ts",
       "note": "re-dispositioned in WP2 commit 4 (was retain)"
     },
     {

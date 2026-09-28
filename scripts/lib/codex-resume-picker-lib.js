@@ -269,13 +269,52 @@ function parseWorktrees(porcelainText) {
   return worktrees
 }
 
-function listWorktrees(cwd, platform) {
+// P3.5 fix round 1: git is never resolved from the project folder. It is
+// named by an absolute path found on PATH's absolute entries (findGit, as
+// the reviewer's src/main/review-diff.ts findGit), never spawned by bare
+// name, never through a shell; on Windows the child also gets
+// NoDefaultCurrentDirectoryInExePath=1 (one spelling), as the reviewer's
+// environment does. The command line keeps the repository's own settings
+// from running anything (no pager, no fsmonitor hook). Only absolute worktree
+// paths with no control character are kept. `deps` (spawn, env, isFile) is
+// injected by tests; nothing else passes it.
+const GIT_WORKTREE_ARGS = Object.freeze(['--no-pager', '-c', 'core.fsmonitor=false', 'worktree', 'list', '--porcelain'])
+function findGit(pathVar, platform, isFile) {
+  const win = platform === 'win32'
+  const api = win ? path.win32 : path.posix
+  const dirs = String(pathVar || '').split(win ? ';' : ':')
+    .map((d) => d.trim().replace(/^"(.*)"$/, '$1'))
+    .filter((d) => d !== '' && !d.includes('%') && (win ? /^([A-Za-z]:[\\/]|\\\\[^\\?.])/.test(d) : d.startsWith('/')))
+  for (const dir of dirs) {
+    const candidate = api.join(dir, win ? 'git.exe' : 'git')
+    try { if (isFile(candidate)) return candidate } catch { /* not there */ }
+  }
+  return null
+}
+const isAbsoluteFor = (p, platform) => (platform === 'win32' ? /^([A-Za-z]:[\\/]|\\\\[^\\?.][^\\]*\\[^\\]+)/.test(p) : p.startsWith('/'))
+const hasControlChar = (s) => [...s].some((c) => { const n = c.codePointAt(0); return n < 32 || (n >= 127 && n < 160) })
+function listWorktrees(cwd, platform, deps) {
   const plat = platform || process.platform
   const own = { path: cwd, branch: null, isMain: true }
+  const env = (deps && deps.env) || process.env
+  const spawn = (deps && deps.spawn) || spawnSync
+  const isFile = (deps && deps.isFile) || ((p) => fs.statSync(p).isFile())
   let found = []
   try {
-    const res = spawnSync('git', ['worktree', 'list', '--porcelain'], { cwd, encoding: 'utf-8', timeout: 5000, windowsHide: true })
-    if (!res.error && res.status === 0 && res.stdout) found = parseWorktrees(res.stdout)
+    const pathKey = Object.keys(env).find((k) => (plat === 'win32' ? k.toUpperCase() : k) === 'PATH')
+    const git = findGit(pathKey ? env[pathKey] : undefined, plat, isFile)
+    if (git) {
+      const childEnv = {}
+      for (const k of Object.keys(env)) {
+        if (plat === 'win32' && k.toUpperCase() === 'NODEFAULTCURRENTDIRECTORYINEXEPATH') continue
+        childEnv[k] = env[k]
+      }
+      if (plat === 'win32') childEnv.NoDefaultCurrentDirectoryInExePath = '1'
+      const res = spawn(git, [...GIT_WORKTREE_ARGS], { cwd, env: childEnv, encoding: 'utf-8', timeout: 5000, windowsHide: true, shell: false })
+      if (res && !res.error && res.status === 0 && typeof res.stdout === 'string' && res.stdout) {
+        found = parseWorktrees(res.stdout).filter((w) => isAbsoluteFor(w.path, plat) && !hasControlChar(w.path))
+      }
+    }
   } catch { found = [] }
   return found.some((w) => samePath(w.path, cwd, plat)) ? found : [own, ...found]
 }
