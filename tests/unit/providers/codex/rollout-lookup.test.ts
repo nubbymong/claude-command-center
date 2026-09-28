@@ -229,20 +229,73 @@ describe('findCodexRollouts stops at the conversation\'s own rollout', () => {
       }
     }
     putAt(sessions, ['2026', '09', '20'], ID, '/p/demo', '2026-09-20T12:00:00.000Z')
-    const before = __codexRolloutEntriesVisitedForTests()
-    expect(findCodexRollouts(sessions, ID).map((f) => f.meta.id)).toEqual([ID])
-    const visited = __codexRolloutEntriesVisitedForTests() - before
-    // The year, its three months, the twenty days of September, and that day's four files.
-    expect(visited).toBeLessThanOrEqual(1 + 3 + 20 + 4)
+    const visits = (kept?: string) => {
+      const before = __codexRolloutEntriesVisitedForTests()
+      expect(findCodexRollouts(sessions, ID, undefined, kept).map((f) => f.meta.id)).toEqual([ID])
+      return __codexRolloutEntriesVisitedForTests() - before
+    }
+    // The year, its three months, the twenty days of September, and that day's four files:
+    // with the directory the session kept, which the rollout records, and with none.
+    const bound = 1 + 3 + 20 + 4
+    expect(visits('/p/demo')).toBeLessThanOrEqual(bound)
+    expect(visits()).toBeLessThanOrEqual(bound)
+    // A kept directory it does not record: the walk goes on, in case an older
+    // rollout of the id records it (fix round 3), within the walk's bounds.
+    expect(visits('/p/elsewhere')).toBeGreaterThan(bound)
   })
 
-  it('a copy in a newer folder still takes part in the choice; one older than the conversation\'s own is not looked for', () => {
+  it('a copy in a newer folder still takes part in the choice; an older one is looked for only when the kept directory is not yet found', () => {
     const sessions = join(temp('realm'), 'sessions')
     const own = putAt(sessions, ['2026', '09', '20'], ID, '/p/demo', '2026-09-20T10:00:00.000Z')
     const newer = putAt(sessions, ['2026', '09', '27'], ID, '/p/newer', '2026-09-20T10:00:00.000Z')
-    putAt(sessions, ['2026', '09', '10'], ID, '/p/older', '2026-09-20T10:00:00.000Z')
+    const older = putAt(sessions, ['2026', '09', '10'], ID, '/p/older', '2026-09-20T10:00:00.000Z')
     expect(findCodexRollouts(sessions, ID).map((f) => f.path)).toEqual([newer, own])
-    expect(chooseCodexRollout(findCodexRollouts(sessions, ID), '/p/newer')?.found.path).toBe(newer)
-    expect(chooseCodexRollout(findCodexRollouts(sessions, ID), '/p/older')).toMatchObject({ found: { path: own }, cwdMatched: false })
+    expect(findCodexRollouts(sessions, ID, undefined, '/p/demo').map((f) => f.path)).toEqual([newer, own])
+    expect(findCodexRollout(sessions, ID, undefined, '/p/newer')?.path).toBe(newer)
+    // The kept directory is recorded only by the older copy: the walk goes on to it, and it wins.
+    expect(findCodexRollouts(sessions, ID, undefined, '/p/older').map((f) => f.path)).toEqual([newer, own, older])
+    expect(findCodexRollout(sessions, ID, undefined, '/p/older')?.path).toBe(older)
+  })
+})
+
+// P3.5 fix round 3 (lens A): a lookup stops early only at a rollout in its own
+// date folder that records the directory the session kept. A copy of the same
+// id that records another directory -- dated in a newer folder, or listed
+// first in the same one -- never ends the walk before the rollout that
+// records it. With no kept directory the walk ends with the day folder of the
+// first rollout found in its own date folder, every rollout of the id there listed.
+describe('a copy never hides the rollout that records the kept directory', () => {
+  const ctx = (sessionsDir: string) => ({ sessionsDir, configuredCwd: '/configured', dirExists: () => true, homeOrAbove: () => false })
+
+  it('a copy dated in a newer folder, recording another directory', () => {
+    const sessions = join(temp('realm'), 'sessions')
+    const own = putAt(sessions, ['2026', '09', '20'], ID, '/p/demo', '2026-09-20T10:00:00.000Z')
+    putAt(sessions, ['2026', '09', '27'], ID, '/p/other', '2026-09-27T10:00:00.000Z')
+    expect(findCodexRollout(sessions, ID, undefined, '/p/demo')?.path).toBe(own)
+    expect(resolveCodexResume({ uuid: ID, cwd: '/p/demo' }, ctx(sessions))).toMatchObject({ path: own, cwdMismatch: false })
+  })
+
+  it('a copy listed first in the same folder, recording another directory', () => {
+    const sessions = join(temp('realm'), 'sessions')
+    const copy = putAt(sessions, ['2026', '09', '20'], ID, '/p/other', '2026-09-20T09:00:00.000Z')
+    const own = putAt(sessions, ['2026', '09', '20'], ID, '/p/demo', '2026-09-20T10:00:00.000Z')
+    expect(copy < own).toBe(true)
+    expect(findCodexRollout(sessions, ID, undefined, '/p/demo')?.path).toBe(own)
+    expect(resolveCodexResume({ uuid: ID, cwd: '/p/demo' }, ctx(sessions))).toMatchObject({ path: own, cwdMismatch: false })
+  })
+
+  it('a copy in a newer folder that records the kept directory too, outside its own date folder, does not end the walk', () => {
+    const sessions = join(temp('realm'), 'sessions')
+    const own = putAt(sessions, ['2026', '09', '20'], ID, '/p/demo', '2026-09-20T10:00:00.000Z')
+    putAt(sessions, ['2026', '09', '27'], ID, '/p/demo', '2026-09-20T10:00:00.000Z')
+    expect(findCodexRollout(sessions, ID, undefined, '/p/demo')?.path).toBe(own)
+  })
+
+  it('with no kept directory, every rollout of the id in that day folder is listed, and no older folder is walked', () => {
+    const sessions = join(temp('realm'), 'sessions')
+    const a = putAt(sessions, ['2026', '09', '20'], ID, '/p/other', '2026-09-20T09:00:00.000Z')
+    const b = putAt(sessions, ['2026', '09', '20'], ID, '/p/demo', '2026-09-20T10:00:00.000Z')
+    putAt(sessions, ['2026', '09', '10'], ID, '/p/older', '2026-09-10T10:00:00.000Z')
+    expect(findCodexRollouts(sessions, ID).map((f) => f.path).sort()).toEqual([a, b].sort())
   })
 })
