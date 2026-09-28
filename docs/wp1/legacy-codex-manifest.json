@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-28T22:15:22.624Z",
-  "head": "8274b3d1fa8a39b0abeb0bdac2eca84e4e0afdab",
-  "tree": "5c1b6f274481fc7bab67970d00cbd853144fde7e",
+  "generatedAt": "2026-09-28T22:19:10.408Z",
+  "head": "4439d7e2d04fa21f09f7cf903a54a2e39d96d25c",
+  "tree": "9d670bb74f310750409596b3578b6784f449df2d",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -1495,7 +1495,7 @@
       "predicates": [
         "P11"
       ],
-      "lineCount": 3
+      "lineCount": 4
     },
     {
       "path": "src/renderer/onboarding/codex-reconfirm-gate.ts",
@@ -1573,7 +1573,7 @@
       "predicates": [
         "P11"
       ],
-      "lineCount": 4
+      "lineCount": 5
     },
     {
       "path": "src/renderer/onboarding/steps.ts",
@@ -4058,7 +4058,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 8
+      "lineCount": 12
     },
     {
       "path": "tests/unit/renderer/window-close-dialogs.test.tsx",

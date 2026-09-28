@@ -31,9 +31,9 @@ export interface WhatsNewItem {
    *  this release, so it is hidden while Claude Code is off (as upgradeOnly
    *  hides a line from a fresh install). The phase that brings the feature
    *  to Codex lifts it (named in that phase's entry of
-   *  docs/wp2/completion-plan.md: Switch mid-session P3.6, Session Watchdog
-   *  P3.10, Agent Canvas P4.1, Ask Conductor and the guide line P4.3,
-   *  Insights P4.7). SSH Persistent and Remote Resumable keep it, as the
+   *  docs/wp2/completion-plan.md: Session Watchdog P3.10, Agent Canvas
+   *  P4.1, Ask Conductor and the guide line P4.3, Insights P4.7; P3.6 lifted
+   *  it from Switch mid-session). SSH Persistent and Remote Resumable keep it, as the
    *  remote resume page does: the persistent remote session wraps the
    *  remote claude command, and the only agent an SSH session runs in
    *  this release is Claude Code. */
@@ -110,7 +110,10 @@ const SECTIONS_21: WhatsNewSection[] = [
   {
     heading: 'Accounts & usage',
     items: [
-      { title: 'Switch mid-session.', desc: 'Sign in to claude.ai in-app, change account without losing the session.', seeIt: 'accounts', needsClaude: true },
+      // P3.6 (row 22): a Codex account switches mid-session too, keeping the
+      // conversation; the claude.ai sign-in the line also named stays Claude's.
+      { title: 'Switch mid-session.', desc: 'Change a running session\'s account without losing the conversation.', seeIt: 'accounts' },
+      { title: 'claude.ai in the app.', desc: 'Sign in to claude.ai in-app, for each account.', needsClaude: true },
       { title: 'Insights.', desc: 'Usage reports across every account at once, not one at a time.', needsClaude: true },
     ],
   },
@@ -244,7 +247,11 @@ export function WhatsNewV2Step({
   // flagship feature of the line gets a full page behind it. With no pages
   // authored for a line this collapses to exactly the old single-page step —
   // no dots, no skip, the harness CTA — so nothing regresses.
-  const showcases = showcasesFor(LINE_SOURCE).filter((p) => withClaude || !p.needsClaude)
+  // P3.6: a page that shows with Claude Code off leaves out its points that
+  // need it (the accounts page's Insights point).
+  const showcases = showcasesFor(LINE_SOURCE)
+    .filter((p) => withClaude || !p.needsClaude)
+    .map((p) => (withClaude ? p : { ...p, points: p.points.filter((pt) => !pt.needsClaude) }))
   // #525: pre-rename upgraders AND fresh installs (owner call, canvas R1)
   // open on the rename/roadmap page — and beta-channel testers on any
   // prerelease build (owner call, canvas R2). Post-rename STABLE upgraders'
