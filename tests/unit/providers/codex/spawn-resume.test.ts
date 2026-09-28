@@ -89,7 +89,7 @@ describe('an exact resume on relaunch or Restart (rows 34, 35)', () => {
   it('resumes a conversation of its own realm by id, before the flags, in the directory it ran in; the picker is not shown', () => {
     deployPicker()
     const project = temp('project')
-    const { sessionsDir } = realmWith(ID, project)
+    const { sessionsDir, file } = realmWith(ID, project)
     const out = new CodexProvider().buildSpawnCommand({
       sessionId: 'sid', realmLaunch: launchIn(sessionsDir), cwd: temp('configured'), useResumePicker: true,
       resume: { uuid: ID, cwd: project }, codexOptions,
@@ -99,6 +99,7 @@ describe('an exact resume on relaunch or Restart (rows 34, 35)', () => {
     expect(out.resumeId).toBe(ID)
     expect(out.cwd).toBe(project)
     expect(out.pickFile).toBeUndefined()
+    expect(out.resumePath).toBe(file)
   })
 
   it('a conversation another account holds is not resumed here: realms never cross', () => {

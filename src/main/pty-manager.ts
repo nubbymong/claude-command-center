@@ -4281,6 +4281,7 @@ function spawnPtyResolved(
           spawnTimestamp: codexSpawnTimestamp,
           sessionsDir: launch.sessionsDir,
           ...(built.resumeId ? { resumeId: built.resumeId } : {}),
+          ...(built.resumeId && built.resumePath ? { resumePath: built.resumePath } : {}),
           ...(built.pickFile ? { pickFile: built.pickFile } : {}),
           onClaim: (claimed) => keepCodexConversation(sessionId, { uuid: claimed.id, cwd: claimed.cwd }),
         },

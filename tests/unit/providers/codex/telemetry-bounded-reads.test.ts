@@ -39,11 +39,11 @@ const filler = (bytes: number) => {
   const line = JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'x'.repeat(900) }] } })
   return Array.from({ length: Math.ceil(bytes / (line.length + 1)) }, () => line).join('\n') + '\n'
 }
-function watch(sessions: string, cwd: string, resumeId?: string) {
+function watch(sessions: string, cwd: string, resumeId?: string, resumePath?: string) {
   const updates: StatuslineData[] = []
   const claims: string[] = []
   const src = watchAndClaimRollout('sess-reads', cwd, Date.now(), (d) => updates.push(d), sessions, undefined,
-    { ...(resumeId ? { resumeId } : {}), onClaim: (c) => claims.push(c.id) })
+    { ...(resumeId ? { resumeId } : {}), ...(resumePath ? { resumePath } : {}), onClaim: (c) => claims.push(c.id) })
   return { updates, claims, src }
 }
 
@@ -148,5 +148,70 @@ describe('the way to a new rollout (thesis 4)', () => {
     await vi.advanceTimersByTimeAsync(1_000)
     src.stop()
     expect(claims).toEqual([])
+  })
+})
+
+// P3.5 fix round 2 (quality major 1): the launch hands the watcher the rollout
+// it chose, so a resume walks the realm once, not twice.
+describe('the rollout the launch chose', () => {
+  it('is claimed at once, without walking the realm again', async () => {
+    vi.useFakeTimers()
+    const sessions = realm()
+    const old = new Date(Date.now() - 2 * 24 * 3600 * 1000)
+    const file = join(dayOf(sessions, old), `rollout-x-${ID}.jsonl`)
+    writeFileSync(file, metaLine(ID, '/p/demo', old.toISOString()) + '\n' + tokenLine(old.toISOString(), 8) + '\n')
+    const walks = __codexRolloutLookupsForTests()
+    const { claims, updates, src } = watch(sessions, '/p/demo', ID, file)
+    await vi.advanceTimersByTimeAsync(300)
+    src.stop()
+    expect(claims).toEqual([ID])
+    expect(updates.at(-1)?.inputTokens).toBe(8)
+    expect(__codexRolloutLookupsForTests()).toBe(walks)
+  })
+
+  it('a path that is not in this realm, or names another conversation, is not taken: the watcher looks it up instead', async () => {
+    vi.useFakeTimers()
+    const sessions = realm()
+    const old = new Date(Date.now() - 2 * 24 * 3600 * 1000)
+    const mine = join(dayOf(sessions, old), `rollout-x-${ID}.jsonl`)
+    writeFileSync(mine, metaLine(ID, '/p/demo', old.toISOString()) + '\n' + tokenLine(old.toISOString(), 8) + '\n')
+    const elsewhere = join(sessions, '..', `rollout-x-${ID}.jsonl`)
+    writeFileSync(elsewhere, metaLine(ID, '/p/demo', old.toISOString()) + '\n' + tokenLine(old.toISOString(), 99) + '\n')
+    const other = join(dayOf(sessions, old), `rollout-x-${ID2}.jsonl`)
+    writeFileSync(other, metaLine(ID2, '/p/demo', old.toISOString()) + '\n' + tokenLine(old.toISOString(), 77) + '\n')
+    for (const given of [elsewhere, other]) {
+      const walks = __codexRolloutLookupsForTests()
+      const { updates, src } = watch(sessions, '/p/demo', ID, given)
+      await vi.advanceTimersByTimeAsync(300)
+      src.stop()
+      expect(updates.at(-1)?.inputTokens).toBe(8)
+      expect(__codexRolloutLookupsForTests()).toBe(walks + 1)
+    }
+  })
+})
+
+// P3.5 fix round 2 (quality nit 5): a line that arrives in two reads.
+describe('a line split across two reads', () => {
+  it('waits for the rest of the line, even inside a multi-byte character, then reads it whole', async () => {
+    vi.useFakeTimers()
+    const sessions = realm()
+    const now = new Date()
+    const file = join(dayOf(sessions, now), `rollout-x-${ID}.jsonl`)
+    writeFileSync(file, metaLine(ID, '/p/demo', now.toISOString()) + '\n' + tokenLine(now.toISOString(), 5) + '\n')
+    const { updates, src } = watch(sessions, '/p/demo', ID)
+    await vi.advanceTimersByTimeAsync(600)
+    const model = 'gpt-5.5-' + String.fromCodePoint(0xfc) + String.fromCodePoint(0x1f600)
+    const line = Buffer.from(JSON.stringify({ type: 'turn_context', payload: { model, effort: 'low' } }) + '\n' + tokenLine(new Date().toISOString(), 6) + '\n', 'utf-8')
+    // Cut inside the four-byte character.
+    const cut = line.indexOf(Buffer.from(String.fromCodePoint(0x1f600), 'utf-8')) + 2
+    appendFileSync(file, line.subarray(0, cut))
+    await vi.advanceTimersByTimeAsync(600)
+    const seen = updates.length
+    expect(updates.at(-1)?.inputTokens).toBe(5)
+    appendFileSync(file, line.subarray(cut))
+    await vi.advanceTimersByTimeAsync(600)
+    src.stop()
+    expect(updates.length).toBeGreaterThan(seen)
+    expect(updates.at(-1)).toMatchObject({ inputTokens: 6, model })
   })
 })

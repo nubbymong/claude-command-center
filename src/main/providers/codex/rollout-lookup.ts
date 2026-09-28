@@ -123,6 +123,7 @@ function subFolders(dir: string, re: RegExp, budget: { entries: number }): strin
   let entries: fs.Dirent[]
   try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return [] }
   budget.entries -= entries.length
+  entriesVisited += entries.length
   if (budget.entries < 0) return null
   // A Dirent describes the entry itself: a link or junction is not a directory.
   return entries.filter((e) => e.isDirectory() && re.test(e.name)).map((e) => e.name).sort().reverse()
@@ -147,15 +148,24 @@ export interface CodexLookupLimits {
   maxMatches?: number
 }
 
-/** How many lookups walked a sessions folder (tests read it). */
+/** How many lookups walked a sessions folder, and how many folder entries
+ *  they saw (tests read them). */
 let lookups = 0
+let entriesVisited = 0
 export function __codexRolloutLookupsForTests(): number { return lookups }
+export function __codexRolloutEntriesVisitedForTests(): number { return entriesVisited }
 
 const pad2Date = (y: number, m: number, d: number): string => `${y}/${pad2(m)}/${pad2(d)}`
 
 /**
- * Every rollout of conversation `id` in this realm's sessions folder, newest
- * date folder first. The walk is bounded (at most `maxEntries` folder
+ * The rollouts of conversation `id` in this realm's sessions folder, newest
+ * date folder first, up to and including its OWN rollout: the first one found
+ * in the date folder its session_meta names, where the walk stops (fix round
+ * 2: a lookup never walks the whole realm for copies). Copies in NEWER date
+ * folders are walked before it and so take part in chooseCodexRollout's
+ * choice (the kept directory first); a copy in an OLDER folder than its own
+ * is not looked for. With no dated rollout the walk goes on to its bounds.
+ * The walk is bounded (at most `maxEntries` folder
  * entries seen, `maxDays` day folders opened, `maxMatches` found) and follows
  * no link at any level: the sessions folder, a year, a month or a day folder
  * that is a link or junction is not entered, and a file link is not read. A
@@ -190,6 +200,7 @@ export function findCodexRollouts(sessionsDir: string, id: string, limits?: Code
         let files: fs.Dirent[]
         try { files = fs.readdirSync(dayDir, { withFileTypes: true }) } catch { continue }
         budget.entries -= files.length
+        entriesVisited += files.length
         if (budget.entries < 0) return out
         for (const f of files) {
           const name = f.name.toLowerCase()
@@ -205,7 +216,7 @@ export function findCodexRollouts(sessionsDir: string, id: string, limits?: Code
             folderDate === pad2Date(at.getUTCFullYear(), at.getUTCMonth() + 1, at.getUTCDate())
             || folderDate === pad2Date(at.getFullYear(), at.getMonth() + 1, at.getDate()))
           out.push({ path: file, meta, dated })
-          if (out.length >= maxMatches) return out
+          if (dated || out.length >= maxMatches) return out
         }
       }
     }
@@ -260,6 +271,8 @@ export interface ResolvedCodexResume {
   /** No rollout of that id records the directory the session kept: it
    *  starts in the configured one, and the caller says so. */
   cwdMismatch: boolean
+  /** The rollout chosen, for the status line to claim without a second walk. */
+  path: string
 }
 
 /**
@@ -288,7 +301,7 @@ export function resolveCodexResume(
     const homeOrAbove = ctx.homeOrAbove ?? isHomeOrAncestor
     const usable = !!own && path.isAbsolute(own) && sameDirectory(own, found.meta.cwd) && dirExists(own)
       && (sameDirectory(own, ctx.configuredCwd) || !homeOrAbove(own))
-    return { resumeId: found.meta.id, cwd: usable ? path.resolve(own) : ctx.configuredCwd, cwdMismatch: !chosen.cwdMatched }
+    return { resumeId: found.meta.id, cwd: usable ? path.resolve(own) : ctx.configuredCwd, cwdMismatch: !chosen.cwdMatched, path: found.path }
   } catch {
     return null
   }
