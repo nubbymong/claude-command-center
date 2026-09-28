@@ -408,6 +408,16 @@ old sign-in out too. The kept old sign-in keeps the account needing
 attention, as design 9.2 requires: "on failure or uncertain provider
 semantics, it remains in a visible recoverable cleanup state and the
 provider account stays `attention`".
+Review round 3: the history is carried over asynchronously, a batch at a
+time, each file as a second name of the same file (a hard link; the folders
+share a volume and the old one is never written again), else a byte copy;
+a file with any name the app did not give it (only the same place in the
+account's earlier folders counts) is left behind and logged; the history
+has its own bound (200,000 entries; beyond it the sign in again is refused
+with nothing changed), and a replacement holding it is removed whole by its
+Discard, which reads the registry again between batches. The provider's
+on/off is read again inside the switch's lock. A sign-out whose CLI ran
+records the account as needing a check whatever its read-back said.
 
 **P3.4 Codex-only mode and provider status.** Each provider's status pills
 only while it is on, with an OpenAI status pill for Codex; no Claude prompts

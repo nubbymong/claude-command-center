@@ -765,7 +765,9 @@
         "tests/wp1/reauth-staging.test.ts",
         "tests/wp1/account-lifecycle.test.ts",
         "tests/wp1/provider-ipc.test.ts",
-        "tests/unit/renderer/accounts-surface.test.tsx"
+        "tests/wp1/codex-realm-folders.test.ts",
+        "tests/unit/renderer/accounts-surface.test.tsx",
+        "tests/unit/tokenomics/tokenomics-carried-history-once.test.ts"
       ],
       "evidence": [],
       "status": "planned",

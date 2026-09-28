@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-27T22:59:10.298Z",
-  "head": "db7be3e7a258a814234c1444a54654cb3616d762",
-  "tree": "c690c9d9af357b3ead02fe0950045d97b4534247",
+  "generatedAt": "2026-09-28T03:19:41.295Z",
+  "head": "f6b8adab4ce669744afdf826e62c3beb317268a6",
+  "tree": "81d11083126f060b550cf2dcbb42affab34ff5fe",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2431,
-  "excludedFileCount": 382,
-  "scannedFileCount": 2049,
+  "trackedFileCount": 2435,
+  "excludedFileCount": 383,
+  "scannedFileCount": 2052,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 485,
-  "pathDigest": "d8c656fed35b19f344745faca786e6717be04c4b4cc86f19ef68ae4b082c8fe7",
+  "matchedPathCount": 486,
+  "pathDigest": "be2999b708f2819cb282fee4680388eb343f91218eca27c50b51fb3ed92468aa",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 128
+      "lineCount": 131
     },
     {
       "path": "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
@@ -210,7 +210,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 81
+      "lineCount": 82
     },
     {
       "path": "docs/wp2/plan.md",
@@ -643,7 +643,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 183
+      "lineCount": 185
     },
     {
       "path": "src/main/providers/codex/install-recipes.ts",
@@ -702,7 +702,7 @@
         "P05",
         "P14"
       ],
-      "lineCount": 87
+      "lineCount": 114
     },
     {
       "path": "src/main/providers/codex/realm-paths.ts",
@@ -3169,7 +3169,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 152
+      "lineCount": 157
     },
     {
       "path": "tests/unit/renderer/active-indicator.test.tsx",
@@ -3939,6 +3939,13 @@
         "P13"
       ],
       "lineCount": 1
+    },
+    {
+      "path": "tests/unit/tokenomics/tokenomics-carried-history-once.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 7
     },
     {
       "path": "tests/unit/tokenomics/tokenomics-worker-reread-order.test.ts",

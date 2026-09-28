@@ -1,9 +1,11 @@
-// WP1.28, WP1.30, WP1.45 -- WP2 slice 3d (plan A5; design 5.4, 5.5, 9.3, 12,
+// WP1.28, WP1.30, WP1.45, WP1.52 -- WP2 slice 3d (plan A5; design 5.4, 5.5, 9.3, 12,
 // 13): the managed Codex account folders. Canonical roots (a SUBST or mapped
 // resources directory), the external home refused on ANY overlap with the
 // managed tree -- by canonical path and by file identity -- creation before
 // sign-in (real, owner-only folders; links refused), and removal of an
 // abandoned setup's folder only after proving it is inside the managed root.
+// WP1.52: a sign in again's replacement removed past the removal's bound,
+// paced, with the registry read again between batches.
 //
 // PURE: every filesystem call goes to an in-memory fake with Windows and POSIX
 // semantics. No file is written, no process started. The real-filesystem
