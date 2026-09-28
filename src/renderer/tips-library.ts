@@ -1014,7 +1014,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Pick up an earlier Codex conversation',
         title: 'Restart a Codex Session',
-        body: 'A Codex session\'s header has a **Restart** menu with two choices:\n\n• **Restart** -- carries on with the same conversation, or starts a new one if the session had none yet\n• **Restart and pick a conversation** -- lists its recent conversations in the terminal: type a number to pick one, or **n** for a new one\n\nA session on a sign-in you confirm at each launch asks for that confirmation again on the way back up.',
+        body: 'A Codex session\'s header has a **Restart** menu with two choices:\n\n• **Restart** -- carries on with the same conversation, or starts a new one if the session had none yet\n• **Restart and pick a conversation** -- lists its recent conversations in the terminal, the project\'s git worktrees included: type a number to pick one, or **n** for a new one\n\nA session on a sign-in you confirm at each launch asks for that confirmation again on the way back up.',
         focusHint: 'Codex session header -- Restart',
       },
     },
