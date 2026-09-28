@@ -7,7 +7,7 @@
 // names the sessions holding the account, with Go to), and archived accounts
 // are listed under "Archived (N)" with Restore (design 5.3).
 import React, { useEffect, useRef, useState } from 'react'
-import type { AccountView, AccountsResult, AccountsSnapshot, KnownAuthState, PendingSetupView, ProviderId, ProviderInstallationView } from '../../../../shared/providers'
+import type { AccountView, AccountsResult, AccountsSnapshot, KnownAuthState, PendingSetupView, ProviderId, ProviderInstallationView, SignInMethod } from '../../../../shared/providers'
 import type { IdentityColorKey } from '../../../../shared/identity-colors'
 import { resolveIdentityColor } from '../../../../shared/identity-colors'
 import {
@@ -67,6 +67,10 @@ function ManagedAccountRow({ account, provider, snapshot }: { account: AccountVi
   const [error, setError] = useState<string | null>(null)
   const [ack, setAck] = useState<ExternalAck | null>(null)
   const [signingInAgain, setSigningInAgain] = useState(false)
+  // Sign in again handing over to Add account: a new account with this
+  // method ("different or unsure"), or naming a sign-in main found to be
+  // someone else (an unfinished setup, resumed at its name).
+  const [handoff, setHandoff] = useState<null | { method: SignInMethod } | { resume: PendingSetupView }>(null)
   const [checked, setChecked] = useState<KnownAuthState | null>(null)
   const [editing, setEditing] = useState(false)
   const [blocker, setBlocker] = useState<{ verb: string; sessions: { id: string; title: string }[]; more: number } | null>(null)
@@ -149,8 +153,8 @@ function ManagedAccountRow({ account, provider, snapshot }: { account: AccountVi
     if (canOfferMakeReviewer(snapshot, account)) {
       items.push({ key: 'make-reviewer', label: 'Make reviewer', onSelect: () => { void run(() => providerAccountActions.setReviewerDefault({ providerId: account.providerId, accountId: id })) } })
     }
-    // Only when it is not signed in now: the provider never logs in over a
-    // realm that still is, so the offer would do nothing but check.
+    // Signed in too: main then signs in to a new folder and moves the
+    // account there only once that sign-in is verified (design 9.2).
     if (canOfferSignInAgain(account)) {
       items.push({ key: 'sign-in-again', label: 'Sign in again', onSelect: () => { setError(null); setChecked(null); setSigningInAgain(true) } })
     }
@@ -239,6 +243,7 @@ function ManagedAccountRow({ account, provider, snapshot }: { account: AccountVi
               snapshot that blocked the account. */}
           {checked && !blocked && <MutedLine testId={`account-checked-${id}`}>{signInCheckText(checked)}</MutedLine>}
           {externalHint && <MutedLine testId={`account-external-hint-${id}`}>{externalHint}</MutedLine>}
+          {account.oldSignInLeft && !blocked && manageable && <MutedLine testId={`account-old-sign-in-${id}`}>Check sign-in removes it.</MutedLine>}
           <RunningPill count={account.runningSessions} testId={`account-running-${id}`} />
           {blocked && manageable && (
             <RowButton onClick={() => { void run(() => providerAccountActions.reconcileSignIn(id)) }} disabled={busy} testId={`account-reconcile-${id}`}>
@@ -260,7 +265,23 @@ function ManagedAccountRow({ account, provider, snapshot }: { account: AccountVi
       {error && <ErrorLine testId={`account-error-${id}`}>{error}</ErrorLine>}
       {blocker && <BlockerLine name={name} verb={blocker.verb} sessions={blocker.sessions} more={blocker.more} testId={`account-blocker-${id}`} />}
       {ack && <ExternalAckDialog kind={ack} provider={provider} onConfirm={confirmAck} onCancel={() => setAck(null)} />}
-      {signingInAgain && <SignInAgainDialog provider={provider} account={account} name={name} onClose={() => setSigningInAgain(false)} />}
+      {signingInAgain && (
+        <SignInAgainDialog
+          provider={provider}
+          account={account}
+          name={name}
+          onClose={() => setSigningInAgain(false)}
+          onNewAccount={(method) => { setSigningInAgain(false); setHandoff({ method }) }}
+          onSeparate={(resume) => setHandoff({ resume })}
+        />
+      )}
+      {handoff && (
+        <AddProviderAccountDialog
+          provider={provider}
+          {...('resume' in handoff ? { resume: handoff.resume } : { initialMethod: handoff.method })}
+          onClose={() => setHandoff(null)}
+        />
+      )}
       {editing && manageable && <IdentityEditor anchor={chipRef} account={account} snapshot={snapshot} onClose={() => setEditing(false)} testId={`identity-editor-${id}`} />}
     </AccountRow>
   )
@@ -318,7 +339,7 @@ function methodWord(m: PendingSetupView['method']): string {
   }
 }
 
-function PendingSetupRow({ setup, manageable, onResume }: { setup: PendingSetupView; manageable: boolean; onResume: () => void }) {
+function PendingSetupRow({ setup, manageable, onResume, replacesName }: { setup: PendingSetupView; manageable: boolean; onResume: () => void; replacesName?: string }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const discard = async () => {
@@ -328,14 +349,19 @@ function PendingSetupRow({ setup, manageable, onResume }: { setup: PendingSetupV
     setBusy(false)
     if (!r.ok) setError(accountFailureText(r))
   }
-  const resumable = manageable && !setup.external && !setup.signingIn
+  // A sign in again of an existing account (design 9.2) is never finished as
+  // a new account: Discard it, then sign in again.
+  const again = setup.replacesAccountId !== undefined
+  const resumable = manageable && !setup.external && !setup.signingIn && !again
   return (
     <div className="py-2" style={{ borderTop: '1px solid var(--border-subtle)' }} data-testid={`pending-setup-${setup.accountId}`}>
       <div className="flex items-center gap-3">
         <div className="flex-1 min-w-0">
-          <div className="text-[12.5px]" style={{ color: 'var(--text-primary)' }}>{methodWord(setup.method)}, not finished</div>
+          <div className="text-[12.5px]" style={{ color: 'var(--text-primary)' }}>{again ? `Sign in again${replacesName ? ` for ${replacesName}` : ''}, not finished` : `${methodWord(setup.method)}, not finished`}</div>
           <MutedLine>
-            {setup.signingIn ? 'Signing in now' : setup.state === 'credentials-written' ? 'Signed in; it still needs a name' : 'Started ' + new Date(setup.createdAt).toLocaleString()}
+            {setup.signingIn ? 'Signing in now'
+              : again ? 'Discard it, then sign in again'
+                : setup.state === 'credentials-written' ? 'Signed in; it still needs a name' : 'Started ' + new Date(setup.createdAt).toLocaleString()}
           </MutedLine>
         </div>
         {resumable && <RowButton onClick={onResume} disabled={busy} testId={`pending-setup-resume-${setup.accountId}`}>Resume</RowButton>}
@@ -417,7 +443,8 @@ export function ManagedAccountsSection({ providerId }: { providerId: ProviderId 
 
   const accounts = selectProviderAccounts(snapshot, providerId)
   const archived = selectArchivedAccounts(snapshot, providerId)
-  const pending = snapshot.pendingSetups.filter((p) => p.providerId === providerId)
+  // A sign in again being run by its own dialog is that dialog's to show.
+  const pending = snapshot.pendingSetups.filter((p) => p.providerId === providerId && !(p.replacesAccountId !== undefined && p.signingIn))
   const manageable = provider.enabled
 
   return (
@@ -438,7 +465,10 @@ export function ManagedAccountsSection({ providerId }: { providerId: ProviderId 
       {pending.length > 0 && (
         <div data-testid={`pending-setups-${providerId}`}>
           <div className="text-[11.5px] font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>Unfinished setups</div>
-          {pending.map((p) => <PendingSetupRow key={p.accountId} setup={p} manageable={manageable} onResume={() => setDialog({ resume: p })} />)}
+          {pending.map((p) => {
+            const replaces = p.replacesAccountId !== undefined ? snapshot.accounts.find((a) => a.id === p.replacesAccountId) : undefined
+            return <PendingSetupRow key={p.accountId} setup={p} manageable={manageable} onResume={() => setDialog({ resume: p })} {...(replaces ? { replacesName: accountDisplayName(snapshot, replaces) } : {})} />
+          })}
         </div>
       )}
       {manageable && <ExternalAdoptionBlock providerId={providerId} provider={provider} />}

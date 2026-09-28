@@ -5,8 +5,10 @@
 // provider's own sign-in there, completeSetup names it. Leaving before
 // completeSetup abandons the setup, so nothing half-made stays behind.
 //
-// Sign in again re-signs an existing managed account in its own realm,
-// after the user confirms it is the same account as before.
+// Sign in again re-signs an existing managed account once the user says it
+// is the same account as before (main stages it when the account is signed
+// in: design 9.2). Not ticked ("different or unsure"), the sign-in is added
+// as a new account instead: the Add account dialog takes over.
 //
 // Both share one sign-in run (useSignInRun): leaving (Cancel, Escape, the
 // close glyph, or the dialog going away) stops a running sign-in, waits for
@@ -65,7 +67,9 @@ const isSignInMethod = (m: string): m is SignInMethod => (SIGN_IN_METHODS as rea
 // The shared sign-in run
 // ---------------------------------------------------------------------------
 
-type SignInAnswer = AccountsResult<{ state: KnownAuthState }>
+/** `separateAccountId`: a sign in again that main found to be someone else;
+ *  that sign-in waits, as an unfinished setup, to be named as a new account. */
+type SignInAnswer = AccountsResult<{ state: KnownAuthState; separateAccountId?: string }>
 
 interface SignInRun {
   /** The account being signed in; set as soon as the main process names it. */
@@ -595,25 +599,34 @@ export interface SignInAgainDialogProps {
   /** The account's name as its row shows it. */
   name: string
   onClose: () => void
+  /** "Different or unsure" (the box not ticked): nothing runs here; the
+   *  sign-in is added as a new account (Add account, with this method). */
+  onNewAccount: (method: SignInMethod) => void
+  /** Main found someone else signed in: that sign-in is a new account's,
+   *  to be named (Add account, resumed at its name). */
+  onSeparate: (setup: PendingSetupView) => void
 }
 
 type AgainStep = 'method' | 'key' | 'signing-in' | 'failed'
 
 /**
- * "Sign in again" for an existing managed account (signed out, expired, or
- * not checked): its recorded method family only, in the account's own
- * realm, after the user confirms it is the same account as before. Nothing
- * runs and no key is taken until that box is ticked. On success the dialog
- * closes and the pushed snapshot updates the row; an answer that blocked
- * the account (a different sign-in) does not close as a success.
+ * "Sign in again" for an existing managed account: its recorded method family
+ * only. Ticked ("the same account as before"), main signs it in again: in
+ * place when it is not signed in, else in a new folder it moves the account
+ * to only once that sign-in is verified (design 9.2). Not ticked, nothing
+ * runs here and no key is taken: the sign-in is added as a new account
+ * instead (onNewAccount), and this one stays as it is. On success the
+ * dialog closes and the pushed snapshot updates the row; an answer that
+ * blocked the account (a different sign-in) does not close as a success,
+ * and one main found to be someone else hands over to naming that new
+ * account (onSeparate).
  */
-export function SignInAgainDialog({ provider, account, name, onClose }: SignInAgainDialogProps) {
+export function SignInAgainDialog({ provider, account, name, onClose, onNewAccount, onSeparate }: SignInAgainDialogProps) {
   const { methods, preselected } = signInAgainMethods(provider, account)
   const [step, setStep] = useState<AgainStep>('method')
   const [method, setMethod] = useState<SignInMethod | null>(preselected)
-  // The user's explicit yes that this is the same account as before: no
-  // sign-in runs, and no key is taken, until it is given (a different
-  // account signing in here would block this one until it is confirmed).
+  // The user's explicit yes that this is the same account as before. Not
+  // given, the sign-in becomes a new account and this one is untouched.
   const [sameAccount, setSameAccount] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -630,13 +643,20 @@ export function SignInAgainDialog({ provider, account, name, onClose }: SignInAg
     setStep('signing-in')
     const r = await runner.start(m, secretHandle)
     if (!r) return
+    if (r.ok && r.separateAccountId) {
+      onSeparate({ accountId: r.separateAccountId, providerId: account.providerId, method: m, state: 'credentials-written', external: false, createdAt: Date.now(), signingIn: false })
+      runner.done()
+      return
+    }
     if (r.ok && r.state === 'signed-in') { runner.done(); return }
     setError(r.ok ? 'Still not signed in. Try again, or cancel.' : signInAgainFailureText(r))
     setStep('failed')
   }
 
   const proceed = () => {
-    if (!method || !sameAccount) return
+    if (!method) return
+    // Different or unsure: a new account, through Add account.
+    if (!sameAccount) { onNewAccount(method); return }
     if (method === 'apiKey') { setError(null); setStep('key') }
     else void start(method)
   }
@@ -678,7 +698,11 @@ export function SignInAgainDialog({ provider, account, name, onClose }: SignInAg
                     />
                     <span>
                       <span data-testid="sign-in-again-confirm-label">{account.providerLabel ? `Sign in to the same account as before (${account.providerLabel}).` : 'Sign in to the same account as before.'}</span>
-                      <span className="block text-[11.5px] mt-0.5" style={{ color: 'var(--text-muted)' }}>If it is signed in a different way than before, the account waits until you confirm it in Accounts.</span>
+                      <span className="block text-[11.5px] mt-0.5" style={{ color: 'var(--text-muted)' }} data-testid="sign-in-again-confirm-hint">
+                        {sameAccount
+                          ? 'If it is signed in a different way than before, the account waits until you confirm it in Accounts.'
+                          : 'Not ticked, the sign-in is added as a new account, and this one stays as it is.'}
+                      </span>
                     </span>
                   </label>
                 </div>
@@ -710,7 +734,7 @@ export function SignInAgainDialog({ provider, account, name, onClose }: SignInAg
       <DialogFooter>
         <DialogButton variant="ghost" onClick={() => { void runner.exit() }} disabled={runner.leaving} testId="sign-in-again-cancel" data-autofocus={step === 'signing-in' ? '' : undefined}>Cancel</DialogButton>
         {!runner.leaving && step === 'method' && (
-          <DialogButton variant="primary" onClick={proceed} disabled={!method || !sameAccount} testId="sign-in-again-continue">{method === 'apiKey' ? 'Continue' : 'Sign in'}</DialogButton>
+          <DialogButton variant="primary" onClick={proceed} disabled={!method} testId="sign-in-again-continue">{method === 'apiKey' ? 'Continue' : 'Sign in'}</DialogButton>
         )}
         {!runner.leaving && step === 'key' && (
           <DialogButton variant="primary" onClick={() => { void submitKey() }} disabled={busy || !hasKey} testId="sign-in-again-key-continue">Continue</DialogButton>
