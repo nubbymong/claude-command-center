@@ -19,12 +19,45 @@ interface TourStep {
   cta?: string // overrides "Next" on this step
 }
 
-/** The one in use when only one is; both otherwise (neither is a state
- *  setup never leaves, and it reads as before). */
+/** The one assistant in use when only one is; null for both (and for
+ *  neither, a state setup never leaves: every card then reads as before). */
+function onlyOne(on: AssistantsOn): 'claude' | 'codex' | null {
+  if (on.claudeOn && !on.codexOn) return 'claude'
+  if (on.codexOn && !on.claudeOn) return 'codex'
+  return null
+}
+
 function assistantsInUse(on: AssistantsOn): string {
-  if (on.claudeOn && !on.codexOn) return 'Claude Code'
-  if (on.codexOn && !on.claudeOn) return 'Codex'
-  return 'Claude Code and Codex'
+  const only = onlyOne(on)
+  return only === 'claude' ? 'Claude Code' : only === 'codex' ? 'Codex' : 'Claude Code and Codex'
+}
+
+/** Where a saved config's sessions run. Codex runs on this computer only in
+ *  this release, and SSH (plain or persistent) is for Claude. */
+const SSH_KINDS = 'over SSH — plain, or persistent so a dropped link does not kill it'
+function whereSessionsRun(on: AssistantsOn): string {
+  const only = onlyOne(on)
+  if (only === 'codex') return 'Codex, on this computer'
+  if (only === 'claude') return `Claude, here or on another machine ${SSH_KINDS}`
+  return `Claude or Codex here, or Claude on another machine ${SSH_KINDS}`
+}
+
+/** What the canvas does. A Codex agent cannot put work on it yet (P4.1
+ *  brings it), so with Codex alone the card says that instead. */
+const CANVAS_REVIEW = 'Your agent renders a mockup, a plan, or the site it just built, and you review it by pointing: click an element to leave a note, draw over it, then decide — approve that version, or send it back for another round. Testing mode goes further — click through a running build and every note saves the screen, the page state and how you got there. A small dot on the button means there is unfinished canvas work anyone here can pick up.'
+function canvasCard(on: AssistantsOn): string {
+  const only = onlyOne(on)
+  if (only === 'codex') return 'Every session has a Canvas button beside Snap. It opens the Agent Canvas, where an agent\'s mockups, plans and builds are reviewed by pointing at them. A Codex agent cannot put work there yet.'
+  if (only === 'claude') return `Every session has a Canvas button beside Snap. ${CANVAS_REVIEW}`
+  return `Every session has a Canvas button beside Snap. ${CANVAS_REVIEW} Claude sessions draw on it; a Codex agent cannot put work there yet.`
+}
+
+/** Ask Conductor is a Claude session (Codex's is PR 4, row 53), so with
+ *  Codex alone the card does not offer it. */
+function helpCard(on: AssistantsOn): string {
+  const only = onlyOne(on)
+  if (only === 'codex') return 'The Feature Guide explains every feature in depth whenever you want it.'
+  return 'The Feature Guide explains every feature in depth whenever you want it and, with Claude Code on, can hand your question to Ask Conductor, a Claude session that knows the app.'
 }
 
 const STEPS: TourStep[] = [
@@ -45,7 +78,7 @@ const STEPS: TourStep[] = [
     // silently skip the step that explains the app's core concept.
     selector: '[data-tour="new-config"]',
     title: 'Saved configs live here',
-    body: 'The left panel has two modes — Saved is your launcher, Running is your live sessions. A saved config is a reusable launcher: project folder, model, account. Open the Saved tab, press "+ New" and pick Config to create one, then start a session from it whenever you want (Claude or Codex here, or Claude on another machine over SSH — plain, or persistent so a dropped link does not kill it).',
+    body: (on) => `The left panel has two modes — Saved is your launcher, Running is your live sessions. A saved config is a reusable launcher: project folder, model, account. Open the Saved tab, press "+ New" and pick Config to create one, then start a session from it whenever you want (${whereSessionsRun(on)}).`,
   },
   {
     // The Agent Canvas had no step at all, which made the app's second-largest
@@ -55,7 +88,7 @@ const STEPS: TourStep[] = [
     // anchored step relies on. It earns its place the moment a session exists.
     selector: '[data-tour="canvas-button"]',
     title: 'Review what your agent builds',
-    body: 'Every session has a Canvas button beside Snap. Your agent renders a mockup, a plan, or the site it just built, and you review it by pointing: click an element to leave a note, draw over it, then decide — approve that version, or send it back for another round. Testing mode goes further — click through a running build and every note saves the screen, the page state and how you got there. A small dot on the button means there is unfinished canvas work anyone here can pick up. Claude sessions draw on it; a Codex agent cannot put work there yet.',
+    body: canvasCard,
   },
   {
     // Anchored on data-tour, not aria-label: the nav button's label is dynamic
@@ -68,7 +101,7 @@ const STEPS: TourStep[] = [
   {
     selector: '[data-tour="help-button"]',
     title: 'Help lives here',
-    body: 'The Feature Guide explains every feature in depth whenever you want it and, with Claude Code on, can hand your question to Ask Conductor, a Claude session that knows the app.',
+    body: helpCard,
   },
   {
     selector: null,

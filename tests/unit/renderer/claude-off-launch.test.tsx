@@ -281,6 +281,35 @@ describe('the Feature Guide Ask card', () => {
   })
 })
 
+describe('the Feature Guide section heroes (P3.4 follow-up, row 14)', () => {
+  // The productivity hero told a Codex-only user about showing Claude
+  // something. It names the assistant in use; with Claude Code on it reads
+  // as before.
+  const productivityHero = async (): Promise<string> => {
+    await act(async () => { root.render(<FeatureGuidePage onNavigateToSessions={() => {}} onStartTour={() => {}} />) })
+    const quick = [...container.querySelectorAll('button')].find((b) => b.textContent?.startsWith('Productivity'))!
+    await act(async () => { quick.click() })
+    return container.querySelector('[data-ux-id="section-hero"]')!.textContent ?? ''
+  }
+  const BEFORE = 'Panes, sketches and captures that live next to the terminal, so you never have to leave the session to show Claude something.'
+
+  it('Codex only: the productivity hero names Codex, not Claude', async () => {
+    setProviders({ claudeEnabled: false, codexEnabled: true })
+    const hero = await productivityHero()
+    expect(hero).toContain('so you never have to leave the session to show Codex something.')
+    expect(hero).not.toContain('Claude')
+  })
+
+  it('Claude Code on (alone or beside Codex): as before', async () => {
+    for (const on of [{ claudeEnabled: true, codexEnabled: true }, { claudeEnabled: true, codexEnabled: false }]) {
+      act(() => { root.unmount() })
+      root = createRoot(container)
+      setProviders(on)
+      expect(await productivityHero(), JSON.stringify(on)).toContain(BEFORE)
+    }
+  })
+})
+
 describe('the New session dialog', () => {
   function providerRadio(title: string): HTMLInputElement {
     const g = container.querySelector('[role="radiogroup"][aria-label="Provider"]')!

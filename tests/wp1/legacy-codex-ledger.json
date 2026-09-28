@@ -2,7 +2,7 @@
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "manifestPathDigest": "bb3674ca41f086f9fd8b859e7d1743386967b1717d0d73d1d7b172952c62a57b",
-  "manifestHead": "0b6c8f0a229a96d0b2ab6b9fd1bbadc6802b0394",
+  "manifestHead": "d2ea6e66835501bc31e599fab102d9a4d9c46a8d",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -1389,7 +1389,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "replace",
-      "evidence": "WP2 commit 6e review fix: the Ask card is disabled with the reason while Claude Code is off (WP1.2); tests/unit/renderer/claude-off-launch.test.tsx; WP2 commit 6f: \"Show the Codex introduction\" on the Codex Provider card replays it without marking it seen (WP1.36); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 commit 6f review round 1: the replay link is offered only once Codex is set up (WP1.36); tests/unit/renderer/hello-codex.acceptance.test.ts",
+      "evidence": "WP2 commit 6e review fix: the Ask card is disabled with the reason while Claude Code is off (WP1.2); tests/unit/renderer/claude-off-launch.test.tsx; WP2 commit 6f: \"Show the Codex introduction\" on the Codex Provider card replays it without marking it seen (WP1.36); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 commit 6f review round 1: the replay link is offered only once Codex is set up (WP1.36); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 PR 3 P3.4 closure follow-up (row 14): the productivity section hero names Codex when Codex alone is in use, else Claude as before (WP1.2); tests/unit/renderer/claude-off-launch.test.tsx",
       "note": ""
     },
     {
@@ -1399,7 +1399,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "replace",
-      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); WP1.33 mapping: adapted in place for WP2 P3 usage track MP13 (the user-facing sweep for the usage UX the owner approved 2026-09-27): the rail step names the Usage page; the tour is otherwise unchanged (WP1.33); tests/unit/renderer/guided-tour-counter.test.tsx; WP2 PR 3 P3.4 closure (row 14): the first card names the assistants in use (both on unchanged; Claude Code or Codex alone when only one is), read as the title bar reads them (WP1.2); tests/unit/renderer/guided-tour-provider-copy.test.tsx",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); WP1.33 mapping: adapted in place for WP2 P3 usage track MP13 (the user-facing sweep for the usage UX the owner approved 2026-09-27): the rail step names the Usage page; the tour is otherwise unchanged (WP1.33); tests/unit/renderer/guided-tour-counter.test.tsx; WP2 PR 3 P3.4 closure (row 14): the first card names the assistants in use (both on unchanged; Claude Code or Codex alone when only one is), read as the title bar reads them (WP1.2); tests/unit/renderer/guided-tour-provider-copy.test.tsx; WP2 PR 3 P3.4 closure follow-up (row 14): every card swept per assistants in use; the saved-config card (Codex alone: Codex on this computer, no SSH; Claude Code alone: no Codex), the canvas card (Codex alone: a Codex agent cannot put work there yet; Claude Code alone: no Codex) and the help card (Codex alone: no Ask on Claude Code) follow them; both on unchanged (WP1.2); tests/unit/renderer/guided-tour-provider-copy.test.tsx",
       "note": ""
     },
     {
@@ -4634,7 +4634,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "WP2 commit 6e review fix: with Claude Code off no config launches Claude (a terminal-only one still does), the reason names the provider, and the New session dialog offers only a provider that is on (WP1.2, WP1.3); tests/unit/renderer/claude-off-launch.test.tsx",
+      "evidence": "WP2 commit 6e review fix: with Claude Code off no config launches Claude (a terminal-only one still does), the reason names the provider, and the New session dialog offers only a provider that is on (WP1.2, WP1.3); tests/unit/renderer/claude-off-launch.test.tsx; WP2 PR 3 P3.4 closure follow-up: the Feature Guide productivity hero per assistants in use (WP1.2); tests/unit/renderer/claude-off-launch.test.tsx",
       "note": ""
     },
     {
@@ -4833,7 +4833,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "new WP2 PR 3 P3.4 closure test (parity row 14): the guided tour's first card names the assistants in use, as the title bar reads them (usesClaude, usesCodex): both on word for word as before, Claude Code alone with Codex off or not answered yet, Codex alone with Claude Code off, and it follows a switch (WP1.2); tests/unit/renderer/guided-tour-provider-copy.test.tsx",
+      "evidence": "new WP2 PR 3 P3.4 closure test (parity row 14): the guided tour's first card names the assistants in use, as the title bar reads them (usesClaude, usesCodex): both on word for word as before, Claude Code alone with Codex off or not answered yet, Codex alone with Claude Code off, and it follows a switch (WP1.2); tests/unit/renderer/guided-tour-provider-copy.test.tsx; every card walked for Codex alone (no Claude), Claude Code alone (no Codex) and both on (word for word as before) (WP1.2); tests/unit/renderer/guided-tour-provider-copy.test.tsx",
       "note": ""
     },
     {
