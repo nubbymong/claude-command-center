@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-28T09:47:04.018Z",
-  "head": "5355128c951ef5d91b94822bce471c9261a75539",
-  "tree": "7d301eaa2a95ebde598628d16ebcb5b6aad2ace9",
+  "generatedAt": "2026-09-28T14:36:25.936Z",
+  "head": "f65de184120aad9c7b017afea3446eb581f8abf6",
+  "tree": "3b6f05e92df311f64d71f2be026092d10d273096",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 147
+      "lineCount": 148
     },
     {
       "path": "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
