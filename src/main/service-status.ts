@@ -18,7 +18,8 @@
  * a provider switched off, or the poller stopped, aborts its read in flight.
  * A page that fails two polls in a row reads as "status unknown" (its
  * components null, its read time kept) rather than freezing its last pill.
- * A send to a window being torn down never escapes as an error.
+ * A send to a window being torn down never escapes as an error. A burst of
+ * accounts-service changes is acted on once, after it.
  */
 import * as https from 'https'
 import type { ClientRequest } from 'http'
@@ -226,6 +227,11 @@ const states = new Map<ReadKey, SourceState>()
 // The providers on at the last poll: a settings save polls again only when
 // this changed.
 let lastOn = ''
+// A refresh waiting for the end of a burst of accounts-service changes (a
+// lease taken and given back, a registry write): the burst is acted on once,
+// so each provider's on/off, a read of the saved settings, is asked once per
+// burst rather than once per change.
+let queuedRefresh: ReturnType<typeof setImmediate> | null = null
 // Last payload. Cached so a renderer that mounts AFTER the immediate poll has
 // already fired (e.g. behind the startup splash) can pull the current status
 // synchronously instead of waiting up to a full poll interval for the next
@@ -365,14 +371,27 @@ export function startServiceStatusPoller(
   const quietly = (p: Promise<void>) => { p.catch(() => { /* a poll never escapes as an error */ }) }
   quietly(pollAll()) // fetch immediately
   timer = setInterval(() => { quietly(pollAll()) }, POLL_INTERVAL)
-  unsubscribe = serviceDeps.subscribe?.(() => { quietly(refreshServiceStatus()) }) ?? null
+  unsubscribe = serviceDeps.subscribe?.(() => {
+    if (queuedRefresh) return
+    queuedRefresh = setImmediate(() => {
+      queuedRefresh = null
+      quietly(refreshServiceStatus())
+    })
+  }) ?? null
+}
+
+function dropQueuedRefresh(): void {
+  if (queuedRefresh) clearImmediate(queuedRefresh)
+  queuedRefresh = null
 }
 
 /** The saved settings changed: a provider switched on is read at once, and
  *  one switched off leaves the payload, its read in flight aborted. Nothing
  *  is read when no provider's on/off changed, and a provider whose on/off
- *  did not change is not read again. */
+ *  did not change is not read again. It covers every change before it, so a
+ *  refresh still waiting for the end of a burst is dropped. */
 export function refreshServiceStatus(): Promise<void> {
+  dropQueuedRefresh()
   if (!started) return Promise.resolve()
   return pollSwitched()
 }
@@ -387,6 +406,7 @@ export function registerServiceStatusHandlers(getWindow: () => BrowserWindow | n
 export function stopServiceStatusPoller(): void {
   try { unsubscribe?.() } catch { /* already gone */ }
   unsubscribe = null
+  dropQueuedRefresh()
   if (timer) {
     clearInterval(timer)
     timer = null
