@@ -475,8 +475,13 @@ re-confirmed PASS at 87ba9c2d, and ADR-009 lens N re-confirmed PASS at
 839ab591 (sync throw in the queued refresh cannot escape; no request to an
 off provider); the VM walk in Codex-only mode PASS at c7f9a34a (e2e 81/81;
 no request to OpenAI's status page while Codex was off or not answered), its
-minor M1 fixed in 9056e021. Owed: the owner's approval of the VM walk's
-screenshots, and a VM re-check at the final head.
+minor M1 fixed in 9056e021; the owner approved the screenshots (canvas
+"P3.4 Codex-only screens" v1, 2026-09-28, the gallery at f65de184); the VM
+re-check at f65de184 PASS (e2e 80 passed and 1 flaky, terminal-links.spec.ts
+line 110, passed on retry and in 3 more runs of that spec alone; the VM-only
+files as at c7f9a34a; What's New, the SSH dialog and the pills PASS). CI at
+f65de184 is green but for the Desktop test gate, which the owner attests.
+P3.4 is complete bar that gate.
 
 **P3.5 History and resume.** The claimed session id kept with the tab; exact
 resume on relaunch in the same realm; Restart resumes the same conversation
