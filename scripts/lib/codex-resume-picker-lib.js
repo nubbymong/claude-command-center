@@ -8,6 +8,7 @@
 const fs = require('fs')
 const path = require('path')
 const { spawnSync } = require('child_process')
+const crypto = require('crypto')
 
 // -- parseRollout ---------------------------------------------------
 // Reads the first ~32KB head of a rollout buffer and extracts:
@@ -349,17 +350,40 @@ function buildPickerRows(conversations, names, width, now) {
 }
 
 // -- The pick file --------------------------------------------------
-// Where the app asked the picker to record the conversation it opens
+// Where the app asked the picker to record each decision it makes
 // (CCC_CODEX_PICK_FILE), so the session's status line and the session
-// itself follow THAT conversation (P3.5). A conversation id only, to an
-// absolute path only, into a new file only (exclusive create, owner-only):
-// never over anything already there. Best-effort: false when not written.
-function writePick(file, id) {
+// itself follow what it runs (P3.5; fix round 1: EVERY decision, so the app
+// claims nothing before one): `{ id }` when it resumes that conversation,
+// `{ fresh: true }` when it starts a new one (New conversation, nothing to
+// list, or the fallback after a resume failed). The latest decision wins.
+function pickDecision(resumeUuid) {
+  return isResumeId(resumeUuid) ? { id: resumeUuid } : { fresh: true }
+}
+
+// A decision is written whole: into a new file beside the pick file
+// (exclusive create, owner-only where the platform keeps modes), then
+// renamed over it, which replaces whatever entry is there -- a link
+// included -- and never writes through one; a folder there is left as it
+// is. To an absolute path only. Best-effort: false when not written.
+function writePick(file, decision) {
+  let body = null
+  if (decision && typeof decision === 'object') {
+    const keys = Object.keys(decision)
+    if (keys.length === 1 && keys[0] === 'id' && isResumeId(decision.id)) body = { id: decision.id }
+    else if (keys.length === 1 && keys[0] === 'fresh' && decision.fresh === true) body = { fresh: true }
+  }
+  if (typeof file !== 'string' || !path.isAbsolute(file) || !body) return false
+  const tmp = `${file}.${crypto.randomBytes(8).toString('hex')}.tmp`
   try {
-    if (typeof file !== 'string' || !path.isAbsolute(file) || !isResumeId(id)) return false
-    fs.writeFileSync(file, JSON.stringify({ id }), { flag: 'wx', mode: 0o600 })
+    fs.writeFileSync(tmp, JSON.stringify(body), { flag: 'wx', mode: 0o600 })
+  } catch {
+    return false
+  }
+  try {
+    fs.renameSync(tmp, file)
     return true
   } catch {
+    try { fs.unlinkSync(tmp) } catch { /* nothing left to remove */ }
     return false
   }
 }
@@ -468,5 +492,5 @@ function isResumeId(id) {
 
 module.exports = {
   parseRollout, walkRollouts, buildResumeArgs, shouldFallback, shouldUseShell, launchTarget, isResumeId,
-  samePath, parseWorktrees, listWorktrees, worktreeLabelFor, displayText, buildPickerRows, loadWorkNames, writePick, childEnv, resolveRetargetCwd, timeAgo,
+  samePath, parseWorktrees, listWorktrees, worktreeLabelFor, displayText, buildPickerRows, loadWorkNames, pickDecision, writePick, childEnv, resolveRetargetCwd, timeAgo,
 }

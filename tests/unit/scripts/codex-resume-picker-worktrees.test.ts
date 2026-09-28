@@ -8,7 +8,7 @@
 // Real files in temp folders; nothing is started (git's output is parsed from
 // a string, as Claude's parseWorktrees test does).
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync, linkSync } from 'fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync, linkSync, readdirSync, statSync, symlinkSync, lstatSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 
@@ -19,7 +19,8 @@ const lib = require('../../../scripts/lib/codex-resume-picker-lib.js') as {
   loadWorkNames: (configDir: string | undefined) => Map<string, string>
   displayText: (raw: unknown, max?: number) => string
   buildPickerRows: (conversations: Array<Record<string, unknown>>, names: Map<string, string>, width: number, now?: number) => Array<{ num: string; title: string; named: boolean; sub: string | null; meta: string; tag: string | null }>
-  writePick: (file: string | undefined, id: string) => boolean
+  writePick: (file: string | undefined, decision: { id: string } | { fresh: true }) => boolean
+  pickDecision: (resumeUuid: string | null) => { id: string } | { fresh: true }
   childEnv: (env: Record<string, string | undefined>) => Record<string, string | undefined>
   resolveRetargetCwd: (resumeId: string | null, sourceCwd: string | undefined, currentCwd: string, existsSync: (p: string) => boolean, platform?: string) => { cwd: string | null }
 }
@@ -177,9 +178,18 @@ describe('everything shown is plain text (row 32)', () => {
     expect(script).not.toMatch(/\bprintable\(/)
   })
 
-  it('the picker records its pick, starts it in its own worktree, and hands Codex the environment without the pick file (source wiring)', () => {
+  it('the picker records every decision, starts a pick in its own worktree, and hands Codex the environment without the pick file (source wiring)', () => {
     const script = readFileSync(join(__dirname, '../../../scripts/codex-resume-picker.js'), 'utf8')
-    expect(script).toContain('lib.writePick(process.env.CCC_CODEX_PICK_FILE, id)')
+    // Every launch (a pick, New conversation, nothing to list, a failed main)
+    // goes through launchCodex, which records its decision first; the
+    // fallback after a failed resume records a new conversation.
+    const launch = script.slice(script.indexOf('function launchCodex('))
+    expect(launch.indexOf('lib.writePick(process.env.CCC_CODEX_PICK_FILE, lib.pickDecision(resumeUuid))')).toBeGreaterThan(-1)
+    expect(launch.indexOf('lib.writePick(process.env.CCC_CODEX_PICK_FILE, lib.pickDecision(resumeUuid))')).toBeLessThan(launch.indexOf('run(lib.buildResumeArgs('))
+    const fallback = launch.slice(launch.indexOf('if (lib.shouldFallback('))
+    expect(fallback.indexOf('lib.writePick(process.env.CCC_CODEX_PICK_FILE, lib.pickDecision(null))')).toBeGreaterThan(-1)
+    expect(fallback.indexOf('lib.writePick(process.env.CCC_CODEX_PICK_FILE, lib.pickDecision(null))')).toBeLessThan(fallback.indexOf('run(forwarded)'))
+    expect(script.match(/spawnSync\(/g)).toHaveLength(1)
     expect(script).toContain('launchCodex(id, conv.sourceCwd)')
     expect(script).toContain('lib.resolveRetargetCwd(resumeUuid, sourceCwd, process.cwd(), fs.existsSync)')
     expect(script).toMatch(/spawnSync\(target\.file, target\.args, \{[^}]*\benv,[^}]*retarget\.cwd/)
@@ -189,19 +199,63 @@ describe('everything shown is plain text (row 32)', () => {
 })
 
 describe('the conversation the picker opens (rows 32, 38)', () => {
-  it('is recorded in the pick file: a conversation id only, a new file only, an absolute path only', () => {
+  it('each decision is recorded whole in the pick file: a conversation id or a new conversation, to an absolute path only', () => {
     const dir = temp('pick')
     const file = join(dir, 'pick.json')
-    expect(lib.writePick(file, ID1)).toBe(true)
+    expect(lib.pickDecision(ID1)).toEqual({ id: ID1 })
+    expect(lib.pickDecision(null)).toEqual({ fresh: true })
+    expect(lib.writePick(file, lib.pickDecision(ID1))).toBe(true)
     expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ id: ID1 })
-    // Never over a file that is there already.
-    expect(lib.writePick(file, ID2)).toBe(false)
-    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ id: ID1 })
+    // A later decision (the fallback after a failed resume) replaces it.
+    expect(lib.writePick(file, lib.pickDecision(null))).toBe(true)
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ fresh: true })
     const other = join(dir, 'other.json')
-    expect(lib.writePick(other, '--config=x')).toBe(false)
+    for (const bad of [{ id: '--config=x' }, { fresh: 'yes' }, { id: ID2, extra: 1, fresh: false }, null, undefined]) {
+      expect(lib.writePick(other, bad as never), JSON.stringify(bad)).toBe(false)
+    }
     expect(existsSync(other)).toBe(false)
-    expect(lib.writePick('relative.json', ID1)).toBe(false)
-    expect(lib.writePick(undefined, ID1)).toBe(false)
+    expect(lib.writePick('relative.json', lib.pickDecision(ID1))).toBe(false)
+    expect(lib.writePick(undefined, lib.pickDecision(ID1))).toBe(false)
+    // Nothing is left beside it.
+    expect(readdirSync(dir).sort()).toEqual(['pick.json'])
+  })
+
+  it('the pick file is readable by its owner only, where the platform keeps modes', (ctx) => {
+    if (process.platform === 'win32') { ctx.skip(); return }
+    const file = join(temp('pick-mode'), 'pick.json')
+    expect(lib.writePick(file, lib.pickDecision(ID1))).toBe(true)
+    expect(statSync(file).mode & 0o777).toBe(0o600)
+  })
+
+  it('a link at the pick path is replaced, never written through', (ctx) => {
+    const dir = temp('pick-link')
+    const target = join(dir, 'elsewhere.json')
+    writeFileSync(target, 'original')
+    const file = join(dir, 'pick.json')
+    try { symlinkSync(target, file, 'file') } catch { ctx.skip(); return }
+    expect(lib.writePick(file, lib.pickDecision(ID1))).toBe(true)
+    expect(readFileSync(target, 'utf8')).toBe('original')
+    expect(lstatSync(file).isSymbolicLink()).toBe(false)
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ id: ID1 })
+  })
+
+  it('nothing is ever written into a folder a link at the pick path points at; a real folder there is left as it is', () => {
+    const dir = temp('pick-junction')
+    const inside = join(dir, 'real')
+    mkdirSync(inside)
+    const file = join(dir, 'pick.json')
+    symlinkSync(inside, file, 'junction')
+    // Windows refuses to replace a folder link with a file; elsewhere the
+    // link itself is replaced. Either way the folder it pointed at stays empty.
+    const wrote = lib.writePick(file, lib.pickDecision(ID1))
+    expect(readdirSync(inside)).toEqual([])
+    if (wrote) expect(lstatSync(file).isFile()).toBe(true)
+    expect(readdirSync(dir).sort()).toEqual(['pick.json', 'real'])
+    const folder = join(dir, 'pick-folder')
+    mkdirSync(folder)
+    expect(lib.writePick(folder, lib.pickDecision(ID1))).toBe(false)
+    expect(readdirSync(folder)).toEqual([])
+    expect(readdirSync(dir).sort()).toEqual(['pick-folder', 'pick.json', 'real'])
   })
 
   it('Codex itself never gets the pick file\'s name, in any spelling', () => {

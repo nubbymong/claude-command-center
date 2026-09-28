@@ -124,8 +124,6 @@ async function main() {
     if (idx >= 1 && idx <= conversations.length) {
       const conv = conversations[idx - 1]
       const id = lib.isResumeId(conv.id) ? conv.id : null
-      // Tell the app which conversation this session is now on (P3.5).
-      if (id) lib.writePick(process.env.CCC_CODEX_PICK_FILE, id)
       launchCodex(id, conv.sourceCwd)
       return
     }
@@ -134,9 +132,13 @@ async function main() {
 }
 
 // -- launchCodex ----------------------------------------------------
-// `sourceCwd`: the worktree git reported for the chosen conversation. A
-// conversation from another worktree starts there (P3.5), as Claude's picker
-// does, and so does its fresh fallback; a new conversation starts here.
+// Every start goes through here: a pick, New conversation, nothing to list,
+// a failed main(). It first tells the app what this session now runs (the
+// pick file, P3.5): the conversation it resumes, or a new one; the app
+// claims nothing until it is told. `sourceCwd`: the worktree git reported
+// for the chosen conversation. A conversation from another worktree starts
+// there, as Claude's picker does, and so does its fresh fallback; a new
+// conversation starts here.
 function launchCodex(resumeUuid, sourceCwd) {
   const forwarded = getForwardedArgs()
   const cmd = resolveCodexCmd()
@@ -144,6 +146,7 @@ function launchCodex(resumeUuid, sourceCwd) {
     console.error('\n  Failed to launch codex: the app did not pass the Codex executable for this session.\n')
     process.exit(1)
   }
+  lib.writePick(process.env.CCC_CODEX_PICK_FILE, lib.pickDecision(resumeUuid))
   const retarget = lib.resolveRetargetCwd(resumeUuid, sourceCwd, process.cwd(), fs.existsSync)
   // Codex itself never gets the pick file's name.
   const env = lib.childEnv(process.env)
@@ -168,6 +171,8 @@ function launchCodex(resumeUuid, sourceCwd) {
   // If resume exited non-zero with a real status, fall back to fresh codex.
   if (lib.shouldFallback(resumeUuid, result.status)) {
     console.log('\n  Conversation no longer available -- starting fresh session...\n')
+    // The session now runs a new conversation: the app follows that one.
+    lib.writePick(process.env.CCC_CODEX_PICK_FILE, lib.pickDecision(null))
     const fresh = run(forwarded)
     if (fresh.error) {
       console.error(`\n  Failed to launch codex: ${fresh.error.message}\n`)
