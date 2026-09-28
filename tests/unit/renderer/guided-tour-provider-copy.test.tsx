@@ -91,17 +91,23 @@ describe('GuidedTour: every card, per assistants in use', () => {
     useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })
   })
 
+  /** Each card's whole text (title, counter, body, buttons) by its title,
+   *  from the last walk: what the no-Claude and no-Codex checks read. */
+  let wholes = new Map<string, string>()
+
   /** Each card's body text by its title, first to last, as the tour shows them. */
   function walk(on: { claudeEnabled?: boolean; codexEnabled?: boolean }): Map<string, string> {
     useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, ...on }, isLoaded: true })
     act(() => { root.render(React.createElement(GuidedTour, { onCreateConfig: () => {}, onClose: () => {} })) })
     const cards = new Map<string, string>()
+    wholes = new Map<string, string>()
     for (let n = 0; n < 7; n++) {
       const text = container.textContent ?? ''
       const title = ['This is your workbench', 'Everything has a home', 'Saved configs live here', 'Review what your agent builds', 'Change anything, anytime', 'Help lives here', 'Ready to go'].find((t) => text.includes(t))!
       // The body is the element right after the title.
       const titleEl = [...container.querySelectorAll('div')].find((d) => d.children.length === 0 && d.textContent === title)!
       cards.set(title, titleEl.nextElementSibling?.textContent ?? '')
+      wholes.set(title, text)
       if (n < 6) act(() => { [...container.querySelectorAll('button')].find((b) => b.textContent?.startsWith('Next'))!.click() })
     }
     expect(cards.size).toBe(7)
@@ -110,7 +116,8 @@ describe('GuidedTour: every card, per assistants in use', () => {
 
   it('Codex only: no card mentions Claude; the saved-config card says Codex runs on this computer', () => {
     const cards = walk(CODEX_ONLY)
-    for (const [title, text] of cards) expect(text, title).not.toContain('Claude')
+    expect(wholes.size).toBe(7)
+    for (const [title, text] of wholes) expect(text, title).not.toContain('Claude')
     expect(cards.get('Saved configs live here')).toContain('whenever you want (Codex, on this computer).')
     expect(cards.get('Saved configs live here')).not.toContain('SSH')
     expect(cards.get('Review what your agent builds')).toContain('A Codex agent cannot put work there yet.')
@@ -123,7 +130,8 @@ describe('GuidedTour: every card, per assistants in use', () => {
       act(() => { root.unmount() })
       root = createRoot(container)
       const cards = walk(on)
-      for (const [title, text] of cards) expect(text, `${title} ${JSON.stringify(on)}`).not.toContain('Codex')
+      expect(wholes.size).toBe(7)
+      for (const [title, text] of wholes) expect(text, `${title} ${JSON.stringify(on)}`).not.toContain('Codex')
       expect(cards.get('Saved configs live here')).toContain(`whenever you want (Claude, here or on another machine over SSH ${DASH} plain, or persistent so a dropped link does not kill it).`)
       expect(cards.get('Review what your agent builds')).toContain('anyone here can pick up.')
       expect(cards.get('Help lives here')).toContain('with Claude Code on, can hand your question to Ask Conductor, a Claude session that knows the app.')
