@@ -418,6 +418,12 @@ with nothing changed), and a replacement holding it is removed whole by its
 Discard, which reads the registry again between batches. The provider's
 on/off is read again inside the switch's lock. A sign-out whose CLI ran
 records the account as needing a check whatever its read-back said.
+Final review round: Cancel stops the copy at its next batch and nothing is
+switched; files left behind are said in the dialog, and the copy step in its
+status line; the too-large refusal names the way that keeps the history
+(signed out, a sign in again runs in the account's own folder); a new name
+is kept only when it landed in the replacement (else unsafe-path) and when
+the link added exactly one name (else it goes and the file is left behind).
 
 **P3.4 Codex-only mode and provider status.** Each provider's status pills
 only while it is on, with an OpenAI status pill for Codex; no Claude prompts
