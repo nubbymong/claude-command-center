@@ -159,23 +159,27 @@ const pad2Date = (y: number, m: number, d: number): string => `${y}/${pad2(m)}/$
 
 /**
  * The rollouts of conversation `id` in this realm's sessions folder, newest
- * date folder first, up to and including its OWN rollout: the first one found
- * in the date folder its session_meta names, where the walk stops (fix round
- * 2: a lookup never walks the whole realm for copies). Copies in NEWER date
- * folders are walked before it and so take part in chooseCodexRollout's
- * choice (the kept directory first); a copy in an OLDER folder than its own
- * is not looked for. With no dated rollout the walk goes on to its bounds.
- * The walk is bounded (at most `maxEntries` folder
- * entries seen, `maxDays` day folders opened, `maxMatches` found) and follows
+ * date folder first, until the one chooseCodexRollout would take is found
+ * (fix round 2: a lookup does not walk the whole realm for copies; fix round
+ * 3: nor does a copy end it early). With `preferCwd` (the directory the
+ * session kept, or the one it starts in) the walk stops at the first rollout
+ * in the date folder its session_meta names that records that directory; a
+ * rollout that records another one, dated in a newer folder or listed first
+ * in the same folder, is kept for the choice and the walk goes on. Without
+ * it the walk ends with the day folder of the first rollout found in its own
+ * date folder, every rollout of the id there listed. Otherwise it goes on to
+ * its bounds: at most `maxEntries` folder entries seen, `maxDays` day
+ * folders opened, `maxMatches` found. It follows
  * no link at any level: the sessions folder, a year, a month or a day folder
  * that is a link or junction is not entered, and a file link is not read. A
  * second hard name of the same file is a file like any other (a staged sign
- * in again leaves them in the account's new folder), so its content is
+ * in again links each carried file, and copies it where linking is refused),
+ * so its content is
  * checked like any other: the file must be named `rollout-...-<id>.jsonl`
  * and its session_meta must say the same id. None when the id is not a
  * conversation id.
  */
-export function findCodexRollouts(sessionsDir: string, id: string, limits?: CodexLookupLimits): FoundRollout[] {
+export function findCodexRollouts(sessionsDir: string, id: string, limits?: CodexLookupLimits, preferCwd?: string): FoundRollout[] {
   const out: FoundRollout[] = []
   if (typeof id !== 'string' || !CODEX_CONVERSATION_ID_RE.test(id)) return out
   if (typeof sessionsDir !== 'string' || !sessionsDir || !isRealFolder(sessionsDir)) return out
@@ -202,6 +206,8 @@ export function findCodexRollouts(sessionsDir: string, id: string, limits?: Code
         budget.entries -= files.length
         entriesVisited += files.length
         if (budget.entries < 0) return out
+        /** A rollout in its own date folder was found here (no kept directory). */
+        let ownFolderReached = false
         for (const f of files) {
           const name = f.name.toLowerCase()
           if (!f.isFile() || !name.startsWith('rollout-') || !name.endsWith(suffix)) continue
@@ -216,8 +222,11 @@ export function findCodexRollouts(sessionsDir: string, id: string, limits?: Code
             folderDate === pad2Date(at.getUTCFullYear(), at.getUTCMonth() + 1, at.getUTCDate())
             || folderDate === pad2Date(at.getFullYear(), at.getMonth() + 1, at.getDate()))
           out.push({ path: file, meta, dated })
-          if (dated || out.length >= maxMatches) return out
+          if (dated && preferCwd && sameDirectory(meta.cwd, preferCwd)) return out
+          if (out.length >= maxMatches) return out
+          if (dated) ownFolderReached = true
         }
+        if (ownFolderReached && !preferCwd) return out
       }
     }
   }
@@ -243,7 +252,7 @@ export function chooseCodexRollout(matches: readonly FoundRollout[], preferCwd?:
 /** The rollout of conversation `id` a launch takes (see findCodexRollouts,
  *  chooseCodexRollout), or null. */
 export function findCodexRollout(sessionsDir: string, id: string, limits?: CodexLookupLimits, preferCwd?: string): FoundRollout | null {
-  return chooseCodexRollout(findCodexRollouts(sessionsDir, id, limits), preferCwd)?.found ?? null
+  return chooseCodexRollout(findCodexRollouts(sessionsDir, id, limits, preferCwd), preferCwd)?.found ?? null
 }
 
 /** Two spellings of one directory, as far as a string can tell: resolved, and
@@ -294,7 +303,7 @@ export function resolveCodexResume(
   try {
     if (!target || typeof target.uuid !== 'string' || !CODEX_CONVERSATION_ID_RE.test(target.uuid)) return null
     const own = typeof target.cwd === 'string' ? target.cwd : ''
-    const chosen = chooseCodexRollout(findCodexRollouts(ctx.sessionsDir, target.uuid), own || undefined)
+    const chosen = chooseCodexRollout(findCodexRollouts(ctx.sessionsDir, target.uuid, undefined, own || undefined), own || undefined)
     if (!chosen) return null
     const found = chosen.found
     const dirExists = ctx.dirExists ?? ((p: string) => { try { return fs.statSync(p).isDirectory() } catch { return false } })
