@@ -274,11 +274,12 @@ export function buildCodexSpawn(opts: SpawnOptions): ProviderSpawnCommand {
     }
     const args = ['resume', resumed.resumeId, ...flags]
     const cwd = resumed.cwd || undefined
+    const resumeCwdMismatch = resumed.cwdMismatch
     if (viaCmdExe) {
       const target = codexCmdExeTarget(executable, args, env)
-      return { cmd: target.cmd, args: [], commandLine: target.commandLine, env, resumeId: resumed.resumeId, cwd }
+      return { cmd: target.cmd, args: [], commandLine: target.commandLine, env, resumeId: resumed.resumeId, cwd, resumeCwdMismatch }
     }
-    return { cmd: executable, args, env, resumeId: resumed.resumeId, cwd }
+    return { cmd: executable, args, env, resumeId: resumed.resumeId, cwd, resumeCwdMismatch }
   }
 
   // Picker swap: when useResumePicker is true and the picker script is

@@ -4237,6 +4237,11 @@ function spawnPtyResolved(
       // status line claims the next.
       if (built.resumeId) keepCodexConversation(sessionId, { uuid: built.resumeId, cwd: codexCwd })
       else keptCodexConversations.delete(sessionId)
+      // Said, never silent: the conversation's rollout does not record the
+      // directory this session kept, so it resumes in the configured one.
+      if (built.resumeId && built.resumeCwdMismatch) {
+        logWarn(`[pty-manager] Codex resume for ${sessionId}: no rollout of ${built.resumeId} records the directory the session kept; resuming in ${describePathForLog(codexCwd)}`)
+      }
       logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${commandLine ?? spawnArgs.join(' ')} cwd=${describePathForLog(codexCwd)} (resume=${built.resumeId ?? 'none'})`)
       // Codex sessions never designate a canvas worktree; drop any inherited
       // hint, in every spelling (Windows names are case-insensitive).

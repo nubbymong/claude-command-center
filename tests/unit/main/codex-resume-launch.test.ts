@@ -17,6 +17,9 @@ const h = vi.hoisted(() => ({
   built: [] as Array<Record<string, unknown>>,
   telemetry: [] as Array<{ sessionId: string; opts: Record<string, unknown> }>,
   missing: new Set<string>(),
+  mismatched: new Set<string>(),
+  reviewRoots: [] as Array<{ sid: string; cwd: string }>,
+  warnings: [] as string[],
 }))
 
 vi.mock('node-pty', () => ({
@@ -49,10 +52,14 @@ vi.mock('electron', () => ({
   safeStorage: { isEncryptionAvailable: () => false },
 }))
 vi.mock('../../../src/main/logging/logging-service', () => ({ getLogSupervisor: () => null, getTranscriptBinder: () => null }))
+vi.mock('../../../src/main/debug-logger', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/main/debug-logger')>()),
+  logWarn: (msg: string) => { h.warnings.push(String(msg)) },
+}))
 vi.mock('../../../src/main/conductor-mcp-server', () => ({
   getConductorMcpPort: () => 0,
   registerCodexReviewSession: () => {},
-  registerClaudeReviewSession: () => {},
+  registerClaudeReviewSession: (sid: string, cwd: string) => { h.reviewRoots.push({ sid, cwd }) },
   unregisterCodexReviewSession: () => {},
   disposeCodexReviewUsage: () => {},
 }))
@@ -66,7 +73,7 @@ vi.mock('../../../src/main/providers', () => ({
       // The real builder resumes only a conversation of the launch's realm
       // (spawn-resume.test.ts); here, any id not marked missing.
       if (resume && !h.missing.has(resume.uuid)) {
-        return { cmd: launch.executable, args: ['resume', resume.uuid], env: launch.env, resumeId: resume.uuid, cwd: `/conversations/${resume.uuid}` }
+        return { cmd: launch.executable, args: ['resume', resume.uuid], env: launch.env, resumeId: resume.uuid, cwd: `/conversations/${resume.uuid}`, resumeCwdMismatch: h.mismatched.has(resume.uuid) }
       }
       if (opts.useResumePicker) return { cmd: 'node', args: ['picker.js'], env: launch.env, pickFile: '/tmp/ccc-codex-pick-x.json' }
       return { cmd: launch.executable, args: [], env: launch.env }
@@ -144,6 +151,9 @@ beforeEach(() => {
   h.built = []
   h.telemetry = []
   h.missing = new Set()
+  h.mismatched = new Set()
+  h.reviewRoots = []
+  h.warnings = []
 })
 
 describe('a restored Codex session resumes its conversation (row 34)', () => {
@@ -221,5 +231,25 @@ describe('Restart resumes the conversation the tab is on (row 35)', () => {
     expect(getKeptCodexConversation(ids[0])).toBeUndefined()
     expect(getKeptCodexConversation(ids[1])).toEqual({ uuid: ID, cwd: '/p/demo' })
     expect(getKeptCodexConversation(ids[ids.length - 1])).toEqual({ uuid: ID, cwd: '/p/demo' })
+  })
+})
+
+// P3.5 fix round 1: what a resumed Codex session may reach (thesis 8) and
+// what it says (thesis 6).
+describe('a resumed Codex session', () => {
+  it('registers its configured folder as its review root, never the folder the resumed conversation names (thesis 8)', () => {
+    start({ resume: { uuid: ID, cwd: '/p/demo' } })
+    expect(h.ptys[0].cwd).toBe(`/conversations/${ID}`)
+    expect(h.reviewRoots).toEqual([{ sid: SID, cwd: path.resolve(os.tmpdir()) }])
+  })
+
+  it('says in the app log when it resumes in the configured folder because no rollout records the kept one (thesis 6)', () => {
+    h.mismatched.add(ID)
+    start({ resume: { uuid: ID, cwd: '/p/demo' } })
+    expect(h.warnings.some((w) => w.includes('no rollout of') && w.includes(ID))).toBe(true)
+    h.warnings = []
+    h.mismatched.clear()
+    start({ resume: { uuid: ID2, cwd: '/p/two' } }, `${SID}x`)
+    expect(h.warnings.some((w) => w.includes('no rollout of'))).toBe(false)
   })
 })

@@ -117,42 +117,80 @@ export function codexDayFolders(sessionsDir: string, times: readonly number[]): 
   return out
 }
 
-/** The real sub-folders of `dir` whose names match `re`, newest name first. */
-function subFolders(dir: string, re: RegExp, budget: { entries: number }): string[] {
+/** The real sub-folders of `dir` whose names match `re`, newest name first,
+ *  or null once the entry budget is spent. */
+function subFolders(dir: string, re: RegExp, budget: { entries: number }): string[] | null {
   let entries: fs.Dirent[]
   try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return [] }
   budget.entries -= entries.length
+  if (budget.entries < 0) return null
   // A Dirent describes the entry itself: a link or junction is not a directory.
   return entries.filter((e) => e.isDirectory() && re.test(e.name)).map((e) => e.name).sort().reverse()
+}
+
+/** Whether `dir` is a real folder, not a link or junction to one. */
+export function isRealFolder(dir: string): boolean {
+  try { return fs.lstatSync(dir).isDirectory() } catch { return false }
 }
 
 export interface FoundRollout {
   path: string
   meta: RolloutSessionMeta
+  /** Its date folder is the one its session_meta names (by UTC or local date). */
+  dated: boolean
 }
 
+/** The bounds of one lookup (tests narrow them). */
+export interface CodexLookupLimits {
+  maxEntries?: number
+  maxDays?: number
+  maxMatches?: number
+}
+
+/** How many lookups walked a sessions folder (tests read it). */
+let lookups = 0
+export function __codexRolloutLookupsForTests(): number { return lookups }
+
+const pad2Date = (y: number, m: number, d: number): string => `${y}/${pad2(m)}/${pad2(d)}`
+
 /**
- * The rollout of conversation `id` in this realm's sessions folder, wherever
- * it is: newest date folder first, bounded (CODEX_LOOKUP_MAX_ENTRIES,
- * CODEX_LOOKUP_MAX_DAYS). The file must be a plain file named
- * `rollout-...-<id>.jsonl` whose session_meta says the same id. Null when
- * the id is not a conversation id, or no such rollout is found.
+ * Every rollout of conversation `id` in this realm's sessions folder, newest
+ * date folder first. The walk is bounded (at most `maxEntries` folder
+ * entries seen, `maxDays` day folders opened, `maxMatches` found) and follows
+ * no link at any level: the sessions folder, a year, a month or a day folder
+ * that is a link or junction is not entered, and a file link is not read. A
+ * second hard name of the same file is a file like any other (a staged sign
+ * in again leaves them in the account's new folder), so its content is
+ * checked like any other: the file must be named `rollout-...-<id>.jsonl`
+ * and its session_meta must say the same id. None when the id is not a
+ * conversation id.
  */
-export function findCodexRollout(sessionsDir: string, id: string): FoundRollout | null {
-  if (typeof id !== 'string' || !CODEX_CONVERSATION_ID_RE.test(id)) return null
-  if (typeof sessionsDir !== 'string' || !sessionsDir) return null
+export function findCodexRollouts(sessionsDir: string, id: string, limits?: CodexLookupLimits): FoundRollout[] {
+  const out: FoundRollout[] = []
+  if (typeof id !== 'string' || !CODEX_CONVERSATION_ID_RE.test(id)) return out
+  if (typeof sessionsDir !== 'string' || !sessionsDir || !isRealFolder(sessionsDir)) return out
+  lookups++
+  const maxDays = limits?.maxDays ?? CODEX_LOOKUP_MAX_DAYS
+  const maxMatches = limits?.maxMatches ?? 8
   const want = id.toLowerCase()
   const suffix = `-${want}.jsonl`
-  const budget = { entries: CODEX_LOOKUP_MAX_ENTRIES }
+  const budget = { entries: limits?.maxEntries ?? CODEX_LOOKUP_MAX_ENTRIES }
   let days = 0
-  for (const year of subFolders(sessionsDir, /^\d{4}$/, budget)) {
-    for (const month of subFolders(path.join(sessionsDir, year), /^\d{2}$/, budget)) {
-      for (const day of subFolders(path.join(sessionsDir, year, month), /^\d{2}$/, budget)) {
-        if (budget.entries <= 0 || ++days > CODEX_LOOKUP_MAX_DAYS) return null
+  const years = subFolders(sessionsDir, /^\d{4}$/, budget)
+  if (!years) return out
+  for (const year of years) {
+    const months = subFolders(path.join(sessionsDir, year), /^\d{2}$/, budget)
+    if (!months) return out
+    for (const month of months) {
+      const dayNames = subFolders(path.join(sessionsDir, year, month), /^\d{2}$/, budget)
+      if (!dayNames) return out
+      for (const day of dayNames) {
+        if (++days > maxDays) return out
         const dayDir = path.join(sessionsDir, year, month, day)
         let files: fs.Dirent[]
         try { files = fs.readdirSync(dayDir, { withFileTypes: true }) } catch { continue }
         budget.entries -= files.length
+        if (budget.entries < 0) return out
         for (const f of files) {
           const name = f.name.toLowerCase()
           if (!f.isFile() || !name.startsWith('rollout-') || !name.endsWith(suffix)) continue
@@ -160,12 +198,41 @@ export function findCodexRollout(sessionsDir: string, id: string): FoundRollout 
           const head = readRolloutFirstLine(file)
           if (!head || head.kind !== 'line') continue
           const meta = parseSessionMetaLine(head.line)
-          if (meta && meta.id.toLowerCase() === want) return { path: file, meta }
+          if (!meta || meta.id.toLowerCase() !== want) continue
+          const at = new Date(meta.at)
+          const folderDate = `${year}/${month}/${day}`
+          const dated = Number.isFinite(meta.at) && (
+            folderDate === pad2Date(at.getUTCFullYear(), at.getUTCMonth() + 1, at.getUTCDate())
+            || folderDate === pad2Date(at.getFullYear(), at.getMonth() + 1, at.getDate()))
+          out.push({ path: file, meta, dated })
+          if (out.length >= maxMatches) return out
         }
       }
     }
   }
-  return null
+  return out
+}
+
+/**
+ * Which of a conversation's rollouts a launch takes, when there is more than
+ * one (a copy): one whose recorded directory is `preferCwd` (the directory
+ * the session kept, or the one it starts in) when there is one; among those,
+ * or among all when none records it, the one in the date folder its own
+ * session_meta names, else the newest folder's. `cwdMatched` is false when a
+ * directory was asked for and no rollout records it, so the caller says so.
+ */
+export function chooseCodexRollout(matches: readonly FoundRollout[], preferCwd?: string): { found: FoundRollout; cwdMatched: boolean } | null {
+  if (matches.length === 0) return null
+  const wanted = preferCwd ? matches.filter((m) => sameDirectory(m.meta.cwd, preferCwd)) : []
+  const pool = wanted.length > 0 ? wanted : matches
+  const found = pool.find((m) => m.dated) ?? pool[0]
+  return { found, cwdMatched: !preferCwd || wanted.length > 0 }
+}
+
+/** The rollout of conversation `id` a launch takes (see findCodexRollouts,
+ *  chooseCodexRollout), or null. */
+export function findCodexRollout(sessionsDir: string, id: string, limits?: CodexLookupLimits, preferCwd?: string): FoundRollout | null {
+  return chooseCodexRollout(findCodexRollouts(sessionsDir, id, limits), preferCwd)?.found ?? null
 }
 
 /** Two spellings of one directory, as far as a string can tell: resolved, and
@@ -190,6 +257,9 @@ export interface ResolvedCodexResume {
   resumeId: string
   /** Where the CLI starts: the conversation's own directory, else the configured one. */
   cwd: string
+  /** No rollout of that id records the directory the session kept: it
+   *  starts in the configured one, and the caller says so. */
+  cwdMismatch: boolean
 }
 
 /**
@@ -210,14 +280,15 @@ export function resolveCodexResume(
 ): ResolvedCodexResume | null {
   try {
     if (!target || typeof target.uuid !== 'string' || !CODEX_CONVERSATION_ID_RE.test(target.uuid)) return null
-    const found = findCodexRollout(ctx.sessionsDir, target.uuid)
-    if (!found) return null
+    const own = typeof target.cwd === 'string' ? target.cwd : ''
+    const chosen = chooseCodexRollout(findCodexRollouts(ctx.sessionsDir, target.uuid), own || undefined)
+    if (!chosen) return null
+    const found = chosen.found
     const dirExists = ctx.dirExists ?? ((p: string) => { try { return fs.statSync(p).isDirectory() } catch { return false } })
     const homeOrAbove = ctx.homeOrAbove ?? isHomeOrAncestor
-    const own = typeof target.cwd === 'string' ? target.cwd : ''
     const usable = !!own && path.isAbsolute(own) && sameDirectory(own, found.meta.cwd) && dirExists(own)
       && (sameDirectory(own, ctx.configuredCwd) || !homeOrAbove(own))
-    return { resumeId: found.meta.id, cwd: usable ? path.resolve(own) : ctx.configuredCwd }
+    return { resumeId: found.meta.id, cwd: usable ? path.resolve(own) : ctx.configuredCwd, cwdMismatch: !chosen.cwdMatched }
   } catch {
     return null
   }

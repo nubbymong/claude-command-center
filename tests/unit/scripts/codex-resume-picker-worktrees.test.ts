@@ -83,6 +83,27 @@ describe('the picker lists every worktree\'s conversations (row 32)', () => {
     expect(lib.walkRollouts(fresh, 30, '/srv/demo', 'linux').map((c) => c.id)).toEqual([ID1])
   })
 
+  it('never lists a conversation reached through a link or junction at the year, month or day level (thesis 4)', () => {
+    const outside = temp('outside')
+    const now = new Date()
+    rollout(outside, now, ID1, '/srv/demo', 'elsewhere')
+    const y = String(now.getUTCFullYear())
+    const m = String(now.getUTCMonth() + 1).padStart(2, '0')
+    const d = String(now.getUTCDate()).padStart(2, '0')
+    const yearHome = temp('home')
+    mkdirSync(join(yearHome, 'sessions'), { recursive: true })
+    symlinkSync(join(outside, 'sessions', y), join(yearHome, 'sessions', y), 'junction')
+    expect(lib.walkRollouts(yearHome, 30, '/srv/demo', 'linux')).toEqual([])
+    const monthHome = temp('home')
+    mkdirSync(join(monthHome, 'sessions', y), { recursive: true })
+    symlinkSync(join(outside, 'sessions', y, m), join(monthHome, 'sessions', y, m), 'junction')
+    expect(lib.walkRollouts(monthHome, 30, '/srv/demo', 'linux')).toEqual([])
+    const dayHome = temp('home')
+    mkdirSync(join(dayHome, 'sessions', y, m), { recursive: true })
+    symlinkSync(join(outside, 'sessions', y, m, d), join(dayHome, 'sessions', y, m, d), 'junction')
+    expect(lib.walkRollouts(dayHome, 30, '/srv/demo', 'linux')).toEqual([])
+  })
+
   it('a single directory still works as before (no git): exact on Linux', () => {
     const home = temp('home')
     rollout(home, new Date(), ID1, '/srv/demo', 'x')

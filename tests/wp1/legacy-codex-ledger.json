@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "fe6ff40668ae26ed7869d7e32ef5c3bd87b802fde33d1d9b7deefc8c9de98614",
-  "manifestHead": "90a717df966ac84395be5aafa915f7fa2880167e",
+  "manifestPathDigest": "5d8d88d92b5a32069c886c98c4877d343b345cff40eb96c00c84d59e0b371bc2",
+  "manifestHead": "0cb779407cc1283c3f2f1d1c8e5689c0e49881ce",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -297,7 +297,7 @@
       ],
       "category": "RESUME-PICKER",
       "disposition": "replace",
-      "evidence": "WP2 commit 4: launchTarget (the cmd.exe /s route, as spawn.ts codexCmdExeTarget) and isResumeId added; buildResumeArgs resumes only a UUID; parsing unchanged; tests/unit/scripts/codex-resume-picker.test.ts (WP1.68, WP1.38); WP2 PR 3 P3.5 (row 32, parity): walkRollouts takes the project's git worktrees (listWorktrees, parseWorktrees, worktreeLabelFor, as the Claude picker) and the local date folders too; loadWorkNames, displayText and buildPickerRows build every shown row as plain text; writePick, childEnv and resolveRetargetCwd (WP1.68); tests/unit/scripts/codex-resume-picker-worktrees.test.ts",
+      "evidence": "WP2 commit 4: launchTarget (the cmd.exe /s route, as spawn.ts codexCmdExeTarget) and isResumeId added; buildResumeArgs resumes only a UUID; parsing unchanged; tests/unit/scripts/codex-resume-picker.test.ts (WP1.68, WP1.38); WP2 PR 3 P3.5 (row 32, parity): walkRollouts takes the project's git worktrees (listWorktrees, parseWorktrees, worktreeLabelFor, as the Claude picker) and the local date folders too; loadWorkNames, displayText and buildPickerRows build every shown row as plain text; writePick, childEnv and resolveRetargetCwd (WP1.68); tests/unit/scripts/codex-resume-picker-worktrees.test.ts; WP2 PR 3 P3.5 fix round 1: every decision is recorded whole (a new owner-only file renamed over the pick file), and the walk follows no link at any level (WP1.68); tests/unit/scripts/codex-resume-picker-worktrees.test.ts",
       "note": "re-dispositioned in WP2 commit 4 (was retain)"
     },
     {
@@ -1012,7 +1012,7 @@
       ],
       "category": "TELEMETRY",
       "disposition": "added",
-      "evidence": "new WP2 PR 3 P3.5 (rows 34, 38; parity) module: a conversation's rollout found by its id in the launch's own realm sessions folder only (a bounded walk of real folders; the file name and its session_meta id must agree), the day folders a new rollout may be in (by UTC and by local date), bounded first-line reads (WP1.68); tests/unit/providers/codex/telemetry-claim-anywhere.test.ts; WP2 PR 3 P3.5 step 2: resolveCodexResume decides whether a launch resumes a conversation exactly (its rollout in the launch's own realm) and in which directory (WP1.38); tests/unit/providers/codex/rollout-lookup.test.ts",
+      "evidence": "new WP2 PR 3 P3.5 (rows 34, 38; parity) module: a conversation's rollout found by its id in the launch's own realm sessions folder only (a bounded walk of real folders; the file name and its session_meta id must agree), the day folders a new rollout may be in (by UTC and by local date), bounded first-line reads (WP1.68); tests/unit/providers/codex/telemetry-claim-anywhere.test.ts; WP2 PR 3 P3.5 step 2: resolveCodexResume decides whether a launch resumes a conversation exactly (its rollout in the launch's own realm) and in which directory (WP1.38); tests/unit/providers/codex/rollout-lookup.test.ts; WP2 PR 3 P3.5 fix round 1: the walk is bounded by entries and day folders and follows no link at any level, every rollout of an id is found and one is chosen (the kept directory first, then the one in its own date folder), and a resume says when no rollout records the kept directory (WP1.68); tests/unit/providers/codex/rollout-lookup.test.ts",
       "note": "created by WP2 PR 3 P3.5"
     },
     {
@@ -1041,7 +1041,7 @@
       ],
       "category": "TELEMETRY",
       "disposition": "replace",
-      "evidence": "WP1.68 rollout telemetry ADAPTED: tests/unit/providers/codex/telemetry.test.ts keeps every parsing case and gains a realm-sessions-dir case; WP2 commit 6g: the sessions folder is required, with no fallback to the ambient home (getCodexHome deleted); without one nothing is watched (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP2: the allowance is read from every token_count, the pre-response one (info null) included, through normaliseCodexRateLimits; plan_type typed on the snapshot, not under primary; updates carry usageBuckets labelled from window_minutes, rateLimitsAt (the event time) and the legacy rateLimitCurrent/Weekly from the validated reading only; an out-of-range reset time no longer throws and drops the update; the 30 s give-up sends usageUnavailable no-reading once (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): watchAndClaimRollout hands the validated allowance to an optional recorder, whose throw never stops the watch (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track, MP1/MP2 review fixes: the token mapper no longer copies raw rate limits (the fields come only from the validated allowance), and an event at the edge of the Date range no longer stops the status line (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 PR 3 P3.5 (row 38, parity): the claim re-reads its day folders on every poll (today and yesterday, by UTC and by local date), finds a resumed conversation's rollout by its id anywhere in the realm (name and session_meta agree) or the one the resume picker opened once it grows, never claims a sibling's new rollout on a resume by id, reads only bounded first lines, reports the claimed conversation id, and a picker launch waits for the user (WP1.68); tests/unit/providers/codex/telemetry-claim-anywhere.test.ts",
+      "evidence": "WP1.68 rollout telemetry ADAPTED: tests/unit/providers/codex/telemetry.test.ts keeps every parsing case and gains a realm-sessions-dir case; WP2 commit 6g: the sessions folder is required, with no fallback to the ambient home (getCodexHome deleted); without one nothing is watched (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP2: the allowance is read from every token_count, the pre-response one (info null) included, through normaliseCodexRateLimits; plan_type typed on the snapshot, not under primary; updates carry usageBuckets labelled from window_minutes, rateLimitsAt (the event time) and the legacy rateLimitCurrent/Weekly from the validated reading only; an out-of-range reset time no longer throws and drops the update; the 30 s give-up sends usageUnavailable no-reading once (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): watchAndClaimRollout hands the validated allowance to an optional recorder, whose throw never stops the watch (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track, MP1/MP2 review fixes: the token mapper no longer copies raw rate limits (the fields come only from the validated allowance), and an event at the edge of the Date range no longer stops the status line (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 PR 3 P3.5 (row 38, parity): the claim re-reads its day folders on every poll (today and yesterday, by UTC and by local date), finds a resumed conversation's rollout by its id anywhere in the realm (name and session_meta agree) or the one the resume picker opened once it grows, never claims a sibling's new rollout on a resume by id, reads only bounded first lines, reports the claimed conversation id, and a picker launch waits for the user (WP1.68); tests/unit/providers/codex/telemetry-claim-anywhere.test.ts; WP2 PR 3 P3.5 fix round 1: the resume picker's every decision is what a picker launch claims (nothing before one), the pick is read only as a small regular file never through a link and dealt with once; a claimed rollout is read by size first and only what it gained, at a claim its head and tail; a conversation another session holds is not walked for again; the scan follows no link (WP1.68); tests/unit/providers/codex/telemetry-claim-anywhere.test.ts, tests/unit/providers/codex/telemetry-bounded-reads.test.ts",
       "note": "watchAndClaimRollout takes the sessions directory of the launch binding realm instead of getCodexHome(); MP2 rebuilt the rate-limit contract (replace); P3.5 rebuilt the claim (day folders on every poll, a resumed conversation by id or the picker's pick, the claimed id reported); token usage parsing and the realm rule unchanged",
       "adaptsTests": [
         "tests/unit/providers/codex/telemetry.test.ts"
@@ -4469,6 +4469,18 @@
       "disposition": "replace",
       "evidence": "WP1.58: cases retained; realm-env cases added (tests/wp1/launch-handoff.test.ts); WP2 final fixes: the resolveBinary case now asserts that CodexProvider refuses both PATH lookups, and resolveCodexBinary, the discovery lookup, keeps its cases (WP1.17); WP2 P3 usage track MP3 follow-up (a stale case CI caught): the telemetry case now pins the sixth argument, the allowance callback that records the session's figure as its own realm's live figure and forgets it when the session stops (WP1.68); tests/unit/providers/codex/spawn.test.ts",
       "note": ""
+    },
+    {
+      "path": "tests/unit/providers/codex/telemetry-bounded-reads.test.ts",
+      "predicates": [
+        "P01",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.5 fix round 1 (item B, thesis 4) test (tests/unit/providers/codex/telemetry-bounded-reads.test.ts): a claim reads a large rollout's head and tail only, a poll reads only what the rollout gained and nothing while it is quiet, a gain past one step is read from the start again within the bound, a conversation another session holds is not walked for every second, and no link or junction is followed to a new rollout (WP1.68)",
+      "note": "created by WP2 PR 3 P3.5 fix round 1"
     },
     {
       "path": "tests/unit/providers/codex/telemetry-claim-anywhere.test.ts",
