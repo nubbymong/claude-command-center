@@ -499,6 +499,9 @@ export function watchAndClaimRollout(
   let nextLookupAt = Number.NEGATIVE_INFINITY
   let lookupWait = LOOKUP_INTERVAL_MS
   let lookupMisses = 0
+  /** When the realm was last walked: never again within LOOKUP_INTERVAL_MS,
+   *  whatever looks again (a new decision, a claim let go). */
+  let lastWalkAt = Number.NEGATIVE_INFINITY
   /** The claimed rollout as claimed: its device and file id, exact. The tail
    *  re-checks it is still reading the claimed file (P3.5 final round). */
   let claimedIdentity: string | null = null
@@ -587,7 +590,8 @@ export function watchAndClaimRollout(
     }
     if (lookupMisses >= LOOKUP_MAX_MISSES) return null
     const now = Date.now()
-    if (now < nextLookupAt) return null
+    if (now < nextLookupAt || now - lastWalkAt < LOOKUP_INTERVAL_MS) return null
+    lastWalkAt = now
     const found = findCodexRollout(sessionsDir, id, undefined, preferCwd)
     if (!found) {
       lookupMisses++
@@ -651,9 +655,12 @@ export function watchAndClaimRollout(
       fd = openSync(file, 'r')
       // The tail re-checks it is still reading the claimed file (P3.5 final
       // round): the opened file must be the one claimed (device and file id,
-      // recorded at the claim); another file at that path is not read.
+      // recorded at the claim, or at this first read when the claim could
+      // not record it); another file at that path is not read.
       const opened = fstatSync(fd, { bigint: true })
-      if (claimedIdentity === null || `${opened.dev}:${opened.ino}` !== claimedIdentity) {
+      const openedIdentity = `${opened.dev}:${opened.ino}`
+      if (claimedIdentity === null) claimedIdentity = openedIdentity
+      if (openedIdentity !== claimedIdentity) {
         claimedFileChanged = true
         return false
       }

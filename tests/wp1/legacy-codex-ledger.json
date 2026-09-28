@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "726e2f33b926a13d76e3a4134f93c39697dc4bd362690d54700fe9d570e9ad4a",
-  "manifestHead": "5b34d96a099ea7bec054ff2c16af7cf343230d87",
+  "manifestPathDigest": "cd50346c7f97f7cfd3772d1ba25799acfe3cb60da44b98125b2c4c8ccec6b122",
+  "manifestHead": "506faf1933ab72b350734206c1f343f6dd196ad8",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -4493,6 +4493,18 @@
       "disposition": "added",
       "evidence": "new WP2 PR 3 P3.5 (row 38) test (tests/unit/providers/codex/telemetry-claim-anywhere.test.ts): the status line's claim finds a new rollout after midnight UTC and by the local date, a resumed conversation by its id wherever it is (never on its file name alone, never a sibling's new rollout), the conversation the resume picker opened once it grows, and a picker launch waits for the user (WP1.68)",
       "note": "created by WP2 PR 3 P3.5"
+    },
+    {
+      "path": "tests/unit/providers/codex/telemetry-claim-identity.test.ts",
+      "predicates": [
+        "P01",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.5 final round test (tests/unit/providers/codex/telemetry-claim-identity.test.ts): when the claimed rollout identity could not be recorded at the claim (its lstat failing, simulated), the first read records it, so the claim is kept and followed rather than let go and taken again on every read (WP1.68)",
+      "note": "created by WP2 PR 3 P3.5 final round; fs is mocked to fail one lstat of the rollout"
     },
     {
       "path": "tests/unit/providers/codex/telemetry.test.ts",
