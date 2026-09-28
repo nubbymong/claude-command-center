@@ -16,6 +16,9 @@
  * Time is bounded: each read has an overall deadline besides the socket's
  * idle timeout, each provider's page is read and published on its own, and
  * a provider switched off, or the poller stopped, aborts its read in flight.
+ * A page that fails two polls in a row reads as "status unknown" (its
+ * components null, its read time kept) rather than freezing its last pill.
+ * A send to a window being torn down never escapes as an error.
  */
 import * as https from 'https'
 import type { ClientRequest } from 'http'
@@ -31,6 +34,9 @@ const REQUEST_TIMEOUT = 8000
 /** The whole read, however the bytes arrive: a reply that drips slower than
  *  the idle timeout is cut here. */
 const REQUEST_DEADLINE = 15_000
+/** Failed polls in a row after which a page's last reading is dropped to
+ *  "status unknown". */
+const STALE_AFTER_FAILURES = 2
 /** A components list is a few KB; anything this large is not one. */
 const MAX_BODY_BYTES = 1024 * 1024
 
@@ -194,6 +200,10 @@ function parseComponents(source: StatusSource, json: unknown): SourceReading | n
 export interface ServiceStatusDeps {
   /** Whether the provider is on now (its saved on/off, as main answers it). */
   providerOn: (providerId: ProviderId) => boolean
+  /** Told of every change the accounts service publishes, so a switch made
+   *  there (not a settings save) reaches the poller at once. Returns an
+   *  unsubscribe. */
+  subscribe?: (listener: () => void) => () => void
 }
 
 interface SourceState {
@@ -201,11 +211,14 @@ interface SourceState {
   at: string | null
   read: Read | null
   pending: Promise<void>
+  /** Failed polls in a row (a success resets it). */
+  failures: number
 }
 
 let timer: ReturnType<typeof setInterval> | null = null
 let started = false
 let deps: ServiceStatusDeps | null = null
+let unsubscribe: (() => void) | null = null
 let getWin: (() => BrowserWindow | null) | null = null
 // Each source's last good reading, when it was taken, and its read in
 // flight; the reading is dropped while its provider is off.
@@ -235,7 +248,7 @@ function onSet(): string {
 
 function stateOf(source: StatusSource): SourceState {
   let s = states.get(source.readKey)
-  if (!s) { s = { reading: null, at: null, read: null, pending: Promise.resolve() }; states.set(source.readKey, s) }
+  if (!s) { s = { reading: null, at: null, read: null, pending: Promise.resolve(), failures: 0 }; states.set(source.readKey, s) }
   return s
 }
 
@@ -265,10 +278,17 @@ function buildPayload(): ServiceStatusPayload {
   }
 }
 
+/** Build the payload and push it. The push never throws: a window being
+ *  torn down can throw from send, and the payload is still kept for the
+ *  next pull. */
 function publish(): void {
   lastPayload = buildPayload()
-  const win = getWin?.()
-  if (win && !win.isDestroyed()) win.webContents.send(IPC.SERVICE_STATUS, lastPayload)
+  try {
+    const win = getWin?.()
+    if (win && !win.isDestroyed()) win.webContents.send(IPC.SERVICE_STATUS, lastPayload)
+  } catch {
+    // The window is going away; nothing to tell.
+  }
 }
 
 /** Stop a source's read in flight; its late reply is ignored. */
@@ -284,6 +304,7 @@ function pollSource(source: StatusSource): Promise<void> {
   const s = stateOf(source)
   if (!started || !isOn(source.providerId)) {
     abortRead(s)
+    s.failures = 0
     if (s.reading) { s.reading = null; s.at = null; publish() }
     return Promise.resolve()
   }
@@ -296,8 +317,18 @@ function pollSource(source: StatusSource): Promise<void> {
     s.read = null
     let reading: SourceReading | null = null
     try { reading = parseComponents(source, json) } catch { reading = null }
-    // A failed read changes nothing: the last reading stands.
-    if (!reading || !started || !isOn(source.providerId)) return
+    if (!started || !isOn(source.providerId)) return
+    if (!reading) {
+      // One failed poll leaves the last reading; two in a row drop it to
+      // "status unknown" (every component null), keeping when it was read.
+      s.failures++
+      if (s.failures >= STALE_AFTER_FAILURES && s.reading && Object.values(s.reading).some((c) => c)) {
+        s.reading = Object.fromEntries(source.components.map((c) => [c.key, null])) as SourceReading
+        publish()
+      }
+      return
+    }
+    s.failures = 0
     s.reading = reading
     s.at = new Date().toISOString()
     publish()
@@ -331,8 +362,10 @@ export function startServiceStatusPoller(
   deps = serviceDeps
   started = true
   logInfo('[service-status] Starting poller (5 min interval, each provider\'s status page while it is on)')
-  void pollAll() // fetch immediately
-  timer = setInterval(() => { void pollAll() }, POLL_INTERVAL)
+  const quietly = (p: Promise<void>) => { p.catch(() => { /* a poll never escapes as an error */ }) }
+  quietly(pollAll()) // fetch immediately
+  timer = setInterval(() => { quietly(pollAll()) }, POLL_INTERVAL)
+  unsubscribe = serviceDeps.subscribe?.(() => { quietly(refreshServiceStatus()) }) ?? null
 }
 
 /** The saved settings changed: a provider switched on is read at once, and
@@ -352,6 +385,8 @@ export function registerServiceStatusHandlers(getWindow: () => BrowserWindow | n
 }
 
 export function stopServiceStatusPoller(): void {
+  try { unsubscribe?.() } catch { /* already gone */ }
+  unsubscribe = null
   if (timer) {
     clearInterval(timer)
     timer = null

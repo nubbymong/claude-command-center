@@ -128,6 +128,8 @@ describe('showcase-pages — the curated set', () => {
     const all20 = sectionsFor(undefined, '2.1.0').flatMap((s) => s.items)
     expect(all20.find((i) => i.title === 'A guide that answers back.')?.needsClaude).toBe(true)
     expect(all20.find((i) => i.title === 'Partner terminal.')?.needsClaude).toBeUndefined()
+    // ...and names no provider (row 64 did the same for the strip and tips).
+    expect(all20.find((i) => i.title === 'Partner terminal.')?.desc).toBe('A plain shell beside your session, labelled so you always know which is which.')
   })
 
   it('P3.4 (row 14): a run that goes on with Codex only (setup found no Claude Code) reads it the same way', async () => {

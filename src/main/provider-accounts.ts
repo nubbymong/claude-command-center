@@ -60,17 +60,22 @@ function preferenceOf(providerId: ProviderId): ProviderPreference {
   return providerPreferenceFromSettings(pkg?.enablement, settings)
 }
 
-/** Whether the provider is on now: as the accounts service answers it (a
- *  switch made there, else the saved setting), or before the service exists
- *  the saved setting by the package's own enablement data. Not answered yet
- *  is not on, and neither is anything while the saved settings cannot be
- *  read: this fails closed where the service keeps the last value it read
- *  (no answer is never a yes). For work that only runs while a provider is
- *  on (its status page, P3.4). */
+/** Whether the provider is on now, for network work that only runs while a
+ *  provider is on (its status page, P3.4). Decided from ONE read of the
+ *  saved settings, which must be an ok read that says on by the package's
+ *  own enablement data (Claude Code: on unless turned off; Codex: only once
+ *  answered on); a missing settings file, an unreadable or unparseable one,
+ *  and not answered yet are all off (no answer is never a yes). The accounts
+ *  service must agree as well, so a switch-off made there and not yet saved
+ *  is off. A fresh first launch has no settings file, so nothing is read
+ *  until its first save; the refresh after that save picks the provider up. */
 export function providerOnNow(providerId: ProviderId): boolean {
   try {
-    if (readSettings() === null) return false
-    return (service ? service.preferenceOf(providerId) : preferenceOf(providerId)) === 'on'
+    const r = readConfigChecked<Record<string, unknown>>('settings', { quarantineUnparseable: false })
+    if (r.outcome !== 'ok' || !r.value || typeof r.value !== 'object') return false
+    const pkg = listProviderPackages().find((p) => p.id === providerId)
+    if (providerPreferenceFromSettings(pkg?.enablement, r.value) !== 'on') return false
+    return !service || service.preferenceOf(providerId) === 'on'
   } catch {
     return false
   }
