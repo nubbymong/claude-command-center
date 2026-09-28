@@ -1030,6 +1030,42 @@ describe('signing in again while signed in, through the service (WP1.52)', () =>
     expect(findAccount(k.doc(), b)).toMatchObject({ lastKnownAuthState: 'signed-in', operationalState: 'ready' })
   })
 
+  it('a sign-out that ran, whose read-back then could not start or found the CLI changed, leaves the account needing a check: a sign-out, this computer\'s sign in again, an archive (review round 3, C3)', async () => {
+    for (const how of ['read-back not started', 'CLI replaced'] as const) {
+      const mk = async () => {
+        let after = false
+        const h = await harness({ script: {
+          'logout': (r) => {
+            h.signedIn.delete(r.home.toLowerCase())
+            after = true
+            if (how === 'CLI replaced') h.state.exeStat = { ...h.state.exeStat, mtimeMs: 999 }
+            return { exitCode: 0, stdout: 'Successfully logged out' + NL }
+          },
+          'login status': (r) => {
+            if (after && how === 'read-back not started') return { spawnError: 'EAGAIN' }
+            return h.signedIn.has(r.home.toLowerCase()) ? { exitCode: 0, stderr: 'Logged in using ChatGPT' + NL } : { exitCode: 1, stderr: 'Not logged in' + NL }
+          },
+        } })
+        return h
+      }
+      const h = await mk()
+      const a = await addCodexAccount(h, 'A')
+      expect((await h.service.logout({ accountId: a })).ok, how).toBe(false)
+      expect(h.signedIn.has(homeOf(realmIdOf(h, a))), how).toBe(false)
+      expect(findAccount(h.doc(), a), how).toMatchObject({ lastKnownAuthState: 'unknown', operationalState: 'attention' })
+      const k = await mk()
+      const ext = await withExternalHome(k)
+      expect((await k.service.signInAgain({ sameAccount: true, acknowledgeExternal: true, accountId: ext, method: 'browser' }, 1)).ok, how).toBe(false)
+      expect(k.signedIn.has(EXT_HOME.toLowerCase()), how).toBe(false)
+      expect(findAccount(k.doc(), ext), how).toMatchObject({ lastKnownAuthState: 'unknown', operationalState: 'attention' })
+      const m = await mk()
+      const b = await addCodexAccount(m, 'B')
+      expect(await m.service.setLifecycle({ accountId: b, lifecycle: 'inactive' }), how).toEqual({ ok: true })
+      expect((await m.service.setLifecycle({ accountId: b, lifecycle: 'archived' })).ok, how).toBe(false)
+      expect(findAccount(m.doc(), b), how).toMatchObject({ lifecycle: 'inactive', lastKnownAuthState: 'unknown' })
+    }
+  })
+
   it('archive asks the account\'s own folder first: nothing is signed out when it cannot finish (review round 2, L2-3)', async () => {
     const h = await harness()
     const a = await addCodexAccount(h, 'A')

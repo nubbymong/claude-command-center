@@ -272,9 +272,12 @@ const SIGN_OUT_NOT_RUN: ReadonlySet<string> = new Set(['realm-unavailable', 'ext
 
 /** What a sign-out left, to record: the state it read back; else, once it
  *  may have run, unknown (the account needs a check before it is trusted
- *  again: review round 2, L2-1); nothing when it never ran. */
+ *  again: review round 2, L2-1); nothing when it never ran. A sign-out whose
+ *  CLI ran (`ran`) may have changed the realm, whatever code its read-back
+ *  then gave (review round 3, C3). */
 function signOutLeft(out: AuthOperationResult): KnownAuthState | null {
   if (out.state === 'signed-out' || out.state === 'signed-in') return out.state
+  if (out.ran === true) return 'unknown'
   return out.code !== undefined && SIGN_OUT_NOT_RUN.has(out.code) ? null : 'unknown'
 }
 
@@ -1977,7 +1980,15 @@ export class AccountsService {
         if (unsettledSupersededRealms(ctx.store.current() ?? ctx.doc, a.id).length > 0) return failure('lifecycle', 'The old sign-in of this account could not be removed yet. Check its sign-in, then try again.')
         if (status.state !== 'signed-out') {
           const out = await ctx.p.auth.logout({ authRealmId: a.authRealmId }).catch((): AuthOperationResult => ({ ok: false, code: 'not-started' }))
-          if (!out.ok) return this.fromAuth(out)
+          if (!out.ok) {
+            // What the sign-out left, as a plain sign-out records it.
+            const left = signOutLeft(out)
+            if (left) {
+              const recorded = await ctx.store.mutate((d, t) => recordAuthCheck(d, a.id, { state: left }, t))
+              if (!recorded.ok) this.log(`a sign-out result was not saved (${recorded.code})`)
+            }
+            return this.fromAuth(out)
+          }
         }
         const signedOut = await ctx.store.mutate((d, t) => recordAuthCheck(d, a.id, { state: 'signed-out' }, t))
         if (!signedOut.ok) return this.fromStore(signedOut)!
