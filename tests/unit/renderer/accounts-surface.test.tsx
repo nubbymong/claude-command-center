@@ -271,7 +271,7 @@ describe('Providers card', () => {
   })
 
   it('says "At least one provider stays on." under the switch when the last one is turned off', async () => {
-    pa.setEnabled.mockResolvedValue({ ok: false, code: 'last-provider', message: 'At least one provider must stay on.' })
+    pa.setEnabled.mockResolvedValue({ ok: false, code: 'last-provider', message: 'At least one provider must stay on.' } as never)
     render(snapshot())
     await act(async () => { (q('provider-row-codex')!.querySelector('[role="switch"]') as HTMLElement).click() })
     await flush()
@@ -327,7 +327,7 @@ describe('Providers card', () => {
   })
 
   it('says the provider is in use, with the count, when something holds it', async () => {
-    pa.setEnabled.mockResolvedValue({ ok: false, code: 'consumers', consumers: 3, message: 'Sessions or operations are using this account.' })
+    pa.setEnabled.mockResolvedValue({ ok: false, code: 'consumers', consumers: 3, message: 'Sessions or operations are using this account.' } as never)
     render(snapshot())
     await act(async () => { (q('provider-row-codex')!.querySelector('[role="switch"]') as HTMLElement).click() })
     await flush()
@@ -344,7 +344,7 @@ describe('Providers card', () => {
   })
 
   it("shows another refusal's own message", async () => {
-    pa.setEnabled.mockResolvedValue({ ok: false, code: 'persist-failed', message: 'The change could not be saved.' })
+    pa.setEnabled.mockResolvedValue({ ok: false, code: 'persist-failed', message: 'The change could not be saved.' } as never)
     render(snapshot())
     await act(async () => { (q('provider-row-claude')!.querySelector('[role="switch"]') as HTMLElement).click() })
     await flush()
@@ -602,7 +602,7 @@ describe('Codex rows', () => {
 
   it('says the account is in use, with the count and what is running, when an action is refused for that', async () => {
     const busyPersonal = { ...personal, runningSessions: 1, runningReviews: 1, consumers: 2 }
-    pa.setDefault.mockResolvedValue({ ok: false, code: 'consumers', consumers: 2, message: 'Sessions or operations are using this account.' })
+    pa.setDefault.mockResolvedValue({ ok: false, code: 'consumers', consumers: 2, message: 'Sessions or operations are using this account.' } as never)
     render(snapshot({ accounts: [work, busyPersonal] }))
     await click('account-menu-btn-acc-personal')
     await click('account-menu-make-default-acc-personal')
@@ -795,7 +795,7 @@ describe('Claude section', () => {
   })
 
   it('shows why a Claude account could not be made the reviewer', async () => {
-    pa.setReviewerDefault.mockResolvedValue({ ok: false, code: 'review-unavailable', message: 'This account cannot run reviews on this computer.' })
+    pa.setReviewerDefault.mockResolvedValue({ ok: false, code: 'review-unavailable', message: 'This account cannot run reviews on this computer.' } as never)
     render(snapshot({ accounts: [claudeMain, claudeHome] }))
     await click('profile-menu-btn-profile-primary')
     await click('profile-menu-make-reviewer-profile-primary')
@@ -1340,7 +1340,7 @@ describe('registry, conflicts, adoption and pending setups', () => {
   })
 
   it('says what went wrong when turning the provider on is refused, and checks nothing', async () => {
-    pa.setEnabled.mockResolvedValue({ ok: false, code: 'persist-failed', message: 'The change could not be saved.' })
+    pa.setEnabled.mockResolvedValue({ ok: false, code: 'persist-failed', message: 'The change could not be saved.' } as never)
     const unanswered = snapshot({ accounts: [work], externalDefaults: [{ providerId: 'codex' }] })
     unanswered.providers[1] = { ...unanswered.providers[1], preference: 'undecided' }
     render(unanswered)
@@ -1507,7 +1507,7 @@ describe('registry, conflicts, adoption and pending setups', () => {
 
   it('a yes that could not be saved stops there: no key is handed over and no sign-in runs', async () => {
     const setup = { accountId: 'acc-key', providerId: 'codex' as const, method: 'apiKey' as const, state: 'pending' as const, external: false, createdAt: 1, signingIn: false }
-    pa.setEnabled.mockResolvedValue({ ok: false, code: 'persist-failed', message: 'The change could not be saved.' })
+    pa.setEnabled.mockResolvedValue({ ok: false, code: 'persist-failed', message: 'The change could not be saved.' } as never)
     render(unansweredWith(setup))
     await click('pending-setup-resume-acc-key')
     typeKey(q('add-account-key') as HTMLInputElement, 'sk-test-DO-NOT-KEEP-88bb')

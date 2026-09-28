@@ -53,7 +53,7 @@ function fromApp<T extends Record<string, any>>(ev: T = {} as T): T {
 }
 const invoke = (ch: string, ...args: any[]) => handlers.get(ch)!(fromApp({} as any), ...args)
 const prof = (over: Partial<AccountProfile>): AccountProfile =>
-  ({ id: 'p1', name: '', createdAt: 0, ...over })
+  ({ id: 'p1', name: '', createdAt: 0, ...over }) as AccountProfile
 const activeOf = (id: string) => store.find((p) => p.id === id)?.active
 
 describe('accountProfiles:setActive handler', () => {
