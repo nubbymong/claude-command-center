@@ -12,8 +12,8 @@
  *   watchAndClaimRollout    -- 250ms-poll claim + 500ms-poll tail pipeline
  */
 
-import { readdirSync, lstatSync, statSync, unlinkSync, openSync, fstatSync, readSync, closeSync, constants as fsConstants } from 'fs'
-import { join, relative, isAbsolute, sep, dirname } from 'path'
+import { readdirSync, lstatSync, statSync, unlinkSync, rmdirSync, openSync, fstatSync, readSync, closeSync, constants as fsConstants } from 'fs'
+import { join, relative, isAbsolute, sep, dirname, basename } from 'path'
 import { computeCodexCostUsd } from './pricing'
 import { CODEX_CONVERSATION_ID_RE, codexDayFolders, findCodexRollout, isRealFolder, parseSessionMetaLine, readRolloutFirstLine } from './rollout-lookup'
 import type { FoundRollout, RolloutSessionMeta } from './rollout-lookup'
@@ -345,6 +345,9 @@ export interface CodexClaimOptions {
   /** Told once which conversation the watcher claimed: its id and the
    *  directory its rollout records. Only a conversation id is reported. */
   onClaim?: (claim: { id: string; cwd: string }) => void
+  /** Told when a claim is let go: the picker decided again after it (fix
+   *  round 2), so the session is no longer on that conversation. */
+  onRelease?: () => void
 }
 
 /** How often a claim by id walks the realm's sessions folder while unclaimed. */
@@ -503,6 +506,14 @@ export function watchAndClaimRollout(
     // only what the rollout gained, so a quiet rollout costs one stat.
     tailIntervalHandle = setInterval(() => {
       if (stopped || !claimedPath) return
+      // The picker can decide again after a claim (fix round 2): a resume
+      // that wrote to its rollout and then failed falls back to a new
+      // conversation. A new decision lets this claim go and claims again by
+      // the protocol.
+      if (pickFile && !resumeId) {
+        const next = readPick()
+        if (next) { release(); decision = next; picked = null; startClaimPolling(); return }
+      }
       if (readNew(claimedPath)) emit()
     }, 500)
 
@@ -510,6 +521,20 @@ export function watchAndClaimRollout(
     if (intervalHandle) {
       clearInterval(intervalHandle)
       intervalHandle = null
+    }
+  }
+
+  /** Let the claim go: stop following its rollout, and say so. */
+  function release(): void {
+    if (tailIntervalHandle) { clearInterval(tailIntervalHandle); tailIntervalHandle = null }
+    if (claimedPath) claimed.delete(claimedPath)
+    claimedPath = null
+    readState = newRolloutReadState()
+    offset = 0
+    contextWindow = null
+    heldElsewhere = null
+    if (claimOpts?.onRelease) {
+      try { claimOpts.onRelease() } catch { /* a listener never stops the watch */ }
     }
   }
 
@@ -734,20 +759,25 @@ export function watchAndClaimRollout(
   }
 
   // Set up the 250ms polling interval before the initial tryClaim() call so
-  // that if tryClaim() claims synchronously, it can clear intervalHandle correctly.
-  intervalHandle = setInterval(() => {
-    if (claimedPath || stopped) {
-      if (intervalHandle) {
-        clearInterval(intervalHandle)
-        intervalHandle = null
+  // that if tryClaim() claims synchronously, it can clear intervalHandle
+  // correctly. Started again when a claim is let go.
+  function startClaimPolling(): void {
+    if (intervalHandle) clearInterval(intervalHandle)
+    intervalHandle = setInterval(() => {
+      if (claimedPath || stopped) {
+        if (intervalHandle) {
+          clearInterval(intervalHandle)
+          intervalHandle = null
+        }
+        return
       }
-      return
-    }
-    tryClaim()
-  }, 250)
+      tryClaim()
+    }, 250)
 
-  // Initial attempt -- avoids waiting 250ms before the first probe.
-  tryClaim()
+    // Initial attempt -- avoids waiting 250ms before the first probe.
+    tryClaim()
+  }
+  startClaimPolling()
 
   // No-claim deadline. P3.5 dev smoke showed Codex 0.128.0 takes ~8s to write the
   // first rollout event on Windows after the cmd.exe wrapper warms up; cold starts
@@ -794,6 +824,11 @@ export function watchAndClaimRollout(
         claimedPath = null
       }
       removePickFile()
+      // The pick file's own folder (fix round 2), made for this launch: removed
+      // with it when empty; any other folder is left.
+      if (pickFile && /^ccc-codex-pick-/.test(basename(dirname(pickFile)))) {
+        try { rmdirSync(dirname(pickFile)) } catch { /* not empty, or gone */ }
+      }
     },
   }
 }

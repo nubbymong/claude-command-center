@@ -255,3 +255,17 @@ describe('a resumed Codex session', () => {
     expect(h.warnings.some((w) => w.includes('no rollout of'))).toBe(false)
   })
 })
+
+// P3.5 fix round 2 (quality minor 2): when the picker decides again after a
+// claim, the watcher lets the claim go, and the session no longer keeps it.
+describe('a claim let go', () => {
+  it('drops the kept conversation, so a Restart does not resume it; the next claim is kept', () => {
+    start({ useResumePicker: true })
+    claim(ID, '/p/demo')
+    expect(getKeptCodexConversation(SID)).toEqual({ uuid: ID, cwd: '/p/demo' })
+    ;(lastTelemetry().onRelease as () => void)()
+    expect(getKeptCodexConversation(SID)).toBeUndefined()
+    claim(ID2, '/p/two')
+    expect(getKeptCodexConversation(SID)).toEqual({ uuid: ID2, cwd: '/p/two' })
+  })
+})
