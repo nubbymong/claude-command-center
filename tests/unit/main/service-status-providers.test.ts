@@ -424,6 +424,85 @@ describe('provider status: the ADR-009 pass (lens N)', () => {
   })
 })
 
+describe('provider status: a burst of accounts-service changes is one refresh', () => {
+  // Every change the accounts service publishes (a lease taken or given back,
+  // a registry write, a switch) reaches the poller; each ask of a provider's
+  // on/off is a read of the saved settings in main (providerOnNow). A burst
+  // is acted on once, after it: one refresh, each provider asked once.
+  let asked = 0
+  let listener: (() => void) | null = null
+  const deps = () => ({
+    providerOn: (id: string) => { asked++; return on[id] === true },
+    subscribe: (l: () => void) => { listener = l; return () => { listener = null } },
+  })
+  async function startSubscribed(): Promise<void> {
+    mod = await import('../../../src/main/service-status')
+    mod.startServiceStatusPoller(() => win as any, deps())
+    await settle()
+    asked = 0
+  }
+  const burst = (n: number) => { for (let i = 0; i < n; i++) listener!() }
+
+  it('five changes in one turn are one refresh: each provider asked once, after the burst', async () => {
+    on.codex = true
+    await startSubscribed()
+    burst(5)
+    expect(asked).toBe(0)
+    await settle()
+    expect(asked).toBe(2)
+    // A later change is acted on again, not swallowed.
+    burst(1)
+    await settle()
+    expect(asked).toBe(4)
+    expect(requested).toHaveLength(2) // nothing switched: no page read again
+  })
+
+  it('a settings save in the same turn as the changes it caused is the one refresh', async () => {
+    await startSubscribed()
+    // onSettingsSaved: the accounts service publishes, then the save refreshes.
+    burst(1)
+    const r = mod.refreshServiceStatus()
+    await settle()
+    await r
+    expect(asked).toBe(2)
+  })
+
+  it('a stop drops a refresh still waiting: a new start asks only what a start asks', async () => {
+    await startSubscribed()
+    const restart = async () => {
+      mod.stopServiceStatusPoller()
+      mod.startServiceStatusPoller(() => win as any, deps())
+      await settle()
+    }
+    await restart()
+    const aStart = asked
+    asked = 0
+    burst(3)
+    await restart()
+    expect(asked).toBe(aStart)
+  })
+
+  it('a switch made in the service still acts: on reads Codex\'s page once, off aborts it; never on, never read', async () => {
+    await startSubscribed()
+    burst(4) // Codex not on (off or not answered): no request to its page
+    await settle()
+    expect(readsOf(OPENAI)).toHaveLength(0)
+    replies[OPENAI] = { status: 200, body: openaiBody(), delay: 3000 }
+    on.codex = true
+    burst(3)
+    await settle()
+    expect(readsOf(OPENAI)).toHaveLength(1)
+    on.codex = false
+    burst(3)
+    await settle()
+    expect(readsOf(OPENAI)[0].destroyed).toBe(true)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(readsOf(OPENAI)).toHaveLength(1)
+    expect(last().codexCli).toBeNull()
+    expect(last().codexReadAt).toBeNull()
+  })
+})
+
 describe('provider status: the renderer pull answers the app window only', () => {
   it('its own window\'s top frame gets the payload; another sender or a subframe gets nothing', async () => {
     await start()
