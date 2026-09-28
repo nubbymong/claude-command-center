@@ -633,7 +633,14 @@ export function SignInAgainDialog({ provider, account, name, onClose, onNewAccou
   const [hasKey, setHasKey] = useState(false)
   const keyRef = useRef<HTMLInputElement>(null)
 
-  const runner = useSignInRun({ initialAccountId: account.id, run: providerAccountActions.signInAgain, onClose })
+  // Every run carries the user's answer: it runs only once the box says
+  // "the same account as before" (main refuses a sign in again without it),
+  // and for this computer's own sign-in the yes its warning asked for.
+  const runner = useSignInRun({
+    initialAccountId: account.id,
+    run: (req) => providerAccountActions.signInAgain({ ...req, sameAccount: true, ...(account.external ? { acknowledgeExternal: true as const } : {}) }),
+    onClose,
+  })
 
   useDialogEscape(() => { void runner.exit() }, !runner.leaving)
 

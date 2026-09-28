@@ -875,7 +875,7 @@ describe('signing an existing account in again (WP2 6b)', () => {
     h.signedIn.delete(realmHome(h, a))
     expect(await h.service.refreshStatus({ accountId: a })).toEqual({ ok: true, state: 'signed-out' })
     const lines: string[] = []
-    expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1, (t) => lines.push(t))).toEqual({ ok: true, state: 'signed-in' })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1, (t) => lines.push(t))).toEqual({ ok: true, state: 'signed-in' })
     expect(h.signedIn.get(realmHome(h, a))).toBe('chatgpt')
     expect(h.doc().accounts.find((x) => x.id === a)).toMatchObject({ lastKnownAuthState: 'signed-in', operationalState: 'ready' })
     // It is still the same account, in the same realm: no new setup, no new account.
@@ -893,12 +893,12 @@ describe('signing an existing account in again (WP2 6b)', () => {
     if (!issued.ok) throw new Error(issued.code)
     h.service.depositSecret(issued.handle, 1, 'sk-proj-' + 'x'.repeat(40))
     // Recorded from the login itself, and said so: not a success.
-    expect(await h.service.signInAgain({ accountId: a, method: 'apiKey', secretHandle: issued.handle }, 1)).toMatchObject({ ok: false, code: 'sign-in-changed', state: 'signed-in' })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'apiKey', secretHandle: issued.handle }, 1)).toMatchObject({ ok: false, code: 'sign-in-changed', state: 'signed-in' })
     expect(h.doc().accounts.find((x) => x.id === a)!.operationalState).toBe('blocked')
     // Blocked: reconcile first. Nothing runs on it at all -- a login here could
     // overwrite the very sign-in the user is asked to confirm.
     const runsBefore = h.runs.length
-    expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'sign-in-changed' })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'sign-in-changed' })
     expect(h.runs.length).toBe(runsBefore)
   })
 
@@ -907,14 +907,15 @@ describe('signing an existing account in again (WP2 6b)', () => {
     const a = await addCodexAccount(h, 'A')
     expect((await h.service.acquireLaunchLease({ kind: 'session', providerId: 'codex', providerAccountId: a, ownerId: 's1' })).ok).toBe(true)
     const before = h.runs.length
-    expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'consumers', consumers: 1 })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'consumers', consumers: 1 })
     expect(h.runs.length).toBe(before)
   })
 
   it('never on an external home, an archived account, or a key that was not deposited for this account by this window', async () => {
     const h = await harness()
     const ext = await withExternal(h)
-    expect(await h.service.signInAgain({ accountId: ext, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'unsupported' })
+    // This computer's own sign-in: only with the user's acknowledgement (P3.3 review round 1, S2).
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: ext, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'acknowledgement-required' })
     expect(h.service.issueSecretHandle({ accountId: ext }, 1)).toMatchObject({ ok: false, code: 'unsupported' })
     const a = await addCodexAccount(h, 'A')
     const b = await addCodexAccount(h, 'B')
@@ -922,18 +923,18 @@ describe('signing an existing account in again (WP2 6b)', () => {
     const forB = h.service.issueSecretHandle({ accountId: b }, 1)
     if (!forB.ok) throw new Error(forB.code)
     h.service.depositSecret(forB.handle, 1, 'sk-proj-' + 'y'.repeat(40))
-    expect(await h.service.signInAgain({ accountId: a, method: 'apiKey', secretHandle: forB.handle }, 1)).toMatchObject({ ok: false, code: 'secret-unavailable' })
-    expect(await h.service.signInAgain({ accountId: b, method: 'apiKey', secretHandle: forB.handle }, 1)).toMatchObject({ ok: false, code: 'secret-unavailable' })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'apiKey', secretHandle: forB.handle }, 1)).toMatchObject({ ok: false, code: 'secret-unavailable' })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: b, method: 'apiKey', secretHandle: forB.handle }, 1)).toMatchObject({ ok: false, code: 'secret-unavailable' })
     const forA = h.service.issueSecretHandle({ accountId: a }, 1)
     if (!forA.ok) throw new Error(forA.code)
     h.service.depositSecret(forA.handle, 1, 'sk-proj-' + 'z'.repeat(40))
-    expect(await h.service.signInAgain({ accountId: a, method: 'apiKey', secretHandle: forA.handle }, 2)).toMatchObject({ ok: false, code: 'secret-unavailable' })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'apiKey', secretHandle: forA.handle }, 2)).toMatchObject({ ok: false, code: 'secret-unavailable' })
     // A browser sign-in carries no handle.
-    expect(await h.service.signInAgain({ accountId: a, method: 'browser', secretHandle: forA.handle }, 1)).toMatchObject({ ok: false })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser', secretHandle: forA.handle }, 1)).toMatchObject({ ok: false })
     // Archived: nothing runs on it.
     expect((await h.service.setLifecycle({ accountId: b, lifecycle: 'inactive' })).ok).toBe(true)
     expect((await h.service.setLifecycle({ accountId: b, lifecycle: 'archived' })).ok).toBe(true)
-    expect(await h.service.signInAgain({ accountId: b, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'lifecycle' })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: b, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'lifecycle' })
     expect(h.service.issueSecretHandle({ accountId: b }, 1)).toMatchObject({ ok: false, code: 'unsupported' })
   })
 
@@ -942,14 +943,15 @@ describe('signing an existing account in again (WP2 6b)', () => {
     const a = await addCodexAccount(h, 'A')
     const old = realmHome(h, a)
     const before = h.runs.length
-    expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
-    // The login ran in a new realm, never in the old one; the old one was
-    // then signed out. tests/wp1/reauth-staging.test.ts covers the rest.
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    // The login ran in a new realm, never in the old one, and the old one
+    // is kept (its removal is not proven safe: P3.3 review round 1, S1).
+    // tests/wp1/reauth-staging.test.ts covers the rest.
     const logins = h.runs.slice(before).filter((r) => r.args === 'login')
     expect(logins).toHaveLength(1)
     expect(logins[0].home.toLowerCase()).not.toBe(old)
     expect(realmHome(h, a)).toBe(logins[0].home.toLowerCase())
-    expect(h.runs.slice(before).filter((r) => r.args === 'logout').map((r) => r.home.toLowerCase())).toEqual([old])
+    expect(h.runs.slice(before).filter((r) => r.args === 'logout')).toEqual([])
   })
 
   it('nothing launches on the account while its sign-in is replaced, and the record is written before the hold ends (ADR-009 6b)', async () => {
@@ -966,7 +968,7 @@ describe('signing an existing account in again (WP2 6b)', () => {
     const a = await addCodexAccount(h, 'A', 'browser')
     armed = true
     expect(await h.service.logout({ accountId: a })).toEqual({ ok: true, state: 'signed-out' })
-    const running = h.service.signInAgain({ accountId: a, method: 'browser' }, 1)
+    const running = h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)
     await new Promise((r) => setTimeout(r, 0))
     expect(await h.service.acquireLaunchLease({ kind: 'session', providerId: 'codex', providerAccountId: a, ownerId: 's-during' })).toMatchObject({ ok: false, code: 'busy' })
     expect(await h.service.prepareLaunch({ kind: 'review', providerId: 'codex', ownerId: 'r-during' })).toMatchObject({ ok: false })
@@ -992,7 +994,7 @@ describe('signing an existing account in again (WP2 6b)', () => {
     const issued = h.service.issueSecretHandle({ accountId: a }, 1)
     if (!issued.ok) throw new Error(issued.code)
     h.service.depositSecret(issued.handle, 1, 'sk-proj-' + 'v'.repeat(40))
-    expect(await h.service.signInAgain({ accountId: a, method: 'apiKey', secretHandle: issued.handle }, 1)).toMatchObject({ ok: false, code: 'sign-in-changed' })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'apiKey', secretHandle: issued.handle }, 1)).toMatchObject({ ok: false, code: 'sign-in-changed' })
     expect(h.doc().accounts.find((x) => x.id === a)!.operationalState).toBe('blocked')
   })
 
@@ -1001,7 +1003,7 @@ describe('signing an existing account in again (WP2 6b)', () => {
     const a = await addCodexAccount(h, 'A', 'browser')
     expect(await h.service.logout({ accountId: a })).toEqual({ ok: true, state: 'signed-out' })
     h.port.failWrites = [h.port.writes + 1]
-    expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'persist-failed' })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'persist-failed' })
     expect(await h.service.acquireLaunchLease({ kind: 'session', providerId: 'codex', providerAccountId: a, ownerId: 's1' })).toMatchObject({ ok: false, code: 'sign-in-changed' })
     // No review is offered on it meanwhile either.
     await h.service.setReviewerDefault({ providerId: 'codex', accountId: a })
@@ -1015,8 +1017,8 @@ describe('signing an existing account in again (WP2 6b)', () => {
   it('a second click while one runs is refused as busy', async () => {
     const h = await harness()
     const a = await addCodexAccount(h, 'A')
-    const first = h.service.signInAgain({ accountId: a, method: 'browser' }, 1)
-    expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'busy' })
+    const first = h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'busy' })
     expect((await first).ok).toBe(true)
   })
 })

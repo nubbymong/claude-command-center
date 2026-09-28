@@ -33,7 +33,7 @@ import type {
   TrailEntry,
 } from '../shared/canvas'
 import type {
-  AccountsSnapshot, AccountsResult, ProviderInstallationView, InstallRecipeView, SignInOutputEvent, BeginSetupRequest, SignInRequest,
+  AccountsSnapshot, AccountsResult, ProviderInstallationView, InstallRecipeView, SignInOutputEvent, BeginSetupRequest, SignInRequest, SignInAgainRequest,
   CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, UpdateIdentityRequest, SecretDeposit, KnownAuthState, ProviderId,
   ResolveConflictRequest, SetReviewerDefaultRequest, ProviderAccountUsageView, ProviderUsageStreamResult,
 } from '../shared/providers'
@@ -643,7 +643,7 @@ export interface ElectronAPI {
     sendSecret: (deposit: SecretDeposit) => void
     signIn: (req: SignInRequest) => Promise<AccountsResult<{ state: KnownAuthState }>>
     /** Sign an existing managed account in again, in its own realm. */
-    signInAgain: (req: SignInRequest) => Promise<AccountsResult<{ state: KnownAuthState; separateAccountId?: string }>>
+    signInAgain: (req: SignInAgainRequest) => Promise<AccountsResult<{ state: KnownAuthState; separateAccountId?: string }>>
     onSignInOutput: (cb: (event: SignInOutputEvent) => void) => () => void
     cancelSignIn: (accountId: string) => Promise<AccountsResult>
     completeSetup: (req: CompleteSetupRequest) => Promise<AccountsResult<{ accountId: string }>>
@@ -1354,9 +1354,12 @@ const electronAPI: ElectronAPI = {
     signIn: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SIGN_IN, req.secretHandle !== undefined
       ? { accountId: req.accountId, method: req.method, secretHandle: req.secretHandle }
       : { accountId: req.accountId, method: req.method }),
-    signInAgain: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, req.secretHandle !== undefined
-      ? { accountId: req.accountId, method: req.method, secretHandle: req.secretHandle }
-      : { accountId: req.accountId, method: req.method }),
+    signInAgain: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, {
+      accountId: req.accountId, method: req.method,
+      ...(req.secretHandle !== undefined ? { secretHandle: req.secretHandle } : {}),
+      sameAccount: req.sameAccount,
+      ...(req.acknowledgeExternal !== undefined ? { acknowledgeExternal: req.acknowledgeExternal } : {}),
+    }),
     onSignInOutput: (cb) => onChannel<SignInOutputEvent>(IPC.PROVIDER_ACCOUNTS_SIGN_IN_OUTPUT, cb),
     cancelSignIn: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_CANCEL_SIGN_IN, { accountId }),
     completeSetup: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_COMPLETE_SETUP, req),

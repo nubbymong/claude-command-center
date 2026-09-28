@@ -110,10 +110,12 @@ export interface AccountView {
   legacyId?: string
   /** When it was archived; present only on an archived account. */
   archivedAt?: number
-  /** A sign in again moved it to a new sign-in, and the old one could not
-   *  be removed yet (design 9.2): it needs attention, and a check of its
-   *  sign-in tries again. Present only when true. */
-  oldSignInLeft?: true
+  /** A sign in again moved it to a new sign-in and the old one is still
+   *  there (design 9.2), and why: `kept` -- the app does not remove it yet
+   *  (not proven safe for the new one; archiving removes it); `unavailable`
+   *  -- the provider cannot sign it out now; `failed` -- a removal did not
+   *  finish, and a check of the sign-in tries again. Absent otherwise. */
+  oldSignInLeft?: 'kept' | 'unavailable' | 'failed'
   /** Sessions running on this account now. */
   runningSessions: number
   /** Reviewer invocations running on this account now. */
@@ -330,6 +332,10 @@ export interface SignInOutputEvent {
 
 export interface BeginSetupRequest { providerId: ProviderId; method: SignInMethod }
 export interface SignInRequest { accountId: string; method: SignInMethod; secretHandle?: string }
+/** Sign in again: `sameAccount` is the user's answer (design 9.2), required;
+ *  `acknowledgeExternal` their yes to signing in again this computer's own
+ *  sign-in in place. */
+export interface SignInAgainRequest extends SignInRequest { sameAccount: true; acknowledgeExternal?: true }
 export type SetupIdentityChoice =
   | { mode: 'new'; friendlyName?: string; colourKey: string; groupId?: string }
   | { mode: 'link'; identityId: string }

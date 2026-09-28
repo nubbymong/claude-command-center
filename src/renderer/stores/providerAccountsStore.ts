@@ -10,7 +10,7 @@
 import { create } from 'zustand'
 import type {
   AccountsSnapshot, AccountView, AccountsResult, AccountsFailure, ProviderInstallationView, ProviderId,
-  BeginSetupRequest, SignInRequest, CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, ResolveConflictRequest,
+  BeginSetupRequest, SignInRequest, SignInAgainRequest, CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, ResolveConflictRequest,
   SetReviewerDefaultRequest, KnownAuthState, SignInMethod, InstallRecipeView, UpdateIdentityRequest, IdentityView,
 } from '../../shared/providers'
 import { SIGN_IN_METHODS } from '../../shared/providers'
@@ -174,7 +174,7 @@ export const providerAccountActions = {
   issueSecretHandle: (accountId: string) => call<{ handle: string }>(() => api().issueSecretHandle(accountId)),
   signIn: (req: SignInRequest) => call<{ state: KnownAuthState }>(() => api().signIn(req)),
   /** An existing managed account's sign-in, run again in its own realm. */
-  signInAgain: (req: SignInRequest) => call<{ state: KnownAuthState; separateAccountId?: string }>(() => api().signInAgain(req)),
+  signInAgain: (req: SignInAgainRequest) => call<{ state: KnownAuthState; separateAccountId?: string }>(() => api().signInAgain(req)),
   cancelSignIn: (accountId: string) => call(() => api().cancelSignIn(accountId)),
   completeSetup: (req: CompleteSetupRequest) => call<{ accountId: string }>(() => api().completeSetup(req)),
   abandonSetup: (accountId: string) => call(() => api().abandonSetup(accountId)),

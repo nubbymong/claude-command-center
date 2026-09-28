@@ -44,7 +44,7 @@ import type {
   AccountsFailureCode, AccountsResult, AccountView, ProviderInstallationView, CapabilityView, PendingSetupView, ExternalDefaultView,
   SetupIdentityChoice, IdentityPatch, RegistryModeView, InstallRecipeView, CredentialClass,
   ResolveConflictRequest, SetReviewerDefaultRequest, ReviewerChoice, ReviewRefusalView, ReviewReadinessView, ProviderLaunchRefusal,
-  ProviderAccountUsageView, ProviderUsageStreamResult,
+  ProviderAccountUsageView, ProviderUsageStreamResult, AuthRealm,
 } from '../../../shared/providers'
 import type { ProviderPackage, DiscoveryResult, AuthCredentialKind, AuthOperationResult, AuthLoginInput, InstallRecipe, ExternalDefaultRealmSpec, RealmRef, UsageReading, UsageReadOutcome } from './package'
 import type { AccountRegistryStore, StoreResult } from './account-registry-store'
@@ -264,6 +264,12 @@ function methodFromCredential(credential: AuthCredentialKind | undefined, signed
 }
 
 const EXTERNAL_IDENTITY_COLOUR = 'slate-blue'
+
+/** Why this computer's own sign-in is not signed in again without a yes. */
+const EXTERNAL_REAUTH_ACK = 'Signing in again here signs this computer\'s sign-in out first, for every app that uses it; if the new sign-in does not finish, it stays signed out. Confirm to continue.'
+
+/** Why an old sign-in is still there (AccountView.oldSignInLeft). */
+type OldSignInRule = 'removable' | 'kept' | 'unavailable'
 
 interface SignInRun {
   controller: AbortController
@@ -513,8 +519,9 @@ export class AccountsService {
       if (a.lastAuthenticatedAt !== undefined) view.lastAuthenticatedAt = a.lastAuthenticatedAt
       if (a.lastValidatedAt !== undefined) view.lastValidatedAt = a.lastValidatedAt
       if (a.lifecycle === 'archived' && a.archivedAt !== undefined) view.archivedAt = a.archivedAt
-      // An old sign-in a sign in again has not removed yet (design 9.2).
-      if (doc && unsettledSupersededRealms(doc, a.id).length > 0) view.oldSignInLeft = true
+      // An old sign-in a sign in again has not removed yet (design 9.2), and why.
+      const old = doc ? unsettledSupersededRealms(doc, a.id) : []
+      if (old.length > 0) view.oldSignInLeft = this.oldSignInView(this.pkg(a.providerId), old)
       const legacyId = doc?.legacyLinks.find((l) => l.accountId === a.id)?.legacyId
       if (legacyId !== undefined) view.legacyId = legacyId
       const refusal = doc ? this.reviewRefusalOf(doc, a, memo) : undefined
@@ -870,6 +877,8 @@ export class AccountsService {
     if (!p || !this.managesAccounts(p)) return failure('unsupported')
     if (existing && (existing.lifecycle === 'archived' || findRealm(ready.doc, existing.authRealmId)?.ownership !== 'conductor-managed')) return failure('unsupported')
     if (j && findRealm(ready.doc, j.realmId)?.ownership !== 'conductor-managed') return failure('unsupported')
+    // A staged sign in again takes its key through the account it replaces.
+    if (j?.replacesAccountId !== undefined) return failure('unsupported')
     // The key is for a sign-in, which runs the provider's CLI: taken only
     // when that sign-in could run (the add-account dialog records the yes
     // before the key is handed over).
@@ -931,6 +940,10 @@ export class AccountsService {
     if ('ok' in ready) return refuse(ready)
     const j = ready.doc.journals.find((x) => x.accountId === input.accountId)
     if (!j) return refuse(failure('not-found'))
+    // A staged sign in again runs only inside its own sign in again: never
+    // as a plain setup's sign-in (it would sign in a replacement nobody
+    // decides about).
+    if (j.replacesAccountId !== undefined) return refuse(failure('unsupported'))
     const p = this.pkg(j.providerId)
     const realm = findRealm(ready.doc, j.realmId)
     if (!p || !this.managesAccounts(p) || realm?.ownership !== 'conductor-managed') return refuse(failure('unsupported'))
@@ -1028,7 +1041,7 @@ export class AccountsService {
    *  account (the user reconciles it first). An earlier staged sign-in of
    *  the account that did not finish is discarded first. */
   async signInAgain(
-    input: { accountId: string; method: SignInMethod; secretHandle?: string },
+    input: { accountId: string; method: SignInMethod; secretHandle?: string; sameAccount?: boolean; acknowledgeExternal?: boolean },
     senderId: number,
     onOutput?: (text: string) => void,
   ): Promise<AccountsResult<{ state: KnownAuthState; separateAccountId?: string }>> {
@@ -1037,13 +1050,22 @@ export class AccountsService {
     // not stay parked, unless a run already in flight is using it.
     const burn = () => { if (handle !== undefined) this.deps.secrets.discard(handle) }
     const refuse = (r: AccountsFailure) => { burn(); return r }
+    // The user's own answer, "the same account as before" (design 9.2),
+    // required here as at the IPC boundary: nothing is signed in again on a
+    // call that does not carry it ("different or unsure" adds a new account).
+    if (input.sameAccount !== true) return refuse(failure('not-confirmed', 'Say whether this is the same account as before.'))
     const ctx = this.accountContext(input.accountId)
     if ('ok' in ctx) return refuse(ctx)
     const a = findAccount(ctx.doc, input.accountId)!
-    const notRunnable = this.runnable(ctx, a, ['auth.status'])
+    const notRunnable = this.runnable(ctx, a, ctx.external ? ['auth.status', 'auth.logout'] : ['auth.status'])
     if (notRunnable) return refuse(notRunnable)
     const p = ctx.p!
-    if (!this.managesAccounts(p) || ctx.external || findRealm(ctx.doc, a.authRealmId)?.ownership !== 'conductor-managed') return refuse(failure('unsupported'))
+    if (!this.managesAccounts(p)) return refuse(failure('unsupported'))
+    if (ctx.external) {
+      // This computer's own sign-in (design 9.2, last paragraph): in place,
+      // only with the user's yes that it reaches every app using it.
+      if (input.acknowledgeExternal !== true) return refuse(failure('acknowledgement-required', EXTERNAL_REAUTH_ACK))
+    } else if (findRealm(ctx.doc, a.authRealmId)?.ownership !== 'conductor-managed') return refuse(failure('unsupported'))
     if (a.operationalState === 'blocked') return refuse(failure('sign-in-changed'))
     const refusedMethod = this.methodAllowed(p, input.method)
     if (refusedMethod) return refuse(refusedMethod)
@@ -1066,6 +1088,7 @@ export class AccountsService {
     let recorded: StoreResult | null = null
     let observedClass: CredentialClass | undefined
     let staged: AccountsResult<{ state: KnownAuthState; separateAccountId?: string }> | null = null
+    let inPlaceExternal: AccountsResult<{ state: KnownAuthState }> | null = null
     try {
       // A staged sign-in of this account an earlier run left (the app
       // closed during it): it is stale now, and is signed out and removed
@@ -1093,7 +1116,9 @@ export class AccountsService {
       else {
         lease = leased.added.lease
         if (run.controller.signal.aborted) result = { ok: false, code: 'cancelled' }
-        else if (findAccount(ctx.store.current() ?? ctx.doc, a.id)?.lastKnownAuthState === 'signed-in') {
+        else if (ctx.external) {
+          inPlaceExternal = await this.externalSignInAgain(ctx.store, p, a.id, a.authRealmId, input.method, handle, run, onOutput)
+        } else if (findAccount(ctx.store.current() ?? ctx.doc, a.id)?.lastKnownAuthState === 'signed-in') {
           // Signed in now: staged, so a sign-in that fails or is someone
           // else never costs the account the one it has.
           staged = await this.stagedSignInAgain(ctx.store, p, a.id, input.method, handle, run, onOutput)
@@ -1139,6 +1164,7 @@ export class AccountsService {
     }
     if (refusal) return refusal
     if (staged) return staged
+    if (inPlaceExternal) return inPlaceExternal
     if (recorded) {
       const bad = this.fromStore(recorded)
       if (bad) {
@@ -1217,6 +1243,12 @@ export class AccountsService {
       }
       if (observed.credential !== 'account' && observed.credential !== 'api-key') observed = { ...observed, credential: method === 'apiKey' ? 'api-key' : 'account' }
       const check = this.checkInput(observed)
+      // The provider's rule again, right before anything is decided or
+      // switched: switched off (or unanswered) meanwhile, nothing moves. The
+      // replacement is signed out and removed once the provider is back
+      // (it stays listed until then).
+      const lost = this.cliRefusal(p.id)
+      if (lost) { await drop(); return lost }
       const doc = store.current()
       const decided = doc ? decideReauth(doc, stagedId, check, true) : null
       if (!decided || !decided.ok) { await drop(); return failure('registry-unavailable') }
@@ -1237,6 +1269,13 @@ export class AccountsService {
       // The switch, under the registry lock, while this run's lease still
       // holds the account: nothing uses it, and nothing can start.
       const switched = await store.mutate((d, t) => rebindAccountRealm(d, stagedId, check, t))
+      if (!switched.ok && switched.code === 'persist-failed') {
+        // The switch may have reached the disk though it was reported as
+        // failed: the new sign-in is kept and listed, never signed out on a
+        // guess. The next start reads whichever the disk holds.
+        keep = true
+        return failure('persist-failed', 'The new sign-in could not be saved. It is kept under Unfinished setups; this account keeps its earlier sign-in for now.')
+      }
       const notSwitched = this.fromStore(switched)
       if (notSwitched) { await drop(); return notSwitched }
       keep = true
@@ -1256,24 +1295,28 @@ export class AccountsService {
     }
   }
 
-  /** Remove the sign-in of each realm an account moved off (a staged sign
-   *  in again's old realm, or one kept in recovery), through the provider,
-   *  in that realm only; then, when asked, check the account's own realm
-   *  again and record it (design 9.2: the replacement is revalidated after
-   *  the cleanup). A realm whose sign-in is gone is retired; one whose
-   *  status or sign-out did not answer stays in recovery, visible, and the
-   *  account keeps needing attention until a later check retries it. The
-   *  caller holds the account (a lease or an exclusive hold). */
-  private async settleOldSignIns(store: AccountRegistryStore, p: ProviderPackage, accountId: string, opts: { revalidate: boolean }): Promise<void> {
+  /** Settle each realm an account moved off (a staged sign in again's old
+   *  realm, or one kept in recovery). Design 9.2: its sign-in is removed
+   *  only when that is proven never to invalidate the replacement, else it
+   *  stays in a visible recovery state (oldSignInRule says which). Removed
+   *  through the provider in that realm only; the realm is then retired and,
+   *  when asked, the account's own realm checked again and recorded (the
+   *  replacement revalidated after the cleanup). Not removed (kept, the
+   *  provider unable to run, or a status or sign-out that did not answer):
+   *  recovery, and the account keeps needing attention. At archive both
+   *  sign-ins go, so the proof is not needed there. The caller holds the
+   *  account (a lease or an exclusive hold). */
+  private async settleOldSignIns(store: AccountRegistryStore, p: ProviderPackage, accountId: string, opts: { revalidate: boolean; archiving?: boolean }): Promise<void> {
     if (!p.auth) return
     const doc = store.current()
     const old = doc ? unsettledSupersededRealms(doc, accountId) : []
     if (old.length === 0) return
-    await this.ensureDiscovered(p)
+    const rules = old.map((r) => this.oldSignInRule(p, r, opts.archiving === true))
+    if (rules.includes('removable')) await this.ensureDiscovered(p)
     let anyCleaned = false
-    for (const r of old) {
+    for (const [i, r] of old.entries()) {
       let cleaned = false
-      if (!this.cliRefusal(p.id) && this.capability(p, 'auth.status').enabled && this.capability(p, 'auth.logout').enabled) {
+      if (rules[i] === 'removable' && this.oldSignInRule(p, r, opts.archiving === true) === 'removable') {
         const status = await p.auth.status({ authRealmId: r.id }).catch(() => null)
         if (status?.ok && status.state === 'signed-out') cleaned = true
         else if (status?.ok) {
@@ -1292,6 +1335,114 @@ export class AccountsService {
     if (!again?.ok) return
     const recorded = await store.mutate((d, t) => recordAuthCheck(d, accountId, this.checkInput(again), t))
     if (!recorded.ok) this.log(`a sign-in check after removing an old sign-in was not saved (${recorded.code})`)
+  }
+
+  /** Whether an old sign-in may be removed now: `kept` -- not proven safe
+   *  for the new one (the provider's `auth.retireReplaced` stays off until
+   *  evidence shows its sign-out there never signs the replacement out), or
+   *  its folder's credentials are not known to be its own file (a keyring or
+   *  automatic store could be shared); `unavailable` -- the provider cannot
+   *  run a status check and a sign-out now. At archive the proof is not
+   *  needed: both sign-ins go. */
+  private oldSignInRule(p: ProviderPackage, realm: AuthRealm, archiving: boolean): OldSignInRule {
+    if (!archiving && !(this.capability(p, 'auth.retireReplaced').enabled && realm.credentialStoreMode === 'file')) return 'kept'
+    if (this.cliRefusal(p.id) || !this.capability(p, 'auth.status').enabled || !this.capability(p, 'auth.logout').enabled) return 'unavailable'
+    return 'removable'
+  }
+
+  /** What the account's row says about its old sign-in: kept (the app does
+   *  not remove it yet), unavailable (it cannot now), or failed (a removal
+   *  did not finish; a check tries again). */
+  private oldSignInView(p: ProviderPackage | null, old: readonly AuthRealm[]): NonNullable<AccountView['oldSignInLeft']> {
+    if (!p?.auth) return 'unavailable'
+    const rules = old.map((r) => this.oldSignInRule(p, r, false))
+    if (rules.includes('kept')) return 'kept'
+    if (rules.includes('unavailable')) return 'unavailable'
+    return 'failed'
+  }
+
+  /** At start (review round 1, Q2): an old sign-in a sign in again left when
+   *  the app closed before it was settled is settled now, by the same rule
+   *  as after the switch, under an operation lease on its account. Refused
+   *  (the provider off, the account in use) it waits for the account's next
+   *  check. Never throws. */
+  async settleLeftoverSignIns(): Promise<void> {
+    const ready = this.ready()
+    if ('ok' in ready) return
+    for (const a of ready.doc.accounts) {
+      if (!ready.doc.realms.some((r) => r.ownerProviderAccountId === a.id && r.id !== a.authRealmId && r.lifecycle === 'retiring')) continue
+      const p = this.pkg(a.providerId)
+      if (!p?.auth) continue
+      const lease = await this.operationLease(ready.store, a.id, a.providerId).catch((): AccountsFailure => failure('internal'))
+      if ('ok' in lease) continue
+      try {
+        await this.settleOldSignIns(ready.store, p, a.id, { revalidate: true })
+      } catch (e) {
+        this.log(`an old sign-in was not settled at start (${e instanceof Error ? e.message : String(e)})`)
+      } finally {
+        lease.release()
+      }
+    }
+  }
+
+  /** This computer's own sign-in, signed in again in place (design 9.2, last
+   *  paragraph; WP1.52). The caller holds the account's sign-in lease
+   *  (nothing uses it, nothing starts on it) and the user has acknowledged
+   *  that it reaches every app using that sign-in. The home is checked first
+   *  (design 5.5: a sign-in that changed there blocks it); a signed-in home
+   *  is signed out first (the provider's login never runs over one); then
+   *  the login runs there. From the sign-out on, the record says what the
+   *  home now holds: a login that does not finish leaves it signed out,
+   *  needing attention. Never staged: this home is not the app's to replace. */
+  private async externalSignInAgain(
+    store: AccountRegistryStore, p: ProviderPackage, accountId: string, realmId: string, method: SignInMethod,
+    secretHandle: string | undefined, run: SignInRun, onOutput?: (text: string) => void,
+  ): Promise<AccountsResult<{ state: KnownAuthState }>> {
+    if (!p.auth) return failure('unsupported')
+    const changed = await this.externalStillMatches(store, p, accountId, realmId, { unansweredBlocks: true })
+    if (changed) return changed
+    const record = async (check: { state: KnownAuthState; observedCredential?: CredentialClass; providerSubject?: string; providerAuthorityId?: string }) => {
+      const r = await store.mutate((d, t) => recordAuthCheck(d, accountId, check, t))
+      if (!r.ok) this.log(`a sign-in state of this computer's own sign-in was not saved (${r.code})`)
+      return r
+    }
+    if (store.current() && findAccount(store.current()!, accountId)?.lastKnownAuthState !== 'signed-out') {
+      const out = await p.auth.logout({ authRealmId: realmId }, { acknowledgeExternalRealm: true }).catch((): AuthOperationResult => ({ ok: false, code: 'not-started' }))
+      if (out.state === 'signed-out' || out.state === 'signed-in') await record({ state: out.state })
+      // Still signed in: nothing was lost, and nothing more runs.
+      if (!out.ok) return this.fromAuth(out)
+    }
+    const ran = await this.loginUnderCliRule(p, { authRealmId: realmId }, method, {
+      ...(secretHandle !== undefined ? { secretHandle } : {}),
+      onOutput: (text) => { try { onOutput?.(text) } catch { /* display only */ } },
+      signal: run.controller.signal,
+      acknowledgeExternalRealm: true,
+    })
+    // Refused before the login ran: the home is as the sign-out above left
+    // it, signed out, and the record says so already.
+    if ('refused' in ran) return ran.refused
+    const result = ran.result
+    if (result.state === 'signed-in') {
+      let observed: AuthOperationResult & { state: KnownAuthState } = { ...result, state: 'signed-in' }
+      if (observed.credential !== 'account' && observed.credential !== 'api-key') {
+        const again = await p.auth.status({ authRealmId: realmId }).catch(() => null)
+        if (again?.ok && again.state === 'signed-in') observed = again
+      }
+      if (observed.credential !== 'account' && observed.credential !== 'api-key') observed = { ...observed, credential: method === 'apiKey' ? 'api-key' : 'account' }
+      const check = this.checkInput(observed)
+      const recorded = await record(check)
+      if (!recorded.ok) {
+        this.unrecordedSignIns.set(accountId, check.observedCredential)
+        this.changed()
+        return this.fromStore(recorded)!
+      }
+      this.unrecordedSignIns.delete(accountId)
+      if (findAccount(recorded.doc, accountId)?.operationalState === 'blocked') return failure('sign-in-changed', undefined, { state: 'signed-in' })
+      return { ok: true, state: 'signed-in' }
+    }
+    // Not signed in: the home is as the sign-out above left it, and the
+    // record says signed out (needing attention) already.
+    return result.ok ? failure('not-signed-in', undefined, { state: 'signed-out' }) : this.fromAuth({ ...result, state: 'signed-out' })
   }
 
   /** Cancel a sign-in this renderer started; nothing else. */
@@ -1718,7 +1869,7 @@ export class AccountsService {
         // An old sign-in a sign in again left goes first: an archived account
         // keeps none. One that still cannot be removed refuses the archive
         // before this account's own sign-in is touched.
-        await this.settleOldSignIns(ctx.store, ctx.p, a.id, { revalidate: false })
+        await this.settleOldSignIns(ctx.store, ctx.p, a.id, { revalidate: false, archiving: true })
         if (unsettledSupersededRealms(ctx.store.current() ?? ctx.doc, a.id).length > 0) return failure('lifecycle', 'The old sign-in of this account could not be removed yet. Check its sign-in, then try again.')
         const status = await ctx.p.auth.status({ authRealmId: a.authRealmId }).catch((): AuthOperationResult & { state: KnownAuthState } => ({ ok: false, code: 'not-started', state: 'error' }))
         if (!status.ok) return this.fromAuth(status)

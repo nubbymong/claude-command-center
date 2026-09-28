@@ -83,7 +83,7 @@ describe('Codex not answered yet: not set up', () => {
     expect(await h.service.abandonSetup({ accountId: pending.accountId })).toMatchObject(NOT_SET_UP)
     expect(await h.service.refreshStatus({ accountId: a })).toMatchObject(NOT_SET_UP)
     expect(await h.service.reconcileSignIn({ accountId: a })).toMatchObject(NOT_SET_UP)
-    expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).toMatchObject(NOT_SET_UP)
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toMatchObject(NOT_SET_UP)
     expect(await h.service.logout({ accountId: a })).toMatchObject(NOT_SET_UP)
     expect(h.runs.length).toBe(runs)
     expect(JSON.stringify(h.doc().journals)).toBe(journals)
@@ -334,7 +334,7 @@ describe('a sign-in reads the answer again before each CLI it starts (ADR-009 de
     const logins = h.args().filter((x) => x === 'login').length
     const record = JSON.stringify(h.doc().accounts.find((x) => x.id === a))
     armed = true
-    expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'provider-not-set-up' })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'provider-not-set-up' })
     expect(h.args().filter((x) => x === 'login').length).toBe(logins)
     expect(JSON.stringify(h.doc().accounts.find((x) => x.id === a))).toBe(record)
     expect(h.leases.count(a)).toBe(0)

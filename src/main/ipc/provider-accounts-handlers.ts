@@ -45,6 +45,13 @@ export const PROVIDER_ACCOUNTS_SCHEMAS = {
   beginSetup: z.object({ providerId, method: signInMethod }).strict(),
   account: z.object({ accountId }).strict(),
   signIn: z.object({ accountId, method: signInMethod, secretHandle: z.string().regex(SECRET_HANDLE_RE).optional() }).strict(),
+  // The user's answer, "the same account as before", is required: without it
+  // nothing is signed in again. The yes to this computer's own sign-in too,
+  // when it is that one (design 9.2).
+  signInAgain: z.object({
+    accountId, method: signInMethod, secretHandle: z.string().regex(SECRET_HANDLE_RE).optional(),
+    sameAccount: z.literal(true), acknowledgeExternal: z.literal(true).optional(),
+  }).strict(),
   completeSetup: z.object({
     accountId,
     identity: z.discriminatedUnion('mode', [
@@ -155,7 +162,7 @@ export function registerProviderAccountsHandlers(getWindow: () => BrowserWindow 
       if (!sender.isDestroyed()) sender.send(IPC.PROVIDER_ACCOUNTS_SIGN_IN_OUTPUT, { accountId: i.accountId, text })
     })
   })
-  handle(IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, S.signIn, (i, svc, e) => {
+  handle(IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, S.signInAgain, (i, svc, e) => {
     const sender = e.sender
     return svc.signInAgain(i, sender.id, (text) => {
       if (!sender.isDestroyed()) sender.send(IPC.PROVIDER_ACCOUNTS_SIGN_IN_OUTPUT, { accountId: i.accountId, text })

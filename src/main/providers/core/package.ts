@@ -132,6 +132,10 @@ export interface AuthLoginInput {
    *  after every wait. Once the login has run, its result is confirmed as
    *  before: stopping then would lose what it left in the realm. */
   mayStart?: () => boolean
+  /** This computer's own home is signed in again in place only with the
+   *  user's acknowledgement that it reaches every app using it (design 9.2,
+   *  last paragraph). Without it a login there is refused. */
+  acknowledgeExternalRealm?: boolean
 }
 
 /** A status check's options. */
