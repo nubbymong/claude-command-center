@@ -582,7 +582,9 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
         }
         const r = await prepare(realm, 'login')
         if (isRefusal(r)) return r
-        if (r.ownership !== 'conductor-managed') return refuse('external-realm')
+        // This computer's own home only with the user's acknowledgement (the
+        // accounts service's in-place sign in again, design 9.2).
+        if (r.ownership !== 'conductor-managed' && input?.acknowledgeExternalRealm !== true) return refuse('external-realm')
         const browser = spec.op === 'login-browser'
         if (browser && browserRunning) return refuse('browser-busy')
         const release = holdRealm(r)

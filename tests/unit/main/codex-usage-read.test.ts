@@ -408,7 +408,7 @@ describe('who is read (ADR-022, bound 2)', () => {
     // its own sign-in, unchanged). The login works; recording it does not.
     expect(await t.h.service.logout({ accountId: a })).toEqual({ ok: true, state: 'signed-out' })
     t.h.port.failWrites = [t.h.port.writes + 1]
-    expect((await t.h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).ok).toBe(false)
+    expect((await t.h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).ok).toBe(false)
     // The record still says signed out, but the realm is signed in now: made
     // to say signed in by hand, the unrecorded sign-in still keeps it unread.
     const recorded = await t.h.store.mutate((d, now) => recordAuthCheck(d, a, { state: 'signed-in' }, now))
@@ -662,7 +662,7 @@ describe('what stops a read, and what waits for one (#49)', () => {
 
   it('signing in again stops the read and waits for it', async () => {
     const f = await inFlight()
-    const again = f.t.h.service.signInAgain({ accountId: f.a, method: 'browser' }, 1)
+    const again = f.t.h.service.signInAgain({ sameAccount: true, accountId: f.a, method: 'browser' }, 1)
     await until(() => f.run.stopped, 'the read to be stopped')
     f.releaseKill()
     expect(await again).toMatchObject({ ok: true, state: 'signed-in' })

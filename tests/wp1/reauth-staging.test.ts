@@ -18,6 +18,8 @@ import {
 import type { ProviderRegistryDoc } from '../../src/shared/providers'
 import type { ProviderPackage } from '../../src/main/providers/core'
 import { harness, addCodexAccount, managedHome, EXT_HOME, KEY } from './accounts-harness'
+import { codexCapabilities, codexWiredCapabilities } from '../../src/main/providers/codex'
+import { claudeCapabilities } from '../../src/main/providers/claude'
 
 const hex = (n: number) => n.toString(16).padStart(24, '0')
 const idn = (n: number) => `idn-${hex(n)}`
@@ -358,38 +360,113 @@ async function withExternalHome(h: H) {
   return r.accountId
 }
 
+/** Removing an old sign-in proven safe, as evidence would record it: the
+ *  provider's auth.retireReplaced on, and every realm's credentials known
+ *  to be its own file (design 9.2; review round 1, S1 and thesis 5). */
+async function proveRemoval(h: H) {
+  h.setCapabilities({ 'auth.retireReplaced': { state: 'supported' } })
+  expect((await h.store.mutate((d) => ({ ok: true, doc: { ...d, realms: d.realms.map((r) => ({ ...r, credentialStoreMode: 'file' as const })) } }))).ok).toBe(true)
+}
+
 describe('signing in again while signed in, through the service (WP1.52)', () => {
-  it('runs in a new realm, switches the same account to it, signs the old one out and checks the new one again', async () => {
+  it('needs the user\'s answer: without it nothing runs (review round 1, T1)', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    const runs = h.runs.length
+    expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'not-confirmed' })
+    expect(await h.service.signInAgain({ sameAccount: false, accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'not-confirmed' })
+    expect(h.runs.length).toBe(runs)
+    expect(h.doc().journals).toEqual([])
+  })
+
+  it('runs in a new realm and switches the same account to it; the old sign-in is kept, visible, while removing it is not proven safe (S1)', async () => {
     const h = await harness()
     const a = await addCodexAccount(h, 'A')
     const before = h.doc()
     const oldRealm = realmIdOf(h, a)
     const runsBefore = h.runs.length
     const lines: string[] = []
-    expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1, (t) => lines.push(t))).toEqual({ ok: true, state: 'signed-in' })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1, (t) => lines.push(t))).toEqual({ ok: true, state: 'signed-in' })
     expect(lines.join('')).toContain('Starting local login server')
     const newRealm = realmIdOf(h, a)
     expect(newRealm).not.toBe(oldRealm)
     const where = (home: string) => (home.toLowerCase() === homeOf(oldRealm) ? 'old' : home.toLowerCase() === homeOf(newRealm) ? 'new' : home)
     const runs = h.runs.slice(runsBefore).map((r) => `${r.args} @ ${where(r.home)}`)
-    // Logged in to the new realm only; the old one signed out only after the
-    // switch; the new one checked again after that.
-    expect(runs.filter((r) => r.startsWith('login @') || r.startsWith('logout'))).toEqual(['login @ new', 'logout @ old'])
-    expect(runs.lastIndexOf('login status @ new')).toBeGreaterThan(runs.indexOf('logout @ old'))
-    expect(h.signedIn.has(homeOf(oldRealm))).toBe(false)
+    // Logged in to the new realm only; nothing at all ran in the old one.
+    expect(runs.filter((r) => r.startsWith('login @') || r.startsWith('logout'))).toEqual(['login @ new'])
+    expect(runs.filter((r) => r.endsWith('@ old'))).toEqual([])
+    expect(h.signedIn.get(homeOf(oldRealm))).toBe('chatgpt')
     expect(h.signedIn.get(homeOf(newRealm))).toBe('chatgpt')
     const d = h.doc()
     // The same account: its id, identity, default -- only its realm moved.
     expect(d.accounts).toHaveLength(1)
-    expect(findAccount(d, a)).toMatchObject({ identityId: findAccount(before, a)!.identityId, isProviderDefault: true, lastKnownAuthState: 'signed-in', operationalState: 'ready', identityAssurance: 'user-asserted' })
-    expect(findRealm(d, oldRealm)).toMatchObject({ lifecycle: 'retired', ownerProviderAccountId: a })
+    expect(findAccount(d, a)).toMatchObject({ identityId: findAccount(before, a)!.identityId, isProviderDefault: true, lastKnownAuthState: 'signed-in', operationalState: 'attention', identityAssurance: 'user-asserted' })
+    expect(findRealm(d, oldRealm)).toMatchObject({ lifecycle: 'recovery', ownerProviderAccountId: a })
     expect(findRealm(d, newRealm)).toMatchObject({ lifecycle: 'active', ownerProviderAccountId: a })
     expect(d.journals).toEqual([])
+    expect(h.service.snapshot().accounts[0]).toMatchObject({ oldSignInLeft: 'kept', operationalState: 'attention' })
+    expect(h.service.consumersOf(a)).toEqual({ session: 0, review: 0, 'sign-in': 0, operation: 0 })
+    // Usable: attention is not a block.
+    expect((await h.service.acquireLaunchLease({ kind: 'session', providerId: 'codex', providerAccountId: a, ownerId: 's1' })).ok).toBe(true)
+    h.service.releaseLaunch('session', 's1')
+    // A check does not remove it either while it is not proven safe.
+    const checks = h.runs.length
+    expect(await h.service.refreshStatus({ accountId: a })).toEqual({ ok: true, state: 'signed-in' })
+    expect(h.runs.slice(checks).map((r) => where(r.home))).toEqual(['new'])
+    expect(findRealm(h.doc(), oldRealm)!.lifecycle).toBe('recovery')
+  })
+
+  it('the removal is off by default: the provider declares it unknown, pending the evidence (S1)', async () => {
+    expect(codexCapabilities['auth.retireReplaced'].state).toBe('unknown')
+    expect(codexWiredCapabilities['auth.retireReplaced'].state).toBe('unknown')
+    expect(codexWiredCapabilities['auth.retireReplaced'].note).toMatch(/evidence/)
+    expect(claudeCapabilities['auth.retireReplaced'].state).toBe('unsupported')
+  })
+
+  it('once removing it is proven safe, the old sign-in is signed out in its own folder and the new one checked again', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    await proveRemoval(h)
+    const oldRealm = realmIdOf(h, a)
+    const runsBefore = h.runs.length
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    const newRealm = realmIdOf(h, a)
+    const where = (home: string) => (home.toLowerCase() === homeOf(oldRealm) ? 'old' : home.toLowerCase() === homeOf(newRealm) ? 'new' : home)
+    const runs = h.runs.slice(runsBefore).map((r) => `${r.args} @ ${where(r.home)}`)
+    expect(runs.filter((r) => r.startsWith('login @') || r.startsWith('logout'))).toEqual(['login @ new', 'logout @ old'])
+    expect(runs.lastIndexOf('login status @ new')).toBeGreaterThan(runs.indexOf('logout @ old'))
+    expect(h.signedIn.has(homeOf(oldRealm))).toBe(false)
+    expect(findRealm(h.doc(), oldRealm)).toMatchObject({ lifecycle: 'retired', ownerProviderAccountId: a })
+    expect(findAccount(h.doc(), a)).toMatchObject({ operationalState: 'ready', lastKnownAuthState: 'signed-in' })
     // The old folder is kept, signed out, as an archived account's is.
     expect(h.folders.exists(managedHome(oldRealm))).toBe(true)
     expect(h.service.snapshot().accounts[0].oldSignInLeft).toBeUndefined()
-    expect(h.service.consumersOf(a)).toEqual({ session: 0, review: 0, 'sign-in': 0, operation: 0 })
-    expect((await h.service.acquireLaunchLease({ kind: 'session', providerId: 'codex', providerAccountId: a, ownerId: 's1' })).ok).toBe(true)
+  })
+
+  it('its own file store alone is not enough: without the capability the old sign-in is kept (S1)', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    expect((await h.store.mutate((d) => ({ ok: true, doc: { ...d, realms: d.realms.map((r) => ({ ...r, credentialStoreMode: 'file' as const })) } }))).ok).toBe(true)
+    const oldRealm = realmIdOf(h, a)
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    expect(h.args().filter((x) => x === 'logout')).toEqual([])
+    expect(findRealm(h.doc(), oldRealm)!.lifecycle).toBe('recovery')
+    expect(h.service.snapshot().accounts[0].oldSignInLeft).toBe('kept')
+  })
+
+  it('a folder whose credentials are not known to be its own file is never signed out, the capability on or not (thesis 5)', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    h.setCapabilities({ 'auth.retireReplaced': { state: 'supported' } })
+    for (const mode of [undefined, 'keyring', 'unknown'] as const) {
+      if (mode) expect((await h.store.mutate((d) => ({ ok: true, doc: { ...d, realms: d.realms.map((r) => (r.id === realmIdOf(h, a) ? { ...r, credentialStoreMode: mode } : r)) } }))).ok).toBe(true)
+      const oldRealm = realmIdOf(h, a)
+      const logouts = h.args().filter((x) => x === 'logout').length
+      expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1), String(mode)).toEqual({ ok: true, state: 'signed-in' })
+      expect(h.args().filter((x) => x === 'logout').length, String(mode)).toBe(logouts)
+      expect(findRealm(h.doc(), oldRealm)!.lifecycle, String(mode)).toBe('recovery')
+      expect(h.service.snapshot().accounts[0].oldSignInLeft, String(mode)).toBe('kept')
+    }
   })
 
   it('while it runs nothing launches on the account, and its own realm is untouched until the switch', async () => {
@@ -404,18 +481,31 @@ describe('signing in again while signed in, through the service (WP1.52)', () =>
     const a = await addCodexAccount(h, 'A')
     const oldRealm = realmIdOf(h, a)
     armed = true
-    const running = h.service.signInAgain({ accountId: a, method: 'browser' }, 1)
+    const running = h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)
     await new Promise((r) => setTimeout(r, 0))
     expect(await h.service.acquireLaunchLease({ kind: 'session', providerId: 'codex', providerAccountId: a, ownerId: 's-during' })).toMatchObject({ ok: false, code: 'busy' })
     expect(realmIdOf(h, a)).toBe(oldRealm)
     expect(h.signedIn.get(homeOf(oldRealm))).toBe('chatgpt')
     // The replacement is journalled and listed as this account's, and is not
-    // discarded or finished under the run.
+    // discarded, finished, signed in as a plain setup or given a key under the run.
     const pending = h.service.snapshot().pendingSetups
     expect(pending).toEqual([expect.objectContaining({ replacesAccountId: a, signingIn: true })])
     expect(await h.service.abandonSetup({ accountId: pending[0].accountId })).toMatchObject({ ok: false, code: 'busy' })
     release()
     expect(await running).toEqual({ ok: true, state: 'signed-in' })
+  })
+
+  it('a staged journal is never signed in as a plain setup, nor given a key of its own (T3)', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    const stagedId = `acct-${'b'.repeat(32)}`
+    const replacement = `realm-${'b'.repeat(32)}`
+    expect((await h.store.mutate((d, t) => beginAccountReauth(d, { accountId: stagedId, realmId: replacement, replacesAccountId: a, method: 'browser' }, t))).ok).toBe(true)
+    expect((await h.codex.realmFolders!.prepare({ authRealmId: replacement })).ok).toBe(true)
+    const runs = h.runs.length
+    expect(await h.service.signIn({ accountId: stagedId, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'unsupported' })
+    expect(h.service.issueSecretHandle({ accountId: stagedId }, 1)).toMatchObject({ ok: false, code: 'unsupported' })
+    expect(h.runs.length).toBe(runs)
   })
 
   it('a sign-in that fails or is cancelled removes the replacement and leaves the account exactly as it was', async () => {
@@ -436,7 +526,7 @@ describe('signing in again while signed in, through the service (WP1.52)', () =>
       const oldRealm = realmIdOf(h, a)
       const realmsBefore = h.doc().realms.length
       armed = true
-      const run = h.service.signInAgain({ accountId: a, method: 'browser' }, 1)
+      const run = h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)
       if (how === 'cancelled') { await running; expect(h.service.cancelSignIn({ accountId: a }, 1)).toEqual({ ok: true }) }
       expect((await run).ok, how).toBe(false)
       const d = h.doc()
@@ -450,7 +540,78 @@ describe('signing in again while signed in, through the service (WP1.52)', () =>
     }
   })
 
-  it('an old sign-in that cannot be removed stays in recovery, visible, until a check removes it', async () => {
+  it('a replacement folder that cannot be made leaves nothing behind; a journal whose folder was never made is discarded (T3)', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    const before = JSON.stringify(h.doc())
+    const mkdir = h.folders.fs.mkdir
+    h.folders.fs.mkdir = () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }) }
+    expect((await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).ok).toBe(false)
+    h.folders.fs.mkdir = mkdir
+    expect(JSON.stringify(h.doc())).toBe(before)
+    // The app closed between the journal and its folder.
+    const stagedId = `acct-${'a'.repeat(32)}`
+    expect((await h.store.mutate((d, t) => beginAccountReauth(d, { accountId: stagedId, realmId: `realm-${'a'.repeat(32)}`, replacesAccountId: a, method: 'browser' }, t))).ok).toBe(true)
+    const again = await harness({ port: h.port, folders: h.folders })
+    for (const [home, v] of h.signedIn) again.signedIn.set(home, v)
+    expect(again.service.snapshot().pendingSetups).toEqual([expect.objectContaining({ accountId: stagedId, replacesAccountId: a })])
+    expect(await again.service.abandonSetup({ accountId: stagedId })).toEqual({ ok: true })
+    expect(again.doc().journals).toEqual([])
+    expect(again.signedIn.get(homeOf(realmIdOf(again, a)))).toBe('chatgpt')
+  })
+
+  it('the provider turned off during the sign-in: nothing is switched, and the replacement waits, listed (T3)', async () => {
+    let pref: 'on' | 'off' = 'on'
+    let armed = false
+    const h = await harness({ preference: { codex: () => pref }, script: { login: (r) => {
+      h.signedIn.set(r.home.toLowerCase(), 'chatgpt')
+      if (armed) pref = 'off'
+      return { exitCode: 0, stdout: 'Successfully logged in' + NL }
+    } } })
+    const a = await addCodexAccount(h, 'A')
+    const oldRealm = realmIdOf(h, a)
+    armed = true
+    const r = await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)
+    expect(r.ok).toBe(false)
+    expect(realmIdOf(h, a)).toBe(oldRealm)
+    expect(findRealm(h.doc(), oldRealm)!.lifecycle).toBe('active')
+    expect(h.doc().journals).toEqual([expect.objectContaining({ replacesAccountId: a, state: 'credentials-written' })])
+    // Back on: Discard signs the replacement out and removes it.
+    pref = 'on'
+    const staged = h.doc().journals[0]
+    expect(await h.service.abandonSetup({ accountId: staged.accountId })).toEqual({ ok: true })
+    expect(h.signedIn.has(homeOf(staged.realmId))).toBe(false)
+  })
+
+  it('a switch whose save failed keeps the new sign-in, listed, never signed out on a guess (Q1)', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    const oldRealm = realmIdOf(h, a)
+    // The writes of a sign in again: the journal, the credentials mark, the switch.
+    h.port.failWrites = [h.port.writes + 3]
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'persist-failed' })
+    const staged = h.doc().journals[0]
+    expect(staged).toMatchObject({ replacesAccountId: a, state: 'credentials-written' })
+    expect(h.signedIn.get(homeOf(staged.realmId))).toBe('chatgpt')
+    expect(h.folders.exists(managedHome(staged.realmId))).toBe(true)
+    expect(h.args().filter((x) => x === 'logout')).toEqual([])
+    expect(realmIdOf(h, a)).toBe(oldRealm)
+  })
+
+  it('a settle whose save failed leaves the old sign-in visible, retried later (T3)', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    const oldRealm = realmIdOf(h, a)
+    // The journal, the credentials mark, the switch, then the settle.
+    h.port.failWrites = [h.port.writes + 4]
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    expect(findRealm(h.doc(), oldRealm)!.lifecycle).toBe('retiring')
+    expect(h.service.snapshot().accounts[0]).toMatchObject({ oldSignInLeft: 'kept', operationalState: 'attention' })
+    expect(await h.service.refreshStatus({ accountId: a })).toEqual({ ok: true, state: 'signed-in' })
+    expect(findRealm(h.doc(), oldRealm)!.lifecycle).toBe('recovery')
+  })
+
+  it('an old sign-in whose removal did not finish is said so, and a check tries again (Q3)', async () => {
     let refuse = true
     const h = await harness({ script: { logout: (r) => {
       if (refuse) return { exitCode: 1, stderr: 'could not log out' + NL }
@@ -458,19 +619,19 @@ describe('signing in again while signed in, through the service (WP1.52)', () =>
       return { exitCode: 0, stdout: 'Successfully logged out' + NL }
     } } })
     const a = await addCodexAccount(h, 'A')
+    await proveRemoval(h)
     const oldRealm = realmIdOf(h, a)
-    expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
     expect(findRealm(h.doc(), oldRealm)!.lifecycle).toBe('recovery')
-    expect(findAccount(h.doc(), a)).toMatchObject({ operationalState: 'attention', lastKnownAuthState: 'signed-in' })
-    expect(h.service.snapshot().accounts[0]).toMatchObject({ oldSignInLeft: true, operationalState: 'attention' })
-    // Still usable: its own sign-in is the new one.
-    expect((await h.service.acquireLaunchLease({ kind: 'session', providerId: 'codex', providerAccountId: a, ownerId: 's1' })).ok).toBe(true)
-    h.service.releaseLaunch('session', 's1')
-    // Not archived while it is there.
-    expect((await h.service.setLifecycle({ accountId: a, lifecycle: 'inactive' })).ok).toBe(true)
-    expect(await h.service.setLifecycle({ accountId: a, lifecycle: 'archived' })).toMatchObject({ ok: false, code: 'lifecycle' })
-    expect(findAccount(h.doc(), a)!.lifecycle).toBe('inactive')
-    // Check sign-in retries it.
+    expect(h.service.snapshot().accounts[0]).toMatchObject({ oldSignInLeft: 'failed', operationalState: 'attention' })
+    // Sign-out not available: said so, and nothing is tried.
+    h.setCapabilities({ 'auth.retireReplaced': { state: 'supported' }, 'auth.logout': { state: 'unknown' } })
+    const runs = h.runs.length
+    expect(h.service.snapshot().accounts[0].oldSignInLeft).toBe('unavailable')
+    expect(await h.service.refreshStatus({ accountId: a })).toEqual({ ok: true, state: 'signed-in' })
+    expect(h.args().slice(runs).filter((x) => x === 'logout')).toEqual([])
+    // Available and working again: a check retries it.
+    h.setCapabilities({ 'auth.retireReplaced': { state: 'supported' } })
     refuse = false
     expect(await h.service.refreshStatus({ accountId: a })).toEqual({ ok: true, state: 'signed-in' })
     expect(findRealm(h.doc(), oldRealm)!.lifecycle).toBe('retired')
@@ -479,19 +640,23 @@ describe('signing in again while signed in, through the service (WP1.52)', () =>
     expect(h.service.snapshot().accounts[0].oldSignInLeft).toBeUndefined()
   })
 
-  it('archiving removes an old sign-in first, and archives once it is gone', async () => {
-    let refuse = true
+  it('archiving removes the old sign-in with the account\'s own, proof or not (both go), and refuses while it cannot', async () => {
+    let refuseOld = true
     const h = await harness({ script: { logout: (r) => {
-      if (refuse && !r.home.toLowerCase().endsWith(realmIdOf(h, a).toLowerCase())) return { exitCode: 1, stderr: 'could not log out' + NL }
+      if (refuseOld && r.home.toLowerCase() !== homeOf(realmIdOf(h, a))) return { exitCode: 1, stderr: 'could not log out' + NL }
       h.signedIn.delete(r.home.toLowerCase())
       return { exitCode: 0, stdout: 'Successfully logged out' + NL }
     } } })
     const a = await addCodexAccount(h, 'A')
     const oldRealm = realmIdOf(h, a)
-    expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
-    expect(findRealm(h.doc(), oldRealm)!.lifecycle).toBe('recovery')
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    expect(h.service.snapshot().accounts[0].oldSignInLeft).toBe('kept')
     expect((await h.service.setLifecycle({ accountId: a, lifecycle: 'inactive' })).ok).toBe(true)
-    refuse = false
+    // The old one cannot be signed out: refused before the account's own is touched.
+    expect(await h.service.setLifecycle({ accountId: a, lifecycle: 'archived' })).toMatchObject({ ok: false, code: 'lifecycle' })
+    expect(h.signedIn.get(homeOf(realmIdOf(h, a)))).toBe('chatgpt')
+    expect(findAccount(h.doc(), a)!.lifecycle).toBe('inactive')
+    refuseOld = false
     expect(await h.service.setLifecycle({ accountId: a, lifecycle: 'archived' })).toEqual({ ok: true })
     expect(findRealm(h.doc(), oldRealm)!.lifecycle).toBe('retired')
     expect(h.signedIn.size).toBe(0)
@@ -500,13 +665,14 @@ describe('signing in again while signed in, through the service (WP1.52)', () =>
   it('a replacement the old sign-out took with it is checked again and said so: signed out, needing attention', async () => {
     const h = await harness({ script: { logout: () => { h.signedIn.clear(); return { exitCode: 0, stdout: 'Successfully logged out' + NL } } } })
     const a = await addCodexAccount(h, 'A')
+    await proveRemoval(h)
     const oldRealm = realmIdOf(h, a)
-    expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-out' })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-out' })
     expect(findRealm(h.doc(), oldRealm)!.lifecycle).toBe('retired')
     expect(findAccount(h.doc(), a)).toMatchObject({ lastKnownAuthState: 'signed-out', operationalState: 'attention' })
   })
 
-  it('an interrupted run recovers: before the switch it is listed and discarded, never named; after it, a check finishes the old realm', async () => {
+  it('an interrupted run recovers: before the switch it is listed and discarded, never named; after it, the next start settles the old realm by the same rule (Q2)', async () => {
     const h = await harness()
     const a = await addCodexAccount(h, 'A')
     const oldRealm = realmIdOf(h, a)
@@ -531,22 +697,55 @@ describe('signing in again while signed in, through the service (WP1.52)', () =>
     expect(again.doc().journals).toEqual([])
     expect(again.signedIn.get(homeOf(oldRealm))).toBe('chatgpt')
 
-    // The app closed after the switch, before the old sign-in was removed.
+    // The app closed after the switch, before the old sign-in was settled.
+    const moveB = async (hh: H, b: string, tag: string) => {
+      const bNew = `realm-${tag.repeat(32)}`
+      const bStaged = `acct-${tag.repeat(32)}`
+      expect((await hh.store.mutate((d, t) => beginAccountReauth(d, { accountId: bStaged, realmId: bNew, replacesAccountId: b, method: 'browser' }, t))).ok).toBe(true)
+      expect((await hh.codex.realmFolders!.prepare({ authRealmId: bNew })).ok).toBe(true)
+      hh.signedIn.set(homeOf(bNew), 'chatgpt')
+      expect((await hh.store.mutate((d, t) => rebindAccountRealm(d, bStaged, { state: 'signed-in' }, t))).ok).toBe(true)
+    }
     const b = await addCodexAccount(again, 'B')
     const bOld = realmIdOf(again, b)
-    const bNew = `realm-${'f'.repeat(32)}`
-    const bStaged = `acct-${'f'.repeat(32)}`
-    expect((await again.store.mutate((d, t) => beginAccountReauth(d, { accountId: bStaged, realmId: bNew, replacesAccountId: b, method: 'browser' }, t))).ok).toBe(true)
-    expect((await again.codex.realmFolders!.prepare({ authRealmId: bNew })).ok).toBe(true)
-    again.signedIn.set(homeOf(bNew), 'chatgpt')
-    expect((await again.store.mutate((d, t) => rebindAccountRealm(d, bStaged, { state: 'signed-in' }, t))).ok).toBe(true)
+    await moveB(again, b, 'f')
+    // Not proven safe: the start settles it into visible recovery, running nothing.
     const third = await harness({ port: again.port, folders: again.folders })
     for (const [home, v] of again.signedIn) third.signedIn.set(home, v)
-    expect(third.service.snapshot().accounts.find((x) => x.id === b)).toMatchObject({ oldSignInLeft: true, operationalState: 'attention' })
-    expect(await third.service.refreshStatus({ accountId: b })).toEqual({ ok: true, state: 'signed-in' })
-    expect(findRealm(third.doc(), bOld)!.lifecycle).toBe('retired')
-    expect(third.signedIn.has(homeOf(bOld))).toBe(false)
-    expect(findAccount(third.doc(), b)!.operationalState).toBe('ready')
+    expect(findRealm(third.doc(), bOld)!.lifecycle).toBe('retiring')
+    await third.service.settleLeftoverSignIns()
+    expect(third.runs.filter((r) => r.home.toLowerCase() === homeOf(bOld))).toEqual([])
+    expect(findRealm(third.doc(), bOld)!.lifecycle).toBe('recovery')
+    expect(third.service.snapshot().accounts.find((x) => x.id === b)).toMatchObject({ oldSignInLeft: 'kept', operationalState: 'attention' })
+    // Proven safe: the start signs it out under an operation lease and retires it.
+    const c = await addCodexAccount(third, 'C')
+    const cOld = realmIdOf(third, c)
+    await moveB(third, c, '9')
+    const fourth = await harness({ port: third.port, folders: third.folders })
+    for (const [home, v] of third.signedIn) fourth.signedIn.set(home, v)
+    await proveRemoval(fourth)
+    let leased = false
+    fourth.leases.subscribe((id) => { if (id === c && fourth.leases.countKind(c, 'operation') > 0) leased = true })
+    await fourth.service.settleLeftoverSignIns()
+    expect(leased).toBe(true)
+    expect(findRealm(fourth.doc(), cOld)!.lifecycle).toBe('retired')
+    expect(fourth.signedIn.has(homeOf(cOld))).toBe(false)
+    expect(findAccount(fourth.doc(), c)!.operationalState).toBe('ready')
+  })
+
+  it('a sign-in the app closed on after it turned out to be someone else is named as a new account at the next start (T3)', async () => {
+    const sp = subjectProvider()
+    const h = await harness({ authWrap: sp.wrap })
+    const a = await addCodexAccount(h, 'A')
+    sp.next.subject = 'user-2'
+    const r = await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)
+    const sep = (r as { separateAccountId: string }).separateAccountId
+    const again = await harness({ port: h.port, folders: h.folders, authWrap: sp.wrap })
+    for (const [home, v] of h.signedIn) again.signedIn.set(home, v)
+    expect(again.service.snapshot().pendingSetups).toEqual([expect.objectContaining({ accountId: sep, state: 'credentials-written' })])
+    expect(again.service.snapshot().pendingSetups[0].replacesAccountId).toBeUndefined()
+    expect(await again.service.completeSetup({ accountId: sep, identity: { mode: 'new', friendlyName: 'Someone else', colourKey: 'rose' } })).toEqual({ ok: true, accountId: sep })
+    expect(again.doc().accounts.map((x) => x.id).sort()).toEqual([a, sep].sort())
   })
 
   it('a staged sign-in the app left behind is discarded first when the account signs in again', async () => {
@@ -555,7 +754,7 @@ describe('signing in again while signed in, through the service (WP1.52)', () =>
     const stale = `realm-${'d'.repeat(32)}`
     expect((await h.store.mutate((d, t) => beginAccountReauth(d, { accountId: `acct-${'d'.repeat(32)}`, realmId: stale, replacesAccountId: a, method: 'browser' }, t))).ok).toBe(true)
     expect((await h.codex.realmFolders!.prepare({ authRealmId: stale })).ok).toBe(true)
-    expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
     expect(h.folders.exists(managedHome(stale))).toBe(false)
     expect(h.doc().journals).toEqual([])
   })
@@ -567,17 +766,63 @@ describe('signing in again while signed in, through the service (WP1.52)', () =>
     const issued = h.service.issueSecretHandle({ accountId: a }, 1)
     if (!issued.ok) throw new Error(issued.code)
     h.service.depositSecret(issued.handle, 1, KEY)
-    expect(await h.service.signInAgain({ accountId: a, method: 'apiKey', secretHandle: issued.handle }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'apiKey', secretHandle: issued.handle }, 1)).toEqual({ ok: true, state: 'signed-in' })
     const keyed = h.runs.filter((r) => r.args === 'login --with-api-key').map((r) => r.home.toLowerCase())
     expect(keyed).toEqual([homeOf(oldRealm), homeOf(realmIdOf(h, a))])
-    expect(findAccount(h.doc(), a)).toMatchObject({ authMethod: 'apiKey', operationalState: 'ready' })
+    expect(findAccount(h.doc(), a)).toMatchObject({ authMethod: 'apiKey', lastKnownAuthState: 'signed-in' })
   })
+})
 
-  it('this computer\'s own Codex sign-in is never signed in again here (WP2: add a managed account instead)', async () => {
+describe('this computer\'s own sign-in, signed in again in place (design 9.2, last paragraph; review round 1, S2)', () => {
+  it('only with the user\'s acknowledgement, and never while anything uses it', async () => {
     const h = await harness()
     const ext = await withExternalHome(h)
-    expect(await h.service.signInAgain({ accountId: ext, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'unsupported' })
+    const runs = h.runs.length
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: ext, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'acknowledgement-required' })
+    expect((await h.service.acquireLaunchLease({ kind: 'session', providerId: 'codex', providerAccountId: ext, ownerId: 's1', acknowledgeRealmOnly: true })).ok).toBe(true)
+    expect(await h.service.signInAgain({ sameAccount: true, acknowledgeExternal: true, accountId: ext, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'consumers', consumers: 1 })
+    expect(h.runs.length).toBe(runs)
+    expect(h.signedIn.get(EXT_HOME.toLowerCase())).toBe('chatgpt')
+  })
+
+  it('checks the home, signs it out, signs in again there, and keeps it this computer\'s own (unverified)', async () => {
+    const h = await harness()
+    const ext = await withExternalHome(h)
+    const runs = h.runs.length
+    expect(await h.service.signInAgain({ sameAccount: true, acknowledgeExternal: true, accountId: ext, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    const here = h.runs.slice(runs).filter((r) => r.home.toLowerCase() === EXT_HOME.toLowerCase()).map((r) => r.args)
+    expect(here[0]).toBe('login status')
+    expect(here.indexOf('logout')).toBeLessThan(here.indexOf('login'))
+    expect(h.signedIn.get(EXT_HOME.toLowerCase())).toBe('chatgpt')
+    expect(findAccount(h.doc(), ext)).toMatchObject({ identityAssurance: 'realm-only', lastKnownAuthState: 'signed-in', operationalState: 'ready', authRealmId: realmIdOf(h, ext) })
+    // Never staged: no new realm, no journal.
     expect(h.doc().journals).toEqual([])
+    expect(h.doc().realms.filter((r) => r.ownerProviderAccountId === ext)).toHaveLength(1)
+  })
+
+  it('a sign-in that fails or is cancelled leaves it signed out, needing attention', async () => {
+    const h = await harness({ script: { login: (r) => (r.home.toLowerCase() === EXT_HOME.toLowerCase() ? { exitCode: 1, stderr: 'Login failed' + NL } : (h.signedIn.set(r.home.toLowerCase(), 'chatgpt'), { exitCode: 0, stdout: 'Successfully logged in' + NL })) } })
+    const ext = await withExternalHome(h)
+    expect((await h.service.signInAgain({ sameAccount: true, acknowledgeExternal: true, accountId: ext, method: 'browser' }, 1)).ok).toBe(false)
+    expect(h.signedIn.has(EXT_HOME.toLowerCase())).toBe(false)
+    expect(findAccount(h.doc(), ext)).toMatchObject({ lastKnownAuthState: 'signed-out', operationalState: 'attention' })
+  })
+
+  it('a home that now holds another kind of sign-in is not touched: blocked until reconciled', async () => {
+    const h = await harness()
+    const ext = await withExternalHome(h)
+    h.signedIn.set(EXT_HOME.toLowerCase(), 'api-key')
+    const runs = h.runs.length
+    expect(await h.service.signInAgain({ sameAccount: true, acknowledgeExternal: true, accountId: ext, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'sign-in-changed' })
+    expect(h.runs.slice(runs).map((r) => r.args)).toEqual(['login status'])
+    expect(h.signedIn.get(EXT_HOME.toLowerCase())).toBe('api-key')
+  })
+
+  it('the login port refuses this computer\'s own home without the acknowledgement', async () => {
+    const h = await harness()
+    const ext = await withExternalHome(h)
+    h.signedIn.delete(EXT_HOME.toLowerCase())
+    expect(await h.codex.auth!.login({ authRealmId: realmIdOf(h, ext) }, 'browser', {})).toMatchObject({ ok: false, code: 'external-realm' })
   })
 })
 
@@ -625,9 +870,10 @@ describe('a provider that reports a subject (WP1.52, WP1.53)', () => {
     const a = await addCodexAccount(h, 'A')
     expect(findAccount(h.doc(), a)).toMatchObject({ providerSubject: 'user-1', providerAuthorityId: 'auth.example' })
     const oldRealm = realmIdOf(h, a)
-    expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
     expect(realmIdOf(h, a)).not.toBe(oldRealm)
-    expect(findAccount(h.doc(), a)).toMatchObject({ providerSubject: 'user-1', operationalState: 'ready' })
+    // Its old sign-in is kept (removal not proven safe): attention, not a block.
+    expect(findAccount(h.doc(), a)).toMatchObject({ providerSubject: 'user-1', operationalState: 'attention' })
   })
 
   it('someone else becomes a separate account for the user to name; this one keeps its own sign-in, untouched', async () => {
@@ -637,7 +883,7 @@ describe('a provider that reports a subject (WP1.52, WP1.53)', () => {
     const oldRealm = realmIdOf(h, a)
     const before = JSON.stringify(findAccount(h.doc(), a))
     sp.next.subject = 'user-2'
-    const r = await h.service.signInAgain({ accountId: a, method: 'browser' }, 1)
+    const r = await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)
     expect(r).toMatchObject({ ok: true, state: 'signed-in', separateAccountId: expect.stringMatching(/^acct-/) })
     const sep = (r as { separateAccountId: string }).separateAccountId
     expect(JSON.stringify(findAccount(h.doc(), a))).toBe(before)
@@ -661,7 +907,7 @@ describe('a provider that reports a subject (WP1.52, WP1.53)', () => {
     expect(findAccount(h.doc(), b)!.providerSubject).toBe('user-2')
     const before = JSON.stringify(h.doc().accounts)
     const realms = h.doc().realms.length
-    const r = await h.service.signInAgain({ accountId: a, method: 'browser' }, 1)
+    const r = await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)
     expect(r).toMatchObject({ ok: false, code: 'subject-conflict' })
     // Said as it is: that sign-in is another account here already.
     expect((r as { message: string }).message).toMatch(/already another account/)

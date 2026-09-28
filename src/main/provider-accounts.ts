@@ -122,6 +122,13 @@ export async function runStartupProviderMigrations(): Promise<void> {
   } catch (e) {
     logError(`[accounts] dropping unfinished checks of a provider's own sign-in threw: ${e instanceof Error ? e.message : String(e)}`)
   }
+  // An old sign-in a sign in again left when the app closed is settled
+  // (P3.3 review round 1, Q2), by the same rule as after the switch.
+  try {
+    await s.settleLeftoverSignIns()
+  } catch (e) {
+    logError(`[accounts] settling an old sign-in left at start threw: ${e instanceof Error ? e.message : String(e)}`)
+  }
   // A reviewer choice this platform can never use is cleared, and said so.
   try {
     await s.clearUnusableReviewerDefaults()
