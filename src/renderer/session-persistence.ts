@@ -157,6 +157,24 @@ export function hydrateDetachedFromSavedState(saved: Pick<SessionState, 'detache
 }
 
 /**
+ * P3.5 (the C item "Resume replaces the tab list"): what the resume prompt's
+ * Refresh offers. The re-read file may hold tabs launched while the prompt was
+ * open (the autosave rewrites it on every tab added): those are running, so
+ * they are never offered again (a Resume would add a second copy). Nothing
+ * left to offer, or no file: the list it had. Answered already (`prev` null):
+ * nothing comes back.
+ */
+export function refreshRestoreOffer(
+  prev: SessionState | null,
+  saved: SessionState | null | undefined,
+  openIds: ReadonlySet<string>,
+): SessionState | null {
+  if (!prev) return null
+  const offered = (saved?.sessions ?? []).filter((s) => !openIds.has(s.id))
+  return saved && offered.length > 0 ? { ...saved, sessions: offered } : prev
+}
+
+/**
  * T8b (bug #5): build the persisted session state AND enrich each live Claude
  * session with its exact-conversation resume target (resumeUuid/resumeCwd) so an
  * app-relaunch resumes the SAME conversation, not the newest in the cwd's folder.

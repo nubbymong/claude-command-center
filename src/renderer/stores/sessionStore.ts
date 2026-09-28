@@ -300,11 +300,21 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   setRestoring: (restoring) => set({ isRestoring: restoring }),
 
+  // P3.5 (the C item "Resume replaces the tab list"): the resume prompt does
+  // not block the app, so tabs launched while it was open are running when
+  // the restore lands. They stay, after the restored ones, and a restored tab
+  // whose id is already open is not added again: the live one stays as it is.
+  // The restored active tab is focused, else the one focused already.
   restoreSessions: (sessions, activeId) =>
-    set({
-      sessions,
-      activeSessionId: activeId || sessions[0]?.id || null,
-      isRestoring: false
+    set((state) => {
+      const open = new Set(state.sessions.map((s) => s.id))
+      const merged = [...sessions.filter((s) => !open.has(s.id)), ...state.sessions]
+      const has = (id: string | null | undefined): id is string => !!id && merged.some((s) => s.id === id)
+      return {
+        sessions: merged,
+        activeSessionId: has(activeId) ? activeId : has(state.activeSessionId) ? state.activeSessionId : merged[0]?.id ?? null,
+        isRestoring: false,
+      }
     }),
 
   beginRename: (id) => set({ renamingSessionId: id }),
