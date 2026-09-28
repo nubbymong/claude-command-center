@@ -474,6 +474,9 @@ export function watchAndClaimRollout(
           if (statSync(picked.path).size > picked.size) { claim(picked.path, picked.meta); return }
         } catch { /* gone: nothing to claim */ }
       }
+      // The picker named the conversation: only that one is this session's,
+      // never a new rollout another session writes in the same folder.
+      return
     }
 
     const now = Date.now()

@@ -545,9 +545,10 @@ started within seconds can swap) with the Codex hooks (P3.10) and Codex runs
 in the logs (P3.12). A conversation switched inside the Codex TUI (its own
 resume or new) is not followed until P3.10's SessionStart hook. A Codex
 session's Claude review root stays its configured directory, never one a
-resumed rollout names. The picker's fresh fallback after a failed resume in
-another worktree runs there and its new rollout is not claimed. Switch
-account (row 35's other half) is P3.6.
+resumed rollout names. Once the picker has named a conversation, only that
+conversation is claimed, never a new rollout another session writes in the
+same folder; so the fresh session the picker falls back to after a failed
+resume gets no status line. Switch account (row 35's other half) is P3.6.
 Owed: the independent spec and code-quality reviews; the ADR-009 pass (the
 `codex resume <id>` argv, the pick file, the picker's environment and its
 worktree start); the SSH live matrix at the final head (`pty-manager.ts`

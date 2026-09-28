@@ -173,6 +173,22 @@ describe('the conversation the resume picker opened (rows 32, 38)', () => {
     expect(updates.at(-1)?.inputTokens).toBe(11)
   })
 
+  it('once the picker has named a conversation, another session\'s new rollout in the same folder is never claimed', async () => {
+    vi.useFakeTimers()
+    const sessions = realm()
+    const pickFile = join(sessions, '..', 'pick.json')
+    const old = new Date(Date.now() - 2 * 24 * 3600 * 1000)
+    rollout(folder(sessions, old.getUTCFullYear(), old.getUTCMonth() + 1, old.getUTCDate()), ID_A, '/p/demo', old.toISOString(), 10)
+    const { claims, src } = watch(sessions, '/p/demo', { pickFile })
+    writeFileSync(pickFile, JSON.stringify({ id: ID_A }))
+    await vi.advanceTimersByTimeAsync(1_500)
+    const now = new Date()
+    rollout(folder(sessions, now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate()), ID_B, '/p/demo', now.toISOString(), 2)
+    await vi.advanceTimersByTimeAsync(1_500)
+    src.stop()
+    expect(claims).toEqual([])
+  })
+
   it('a pick that is not a conversation id claims nothing old; a new conversation is still claimed', async () => {
     vi.useFakeTimers()
     const sessions = realm()
