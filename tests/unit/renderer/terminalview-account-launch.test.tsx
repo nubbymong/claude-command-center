@@ -268,6 +268,18 @@ describe("a Codex session's account reaches pty:spawn", () => {
     await settle()
     expect(spawn.mock.calls[0][1].providerAccountId).toBeUndefined()
   })
+
+  it('P3.6: a line a Switch account left for this start is said once, dimmed, as it starts; control characters never reach the terminal', async () => {
+    const { setLaunchNote, takeLaunchNote } = await import('../../../src/renderer/utils/launchNote')
+    setLaunchNote('s-1', 'Switched to Personal.\u001b[2J This is a new conversation.')
+    mount(codexSession({ providerAccountId: 'acc-personal' }))
+    await settle()
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(H.MockTerminal.last.lines).toContain('\x1b[90mSwitched to Personal.[2J This is a new conversation.\x1b[0m')
+    expect(takeLaunchNote('s-1')).toBeUndefined()
+    await restartTo(codexSession({ providerAccountId: 'acc-personal' }), 'b')
+    expect(termLines()).not.toContain('Switched to Personal.')
+  })
 })
 
 describe("a later launch on this computer's own sign-in asks first", () => {

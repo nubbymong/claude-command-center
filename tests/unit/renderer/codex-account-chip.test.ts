@@ -41,7 +41,10 @@ const { default: SessionStatusStrip } = await import('../../../src/renderer/comp
 const { default: SessionRow } = await import('../../../src/renderer/components/sidebar/SessionRow')
 const { useProviderAccountsStore, accountDisplayName } = await import('../../../src/renderer/stores/providerAccountsStore')
 const { resolveIdentityColor } = await import('../../../src/shared/identity-colors')
-const { snapshot, work, personal, local } = await import('./accounts-snapshot-harness')
+const { snapshot, work, personal, local, parked, claudeMain } = await import('./accounts-snapshot-harness')
+// One Codex account: the read-only chip, as a single-account Claude session
+// shows (two or more make it the Switch account pill, below).
+const only = (a: typeof work) => snapshot({ accounts: [a, claudeMain] })
 
 let container: HTMLDivElement
 let root: Root
@@ -65,6 +68,7 @@ const chipDot = () => (chip()!.querySelector('span') as HTMLElement).style.backg
 
 describe('the session strip shows a Codex session\'s account (P3.6, row 20)', () => {
   it('the account it runs under: the identity\'s name and colour, at the far left', async () => {
+    useProviderAccountsStore.setState({ snapshot: only(personal), loaded: true })
     await strip({ id: 'x1', provider: 'codex', status: 'idle', providerAccountId: personal.id })
     expect(chip()).not.toBeNull()
     expect(chip()!.textContent).toBe('Personal')
@@ -75,12 +79,14 @@ describe('the session strip shows a Codex session\'s account (P3.6, row 20)', ()
   })
 
   it('no account named: the provider default\'s', async () => {
+    useProviderAccountsStore.setState({ snapshot: only(work), loaded: true })
     await strip({ id: 'x2', provider: 'codex', status: 'idle' })
     expect(chip()!.textContent).toBe('Work')
     expect(chipDot()).toBe(css('indigo'))
   })
 
   it('this computer\'s own sign-in is named for what it is', async () => {
+    useProviderAccountsStore.setState({ snapshot: only(local), loaded: true })
     await strip({ id: 'x3', provider: 'codex', status: 'idle', providerAccountId: local.id })
     expect(chip()!.textContent).toBe(accountDisplayName(snapshot(), local))
   })
@@ -96,6 +102,7 @@ describe('the session strip shows a Codex session\'s account (P3.6, row 20)', ()
   })
 
   it('with the status line master switch off the account item stays, as Claude\'s does, and the band goes when nothing is left', async () => {
+    useProviderAccountsStore.setState({ snapshot: only(work), loaded: true })
     settingsState.settings = { ...settingsState.settings, statusLineEnabled: false }
     await strip({ id: 'x4b', provider: 'codex', status: 'idle', providerAccountId: work.id, costUsd: 0.5 })
     expect(chip()!.textContent).toBe('Work')
@@ -103,6 +110,23 @@ describe('the session strip shows a Codex session\'s account (P3.6, row 20)', ()
     settingsState.settings = { ...settingsState.settings, statusLine: { ...STATUS_LINE, showAccount: false } }
     await strip({ id: 'x4c', provider: 'codex', status: 'idle', providerAccountId: work.id })
     expect(container.innerHTML).toBe('')
+  })
+
+  it('P3.6 (row 22): with two or more Codex accounts it is the Switch account pill, and it stays with the master switch off', async () => {
+    const pill = () => container.querySelector('button[title="Switch account (respawns + resumes this session)"]') as HTMLButtonElement | null
+    await strip({ id: 'x4d', provider: 'codex', status: 'idle', providerAccountId: personal.id })
+    expect(chip()).toBeNull()
+    expect(pill()!.textContent).toBe('Personal')
+    expect((pill()!.querySelector('span span') as HTMLElement).style.backgroundColor).toBe(css('pink'))
+    await act(async () => { pill()!.click() })
+    const row = (label: string) => Array.from(container.querySelectorAll('button')).filter((b) => b !== pill()).find((b) => b.textContent?.startsWith(label))!
+    // Greyed, as ToolbarPopup greys a disabled row (muted, no pick number).
+    expect(row('Parked').style.color).toBe('var(--text-muted)')
+    expect(row('Personal').style.color).toBe('var(--text-primary)')
+    expect(row(accountDisplayName(snapshot(), local)).textContent).toContain('confirm at launch')
+    settingsState.settings = { ...settingsState.settings, statusLineEnabled: false, statusLine: { ...STATUS_LINE, showAccount: false } }
+    await strip({ id: 'x4e', provider: 'codex', status: 'idle', providerAccountId: parked.id })
+    expect(pill()!.textContent).toBe('Parked')
   })
 
   it('an account that is not the session provider\'s is never shown for it', async () => {

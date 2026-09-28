@@ -14,8 +14,8 @@ import { useSwitchAccount } from '../hooks/useSwitchAccount'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { useRegionTypography } from '../hooks/useTypography'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
-import { isAccountActive } from '../../shared/account-types'
-import { resolveAccountName, resolveAccountNameByEmail, middleTruncateEmail } from '../../shared/account-chip-color'
+import { resolveAccountNameByEmail } from '../../shared/account-chip-color'
+import { switchAccountItems, switchItemHint } from '../utils/switchAccountItems'
 import { chipColourKeyForEmail, providerAccountChip } from '../utils/accountChip'
 import { resolveIdentityColor } from '../../shared/identity-colors'
 import ToolbarPopup from './ToolbarPopup'
@@ -100,9 +100,11 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
   const accountsSnapshot = useProviderAccountsStore((s) => s.snapshot)
   // Mid-session account switch (respawn + resume): gated on having at least 2
-  // profiles (need a real choice). Selector form on every read so the strip
-  // never re-renders on unrelated store churn.
-  const canSwitchAccount = canSwitchAccountForSession({ provider: session?.provider, isSsh: !!session?.sshConfig, shellOnly: !!session?.shellOnly, profileCount: profiles.length })
+  // accounts of the session's provider (need a real choice). Selector form on
+  // every read so the strip never re-renders on unrelated store churn.
+  // P3.6 (row 22): one list for every provider (utils/switchAccountItems).
+  const switchItems = switchAccountItems(session, { profiles, aliases: accountAliases, snapshot: accountsSnapshot })
+  const canSwitchAccount = canSwitchAccountForSession({ provider: session?.provider, isSsh: !!session?.sshConfig, shellOnly: !!session?.shellOnly, profileCount: profiles.length, providerAccountCount: switchItems.length })
   const registry = useRegistryStore((s) => s.registry)
   // Copilot AI-credit meter gate. The chip self-gates on githubAiUsageEnabled
   // (returns null when off), so we read the same flag here to avoid rendering
@@ -275,23 +277,20 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   )
   const accountTitle = providerChip ? providerChip.title : session.accountEmail
 
-  // Account chooser: every profile (resolved name + truncated email hint).
-  // The current account is marked active; selecting it is a no-op in switchAccount.
-  // Inactive accounts stay listed but are disabled (greyed, unselectable); the
-  // current account is never disabled, even if it was deactivated while in use.
-  const accountItems = profiles.map((p) => {
-    const isCurrent = p.id === session.profileId
-    const inactive = !isAccountActive(p)
-    return {
-      label: resolveAccountName(p.accountEmail, p.name, accountAliases),
-      value: p.id,
-      active: isCurrent,
-      disabled: inactive && !isCurrent,
-      hint: inactive
-        ? `${middleTruncateEmail(p.accountEmail)} · inactive`
-        : middleTruncateEmail(p.accountEmail),
-    }
-  })
+  // Account chooser: every account of the session's provider (resolved name +
+  // truncated address hint). The current account is marked active; selecting
+  // it is a no-op in switchAccount. Inactive accounts (and a Codex account
+  // that needs attention) stay listed but are disabled (greyed, unselectable);
+  // the current account is never disabled, even if it was deactivated while
+  // in use. A Codex account launched only with that launch's confirmation
+  // says "confirm at launch" (utils/switchAccountItems).
+  const accountItems = switchItems.map((item) => ({
+    label: item.label,
+    value: item.value,
+    active: item.active,
+    disabled: item.disabled,
+    hint: switchItemHint(item),
+  }))
 
   return (
     <div

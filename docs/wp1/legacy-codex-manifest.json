@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-28T22:00:56.867Z",
-  "head": "68d00f624fdc850595a2a7e38b8b9e75c611b5d0",
-  "tree": "b6742ed198c8ec6cd0820bf4d504577150f681fe",
+  "generatedAt": "2026-09-28T22:15:22.624Z",
+  "head": "8274b3d1fa8a39b0abeb0bdac2eca84e4e0afdab",
+  "tree": "5c1b6f274481fc7bab67970d00cbd853144fde7e",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2457,
+  "trackedFileCount": 2460,
   "excludedFileCount": 384,
-  "scannedFileCount": 2073,
+  "scannedFileCount": 2076,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 506,
-  "pathDigest": "2b0062b78a18d499be47ebdae610d7d6a393da4492645351e775d88aee23099a",
+  "matchedPathCount": 509,
+  "pathDigest": "a499f01686768226ee90c8c404c560b1821a9181ea3f702baa6f58ff5c77829e",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -1128,7 +1128,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 24
+      "lineCount": 26
     },
     {
       "path": "src/renderer/components/SettingsPage.tsx",
@@ -1302,6 +1302,13 @@
         "P11"
       ],
       "lineCount": 2
+    },
+    {
+      "path": "src/renderer/components/sidebar/SessionContextMenu.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "lineCount": 3
     },
     {
       "path": "src/renderer/components/sidebar/SessionRow.tsx",
@@ -1606,7 +1613,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 22
+      "lineCount": 23
     },
     {
       "path": "src/renderer/stores/appMetaStore.ts",
@@ -1717,7 +1724,15 @@
         "P05",
         "P11"
       ],
-      "lineCount": 13
+      "lineCount": 14
+    },
+    {
+      "path": "src/renderer/utils/switchAccountItems.ts",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "lineCount": 2
     },
     {
       "path": "src/shared/app-knowledge.ts",
@@ -3354,7 +3369,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 16
+      "lineCount": 20
     },
     {
       "path": "tests/unit/renderer/codex-mini-icon.test.ts",
@@ -3399,6 +3414,14 @@
         "P13"
       ],
       "lineCount": 59
+    },
+    {
+      "path": "tests/unit/renderer/codex-switch-account.test.tsx",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 28
     },
     {
       "path": "tests/unit/renderer/command-bar-layout.test.ts",
@@ -3968,7 +3991,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 88
+      "lineCount": 90
     },
     {
       "path": "tests/unit/renderer/titlebar-provider-status.test.tsx",
