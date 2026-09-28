@@ -605,16 +605,29 @@ Row 35 deviates from Claude by the F7 menu: with no known conversation
 Claude's Restart opens the picker, Codex's plain Restart starts a new
 conversation ("Restart and pick a conversation" is the picker). Switch
 account (row 35's other half) is P3.6.
-Owed: the independent spec and code-quality reviews; the ADR-009 pass (the
-`codex resume <id>` argv, the pick file, the picker's environment and its
-worktree start); the SSH live matrix at the final head (`pty-manager.ts`
-edited); a VM check with a real Codex CLI at 0.153.4 and 0.155.1 (a relaunch
-and a Restart resume the same conversation; a two-day-old conversation picked
-from the picker and a session crossing midnight UTC keep their status line; a
-worktree conversation is listed and starts in its worktree; a carried-over
-conversation after a staged Sign in again; whether `codex resume <id>` in the
-recorded directory asks anything); the owner's review of VM screenshots of the
-picker with worktrees and names.
+VM check (2026-09-28, at c2c42e22; real Codex CLI 0.155.1 with both
+providers on, and 0.153.4 with Codex only): passed rows 34 (a relaunch
+resumes the same conversation), 35 (Restart keeps it), 32 (worktree
+conversations listed, named and started in their worktree; names and labels
+shown as plain text) and 38 for a conversation from an earlier date folder,
+and both C items. Row 38's midnight UTC case is covered by unit tests with
+fake timers only, not on the VM. Two findings, fixed after it (mocked, VM
+recheck owed): V1, a launch that needs a dialog (the account choice with two
+or more accounts, or the confirm for a sign-in already on this computer) made
+while the resume offer was up showed nothing and started nothing until the
+offer was answered; those dialogs are now held back by every boot gate but
+the resume offer, since no restore has started while it is up (2e70e744,
+05f1e01a). V2, a conversation resumed from the picker showed its status line
+only at its first new turn; it is now claimed at the pick with the checks a
+launch's chosen rollout gets, as a resume by id is at its launch (b969e828).
+For Claude the app claims no transcript (Claude Code sends its own status
+line), so its picker and exact resumes reach the status line the same way.
+Owed: the reviews and ADR-009 pass of V1 and V2 (V2 changes the claim); the
+SSH live matrix at the final head (`pty-manager.ts` edited); a VM recheck of
+V1 and V2; the carried-over conversation after a staged Sign in again (P3.3)
+on the VM, an owner action, since it needs a second real sign-in; whether
+`codex resume <id>` in the recorded directory asks anything; the owner's
+review of VM screenshots of the picker with worktrees and names.
 
 **P3.6 Account chip and Switch account** (after P3.5). The strip's Codex
 account pill with its Switch account menu (inactive accounts greyed, this

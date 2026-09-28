@@ -2,7 +2,7 @@
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "manifestPathDigest": "726e2f33b926a13d76e3a4134f93c39697dc4bd362690d54700fe9d570e9ad4a",
-  "manifestHead": "05f1e01ae773814f28007fd3759bc8eb354efd9f",
+  "manifestHead": "b969e828590ce9d9b13072edc11e1ae8ec9a4982",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
