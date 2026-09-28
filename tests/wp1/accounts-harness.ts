@@ -192,11 +192,11 @@ export async function harness(o: HarnessOpts = {}) {
   const secrets = new SecretHandleStore({ now })
   const codex = createCodexPackage({
     realms: {
-      lookup: async (ref) => {
+      lookup: async (ref, use) => {
         const doc = active?.current()
         const realm = doc ? findRealm(doc, ref.authRealmId) : undefined
         // The composition root's rule (compose.ts): never a retired realm.
-        return realm && realmOperable(realm) ? { ok: true, realm, resourcesDir: RES } : { ok: false }
+        return realm && realmOperable(realm, use) ? { ok: true, realm, resourcesDir: RES } : { ok: false }
       },
       mkdirSecure: (dir) => folders.fs.mkdirSecure(dir),
     },

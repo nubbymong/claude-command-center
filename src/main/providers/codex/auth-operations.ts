@@ -46,7 +46,7 @@
 //   by a failed or cut-off run is dropped rather than shown.
 // - nothing throws: every odd port answer fails closed with a code.
 import path from 'node:path'
-import type { AuthMethod, AuthRealm, KnownAuthState, RealmOwnership } from '../../../shared/providers'
+import type { AuthMethod, AuthRealm, KnownAuthState, RealmOwnership, RealmUse } from '../../../shared/providers'
 import type {
   ProviderAuthOperations, RealmRef, AuthOperationResult, AuthLoginInput, AuthLogoutOptions, AuthStatusOptions, AuthFailureCode, AuthCredentialKind, LaunchPreparation,
 } from '../core'
@@ -79,7 +79,7 @@ export interface CodexAuthDeps {
   /** The realm record behind an opaque reference and the roots its home is
    *  derived from, looked up in the registry (injected by the composition
    *  root). */
-  lookupRealm(realm: RealmRef): Promise<CodexRealmLookup>
+  lookupRealm(realm: RealmRef, use: RealmUse): Promise<CodexRealmLookup>
   /** The canonical path and file identity of a realm home. Throws when it
    *  cannot be read (a missing folder included). */
   realmIdentity(home: string): CodexRealmIdentity
@@ -225,11 +225,11 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
   /** The realm's home and ownership, from the looked-up record. Anything odd
    *  about the reference or the record -- a throwing getter included -- is
    *  `realm-unavailable`. */
-  async function locate(ref: RealmRef): Promise<{ ok: true; home: string; ownership: RealmOwnership } | Refusal> {
+  async function locate(ref: RealmRef, use: RealmUse): Promise<{ ok: true; home: string; ownership: RealmOwnership } | Refusal> {
     try {
       const id = ref && typeof ref === 'object' ? (ref as { authRealmId?: unknown }).authRealmId : undefined
       if (typeof id !== 'string' || !id) return refuse('realm-unavailable')
-      const found: CodexRealmLookup = await deps.lookupRealm({ authRealmId: id })
+      const found: CodexRealmLookup = await deps.lookupRealm({ authRealmId: id }, use)
       if (!found || found.ok !== true || !found.realm || found.realm.id !== id || !found.roots) return refuse('realm-unavailable')
       const ownership = found.realm.ownership
       if (ownership !== 'conductor-managed' && ownership !== 'external-default') return refuse('realm-unavailable')
@@ -241,8 +241,8 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
     }
   }
 
-  async function prepare(ref: RealmRef, purpose: 'status' | 'login' | 'logout' | 'launch'): Promise<Ready | Refusal> {
-    const where = await locate(ref)
+  async function prepare(ref: RealmRef, purpose: 'status' | 'login' | 'logout' | 'launch' | 'usage'): Promise<Ready | Refusal> {
+    const where = await locate(ref, purpose)
     if (isRefusal(where)) return where
     const ownership = where.ownership
     let fsid: CodexRealmIdentity
@@ -421,7 +421,7 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
      *  when refused. */
     async usageSessionsDir(realm: RealmRef): Promise<string | null> {
       try {
-        const where = await locate(realm)
+        const where = await locate(realm, 'sessions')
         if (isRefusal(where)) return null
         let fsid: CodexRealmIdentity
         try { fsid = deps.realmIdentity(where.home) } catch { return null }
@@ -479,7 +479,7 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
         // helper slot go: never before its kills have settled.
         let handedOff = false
         try {
-          const r = await prepare(realm, 'status')
+          const r = await prepare(realm, 'usage')
           if (isRefusal(r)) { free(); return refused(r.code) }
           if (r.ownership !== 'conductor-managed') { free(); return refused('external-realm') }
           const release = holdRealm(r, 'exclusive')

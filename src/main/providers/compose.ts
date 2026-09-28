@@ -35,16 +35,16 @@ const claudeLegacyAccountsIo: ClaudeLegacyAccountsIo = {
  *  directory is the one the registry was loaded from, where the managed
  *  folders live. */
 export const codexRealmSource: CodexRealmSource = {
-  lookup: async (ref) => {
+  lookup: async (ref, use) => {
     const doc = getAccountRegistry()?.current()
     const realm = doc ? findRealm(doc, ref.authRealmId) : undefined
     const resourcesDir = getAccountRegistryResourcesDir()
-    // Only a realm being set up or in use, or an app-managed one an account
-    // moved off whose sign-in is still to be removed (a sign in again: only
-    // its status and sign-out run there). Never a retired one: an archived
+    // Only a realm being set up or in use; an app-managed one an account
+    // moved off whose sign-in is still to be removed (a sign in again) ONLY
+    // for its status check and sign-out. Never a retired one: an archived
     // account's may name the same external home a newer account now uses,
     // and nothing may run there on the old record's behalf.
-    const live = realmOperable(realm)
+    const live = realmOperable(realm, use)
     return realm && live && resourcesDir ? { ok: true, realm, resourcesDir } : { ok: false }
   },
   mkdirSecure: (dir) => mkdirSecure(dir),
