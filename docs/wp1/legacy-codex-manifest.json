@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-28T14:47:03.252Z",
-  "head": "0b6c8f0a229a96d0b2ab6b9fd1bbadc6802b0394",
-  "tree": "09d38dcce9938adda9eea8ce397401ea3f7ffe69",
+  "generatedAt": "2026-09-28T14:58:22.875Z",
+  "head": "d2ea6e66835501bc31e599fab102d9a4d9c46a8d",
+  "tree": "297bff9a25c02dc5d1c78cb4fa364c1d556ccb84",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -1001,14 +1001,14 @@
       "predicates": [
         "P11"
       ],
-      "lineCount": 10
+      "lineCount": 15
     },
     {
       "path": "src/renderer/components/GuidedTour.tsx",
       "predicates": [
         "P11"
       ],
-      "lineCount": 10
+      "lineCount": 19
     },
     {
       "path": "src/renderer/components/InsightsPage.tsx",
@@ -3239,7 +3239,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 94
+      "lineCount": 102
     },
     {
       "path": "tests/unit/renderer/claude-off-onboarding.test.tsx",
@@ -3384,7 +3384,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 25
+      "lineCount": 41
     },
     {
       "path": "tests/unit/renderer/hello-codex.acceptance.test.ts",
