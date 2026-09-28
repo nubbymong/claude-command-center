@@ -1325,8 +1325,16 @@ export class AccountsService {
         }
       }
       // The switch, under the registry lock, while this run's lease still
-      // holds the account: nothing uses it, and nothing can start.
-      let switched = await store.mutate((d, t) => rebindAccountRealm(d, stagedId, check, t))
+      // holds the account: nothing uses it, and nothing can start. The
+      // provider's rule once more, inside that lock (review round 3, C2): a
+      // provider switched off while the history was carried over switches
+      // nothing; the replacement is removed once the provider is back.
+      const atSwitch: { refused: AccountsFailure | null } = { refused: null }
+      let switched = await store.mutate((d, t) => {
+        atSwitch.refused = this.cliRefusal(p.id)
+        return atSwitch.refused ? { ok: false, code: 'lifecycle', message: atSwitch.refused.message } : rebindAccountRealm(d, stagedId, check, t)
+      })
+      if (atSwitch.refused) { await drop(); return atSwitch.refused }
       if (!switched.ok && switched.code === 'persist-failed') {
         // The write may have reached the disk though it was reported as
         // failed: what the disk says is what the next start reads, so the

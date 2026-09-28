@@ -952,6 +952,28 @@ describe('signing in again while signed in, through the service (WP1.52)', () =>
     expect([...h.folders.dirs].filter((x) => x.startsWith('c:\\res\\codex-realms\\') && !x.startsWith(homeOf(oldRealm)))).toEqual([])
   }, 120_000)
 
+  it('the provider turned off while the history was carried over: nothing is switched; once it is back, Discard removes the replacement whole (review round 3, C2)', async () => {
+    let pref: 'on' | 'off' = 'on'
+    const h = await harness({ preference: { codex: () => pref }, realmLimits: { removeEntries: 20 } })
+    const a = await addCodexAccount(h, 'A')
+    const oldRealm = realmIdOf(h, a)
+    plantHistory(h, homeOf(oldRealm), 100)
+    const copy = h.codex.realmFolders!.copyHistory!
+    h.codex.realmFolders!.copyHistory = async (from, to, opts) => { const r = await copy(from, to, opts); pref = 'off'; return r }
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'provider-disabled' })
+    expect(realmIdOf(h, a)).toBe(oldRealm)
+    expect(findRealm(h.doc(), oldRealm)!.lifecycle).toBe('active')
+    const staged = h.doc().journals[0]
+    expect(staged).toMatchObject({ replacesAccountId: a, state: 'credentials-written' })
+    expect(h.folders.files.has(`${homeOf(staged.realmId)}\\history.jsonl`)).toBe(true)
+    pref = 'on'
+    expect(await h.service.abandonSetup({ accountId: staged.accountId })).toEqual({ ok: true })
+    expect(h.doc().journals).toEqual([])
+    expect(h.folders.exists(managedHome(staged.realmId))).toBe(false)
+    // The earlier conversations stay where they were.
+    expect(h.folders.files.has(`${homeOf(oldRealm)}\\history.jsonl`)).toBe(true)
+  })
+
   it('never a folder it did not make, nor a sign-in it did not perform: refused, the folder left as found (review round 2, L2-2)', async () => {
     for (const plant of ['folder', 'signed-in'] as const) {
       const h = await harness()
