@@ -1085,6 +1085,59 @@ describe('signing in again while signed in, through the service (WP1.52)', () =>
     expect(h.folders.fs.lstat(one).nlink).toBe(1)
   })
 
+  it('a Discard running is listed as running until it ends, a Cancel\'s and a plain one, however it ends (P3.3 VM round, V1)', async () => {
+    // A Cancel's: the replacement is being removed while the dialog stops.
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    plantHistory(h, homeOf(realmIdOf(h, a)), 100)
+    const { link } = h.folders.ops
+    let links = 0
+    h.folders.ops.link = (s, d) => { if (++links === 1) h.service.cancelSignIn({ accountId: a }, 1); link(s, d) }
+    const remove = h.codex.realmFolders!.remove
+    const during: unknown[] = []
+    h.codex.realmFolders!.remove = async (ref, opts) => { during.push(...h.service.snapshot().pendingSetups); return remove(ref, opts) }
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'cancelled' })
+    expect(during).toEqual([expect.objectContaining({ replacesAccountId: a, state: 'discarding', discardRunning: true })])
+    expect(h.service.snapshot().pendingSetups).toEqual([])
+    // A plain one that does not finish: running while it runs, then not.
+    let refuse = true
+    const seen: boolean[] = []
+    const k = await harness({ script: { logout: (r) => {
+      seen.push(...k.service.snapshot().pendingSetups.map((p) => p.discardRunning === true))
+      if (refuse) return { exitCode: 1, stderr: 'could not log out' + NL }
+      k.signedIn.delete(r.home.toLowerCase())
+      return { exitCode: 0, stdout: 'Successfully logged out' + NL }
+    } } })
+    const begun = await k.service.beginSetup({ providerId: 'codex', method: 'browser' }) as { accountId: string }
+    await k.service.signIn({ accountId: begun.accountId, method: 'browser' }, 1)
+    expect((await k.service.abandonSetup({ accountId: begun.accountId })).ok).toBe(false)
+    expect(seen).toEqual([true])
+    expect(k.service.snapshot().pendingSetups).toEqual([expect.objectContaining({ state: 'discarding' })])
+    expect(k.service.snapshot().pendingSetups[0].discardRunning).toBeUndefined()
+    refuse = false
+    expect(await k.service.abandonSetup({ accountId: begun.accountId })).toEqual({ ok: true })
+    expect(k.service.snapshot().pendingSetups).toEqual([])
+  })
+
+  it('an account being signed in again says so in its row\'s view while it runs: staged, and this computer\'s in place (P3.3 VM round, V3)', async () => {
+    const seen: Array<{ id: string; signingIn: unknown }> = []
+    const h = await harness({ script: { login: (r) => {
+      for (const x of h.service.snapshot().accounts) seen.push({ id: x.id, signingIn: x.signingIn })
+      h.signedIn.set(r.home.toLowerCase(), 'chatgpt')
+      return { exitCode: 0, stdout: 'Successfully logged in' + NL }
+    } } })
+    const a = await addCodexAccount(h, 'A')
+    const ext = await withExternalHome(h)
+    seen.length = 0
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    expect(seen).toEqual(expect.arrayContaining([{ id: a, signingIn: true }, { id: ext, signingIn: undefined }]))
+    seen.length = 0
+    expect(await h.service.signInAgain({ sameAccount: true, acknowledgeExternal: true, accountId: ext, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    expect(seen).toEqual(expect.arrayContaining([{ id: ext, signingIn: true }, { id: a, signingIn: undefined }]))
+    // Ended: nothing says it any more.
+    expect(h.service.snapshot().accounts.filter((x) => x.signingIn !== undefined)).toEqual([])
+  })
+
   it('never a folder it did not make, nor a sign-in it did not perform: refused, the folder left as found (review round 2, L2-2)', async () => {
     for (const plant of ['folder', 'signed-in'] as const) {
       const h = await harness()

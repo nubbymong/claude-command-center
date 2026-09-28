@@ -537,6 +537,18 @@ describe('Codex rows', () => {
       render(off)
       expect(q('account-external-hint-acc-local')).toBeNull()
     })
+
+    it('while the app signs it in again in place, it says so, as any row with a sign-in running, never the terminal hint (P3.3 VM round, V3)', async () => {
+      render(snapshot({ accounts: [{ ...work, signingIn: true }, { ...local, lastKnownAuthState: 'signed-out', operationalState: 'attention', signingIn: true }] }))
+      expect(q('account-signing-in-acc-local')?.textContent).toBe('Signing in now')
+      expect(q('account-external-hint-acc-local')).toBeNull()
+      expect(q('account-signing-in-acc-work')?.textContent).toBe('Signing in now')
+      unmountNow()
+      render(snapshot({ accounts: [work, { ...local, lastKnownAuthState: 'signed-out' }] }))
+      expect(q('account-signing-in-acc-local')).toBeNull()
+      expect(q('account-signing-in-acc-work')).toBeNull()
+      expect(q('account-external-hint-acc-local')).toBeTruthy()
+    })
   })
 
   it('offers Make inactive on the default when it is the only active account, and never Make active on a blocked one', async () => {
@@ -1076,6 +1088,8 @@ describe('Sign in again', () => {
     expect(q('sign-in-again-dialog')).toBeNull()
     expect(q('external-ack-dialog')).toBeTruthy()
     expect(q('external-ack-text')?.textContent).toContain('Signing in again signs them out first, and if the new sign-in does not finish, it stays signed out.')
+    // This computer's own sign-in, inside a sentence, in lower case (P3.3 VM round, V2).
+    expect(document.getElementById('external-ack-title')?.textContent).toBe("Sign in to this computer's Codex (~/.codex) again?")
     await click('external-ack-cancel')
     expect(q('external-ack-dialog')).toBeNull()
     expect(q('sign-in-again-dialog')).toBeNull()
@@ -1083,6 +1097,10 @@ describe('Sign in again', () => {
     await click('account-menu-sign-in-again-acc-local')
     await click('external-ack-confirm')
     expect(q('sign-in-again-dialog')).toBeTruthy()
+    expect(document.getElementById('sign-in-again-title')?.textContent).toBe("Sign in to this computer's Codex (~/.codex) again")
+    // Its row's actions name it the same way; a managed account keeps its own name.
+    expect(q('account-menu-btn-acc-local')?.getAttribute('aria-label')).toBe("Actions for this computer's Codex (~/.codex)")
+    expect(q('account-menu-btn-acc-work')?.getAttribute('aria-label')).toBe('Actions for Work')
     await click('sign-in-again-confirm')
     await click('sign-in-again-continue')
     expect(pa.signInAgain).toHaveBeenCalledWith({ accountId: 'acc-local', method: 'browser', sameAccount: true, acknowledgeExternal: true })
@@ -1382,6 +1400,21 @@ describe('registry, conflicts, adoption and pending setups', () => {
     expect(q('pending-setup-resume-acc-cut')).toBeNull()
     await click('pending-setup-discard-acc-cut')
     expect(pa.abandonSetup).toHaveBeenCalledWith('acc-cut')
+  })
+
+  it('a Discard running now is shown as running, with no Discard, until it ends (P3.3 VM round, V1)', async () => {
+    const running = { accountId: 'acc-cut', providerId: 'codex' as const, method: 'browser' as const, state: 'discarding' as const, external: false, createdAt: 1, signingIn: false, discardRunning: true as const, replacesAccountId: 'acc-work' }
+    const s = snapshot({ pendingSetups: [running] })
+    render(s)
+    expect(q('pending-setup-acc-cut')?.textContent).toContain('Discarding now')
+    expect(q('pending-setup-acc-cut')?.textContent).not.toContain('Discard finishes it')
+    expect(q('pending-setup-discard-acc-cut')).toBeNull()
+    expect(q('pending-setup-resume-acc-cut')).toBeNull()
+    // It ended without finishing: Discard is offered again.
+    const { discardRunning: _r, ...ended } = running
+    act(() => { useProviderAccountsStore.setState({ snapshot: { ...s, revision: 2, pendingSetups: [ended] } }) })
+    expect(q('pending-setup-acc-cut')?.textContent).toContain('Discarding did not finish; Discard finishes it')
+    expect(q('pending-setup-discard-acc-cut')).toBeTruthy()
   })
 
   it('a sign in again the app did not finish is named for its account, with Discard only, and not listed while its dialog runs it (P3.3)', async () => {
