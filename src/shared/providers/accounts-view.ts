@@ -236,7 +236,7 @@ export type AuthOperationCode =
 /** The realm folder codes the surface can see (mirrors the core contract). */
 export type RealmFolderCode =
   | 'not-managed' | 'resources-unavailable' | 'overlaps-external' | 'unsafe-path' | 'permissions' | 'credentials-present'
-  | 'not-empty' | 'unsafe-contents' | 'changed' | 'io-failed'
+  | 'not-empty' | 'unsafe-contents' | 'changed' | 'too-large' | 'io-failed'
 
 export type AccountsFailure = {
   ok: false

@@ -342,20 +342,33 @@ export function unsettledSupersededRealms(doc: ProviderRegistryDoc, accountId: s
   return doc.realms.filter((r) => r.ownerProviderAccountId === accountId && r.id !== account.authRealmId && (r.lifecycle === 'retiring' || r.lifecycle === 'recovery'))
 }
 
+/** Every app-managed realm an account moved off (earlier sign ins again),
+ *  settled or not: a history copy compares its files with theirs. */
+export function earlierManagedRealms(doc: ProviderRegistryDoc, accountId: string): AuthRealm[] {
+  const account = findAccount(doc, accountId)
+  if (!account) return []
+  return doc.realms.filter((r) => r.ownerProviderAccountId === accountId && r.id !== account.authRealmId && r.ownership === 'conductor-managed' && SUPERSEDED_LIFECYCLES.includes(r.lifecycle))
+}
+
 /** What a provider operation wants a realm for: its sign-in status, a
- *  sign-out, a sign-in, a launch, a usage read, its sessions folder, or its
- *  folder itself (made or removed). */
-export type RealmUse = 'status' | 'logout' | 'login' | 'launch' | 'usage' | 'sessions' | 'folder'
+ *  sign-out, a sign-in, a launch, a usage read, its sessions folder, its
+ *  folder itself (made or removed), or its history files compared (never
+ *  changed or run in: a history copy's check that a file has no name the
+ *  app did not give it). */
+export type RealmUse = 'status' | 'logout' | 'login' | 'launch' | 'usage' | 'sessions' | 'folder' | 'history'
 
 /** Whether a provider operation may run in a realm, for that use: any use
  *  of one being set up or in use; ONLY a status check or a sign-out of an
  *  app-managed realm an account has moved off (a sign in again's old realm,
  *  retiring or kept in recovery) -- never a sign-in, launch, usage read,
  *  sessions scan or folder change there. Never a retired realm: an archived
- *  account's may name the external home a newer account now uses. */
+ *  account's may name the external home a newer account now uses. The one
+ *  exception is `history`, which only compares files: any app-managed realm
+ *  an account moved off, retired too (its folder is its own). */
 export function realmOperable(realm: Pick<AuthRealm, 'lifecycle' | 'ownership'> | undefined, use: RealmUse): boolean {
   if (!realm) return false
   if (realm.lifecycle === 'pending' || realm.lifecycle === 'active') return true
+  if (use === 'history') return realm.ownership === 'conductor-managed' && SUPERSEDED_LIFECYCLES.includes(realm.lifecycle)
   if (realm.lifecycle !== 'retiring' && realm.lifecycle !== 'recovery') return false
   return realm.ownership === 'conductor-managed' && (use === 'status' || use === 'logout')
 }

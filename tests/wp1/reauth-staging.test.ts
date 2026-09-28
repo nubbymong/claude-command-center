@@ -18,10 +18,7 @@ import {
 import type { ProviderRegistryDoc } from '../../src/shared/providers'
 import type { ProviderPackage } from '../../src/main/providers/core'
 import { harness, addCodexAccount, managedHome, EXT_HOME, KEY, MemoryPort } from './accounts-harness'
-import { codexEventsFromRollout } from '../../src/main/tokenomics/tk-parse'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
-import { codexCapabilities, codexWiredCapabilities } from '../../src/main/providers/codex'
+import { codexCapabilities, codexWiredCapabilities, CODEX_REMOVE_MAX_ENTRIES } from '../../src/main/providers/codex'
 import { claudeCapabilities } from '../../src/main/providers/claude'
 
 const hex = (n: number) => n.toString(16).padStart(24, '0')
@@ -247,6 +244,15 @@ describe('a separate account, and the old realm afterwards', () => {
       // Never this computer's own home, whatever it is doing.
       expect(realmOperable({ ...old!, ownership: 'external-default' }, 'status')).toBe(false)
     }
+    // A history copy only compares files with an account's earlier realms:
+    // any app-managed one it moved off, retired too; never this computer's
+    // own home (review round 3, C1).
+    for (const doc of [switched, recovery, retired]) {
+      const old = findRealm(doc, realm(1))!
+      expect(realmOperable(old, 'history'), old.lifecycle).toBe(true)
+      expect(realmOperable({ ...old, ownership: 'external-default' }, 'history'), old.lifecycle).toBe(false)
+    }
+    expect(realmOperable(undefined, 'history')).toBe(false)
   })
 
   it('the invariants refuse a current realm being retired and a staged setup of an account that is gone', () => {
@@ -389,6 +395,21 @@ class TornPort extends MemoryPort {
 }
 const realmIdOf = (h: H, a: string) => h.doc().accounts.find((x) => x.id === a)!.authRealmId
 const homeOf = (realmId: string) => managedHome(realmId).toLowerCase()
+/** `n` conversations from before, a folder per day (at most 28), and the
+ *  prompt history, in a realm's home. Paths as the memory tree keeps them
+ *  (caseless); the rollouts' paths are returned. */
+function plantHistory(h: H, home: string, n: number): string[] {
+  const out: string[] = []
+  for (const d of ['sessions', 'sessions\\2026', 'sessions\\2026\\09']) h.folders.dirs.add(`${home}\\${d}`)
+  for (let i = 0; i < n; i++) {
+    const day = `${home}\\sessions\\2026\\09\\${String(1 + (i % 28)).padStart(2, '0')}`
+    h.folders.dirs.add(day)
+    out.push(`${day}\\rollout-${i}.jsonl`)
+    h.folders.files.add(out[i])
+  }
+  h.folders.files.add(`${home}\\history.jsonl`)
+  return out
+}
 const NL = String.fromCharCode(10)
 
 async function withExternalHome(h: H) {
@@ -705,7 +726,7 @@ describe('signing in again while signed in, through the service (WP1.52)', () =>
     expect(h.doc().journals).toEqual([])
   })
 
-  it('carries the earlier conversations over before the switch: resume and usage keep them, and Tokenomics counts them once (review round 2, H1)', async () => {
+  it('carries the earlier conversations over before the switch: resume and usage keep them (review round 2, H1)', async () => {
     const h = await harness()
     const a = await addCodexAccount(h, 'A')
     const oldRealm = realmIdOf(h, a)
@@ -723,24 +744,18 @@ describe('signing in again while signed in, through the service (WP1.52)', () =>
     expect(h.folders.files.has(`${newHome}\\${rollout}`)).toBe(true)
     expect(h.folders.files.has(`${newHome}\\history.jsonl`)).toBe(true)
     expect(h.folders.files.has(`${newHome}\\config.toml`)).toBe(false)
-    // Copied, not moved: the old folder keeps them.
+    // Carried over, not moved: the old folder keeps them. Each file is a
+    // second name of the same file (a hard link, review round 3, C1).
     expect(h.folders.files.has(`${oldHome}\\${rollout}`)).toBe(true)
-    // The copy ran before the switch, while the old realm was the account's.
-    const copyAt = h.folders.log.findIndex((l) => l.startsWith('copyFile'))
-    expect(copyAt).toBeGreaterThan(-1)
+    expect(h.folders.fs.lstat(`${newHome}\\${rollout}`)).toMatchObject({ ino: h.folders.fs.lstat(`${oldHome}\\${rollout}`).ino, nlink: 2 })
+    expect(h.folders.log.filter((l) => l.startsWith('link '))).toHaveLength(2)
     // Resume (codex resume <id> finds a rollout by id in any date folder of
     // its home, P3.1 evidence) and usage look in the account's own folder now.
     const roots = (await h.service.sessionsRoots('codex'))!
     expect(roots.map((x) => x.dir.toLowerCase())).toEqual([`${newHome}\\sessions`])
     expect(roots[0].accountId).toBe(a)
-    // Tokenomics keys a Codex event on its session id and turn, from the
-    // rollout's content, never its path: the copy's events are the same keys,
-    // stored once (INSERT OR IGNORE).
-    const text = readFileSync(resolve(__dirname, '../fixtures/codex/cli/0.155.1/rollout-exec-then-resume.jsonl'), 'utf8')
-    const before = codexEventsFromRollout(text, [], 0).map((e) => e.dedupKey)
-    const copied = codexEventsFromRollout(text, [], 0).map((e) => e.dedupKey)
-    expect(before.length).toBeGreaterThan(0)
-    expect(copied).toEqual(before)
+    // Tokenomics counts a carried-over rollout once, read from both folders:
+    // tests/unit/tokenomics/tokenomics-carried-history-once.test.ts.
   })
 
   it('history is never carried over to someone else, and a link in it stops the sign in again with nothing changed (H1)', async () => {
@@ -768,6 +783,174 @@ describe('signing in again while signed in, through the service (WP1.52)', () =>
     expect(k.doc().journals).toEqual([])
     expect([...k.folders.dirs].filter((x) => x.startsWith('c:\\res\\codex-realms\\') && !x.startsWith(bHome))).toEqual([])
   })
+
+  it('carries a large history over without holding the event loop: timers run between batches (review round 3, C1)', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    plantHistory(h, homeOf(realmIdOf(h, a)), 640)
+    let ticks = 0
+    let running = true
+    const tick = () => { ticks++; if (running) setTimeout(tick, 0) }
+    setTimeout(tick, 0)
+    // Each file takes as long as a small real one does; the tick count as
+    // each is carried over.
+    const seen: number[] = []
+    const busy = () => { const until = performance.now() + 0.05; while (performance.now() < until) { /* a file operation takes time */ } }
+    const { link, copyFile } = h.folders.ops
+    h.folders.ops.link = (s, d) => { busy(); seen.push(ticks); link(s, d) }
+    h.folders.ops.copyFile = (s, d) => { busy(); seen.push(ticks); copyFile(s, d) }
+    try {
+      expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    } finally {
+      running = false
+    }
+    expect(seen).toHaveLength(641)
+    // Timers ran while the files were carried over, not only after.
+    expect(seen[seen.length - 1] - seen[0]).toBeGreaterThanOrEqual(3)
+  })
+
+  it('a file becomes a second name of the same file; where linking is refused, a copy; never over anything there (C1)', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    const oldHome = homeOf(realmIdOf(h, a))
+    const [first] = plantHistory(h, oldHome, 3)
+    // This file system gives no second names: each file is copied instead.
+    h.folders.ops.link = () => { throw Object.assign(new Error('EPERM'), { code: 'EPERM' }) }
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    const newHome = homeOf(realmIdOf(h, a))
+    const moved = first.replace(oldHome, newHome)
+    expect(h.folders.files.has(moved)).toBe(true)
+    expect(h.folders.fs.lstat(moved).nlink).toBe(1)
+    expect(h.folders.log.filter((l) => l.startsWith('copyFile '))).toHaveLength(4)
+    // Something already in the replacement is never written over: the
+    // sign in again stops, nothing changed.
+    const k = await harness()
+    const b = await addCodexAccount(k, 'B')
+    const bOld = realmIdOf(k, b)
+    plantHistory(k, homeOf(bOld), 1)
+    const copy = k.codex.realmFolders!.copyHistory!
+    k.codex.realmFolders!.copyHistory = async (from, to, opts) => { k.folders.files.add(`${homeOf(to.authRealmId)}\\history.jsonl`); return copy(from, to, opts) }
+    expect(await k.service.signInAgain({ sameAccount: true, accountId: b, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'not-empty' })
+    expect(realmIdOf(k, b)).toBe(bOld)
+  })
+
+  it('a file that has another name the app did not give it (a planted hard link) is left behind, and said so (C1)', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    const oldHome = homeOf(realmIdOf(h, a))
+    const [kept] = plantHistory(h, oldHome, 2)
+    // A second name, in the history, for this computer's own sign-in file.
+    const auth = `${EXT_HOME.toLowerCase()}\\auth.json`
+    h.folders.files.add(auth)
+    const planted = `${oldHome}\\sessions\\2026\\09\\01\\rollout-planted.jsonl`
+    h.folders.ops.link(auth, planted)
+    expect(h.folders.fs.lstat(planted).nlink).toBe(2)
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    const newHome = homeOf(realmIdOf(h, a))
+    expect(h.folders.files.has(kept.replace(oldHome, newHome))).toBe(true)
+    expect(h.folders.files.has(planted.replace(oldHome, newHome))).toBe(false)
+    // It was given no third name, and was not copied either.
+    expect(h.folders.fs.lstat(auth).nlink).toBe(2)
+    expect(h.folders.log.filter((l) => l.includes('rollout-planted'))).toEqual([`link ${auth} -> ${planted}`])
+    expect(h.logs.some((l) => /left 1 earlier conversation file\(s\) behind/.test(l))).toBe(true)
+  })
+
+  it('signing in again once more carries every file over again: the names an earlier sign in again gave are the app\'s own (C1)', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    const first = homeOf(realmIdOf(h, a))
+    const files = plantHistory(h, first, 3)
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    const second = homeOf(realmIdOf(h, a))
+    expect(h.folders.fs.lstat(files[0].replace(first, second)).nlink).toBe(2)
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    const third = homeOf(realmIdOf(h, a))
+    for (const f of files) expect(h.folders.fs.lstat(f.replace(first, third)).nlink, f).toBe(3)
+    expect(h.folders.files.has(`${third}\\history.jsonl`)).toBe(true)
+    expect(h.logs.some((l) => /behind/.test(l))).toBe(false)
+    // The same file under another name in an earlier realm is not the app's.
+    const k = await harness()
+    const b = await addCodexAccount(k, 'B')
+    const bFirst = homeOf(realmIdOf(k, b))
+    const [one] = plantHistory(k, bFirst, 1)
+    expect(await k.service.signInAgain({ sameAccount: true, accountId: b, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    const bSecond = homeOf(realmIdOf(k, b))
+    k.folders.ops.link(one, `${bFirst}\\sessions\\2026\\09\\01\\rollout-renamed.jsonl`)
+    expect(await k.service.signInAgain({ sameAccount: true, accountId: b, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    const bThird = homeOf(realmIdOf(k, b))
+    expect(k.folders.files.has(one.replace(bFirst, bThird))).toBe(false)
+    expect(k.folders.files.has(one.replace(bFirst, bSecond))).toBe(true)
+    // Nor is a name reached through a link or junction in an earlier realm
+    // (the place there resolves somewhere else).
+    const m = await harness()
+    const c = await addCodexAccount(m, 'C')
+    const cFirst = homeOf(realmIdOf(m, c))
+    const [two] = plantHistory(m, cFirst, 1)
+    expect(await m.service.signInAgain({ sameAccount: true, accountId: c, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    const realpath = m.folders.fs.realpath
+    m.folders.fs.realpath = (p) => (p.toLowerCase() === two ? 'C:\\elsewhere\\rollout-0.jsonl' : realpath(p))
+    expect(await m.service.signInAgain({ sameAccount: true, accountId: c, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    expect(m.folders.files.has(two.replace(cFirst, homeOf(realmIdOf(m, c))))).toBe(false)
+  })
+
+  it('a file swapped for another between its check and its link: what was made goes again, and nothing changes (C1)', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    const oldRealm = realmIdOf(h, a)
+    const oldHome = homeOf(oldRealm)
+    const [one] = plantHistory(h, oldHome, 1)
+    const other = `${EXT_HOME.toLowerCase()}\\auth.json`
+    h.folders.files.add(other)
+    const { link } = h.folders.ops
+    let swapped = false
+    h.folders.ops.link = (s, d) => {
+      if (!swapped && s.toLowerCase() === one) {
+        swapped = true
+        h.folders.fs.unlink(one)
+        link(other, one)
+        h.folders.fs.unlink(other)
+      }
+      link(s, d)
+    }
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'changed' })
+    expect(realmIdOf(h, a)).toBe(oldRealm)
+    expect(h.doc().journals).toEqual([])
+    expect([...h.folders.dirs].filter((x) => x.startsWith('c:\\res\\codex-realms\\') && !x.startsWith(oldHome))).toEqual([])
+  })
+
+  it('a history larger than its bound is refused with the bound named, before anything is carried over (C1)', async () => {
+    const h = await harness({ realmLimits: { historyEntries: 40 } })
+    const a = await addCodexAccount(h, 'A')
+    const oldRealm = realmIdOf(h, a)
+    plantHistory(h, homeOf(oldRealm), 60)
+    const r = await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)
+    expect(r).toMatchObject({ ok: false, code: 'too-large', message: expect.stringContaining('more than 40 earlier conversation files') })
+    expect(realmIdOf(h, a)).toBe(oldRealm)
+    expect(h.doc().journals).toEqual([])
+    expect(h.folders.log.filter((l) => l.startsWith('link ') || l.startsWith('copyFile '))).toEqual([])
+    expect([...h.folders.dirs].filter((x) => x.startsWith('c:\\res\\codex-realms\\') && !x.startsWith(homeOf(oldRealm)))).toEqual([])
+  })
+
+  it('a history larger than the removal\'s own bound is carried over, and a replacement holding it is removed whole when the switch is not saved (C1)', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    const oldRealm = realmIdOf(h, a)
+    plantHistory(h, homeOf(oldRealm), CODEX_REMOVE_MAX_ENTRIES + 5)
+    const copy = h.codex.realmFolders!.copyHistory!
+    let carried: { copied?: number } = {}
+    h.codex.realmFolders!.copyHistory = async (from, to, opts) => {
+      const r = await copy(from, to, opts)
+      carried = r
+      // The journal, the credentials mark, then the switch: it fails.
+      h.port.failWrites = [h.port.writes + 1]
+      return r
+    }
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'persist-failed' })
+    expect(carried).toMatchObject({ ok: true, copied: CODEX_REMOVE_MAX_ENTRIES + 6 })
+    expect(realmIdOf(h, a)).toBe(oldRealm)
+    expect(h.doc().journals).toEqual([])
+    expect([...h.folders.dirs].filter((x) => x.startsWith('c:\\res\\codex-realms\\') && !x.startsWith(homeOf(oldRealm)))).toEqual([])
+  }, 120_000)
 
   it('never a folder it did not make, nor a sign-in it did not perform: refused, the folder left as found (review round 2, L2-2)', async () => {
     for (const plant of ['folder', 'signed-in'] as const) {

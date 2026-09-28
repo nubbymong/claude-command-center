@@ -34,6 +34,7 @@ import {
   recordAuthCheck, recordAccountPlan, reconcileAccountSignIn, resolveIdentityConflict, setReviewerDefault, chooseReviewerAccount, chooseSessionAccount,
   recordProviderMigration, resolveLaunchBinding, findAccount, findRealm, findIdentity, isLegacyLinked,
   beginAccountReauth, rebindAccountRealm, releaseReauthAsSetup, settleSupersededRealm, decideReauth, unsettledSupersededRealms, reauthJournalOf,
+  earlierManagedRealms,
   resolveCapability, makeOpaqueId, providerRealmKind, isIdentityColourKey,
   MANAGED_PATH_REF_PREFIX, EXTERNAL_DEFAULT_PATH_REF, SIGN_IN_METHODS, SIGN_IN_CAPABILITY, providerOffMessage, providerStateUnknownMessage,
   providerNotSetUpMessage,
@@ -1301,18 +1302,26 @@ export class AccountsService {
       }
       // The earlier conversations go with the account (parity with an
       // in-place sign-in, which keeps them): its session transcripts and
-      // prompt history are copied into the replacement BEFORE the switch,
+      // prompt history are carried into the replacement BEFORE the switch,
       // while its own realm is still the one in use. A copy that cannot
       // finish changes nothing: the replacement is removed and the account
-      // keeps its sign-in.
+      // keeps its sign-in. A file with a name the app did not give it is
+      // left behind (logged), never carried over.
       const account = store.current() ? findAccount(store.current()!, accountId) : undefined
       if (!account) { await drop(); return failure('not-found') }
       if (p.realmFolders.copyHistory) {
-        const copied = await p.realmFolders.copyHistory({ authRealmId: account.authRealmId }, { authRealmId: realmId })
-          .catch((): { ok: false; code: 'io-failed' } => ({ ok: false, code: 'io-failed' }))
+        // The account's earlier realms: a file an earlier sign in again
+        // carried over has its name there too, and only there.
+        const earlier = earlierManagedRealms(store.current()!, accountId).map((r) => ({ authRealmId: r.id }))
+        const copied = await p.realmFolders.copyHistory({ authRealmId: account.authRealmId }, { authRealmId: realmId }, { earlier })
+          .catch((): { ok: false; code: 'io-failed'; message?: string } => ({ ok: false, code: 'io-failed' }))
         if (!copied.ok) {
           await drop()
-          return failure((copied.code ?? 'io-failed') as AccountsFailureCode, 'The earlier conversations could not be carried over to the new sign-in, so nothing was changed.')
+          const message = copied.code === 'too-large' && typeof copied.message === 'string' ? copied.message : 'The earlier conversations could not be carried over to the new sign-in, so nothing was changed.'
+          return failure((copied.code ?? 'io-failed') as AccountsFailureCode, message)
+        }
+        if ('skipped' in copied && typeof copied.skipped === 'number' && copied.skipped > 0) {
+          this.log(`a sign in again left ${copied.skipped} earlier conversation file(s) behind: each has another name the app did not give it`)
         }
       }
       // The switch, under the registry lock, while this run's lease still
@@ -1613,7 +1622,10 @@ export class AccountsService {
           const out = await p.auth.logout({ authRealmId: j.realmId }).catch((): AuthOperationResult => ({ ok: false, code: 'not-started' }))
           if (!out.ok) return this.fromAuth(out)
         }
-        const removed = await p.realmFolders.remove({ authRealmId: j.realmId }, { contents: 'all' }).catch(() => ({ ok: false as const, code: 'io-failed' as const }))
+        // A sign in again's replacement may hold the history carried over
+        // into it: that bound, not the removal's own, applies to it.
+        const removed = await p.realmFolders.remove({ authRealmId: j.realmId }, { contents: 'all', ...(j.replacesAccountId !== undefined ? { holdsHistory: true } : {}) })
+          .catch(() => ({ ok: false as const, code: 'io-failed' as const }))
         if (!removed.ok) return failure((removed.code ?? 'io-failed') as AccountsFailureCode, 'The account folder could not be removed; the setup is kept.')
       }
       const dropped = await ready.store.mutate((d) => abandonAccountSetup(d, j.accountId))
