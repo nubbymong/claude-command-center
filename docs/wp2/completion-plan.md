@@ -508,6 +508,56 @@ files: `src/main/session-resume-enrich.ts`, `src/renderer/session-persistence.ts
 `SessionHeader.tsx`, `src/main/pty-manager.ts`. ADR-009: yes (launch argv).
 SSH radius: yes. The C item "Resume replaces the tab list" (section 7) fits
 here.
+Built (2026-09-28, 28f42af2, 90a717df, 44729f29, 18f3e3f5; mocked). Row 38:
+the status line's claim re-reads its day folders on every poll (today and
+yesterday, by UTC and by local date: a rollout's name is local time and which
+date its folder follows is unproven) and finds a resumed conversation by its
+id anywhere in the account's own folder (the file name and its session_meta
+must agree), or the one the resume picker opened, through a pick file the
+picker writes (a conversation id, a new file only) once that rollout grows; a
+picker launch waits for the user instead of giving up at 30 s. Rows 34 and
+35: main keeps the conversation each Codex session is on (the claimed one,
+or the one an exact resume starts; bounded); session:save persists it as
+Claude's is; a restored session resumes it with `codex resume <id>` before
+the flags, bypassing the picker as Claude's exact resume does, only when its
+rollout is in the launch's own realm, in the directory the conversation
+recorded while that still exists and is not home or above it (else the
+configured one; a resume by id is not tied to a directory); the builder checks
+the id again before argv. Restart resumes it; "Restart and pick a
+conversation" still opens the picker; with no known conversation Restart
+starts a new one. After a staged Sign in again the carried-over conversation
+resumes in the account's new folder and the picker lists it there
+(`spawn-resume.test.ts`, `codex-resume-picker-worktrees.test.ts`). Row 32:
+the picker lists every git worktree's conversations (matched however Windows
+spells the path, tagged, started in their own worktree), finds today's by the
+local date too, leads with a session's name from the app's session state, and
+shows names and labels as plain text, built in one place. The C item: Resume
+keeps the tabs launched while its prompt was open, and Refresh never offers
+them again. SSH radius: only the Codex local branch of `pty-manager.ts`; no
+SSH code path changed. Row 38's midnight-UTC limitation (section 7, item 6)
+is fixed, verification owed.
+Limits, recorded, none a UX decision: the name file Claude's picker prefers
+(written by the logs binder against an exact bind) is not written for Codex,
+so a Codex name comes from the session state while the session is open or
+saved; it rides with the exact bind of a NEW Codex conversation (today a claim
+by folder and time, as before; two new sessions of one account in one folder
+started within seconds can swap) with the Codex hooks (P3.10) and Codex runs
+in the logs (P3.12). A conversation switched inside the Codex TUI (its own
+resume or new) is not followed until P3.10's SessionStart hook. A Codex
+session's Claude review root stays its configured directory, never one a
+resumed rollout names. The picker's fresh fallback after a failed resume in
+another worktree runs there and its new rollout is not claimed. Switch
+account (row 35's other half) is P3.6.
+Owed: the independent spec and code-quality reviews; the ADR-009 pass (the
+`codex resume <id>` argv, the pick file, the picker's environment and its
+worktree start); the SSH live matrix at the final head (`pty-manager.ts`
+edited); a VM check with a real Codex CLI at 0.153.4 and 0.155.1 (a relaunch
+and a Restart resume the same conversation; a two-day-old conversation picked
+from the picker and a session crossing midnight UTC keep their status line; a
+worktree conversation is listed and starts in its worktree; a carried-over
+conversation after a staged Sign in again; whether `codex resume <id>` in the
+recorded directory asks anything); the owner's review of VM screenshots of the
+picker with worktrees and names.
 
 **P3.6 Account chip and Switch account** (after P3.5). The strip's Codex
 account pill with its Switch account menu (inactive accounts greyed, this
