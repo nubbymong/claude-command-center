@@ -26,7 +26,7 @@ import { recordLiveUsageForSession, setClaudeAccountDataAllowed, setLiveUsageTra
 import { getProvider } from './providers'
 import { composeProviders, flushPendingProviderCliKills } from './providers/compose'
 import { initAccountRegistry, reconcileLegacyAccountStores } from './provider-account-registry'
-import { initProviderAccounts, getAccountsService, runStartupProviderMigrations, followResourcesDirectory, discoverProvidersAtStart } from './provider-accounts'
+import { initProviderAccounts, getAccountsService, runStartupProviderMigrations, followResourcesDirectory, discoverProvidersAtStart, providerOnNow } from './provider-accounts'
 import { probeClaudeCliVersion, setClaudeCliProbeAllowed } from './claude-cli-version'
 import { providerProbeRefusal } from './provider-launch-gate'
 import { providerUseWithoutLease } from './provider-in-use'
@@ -92,7 +92,7 @@ import { isSentinelEnabled } from '../shared/sentinel-enabled'
 import { resolveHooksPort } from './hooks/hooks-types'
 import { fetchModelPricing } from './tokenomics/tk-pricing'
 import { killAllAgents } from './cloud-agent-manager'
-import { startServiceStatusPoller, stopServiceStatusPoller, getLastServiceStatus } from './service-status'
+import { startServiceStatusPoller, stopServiceStatusPoller, getLastServiceStatus, refreshServiceStatus } from './service-status'
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
 import { startUpdateServer, stopUpdateServer } from './update-server'
 import { saveSessionState, loadSessionState, clearSessionState, hasSavedSessionState, SessionState } from './session-state'
@@ -693,6 +693,9 @@ if (!gotTheLock) {
         // switch, onboarding, Settings): the accounts snapshot says so now, and
         // a provider the save turned on is looked for.
         try { getAccountsService()?.settingsChanged() } catch (err) { logError('[main] accounts settings change failed:', err) }
+        // P3.4: a provider switched on has its status page read at once; one
+        // switched off leaves the title bar and is not read again.
+        void refreshServiceStatus().catch((err) => logError('[main] service status refresh failed:', err))
       },
     })
     // Beta builds default to verbose logging (lightweight async DEBUG lines ->
@@ -993,8 +996,8 @@ if (!gotTheLock) {
     setStatuslineUsageSink(recordLiveUsageForSession)
     startStatuslineWatcher(getWindow)
 
-    // Start polling Anthropic service status
-    startServiceStatusPoller(getWindow)
+    // Start polling each provider's public status page, only while it is on
+    startServiceStatusPoller(getWindow, { providerOn: providerOnNow })
     // Let a freshly-mounted renderer pull the cached status immediately, rather
     // than waiting up to a full poll interval for the next push (the title-bar
     // status pills were blank until the next poll because the immediate poll

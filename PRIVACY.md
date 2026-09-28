@@ -110,7 +110,8 @@ is not affected by that switch.
 | Destination | Why | When |
 | --- | --- | --- |
 | `api.anthropic.com` | Reads your Claude usage allowance for the status line, using **your** Claude OAuth token | While a session runs, when the status line is enabled |
-| `status.claude.com` | Anthropic's public service-status page | Periodically, to show service health |
+| `status.claude.com` | Anthropic's public service-status page, for the title bar's Claude status pills | Every 5 minutes while Claude Code is on, and not at all while it is off |
+| `status.openai.com` | OpenAI's public service-status page, for the title bar's Codex status pill | Every 5 minutes while Codex is on, and not at all while it is off or not set up |
 | `api.github.com`, `github.com` | Checks for app updates and downloads them; powers the optional GitHub integration | On update checks, and when you use the GitHub features |
 | `raw.githubusercontent.com` | Fetches a public model-pricing table (LiteLLM's open dataset) so cost figures are accurate | At most once every 24 hours, cached locally |
 | OpenAI: `chatgpt.com`, and with Codex 0.155.1 also `sdmntprsouthcentralus.oaiusercontent.com` (OpenAI's content storage) | Codex's own usage check for a Codex account with no session open, run by the Codex command-line tool in that account's folder with that account's own sign-in. Codex reads the account's usage allowance, and on the same start refreshes its list of models and checks its plugin cache, as it does whenever it runs | Only when you open the Usage page, press Refresh or use an account card's Retry; about a second, one account at a time. Never for an API-key account, for your own Codex folder, or for an account a session or review is using |

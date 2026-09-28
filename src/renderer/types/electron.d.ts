@@ -96,6 +96,10 @@ export interface ServiceStatusPayload {
   claudeCode: ServiceComponentStatus | null
   claudeAi: ServiceComponentStatus | null
   api: ServiceComponentStatus | null
+  codexCli: ServiceComponentStatus | null
+  codexApi: ServiceComponentStatus | null
+  claudeReadAt: string | null
+  codexReadAt: string | null
   worst: string
 }
 

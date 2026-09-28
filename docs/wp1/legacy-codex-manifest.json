@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-28T03:19:41.295Z",
-  "head": "f6b8adab4ce669744afdf826e62c3beb317268a6",
-  "tree": "81d11083126f060b550cf2dcbb42affab34ff5fe",
+  "generatedAt": "2026-09-28T06:13:52.384Z",
+  "head": "f1ccb5f24f999769275887322b0adca57b7486ef",
+  "tree": "006c20a7a79173e05b698174a4f07cbfca6ba6f6",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2435,
+  "trackedFileCount": 2437,
   "excludedFileCount": 383,
-  "scannedFileCount": 2052,
+  "scannedFileCount": 2054,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 486,
-  "pathDigest": "be2999b708f2819cb282fee4680388eb343f91218eca27c50b51fb3ed92468aa",
+  "matchedPathCount": 490,
+  "pathDigest": "037c84e662f3ddd1349cef1a5bbf334f5519af9436ffd4b07174faad9ac85915",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -161,7 +161,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 41
+      "lineCount": 42
     },
     {
       "path": "README.md",
@@ -210,7 +210,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 82
+      "lineCount": 83
     },
     {
       "path": "docs/wp2/plan.md",
@@ -836,6 +836,13 @@
       "lineCount": 40
     },
     {
+      "path": "src/main/service-status.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 21
+    },
+    {
       "path": "src/main/session-resume-enrich.ts",
       "predicates": [
         "P05",
@@ -1138,6 +1145,13 @@
         "P11"
       ],
       "lineCount": 33
+    },
+    {
+      "path": "src/renderer/components/TitleBar.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "lineCount": 20
     },
     {
       "path": "src/renderer/components/command-bar/chips.tsx",
@@ -1598,7 +1612,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 32
+      "lineCount": 34
     },
     {
       "path": "src/renderer/stores/sessionStore.ts",
@@ -1654,7 +1668,7 @@
         "P08",
         "P11"
       ],
-      "lineCount": 11
+      "lineCount": 14
     },
     {
       "path": "src/renderer/utils/bootGates.ts",
@@ -2810,6 +2824,14 @@
       "lineCount": 48
     },
     {
+      "path": "tests/unit/main/service-status-providers.test.ts",
+      "predicates": [
+        "P04",
+        "P13"
+      ],
+      "lineCount": 41
+    },
+    {
       "path": "tests/unit/main/session-resume-enrich.test.ts",
       "predicates": [
         "P13"
@@ -3169,7 +3191,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 157
+      "lineCount": 164
     },
     {
       "path": "tests/unit/renderer/active-indicator.test.tsx",
@@ -3817,6 +3839,15 @@
         "P13"
       ],
       "lineCount": 88
+    },
+    {
+      "path": "tests/unit/renderer/titlebar-provider-status.test.tsx",
+      "predicates": [
+        "P04",
+        "P05",
+        "P13"
+      ],
+      "lineCount": 40
     },
     {
       "path": "tests/unit/renderer/token-contrast.test.ts",
