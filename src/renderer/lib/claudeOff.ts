@@ -28,6 +28,11 @@ export const CLAUDE_OFF_ACCOUNTS_LINE = 'Claude Code is off. Turn it on in Setti
 /** The reason Ask Conductor cannot open: it is a Claude session. */
 export const ASK_CLAUDE_OFF = 'Ask Conductor runs on Claude Code, which is off. Turn it on in Settings, Accounts.'
 
+/** The reason the session dialog's SSH Persistent card is off for a
+ *  terminal-only config while Claude Code is off: what persists is the remote
+ *  claude command, wrapped in tmux, and no Claude is launched then. */
+export const PERSISTENT_CLAUDE_OFF = 'SSH Persistent keeps a remote Claude Code session running, and Claude Code is off.'
+
 /** True while Claude Code is switched off. */
 export function isClaudeOff(settings: ProviderChoiceView = useSettingsStore.getState().settings): boolean {
   return !usesClaude(settings)

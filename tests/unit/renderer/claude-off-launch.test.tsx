@@ -314,4 +314,54 @@ describe('the New session dialog', () => {
     expect(providerRadio('Claude Code').checked).toBe(true)
     expect(providerRadio('Claude Code').disabled).toBe(true)
   })
+
+  // P3.4 follow-up (row 14): SSH Persistent keeps a remote session alive by
+  // wrapping the remote claude command in tmux, which a terminal-only
+  // session never runs while Claude Code is off (every Launch Claude is
+  // refused). So with Claude Code off the card is disabled for Terminal only,
+  // as it is for Codex, with the reason in the same place.
+  function connectionRadio(title: string): HTMLInputElement {
+    const g = container.querySelector('[role="radiogroup"][aria-label="Connection"]')!
+    const lab = Array.from(g.querySelectorAll('label')).find((l) => l.querySelector('span')?.textContent === title)!
+    return lab.querySelector('input[type="radio"]') as HTMLInputElement
+  }
+  const PERSISTENT_COPY = 'SSH Persistent keeps a remote Claude Code session running, and Claude Code is off.'
+  const persistentNote = () => container.querySelector('[data-testid="claude-off-persistent-note"]')
+
+  it('with Claude Code off, Terminal only: SSH Persistent is disabled with the reason; Local and SSH stay', () => {
+    setProviders({ claudeEnabled: false, codexEnabled: true })
+    render()
+    // Codex (the start) keeps its own treatment and note, and not this one.
+    expect(connectionRadio('SSH Persistent').disabled).toBe(true)
+    expect(persistentNote()).toBeNull()
+    act(() => { providerRadio('Terminal only').click() })
+    expect(providerRadio('Terminal only').checked).toBe(true)
+    expect(connectionRadio('SSH Persistent').disabled).toBe(true)
+    expect(connectionRadio('Local').disabled).toBe(false)
+    expect(connectionRadio('SSH').disabled).toBe(false)
+    expect(persistentNote()!.textContent).toBe(PERSISTENT_COPY)
+    expect(container.querySelector('[data-testid="codex-local-note"]')).toBeNull()
+  })
+
+  it('with Claude Code on (alone or beside Codex), Terminal only offers SSH Persistent as before, with no note', () => {
+    for (const on of [{ claudeEnabled: true, codexEnabled: true }, { claudeEnabled: true, codexEnabled: false }]) {
+      act(() => { root.unmount() })
+      root = createRoot(container)
+      setProviders(on)
+      render()
+      act(() => { providerRadio('Terminal only').click() })
+      for (const t of ['Local', 'SSH', 'SSH Persistent']) expect(connectionRadio(t).disabled, `${t} ${JSON.stringify(on)}`).toBe(false)
+      expect(persistentNote()).toBeNull()
+    }
+  })
+
+  it('an edit of a terminal-only SSH Persistent config with Claude Code off keeps its choice, says why it is off, and can move to plain SSH', () => {
+    setProviders({ claudeEnabled: false, codexEnabled: true })
+    render({ initial: cfg({ shellOnly: true, sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } }) })
+    expect(connectionRadio('SSH Persistent').checked).toBe(true)
+    expect(connectionRadio('SSH Persistent').disabled).toBe(true)
+    expect(persistentNote()!.textContent).toBe(PERSISTENT_COPY)
+    act(() => { connectionRadio('SSH').click() })
+    expect(connectionRadio('SSH').checked).toBe(true)
+  })
 })

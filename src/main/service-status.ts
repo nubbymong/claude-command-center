@@ -18,8 +18,9 @@
  * a provider switched off, or the poller stopped, aborts its read in flight.
  * A page that fails two polls in a row reads as "status unknown" (its
  * components null, its read time kept) rather than freezing its last pill.
- * A send to a window being torn down never escapes as an error. A burst of
- * accounts-service changes is acted on once, after it.
+ * A send to a window being torn down never escapes as an error. The
+ * accounts-service changes of one turn of the event loop are acted on once,
+ * in the next turn (setImmediate, not a timed debounce).
  */
 import * as https from 'https'
 import type { ClientRequest } from 'http'
@@ -202,8 +203,9 @@ export interface ServiceStatusDeps {
   /** Whether the provider is on now (its saved on/off, as main answers it). */
   providerOn: (providerId: ProviderId) => boolean
   /** Told of every change the accounts service publishes, so a switch made
-   *  there (not a settings save) reaches the poller at once. Returns an
-   *  unsubscribe. */
+   *  there (not a settings save) reaches the poller. The changes of one turn
+   *  of the event loop are acted on together, in the next turn (no timed
+   *  debounce). Returns an unsubscribe. */
   subscribe?: (listener: () => void) => () => void
 }
 
@@ -227,10 +229,11 @@ const states = new Map<ReadKey, SourceState>()
 // The providers on at the last poll: a settings save polls again only when
 // this changed.
 let lastOn = ''
-// A refresh waiting for the end of a burst of accounts-service changes (a
-// lease taken and given back, a registry write): the burst is acted on once,
-// so each provider's on/off, a read of the saved settings, is asked once per
-// burst rather than once per change.
+// A refresh queued for the next turn of the event loop (setImmediate, not a
+// timed debounce) by the accounts-service changes of this turn (a lease
+// taken and given back, a registry write): they are acted on once, so each
+// provider's on/off, a read of the saved settings, is asked once per turn
+// rather than once per change.
 let queuedRefresh: ReturnType<typeof setImmediate> | null = null
 // Last payload. Cached so a renderer that mounts AFTER the immediate poll has
 // already fired (e.g. behind the startup splash) can pull the current status
@@ -375,7 +378,9 @@ export function startServiceStatusPoller(
     if (queuedRefresh) return
     queuedRefresh = setImmediate(() => {
       queuedRefresh = null
-      quietly(refreshServiceStatus())
+      // Out of the accounts service's own per-listener guard by now: a
+      // synchronous throw is caught here, a rejection by quietly.
+      try { quietly(refreshServiceStatus()) } catch { /* a refresh never escapes as an error */ }
     })
   }) ?? null
 }
@@ -389,7 +394,7 @@ function dropQueuedRefresh(): void {
  *  one switched off leaves the payload, its read in flight aborted. Nothing
  *  is read when no provider's on/off changed, and a provider whose on/off
  *  did not change is not read again. It covers every change before it, so a
- *  refresh still waiting for the end of a burst is dropped. */
+ *  refresh queued for the next turn of the event loop is dropped. */
 export function refreshServiceStatus(): Promise<void> {
   dropQueuedRefresh()
   if (!started) return Promise.resolve()

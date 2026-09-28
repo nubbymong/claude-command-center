@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-28T09:14:38.127Z",
-  "head": "c7f9a34a80ec5e1c6f604824fbd765277fb06139",
-  "tree": "45f0e288a62eb536051c09b86fe949bfb282972f",
+  "generatedAt": "2026-09-28T09:33:12.655Z",
+  "head": "9056e0219bce70b11bfd3bcfee5a602f154a39b3",
+  "tree": "f0f0be074dbfa2295904b8e9f1a9bc6f42f90bdb",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 145
+      "lineCount": 147
     },
     {
       "path": "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
@@ -1079,7 +1079,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 88
+      "lineCount": 89
     },
     {
       "path": "src/renderer/components/SessionDialog/CodexFormFields.tsx",
@@ -2839,7 +2839,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 99
+      "lineCount": 113
     },
     {
       "path": "tests/unit/main/session-resume-enrich.test.ts",
@@ -3239,7 +3239,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 82
+      "lineCount": 92
     },
     {
       "path": "tests/unit/renderer/claude-off-onboarding.test.tsx",
