@@ -8,7 +8,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, linkSync } from 'fs'
 import { join } from 'path'
 import { tmpdir, homedir } from 'os'
-import { findCodexRollout, findCodexRollouts, chooseCodexRollout, resolveCodexResume, codexDayFolders, sameDirectory, readRolloutFirstLine, CODEX_ROLLOUT_HEAD_MAX_BYTES } from '../../../../src/main/providers/codex/rollout-lookup'
+import { findCodexRollout, findCodexRollouts, chooseCodexRollout, resolveCodexResume, codexDayFolders, sameDirectory, readRolloutFirstLine, CODEX_ROLLOUT_HEAD_MAX_BYTES, __codexRolloutEntriesVisitedForTests } from '../../../../src/main/providers/codex/rollout-lookup'
 
 const ID = '019dd000-0001-7000-8000-0000000000f1'
 const temps: string[] = []
@@ -66,7 +66,7 @@ describe('resolveCodexResume', () => {
     const sessions = join(temp('realm'), 'sessions')
     const project = temp('project')
     put(sessions, ['2026', '09', '01'], ID, project)
-    expect(resolveCodexResume({ uuid: ID, cwd: project }, { sessionsDir: sessions, configuredCwd: '/configured' })).toEqual({ resumeId: ID, cwd: project, cwdMismatch: false })
+    expect(resolveCodexResume({ uuid: ID, cwd: project }, { sessionsDir: sessions, configuredCwd: '/configured' })).toMatchObject({ resumeId: ID, cwd: project, cwdMismatch: false, path: expect.stringContaining(ID) })
   })
 
   it('in the configured directory otherwise: another directory, a relative one, or one at or above home', () => {
@@ -204,8 +204,44 @@ describe('findCodexRollouts: bounds, links and duplicates', () => {
     const sessions = join(temp('realm'), 'sessions')
     putAt(sessions, ['2026', '09', '20'], ID, '/p/demo', '2026-09-20T10:00:00.000Z')
     const out = resolveCodexResume({ uuid: ID, cwd: '/p/elsewhere' }, { sessionsDir: sessions, configuredCwd: '/configured', dirExists: () => true, homeOrAbove: () => false })
-    expect(out).toEqual({ resumeId: ID, cwd: '/configured', cwdMismatch: true })
+    expect(out).toMatchObject({ resumeId: ID, cwd: '/configured', cwdMismatch: true, path: expect.stringContaining(ID) })
     const match = resolveCodexResume({ uuid: ID, cwd: '/p/demo' }, { sessionsDir: sessions, configuredCwd: '/configured', dirExists: () => true, homeOrAbove: () => false })
     expect(match?.cwdMismatch).toBe(false)
+  })
+})
+
+// P3.5 fix round 2 (quality major 1): a lookup stops at the conversation's own
+// rollout (the first found in the date folder its session_meta names) instead
+// of walking the whole realm for copies. Copies in NEWER folders are walked
+// first (newest first) and still take part in the choice; a copy in an older
+// folder than the conversation's own is not looked for.
+describe('findCodexRollouts stops at the conversation\'s own rollout', () => {
+  const OTHER = (n: number) => `019dd000-0001-7000-8000-${String(n).padStart(12, '0')}`
+
+  it('visits only what lies before it: a realm with many days is not walked past it', () => {
+    const sessions = join(temp('realm'), 'sessions')
+    let n = 0
+    for (let month = 7; month <= 9; month++) {
+      for (let day = 1; day <= 20; day++) {
+        const ymd: [string, string, string] = ['2026', String(month).padStart(2, '0'), String(day).padStart(2, '0')]
+        for (let k = 0; k < 3; k++) putAt(sessions, ymd, OTHER(++n), '/p', `2026-${ymd[1]}-${ymd[2]}T10:00:0${k}.000Z`)
+      }
+    }
+    putAt(sessions, ['2026', '09', '20'], ID, '/p/demo', '2026-09-20T12:00:00.000Z')
+    const before = __codexRolloutEntriesVisitedForTests()
+    expect(findCodexRollouts(sessions, ID).map((f) => f.meta.id)).toEqual([ID])
+    const visited = __codexRolloutEntriesVisitedForTests() - before
+    // The year, its three months, the twenty days of September, and that day's four files.
+    expect(visited).toBeLessThanOrEqual(1 + 3 + 20 + 4)
+  })
+
+  it('a copy in a newer folder still takes part in the choice; one older than the conversation\'s own is not looked for', () => {
+    const sessions = join(temp('realm'), 'sessions')
+    const own = putAt(sessions, ['2026', '09', '20'], ID, '/p/demo', '2026-09-20T10:00:00.000Z')
+    const newer = putAt(sessions, ['2026', '09', '27'], ID, '/p/newer', '2026-09-20T10:00:00.000Z')
+    putAt(sessions, ['2026', '09', '10'], ID, '/p/older', '2026-09-20T10:00:00.000Z')
+    expect(findCodexRollouts(sessions, ID).map((f) => f.path)).toEqual([newer, own])
+    expect(chooseCodexRollout(findCodexRollouts(sessions, ID), '/p/newer')?.found.path).toBe(newer)
+    expect(chooseCodexRollout(findCodexRollouts(sessions, ID), '/p/older')).toMatchObject({ found: { path: own }, cwdMatched: false })
   })
 })

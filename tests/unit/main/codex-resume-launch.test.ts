@@ -73,7 +73,7 @@ vi.mock('../../../src/main/providers', () => ({
       // The real builder resumes only a conversation of the launch's realm
       // (spawn-resume.test.ts); here, any id not marked missing.
       if (resume && !h.missing.has(resume.uuid)) {
-        return { cmd: launch.executable, args: ['resume', resume.uuid], env: launch.env, resumeId: resume.uuid, cwd: `/conversations/${resume.uuid}`, resumeCwdMismatch: h.mismatched.has(resume.uuid) }
+        return { cmd: launch.executable, args: ['resume', resume.uuid], env: launch.env, resumeId: resume.uuid, cwd: `/conversations/${resume.uuid}`, resumeCwdMismatch: h.mismatched.has(resume.uuid), resumePath: `/realm/sessions/${resume.uuid}.jsonl` }
       }
       if (opts.useResumePicker) return { cmd: 'node', args: ['picker.js'], env: launch.env, pickFile: '/tmp/ccc-codex-pick-x.json' }
       return { cmd: launch.executable, args: [], env: launch.env }
@@ -163,6 +163,8 @@ describe('a restored Codex session resumes its conversation (row 34)', () => {
     expect(h.ptys[0].cwd).toBe(`/conversations/${ID}`)
     expect(lastTelemetry().resumeId).toBe(ID)
     expect(lastTelemetry().cwd).toBe(`/conversations/${ID}`)
+    // Fix round 2: the rollout the builder chose, so the watcher does not walk again.
+    expect(lastTelemetry().resumePath).toBe(`/realm/sessions/${ID}.jsonl`)
     expect(getKeptCodexConversation(SID)).toEqual({ uuid: ID, cwd: `/conversations/${ID}` })
   })
 

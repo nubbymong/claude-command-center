@@ -275,11 +275,13 @@ export function buildCodexSpawn(opts: SpawnOptions): ProviderSpawnCommand {
     const args = ['resume', resumed.resumeId, ...flags]
     const cwd = resumed.cwd || undefined
     const resumeCwdMismatch = resumed.cwdMismatch
+    // The rollout chosen here, so the status line claims it without a second walk.
+    const resumePath = resumed.path
     if (viaCmdExe) {
       const target = codexCmdExeTarget(executable, args, env)
-      return { cmd: target.cmd, args: [], commandLine: target.commandLine, env, resumeId: resumed.resumeId, cwd, resumeCwdMismatch }
+      return { cmd: target.cmd, args: [], commandLine: target.commandLine, env, resumeId: resumed.resumeId, cwd, resumeCwdMismatch, resumePath }
     }
-    return { cmd: executable, args, env, resumeId: resumed.resumeId, cwd, resumeCwdMismatch }
+    return { cmd: executable, args, env, resumeId: resumed.resumeId, cwd, resumeCwdMismatch, resumePath }
   }
 
   // Picker swap: when useResumePicker is true and the picker script is

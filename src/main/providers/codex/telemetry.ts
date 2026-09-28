@@ -13,7 +13,7 @@
  */
 
 import { readdirSync, lstatSync, statSync, unlinkSync, openSync, fstatSync, readSync, closeSync, constants as fsConstants } from 'fs'
-import { join, relative, isAbsolute, sep } from 'path'
+import { join, relative, isAbsolute, sep, dirname } from 'path'
 import { computeCodexCostUsd } from './pricing'
 import { CODEX_CONVERSATION_ID_RE, codexDayFolders, findCodexRollout, isRealFolder, parseSessionMetaLine, readRolloutFirstLine } from './rollout-lookup'
 import type { FoundRollout, RolloutSessionMeta } from './rollout-lookup'
@@ -330,6 +330,10 @@ export interface CodexClaimOptions {
    *  exact resume on relaunch or Restart): its rollout is claimed wherever
    *  it is in the realm, whatever its age, and no other rollout is. */
   resumeId?: string
+  /** The rollout the launch chose for `resumeId` (the builder's lookup):
+   *  claimed without walking the realm again, when it is still that
+   *  conversation's plain file inside this realm's real folders. */
+  resumePath?: string
   /** Where the resume picker records each decision it makes (P3.5 fix
    *  round 1): `{ id }` when it resumes that conversation, `{ fresh: true }`
    *  when it starts a new one (a New conversation choice, nothing to list,
@@ -455,6 +459,8 @@ export function watchAndClaimRollout(
   if (typeof sessionsDir !== 'string' || !sessionsDir) return { stop() {} }
   // A resume id that is not a conversation id resumes nothing: claim as a new launch would.
   const resumeId = typeof claimOpts?.resumeId === 'string' && CODEX_CONVERSATION_ID_RE.test(claimOpts.resumeId) ? claimOpts.resumeId : undefined
+  /** The rollout the launch chose for `resumeId`, tried once before any walk. */
+  let givenPath: string | null = resumeId && typeof claimOpts?.resumePath === 'string' && claimOpts.resumePath ? claimOpts.resumePath : null
   const pickFile = typeof claimOpts?.pickFile === 'string' && claimOpts.pickFile ? claimOpts.pickFile : undefined
   const waitsForUser = !!pickFile && !resumeId
 
@@ -655,6 +661,15 @@ export function watchAndClaimRollout(
     if (claimedPath || stopped) return
 
     if (resumeId) {
+      // The rollout the launch chose (fix round 2): taken at once, without a
+      // second walk, while it is still that conversation's plain file inside
+      // this realm's real folders and no other session holds it; else a lookup.
+      if (givenPath) {
+        const given = givenPath
+        givenPath = null
+        const found = realFolderChain(sessionsDir, dirname(given)) && !claimed.has(given) ? stillTheConversation(given, resumeId) : null
+        if (found) { claim(found.path, found.meta); return }
+      }
       const found = lookup(resumeId)
       if (found) claim(found.path, found.meta)
       return
