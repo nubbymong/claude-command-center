@@ -663,7 +663,7 @@ describe('ADR-009 round 1 regressions: archived records, capabilities, setup rac
     expect(h.signedIn.get(EXT_HOME.toLowerCase())).toBe('chatgpt')
   })
 
-  it('the production realm source hands out only a realm being set up or in use, or a managed one being retired (P3.3)', async () => {
+  it('the production realm source hands out only a realm being set up or in use, or a managed one being retired only to check or sign it out (P3.3)', async () => {
     vi.resetModules()
     const realms: Record<string, { lifecycle: 'pending' | 'active' | 'retiring' | 'retired' | 'recovery'; ownership: 'conductor-managed' | 'external-default' }> = {}
     vi.doMock('../../src/main/provider-account-registry', () => ({
@@ -674,12 +674,15 @@ describe('ADR-009 round 1 regressions: archived records, capabilities, setup rac
       const { codexRealmSource } = await import('../../src/main/providers/compose')
       for (const ownership of ['conductor-managed', 'external-default'] as const) {
         for (const lifecycle of ['pending', 'active', 'retiring', 'retired', 'recovery'] as const) {
-          realms['realm-x'] = { lifecycle, ownership }
-          const r = await codexRealmSource.lookup({ authRealmId: 'realm-x' })
-          // A sign in again's old realm (retiring, or kept in recovery) is
-          // signed out through it; never a retired one, never an external one.
-          const want = lifecycle === 'pending' || lifecycle === 'active' || (ownership === 'conductor-managed' && (lifecycle === 'retiring' || lifecycle === 'recovery'))
-          expect(r.ok, `${ownership} ${lifecycle}`).toBe(want)
+          for (const use of ['status', 'logout', 'login', 'launch', 'usage', 'sessions', 'folder'] as const) {
+            realms['realm-x'] = { lifecycle, ownership }
+            const r = await codexRealmSource.lookup({ authRealmId: 'realm-x' }, use)
+            // A sign in again's old realm (retiring, or kept in recovery) is
+            // only checked or signed out through it; never a retired one,
+            // never an external one, and nothing else runs there.
+            const moved = ownership === 'conductor-managed' && (lifecycle === 'retiring' || lifecycle === 'recovery') && (use === 'status' || use === 'logout')
+            expect(r.ok, `${ownership} ${lifecycle} ${use}`).toBe(lifecycle === 'pending' || lifecycle === 'active' || moved)
+          }
         }
       }
     } finally {

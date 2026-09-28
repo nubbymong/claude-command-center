@@ -3,7 +3,7 @@
 // ratchets the remaining deep imports down to zero.
 import type { SessionProvider, SpawnOptions, TelemetrySource, HistorySession } from '../types'
 import type { LegacyVersion, StatuslineData } from '../../../shared/types'
-import type { ProviderCapabilities, AuthRealm } from '../../../shared/providers'
+import type { ProviderCapabilities, AuthRealm, RealmUse } from '../../../shared/providers'
 import type { ProviderPackage, RealmRef } from '../core'
 import { CODEX_ENABLEMENT } from './enablement'
 import { resolveCodexBinary, buildCodexSpawn } from './spawn'
@@ -227,7 +227,9 @@ export const CODEX_EXTERNAL_DEFAULT_REALM = Object.freeze({ kind: 'codex-home' a
  *  has it configured. The package canonicalises that directory and the
  *  external home itself before it derives any CODEX_HOME. */
 export interface CodexRealmSource {
-  lookup(realm: RealmRef): Promise<{ ok: true; realm: Pick<AuthRealm, 'id' | 'providerId' | 'kind' | 'ownership' | 'pathRef' | 'lifecycle'>; resourcesDir: string } | { ok: false }>
+  /** `use`: what the lookup is for; a realm an account moved off resolves
+   *  only for its status check and sign-out (realmOperable). */
+  lookup(realm: RealmRef, use: RealmUse): Promise<{ ok: true; realm: Pick<AuthRealm, 'id' | 'providerId' | 'kind' | 'ownership' | 'pathRef' | 'lifecycle'>; resourcesDir: string } | { ok: false }>
   /** `mkdir -p` refusing a pre-planted link: the app's mkdirSecure. */
   mkdirSecure(dir: string): void
 }
@@ -289,9 +291,9 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
   const realmFs = source ? (deps.realmFs ?? realRealmFsPort(process.platform, (dir) => source.mkdirSecure(dir))) : null
   const displayPaths = (realmFs?.platform ?? process.platform) === 'win32' ? path.win32 : path.posix
   /** The registry's record with canonical roots, resolved afresh each time. */
-  const lookupRealm = async (ref: RealmRef): Promise<CodexFolderLookup> => {
+  const lookupRealm = async (ref: RealmRef, use: RealmUse): Promise<CodexFolderLookup> => {
     if (!source || !realmFs) return { ok: false }
-    const found = await source.lookup({ authRealmId: ref.authRealmId })
+    const found = await source.lookup({ authRealmId: ref.authRealmId }, use)
     if (!found || found.ok !== true || !found.realm || typeof found.resourcesDir !== 'string') return { ok: false }
     const r = resolveCodexRealmRoots({ resourcesDir: found.resourcesDir, env: inherited, homeDir }, realmFs)
     return r.ok ? { ok: true, realm: found.realm, roots: r.roots } : { ok: false }
@@ -419,7 +421,7 @@ function realAuthDeps(injected: Pick<CodexAuthDeps, 'lookupRealm' | 'takeSecret'
   const platform = process.platform
   const takeSecret = injected.takeSecret
   return {
-    lookupRealm: (realm) => injected.lookupRealm(realm),
+    lookupRealm: (realm, use) => injected.lookupRealm(realm, use),
     // Through the folder port, so sign-in and folder removal key the realm
     // lock on the same reading of the same folder.
     realmIdentity: (home) => {

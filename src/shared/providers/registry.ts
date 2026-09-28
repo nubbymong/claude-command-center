@@ -339,15 +339,22 @@ export function unsettledSupersededRealms(doc: ProviderRegistryDoc, accountId: s
   return doc.realms.filter((r) => r.ownerProviderAccountId === accountId && r.id !== account.authRealmId && (r.lifecycle === 'retiring' || r.lifecycle === 'recovery'))
 }
 
-/** Whether a provider operation may run in a realm at all: one being set up
- *  or in use, or an app-managed one an account has moved off whose sign-in
- *  is still to be removed (only a status check and a sign-out run there).
- *  Never a retired realm: an archived account's may name the external home
- *  a newer account now uses. */
-export function realmOperable(realm: Pick<AuthRealm, 'lifecycle' | 'ownership'> | undefined): boolean {
+/** What a provider operation wants a realm for: its sign-in status, a
+ *  sign-out, a sign-in, a launch, a usage read, its sessions folder, or its
+ *  folder itself (made or removed). */
+export type RealmUse = 'status' | 'logout' | 'login' | 'launch' | 'usage' | 'sessions' | 'folder'
+
+/** Whether a provider operation may run in a realm, for that use: any use
+ *  of one being set up or in use; ONLY a status check or a sign-out of an
+ *  app-managed realm an account has moved off (a sign in again's old realm,
+ *  retiring or kept in recovery) -- never a sign-in, launch, usage read,
+ *  sessions scan or folder change there. Never a retired realm: an archived
+ *  account's may name the external home a newer account now uses. */
+export function realmOperable(realm: Pick<AuthRealm, 'lifecycle' | 'ownership'> | undefined, use: RealmUse): boolean {
   if (!realm) return false
   if (realm.lifecycle === 'pending' || realm.lifecycle === 'active') return true
-  return (realm.lifecycle === 'retiring' || realm.lifecycle === 'recovery') && realm.ownership === 'conductor-managed'
+  if (realm.lifecycle !== 'retiring' && realm.lifecycle !== 'recovery') return false
+  return realm.ownership === 'conductor-managed' && (use === 'status' || use === 'logout')
 }
 
 /** The staged sign in again of an account in progress, if any. */
@@ -1219,7 +1226,9 @@ export function checkRegistryInvariants(doc: ProviderRegistryDoc): string[] {
     // A staged sign in again names a live, app-managed account of its own
     // provider, and only one runs per account.
     const target = accounts.get(j.replacesAccountId)
-    if (!target || target.providerId !== j.providerId || target.lifecycle === 'archived' || isLegacyRecord(doc, target) || r?.ownership !== 'conductor-managed') {
+    const targetRealm = target ? realmsById.get(target.authRealmId) : undefined
+    if (!target || target.providerId !== j.providerId || target.lifecycle === 'archived' || isLegacyRecord(doc, target)
+      || r?.ownership !== 'conductor-managed' || targetRealm?.ownership !== 'conductor-managed') {
       problems.push(`setup ${j.accountId} replaces ${j.replacesAccountId}, which cannot sign in again`)
     }
     if (replaced.has(j.replacesAccountId)) problems.push(`two sign-ins again replace ${j.replacesAccountId}`)

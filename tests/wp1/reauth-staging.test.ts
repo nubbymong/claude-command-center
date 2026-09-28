@@ -223,13 +223,25 @@ describe('a separate account, and the old realm afterwards', () => {
     expect(settleSupersededRealm(odd, realm(1), 'retired', 40)).toMatchObject({ ok: false, code: 'lifecycle' })
   })
 
-  it('an operable realm: pending or active, or a managed one being retired; never a retired one', () => {
+  it('an operable realm: pending or active for anything; a managed one being retired only to check or sign out its sign-in; never a retired one', () => {
     const switched = ok(rebindAccountRealm(staged(), acct(9), { state: 'signed-in' }, 30))
-    expect(realmOperable(findRealm(switched, realm(1)))).toBe(true)
-    expect(realmOperable(findRealm(switched, realm(2)))).toBe(true)
-    expect(realmOperable(findRealm(ok(settleSupersededRealm(switched, realm(1), 'recovery', 40)), realm(1)))).toBe(true)
-    expect(realmOperable(findRealm(ok(settleSupersededRealm(switched, realm(1), 'retired', 40)), realm(1)))).toBe(false)
-    expect(realmOperable(undefined)).toBe(false)
+    const recovery = ok(settleSupersededRealm(switched, realm(1), 'recovery', 40))
+    const retired = ok(settleSupersededRealm(switched, realm(1), 'retired', 40))
+    const OTHER = ['login', 'launch', 'usage', 'sessions', 'folder'] as const
+    for (const use of [...OTHER, 'status', 'logout'] as const) {
+      expect(realmOperable(findRealm(switched, realm(2)), use), `active ${use}`).toBe(true)
+      expect(realmOperable(findRealm(staged(), realm(2)), use), `pending ${use}`).toBe(true)
+      expect(realmOperable(findRealm(retired, realm(1)), use), `retired ${use}`).toBe(false)
+      expect(realmOperable(undefined, use)).toBe(false)
+    }
+    for (const doc of [switched, recovery]) {
+      const old = findRealm(doc, realm(1))
+      expect(realmOperable(old, 'status')).toBe(true)
+      expect(realmOperable(old, 'logout')).toBe(true)
+      for (const use of OTHER) expect(realmOperable(old, use), `${old!.lifecycle} ${use}`).toBe(false)
+      // Never this computer's own home, whatever it is doing.
+      expect(realmOperable({ ...old!, ownership: 'external-default' }, 'status')).toBe(false)
+    }
   })
 
   it('the invariants refuse a current realm being retired and a staged setup of an account that is gone', () => {
@@ -242,6 +254,57 @@ describe('a separate account, and the old realm afterwards', () => {
     const d3 = JSON.parse(JSON.stringify(ok(rebindAccountRealm(staged(), acct(9), { state: 'signed-in' }, 30)))) as ProviderRegistryDoc
     d3.realms.find((r) => r.id === realm(1))!.lifecycle = 'active'
     expect(checkRegistryInvariants(d3).join('\n')).toMatch(/is not its realm/)
+  })
+})
+
+describe('the document rules for a staged sign in again (review round 1, T4)', () => {
+  it('a journal naming a malformed account to replace is not read', () => {
+    for (const bad of ['not-an-account', idn(1), 42]) {
+      const d = JSON.parse(JSON.stringify(staged()))
+      d.journals[0].replacesAccountId = bad
+      expect(parseRegistryDoc(d), String(bad)).toMatchObject({ ok: false, reason: 'invalid' })
+    }
+  })
+
+  it('two staged sign-ins of one account break the invariants', () => {
+    const d = JSON.parse(JSON.stringify(staged())) as ProviderRegistryDoc
+    d.realms.push({ ...findRealm(d, realm(2))!, id: realm(3), pathRef: `managed:${realm(3)}`, ownerProviderAccountId: acct(8) })
+    d.journals.push({ ...d.journals[0], accountId: acct(8), realmId: realm(3) })
+    expect(checkRegistryInvariants(d).join('\n')).toMatch(/two sign-ins again replace/)
+  })
+
+  it('a staged sign-in replaces only a live, app-managed account of its own provider', () => {
+    const wrongProvider = JSON.parse(JSON.stringify(staged())) as ProviderRegistryDoc
+    wrongProvider.journals[0].providerId = 'claude'
+    const archived = JSON.parse(JSON.stringify(staged())) as ProviderRegistryDoc
+    archived.accounts[0] = { ...archived.accounts[0], lifecycle: 'archived', isProviderDefault: false }
+    // This computer's own home as the target.
+    let ext = ok(createIdentity(emptyRegistry(), { id: idn(1), friendlyName: 'External', colourKey: 'mauve' }, 10))
+    ext = ok(beginAccountSetup(ext, { accountId: acct(1), realmId: realm(1), providerId: 'codex', method: 'external', realmKind: 'codex-home', ownership: 'external-default', pathRef: 'external-default' }, 11))
+    ext = ok(commitAccountSetup(ext, acct(1), { identityId: idn(1), authMethod: 'external', lastKnownAuthState: 'signed-in', identityAssurance: 'realm-only' }, 12))
+    ext = ok(beginAccountSetup(ext, { accountId: acct(9), realmId: realm(2), providerId: 'codex', method: 'browser', realmKind: 'codex-home', ownership: 'conductor-managed', pathRef: `managed:${realm(2)}` }, 13))
+    ext = { ...ext, journals: ext.journals.map((j) => ({ ...j, replacesAccountId: acct(1) })) }
+    // A Claude profile's account as the target.
+    const rec = reconcileLegacyAccounts(oneAccount(), 'claude', [{
+      legacyId: 'profile-work', friendlyName: 'Work', colourKey: 'rose', lifecycle: 'active', isDefault: true,
+      realm: { kind: 'claude-config-home', ownership: 'conductor-managed', pathRef: 'claude-profile:profile-work' }, authMethod: 'browser', identityAssurance: 'user-asserted',
+    }], { now: 5, deterministicId: (kind, seed) => `${ID_PREFIX[kind]}-${seed === 'profile-work' ? hex(40) : hex(41)}` })
+    if (!rec.ok) throw new Error(rec.problems.join('; '))
+    const claudeId = rec.doc.accounts.find((a) => a.providerId === 'claude')!.id
+    let claude = ok(beginAccountSetup(rec.doc, { accountId: acct(9), realmId: realm(2), providerId: 'codex', method: 'browser', realmKind: 'codex-home', ownership: 'conductor-managed', pathRef: `managed:${realm(2)}` }, 13))
+    claude = { ...claude, journals: claude.journals.map((j) => ({ ...j, replacesAccountId: claudeId })) }
+    for (const [name, d] of [['another provider', wrongProvider], ['archived', archived], ['this computer\'s own home', ext], ['a Claude profile', claude]] as const) {
+      expect(checkRegistryInvariants(d).join('\n'), name).toMatch(/replaces .* which cannot sign in again/)
+    }
+  })
+
+  it('only an app-managed realm may stay owned by an account that moved off it', () => {
+    const d = JSON.parse(JSON.stringify(ok(settleSupersededRealm(ok(rebindAccountRealm(staged(), acct(9), { state: 'signed-in' }, 30)), realm(1), 'retired', 40)))) as ProviderRegistryDoc
+    expect(checkRegistryInvariants(d)).toEqual([])
+    const old = d.realms.find((x) => x.id === realm(1))!
+    old.ownership = 'external-default'
+    old.pathRef = 'external-default'
+    expect(checkRegistryInvariants(d).join('\n')).toMatch(/is not its realm/)
   })
 })
 
@@ -515,6 +578,43 @@ describe('signing in again while signed in, through the service (WP1.52)', () =>
     const ext = await withExternalHome(h)
     expect(await h.service.signInAgain({ accountId: ext, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'unsupported' })
     expect(h.doc().journals).toEqual([])
+  })
+})
+
+describe('a realm an account moved off is only checked or signed out (review round 1, T2)', () => {
+  it('a sign-in, launch, usage read, sessions folder or folder change never reaches it, retiring or in recovery', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    const oldRealm = realmIdOf(h, a)
+    const oldSessions = `${managedHome(oldRealm)}\\sessions`
+    // The account moved by hand: its old realm is left retiring.
+    const stagedId = `acct-${'c'.repeat(32)}`
+    const next = `realm-${'c'.repeat(32)}`
+    expect((await h.store.mutate((d, t) => beginAccountReauth(d, { accountId: stagedId, realmId: next, replacesAccountId: a, method: 'browser' }, t))).ok).toBe(true)
+    expect((await h.codex.realmFolders!.prepare({ authRealmId: next })).ok).toBe(true)
+    h.signedIn.set(homeOf(next), 'chatgpt')
+    expect((await h.store.mutate((d, t) => rebindAccountRealm(d, stagedId, { state: 'signed-in' }, t))).ok).toBe(true)
+    for (const lifecycle of ['retiring', 'recovery'] as const) {
+      if (lifecycle === 'recovery') expect((await h.store.mutate((d, t) => settleSupersededRealm(d, oldRealm, 'recovery', t))).ok).toBe(true)
+      expect(findRealm(h.doc(), oldRealm)!.lifecycle).toBe(lifecycle)
+      const ref = { authRealmId: oldRealm }
+      const runs = h.runs.length
+      expect(await h.codex.auth!.login(ref, 'browser', {}), lifecycle).toMatchObject({ ok: false, code: 'realm-unavailable' })
+      expect(await h.codex.launch!.prepare(ref), lifecycle).toMatchObject({ ok: false, code: 'realm-unavailable' })
+      expect(await h.codex.launch!.sessionsDir!(ref), lifecycle).toBeNull()
+      const read = await h.codex.usage!.read!(ref, { mayStart: () => true })
+      await read.ended
+      expect(read.outcome, lifecycle).toEqual({ ok: false, failure: 'refused' })
+      expect(await h.codex.realmFolders!.prepare(ref), lifecycle).toMatchObject({ ok: false, code: 'realm-unavailable' })
+      expect(await h.codex.realmFolders!.remove(ref, { contents: 'all' }), lifecycle).toMatchObject({ ok: false, code: 'realm-unavailable' })
+      expect(h.runs.length, lifecycle).toBe(runs)
+      // The sessions scans name only the account's own folder.
+      expect((await h.service.sessionsRoots('codex'))!.map((x) => x.dir), lifecycle).not.toContain(oldSessions)
+      expect(await h.service.sessionsDirs('codex'), lifecycle).not.toContain(oldSessions)
+      // Its status still reads.
+      expect(await h.codex.auth!.status(ref), lifecycle).toMatchObject({ ok: true, state: 'signed-in' })
+    }
+    expect(await h.codex.auth!.logout({ authRealmId: oldRealm })).toMatchObject({ ok: true, state: 'signed-out' })
   })
 })
 

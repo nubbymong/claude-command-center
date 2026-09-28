@@ -272,7 +272,8 @@ export type CodexFolderLookup =
   | { ok: false }
 
 export interface CodexRealmFolderDeps {
-  lookupRealm(realm: RealmRef): Promise<CodexFolderLookup>
+  /** Asked for the `folder` use: never a realm an account moved off. */
+  lookupRealm(realm: RealmRef, use: 'folder'): Promise<CodexFolderLookup>
   fs: CodexRealmFsPort
   locks: CodexRealmLocks
 }
@@ -324,7 +325,7 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
     try {
       const id = ref && typeof ref === 'object' ? (ref as { authRealmId?: unknown }).authRealmId : undefined
       if (typeof id !== 'string' || !id) return fail('realm-unavailable')
-      found = await deps.lookupRealm({ authRealmId: id })
+      found = await deps.lookupRealm({ authRealmId: id }, 'folder')
       if (!found || found.ok !== true || !found.realm || found.realm.id !== id || !found.roots) return fail('realm-unavailable')
     } catch {
       return fail('realm-unavailable')
