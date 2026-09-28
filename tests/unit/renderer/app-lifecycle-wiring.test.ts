@@ -207,6 +207,7 @@ describe('App.tsx wires the R6/R7 helpers', () => {
     const saved = { sessions: [{ id: 'a' }], activeSessionId: 'a', savedAt: 1, detachedRemotes: [{ sessionId: 'r' }] }
     const handler = run<() => void>(jsxHandler(APP, 'onDontOpen'), {
       pendingRestore: saved, setPendingRestore: (v: unknown) => { order.push(`setPendingRestore:${v}`) },
+      setUnansweredRestore: (v: unknown) => { order.push(`unanswered:${v}`) },
       // Walk fix N5: nothing reopens; the tally is the remotes just kept.
       setRestoreTally: (t: { sessions: unknown[]; detached: unknown[] }) => { order.push(`tally:${t.sessions.length}:${t.detached.length}`) },
       useDetachedRemotesStore: { getState: () => ({ entries: [{ sessionId: 'r' }] }) },
@@ -218,7 +219,7 @@ describe('App.tsx wires the R6/R7 helpers', () => {
       persistDetachedOnlyOrClear: async () => { order.push('persist'); return 'saved' },
     })
     handler()
-    expect(order).toEqual(['setPendingRestore:null', 'reconcile', 'cancelAutosave', 'hydrate:true', 'ping', 'tally:0:1', 'persist'])
+    expect(order).toEqual(['setPendingRestore:null', 'unanswered:null', 'reconcile', 'cancelAutosave', 'hydrate:true', 'ping', 'tally:0:1', 'persist'])
   })
 
   it('Resume hands the WHOLE saved set to restoreSavedSessions (none dropped), and clears the prompt first', () => {
@@ -236,6 +237,7 @@ describe('App.tsx wires the R6/R7 helpers', () => {
     let tally: unknown
     const handler = run<() => void>(jsxHandler(APP, 'onResume'), {
       pendingRestore: saved, setPendingRestore: (v: unknown) => { order.push(`setPendingRestore:${v}`) },
+      setUnansweredRestore: (v: unknown) => { order.push(`unanswered:${v}`) },
       setRestoreTally: (t: unknown) => { tally = t; order.push('tally') },
       restoreSavedSessions: async (s: unknown, _ref: unknown, deps: { probeGoneSessions: unknown; pingAllDetachedHosts: unknown }) => {
         order.push(`restore:${s === saved}`)
@@ -246,13 +248,21 @@ describe('App.tsx wires the R6/R7 helpers', () => {
       pingAllDetachedHosts,
     })
     handler()
-    expect(order).toEqual(['tally', 'setPendingRestore:null', 'restore:true', 'deps:true'])
+    // P3.5 fix round 1 (item D): the offer is let go before the restore writes the file.
+    expect(order).toEqual(['tally', 'setPendingRestore:null', 'unanswered:null', 'restore:true', 'deps:true'])
     // Walk fix N5: tallied from the saved set itself, every session in it
     // (one that will reopen Not started included), before the restore lands.
     expect(tally).toEqual({ sessions: saved.sessions, detached: [] })
     // ADR-009 R7: the restore is marked in flight BEFORE the prompt clears, so a
     // close before it lands keeps the saved file.
     expect(restoreUnsettledRef.current).toBe(true)
+  })
+
+  it('while the resume prompt is up, every write of the session file keeps its offer: App keeps it in step with pendingRestore (P3.5 fix round 1, item D)', () => {
+    const at = APP.indexOf('setUnansweredRestore(pendingRestore)')
+    expect(at, 'the effect that keeps the offer in step').toBeGreaterThan(-1)
+    const effect = APP.slice(APP.lastIndexOf('useEffect(', at), APP.indexOf(']', at) + 1)
+    expect(effect).toMatch(/useEffect\(\(\) => \{\s*setUnansweredRestore\(pendingRestore\)\s*\}, \[pendingRestore\]/)
   })
 
   it('the resume gate is boot-only: raised by the saved set whatever its providers, set only by the startup load, never brought back once answered', async () => {

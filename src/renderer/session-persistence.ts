@@ -95,15 +95,29 @@ export function buildSessionState(): SessionState {
     // reopened session asks again if its account needs one.
     providerAccountId: s.provider === 'codex' ? s.providerAccountId : undefined,
   }))
+  // P3.5 (a C item): while the resume prompt is unanswered, the saved set it
+  // offers stays in the file, before the tabs open now (each tab once, as it
+  // is now), so a tab launched meanwhile never overwrites a choice the user
+  // has not made yet.
+  const offered = unansweredRestore ? unansweredRestore.sessions.filter((s) => !sessions.some((k) => k.id === s.id)) : []
   return {
-    sessions,
-    activeSessionId: activeKept ? state.activeSessionId : (kept[kept.length - 1]?.id ?? null),
+    sessions: [...offered, ...sessions],
+    activeSessionId: activeKept ? state.activeSessionId : (kept[kept.length - 1]?.id ?? unansweredRestore?.activeSessionId ?? null),
     savedAt: Date.now(),
     // SSH Persistent (Phase 1): fold the left-running registry into the same
     // persisted file so a detached remote survives an app restart. Main round-
     // trips this untouched (only `sessions` is migrated on load).
     detachedRemotes: useDetachedRemotesStore.getState().entries,
   }
+}
+
+/** The saved set the resume prompt offers while it is unanswered (P3.5, a C
+ *  item): App keeps it in step with its pendingRestore, and clears it the
+ *  moment the prompt is answered. Every write of the session file keeps it
+ *  (buildSessionState). */
+let unansweredRestore: SessionState | null = null
+export function setUnansweredRestore(state: SessionState | null): void {
+  unansweredRestore = state && Array.isArray(state.sessions) && state.sessions.length > 0 ? state : null
 }
 
 /**

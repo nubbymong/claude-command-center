@@ -100,7 +100,7 @@ import OnboardingModal from './components/github/onboarding/OnboardingModal'
 import AutoDetectBanner from './components/github/AutoDetectBanner'
 import { handleAutoDetectAccept } from './utils/githubAutoDetectAccept'
 import type { SessionState } from './types/electron'
-import { buildSessionState, buildSessionStateWithResumeTargets, persistDetachedOnlyOrClear, hydrateDetachedFromSavedState, loadSavedStateAtStartup, closeWithNoSessions, discardAndClose, restoreSavedSessions, refreshRestoreOffer } from './session-persistence'
+import { buildSessionState, buildSessionStateWithResumeTargets, persistDetachedOnlyOrClear, hydrateDetachedFromSavedState, loadSavedStateAtStartup, closeWithNoSessions, discardAndClose, restoreSavedSessions, refreshRestoreOffer, setUnansweredRestore } from './session-persistence'
 import { useSessionAutosave, cancelSessionAutosave } from './hooks/useSessionAutosave'
 import { listenGoToSession } from './lib/goToSession'
 
@@ -281,6 +281,10 @@ export default function App() {
   // this run. It is the whole saved set: a session whose provider cannot
   // launch is restored too and reopens as Not started (the prompt tags it).
   const [pendingRestore, setPendingRestore] = useState<SessionState | null>(null)
+  // P3.5 (a C item): while the prompt is unanswered, every write of the
+  // session file keeps the set it offers (session-persistence), so a tab
+  // launched meanwhile never overwrites it on disk.
+  useEffect(() => { setUnansweredRestore(pendingRestore) }, [pendingRestore])
   // What this start brought back, tallied once when the restore is decided
   // (Resume, Don't open, or nothing saved to ask about): the Allow Multi Spawn
   // grandfathering and its startup page count copies from it alone.
@@ -1438,11 +1442,15 @@ export default function App() {
               // the prompt, so a close before it lands keeps the saved file.
               restoreUnsettledRef.current = true
               setPendingRestore(null)
+              // P3.5: answered -- the file no longer keeps the offer (at once,
+              // before the restore's own write).
+              setUnansweredRestore(null)
               void restoreSavedSessions(saved, restoreUnsettledRef, { probeGoneSessions, pingAllDetachedHosts })
             }}
             onDontOpen={() => {
               const saved = pendingRestore
               setPendingRestore(null)
+              setUnansweredRestore(null)
               useCommandBarStore.getState().reconcile(useSessionStore.getState().sessions.map((s) => s.id))
               // Discard the saved cards so the next boot doesn't re-prompt; the
               // conversations themselves stay resumable from inside Claude.
