@@ -9,7 +9,7 @@
 // a string, as Claude's parseWorktrees test does).
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync, linkSync, readdirSync, statSync, symlinkSync, lstatSync, renameSync } from 'fs'
-import { join } from 'path'
+import { join, dirname, basename } from 'path'
 import { tmpdir } from 'os'
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -33,12 +33,14 @@ const ID2 = '019dd000-0001-7000-8000-000000000102'
 const ID3 = '019dd000-0001-7000-8000-000000000103'
 const temps: string[] = []
 const temp = (tag: string) => { const d = mkdtempSync(join(tmpdir(), `ccc-p35-picker-${tag}-`)); temps.push(d); return d }
+/** Removes, recursively, only a folder this file made: its own prefix, directly in the temp folder. */
+const removeOwn = (d: string) => { if (dirname(d) === tmpdir() && /^ccc-p35-picker-/.test(basename(d))) rmSync(d, { recursive: true, force: true }) }
 const originalTz = process.env.TZ
 afterEach(() => {
   vi.useRealTimers()
   if (originalTz === undefined) delete process.env.TZ
   else process.env.TZ = originalTz
-  for (const d of temps.splice(0)) rmSync(d, { recursive: true, force: true })
+  for (const d of temps.splice(0)) removeOwn(d)
 })
 
 function rollout(home: string, day: Date, id: string, cwd: string, prompt: string, local = false): void {
@@ -82,7 +84,7 @@ describe('the picker lists every worktree\'s conversations (row 32)', () => {
     const rel = join('sessions', String(day.getUTCFullYear()), String(day.getUTCMonth() + 1).padStart(2, '0'), String(day.getUTCDate()).padStart(2, '0'))
     mkdirSync(join(fresh, rel), { recursive: true })
     linkSync(join(old, rel, `rollout-x-${ID1}.jsonl`), join(fresh, rel, `rollout-x-${ID1}.jsonl`))
-    rmSync(old, { recursive: true, force: true })
+    removeOwn(old)
     expect(lib.walkRollouts(fresh, 30, '/srv/demo', 'linux').map((c) => c.id)).toEqual([ID1])
   })
 
