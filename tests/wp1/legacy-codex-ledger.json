@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "5d8d88d92b5a32069c886c98c4877d343b345cff40eb96c00c84d59e0b371bc2",
-  "manifestHead": "c2c42e2283e6f198133b91a5cb443810a6cac1af",
+  "manifestPathDigest": "726e2f33b926a13d76e3a4134f93c39697dc4bd362690d54700fe9d570e9ad4a",
+  "manifestHead": "2e70e744839d3b14d562cdf13cbc321a783fe0e5",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -4967,6 +4967,16 @@
       "disposition": "retain",
       "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/launch-dialogs-during-resume-offer.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.5 VM finding V1 test (tests/unit/renderer/launch-dialogs-during-resume-offer.test.tsx): a launch made while the resume offer is up shows its account choice or its confirm for a sign-in on this computer and goes on; every other boot gate, the Codex question and introduction among them, still holds both back (WP1.34)",
+      "note": "created by WP2 PR 3 P3.5 fix for VM finding V1; its Codex mentions are the gate names codexReconfirm and helloCodex"
     },
     {
       "path": "tests/unit/renderer/logs-pane.test.tsx",

@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-28T19:40:45.770Z",
-  "head": "c2c42e2283e6f198133b91a5cb443810a6cac1af",
-  "tree": "f5a3f317e1b7cc40b799b764c89c9f9941ef27d4",
+  "generatedAt": "2026-09-28T19:47:13.932Z",
+  "head": "2e70e744839d3b14d562cdf13cbc321a783fe0e5",
+  "tree": "df2d253f9640b9890f5d18a34d116ecd3a044783",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2449,
+  "trackedFileCount": 2450,
   "excludedFileCount": 383,
-  "scannedFileCount": 2066,
+  "scannedFileCount": 2067,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 500,
-  "pathDigest": "5d8d88d92b5a32069c886c98c4877d343b345cff40eb96c00c84d59e0b371bc2",
+  "matchedPathCount": 501,
+  "pathDigest": "726e2f33b926a13d76e3a4134f93c39697dc4bd362690d54700fe9d570e9ad4a",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -3484,6 +3484,13 @@
         "P13"
       ],
       "lineCount": 4
+    },
+    {
+      "path": "tests/unit/renderer/launch-dialogs-during-resume-offer.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 1
     },
     {
       "path": "tests/unit/renderer/logs-pane.test.tsx",
