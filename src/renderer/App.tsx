@@ -100,7 +100,7 @@ import OnboardingModal from './components/github/onboarding/OnboardingModal'
 import AutoDetectBanner from './components/github/AutoDetectBanner'
 import { handleAutoDetectAccept } from './utils/githubAutoDetectAccept'
 import type { SessionState } from './types/electron'
-import { buildSessionState, buildSessionStateWithResumeTargets, persistDetachedOnlyOrClear, hydrateDetachedFromSavedState, loadSavedStateAtStartup, closeWithNoSessions, discardAndClose, restoreSavedSessions } from './session-persistence'
+import { buildSessionState, buildSessionStateWithResumeTargets, persistDetachedOnlyOrClear, hydrateDetachedFromSavedState, loadSavedStateAtStartup, closeWithNoSessions, discardAndClose, restoreSavedSessions, refreshRestoreOffer } from './session-persistence'
 import { useSessionAutosave, cancelSessionAutosave } from './hooks/useSessionAutosave'
 import { listenGoToSession } from './lib/goToSession'
 
@@ -1463,10 +1463,12 @@ export default function App() {
               // session restarted since launch shows up (#130). Keep the current
               // list on a transient empty read rather than dismissing the prompt.
               // Boot-only: a read that lands after the prompt was answered
-              // (prev is null by then) never brings it back.
+              // (prev is null by then) never brings it back. P3.5: a tab
+              // launched while the prompt was open is never offered again.
               try {
                 const saved = await window.electronAPI.session.load() as SessionState | null
-                setPendingRestore((prev) => (prev && saved && saved.sessions.length > 0 ? saved : prev))
+                const open = new Set(useSessionStore.getState().sessions.map((s) => s.id))
+                setPendingRestore((prev) => refreshRestoreOffer(prev, saved, open))
               } catch (err) {
                 console.error('[App] Resume refresh failed:', err)
               }
