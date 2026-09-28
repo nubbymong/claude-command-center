@@ -41,6 +41,10 @@ export interface ShowcasePoint {
   /** Bold lead-in, ending in a full stop unless the rest continues the sentence. */
   lead: string
   rest: string
+  /** P3.6: this point alone is about something that needs Claude Code in
+   *  this release, on a page that is not (the page's own `needsClaude`
+   *  below): it is not shown while Claude Code is off. */
+  needsClaude?: boolean
 }
 
 export interface ShowcasePage {
@@ -58,9 +62,10 @@ export interface ShowcasePage {
   /** P3.4 (row 14): the page is about something that needs Claude Code in
    *  this release (Claude sessions only), so it is not shown while Claude
    *  Code is off. The phase that brings the feature to Codex lifts it (named
-   *  in that phase's entry of docs/wp2/completion-plan.md: accounts P3.6,
-   *  watchdog P3.10, canvas P4.1, askConductor P4.3); remoteResume keeps it,
-   *  since Codex over SSH is outside this release. */
+   *  in that phase's entry of docs/wp2/completion-plan.md: watchdog P3.10,
+   *  canvas P4.1, askConductor P4.3; P3.6 lifted it from accounts, whose
+   *  Insights point keeps it); remoteResume keeps it, since Codex over SSH is
+   *  outside this release. */
   needsClaude?: boolean
 }
 
@@ -144,16 +149,19 @@ export const SHOWCASES_21: ShowcasePage[] = [
     art: 'sidebarMarks',
   },
   {
+    // P3.6 (row 22): Claude Code and Codex alike switch mid-session, keeping
+    // the conversation, so the page reads for both and shows with Claude
+    // Code off; only its Insights point is Claude Code's in this release.
     id: 'accounts',
-    needsClaude: true,
     heading: 'Every account, one app',
-    tagline: 'Sign in to more than one Claude account and switch mid-session — usage, costs and insights follow each account separately.',
+    tagline: 'Sign in to more than one account and switch mid-session. Usage and costs follow each account separately.',
     points: [
       { lead: 'Switch mid-session.', rest: 'The session restarts under the new account and resumes the same conversation.' },
       { lead: 'Usage at a glance.', rest: "The footer meters each account's window while you work." },
-      { lead: 'Insights across accounts.', rest: 'With two or more signed in, reports read them all at once.' },
+      { lead: 'Named and coloured.', rest: 'Give each account a name and a colour in Settings, Accounts; its sessions show them on the status strip and in the sidebar.' },
+      { lead: 'Insights across accounts.', rest: 'With two or more signed in, reports read them all at once.', needsClaude: true },
     ],
-    where: { pre: 'Where: add a second account and the ', em: 'account strip', post: ' appears in the footer; Insights sits in the sidebar.' },
+    where: { pre: 'Where: the ', em: 'account pill', post: ' at the left of the session strip switches it; add a second account and the footer meters each one.' },
     art: 'accounts',
   },
   {

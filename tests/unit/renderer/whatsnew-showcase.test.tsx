@@ -100,13 +100,15 @@ describe('showcase-pages — the curated set', () => {
   })
 
   it('P3.4 (row 14): with Claude Code off, what needs Claude Code in this release is not shown', () => {
-    const CLAUDE_ONLY_PAGES = ['canvas', 'remoteResume', 'accounts', 'watchdog', 'askConductor']
+    // P3.6 lifted the accounts page and the Switch mid-session line (a Codex
+    // account switches mid-session too); claude.ai in the app stays Claude's.
+    const CLAUDE_ONLY_PAGES = ['canvas', 'remoteResume', 'watchdog', 'askConductor']
     // The two remote lines (VM round, M1): SSH Persistent keeps the remote
     // session alive by wrapping the remote claude command, and the only agent
     // an SSH session runs in this release is Claude Code, so both go with the
     // remote resume page.
     const REMOTE_ITEMS = ['SSH Persistent.', 'Remote Resumable.']
-    const CLAUDE_ONLY_ITEMS = ['Agent Canvas.', 'Session Watchdog.', 'Ask Conductor.', 'Switch mid-session.', 'Insights.', ...REMOTE_ITEMS]
+    const CLAUDE_ONLY_ITEMS = ['Agent Canvas.', 'Session Watchdog.', 'Ask Conductor.', 'claude.ai in the app.', 'Insights.', ...REMOTE_ITEMS]
     // Claude Code on: everything, as before.
     render()
     expect(container.textContent).toContain('Working with Claude')
@@ -126,7 +128,9 @@ describe('showcase-pages — the curated set', () => {
     settingsState.settings = { updateChannel: 'stable', claudeEnabled: false, codexEnabled: true }
     render()
     expect(container.textContent).not.toContain('Working with Claude')
-    expect(container.textContent).not.toContain('Accounts & usage')
+    // The section stays for the switch line (P3.6).
+    expect(container.textContent).toContain('Accounts & usage')
+    expect(container.textContent).toContain('Switch mid-session.')
     for (const t of CLAUDE_ONLY_ITEMS) expect(container.textContent, t).not.toContain(t)
     const shown = SHOWCASES_21.filter((p: { id: string }) => !CLAUDE_ONLY_PAGES.includes(p.id))
     expect(q('whatsnew-hint')!.textContent).toContain(`Page 1 of ${1 + shown.length}`)
@@ -146,6 +150,38 @@ describe('showcase-pages — the curated set', () => {
     expect(all20.find((i) => i.title === 'Partner terminal.')?.needsClaude).toBeUndefined()
     // ...and names no provider (row 64 did the same for the strip and tips).
     expect(all20.find((i) => i.title === 'Partner terminal.')?.desc).toBe('A plain shell beside your session, labelled so you always know which is which.')
+  })
+
+  it('P3.6 (row 22): the switch is told for both providers; with Claude Code off, nothing about Claude\'s own services', () => {
+    const lines = sectionsFor('2.1.0-beta.17', '2.1.0').flatMap((s) => s.items)
+    const sw = lines.find((i) => i.title === 'Switch mid-session.')!
+    expect(sw.needsClaude).toBeUndefined()
+    expect(sw.seeIt).toBe('accounts')
+    expect(sw.desc).not.toMatch(/claude/i)
+    expect(lines.find((i) => i.title === 'claude.ai in the app.')?.needsClaude).toBe(true)
+    const page = SHOWCASES_21.find((p: { id: string }) => p.id === 'accounts')!
+    expect(page.needsClaude).toBeUndefined()
+    expect(`${page.heading} ${page.tagline} ${page.where.pre}${page.where.em}${page.where.post}`).not.toMatch(/claude|insights/i)
+    // Its Claude-only point is marked, and the page keeps three or more without it.
+    for (const pt of page.points) {
+      const claudeOnly = /insights|claude/i.test(`${pt.lead} ${pt.rest}`)
+      expect(pt.needsClaude, pt.lead).toBe(claudeOnly ? true : undefined)
+    }
+    expect(page.points.filter((pt: { needsClaude?: boolean }) => !pt.needsClaude).length).toBeGreaterThanOrEqual(3)
+    // Codex only: the page shows, without its Claude-only point.
+    settingsState.settings = { updateChannel: 'stable', claudeEnabled: false, codexEnabled: true }
+    render()
+    click(q('see-accounts'))
+    expect(q('showcase-heading')!.textContent).toBe('Every account, one app')
+    expect(q('showcase-points')!.textContent).toContain('Switch mid-session.')
+    expect(q('showcase-points')!.textContent).not.toMatch(/insights/i)
+    act(() => root.unmount())
+    root = createRoot(container)
+    // Claude Code on: the Insights point is there.
+    settingsState.settings = { updateChannel: 'stable' }
+    render()
+    click(q('see-accounts'))
+    expect(q('showcase-points')!.textContent).toContain('Insights across accounts.')
   })
 
   it('P3.4 (row 14): a run that goes on with Codex only (setup found no Claude Code) reads it the same way', async () => {
