@@ -447,24 +447,34 @@ sign-in is read; What's New and its showcase hide what needs Claude Code in
 this release (`needsClaude`; each flag is lifted by the phase that brings its
 feature to Codex, recorded in that phase's entry: P3.6, P3.10, P4.1, P4.3 and
 P4.7; the remote resume page, and the SSH Persistent and Remote Resumable
-lines, keep it, since Codex over SSH is outside this release); the registry callout no longer says the Claude accounts still
-work. Hello Codex page 1 already read without Claude (unchanged). The partner
-terminal line stays (it works beside a Codex session). Left to their phases:
-the Sentinel card (P3.9), the log indexing card (P3.12), Ask (row 53, PR 4).
+lines, keep it, since Codex over SSH is outside this release); the registry
+callout no longer says the Claude accounts still work. Hello Codex page 1
+already read without Claude (unchanged). The partner terminal line stays (it
+works beside a Codex session). Left to their phases: the Sentinel card
+(P3.9), the log indexing card (P3.12), Ask (row 53, PR 4).
 Fix round 1 (the reviews and the ADR-009 thesis check): the on/off the pages
 are read by fails closed on settings that cannot be read; each read has an
 overall deadline, each provider's page settles on its own, a switch-off or
 stop aborts a read in flight, and a second start is ignored; the renderer's
 pull answers the app's own window only; no remote text reaches the renderer
-(only the app's ids and labels and a known status). Owed: the ADR-009 attack
-pass, and a VM walk in Codex-only mode.
-Follow-up (the quality review's minor and the VM walk's M1): a burst of
-accounts-service changes is acted on once, after it, so each provider's
-on/off is read from the settings once per burst rather than once per change
-(a settings save in the same turn is that one refresh); What's New's SSH
-Persistent and Remote Resumable lines carry the flag with the remote resume
-page, since the persistent remote session wraps the remote claude command
-and the only agent an SSH session runs in this release is Claude Code.
+(only the app's ids and labels and a known status).
+Follow-up (87ba9c2d and 9056e021; the quality review's minor and the VM
+walk's M1): the accounts-service changes of one turn of the event loop are
+acted on once, in the next turn, so each provider's on/off is read from the
+settings once per turn rather than once per change (a settings save in the
+same turn is that one refresh); What's New's SSH Persistent and Remote
+Resumable lines carry the flag with the remote resume page, since the
+persistent remote session wraps the remote claude command and the only
+agent an SSH session runs in this release is Claude Code. Its fix round: a
+synchronous throw in that refresh never escapes, and with Claude Code off
+the session dialog's SSH Persistent card is disabled for Terminal only, with
+the reason, as it is for Codex (a terminal-only session launches no Claude
+then, so nothing would persist).
+Done: the ADR-009 pass, lenses N and G PASS at c7f9a34a and lens N
+re-confirmed PASS at 87ba9c2d; the VM walk in Codex-only mode PASS at
+c7f9a34a (e2e 81/81; no request to OpenAI's status page while Codex was off
+or not answered), its minor M1 fixed in 9056e021. Owed: the owner's approval
+of the VM walk's screenshots, and a VM re-check at the final head.
 
 **P3.5 History and resume.** The claimed session id kept with the tab; exact
 resume on relaunch in the same realm; Restart resumes the same conversation

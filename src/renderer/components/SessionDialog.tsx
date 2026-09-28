@@ -16,6 +16,7 @@ import { useProviderAccountsStore } from '../stores/providerAccountsStore'
 import { accountFieldState, defaultAccountId, providerTooOldText, accountEmail } from '../utils/launchAccount'
 import { ClaudeGlyph, CodexGlyph } from './sidebar/Badges'
 import { CLAUDE_OFF_LAUNCH_REASON, CODEX_OFF_LAUNCH_REASON, CODEX_NOT_SET_UP_LAUNCH_REASON } from '../hooks/useLaunchConfig'
+import { PERSISTENT_CLAUDE_OFF } from '../lib/claudeOff'
 import { codexPreference } from '../onboarding/provider-choice'
 
 /** The one launch the dialog's ticked "launch with the sign-in already on
@@ -691,6 +692,11 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
     setSessionType('ssh')
     setDetachable(id === 'ssh-persistent')
   }
+  // SSH Persistent keeps the remote claude command alive in tmux; a
+  // terminal-only session launches no Claude while Claude Code is off (main
+  // refuses every Launch Claude), so nothing would persist. Disabled with the
+  // reason, as it is for Codex (P3.4 follow-up, row 14).
+  const terminalPersistentOff = uiProvider === 'terminal' && claudeDisabled
   const connectionCard = (id: ConnectionChoice, title: string, sub: string, disabled: boolean) => (
     <label className={cardCls(connectionChoice === id, disabled)}>
       <input
@@ -778,10 +784,13 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
               <div className="flex gap-2 mt-2" role="radiogroup" aria-label="Connection">
                 {connectionCard('local', 'Local', 'Runs on this PC', false)}
                 {connectionCard('ssh', 'SSH', 'Another machine, plain session', uiProvider === 'codex')}
-                {connectionCard('ssh-persistent', 'SSH Persistent', 'Survives disconnects, reattaches', uiProvider === 'codex')}
+                {connectionCard('ssh-persistent', 'SSH Persistent', 'Survives disconnects, reattaches', uiProvider === 'codex' || terminalPersistentOff)}
               </div>
               {uiProvider === 'codex' && (
                 <p className="text-[11px] text-[var(--text-muted)] mt-1.5" data-testid="codex-local-note">Codex runs on this computer only in this release.</p>
+              )}
+              {terminalPersistentOff && (
+                <p className="text-[11px] text-[var(--text-muted)] mt-1.5" data-testid="claude-off-persistent-note">{PERSISTENT_CLAUDE_OFF}</p>
               )}
               {/* Allow Multi Spawn (phase 4). Off by default: a launcher runs
                   ONE session at a time, and every launch surface refuses the

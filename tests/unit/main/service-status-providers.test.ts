@@ -482,24 +482,61 @@ describe('provider status: a burst of accounts-service changes is one refresh', 
     expect(asked).toBe(aStart)
   })
 
-  it('a switch made in the service still acts: on reads Codex\'s page once, off aborts it; never on, never read', async () => {
+  it('a switch made in the service still acts: on reads Codex\'s page, off drops its reading and aborts a read in flight; never on, never read', async () => {
     await startSubscribed()
     burst(4) // Codex not on (off or not answered): no request to its page
     await settle()
     expect(readsOf(OPENAI)).toHaveLength(0)
-    replies[OPENAI] = { status: 200, body: openaiBody(), delay: 3000 }
     on.codex = true
     burst(3)
     await settle()
     expect(readsOf(OPENAI)).toHaveLength(1)
+    // The reading landed: it is in the payload.
+    expect(last().codexCli).toEqual({ id: '01KMKFAMWKNQ84Z1766MV08ZDE', label: 'Codex CLI', status: 'operational' })
+    expect(last().codexReadAt).toEqual(expect.any(String))
+    // The next poll's read is still in flight when Codex is switched off.
+    replies[OPENAI] = { status: 200, body: openaiBody('major_outage'), delay: 3000 }
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+    expect(readsOf(OPENAI)).toHaveLength(2)
+    expect(readsOf(OPENAI)[1].destroyed).toBe(false)
+    const pushed = sent.length
     on.codex = false
     burst(3)
     await settle()
-    expect(readsOf(OPENAI)[0].destroyed).toBe(true)
+    expect(readsOf(OPENAI)[1].destroyed).toBe(true)
+    const p = last()
+    expect(p.codexCli).toBeNull()
+    expect(p.codexApi).toBeNull()
+    expect(p.codexReadAt).toBeNull()
+    expect(sent.length).toBeGreaterThan(pushed)
+    expect(sent.at(-1)).toEqual(p)
+    // The late reply changes nothing, and no further read of the page goes out.
     await vi.advanceTimersByTimeAsync(5000)
-    expect(readsOf(OPENAI)).toHaveLength(1)
+    expect(readsOf(OPENAI)).toHaveLength(2)
     expect(last().codexCli).toBeNull()
-    expect(last().codexReadAt).toBeNull()
+  })
+
+  it('a synchronous throw in the refresh after a burst never escapes, and the next burst is still acted on', async () => {
+    on.codex = true
+    await startSubscribed()
+    expect(last().codexCli).not.toBeNull()
+    // Switching Codex off drops its reading, which builds and pushes a
+    // payload: make building it throw.
+    const spy = vi.spyOn(Date.prototype, 'toISOString').mockImplementation(() => { throw new Error('thrown in the refresh') })
+    let escaped: unknown = null
+    try {
+      on.codex = false
+      burst(1)
+      try { await settle() } catch (e) { escaped = e }
+    } finally {
+      spy.mockRestore()
+    }
+    expect(escaped).toBeNull()
+    on.codex = true
+    burst(1)
+    await settle()
+    expect(readsOf(OPENAI)).toHaveLength(2)
+    expect(last().codexCli).not.toBeNull()
   })
 })
 
