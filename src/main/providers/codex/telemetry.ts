@@ -550,8 +550,12 @@ export function watchAndClaimRollout(
 
   /** The rollout of conversation `id` in this realm, looked up at most once a
    *  second. One another session holds is remembered and not walked for
-   *  again while it is held; once let go it is checked again and taken. */
-  function lookup(id: string): FoundRollout | null {
+   *  again while it is held; once let go it is checked again and taken.
+   *  `preferCwd`: the folder a resume by id prefers (the session's own); a
+   *  pick names a conversation, not a folder, and gives none (fix round 3:
+   *  one picked from another worktree never records the session's folder,
+   *  so preferring it would walk on to the walk's bounds on every pick). */
+  function lookup(id: string, preferCwd?: string): FoundRollout | null {
     if (heldElsewhere && heldElsewhere.id === id) {
       if (claimed.has(heldElsewhere.path)) return null
       const again = stillTheConversation(heldElsewhere.path, id)
@@ -561,7 +565,7 @@ export function watchAndClaimRollout(
     const now = Date.now()
     if (now - lastLookupAt < LOOKUP_INTERVAL_MS) return null
     lastLookupAt = now
-    const found = findCodexRollout(sessionsDir, id, undefined, sessionCwd)
+    const found = findCodexRollout(sessionsDir, id, undefined, preferCwd)
     if (found && claimed.has(found.path)) { heldElsewhere = { path: found.path, id }; return null }
     return found
   }
@@ -655,6 +659,8 @@ export function watchAndClaimRollout(
 
   function removePickFile(): void {
     if (!pickFile || !pickFolderIntact()) return
+    // The folder check and the unlink are separate operations on the path
+    // (Node has no unlinkat); see the pick file's limit in the P3.5 record.
     try { unlinkSync(pickFile) } catch { /* not there, or already gone */ }
   }
 
@@ -718,7 +724,7 @@ export function watchAndClaimRollout(
         const found = realFolderChain(sessionsDir, dirname(given)) && !claimed.has(given) ? stillTheConversation(given, resumeId) : null
         if (found) { claim(found.path, found.meta); return }
       }
-      const found = lookup(resumeId)
+      const found = lookup(resumeId, sessionCwd)
       if (found) claim(found.path, found.meta)
       return
     }

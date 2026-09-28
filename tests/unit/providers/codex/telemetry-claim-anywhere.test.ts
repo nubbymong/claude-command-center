@@ -9,7 +9,7 @@ import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirS
 import { join, dirname, basename } from 'path'
 import { tmpdir } from 'os'
 import { watchAndClaimRollout } from '../../../../src/main/providers/codex/telemetry'
-import { codexFolderIdentity } from '../../../../src/main/providers/codex/rollout-lookup'
+import { codexFolderIdentity, __codexRolloutEntriesVisitedForTests } from '../../../../src/main/providers/codex/rollout-lookup'
 import type { StatuslineData } from '../../../../src/shared/types'
 
 const ID_A = '019dd000-0001-7000-8000-00000000000a'
@@ -621,5 +621,51 @@ describe('the pick folder is the one made for the launch (fix round 3)', () => {
     watch(sessions, '/p/demo', { pickFile: join(other, 'pick.json') }).src.stop()
     expect(readdirSync(other)).toEqual(['pick.json.not-hex.tmp'])
     unlinkSync(join(other, 'pick.json.not-hex.tmp'))
+  })
+})
+
+// P3.5 fix round 3 (quality minor): a pick names a conversation, not a folder.
+// A conversation picked from another worktree records that worktree, never
+// the session's own folder, so its lookup is made with no kept folder: the
+// walk ends with the day folder of its own rollout instead of running on to
+// the walk's bounds on every such pick. A resume by id still prefers the
+// session's folder.
+describe('a pick from another worktree is looked up without the session\'s folder', () => {
+  it('visits only what lies before its rollout, and claims it once it grows', async () => {
+    vi.useFakeTimers()
+    const sessions = realm()
+    const OTHER = (n: number) => `019dd000-0001-7000-8000-${String(n).padStart(12, '0')}`
+    let n = 0
+    for (let month = 7; month <= 9; month++) {
+      for (let day = 1; day <= 20; day++) {
+        const dir = folder(sessions, 2026, month, day)
+        for (let k = 0; k < 3; k++) rollout(dir, OTHER(++n), '/p/demo', `2026-${pad(month)}-${pad(day)}T10:00:0${k}.000Z`)
+      }
+    }
+    const picked = rollout(folder(sessions, 2026, 9, 20), ID_A, '/wt/other', '2026-09-20T12:00:00.000Z', 5)
+    const pickFile = join(sessions, '..', 'pick.json')
+    const { claims, src } = watch(sessions, '/p/demo', { pickFile })
+    const before = __codexRolloutEntriesVisitedForTests()
+    writeFileSync(pickFile, JSON.stringify({ id: ID_A }))
+    await vi.advanceTimersByTimeAsync(300)
+    const visited = __codexRolloutEntriesVisitedForTests() - before
+    // The year, its three months, the twenty days of September, and that day's four files.
+    expect(visited).toBeGreaterThan(0)
+    expect(visited).toBeLessThanOrEqual(1 + 3 + 20 + 4)
+    appendFileSync(picked, tokenLine(new Date().toISOString(), 6) + '\n')
+    await vi.advanceTimersByTimeAsync(600)
+    src.stop()
+    expect(claims).toEqual([{ id: ID_A, cwd: '/wt/other' }])
+  })
+
+  it("a resume by id still prefers the session's folder: a newer copy recording another folder is not claimed", async () => {
+    vi.useFakeTimers()
+    const sessions = realm()
+    rollout(folder(sessions, 2026, 9, 27), ID_A, '/p/other', '2026-09-27T10:00:00.000Z', 7)
+    rollout(folder(sessions, 2026, 9, 20), ID_A, '/p/demo', '2026-09-20T10:00:00.000Z', 5)
+    const { claims, src } = watch(sessions, '/p/demo', { resumeId: ID_A })
+    await vi.advanceTimersByTimeAsync(300)
+    src.stop()
+    expect(claims).toEqual([{ id: ID_A, cwd: '/p/demo' }])
   })
 })
