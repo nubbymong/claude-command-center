@@ -5,7 +5,12 @@
 // its status page is never asked for), and settings that cannot be read are
 // off, even when the accounts service still holds an earlier "on" (fail
 // closed: no answer is never a yes). A start-up whose settings cannot be
-// read yet makes no request at all.
+// read yet makes no request at all. ADR-009 pass (lens G): only an ok read
+// that says on counts, so a missing settings file is off (a fresh first
+// launch reads no status page until its first save, and the refresh after
+// that save reads it); each decision is made from one read, and the
+// service's answer must agree; a switch-off made in the accounts service
+// (no settings save) reaches the poller through its change subscription.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { CLAUDE_ENABLEMENT } from '../../../src/main/providers/claude/enablement'
 import { CODEX_ENABLEMENT } from '../../../src/main/providers/codex/enablement'
@@ -19,9 +24,13 @@ vi.mock('../../../src/main/providers/core', async (orig) => ({
   listProviderPackages: () => FAKE_PACKAGES,
   tryGetProviderPackage: (id: string) => FAKE_PACKAGES.find((p) => p.id === id) ?? null,
 }))
-const disk = vi.hoisted(() => ({ settings: {} as Record<string, unknown>, outcome: 'ok' as 'ok' | 'absent' | 'failed' }))
+const disk = vi.hoisted(() => ({
+  settings: {} as Record<string, unknown>,
+  outcome: 'ok' as 'ok' | 'absent' | 'failed',
+  script: null as null | (() => { value: unknown; outcome: string }),
+}))
 vi.mock('../../../src/main/config-manager', () => ({
-  readConfigChecked: () => (disk.outcome === 'ok' ? { value: disk.settings, outcome: 'ok' } : { value: null, outcome: disk.outcome }),
+  readConfigChecked: () => (disk.script ? disk.script() : disk.outcome === 'ok' ? { value: disk.settings, outcome: 'ok' } : { value: null, outcome: disk.outcome }),
   readConfig: () => null,
 }))
 vi.mock('../../../src/main/provider-account-registry', async () => {
@@ -41,22 +50,29 @@ vi.mock('../../../src/main/provider-account-registry', async () => {
 vi.mock('../../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }))
 vi.mock('electron', () => ({ ipcMain: { handle: vi.fn() } }))
 const requested = vi.hoisted(() => [] as string[])
+const destroyed = vi.hoisted(() => [] as string[])
 vi.mock('https', () => {
+  // Never answers: every read stays in flight until destroyed.
   const get = (url: string) => {
     requested.push(url)
-    const req: any = { on: () => req, destroy: () => {} }
+    const req: any = { on: () => req, destroy: () => { destroyed.push(url) } }
     return req
   }
   return { default: { get }, get }
 })
 
-const { providerOnNow, initProviderAccounts, _resetProviderAccountsForTest } = await import('../../../src/main/provider-accounts')
+const { providerOnNow, initProviderAccounts, getAccountsService, _resetProviderAccountsForTest } = await import('../../../src/main/provider-accounts')
+const ANTHROPIC = 'https://status.claude.com/api/v2/components.json'
+const OPENAI = 'https://status.openai.com/api/v2/components.json'
+const ok = (value: Record<string, unknown>) => ({ value, outcome: 'ok' })
 
 beforeEach(() => {
   _resetProviderAccountsForTest()
   disk.settings = {}
   disk.outcome = 'ok'
+  disk.script = null
   requested.length = 0
+  destroyed.length = 0
 })
 
 describe('providerOnNow', () => {
@@ -90,6 +106,32 @@ describe('providerOnNow', () => {
   })
 })
 
+describe('providerOnNow: the ADR-009 pass (lens G)', () => {
+  it('G1: a missing settings file is off for every provider, before and after the service exists', () => {
+    disk.outcome = 'absent'
+    expect(providerOnNow('claude')).toBe(false)
+    expect(providerOnNow('codex')).toBe(false)
+    initProviderAccounts()
+    expect(providerOnNow('claude')).toBe(false)
+    // An ok read with no Claude key is Claude's effective enablement: on.
+    disk.outcome = 'ok'
+    disk.settings = { theme: 'dark' }
+    expect(providerOnNow('claude')).toBe(true)
+  })
+
+  it('G2: one read decides; settings saying off are off even when a second read would fail and the service last read on', () => {
+    initProviderAccounts()
+    disk.settings = { claudeEnabled: true, codexEnabled: true, codexAnswered: true }
+    expect(getAccountsService()!.preferenceOf('claude')).toBe('on')
+    expect(getAccountsService()!.preferenceOf('codex')).toBe('on')
+    let i = 0
+    disk.script = () => (i++ % 2 === 0 ? ok({ claudeEnabled: false, codexEnabled: false, codexAnswered: true }) : { value: null, outcome: 'failed' })
+    expect(providerOnNow('claude')).toBe(false)
+    i = 0
+    expect(providerOnNow('codex')).toBe(false)
+  })
+})
+
 describe('the status poller on providerOnNow', () => {
   afterEach(async () => {
     const m = await import('../../../src/main/service-status')
@@ -104,6 +146,50 @@ describe('the status poller on providerOnNow', () => {
     m.startServiceStatusPoller(() => null, { providerOn: providerOnNow })
     await vi.advanceTimersByTimeAsync(50)
     expect(requested).toEqual([])
+  })
+
+  it('G1: a fresh first launch (no settings file) reads no status page until the first save; the refresh after it reads Claude Code status', async () => {
+    vi.useFakeTimers()
+    disk.outcome = 'absent'
+    initProviderAccounts()
+    const m = await import('../../../src/main/service-status')
+    m.startServiceStatusPoller(() => null, { providerOn: providerOnNow })
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 50)
+    expect(requested).toEqual([])
+    disk.outcome = 'ok'
+    disk.settings = { theme: 'dark' }
+    void m.refreshServiceStatus()
+    await vi.advanceTimersByTimeAsync(50)
+    expect(requested).toEqual([ANTHROPIC])
+  })
+
+  it('G1: Claude Code saved off, then the settings file briefly missing at a poll: Anthropic is never asked', async () => {
+    vi.useFakeTimers()
+    disk.settings = { claudeEnabled: false, codexEnabled: true, codexAnswered: true }
+    initProviderAccounts()
+    const m = await import('../../../src/main/service-status')
+    m.startServiceStatusPoller(() => null, { providerOn: providerOnNow })
+    await vi.advanceTimersByTimeAsync(50)
+    expect(requested).toEqual([OPENAI])
+    disk.outcome = 'absent'
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 50)
+    expect(requested).not.toContain(ANTHROPIC)
+  })
+
+  it('G3: a switch-off made in the accounts service (no settings save) aborts the read in flight for that provider', async () => {
+    vi.useFakeTimers()
+    disk.settings = { claudeEnabled: true, codexEnabled: true, codexAnswered: true }
+    initProviderAccounts()
+    const svc = getAccountsService()!
+    const m = await import('../../../src/main/service-status')
+    m.startServiceStatusPoller(() => null, { providerOn: providerOnNow, subscribe: (l: () => void) => svc.subscribe(l) })
+    await vi.advanceTimersByTimeAsync(50)
+    expect([...requested].sort()).toEqual([ANTHROPIC, OPENAI].sort())
+    expect(destroyed).toEqual([])
+    const r = await svc.setProviderEnabled('codex', false)
+    expect(r.ok).toBe(true)
+    await vi.advanceTimersByTimeAsync(10)
+    expect(destroyed).toEqual([OPENAI])
   })
 
   it('an unanswered Codex never has its status page asked for', async () => {

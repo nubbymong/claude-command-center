@@ -996,8 +996,13 @@ if (!gotTheLock) {
     setStatuslineUsageSink(recordLiveUsageForSession)
     startStatuslineWatcher(getWindow)
 
-    // Start polling each provider's public status page, only while it is on
-    startServiceStatusPoller(getWindow, { providerOn: providerOnNow })
+    // Start polling each provider's public status page, only while it is on;
+    // a switch made in the accounts service (not a settings save) reaches it
+    // through the service's change subscription.
+    startServiceStatusPoller(getWindow, {
+      providerOn: providerOnNow,
+      subscribe: (listener) => getAccountsService()?.subscribe(listener) ?? (() => {}),
+    })
     // Let a freshly-mounted renderer pull the cached status immediately, rather
     // than waiting up to a full poll interval for the next push (the title-bar
     // status pills were blank until the next poll because the immediate poll

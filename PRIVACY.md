@@ -110,7 +110,7 @@ is not affected by that switch.
 | Destination | Why | When |
 | --- | --- | --- |
 | `api.anthropic.com` | Reads your Claude usage allowance for the status line, using **your** Claude OAuth token | While a session runs, when the status line is enabled |
-| `status.claude.com` | Anthropic's public service-status page, for the title bar's Claude status pills | While Claude Code is on: when the app starts, every 5 minutes, and at once when Claude Code is turned on. Never while it is off |
+| `status.claude.com` | Anthropic's public service-status page, for the title bar's Claude status pills | While Claude Code is on: when the app starts, every 5 minutes, and at once when Claude Code is turned on. Never while it is off, and not on a first launch until its settings are first saved |
 | `status.openai.com` | OpenAI's public service-status page, for the title bar's Codex status pill | While Codex is on: when the app starts, every 5 minutes, and at once when Codex is turned on. Never while it is off or not set up |
 | `api.github.com`, `github.com` | Checks for app updates and downloads them; powers the optional GitHub integration | On update checks, and when you use the GitHub features |
 | `raw.githubusercontent.com` | Fetches a public model-pricing table (LiteLLM's open dataset) so cost figures are accurate | At most once every 24 hours, cached locally |

@@ -350,6 +350,80 @@ describe('provider status: time is bounded', () => {
   })
 })
 
+describe('provider status: the ADR-009 pass (lens N)', () => {
+  const tick = () => vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+
+  it('N1: a page that keeps failing does not freeze its last reading: two failed polls in a row read as status unknown, the read time kept', async () => {
+    on.codex = true
+    await start()
+    const first = last()
+    expect(first.codexCli.status).toBe('operational')
+    expect(first.claudeCode.status).toBe('operational')
+    // Both pages now fail: a 503, then a page that is not a components list.
+    replies[OPENAI] = { status: 503, body: '' }
+    replies[ANTHROPIC] = { status: 200, body: '<html>blocked</html>' }
+    await tick()
+    // One failure: the last reading stands.
+    expect(last().codexCli.status).toBe('operational')
+    expect(last().claudeCode.status).toBe('operational')
+    const published = sent.length
+    await tick()
+    const p = last()
+    expect(p.codexCli).toBeNull()
+    expect(p.codexApi).toBeNull()
+    expect(p.claudeCode).toBeNull()
+    expect(p.claudeAi).toBeNull()
+    expect(p.api).toBeNull()
+    expect(p.codexReadAt).toBe(first.codexReadAt)
+    expect(p.claudeReadAt).toBe(first.claudeReadAt)
+    expect(sent.length).toBeGreaterThan(published)
+    expect(sent.at(-1)).toEqual(p)
+    // The page answers again: the reading is back.
+    replies[OPENAI] = { status: 200, body: openaiBody() }
+    await tick()
+    expect(last().codexCli.status).toBe('operational')
+    expect(last().codexReadAt).not.toBe(first.codexReadAt)
+  })
+
+  it('N1: a failure, then a success, then a failure does not count as two in a row', async () => {
+    on.claude = false
+    on.codex = true
+    await start()
+    replies[OPENAI] = { status: 503, body: '' }
+    await tick()
+    replies[OPENAI] = { status: 200, body: openaiBody() }
+    await tick()
+    replies[OPENAI] = { status: 503, body: '' }
+    await tick()
+    expect(last().codexCli.status).toBe('operational')
+  })
+
+  it('N2: a window whose send throws (torn down) breaks nothing: no throw out of start, a poll or a refresh, and no unhandled rejection', async () => {
+    const rejections: unknown[] = []
+    const onRejection = (r: unknown) => { rejections.push(r) }
+    process.on('unhandledRejection', onRejection)
+    try {
+      on.codex = true
+      const badWin = { isDestroyed: () => false, webContents: { send: () => { throw new Error('Object has been destroyed') }, mainFrame } }
+      mod = await import('../../../src/main/service-status')
+      expect(() => mod.startServiceStatusPoller(() => badWin as any, { providerOn: (id: string) => on[id] === true })).not.toThrow()
+      await settle()
+      await tick()
+      on.codex = false
+      let r: Promise<void> | undefined
+      expect(() => { r = mod.refreshServiceStatus() }).not.toThrow()
+      await expect(r).resolves.toBeUndefined()
+      await settle()
+      expect(rejections).toEqual([])
+      // The payload is still kept for the next pull.
+      expect(last().codexCli).toBeNull()
+      expect(last().claudeCode.status).toBe('operational')
+    } finally {
+      process.off('unhandledRejection', onRejection)
+    }
+  })
+})
+
 describe('provider status: the renderer pull answers the app window only', () => {
   it('its own window\'s top frame gets the payload; another sender or a subframe gets nothing', async () => {
     await start()
