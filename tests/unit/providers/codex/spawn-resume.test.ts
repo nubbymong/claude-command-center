@@ -145,6 +145,19 @@ describe('an exact resume on relaunch or Restart (rows 34, 35)', () => {
     expect(gone.cwd).toBe(configured)
   })
 
+  it('says when no rollout of the conversation records the directory the session kept (thesis 6)', () => {
+    const project = temp('project')
+    const { sessionsDir } = realmWith(ID, project)
+    const kept = new CodexProvider().buildSpawnCommand({
+      sessionId: 'sid', realmLaunch: launchIn(sessionsDir), cwd: temp('configured'), resume: { uuid: ID, cwd: project }, codexOptions,
+    })
+    expect(kept.resumeCwdMismatch).toBe(false)
+    const other = new CodexProvider().buildSpawnCommand({
+      sessionId: 'sid', realmLaunch: launchIn(sessionsDir), cwd: temp('configured'), resume: { uuid: ID, cwd: temp('elsewhere') }, codexOptions,
+    })
+    expect(other.resumeCwdMismatch).toBe(true)
+  })
+
   it('an id that is not a conversation id never reaches argv', () => {
     const project = temp('project')
     const { sessionsDir } = realmWith(ID, project)

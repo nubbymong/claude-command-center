@@ -147,24 +147,29 @@ function walkRollouts(home, maxDays, where, platform) {
     ? [{ path: where, branch: null, isMain: true }]
     : (Array.isArray(where) ? where.filter((w) => w && typeof w.path === 'string' && w.path) : [])
   const sessionsDir = path.join(home, 'sessions')
-  if (!fs.existsSync(sessionsDir)) return []
+  if (!isRealFolder(sessionsDir)) return []
   const matches = []
 
   for (const dayDir of dayFolders(sessionsDir, maxDays, Date.now())) {
     if (matches.length >= MAX_LISTED) break
-    if (!fs.existsSync(dayDir)) continue
+    // Real folders only, at every level (P3.5 fix round 1): a year, month or
+    // day folder that is a link or junction is not entered.
+    if (!realFolderChain(sessionsDir, dayDir)) continue
 
     let files
     try {
-      files = fs.readdirSync(dayDir).filter(f => f.startsWith('rollout-') && f.endsWith('.jsonl'))
+      files = fs.readdirSync(dayDir, { withFileTypes: true })
+        .filter((e) => e.isFile() && e.name.startsWith('rollout-') && e.name.endsWith('.jsonl'))
+        .map((e) => e.name)
     } catch { continue }
 
-    // Sort newest-first within day by mtime
+    // Sort newest-first within day by mtime (plain files only: a file link is not read)
     const dayEntries = []
     for (const f of files) {
       const fp = path.join(dayDir, f)
       let st
-      try { st = fs.statSync(fp) } catch { continue }
+      try { st = fs.lstatSync(fp) } catch { continue }
+      if (!st.isFile()) continue
       dayEntries.push({ fp, mtime: st.mtimeMs })
     }
     dayEntries.sort((a, b) => b.mtime - a.mtime)
@@ -196,6 +201,25 @@ function walkRollouts(home, maxDays, where, platform) {
   // Final sort across days
   matches.sort((a, b) => b.mtime - a.mtime)
   return matches.slice(0, MAX_LISTED)
+}
+
+// -- Real folders ---------------------------------------------------
+// A folder that is a folder, not a link or junction to one (lstat).
+function isRealFolder(dir) {
+  try { return fs.lstatSync(dir).isDirectory() } catch { return false }
+}
+
+// Every folder from `sessionsDir` down to `dir` is a real one.
+function realFolderChain(sessionsDir, dir) {
+  const rel = path.relative(sessionsDir, dir)
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return false
+  let at = sessionsDir
+  if (!isRealFolder(at)) return false
+  for (const part of rel.split(path.sep)) {
+    at = path.join(at, part)
+    if (!isRealFolder(at)) return false
+  }
+  return true
 }
 
 // -- samePath -------------------------------------------------------

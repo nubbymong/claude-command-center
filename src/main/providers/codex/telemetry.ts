@@ -12,11 +12,11 @@
  *   watchAndClaimRollout    -- 250ms-poll claim + 500ms-poll tail pipeline
  */
 
-import { readFileSync, readdirSync, lstatSync, statSync, unlinkSync, openSync, fstatSync, readSync, closeSync, constants as fsConstants } from 'fs'
-import { join } from 'path'
+import { readdirSync, lstatSync, statSync, unlinkSync, openSync, fstatSync, readSync, closeSync, constants as fsConstants } from 'fs'
+import { join, relative, isAbsolute, sep } from 'path'
 import { computeCodexCostUsd } from './pricing'
-import { CODEX_CONVERSATION_ID_RE, codexDayFolders, findCodexRollout, parseSessionMetaLine, readRolloutFirstLine } from './rollout-lookup'
-import type { RolloutSessionMeta } from './rollout-lookup'
+import { CODEX_CONVERSATION_ID_RE, codexDayFolders, findCodexRollout, isRealFolder, parseSessionMetaLine, readRolloutFirstLine } from './rollout-lookup'
+import type { FoundRollout, RolloutSessionMeta } from './rollout-lookup'
 import { normaliseCodexRateLimits, mergeAllowanceReadings, readingToBuckets, isoFromEpochMs, CODEX_DEFAULT_LIMIT_ID } from './rate-limits'
 import type { StatuslineData } from '../../../shared/types'
 import type { AllowanceReading } from '../../../shared/usage-types'
@@ -93,6 +93,111 @@ export interface TokenCountEvent {
 // ── Parser ───────────────────────────────────────────────────────────────────
 
 /**
+ * What the status line needs from a rollout, read a line at a time (P3.5 fix
+ * round 1), so a watcher reads only what a rollout gained since its last read:
+ *   meta          -- session_meta fields (id, cwd, model, cli_version, timestamp),
+ *                    with the model and effort of the latest turn_context
+ *   contextWindow -- model_context_window of the latest task_started, or null
+ *   latest        -- the latest token_count that has real usage data (info != null)
+ *   allowance     -- the account's allowances from EVERY token_count that carries
+ *                    rate_limits (the pre-response info-null one included): the
+ *                    newest reading of each limit, stamped with the time of the
+ *                    newest event that had one; null when none did (merged a
+ *                    reading at a time: the same result as merging them all)
+ */
+export interface RolloutReadState {
+  meta: RolloutMeta | null
+  contextWindow: number | null
+  latest: TokenCountEvent | null
+  allowance: AllowanceReading | null
+}
+
+export function newRolloutReadState(): RolloutReadState {
+  return { meta: null, contextWindow: null, latest: null, allowance: null }
+}
+
+/** One JSONL line of a rollout into `state`; `onTokenCount` hears each usage
+ *  event. A line that is not a record this reads is skipped. */
+export function applyRolloutLine(state: RolloutReadState, line: string, onTokenCount?: (tc: TokenCountEvent) => void): void {
+  let evt: Record<string, unknown>
+  try {
+    evt = JSON.parse(line) as Record<string, unknown>
+  } catch {
+    return
+  }
+  if (!evt || typeof evt !== 'object') return
+  const payload = evt.payload as Record<string, unknown> | undefined
+  if (!payload || typeof payload !== 'object') return
+
+  if (evt.type === 'session_meta') {
+    state.meta = {
+      id: String(payload.id ?? ''),
+      cwd: String(payload.cwd ?? ''),
+      // model is populated below from turn_context; session_meta only has model_provider
+      model: String(payload.model ?? ''),
+      cli_version: String(payload.cli_version ?? ''),
+      timestamp: String(evt.timestamp ?? ''),
+    }
+    return
+  }
+
+  // turn_context carries the resolved model name (e.g. "gpt-5.5") and the
+  // reasoning effort (e.g. "xhigh"). The effort is on payload.effort directly.
+  if (evt.type === 'turn_context' && state.meta) {
+    if (typeof payload.model === 'string' && payload.model) state.meta.model = payload.model
+    if (typeof payload.effort === 'string' && payload.effort) state.meta.reasoningEffort = payload.effort
+    return
+  }
+
+  if (evt.type !== 'event_msg') return
+
+  if (payload.type === 'task_started') {
+    const cw = payload.model_context_window
+    if (typeof cw === 'number') state.contextWindow = cw
+    return
+  }
+
+  if (payload.type === 'token_count') {
+    // The allowance first: a pre-response event (info null) already carries it.
+    if (payload.rate_limits != null) {
+      const at = Date.parse(String(evt.timestamp ?? ''))
+      state.allowance = mergeAllowanceReadings([state.allowance, normaliseCodexRateLimits(payload.rate_limits, 'rollout', Number.isFinite(at) ? at : null)])
+    }
+    // info is null for pre-response token_count events -- no usage in those
+    const info = payload.info as Record<string, unknown> | null
+    if (!info) return
+
+    const usage = info.total_token_usage as Record<string, unknown>
+    if (!usage) return
+
+    const tokenCountEvent: TokenCountEvent = {
+      total_token_usage: {
+        input_tokens: Number(usage.input_tokens ?? 0),
+        cached_input_tokens: Number(usage.cached_input_tokens ?? 0),
+        output_tokens: Number(usage.output_tokens ?? 0),
+        reasoning_output_tokens: Number(usage.reasoning_output_tokens ?? 0),
+        total_tokens: Number(usage.total_tokens ?? 0),
+      },
+      rate_limits: payload.rate_limits as TokenCountEvent['rate_limits'] | undefined,
+    }
+
+    const lastUsage = info.last_token_usage as Record<string, unknown> | undefined
+    if (lastUsage) {
+      tokenCountEvent.last_token_usage = {
+        input_tokens: Number(lastUsage.input_tokens ?? 0),
+        cached_input_tokens: Number(lastUsage.cached_input_tokens ?? 0),
+        output_tokens: Number(lastUsage.output_tokens ?? 0),
+        reasoning_output_tokens: Number(lastUsage.reasoning_output_tokens ?? 0),
+        total_tokens: Number(lastUsage.total_tokens ?? 0),
+      }
+    }
+
+    state.latest = tokenCountEvent
+    onTokenCount?.(tokenCountEvent)
+  }
+}
+
+/**
  * Parse raw JSONL text from a Codex rollout file.
  *
  * Returns:
@@ -112,97 +217,13 @@ export function parseCodexRollout(text: string): {
   contextWindow: number | null
   allowance: AllowanceReading | null
 } {
-  const lines = text.split('\n').filter(Boolean)
-  let meta: RolloutMeta | null = null
+  const state = newRolloutReadState()
   const tokenCounts: TokenCountEvent[] = []
-  let contextWindow: number | null = null
-  const readings: (AllowanceReading | null)[] = []
-
-  for (const line of lines) {
-    let evt: Record<string, unknown>
-    try {
-      evt = JSON.parse(line) as Record<string, unknown>
-    } catch {
-      continue
-    }
-
-    if (evt.type === 'session_meta') {
-      const p = evt.payload as Record<string, unknown>
-      meta = {
-        id: String(p.id ?? ''),
-        cwd: String(p.cwd ?? ''),
-        // model is populated below from turn_context; session_meta only has model_provider
-        model: String(p.model ?? ''),
-        cli_version: String(p.cli_version ?? ''),
-        timestamp: String(evt.timestamp ?? ''),
-      }
-      continue
-    }
-
-    // turn_context carries the resolved model name (e.g. "gpt-5.5") and the
-    // reasoning effort (e.g. "xhigh"). The effort is on payload.effort directly.
-    if (evt.type === 'turn_context' && meta) {
-      const p = evt.payload as Record<string, unknown>
-      if (typeof p.model === 'string' && p.model) {
-        meta.model = p.model
-      }
-      if (typeof p.effort === 'string' && p.effort) {
-        meta.reasoningEffort = p.effort
-      }
-      continue
-    }
-
-    if (evt.type !== 'event_msg') continue
-
-    const payload = evt.payload as Record<string, unknown>
-
-    if (payload.type === 'task_started') {
-      const cw = (payload as Record<string, unknown>).model_context_window
-      if (typeof cw === 'number') contextWindow = cw
-      continue
-    }
-
-    if (payload.type === 'token_count') {
-      // The allowance first: a pre-response event (info null) already carries it.
-      if (payload.rate_limits != null) {
-        const at = Date.parse(String(evt.timestamp ?? ''))
-        readings.push(normaliseCodexRateLimits(payload.rate_limits, 'rollout', Number.isFinite(at) ? at : null))
-      }
-      // info is null for pre-response token_count events -- no usage in those
-      const info = payload.info as Record<string, unknown> | null
-      if (!info) continue
-
-      const usage = info.total_token_usage as Record<string, unknown>
-      if (!usage) continue
-
-      const tokenCountEvent: TokenCountEvent = {
-        total_token_usage: {
-          input_tokens: Number(usage.input_tokens ?? 0),
-          cached_input_tokens: Number(usage.cached_input_tokens ?? 0),
-          output_tokens: Number(usage.output_tokens ?? 0),
-          reasoning_output_tokens: Number(usage.reasoning_output_tokens ?? 0),
-          total_tokens: Number(usage.total_tokens ?? 0),
-        },
-        rate_limits: payload.rate_limits as TokenCountEvent['rate_limits'] | undefined,
-      }
-
-      const lastUsage = info.last_token_usage as Record<string, unknown> | undefined
-      if (lastUsage) {
-        tokenCountEvent.last_token_usage = {
-          input_tokens: Number(lastUsage.input_tokens ?? 0),
-          cached_input_tokens: Number(lastUsage.cached_input_tokens ?? 0),
-          output_tokens: Number(lastUsage.output_tokens ?? 0),
-          reasoning_output_tokens: Number(lastUsage.reasoning_output_tokens ?? 0),
-          total_tokens: Number(lastUsage.total_tokens ?? 0),
-        }
-      }
-
-      tokenCounts.push(tokenCountEvent)
-    }
+  for (const line of text.split('\n')) {
+    if (line) applyRolloutLine(state, line, (tc) => tokenCounts.push(tc))
   }
-
-  if (!meta) throw new Error('rollout missing session_meta')
-  return { meta, tokenCounts, contextWindow, allowance: mergeAllowanceReadings(readings) }
+  if (!state.meta) throw new Error('rollout missing session_meta')
+  return { meta: state.meta, tokenCounts, contextWindow: state.contextWindow, allowance: state.allowance }
 }
 
 // ── Mapper ───────────────────────────────────────────────────────────────────
@@ -336,6 +357,48 @@ const READ_NO_FOLLOW = fsConstants.O_RDONLY | (typeof fsConstants.O_NOFOLLOW ===
 /** A decision the resume picker recorded (see CodexClaimOptions.pickFile). */
 type PickDecision = { kind: 'id'; id: string } | { kind: 'fresh'; at: number }
 
+/** What a watcher reads of a rollout from its start (a claim, or a rollout
+ *  replaced): all of it when it is no bigger than these two together, else
+ *  its head (session_meta, the first task_started) and its tail (the newest
+ *  events). A resumed conversation's rollout can be many megabytes. */
+export const CLAIM_HEAD_BYTES = 256 * 1024
+export const CLAIM_TAIL_BYTES = 1024 * 1024
+/** The most a watcher reads of what a rollout gained since its last read; a
+ *  larger gain is read from the start again (head and tail). */
+export const READ_STEP_MAX_BYTES = 1024 * 1024
+
+/** Bytes the watchers have read from rollouts after a claim (tests read it). */
+let rolloutBytesRead = 0
+export function __codexRolloutBytesReadForTests(): number { return rolloutBytesRead }
+
+/** Bytes [start, end) of an open file, counted. */
+function readSpan(fd: number, start: number, end: number): Buffer {
+  const len = Math.max(0, end - start)
+  const buf = Buffer.alloc(len)
+  let got = 0
+  while (got < len) {
+    const n = readSync(fd, buf, got, len - got, start + got)
+    if (n <= 0) break
+    got += n
+  }
+  rolloutBytesRead += got
+  return got === len ? buf : buf.subarray(0, got)
+}
+
+/** Whether every folder from `sessionsDir` down to `dir` is a real folder,
+ *  not a link or junction to one. */
+function realFolderChain(sessionsDir: string, dir: string): boolean {
+  const rel = relative(sessionsDir, dir)
+  if (!rel || rel.startsWith('..') || isAbsolute(rel)) return false
+  let at = sessionsDir
+  if (!isRealFolder(at)) return false
+  for (const part of rel.split(sep)) {
+    at = join(at, part)
+    if (!isRealFolder(at)) return false
+  }
+  return true
+}
+
 /**
  * Watch and claim the Codex rollout file for a spawned session.
  *
@@ -352,10 +415,12 @@ type PickDecision = { kind: 'id'; id: string } | { kind: 'fresh'; at: number }
  *      sessionCwd AND whose timestamp is within [spawnTimestamp - 5000ms, +inf).
  *      Only each file's first line is read, bounded; a file that settled as
  *      another session's is not read again.
- * 2. Once claimed, poll parseAndEmit every 500ms. fs.watch is NOT used because
- *    on Windows it misses append events when the Codex CLI writer holds the
- *    file open -- same failure mode that hit the Claude statusline in v1.2.134
- *    (SMB writes). The lastSize dedupe in parseAndEmit keeps the polling cheap.
+ * 2. Once claimed, poll every 500ms. fs.watch is NOT used because on Windows
+ *    it misses append events when the Codex CLI writer holds the file open --
+ *    same failure mode that hit the Claude statusline in v1.2.134 (SMB
+ *    writes). Each poll looks at the size first and reads only what the
+ *    rollout gained; the claim reads it all when small, else its head and
+ *    tail (CLAIM_HEAD_BYTES, CLAIM_TAIL_BYTES).
  * 3. If no claim happens within 10s, log a "still polling" warning. If still
  *    no claim at 30s, give up (--ephemeral path) and stop polling. The 30s
  *    cap accounts for cold-start delay -- on Windows, Codex 0.128.0 typically
@@ -397,9 +462,13 @@ export function watchAndClaimRollout(
   let intervalHandle: ReturnType<typeof setInterval> | null = null
   let tailIntervalHandle: ReturnType<typeof setInterval> | null = null
   let stopped = false
-  let lastSize = 0
   let contextWindow: number | null = null
-  let meta: RolloutMeta | null = null
+  /** What the claimed rollout has said so far, and how far it has been read
+   *  (through its last complete line). */
+  let readState = newRolloutReadState()
+  let offset = 0
+  /** A conversation another session holds: not walked for again while it does. */
+  let heldElsewhere: { path: string; id: string } | null = null
   /** Files whose first line settled as not this session's: never read again. */
   const settled = new Set<string>()
   let lastLookupAt = Number.NEGATIVE_INFINITY
@@ -413,22 +482,22 @@ export function watchAndClaimRollout(
   function claim(fullPath: string, found: RolloutSessionMeta): void {
     claimedPath = fullPath
     claimed.add(fullPath)
-    meta = { id: found.id, cwd: found.cwd, model: found.model, cli_version: found.cliVersion, timestamp: found.timestamp }
     if (claimOpts?.onClaim && CODEX_CONVERSATION_ID_RE.test(found.id)) {
       try { claimOpts.onClaim({ id: found.id, cwd: found.cwd }) } catch { /* a listener never stops the watch */ }
     }
 
-    // Initial parse covers the case where session_meta + task_started +
-    // token_count are all already present at claim time.
-    parseAndEmit(fullPath)
+    // What is already there: all of it when small, else its head and its
+    // tail (a resumed conversation's rollout can be large; P3.5 fix round 1).
+    offset = 0
+    if (readNew(fullPath)) emit()
 
     // Replaced fs.watch with a polling interval -- fs.watch on Windows
     // misses append events when the Codex CLI writer holds the file open
-    // and appends progressively. lastSize dedupe in parseAndEmit keeps
-    // the polling cheap when the file has not grown.
+    // and appends progressively. Each poll looks at the size first and reads
+    // only what the rollout gained, so a quiet rollout costs one stat.
     tailIntervalHandle = setInterval(() => {
       if (stopped || !claimedPath) return
-      parseAndEmit(claimedPath)
+      if (readNew(claimedPath)) emit()
     }, 500)
 
     // Claimed -- the interval can stop polling
@@ -438,13 +507,99 @@ export function watchAndClaimRollout(
     }
   }
 
-  /** The rollout of conversation `id` in this realm, looked up at most once a second. */
-  function lookup(id: string): ReturnType<typeof findCodexRollout> {
+  /** The rollout of conversation `id` in this realm, looked up at most once a
+   *  second. One another session holds is remembered and not walked for
+   *  again while it is held; once let go it is checked again and taken. */
+  function lookup(id: string): FoundRollout | null {
+    if (heldElsewhere && heldElsewhere.id === id) {
+      if (claimed.has(heldElsewhere.path)) return null
+      const again = stillTheConversation(heldElsewhere.path, id)
+      heldElsewhere = null
+      if (again) return again
+    }
     const now = Date.now()
     if (now - lastLookupAt < LOOKUP_INTERVAL_MS) return null
     lastLookupAt = now
-    const found = findCodexRollout(sessionsDir, id)
-    return found && !claimed.has(found.path) ? found : null
+    const found = findCodexRollout(sessionsDir, id, undefined, sessionCwd)
+    if (found && claimed.has(found.path)) { heldElsewhere = { path: found.path, id }; return null }
+    return found
+  }
+
+  /** `file`, when it is still a plain file whose session_meta names `id`. */
+  function stillTheConversation(file: string, id: string): FoundRollout | null {
+    try { if (!lstatSync(file).isFile()) return null } catch { return null }
+    const head = readRolloutFirstLine(file)
+    if (!head || head.kind !== 'line') return null
+    const found = parseSessionMetaLine(head.line)
+    return found && found.id.toLowerCase() === id.toLowerCase() ? { path: file, meta: found, dated: false } : null
+  }
+
+  /** The complete lines of `buf` into the read state: the bytes used (through
+   *  its last newline; a line still being written waits for the next read). */
+  function applyLines(buf: Buffer): number {
+    const end = buf.lastIndexOf(0x0a) + 1
+    if (end <= 0) return 0
+    for (const line of buf.subarray(0, end).toString('utf-8').split('\n')) {
+      if (line) applyRolloutLine(readState, line)
+    }
+    return end
+  }
+
+  /** Read what `file` gained since the last read: true when a line was read.
+   *  The size first: no growth, nothing read. From the start (a claim, a
+   *  rollout replaced by a smaller one, or a gain past READ_STEP_MAX_BYTES):
+   *  all of it when it is no bigger than its head and tail, else its head
+   *  (session_meta, the first task_started) and its tail (the newest
+   *  events), each bounded. */
+  function readNew(file: string): boolean {
+    let fd: number | null = null
+    try {
+      fd = openSync(file, 'r')
+      const size = fstatSync(fd).size
+      if (offset > 0 && size === offset) return false
+      if (offset === 0 || size < offset || size - offset > READ_STEP_MAX_BYTES) {
+        readState = newRolloutReadState()
+        if (size <= CLAIM_HEAD_BYTES + CLAIM_TAIL_BYTES) {
+          offset = applyLines(readSpan(fd, 0, size))
+          return offset > 0
+        }
+        applyLines(readSpan(fd, 0, CLAIM_HEAD_BYTES))
+        const tailStart = size - CLAIM_TAIL_BYTES
+        const tail = readSpan(fd, tailStart, size)
+        // The tail's first line may be cut: it is skipped.
+        const first = tail.indexOf(0x0a) + 1
+        const used = first > 0 ? applyLines(tail.subarray(first)) : 0
+        offset = first > 0 ? tailStart + first + used : size
+        return true
+      }
+      const used = applyLines(readSpan(fd, offset, size))
+      offset += used
+      return used > 0
+    } catch {
+      // Read error -- try again next poll
+      return false
+    } finally {
+      if (fd !== null) { try { closeSync(fd) } catch { /* already closed */ } }
+    }
+  }
+
+  /** The status line from what the rollout has said, once its session_meta was read. */
+  function emit(): void {
+    const meta = readState.meta
+    if (!meta) return
+    if (readState.contextWindow != null && contextWindow == null) contextWindow = readState.contextWindow
+    const allowance = readState.allowance
+    if (allowance && onAllowance) {
+      try { onAllowance(allowance) } catch { /* the live figure never stops the watch */ }
+    }
+    try {
+      if (readState.latest) {
+        onUpdate(withAllowance(mapTokenCountToStatusline(readState.latest, meta, sessionId, contextWindow), allowance))
+      } else if (allowance) {
+        // Only the pre-response event so far: its allowance is already real.
+        onUpdate(withAllowance({ sessionId }, allowance))
+      }
+    } catch { /* a sink that throws never stops the watch */ }
   }
 
   function removePickFile(): void {
@@ -534,9 +689,14 @@ export function watchAndClaimRollout(
 
     const now = Date.now()
     for (const dateDir of codexDayFolders(sessionsDir, [now, now - 24 * 3600 * 1000])) {
+      // Real folders only, at every level, and plain files only: a link or
+      // junction anywhere on the way is not followed (P3.5 fix round 1).
+      if (!realFolderChain(sessionsDir, dateDir)) continue
       let files: string[]
       try {
-        files = readdirSync(dateDir).filter((f) => f.startsWith('rollout-') && f.endsWith('.jsonl'))
+        files = readdirSync(dateDir, { withFileTypes: true })
+          .filter((e) => e.isFile() && e.name.startsWith('rollout-') && e.name.endsWith('.jsonl'))
+          .map((e) => e.name)
       } catch {
         continue
       }
@@ -555,40 +715,6 @@ export function watchAndClaimRollout(
         }
         settled.add(fullPath)
       }
-    }
-  }
-
-  function parseAndEmit(filePath: string): void {
-    try {
-      const text = readFileSync(filePath, 'utf-8')
-      // JSONL rollouts are append-only. A size shrink means the file was replaced
-      // (rotation, restart, or external delete-and-recreate); reset lastSize to
-      // force a fresh parse from offset 0.
-      if (text.length < lastSize) { lastSize = 0 }
-      if (text.length === lastSize) return
-      lastSize = text.length
-
-      try {
-        const { meta: parsedMeta, tokenCounts, contextWindow: cw, allowance } = parseCodexRollout(text)
-        // Refresh meta on each parse so turn_context model updates are captured.
-        // session_meta.payload has no model field; turn_context carries the resolved model name.
-        meta = parsedMeta
-        if (cw != null && contextWindow == null) contextWindow = cw
-        if (allowance && onAllowance) {
-          try { onAllowance(allowance) } catch { /* the live figure never stops the watch */ }
-        }
-        if (tokenCounts.length > 0 && meta) {
-          const latest = tokenCounts[tokenCounts.length - 1]
-          onUpdate(withAllowance(mapTokenCountToStatusline(latest, meta, sessionId, contextWindow), allowance))
-        } else if (allowance) {
-          // Only the pre-response event so far: its allowance is already real.
-          onUpdate(withAllowance({ sessionId }, allowance))
-        }
-      } catch {
-        // Partial read or missing session_meta -- will retry on next change
-      }
-    } catch {
-      // File read error -- skip
     }
   }
 

@@ -5,10 +5,10 @@
 // only the launch's own realm, only real folders, the name and the
 // session_meta must agree, and a resume by id is not tied to a directory.
 import { describe, it, expect, afterEach } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, linkSync } from 'fs'
 import { join } from 'path'
 import { tmpdir, homedir } from 'os'
-import { findCodexRollout, resolveCodexResume, codexDayFolders, sameDirectory, readRolloutFirstLine, CODEX_ROLLOUT_HEAD_MAX_BYTES } from '../../../../src/main/providers/codex/rollout-lookup'
+import { findCodexRollout, findCodexRollouts, chooseCodexRollout, resolveCodexResume, codexDayFolders, sameDirectory, readRolloutFirstLine, CODEX_ROLLOUT_HEAD_MAX_BYTES } from '../../../../src/main/providers/codex/rollout-lookup'
 
 const ID = '019dd000-0001-7000-8000-0000000000f1'
 const temps: string[] = []
@@ -20,6 +20,14 @@ function put(sessionsDir: string, ymd: [string, string, string], id: string, cwd
   mkdirSync(dir, { recursive: true })
   const file = join(dir, `rollout-2026-09-01T00-00-00-${id}.jsonl`)
   writeFileSync(file, JSON.stringify({ timestamp: '2026-09-01T00:00:00.000Z', type: 'session_meta', payload: { id: metaId, cwd } }) + '\n')
+  return file
+}
+/** A rollout whose session_meta carries its own time. */
+function putAt(sessionsDir: string, ymd: [string, string, string], id: string, cwd: string, iso: string): string {
+  const dir = join(sessionsDir, ...ymd)
+  mkdirSync(dir, { recursive: true })
+  const file = join(dir, `rollout-${iso.slice(0, 19).replace(/:/g, '-')}-${id}.jsonl`)
+  writeFileSync(file, JSON.stringify({ timestamp: iso, type: 'session_meta', payload: { id, cwd } }) + '\n')
   return file
 }
 
@@ -58,7 +66,7 @@ describe('resolveCodexResume', () => {
     const sessions = join(temp('realm'), 'sessions')
     const project = temp('project')
     put(sessions, ['2026', '09', '01'], ID, project)
-    expect(resolveCodexResume({ uuid: ID, cwd: project }, { sessionsDir: sessions, configuredCwd: '/configured' })).toEqual({ resumeId: ID, cwd: project })
+    expect(resolveCodexResume({ uuid: ID, cwd: project }, { sessionsDir: sessions, configuredCwd: '/configured' })).toEqual({ resumeId: ID, cwd: project, cwdMismatch: false })
   })
 
   it('in the configured directory otherwise: another directory, a relative one, or one at or above home', () => {
@@ -119,5 +127,85 @@ describe('the helpers', () => {
     expect(readRolloutFirstLine(f)).toEqual({ kind: 'partial' })
     writeFileSync(f, '{"a":1}\n{"b":2}\n')
     expect(readRolloutFirstLine(f)).toEqual({ kind: 'line', line: '{"a":1}' })
+  })
+})
+
+// P3.5 fix round 1 (theses 4, 5, 6): the walk is bounded, never follows a
+// link at any level, and says which of two rollouts with one id it takes.
+describe('findCodexRollouts: bounds, links and duplicates', () => {
+  const OTHER = (n: number) => `019dd000-0001-7000-8000-${String(n).padStart(12, '0')}`
+
+  it('gives up past its bound on day folders (thesis 5)', () => {
+    const sessions = join(temp('realm'), 'sessions')
+    put(sessions, ['2026', '09', '01'], ID, '/p')
+    for (let d = 2; d <= 5; d++) put(sessions, ['2026', '09', String(d).padStart(2, '0')], OTHER(d), '/p')
+    expect(findCodexRollouts(sessions, ID, { maxDays: 4 })).toEqual([])
+    expect(findCodexRollouts(sessions, ID, { maxDays: 5 }).map((f) => f.meta.id)).toEqual([ID])
+  })
+
+  it('gives up past its bound on folder entries, and never reads more files than it has left (thesis 5)', () => {
+    const sessions = join(temp('realm'), 'sessions')
+    for (let n = 1; n <= 40; n++) put(sessions, ['2026', '09', '01'], OTHER(n), '/p')
+    put(sessions, ['2026', '09', '01'], ID, '/p')
+    expect(findCodexRollouts(sessions, ID, { maxEntries: 20 })).toEqual([])
+    expect(findCodexRollouts(sessions, ID, { maxEntries: 100 }).map((f) => f.meta.id)).toEqual([ID])
+  })
+
+  it('never follows a link at the year or month level, nor a sessions folder that is itself a link (thesis 4)', () => {
+    const outside = join(temp('outside'), 'sessions')
+    put(outside, ['2026', '09', '01'], ID, '/p')
+    const yearLinked = join(temp('realm'), 'sessions')
+    mkdirSync(yearLinked, { recursive: true })
+    symlinkSync(join(outside, '2026'), join(yearLinked, '2026'), 'junction')
+    expect(findCodexRollouts(yearLinked, ID)).toEqual([])
+    const monthLinked = join(temp('realm'), 'sessions')
+    mkdirSync(join(monthLinked, '2026'), { recursive: true })
+    symlinkSync(join(outside, '2026', '09'), join(monthLinked, '2026', '09'), 'junction')
+    expect(findCodexRollouts(monthLinked, ID)).toEqual([])
+    const home = temp('realm')
+    symlinkSync(outside, join(home, 'sessions'), 'junction')
+    expect(findCodexRollouts(join(home, 'sessions'), ID)).toEqual([])
+  })
+
+  it('never follows a file link (thesis 4)', (ctx) => {
+    const outside = join(temp('outside'), 'sessions')
+    const real = put(outside, ['2026', '09', '01'], ID, '/p')
+    const sessions = join(temp('realm'), 'sessions')
+    mkdirSync(join(sessions, '2026', '09', '01'), { recursive: true })
+    try { symlinkSync(real, join(sessions, '2026', '09', '01', `rollout-2026-09-01T00-00-00-${ID}.jsonl`), 'file') } catch { ctx.skip(); return }
+    expect(findCodexRollouts(sessions, ID)).toEqual([])
+  })
+
+  it('a second name of the same file (what a staged sign in again leaves in the new folder) is found: its content is checked like any other', () => {
+    const old = join(temp('realm-old'), 'sessions')
+    const real = put(old, ['2026', '09', '01'], ID, '/p')
+    const fresh = join(temp('realm-new'), 'sessions')
+    mkdirSync(join(fresh, '2026', '09', '01'), { recursive: true })
+    const second = join(fresh, '2026', '09', '01', `rollout-2026-09-01T00-00-00-${ID}.jsonl`)
+    linkSync(real, second)
+    expect(findCodexRollouts(fresh, ID).map((f) => f.path)).toEqual([second])
+  })
+
+  it('two rollouts with one id: the one in the date folder its session_meta names wins over a newer copy (thesis 6)', () => {
+    const sessions = join(temp('realm'), 'sessions')
+    const own = putAt(sessions, ['2026', '09', '20'], ID, '/p/demo', '2026-09-20T10:00:00.000Z')
+    putAt(sessions, ['2026', '09', '27'], ID, '/p/copy', '2026-09-20T10:00:00.000Z')
+    expect(findCodexRollouts(sessions, ID).map((f) => [f.path === own, f.dated])).toEqual([[false, false], [true, true]])
+    expect(chooseCodexRollout(findCodexRollouts(sessions, ID))).toMatchObject({ found: { path: own }, cwdMatched: true })
+    // The directory the session kept wins over the date: the copy that records it.
+    const kept = chooseCodexRollout(findCodexRollouts(sessions, ID), '/p/copy')
+    expect(kept?.found.meta.cwd).toBe('/p/copy')
+    expect(kept?.cwdMatched).toBe(true)
+    // Neither records it: the dated one, and it says so.
+    expect(chooseCodexRollout(findCodexRollouts(sessions, ID), '/p/elsewhere')).toMatchObject({ found: { path: own }, cwdMatched: false })
+  })
+
+  it('a resume whose kept directory no rollout of that id records starts in the configured directory and says so (thesis 6)', () => {
+    const sessions = join(temp('realm'), 'sessions')
+    putAt(sessions, ['2026', '09', '20'], ID, '/p/demo', '2026-09-20T10:00:00.000Z')
+    const out = resolveCodexResume({ uuid: ID, cwd: '/p/elsewhere' }, { sessionsDir: sessions, configuredCwd: '/configured', dirExists: () => true, homeOrAbove: () => false })
+    expect(out).toEqual({ resumeId: ID, cwd: '/configured', cwdMismatch: true })
+    const match = resolveCodexResume({ uuid: ID, cwd: '/p/demo' }, { sessionsDir: sessions, configuredCwd: '/configured', dirExists: () => true, homeOrAbove: () => false })
+    expect(match?.cwdMismatch).toBe(false)
   })
 })

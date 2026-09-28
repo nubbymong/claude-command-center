@@ -85,6 +85,9 @@ export interface ProviderSpawnCommand {
   commandLine?: string
   cwd?: string
   resumeId?: string
+  /** No rollout of the resumed conversation records the directory the
+   *  session kept: it starts in the configured one (the caller says so). */
+  resumeCwdMismatch?: boolean
   pickFile?: string
 }
 
