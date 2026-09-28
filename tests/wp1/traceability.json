@@ -773,7 +773,7 @@
       "status": "planned",
       "currentTests": [],
       "baseCoverage": "new capability, none on base",
-      "reason": "automated tests cover the staging, the decision, the switch, recovery and in-place re-authentication; owed before evidenced: the VM proof that signing out a retired realm never invalidates its replacement (real CLI 0.153.4 and 0.155.1, file and keyring stores), the real-CLI replacement revalidation after that sign-out, and the ADR-009 pass"
+      "reason": "automated tests cover the staging, the decision, the switch, recovery and in-place re-authentication; owed before evidenced: the VM proof that signing out a retired realm never invalidates its replacement (real CLI 0.153.4 and 0.155.1, file and keyring stores), and the real-CLI replacement revalidation after that sign-out (the ADR-009 pass is done)"
     },
     {
       "id": "WP1.53",
