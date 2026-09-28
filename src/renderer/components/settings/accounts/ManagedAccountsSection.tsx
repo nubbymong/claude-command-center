@@ -14,7 +14,7 @@ import {
   useProviderAccountsStore, providerAccountActions, providerView, selectProviderAccounts, accountDisplayName, canOfferMakeReviewer,
   showsReviewerBadge, accountFailureText, accountState, signInMethodLabel, externalHomeLabel, externalHomeFolder, canOfferSignInAgain,
   canOfferMakeInactive, canOfferMakeActive, canOfferArchive, externalAdoption, canOfferCheckSignIn, signInCheckText, externalSignInHint,
-  selectArchivedAccounts, canOfferRestore, linkedAccounts, linkedAccountLabel, blockerSessions, sessionTitle, unnamedHolders,
+  selectArchivedAccounts, canOfferRestore, linkedAccounts, linkedAccountLabel, blockerSessions, sessionTitle, unnamedHolders, oldSignInText,
 } from '../../../stores/providerAccountsStore'
 import { useSessionStore } from '../../../stores/sessionStore'
 import { useResolvedTheme } from '../../../hooks/useThemeController'
@@ -27,10 +27,10 @@ import { IdentityEditor } from './IdentityEditor'
 import { RowMenu, type MenuItem } from '../../ui/RowMenu'
 import { AddProviderAccountDialog, SignInAgainDialog } from './AddProviderAccountDialog'
 
-type ExternalAck = 'logout' | 'archive'
+type ExternalAck = 'logout' | 'archive' | 'sign-in-again'
 
-/** Signing out of, or archiving, the provider's own shared home reaches
- *  beyond this app: the user says yes to that first. */
+/** Signing out of, archiving, or signing in again the provider's own shared
+ *  home reaches beyond this app: the user says yes to that first. */
 function ExternalAckDialog({ kind, provider, onConfirm, onCancel }: {
   kind: ExternalAck
   provider: ProviderInstallationView
@@ -40,7 +40,7 @@ function ExternalAckDialog({ kind, provider, onConfirm, onCancel }: {
   useDialogEscape(onCancel)
   const folder = useProviderAccountsStore((s) => externalHomeFolder(s.snapshot, provider.providerId))
   const home = externalHomeLabel(provider, folder)
-  const title = kind === 'logout' ? `Sign out of ${home}?` : `Archive ${home}?`
+  const title = kind === 'logout' ? `Sign out of ${home}?` : kind === 'archive' ? `Archive ${home}?` : `Sign in to ${home} again?`
   return (
     <AccountsModal labelledBy="external-ack-title" role="alertdialog" testId="external-ack-dialog" overlayTestId="external-ack-overlay">
       <DialogHeader title={title} titleId="external-ack-title" onClose={onCancel} />
@@ -48,29 +48,34 @@ function ExternalAckDialog({ kind, provider, onConfirm, onCancel }: {
         <p className="text-[12.5px] leading-relaxed" style={{ color: 'var(--text-secondary)' }} data-testid="external-ack-text">
           {kind === 'logout'
             ? `This sign-in is shared with other apps on this computer, including the ${provider.displayName} CLI itself. Signing out here signs them out too.`
-            : `Archiving only forgets this sign-in in this app. It is shared with other apps on this computer, and it stays signed in for them.`}
+            : kind === 'archive'
+              ? `Archiving only forgets this sign-in in this app. It is shared with other apps on this computer, and it stays signed in for them.`
+              : `This sign-in is shared with other apps on this computer, including the ${provider.displayName} CLI itself. Signing in again signs them out first, and if the new sign-in does not finish, it stays signed out.`}
         </p>
       </DialogBody>
       <DialogFooter>
         <DialogButton variant="ghost" onClick={onCancel} testId="external-ack-cancel" data-autofocus="">Cancel</DialogButton>
-        <DialogButton variant={kind === 'logout' ? 'danger' : 'primary'} onClick={onConfirm} testId="external-ack-confirm">
-          {kind === 'logout' ? 'Sign out' : 'Archive'}
+        <DialogButton variant={kind === 'archive' ? 'primary' : 'danger'} onClick={onConfirm} testId="external-ack-confirm">
+          {kind === 'logout' ? 'Sign out' : kind === 'archive' ? 'Archive' : 'Continue'}
         </DialogButton>
       </DialogFooter>
     </AccountsModal>
   )
 }
 
-function ManagedAccountRow({ account, provider, snapshot }: { account: AccountView; provider: ProviderInstallationView; snapshot: AccountsSnapshot }) {
+function ManagedAccountRow({ account, provider, snapshot, onAddAccount }: {
+  account: AccountView
+  provider: ProviderInstallationView
+  snapshot: AccountsSnapshot
+  /** Sign in again handing over to Add account (the section owns that
+   *  dialog, so it can leave the setup being named out of Unfinished setups). */
+  onAddAccount: (d: AddAccountDialogState) => void
+}) {
   const theme = useResolvedTheme()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [ack, setAck] = useState<ExternalAck | null>(null)
   const [signingInAgain, setSigningInAgain] = useState(false)
-  // Sign in again handing over to Add account: a new account with this
-  // method ("different or unsure"), or naming a sign-in main found to be
-  // someone else (an unfinished setup, resumed at its name).
-  const [handoff, setHandoff] = useState<null | { method: SignInMethod } | { resume: PendingSetupView }>(null)
   const [checked, setChecked] = useState<KnownAuthState | null>(null)
   const [editing, setEditing] = useState(false)
   const [blocker, setBlocker] = useState<{ verb: string; sessions: { id: string; title: string }[]; more: number } | null>(null)
@@ -154,9 +159,10 @@ function ManagedAccountRow({ account, provider, snapshot }: { account: AccountVi
       items.push({ key: 'make-reviewer', label: 'Make reviewer', onSelect: () => { void run(() => providerAccountActions.setReviewerDefault({ providerId: account.providerId, accountId: id })) } })
     }
     // Signed in too: main then signs in to a new folder and moves the
-    // account there only once that sign-in is verified (design 9.2).
+    // account there only once that sign-in is verified (design 9.2). This
+    // computer's own sign-in in place, after its warning (design 9.2).
     if (canOfferSignInAgain(account)) {
-      items.push({ key: 'sign-in-again', label: 'Sign in again', onSelect: () => { setError(null); setChecked(null); setSigningInAgain(true) } })
+      items.push({ key: 'sign-in-again', label: 'Sign in again', onSelect: () => { setError(null); setChecked(null); if (account.external) setAck('sign-in-again'); else setSigningInAgain(true) } })
     }
     if (canOfferCheckSignIn(account, provider)) {
       items.push({ key: 'check-sign-in', label: 'Check sign-in', onSelect: () => { void checkSignIn() } })
@@ -191,6 +197,7 @@ function ManagedAccountRow({ account, provider, snapshot }: { account: AccountVi
     setAck(null)
     if (kind === 'logout') void run(() => providerAccountActions.logout({ accountId: id, acknowledgeExternal: true }))
     else if (kind === 'archive') void run(() => providerAccountActions.setLifecycle({ accountId: id, lifecycle: 'archived', acknowledgeExternal: true }), 'archived')
+    else if (kind === 'sign-in-again') setSigningInAgain(true)
   }
 
   const links = linkedAccounts(snapshot, account)
@@ -243,7 +250,7 @@ function ManagedAccountRow({ account, provider, snapshot }: { account: AccountVi
               snapshot that blocked the account. */}
           {checked && !blocked && <MutedLine testId={`account-checked-${id}`}>{signInCheckText(checked)}</MutedLine>}
           {externalHint && <MutedLine testId={`account-external-hint-${id}`}>{externalHint}</MutedLine>}
-          {account.oldSignInLeft && !blocked && manageable && <MutedLine testId={`account-old-sign-in-${id}`}>Check sign-in removes it.</MutedLine>}
+          {account.oldSignInLeft && !blocked && manageable && <MutedLine testId={`account-old-sign-in-${id}`}>{oldSignInText(account.oldSignInLeft, provider.displayName)}</MutedLine>}
           <RunningPill count={account.runningSessions} testId={`account-running-${id}`} />
           {blocked && manageable && (
             <RowButton onClick={() => { void run(() => providerAccountActions.reconcileSignIn(id)) }} disabled={busy} testId={`account-reconcile-${id}`}>
@@ -271,15 +278,8 @@ function ManagedAccountRow({ account, provider, snapshot }: { account: AccountVi
           account={account}
           name={name}
           onClose={() => setSigningInAgain(false)}
-          onNewAccount={(method) => { setSigningInAgain(false); setHandoff({ method }) }}
-          onSeparate={(resume) => setHandoff({ resume })}
-        />
-      )}
-      {handoff && (
-        <AddProviderAccountDialog
-          provider={provider}
-          {...('resume' in handoff ? { resume: handoff.resume } : { initialMethod: handoff.method })}
-          onClose={() => setHandoff(null)}
+          onNewAccount={(initialMethod) => { setSigningInAgain(false); onAddAccount({ initialMethod }) }}
+          onSeparate={(resume) => onAddAccount({ resume })}
         />
       )}
       {editing && manageable && <IdentityEditor anchor={chipRef} account={account} snapshot={snapshot} onClose={() => setEditing(false)} testId={`identity-editor-${id}`} />}
@@ -328,6 +328,12 @@ function ArchivedAccountRow({ account, provider, snapshot }: { account: AccountV
     </div>
   )
 }
+
+/** The section's Add account dialog: a new account (from Add account, or a
+ *  sign in again answered "different or unsure", with its method), or a
+ *  setup resumed (from Unfinished setups, or a sign in again main found to
+ *  be someone else, at its name). */
+interface AddAccountDialogState { resume?: PendingSetupView; initialMethod?: SignInMethod }
 
 function methodWord(m: PendingSetupView['method']): string {
   switch (m) {
@@ -437,14 +443,15 @@ function ExternalAdoptionBlock({ providerId, provider }: { providerId: ProviderI
 
 export function ManagedAccountsSection({ providerId }: { providerId: ProviderId }) {
   const snapshot = useProviderAccountsStore((s) => s.snapshot)
-  const [dialog, setDialog] = useState<null | { resume?: PendingSetupView }>(null)
+  const [dialog, setDialog] = useState<AddAccountDialogState | null>(null)
   const provider = providerView(snapshot, providerId)
   if (!snapshot || !provider || !provider.managedAccounts) return null
 
   const accounts = selectProviderAccounts(snapshot, providerId)
   const archived = selectArchivedAccounts(snapshot, providerId)
   // A sign in again being run by its own dialog is that dialog's to show.
-  const pending = snapshot.pendingSetups.filter((p) => p.providerId === providerId && !(p.replacesAccountId !== undefined && p.signingIn))
+  // So is a setup its Add account dialog is naming or resuming now.
+  const pending = snapshot.pendingSetups.filter((p) => p.providerId === providerId && !(p.replacesAccountId !== undefined && p.signingIn) && p.accountId !== dialog?.resume?.accountId)
   const manageable = provider.enabled
 
   return (
@@ -454,7 +461,7 @@ export function ManagedAccountsSection({ providerId }: { providerId: ProviderId 
         <MutedLine testId={`provider-off-note-${providerId}`}>Turn {provider.displayName} on to manage its accounts.</MutedLine>
       )}
       <div>
-        {accounts.map((a) => <ManagedAccountRow key={a.id} account={a} provider={provider} snapshot={snapshot} />)}
+        {accounts.map((a) => <ManagedAccountRow key={a.id} account={a} provider={provider} snapshot={snapshot} onAddAccount={setDialog} />)}
       </div>
       {archived.length > 0 && (
         <div className="pt-2.5" style={{ borderTop: '1px solid var(--border-subtle)' }} data-testid={`archived-accounts-${providerId}`}>
@@ -479,7 +486,7 @@ export function ManagedAccountsSection({ providerId }: { providerId: ProviderId 
           </DialogButton>
         </div>
       )}
-      {dialog && <AddProviderAccountDialog provider={provider} resume={dialog.resume} onClose={() => setDialog(null)} />}
+      {dialog && <AddProviderAccountDialog provider={provider} {...(dialog.resume ? { resume: dialog.resume } : {})} {...(dialog.initialMethod ? { initialMethod: dialog.initialMethod } : {})} onClose={() => setDialog(null)} />}
     </Section>
   )
 }
