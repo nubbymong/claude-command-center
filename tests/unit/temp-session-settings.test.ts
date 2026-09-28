@@ -44,8 +44,19 @@ describe('the temp session settings stand-in', () => {
   })
 
   it('stands in for every function the real writer exports', () => {
-    const real = fs.readFileSync(path.join(ROOT, 'src/main/hooks/per-session-settings.ts'), 'utf8')
-    const exported = [...real.matchAll(/^export function (\w+)/gm)].map((m) => m[1])
+    // Every value a module exports, however it is written (review round 3,
+    // C5): a function (async or not), a const, let or var, a class or enum,
+    // or an export list. Types need no stand-in.
+    const exportsOf = (text: string) => [
+      ...[...text.matchAll(/^export\s+(?:async\s+)?(?:function\s*\*?|const|let|var|class|enum)\s+(\w+)/gm)].map((m) => m[1]),
+      ...[...text.matchAll(/^export\s*\{([^}]*)\}/gm)]
+        .flatMap((m) => m[1].split(',').map((s) => s.trim().split(/\s+as\s+/).pop() ?? '').filter((s) => s && !s.startsWith('type '))),
+    ]
+    expect(exportsOf([
+      'export async function a() {}', 'export const b = 1', 'export let c = 2', 'export class D {}', 'export function h() {}',
+      'export { e, f as g }', 'export type T = 1', 'export interface I { x: 1 }',
+    ].join('\n'))).toEqual(['a', 'b', 'c', 'D', 'h', 'e', 'g'])
+    const exported = exportsOf(fs.readFileSync(path.join(ROOT, 'src/main/hooks/per-session-settings.ts'), 'utf8'))
     expect(exported.length).toBeGreaterThan(0)
     const s = tempSessionSettings()
     try {
