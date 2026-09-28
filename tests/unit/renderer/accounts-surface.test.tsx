@@ -398,11 +398,12 @@ describe('Codex rows', () => {
   it('offers each account only the actions its state allows', async () => {
     render(snapshot())
     // The default, with other active accounts, is not offered Make inactive (the registry wants another default first).
-    expect(await menuKeys('acc-work')).toEqual(['make-reviewer', 'check-sign-in', 'sign-out'])
-    expect(await menuKeys('acc-personal')).toEqual(['make-default', 'check-sign-in', 'sign-out', 'make-inactive'])
+    // Signed in, Sign in again is offered too (P3.3: main stages it).
+    expect(await menuKeys('acc-work')).toEqual(['make-reviewer', 'sign-in-again', 'check-sign-in', 'sign-out'])
+    expect(await menuKeys('acc-personal')).toEqual(['make-default', 'sign-in-again', 'check-sign-in', 'sign-out', 'make-inactive'])
     // Blocked: "This is still my account" is its check (it vouches); no plain check.
     expect(await menuKeys('acc-old')).toEqual(['sign-out', 'make-inactive'])
-    expect(await menuKeys('acc-parked')).toEqual(['check-sign-in', 'sign-out', 'make-active', 'archive'])
+    expect(await menuKeys('acc-parked')).toEqual(['sign-in-again', 'check-sign-in', 'sign-out', 'make-active', 'archive'])
   })
 
   // WP2 commit 6g: the retired Codex settings tab's "Test connection", per
@@ -947,37 +948,83 @@ describe('Sign in again', () => {
     if (confirmSame) await click('sign-in-again-confirm')
   }
 
-  it('is offered only on a managed, unblocked, non-archived account that is not signed in', async () => {
+  it('is offered on a managed, unblocked, non-archived account, signed in or not (P3.3)', async () => {
     render(snapshot({ accounts: [work, expired, signedOut, errored, unknown, externalOut, blockedOut] }))
-    for (const id of ['acc-exp', 'acc-out', 'acc-err', 'acc-unk']) expect(await menuKeys(id), id).toContain('sign-in-again')
-    for (const id of ['acc-work', 'acc-local', 'acc-old']) expect(await menuKeys(id), id).not.toContain('sign-in-again')
+    for (const id of ['acc-work', 'acc-exp', 'acc-out', 'acc-err', 'acc-unk']) expect(await menuKeys(id), id).toContain('sign-in-again')
+    for (const id of ['acc-local', 'acc-old']) expect(await menuKeys(id), id).not.toContain('sign-in-again')
+    expect(canOfferSignInAgain(work)).toBe(true)
     expect(canOfferSignInAgain(signedOut)).toBe(true)
     expect(canOfferSignInAgain({ ...signedOut, lifecycle: 'archived' })).toBe(false)
   })
 
-  it('runs nothing and takes no key until "same account as before" is ticked', async () => {
+  it('ticked, it signs the same account in again and takes the key; not ticked, it adds a new account instead (P3.3)', async () => {
     pa.issueSecretHandle.mockResolvedValue({ ok: true, handle: HANDLE })
     pa.signInAgain.mockResolvedValue({ ok: true, state: 'signed-in' })
+    pa.beginSetup.mockResolvedValue({ ok: true, accountId: 'acc-new' })
     render(snapshot({ accounts: [work, keyAccount] }))
     await openFor('acc-key', false)
 
     expect(q('sign-in-again-who')?.textContent).toContain('Personal')
     expect(q('sign-in-again-who')?.textContent).toContain('alex@home.example')
     expect(q('sign-in-again-confirm-label')?.textContent).toBe('Sign in to the same account as before (alex@home.example).')
-    expect(q('sign-in-again-who')?.textContent).toContain('If it is signed in a different way than before, the account waits until you confirm it in Accounts.')
-
-    expect((q('sign-in-again-continue') as HTMLButtonElement).disabled).toBe(true)
-    await click('sign-in-again-continue')
-    expect(q('sign-in-again-key')).toBeNull()
-    expect(pa.signInAgain).not.toHaveBeenCalled()
-    expect(pa.issueSecretHandle).not.toHaveBeenCalled()
-
+    expect(q('sign-in-again-confirm-hint')?.textContent).toBe('Not ticked, the sign-in is added as a new account, and this one stays as it is.')
     await click('sign-in-again-confirm')
+    expect(q('sign-in-again-confirm-hint')?.textContent).toBe('If it is signed in a different way than before, the account waits until you confirm it in Accounts.')
     await click('sign-in-again-continue')
     typeKey(q('sign-in-again-key') as HTMLInputElement, KEY)
     await click('sign-in-again-key-continue')
     expect(pa.issueSecretHandle).toHaveBeenCalledTimes(1)
     expect(pa.signInAgain).toHaveBeenCalledTimes(1)
+    expect(pa.beginSetup).not.toHaveBeenCalled()
+    expect(q('sign-in-again-dialog')).toBeNull()
+
+    // Not ticked: nothing runs here and no key is taken here; Add account
+    // takes over with the method chosen here.
+    pa.issueSecretHandle.mockClear()
+    pa.signInAgain.mockClear()
+    await openFor('acc-key', false)
+    expect((q('sign-in-again-continue') as HTMLButtonElement).disabled).toBe(false)
+    await click('sign-in-again-continue')
+    expect(q('sign-in-again-dialog')).toBeNull()
+    expect(q('add-account-dialog')).toBeTruthy()
+    expect(pa.beginSetup).toHaveBeenCalledWith({ providerId: 'codex', method: 'apiKey' })
+    expect(q('add-account-key')).toBeTruthy()
+    expect(pa.signInAgain).not.toHaveBeenCalled()
+    expect(pa.issueSecretHandle).not.toHaveBeenCalled()
+  })
+
+  it('on a signed-in account it runs Sign in again (main stages it) and closes on success (P3.3)', async () => {
+    pa.signInAgain.mockResolvedValue({ ok: true, state: 'signed-in' })
+    render(snapshot({ accounts: [work] }))
+    await openFor('acc-work')
+    await click('sign-in-again-continue')
+    expect(pa.signInAgain).toHaveBeenCalledWith({ accountId: 'acc-work', method: 'browser' })
+    expect(pa.beginSetup).not.toHaveBeenCalled()
+    expect(q('sign-in-again-dialog')).toBeNull()
+    expect(q('add-account-dialog')).toBeNull()
+  })
+
+  it('when main finds someone else signed in, it hands over to naming that new account (P3.3)', async () => {
+    pa.signInAgain.mockResolvedValue({ ok: true, state: 'signed-in', separateAccountId: 'acc-sep' })
+    pa.completeSetup.mockResolvedValue({ ok: true, accountId: 'acc-sep' })
+    render(snapshot({ accounts: [work] }))
+    await openFor('acc-work')
+    await click('sign-in-again-continue')
+    expect(q('sign-in-again-dialog')).toBeNull()
+    expect(q('add-account-step-name')).toBeTruthy()
+    expect(pa.signIn).not.toHaveBeenCalled()
+    expect(pa.beginSetup).not.toHaveBeenCalled()
+    await click('add-account-finish')
+    expect(pa.completeSetup).toHaveBeenCalledWith(expect.objectContaining({ accountId: 'acc-sep' }))
+    expect(pa.abandonSetup).not.toHaveBeenCalled()
+  })
+
+  it('an old sign-in a sign in again could not remove is said on the row, and Check sign-in is how to retry (P3.3)', async () => {
+    const left = { ...work, oldSignInLeft: true as const, operationalState: 'attention' as const }
+    render(snapshot({ accounts: [left] }))
+    expect(q('account-state-acc-work')?.textContent).toBe('Needs attention: the old sign-in was not removed')
+    expect(q('account-old-sign-in-acc-work')?.textContent).toBe('Check sign-in removes it.')
+    expect(await menuKeys('acc-work')).toContain('check-sign-in')
   })
 
   it('asks without an address when the account has no label', async () => {
@@ -1056,8 +1103,11 @@ describe('Sign in again', () => {
   })
 
   it('keeps focus inside: Tab from the last enabled control wraps while the final button is disabled', async () => {
-    render(snapshot({ accounts: [work, signedOut] }))
-    await openFor('acc-out', false)
+    // No method of the account's family is available here: nothing to continue with.
+    const s = snapshot({ accounts: [work, keyAccount] })
+    s.providers[1] = { ...s.providers[1], signInMethods: { ...s.providers[1].signInMethods, apiKey: { enabled: false, labelExperimental: false } } }
+    render(s)
+    await openFor('acc-key', false)
     expect((q('sign-in-again-continue') as HTMLButtonElement).disabled).toBe(true)
     act(() => { q('sign-in-again-cancel')!.focus() })
     const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
@@ -1254,6 +1304,19 @@ describe('registry, conflicts, adoption and pending setups', () => {
     await click('add-account-finish')
     expect(pa.completeSetup).toHaveBeenCalledWith(expect.objectContaining({ accountId: 'acc-half' }))
     expect(pa.abandonSetup).not.toHaveBeenCalled()
+  })
+
+  it('a sign in again the app did not finish is named for its account, with Discard only, and not listed while its dialog runs it (P3.3)', async () => {
+    const again = { accountId: 'acc-stg', providerId: 'codex' as const, method: 'browser' as const, state: 'credentials-written' as const, external: false, createdAt: 1, signingIn: false, replacesAccountId: 'acc-work' }
+    render(snapshot({ pendingSetups: [again] }))
+    expect(q('pending-setup-acc-stg')?.textContent).toContain('Sign in again for Work, not finished')
+    expect(q('pending-setup-acc-stg')?.textContent).toContain('Discard it, then sign in again')
+    expect(q('pending-setup-resume-acc-stg')).toBeNull()
+    await click('pending-setup-discard-acc-stg')
+    expect(pa.abandonSetup).toHaveBeenCalledWith('acc-stg')
+    unmountNow()
+    render(snapshot({ pendingSetups: [{ ...again, signingIn: true }] }))
+    expect(q('pending-setup-acc-stg')).toBeNull()
   })
 
   // Main refuses a sign-in of a Codex the user has not answered for (as not

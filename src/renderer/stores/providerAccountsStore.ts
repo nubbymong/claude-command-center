@@ -387,14 +387,14 @@ export function canOfferMakeReviewer(snapshot: AccountsSnapshot | null, account:
 }
 
 /** Whether an account may be offered "Sign in again": one this app manages
- *  (not the provider's shared external home), not archived, not blocked (it
- *  is reconciled first), and not signed in now (the provider never logs in
- *  over a realm that is still signed in). */
+ *  (not the provider's shared external home), not archived, and not blocked
+ *  (it is reconciled first). Signed in too (P3.3, design 9.2): main then
+ *  signs in to a new folder and moves the account there only once that
+ *  sign-in is verified, so the one it has is never lost on the way. */
 export function canOfferSignInAgain(account: AccountView): boolean {
   if (account.external) return false
   if (account.lifecycle === 'archived') return false
-  if (account.operationalState === 'blocked') return false
-  return account.lastKnownAuthState !== 'signed-in'
+  return account.operationalState !== 'blocked'
 }
 
 /** The methods "Sign in again" offers: the account's recorded family only
@@ -576,8 +576,10 @@ export function signInMethodLabel(account: Pick<AccountView, 'authMethod'>, p: P
 /** An account's sign-in state as a row says it. A blocked account (a check
  *  found it signed in a different way than before, such as an API key where
  *  there was a ChatGPT sign-in) says so before anything else. */
-export function accountState(account: Pick<AccountView, 'operationalState' | 'lastKnownAuthState'>): { text: string; tone: StatusTone } {
+export function accountState(account: Pick<AccountView, 'operationalState' | 'lastKnownAuthState' | 'oldSignInLeft'>): { text: string; tone: StatusTone } {
   if (account.operationalState === 'blocked') return { text: 'Needs attention: signed in a different way than before', tone: 'warn' }
+  // A sign in again moved it to a new sign-in; the old one is still there.
+  if (account.oldSignInLeft) return { text: 'Needs attention: the old sign-in was not removed', tone: 'warn' }
   switch (account.lastKnownAuthState) {
     case 'signed-in': return { text: 'Signed in', tone: account.operationalState === 'attention' ? 'warn' : 'ok' }
     case 'signed-out': return { text: 'Signed out', tone: 'warn' }
