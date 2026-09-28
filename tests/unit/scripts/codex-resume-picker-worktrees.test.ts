@@ -8,7 +8,7 @@
 // Real files in temp folders; nothing is started (git's output is parsed from
 // a string, as Claude's parseWorktrees test does).
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from 'fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync, linkSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 
@@ -68,6 +68,18 @@ describe('the picker lists every worktree\'s conversations (row 32)', () => {
     expect(wt.worktreeLabel).toBe('fix-login')
     expect(wt.sourceCwd).toBe('F:/repo/demo/.worktrees/fix-login')
     expect(out.find((c) => c.id === ID1)!.worktreeLabel).toBeNull()
+  })
+
+  it('after a staged sign in again, the conversations carried into the account\'s new folder are listed there (P3.3)', () => {
+    const old = temp('old-realm')
+    rollout(old, new Date(Date.now() - 3 * 24 * 3600 * 1000), ID1, '/srv/demo', 'before the sign in again')
+    const fresh = temp('new-realm')
+    const day = new Date(Date.now() - 3 * 24 * 3600 * 1000)
+    const rel = join('sessions', String(day.getUTCFullYear()), String(day.getUTCMonth() + 1).padStart(2, '0'), String(day.getUTCDate()).padStart(2, '0'))
+    mkdirSync(join(fresh, rel), { recursive: true })
+    linkSync(join(old, rel, `rollout-x-${ID1}.jsonl`), join(fresh, rel, `rollout-x-${ID1}.jsonl`))
+    rmSync(old, { recursive: true, force: true })
+    expect(lib.walkRollouts(fresh, 30, '/srv/demo', 'linux').map((c) => c.id)).toEqual([ID1])
   })
 
   it('a single directory still works as before (no git): exact on Linux', () => {
