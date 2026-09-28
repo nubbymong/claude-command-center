@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-28T09:33:12.655Z",
-  "head": "9056e0219bce70b11bfd3bcfee5a602f154a39b3",
-  "tree": "f0f0be074dbfa2295904b8e9f1a9bc6f42f90bdb",
+  "generatedAt": "2026-09-28T09:47:04.018Z",
+  "head": "5355128c951ef5d91b94822bce471c9261a75539",
+  "tree": "7d301eaa2a95ebde598628d16ebcb5b6aad2ace9",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -3239,7 +3239,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 92
+      "lineCount": 94
     },
     {
       "path": "tests/unit/renderer/claude-off-onboarding.test.tsx",

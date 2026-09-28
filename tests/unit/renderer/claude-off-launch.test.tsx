@@ -326,7 +326,7 @@ describe('the New session dialog', () => {
     const lab = Array.from(g.querySelectorAll('label')).find((l) => l.querySelector('span')?.textContent === title)!
     return lab.querySelector('input[type="radio"]') as HTMLInputElement
   }
-  const PERSISTENT_COPY = 'SSH Persistent keeps a remote Claude Code session running, and Claude Code is off.'
+  const PERSISTENT_COPY = 'SSH Persistent keeps a remote Claude Code session running, which needs Claude Code on.'
   const persistentNote = () => container.querySelector('[data-testid="claude-off-persistent-note"]')
 
   it('with Claude Code off, Terminal only: SSH Persistent is disabled with the reason; Local and SSH stay', () => {
@@ -364,5 +364,21 @@ describe('the New session dialog', () => {
     expect(persistentNote()!.textContent).toBe(PERSISTENT_COPY)
     act(() => { connectionRadio('SSH').click() })
     expect(connectionRadio('SSH').checked).toBe(true)
+  })
+
+  it('an existing terminal-only SSH Persistent config can still be saved with Claude Code off, and stays persistent', () => {
+    setProviders({ claudeEnabled: false, codexEnabled: true })
+    const onConfirm = vi.fn()
+    render({ onConfirm, initial: cfg({ shellOnly: true, sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } }) })
+    expect(connectionRadio('SSH Persistent').checked).toBe(true)
+    const submit = container.querySelector('[data-testid="session-dialog-submit"]') as HTMLButtonElement
+    expect(submit.disabled).toBe(false)
+    act(() => { submit.click() })
+    expect(onConfirm).toHaveBeenCalledTimes(1)
+    const saved = onConfirm.mock.calls[0][0]
+    expect(saved.shellOnly).toBe(true)
+    expect(saved.sessionType).toBe('ssh')
+    // Persistent is stored as the default (undefined); only plain SSH stores false.
+    expect(saved.sshConfig.detachable).toBeUndefined()
   })
 })

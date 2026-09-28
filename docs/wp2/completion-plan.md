@@ -470,11 +470,13 @@ synchronous throw in that refresh never escapes, and with Claude Code off
 the session dialog's SSH Persistent card is disabled for Terminal only, with
 the reason, as it is for Codex (a terminal-only session launches no Claude
 then, so nothing would persist).
-Done: the ADR-009 pass, lenses N and G PASS at c7f9a34a and lens N
-re-confirmed PASS at 87ba9c2d; the VM walk in Codex-only mode PASS at
-c7f9a34a (e2e 81/81; no request to OpenAI's status page while Codex was off
-or not answered), its minor M1 fixed in 9056e021. Owed: the owner's approval
-of the VM walk's screenshots, and a VM re-check at the final head.
+Done: the ADR-009 pass, lenses N and G PASS at c7f9a34a, lens N
+re-confirmed PASS at 87ba9c2d, and ADR-009 lens N re-confirmed PASS at
+839ab591 (sync throw in the queued refresh cannot escape; no request to an
+off provider); the VM walk in Codex-only mode PASS at c7f9a34a (e2e 81/81;
+no request to OpenAI's status page while Codex was off or not answered), its
+minor M1 fixed in 9056e021. Owed: the owner's approval of the VM walk's
+screenshots, and a VM re-check at the final head.
 
 **P3.5 History and resume.** The claimed session id kept with the tab; exact
 resume on relaunch in the same realm; Restart resumes the same conversation
