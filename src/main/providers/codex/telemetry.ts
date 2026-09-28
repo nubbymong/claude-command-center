@@ -12,7 +12,7 @@
  *   watchAndClaimRollout    -- 250ms-poll claim + 500ms-poll tail pipeline
  */
 
-import { readFileSync, readdirSync, lstatSync, statSync, unlinkSync } from 'fs'
+import { readFileSync, readdirSync, lstatSync, statSync, unlinkSync, openSync, fstatSync, readSync, closeSync, constants as fsConstants } from 'fs'
 import { join } from 'path'
 import { computeCodexCostUsd } from './pricing'
 import { CODEX_CONVERSATION_ID_RE, codexDayFolders, findCodexRollout, parseSessionMetaLine, readRolloutFirstLine } from './rollout-lookup'
@@ -309,9 +309,13 @@ export interface CodexClaimOptions {
    *  exact resume on relaunch or Restart): its rollout is claimed wherever
    *  it is in the realm, whatever its age, and no other rollout is. */
   resumeId?: string
-  /** Where the resume picker records the conversation it opened: read each
-   *  poll until it names one, then removed. That rollout is claimed once it
-   *  grows after the pick is read (the resume has begun writing to it). */
+  /** Where the resume picker records each decision it makes (P3.5 fix
+   *  round 1): `{ id }` when it resumes that conversation, `{ fresh: true }`
+   *  when it starts a new one (a New conversation choice, nothing to list,
+   *  or the fallback after a resume failed). Read each poll, removed once
+   *  read; the latest decision wins. Before the first, nothing is claimed;
+   *  after `{ id }` only that conversation, once its rollout grows; after
+   *  `{ fresh }` only a new rollout created from the decision on. */
   pickFile?: string
   /** Told once which conversation the watcher claimed: its id and the
    *  directory its rollout records. Only a conversation id is reported. */
@@ -322,6 +326,15 @@ export interface CodexClaimOptions {
 const LOOKUP_INTERVAL_MS = 1_000
 /** The most of a pick file that is read. */
 const PICK_FILE_MAX_BYTES = 1_024
+/** How far before a New conversation decision a new rollout may say it began
+ *  (the decision is dated by the pick file, or by its reading if earlier). */
+const FRESH_DECISION_TOLERANCE_MS = 1_000
+/** Open for reading without following a link where the platform can say so;
+ *  elsewhere the opened file is compared with what lstat saw. */
+const READ_NO_FOLLOW = fsConstants.O_RDONLY | (typeof fsConstants.O_NOFOLLOW === 'number' ? fsConstants.O_NOFOLLOW : 0)
+
+/** A decision the resume picker recorded (see CodexClaimOptions.pickFile). */
+type PickDecision = { kind: 'id'; id: string } | { kind: 'fresh'; at: number }
 
 /**
  * Watch and claim the Codex rollout file for a spawned session.
@@ -390,9 +403,12 @@ export function watchAndClaimRollout(
   /** Files whose first line settled as not this session's: never read again. */
   const settled = new Set<string>()
   let lastLookupAt = Number.NEGATIVE_INFINITY
-  /** The conversation the picker opened, once read, and its rollout's size then. */
-  let pickedId: string | null = null
+  /** The picker's latest decision (none yet: nothing is claimed), and for a
+   *  resume, the picked rollout and its size when first seen. */
+  let decision: PickDecision | null = null
   let picked: { path: string; meta: RolloutSessionMeta; size: number } | null = null
+  /** A pick entry already dealt with (read, or refused), by its identity: never read again. */
+  let handledPick: string | null = null
 
   function claim(fullPath: string, found: RolloutSessionMeta): void {
     claimedPath = fullPath
@@ -436,21 +452,48 @@ export function watchAndClaimRollout(
     try { unlinkSync(pickFile) } catch { /* not there, or already gone */ }
   }
 
-  /** The conversation id the picker recorded, or null while it has recorded none. */
-  function readPick(): string | null {
+  /** A new decision the picker recorded, or null. Read only when the pick
+   *  path is a small regular file, never through a link (lstat, then the
+   *  opened file compared with it, no-follow where the platform has it); an
+   *  entry is dealt with once: read or refused, it is removed (a folder is
+   *  left, and remembered as refused). The picker replaces the file whole
+   *  (it renames a finished file into place), so what is read is complete. */
+  function readPick(): PickDecision | null {
     if (!pickFile) return null
-    try {
-      const st = lstatSync(pickFile, { throwIfNoEntry: false })
-      if (!st) return null
-      // Only a small plain file (never a link) is read.
-      if (!st.isFile() || st.size > PICK_FILE_MAX_BYTES) { removePickFile(); return null }
-      const parsed = JSON.parse(readFileSync(pickFile, 'utf-8')) as { id?: unknown }
-      removePickFile()
-      return parsed && typeof parsed.id === 'string' && CODEX_CONVERSATION_ID_RE.test(parsed.id) ? parsed.id : null
-    } catch {
-      // Still being written: read it again next poll.
+    let st: ReturnType<typeof lstatSync> | undefined
+    try { st = lstatSync(pickFile, { throwIfNoEntry: false }) } catch { return null }
+    if (!st) return null
+    const identity = `${st.dev}:${st.ino}:${st.size}:${st.mtimeMs}`
+    if (identity === handledPick) return null
+    const done = (): null => {
+      handledPick = identity
+      if (!st!.isDirectory()) removePickFile()
       return null
     }
+    if (!st.isFile() || st.size > PICK_FILE_MAX_BYTES) return done()
+    let text: string
+    let fd: number | null = null
+    try {
+      fd = openSync(pickFile, READ_NO_FOLLOW)
+      const opened = fstatSync(fd)
+      const same = opened.isFile() && opened.dev === st.dev && (!st.ino || opened.ino === st.ino) && opened.size <= PICK_FILE_MAX_BYTES
+      if (!same) return done()
+      const buf = Buffer.alloc(opened.size)
+      const n = opened.size > 0 ? readSync(fd, buf, 0, opened.size, 0) : 0
+      text = buf.subarray(0, n).toString('utf-8')
+    } catch {
+      // Gone or replaced between the two looks: look again next poll.
+      return null
+    } finally {
+      if (fd !== null) { try { closeSync(fd) } catch { /* already closed */ } }
+    }
+    const at = Math.min(st.mtimeMs, Date.now())
+    let parsed: { id?: unknown; fresh?: unknown } | null = null
+    try { parsed = JSON.parse(text) as { id?: unknown; fresh?: unknown } } catch { parsed = null }
+    done()
+    if (parsed && typeof parsed.id === 'string' && CODEX_CONVERSATION_ID_RE.test(parsed.id)) return { kind: 'id', id: parsed.id }
+    if (parsed && parsed.fresh === true) return { kind: 'fresh', at }
+    return null
   }
 
   function tryClaim(): void {
@@ -462,21 +505,31 @@ export function watchAndClaimRollout(
       return
     }
 
-    if (pickFile && !pickedId) pickedId = readPick()
-    if (pickedId) {
-      if (!picked) {
-        const found = lookup(pickedId)
-        if (found) {
-          try { picked = { ...found, size: statSync(found.path).size } } catch { picked = null }
+    // A picker launch claims only what the picker decided (P3.5 fix round
+    // 1): nothing before its first decision, so a new rollout another
+    // session writes in the same folder is never taken meanwhile.
+    let since = spawnTimestamp - 5000
+    if (pickFile) {
+      const next = readPick()
+      if (next) { decision = next; picked = null }
+      if (!decision) return
+      if (decision.kind === 'fresh') {
+        // A new conversation: only a rollout created from the decision on.
+        since = decision.at - FRESH_DECISION_TOLERANCE_MS
+      } else {
+        if (!picked) {
+          const found = lookup(decision.id)
+          if (found) {
+            try { picked = { ...found, size: statSync(found.path).size } } catch { picked = null }
+          }
+        } else if (!claimed.has(picked.path)) {
+          try {
+            if (statSync(picked.path).size > picked.size) { claim(picked.path, picked.meta); return }
+          } catch { /* gone: nothing to claim */ }
         }
-      } else if (!claimed.has(picked.path)) {
-        try {
-          if (statSync(picked.path).size > picked.size) { claim(picked.path, picked.meta); return }
-        } catch { /* gone: nothing to claim */ }
+        // Only the named conversation is this session's.
+        return
       }
-      // The picker named the conversation: only that one is this session's,
-      // never a new rollout another session writes in the same folder.
-      return
     }
 
     const now = Date.now()
@@ -496,7 +549,7 @@ export function watchAndClaimRollout(
         if (!head || head.kind === 'partial') continue
         if (head.kind === 'too-long') { settled.add(fullPath); continue }
         const found = parseSessionMetaLine(head.line)
-        if (found && found.cwd === sessionCwd && found.at >= spawnTimestamp - 5000) {
+        if (found && found.cwd === sessionCwd && found.at >= since) {
           claim(fullPath, found)
           return
         }
