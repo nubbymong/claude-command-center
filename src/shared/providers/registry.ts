@@ -53,7 +53,10 @@ export interface LegacyLink {
   shadow: LegacyShadow
 }
 
-export type SetupJournalState = 'pending' | 'credentials-written'
+/** `discarding`: a Discard is under way (write-ahead: recorded before the
+ *  realm is signed out and removed), so a Discard that stops half-way, or
+ *  whose last write is lost, is finished by the next one, never completed. */
+export type SetupJournalState = 'pending' | 'credentials-written' | 'discarding'
 
 /** A durable, non-secret record of an account being set up (design 9.3). The
  *  account and realm ids are allocated before authentication starts, so a crash
@@ -201,7 +204,7 @@ const REALM_KINDS: readonly RealmKind[] = ['claude-config-home', 'codex-home']
 const OWNERSHIPS: readonly RealmOwnership[] = ['conductor-managed', 'external-default']
 const REALM_LIFECYCLES: readonly RealmLifecycle[] = ['pending', 'active', 'retiring', 'retired', 'recovery']
 const STORE_MODES: readonly CredentialStoreMode[] = ['file', 'keyring', 'unknown']
-const JOURNAL_STATES: readonly SetupJournalState[] = ['pending', 'credentials-written']
+const JOURNAL_STATES: readonly SetupJournalState[] = ['pending', 'credentials-written', 'discarding']
 const oneOf = <T extends string>(list: readonly T[], v: unknown): v is T => typeof v === 'string' && (list as readonly string[]).includes(v)
 const isTime = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 && v <= TIME_MAX
 
@@ -474,22 +477,18 @@ export function linkAccountIdentity(doc: ProviderRegistryDoc, accountId: string,
 /** Give an account a new private identity, copied from its current one. The
  *  old identity is retained: history may still name it.
  *
- *  The copy carries the name the account was shown under. An identity with
- *  no name of its own (a Claude profile often has none) is named, on an
- *  account with no label of its own, by the label of a live account sharing
- *  it (the rows' rule, accountDisplayName in the renderer's accounts store);
- *  once unlinked that label no longer reaches it, so the copy takes it as its
- *  name rather than leaving the account unnamed. */
+ *  The copy carries the identity's own name. An identity with no name (a
+ *  Claude profile often has none) gives the copy the account's OWN label
+ *  as its name, when it has one; never another account's label (that is
+ *  someone else's address), so an account with no label of its own is left
+ *  unnamed and its row shows its own fallback. */
 export function unlinkAccountIdentity(doc: ProviderRegistryDoc, accountId: string, newIdentityId: string, now: number): RegistryResult {
   const account = findAccount(doc, accountId)
   if (!account) return fail('not-found', `account ${accountId} does not exist`)
   if (isRealmOnly(account, findRealm(doc, account.authRealmId))) return fail('not-linkable', 'an unverified external sign-in keeps its own identity')
   const from = findIdentity(doc, account.identityId)
   if (!from) return fail('not-found', `identity ${account.identityId} does not exist`)
-  const shownBy = from.friendlyName !== undefined || account.providerLabel?.trim()
-    ? undefined
-    : doc.accounts.find((a) => a.identityId === from.id && a.lifecycle !== 'archived' && a.providerLabel?.trim())?.providerLabel
-  const created = createIdentity(doc, { id: newIdentityId, friendlyName: from.friendlyName ?? shownBy, colourKey: from.colourKey, groupId: from.groupId }, now)
+  const created = createIdentity(doc, { id: newIdentityId, friendlyName: from.friendlyName ?? account.providerLabel, colourKey: from.colourKey, groupId: from.groupId }, now)
   if (!created.ok) return created
   return done({ ...created.doc, accounts: created.doc.accounts.map((a) => (a.id === accountId ? { ...a, identityId: newIdentityId, updatedAt: now } : a)) })
 }
@@ -544,8 +543,21 @@ export function beginAccountSetup(doc: ProviderRegistryDoc, input: BeginSetupInp
 }
 
 export function markSetupCredentialsWritten(doc: ProviderRegistryDoc, accountId: string, now: number): RegistryResult {
-  if (!doc.journals.some((j) => j.accountId === accountId)) return fail('not-found', `no setup in progress for ${accountId}`)
+  const journal = doc.journals.find((j) => j.accountId === accountId)
+  if (!journal) return fail('not-found', `no setup in progress for ${accountId}`)
+  if (journal.state === 'discarding') return fail('lifecycle', 'this setup is being discarded')
   return done({ ...doc, journals: doc.journals.map((j) => (j.accountId === accountId ? { ...j, state: 'credentials-written' as const, updatedAt: now } : j)) })
+}
+
+/** Write-ahead for a Discard: recorded BEFORE the realm is signed out and
+ *  removed, so the registry on disk never names a setup, or an account, over
+ *  a folder already gone. A setup being discarded is never completed,
+ *  switched to or released; only its Discard finishes it. */
+export function markSetupDiscarding(doc: ProviderRegistryDoc, accountId: string, now: number): RegistryResult {
+  const journal = doc.journals.find((j) => j.accountId === accountId)
+  if (!journal) return fail('not-found', `no setup in progress for ${accountId}`)
+  if (journal.state === 'discarding') return done(doc)
+  return done({ ...doc, journals: doc.journals.map((j) => (j.accountId === accountId ? { ...j, state: 'discarding' as const, updatedAt: now } : j)) })
 }
 
 export interface CommitSetupInput {
@@ -568,6 +580,7 @@ export function commitAccountSetup(doc: ProviderRegistryDoc, accountId: string, 
   // A staged sign in again ends in the switch (rebindAccountRealm), or is
   // released as a plain setup first when it is a separate account.
   if (journal.replacesAccountId !== undefined) return fail('lifecycle', 'this sign-in replaces an existing account\'s; it is not a new account')
+  if (journal.state === 'discarding') return fail('lifecycle', 'this setup is being discarded')
   if (!findIdentity(doc, input.identityId)) return fail('not-found', `identity ${input.identityId} does not exist`)
   if (!oneOf(AUTH_METHODS, input.authMethod)) return fail('invalid-value', 'unknown sign-in method')
   if (!oneOf(AUTH_STATES, input.lastKnownAuthState)) return fail('invalid-value', 'unknown auth state')
@@ -684,6 +697,7 @@ export function decideReauth(
 ): { ok: true; decision: ReauthDecision } | { ok: false; code: RegistryErrorCode; message: string } {
   const journal = doc.journals.find((j) => j.accountId === journalAccountId)
   if (!journal?.replacesAccountId) return { ok: false, code: 'not-found', message: `no sign in again in progress for ${journalAccountId}` }
+  if (journal.state === 'discarding') return { ok: false, code: 'lifecycle', message: 'this sign in again is being discarded' }
   const target = findAccount(doc, journal.replacesAccountId)
   if (!target) return { ok: false, code: 'not-found', message: `account ${journal.replacesAccountId} does not exist` }
   const answer: ReauthDecision = sameAccount ? 'rebind' : 'separate'
@@ -744,6 +758,7 @@ export function rebindAccountRealm(doc: ProviderRegistryDoc, journalAccountId: s
 export function releaseReauthAsSetup(doc: ProviderRegistryDoc, journalAccountId: string, now: number): RegistryResult {
   const journal = doc.journals.find((j) => j.accountId === journalAccountId)
   if (!journal?.replacesAccountId) return fail('not-found', `no sign in again in progress for ${journalAccountId}`)
+  if (journal.state === 'discarding') return fail('lifecycle', 'this sign in again is being discarded')
   return done({
     ...doc,
     journals: doc.journals.map((j) => {

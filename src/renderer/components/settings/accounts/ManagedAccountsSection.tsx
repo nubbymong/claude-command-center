@@ -358,7 +358,9 @@ function PendingSetupRow({ setup, manageable, onResume, replacesName }: { setup:
   // A sign in again of an existing account (design 9.2) is never finished as
   // a new account: Discard it, then sign in again.
   const again = setup.replacesAccountId !== undefined
-  const resumable = manageable && !setup.external && !setup.signingIn && !again
+  // One being discarded is finished only by Discard.
+  const discarding = setup.state === 'discarding'
+  const resumable = manageable && !setup.external && !setup.signingIn && !again && !discarding
   return (
     <div className="py-2" style={{ borderTop: '1px solid var(--border-subtle)' }} data-testid={`pending-setup-${setup.accountId}`}>
       <div className="flex items-center gap-3">
@@ -366,6 +368,7 @@ function PendingSetupRow({ setup, manageable, onResume, replacesName }: { setup:
           <div className="text-[12.5px]" style={{ color: 'var(--text-primary)' }}>{again ? `Sign in again${replacesName ? ` for ${replacesName}` : ''}, not finished` : `${methodWord(setup.method)}, not finished`}</div>
           <MutedLine>
             {setup.signingIn ? 'Signing in now'
+              : discarding ? 'Discarding did not finish; Discard finishes it'
               : again ? 'Discard it, then sign in again'
                 : setup.state === 'credentials-written' ? 'Signed in; it still needs a name' : 'Started ' + new Date(setup.createdAt).toLocaleString()}
           </MutedLine>

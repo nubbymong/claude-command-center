@@ -80,6 +80,13 @@ export function memoryFs() {
       if ([...dirs, ...files].some((x) => parent(x) === n)) throw err('ENOTEMPTY')
       if (!dirs.delete(n)) throw err('ENOENT')
     },
+    copyFile: (src, dest) => {
+      log.push(`copyFile ${src} -> ${dest}`)
+      if (!files.has(norm(src))) throw err('ENOENT')
+      if (dirs.has(norm(dest)) || files.has(norm(dest))) throw err('EEXIST')
+      if (!dirs.has(parent(dest))) throw err('ENOENT')
+      files.add(norm(dest))
+    },
   }
   return { fs, dirs, files, log, exists: (p: string) => dirs.has(norm(p)) }
 }

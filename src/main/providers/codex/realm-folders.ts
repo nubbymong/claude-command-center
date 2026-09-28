@@ -77,6 +77,9 @@ export interface CodexRealmFsPort {
   readdir(dir: string): string[]
   unlink(p: string): void
   rmdir(p: string): void
+  /** Exactly one new file, a byte copy of `src` (a regular file); EEXIST when
+   *  anything is already at `dest`. Absent: history is not copied. */
+  copyFile?(src: string, dest: string): void
 }
 
 /** The realm locks sign-in, sign-out and folder removal share. */
@@ -578,7 +581,88 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
     })
   }
 
-  return { prepare, remove }
+  /** The conversation history a Codex home keeps: its session transcripts
+   *  and its prompt history. Nothing else is copied (never a sign-in). */
+  const HISTORY_DIR = 'sessions'
+  const HISTORY_FILE = 'history.jsonl'
+
+  /** A staged sign in again's history, copied into the replacement before
+   *  the switch (P3.3 review round 2): the source is the account's realm in
+   *  use, the destination the replacement being set up. Both are held with
+   *  their sign-in locks for the whole copy. The source tree is planned
+   *  first, exactly as a removal plans (plain files and folders on one
+   *  volume, each at its own canonical path, bounded in depth and count);
+   *  each entry is re-checked just before it is copied; folders are made
+   *  owner-only in the destination and a file is never written over. */
+  function copyHistory(from: RealmRef, to: RealmRef): Promise<RealmFolderResult & { copied?: number }> {
+    return guard(async () => {
+      if (typeof fs.copyFile !== 'function') return fail('io-failed')
+      const src = await locate(from, ['active'])
+      if (isFailure(src)) return src
+      const dst = await locate(to, ['pending'])
+      if (isFailure(dst)) return dst
+      const s = inspect(src)
+      const d = inspect(dst)
+      if (s === 'absent' || d === 'absent') return fail('realm-unavailable')
+      if (isFailure(s)) return s
+      if (isFailure(d)) return d
+      const releaseSrc = deps.locks.hold(codexRealmLockKey(s.canonical, s.home.dev, s.home.ino))
+      if (!releaseSrc) return fail('busy')
+      const releaseDst = deps.locks.hold(codexRealmLockKey(d.canonical, d.home.dev, d.home.ino))
+      if (!releaseDst) { releaseSrc(); return fail('busy') }
+      try {
+        const planned: Planned[] = []
+        // The transcripts folder, when there is one.
+        const sessions = pathApi.join(src.home, HISTORY_DIR)
+        let sessionsEntry: CodexFsEntry | null = null
+        try { sessionsEntry = fs.lstat(sessions) } catch (e) { if (errCode(e) !== 'ENOENT') return fail('io-failed') }
+        if (sessionsEntry) {
+          if (sessionsEntry.kind !== 'dir' || otherVolume(sessionsEntry, s.home) || !stillCanonical(sessions)) return fail('unsafe-contents')
+          const refused = plan(sessions, sessionsEntry, 2, planned)
+          if (refused) return refused
+          planned.push({ p: sessions, e: sessionsEntry, parent: s.home })
+        }
+        // The prompt history, when there is one.
+        const history = pathApi.join(src.home, HISTORY_FILE)
+        let historyEntry: CodexFsEntry | null = null
+        try { historyEntry = fs.lstat(history) } catch (e) { if (errCode(e) !== 'ENOENT') return fail('io-failed') }
+        if (historyEntry) {
+          if (historyEntry.kind !== 'file' || otherVolume(historyEntry, s.home) || !stillCanonical(history)) return fail('unsafe-contents')
+          planned.push({ p: history, e: historyEntry, parent: s.home })
+        }
+        // Parents before children for the copy (the plan lists children first).
+        const ordered = [...planned].sort((a, b) => a.p.length - b.p.length)
+        let copied = 0
+        for (const { p, e, parent } of ordered) {
+          const dir = pathApi.dirname(p)
+          if (!stillCanonical(dir) || !unchanged(dir, parent) || !unchanged(p, e)) return fail('changed')
+          const rel = pathApi.relative(src.home, p)
+          if (!rel || rel.startsWith('..') || pathApi.isAbsolute(rel)) return fail('unsafe-contents')
+          const target = pathApi.join(dst.home, rel)
+          const targetDir = pathApi.dirname(target)
+          if (!stillCanonical(targetDir)) return fail('changed')
+          if (e.kind === 'dir') {
+            try { fs.mkdir(target, OWNER_ONLY) } catch (err) {
+              if (errCode(err) !== 'EEXIST') return fail('io-failed')
+              const there = checkDir(target)
+              if (isFailure(there)) return there
+            }
+            const priv = makePrivate(target)
+            if (priv) return priv
+          } else {
+            try { fs.copyFile(p, target) } catch (err) { return fail(errCode(err) === 'EEXIST' ? 'not-empty' : 'io-failed') }
+            copied++
+          }
+        }
+        return { ok: true, copied }
+      } finally {
+        releaseDst()
+        releaseSrc()
+      }
+    })
+  }
+
+  return { prepare, remove, copyHistory }
 }
 
 /** The promise's answer, or `late` once `ms` have passed. */

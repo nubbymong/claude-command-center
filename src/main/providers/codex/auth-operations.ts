@@ -250,7 +250,9 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
     if (!fsid || fsid.isDirectory !== true || typeof fsid.canonical !== 'string' || !samePath(fsid.canonical, where.home)) return refuse('realm-unavailable')
     const exe = currentExecutable()
     if (!exe.ok) return exe
-    if (ownership === 'conductor-managed' && purpose !== 'logout') {
+    // Every run in a managed folder, a sign-out included (review round 2):
+    // the CLI loads a .env there whatever it was started for.
+    if (ownership === 'conductor-managed') {
       let present: unknown
       try { present = deps.envFilePresent(where.home) } catch { present = true }
       if (present !== false) return refuse('realm-env-file')

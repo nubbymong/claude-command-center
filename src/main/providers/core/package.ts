@@ -204,6 +204,14 @@ export interface ProviderRealmFolderOperations {
    *  keeping the journal when this fails: the folder is only ever found
    *  through its realm record. `removed: false` means nothing was there. */
   remove(realm: RealmRef, opts: { contents: 'empty-only' | 'all' }): Promise<RealmFolderResult>
+  /** A staged sign in again (design 9.2): copy an account's conversation
+   *  history (the provider's session transcripts and its prompt history) from
+   *  its realm in use into the replacement being set up, before the switch,
+   *  so resume and usage keep the earlier conversations. Only plain files and
+   *  folders on one volume, each at its own canonical path, bounded; nothing
+   *  in the source changes; a file already in the replacement is never
+   *  overwritten. Absent: the provider keeps no such history. */
+  copyHistory?(from: RealmRef, to: RealmRef): Promise<RealmFolderResult & { copied?: number }>
 }
 
 /** What a launch in a bound realm needs, proven at launch time (plan A10):

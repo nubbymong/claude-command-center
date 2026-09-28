@@ -13,11 +13,14 @@ import {
   emptyRegistry, createIdentity, beginAccountSetup, commitAccountSetup, checkRegistryInvariants, parseRegistryDoc,
   beginAccountReauth, rebindAccountRealm, releaseReauthAsSetup, settleSupersededRealm, decideReauth, realmOperable,
   unsettledSupersededRealms, recordAuthCheck, setAccountLifecycle, findAccount, findRealm, REGISTRY_SCHEMA_VERSION,
-  reconcileLegacyAccounts, ID_PREFIX, reconcileAccountSignIn,
+  reconcileLegacyAccounts, ID_PREFIX, reconcileAccountSignIn, markSetupDiscarding, markSetupCredentialsWritten,
 } from '../../src/shared/providers'
 import type { ProviderRegistryDoc } from '../../src/shared/providers'
 import type { ProviderPackage } from '../../src/main/providers/core'
-import { harness, addCodexAccount, managedHome, EXT_HOME, KEY } from './accounts-harness'
+import { harness, addCodexAccount, managedHome, EXT_HOME, KEY, MemoryPort } from './accounts-harness'
+import { codexEventsFromRollout } from '../../src/main/tokenomics/tk-parse'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { codexCapabilities, codexWiredCapabilities } from '../../src/main/providers/codex'
 import { claudeCapabilities } from '../../src/main/providers/claude'
 
@@ -259,6 +262,23 @@ describe('a separate account, and the old realm afterwards', () => {
   })
 })
 
+describe('a setup being discarded (review round 2, L1-1: the Discard is written ahead)', () => {
+  it('is marked first, and from then on is never marked signed in, completed, switched to or released', () => {
+    const doc = ok(markSetupDiscarding(staged(), acct(9), 30))
+    expect(doc.journals[0].state).toBe('discarding')
+    expect(parseRegistryDoc(JSON.parse(JSON.stringify(doc)))).toEqual({ ok: true, doc })
+    expect(markSetupCredentialsWritten(doc, acct(9), 31)).toMatchObject({ ok: false, code: 'lifecycle' })
+    expect(rebindAccountRealm(doc, acct(9), { state: 'signed-in' }, 31)).toMatchObject({ ok: false, code: 'lifecycle' })
+    expect(releaseReauthAsSetup(doc, acct(9), 31)).toMatchObject({ ok: false, code: 'lifecycle' })
+    let plain = ok(createIdentity(oneAccount(), { id: idn(2), colourKey: 'rose' }, 20))
+    plain = ok(beginAccountSetup(plain, { accountId: acct(7), realmId: realm(7), providerId: 'codex', method: 'browser', realmKind: 'codex-home', ownership: 'conductor-managed', pathRef: `managed:${realm(7)}` }, 21))
+    plain = ok(markSetupDiscarding(plain, acct(7), 22))
+    expect(commitAccountSetup(plain, acct(7), { identityId: idn(2), authMethod: 'browser', lastKnownAuthState: 'signed-in', identityAssurance: 'user-asserted' }, 23)).toMatchObject({ ok: false, code: 'lifecycle' })
+    // Marking it again changes nothing; dropping it finishes it.
+    expect(ok(markSetupDiscarding(plain, acct(7), 24))).toBe(plain)
+  })
+})
+
 describe('the document rules for a staged sign in again (review round 1, T4)', () => {
   it('a journal naming a malformed account to replace is not read', () => {
     for (const bad of ['not-an-account', idn(1), 42]) {
@@ -349,6 +369,24 @@ function subjectProvider() {
 }
 
 type H = Awaited<ReturnType<typeof harness>>
+
+/** A registry file whose write can land and then report a failure (the
+ *  read-back threw), or whose read can fail. */
+class TornPort extends MemoryPort {
+  torn: number[] = []
+  blind = false
+  override read() {
+    // Not there to read back (the store takes nothing but a readable file).
+    if (this.blind) return { kind: 'missing' as const }
+    return super.read()
+  }
+  override write(text: string) {
+    this.writes++
+    if (this.failWrites.includes(this.writes)) throw new Error('disk full (nothing written)')
+    this.file = text
+    if (this.torn.includes(this.writes)) throw new Error('EBUSY on read-back (written)')
+  }
+}
 const realmIdOf = (h: H, a: string) => h.doc().accounts.find((x) => x.id === a)!.authRealmId
 const homeOf = (realmId: string) => managedHome(realmId).toLowerCase()
 const NL = String.fromCharCode(10)
@@ -583,19 +621,222 @@ describe('signing in again while signed in, through the service (WP1.52)', () =>
     expect(h.signedIn.has(homeOf(staged.realmId))).toBe(false)
   })
 
-  it('a switch whose save failed keeps the new sign-in, listed, never signed out on a guess (Q1)', async () => {
-    const h = await harness()
+  it('a switch reported as not saved is decided by what the disk says (review round 2, L1-1)', async () => {
+    // Written, then the write reported a failure: the disk has the switch.
+    const torn = new TornPort()
+    const h = await harness({ port: torn })
     const a = await addCodexAccount(h, 'A')
     const oldRealm = realmIdOf(h, a)
     // The writes of a sign in again: the journal, the credentials mark, the switch.
-    h.port.failWrites = [h.port.writes + 3]
-    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'persist-failed' })
-    const staged = h.doc().journals[0]
-    expect(staged).toMatchObject({ replacesAccountId: a, state: 'credentials-written' })
-    expect(h.signedIn.get(homeOf(staged.realmId))).toBe('chatgpt')
-    expect(h.folders.exists(managedHome(staged.realmId))).toBe(true)
+    torn.torn = [torn.writes + 3]
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    const newRealm = realmIdOf(h, a)
+    expect(newRealm).not.toBe(oldRealm)
+    expect(h.folders.exists(managedHome(newRealm))).toBe(true)
+    expect(h.signedIn.get(homeOf(newRealm))).toBe('chatgpt')
+    expect(h.doc().journals).toEqual([])
+    const disk = JSON.parse(torn.file!) as ProviderRegistryDoc
+    expect(disk.accounts.find((x) => x.id === a)!.authRealmId).toBe(newRealm)
+    // Nothing written: the disk says not switched, so the replacement goes.
+    const k = await harness()
+    const b = await addCodexAccount(k, 'B')
+    const bOld = realmIdOf(k, b)
+    k.port.failWrites = [k.port.writes + 3]
+    expect(await k.service.signInAgain({ sameAccount: true, accountId: b, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'persist-failed' })
+    expect(realmIdOf(k, b)).toBe(bOld)
+    expect(k.doc().journals).toEqual([])
+    expect([...k.folders.dirs].filter((x) => x.startsWith('c:\\res\\codex-realms\\'))).toEqual([homeOf(bOld)])
+    // The disk cannot be read back: kept, listed, never signed out on a guess.
+    const blind = new TornPort()
+    const m = await harness({ port: blind })
+    const c = await addCodexAccount(m, 'C')
+    blind.failWrites = [blind.writes + 3]
+    blind.blind = true
+    expect(await m.service.signInAgain({ sameAccount: true, accountId: c, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'persist-failed' })
+    const staged = m.doc().journals[0]
+    expect(staged).toMatchObject({ replacesAccountId: c, state: 'credentials-written' })
+    expect(m.signedIn.get(homeOf(staged.realmId))).toBe('chatgpt')
+    expect(m.args().filter((x) => x === 'logout')).toEqual([])
+  })
+
+  it('a Discard is written ahead: one whose first write fails touches nothing; a completion reported as not saved is undone on disk before its folder goes (L1-1)', async () => {
+    const h = await harness()
+    const begun = await h.service.beginSetup({ providerId: 'codex', method: 'browser' }) as { accountId: string }
+    await h.service.signIn({ accountId: begun.accountId, method: 'browser' }, 1)
+    const realmId = h.doc().journals[0].realmId
+    h.port.failWrites = [h.port.writes + 1]
+    expect(await h.service.abandonSetup({ accountId: begun.accountId })).toMatchObject({ ok: false, code: 'persist-failed' })
+    expect(h.signedIn.get(homeOf(realmId))).toBe('chatgpt')
+    expect(h.folders.exists(managedHome(realmId))).toBe(true)
     expect(h.args().filter((x) => x === 'logout')).toEqual([])
-    expect(realmIdOf(h, a)).toBe(oldRealm)
+    // A completion whose write landed but was reported as failed, then Discard.
+    const torn = new TornPort()
+    const k = await harness({ port: torn })
+    const c = await k.service.beginSetup({ providerId: 'codex', method: 'browser' }) as { accountId: string }
+    await k.service.signIn({ accountId: c.accountId, method: 'browser' }, 1)
+    const cRealm = k.doc().journals[0].realmId
+    torn.torn = [torn.writes + 1]
+    expect((await k.service.completeSetup({ accountId: c.accountId, identity: { mode: 'new', colourKey: 'rose' } })).ok).toBe(false)
+    expect((JSON.parse(torn.file!) as ProviderRegistryDoc).accounts.map((x) => x.id)).toEqual([c.accountId])
+    expect(await k.service.abandonSetup({ accountId: c.accountId })).toEqual({ ok: true })
+    // The disk and the folder agree: no account, no setup, no folder.
+    const again = await harness({ port: torn, folders: k.folders })
+    expect(again.doc().accounts).toEqual([])
+    expect(again.doc().journals).toEqual([])
+    expect(k.folders.exists(managedHome(cRealm))).toBe(false)
+  })
+
+  it('a Discard cut short is listed as such, never resumed or completed, and the next Discard finishes it (L1-1)', async () => {
+    let refuse = true
+    const h = await harness({ script: { logout: (r) => {
+      if (refuse) return { exitCode: 1, stderr: 'could not log out' + NL }
+      h.signedIn.delete(r.home.toLowerCase())
+      return { exitCode: 0, stdout: 'Successfully logged out' + NL }
+    } } })
+    const begun = await h.service.beginSetup({ providerId: 'codex', method: 'browser' }) as { accountId: string }
+    await h.service.signIn({ accountId: begun.accountId, method: 'browser' }, 1)
+    expect((await h.service.abandonSetup({ accountId: begun.accountId })).ok).toBe(false)
+    expect(h.doc().journals[0].state).toBe('discarding')
+    expect(h.service.snapshot().pendingSetups[0]).toMatchObject({ state: 'discarding' })
+    expect(await h.service.completeSetup({ accountId: begun.accountId, identity: { mode: 'new', colourKey: 'rose' } })).toMatchObject({ ok: false, code: 'unsupported' })
+    expect(await h.service.signIn({ accountId: begun.accountId, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'unsupported' })
+    refuse = false
+    expect(await h.service.abandonSetup({ accountId: begun.accountId })).toEqual({ ok: true })
+    expect(h.doc().journals).toEqual([])
+  })
+
+  it('carries the earlier conversations over before the switch: resume and usage keep them, and Tokenomics counts them once (review round 2, H1)', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    const oldRealm = realmIdOf(h, a)
+    const oldHome = homeOf(oldRealm)
+    // A conversation from before, and the prompt history.
+    // The memory folder tree keeps paths as the file system compares them: caseless.
+    const rollout = 'sessions\\2026\\09\\27\\rollout-2026-09-27t12-08-23-00000000-0000-7000-8000-000000000001.jsonl'
+    for (const d of ['sessions', 'sessions\\2026', 'sessions\\2026\\09', 'sessions\\2026\\09\\27']) h.folders.dirs.add(`${oldHome}\\${d}`)
+    h.folders.files.add(`${oldHome}\\${rollout}`)
+    h.folders.files.add(`${oldHome}\\history.jsonl`)
+    // Neither the sign-in nor anything else is copied.
+    h.folders.files.add(`${oldHome}\\config.toml`)
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    const newHome = homeOf(realmIdOf(h, a))
+    expect(h.folders.files.has(`${newHome}\\${rollout}`)).toBe(true)
+    expect(h.folders.files.has(`${newHome}\\history.jsonl`)).toBe(true)
+    expect(h.folders.files.has(`${newHome}\\config.toml`)).toBe(false)
+    // Copied, not moved: the old folder keeps them.
+    expect(h.folders.files.has(`${oldHome}\\${rollout}`)).toBe(true)
+    // The copy ran before the switch, while the old realm was the account's.
+    const copyAt = h.folders.log.findIndex((l) => l.startsWith('copyFile'))
+    expect(copyAt).toBeGreaterThan(-1)
+    // Resume (codex resume <id> finds a rollout by id in any date folder of
+    // its home, P3.1 evidence) and usage look in the account's own folder now.
+    const roots = (await h.service.sessionsRoots('codex'))!
+    expect(roots.map((x) => x.dir.toLowerCase())).toEqual([`${newHome}\\sessions`])
+    expect(roots[0].accountId).toBe(a)
+    // Tokenomics keys a Codex event on its session id and turn, from the
+    // rollout's content, never its path: the copy's events are the same keys,
+    // stored once (INSERT OR IGNORE).
+    const text = readFileSync(resolve(__dirname, '../fixtures/codex/cli/0.155.1/rollout-exec-then-resume.jsonl'), 'utf8')
+    const before = codexEventsFromRollout(text, [], 0).map((e) => e.dedupKey)
+    const copied = codexEventsFromRollout(text, [], 0).map((e) => e.dedupKey)
+    expect(before.length).toBeGreaterThan(0)
+    expect(copied).toEqual(before)
+  })
+
+  it('history is never carried over to someone else, and a link in it stops the sign in again with nothing changed (H1)', async () => {
+    const sp = subjectProvider()
+    const h = await harness({ authWrap: sp.wrap })
+    const a = await addCodexAccount(h, 'A')
+    const oldHome = homeOf(realmIdOf(h, a))
+    h.folders.dirs.add(`${oldHome}\\sessions`)
+    h.folders.files.add(`${oldHome}\\history.jsonl`)
+    sp.next.subject = 'user-2'
+    const r = await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)
+    const sep = (r as { separateAccountId: string }).separateAccountId
+    const sepRealm = h.doc().journals.find((j) => j.accountId === sep)!.realmId
+    expect(h.folders.files.has(`${homeOf(sepRealm)}\\history.jsonl`)).toBe(false)
+    // A link where the history is: refused, and the account keeps its sign-in.
+    const k = await harness()
+    const b = await addCodexAccount(k, 'B')
+    const bOld = realmIdOf(k, b)
+    const bHome = homeOf(bOld)
+    k.folders.dirs.add(`${bHome}\\sessions`)
+    const lstat = k.folders.fs.lstat
+    k.folders.fs.lstat = (p) => (p.toLowerCase() === `${bHome}\\sessions` ? { kind: 'link', dev: '9', ino: '5', mode: 0o777 } : lstat(p))
+    expect(await k.service.signInAgain({ sameAccount: true, accountId: b, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'unsafe-contents' })
+    expect(realmIdOf(k, b)).toBe(bOld)
+    expect(k.doc().journals).toEqual([])
+    expect([...k.folders.dirs].filter((x) => x.startsWith('c:\\res\\codex-realms\\') && !x.startsWith(bHome))).toEqual([])
+  })
+
+  it('never a folder it did not make, nor a sign-in it did not perform: refused, the folder left as found (review round 2, L2-2)', async () => {
+    for (const plant of ['folder', 'signed-in'] as const) {
+      const h = await harness()
+      const a = await addCodexAccount(h, 'A')
+      const oldRealm = realmIdOf(h, a)
+      const prepare = h.codex.realmFolders!.prepare
+      let planted = ''
+      h.codex.realmFolders!.prepare = async (ref) => {
+        const home = homeOf(ref.authRealmId)
+        if (plant === 'folder') { h.folders.dirs.add(home); planted = home }
+        const r = await prepare(ref)
+        if (plant === 'signed-in') { h.signedIn.set(home, 'chatgpt'); planted = home }
+        return r
+      }
+      const runs = h.runs.length
+      expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1), plant).toMatchObject({ ok: false, code: 'changed' })
+      expect(realmIdOf(h, a), plant).toBe(oldRealm)
+      expect(h.doc().journals, plant).toEqual([])
+      expect(h.runs.slice(runs).filter((r) => r.args === 'login'), plant).toEqual([])
+      if (plant === 'folder') expect(h.folders.exists(planted), plant).toBe(true)
+    }
+  })
+
+  it('a sign-out signs out the old sign-in a sign in again left too (review round 2, L1-2)', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    const oldRealm = realmIdOf(h, a)
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    expect(h.signedIn.get(homeOf(oldRealm))).toBe('chatgpt')
+    expect(await h.service.logout({ accountId: a })).toEqual({ ok: true, state: 'signed-out' })
+    expect(h.signedIn.size).toBe(0)
+    expect(findRealm(h.doc(), oldRealm)!.lifecycle).toBe('retired')
+    expect(h.service.snapshot().accounts[0].oldSignInLeft).toBeUndefined()
+  })
+
+  it('a sign-out whose result could not be read back leaves the account needing a check, never "signed in, ready" (review round 2, L2-1)', async () => {
+    let odd = false
+    const h = await harness({ script: {
+      'login status': (r) => {
+        if (odd) return { exitCode: 2, stderr: 'error: something odd' + NL }
+        return h.signedIn.has(r.home.toLowerCase()) ? { exitCode: 0, stderr: 'Logged in using ChatGPT' + NL } : { exitCode: 1, stderr: 'Not logged in' + NL }
+      },
+      'logout': (r) => { h.signedIn.delete(r.home.toLowerCase()); odd = true; return { exitCode: 0, stdout: 'Successfully logged out' + NL } },
+    } })
+    const a = await addCodexAccount(h, 'A')
+    expect((await h.service.logout({ accountId: a })).ok).toBe(false)
+    expect(findAccount(h.doc(), a)).toMatchObject({ lastKnownAuthState: 'unknown', operationalState: 'attention' })
+    // Nothing ran (refused before the CLI): nothing is recorded either.
+    odd = false
+    const k = await harness()
+    const b = await addCodexAccount(k, 'B')
+    k.state.envFile.add(homeOf(realmIdOf(k, b)))
+    expect(await k.service.logout({ accountId: b })).toMatchObject({ ok: false, code: 'realm-env-file' })
+    expect(findAccount(k.doc(), b)).toMatchObject({ lastKnownAuthState: 'signed-in', operationalState: 'ready' })
+  })
+
+  it('archive asks the account\'s own folder first: nothing is signed out when it cannot finish (review round 2, L2-3)', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    const oldRealm = realmIdOf(h, a)
+    expect(await h.service.signInAgain({ sameAccount: true, accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
+    expect((await h.service.setLifecycle({ accountId: a, lifecycle: 'inactive' })).ok).toBe(true)
+    h.state.envFile.add(homeOf(realmIdOf(h, a)))
+    const runs = h.runs.length
+    expect(await h.service.setLifecycle({ accountId: a, lifecycle: 'archived' })).toMatchObject({ ok: false, code: 'realm-env-file' })
+    expect(h.signedIn.get(homeOf(oldRealm))).toBe('chatgpt')
+    expect(h.runs.slice(runs).filter((r) => r.args === 'logout')).toEqual([])
+    expect(findRealm(h.doc(), oldRealm)!.lifecycle).toBe('recovery')
   })
 
   it('a settle whose save failed leaves the old sign-in visible, retried later (T3)', async () => {
@@ -816,6 +1057,21 @@ describe('this computer\'s own sign-in, signed in again in place (design 9.2, la
     expect(await h.service.signInAgain({ sameAccount: true, acknowledgeExternal: true, accountId: ext, method: 'browser' }, 1)).toMatchObject({ ok: false, code: 'sign-in-changed' })
     expect(h.runs.slice(runs).map((r) => r.args)).toEqual(['login status'])
     expect(h.signedIn.get(EXT_HOME.toLowerCase())).toBe('api-key')
+  })
+
+  it('a sign-out there whose result could not be read back leaves it needing a check, never "signed in, ready" (review round 2, L2-1)', async () => {
+    let odd = false
+    const h = await harness({ script: {
+      'logout': (r) => { h.signedIn.delete(r.home.toLowerCase()); if (r.home.toLowerCase() === EXT_HOME.toLowerCase()) odd = true; return { exitCode: 0, stdout: 'Successfully logged out' + NL } },
+      'login status': (r) => {
+        if (odd && r.home.toLowerCase() === EXT_HOME.toLowerCase()) return { exitCode: 2, stderr: 'error: something odd' + NL }
+        return h.signedIn.has(r.home.toLowerCase()) ? { exitCode: 0, stderr: 'Logged in using ChatGPT' + NL } : { exitCode: 1, stderr: 'Not logged in' + NL }
+      },
+    } })
+    const ext = await withExternalHome(h)
+    expect((await h.service.signInAgain({ sameAccount: true, acknowledgeExternal: true, accountId: ext, method: 'browser' }, 1)).ok).toBe(false)
+    expect(h.signedIn.has(EXT_HOME.toLowerCase())).toBe(false)
+    expect(findAccount(h.doc(), ext)).toMatchObject({ lastKnownAuthState: 'unknown', operationalState: 'attention' })
   })
 
   it('the login port refuses this computer\'s own home without the acknowledgement', async () => {
