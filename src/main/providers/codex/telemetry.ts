@@ -12,9 +12,11 @@
  *   watchAndClaimRollout    -- 250ms-poll claim + 500ms-poll tail pipeline
  */
 
-import { readFileSync, readdirSync, existsSync } from 'fs'
+import { readFileSync, readdirSync, lstatSync, statSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import { computeCodexCostUsd } from './pricing'
+import { CODEX_CONVERSATION_ID_RE, codexDayFolders, findCodexRollout, parseSessionMetaLine, readRolloutFirstLine } from './rollout-lookup'
+import type { RolloutSessionMeta } from './rollout-lookup'
 import { normaliseCodexRateLimits, mergeAllowanceReadings, readingToBuckets, isoFromEpochMs, CODEX_DEFAULT_LIMIT_ID } from './rate-limits'
 import type { StatuslineData } from '../../../shared/types'
 import type { AllowanceReading } from '../../../shared/usage-types'
@@ -298,12 +300,45 @@ export function withAllowance(sl: StatuslineData, reading: AllowanceReading | nu
 const claimed = new Set<string>()
 
 /**
+ * How a watcher finds its rollout (P3.5, rows 34 and 38). All optional: a
+ * launch that names none claims a new rollout by directory and time, as
+ * before.
+ */
+export interface CodexClaimOptions {
+  /** The conversation this launch resumes by id (`codex resume <id>`, an
+   *  exact resume on relaunch or Restart): its rollout is claimed wherever
+   *  it is in the realm, whatever its age, and no other rollout is. */
+  resumeId?: string
+  /** Where the resume picker records the conversation it opened: read each
+   *  poll until it names one, then removed. That rollout is claimed once it
+   *  grows after the pick is read (the resume has begun writing to it). */
+  pickFile?: string
+  /** Told once which conversation the watcher claimed: its id and the
+   *  directory its rollout records. Only a conversation id is reported. */
+  onClaim?: (claim: { id: string; cwd: string }) => void
+}
+
+/** How often a claim by id walks the realm's sessions folder while unclaimed. */
+const LOOKUP_INTERVAL_MS = 1_000
+/** The most of a pick file that is read. */
+const PICK_FILE_MAX_BYTES = 1_024
+
+/**
  * Watch and claim the Codex rollout file for a spawned session.
  *
  * Algorithm:
- * 1. Poll every 250ms, looking for a rollout file in the UTC date directory
- *    whose session_meta.cwd matches sessionCwd AND whose timestamp is within
- *    [spawnTimestamp - 5000ms, +inf).
+ * 1. Poll every 250ms for the session's rollout:
+ *    - a launch that resumes a conversation by id (`resumeId`) claims that
+ *      conversation's rollout wherever it is in the realm (rollout-lookup's
+ *      findCodexRollout), and nothing else;
+ *    - a launch through the resume picker (`pickFile`) claims the
+ *      conversation the picker opened once its rollout grows, or a new one;
+ *    - a new conversation: a rollout in one of the day folders (recomputed on
+ *      every poll: today and yesterday, each by UTC and by local date, so a
+ *      session crossing midnight is found) whose session_meta.cwd matches
+ *      sessionCwd AND whose timestamp is within [spawnTimestamp - 5000ms, +inf).
+ *      Only each file's first line is read, bounded; a file that settled as
+ *      another session's is not read again.
  * 2. Once claimed, poll parseAndEmit every 500ms. fs.watch is NOT used because
  *    on Windows it misses append events when the Codex CLI writer holds the
  *    file open -- same failure mode that hit the Claude statusline in v1.2.134
@@ -312,9 +347,10 @@ const claimed = new Set<string>()
  *    no claim at 30s, give up (--ephemeral path) and stop polling. The 30s
  *    cap accounts for cold-start delay -- on Windows, Codex 0.128.0 typically
  *    writes the first rollout event ~8s after spawn but a cold launch through
- *    the cmd.exe wrapper can run noticeably longer.
+ *    the cmd.exe wrapper can run noticeably longer. A picker launch waits for
+ *    the user instead: nothing runs until they pick, however long that takes.
  * 4. stop() clears both timeouts, the claim-poll interval, and the tail-poll
- *    interval, and removes the path from the claimed set.
+ *    interval, removes the path from the claimed set and the pick file.
  *
  * Windows path note: Codex records cwd exactly as provided by the OS at spawn
  * time. Pass the same resolvedCwd string from pty-manager (backslashes on
@@ -336,18 +372,13 @@ export function watchAndClaimRollout(
   onUpdate: (sl: StatuslineData) => void,
   sessionsDir: string,
   onAllowance?: (reading: AllowanceReading) => void,
+  claimOpts?: CodexClaimOptions,
 ): TelemetrySource {
   if (typeof sessionsDir !== 'string' || !sessionsDir) return { stop() {} }
-  // NOTE: dateDir is bound to today's UTC date at call time; it will not follow
-  // midnight UTC rollover (sessions started before midnight won't be found after).
-  // Known limitation -- fix by re-computing dateDir on each poll tick.
-  const today = new Date()
-  const dateDir = join(
-    sessionsDir,
-    String(today.getUTCFullYear()),
-    String(today.getUTCMonth() + 1).padStart(2, '0'),
-    String(today.getUTCDate()).padStart(2, '0'),
-  )
+  // A resume id that is not a conversation id resumes nothing: claim as a new launch would.
+  const resumeId = typeof claimOpts?.resumeId === 'string' && CODEX_CONVERSATION_ID_RE.test(claimOpts.resumeId) ? claimOpts.resumeId : undefined
+  const pickFile = typeof claimOpts?.pickFile === 'string' && claimOpts.pickFile ? claimOpts.pickFile : undefined
+  const waitsForUser = !!pickFile && !resumeId
 
   let claimedPath: string | null = null
   let intervalHandle: ReturnType<typeof setInterval> | null = null
@@ -356,69 +387,117 @@ export function watchAndClaimRollout(
   let lastSize = 0
   let contextWindow: number | null = null
   let meta: RolloutMeta | null = null
+  /** Files whose first line settled as not this session's: never read again. */
+  const settled = new Set<string>()
+  let lastLookupAt = Number.NEGATIVE_INFINITY
+  /** The conversation the picker opened, once read, and its rollout's size then. */
+  let pickedId: string | null = null
+  let picked: { path: string; meta: RolloutSessionMeta; size: number } | null = null
+
+  function claim(fullPath: string, found: RolloutSessionMeta): void {
+    claimedPath = fullPath
+    claimed.add(fullPath)
+    meta = { id: found.id, cwd: found.cwd, model: found.model, cli_version: found.cliVersion, timestamp: found.timestamp }
+    if (claimOpts?.onClaim && CODEX_CONVERSATION_ID_RE.test(found.id)) {
+      try { claimOpts.onClaim({ id: found.id, cwd: found.cwd }) } catch { /* a listener never stops the watch */ }
+    }
+
+    // Initial parse covers the case where session_meta + task_started +
+    // token_count are all already present at claim time.
+    parseAndEmit(fullPath)
+
+    // Replaced fs.watch with a polling interval -- fs.watch on Windows
+    // misses append events when the Codex CLI writer holds the file open
+    // and appends progressively. lastSize dedupe in parseAndEmit keeps
+    // the polling cheap when the file has not grown.
+    tailIntervalHandle = setInterval(() => {
+      if (stopped || !claimedPath) return
+      parseAndEmit(claimedPath)
+    }, 500)
+
+    // Claimed -- the interval can stop polling
+    if (intervalHandle) {
+      clearInterval(intervalHandle)
+      intervalHandle = null
+    }
+  }
+
+  /** The rollout of conversation `id` in this realm, looked up at most once a second. */
+  function lookup(id: string): ReturnType<typeof findCodexRollout> {
+    const now = Date.now()
+    if (now - lastLookupAt < LOOKUP_INTERVAL_MS) return null
+    lastLookupAt = now
+    const found = findCodexRollout(sessionsDir, id)
+    return found && !claimed.has(found.path) ? found : null
+  }
+
+  function removePickFile(): void {
+    if (!pickFile) return
+    try { unlinkSync(pickFile) } catch { /* not there, or already gone */ }
+  }
+
+  /** The conversation id the picker recorded, or null while it has recorded none. */
+  function readPick(): string | null {
+    if (!pickFile) return null
+    try {
+      const st = lstatSync(pickFile, { throwIfNoEntry: false })
+      if (!st) return null
+      // Only a small plain file (never a link) is read.
+      if (!st.isFile() || st.size > PICK_FILE_MAX_BYTES) { removePickFile(); return null }
+      const parsed = JSON.parse(readFileSync(pickFile, 'utf-8')) as { id?: unknown }
+      removePickFile()
+      return parsed && typeof parsed.id === 'string' && CODEX_CONVERSATION_ID_RE.test(parsed.id) ? parsed.id : null
+    } catch {
+      // Still being written: read it again next poll.
+      return null
+    }
+  }
 
   function tryClaim(): void {
     if (claimedPath || stopped) return
-    if (!existsSync(dateDir)) return
 
-    let files: string[]
-    try {
-      files = readdirSync(dateDir).filter((f) => f.startsWith('rollout-') && f.endsWith('.jsonl'))
-    } catch {
+    if (resumeId) {
+      const found = lookup(resumeId)
+      if (found) claim(found.path, found.meta)
       return
     }
 
-    for (const f of files) {
-      const fullPath = join(dateDir, f)
-      if (claimed.has(fullPath)) continue
+    if (pickFile && !pickedId) pickedId = readPick()
+    if (pickedId) {
+      if (!picked) {
+        const found = lookup(pickedId)
+        if (found) {
+          try { picked = { ...found, size: statSync(found.path).size } } catch { picked = null }
+        }
+      } else if (!claimed.has(picked.path)) {
+        try {
+          if (statSync(picked.path).size > picked.size) { claim(picked.path, picked.meta); return }
+        } catch { /* gone: nothing to claim */ }
+      }
+    }
 
+    const now = Date.now()
+    for (const dateDir of codexDayFolders(sessionsDir, [now, now - 24 * 3600 * 1000])) {
+      let files: string[]
       try {
-        const text = readFileSync(fullPath, 'utf-8')
-        const firstLine = text.split('\n')[0]
-        if (!firstLine) continue
+        files = readdirSync(dateDir).filter((f) => f.startsWith('rollout-') && f.endsWith('.jsonl'))
+      } catch {
+        continue
+      }
 
-        const evt = JSON.parse(firstLine) as Record<string, unknown>
-        if (evt.type !== 'session_meta') continue
-
-        const p = evt.payload as Record<string, unknown>
-        const rolloutTs = new Date(String(evt.timestamp ?? '')).getTime()
-
-        if (
-          String(p.cwd) === sessionCwd &&
-          rolloutTs >= spawnTimestamp - 5000
-        ) {
-          claimedPath = fullPath
-          claimed.add(fullPath)
-          meta = {
-            id: String(p.id ?? ''),
-            cwd: String(p.cwd ?? ''),
-            model: String(p.model ?? ''),
-            cli_version: String(p.cli_version ?? ''),
-            timestamp: String(evt.timestamp ?? ''),
-          }
-
-          // Initial parse covers the case where session_meta + task_started +
-          // token_count are all already present at claim time.
-          parseAndEmit(fullPath)
-
-          // Replaced fs.watch with a polling interval -- fs.watch on Windows
-          // misses append events when the Codex CLI writer holds the file open
-          // and appends progressively. lastSize dedupe in parseAndEmit keeps
-          // the polling cheap when the file has not grown.
-          tailIntervalHandle = setInterval(() => {
-            if (stopped || !claimedPath) return
-            parseAndEmit(claimedPath)
-          }, 500)
-
-          // Claimed -- the interval can stop polling
-          if (intervalHandle) {
-            clearInterval(intervalHandle)
-            intervalHandle = null
-          }
+      for (const f of files) {
+        const fullPath = join(dateDir, f)
+        if (claimed.has(fullPath) || settled.has(fullPath)) continue
+        const head = readRolloutFirstLine(fullPath)
+        // Not readable just now, or its first line still being written: read it again next poll.
+        if (!head || head.kind === 'partial') continue
+        if (head.kind === 'too-long') { settled.add(fullPath); continue }
+        const found = parseSessionMetaLine(head.line)
+        if (found && found.cwd === sessionCwd && found.at >= spawnTimestamp - 5000) {
+          claim(fullPath, found)
           return
         }
-      } catch {
-        // Skip malformed lines
+        settled.add(fullPath)
       }
     }
   }
@@ -477,8 +556,8 @@ export function watchAndClaimRollout(
   // first rollout event on Windows after the cmd.exe wrapper warms up; cold starts
   // can run longer. We warn at 10s (so the user sees something is slow) but keep
   // polling until 30s before giving up. Hitting 30s genuinely indicates --ephemeral
-  // or a launch failure.
-  const warnHandle = setTimeout(() => {
+  // or a launch failure. A picker launch has no deadline: it waits for the user.
+  const warnHandle = waitsForUser ? null : setTimeout(() => {
     if (!claimedPath && !stopped) {
       console.warn(
         `[codex/telemetry] no rollout claimed for session ${sessionId} after 10s -- still polling, will give up at 30s`,
@@ -486,7 +565,7 @@ export function watchAndClaimRollout(
     }
   }, 10_000)
 
-  const timeoutHandle = setTimeout(() => {
+  const timeoutHandle = waitsForUser ? null : setTimeout(() => {
     if (!claimedPath && !stopped) {
       console.warn(
         `[codex/telemetry] no rollout claimed for session ${sessionId} after 30s -- assuming --ephemeral`,
@@ -503,8 +582,8 @@ export function watchAndClaimRollout(
   return {
     stop(): void {
       stopped = true
-      clearTimeout(warnHandle)
-      clearTimeout(timeoutHandle)
+      if (warnHandle) clearTimeout(warnHandle)
+      if (timeoutHandle) clearTimeout(timeoutHandle)
       if (intervalHandle) {
         clearInterval(intervalHandle)
         intervalHandle = null
@@ -517,6 +596,7 @@ export function watchAndClaimRollout(
         claimed.delete(claimedPath)
         claimedPath = null
       }
+      removePickFile()
     },
   }
 }

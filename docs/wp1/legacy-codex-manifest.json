@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-28T15:16:05.133Z",
-  "head": "cc68f3f6a1ce460fee96fbbb3ea235c3913ab83c",
-  "tree": "551dc3ed5078cd0d27801c2ed9a054ce04239066",
+  "generatedAt": "2026-09-28T15:44:22.241Z",
+  "head": "f991957468344e24596b7c3ba1164f784da25e4d",
+  "tree": "ba9ae380bfda14800867927eac9901c3ca534ea3",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2440,
+  "trackedFileCount": 2442,
   "excludedFileCount": 383,
-  "scannedFileCount": 2057,
+  "scannedFileCount": 2059,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 493,
-  "pathDigest": "bb3674ca41f086f9fd8b859e7d1743386967b1717d0d73d1d7b172952c62a57b",
+  "matchedPathCount": 495,
+  "pathDigest": "44a41ece117069baa3b23703d4a3875ae2a0d0e17dbeabd2d0ebbbea3398b617",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -733,6 +733,15 @@
       "lineCount": 22
     },
     {
+      "path": "src/main/providers/codex/rollout-lookup.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P14"
+      ],
+      "lineCount": 26
+    },
+    {
       "path": "src/main/providers/codex/spawn.ts",
       "predicates": [
         "P01",
@@ -750,7 +759,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 35
+      "lineCount": 46
     },
     {
       "path": "src/main/providers/codex/ui-detection.ts",
@@ -3083,6 +3092,15 @@
         "P13"
       ],
       "lineCount": 213
+    },
+    {
+      "path": "tests/unit/providers/codex/telemetry-claim-anywhere.test.ts",
+      "predicates": [
+        "P01",
+        "P07",
+        "P13"
+      ],
+      "lineCount": 7
     },
     {
       "path": "tests/unit/providers/codex/telemetry.test.ts",
