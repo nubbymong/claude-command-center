@@ -1,23 +1,37 @@
 import { useEffect, useLayoutEffect, useState } from 'react'
 import { useOccludesNativePanes } from '../stores/paneOcclusionStore'
+import { useSettingsStore } from '../stores/settingsStore'
+import { usesClaude, usesCodex } from '../onboarding/provider-choice'
 
 // Anchored coach-mark tour over the LIVE app (not a modal wizard). Each step
 // spotlights a real element by a data-tour selector and floats a callout beside
 // it; the final step hands off to first-config creation. Dependency-free:
 // getBoundingClientRect + a light rAF re-measure so the spotlight tracks layout.
 
+/** The assistants in use, as the title bar reads them (usesClaude, usesCodex). */
+interface AssistantsOn { claudeOn: boolean; codexOn: boolean }
+
 interface TourStep {
   selector: string | null // null => centered welcome/handoff card
   title: string
-  body: string
+  /** A function where the copy names the assistants in use (P3.4, row 14). */
+  body: string | ((on: AssistantsOn) => string)
   cta?: string // overrides "Next" on this step
+}
+
+/** The one in use when only one is; both otherwise (neither is a state
+ *  setup never leaves, and it reads as before). */
+function assistantsInUse(on: AssistantsOn): string {
+  if (on.claudeOn && !on.codexOn) return 'Claude Code'
+  if (on.codexOn && !on.claudeOn) return 'Codex'
+  return 'Claude Code and Codex'
 }
 
 const STEPS: TourStep[] = [
   {
     selector: null,
     title: 'This is your workbench',
-    body: 'AI Code Conductor runs your Claude Code and Codex sessions side by side. A quick look at where things live, then we’ll start your first session.',
+    body: (on) => `AI Code Conductor runs your ${assistantsInUse(on)} sessions side by side. A quick look at where things live, then we’ll start your first session.`,
   },
   {
     selector: '[data-tour="nav-rail"]',
@@ -92,6 +106,9 @@ export default function GuidedTour({ onCreateConfig, onClose }: { onCreateConfig
   useOccludesNativePanes()
   const [i, setI] = useState(0)
   const step = STEPS[i]
+  const claudeOn = useSettingsStore((s) => usesClaude(s.settings))
+  const codexOn = useSettingsStore((s) => usesCodex(s.settings))
+  const body = typeof step.body === 'function' ? step.body({ claudeOn, codexOn }) : step.body
   const rect = useAnchorRect(step.selector)
   const last = i === STEPS.length - 1
 
@@ -193,7 +210,7 @@ export default function GuidedTour({ onCreateConfig, onClose }: { onCreateConfig
         </div>
         <div style={{ fontSize: 16, fontWeight: 650, marginBottom: 6 }}>{step.title}</div>
         <div style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--text-secondary, #a8b2c0)', marginBottom: 14 }}>
-          {step.body}
+          {body}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <button

@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-28T14:36:25.936Z",
-  "head": "f65de184120aad9c7b017afea3446eb581f8abf6",
-  "tree": "3b6f05e92df311f64d71f2be026092d10d273096",
+  "generatedAt": "2026-09-28T14:47:03.252Z",
+  "head": "0b6c8f0a229a96d0b2ab6b9fd1bbadc6802b0394",
+  "tree": "09d38dcce9938adda9eea8ce397401ea3f7ffe69",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2439,
+  "trackedFileCount": 2440,
   "excludedFileCount": 383,
-  "scannedFileCount": 2056,
+  "scannedFileCount": 2057,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 492,
-  "pathDigest": "9ebf71461aa027044c2d56a2f0f14ef78b46c4e7cb6524058c3f29dd8db3683c",
+  "matchedPathCount": 493,
+  "pathDigest": "bb3674ca41f086f9fd8b859e7d1743386967b1717d0d73d1d7b172952c62a57b",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -1008,7 +1008,7 @@
       "predicates": [
         "P11"
       ],
-      "lineCount": 3
+      "lineCount": 10
     },
     {
       "path": "src/renderer/components/InsightsPage.tsx",
@@ -3377,6 +3377,14 @@
         "P13"
       ],
       "lineCount": 87
+    },
+    {
+      "path": "tests/unit/renderer/guided-tour-provider-copy.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "lineCount": 25
     },
     {
       "path": "tests/unit/renderer/hello-codex.acceptance.test.ts",
