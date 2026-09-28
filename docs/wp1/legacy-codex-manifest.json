@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-28T06:13:52.384Z",
-  "head": "f1ccb5f24f999769275887322b0adca57b7486ef",
-  "tree": "006c20a7a79173e05b698174a4f07cbfca6ba6f6",
+  "generatedAt": "2026-09-28T06:26:37.783Z",
+  "head": "aa0411b097e7b3df22554bbe20a9c400e68123f5",
+  "tree": "447401b5320da2d4a694dd269f3da614661350c8",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2437,
+  "trackedFileCount": 2438,
   "excludedFileCount": 383,
-  "scannedFileCount": 2054,
+  "scannedFileCount": 2055,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 490,
-  "pathDigest": "037c84e662f3ddd1349cef1a5bbf334f5519af9436ffd4b07174faad9ac85915",
+  "matchedPathCount": 491,
+  "pathDigest": "4d3a4228ddd3ca680f166f071ad6876122ee984baae5556d6f07915cc118b190",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -1207,14 +1207,15 @@
         "P05",
         "P11"
       ],
-      "lineCount": 43
+      "lineCount": 45
     },
     {
       "path": "src/renderer/components/settings/accounts/AccountsSurface.tsx",
       "predicates": [
-        "P05"
+        "P05",
+        "P11"
       ],
-      "lineCount": 1
+      "lineCount": 2
     },
     {
       "path": "src/renderer/components/settings/accounts/AddProviderAccountDialog.tsx",
@@ -1398,7 +1399,7 @@
       "predicates": [
         "P11"
       ],
-      "lineCount": 30
+      "lineCount": 32
     },
     {
       "path": "src/renderer/onboarding/CodexReconfirmPage.tsx",
@@ -1456,7 +1457,7 @@
       "predicates": [
         "P11"
       ],
-      "lineCount": 8
+      "lineCount": 7
     },
     {
       "path": "src/renderer/onboarding/WelcomeStep.tsx",
@@ -1470,7 +1471,7 @@
       "predicates": [
         "P11"
       ],
-      "lineCount": 1
+      "lineCount": 3
     },
     {
       "path": "src/renderer/onboarding/codex-reconfirm-gate.ts",
@@ -1548,7 +1549,7 @@
       "predicates": [
         "P11"
       ],
-      "lineCount": 1
+      "lineCount": 2
     },
     {
       "path": "src/renderer/onboarding/steps.ts",
@@ -3191,7 +3192,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 164
+      "lineCount": 166
     },
     {
       "path": "tests/unit/renderer/active-indicator.test.tsx",
@@ -3232,6 +3233,14 @@
       "lineCount": 82
     },
     {
+      "path": "tests/unit/renderer/claude-off-onboarding.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "lineCount": 26
+    },
+    {
       "path": "tests/unit/renderer/code-review-tools.test.tsx",
       "predicates": [
         "P04",
@@ -3239,7 +3248,7 @@
         "P08",
         "P13"
       ],
-      "lineCount": 103
+      "lineCount": 113
     },
     {
       "path": "tests/unit/renderer/codex-mini-icon.test.ts",
@@ -3902,9 +3911,10 @@
     {
       "path": "tests/unit/renderer/whatsnew-showcase.test.tsx",
       "predicates": [
+        "P05",
         "P13"
       ],
-      "lineCount": 2
+      "lineCount": 5
     },
     {
       "path": "tests/unit/renderer/window-close-dialogs.test.tsx",

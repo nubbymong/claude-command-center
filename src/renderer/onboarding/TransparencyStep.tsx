@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useSettingsStore, type UpdateChannel } from '../stores/settingsStore'
-import { codexPreference } from './provider-choice'
+import { codexPreference, usesClaude } from './provider-choice'
+import { CLAUDE_OFF_ACCOUNTS_LINE } from '../lib/claudeOff'
 import { useGitHubStore } from '../stores/githubStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { defaultUpdateChannelForVersion } from '../utils/versionLabel'
@@ -40,11 +41,19 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
     typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '',
   )
 
+  // P3.4 (row 14; OD27 M1 D5): with Claude Code off the Account row (Claude's
+  // account) reads the one muted line, and Claude's own sign-in is not read.
+  const claudeOn = usesClaude(settings)
+
   useEffect(() => {
     void useGitHubStore.getState().loadConfig()
     void useAccountProfilesStore.getState().hydrate()
-    void window.electronAPI.accountProfiles.globalEmail().then(setGlobalEmail).catch(() => {})
   }, [])
+
+  useEffect(() => {
+    if (!claudeOn) return
+    void window.electronAPI.accountProfiles.globalEmail().then(setGlobalEmail).catch(() => {})
+  }, [claudeOn])
 
   // Pre-select the channel that matches the running build -- once, and never
   // over an explicit choice (updateChannelChosen). Written rather than merely
@@ -66,13 +75,14 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
   const email = profiles.find((p) => p.isPrimary)?.accountEmail || profiles[0]?.accountEmail || globalEmail
   // Each tool that can reach a session, named so the recap discloses which
   // ones are on. Codex review needs Codex on (the user's yes: with no saved
-  // value, Codex is not set up); Claude review counts by its own switch (it
-  // answers Codex sessions whenever there are any).
+  // value, Codex is not set up), and Claude review needs Claude Code on (it
+  // runs Claude Code); each otherwise counts by its own switch (it answers the
+  // other provider's sessions whenever there are any).
   const codex = codexPreference(settings)
   const toolGates: [string, boolean][] = [
     ['Vision', settings.conductorTools?.vision !== false],
     ['Codex review', settings.conductorTools?.codexReview !== false && codex === 'on'],
-    ['Claude review', settings.conductorTools?.claudeReview !== false],
+    ['Claude review', settings.conductorTools?.claudeReview !== false && claudeOn],
     ['Host screenshots', settings.conductorTools?.hostTransfer !== false],
     ['Agent Canvas', settings.conductorTools?.canvas !== false],
   ]
@@ -83,7 +93,7 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
   const channel = settings.updateChannel === 'beta' ? 'beta' : 'stable'
   const recap: { icon: string; label: string; value: string; control?: ReactNode }[] = [
     { icon: PALETTE, label: 'Theme', value: themeLabel },
-    { icon: PERSON, label: 'Account', value: email ?? 'Sign in at first session' },
+    { icon: PERSON, label: 'Account', value: claudeOn ? email ?? 'Sign in at first session' : CLAUDE_OFF_ACCOUNTS_LINE },
     {
       icon: BRANCH,
       label: 'GitHub',

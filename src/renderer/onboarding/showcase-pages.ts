@@ -55,11 +55,16 @@ export interface ShowcasePage {
   /** Optional brand-mark asset URL drawn beside the heading (#586). Only pages
    *  with a mark of their own set it; the copy column is otherwise unchanged. */
   mark?: string
+  /** P3.4 (row 14): the page is about something that needs Claude Code in
+   *  this release (Claude sessions only), so it is not shown while Claude
+   *  Code is off. Lift it when the feature reaches Codex. */
+  needsClaude?: boolean
 }
 
 export const SHOWCASES_21: ShowcasePage[] = [
   {
     id: 'canvas',
+    needsClaude: true,
     heading: 'The Agent Canvas — new to this line',
     tagline: "Claude renders its work as a real page inside the app. You point at what's wrong; it reads every note and fixes it all in one pass.",
     points: [
@@ -110,6 +115,7 @@ export const SHOWCASES_21: ShowcasePage[] = [
   },
   {
     id: 'remoteResume',
+    needsClaude: true,
     heading: 'Pick a remote session back up',
     tagline: 'Leave a persistent SSH session running on its host and it waits for you in the sidebar. One click puts you back in the same Claude, in the same conversation.',
     points: [
@@ -136,6 +142,7 @@ export const SHOWCASES_21: ShowcasePage[] = [
   },
   {
     id: 'accounts',
+    needsClaude: true,
     heading: 'Every account, one app',
     tagline: 'Sign in to more than one Claude account and switch mid-session — usage, costs and insights follow each account separately.',
     points: [
@@ -148,6 +155,7 @@ export const SHOWCASES_21: ShowcasePage[] = [
   },
   {
     id: 'watchdog',
+    needsClaude: true,
     heading: "The Watchdog waits so you don't have to",
     tagline: "A rate limit doesn't have to end your evening: the session reads the banner, waits out the reset, and types the retry itself.",
     points: [
@@ -160,6 +168,7 @@ export const SHOWCASES_21: ShowcasePage[] = [
   },
   {
     id: 'askConductor',
+    needsClaude: true,
     heading: 'Ask Conductor',
     tagline: 'A session that has read the manual. Ask how the app works — settings, accounts, remote sessions — in plain English.',
     points: [

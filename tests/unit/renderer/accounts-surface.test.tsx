@@ -1268,6 +1268,16 @@ describe('registry, conflicts, adoption and pending setups', () => {
     expect(q('providers-card')).toBeTruthy()
   })
 
+  it('P3.4 (row 14): with Claude Code off the callout does not say the Claude accounts still work', () => {
+    const recovery = snapshot({ registry: { mode: 'recovery', reason: 'unreadable' }, accounts: [] })
+    render(recovery)
+    expect(q('accounts-registry-callout')?.textContent).toBe('The account list is not available right now. Your Claude accounts below still work.')
+    unmountNow()
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, claudeEnabled: false, codexEnabled: true } } as never)
+    render(recovery)
+    expect(q('accounts-registry-callout')?.textContent).toBe('The account list is not available right now.')
+  })
+
   it('shows no callout when the registry is ready', () => {
     render(snapshot())
     expect(q('accounts-registry-callout')).toBeNull()

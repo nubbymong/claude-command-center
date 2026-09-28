@@ -98,6 +98,44 @@ describe('showcase-pages — the curated set', () => {
     expect(linked).toContain('watchdog')
     expect(linked).toContain('oneRow')
   })
+
+  it('P3.4 (row 14): with Claude Code off, what needs Claude Code in this release is not shown', () => {
+    const CLAUDE_ONLY_PAGES = ['canvas', 'remoteResume', 'accounts', 'watchdog', 'askConductor']
+    const CLAUDE_ONLY_ITEMS = ['Agent Canvas.', 'Session Watchdog.', 'Ask Conductor.', 'Switch mid-session.', 'Insights.']
+    // Claude Code on: everything, as before.
+    render()
+    expect(container.textContent).toContain('Working with Claude')
+    for (const t of CLAUDE_ONLY_ITEMS) expect(container.textContent, t).toContain(t)
+    expect(q('whatsnew-hint')!.textContent).toContain(`Page 1 of ${1 + SHOWCASES_21.length}`)
+    act(() => root.unmount())
+    root = createRoot(container)
+    // Claude Code off: those items and pages go; a section left empty goes too.
+    settingsState.settings = { updateChannel: 'stable', claudeEnabled: false, codexEnabled: true }
+    render()
+    expect(container.textContent).not.toContain('Working with Claude')
+    expect(container.textContent).not.toContain('Accounts & usage')
+    for (const t of CLAUDE_ONLY_ITEMS) expect(container.textContent, t).not.toContain(t)
+    const shown = SHOWCASES_21.filter((p: { id: string }) => !CLAUDE_ONLY_PAGES.includes(p.id))
+    expect(q('whatsnew-hint')!.textContent).toContain(`Page 1 of ${1 + shown.length}`)
+    // Remote Resumable stays on the summary (its line names no provider); its
+    // page, written about resuming Claude, does not, so it has no chip.
+    expect(container.textContent).toContain('Remote Resumable.')
+    expect(q('see-remoteResume')).toBeNull()
+    expect(q('see-oneRow')).not.toBeNull()
+  })
+
+  it('P3.4 (row 14): a run that goes on with Codex only (setup found no Claude Code) reads it the same way', async () => {
+    const { noteClaudeMissingAtSetup, resetProviderChoiceForTests } = await import('../../../src/renderer/onboarding/provider-choice')
+    noteClaudeMissingAtSetup()
+    try {
+      render()
+      expect(container.textContent).toContain('Remote Resumable.') // the summary page is the one shown
+      expect(container.textContent).not.toContain('Working with Claude')
+      expect(container.textContent).not.toContain('Agent Canvas.')
+    } finally {
+      resetProviderChoiceForTests()
+    }
+  })
 })
 
 // ── the paged step ─────────────────────────────────────────────────
