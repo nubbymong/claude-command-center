@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "2b0062b78a18d499be47ebdae610d7d6a393da4492645351e775d88aee23099a",
-  "manifestHead": "68d00f624fdc850595a2a7e38b8b9e75c611b5d0",
+  "manifestPathDigest": "a499f01686768226ee90c8c404c560b1821a9181ea3f702baa6f58ff5c77829e",
+  "manifestHead": "8274b3d1fa8a39b0abeb0bdac2eca84e4e0afdab",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -1567,7 +1567,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "replace",
-      "evidence": "WP2 reconfirm (owner decision 2026-09-26, U3): the codex_review usage poll runs only when Codex is answered on (usesCodex, provider-choice.ts: the saved setting says on; the settings load drops one saved without the answer); an unanswered Codex is not set up and main offers it no review, so the strip never asks for or shows a review count for it (WP1.5); tests/unit/renderer/session-status-strip.test.ts; before that the file changed since the base only for #618, an unrelated SSH scroll fix, and in the WP2 final fixes, a corrected comment on the codex_review usage poll; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); reads settings.codexEnabled and the provider labels; WP2 P3 usage track MP6 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, usage footer settings, D2, Q1.5): the weekly window reads Weekly on every path; D2 static no-reading meters with a re-render at the next reset; the waiting placeholder for any provider that reports usage, never for a session nothing will report or an API-key account (its registry account, else the provider default); the cost tooltip per Q1.5 (WP1.68); tests/unit/renderer/strip-usage-consistency.test.ts; WP2 PR 3 P3.6 (rows 7 and 20): the account chip reads the identity (utils/accountChip), a Codex session's from its registry account, and a Codex strip keeps its account item with the master switch off, as Claude's (WP1.68); tests/unit/renderer/account-chip-identity.test.tsx, tests/unit/renderer/codex-account-chip.test.ts",
+      "evidence": "WP2 reconfirm (owner decision 2026-09-26, U3): the codex_review usage poll runs only when Codex is answered on (usesCodex, provider-choice.ts: the saved setting says on; the settings load drops one saved without the answer); an unanswered Codex is not set up and main offers it no review, so the strip never asks for or shows a review count for it (WP1.5); tests/unit/renderer/session-status-strip.test.ts; before that the file changed since the base only for #618, an unrelated SSH scroll fix, and in the WP2 final fixes, a corrected comment on the codex_review usage poll; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); reads settings.codexEnabled and the provider labels; WP2 P3 usage track MP6 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, usage footer settings, D2, Q1.5): the weekly window reads Weekly on every path; D2 static no-reading meters with a re-render at the next reset; the waiting placeholder for any provider that reports usage, never for a session nothing will report or an API-key account (its registry account, else the provider default); the cost tooltip per Q1.5 (WP1.68); tests/unit/renderer/strip-usage-consistency.test.ts; WP2 PR 3 P3.6 (rows 7 and 20): the account chip reads the identity (utils/accountChip), a Codex session's from its registry account, and a Codex strip keeps its account item with the master switch off, as Claude's (WP1.68); tests/unit/renderer/account-chip-identity.test.tsx, tests/unit/renderer/codex-account-chip.test.ts; WP2 PR 3 P3.6 (row 22): the account pill's Switch account lists the session provider's accounts (utils/switchAccountItems), so a Codex session with two or more switches from it (WP1.68); tests/unit/renderer/codex-switch-account.test.tsx",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
@@ -1599,7 +1599,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "replace",
-      "evidence": "WP2 commit 6f (review round 1): the New config shortcut is held while the Codex introduction covers the shell (its one-time takeover or a replay), as it is while onboarding is due; the sidebar reads settings.codexEnabled and the provider labels through the compatibility shadow as before (WP1.34); tests/unit/renderer/hello-codex.acceptance.test.ts",
+      "evidence": "WP2 commit 6f (review round 1): the New config shortcut is held while the Codex introduction covers the shell (its one-time takeover or a replay), as it is while onboarding is due; the sidebar reads settings.codexEnabled and the provider labels through the compatibility shadow as before (WP1.34); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 PR 3 P3.6 (row 22): the right-click Switch Account gets the one Switch account list and the gate for the session's provider (WP1.68); tests/unit/renderer/codex-switch-account.test.tsx",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
@@ -1625,7 +1625,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "replace",
-      "evidence": "WP2 commit 6c: a Codex launch runs on the session's saved Codex account or the Codex default, resolved by utils/launchAccount.ts and sent as providerAccountId, with this launch's acknowledgement where the account needs one (WP1.38, WP1.42, WP1.45); tests/unit/renderer/terminalview-account-launch.test.tsx; WP2 commit 6e: a transient install tab runs its command once; a Restart opens a plain shell (WP1.2); tests/unit/renderer/transient-terminal.test.tsx; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): a refused restore or Restart says why in the tab and keeps the session, and nothing is asked first while the provider is off; tests/unit/renderer/terminalview-account-launch.test.tsx",
+      "evidence": "WP2 commit 6c: a Codex launch runs on the session's saved Codex account or the Codex default, resolved by utils/launchAccount.ts and sent as providerAccountId, with this launch's acknowledgement where the account needs one (WP1.38, WP1.42, WP1.45); tests/unit/renderer/terminalview-account-launch.test.tsx; WP2 commit 6e: a transient install tab runs its command once; a Restart opens a plain shell (WP1.2); tests/unit/renderer/transient-terminal.test.tsx; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): a refused restore or Restart says why in the tab and keeps the session, and nothing is asked first while the provider is off; tests/unit/renderer/terminalview-account-launch.test.tsx; WP2 PR 3 P3.6 (row 22): a one-shot line a Switch account left for the next start (utils/launchNote) is written dimmed as the start begins, control characters removed (WP1.68); tests/unit/renderer/terminalview-account-launch.test.tsx",
       "note": "the Claude profile picker (shouldGateAccountChoice) stays Claude-only; a Codex launch resolves its own account through utils/launchAccount.ts"
     },
     {
@@ -1841,6 +1841,16 @@
       "note": ""
     },
     {
+      "path": "src/renderer/components/sidebar/SessionContextMenu.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "replace",
+      "evidence": "WP2 PR 3 P3.6 (row 22): the right-click Switch Account renders the one Switch account list (utils/switchAccountItems), so a Codex session lists its Codex accounts as a Claude session lists its profiles; Claude's rows read as before (WP1.68); tests/unit/renderer/codex-switch-account.test.tsx",
+      "note": "session/logs/sidebar surface (runtime work package); names Codex in a comment only"
+    },
+    {
       "path": "src/renderer/components/sidebar/SessionRow.tsx",
       "predicates": [
         "P05",
@@ -1934,8 +1944,8 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled (the saved Codex switch, which main also reads as the Codex package's enablement key) and the provider labels",
+      "disposition": "replace",
+      "evidence": "WP2 PR 3 P3.6 (row 22; completion plan section 5): a Codex session switches as Claude's does: pin the new account and save it, main carries the conversation into it holding both accounts (providerAccounts:carryConversation), then Restart resumes it there by id (P3.5); a conversation not carried starts a new one and the terminal says why; refused for an inactive, blocked, archived or other provider's account, over SSH and for a terminal-only tab (WP1.16, WP1.42, WP1.68); tests/unit/renderer/codex-switch-account.test.tsx, tests/unit/renderer/use-switch-account.test.ts",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
@@ -2293,7 +2303,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "replace",
-      "evidence": "WP2 commit 6c: a reopened Codex session keeps its account binding (providerAccountId, never a launch acknowledgement) and saves it again; a Claude session never carries one (WP1.38, WP1.42); tests/unit/renderer/session-persistence-restore.test.ts; WP2 commit 6e: a transient install tab is never saved, so a later start never runs it again (WP1.2); tests/unit/renderer/transient-terminal.test.tsx",
+      "evidence": "WP2 commit 6c: a reopened Codex session keeps its account binding (providerAccountId, never a launch acknowledgement) and saves it again; a Claude session never carries one (WP1.38, WP1.42); tests/unit/renderer/session-persistence-restore.test.ts; WP2 commit 6e: a transient install tab is never saved, so a later start never runs it again (WP1.2); tests/unit/renderer/transient-terminal.test.tsx; WP2 PR 3 P3.6 (row 22): persistSessionProviderAccount pins and saves the Codex account a switched session runs under (WP1.68); tests/unit/renderer/codex-switch-account.test.tsx",
       "note": "saved sessions carry the provider-account binding so restore resolves an exact realm",
       "adaptsTests": [
         "tests/unit/renderer/session-persistence-restore.test.ts"
@@ -2466,9 +2476,20 @@
         "P11"
       ],
       "category": "LAUNCH",
-      "disposition": "retain",
-      "evidence": "unchanged observable behaviour: shouldGateAccountChoice and canSwitchAccountForSession still exclude Codex, deliberately. They are the Claude profile picker and Switch Account; a Codex launch runs on the Codex account its config names, resolved by src/renderer/utils/launchAccount.ts (tests/unit/renderer/launch-account.test.ts, tests/unit/renderer/terminalview-account-launch.test.tsx). The code is unchanged since the WP1 base; the WP2 final fixes corrected two comments (the retired ~/.codex remark, which is why P04 no longer matches). tests/unit/renderer/session-launch.test.ts is unchanged (WP1.33, WP1.38)",
+      "disposition": "replace",
+      "evidence": "WP2 PR 3 P3.6 (row 22): canSwitchAccountForSession offers Switch account for a local Codex session with two or more Codex accounts (on every platform: the Keychain rule is Claude Code's), never over SSH or for a terminal-only tab; shouldGateAccountChoice still excludes Codex, whose launch runs on the account its config names (src/renderer/utils/launchAccount.ts) (WP1.38, WP1.68); tests/unit/renderer/codex-switch-account.test.tsx, tests/unit/renderer/session-launch.test.ts; before that unchanged observable behaviour since the WP1 base (WP1.33)",
       "note": ""
+    },
+    {
+      "path": "src/renderer/utils/switchAccountItems.ts",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.6 (row 22; completion plan section 8): one Switch account list for every provider, the strip's pill and the sidebar's right-click menu alike; Claude's reads as before, a Codex session lists the Codex accounts (current marked, inactive and blocked greyed, this computer's own sign-in marked confirm at launch, archived left out) (WP1.16, WP1.45); tests/unit/renderer/codex-switch-account.test.tsx",
+      "note": "renderer presentation; provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
       "path": "src/shared/app-knowledge.ts",
@@ -4851,6 +4872,17 @@
       "note": "its P04 and P05 hits are fixture data (providers.codex, codexEnabled, and the ~/.codex sign-in the no-reviewer reason names)"
     },
     {
+      "path": "tests/unit/renderer/codex-switch-account.test.tsx",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.6 (row 22) test (tests/unit/renderer/codex-switch-account.test.tsx): the Switch account list and gate for a Codex session, the switch (pin and save, the carry, then Restart), the section 5 fallback note, refusals, the right-click menu (WP1.68)",
+      "note": ""
+    },
+    {
       "path": "tests/unit/renderer/command-bar-layout.test.ts",
       "predicates": [
         "P13"
@@ -5636,7 +5668,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "WP2 commit 6c launch path and restart menu (WP1.42); tests/unit/renderer/terminalview-account-launch.test.tsx; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): a refused restore or Restart says why in the tab and keeps the session; no sign-in question, account picker or Connecting card while the provider is off; tests/unit/renderer/terminalview-account-launch.test.tsx",
+      "evidence": "WP2 commit 6c launch path and restart menu (WP1.42); tests/unit/renderer/terminalview-account-launch.test.tsx; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): a refused restore or Restart says why in the tab and keeps the session; no sign-in question, account picker or Connecting card while the provider is off; tests/unit/renderer/terminalview-account-launch.test.tsx; WP2 PR 3 P3.6 (row 22): the Switch account note is said once, dimmed, without control characters (WP1.68)",
       "note": "drives the real TerminalView launch path"
     },
     {

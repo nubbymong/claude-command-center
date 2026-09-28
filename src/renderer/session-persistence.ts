@@ -283,6 +283,21 @@ export async function persistLastUsedAccount(sessionId: string, profileId: strin
 }
 
 /**
+ * P3.6 (row 22): pin the registry account a session of an account-attributed
+ * provider (Codex) now runs under, as persistLastUsedAccount pins a Claude
+ * profile, and flush it to disk eagerly so a crash cannot lose the switch.
+ * The store update is synchronous, before any respawn reads it.
+ */
+export async function persistSessionProviderAccount(sessionId: string, providerAccountId: string): Promise<void> {
+  useSessionStore.getState().updateSession(sessionId, { providerAccountId })
+  try {
+    await window.electronAPI.session.save(buildSessionState())
+  } catch {
+    /* best-effort: the choice still lives in the store for this run */
+  }
+}
+
+/**
  * rc.15 review R7 (aicc_planning#53): what boot does with the saved file. The
  * left-running registry is hydrated for BOTH startup shapes -- with attached
  * cards (the restore prompt follows) and without -- BEFORE the restore prompt

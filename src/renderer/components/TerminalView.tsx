@@ -25,6 +25,7 @@ import { forgetSessionBrowserProfile } from '../stores/sshCloseStore'
 import { hasSpawned, markSpawned, clearSpawned, killSessionPty, isCurrentSpawn } from '../ptyTracker'
 import { spentCommand } from '../utils/commandTerminal'
 import { listenForSpawnEnd, reportSpawnEnd } from '../utils/spawnEndNotice'
+import { takeLaunchNote } from '../utils/launchNote'
 import SshFlowOverlay from './SshFlowOverlay'
 import { shouldUseResumePicker } from '../utils/resumePicker'
 import { shouldGateAccountChoice } from '../utils/sessionLaunch'
@@ -1002,6 +1003,11 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           // account gate leaves the session unspawned and re-gates on remount.
           const startSpawn = (resolvedProfileId: string | undefined, account: LaunchAccountFields, failure: LaunchFailureContext) => {
             const spawnToken = markSpawned(sessionId)
+            // P3.6 (row 22): a line a Switch account left for this start (the
+            // conversation could not be carried over: utils/launchNote), said
+            // once, dimmed, before the session's own output.
+            const launchNote = takeLaunchNote(sessionId)
+            if (launchNote) term?.writeln(`\x1b[90m${launchNote}\x1b[0m`)
             // T8b (bug #5): app-relaunch ONLY. A restored session carries the
             // persisted exact-conversation target; pass it as `resume` so the
             // first spawn resumes THAT conversation (cwd-overridden in main).
