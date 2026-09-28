@@ -386,13 +386,13 @@ export function canOfferMakeReviewer(snapshot: AccountsSnapshot | null, account:
   return !!providerView(snapshot, account.providerId)?.review
 }
 
-/** Whether an account may be offered "Sign in again": one this app manages
- *  (not the provider's shared external home), not archived, and not blocked
- *  (it is reconciled first). Signed in too (P3.3, design 9.2): main then
- *  signs in to a new folder and moves the account there only once that
- *  sign-in is verified, so the one it has is never lost on the way. */
+/** Whether an account may be offered "Sign in again": not archived and not
+ *  blocked (it is reconciled first). Signed in too (P3.3, design 9.2): main
+ *  then signs in to a new folder and moves the account there only once that
+ *  sign-in is verified, so the one it has is never lost on the way. This
+ *  computer's own sign-in too, in place, after its warning is confirmed
+ *  (design 9.2, last paragraph). */
 export function canOfferSignInAgain(account: AccountView): boolean {
-  if (account.external) return false
   if (account.lifecycle === 'archived') return false
   return account.operationalState !== 'blocked'
 }
@@ -578,7 +578,9 @@ export function signInMethodLabel(account: Pick<AccountView, 'authMethod'>, p: P
  *  there was a ChatGPT sign-in) says so before anything else. */
 export function accountState(account: Pick<AccountView, 'operationalState' | 'lastKnownAuthState' | 'oldSignInLeft'>): { text: string; tone: StatusTone } {
   if (account.operationalState === 'blocked') return { text: 'Needs attention: signed in a different way than before', tone: 'warn' }
-  // A sign in again moved it to a new sign-in; the old one is still there.
+  // A sign in again moved it to a new sign-in; the old one is still there:
+  // kept on purpose, or not removed (oldSignInText says why and what to do).
+  if (account.oldSignInLeft === 'kept') return { text: 'Needs attention: the old sign-in is kept', tone: 'warn' }
   if (account.oldSignInLeft) return { text: 'Needs attention: the old sign-in was not removed', tone: 'warn' }
   switch (account.lastKnownAuthState) {
     case 'signed-in': return { text: 'Signed in', tone: account.operationalState === 'attention' ? 'warn' : 'ok' }
@@ -587,6 +589,17 @@ export function accountState(account: Pick<AccountView, 'operationalState' | 'la
     case 'error': return { text: "Couldn't check the sign-in", tone: 'warn' }
     case 'unsupported': return { text: "Can't check the sign-in here", tone: 'muted' }
     default: return { text: 'Not checked yet', tone: 'muted' }
+  }
+}
+
+/** Why an account's old sign-in is still there, and what removes it (the
+ *  row's line under its state). Honest: never "Check sign-in removes it"
+ *  when a check will not. */
+export function oldSignInText(reason: NonNullable<AccountView['oldSignInLeft']>, providerName: string): string {
+  switch (reason) {
+    case 'kept': return 'It stays until the app can remove it without signing out the new one. Archiving the account removes it.'
+    case 'unavailable': return `It is removed once ${providerName} can sign it out here.`
+    case 'failed': return 'Removing it did not finish. Check sign-in tries again.'
   }
 }
 

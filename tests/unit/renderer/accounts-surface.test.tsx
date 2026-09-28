@@ -948,10 +948,10 @@ describe('Sign in again', () => {
     if (confirmSame) await click('sign-in-again-confirm')
   }
 
-  it('is offered on a managed, unblocked, non-archived account, signed in or not (P3.3)', async () => {
+  it('is offered on an unblocked, non-archived account, signed in or not, this computer\'s own included (P3.3)', async () => {
     render(snapshot({ accounts: [work, expired, signedOut, errored, unknown, externalOut, blockedOut] }))
-    for (const id of ['acc-work', 'acc-exp', 'acc-out', 'acc-err', 'acc-unk']) expect(await menuKeys(id), id).toContain('sign-in-again')
-    for (const id of ['acc-local', 'acc-old']) expect(await menuKeys(id), id).not.toContain('sign-in-again')
+    for (const id of ['acc-work', 'acc-exp', 'acc-out', 'acc-err', 'acc-unk', 'acc-local']) expect(await menuKeys(id), id).toContain('sign-in-again')
+    for (const id of ['acc-old']) expect(await menuKeys(id), id).not.toContain('sign-in-again')
     expect(canOfferSignInAgain(work)).toBe(true)
     expect(canOfferSignInAgain(signedOut)).toBe(true)
     expect(canOfferSignInAgain({ ...signedOut, lifecycle: 'archived' })).toBe(false)
@@ -1007,11 +1007,17 @@ describe('Sign in again', () => {
   it('when main finds someone else signed in, it hands over to naming that new account (P3.3)', async () => {
     pa.signInAgain.mockResolvedValue({ ok: true, state: 'signed-in', separateAccountId: 'acc-sep' })
     pa.completeSetup.mockResolvedValue({ ok: true, accountId: 'acc-sep' })
-    render(snapshot({ accounts: [work] }))
+    const sep = { accountId: 'acc-sep', providerId: 'codex' as const, method: 'browser' as const, state: 'credentials-written' as const, external: false, createdAt: 1, signingIn: false }
+    const s = snapshot({ accounts: [work] })
+    render(s)
     await openFor('acc-work')
+    // Main's next snapshot lists that sign-in as an unfinished setup.
+    act(() => { useProviderAccountsStore.setState({ snapshot: { ...s, revision: 2, pendingSetups: [sep] } }) })
     await click('sign-in-again-continue')
     expect(q('sign-in-again-dialog')).toBeNull()
     expect(q('add-account-step-name')).toBeTruthy()
+    // Not also listed as unfinished while its naming dialog is open (review round 1, Q4).
+    expect(q('pending-setup-acc-sep')).toBeNull()
     expect(pa.signIn).not.toHaveBeenCalled()
     expect(pa.beginSetup).not.toHaveBeenCalled()
     await click('add-account-finish')
@@ -1019,12 +1025,46 @@ describe('Sign in again', () => {
     expect(pa.abandonSetup).not.toHaveBeenCalled()
   })
 
-  it('an old sign-in a sign in again could not remove is said on the row, and Check sign-in is how to retry (P3.3)', async () => {
-    const left = { ...work, oldSignInLeft: true as const, operationalState: 'attention' as const }
-    render(snapshot({ accounts: [left] }))
-    expect(q('account-state-acc-work')?.textContent).toBe('Needs attention: the old sign-in was not removed')
-    expect(q('account-old-sign-in-acc-work')?.textContent).toBe('Check sign-in removes it.')
-    expect(await menuKeys('acc-work')).toContain('check-sign-in')
+  it('an old sign-in a sign in again left is said on the row, with why and what removes it (P3.3; review round 1, S1, Q3)', async () => {
+    const rows: Array<[NonNullable<AccountView['oldSignInLeft']>, string, string]> = [
+      ['kept', 'Needs attention: the old sign-in is kept', 'It stays until the app can remove it without signing out the new one. Archiving the account removes it.'],
+      ['unavailable', 'Needs attention: the old sign-in was not removed', 'It is removed once Codex can sign it out here.'],
+      ['failed', 'Needs attention: the old sign-in was not removed', 'Removing it did not finish. Check sign-in tries again.'],
+    ]
+    for (const [reason, state, line] of rows) {
+      render(snapshot({ accounts: [{ ...work, oldSignInLeft: reason, operationalState: 'attention' }] }))
+      expect(q('account-state-acc-work')?.textContent, reason).toBe(state)
+      expect(q('account-old-sign-in-acc-work')?.textContent, reason).toBe(line)
+      unmountNow()
+    }
+  })
+
+  it('this computer\'s own sign-in: its warning first; Cancel runs nothing; Continue signs it in again in place (review round 1, S2)', async () => {
+    pa.signInAgain.mockResolvedValue({ ok: true, state: 'signed-in' })
+    render(snapshot({ accounts: [work, local] }))
+    await click('account-menu-btn-acc-local')
+    await click('account-menu-sign-in-again-acc-local')
+    expect(q('sign-in-again-dialog')).toBeNull()
+    expect(q('external-ack-dialog')).toBeTruthy()
+    expect(q('external-ack-text')?.textContent).toContain('Signing in again signs them out first, and if the new sign-in does not finish, it stays signed out.')
+    await click('external-ack-cancel')
+    expect(q('external-ack-dialog')).toBeNull()
+    expect(q('sign-in-again-dialog')).toBeNull()
+    await click('account-menu-btn-acc-local')
+    await click('account-menu-sign-in-again-acc-local')
+    await click('external-ack-confirm')
+    expect(q('sign-in-again-dialog')).toBeTruthy()
+    await click('sign-in-again-confirm')
+    await click('sign-in-again-continue')
+    expect(pa.signInAgain).toHaveBeenCalledWith({ accountId: 'acc-local', method: 'browser', sameAccount: true, acknowledgeExternal: true })
+  })
+
+  it('a managed account never sends the acknowledgement meant for this computer\'s own sign-in (review round 1, S2)', async () => {
+    pa.signInAgain.mockResolvedValue({ ok: true, state: 'signed-in' })
+    render(snapshot({ accounts: [work] }))
+    await openFor('acc-work')
+    await click('sign-in-again-continue')
+    expect(pa.signInAgain).toHaveBeenCalledWith({ accountId: 'acc-work', method: 'browser', sameAccount: true })
   })
 
   it('asks without an address when the account has no label', async () => {
