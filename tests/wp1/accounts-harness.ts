@@ -5,7 +5,7 @@
 // through the legacy reconcile, exactly as at start. No file is written and
 // no process is started.
 import { createCodexPackage } from '../../src/main/providers/codex'
-import type { CodexRealmFsPort, CodexCommand, CodexRunOptions, CodexRunResult, CodexDiscoveryDeps, CodexFsEntry, CodexUsageFsPort, CodexLiveUsage } from '../../src/main/providers/codex'
+import type { CodexRealmFsPort, CodexCommand, CodexRunOptions, CodexRunResult, CodexDiscoveryDeps, CodexFsEntry, CodexUsageFsPort, CodexLiveUsage, CodexRealmFolderLimits } from '../../src/main/providers/codex'
 import { createClaudePackage } from '../../src/main/providers/claude'
 import type { ClaudeReviewPorts } from '../../src/main/providers/claude'
 import { AccountRegistryStore, AccountsService, ConsumerLeaseRegistry, SecretHandleStore, registerProviderPackage, _resetProviderRegistryForTest } from '../../src/main/providers/core'
@@ -38,7 +38,10 @@ const STAT = { size: 1, mtimeMs: 1, ctimeMs: 1, dev: '1', ino: '2', isFile: true
 export const managedHome = (realmId: string) => `${RES}\\codex-realms\\${realmId}`
 
 /** A small in-memory folder tree, Windows-shaped: what the realm folder code
- *  walks, creates and removes. Every call is logged. */
+ *  walks, creates and removes. Every call is logged. A file given a second
+ *  name (`link`) shares its file id, and each name reports how many it has.
+ *  The asynchronous twin (`promises`) calls the synchronous one AT CALL TIME,
+ *  so a test that replaces `fs.lstat` changes both. */
 export function memoryFs() {
   const norm = (p: string) => p.replace(/[\\/]+$/, '').toLowerCase()
   const dirs = new Set<string>(['c:', 'c:\\res', 'c:\\users', 'c:\\users\\u', 'c:\\users\\u\\.codex', 'c:\\tools'])
@@ -47,13 +50,35 @@ export function memoryFs() {
   const err = (code: string) => Object.assign(new Error(code), { code })
   const ino = (p: string) => String([...norm(p)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7))
   const parent = (p: string) => norm(p).split('\\').slice(0, -1).join('\\')
+  /** A name a link made -> the file id it shares. */
+  const sharedId = new Map<string, string>()
+  /** A file id with more than one name -> how many it has. */
+  const names = new Map<string, number>()
+  const idOf = (p: string) => sharedId.get(norm(p)) ?? ino(p)
+  const link = (src: string, dest: string) => {
+    log.push(`link ${src} -> ${dest}`)
+    if (!files.has(norm(src))) throw err('ENOENT')
+    if (dirs.has(norm(dest)) || files.has(norm(dest))) throw err('EEXIST')
+    if (!dirs.has(parent(dest))) throw err('ENOENT')
+    const id = idOf(src)
+    sharedId.set(norm(dest), id)
+    names.set(id, (names.get(id) ?? 1) + 1)
+    files.add(norm(dest))
+  }
+  const copyFile = (src: string, dest: string) => {
+    log.push(`copyFile ${src} -> ${dest}`)
+    if (!files.has(norm(src))) throw err('ENOENT')
+    if (dirs.has(norm(dest)) || files.has(norm(dest))) throw err('EEXIST')
+    if (!dirs.has(parent(dest))) throw err('ENOENT')
+    files.add(norm(dest))
+  }
   const fs: CodexRealmFsPort = {
     platform: 'win32',
     realpath: (p) => { if (!dirs.has(norm(p)) && !files.has(norm(p))) throw err('ENOENT'); return p.replace(/[\\/]+$/, '') || p },
     lstat: (p): CodexFsEntry => {
       const n = norm(p)
       if (dirs.has(n)) return { kind: 'dir', dev: '9', ino: ino(p), mode: 0o700 }
-      if (files.has(n)) return { kind: 'file', dev: '9', ino: ino(p), mode: 0o600 }
+      if (files.has(n)) return { kind: 'file', dev: '9', ino: idOf(p), mode: 0o600, nlink: names.get(idOf(p)) ?? 1 }
       throw err('ENOENT')
     },
     mkdirSecure: (dir) => {
@@ -73,22 +98,36 @@ export function memoryFs() {
       if (!dirs.has(n)) throw err('ENOENT')
       return [...dirs, ...files].filter((x) => parent(x) === n).map((x) => x.slice(n.length + 1))
     },
-    unlink: (p) => { log.push(`unlink ${p}`); if (!files.delete(norm(p))) throw err('ENOENT') },
+    unlink: (p) => {
+      log.push(`unlink ${p}`)
+      const id = idOf(p)
+      if (!files.delete(norm(p))) throw err('ENOENT')
+      sharedId.delete(norm(p))
+      const left = (names.get(id) ?? 1) - 1
+      if (left > 1) names.set(id, left)
+      else names.delete(id)
+    },
     rmdir: (p) => {
       log.push(`rmdir ${p}`)
       const n = norm(p)
       if ([...dirs, ...files].some((x) => parent(x) === n)) throw err('ENOTEMPTY')
       if (!dirs.delete(n)) throw err('ENOENT')
     },
-    copyFile: (src, dest) => {
-      log.push(`copyFile ${src} -> ${dest}`)
-      if (!files.has(norm(src))) throw err('ENOENT')
-      if (dirs.has(norm(dest)) || files.has(norm(dest))) throw err('EEXIST')
-      if (!dirs.has(parent(dest))) throw err('ENOENT')
-      files.add(norm(dest))
-    },
   }
-  return { fs, dirs, files, log, exists: (p: string) => dirs.has(norm(p)) }
+  const ops = { link, copyFile }
+  fs.promises = {
+    realpath: async (p) => fs.realpath(p),
+    lstat: async (p) => fs.lstat(p),
+    readdir: async (dir) => fs.readdir(dir),
+    mkdir: async (dir, mode) => fs.mkdir(dir, mode),
+    chmod: async (p, mode) => fs.chmod(p, mode),
+    unlink: async (p) => fs.unlink(p),
+    rmdir: async (p) => fs.rmdir(p),
+    link: async (src, dest) => ops.link(src, dest),
+    copyFile: async (src, dest) => ops.copyFile(src, dest),
+  }
+  /** `ops`: replace `link` or `copyFile` to make them refuse or watch them. */
+  return { fs, dirs, files, log, ops, exists: (p: string) => dirs.has(norm(p)) }
 }
 
 export type Via = 'chatgpt' | 'api-key'
@@ -107,6 +146,8 @@ export interface HarnessOpts {
   cli?: boolean
   /** The folder tree of an earlier start (a restart keeps the disk). */
   folders?: ReturnType<typeof memoryFs>
+  /** Smaller bounds on the Codex folder walks. Absent: the shipped ones. */
+  realmLimits?: Partial<CodexRealmFolderLimits>
   /** Running sessions that hold no account lease, per provider (Claude's). */
   unleasedSessions?: (providerId: ProviderId) => number
   /** The Claude reviewer's ports (WP2 5b): absent, Claude has no launch. */
@@ -209,6 +250,7 @@ export async function harness(o: HarnessOpts = {}) {
     },
     auth: { takeSecret: (h) => secrets.take(h) },
     realmFs: folders.fs,
+    ...(o.realmLimits ? { realmLimits: o.realmLimits } : {}),
     usageFs: o.usageFs ?? EMPTY_USAGE_FS,
     ...(o.liveUsage ? { liveUsage: o.liveUsage } : {}),
     hostHome: { env: o.hostEnv ?? {}, homeDir: USER },

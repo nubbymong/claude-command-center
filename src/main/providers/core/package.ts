@@ -175,6 +175,7 @@ export type RealmFolderFailureCode =
   | 'not-empty'              // an empty-only removal found something inside
   | 'unsafe-contents'        // a removal found a link, another volume or too much: nothing removed
   | 'changed'                // the folder changed while in use, and the operation stopped
+  | 'too-large'              // a history copy found more than it carries over: nothing changed
   | 'io-failed'
 
 export interface RealmFolderResult {
@@ -202,16 +203,23 @@ export interface ProviderRealmFolderOperations {
    *  stored sign-in is refused, never deleted; one kept in an OS keyring is
    *  invisible here), and removes the folder BEFORE it abandons the setup,
    *  keeping the journal when this fails: the folder is only ever found
-   *  through its realm record. `removed: false` means nothing was there. */
-  remove(realm: RealmRef, opts: { contents: 'empty-only' | 'all' }): Promise<RealmFolderResult>
+   *  through its realm record. `removed: false` means nothing was there.
+   *  `holdsHistory`: a sign in again's replacement, which may hold the
+   *  history carried over into it (copyHistory's bound, not the removal's). */
+  remove(realm: RealmRef, opts: { contents: 'empty-only' | 'all'; holdsHistory?: boolean }): Promise<RealmFolderResult>
   /** A staged sign in again (design 9.2): copy an account's conversation
    *  history (the provider's session transcripts and its prompt history) from
    *  its realm in use into the replacement being set up, before the switch,
    *  so resume and usage keep the earlier conversations. Only plain files and
    *  folders on one volume, each at its own canonical path, bounded; nothing
    *  in the source changes; a file already in the replacement is never
-   *  overwritten. Absent: the provider keeps no such history. */
-  copyHistory?(from: RealmRef, to: RealmRef): Promise<RealmFolderResult & { copied?: number }>
+   *  overwritten. It never holds the main process (asynchronous, a batch at
+   *  a time). A file is carried over only when every name it has is one the
+   *  app gave it (`earlier`: the account's earlier realms, compared only);
+   *  others are `skipped`. `copied` counts the files carried over, `linked`
+   *  those that became a second name of the same file. Absent: the provider
+   *  keeps no such history. */
+  copyHistory?(from: RealmRef, to: RealmRef, opts?: { earlier?: readonly RealmRef[] }): Promise<RealmFolderResult & { copied?: number; linked?: number; skipped?: number }>
 }
 
 /** What a launch in a bound realm needs, proven at launch time (plan A10):

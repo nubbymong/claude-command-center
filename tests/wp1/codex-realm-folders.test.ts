@@ -716,6 +716,77 @@ describe('removing an abandoned setup\'s folder', () => {
     expect(await edge.folders.remove(A, { contents: 'all' })).toEqual({ ok: true, removed: true })
   })
 
+  it('a sign in again\'s replacement is not stopped by the removal\'s own bound: the history carried into it has its own (review round 3, C1)', async () => {
+    const big = (holdsHistory: boolean) => {
+      const w = world()
+      w.fs.dir(w.home(RA))
+      for (let i = 0; i < 30; i++) w.fs.file(w.api.join(w.home(RA), `f${i}`))
+      const folders = createCodexRealmFolders({ lookupRealm: w.lookupRealm, fs: w.fs, locks: createCodexRealmLocks(), limits: { removeEntries: 10, historyEntries: 25 } })
+      return { w, run: () => folders.remove(A, { contents: 'all', ...(holdsHistory ? { holdsHistory: true } : {}) }) }
+    }
+    const plainSetup = big(false)
+    expect(await plainSetup.run()).toMatchObject({ ok: false, code: 'unsafe-contents' })
+    expect(mutating(plainSetup.w.fs.ops)).toEqual([])
+    const replacement = big(true)
+    expect(await replacement.run()).toEqual({ ok: true, removed: true })
+    expect(replacement.w.fs.exists(replacement.w.home(RA))).toBe(false)
+    // Its bound is the two together, not none.
+    const w = world()
+    w.fs.dir(w.home(RA))
+    for (let i = 0; i < 40; i++) w.fs.file(w.api.join(w.home(RA), `f${i}`))
+    const folders = createCodexRealmFolders({ lookupRealm: w.lookupRealm, fs: w.fs, locks: createCodexRealmLocks(), limits: { removeEntries: 10, historyEntries: 25 } })
+    expect(await folders.remove(A, { contents: 'all', holdsHistory: true })).toMatchObject({ ok: false, code: 'unsafe-contents' })
+    expect(mutating(w.fs.ops)).toEqual([])
+  })
+
+  it('a long removal lets the event loop run between batches, and reads the registry again after its walk and after each batch: a setup completed meanwhile stops it (C1)', async () => {
+    // The first look, the one under the lock, the one after the walk, then
+    // one after each batch of four: completed at the third look, nothing
+    // goes; at the fifth, two batches went.
+    for (const [completedAt, gone] of [[3, 0], [5, 8]] as const) {
+      const w = world()
+      w.fs.dir(w.home(RA))
+      for (let i = 0; i < 12; i++) w.fs.file(w.api.join(w.home(RA), `f${i}`))
+      let n = 0
+      let turns = 0
+      let running = true
+      const turn = () => { turns++; if (running) setImmediate(turn) }
+      setImmediate(turn)
+      const seen: number[] = []
+      const before = w.fs.beforeRemove
+      w.fs.beforeRemove = (p) => { seen.push(turns); before?.(p) }
+      const folders = createCodexRealmFolders({
+        lookupRealm: async (ref) => { if (++n === completedAt) w.realms.set(RA, managed(RA, 'active')); return w.lookupRealm(ref) },
+        fs: w.fs,
+        locks: createCodexRealmLocks(),
+        limits: { batch: 4 },
+      })
+      try {
+        expect(await folders.remove(A, { contents: 'all' }), `at ${completedAt}`).toMatchObject({ ok: false, code: 'lifecycle' })
+      } finally {
+        running = false
+      }
+      // It stopped there: the rest, and the folder, stay.
+      expect(mutating(w.fs.ops), `at ${completedAt}`).toHaveLength(gone)
+      expect(w.fs.exists(w.home(RA))).toBe(true)
+      // The event loop ran between the entries of one batch and the next.
+      if (gone) expect(seen[seen.length - 1]).toBeGreaterThan(seen[0])
+    }
+  })
+
+  it('history is never copied through a file system with no asynchronous twin (C1)', async () => {
+    const w = world()
+    w.realms.set(RB, managed(RB, 'active'))
+    w.fs.dir(w.home(RA))
+    w.fs.dir(w.home(RB))
+    w.fs.file(w.api.join(w.home(RB), 'history.jsonl'))
+    w.fs.dir(w.api.join(w.home(RB), 'sessions', '2026'))
+    w.fs.file(w.api.join(w.home(RB), 'sessions', '2026', 'rollout-1.jsonl'))
+    const copy = w.folders.copyHistory!
+    expect(await copy(B, A)).toMatchObject({ ok: false, code: 'io-failed' })
+    expect(mutating(w.fs.ops)).toEqual([])
+  })
+
   it('a name the directory listing should never return refuses the removal', async () => {
     for (const bad of ['..', '.', 'a/b', 'a\\b', '', 'x\0y']) {
       const w = world()

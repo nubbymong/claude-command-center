@@ -23,7 +23,7 @@ import { createCodexRealmFolders, createCodexRealmLocks, resolveCodexRealmRoots 
 import { codexExternalDefaultHome, codexHomeDisplay } from './realm-paths'
 import { createCodexLiveUsage, createCodexUsageOperations, realCodexUsageFsPort } from './usage'
 import type { CodexLiveUsage, CodexUsageFsPort } from './usage'
-import type { CodexFolderLookup, CodexFsEntry, CodexRealmFsPort } from './realm-folders'
+import type { CodexFolderLookup, CodexFsEntry, CodexRealmFsPort, CodexRealmFolderLimits } from './realm-folders'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -61,8 +61,9 @@ export {
 export type { CodexRealmRoots, CodexRealmHome, CodexExternalCandidate } from './realm-paths'
 export {
   createCodexRealmFolders, createCodexRealmLocks, codexRealmLockKey, resolveCodexRealmRoots, CODEX_REMOVE_MAX_DEPTH, CODEX_REMOVE_MAX_ENTRIES, CODEX_UNDER_LOCK_LOOKUP_MS,
+  CODEX_HISTORY_MAX_ENTRIES, CODEX_FOLDER_BATCH,
 } from './realm-folders'
-export type { CodexRealmFsPort, CodexFsEntry, CodexRealmLocks, CodexFolderLookup, CodexRealmFolderDeps, CodexRootsResult } from './realm-folders'
+export type { CodexRealmFsPort, CodexRealmFsAsync, CodexFsEntry, CodexRealmLocks, CodexFolderLookup, CodexRealmFolderDeps, CodexRealmFolderLimits, CodexRootsResult } from './realm-folders'
 // Usage track MP2/MP3: the allowance reading and the usage port.
 export { normaliseCodexRateLimits, mergeAllowanceReadings, readingToBuckets, CODEX_DEFAULT_LIMIT_ID } from './rate-limits'
 export {
@@ -250,6 +251,8 @@ export interface CodexPackageDeps {
   authPorts?: Partial<Omit<CodexAuthDeps, 'proven' | 'lookupRealm' | 'takeSecret' | 'locks'>>
   /** Replaces the real folder filesystem, for a test. */
   realmFs?: CodexRealmFsPort
+  /** Smaller bounds on the folder walks, for a test. */
+  realmLimits?: Partial<CodexRealmFolderLimits>
   /** Replaces the inherited CODEX_HOME and the home directory, for a test. */
   hostHome?: { env: Readonly<Record<string, string | undefined>>; homeDir: string }
   /** Replaces the filesystem the usage port's last-seen reader uses, for a test. */
@@ -324,7 +327,7 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
         liveUsage,
         () => proven,
       ),
-      realmFolders: createCodexRealmFolders({ lookupRealm, fs: realmFs, locks }),
+      realmFolders: createCodexRealmFolders({ lookupRealm, fs: realmFs, locks, ...(deps.realmLimits ? { limits: deps.realmLimits } : {}) }),
       // The user's own ~/.codex (or inherited CODEX_HOME), adopted only when
       // the user chooses to use it and it is signed in (owner decision
       // 2026-09-26): realm-only, never vouched for (design 6.3).
@@ -375,6 +378,7 @@ function realRealmFsPort(platform: NodeJS.Platform, mkdirSecure: (dir: string) =
     dev: String(s.dev),
     ino: String(s.ino),
     mode: Number(s.mode & 0o7777n),
+    nlink: Number(s.nlink),
   })
   return {
     platform,
@@ -386,8 +390,20 @@ function realRealmFsPort(platform: NodeJS.Platform, mkdirSecure: (dir: string) =
     readdir: (dir) => fs.readdirSync(dir),
     unlink: (p) => fs.unlinkSync(p),
     rmdir: (p) => fs.rmdirSync(p),
-    // Never over anything already there.
-    copyFile: (src, dest) => fs.copyFileSync(src, dest, fs.constants.COPYFILE_EXCL),
+    // The long walks (a removal, a history copy): never holding the main process.
+    promises: {
+      // realpath.native semantics, as the sync port's.
+      realpath: (p) => fs.promises.realpath(p),
+      lstat: async (p) => entry(await fs.promises.lstat(p, { bigint: true })),
+      readdir: (dir) => fs.promises.readdir(dir),
+      mkdir: async (dir, mode) => { await fs.promises.mkdir(dir, { mode }) },
+      chmod: (p, mode) => fs.promises.chmod(p, mode),
+      unlink: (p) => fs.promises.unlink(p),
+      rmdir: (p) => fs.promises.rmdir(p),
+      // Both refuse anything already there (EEXIST).
+      link: (src, dest) => fs.promises.link(src, dest),
+      copyFile: (src, dest) => fs.promises.copyFile(src, dest, fs.constants.COPYFILE_EXCL),
+    },
   }
 }
 
