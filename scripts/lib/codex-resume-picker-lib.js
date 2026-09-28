@@ -270,10 +270,10 @@ function worktreeLabelFor(worktree) {
 // block become a space, and the text is cut at `max` code points, never
 // inside a surrogate pair. The same class as src/shared/safe-text.ts,
 // which this CJS lib cannot import (and Claude's picker's displayPath).
-const SPOOFABLE = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\ufff9-\ufffb\u{e0000}-\u{e007f}]/gu
+const NOT_PLAIN_TEXT = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\ufff9-\ufffb\u{e0000}-\u{e007f}]/gu
 function displayText(raw, max) {
   const limit = typeof max === 'number' && max > 0 ? max : 500
-  const clean = (raw === undefined || raw === null ? '' : String(raw)).replace(SPOOFABLE, ' ')
+  const clean = (raw === undefined || raw === null ? '' : String(raw)).replace(NOT_PLAIN_TEXT, ' ')
   const points = Array.from(clean)
   return points.length <= limit ? clean : points.slice(0, limit).join('')
 }

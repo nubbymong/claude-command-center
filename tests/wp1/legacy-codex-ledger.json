@@ -4479,7 +4479,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "new WP2 PR 3 P3.5 (row 38) test (tests/unit/providers/codex/telemetry-claim-anywhere.test.ts): the status line's claim finds a new rollout after midnight UTC and by the local date, a resumed conversation by its id wherever it is (never a planted name, never a sibling's new rollout), the conversation the resume picker opened once it grows, and a picker launch waits for the user (WP1.68)",
+      "evidence": "new WP2 PR 3 P3.5 (row 38) test (tests/unit/providers/codex/telemetry-claim-anywhere.test.ts): the status line's claim finds a new rollout after midnight UTC and by the local date, a resumed conversation by its id wherever it is (never on its file name alone, never a sibling's new rollout), the conversation the resume picker opened once it grows, and a picker launch waits for the user (WP1.68)",
       "note": "created by WP2 PR 3 P3.5"
     },
     {
