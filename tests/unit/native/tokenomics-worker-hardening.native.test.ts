@@ -119,8 +119,11 @@ describe('tokenomics codex ingest hardening', () => {
    * sweepPending whenever scannedTo < size). So a rollout that yields NOTHING
    * for many ticks while the ingester works through megabytes of tool output
    * is never mistaken for finished, which is what several quiet sweeps used
-   * to stand in for. The confirming sweep re-reads what was already counted:
-   * a double count on a re-read shows as a total that moved.
+   * to stand in for. The confirming sweep is one more pass over the same
+   * files. A file read to its end and unchanged since is skipped in it
+   * (unchangedAndFullyScanned returns before any read), so its total must
+   * not move; a total that moved means a sweep after the drained one still
+   * added rows, such as a file read again from the top and counted twice.
    */
   async function drain(fake: FakeTkWorkerTransport, msgs: FromTkWorker[]): Promise<number> {
     await waitForCompletions(msgs, 1)

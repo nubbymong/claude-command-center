@@ -10,7 +10,7 @@ import { WhatsNewEntries } from './WhatsNewEntries'
 import { showHelloCodexReplay, codexSetUp } from '../onboarding/hello-codex'
 import { useProviderAccountsStore } from '../stores/providerAccountsStore'
 import { useSettingsStore } from '../stores/settingsStore'
-import { usesClaude, usesCodex } from '../onboarding/provider-choice'
+import { onlyAssistantInUse, type OnlyAssistant } from '../onboarding/provider-choice'
 
 // Full-screen Feature Guide — a peer page (ViewType 'help'), NOT the old
 // createPortal modal that floated over every other page. It renders the same
@@ -359,13 +359,13 @@ function FeatureCard({ step, onOpenExplained }: { step: TrainingStep; onOpenExpl
 }
 
 // ── A feature section (hero + its cards) ─────────────────────────────────────
-/** A blurb that names an assistant takes the ones in use, as the title bar
- *  reads them (P3.4 follow-up, row 14). */
-type SectionBlurb = string | ((on: { claudeOn: boolean; codexOn: boolean }) => string)
+/** A blurb that names an assistant takes the one in use when only one is
+ *  (onlyAssistantInUse, as the guided tour does; P3.4 follow-up, row 14). */
+type SectionBlurb = string | ((only: OnlyAssistant) => string)
 
 const SECTION_BLURB: Record<TrainingSection, { title: string; blurb: SectionBlurb }> = {
   'getting-started': { title: 'The first things to set up', blurb: 'A saved config is the unit of work — what runs, where, and as whom. Get these right and every other feature has something to hang off.' },
-  productivity: { title: 'Move faster inside a session', blurb: (on) => `Panes, sketches and captures that live next to the terminal, so you never have to leave the session to show ${on.codexOn && !on.claudeOn ? 'Codex' : 'Claude'} something.` },
+  productivity: { title: 'Move faster inside a session', blurb: (only) => `Panes, sketches and captures that live next to the terminal, so you never have to leave the session to show ${only === 'codex' ? 'Codex' : 'Claude'} something.` },
   integrations: { title: 'Everything the Conductor plugs into', blurb: 'Codex, browser automation, agents, GitHub and the Agent Canvas — each wired into the same session model.' },
   admin: { title: 'See what your sessions are doing', blurb: 'The dashboards over your own usage: spend, memory, insights, transcripts and every preference in one place.' },
   tips: { title: 'Power moves and shortcuts', blurb: 'Small things you will start using on day two.' },
@@ -373,9 +373,8 @@ const SECTION_BLURB: Record<TrainingSection, { title: string; blurb: SectionBlur
 
 function SectionView({ section, steps, onOpenExplained }: { section: TrainingSection; steps: TrainingStep[]; onOpenExplained?: () => void }) {
   const meta = SECTION_BLURB[section]
-  const claudeOn = useSettingsStore((s) => usesClaude(s.settings))
-  const codexOn = useSettingsStore((s) => usesCodex(s.settings))
-  const blurb = typeof meta.blurb === 'function' ? meta.blurb({ claudeOn, codexOn }) : meta.blurb
+  const only = useSettingsStore((s) => onlyAssistantInUse(s.settings))
+  const blurb = typeof meta.blurb === 'function' ? meta.blurb(only) : meta.blurb
   return (
     <div>
       <SectionHero eyebrow={SECTION_LABELS[section]} title={meta.title} blurb={blurb} />

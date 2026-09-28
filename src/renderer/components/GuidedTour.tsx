@@ -1,42 +1,30 @@
 import { useEffect, useLayoutEffect, useState } from 'react'
 import { useOccludesNativePanes } from '../stores/paneOcclusionStore'
 import { useSettingsStore } from '../stores/settingsStore'
-import { usesClaude, usesCodex } from '../onboarding/provider-choice'
+import { onlyAssistantInUse, type OnlyAssistant } from '../onboarding/provider-choice'
 
 // Anchored coach-mark tour over the LIVE app (not a modal wizard). Each step
 // spotlights a real element by a data-tour selector and floats a callout beside
 // it; the final step hands off to first-config creation. Dependency-free:
 // getBoundingClientRect + a light rAF re-measure so the spotlight tracks layout.
 
-/** The assistants in use, as the title bar reads them (usesClaude, usesCodex). */
-interface AssistantsOn { claudeOn: boolean; codexOn: boolean }
-
 interface TourStep {
   selector: string | null // null => centered welcome/handoff card
   title: string
-  /** A function where the copy names the assistants in use (P3.4, row 14). */
-  body: string | ((on: AssistantsOn) => string)
+  /** A function where the copy names the assistants in use (P3.4, row 14):
+   *  given the one in use when only one is (onlyAssistantInUse). */
+  body: string | ((only: OnlyAssistant) => string)
   cta?: string // overrides "Next" on this step
 }
 
-/** The one assistant in use when only one is; null for both (and for
- *  neither, a state setup never leaves: every card then reads as before). */
-function onlyOne(on: AssistantsOn): 'claude' | 'codex' | null {
-  if (on.claudeOn && !on.codexOn) return 'claude'
-  if (on.codexOn && !on.claudeOn) return 'codex'
-  return null
-}
-
-function assistantsInUse(on: AssistantsOn): string {
-  const only = onlyOne(on)
+function assistantsInUse(only: OnlyAssistant): string {
   return only === 'claude' ? 'Claude Code' : only === 'codex' ? 'Codex' : 'Claude Code and Codex'
 }
 
 /** Where a saved config's sessions run. Codex runs on this computer only in
  *  this release, and SSH (plain or persistent) is for Claude. */
 const SSH_KINDS = 'over SSH — plain, or persistent so a dropped link does not kill it'
-function whereSessionsRun(on: AssistantsOn): string {
-  const only = onlyOne(on)
+function whereSessionsRun(only: OnlyAssistant): string {
   if (only === 'codex') return 'Codex, on this computer'
   if (only === 'claude') return `Claude, here or on another machine ${SSH_KINDS}`
   return `Claude or Codex here, or Claude on another machine ${SSH_KINDS}`
@@ -45,8 +33,7 @@ function whereSessionsRun(on: AssistantsOn): string {
 /** What the canvas does. A Codex agent cannot put work on it yet (P4.1
  *  brings it), so with Codex alone the card says that instead. */
 const CANVAS_REVIEW = 'Your agent renders a mockup, a plan, or the site it just built, and you review it by pointing: click an element to leave a note, draw over it, then decide — approve that version, or send it back for another round. Testing mode goes further — click through a running build and every note saves the screen, the page state and how you got there. A small dot on the button means there is unfinished canvas work anyone here can pick up.'
-function canvasCard(on: AssistantsOn): string {
-  const only = onlyOne(on)
+function canvasCard(only: OnlyAssistant): string {
   if (only === 'codex') return 'Every session has a Canvas button beside Snap. It opens the Agent Canvas, where an agent\'s mockups, plans and builds are reviewed by pointing at them. A Codex agent cannot put work there yet.'
   if (only === 'claude') return `Every session has a Canvas button beside Snap. ${CANVAS_REVIEW}`
   return `Every session has a Canvas button beside Snap. ${CANVAS_REVIEW} Claude sessions draw on it; a Codex agent cannot put work there yet.`
@@ -54,8 +41,7 @@ function canvasCard(on: AssistantsOn): string {
 
 /** Ask Conductor is a Claude session (Codex's is PR 4, row 53), so with
  *  Codex alone the card does not offer it. */
-function helpCard(on: AssistantsOn): string {
-  const only = onlyOne(on)
+function helpCard(only: OnlyAssistant): string {
   if (only === 'codex') return 'The Feature Guide explains every feature in depth whenever you want it.'
   return 'The Feature Guide explains every feature in depth whenever you want it and, with Claude Code on, can hand your question to Ask Conductor, a Claude session that knows the app.'
 }
@@ -64,7 +50,7 @@ const STEPS: TourStep[] = [
   {
     selector: null,
     title: 'This is your workbench',
-    body: (on) => `AI Code Conductor runs your ${assistantsInUse(on)} sessions side by side. A quick look at where things live, then we’ll start your first session.`,
+    body: (only) => `AI Code Conductor runs your ${assistantsInUse(only)} sessions side by side. A quick look at where things live, then we’ll start your first session.`,
   },
   {
     selector: '[data-tour="nav-rail"]',
@@ -78,7 +64,7 @@ const STEPS: TourStep[] = [
     // silently skip the step that explains the app's core concept.
     selector: '[data-tour="new-config"]',
     title: 'Saved configs live here',
-    body: (on) => `The left panel has two modes — Saved is your launcher, Running is your live sessions. A saved config is a reusable launcher: project folder, model, account. Open the Saved tab, press "+ New" and pick Config to create one, then start a session from it whenever you want (${whereSessionsRun(on)}).`,
+    body: (only) => `The left panel has two modes — Saved is your launcher, Running is your live sessions. A saved config is a reusable launcher: project folder, model, account. Open the Saved tab, press "+ New" and pick Config to create one, then start a session from it whenever you want (${whereSessionsRun(only)}).`,
   },
   {
     // The Agent Canvas had no step at all, which made the app's second-largest
@@ -139,9 +125,8 @@ export default function GuidedTour({ onCreateConfig, onClose }: { onCreateConfig
   useOccludesNativePanes()
   const [i, setI] = useState(0)
   const step = STEPS[i]
-  const claudeOn = useSettingsStore((s) => usesClaude(s.settings))
-  const codexOn = useSettingsStore((s) => usesCodex(s.settings))
-  const body = typeof step.body === 'function' ? step.body({ claudeOn, codexOn }) : step.body
+  const only = useSettingsStore((s) => onlyAssistantInUse(s.settings))
+  const body = typeof step.body === 'function' ? step.body(only) : step.body
   const rect = useAnchorRect(step.selector)
   const last = i === STEPS.length - 1
 

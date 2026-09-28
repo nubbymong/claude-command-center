@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-28T14:58:22.875Z",
-  "head": "d2ea6e66835501bc31e599fab102d9a4d9c46a8d",
-  "tree": "297bff9a25c02dc5d1c78cb4fa364c1d556ccb84",
+  "generatedAt": "2026-09-28T15:11:16.204Z",
+  "head": "7811229f39236cdc5a41d08f1fa153b8a71cc085",
+  "tree": "78a9d51eab37f0f443d55271d689c247b426c0e5",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 148
+      "lineCount": 149
     },
     {
       "path": "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
@@ -1001,14 +1001,14 @@
       "predicates": [
         "P11"
       ],
-      "lineCount": 15
+      "lineCount": 11
     },
     {
       "path": "src/renderer/components/GuidedTour.tsx",
       "predicates": [
         "P11"
       ],
-      "lineCount": 19
+      "lineCount": 11
     },
     {
       "path": "src/renderer/components/InsightsPage.tsx",
@@ -1520,7 +1520,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 39
+      "lineCount": 44
     },
     {
       "path": "src/renderer/onboarding/save-provider-choice.ts",
@@ -3384,7 +3384,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 41
+      "lineCount": 43
     },
     {
       "path": "tests/unit/renderer/hello-codex.acceptance.test.ts",

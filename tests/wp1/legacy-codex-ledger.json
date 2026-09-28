@@ -2,7 +2,7 @@
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "manifestPathDigest": "bb3674ca41f086f9fd8b859e7d1743386967b1717d0d73d1d7b172952c62a57b",
-  "manifestHead": "d2ea6e66835501bc31e599fab102d9a4d9c46a8d",
+  "manifestHead": "7811229f39236cdc5a41d08f1fa153b8a71cc085",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -2170,7 +2170,7 @@
       ],
       "category": "SETUP",
       "disposition": "added",
-      "evidence": "WP2 commit 6e provider choice rules (WP1.1, WP1.2, WP1.3); tests/unit/renderer/onboarding-provider-flow.test.tsx; WP2 reconfirm (owner decision 2026-09-26): Use Codex only records the answer (codexAnswered), and the in-memory Yes of the one-time Codex question (WP1.34); tests/unit/renderer/setup-codex-only.test.tsx, tests/unit/renderer/onboarding-provider-flow.test.tsx",
+      "evidence": "WP2 commit 6e provider choice rules (WP1.1, WP1.2, WP1.3); tests/unit/renderer/onboarding-provider-flow.test.tsx; WP2 reconfirm (owner decision 2026-09-26): Use Codex only records the answer (codexAnswered), and the in-memory Yes of the one-time Codex question (WP1.34); tests/unit/renderer/setup-codex-only.test.tsx, tests/unit/renderer/onboarding-provider-flow.test.tsx; WP2 PR 3 P3.4 review fix: onlyAssistantInUse, the one assistant in use when only one is (from usesClaude and usesCodex; null for both or neither), shared by the guided tour and the Feature Guide (WP1.2); tests/unit/renderer/guided-tour-provider-copy.test.tsx, tests/unit/renderer/claude-off-launch.test.tsx",
       "note": "pure"
     },
     {
