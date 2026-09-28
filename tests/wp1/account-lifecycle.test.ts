@@ -663,19 +663,24 @@ describe('ADR-009 round 1 regressions: archived records, capabilities, setup rac
     expect(h.signedIn.get(EXT_HOME.toLowerCase())).toBe('chatgpt')
   })
 
-  it('the production realm source hands out only a realm being set up or in use', async () => {
+  it('the production realm source hands out only a realm being set up or in use, or a managed one being retired (P3.3)', async () => {
     vi.resetModules()
-    const realms: Record<string, 'pending' | 'active' | 'retiring' | 'retired' | 'recovery'> = {}
+    const realms: Record<string, { lifecycle: 'pending' | 'active' | 'retiring' | 'retired' | 'recovery'; ownership: 'conductor-managed' | 'external-default' }> = {}
     vi.doMock('../../src/main/provider-account-registry', () => ({
-      getAccountRegistry: () => ({ current: () => ({ realms: Object.entries(realms).map(([id, lifecycle]) => ({ id, lifecycle })) }) }),
+      getAccountRegistry: () => ({ current: () => ({ realms: Object.entries(realms).map(([id, r]) => ({ id, ...r })) }) }),
       getAccountRegistryResourcesDir: () => 'C:\\res',
     }))
     try {
       const { codexRealmSource } = await import('../../src/main/providers/compose')
-      for (const lifecycle of ['pending', 'active', 'retiring', 'retired', 'recovery'] as const) {
-        realms['realm-x'] = lifecycle
-        const r = await codexRealmSource.lookup({ authRealmId: 'realm-x' })
-        expect(r.ok, lifecycle).toBe(lifecycle === 'pending' || lifecycle === 'active')
+      for (const ownership of ['conductor-managed', 'external-default'] as const) {
+        for (const lifecycle of ['pending', 'active', 'retiring', 'retired', 'recovery'] as const) {
+          realms['realm-x'] = { lifecycle, ownership }
+          const r = await codexRealmSource.lookup({ authRealmId: 'realm-x' })
+          // A sign in again's old realm (retiring, or kept in recovery) is
+          // signed out through it; never a retired one, never an external one.
+          const want = lifecycle === 'pending' || lifecycle === 'active' || (ownership === 'conductor-managed' && (lifecycle === 'retiring' || lifecycle === 'recovery'))
+          expect(r.ok, `${ownership} ${lifecycle}`).toBe(want)
+        }
       }
     } finally {
       vi.doUnmock('../../src/main/provider-account-registry')
@@ -929,12 +934,19 @@ describe('signing an existing account in again (WP2 6b)', () => {
     expect(h.service.issueSecretHandle({ accountId: b }, 1)).toMatchObject({ ok: false, code: 'unsupported' })
   })
 
-  it('on a realm that is still signed in it runs no login and just records the check', async () => {
+  it('on a realm that is still signed in it signs in again in a new realm, never over the old one (P3.3, WP1.52)', async () => {
     const h = await harness()
     const a = await addCodexAccount(h, 'A')
+    const old = realmHome(h, a)
     const before = h.runs.length
     expect(await h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).toEqual({ ok: true, state: 'signed-in' })
-    expect(h.args().slice(before).filter((x) => x !== 'login status')).toEqual([])
+    // The login ran in a new realm, never in the old one; the old one was
+    // then signed out. tests/wp1/reauth-staging.test.ts covers the rest.
+    const logins = h.runs.slice(before).filter((r) => r.args === 'login')
+    expect(logins).toHaveLength(1)
+    expect(logins[0].home.toLowerCase()).not.toBe(old)
+    expect(realmHome(h, a)).toBe(logins[0].home.toLowerCase())
+    expect(h.runs.slice(before).filter((r) => r.args === 'logout').map((r) => r.home.toLowerCase())).toEqual([old])
   })
 
   it('nothing launches on the account while its sign-in is replaced, and the record is written before the hold ends (ADR-009 6b)', async () => {

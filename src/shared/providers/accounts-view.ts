@@ -110,6 +110,10 @@ export interface AccountView {
   legacyId?: string
   /** When it was archived; present only on an archived account. */
   archivedAt?: number
+  /** A sign in again moved it to a new sign-in, and the old one could not
+   *  be removed yet (design 9.2): it needs attention, and a check of its
+   *  sign-in tries again. Present only when true. */
+  oldSignInLeft?: true
   /** Sessions running on this account now. */
   runningSessions: number
   /** Reviewer invocations running on this account now. */
@@ -148,6 +152,9 @@ export interface PendingSetupView {
   createdAt: number
   /** A sign-in for it is running now. */
   signingIn: boolean
+  /** A sign in again of this account, not a new one: it is finished by that
+   *  sign in again, or discarded; never named as a new account. */
+  replacesAccountId?: string
 }
 
 /** A provider's own default sign-in on this computer (6.3; Codex's
