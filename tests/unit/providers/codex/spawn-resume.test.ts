@@ -6,7 +6,7 @@
 // the conversation it opens and the app's config folder (its names). Real
 // files in temp folders; the CLI lookups mocked, nothing is started.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, linkSync, rmSync, existsSync, readdirSync, statSync } from 'fs'
+import { mkdtempSync, mkdirSync, writeFileSync, linkSync, rmSync, rmdirSync, unlinkSync, existsSync, readdirSync, statSync } from 'fs'
 import { join, isAbsolute, dirname, basename } from 'path'
 import { tmpdir } from 'os'
 
@@ -54,6 +54,10 @@ const codexOptions = { model: 'gpt-5.5', permissionsPreset: 'standard' as const 
 const FLAGS = ['-m', 'gpt-5.5', '--sandbox', 'workspace-write', '--ask-for-approval', 'on-request']
 const temps: string[] = []
 const temp = (tag: string) => { const d = mkdtempSync(join(tmpdir(), `ccc-p35-${tag}-`)); temps.push(d); return d }
+/** Removes, recursively, only a folder this file made: its own prefix, directly in the temp folder. */
+const removeOwn = (d: string) => { if (dirname(d) === tmpdir() && /^ccc-p35-/.test(basename(d))) rmSync(d, { recursive: true, force: true }) }
+/** Pick folders the builder made: emptied of the pick file and removed, never recursively. */
+const pickDirs: string[] = []
 
 /** A realm with this conversation's rollout, recorded as run in `cwd`. */
 function realmWith(id: string, cwd: string, daysAgo = 2): { sessionsDir: string; file: string } {
@@ -82,10 +86,11 @@ afterEach(() => {
   delete (globalThis as any).__p35ResourcesDir
   delete (globalThis as any).__p35ForcedResume
   delete (globalThis as any).__p35ConfigDir
-  // Only folders this file made (a ccc-p35- or ccc-codex-pick- folder directly
-  // in the temp folder) are ever removed: never the temp folder itself.
-  for (const d of temps.splice(0)) {
-    if (dirname(d) === tmpdir() && /^ccc-(p35|codex-pick)-/.test(basename(d))) rmSync(d, { recursive: true, force: true })
+  for (const d of temps.splice(0)) removeOwn(d)
+  for (const d of pickDirs.splice(0)) {
+    if (dirname(d) !== tmpdir() || !/^ccc-codex-pick-/.test(basename(d))) continue
+    try { unlinkSync(join(d, 'pick.json')) } catch { /* not there */ }
+    try { rmdirSync(d) } catch { /* not empty, or gone */ }
   }
 })
 
@@ -126,7 +131,7 @@ describe('an exact resume on relaunch or Restart (rows 34, 35)', () => {
     const rel = old.file.slice(old.sessionsDir.length)
     mkdirSync(dirname(join(fresh, 'sessions', rel)), { recursive: true })
     linkSync(old.file, join(fresh, 'sessions', rel))
-    rmSync(dirname(old.sessionsDir), { recursive: true, force: true })
+    removeOwn(dirname(old.sessionsDir))
     const out = new CodexProvider().buildSpawnCommand({
       sessionId: 'sid', realmLaunch: launchIn(join(fresh, 'sessions')), cwd: project, resume: { uuid: ID, cwd: project }, codexOptions,
     })
@@ -142,7 +147,7 @@ describe('an exact resume on relaunch or Restart (rows 34, 35)', () => {
     })
     expect(elsewhere.args.slice(0, 2)).toEqual(['resume', ID])
     expect(elsewhere.cwd).toBe(configured)
-    rmSync(project, { recursive: true, force: true })
+    removeOwn(project)
     const gone = new CodexProvider().buildSpawnCommand({
       sessionId: 'sid', realmLaunch: launchIn(sessionsDir), cwd: configured, resume: { uuid: ID, cwd: project }, codexOptions,
     })
@@ -215,7 +220,7 @@ describe('the resume picker\'s launch (rows 32, 38)', () => {
     expect(isAbsolute(a.pickFile!)).toBe(true)
     // Fix round 2: in a folder of its own, made for this launch, private to its owner where the platform keeps modes.
     const own = dirname(a.pickFile!)
-    temps.push(own, dirname(b.pickFile!))
+    pickDirs.push(own, dirname(b.pickFile!))
     expect(dirname(own)).toBe(tmpdir())
     expect(basename(own)).toMatch(/^ccc-codex-pick-/)
     expect(readdirSync(own)).toEqual([])

@@ -5,7 +5,7 @@
 // the spawn, so a resumed conversation from an earlier day, or one crossing
 // midnight UTC, got no status line. Real files in a temp folder; fake timers.
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'fs'
+import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'fs'
 import { join, dirname, basename } from 'path'
 import { tmpdir } from 'os'
 import { watchAndClaimRollout } from '../../../../src/main/providers/codex/telemetry'
@@ -15,6 +15,14 @@ const ID_A = '019dd000-0001-7000-8000-00000000000a'
 const ID_B = '019dd000-0001-7000-8000-00000000000b'
 const pad = (n: number) => String(n).padStart(2, '0')
 const temps: string[] = []
+const pickDirs: string[] = []
+/** Removes a link (a junction on Windows), if still there, and never what it points at. */
+function dropLink(p: string): void {
+  const st = lstatSync(p, { throwIfNoEntry: false })
+  if (!st) return
+  if (!st.isSymbolicLink()) throw new Error('not a link: ' + p)
+  try { unlinkSync(p) } catch { rmdirSync(p) }
+}
 const originalTz = process.env.TZ
 
 afterEach(() => {
@@ -22,8 +30,14 @@ afterEach(() => {
   vi.restoreAllMocks()
   if (originalTz === undefined) delete process.env.TZ
   else process.env.TZ = originalTz
-  // Only folders this file made directly in the temp folder, never the temp folder itself.
-  for (const t of temps.splice(0)) if (dirname(t) === tmpdir() && /^ccc-(test-codex-claim|codex-pick)-/.test(basename(t))) rmSync(t, { recursive: true, force: true })
+  // Only a folder this file made (its own prefix, directly in the temp folder) is removed recursively.
+  for (const t of temps.splice(0)) if (dirname(t) === tmpdir() && /^ccc-test-codex-claim-/.test(basename(t))) rmSync(t, { recursive: true, force: true })
+  // A pick folder (the watcher removes it; here only if a test failed first): its pick file, then the folder, never recursively.
+  for (const d of pickDirs.splice(0)) {
+    if (dirname(d) !== tmpdir() || !/^ccc-codex-pick-/.test(basename(d))) continue
+    try { unlinkSync(join(d, 'pick.json')) } catch { /* not there */ }
+    try { rmdirSync(d) } catch { /* not empty, or gone */ }
+  }
 })
 
 function realm(): string {
@@ -393,10 +407,10 @@ describe('what main reads as the pick', () => {
     const { claims, src } = watch(sessions, '/p/demo', { pickFile })
     await vi.advanceTimersByTimeAsync(600)
     expect(existsSync(join(inside, 'keep.txt'))).toBe(true)
-    rmSync(pickFile, { force: true })
-    mkdirSync(pickFile, { recursive: true })
+    dropLink(pickFile)
+    mkdirSync(pickFile)
     await vi.advanceTimersByTimeAsync(600)
-    rmSync(pickFile, { recursive: true, force: true })
+    rmdirSync(pickFile)
     writeFileSync(pickFile, JSON.stringify({ fresh: true }))
     await vi.advanceTimersByTimeAsync(300)
     rollout(todayDir(sessions), ID_B, '/p/demo', new Date(Date.now() + 200).toISOString(), 2)
@@ -478,7 +492,7 @@ describe('the pick file\'s folder', () => {
     const sessions = realm()
     mkdirSync(sessions, { recursive: true })
     const own = mkdtempSync(join(tmpdir(), 'ccc-codex-pick-'))
-    temps.push(own)
+    pickDirs.push(own)
     const pickFile = join(own, 'pick.json')
     writeFileSync(pickFile, JSON.stringify({ fresh: true }))
     watch(sessions, '/p/demo', { pickFile }).src.stop()

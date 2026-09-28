@@ -6,14 +6,15 @@
 // session_meta must agree, and a resume by id is not tied to a directory.
 import { describe, it, expect, afterEach } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, linkSync } from 'fs'
-import { join } from 'path'
+import { join, dirname, basename } from 'path'
 import { tmpdir, homedir } from 'os'
 import { findCodexRollout, findCodexRollouts, chooseCodexRollout, resolveCodexResume, codexDayFolders, sameDirectory, readRolloutFirstLine, CODEX_ROLLOUT_HEAD_MAX_BYTES, __codexRolloutEntriesVisitedForTests } from '../../../../src/main/providers/codex/rollout-lookup'
 
 const ID = '019dd000-0001-7000-8000-0000000000f1'
 const temps: string[] = []
 const temp = (tag: string) => { const d = mkdtempSync(join(tmpdir(), `ccc-p35-lookup-${tag}-`)); temps.push(d); return d }
-afterEach(() => { for (const d of temps.splice(0)) rmSync(d, { recursive: true, force: true }) })
+// Only a folder this file made (its own prefix, directly in the temp folder) is removed.
+afterEach(() => { for (const d of temps.splice(0)) if (dirname(d) === tmpdir() && /^ccc-p35-lookup-/.test(basename(d))) rmSync(d, { recursive: true, force: true }) })
 
 function put(sessionsDir: string, ymd: [string, string, string], id: string, cwd: string, metaId = id): string {
   const dir = join(sessionsDir, ...ymd)
