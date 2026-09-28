@@ -4284,6 +4284,8 @@ function spawnPtyResolved(
           ...(built.resumeId && built.resumePath ? { resumePath: built.resumePath } : {}),
           ...(built.pickFile ? { pickFile: built.pickFile } : {}),
           onClaim: (claimed) => keepCodexConversation(sessionId, { uuid: claimed.id, cwd: claimed.cwd }),
+          // The picker decided again after a claim: the session is no longer on it.
+          onRelease: () => { keptCodexConversations.delete(sessionId) },
         },
         (data) => {
           // Copilot review on PR #31 (p9.17): decorate at the send site so

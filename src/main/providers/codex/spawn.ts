@@ -10,7 +10,6 @@ import { readConfig, getConfigDir } from '../../config-manager'
 import { colorFgBgValue } from '../host-color-scheme'
 import { codexShellEnv } from './cli-runner'
 import { CODEX_CONVERSATION_ID_RE, resolveCodexResume } from './rollout-lookup'
-import { randomId } from '../../../shared/id'
 
 export function resolveCodexBinary(): { cmd: string; args: string[] } | null {
   if (os.platform() !== 'win32') {
@@ -298,19 +297,22 @@ export function buildCodexSpawn(opts: SpawnOptions): ProviderSpawnCommand {
       if (viaCmdExe) codexCmdExeTarget(executable, flags, env)
       const pickerEnv = { ...env }
       setOwned(pickerEnv, 'CCC_CODEX_EXECUTABLE', executable, win32)
-      // P3.5 (rows 32, 38): where the picker records the conversation it
-      // opens, so the status line and the tab follow THAT conversation: a
-      // new, unguessable name in the temp folder, made by the picker only
-      // (exclusive create) and read and removed by the watcher.
-      const pickFile = path.join(os.tmpdir(), `ccc-codex-pick-${randomId()}.json`)
-      setOwned(pickerEnv, 'CCC_CODEX_PICK_FILE', pickFile, win32)
+      // P3.5 (rows 32, 38): where the picker records each decision it makes,
+      // so the status line and the tab follow what the session runs: a file
+      // in a folder of its own, made for this launch with an unguessable
+      // name (owner-only where the platform keeps modes, so no other user
+      // can put a file there first), written by the picker only and read and
+      // removed, with its folder, by the watcher.
+      let pickFile: string | undefined
+      try { pickFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-codex-pick-')), 'pick.json') } catch { pickFile = undefined }
+      if (pickFile) setOwned(pickerEnv, 'CCC_CODEX_PICK_FILE', pickFile, win32)
       // The app's config folder, so the picker can name each conversation
       // with its tab's name (session-state.json), as Claude's picker does.
       // Read-only, best-effort.
       try { setOwned(pickerEnv, 'CCC_CONFIG_DIR', getConfigDir(), win32) } catch { /* no names */ }
       // Bare 'node' fails under node-pty/ConPTY on Windows (no PATH lookup).
       // Resolve to the full node.exe path via `where node`. See resolveNodeExe.
-      return { cmd: resolveNodeExe(), args: [pickerScript, ...flags], env: pickerEnv, pickFile }
+      return { cmd: resolveNodeExe(), args: [pickerScript, ...flags], env: pickerEnv, ...(pickFile ? { pickFile } : {}) }
     }
     // Fallthrough: picker missing, spawn codex directly.
   }

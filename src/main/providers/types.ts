@@ -112,6 +112,8 @@ export interface TelemetryOptions {
   resumePath?: string
   pickFile?: string
   onClaim?: (claim: { id: string; cwd: string }) => void
+  /** Told when a claim is let go (the picker decided again after it). */
+  onRelease?: () => void
 }
 
 export interface TelemetrySource {

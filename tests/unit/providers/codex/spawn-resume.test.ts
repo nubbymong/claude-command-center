@@ -6,8 +6,8 @@
 // the conversation it opens and the app's config folder (its names). Real
 // files in temp folders; the CLI lookups mocked, nothing is started.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, linkSync, rmSync, existsSync } from 'fs'
-import { join, isAbsolute, dirname } from 'path'
+import { mkdtempSync, mkdirSync, writeFileSync, linkSync, rmSync, existsSync, readdirSync, statSync } from 'fs'
+import { join, isAbsolute, dirname, basename } from 'path'
 import { tmpdir } from 'os'
 
 vi.mock('os', async (importOriginal) => {
@@ -82,7 +82,11 @@ afterEach(() => {
   delete (globalThis as any).__p35ResourcesDir
   delete (globalThis as any).__p35ForcedResume
   delete (globalThis as any).__p35ConfigDir
-  for (const d of temps.splice(0)) rmSync(d, { recursive: true, force: true })
+  // Only folders this file made (a ccc-p35- or ccc-codex-pick- folder directly
+  // in the temp folder) are ever removed: never the temp folder itself.
+  for (const d of temps.splice(0)) {
+    if (dirname(d) === tmpdir() && /^ccc-(p35|codex-pick)-/.test(basename(d))) rmSync(d, { recursive: true, force: true })
+  }
 })
 
 describe('an exact resume on relaunch or Restart (rows 34, 35)', () => {
@@ -209,10 +213,17 @@ describe('the resume picker\'s launch (rows 32, 38)', () => {
     expect(a.args[0]).toMatch(/codex-resume-picker\.js$/)
     expect(a.pickFile).toBeTruthy()
     expect(isAbsolute(a.pickFile!)).toBe(true)
-    expect(dirname(a.pickFile!)).toBe(tmpdir())
+    // Fix round 2: in a folder of its own, made for this launch, private to its owner where the platform keeps modes.
+    const own = dirname(a.pickFile!)
+    temps.push(own, dirname(b.pickFile!))
+    expect(dirname(own)).toBe(tmpdir())
+    expect(basename(own)).toMatch(/^ccc-codex-pick-/)
+    expect(readdirSync(own)).toEqual([])
+    if (process.platform !== 'win32') expect(statSync(own).mode & 0o777).toBe(0o700)
     expect(a.env.CCC_CODEX_PICK_FILE).toBe(a.pickFile)
     expect(existsSync(a.pickFile!)).toBe(false)
     expect(b.pickFile).not.toBe(a.pickFile)
+    expect(dirname(b.pickFile!)).not.toBe(own)
     expect(a.env.CCC_CONFIG_DIR).toBe(join(tmpdir(), 'ccc-p35-config'))
     expect(a.resumeId).toBeUndefined()
   })

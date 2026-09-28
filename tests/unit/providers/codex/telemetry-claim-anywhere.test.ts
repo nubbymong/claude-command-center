@@ -6,7 +6,7 @@
 // midnight UTC, got no status line. Real files in a temp folder; fake timers.
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'fs'
-import { join } from 'path'
+import { join, dirname, basename } from 'path'
 import { tmpdir } from 'os'
 import { watchAndClaimRollout } from '../../../../src/main/providers/codex/telemetry'
 import type { StatuslineData } from '../../../../src/shared/types'
@@ -22,7 +22,8 @@ afterEach(() => {
   vi.restoreAllMocks()
   if (originalTz === undefined) delete process.env.TZ
   else process.env.TZ = originalTz
-  for (const t of temps.splice(0)) rmSync(t, { recursive: true, force: true })
+  // Only folders this file made directly in the temp folder, never the temp folder itself.
+  for (const t of temps.splice(0)) if (dirname(t) === tmpdir() && /^ccc-(test-codex-claim|codex-pick)-/.test(basename(t))) rmSync(t, { recursive: true, force: true })
 })
 
 function realm(): string {
@@ -47,9 +48,10 @@ function rollout(dir: string, id: string, cwd: string, iso: string, input?: numb
 function watch(sessions: string, cwd: string, opts?: Parameters<typeof watchAndClaimRollout>[6]) {
   const updates: StatuslineData[] = []
   const claims: Array<{ id: string; cwd: string }> = []
+  const releases: number[] = []
   const src = watchAndClaimRollout('sess-p35', cwd, Date.now(), (d) => updates.push(d), sessions, undefined,
-    opts ? { ...opts, onClaim: (c) => claims.push(c) } : undefined)
-  return { updates, claims, src }
+    opts ? { ...opts, onClaim: (c) => claims.push(c), onRelease: () => releases.push(claims.length) } : undefined)
+  return { updates, claims, releases, src }
 }
 
 describe('a new conversation is found in the day folder it lands in (row 38)', () => {
@@ -416,5 +418,74 @@ describe('what main reads as the pick', () => {
     await vi.advanceTimersByTimeAsync(600)
     src.stop()
     expect(claims).toEqual([])
+  })
+})
+
+// P3.5 fix round 2 (quality minor 2): the picker can decide again after a
+// claim: its picked resume wrote to its rollout, then failed, and it falls
+// back to a new conversation. The watcher keeps reading the pick file; a new
+// decision lets the claim go (the session no longer keeps that conversation)
+// and claims by the protocol again.
+describe('a decision after a claim', () => {
+  it('lets the claimed conversation go and follows the new one the picker falls back to', async () => {
+    vi.useFakeTimers()
+    const sessions = realm()
+    const pickFile = join(sessions, '..', 'pick.json')
+    const old = new Date(Date.now() - 2 * 24 * 3600 * 1000)
+    const picked = rollout(folder(sessions, old.getUTCFullYear(), old.getUTCMonth() + 1, old.getUTCDate()), ID_A, '/p/demo', old.toISOString(), 10)
+    const { claims, releases, updates, src } = watch(sessions, '/p/demo', { pickFile })
+    writeFileSync(pickFile, JSON.stringify({ id: ID_A }))
+    await vi.advanceTimersByTimeAsync(1_500)
+    appendFileSync(picked, tokenLine(new Date().toISOString(), 11) + '\n')
+    await vi.advanceTimersByTimeAsync(1_500)
+    expect(claims).toEqual([{ id: ID_A, cwd: '/p/demo' }])
+    writeFileSync(pickFile, JSON.stringify({ fresh: true }))
+    await vi.advanceTimersByTimeAsync(600)
+    expect(releases).toEqual([1])
+    const now = new Date()
+    rollout(folder(sessions, now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate()), ID_B, '/p/demo', new Date(Date.now() + 200).toISOString(), 3)
+    await vi.advanceTimersByTimeAsync(600)
+    // The old rollout growing again is no longer followed.
+    appendFileSync(picked, tokenLine(new Date().toISOString(), 99) + '\n')
+    await vi.advanceTimersByTimeAsync(1_000)
+    src.stop()
+    expect(claims).toEqual([{ id: ID_A, cwd: '/p/demo' }, { id: ID_B, cwd: '/p/demo' }])
+    expect(updates.at(-1)?.inputTokens).toBe(3)
+  })
+
+  it('a launch that resumes by id reads no pick file after its claim', async () => {
+    vi.useFakeTimers()
+    const sessions = realm()
+    const pickFile = join(sessions, '..', 'pick.json')
+    const old = new Date(Date.now() - 24 * 3600 * 1000)
+    rollout(folder(sessions, old.getUTCFullYear(), old.getUTCMonth() + 1, old.getUTCDate()), ID_A, '/p/demo', old.toISOString(), 10)
+    const { claims, releases, src } = watch(sessions, '/p/demo', { resumeId: ID_A, pickFile })
+    await vi.advanceTimersByTimeAsync(300)
+    writeFileSync(pickFile, JSON.stringify({ fresh: true }))
+    await vi.advanceTimersByTimeAsync(1_000)
+    // Not read: still there until the watch stops and clears it.
+    expect(existsSync(pickFile)).toBe(true)
+    src.stop()
+    expect(claims).toEqual([{ id: ID_A, cwd: '/p/demo' }])
+    expect(releases).toEqual([])
+  })
+})
+
+// P3.5 fix round 2 (lens A minor): the pick file lives in its own private
+// folder, which the watcher removes with it when it stops.
+describe('the pick file\'s folder', () => {
+  it('is removed with the pick file when the watch stops; any other folder is left', () => {
+    const sessions = realm()
+    mkdirSync(sessions, { recursive: true })
+    const own = mkdtempSync(join(tmpdir(), 'ccc-codex-pick-'))
+    temps.push(own)
+    const pickFile = join(own, 'pick.json')
+    writeFileSync(pickFile, JSON.stringify({ fresh: true }))
+    watch(sessions, '/p/demo', { pickFile }).src.stop()
+    expect(existsSync(own)).toBe(false)
+    const shared = join(sessions, '..', 'shared')
+    mkdirSync(shared)
+    watch(sessions, '/p/demo', { pickFile: join(shared, 'pick.json') }).src.stop()
+    expect(existsSync(shared)).toBe(true)
   })
 })
