@@ -398,6 +398,16 @@ the new one out, for file and keyring stores (an owner action; it would turn
 on the Codex capability `auth.retireReplaced`), and each folder's
 credential store recorded as its own file. This computer's own sign-in is
 signed in again in place, after its warning (design 9.2, last paragraph).
+Review round 2: the account's conversation history (its `sessions` folder
+and `history.jsonl`) is copied into the new folder before the switch, so
+resume, restored tabs and Tokenomics keep earlier conversations (Tokenomics
+keys a Codex turn on its session id and turn, so the copy is counted once);
+a failed or torn switch is decided by what the registry file says, and a
+Discard is written ahead of the sign-out and removal; a sign-out signs the
+old sign-in out too. The kept old sign-in keeps the account needing
+attention, as design 9.2 requires: "on failure or uncertain provider
+semantics, it remains in a visible recoverable cleanup state and the
+provider account stays `attention`".
 
 **P3.4 Codex-only mode and provider status.** Each provider's status pills
 only while it is on, with an OpenAI status pill for Codex; no Claude prompts
@@ -413,13 +423,12 @@ resume on relaunch in the same realm; Restart resumes the same conversation
 (picking another stays a choice); the picker lists worktree conversations and
 names; the statusline after resuming a conversation from an earlier day or
 across midnight UTC (the claim re-reads its date folder and finds a resumed
-rollout wherever it is: row 38's defect). The folder an account left after
-a staged Sign in again (P3.3) keeps its conversations reachable: today
-`sessionsRoots` and `sessionsDirs` (`src/main/providers/core/accounts-service.ts`)
-read only active realms, so resume, Logs and the Tokenomics watcher lose
-them. Required test: a conversation written in the old folder is still
-listed for resume and still counted, attributed to the same account, after
-the account moved to its new folder. Likely
+rollout wherever it is: row 38's defect). A staged Sign in again (P3.3)
+copies the old folder's `sessions` and `history.jsonl` into the new folder
+before the switch, so a conversation from before is found there by id (P3.1
+evidence) and counted once by Tokenomics; P3.5 keeps it covered: a restored
+tab's `codex resume <id>` of a pre-switch conversation, and the picker
+listing it, in the account's new folder. Likely
 files: `src/main/session-resume-enrich.ts`, `src/renderer/session-persistence.ts`,
 `providers/codex/spawn.ts`, `providers/codex/resume-picker.ts`,
 `scripts/lib/codex-resume-picker-lib.js`, `providers/codex/telemetry.ts`,
