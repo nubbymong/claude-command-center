@@ -12,7 +12,9 @@ import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/id
 import { useResolvedTheme } from '../../hooks/useThemeController'
 import { useAccountProfilesStore } from '../../stores/accountProfilesStore'
 import { useSettingsStore } from '../../stores/settingsStore'
-import { resolveAccountNameByEmail, resolveAccountColourKey } from '../../../shared/account-chip-color'
+import { resolveAccountNameByEmail } from '../../../shared/account-chip-color'
+import { useProviderAccountsStore } from '../../stores/providerAccountsStore'
+import { chipColourKeyForEmail } from '../../utils/accountChip'
 
 interface SessionRowProps {
   session: Session
@@ -98,13 +100,16 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
   const profiles = useAccountProfilesStore((s) => s.profiles)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
+  // P3.6 (row 7): the colour is the account's identity's when the account
+  // list names it (utils/accountChip), else the email override as before.
+  const accountsSnapshot = useProviderAccountsStore((s) => s.snapshot)
   const accountEmail = session.accountEmail || session.sshRemoteAccount
   const accountName = accountEmail
     ? resolveAccountNameByEmail(accountEmail, profiles, accountAliases)
     : null
   const accountDot = accountEmail
     ? resolveIdentityColor(
-        resolveAccountColourKey(accountEmail, accountColourOverrides, session.accountColour),
+        chipColourKeyForEmail(accountEmail, { profiles, snapshot: accountsSnapshot, overrides: accountColourOverrides }, session.accountColour),
         theme,
       )
     : null

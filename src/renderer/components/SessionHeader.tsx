@@ -8,7 +8,9 @@ import { sshMappedProfileId } from '../utils/sessionLaunch'
 import { useAccountAuthStore, claudeCodeNotChecked, type AccountAuthStatus } from '../stores/accountAuthStore'
 import { useClaudeOff } from '../lib/claudeOff'
 import { useSettingsStore } from '../stores/settingsStore'
-import { resolveAccountName, resolveAccountNameByEmail, resolveAccountColourKey, middleTruncateEmail } from '../../shared/account-chip-color'
+import { resolveAccountName, resolveAccountNameByEmail, middleTruncateEmail } from '../../shared/account-chip-color'
+import { chipColourKeyForEmail } from '../utils/accountChip'
+import { useProviderAccountsStore } from '../stores/providerAccountsStore'
 import { BrandMark } from './BrandMark'
 import { ContainerGlyph, containerBadgeTitle, ProviderMark } from './sidebar/Badges'
 import { containerNameOf, resolveTransportBadge } from './sidebar/transportBadge'
@@ -479,6 +481,8 @@ function SessionAuthPills({ session }: { session: Session }) {
   const refresh = useAccountAuthStore((s) => s.refresh)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
+  // P3.6 (row 7): chip colours from the identity when the account list names it.
+  const accountsSnapshot = useProviderAccountsStore((s) => s.snapshot)
   const theme = useResolvedTheme()
   // Only LOCAL Claude sessions carry per-session Claude Code creds + a claude.ai
   // web session. SSH (remote creds), Codex (not profile-scoped) and shell-only
@@ -580,7 +584,7 @@ function SessionAuthPills({ session }: { session: Session }) {
       ? (r === idEmail ? middleTruncateEmail(idEmail) : r)
       : (sshProfile?.name || 'Account')
     const remoteTone = resolveIdentityColor(
-      resolveAccountColourKey(idEmail, accountColourOverrides, session.accountColour ?? sshProfile?.colourKey),
+      chipColourKeyForEmail(idEmail, { profiles, snapshot: accountsSnapshot, overrides: accountColourOverrides }, session.accountColour ?? sshProfile?.colourKey),
       theme,
     )
     const accountTitle = reportedEmail
@@ -647,7 +651,7 @@ function SessionAuthPills({ session }: { session: Session }) {
       })()
     : (profile?.name || 'Account')
   const accountTone = resolveIdentityColor(
-    resolveAccountColourKey(email, accountColourOverrides, session.accountColour ?? profile?.colourKey),
+    chipColourKeyForEmail(email, { profiles, snapshot: accountsSnapshot, overrides: accountColourOverrides }, session.accountColour ?? profile?.colourKey),
     theme,
   )
 

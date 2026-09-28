@@ -15,7 +15,8 @@ import { useResolvedTheme } from '../hooks/useThemeController'
 import { useRegionTypography } from '../hooks/useTypography'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { isAccountActive } from '../../shared/account-types'
-import { resolveAccountName, resolveAccountNameByEmail, resolveAccountColourKey, middleTruncateEmail } from '../../shared/account-chip-color'
+import { resolveAccountName, resolveAccountNameByEmail, middleTruncateEmail } from '../../shared/account-chip-color'
+import { chipColourKeyForEmail } from '../utils/accountChip'
 import { resolveIdentityColor } from '../../shared/identity-colors'
 import ToolbarPopup from './ToolbarPopup'
 import {
@@ -97,6 +98,7 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   const profiles = useAccountProfilesStore((s) => s.profiles)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
+  const accountsSnapshot = useProviderAccountsStore((s) => s.snapshot)
   // Mid-session account switch (respawn + resume): gated on having at least 2
   // profiles (need a real choice). Selector form on every read so the strip
   // never re-renders on unrelated store churn.
@@ -256,8 +258,10 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   const accountName = session.accountEmail
     ? resolveAccountNameByEmail(session.accountEmail, profiles, accountAliases)
     : null
+  // P3.6 (row 7): the identity's colour when the account list names it
+  // (utils/accountChip), else the email override as before.
   const accountDot = resolveIdentityColor(
-    resolveAccountColourKey(session.accountEmail, accountColourOverrides, session.accountColour),
+    chipColourKeyForEmail(session.accountEmail, { profiles, snapshot: accountsSnapshot, overrides: accountColourOverrides }, session.accountColour),
     theme,
   )
 
