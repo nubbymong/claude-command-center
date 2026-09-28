@@ -16,7 +16,9 @@ import { describeDestination, effectiveRuntimeOf } from '../../../shared/detache
 import { tmuxExactTarget } from '../../../shared/ssh-tmux-persistence'
 import { displayLiveness, type EntryDisplayLiveness } from '../../utils/detachedRemotesLiveness'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/identity-colors'
-import { resolveAccountColourKey, resolveAccountNameByEmail } from '../../../shared/account-chip-color'
+import { resolveAccountNameByEmail } from '../../../shared/account-chip-color'
+import { chipColourKeyForEmail } from '../../utils/accountChip'
+import { useProviderAccountsStore } from '../../stores/providerAccountsStore'
 import { resolveRemoteResumableCollapsed } from './sessionsPanelState'
 import { DialogButton, DialogFooter, DialogHeader, DialogOverlay, DialogPanel, useDialogEscape } from '../ui/Dialog'
 
@@ -108,6 +110,9 @@ export default function RemoteResumableSection({ liveSessionIds, onRevealSession
   const profiles = useAccountProfilesStore((s) => s.profiles)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
+  // P3.6 (row 7): an entry's dot is its account's identity colour when the
+  // account list names it (utils/accountChip), else the override as before.
+  const accountsSnapshot = useProviderAccountsStore((s) => s.snapshot)
   // Two launch paths on purpose. `reattach` reuses the detached remote's id and
   // asks for reconnect (the resume). `launchFresh` is the ORDINARY launch every
   // other surface uses — gated (Codex off) and always a new id — so "Start new"
@@ -309,7 +314,7 @@ export default function RemoteResumableSection({ liveSessionIds, onRevealSession
           ? resolveIdentityColor(config.identityColorKey ?? bucketLegacyColorToKey(config.color), theme)
           : 'var(--text-muted)'
         const accountDot = entry.accountEmail
-          ? resolveIdentityColor(resolveAccountColourKey(entry.accountEmail, accountColourOverrides, undefined), theme)
+          ? resolveIdentityColor(chipColourKeyForEmail(entry.accountEmail, { profiles, snapshot: accountsSnapshot, overrides: accountColourOverrides }, undefined), theme)
           : null
         const accountName = entry.accountEmail
           ? resolveAccountNameByEmail(entry.accountEmail, profiles, accountAliases)

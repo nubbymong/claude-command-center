@@ -8,7 +8,9 @@ import React, { useState, useEffect } from 'react'
 import { useAccountGateStore } from '../stores/accountGateStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSettingsStore } from '../stores/settingsStore'
-import { middleTruncateEmail, resolveAccountName, resolveAccountColourKey } from '../../shared/account-chip-color'
+import { middleTruncateEmail, resolveAccountName } from '../../shared/account-chip-color'
+import { chipColourKeyForProfile } from '../utils/accountChip'
+import { useProviderAccountsStore } from '../stores/providerAccountsStore'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { resolveIdentityColor } from '../../shared/identity-colors'
 import { isAccountActive } from '../../shared/account-types'
@@ -47,6 +49,7 @@ export default function AccountLaunchGate({ suppressed = false }: { suppressed?:
   const profiles = useAccountProfilesStore((s) => s.profiles)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
+  const accountsSnapshot = useProviderAccountsStore((s) => s.snapshot)
   const lastUsedAccountId = useSettingsStore((s) => s.settings.lastUsedAccountId)
   const theme = useResolvedTheme()
   // Only active accounts are selectable at launch: an inactive account has been
@@ -100,20 +103,16 @@ export default function AccountLaunchGate({ suppressed = false }: { suppressed?:
           })()
         : (lastUsedProfile.name || 'New account'))
     : ''
+  // P3.6 (row 7): a profile's dot is its identity's colour when the account
+  // list mirrors it (utils/accountChip), else as before: the user override,
+  // else the profile's stored colourKey, else neutral mauve.
   const lastUsedDot = lastUsedProfile
-    ? resolveIdentityColor(
-        resolveAccountColourKey(lastUsedProfile.accountEmail, accountColourOverrides, lastUsedProfile.colourKey),
-        theme,
-      )
+    ? resolveIdentityColor(chipColourKeyForProfile(lastUsedProfile, { snapshot: accountsSnapshot, overrides: accountColourOverrides }), theme)
     : ''
 
-  // Colour dot for the current selection: user override wins, else the profile's
-  // stored colourKey, else neutral mauve.
+  // Colour dot for the current selection, by the same rule.
   const selectedProfile = profiles.find((p) => p.id === selected)
-  const selectedDot = resolveIdentityColor(
-    resolveAccountColourKey(selectedProfile?.accountEmail, accountColourOverrides, selectedProfile?.colourKey),
-    theme,
-  )
+  const selectedDot = resolveIdentityColor(chipColourKeyForProfile(selectedProfile, { snapshot: accountsSnapshot, overrides: accountColourOverrides }), theme)
 
   return (
     <DialogOverlay z="z-[60]" dim={0.5}>
