@@ -433,6 +433,22 @@ would be. Likely files: `TitleBar.tsx`, `src/main/service-status.ts`,
 `AccountsPanel.tsx`, `onboarding/hello-codex.ts`, the onboarding steps,
 `PRIVACY.md` (the new status host). ADR-009: yes (a new main-process fetch and
 its IPC payload).
+Built (2026-09-28, aa0411b0 and a0c0e9ba): main reads each provider's public
+status page only while it is on (OpenAI's `status.openai.com` components list
+for Codex: its CLI and Codex API components), drops an off provider's reading,
+acts on a switch when the settings are saved, and reads a reply defensively;
+the title bar shows Claude's pills only while Claude Code is on and a Codex
+pill while Codex is on (the Codex API as its own pill only when not
+operational, as Claude's API is); PRIVACY.md, the README and app-knowledge
+name the host. With Claude Code off: Built-in Tools asks about your sessions,
+blocks Claude review and notes Codex review (and Settings' Code review rows
+say the same); the recap's Account row reads the D5 line and no Claude
+sign-in is read; What's New and its showcase hide what needs Claude Code in
+this release (`needsClaude`, to come off as P3.6, P3.10 and PR 4 bring those
+features to Codex); the registry callout no longer says the Claude accounts
+still work. Hello Codex page 1 already read without Claude (unchanged). Left
+to their phases: the Sentinel card (P3.9), the log indexing card (P3.12), Ask
+(row 53, PR 4). Owed: the ADR-009 pass, and a VM walk in Codex-only mode.
 
 **P3.5 History and resume.** The claimed session id kept with the tab; exact
 resume on relaunch in the same realm; Restart resumes the same conversation
