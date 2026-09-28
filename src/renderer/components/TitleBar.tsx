@@ -28,7 +28,6 @@ interface ComponentStatus {
   id: string
   label: string
   status: string
-  name: string
 }
 
 // Mirrors src/main/service-status.ts: a provider that is off has no reading

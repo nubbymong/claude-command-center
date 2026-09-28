@@ -122,6 +122,12 @@ describe('showcase-pages — the curated set', () => {
     expect(container.textContent).toContain('Remote Resumable.')
     expect(q('see-remoteResume')).toBeNull()
     expect(q('see-oneRow')).not.toBeNull()
+    // The 2.0 set's guide line promises Ask ("a session that has read the
+    // docs"), which needs Claude Code until P4.3; the partner terminal works
+    // beside a Codex session too, so it stays.
+    const all20 = sectionsFor(undefined, '2.1.0').flatMap((s) => s.items)
+    expect(all20.find((i) => i.title === 'A guide that answers back.')?.needsClaude).toBe(true)
+    expect(all20.find((i) => i.title === 'Partner terminal.')?.needsClaude).toBeUndefined()
   })
 
   it('P3.4 (row 14): a run that goes on with Codex only (setup found no Claude Code) reads it the same way', async () => {

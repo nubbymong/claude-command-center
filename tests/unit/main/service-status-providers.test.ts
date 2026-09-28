@@ -4,38 +4,64 @@
 // while that provider is on (OD27 D5: a provider that is off makes no
 // calls), Codex's from OpenAI's status page. An off provider's figures leave
 // the payload, a switch on or off is acted on when the settings are saved,
-// and a reply is read defensively: a 200 only, a bounded body, known
-// statuses only, the app's own labels.
+// and a reply is read defensively: a 200 only (no redirect followed), a
+// bounded body, known statuses only, the app's own labels and no remote
+// text. Time is bounded: each read has an overall deadline, each provider's
+// read settles on its own, a switch-off or stop aborts a read in flight.
+// The answer to the renderer's pull goes to the app's own window only.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
-vi.mock('electron', () => ({ BrowserWindow: class {} }))
+const handlers = new Map<string, (e: unknown) => unknown>()
+vi.mock('electron', () => ({
+  BrowserWindow: class {},
+  ipcMain: { handle: (ch: string, fn: (e: unknown) => unknown) => { handlers.set(ch, fn) } },
+}))
 vi.mock('../../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }))
 
 const ANTHROPIC = 'https://status.claude.com/api/v2/components.json'
 const OPENAI = 'https://status.openai.com/api/v2/components.json'
 
+type Reply = { status: number; body?: string; headers?: Record<string, string>; delay?: number; drip?: number; hang?: boolean }
 const requested: string[] = []
-let replies: Record<string, { status: number; body: string }> = {}
+const reads: { url: string; destroyed: boolean; opts: any }[] = []
+let replies: Record<string, Reply> = {}
 
+// A stand-in for https.get that behaves like one: it honours the socket
+// idle timeout it is given (req 'timeout'), stops delivering once destroyed,
+// and can drip a body forever or never answer.
 vi.mock('https', () => {
-  const get = (url: string, _opts: unknown, cb: (res: any) => void) => {
+  const get = (url: string, opts: any, cb: (res: any) => void) => {
     requested.push(url)
+    const rec = { url, destroyed: false, opts }
+    reads.push(rec)
     const reply = replies[url] ?? { status: 503, body: '' }
-    const handlers: Record<string, (arg?: unknown) => void> = {}
+    const reqH: Record<string, (arg?: unknown) => void> = {}
+    const resH: Record<string, (arg?: unknown) => void> = {}
+    const req: any = { on: (ev: string, fn: (arg?: unknown) => void) => { reqH[ev] = fn; return req }, destroy: () => { rec.destroyed = true } }
     const res: any = {
       statusCode: reply.status,
-      on: (ev: string, fn: (arg?: unknown) => void) => { handlers[ev] = fn; return res },
+      headers: reply.headers ?? {},
+      on: (ev: string, fn: (arg?: unknown) => void) => { resH[ev] = fn; return res },
       resume: () => {},
-      destroy: () => {},
+      destroy: () => { rec.destroyed = true },
     }
-    const req: any = { on: () => req, destroy: () => {} }
-    queueMicrotask(() => {
+    if (reply.hang) {
+      if (opts?.timeout) setTimeout(() => { if (!rec.destroyed) reqH.timeout?.() }, opts.timeout)
+      return req
+    }
+    setTimeout(() => {
+      if (rec.destroyed) return
       cb(res)
-      queueMicrotask(() => {
-        if (reply.body) handlers.data?.(Buffer.from(reply.body))
-        handlers.end?.()
-      })
-    })
+      if (reply.drip) {
+        const t = setInterval(() => { if (rec.destroyed) { clearInterval(t); return } resH.data?.(Buffer.from(' ')) }, reply.drip)
+        return
+      }
+      setTimeout(() => {
+        if (rec.destroyed) return
+        if (reply.body) resH.data?.(Buffer.from(reply.body))
+        resH.end?.()
+      }, reply.delay ?? 0)
+    }, 0)
     return req
   }
   return { default: { get }, get }
@@ -54,25 +80,29 @@ const openaiBody = (cli = 'operational', api = 'operational') => JSON.stringify(
 
 const on: Record<string, boolean> = { claude: true, codex: false }
 const sent: any[] = []
-const win = { isDestroyed: () => false, webContents: { send: (_ch: string, p: unknown) => { sent.push(p) } } }
+const mainFrame = { id: 'main' }
+const webContents = { send: (_ch: string, p: unknown) => { sent.push(p) }, mainFrame }
+const win = { isDestroyed: () => false, webContents }
 
 type Mod = typeof import('../../../src/main/service-status')
 let mod: Mod
 
 async function start(): Promise<void> {
   mod = await import('../../../src/main/service-status')
-  ;(mod.startServiceStatusPoller as any)(() => win, { providerOn: (id: string) => on[id] === true })
+  mod.startServiceStatusPoller(() => win as any, { providerOn: (id: string) => on[id] === true })
   await settle()
 }
-
-async function settle(): Promise<void> {
-  for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0))
-}
+const settle = () => vi.advanceTimersByTimeAsync(20)
+const last = () => mod.getLastServiceStatus() as any
+const readsOf = (url: string) => reads.filter((r) => r.url === url)
 
 beforeEach(() => {
+  vi.useFakeTimers()
   vi.resetModules()
   requested.length = 0
+  reads.length = 0
   sent.length = 0
+  handlers.clear()
   replies = { [ANTHROPIC]: { status: 200, body: anthropicBody() }, [OPENAI]: { status: 200, body: openaiBody() } }
   on.claude = true
   on.codex = false
@@ -80,14 +110,15 @@ beforeEach(() => {
 
 afterEach(() => {
   mod?.stopServiceStatusPoller()
+  vi.useRealTimers()
 })
 
 describe('provider status: one page per provider, read only while it is on', () => {
   it('Claude Code only (Codex off or not set up): Anthropic is read, OpenAI never is', async () => {
     await start()
     expect(requested).toEqual([ANTHROPIC])
-    const p = mod.getLastServiceStatus() as any
-    expect(p.claudeCode).toMatchObject({ label: 'Claude Code', status: 'operational' })
+    const p = last()
+    expect(p.claudeCode).toEqual({ id: 'yyzkbfz2thpt', label: 'Claude Code', status: 'operational' })
     expect(p.codexCli).toBeNull()
     expect(p.codexApi).toBeNull()
     expect(p.claudeReadAt).toEqual(expect.any(String))
@@ -99,9 +130,9 @@ describe('provider status: one page per provider, read only while it is on', () 
     on.codex = true
     await start()
     expect(requested).toEqual([OPENAI])
-    const p = mod.getLastServiceStatus() as any
-    expect(p.codexCli).toMatchObject({ id: '01KMKFAMWKNQ84Z1766MV08ZDE', label: 'Codex CLI', status: 'operational' })
-    expect(p.codexApi).toMatchObject({ id: '01KMP3KP5MGE23B80K1EK4S8PV', label: 'Codex API', status: 'operational' })
+    const p = last()
+    expect(p.codexCli).toEqual({ id: '01KMKFAMWKNQ84Z1766MV08ZDE', label: 'Codex CLI', status: 'operational' })
+    expect(p.codexApi).toEqual({ id: '01KMP3KP5MGE23B80K1EK4S8PV', label: 'Codex API', status: 'operational' })
     expect(p.claudeCode).toBeNull()
     expect(p.claudeAi).toBeNull()
     expect(p.api).toBeNull()
@@ -118,7 +149,7 @@ describe('provider status: one page per provider, read only while it is on', () 
     replies[OPENAI] = { status: 200, body: openaiBody('partial_outage') }
     await start()
     expect([...requested].sort()).toEqual([ANTHROPIC, OPENAI].sort())
-    const p = mod.getLastServiceStatus() as any
+    const p = last()
     expect(p.claudeCode.status).toBe('operational')
     expect(p.codexCli.status).toBe('partial_outage')
     expect(p.worst).toBe('partial_outage')
@@ -134,17 +165,19 @@ describe('provider status: one page per provider, read only while it is on', () 
     await start()
     expect(requested).toEqual([ANTHROPIC])
     on.codex = true
-    await (mod as any).refreshServiceStatus()
+    const r = mod.refreshServiceStatus()
     await settle()
+    await r
     expect(requested).toContain(OPENAI)
-    expect((mod.getLastServiceStatus() as any).codexCli.status).toBe('operational')
+    expect(last().codexCli.status).toBe('operational')
 
     requested.length = 0
     on.codex = false
-    await (mod as any).refreshServiceStatus()
+    const r2 = mod.refreshServiceStatus()
     await settle()
+    await r2
     expect(requested).not.toContain(OPENAI)
-    const p = mod.getLastServiceStatus() as any
+    const p = last()
     expect(p.codexCli).toBeNull()
     expect(p.codexReadAt).toBeNull()
     expect(sent.at(-1).codexCli).toBeNull()
@@ -153,8 +186,9 @@ describe('provider status: one page per provider, read only while it is on', () 
   it('a settings save that changes neither provider makes no request', async () => {
     await start()
     requested.length = 0
-    await (mod as any).refreshServiceStatus()
+    const r = mod.refreshServiceStatus()
     await settle()
+    await r
     expect(requested).toEqual([])
   })
 
@@ -162,9 +196,10 @@ describe('provider status: one page per provider, read only while it is on', () 
     on.codex = true
     await start()
     on.claude = false
-    await (mod as any).refreshServiceStatus()
+    const r = mod.refreshServiceStatus()
     await settle()
-    const p = mod.getLastServiceStatus() as any
+    await r
+    const p = last()
     expect(p.claudeCode).toBeNull()
     expect(p.claudeReadAt).toBeNull()
     expect(p.codexCli).not.toBeNull()
@@ -172,37 +207,158 @@ describe('provider status: one page per provider, read only while it is on', () 
 })
 
 describe('provider status: a reply is read defensively', () => {
-  it('a status the app does not know is no status (unknown), and the labels are the app\'s own', async () => {
+  it('a status the app does not know, or a prototype key, is no status; the labels are the app\'s own and no remote text is sent', async () => {
     on.claude = false
     on.codex = true
     replies[OPENAI] = { status: 200, body: JSON.stringify({ components: [
       { id: '01KMKFAMWKNQ84Z1766MV08ZDE', name: 'x'.repeat(10_000), status: '<b>bad</b>' },
-      { id: '01KMP3KP5MGE23B80K1EK4S8PV', name: 42, status: 'degraded_performance' },
+      { id: '01KMP3KP5MGE23B80K1EK4S8PV', name: 'Remote <i>name</i>', status: 'degraded_performance' },
     ] }) }
     await start()
-    const p = mod.getLastServiceStatus() as any
+    let p = last()
     expect(p.codexCli).toBeNull()
-    expect(p.codexApi).toMatchObject({ label: 'Codex API', status: 'degraded_performance' })
-    expect(p.codexApi.name.length).toBeLessThanOrEqual(100)
+    expect(p.codexApi).toEqual({ id: '01KMP3KP5MGE23B80K1EK4S8PV', label: 'Codex API', status: 'degraded_performance' })
+    expect(JSON.stringify(p)).not.toContain('Remote')
+    expect(JSON.stringify(p)).not.toContain('xxxx')
     expect(p.codexReadAt).toEqual(expect.any(String))
+
+    for (const status of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+      mod.stopServiceStatusPoller()
+      vi.resetModules()
+      replies[OPENAI] = { status: 200, body: JSON.stringify({ components: [{ id: '01KMKFAMWKNQ84Z1766MV08ZDE', status }] }) }
+      await start()
+      p = last()
+      expect(p.codexCli, status).toBeNull()
+      expect(p.worst, status).toBe('operational')
+    }
   })
 
-  it('a non-200 reply, a body over the cap, or JSON of the wrong shape leaves no reading', async () => {
+  it('a null or non-object element in the list does not stop the tracked components being read', async () => {
+    on.claude = false
+    on.codex = true
+    replies[OPENAI] = { status: 200, body: JSON.stringify({ components: [null, 7, 'x', [], { id: '01KMKFAMWKNQ84Z1766MV08ZDE', status: 'partial_outage' }] }) }
+    await start()
+    expect(last().codexCli).toEqual({ id: '01KMKFAMWKNQ84Z1766MV08ZDE', label: 'Codex CLI', status: 'partial_outage' })
+  })
+
+  it('a non-200 reply, a redirect (never followed), a body over the cap, or JSON of the wrong shape leaves no reading', async () => {
     on.claude = false
     on.codex = true
     for (const reply of [
       { status: 500, body: openaiBody() },
+      { status: 301, body: openaiBody(), headers: { location: 'https://example.invalid/components.json' } },
+      { status: 302, body: openaiBody(), headers: { location: 'https://example.invalid/components.json' } },
       { status: 200, body: openaiBody() + ' '.repeat(1024 * 1024) },
       { status: 200, body: '{"components": {"not": "a list"}}' },
       { status: 200, body: 'not json' },
-    ]) {
+    ] as Reply[]) {
       vi.resetModules()
+      requested.length = 0
       replies[OPENAI] = reply
       await start()
-      const p = mod.getLastServiceStatus() as any
-      expect(p?.codexReadAt ?? null, JSON.stringify(reply).slice(0, 60)).toBeNull()
+      const p = last()
+      expect(p?.codexReadAt ?? null, `${reply.status} ${String(reply.body).slice(0, 30)}`).toBeNull()
       expect(p?.codexCli ?? null).toBeNull()
+      // Nothing is followed: the one request made is the status page's.
+      expect(requested).toEqual([OPENAI])
       mod.stopServiceStatusPoller()
     }
+  })
+})
+
+describe('provider status: time is bounded', () => {
+  it('a reply that drips forever is cut at the overall deadline, and does not hold up the other provider', async () => {
+    on.codex = true
+    replies[OPENAI] = { status: 200, drip: 1000 } // under the idle timeout, never ends
+    await start()
+    // Claude's page landed on its own while OpenAI's still drips.
+    expect(last().claudeCode.status).toBe('operational')
+    expect(last().codexReadAt).toBeNull()
+    expect(readsOf(OPENAI)[0].destroyed).toBe(false)
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(readsOf(OPENAI)[0].destroyed).toBe(true)
+    expect(last().codexReadAt).toBeNull()
+    // The source is free again: a switch-off and on reads it afresh.
+    replies[OPENAI] = { status: 200, body: openaiBody() }
+    on.codex = false
+    await mod.refreshServiceStatus()
+    on.codex = true
+    const r = mod.refreshServiceStatus()
+    await settle()
+    await r
+    expect(readsOf(OPENAI)).toHaveLength(2)
+    expect(last().codexCli.status).toBe('operational')
+  })
+
+  it('a reply that never comes is given up on (the idle timeout, then the deadline), and the socket is destroyed', async () => {
+    on.claude = false
+    on.codex = true
+    replies[OPENAI] = { status: 200, hang: true }
+    await start()
+    expect(readsOf(OPENAI)[0].opts?.timeout).toBeGreaterThan(0)
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(readsOf(OPENAI)[0].destroyed).toBe(true)
+    expect(last()?.codexReadAt ?? null).toBeNull()
+  })
+
+  it('switching a provider off aborts its read in flight, and its late reply is ignored', async () => {
+    on.codex = true
+    replies[OPENAI] = { status: 200, body: openaiBody(), delay: 3000 }
+    await start()
+    expect(readsOf(OPENAI)[0].destroyed).toBe(false)
+    on.codex = false
+    await mod.refreshServiceStatus()
+    expect(readsOf(OPENAI)[0].destroyed).toBe(true)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(last().codexCli).toBeNull()
+    expect(last().codexReadAt).toBeNull()
+  })
+
+  it('a reply that lands after its provider went off (before the settings save is acted on) is not kept', async () => {
+    on.codex = true
+    replies[OPENAI] = { status: 200, body: openaiBody(), delay: 3000 }
+    await start()
+    on.codex = false
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(last().codexCli).toBeNull()
+    expect(last().codexReadAt).toBeNull()
+  })
+
+  it('stopping aborts every read in flight, and a late reply changes nothing', async () => {
+    on.codex = true
+    replies[OPENAI] = { status: 200, body: openaiBody(), delay: 3000 }
+    replies[ANTHROPIC] = { status: 200, body: anthropicBody(), delay: 3000 }
+    await start()
+    const before = sent.length
+    mod.stopServiceStatusPoller()
+    expect(reads.every((r) => r.destroyed)).toBe(true)
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 5000)
+    expect(sent.length).toBe(before)
+    expect(requested).toHaveLength(2) // no further poll after stop
+  })
+
+  it('a second start is ignored: one read per provider, one timer', async () => {
+    on.codex = true
+    await start()
+    mod.startServiceStatusPoller(() => win as any, { providerOn: (id: string) => on[id] === true })
+    await settle()
+    expect(readsOf(ANTHROPIC)).toHaveLength(1)
+    expect(readsOf(OPENAI)).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+    expect(readsOf(ANTHROPIC)).toHaveLength(2)
+    expect(readsOf(OPENAI)).toHaveLength(2)
+  })
+})
+
+describe('provider status: the renderer pull answers the app window only', () => {
+  it('its own window\'s top frame gets the payload; another sender or a subframe gets nothing', async () => {
+    await start()
+    mod.registerServiceStatusHandlers(() => win as any)
+    const get = handlers.get('serviceStatus:get')!
+    expect(get).toBeTypeOf('function')
+    expect(get({ sender: webContents, senderFrame: mainFrame })).toEqual(last())
+    expect(get({ sender: { send: () => {} }, senderFrame: mainFrame })).toBeNull()
+    expect(get({ sender: webContents, senderFrame: { id: 'child' } })).toBeNull()
+    expect(get({ sender: webContents, senderFrame: null })).toBeNull()
   })
 })

@@ -29,8 +29,11 @@ export interface WhatsNewItem {
   seeIt?: string
   /** P3.4 (row 14): the line is about something that needs Claude Code in
    *  this release, so it is hidden while Claude Code is off (as upgradeOnly
-   *  hides a line from a fresh install). Lift it when the feature reaches
-   *  Codex. */
+   *  hides a line from a fresh install). The phase that brings the feature
+   *  to Codex lifts it (named in that phase's entry of
+   *  docs/wp2/completion-plan.md: Switch mid-session P3.6, Session Watchdog
+   *  P3.10, Agent Canvas P4.1, Ask Conductor and the guide line P4.3,
+   *  Insights P4.7). */
   needsClaude?: boolean
 }
 
@@ -69,7 +72,7 @@ const SECTIONS_20: WhatsNewSection[] = [
   {
     heading: 'Help',
     items: [
-      { title: 'A guide that answers back.', desc: 'The ? button opens a searchable guide, and a session that has read the docs.' },
+      { title: 'A guide that answers back.', desc: 'The ? button opens a searchable guide, and a session that has read the docs.', needsClaude: true },
     ],
   },
   {

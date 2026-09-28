@@ -24,7 +24,7 @@ vi.mock('../../../src/renderer/components/sentinel/SentinelDot', () => ({ defaul
 const { default: TitleBar } = await import('../../../src/renderer/components/TitleBar')
 
 const now = new Date().toISOString()
-const comp = (id: string, label: string, status: string) => ({ id, label, name: label, status })
+const comp = (id: string, label: string, status: string) => ({ id, label, status })
 function payload(opts: { claude?: boolean; codex?: boolean; claudeStatus?: string; codexStatus?: string; codexApiStatus?: string } = {}) {
   const claude = opts.claude !== false
   const codex = opts.codex === true

@@ -62,11 +62,14 @@ function preferenceOf(providerId: ProviderId): ProviderPreference {
 
 /** Whether the provider is on now: as the accounts service answers it (a
  *  switch made there, else the saved setting), or before the service exists
- *  the saved setting by the package's own enablement data. Not answered yet,
- *  and a setting that cannot be read, are not on. For work that only runs
- *  while a provider is on (its status page, P3.4). */
+ *  the saved setting by the package's own enablement data. Not answered yet
+ *  is not on, and neither is anything while the saved settings cannot be
+ *  read: this fails closed where the service keeps the last value it read
+ *  (no answer is never a yes). For work that only runs while a provider is
+ *  on (its status page, P3.4). */
 export function providerOnNow(providerId: ProviderId): boolean {
   try {
+    if (readSettings() === null) return false
     return (service ? service.preferenceOf(providerId) : preferenceOf(providerId)) === 'on'
   } catch {
     return false
