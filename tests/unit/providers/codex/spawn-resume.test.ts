@@ -48,6 +48,7 @@ vi.mock('../../../../src/main/providers/codex/telemetry', async (importOriginal)
 import { CodexProvider } from '../../../../src/main/providers/codex'
 import { __resetNodeExeCache } from '../../../../src/main/providers/codex/spawn'
 import { watchAndClaimRollout } from '../../../../src/main/providers/codex/telemetry'
+import { codexFolderIdentity } from '../../../../src/main/providers/codex/rollout-lookup'
 
 const ID = '019dd000-0001-7000-8000-0000000000c1'
 const codexOptions = { model: 'gpt-5.5', permissionsPreset: 'standard' as const }
@@ -226,6 +227,11 @@ describe('the resume picker\'s launch (rows 32, 38)', () => {
     expect(readdirSync(own)).toEqual([])
     if (process.platform !== 'win32') expect(statSync(own).mode & 0o777).toBe(0o700)
     expect(a.env.CCC_CODEX_PICK_FILE).toBe(a.pickFile)
+    // Fix round 3: the folder's identity as made, for the watcher, and its id for the picker.
+    expect(a.pickFolder).toEqual(codexFolderIdentity(own))
+    expect(a.pickFolder?.id).toMatch(/^[0-9]+:[0-9]+$/)
+    expect(a.env.CCC_CODEX_PICK_DIR_ID).toBe(a.pickFolder!.id)
+    expect(b.pickFolder?.id).not.toBe(a.pickFolder?.id)
     expect(existsSync(a.pickFile!)).toBe(false)
     expect(b.pickFile).not.toBe(a.pickFile)
     expect(dirname(b.pickFile!)).not.toBe(own)
@@ -238,6 +244,8 @@ describe('the resume picker\'s launch (rows 32, 38)', () => {
     const out = new CodexProvider().buildSpawnCommand({ sessionId: 'sid', realmLaunch: launchIn(sessionsDir), cwd: temp('c'), codexOptions })
     expect(out.pickFile).toBeUndefined()
     expect(out.env.CCC_CODEX_PICK_FILE).toBeUndefined()
+    expect(out.pickFolder).toBeUndefined()
+    expect(out.env.CCC_CODEX_PICK_DIR_ID).toBeUndefined()
   })
 })
 
@@ -248,7 +256,12 @@ describe('the status line is told how to find the conversation (row 38)', () => 
     const cb = () => {}
     new CodexProvider().ingestSessionTelemetry('sid', { cwd: '/w', spawnTimestamp: 7, sessionsDir: '/r/sessions', resumeId: ID, pickFile: '/t/p.json', onClaim }, cb)
     expect(vi.mocked(watchAndClaimRollout).mock.calls[0]).toEqual(['sid', '/w', 7, cb, '/r/sessions', undefined, { resumeId: ID, pickFile: '/t/p.json', onClaim }])
+    // Fix round 3: the pick folder's identity reaches the watcher with the pick file.
+    const pickFolder = { id: '1:2', real: '/t' }
+    new CodexProvider().ingestSessionTelemetry('sid', { cwd: '/w', spawnTimestamp: 7, sessionsDir: '/r/sessions', pickFile: '/t/p.json', pickFolder }, cb)
+    expect(vi.mocked(watchAndClaimRollout).mock.calls[1][6]).toEqual({ pickFile: '/t/p.json', pickFolder })
+    vi.mocked(watchAndClaimRollout).mockClear()
     new CodexProvider().ingestSessionTelemetry('sid', { cwd: '/w', spawnTimestamp: 7, sessionsDir: '/r/sessions' }, cb)
-    expect(vi.mocked(watchAndClaimRollout).mock.calls[1]).toEqual(['sid', '/w', 7, cb, '/r/sessions', undefined])
+    expect(vi.mocked(watchAndClaimRollout).mock.calls[0]).toEqual(['sid', '/w', 7, cb, '/r/sessions', undefined])
   })
 })

@@ -4,12 +4,12 @@ import * as path from 'path'
 import { execSync } from 'child_process'
 import { sandboxFor, approvalFor } from './permissions'
 import { getResourcesDirectory } from '../../ipc/setup-handlers'
-import type { SpawnOptions, ProviderSpawnCommand } from '../types'
+import type { SpawnOptions, ProviderSpawnCommand, PickFolderIdentity } from '../types'
 import { getConductorMcpPort, issueMcpSessionToken } from '../../conductor-mcp-server'
 import { readConfig, getConfigDir } from '../../config-manager'
 import { colorFgBgValue } from '../host-color-scheme'
 import { codexShellEnv } from './cli-runner'
-import { CODEX_CONVERSATION_ID_RE, resolveCodexResume } from './rollout-lookup'
+import { CODEX_CONVERSATION_ID_RE, codexFolderIdentity, resolveCodexResume } from './rollout-lookup'
 
 export function resolveCodexBinary(): { cmd: string; args: string[] } | null {
   if (os.platform() !== 'win32') {
@@ -302,17 +302,31 @@ export function buildCodexSpawn(opts: SpawnOptions): ProviderSpawnCommand {
       // in a folder of its own, made for this launch with an unguessable
       // name (owner-only where the platform keeps modes, so no other user
       // can put a file there first), written by the picker only and read and
-      // removed, with its folder, by the watcher.
+      // removed, with its folder, by the watcher. The folder's identity is
+      // recorded as made (fix round 3): the watcher and the picker use it
+      // only while it is still that folder, never one put in its place.
       let pickFile: string | undefined
-      try { pickFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-codex-pick-')), 'pick.json') } catch { pickFile = undefined }
-      if (pickFile) setOwned(pickerEnv, 'CCC_CODEX_PICK_FILE', pickFile, win32)
+      let pickFolder: PickFolderIdentity | null = null
+      try {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-codex-pick-'))
+        pickFolder = codexFolderIdentity(dir)
+        if (pickFolder) pickFile = path.join(dir, 'pick.json')
+        else { try { fs.rmdirSync(dir) } catch { /* left empty */ } }
+      } catch {
+        pickFile = undefined
+        pickFolder = null
+      }
+      if (pickFile && pickFolder) {
+        setOwned(pickerEnv, 'CCC_CODEX_PICK_FILE', pickFile, win32)
+        setOwned(pickerEnv, 'CCC_CODEX_PICK_DIR_ID', pickFolder.id, win32)
+      }
       // The app's config folder, so the picker can name each conversation
       // with its tab's name (session-state.json), as Claude's picker does.
       // Read-only, best-effort.
       try { setOwned(pickerEnv, 'CCC_CONFIG_DIR', getConfigDir(), win32) } catch { /* no names */ }
       // Bare 'node' fails under node-pty/ConPTY on Windows (no PATH lookup).
       // Resolve to the full node.exe path via `where node`. See resolveNodeExe.
-      return { cmd: resolveNodeExe(), args: [pickerScript, ...flags], env: pickerEnv, ...(pickFile ? { pickFile } : {}) }
+      return { cmd: resolveNodeExe(), args: [pickerScript, ...flags], env: pickerEnv, ...(pickFile && pickFolder ? { pickFile, pickFolder } : {}) }
     }
     // Fallthrough: picker missing, spawn codex directly.
   }

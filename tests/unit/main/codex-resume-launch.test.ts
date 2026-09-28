@@ -75,7 +75,7 @@ vi.mock('../../../src/main/providers', () => ({
       if (resume && !h.missing.has(resume.uuid)) {
         return { cmd: launch.executable, args: ['resume', resume.uuid], env: launch.env, resumeId: resume.uuid, cwd: `/conversations/${resume.uuid}`, resumeCwdMismatch: h.mismatched.has(resume.uuid), resumePath: `/realm/sessions/${resume.uuid}.jsonl` }
       }
-      if (opts.useResumePicker) return { cmd: 'node', args: ['picker.js'], env: launch.env, pickFile: '/tmp/ccc-codex-pick-x.json' }
+      if (opts.useResumePicker) return { cmd: 'node', args: ['picker.js'], env: launch.env, pickFile: '/tmp/ccc-codex-pick-x.json', pickFolder: { id: '7:9', real: '/tmp' } }
       return { cmd: launch.executable, args: [], env: launch.env }
     },
     ingestSessionTelemetry: (sessionId: string, opts: Record<string, unknown>) => {
@@ -202,6 +202,8 @@ describe('Restart resumes the conversation the tab is on (row 35)', () => {
     expect(h.built[1].resume).toBeUndefined()
     expect(h.built[1].useResumePicker).toBe(true)
     expect(lastTelemetry().pickFile).toBe('/tmp/ccc-codex-pick-x.json')
+    // Fix round 3: with the identity of the folder the builder made.
+    expect(lastTelemetry().pickFolder).toEqual({ id: '7:9', real: '/tmp' })
     expect(getKeptCodexConversation(SID)).toBeUndefined()
   })
 

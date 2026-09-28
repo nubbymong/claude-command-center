@@ -15,8 +15,9 @@
 import { readdirSync, lstatSync, statSync, unlinkSync, rmdirSync, openSync, fstatSync, readSync, closeSync, constants as fsConstants } from 'fs'
 import { join, relative, isAbsolute, sep, dirname, basename } from 'path'
 import { computeCodexCostUsd } from './pricing'
-import { CODEX_CONVERSATION_ID_RE, codexDayFolders, findCodexRollout, isRealFolder, parseSessionMetaLine, readRolloutFirstLine } from './rollout-lookup'
+import { CODEX_CONVERSATION_ID_RE, codexDayFolders, codexFolderIdentity, findCodexRollout, isRealFolder, parseSessionMetaLine, readRolloutFirstLine } from './rollout-lookup'
 import type { FoundRollout, RolloutSessionMeta } from './rollout-lookup'
+import type { PickFolderIdentity } from '../types'
 import { normaliseCodexRateLimits, mergeAllowanceReadings, readingToBuckets, isoFromEpochMs, CODEX_DEFAULT_LIMIT_ID } from './rate-limits'
 import type { StatuslineData } from '../../../shared/types'
 import type { AllowanceReading } from '../../../shared/usage-types'
@@ -342,6 +343,11 @@ export interface CodexClaimOptions {
    *  after `{ id }` only that conversation, once its rollout grows; after
    *  `{ fresh }` only a new rollout created from the decision on. */
   pickFile?: string
+  /** The pick file's folder as the builder made it (fix round 3): a pick
+   *  is read, and anything there removed, only while the folder is still
+   *  that one (the same device and file id, the same real path, not a
+   *  link or junction). Without it no pick is read. */
+  pickFolder?: PickFolderIdentity
   /** Told once which conversation the watcher claimed: its id and the
    *  directory its rollout records. Only a conversation id is reported. */
   onClaim?: (claim: { id: string; cwd: string }) => void
@@ -465,6 +471,7 @@ export function watchAndClaimRollout(
   /** The rollout the launch chose for `resumeId`, tried once before any walk. */
   let givenPath: string | null = resumeId && typeof claimOpts?.resumePath === 'string' && claimOpts.resumePath ? claimOpts.resumePath : null
   const pickFile = typeof claimOpts?.pickFile === 'string' && claimOpts.pickFile ? claimOpts.pickFile : undefined
+  const pickFolder = claimOpts?.pickFolder && typeof claimOpts.pickFolder.id === 'string' && typeof claimOpts.pickFolder.real === 'string' ? claimOpts.pickFolder : null
   const waitsForUser = !!pickFile && !resumeId
 
   let claimedPath: string | null = null
@@ -524,7 +531,9 @@ export function watchAndClaimRollout(
     }
   }
 
-  /** Let the claim go: stop following its rollout, and say so. */
+  /** Let the claim go: stop following its rollout, and say so. The status
+   *  line no longer shows that conversation's figures (fix round 3): its
+   *  tokens, cost and context go to zero until the next claim reports. */
   function release(): void {
     if (tailIntervalHandle) { clearInterval(tailIntervalHandle); tailIntervalHandle = null }
     if (claimedPath) claimed.delete(claimedPath)
@@ -533,6 +542,7 @@ export function watchAndClaimRollout(
     offset = 0
     contextWindow = null
     heldElsewhere = null
+    try { onUpdate({ sessionId, inputTokens: 0, outputTokens: 0, costUsd: 0, contextUsedPercent: 0 }) } catch { /* a sink that throws never stops the watch */ }
     if (claimOpts?.onRelease) {
       try { claimOpts.onRelease() } catch { /* a listener never stops the watch */ }
     }
@@ -633,19 +643,30 @@ export function watchAndClaimRollout(
     } catch { /* a sink that throws never stops the watch */ }
   }
 
+  /** Whether the pick file's folder is still the one the builder made (fix
+   *  round 3): a real folder, not a link or junction, with the same device
+   *  and file id and the same real path. Looked at before every read and
+   *  every removal there. */
+  function pickFolderIntact(): boolean {
+    if (!pickFile || !pickFolder) return false
+    const now = codexFolderIdentity(dirname(pickFile))
+    return !!now && now.id === pickFolder.id && now.real === pickFolder.real
+  }
+
   function removePickFile(): void {
-    if (!pickFile) return
+    if (!pickFile || !pickFolderIntact()) return
     try { unlinkSync(pickFile) } catch { /* not there, or already gone */ }
   }
 
-  /** A new decision the picker recorded, or null. Read only when the pick
+  /** A new decision the picker recorded, or null. Read only while the pick
+   *  folder is the one made for the launch, and only when the pick
    *  path is a small regular file, never through a link (lstat, then the
    *  opened file compared with it, no-follow where the platform has it); an
    *  entry is dealt with once: read or refused, it is removed (a folder is
    *  left, and remembered as refused). The picker replaces the file whole
    *  (it renames a finished file into place), so what is read is complete. */
   function readPick(): PickDecision | null {
-    if (!pickFile) return null
+    if (!pickFile || !pickFolderIntact()) return null
     let st: ReturnType<typeof lstatSync> | undefined
     try { st = lstatSync(pickFile, { throwIfNoEntry: false }) } catch { return null }
     if (!st) return null
@@ -673,6 +694,8 @@ export function watchAndClaimRollout(
     } finally {
       if (fd !== null) { try { closeSync(fd) } catch { /* already closed */ } }
     }
+    // Still the folder made for the launch once read: else nothing is decided.
+    if (!pickFolderIntact()) return null
     const at = Math.min(st.mtimeMs, Date.now())
     let parsed: { id?: unknown; fresh?: unknown } | null = null
     try { parsed = JSON.parse(text) as { id?: unknown; fresh?: unknown } } catch { parsed = null }
@@ -823,11 +846,25 @@ export function watchAndClaimRollout(
         claimed.delete(claimedPath)
         claimedPath = null
       }
-      removePickFile()
-      // The pick file's own folder (fix round 2), made for this launch: removed
-      // with it when empty; any other folder is left.
-      if (pickFile && /^ccc-codex-pick-/.test(basename(dirname(pickFile)))) {
-        try { rmdirSync(dirname(pickFile)) } catch { /* not empty, or gone */ }
+      // The pick file's own folder (fix round 2), made for this launch, while
+      // it is still that folder (fix round 3): the pick file, and any new
+      // file a picker stopped between its write and its rename left
+      // (`pick.json.<16 hex>.tmp`), are removed, then the folder, never
+      // recursively: anything else there keeps it. Any other folder is left.
+      if (pickFile && pickFolderIntact()) {
+        removePickFile()
+        const dir = dirname(pickFile)
+        const prefix = `${basename(pickFile)}.`
+        try {
+          for (const e of readdirSync(dir, { withFileTypes: true })) {
+            if (!e.isFile() || !e.name.startsWith(prefix) || !e.name.endsWith('.tmp')) continue
+            if (!/^[0-9a-f]{16}$/.test(e.name.slice(prefix.length, -'.tmp'.length))) continue
+            try { unlinkSync(join(dir, e.name)) } catch { /* gone */ }
+          }
+        } catch { /* not listed: left */ }
+        if (/^ccc-codex-pick-/.test(basename(dir))) {
+          try { rmdirSync(dir) } catch { /* not empty, or gone */ }
+        }
       }
     },
   }

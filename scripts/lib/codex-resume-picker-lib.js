@@ -441,14 +441,32 @@ const PICK_IO = {
   sleep: sleepSync,
 }
 
+// The pick folder's identity: its device and file id, read exactly (lstat,
+// as main reads them when it makes the folder). Null unless it is a real
+// folder, not a link or junction to one.
+function folderIdOf(dir) {
+  try {
+    const st = fs.lstatSync(dir, { bigint: true })
+    if (!st.isDirectory() || st.isSymbolicLink()) return null
+    return `${st.dev}:${st.ino}`
+  } catch {
+    return null
+  }
+}
+
 // A decision is written whole: into a new file beside the pick file
 // (exclusive create, owner-only where the platform keeps modes), then
 // renamed over it, which replaces whatever entry is there -- a link
 // included -- and never writes through one; a folder there is left as it
-// is. To an absolute path only. Best-effort: false when not written (the
-// new file is then removed). `ops` replaces the file operations in tests.
+// is. To an absolute path only. With `ops.dirId` (fix round 3), only into
+// the folder with that identity, looked at before the new file is written
+// and again before each rename: a link or junction, or another folder, in
+// its place is never written into. Best-effort: false when not written (the
+// new file is then removed). `ops` also replaces the file operations in tests.
 function writePick(file, decision, ops) {
   const io = { ...PICK_IO, ...(ops || {}) }
+  const checksFolder = !!ops && Object.prototype.hasOwnProperty.call(ops, 'dirId')
+  const folderIsMade = () => !checksFolder || (typeof io.dirId === 'string' && io.dirId !== '' && folderIdOf(path.dirname(file)) === io.dirId)
   let body = null
   if (decision && typeof decision === 'object') {
     const keys = Object.keys(decision)
@@ -456,6 +474,7 @@ function writePick(file, decision, ops) {
     else if (keys.length === 1 && keys[0] === 'fresh' && decision.fresh === true) body = { fresh: true }
   }
   if (typeof file !== 'string' || !path.isAbsolute(file) || !body) return false
+  if (!folderIsMade()) return false
   const tmp = `${file}.${crypto.randomBytes(8).toString('hex')}.tmp`
   try {
     io.writeFileSync(tmp, JSON.stringify(body), { flag: 'wx', mode: 0o600 })
@@ -463,6 +482,7 @@ function writePick(file, decision, ops) {
     return false
   }
   for (let attempt = 0; ; attempt++) {
+    if (!folderIsMade()) break
     try {
       io.renameSync(tmp, file)
       return true
@@ -487,18 +507,23 @@ function writePick(file, decision, ops) {
 // null when the decision was recorded or none was asked for.
 const PICK_NOT_RECORDED_NOTICE = '\n  AI Code Conductor could not be told which conversation this session runs, so its status line will not follow it. The conversation itself is not affected.\n'
 
-function recordPick(file, resumeUuid, ops) {
+// `dirId`: the pick folder's identity as the app recorded it
+// (CCC_CODEX_PICK_DIR_ID); without it nothing is written.
+function recordPick(file, resumeUuid, dirId, ops) {
   if (typeof file !== 'string' || file === '') return null
-  return writePick(file, pickDecision(resumeUuid), ops) ? null : PICK_NOT_RECORDED_NOTICE
+  const written = writePick(file, pickDecision(resumeUuid), { ...(ops || {}), dirId: typeof dirId === 'string' ? dirId : '' })
+  return written ? null : PICK_NOT_RECORDED_NOTICE
 }
 
 // The environment Codex itself starts with: the picker's own, without the
-// pick file's name (in any spelling; Windows names are case-insensitive),
-// so nothing the session runs can record a pick of its own.
+// pick file's name or its folder's identity (in any spelling; Windows names
+// are case-insensitive), so nothing the session runs can record a pick of
+// its own.
 function childEnv(env) {
   const out = {}
   for (const k of Object.keys(env || {})) {
-    if (k.toUpperCase() === 'CCC_CODEX_PICK_FILE') continue
+    const name = k.toUpperCase()
+    if (name === 'CCC_CODEX_PICK_FILE' || name === 'CCC_CODEX_PICK_DIR_ID') continue
     out[k] = env[k]
   }
   return out
@@ -601,5 +626,5 @@ function isResumeId(id) {
 
 module.exports = {
   parseRollout, walkRollouts, buildResumeArgs, shouldFallback, shouldUseShell, launchTarget, isResumeId,
-  samePath, parseWorktrees, listWorktrees, worktreeLabelFor, displayText, buildPickerRows, loadWorkNames, pickDecision, writePick, recordPick, childEnv, isDirectory, resolveRetargetCwd, timeAgo,
+  samePath, parseWorktrees, listWorktrees, worktreeLabelFor, displayText, buildPickerRows, loadWorkNames, pickDecision, writePick, recordPick, folderIdOf, childEnv, isDirectory, resolveRetargetCwd, timeAgo,
 }

@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-28T18:09:10.704Z",
-  "head": "17c6d1ab42b5fa1a678483b688ae1df077398f2c",
-  "tree": "9cf777867327a9da68b4b7a0bb8cb88feef71f64",
+  "generatedAt": "2026-09-28T18:18:23.797Z",
+  "head": "2989d87690d321c18c6cbf2a532c63c1fc256ef5",
+  "tree": "f3403599f9fa4222eab50661d4b0d98d43492993",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -265,7 +265,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 19
+      "lineCount": 20
     },
     {
       "path": "scripts/readme-shots/stage/content.js",
@@ -739,7 +739,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 33
+      "lineCount": 34
     },
     {
       "path": "src/main/providers/codex/spawn.ts",
@@ -749,7 +749,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 67
+      "lineCount": 69
     },
     {
       "path": "src/main/providers/codex/telemetry.ts",
@@ -759,7 +759,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 47
+      "lineCount": 48
     },
     {
       "path": "src/main/providers/codex/ui-detection.ts",
@@ -3110,7 +3110,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 79
+      "lineCount": 87
     },
     {
       "path": "tests/unit/providers/codex/spawn.test.ts",
@@ -3138,7 +3138,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 10
+      "lineCount": 22
     },
     {
       "path": "tests/unit/providers/codex/telemetry.test.ts",
@@ -4003,7 +4003,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 21
+      "lineCount": 26
     },
     {
       "path": "tests/unit/scripts/codex-resume-picker.test.ts",
