@@ -48,12 +48,19 @@
 // - Never holding the main process. The walks that can be long (a removal, a
 //   history copy) go through the asynchronous port, a batch at a time, and
 //   let the event loop run between batches.
+// - A conversation copy (P3.6: a running session switched to another
+//   account) writes only into an app-managed folder in use, and reads the
+//   source realm (managed, or the provider's own shared home) without
+//   changing it; both realm locks are held for it, and the file work is the
+//   carry port's (conversation-carry.ts).
 // - Nothing throws; every odd port answer fails closed with a code.
 import path from 'node:path'
 import type { AuthRealm, RealmLifecycle } from '../../../shared/providers'
 import type { ProviderRealmFolderOperations, RealmFolderResult, RealmFolderFailureCode, RealmRef } from '../core'
 import { codexRealmHome, codexExternalHomeCandidate, codexHomesOverlap, isFullyQualifiedPath, CODEX_REALMS_DIRNAME } from './realm-paths'
 import type { CodexRealmRoots } from './realm-paths'
+import { CODEX_CONVERSATION_ID_RE } from './rollout-lookup'
+import type { CodexConversationCarry } from './conversation-carry'
 
 /** One directory entry as lstat sees it: the entry itself, never a link's target. */
 export interface CodexFsEntry {
@@ -319,6 +326,9 @@ export interface CodexRealmFolderDeps {
   fs: CodexRealmFsPort
   locks: CodexRealmLocks
   limits?: Partial<CodexRealmFolderLimits>
+  /** The file work of a conversation copy (conversation-carry.ts). Absent:
+   *  no conversation is copied. */
+  carry?: CodexConversationCarry
 }
 
 /** Bounds on a tree the removal will walk: an abandoned setup's home holds a
@@ -349,6 +359,8 @@ const MSG: Readonly<Record<RealmFolderFailureCode, string>> = {
   'changed': 'The Codex account folder changed while it was being used; the app stopped.',
   'cancelled': 'Stopped on request; nothing was changed.',
   'too-large': 'This Codex account has more earlier conversation files than the app carries over to a new sign-in, so nothing was changed.',
+  'conversation-missing': "The conversation's file was not found in the Codex account's folder, so it was not carried over.",
+  'conversation-differs': 'The other Codex account already holds a different copy of this conversation, so the app left it as it is.',
   'io-failed': 'The Codex account folder could not be created or removed.',
 }
 
@@ -398,10 +410,10 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
   /** Counts entries handled and lets the event loop run once a batch is done. */
   const pacer = () => { let n = 0; return async () => { if (++n % limits.batch === 0) { await nextTurn(); return true } return false } }
 
-  interface Located { home: string; root: string; resourcesDir: string }
+  interface Located { home: string; root: string; resourcesDir: string; external: boolean }
 
   /** The record behind the reference, checked; the home it derives. */
-  async function locate(ref: RealmRef, allowed: readonly RealmLifecycle[], use: 'folder' | 'history' = 'folder'): Promise<Located | Failure> {
+  async function locate(ref: RealmRef, allowed: readonly RealmLifecycle[], use: 'folder' | 'history' = 'folder', opts?: { readExternal?: boolean }): Promise<Located | Failure> {
     let found: CodexFolderLookup
     try {
       const id = ref && typeof ref === 'object' ? (ref as { authRealmId?: unknown }).authRealmId : undefined
@@ -415,7 +427,10 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
     if (realm.providerId !== 'codex' || realm.kind !== 'codex-home') return fail('realm-unavailable')
     // The overlap first: it makes every Codex realm unusable, and says why.
     if (roots.externalConflict === true) return fail('overlaps-external')
-    if (realm.ownership !== 'conductor-managed') return fail('not-managed')
+    // The provider's own shared home only where the caller only reads it
+    // (a conversation copy's source); it is never created, changed or removed.
+    const external = realm.ownership === 'external-default'
+    if (realm.ownership !== 'conductor-managed' && !(external && opts?.readExternal === true)) return fail('not-managed')
     if (!realm.lifecycle || !allowed.includes(realm.lifecycle)) return fail('lifecycle')
     const where = codexRealmHome(realm, roots, pathApi)
     if (!where.ok) return fail('realm-unavailable')
@@ -426,7 +441,7 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
     } catch {
       return fail('resources-unavailable')
     }
-    return { home: where.home, root, resourcesDir: roots.resourcesDir }
+    return { home: where.home, root, resourcesDir: roots.resourcesDir, external }
   }
 
   /** A real directory at its own canonical path. */
@@ -868,7 +883,77 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
     })
   }
 
-  return { prepare, remove, copyHistory }
+  /** The carry port's refusals, as this module's codes. */
+  const CARRY_FAILURES: Readonly<Record<string, Failure>> = {
+    'not-found': fail('conversation-missing'),
+    'exists-different': fail('conversation-differs'),
+    'too-large': { ok: false, code: 'too-large', message: 'This conversation is larger than the app carries between Codex accounts, so it was not carried over.' },
+    'unsafe-path': fail('unsafe-path'),
+    'changed': fail('changed'),
+    'io-failed': fail('io-failed'),
+  }
+
+  /** A running session switched to another Codex account (P3.6, row 22):
+   *  conversation `id`'s rollout carried from the realm it ran in (`from`:
+   *  an app-managed folder or the provider's own shared home, active, only
+   *  read) into the realm it moves to (`to`: an app-managed folder, active).
+   *  Both are located from the registry and checked as a history copy checks
+   *  them, and both realm locks are held for the copy (no sign-in, sign-out,
+   *  history copy or removal meanwhile); the file work is the carry port's. */
+  function copyConversation(from: RealmRef, to: RealmRef, conversation: { id: string; cwd?: string }): Promise<RealmFolderResult & { carried?: 'copied' | 'present' }> {
+    return guard(async () => {
+      const carry = deps.carry
+      if (typeof carry !== 'function') return fail('io-failed')
+      const id = conversation && typeof conversation === 'object' ? (conversation as { id?: unknown }).id : undefined
+      if (typeof id !== 'string' || !CODEX_CONVERSATION_ID_RE.test(id)) return fail('conversation-missing')
+      const rawCwd = (conversation as { cwd?: unknown }).cwd
+      const preferCwd = typeof rawCwd === 'string' && rawCwd.length > 0 && rawCwd.length <= 4096 ? rawCwd : undefined
+      const src = await locate(from, ['active'], 'folder', { readExternal: true })
+      if (isFailure(src)) return src
+      const dst = await locate(to, ['active'])
+      if (isFailure(dst)) return dst
+      if (samePath(src.home, dst.home)) return fail('unsafe-path')
+      // The source as it stands: a managed home is checked where the app put
+      // it; the shared home is a real folder at its own canonical path.
+      let s: 'absent' | { home: CodexFsEntry; canonical: string } | Failure
+      if (src.external) {
+        const e = checkDir(src.home)
+        if (isFailure(e)) s = e
+        else { try { s = { home: e, canonical: fs.realpath(src.home) } } catch { s = fail('io-failed') } }
+      } else {
+        s = inspect(src)
+      }
+      const d = inspect(dst)
+      if (s === 'absent' || d === 'absent') return fail('realm-unavailable')
+      if (isFailure(s)) return s
+      if (isFailure(d)) return d
+      const srcKey = codexRealmLockKey(s.canonical, s.home.dev, s.home.ino)
+      const dstKey = codexRealmLockKey(d.canonical, d.home.dev, d.home.ino)
+      if (srcKey === dstKey) return fail('unsafe-path')
+      const releaseSrc = deps.locks.hold(srcKey)
+      if (!releaseSrc) return fail('busy')
+      const releaseDst = deps.locks.hold(dstKey)
+      if (!releaseDst) { releaseSrc(); return fail('busy') }
+      try {
+        // Under the locks: still the folders that were checked.
+        if (!unchanged(src.home, s.home) || !unchanged(dst.home, d.home)) return fail('changed')
+        let r: Awaited<ReturnType<CodexConversationCarry>>
+        try {
+          r = await carry({ fromSessionsDir: pathApi.join(src.home, 'sessions'), toHome: dst.home, id, ...(preferCwd ? { preferCwd } : {}) })
+        } catch {
+          return fail('io-failed')
+        }
+        if (r && r.ok === true && (r.carried === 'copied' || r.carried === 'present')) return { ok: true, carried: r.carried }
+        const code = r && r.ok === false && typeof r.code === 'string' ? r.code : 'io-failed'
+        return Object.prototype.hasOwnProperty.call(CARRY_FAILURES, code) ? CARRY_FAILURES[code] : fail('io-failed')
+      } finally {
+        releaseDst()
+        releaseSrc()
+      }
+    })
+  }
+
+  return { prepare, remove, copyHistory, copyConversation }
 }
 
 /** The promise's answer, or `late` once `ms` have passed. */

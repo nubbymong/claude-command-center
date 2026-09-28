@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-28T21:41:58.877Z",
-  "head": "57ce396a71fde4191ecabc3069c4b38cd3beb6e0",
-  "tree": "f3bc4d0297fb5ad3d8e0c7e3e7add097f8fc84f3",
+  "generatedAt": "2026-09-28T22:00:56.867Z",
+  "head": "68d00f624fdc850595a2a7e38b8b9e75c611b5d0",
+  "tree": "b6742ed198c8ec6cd0820bf4d504577150f681fe",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2454,
-  "excludedFileCount": 383,
-  "scannedFileCount": 2071,
+  "trackedFileCount": 2457,
+  "excludedFileCount": 384,
+  "scannedFileCount": 2073,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 504,
-  "pathDigest": "cb0381575a280fae4ec3f62031fbd7be6c55193694f0e463a702716a1d74ef62",
+  "matchedPathCount": 506,
+  "pathDigest": "2b0062b78a18d499be47ebdae610d7d6a393da4492645351e775d88aee23099a",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -440,7 +440,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 8
+      "lineCount": 9
     },
     {
       "path": "src/main/install-secret.ts",
@@ -617,6 +617,14 @@
       "lineCount": 107
     },
     {
+      "path": "src/main/providers/codex/conversation-carry.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "lineCount": 16
+    },
+    {
       "path": "src/main/providers/codex/discovery.ts",
       "predicates": [
         "P01",
@@ -643,7 +651,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 186
+      "lineCount": 191
     },
     {
       "path": "src/main/providers/codex/install-recipes.ts",
@@ -702,7 +710,7 @@
         "P05",
         "P14"
       ],
-      "lineCount": 114
+      "lineCount": 126
     },
     {
       "path": "src/main/providers/codex/realm-paths.ts",
@@ -833,7 +841,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 140
+      "lineCount": 143
     },
     {
       "path": "src/main/sanitize-restored-spawn-options.ts",
@@ -2648,7 +2656,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 31
+      "lineCount": 44
     },
     {
       "path": "tests/unit/main/codex-review-mcp-tool.test.ts",
@@ -3058,6 +3066,14 @@
         "P13"
       ],
       "lineCount": 18
+    },
+    {
+      "path": "tests/unit/providers/codex/conversation-carry.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 26
     },
     {
       "path": "tests/unit/providers/codex/mcp-config.test.ts",

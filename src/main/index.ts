@@ -7,7 +7,7 @@ import { createSplashWindow, closeSplashWindow, SPLASH_MIN_MS, SPLASH_POST_READY
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerAccountWebHandlers } from './ipc/account-web-handlers'
 import { sweepAbandonedProfiles } from './account-web/sign-in'
-import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine, getKeptCodexConversation } from './pty-manager'
+import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine, getKeptCodexConversation, getKeptCodexConversationSource } from './pty-manager'
 import { registerResumeHandlers } from './ipc/resume-handlers'
 import { registerCliHandlers } from './ipc/cli-handlers'
 import { registerClipboardHandlers } from './ipc/clipboard-handlers'
@@ -744,7 +744,7 @@ if (!gotTheLock) {
     registerInsightsHandlers(getWindow)
     registerNotesHandlers()
     registerVisionHandlers(getWindow)
-    registerProviderAccountsHandlers(getWindow, getAccountsService)
+    registerProviderAccountsHandlers(getWindow, getAccountsService, { sessionConversation: getKeptCodexConversationSource })
     registerCodexReviewHandlers()
     registerExeHandlers()
     registerChannelHandlers()

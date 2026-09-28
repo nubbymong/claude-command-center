@@ -86,6 +86,7 @@ const CHANNELS: Array<[string, unknown]> = [
   [IPC.PROVIDER_ACCOUNTS_SET_REVIEWER_DEFAULT, { providerId: 'codex', accountId: null }],
   [IPC.PROVIDER_ACCOUNTS_USAGE_ONE, { accountId: ACC }],
   [IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId: 'codex', channel: USAGE_CH }],
+  [IPC.PROVIDER_ACCOUNTS_CARRY_CONVERSATION, { sessionId: 'sess_01-a', accountId: ACC }],
 ]
 
 /** A service whose every method records that it was reached. */
@@ -204,6 +205,19 @@ describe('the Accounts IPC boundary (WP1.42)', () => {
       [IPC.PROVIDER_ACCOUNTS_USAGE_STREAM_STOP, { providerId: 'gemini' }],
       [IPC.PROVIDER_ACCOUNTS_USAGE_STREAM_STOP, { providerId: 'codex', channel: USAGE_CH }],
       [IPC.PROVIDER_ACCOUNTS_USAGE_STREAM_STOP, undefined],
+      // P3.6: a switch names the session (the pty session id's own rule) and
+      // an account; the conversation and where it came from are never sent.
+      [IPC.PROVIDER_ACCOUNTS_CARRY_CONVERSATION, { sessionId: '..\\..\\x', accountId: ACC }],
+      [IPC.PROVIDER_ACCOUNTS_CARRY_CONVERSATION, { sessionId: 'a b', accountId: ACC }],
+      [IPC.PROVIDER_ACCOUNTS_CARRY_CONVERSATION, { sessionId: 's'.repeat(201), accountId: ACC }],
+      [IPC.PROVIDER_ACCOUNTS_CARRY_CONVERSATION, { sessionId: '', accountId: ACC }],
+      [IPC.PROVIDER_ACCOUNTS_CARRY_CONVERSATION, { sessionId: 's1', accountId: IDN }],
+      [IPC.PROVIDER_ACCOUNTS_CARRY_CONVERSATION, { sessionId: 's1' }],
+      [IPC.PROVIDER_ACCOUNTS_CARRY_CONVERSATION, { accountId: ACC }],
+      [IPC.PROVIDER_ACCOUNTS_CARRY_CONVERSATION, { sessionId: 's1', accountId: ACC, uuid: '019dd000-0006-7000-8000-0000000000c1' }],
+      [IPC.PROVIDER_ACCOUNTS_CARRY_CONVERSATION, { sessionId: 's1', accountId: ACC, fromAccountId: ACC }],
+      [IPC.PROVIDER_ACCOUNTS_CARRY_CONVERSATION, { sessionId: 's1', accountId: ACC, cwd: 'C:\\Users\\victim' }],
+      [IPC.PROVIDER_ACCOUNTS_CARRY_CONVERSATION, { sessionId: 42, accountId: ACC }],
       // Oversized labels.
       [IPC.PROVIDER_ACCOUNTS_CREATE_GROUP, { name: 'x'.repeat(10_000) }],
       [IPC.PROVIDER_ACCOUNTS_UPDATE_IDENTITY, { identityId: IDN, friendlyName: 'y'.repeat(10_000) }],
@@ -233,6 +247,33 @@ describe('the Accounts IPC boundary (WP1.42)', () => {
     const w = wire(null)
     expect(await w.call(IPC.PROVIDER_ACCOUNTS_SET_DEFAULT, { accountId: ACC })).toMatchObject({ ok: false, code: 'registry-unavailable' })
     expect(await w.call(IPC.PROVIDER_ACCOUNTS_SNAPSHOT)).toBeNull()
+  })
+})
+
+describe('a Switch account\'s carry takes the conversation from main\'s own record (P3.6, row 22)', () => {
+  it('the service gets the record main keeps for that session, never anything from the request; none when main has none or cannot say', async () => {
+    const calls: unknown[][] = []
+    const svc = new Proxy({}, {
+      get: (_t, prop) => (prop === 'subscribe' ? () => () => {} : prop === 'then' ? undefined : (...args: unknown[]) => { calls.push([prop, ...args]); return { ok: true, carried: 'copied' } }),
+    }) as unknown as AccountsService
+    const record = { uuid: '019dd000-0006-7000-8000-0000000000c1', cwd: 'C:\\p\\demo', accountId: 'acct-' + 'b'.repeat(32) }
+    const asked: string[] = []
+    const sessionConversation = (id: string) => { asked.push(id); if (id === 'broken') throw new Error('x'); return id === 's1' ? record : undefined }
+    vi.mocked(ipcMain.handle).mockClear()
+    const wc = fakeContents(1)
+    registerProviderAccountsHandlers(() => ({ isDestroyed: () => false, webContents: wc }) as never, () => svc, { sessionConversation })
+    const handler = new Map(vi.mocked(ipcMain.handle).mock.calls.map(([c, f]) => [c as string, f as Handler])).get(IPC.PROVIDER_ACCOUNTS_CARRY_CONVERSATION)!
+    const top = { sender: wc, senderFrame: wc.mainFrame }
+    expect(await handler(top, { sessionId: 's1', accountId: ACC })).toEqual({ ok: true, carried: 'copied' })
+    expect(calls).toEqual([['carryConversation', { accountId: ACC }, record]])
+    await handler(top, { sessionId: 's2', accountId: ACC })
+    await handler(top, { sessionId: 'broken', accountId: ACC })
+    expect(calls.slice(1)).toEqual([['carryConversation', { accountId: ACC }, undefined], ['carryConversation', { accountId: ACC }, undefined]])
+    expect(asked).toEqual(['s1', 's2', 'broken'])
+    // Another sender is refused before main's record is even read.
+    const other = fakeContents(2)
+    expect(await handler({ sender: other, senderFrame: other.mainFrame }, { sessionId: 's1', accountId: ACC })).toMatchObject({ ok: false, code: 'untrusted-sender' })
+    expect(asked).toHaveLength(3)
   })
 })
 

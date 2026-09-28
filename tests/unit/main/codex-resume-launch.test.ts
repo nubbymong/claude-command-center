@@ -130,7 +130,7 @@ vi.mock('../../../src/main/account-profiles', async (importOriginal) => ({
   backupProfileHomeToCanonical: () => {},
 }))
 
-const { spawnPty, killPty, getKeptCodexConversation, KEPT_CODEX_CONVERSATIONS_MAX } = await import('../../../src/main/pty-manager')
+const { spawnPty, killPty, getKeptCodexConversation, getKeptCodexConversationSource, KEPT_CODEX_CONVERSATIONS_MAX } = await import('../../../src/main/pty-manager')
 type SpawnOpts = NonNullable<Parameters<typeof spawnPty>[2]>
 
 // A new session id per test: the kept conversation outlives a kill by design.
@@ -269,5 +269,38 @@ describe('a claim let go', () => {
     expect(getKeptCodexConversation(SID)).toBeUndefined()
     claim(ID2, '/p/two')
     expect(getKeptCodexConversation(SID)).toEqual({ uuid: ID2, cwd: '/p/two' })
+  })
+})
+
+// P3.6 (row 22): a Switch account carries the conversation from the account
+// the session ran under. Main records that account with the conversation it
+// keeps -- the account of the launch that resumed it or whose status line
+// claimed it -- so the carry's source is main's own record, never a name the
+// renderer sends. session:save still persists only the conversation.
+describe('the kept conversation records the account it ran under (P3.6)', () => {
+  const on = (accountId: string | undefined) => ({ ...(launch() as object), lease: { release: vi.fn(), ...(accountId ? { accountId } : {}) } }) as unknown as SpawnOpts['codexLaunch']
+
+  it('a resumed conversation is kept with the account its launch holds; what is saved stays the conversation alone', () => {
+    start({ resume: { uuid: ID, cwd: '/p/demo' }, codexLaunch: on('acct-a') })
+    expect(getKeptCodexConversationSource(SID)).toEqual({ uuid: ID, cwd: `/conversations/${ID}`, accountId: 'acct-a' })
+    expect(getKeptCodexConversation(SID)).toEqual({ uuid: ID, cwd: `/conversations/${ID}` })
+  })
+
+  it('a claimed conversation takes the launch\'s account, and a later launch that resumes it on another account records that one', () => {
+    start({ codexLaunch: on('acct-a') })
+    claim(ID, '/p/demo')
+    expect(getKeptCodexConversationSource(SID)).toEqual({ uuid: ID, cwd: '/p/demo', accountId: 'acct-a' })
+    killPty(SID)
+    start({ codexLaunch: on('acct-b') })
+    expect(getKeptCodexConversationSource(SID)).toEqual({ uuid: ID, cwd: `/conversations/${ID}`, accountId: 'acct-b' })
+  })
+
+  it('nothing to carry without both: no conversation, or a launch that names no account', () => {
+    start({ codexLaunch: on('acct-a') })
+    expect(getKeptCodexConversationSource(SID)).toBeUndefined()
+    start({ codexLaunch: on(undefined) }, `${SID}y`)
+    claim(ID, '/p/demo')
+    expect(getKeptCodexConversation(`${SID}y`)).toEqual({ uuid: ID, cwd: '/p/demo' })
+    expect(getKeptCodexConversationSource(`${SID}y`)).toBeUndefined()
   })
 })

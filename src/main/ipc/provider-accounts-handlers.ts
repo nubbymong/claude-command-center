@@ -82,6 +82,10 @@ export const PROVIDER_ACCOUNTS_SCHEMAS = {
   // afresh.
   usageStream: z.object({ providerId, channel: z.string().max(64).regex(PROVIDER_USAGE_RESULT_RE), read: z.boolean().optional() }).strict(),
   usageOne: z.object({ accountId, read: z.boolean().optional() }).strict(),
+  // P3.6 (row 22): the session (the pty session id's own rule) and the
+  // account it moves to. Nothing else: the conversation and the account it
+  // ran under are main's own record (sessionConversation).
+  carryConversation: z.object({ sessionId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/), accountId }).strict(),
 } as const
 
 const refusal = (code: AccountsFailure['code'], message: string): AccountsFailure => ({ ok: false, code, message })
@@ -90,7 +94,15 @@ const INVALID = refusal('invalid-request', 'That request was not valid.')
 const UNAVAILABLE = refusal('registry-unavailable', 'The account list is not available right now.')
 const INTERNAL = refusal('internal', 'That did not work; the app log has the detail.')
 
-export function registerProviderAccountsHandlers(getWindow: () => BrowserWindow | null, getService: () => AccountsService | null): void {
+/** What the composition root lends these handlers from the rest of main. */
+export interface ProviderAccountsHandlerDeps {
+  /** P3.6 (row 22): the conversation a session is on and the account it ran
+   *  under, as main recorded them (pty-manager); none when either is not
+   *  known. */
+  sessionConversation?: (sessionId: string) => { uuid: string; cwd: string; accountId: string } | undefined
+}
+
+export function registerProviderAccountsHandlers(getWindow: () => BrowserWindow | null, getService: () => AccountsService | null, deps: ProviderAccountsHandlerDeps = {}): void {
   /** The app's own window, top frame only (trusted-sender.ts). */
   const trusted = appWindowSender(getWindow)
 
@@ -189,6 +201,13 @@ export function registerProviderAccountsHandlers(getWindow: () => BrowserWindow 
   handle(IPC.PROVIDER_ACCOUNTS_RECONCILE_SIGN_IN, S.account, (i, svc) => svc.reconcileSignIn(i))
   handle(IPC.PROVIDER_ACCOUNTS_RESOLVE_CONFLICT, S.resolveConflict, (i, svc) => svc.resolveIdentityConflict(i))
   handle(IPC.PROVIDER_ACCOUNTS_SET_REVIEWER_DEFAULT, S.setReviewerDefault, (i, svc) => svc.setReviewerDefault(i))
+  // P3.6 (row 22): the conversation comes from main's own record for that
+  // session, never from the request.
+  handle(IPC.PROVIDER_ACCOUNTS_CARRY_CONVERSATION, S.carryConversation, (i, svc) => {
+    let conversation: { uuid: string; cwd: string; accountId: string } | undefined
+    try { conversation = deps.sessionConversation?.(i.sessionId) } catch { conversation = undefined }
+    return svc.carryConversation({ accountId: i.accountId }, conversation)
+  })
 
   // Usage track MP3: allowance views. A stream's views go to the CALLER's
   // own renderer on its private reply channel, and only while it is the

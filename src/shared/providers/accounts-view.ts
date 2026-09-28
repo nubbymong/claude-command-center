@@ -241,6 +241,7 @@ export type AuthOperationCode =
 export type RealmFolderCode =
   | 'not-managed' | 'resources-unavailable' | 'overlaps-external' | 'unsafe-path' | 'permissions' | 'credentials-present'
   | 'not-empty' | 'unsafe-contents' | 'changed' | 'too-large' | 'cancelled' | 'io-failed'
+  | 'conversation-missing' | 'conversation-differs'
 
 export type AccountsFailure = {
   ok: false

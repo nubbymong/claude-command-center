@@ -232,7 +232,8 @@
       "tests": [
         "tests/wp1/account-lifecycle.test.ts",
         "tests/wp1/consumer-leases.test.ts",
-        "tests/unit/renderer/accounts-surface.test.tsx"
+        "tests/unit/renderer/accounts-surface.test.tsx",
+        "tests/wp1/conversation-carry-service.test.ts"
       ],
       "evidence": [],
       "status": "planned",
@@ -629,7 +630,8 @@
       "tests": [
         "tests/wp1/launch-handoff.test.ts",
         "tests/wp1/provider-core.test.ts",
-        "tests/wp1/provider-ipc.test.ts"
+        "tests/wp1/provider-ipc.test.ts",
+        "tests/wp1/conversation-carry-service.test.ts"
       ],
       "evidence": [],
       "status": "planned",
