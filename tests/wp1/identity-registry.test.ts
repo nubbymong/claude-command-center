@@ -112,11 +112,12 @@ describe('linking accounts to identities (WP1.12, WP1.13, WP1.14)', () => {
     expect(out.realms).toEqual(doc.realms)
   })
 
-  it('link then unlink keeps the name the account showed: an unnamed identity named by a linked label', () => {
+  it('link then unlink never names the account after ANOTHER account\'s address (P3.3 review round 2, L1-3)', () => {
     // A Claude profile often has no name of its own; its row, and every
-    // account linked to it, is named by its email. A named Codex account
-    // linked there shows that email; unlinked, its private copy must carry
-    // it, never fall back to "no name".
+    // account linked to it, is named by its email. A Codex account linked
+    // there and then unlinked is not given that email as its name: it is
+    // someone else's address. It is left unnamed (its row shows its own
+    // fallback); an account with a label of its own takes that.
     const rec = reconcileLegacyAccounts(withCodexAccount(), 'claude', [{
       legacyId: 'profile-work', friendlyName: '', colourKey: 'rose', lifecycle: 'active', isDefault: true, providerLabel: 'nick@example.com',
       realm: { kind: 'claude-config-home', ownership: 'conductor-managed', pathRef: 'claude-profile:profile-work' }, authMethod: 'browser', identityAssurance: 'user-asserted',
@@ -127,26 +128,25 @@ describe('linking accounts to identities (WP1.12, WP1.13, WP1.14)', () => {
     const doc = ok(linkAccountIdentity(rec.doc, acct(1), claude.identityId, 30))
     const out = ok(unlinkAccountIdentity(doc, acct(1), idn(7), 40))
     expect(out.accounts.find((a) => a.id === acct(1))!.identityId).toBe(idn(7))
-    expect(out.identities.find((i) => i.id === idn(7))).toMatchObject({ friendlyName: 'nick@example.com', colourKey: 'rose' })
+    expect(out.identities.find((i) => i.id === idn(7))).toMatchObject({ colourKey: 'rose' })
+    expect(out.identities.find((i) => i.id === idn(7))!.friendlyName).toBeUndefined()
     expect(checkRegistryInvariants(out)).toEqual([])
-    // The labelled account unlinked instead is still named by its own label:
-    // its copy stays unnamed, as the identity it came from.
+    // The labelled account unlinked instead takes its OWN label as its name.
     const back = ok(unlinkAccountIdentity(doc, claude.id, idn(8), 41))
-    expect(back.identities.find((i) => i.id === idn(8))!.friendlyName).toBeUndefined()
+    expect(back.identities.find((i) => i.id === idn(8))!.friendlyName).toBe('nick@example.com')
   })
 
-  it('an archived holder\'s label named nothing, so an unlinked copy does not take it', () => {
+  it('two Codex accounts on one unnamed identity: the unlinked one never takes the other\'s label (L1-3)', () => {
     let doc = ok(createIdentity(emptyRegistry(), { id: idn(1), colourKey: 'indigo' }, 10))
     doc = ok(beginAccountSetup(doc, { accountId: acct(1), realmId: realm(1), providerId: 'codex', method: 'browser', realmKind: 'codex-home', ownership: 'conductor-managed', pathRef: `managed:${realm(1)}` }, 11))
     doc = ok(commitAccountSetup(doc, acct(1), { identityId: idn(1), authMethod: 'browser', lastKnownAuthState: 'signed-in', identityAssurance: 'user-asserted' }, 12))
     doc = ok(beginAccountSetup(doc, { accountId: acct(2), realmId: realm(2), providerId: 'codex', method: 'apiKey', realmKind: 'codex-home', ownership: 'conductor-managed', pathRef: `managed:${realm(2)}` }, 13))
     doc = ok(commitAccountSetup(doc, acct(2), { identityId: idn(1), authMethod: 'apiKey', lastKnownAuthState: 'signed-in', identityAssurance: 'user-asserted', providerLabel: 'old@example.com' }, 14))
     const live = ok(unlinkAccountIdentity(doc, acct(1), idn(7), 20))
-    expect(live.identities.find((i) => i.id === idn(7))!.friendlyName).toBe('old@example.com')
-    doc = ok(setAccountLifecycle(doc, acct(2), 'inactive', { consumers: 0 }, 15))
-    doc = ok(setAccountLifecycle(doc, acct(2), 'archived', { consumers: 0 }, 16))
-    const out = ok(unlinkAccountIdentity(doc, acct(1), idn(7), 20))
-    expect(out.identities.find((i) => i.id === idn(7))!.friendlyName).toBeUndefined()
+    expect(live.identities.find((i) => i.id === idn(7))!.friendlyName).toBeUndefined()
+    // The one with the label, unlinked, takes its own.
+    const own = ok(unlinkAccountIdentity(doc, acct(2), idn(8), 21))
+    expect(own.identities.find((i) => i.id === idn(8))!.friendlyName).toBe('old@example.com')
   })
 
   it('an account whose identity cannot be verified (an external realm) is never linked', () => {

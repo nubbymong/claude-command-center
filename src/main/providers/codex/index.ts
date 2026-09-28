@@ -386,6 +386,8 @@ function realRealmFsPort(platform: NodeJS.Platform, mkdirSecure: (dir: string) =
     readdir: (dir) => fs.readdirSync(dir),
     unlink: (p) => fs.unlinkSync(p),
     rmdir: (p) => fs.rmdirSync(p),
+    // Never over anything already there.
+    copyFile: (src, dest) => fs.copyFileSync(src, dest, fs.constants.COPYFILE_EXCL),
   }
 }
 

@@ -29,7 +29,7 @@
 // - An archived account, or one whose realm is no longer active, runs
 //   nothing: its record may name a home a live account now uses.
 import {
-  beginAccountSetup, abandonAccountSetup, commitAccountSetup, markSetupCredentialsWritten, createIdentity, updateIdentity,
+  beginAccountSetup, abandonAccountSetup, commitAccountSetup, markSetupCredentialsWritten, markSetupDiscarding, createIdentity, updateIdentity,
   createGroup, renameGroup, deleteGroup, linkAccountIdentity, unlinkAccountIdentity, setAccountLifecycle, restoreArchivedAccount, setProviderDefault,
   recordAuthCheck, recordAccountPlan, reconcileAccountSignIn, resolveIdentityConflict, setReviewerDefault, chooseReviewerAccount, chooseSessionAccount,
   recordProviderMigration, resolveLaunchBinding, findAccount, findRealm, findIdentity, isLegacyLinked,
@@ -264,6 +264,18 @@ function methodFromCredential(credential: AuthCredentialKind | undefined, signed
 }
 
 const EXTERNAL_IDENTITY_COLOUR = 'slate-blue'
+
+/** Refusals a sign-out gives before its CLI could run: they say nothing
+ *  about the realm, which is as it was. */
+const SIGN_OUT_NOT_RUN: ReadonlySet<string> = new Set(['realm-unavailable', 'external-overlap', 'cli-unavailable', 'realm-env-file', 'busy', 'external-ack-required', 'not-started'])
+
+/** What a sign-out left, to record: the state it read back; else, once it
+ *  may have run, unknown (the account needs a check before it is trusted
+ *  again: review round 2, L2-1); nothing when it never ran. */
+function signOutLeft(out: AuthOperationResult): KnownAuthState | null {
+  if (out.state === 'signed-out' || out.state === 'signed-in') return out.state
+  return out.code !== undefined && SIGN_OUT_NOT_RUN.has(out.code) ? null : 'unknown'
+}
 
 /** Why this computer's own sign-in is not signed in again without a yes. */
 const EXTERNAL_REAUTH_ACK = 'Signing in again here signs this computer\'s sign-in out first, for every app that uses it; if the new sign-in does not finish, it stays signed out. Confirm to continue.'
@@ -943,7 +955,7 @@ export class AccountsService {
     // A staged sign in again runs only inside its own sign in again: never
     // as a plain setup's sign-in (it would sign in a replacement nobody
     // decides about).
-    if (j.replacesAccountId !== undefined) return refuse(failure('unsupported'))
+    if (j.replacesAccountId !== undefined || j.state === 'discarding') return refuse(failure('unsupported'))
     const p = this.pkg(j.providerId)
     const realm = findRealm(ready.doc, j.realmId)
     if (!p || !this.managesAccounts(p) || realm?.ownership !== 'conductor-managed') return refuse(failure('unsupported'))
@@ -1206,16 +1218,31 @@ export class AccountsService {
     // completion as a setup, waits for this run to end.
     this.signIns.set(stagedId, run)
     let keep = false
+    // Only a folder this run made is signed out and removed; one it found
+    // there is never touched (only the reservation goes).
+    let made = false
     const drop = async () => {
       if (this.signIns.get(stagedId) === run) this.signIns.delete(stagedId)
+      if (!made) {
+        const dropped = await store.mutate((d) => (d.journals.some((j) => j.accountId === stagedId) ? abandonAccountSetup(d, stagedId) : { ok: true, doc: d }))
+        if (!dropped.ok) this.log(`a staged sign-in's reservation was not dropped (${dropped.code}); it stays listed`)
+        return
+      }
       const dropped = await this.abandonSetup({ accountId: stagedId }).catch((): AccountsResult => failure('internal'))
       if (!dropped.ok) this.log(`a staged sign-in's replacement was not removed (${dropped.code}); it stays listed`)
     }
     try {
-      const prepared = await p.realmFolders.prepare({ authRealmId: realmId }).catch(() => ({ ok: false as const, code: 'io-failed' as const }))
+      const prepared = await p.realmFolders.prepare({ authRealmId: realmId }).catch(() => ({ ok: false as const, code: 'io-failed' as const, created: undefined }))
+      if (prepared.ok && prepared.created === true) made = true
       if (!prepared.ok) {
         await drop()
         return failure((prepared.code ?? 'io-failed') as AccountsFailureCode, 'The account folder could not be prepared.')
+      }
+      // A folder that was already there is not this run's: never signed in
+      // to, adopted or removed here.
+      if (!made) {
+        await drop()
+        return failure('changed', 'The folder for the new sign-in already existed, so nothing was changed. Try again.')
       }
       const ran = await this.loginUnderCliRule(p, { authRealmId: realmId }, method, {
         ...(secretHandle !== undefined ? { secretHandle } : {}),
@@ -1224,6 +1251,12 @@ export class AccountsService {
       })
       if ('refused' in ran) { await drop(); return ran.refused }
       const result = ran.result
+      // A sign-in this run did not perform (the folder was signed in before
+      // its login ran) is never adopted.
+      if (result.code === 'already-signed-in') {
+        await drop()
+        return failure('changed', 'The folder for the new sign-in was already signed in, so nothing was changed. Try again.')
+      }
       // Signed in, also after a "failure" (a cancelled login may have
       // finished in the browser anyway): verified in the replacement.
       if (result.state !== 'signed-in') {
@@ -1266,15 +1299,42 @@ export class AccountsService {
         this.signedInWith.set(stagedId, method)
         return { ok: true, state: 'signed-in', separateAccountId: stagedId }
       }
+      // The earlier conversations go with the account (parity with an
+      // in-place sign-in, which keeps them): its session transcripts and
+      // prompt history are copied into the replacement BEFORE the switch,
+      // while its own realm is still the one in use. A copy that cannot
+      // finish changes nothing: the replacement is removed and the account
+      // keeps its sign-in.
+      const account = store.current() ? findAccount(store.current()!, accountId) : undefined
+      if (!account) { await drop(); return failure('not-found') }
+      if (p.realmFolders.copyHistory) {
+        const copied = await p.realmFolders.copyHistory({ authRealmId: account.authRealmId }, { authRealmId: realmId })
+          .catch((): { ok: false; code: 'io-failed' } => ({ ok: false, code: 'io-failed' }))
+        if (!copied.ok) {
+          await drop()
+          return failure((copied.code ?? 'io-failed') as AccountsFailureCode, 'The earlier conversations could not be carried over to the new sign-in, so nothing was changed.')
+        }
+      }
       // The switch, under the registry lock, while this run's lease still
       // holds the account: nothing uses it, and nothing can start.
-      const switched = await store.mutate((d, t) => rebindAccountRealm(d, stagedId, check, t))
+      let switched = await store.mutate((d, t) => rebindAccountRealm(d, stagedId, check, t))
       if (!switched.ok && switched.code === 'persist-failed') {
-        // The switch may have reached the disk though it was reported as
-        // failed: the new sign-in is kept and listed, never signed out on a
-        // guess. The next start reads whichever the disk holds.
-        keep = true
-        return failure('persist-failed', 'The new sign-in could not be saved. It is kept under Unfinished setups; this account keeps its earlier sign-in for now.')
+        // The write may have reached the disk though it was reported as
+        // failed: what the disk says is what the next start reads, so the
+        // file is read again and decides (review round 2, L1-1).
+        const onDisk = await store.reread()
+        if (onDisk.ok && findAccount(onDisk.doc, accountId)?.authRealmId === realmId) {
+          switched = onDisk
+        } else if (onDisk.ok) {
+          // Not switched on disk either: the replacement is nobody's yet.
+          await drop()
+          return failure('persist-failed', 'The new sign-in could not be saved, so it was removed. This account keeps its earlier sign-in.')
+        } else {
+          // The disk cannot be read: the new sign-in is kept and listed,
+          // never signed out on a guess.
+          keep = true
+          return failure('persist-failed', 'The new sign-in could not be saved. It is kept under Unfinished setups; this account keeps its earlier sign-in for now.')
+        }
       }
       const notSwitched = this.fromStore(switched)
       if (notSwitched) { await drop(); return notSwitched }
@@ -1408,7 +1468,10 @@ export class AccountsService {
     }
     if (store.current() && findAccount(store.current()!, accountId)?.lastKnownAuthState !== 'signed-out') {
       const out = await p.auth.logout({ authRealmId: realmId }, { acknowledgeExternalRealm: true }).catch((): AuthOperationResult => ({ ok: false, code: 'not-started' }))
-      if (out.state === 'signed-out' || out.state === 'signed-in') await record({ state: out.state })
+      // A sign-out whose result was not read back proves nothing: the home
+      // needs a check before it is trusted again (review round 2, L2-1).
+      const left = signOutLeft(out)
+      if (left) await record({ state: left })
       // Still signed in: nothing was lost, and nothing more runs.
       if (!out.ok) return this.fromAuth(out)
     }
@@ -1470,6 +1533,7 @@ export class AccountsService {
     // it ends in its switch, or is discarded (a separate account is released
     // as a plain setup first).
     if (j.replacesAccountId !== undefined) return failure('unsupported', 'This sign-in belongs to a sign in again that did not finish: discard it, then sign in again.')
+    if (j.state === 'discarding') return failure('unsupported', 'This setup is being discarded: discard it again to finish.')
     const notNow = this.cliRefusal(p.id)
     if (notNow) return notNow
     if (!this.capability(p, 'auth.status').enabled) return failure('capability-disabled')
@@ -1533,6 +1597,15 @@ export class AccountsService {
     })
     if (typeof release !== 'function') return release
     try {
+      // Write-ahead (review round 2, L1-1): the registry says this setup is
+      // being discarded, on disk, before anything is signed out or removed.
+      // A write that did not land stops here with nothing touched; a Discard
+      // cut short afterwards is finished by the next one. The document it
+      // writes is the one this process holds, so a switch or a completion
+      // whose write was reported as failed is undone on disk first.
+      const marked = await ready.store.mutate((d, t) => markSetupDiscarding(d, j.accountId, t))
+      const notMarked = this.fromStore(marked)
+      if (notMarked) return notMarked
       if (runsCli && p?.auth && p.realmFolders) {
         await this.ensureDiscovered(p)
         const status = await p.auth.status({ authRealmId: j.realmId }).catch(() => null)
@@ -1746,12 +1819,18 @@ export class AccountsService {
       await this.ensureDiscovered(p)
       const out = await p.auth!.logout({ authRealmId: a.authRealmId }, ctx.external ? { acknowledgeExternalRealm: true } : {})
         .catch((): AuthOperationResult => ({ ok: false, code: 'not-started' }))
-      if (out.state === 'signed-out' || out.state === 'signed-in') {
-        const state = out.state
+      // What the sign-out left, as far as it is known: a sign-out that may
+      // have run but whose result was not read back is not evidence of
+      // either state, so the account needs a check (review round 2, L2-1).
+      const state = signOutLeft(out)
+      if (state) {
         const recorded = await ctx.store.mutate((d, t) => recordAuthCheck(d, a.id, { state }, t))
         if (!recorded.ok) this.log(`a sign-out result was not saved (${recorded.code})`)
       }
       if (!out.ok) return this.fromAuth(out)
+      // Signed out: an old sign-in a sign in again left goes too (as at
+      // archive: nothing of the account stays signed in; review round 2, L1-2).
+      await this.settleOldSignIns(ctx.store, p, a.id, { revalidate: false, archiving: true })
       return { ok: true, state: 'signed-out' }
     } finally {
       release()
@@ -1866,13 +1945,16 @@ export class AccountsService {
       if (typeof release !== 'function') return release
       try {
         await this.ensureDiscovered(ctx.p)
-        // An old sign-in a sign in again left goes first: an archived account
-        // keeps none. One that still cannot be removed refuses the archive
-        // before this account's own sign-in is touched.
-        await this.settleOldSignIns(ctx.store, ctx.p, a.id, { revalidate: false, archiving: true })
-        if (unsettledSupersededRealms(ctx.store.current() ?? ctx.doc, a.id).length > 0) return failure('lifecycle', 'The old sign-in of this account could not be removed yet. Check its sign-in, then try again.')
+        // The account's own folder answers first (a status run: the folder in
+        // place, no .env): nothing is signed out before the archive is known
+        // to be able to finish (review round 2, L2-3).
         const status = await ctx.p.auth.status({ authRealmId: a.authRealmId }).catch((): AuthOperationResult & { state: KnownAuthState } => ({ ok: false, code: 'not-started', state: 'error' }))
         if (!status.ok) return this.fromAuth(status)
+        // Then an old sign-in a sign in again left: an archived account keeps
+        // none. One that still cannot be removed refuses the archive before
+        // this account's own sign-in is touched.
+        await this.settleOldSignIns(ctx.store, ctx.p, a.id, { revalidate: false, archiving: true })
+        if (unsettledSupersededRealms(ctx.store.current() ?? ctx.doc, a.id).length > 0) return failure('lifecycle', 'The old sign-in of this account could not be removed yet. Check its sign-in, then try again.')
         if (status.state !== 'signed-out') {
           const out = await ctx.p.auth.logout({ authRealmId: a.authRealmId }).catch((): AuthOperationResult => ({ ok: false, code: 'not-started' }))
           if (!out.ok) return this.fromAuth(out)

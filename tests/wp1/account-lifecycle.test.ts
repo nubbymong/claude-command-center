@@ -725,7 +725,8 @@ describe('ADR-009 round 1 regressions: archived records, capabilities, setup rac
     await h.service.signIn({ accountId: b.accountId, method: 'browser' }, 1)
     const abandon = h.service.abandonSetup({ accountId: b.accountId })
     await tick()
-    expect(await h.service.completeSetup({ accountId: b.accountId, identity: { mode: 'new', colourKey: 'violet' } })).toMatchObject({ ok: false, code: 'busy' })
+    // Refused: the Discard is under way and recorded (P3.3 review round 2: written ahead).
+    expect(await h.service.completeSetup({ accountId: b.accountId, identity: { mode: 'new', colourKey: 'violet' } })).toMatchObject({ ok: false, code: 'unsupported' })
     release()
     expect(await abandon).toEqual({ ok: true })
     expect(h.doc().accounts).toEqual([])

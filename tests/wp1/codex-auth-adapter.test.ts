@@ -229,12 +229,12 @@ describe('Codex status (A7, D3)', () => {
     }
   })
 
-  it('a managed realm holding a .env is refused for status and sign-in (it can carry a key past the allowlist), not for logout', async () => {
+  it('a managed realm holding a .env is refused for status, sign-in and sign-out (the CLI loads it whatever it runs for; P3.3 review round 2)', async () => {
     const w = world({ envFilePresent: (home) => home === HOME_A })
     expect(await w.ops.status(MANAGED)).toMatchObject({ ok: false, state: 'error', code: 'realm-env-file', message: expect.stringMatching(/\.env/) })
     expect(await w.ops.login(MANAGED, 'browser')).toMatchObject({ ok: false, code: 'realm-env-file' })
+    expect(await w.ops.logout(MANAGED)).toMatchObject({ ok: false, code: 'realm-env-file' })
     expect(w.runs).toEqual([])
-    expect(await w.ops.logout(MANAGED)).toMatchObject({ ok: true })
     // The external default home is the user's own; its .env is theirs.
     expect(await world({ envFilePresent: () => true }).ops.status(EXTERNAL)).toMatchObject({ ok: true })
   })
