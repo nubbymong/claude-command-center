@@ -1,10 +1,11 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { z } from 'zod'
-import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemoteDetailed, probeTmuxLive, holdsCodexLaunchLease, codexLaunchLeaseTaken, beginSpawnPreparation, isSessionWritable, SSHOptions, SshEndTarget } from '../pty-manager'
+import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemoteDetailed, probeTmuxLive, holdsCodexLaunchLease, codexLaunchLeaseTaken, beginSpawnPreparation, isSessionWritable, SSHOptions, SshEndTarget, getKeptCodexConversation, getKeptCodexConversationSource, codexRunEnded } from '../pty-manager'
 import type { CodexLaunch } from '../pty-manager'
 import { getAccountsService } from '../provider-accounts'
 import { providerLaunchRefusal } from '../provider-launch-gate'
-import type { AccountLease } from '../providers/core'
+import type { AccountLease, AccountsService } from '../providers/core'
+import type { ConversationCarryNotice } from '../../shared/providers'
 import { forgetCanvasMarkers } from '../canvas/canvas-marker-delivery'
 import { logUserInput, isDebugModeEnabled } from '../debug-capture'
 import { logInfo } from '../debug-logger'
@@ -124,6 +125,47 @@ export const MAIN_INTERNAL_SPAWN_FIELDS = ['refreshAwaited', 'projectGate', 'pro
 /** Owner ids of Codex launch leases: one per spawn, so a respawn's new lease
  *  never shares an owner with the one it replaces. */
 let codexLaunchSeq = 0
+
+/** P3.6 (row 22): how long a respawn waits for the session's previous Codex
+ *  process to end before it carries the conversation. Past it nothing is
+ *  carried: what a process still running writes after the copy would be
+ *  lost. */
+export const CODEX_CARRY_EXIT_WAIT_MS = 5_000
+
+/** A respawn's carry: the conversation it was for, and why it did not come
+ *  along (`resumed` is settled by the spawn). */
+interface RespawnCarry { uuid: string; notice?: Omit<ConversationCarryNotice, 'resumed'> }
+
+/**
+ * P3.6 (row 22; ADR-009 thesis 3): a Codex session respawned on another
+ * account (a Switch account restarts it on the new one, as Claude's does)
+ * carries the conversation it is on into that account: kill, carry, spawn.
+ * The conversation and the account it ran under are main's own record of
+ * THIS session (pty-manager's kept conversation), and the destination is the
+ * account this very launch was prepared on; nothing the renderer sends names
+ * a conversation, a path or another session. The copy waits for the
+ * session's previous process to have ended (bounded), so nothing it wrote
+ * after the copy is lost. Undefined when there is nothing to carry (no
+ * conversation known, or already on that account).
+ */
+async function carryForRespawn(sessionId: string, accountId: string, service: Pick<AccountsService, 'carryConversation'>): Promise<RespawnCarry | undefined> {
+  // Final once the old run was killed: killPty stops its status line, so
+  // nothing claims another conversation for it meanwhile.
+  const kept = getKeptCodexConversationSource(sessionId)
+  if (!kept || kept.accountId === accountId) return undefined
+  if (!(await codexRunEnded(sessionId, CODEX_CARRY_EXIT_WAIT_MS))) {
+    logWarn(`[pty] Session ${sessionId}: its previous Codex run had not ended, so its conversation was not carried into the new account`)
+    return { uuid: kept.uuid, notice: { code: 'busy', message: "The session's previous run had not ended yet, so its conversation was not carried over." } }
+  }
+  let r: Awaited<ReturnType<AccountsService['carryConversation']>> | null
+  try { r = await service.carryConversation({ accountId }, kept) } catch { r = null }
+  if (r && r.ok) {
+    logInfo(`[pty] Session ${sessionId}: its conversation was carried into the new account (${r.carried})`)
+    return { uuid: kept.uuid }
+  }
+  logWarn(`[pty] Session ${sessionId}: its conversation was not carried into the new account (${r ? r.code : 'internal'})`)
+  return { uuid: kept.uuid, notice: r ? { code: r.code, message: r.message } : { code: 'internal', message: 'The conversation could not be carried over.' } }
+}
 
 /** WP2: shell-only SSH sessions, by id (spawned as such by pty:spawn), and
  *  those among them whose "Launch Claude" main accepted. pty-manager
@@ -644,6 +686,7 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     const legacyInstall = launchProvider === 'claude' && !!(options?.legacyVersion?.enabled && options.legacyVersion.version && !isVersionInstalled(options.legacyVersion.version))
     const preparation = codexSession || legacyInstall ? beginSpawnPreparation(win, sessionId, options?.shellOnly ? null : (options?.provider ?? 'claude')) : null
     let codexLease: AccountLease | undefined
+    let carry: RespawnCarry | undefined
     try {
       // Auto-install legacy version before spawn if needed
       if (legacyInstall && options?.legacyVersion) {
@@ -760,6 +803,13 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
           ...resolvedOptions,
           codexLaunch: { lease: prepared.lease, executable: prepared.executable, env: prepared.env, sessionsDir: prepared.sessionsDir },
         }
+        // P3.6 (row 22): a respawn of this session on another account
+        // carries the conversation it is on into that account first, once
+        // its previous process has ended (carryForRespawn). Only when the
+        // launch resumes the kept conversation (pty-manager's rule): one
+        // that names its own (a restored tab) or opens the picker has none
+        // to carry.
+        if (!options?.resume && !options?.useResumePicker) carry = await carryForRespawn(sessionId, prepared.lease.accountId, service)
       }
 
       // Closed, swept or superseded while it was prepared: start nothing, and
@@ -821,6 +871,14 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
 
       if (preparation) preparation.spawn(resolvedOptions)
       else spawnPty(win, sessionId, resolvedOptions)
+      // P3.6: what the terminal says when the conversation did not come
+      // along whole, from what the launch actually did (it resumed that
+      // conversation, from a copy already in the account, or started anew).
+      if (carry) {
+        const resumed = getKeptCodexConversation(sessionId)?.uuid === carry.uuid
+        if (carry.notice) return { started: true as const, carry: { ...carry.notice, resumed } }
+        if (!resumed) return { started: true as const, carry: { code: 'conversation-missing' as const, message: 'The conversation was copied into that account, but the new session did not resume it.', resumed: false } }
+      }
     } catch (err) {
       if (codexLease) {
         // Registered, but the spawn failed after that: a Codex PTY is running

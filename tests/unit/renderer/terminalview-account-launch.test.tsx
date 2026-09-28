@@ -269,16 +269,26 @@ describe("a Codex session's account reaches pty:spawn", () => {
     expect(spawn.mock.calls[0][1].providerAccountId).toBeUndefined()
   })
 
-  it('P3.6: a line a Switch account left for this start is said once, dimmed, as it starts; control characters never reach the terminal', async () => {
-    const { setLaunchNote, takeLaunchNote } = await import('../../../src/renderer/utils/launchNote')
-    setLaunchNote('s-1', 'Switched to Personal.\u001b[2J This is a new conversation.')
+  it('P3.6: a respawn on another account whose conversation did not come along whole says so once, dimmed, from main\'s answer; spoofing characters never reach the terminal', async () => {
     mount(codexSession({ providerAccountId: 'acc-personal' }))
     await settle()
     expect(spawn).toHaveBeenCalledTimes(1)
-    expect(H.MockTerminal.last.lines).toContain('\x1b[90mSwitched to Personal.[2J This is a new conversation.\x1b[0m')
-    expect(takeLaunchNote('s-1')).toBeUndefined()
+    const RLO = String.fromCharCode(0x202e)
+    await act(async () => { settles[0].resolve({ started: true, carry: { code: 'too-large', message: `Too large.${RLO}\u001b[2J`, resumed: false } }) })
+    await settle()
+    expect(H.MockTerminal.last.lines).toContain('\x1b[90mSwitched to Personal. Too large.  [2J This is a new conversation.\x1b[0m')
+    expect(termLines().split('Switched to').length).toBe(2)
+    // Resumed from a copy already there: said as that, never a new conversation.
     await restartTo(codexSession({ providerAccountId: 'acc-personal' }), 'b')
-    expect(termLines()).not.toContain('Switched to Personal.')
+    await act(async () => { settles[1].resolve({ started: true, carry: { code: 'conversation-differs', message: 'x', resumed: true } }) })
+    await settle()
+    expect(termLines()).toContain('so the session carries on from that copy.')
+    expect(termLines()).not.toContain('This is a new conversation.')
+    // Carried whole, or nothing to carry: nothing is said.
+    await restartTo(codexSession({ providerAccountId: 'acc-personal' }), 'c')
+    await act(async () => { settles[2].resolve(undefined) })
+    await settle()
+    expect(termLines()).not.toContain('Switched to')
   })
 })
 

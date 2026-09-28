@@ -289,11 +289,6 @@ export const IPC = {
   PROVIDER_ACCOUNTS_USAGE_STREAM: 'providerAccounts:usageStream',
   PROVIDER_ACCOUNTS_USAGE_STREAM_STOP: 'providerAccounts:usageStreamStop',
   PROVIDER_ACCOUNTS_USAGE_ONE: 'providerAccounts:usageOne',
-  // P3.6 (row 22): a Switch account carries the conversation the session is
-  // on into the account it moves to (main's own record of the conversation
-  // and of the account it ran under; the renderer names the session and the
-  // account only), holding both accounts for the copy.
-  PROVIDER_ACCOUNTS_CARRY_CONVERSATION: 'providerAccounts:carryConversation',
 
   // Memory
   MEMORY_SCAN: 'memory:scan',

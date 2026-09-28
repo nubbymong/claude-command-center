@@ -3,11 +3,13 @@
 // Claude's works (settled by parity): the strip's account pill and the
 // sidebar's right-click Switch Account list the provider's accounts (the
 // current one marked, inactive ones greyed, this computer's own sign-in
-// marked "confirm at launch"); a pick pins the new account and saves it, has
-// main carry the conversation into that account (both accounts held), then
-// restarts through the Restart path, which resumes it there by id (P3.5).
-// When the conversation cannot be carried, the section 5 fallback: the
-// session starts a new conversation and says so in the terminal.
+// marked "confirm at launch"); a pick pins the new account and saves it, then
+// restarts through the Restart path. Main's respawn of the session carries
+// the conversation into the new account once the old process has ended and
+// resumes it there by id (P3.5; tests/wp1/launch-handoff-pty.test.ts): the
+// renderer asks for no carry. When it does not come along whole, the section
+// 5 fallback: the terminal says why and what the session did (the note's
+// words here; TerminalView writes it from the spawn's answer).
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import React from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -29,15 +31,15 @@ vi.mock('../../../src/renderer/utils/resumePicker', () => ({
   shouldUseResumePicker: vi.fn(() => false),
 }))
 
-let carryAnswer: unknown = { ok: true, carried: 'copied' }
-const carryMock = vi.fn(async () => carryAnswer)
 const saveMock = vi.fn(async () => true)
+const touched: string[] = []
 const fetchOneMock = vi.fn(async () => null)
 ;(globalThis as any).window.electronAPI = {
   pty: { kill: vi.fn(), write: vi.fn() },
   session: { save: saveMock },
   accountUsage: { fetchOne: fetchOneMock },
-  providerAccounts: { carryConversation: carryMock },
+  // Anything the switch reaches for here is recorded: it should reach nothing.
+  providerAccounts: new Proxy({}, { get: (_t, prop) => { if (typeof prop === 'string') touched.push(prop); return undefined } }),
 }
 
 const { useSessionStore } = await import('../../../src/renderer/stores/sessionStore')
@@ -46,7 +48,7 @@ const { useAccountProfilesStore } = await import('../../../src/renderer/stores/a
 const { useSwitchAccount } = await import('../../../src/renderer/hooks/useSwitchAccount')
 const { switchAccountItems, switchItemHint } = await import('../../../src/renderer/utils/switchAccountItems')
 const { canSwitchAccountForSession } = await import('../../../src/renderer/utils/sessionLaunch')
-const { takeLaunchNote } = await import('../../../src/renderer/utils/launchNote')
+const { carryNote, terminalNoteLine } = await import('../../../src/renderer/utils/launchNote')
 const { default: SessionContextMenu } = await import('../../../src/renderer/components/sidebar/SessionContextMenu')
 const { snapshot, work, personal, local, old, parked, gone } = await import('./accounts-snapshot-harness')
 const { middleTruncateEmail } = await import('../../../src/shared/account-chip-color')
@@ -60,9 +62,8 @@ beforeEach(() => {
   useProviderAccountsStore.setState({ snapshot: snapshot(), loaded: true })
   useSessionStore.setState({ sessions: [], activeSessionId: null, isRestoring: false })
   useAccountProfilesStore.setState({ profiles: [] })
-  killSessionPtyMock.mockReset(); markSessionForResumePickerMock.mockReset(); carryMock.mockClear(); saveMock.mockClear(); fetchOneMock.mockClear()
-  carryAnswer = { ok: true, carried: 'copied' }
-  takeLaunchNote('sess-x')
+  killSessionPtyMock.mockReset(); markSessionForResumePickerMock.mockReset(); saveMock.mockClear(); fetchOneMock.mockClear()
+  touched.length = 0
 })
 afterEach(() => { useProviderAccountsStore.setState({ snapshot: null, loaded: false }) })
 
@@ -131,50 +132,29 @@ describe('switching a Codex session\'s account', () => {
   const settle = async () => { for (let i = 0; i < 5; i++) await act(async () => { await Promise.resolve() }) }
   const stored = () => useSessionStore.getState().sessions.find((s) => s.id === 'sess-x')!
 
-  it('pins the new account and saves it, has main carry the conversation, then restarts through the Restart path with it', async () => {
+  it('pins the new account and saves it, then restarts through the Restart path with it; the carry is main\'s, in the respawn', async () => {
     mount(codexSession())
     switchFn!('sess-x', personal.id)
     await settle()
     expect(saveMock).toHaveBeenCalled()
-    expect(carryMock).toHaveBeenCalledWith({ sessionId: 'sess-x', accountId: personal.id })
-    expect(saveMock.mock.invocationCallOrder[0]).toBeLessThan(carryMock.mock.invocationCallOrder[0])
     expect(killSessionPtyMock).toHaveBeenCalledWith('sess-x')
-    expect(carryMock.mock.invocationCallOrder[0]).toBeLessThan(killSessionPtyMock.mock.invocationCallOrder[0])
+    expect(saveMock.mock.invocationCallOrder[0]).toBeLessThan(killSessionPtyMock.mock.invocationCallOrder[0])
     expect(stored().providerAccountId).toBe(personal.id)
     // Codex's plain Restart carries on with the conversation (P3.5): no picker.
     expect(markSessionForResumePickerMock).not.toHaveBeenCalled()
-    // Carried: nothing to say. And no usage read is started for it.
-    expect(takeLaunchNote('sess-x')).toBeUndefined()
+    // The renderer names no conversation and asks for no carry (ADR-009
+    // thesis 3): there is no such call to make. And no usage read either.
+    expect(touched).toEqual([])
     expect(fetchOneMock).not.toHaveBeenCalled()
   })
 
-  it('the section 5 fallback: a conversation that could not be carried starts a new one, and the terminal says why', async () => {
-    carryAnswer = { ok: false, code: 'too-large', message: 'This conversation is larger than the app carries between Codex accounts, so it was not carried over.' }
+  it('a save that fails still switches: the account is pinned on the session and the restart goes ahead', async () => {
+    saveMock.mockRejectedValueOnce(new Error('disk'))
     mount(codexSession())
     switchFn!('sess-x', personal.id)
     await settle()
-    expect(killSessionPtyMock).toHaveBeenCalledWith('sess-x')
     expect(stored().providerAccountId).toBe(personal.id)
-    expect(takeLaunchNote('sess-x')).toBe('Switched to Personal. This conversation is larger than the app carries between Codex accounts, so it was not carried over. This is a new conversation.')
-    // One-shot.
-    expect(takeLaunchNote('sess-x')).toBeUndefined()
-  })
-
-  it('an earlier copy already in that account is left as it is, and the terminal says the session carries on from it', async () => {
-    carryAnswer = { ok: false, code: 'conversation-differs', message: 'The other Codex account already holds a different copy of this conversation, so the app left it as it is.' }
-    mount(codexSession())
-    switchFn!('sess-x', personal.id)
-    await settle()
-    expect(takeLaunchNote('sess-x')).toBe('Switched to Personal. That account already holds an earlier copy of this conversation, which the app left as it is, so the session carries on from that copy.')
-  })
-
-  it('a carry that could not be asked still switches, and says so', async () => {
-    carryMock.mockRejectedValueOnce(new Error('ipc'))
-    mount(codexSession())
-    switchFn!('sess-x', personal.id)
-    await settle()
     expect(killSessionPtyMock).toHaveBeenCalledWith('sess-x')
-    expect(takeLaunchNote('sess-x')).toBe('Switched to Personal. The conversation could not be carried over. This is a new conversation.')
   })
 
   it('refused before anything changes: the current account, one that is inactive, blocked, archived, another provider\'s or unknown; over SSH; a terminal-only tab', async () => {
@@ -192,24 +172,58 @@ describe('switching a Codex session\'s account', () => {
       act(() => { root.unmount() }); root = createRoot(container)
       useSessionStore.setState({ sessions: [] })
     }
-    expect(carryMock).not.toHaveBeenCalled()
     expect(killSessionPtyMock).not.toHaveBeenCalled()
     expect(saveMock).not.toHaveBeenCalled()
   })
 
   it('a second pick while one is under way is ignored', async () => {
     let release!: () => void
-    carryMock.mockImplementationOnce(() => new Promise((r) => { release = () => r({ ok: true, carried: 'copied' }) }))
+    saveMock.mockImplementationOnce(() => new Promise((r) => { release = () => r(true) }))
     mount(codexSession())
     switchFn!('sess-x', personal.id)
     await settle()
     switchFn!('sess-x', local.id)
     await settle()
-    expect(carryMock).toHaveBeenCalledTimes(1)
+    expect(saveMock).toHaveBeenCalledTimes(1)
     release()
     await settle()
     expect(killSessionPtyMock).toHaveBeenCalledTimes(1)
     expect(stored().providerAccountId).toBe(personal.id)
+  })
+})
+
+// P3.6 (quality round 1; spec minor at useSwitchAccount:46): the words for a
+// respawn whose conversation did not come along whole are true for what the
+// launch did, main answering both why and whether it resumed.
+describe('the note a Switch account\'s respawn says', () => {
+  it('not resumed: a new conversation, in main\'s words for why', () => {
+    expect(carryNote({ code: 'too-large', message: 'This conversation is larger than the app carries between Codex accounts, so it was not carried over.', resumed: false }, 'Personal'))
+      .toBe('Switched to Personal. This conversation is larger than the app carries between Codex accounts, so it was not carried over. This is a new conversation.')
+    expect(carryNote({ code: 'internal', message: '  ', resumed: false }, 'Personal')).toBe('Switched to Personal. The conversation could not be carried over. This is a new conversation.')
+  })
+
+  it('resumed from a copy that went its own way there: carries on from that copy, never called a new conversation', () => {
+    const line = carryNote({ code: 'conversation-differs', message: 'x', resumed: true }, 'Personal')
+    expect(line).toBe('Switched to Personal. That account already holds a copy of this conversation that went on differently there, which the app left as it is, so the session carries on from that copy.')
+    expect(line).not.toMatch(/new conversation/)
+  })
+
+  it('resumed from an earlier copy for another reason (A -> B -> A with the carry refused): carries on from it, and says it may be behind', () => {
+    const line = carryNote({ code: 'busy', message: "The session's previous run had not ended yet, so its conversation was not carried over.", resumed: true }, 'Personal')
+    expect(line).toBe("Switched to Personal. The session's previous run had not ended yet, so its conversation was not carried over. The session carries on from the copy of this conversation already in that account, which may not have what was said since.")
+    expect(line).not.toMatch(/new conversation/)
+  })
+
+  it('ADR-009 thesis 18: the line reaches the terminal with every control and spoofing character replaced, as the app treats every such line', () => {
+    const RLO = String.fromCharCode(0x202e)
+    const LRI = String.fromCharCode(0x2066)
+    const ZWSP = String.fromCharCode(0x200b)
+    const CSI = String.fromCharCode(0x9b)
+    const LS = String.fromCharCode(0x2028)
+    const line = terminalNoteLine(carryNote({ code: 'too-large', message: 'Too large.', resumed: false }, `Pers${RLO}lanos${LRI}x${ZWSP}y${CSI}2J\u001b]8;;http://e/\u0007z${LS}fake`))
+    for (const c of [RLO, LRI, ZWSP, CSI, LS, '\u001b', '\u0007']) expect(line.includes(c), c.charCodeAt(0).toString(16)).toBe(false)
+    expect(line.startsWith('Switched to Pers lanos x y 2J ]8;;http://e/ z fake.')).toBe(true)
+    expect(terminalNoteLine('x'.repeat(5000)).length).toBe(1000)
   })
 })
 

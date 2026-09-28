@@ -63,12 +63,12 @@ export {
 } from './realm-paths'
 export type { CodexRealmRoots, CodexRealmHome, CodexExternalCandidate } from './realm-paths'
 export {
-  createCodexRealmFolders, createCodexRealmLocks, codexRealmLockKey, resolveCodexRealmRoots, CODEX_REMOVE_MAX_DEPTH, CODEX_REMOVE_MAX_ENTRIES, CODEX_UNDER_LOCK_LOOKUP_MS,
+  createCodexRealmFolders, createCodexRealmLocks, codexRealmLockKey, resolveCodexRealmRoots, CODEX_REMOVE_MAX_DEPTH, CODEX_REMOVE_MAX_ENTRIES, CODEX_UNDER_LOCK_LOOKUP_MS, CODEX_CARRY_LOCK_WAIT_MS,
   CODEX_HISTORY_MAX_ENTRIES, CODEX_FOLDER_BATCH,
 } from './realm-folders'
 export type { CodexRealmFsPort, CodexRealmFsAsync, CodexFsEntry, CodexRealmLocks, CodexFolderLookup, CodexRealmFolderDeps, CodexRealmFolderLimits, CodexRootsResult } from './realm-folders'
 // P3.6: a switched session's conversation carried into the new account's folder.
-export { carryCodexRollout, CODEX_CARRY_MAX_BYTES } from './conversation-carry'
+export { carryCodexRollout, CODEX_CARRY_MAX_BYTES, CODEX_CARRY_STALE_TEMP_MS } from './conversation-carry'
 export type { CodexConversationCarry, CodexCarryInput, CodexCarryResult, CodexCarryCode } from './conversation-carry'
 // Usage track MP2/MP3: the allowance reading and the usage port.
 export { normaliseCodexRateLimits, mergeAllowanceReadings, readingToBuckets, CODEX_DEFAULT_LIMIT_ID } from './rate-limits'

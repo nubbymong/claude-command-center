@@ -7,11 +7,14 @@
 // preparing the launch, the spawn is registered with pty-manager: a close, a
 // sweep or a newer spawn supersedes it, and the replaced PTY's exit is not
 // taken for the end of the session being prepared (ADR-009 pass on commit 4).
+// P3.6 (row 22): a respawn on another account carries the conversation this
+// session is on into it, from main's own record of this session, once the
+// old process has ended: kill, carry, spawn (ADR-009 thesis 3).
 //
 // Drives the REAL spawnPty and the REAL pty:spawn handler with node-pty, the
 // providers and the accounts service mocked (the stack of
 // tests/unit/main/canvas-worktree-spawn.test.ts). No process is started.
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as os from 'os'
 import * as path from 'path'
 
@@ -30,6 +33,9 @@ const h = vi.hoisted(() => ({
   listeners: new Map<string, (...a: any[]) => any>(),
   prepare: null as null | ((input: Record<string, unknown>) => Promise<unknown>),
   prepareCalls: 0,
+  carry: null as null | ((...a: unknown[]) => Promise<unknown>),
+  carries: [] as unknown[][],
+  resumable: false,
   installs: 0,
   credentialLoads: 0,
   legacyInstalled: true,
@@ -89,7 +95,10 @@ vi.mock('../../src/main/providers', () => ({
       const launch = opts.realmLaunch as { executable: string; env: Record<string, string> } | undefined
       if (!launch) throw new Error('A Codex session needs its account')
       const env = { ...launch.env, CLAUDE_MULTI_SESSION_ID: String(opts.sessionId) }
-      return h.commandLine ? { cmd: 'C:/Windows/System32/cmd.exe', args: [], env, commandLine: h.commandLine } : { cmd: launch.executable, args: ['--sandbox', 'read-only'], env }
+      // P3.6: the realm holds the conversation asked for (the resume finds it).
+      const resume = opts.resume as { uuid: string } | undefined
+      const found = h.resumable && resume ? { resumeId: resume.uuid } : {}
+      return h.commandLine ? { cmd: 'C:/Windows/System32/cmd.exe', args: [], env, commandLine: h.commandLine, ...found } : { cmd: launch.executable, args: ['--sandbox', 'read-only'], env, ...found }
     },
     ingestSessionTelemetry: (sessionId: string, opts: Record<string, unknown>) => {
       if (h.failTelemetry) throw new Error('telemetry failed')
@@ -154,11 +163,12 @@ vi.mock('../../src/main/provider-accounts', () => ({
     launchRefusal: () => null,
     remoteLaunchRefusal: () => ({ ok: false, code: 'unsupported', message: 'Codex runs on this computer only in this release; it is not available in SSH sessions.' }),
     prepareLaunch: (input: Record<string, unknown>) => { h.prepareCalls++; return h.prepare ? h.prepare(input) : Promise.resolve({ ok: false, code: 'not-found', message: 'no account' }) },
+    carryConversation: (...a: unknown[]) => { h.carries.push(a); return h.carry ? h.carry(...a) : Promise.resolve({ ok: true, carried: 'copied' }) },
   }),
 }))
 
 const { spawnPty, killPty, killAllPty, holdsCodexLaunchLease, countUnleasedAgentSessions, beginSpawnPreparation } = await import('../../src/main/pty-manager')
-const { registerPtyHandlers } = await import('../../src/main/ipc/pty-handlers')
+const { registerPtyHandlers, CODEX_CARRY_EXIT_WAIT_MS } = await import('../../src/main/ipc/pty-handlers')
 type Launch = NonNullable<NonNullable<Parameters<typeof spawnPty>[2]>['codexLaunch']>
 
 const SID = 'lh0000000000000000000001'
@@ -186,6 +196,9 @@ const flush = () => new Promise((r) => setTimeout(r, 0))
 
 beforeEach(() => {
   try { killPty(SID) } catch { /* nothing running */ }
+  // Every process of the last test has ended by the next (a killed one's end
+  // is what a respawn's carry waits for).
+  for (const p of h.ptys) exitPty(p, 0)
   h.ptys = []
   h.built = []
   h.telemetry = []
@@ -195,6 +208,9 @@ beforeEach(() => {
   h.commandLine = undefined
   h.prepare = null
   h.prepareCalls = 0
+  h.carry = null
+  h.carries = []
+  h.resumable = false
   h.installs = 0
   h.credentialLoads = 0
   h.legacyInstalled = true
@@ -458,5 +474,164 @@ describe('a Codex session registers for claude_review (WP2 5b)', () => {
     h.failSpawn = true
     expect(() => start(launch('c'))).toThrow()
     expect(h.claudeReview).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// P3.6 (row 22; quality round 1, item 2; ADR-009 thesis 3): a Switch account
+// restarts the session on the new account; main's respawn of THAT session
+// carries the conversation it is on into the new account -- from main's own
+// record of the session, once the old process has ended -- and the launch
+// then resumes it there by id (P3.5).
+// ---------------------------------------------------------------------------
+
+describe('a respawn on another account carries this session\'s conversation (P3.6)', () => {
+  // A new pair of session ids per test: the kept conversation outlives a
+  // kill by design, so one test's would be the next test's to carry.
+  let seq = 0
+  let sid = ''
+  let sid2 = ''
+  beforeEach(() => { seq++; sid = `lh-p36-${seq}-a`; sid2 = `lh-p36-${seq}-b` })
+  const CID = '019dd000-0006-7000-8000-0000000000c1'
+  const OTHER = '019dd000-0006-7000-8000-0000000000c2'
+  const on = (tag: string, accountId: string) => {
+    const l = launch(tag)
+    ;(l.lease as unknown as { accountId: string }).accountId = accountId
+    return l
+  }
+  const spawnFor = (id: string, opts: Record<string, unknown>) => h.handlers.get('pty:spawn')!({}, id, opts)
+  const spawnIn = (opts: Record<string, unknown>) => spawnFor(sid, opts)
+  const killIn = () => h.listeners.get('pty:kill')!({}, sid)
+  const claim = (of: string, id: string, cwd = '/p/demo') => {
+    const t = [...h.telemetry].reverse().find((x) => x.sessionId === of)!
+    ;(t.opts.onClaim as (c: { id: string; cwd: string }) => void)({ id, cwd })
+  }
+  const onAccount = (accountId: string) => { h.prepare = async () => prepared(on(accountId, accountId)) }
+  const request = (accountId: string, extra: Record<string, unknown> = {}) => ({ ...codexRequest, providerAccountId: accountId, ...extra })
+  afterEach(() => { for (const id of [sid, sid2]) { try { killPty(id) } catch { /* not running */ } } })
+
+  it('kill, carry, spawn: the copy starts only once the old process has ended; the new launch then resumes the conversation, and says nothing', async () => {
+    onAccount('acct-a')
+    await spawnIn(request('acct-a'))
+    claim(sid, CID)
+    killIn()
+    onAccount('acct-b')
+    h.resumable = true
+    const req = spawnIn(request('acct-b'))
+    for (let i = 0; i < 5; i++) await flush()
+    // The old process is still ending: nothing copied, nothing spawned yet.
+    expect(h.carries).toEqual([])
+    expect(h.ptys).toHaveLength(1)
+    exitPty(h.ptys[0], 0)
+    await expect(req).resolves.toBeUndefined()
+    expect(h.carries).toEqual([[{ accountId: 'acct-b' }, { uuid: CID, cwd: '/p/demo', accountId: 'acct-a' }]])
+    expect(h.ptys).toHaveLength(2)
+    expect(h.built.at(-1)).toMatchObject({ resume: { uuid: CID } })
+    // The destination is the account this launch was prepared on: the
+    // provider default when the request names none.
+    killIn()
+    exitPty(h.ptys[1], 0)
+    onAccount('acct-default')
+    await expect(spawnIn({ ...codexRequest })).resolves.toBeUndefined()
+    expect(h.carries[1]).toEqual([{ accountId: 'acct-default' }, expect.objectContaining({ uuid: CID, accountId: 'acct-b' })])
+  })
+
+  it('ADR-009 thesis 3: the respawn of one session carries that session\'s conversation, never another tab\'s, and never one the request names', async () => {
+    onAccount('acct-a')
+    await spawnIn(request('acct-a'))
+    claim(sid, CID)
+    await spawnFor(sid2, request('acct-a'))
+    claim(sid2, OTHER, '/p/other')
+    killIn()
+    exitPty(h.ptys[0], 0)
+    onAccount('acct-b')
+    h.resumable = true
+    await spawnIn(request('acct-b'))
+    expect(h.carries.map((c) => (c[1] as { uuid: string }).uuid)).toEqual([CID])
+    // A request naming a conversation itself (here the other tab's) resumes
+    // that one as named, and nothing is carried for it.
+    killIn()
+    exitPty(h.ptys.at(-1)!, 0)
+    onAccount('acct-c')
+    await spawnIn(request('acct-c', { resume: { uuid: OTHER, cwd: '/p/other' } }))
+    expect(h.carries).toHaveLength(1)
+    // The picker: nothing kept is resumed, so nothing is carried.
+    killIn()
+    exitPty(h.ptys.at(-1)!, 0)
+    claim(sid, CID)
+    onAccount('acct-d')
+    await spawnIn(request('acct-d', { useResumePicker: true }))
+    expect(h.carries).toHaveLength(1)
+  })
+
+  it('not carried: the spawn says why in main\'s words, and whether the launch resumed the conversation from a copy already there or started a new one', async () => {
+    onAccount('acct-a')
+    await spawnIn(request('acct-a'))
+    claim(sid, CID)
+    killIn()
+    exitPty(h.ptys[0], 0)
+    h.carry = async () => ({ ok: false, code: 'conversation-differs', message: 'It differs there.' })
+    h.resumable = true
+    onAccount('acct-b')
+    await expect(spawnIn(request('acct-b'))).resolves.toEqual({ started: true, carry: { code: 'conversation-differs', message: 'It differs there.', resumed: true } })
+    killIn()
+    exitPty(h.ptys.at(-1)!, 0)
+    h.carry = async () => ({ ok: false, code: 'too-large', message: 'Too large.' })
+    h.resumable = false
+    onAccount('acct-a')
+    await expect(spawnIn(request('acct-a'))).resolves.toEqual({ started: true, carry: { code: 'too-large', message: 'Too large.', resumed: false } })
+    // Carried, but the launch did not resume it: said too, never silent.
+    claim(sid, CID)
+    killIn()
+    exitPty(h.ptys.at(-1)!, 0)
+    h.carry = async () => ({ ok: true, carried: 'copied' })
+    onAccount('acct-b')
+    await expect(spawnIn(request('acct-b'))).resolves.toMatchObject({ started: true, carry: { code: 'conversation-missing', resumed: false } })
+    // A carry that throws is not carried, in plain words.
+    claim(sid, CID)
+    killIn()
+    exitPty(h.ptys.at(-1)!, 0)
+    h.carry = async () => { throw new Error('boom') }
+    onAccount('acct-a')
+    await expect(spawnIn(request('acct-a'))).resolves.toEqual({ started: true, carry: { code: 'internal', message: 'The conversation could not be carried over.', resumed: false } })
+  })
+
+  it('an old process still running, or not ended within the bound: nothing is carried, and the spawn says so', async () => {
+    onAccount('acct-a')
+    await spawnIn(request('acct-a'))
+    claim(sid, CID)
+    // Never killed: a respawn straight over it.
+    onAccount('acct-b')
+    await expect(spawnIn(request('acct-b'))).resolves.toMatchObject({ started: true, carry: { code: 'busy', resumed: false } })
+    expect(h.carries).toEqual([])
+    // Killed, but its process never reports its end.
+    claim(sid, CID)
+    killIn()
+    onAccount('acct-a')
+    vi.useFakeTimers()
+    try {
+      const req = spawnIn(request('acct-a'))
+      await vi.advanceTimersByTimeAsync(CODEX_CARRY_EXIT_WAIT_MS + 100)
+      await expect(req).resolves.toMatchObject({ started: true, carry: { code: 'busy', resumed: false } })
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(h.carries).toEqual([])
+    expect(CODEX_CARRY_EXIT_WAIT_MS).toBeGreaterThan(0)
+    expect(CODEX_CARRY_EXIT_WAIT_MS).toBeLessThanOrEqual(10_000)
+  })
+
+  it('nothing to carry: the same account again, or no conversation known -- nothing asked, nothing said', async () => {
+    onAccount('acct-a')
+    await spawnIn(request('acct-a'))
+    claim(sid, CID)
+    killIn()
+    exitPty(h.ptys[0], 0)
+    await expect(spawnIn(request('acct-a'))).resolves.toBeUndefined()
+    killIn()
+    exitPty(h.ptys.at(-1)!, 0)
+    onAccount('acct-b')
+    await expect(spawnIn(request('acct-b'))).resolves.toBeUndefined()
+    expect(h.carries).toEqual([])
   })
 })

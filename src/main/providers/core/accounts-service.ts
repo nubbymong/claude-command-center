@@ -3100,21 +3100,26 @@ export class AccountsService {
    * conversation the session is on is carried into the account it moves to,
    * and the respawn resumes it there by id.
    *
-   * `conversation` is main's own record of what the session is on and of the
-   * account it ran under (pty-manager), never the renderer's; the renderer
-   * names only the session and the account to move to. Refused unless both
+   * Called by main's respawn of that session only (pty:spawn, once the
+   * session's previous process has ended): `conversation` is main's own
+   * record of what that session is on and of the account it ran under
+   * (pty-manager), and `input` names the account the new launch was
+   * prepared on. Nothing here is the renderer's. Refused unless both
    * accounts are the same provider's, the provider is on and its package
    * copies conversations, and the destination is one a launch could run on
    * now (active, not blocked, its realm locatable, no sign-in replacing it).
-   * Both accounts are leased under the registry lock for the whole copy (no
-   * sign-out, archive, inactivation or switch-off meanwhile), and the leases
-   * are released on every path. `none`: nothing to carry (the session is on
-   * no known conversation, or already on that account).
+   * The destination may be this computer's own sign-in: its conversations
+   * folder is written under the same rules as a managed one's, as every
+   * Claude profile shares one. Both accounts are leased under the registry
+   * lock for the whole copy (no sign-out, archive, inactivation or
+   * switch-off meanwhile), and the leases are released on every path.
+   * `none`: nothing to carry (the session is on no known conversation, or
+   * already on that account).
    */
   async carryConversation(
     input: { accountId: string },
     conversation: { uuid: string; cwd: string; accountId: string } | undefined,
-  ): Promise<AccountsResult<{ carried: 'copied' | 'present' | 'none' }>> {
+  ): Promise<AccountsResult<{ carried: 'copied' | 'present' | 'extended' | 'none' }>> {
     const targetId = input && typeof input === 'object' ? (input as { accountId?: unknown }).accountId : undefined
     if (typeof targetId !== 'string' || !targetId) return failure('invalid-request')
     if (!conversation) return { ok: true, carried: 'none' }
@@ -3149,19 +3154,13 @@ export class AccountsService {
       const b = resolveLaunchBinding(doc, { providerId: p.id, providerAccountId: t.id })
       if (!b.ok) return failure(b.code === 'realm-unavailable' ? 'realm-unavailable' : b.code === 'not-active' || b.code === 'blocked' ? 'lifecycle' : b.code === 'provider-mismatch' ? 'invalid-request' : b.code, b.message)
       if (this.unrecordedSignIns.has(t.id)) return failure('sign-in-changed', 'This account signed in again, but the app could not record it. Check it in Accounts before using it.')
-      // The provider's own shared home is never written by the app (it is
-      // only adopted, read and signed in or out through the provider), so
-      // nothing is carried into it: the switch starts a new conversation.
-      if (findRealm(doc, b.binding.authRealmId)?.ownership === 'external-default') {
-        return failure('not-managed', "The sign-in already on this computer keeps its own folder, which the app does not write to, so the conversation was not carried there.")
-      }
       const copied = await folders.copyConversation({ authRealmId: s.authRealmId }, { authRealmId: b.binding.authRealmId }, { id: conversation.uuid, cwd: conversation.cwd })
         .catch((): { ok: false; code: 'io-failed'; message?: string; carried?: undefined } => ({ ok: false, code: 'io-failed' }))
       if (!copied || copied.ok !== true) {
         const code = (copied?.code ?? 'io-failed') as AccountsFailureCode
-        return failure(code, typeof copied?.message === 'string' ? copied.message : undefined)
+        return failure(code, typeof copied?.message === 'string' ? copied.message : 'The conversation could not be copied into the other account, so it was not carried over.')
       }
-      return { ok: true, carried: copied.carried === 'present' ? 'present' : 'copied' }
+      return { ok: true, carried: copied.carried === 'present' || copied.carried === 'extended' ? copied.carried : 'copied' }
     } finally {
       for (const l of leases) { try { l.release() } catch { /* idempotent */ } }
     }

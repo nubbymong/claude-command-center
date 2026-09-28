@@ -266,8 +266,10 @@ export interface ElectronAPI {
       acknowledgeRealmOnly?: boolean
       /** Resolves `{ started: false }` when main started nothing for this
        *  request: its launch was cancelled or superseded while it was being
-       *  prepared. Anything else means the spawn went ahead. */
-    }) => Promise<void | { started: false } | ({ started: false } & import('../../shared/providers').ProviderLaunchRefused)>
+       *  prepared. Anything else means the spawn went ahead; P3.6: with
+       *  `carry` when it went ahead on another account without the
+       *  conversation carried whole (main's words, and whether it resumed). */
+    }) => Promise<void | { started: false } | ({ started: false } & import('../../shared/providers').ProviderLaunchRefused) | { started: true; carry: import('../../shared/providers').ConversationCarryNotice }>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void
     kill: (sessionId: string) => void
@@ -944,9 +946,6 @@ export interface ElectronAPI {
     usageStreamStop?: (providerId: ProviderAccountsProviderId) => Promise<ProviderAccountsResult>
     /** `read`: only for a card's Retry. */
     usageOne: (accountId: string, opts?: { read?: boolean }) => Promise<ProviderAccountsResult<{ usage: ProviderAccountUsageView }>>
-    /** P3.6 (row 22): a Switch account carries the session's conversation
-     *  into the account it moves to (main's own record of the conversation). */
-    carryConversation: (req: { sessionId: string; accountId: string }) => Promise<ProviderAccountsResult<{ carried: 'copied' | 'present' | 'none' }>>
   }
 }
 

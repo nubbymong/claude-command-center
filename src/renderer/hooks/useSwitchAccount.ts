@@ -4,10 +4,8 @@ import { persistLastUsedAccount, persistSessionProviderAccount } from '../sessio
 import { useRestartSession } from './useRestartSession'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { isAccountActive } from '../../shared/account-types'
-import { useProviderAccountsStore, accountDisplayName } from '../stores/providerAccountsStore'
+import { useProviderAccountsStore } from '../stores/providerAccountsStore'
 import { sessionProviderAccount } from '../utils/accountChip'
-import { setLaunchNote } from '../utils/launchNote'
-import type { AccountsResult } from '../../shared/providers'
 
 /**
  * Guard for the mid-session account switch. A switch is only meaningful when
@@ -23,28 +21,9 @@ export function shouldSwitch(
   return (current ?? undefined) !== (next ?? undefined)
 }
 
-/** Sessions whose switch (P3.6: the carry, then the restart) is under way:
- *  a second pick meanwhile is ignored. */
+/** Sessions whose switch (P3.6: saving the new account, then the restart)
+ *  is under way: a second pick meanwhile is ignored. */
 const switching = new Set<string>()
-
-type CarryResult = AccountsResult<{ carried: 'copied' | 'present' | 'none' }>
-
-/**
- * P3.6 (row 22; completion plan section 5): what the terminal says when the
- * conversation did not come along. Nothing when it did (or there was none to
- * carry). An earlier copy already in the account is left as it is and the
- * session carries on from it (the resume finds it by id); anything else is a
- * new conversation, in main's own words for why.
- */
-export function carryNote(result: CarryResult | null, accountName: string): string | undefined {
-  if (result && result.ok) return undefined
-  const lead = `Switched to ${accountName}.`
-  if (result && result.code === 'conversation-differs') {
-    return `${lead} That account already holds an earlier copy of this conversation, which the app left as it is, so the session carries on from that copy.`
-  }
-  const why = result && typeof result.message === 'string' && result.message.trim() ? result.message.trim() : 'The conversation could not be carried over.'
-  return `${lead} ${why} This is a new conversation.`
-}
 
 /**
  * Mid-session account switch (locked design: switch = respawn + resume).
@@ -63,11 +42,13 @@ export function carryNote(result: CarryResult | null, accountName: string): stri
  *
  * P3.6 (row 22): a session of a provider whose sessions run under a registry
  * account (Codex) switches the same way, by parity: pin the new account
- * (`providerAccountId`) and save it; have main carry the conversation the
- * session is on into that account (main holds both accounts for the copy and
- * takes the conversation from its own record); then Restart, which resumes it
- * there by id (P3.5). When it could not be carried, the section 5 fallback:
- * the session starts a new conversation and the terminal says why.
+ * (`providerAccountId`) and save it, then Restart on it. Main's respawn of
+ * the session carries the conversation it is on into the new account once
+ * the old process has ended (kill, carry, spawn: pty:spawn, from main's own
+ * record of this session, both accounts held for the copy) and resumes it
+ * there by id (P3.5). When it did not come along whole, the section 5
+ * fallback: the terminal says why and what the session did instead
+ * (TerminalView, utils/launchNote).
  */
 export function useSwitchAccount(
   session: Session | null | undefined,
@@ -144,24 +125,14 @@ function switchProviderAccount(
   const target = snapshot.accounts.find((a) => a.id === nextId && a.providerId === provider)
   if (!target || target.lifecycle !== 'active' || target.operationalState === 'blocked') return
   const sessionId = session.id
-  const name = accountDisplayName(snapshot, target)
   switching.add(sessionId)
   void (async () => {
     try {
       // 1. Pin the new account and save it.
       await persistSessionProviderAccount(sessionId, target.id)
-      // 2. Main carries the conversation into it, holding both accounts.
-      let result: CarryResult | null
-      try {
-        result = await window.electronAPI.providerAccounts.carryConversation({ sessionId, accountId: target.id })
-      } catch {
-        result = null
-      }
-      // 3. Restart there: it resumes the conversation by id (P3.5), or, as
-      //    the note says, starts a new one.
+      // 2. Restart there. Main's respawn carries the conversation into it
+      //    once the old process has ended, then resumes it by id (P3.5).
       restart({ providerAccountId: target.id })
-      const note = carryNote(result, name)
-      if (note) setLaunchNote(sessionId, note)
     } finally {
       switching.delete(sessionId)
     }

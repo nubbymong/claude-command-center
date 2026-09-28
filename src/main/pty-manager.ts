@@ -427,6 +427,41 @@ export function getKeptCodexConversationSource(sessionId: string): { uuid: strin
   return kept && kept.accountId ? { uuid: kept.uuid, cwd: kept.cwd, accountId: kept.accountId } : undefined
 }
 
+// P3.6 (row 22; quality round 1): a Switch account carries the conversation
+// only once the session's previous Codex process has ended, so nothing it
+// writes after the copy is lost. killPty records the end of each Codex run it
+// kills (its process's exit); the respawn waits for it, bounded. An entry
+// goes when its process has ended; a later kill of the session replaces it.
+const endingCodexRuns = new Map<string, Promise<void>>()
+
+function noteCodexRunEnding(sessionId: string, proc: pty.IPty): void {
+  let ended!: () => void
+  const done = new Promise<void>((resolve) => { ended = resolve })
+  endingCodexRuns.set(sessionId, done)
+  const settle = (): void => {
+    ended()
+    if (endingCodexRuns.get(sessionId) === done) endingCodexRuns.delete(sessionId)
+  }
+  try { proc.onExit(() => settle()) } catch { settle() }
+}
+
+/** P3.6: whether this session has no Codex process left running -- none
+ *  live, and the one killed last has ended -- waiting at most `timeoutMs`
+ *  for that one. False while one still runs (never killed) or when the
+ *  killed one has not ended in time. */
+export async function codexRunEnded(sessionId: string, timeoutMs: number): Promise<boolean> {
+  if (codexLaunchLeases.has(sessionId)) return false
+  const ending = endingCodexRuns.get(sessionId)
+  if (!ending) return true
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), timeoutMs) })
+  try {
+    return await Promise.race([ending.then(() => true), late])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 // T8b (bug #5): exact-conversation resume target captured at the TOP of a
 // respawn (in-session Restart / Switch-account), keyed by sessionId. Captured
 // BEFORE killPty so the live conversation's uuid + its real cwd are read off
@@ -5607,6 +5642,8 @@ export function killPty(sessionId: string): void {
   if (entry && dyingLease) {
     codexLaunchLeases.delete(sessionId)
     releaseCodexLeaseOnExit(entry.ptyProcess, dyingLease)
+    // P3.6: a Switch account's carry waits for this process to end.
+    noteCodexRunEnding(sessionId, entry.ptyProcess)
   }
   // Read persistence BEFORE cleanupSessionResources runs (it no longer clears
   // these, but killPty does, at the end).

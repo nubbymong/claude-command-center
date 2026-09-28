@@ -14,7 +14,7 @@ import { describe, it, expect, vi } from 'vitest'
 import path from 'node:path'
 import {
   createCodexRealmFolders, createCodexRealmLocks, codexRealmLockKey, resolveCodexRealmRoots, codexRealmHome, codexExternalHomeCandidate,
-  createCodexPackage, CODEX_REMOVE_MAX_DEPTH, CODEX_REMOVE_MAX_ENTRIES, CODEX_UNDER_LOCK_LOOKUP_MS,
+  createCodexPackage, CODEX_REMOVE_MAX_DEPTH, CODEX_REMOVE_MAX_ENTRIES, CODEX_UNDER_LOCK_LOOKUP_MS, CODEX_CARRY_LOCK_WAIT_MS,
 } from '../../src/main/providers/codex'
 import type { CodexRealmFsPort, CodexFsEntry, CodexFolderLookup, CodexRealmRoots } from '../../src/main/providers/codex'
 import { packageRegistrationProblem } from '../../src/main/providers/core'
@@ -1450,18 +1450,19 @@ describe('the package exposes folder operations only when wired, sharing one loc
 describe('a conversation copied into another account\'s folder (P3.6, row 22)', () => {
   const CID = '019dd000-0006-7000-8000-0000000000c1'
   type CarryCall = { fromSessionsDir: string; toHome: string; id: string; preferCwd?: string }
-  function carrying(answer: (c: CarryCall) => unknown = () => ({ ok: true, carried: 'copied', bytes: 10 })) {
-    const w = world()
+  function carrying(answer: (c: CarryCall) => unknown = () => ({ ok: true, carried: 'copied', bytes: 10 }), carryLockWaitMs = 60, o: { platform?: NodeJS.Platform; extHome?: Partial<Node> } = {}) {
+    const w = world(o.platform ? { platform: o.platform } : {})
     w.realms.set(RA, managed(RA, 'active'))
     w.realms.set(RB, managed(RB, 'active'))
     w.fs.dir(w.home(RA))
     w.fs.dir(w.home(RB))
-    w.fs.dir(w.api.join(w.USER, '.codex'))
+    w.fs.dir(w.api.join(w.USER, '.codex'), o.extHome ?? {})
     const calls: CarryCall[] = []
     const keyOf = (h: string) => { const e = w.fs.lstat(h); return codexRealmLockKey(w.fs.realpath(h), e.dev, e.ino) }
     const heldDuring: boolean[] = []
     const folders = createCodexRealmFolders({
       lookupRealm: w.lookupRealm, fs: w.fs, locks: w.locks,
+      limits: { carryLockWaitMs },
       carry: async (c) => {
         calls.push(c)
         // Both realm locks are held while the file work runs.
@@ -1483,12 +1484,50 @@ describe('a conversation copied into another account\'s folder (P3.6, row 22)', 
     expect(mutating(w.fs.ops)).toEqual([])
   })
 
-  it('this computer\'s own sign-in may be the source (only read), never the destination', async () => {
-    const { w, folders, calls } = carrying()
+  it('this computer\'s own sign-in carries a conversation both ways under the same rules (ADR-009 thesis 14, settled by parity)', async () => {
+    const { w, folders, calls, heldDuring, keyOf } = carrying()
     expect(await folders.copyConversation!(X, B, { id: CID })).toEqual({ ok: true, carried: 'copied' })
     expect(calls[0].fromSessionsDir).toBe(w.api.join(w.USER, '.codex', 'sessions'))
-    expect(await folders.copyConversation!(A, X, { id: CID })).toMatchObject({ ok: false, code: 'not-managed' })
-    expect(calls).toHaveLength(1)
+    // Every Claude profile shares one conversations folder: a switch to this
+    // computer's own sign-in carries the conversation into its sessions too.
+    expect(await folders.copyConversation!(A, X, { id: CID, cwd: 'C:\\p\\demo' })).toEqual({ ok: true, carried: 'copied' })
+    expect(calls[1]).toEqual({ fromSessionsDir: w.api.join(w.home(RA), 'sessions'), toHome: w.api.join(w.USER, '.codex'), id: CID, preferCwd: 'C:\\p\\demo' })
+    // Its lock is held for the copy as a managed one's is, then let go.
+    expect(heldDuring).toEqual([true, true, true, true])
+    const again = w.locks.hold(keyOf(w.api.join(w.USER, '.codex')))
+    expect(again).not.toBeNull()
+    again!()
+    // Nothing is created, removed or signed in or out here.
+    expect(mutating(w.fs.ops)).toEqual([])
+  })
+
+  it('this computer\'s own home that is a link (ADR-009 thesis 4): taken where it leads, as the CLI takes it, never through the link; one that leads into the app\'s own folders is refused', async () => {
+    const { w, folders, calls } = carrying()
+    const ext = w.api.join(w.USER, '.codex')
+    w.fs.rmdir(ext)
+    w.fs.dir('C:\\Users\\u\\Elsewhere')
+    w.fs.link(ext, 'C:\\Users\\u\\Elsewhere')
+    expect(await folders.copyConversation!(A, X, { id: CID })).toEqual({ ok: true, carried: 'copied' })
+    expect(await folders.copyConversation!(X, A, { id: CID })).toEqual({ ok: true, carried: 'copied' })
+    // The canonical folder, never the link's own name: the carry port then
+    // refuses any link below it (conversation-carry.test.ts).
+    expect(calls.map((c) => [c.toHome, c.fromSessionsDir])).toEqual([
+      ['C:\\Users\\u\\Elsewhere', w.api.join(w.home(RA), 'sessions')],
+      [w.home(RA), 'C:\\Users\\u\\Elsewhere\\sessions'],
+    ])
+    // A volume of its own (a mount the user made at it): the user's own
+    // folder, read and written as the CLI does; only the app's managed
+    // folders must sit on their parent's volume.
+    const mounted = carrying(undefined, 60, { platform: 'linux', extHome: { dev: '77', mode: 0o755 } })
+    expect(await mounted.folders.copyConversation!(A, X, { id: CID })).toEqual({ ok: true, carried: 'copied' })
+    expect(mounted.calls[0].toHome).toBe('/home/u/.codex')
+    // Leading into the app's own account folders: no Codex realm is used.
+    w.fs.rmdir('C:\\Users\\u\\Elsewhere')
+    w.fs.unlink(ext)
+    w.fs.link(ext, w.home(RB))
+    expect(await folders.copyConversation!(A, X, { id: CID })).toMatchObject({ ok: false, code: 'overlaps-external' })
+    expect(await folders.copyConversation!(X, A, { id: CID })).toMatchObject({ ok: false, code: 'overlaps-external' })
+    expect(calls).toHaveLength(2)
   })
 
   it('refused before any file work: a realm not in use, the same realm, a destination that is a link, not a conversation id', async () => {
@@ -1511,7 +1550,7 @@ describe('a conversation copied into another account\'s folder (P3.6, row 22)', 
     expect(calls).toEqual([])
   })
 
-  it('a sign-in, sign-out or removal holding either realm: busy, and nothing is left held', async () => {
+  it('a sign-in, sign-out or removal holding either realm past the short wait: busy, and nothing is left held', async () => {
     const { w, folders, calls, keyOf } = carrying()
     const held = w.locks.hold(keyOf(w.home(RB)))!
     expect(await folders.copyConversation!(A, B, { id: CID })).toMatchObject({ ok: false, code: 'busy' })
@@ -1523,9 +1562,47 @@ describe('a conversation copied into another account\'s folder (P3.6, row 22)', 
     expect(calls).toEqual([])
   })
 
+  it('two copies the opposite way at once (two sessions switched A to B and B to A): the second waits for the first, and both carry (ADR-009 thesis 13)', async () => {
+    const order: string[] = []
+    const { w, folders, calls, keyOf } = carrying(async (c) => {
+      order.push('start')
+      await new Promise((r) => setTimeout(r, 30))
+      order.push('end')
+      return { ok: true, carried: 'copied', bytes: 10 }
+    }, 2_000)
+    const [one, two] = await Promise.all([folders.copyConversation!(A, B, { id: CID }), folders.copyConversation!(B, A, { id: CID })])
+    expect(one).toEqual({ ok: true, carried: 'copied' })
+    expect(two).toEqual({ ok: true, carried: 'copied' })
+    expect(calls).toHaveLength(2)
+    // One at a time: the second began only once the first had ended.
+    expect(order).toEqual(['start', 'end', 'start', 'end'])
+    for (const h of [w.home(RA), w.home(RB)]) { const again = w.locks.hold(keyOf(h)); expect(again).not.toBeNull(); again!() }
+  })
+
+  it('a lock let go during the wait is taken; the wait is bounded', async () => {
+    const { w, folders, keyOf } = carrying(undefined, 2_000)
+    const held = w.locks.hold(keyOf(w.home(RB)))!
+    setTimeout(held, 40)
+    const t0 = Date.now()
+    expect(await folders.copyConversation!(A, B, { id: CID })).toEqual({ ok: true, carried: 'copied' })
+    expect(Date.now() - t0).toBeLessThan(1_500)
+    const short = carrying(undefined, 50)
+    const stuck = short.w.locks.hold(short.keyOf(short.w.home(RA)))!
+    const t1 = Date.now()
+    expect(await short.folders.copyConversation!(A, B, { id: CID })).toMatchObject({ ok: false, code: 'busy' })
+    expect(Date.now() - t1).toBeLessThan(1_500)
+    stuck()
+    // The default wait is a few seconds, never open-ended.
+    expect(CODEX_CARRY_LOCK_WAIT_MS).toBeGreaterThan(0)
+    expect(CODEX_CARRY_LOCK_WAIT_MS).toBeLessThanOrEqual(10_000)
+  })
+
   it('the carry\'s refusals in this module\'s words; a throw is io-failed; the locks go either way', async () => {
     const answers: Array<[unknown, Record<string, unknown>]> = [
       [{ ok: true, carried: 'present', bytes: 1 }, { ok: true, carried: 'present' }],
+      [{ ok: true, carried: 'extended', bytes: 1 }, { ok: true, carried: 'extended' }],
+      [{ ok: false, code: 'io-failed' }, { ok: false, code: 'io-failed', message: "The conversation could not be copied into the other Codex account's folder, so it was not carried over." }],
+      [{ ok: false, code: 'changed' }, { ok: false, code: 'changed', message: "The conversation's file, or a Codex account folder, changed while it was being copied, so it was not carried over." }],
       [{ ok: false, code: 'not-found' }, { ok: false, code: 'conversation-missing' }],
       [{ ok: false, code: 'exists-different' }, { ok: false, code: 'conversation-differs' }],
       [{ ok: false, code: 'too-large' }, { ok: false, code: 'too-large', message: 'This conversation is larger than the app carries between Codex accounts, so it was not carried over.' }],
@@ -1541,7 +1618,8 @@ describe('a conversation copied into another account\'s folder (P3.6, row 22)', 
       again!()
     }
     const { w, folders, keyOf } = carrying(() => { throw new Error('disk') })
-    expect(await folders.copyConversation!(A, B, { id: CID })).toMatchObject({ ok: false, code: 'io-failed' })
+    // Its own words, never a folder's creation or removal (quality round 1, item 6).
+    expect(await folders.copyConversation!(A, B, { id: CID })).toEqual({ ok: false, code: 'io-failed', message: "The conversation could not be copied into the other Codex account's folder, so it was not carried over." })
     for (const h of [w.home(RA), w.home(RB)]) { const again = w.locks.hold(keyOf(h)); expect(again).not.toBeNull(); again!() }
   })
 
@@ -1551,6 +1629,6 @@ describe('a conversation copied into another account\'s folder (P3.6, row 22)', 
     w.realms.set(RB, managed(RB, 'active'))
     w.fs.dir(w.home(RA))
     w.fs.dir(w.home(RB))
-    expect(await w.folders.copyConversation!(A, B, { id: CID })).toMatchObject({ ok: false, code: 'io-failed' })
+    expect(await w.folders.copyConversation!(A, B, { id: CID })).toMatchObject({ ok: false, code: 'io-failed', message: expect.stringMatching(/not carried over/) })
   })
 })
