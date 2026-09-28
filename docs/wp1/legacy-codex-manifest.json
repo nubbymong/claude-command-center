@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-28T17:04:26.923Z",
-  "head": "1609133621f04b32489131966c82207440b5d8a8",
-  "tree": "c0494fefe14ca9ffd1d9e1ef6f633d28762ae800",
+  "generatedAt": "2026-09-28T17:48:47.989Z",
+  "head": "259847f035df2dac2fc14d8ffa4c416177a457f9",
+  "tree": "38e670862ed2f5e4f4971817ad1a4168cce98e84",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2448,
+  "trackedFileCount": 2449,
   "excludedFileCount": 383,
-  "scannedFileCount": 2065,
+  "scannedFileCount": 2066,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -739,7 +739,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 31
+      "lineCount": 33
     },
     {
       "path": "src/main/providers/codex/spawn.ts",
@@ -759,7 +759,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 46
+      "lineCount": 47
     },
     {
       "path": "src/main/providers/codex/ui-detection.ts",
@@ -833,7 +833,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 139
+      "lineCount": 140
     },
     {
       "path": "src/main/sanitize-restored-spawn-options.ts",
@@ -2640,7 +2640,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 28
+      "lineCount": 31
     },
     {
       "path": "tests/unit/main/codex-review-mcp-tool.test.ts",
@@ -3100,7 +3100,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 40
+      "lineCount": 47
     },
     {
       "path": "tests/unit/providers/codex/spawn-resume.test.ts",
@@ -3110,7 +3110,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 77
+      "lineCount": 80
     },
     {
       "path": "tests/unit/providers/codex/spawn.test.ts",
@@ -3129,7 +3129,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 15
+      "lineCount": 19
     },
     {
       "path": "tests/unit/providers/codex/telemetry-claim-anywhere.test.ts",
@@ -3138,7 +3138,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 7
+      "lineCount": 9
     },
     {
       "path": "tests/unit/providers/codex/telemetry.test.ts",
@@ -4003,7 +4003,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 20
+      "lineCount": 21
     },
     {
       "path": "tests/unit/scripts/codex-resume-picker.test.ts",
