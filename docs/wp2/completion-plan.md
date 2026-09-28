@@ -255,7 +255,7 @@ Per PR:
   body and the ADR-009 verdict comment for the final head, and CI at that head.
   The verification its rows still owe is recorded in PR 4 (section 2).
 - **PR 3.** Phases P3.1 to P3.16 (section 8). The SSH live matrix is owed:
-  P3.5, P3.10, P3.11 and P3.12 edit `pty-manager.ts`.
+  P3.5, P3.6, P3.10, P3.11 and P3.12 edit `pty-manager.ts`.
 - **PR 4.** Phases P4.1 to P4.11 (section 9), including row 15, which OD20 D8
   makes a merge blocker. The SSH live matrix is owed if P4.1 or P4.3 edits
   `pty-manager.ts`.
@@ -345,7 +345,7 @@ from P3.1, and then only that row.
 | P3.3 Staged re-authentication | 11 | Y | N | APPROVED |
 | P3.4 Codex-only mode and provider status | 14, 45 | Y | N | APPROVED |
 | P3.5 History and resume | 32, 34, 35, 38 | Y | Y | APPROVED |
-| P3.6 Account chip and Switch account | 20, 22 | Y | N | APPROVED |
+| P3.6 Account chip and Switch account | 20, 22 | Y | Y | APPROVED |
 | P3.7 Statusline segments and settings | 36, 37 | N | N | APPROVED |
 | P3.8 Model, effort, pricing, compact, plan mode | 28, 39, 40, 41, 61, 69 | Y | N | APPROVED |
 | P3.9 Sentinel for Codex | 42 | Y | N | APPROVED |
@@ -661,6 +661,68 @@ radius: no, unless `pty-manager.ts` changes. Lifts P3.4's `needsClaude` from
 the showcase's accounts page (`showcase-pages.ts`) and What's New's "Switch
 mid-session." line (`WhatsNewV2Step.tsx`) once a Codex account switches
 mid-session, rewording them for both providers.
+Built (2026-09-28; 57ce396a, 68d00f62, 8274b3d1, 4439d7e2, bb99d2da; mocked).
+Row 7's migration and row 20: the chips that read the email-keyed Claude
+colour overrides (the strip, the sidebar card, the session header local and
+SSH, the launch picker, the Remote Resumable list) read the identity's colour
+when the account list names it, by the one Claude profile with that email
+(design 19: an email-keyed value migrates only when it resolves uniquely), or
+by the profile id in the launch picker; otherwise the override path is
+unchanged (no list yet, a profile not mirrored yet, an email no profile has
+or two share). The values were already carried into the identity's colour by
+the reconcile (the Claude legacy snapshot); nothing writes or removes an
+override, which stays the way back (no list, a downgrade) and is kept in step
+by the identity editor. The footer's plain Claude pill keeps its approved
+rule (usage track MP5), the same colour while the two are in step
+(`utils/accountChip.ts`). A Codex session carries its account chip on the
+strip (far left, as Claude's; hidden by the Account item of the Status Line
+settings; kept with the master switch off) and on line 3 of its sidebar card:
+the account it runs under, else the provider default, named by the footer's
+label rule and coloured by its identity. Row 36's account-chip segment is so
+built here; the Status Line settings and their Codex note stay P3.7's.
+Row 22 (and row 35's Switch half): the strip's pill and the right-click
+Switch Account list a Codex session's Codex accounts from one rule for every
+provider (`utils/switchAccountItems.ts`: current marked, inactive and
+needs-attention greyed, this computer's sign-in marked confirm at launch,
+archived left out; Claude's rows unchanged), offered for a local Codex
+session with two or more accounts, on every platform. A pick pins the account
+and saves it, then main carries the conversation
+(`providerAccounts:carryConversation`: a session id and an account id, a
+strict schema, the app window only; the conversation and the account it ran
+under are main's own record, pty-manager keeping the launch's account with
+the kept conversation), holding an operation lease on both accounts under the
+registry lock and both realm locks for the copy (`realm-folders.ts`
+copyConversation), the file work in `conversation-carry.ts` (P3.5's lookup in
+the source realm only, bounded at 256 MiB, whole lines, no link followed, an
+exclusive temporary file then a hard link that never replaces anything; the
+same bytes already there are present, anything else is refused); Restart then
+resumes it by id in the new account's folder through P3.5's path and checks.
+Section 5's fallback: a conversation that could not be carried starts a new
+one and the terminal says why, once, dimmed (`utils/launchNote.ts`). No usage
+read is started for the pick (ADR-022). A second pick while one is under way
+is ignored. What's New's line and the accounts page show with Claude Code off,
+reworded; the claude.ai sign-in the line also named is its own Claude-only
+line; the page's Insights point keeps the flag, per point. SSH radius: yes,
+`pty-manager.ts` changed (the Codex local branch and the kept-conversation
+map only).
+Stopped for the owner, not invented (section 5's fallback ships until each is
+decided): (1) switching TO the Codex sign-in already on this computer: the app
+has never written into that folder (it is adopted, read, and signed in or out
+through the CLI only), so nothing is carried there and the switch starts a new
+conversation with the note; (2) switching BACK to an account that still holds
+an older copy of the conversation: the copy never overwrites a different
+file, so that older copy is left and the session carries on from it, without
+what was said since on the other account, and the note says so.
+Owed: the server half of P3.1 answer 1 (whether OpenAI accepts a conversation
+resumed under another account; a second signed-in account on the VM, row 15's
+disposable identities, an owner action); a VM walk of the switch with real
+Codex 0.153.4 and 0.155.1 (managed to managed, from and to this computer's
+sign-in, back again, a conversation from an earlier day); the e2e suite at the
+final head; owner screenshots of the strip pill and its menu, the right-click
+menu, the sidebar card's Codex line, the chips' colours, and the reworded
+What's New and accounts pages, both themes; the ADR-009 pass (the copy, the
+leases, the IPC, the pty-manager record); the independent spec and quality
+reviews; the SSH live matrix at PR 3's final head.
 
 **P3.7 Statusline segments and settings.** The account chip, duration, and
 line counts if Codex reports them (P3.1); the Status Line settings cover them
