@@ -9,6 +9,7 @@ import {
   abandonAccountSetup, markSetupCredentialsWritten, setAccountLifecycle, setProviderDefault,
   recordAuthCheck, resolveLaunchBinding, providerDefaultAccount, selectableAccounts,
   reconcileAccountSignIn, setReviewerDefault, chooseReviewerAccount, parseRegistryDoc, linkAccountIdentity, restoreArchivedAccount,
+  REGISTRY_SCHEMA_VERSION,
 } from '../../src/shared/providers'
 import type { ProviderRegistryDoc, AccountLifecycle } from '../../src/shared/providers'
 
@@ -320,7 +321,7 @@ describe('the reviewer default (plan: provider review through MCP)', () => {
       expect(parseRegistryDoc(bad), String(v)).toMatchObject({ ok: false, reason: 'invalid' })
     }
     // A schema 2 file has no reviewer default: it reads as none chosen.
-    expect(parseRegistryDoc({ ...JSON.parse(JSON.stringify(two())), schemaVersion: 2 })).toMatchObject({ ok: true, doc: { schemaVersion: 3 } })
+    expect(parseRegistryDoc({ ...JSON.parse(JSON.stringify(two())), schemaVersion: 2 })).toMatchObject({ ok: true, doc: { schemaVersion: REGISTRY_SCHEMA_VERSION } })
   })
 
   it('the choice: the named account, else the reviewer default, else the provider default -- never a silent fallback past a chosen one', () => {

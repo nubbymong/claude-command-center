@@ -26,11 +26,12 @@ import type {
 /** Bump on ANY new field, record or list. The parser drops what it does not
  *  know and the next write persists that loss, so an older build must see a
  *  newer document as `newer-schema` (recovery), never as its own. */
-export const REGISTRY_SCHEMA_VERSION = 3 as const
-/** Older WP2 builds, never released: schema 1 had no `migrations` (it reads
- *  as none recorded yet), schema 2 no reviewer default (none chosen yet).
- *  Both are written back as the current schema. */
-const UPGRADABLE_SCHEMA_VERSIONS: readonly number[] = [1, 2]
+export const REGISTRY_SCHEMA_VERSION = 4 as const
+/** Older builds: schema 1 had no `migrations` (it reads as none recorded
+ *  yet), schema 2 no reviewer default (none chosen yet), schema 3 no staged
+ *  sign in again (none in progress, and no realm being retired). All are
+ *  written back as the current schema. */
+const UPGRADABLE_SCHEMA_VERSIONS: readonly number[] = [1, 2, 3]
 
 /** The last values Conductor and a legacy store agreed on, per field. A
  *  reconcile compares the legacy store and the registry against it to tell
@@ -65,6 +66,11 @@ export interface SetupJournal {
   state: SetupJournalState
   createdAt: number
   updatedAt: number
+  /** A staged sign in again of that account (design 9.2): this setup's realm
+   *  is its replacement, verified while the account's own realm stays in
+   *  use. The setup's own account id is used only if the new sign-in turns
+   *  out to be a separate account (releaseReauthAsSetup). */
+  replacesAccountId?: string
 }
 
 /** A legacy edit and a registry edit to the same field that disagree. The
@@ -318,6 +324,37 @@ function isRealmOnly(account: ProviderAccount, realm: AuthRealm | undefined): bo
   return account.identityAssurance === 'realm-only' || realm?.ownership === 'external-default'
 }
 
+/** The lifecycles of a realm an account has moved off (design 5.4, 9.2):
+ *  being retired, retired, or kept in recovery because its sign-in could not
+ *  be removed. Only such a realm may be owned by an account without being
+ *  its realm. */
+const SUPERSEDED_LIFECYCLES: readonly RealmLifecycle[] = ['retiring', 'retired', 'recovery']
+
+/** The realms an account moved off whose sign-in has not been removed yet
+ *  (retiring, or kept in recovery): while any is left the account needs
+ *  attention, and it is not archived. */
+export function unsettledSupersededRealms(doc: ProviderRegistryDoc, accountId: string): AuthRealm[] {
+  const account = findAccount(doc, accountId)
+  if (!account) return []
+  return doc.realms.filter((r) => r.ownerProviderAccountId === accountId && r.id !== account.authRealmId && (r.lifecycle === 'retiring' || r.lifecycle === 'recovery'))
+}
+
+/** Whether a provider operation may run in a realm at all: one being set up
+ *  or in use, or an app-managed one an account has moved off whose sign-in
+ *  is still to be removed (only a status check and a sign-out run there).
+ *  Never a retired realm: an archived account's may name the external home
+ *  a newer account now uses. */
+export function realmOperable(realm: Pick<AuthRealm, 'lifecycle' | 'ownership'> | undefined): boolean {
+  if (!realm) return false
+  if (realm.lifecycle === 'pending' || realm.lifecycle === 'active') return true
+  return (realm.lifecycle === 'retiring' || realm.lifecycle === 'recovery') && realm.ownership === 'conductor-managed'
+}
+
+/** The staged sign in again of an account in progress, if any. */
+export function reauthJournalOf(doc: ProviderRegistryDoc, accountId: string): SetupJournal | undefined {
+  return doc.journals.find((j) => j.replacesAccountId === accountId)
+}
+
 /** An identity an unverified sign-in shows: nothing else may join it, or a
  *  guess would name a real account (and its name and colour would be
  *  written into a provider's own list). */
@@ -521,6 +558,9 @@ export interface CommitSetupInput {
 export function commitAccountSetup(doc: ProviderRegistryDoc, accountId: string, input: CommitSetupInput, now: number): RegistryResult {
   const journal = doc.journals.find((j) => j.accountId === accountId)
   if (!journal) return fail('not-found', `no setup in progress for ${accountId}`)
+  // A staged sign in again ends in the switch (rebindAccountRealm), or is
+  // released as a plain setup first when it is a separate account.
+  if (journal.replacesAccountId !== undefined) return fail('lifecycle', 'this sign-in replaces an existing account\'s; it is not a new account')
   if (!findIdentity(doc, input.identityId)) return fail('not-found', `identity ${input.identityId} does not exist`)
   if (!oneOf(AUTH_METHODS, input.authMethod)) return fail('invalid-value', 'unknown sign-in method')
   if (!oneOf(AUTH_STATES, input.lastKnownAuthState)) return fail('invalid-value', 'unknown auth state')
@@ -572,6 +612,161 @@ export function abandonAccountSetup(doc: ProviderRegistryDoc, accountId: string)
     ...doc,
     realms: doc.realms.filter((r) => !(r.id === journal.realmId && r.lifecycle === 'pending')),
     journals: doc.journals.filter((j) => j.accountId !== accountId),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Staged sign in again (design 9.2; WP1.52)
+// ---------------------------------------------------------------------------
+
+export interface BeginReauthInput {
+  /** The setup's own reserved account id: used only if the new sign-in turns
+   *  out to be a separate account. */
+  accountId: string
+  /** The replacement realm, reserved now. */
+  realmId: string
+  /** The account signing in again. */
+  replacesAccountId: string
+  method: AuthMethod
+  credentialStoreMode?: CredentialStoreMode
+}
+
+/** Reserve a replacement realm for an account that is signing in again. The
+ *  pinned provider flows clear a realm's sign-in before they try the new one,
+ *  so the new sign-in runs in a new, journalled realm while the account's own
+ *  realm stays in use; nothing about the account changes until the switch.
+ *  Only an app-managed account the user can sign in again (not archived, not
+ *  blocked, not a provider's own list's record, not the external home), and
+ *  one at a time per account. */
+export function beginAccountReauth(doc: ProviderRegistryDoc, input: BeginReauthInput, now: number): RegistryResult {
+  const target = findAccount(doc, input.replacesAccountId)
+  if (!target) return fail('not-found', `account ${input.replacesAccountId} does not exist`)
+  if (target.lifecycle === 'archived') return fail('lifecycle', 'an archived account does not sign in again')
+  if (target.operationalState === 'blocked') return fail('lifecycle', 'this account is blocked until its sign-in is reconciled')
+  if (isLegacyRecord(doc, target)) return fail('legacy-owned', 'this account signs in again where it was created')
+  const current = findRealm(doc, target.authRealmId)
+  if (!current || current.ownership !== 'conductor-managed' || current.lifecycle !== 'active') return fail('realm-conflict', 'only an app-managed sign-in in use is signed in again this way')
+  if (reauthJournalOf(doc, target.id)) return fail('duplicate', 'this account is already signing in again')
+  const begun = beginAccountSetup(doc, {
+    accountId: input.accountId, realmId: input.realmId, providerId: target.providerId, method: input.method,
+    realmKind: current.kind, ownership: 'conductor-managed', pathRef: `${MANAGED_PATH_REF_PREFIX}${input.realmId}`,
+    ...(input.credentialStoreMode !== undefined ? { credentialStoreMode: input.credentialStoreMode } : {}),
+  }, now)
+  if (!begun.ok) return begun
+  return done({ ...begun.doc, journals: begun.doc.journals.map((j) => (j.accountId === input.accountId ? { ...j, replacesAccountId: target.id } : j)) })
+}
+
+export type ReauthDecision = 'rebind' | 'separate' | 'conflict'
+
+/** Who signed in, as design 9.2 decides it, provider-neutrally:
+ *  - a reliable subject another live account already holds: `conflict`
+ *    (neither this account nor a second one over the same sign-in);
+ *  - the account has a subject on record and a reliable one is reported:
+ *    `rebind` when the pair is byte-identical, else `separate` (another
+ *    person or another authority never inherits this account's history);
+ *  - a report that cannot be read against a recorded subject (malformed, or
+ *    without its authority) is never evidence of the same person: `separate`;
+ *  - nothing reliable to compare (no subject reported, or none on record):
+ *    the user's own answer, `rebind` for "the same account as before", else
+ *    `separate`. */
+export function decideReauth(
+  doc: ProviderRegistryDoc,
+  journalAccountId: string,
+  reported: { providerSubject?: string; providerAuthorityId?: string },
+  sameAccount: boolean,
+): { ok: true; decision: ReauthDecision } | { ok: false; code: RegistryErrorCode; message: string } {
+  const journal = doc.journals.find((j) => j.accountId === journalAccountId)
+  if (!journal?.replacesAccountId) return { ok: false, code: 'not-found', message: `no sign in again in progress for ${journalAccountId}` }
+  const target = findAccount(doc, journal.replacesAccountId)
+  if (!target) return { ok: false, code: 'not-found', message: `account ${journal.replacesAccountId} does not exist` }
+  const answer: ReauthDecision = sameAccount ? 'rebind' : 'separate'
+  const subject = safeToken(reported.providerSubject, SUBJECT_MAX)
+  const authority = safeToken(reported.providerAuthorityId, SUBJECT_MAX)
+  const reportedAny = reported.providerSubject !== undefined || reported.providerAuthorityId !== undefined
+  const reliable = subject !== undefined && authority !== undefined
+  if (reliable && subjectTaken(doc, target.providerId, authority, subject, target.id)) return { ok: true, decision: 'conflict' }
+  const recorded = target.providerSubject !== undefined && target.providerAuthorityId !== undefined
+  if (recorded && reportedAny) {
+    return { ok: true, decision: reliable && subject === target.providerSubject && authority === target.providerAuthorityId ? 'rebind' : 'separate' }
+  }
+  return { ok: true, decision: answer }
+}
+
+/** The switch (design 9.2): after the decision, the account moves to its
+ *  verified replacement realm in one transition. The replacement becomes
+ *  active and the account's; the old realm starts being retired (its
+ *  sign-in is removed next, and it stays visible until that is done); the
+ *  journal goes. The new sign-in is recorded exactly as a status check
+ *  records it (recordAuthCheck): a credential of another kind blocks the
+ *  account, and a reliable subject is adopted when none was on record.
+ *
+ *  Refused, changing nothing: no staged sign in again under that id; an
+ *  account no longer there, archived or blocked; a status other than signed
+ *  in; a reliable reported subject that differs from the recorded one or that
+ *  another live account holds, and a subject reported without its authority
+ *  against a recorded one (decideReauth says `separate` or `conflict`). */
+export function rebindAccountRealm(doc: ProviderRegistryDoc, journalAccountId: string, input: AuthCheckInput, now: number): RegistryResult {
+  const journal = doc.journals.find((j) => j.accountId === journalAccountId)
+  if (!journal?.replacesAccountId) return fail('not-found', `no sign in again in progress for ${journalAccountId}`)
+  const target = findAccount(doc, journal.replacesAccountId)
+  if (!target) return fail('not-found', `account ${journal.replacesAccountId} does not exist`)
+  if (target.lifecycle === 'archived' || target.operationalState === 'blocked') return fail('lifecycle', 'this account cannot take a new sign-in now')
+  if (input.state !== 'signed-in') return fail('invalid-value', 'only a verified sign-in replaces an account\'s')
+  const decided = decideReauth(doc, journalAccountId, input, true)
+  if (!decided.ok) return decided
+  if (decided.decision !== 'rebind') return fail('subject-conflict', 'the new sign-in is not this account')
+  const replacement = findRealm(doc, journal.realmId)
+  if (!replacement || replacement.lifecycle !== 'pending' || replacement.providerId !== target.providerId) return fail('realm-conflict', 'the replacement sign-in location is not ready')
+  const oldRealmId = target.authRealmId
+  const moved: ProviderRegistryDoc = {
+    ...doc,
+    accounts: doc.accounts.map((a) => (a.id === target.id ? { ...a, authRealmId: replacement.id } : a)),
+    realms: doc.realms.map((r) => {
+      if (r.id === replacement.id) return { ...r, ownerProviderAccountId: target.id, lifecycle: 'active' as const, lastValidatedAt: now }
+      if (r.id === oldRealmId) return { ...r, lifecycle: 'retiring' as const }
+      return r
+    }),
+    journals: doc.journals.filter((j) => j.accountId !== journalAccountId),
+  }
+  return recordAuthCheck(moved, target.id, input, now)
+}
+
+/** A staged sign in again that turned out to be someone else (a reliable
+ *  mismatch): its setup becomes a plain one, to be named as a new account.
+ *  The account it was for is untouched and keeps its own realm. */
+export function releaseReauthAsSetup(doc: ProviderRegistryDoc, journalAccountId: string, now: number): RegistryResult {
+  const journal = doc.journals.find((j) => j.accountId === journalAccountId)
+  if (!journal?.replacesAccountId) return fail('not-found', `no sign in again in progress for ${journalAccountId}`)
+  return done({
+    ...doc,
+    journals: doc.journals.map((j) => {
+      if (j.accountId !== journalAccountId) return j
+      const { replacesAccountId: _r, ...plain } = j
+      return { ...plain, updatedAt: now }
+    }),
+  })
+}
+
+/** Settle a realm an account moved off: `retired` once its sign-in has been
+ *  removed (and the replacement still reads signed in), else `recovery`, a
+ *  visible state a later check retries. The account needs attention while
+ *  any such realm is unsettled, and is ready again (if its own sign-in is)
+ *  once none is. Only a superseded realm: never an account's own. */
+export function settleSupersededRealm(doc: ProviderRegistryDoc, realmId: string, outcome: 'retired' | 'recovery', now: number): RegistryResult {
+  const realm = findRealm(doc, realmId)
+  if (!realm) return fail('not-found', `realm ${realmId} does not exist`)
+  const owner = findAccount(doc, realm.ownerProviderAccountId)
+  if (!owner || owner.authRealmId === realmId || (realm.lifecycle !== 'retiring' && realm.lifecycle !== 'recovery')) {
+    return fail('lifecycle', 'only a realm an account has moved off is retired this way')
+  }
+  if (outcome !== 'retired' && outcome !== 'recovery') return fail('invalid-value', 'unknown outcome')
+  const realms = doc.realms.map((r) => (r.id === realmId ? { ...r, lifecycle: outcome } : r))
+  const next: ProviderRegistryDoc = { ...doc, realms }
+  const unsettled = unsettledSupersededRealms(next, owner.id).length > 0
+  const operationalState: OperationalState = owner.operationalState === 'blocked' ? 'blocked' : unsettled ? 'attention' : operationalFor(owner.lastKnownAuthState)
+  return done({
+    ...next,
+    accounts: next.accounts.map((a) => (a.id === owner.id && a.operationalState !== operationalState ? { ...a, operationalState, updatedAt: now } : a)),
   })
 }
 
@@ -637,6 +832,10 @@ export function setAccountLifecycle(
   if (!allowed) return fail('lifecycle', `an ${from} account cannot become ${next}`)
   if (next !== 'active' && ctx.consumers > 0) return fail('blocked-by-consumers', `${ctx.consumers} running session(s) or operation(s) use this account`)
   if (next === 'active' && account.operationalState === 'blocked') return fail('lifecycle', 'this account is blocked until its sign-in is reconciled')
+  // An archived account keeps no sign-in: not while its old one is still to
+  // be removed, nor while a sign in again of it is still listed.
+  if (next === 'archived' && unsettledSupersededRealms(doc, accountId).length > 0) return fail('lifecycle', 'the old sign-in of this account has not been removed yet')
+  if (next === 'archived' && reauthJournalOf(doc, accountId)) return fail('lifecycle', 'a sign in again of this account is not finished')
   if (isLegacyLinked(doc, accountId)) {
     // The legacy store cannot express either: it has no "archived" (removal is
     // done where the account was created) and its default is always active.
@@ -798,7 +997,9 @@ export function recordAuthCheck(doc: ProviderRegistryDoc, accountId: string, inp
       next.providerAuthorityId = authority
     }
   }
-  next.operationalState = drift ? 'blocked' : operationalFor(input.state)
+  // An old sign-in still to be removed (a sign in again's old realm) keeps
+  // the account needing attention whatever this check says.
+  next.operationalState = drift ? 'blocked' : unsettledSupersededRealms(doc, accountId).length > 0 ? 'attention' : operationalFor(input.state)
   return done({ ...doc, accounts: doc.accounts.map((a) => (a.id === accountId ? compact(next) : a)) })
 }
 
@@ -832,7 +1033,10 @@ export function reconcileAccountSignIn(doc: ProviderRegistryDoc, accountId: stri
   if (account.lifecycle === 'archived') return fail('lifecycle', 'an archived account is not reconciled')
   if (input.state !== 'signed-in' && input.state !== 'signed-out' && input.state !== 'expired') return fail('invalid-value', 'a reconcile needs a status the provider answered')
   if (input.observedCredential !== undefined && input.observedCredential !== 'account' && input.observedCredential !== 'api-key') return fail('invalid-value', 'unknown credential kind')
-  const next: ProviderAccount = { ...account, lastKnownAuthState: input.state, lastValidatedAt: now, updatedAt: now, operationalState: operationalFor(input.state) }
+  const next: ProviderAccount = {
+    ...account, lastKnownAuthState: input.state, lastValidatedAt: now, updatedAt: now,
+    operationalState: unsettledSupersededRealms(doc, accountId).length > 0 ? 'attention' : operationalFor(input.state),
+  }
   if (input.state === 'signed-in') next.lastAuthenticatedAt = now
   const reported = input.providerSubject !== undefined || input.providerAuthorityId !== undefined
   if (reported) {
@@ -981,6 +1185,7 @@ export function checkRegistryInvariants(doc: ProviderRegistryDoc): string[] {
     if (r.ownerProviderAccountId !== a.id) problems.push(`realm ${r.id} owner is ${r.ownerProviderAccountId}, not ${a.id}`)
     if (r.providerId !== a.providerId) problems.push(`realm ${r.id} provider ${r.providerId} differs from account ${a.id}`)
     if (r.lifecycle === 'pending') problems.push(`account ${a.id} is committed but its realm ${r.id} is still pending`)
+    if (r.lifecycle === 'retiring' || r.lifecycle === 'recovery') problems.push(`account ${a.id} is on its realm ${r.id}, which is being retired`)
     if (r.ownership === 'external-default' && a.identityAssurance !== 'realm-only') problems.push(`account ${a.id} on the external default home is not realm-only`)
   }
   const linkedProfiles = new Set(doc.legacyLinks.map((l) => `${l.accountId}|${l.legacyId}`))
@@ -990,9 +1195,12 @@ export function checkRegistryInvariants(doc: ProviderRegistryDoc): string[] {
     const owner = accounts.get(r.ownerProviderAccountId)
     const journal = journals.get(r.ownerProviderAccountId)
     if (owner) {
-      // One realm per account: an owned realm that is not the owner's own is
-      // an orphan still holding a reference.
-      if (owner.authRealmId !== r.id) problems.push(`realm ${r.id} is owned by ${owner.id} but is not its realm`)
+      // One current realm per account: an owned realm that is not the
+      // owner's own is an orphan still holding a reference, unless it is an
+      // app-managed realm the account moved off (a sign in again), being
+      // retired, retired or kept in recovery.
+      const superseded = SUPERSEDED_LIFECYCLES.includes(r.lifecycle) && r.ownership === 'conductor-managed'
+      if (owner.authRealmId !== r.id && !superseded) problems.push(`realm ${r.id} is owned by ${owner.id} but is not its realm`)
     } else if (!(journal && journal.realmId === r.id && r.lifecycle === 'pending' && journal.providerId === r.providerId)) {
       problems.push(`realm ${r.id} owner ${r.ownerProviderAccountId} is neither an account nor a setup in progress`)
     }
@@ -1003,9 +1211,19 @@ export function checkRegistryInvariants(doc: ProviderRegistryDoc): string[] {
       if (!linkedProfiles.has(`${r.ownerProviderAccountId}|${profileId}`)) problems.push(`realm ${r.id} names profile ${profileId} but its account is not linked to it`)
     }
   }
+  const replaced = new Set<string>()
   for (const j of doc.journals) {
     const r = realmsById.get(j.realmId)
     if (!r || r.lifecycle !== 'pending' || r.ownerProviderAccountId !== j.accountId) problems.push(`setup ${j.accountId} has no pending realm ${j.realmId}`)
+    if (j.replacesAccountId === undefined) continue
+    // A staged sign in again names a live, app-managed account of its own
+    // provider, and only one runs per account.
+    const target = accounts.get(j.replacesAccountId)
+    if (!target || target.providerId !== j.providerId || target.lifecycle === 'archived' || isLegacyRecord(doc, target) || r?.ownership !== 'conductor-managed') {
+      problems.push(`setup ${j.accountId} replaces ${j.replacesAccountId}, which cannot sign in again`)
+    }
+    if (replaced.has(j.replacesAccountId)) problems.push(`two sign-ins again replace ${j.replacesAccountId}`)
+    replaced.add(j.replacesAccountId)
   }
 
   const livePaths = new Map<string, string>()
@@ -1193,7 +1411,10 @@ function parseJournal(o: unknown): Parsed<SetupJournal> {
   if (!oneOf(AUTH_METHODS, o.method)) return X('setup journal names an unknown method')
   if (!oneOf(JOURNAL_STATES, o.state)) return X('setup journal state is invalid')
   if (!isTime(o.createdAt) || !isTime(o.updatedAt)) return X('setup journal timestamps are invalid')
-  return P({ accountId: o.accountId as string, realmId: o.realmId as string, providerId: o.providerId, method: o.method, state: o.state, createdAt: o.createdAt, updatedAt: o.updatedAt })
+  if (o.replacesAccountId !== undefined && !isOpaqueId(o.replacesAccountId, 'account')) return X('setup journal names an invalid account to replace')
+  const journal: SetupJournal = { accountId: o.accountId as string, realmId: o.realmId as string, providerId: o.providerId, method: o.method, state: o.state, createdAt: o.createdAt, updatedAt: o.updatedAt }
+  if (o.replacesAccountId !== undefined) journal.replacesAccountId = o.replacesAccountId as string
+  return P(journal)
 }
 
 function parseLegacyLink(o: unknown): Parsed<LegacyLink> {

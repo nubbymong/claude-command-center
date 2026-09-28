@@ -280,7 +280,8 @@ describe('what each account shows (plan section 3)', () => {
     const a = await addCodexAccount(t.h, 'A')
     t.fs.rollout(sessionsOf(t.h, a), 30)
     const realmId = t.h.doc().accounts.find((x) => x.id === a)!.authRealmId
-    const r = await t.h.store.mutate((d) => ({ ok: true, doc: { ...d, realms: d.realms.map((x) => (x.id === realmId ? { ...x, lifecycle: 'retiring' as const } : x)) } }))
+    // Retired (P3.3: an account's own realm is never "retiring", only one it moved off).
+    const r = await t.h.store.mutate((d) => ({ ok: true, doc: { ...d, realms: d.realms.map((x) => (x.id === realmId ? { ...x, lifecycle: 'retired' as const } : x)) } }))
     expect(r.ok).toBe(true)
     t.fs.calls.length = 0
     expect(await t.h.service.readAccountUsage({ accountId: a })).toEqual({ ok: true, usage: { accountId: a, providerId: 'codex', status: 'error', buckets: [] } })
