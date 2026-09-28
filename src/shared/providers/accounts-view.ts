@@ -259,6 +259,19 @@ export type AccountsFailure = {
   state?: KnownAuthState
 }
 
+/**
+ * P3.6 (row 22): a respawn of a session under another account whose
+ * conversation did not come along whole (main's carry, pty:spawn): main's
+ * reason in its own words, and what the launch actually did -- resumed the
+ * conversation from a copy already in that account, or started a new one.
+ * Absent when the conversation was carried and resumed, or there was none.
+ */
+export interface ConversationCarryNotice {
+  code: AccountsFailureCode
+  message: string
+  resumed: boolean
+}
+
 export type AccountsResult<T extends object = object> = ({ ok: true } & T) | AccountsFailure
 
 /** An install or update recipe as the surface shows it: the documented

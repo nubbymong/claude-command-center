@@ -30,6 +30,10 @@ vi.mock('../../../src/main/pty-manager', () => ({
   spawnPty, writePty: vi.fn(), resizePty: vi.fn(), killPty: vi.fn(), getSshFlow: () => flow, endSshRemote: vi.fn(),
   beginSpawnPreparation, holdsCodexLaunchLease: () => false, codexLaunchLeaseTaken: () => false,
   isSessionWritable: (id: string) => live.has(id),
+  // P3.6: no conversation kept, so a Codex spawn carries nothing.
+  getKeptCodexConversationSource: () => undefined,
+  getKeptCodexConversation: () => undefined,
+  codexRunEnded: async () => true,
 }))
 vi.mock('../../../src/main/debug-capture', () => ({ logUserInput: vi.fn(), isDebugModeEnabled: () => false }))
 vi.mock('../../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }))

@@ -25,13 +25,14 @@ import { forgetSessionBrowserProfile } from '../stores/sshCloseStore'
 import { hasSpawned, markSpawned, clearSpawned, killSessionPty, isCurrentSpawn } from '../ptyTracker'
 import { spentCommand } from '../utils/commandTerminal'
 import { listenForSpawnEnd, reportSpawnEnd } from '../utils/spawnEndNotice'
-import { takeLaunchNote } from '../utils/launchNote'
+import { carryNote, terminalNoteLine } from '../utils/launchNote'
+import { sessionProviderAccount } from '../utils/accountChip'
 import SshFlowOverlay from './SshFlowOverlay'
 import { shouldUseResumePicker } from '../utils/resumePicker'
 import { shouldGateAccountChoice } from '../utils/sessionLaunch'
 import { resolveLaunchAccount, launchStep, accountsSnapshotWhenLoaded, describeLaunchFailure, providerOffForLaunch, type LaunchAccountFields, type LaunchAccountPlan, type LaunchFailureContext, type LaunchStep } from '../utils/launchAccount'
 import { createSpawnExitHold, type SpawnExitHold, type SpawnOutcome } from '../utils/spawnExitHold'
-import { useProviderAccountsStore, providerView } from '../stores/providerAccountsStore'
+import { useProviderAccountsStore, providerView, accountDisplayName } from '../stores/providerAccountsStore'
 import { useLaunchAckStore, consumeLaunchAcknowledgement } from '../stores/launchAckStore'
 import { stripCursorSequences } from '../utils/terminalFormatting'
 import { isControlReportOnly, resolveContextMenuIntent, blindPasteNeedsMenu, sanitizeClipboardForPaste, sanitizePasteIntoTerminal, isMouseTracking, isOrdinaryEditable } from '../utils/terminalInput'
@@ -935,6 +936,13 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           // carries the name from its first run (#119 rename → logs durability).
           const configLabel = session?.customName?.trim() || session?.label || 'default'
           const useResumePicker = shouldUseResumePicker(sessionId)
+          // P3.6: the account a launch ran on, by the footer's label rule,
+          // for the line a Switch account's respawn may say.
+          const launchAccountName = (accountId: string | undefined): string => {
+            const snap = useProviderAccountsStore.getState().snapshot
+            const account = sessionProviderAccount({ provider, providerAccountId: accountId }, snap)
+            return account ? accountDisplayName(snap, account) : 'the new account'
+          }
           // WP2 (plan A10, design 5.5): a Codex session names the account it
           // runs under, and a launch on an unverified sign-in (this computer's
           // own ~/.codex) carries THIS launch's acknowledgement -- the New
@@ -1003,11 +1011,6 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           // account gate leaves the session unspawned and re-gates on remount.
           const startSpawn = (resolvedProfileId: string | undefined, account: LaunchAccountFields, failure: LaunchFailureContext) => {
             const spawnToken = markSpawned(sessionId)
-            // P3.6 (row 22): a line a Switch account left for this start (the
-            // conversation could not be carried over: utils/launchNote), said
-            // once, dimmed, before the session's own output.
-            const launchNote = takeLaunchNote(sessionId)
-            if (launchNote) term?.writeln(`\x1b[90m${launchNote}\x1b[0m`)
             // T8b (bug #5): app-relaunch ONLY. A restored session carries the
             // persisted exact-conversation target; pass it as `resume` so the
             // first spawn resumes THAT conversation (cwd-overridden in main).
@@ -1078,6 +1081,12 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
                   if (nothingStarted) endSpawnElsewhere(spawnToken, `\r\n\x1b[90m${endText}\x1b[0m`)
                   return
                 }
+                // P3.6 (row 22): a respawn on another account (a Switch
+                // account) whose conversation did not come along whole says
+                // so once, dimmed, before the session's own output: main's
+                // reason, and what the launch did (utils/launchNote).
+                const carried = !nothingStarted && result && typeof result === 'object' && 'carry' in result ? result.carry : undefined
+                if (carried) term?.writeln(`\x1b[90m${terminalNoteLine(carryNote(carried, launchAccountName(account.providerAccountId)))}\x1b[0m`)
                 // Settled with a PTY: an exit held meanwhile was the replaced
                 // run's, and is dropped. Main starting nothing (a preparation
                 // closed or swept meanwhile) ends the start here instead.

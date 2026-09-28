@@ -686,33 +686,42 @@ provider (`utils/switchAccountItems.ts`: current marked, inactive and
 needs-attention greyed, this computer's sign-in marked confirm at launch,
 archived left out; Claude's rows unchanged), offered for a local Codex
 session with two or more accounts, on every platform. A pick pins the account
-and saves it, then main carries the conversation
-(`providerAccounts:carryConversation`: a session id and an account id, a
-strict schema, the app window only; the conversation and the account it ran
-under are main's own record, pty-manager keeping the launch's account with
-the kept conversation), holding an operation lease on both accounts under the
-registry lock and both realm locks for the copy (`realm-folders.ts`
-copyConversation), the file work in `conversation-carry.ts` (P3.5's lookup in
-the source realm only, bounded at 256 MiB, whole lines, no link followed, an
-exclusive temporary file then a hard link that never replaces anything; the
-same bytes already there are present, anything else is refused); Restart then
-resumes it by id in the new account's folder through P3.5's path and checks.
-Section 5's fallback: a conversation that could not be carried starts a new
-one and the terminal says why, once, dimmed (`utils/launchNote.ts`). No usage
-read is started for the pick (ADR-022). A second pick while one is under way
-is ignored. What's New's line and the accounts page show with Claude Code off,
+and saves it, then restarts the session on it, as Claude's switch does; main's
+respawn of that session carries the conversation (fix round 1: kill, carry,
+spawn, in `pty:spawn`, once the old process has ended, waiting at most 5 s;
+the conversation and the account it ran under are main's own record of the
+session being respawned, pty-manager keeping the launch's account with the
+kept conversation, and the destination is the account the launch was prepared
+on; no renderer channel names a conversation, so the first build's
+`providerAccounts:carryConversation` is gone), holding an operation lease on
+both accounts under the registry lock and both realm locks for the copy
+(`realm-folders.ts` copyConversation; a copy the other way at once is waited
+for, briefly), the file work in `conversation-carry.ts` (P3.5's lookup in the
+source realm only, bounded at 256 MiB, whole lines, no link followed, an
+exclusive temporary file in the destination's sessions folder then a hard
+link that never replaces anything, checked after it lands; a temporary file a
+stopped carry left is swept by the next one once stale; the same bytes already
+there are present, an earlier copy that is exactly the start of the
+conversation has the rest added in place, anything else is refused); the
+launch then resumes it by id in the new account's folder through P3.5's path
+and checks. Section 5's fallback: when the conversation did not come along
+whole, the spawn answers main's reason and whether the launch resumed it from
+a copy already there, and the terminal says so, once, dimmed, in words true
+for that (`utils/launchNote.ts`, with the app's spoofing-character rule).
+No usage read is started for the pick (ADR-022). A second pick while one is
+under way is ignored. What's New's line and the accounts page show with Claude Code off,
 reworded; the claude.ai sign-in the line also named is its own Claude-only
 line; the page's Insights point keeps the flag, per point. SSH radius: yes,
-`pty-manager.ts` changed (the Codex local branch and the kept-conversation
-map only).
-Stopped for the owner, not invented (section 5's fallback ships until each is
-decided): (1) switching TO the Codex sign-in already on this computer: the app
-has never written into that folder (it is adopted, read, and signed in or out
-through the CLI only), so nothing is carried there and the switch starts a new
-conversation with the note; (2) switching BACK to an account that still holds
-an older copy of the conversation: the copy never overwrites a different
-file, so that older copy is left and the session carries on from it, without
-what was said since on the other account, and the note says so.
+`pty-manager.ts` changed (the Codex local branch, the kept-conversation
+map, and the Codex-only branch of killPty that records a run's end).
+The two questions the first build stopped on were settled by the owner in the
+P3.6 review and built in fix round 1: (1) a switch TO this computer's own
+sign-in carries the conversation into its sessions folder under the same rules
+as a managed one's, by parity (every Claude profile's projects folder is the
+one ~/.claude/projects); (2) a switch BACK to an account whose copy is exactly
+the start of the conversation brings that copy up to date; only a copy that
+went its own way there is left as it is, the session carrying on from it and
+the note saying so.
 Owed: the server half of P3.1 answer 1 (whether OpenAI accepts a conversation
 resumed under another account; a second signed-in account on the VM, row 15's
 disposable identities, an owner action); a VM walk of the switch with real
@@ -721,11 +730,11 @@ sign-in, back again, a conversation from an earlier day); the e2e suite at the
 final head; owner screenshots of the strip pill and its menu, the right-click
 menu, the sidebar card's Codex line, the chips' colours, and the reworded
 What's New and accounts pages, both themes; the ADR-009 pass (the copy, the
-leases, the IPC, the pty-manager record); the independent spec and quality
+leases, the respawn's carry in pty:spawn, the pty-manager record); the independent spec and quality
 reviews; the SSH live matrix at PR 3's final head.
 
-**P3.7 Statusline segments and settings.** The account chip, duration, and
-line counts if Codex reports them (P3.1); the Status Line settings cover them
+**P3.7 Statusline segments and settings.** Duration and line counts if Codex
+reports them (P3.1; the account chip landed in P3.6); the Status Line settings cover them
 and the Codex note there is updated. Likely files: `providers/codex/telemetry.ts`,
 `SessionStatusStrip.tsx`, `SettingsPage.tsx`. The C item "narrow-window
 overlap" fits here.

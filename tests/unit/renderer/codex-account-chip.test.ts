@@ -160,3 +160,43 @@ describe('the sidebar card shows it too (P3.6, row 20)', () => {
     expect(container.querySelector('[data-testid="card-line3"]')).toBeNull()
   })
 })
+
+// P3.6 (quality round 1, item 5): the strip and each card read their chip,
+// never the whole account list, so a change elsewhere in it re-renders none
+// of them; a change to the chip itself still shows at once.
+describe('the strip and the card read only their chip from the account list', () => {
+  const props = {
+    isActive: false, needsAttention: false, isRenaming: false, renameValue: '', renameRef: { current: null },
+    onRenameChange: () => {}, onRenameFinish: () => {}, onRenameCancel: () => {}, onClick: () => {}, onContextMenu: () => {},
+  }
+  async function both(session: Record<string, unknown>, onRender: () => void) {
+    sessionState = { activeSessionId: session.id as string, sessions: [session] }
+    await act(async () => {
+      root.render(React.createElement(React.Profiler, { id: 'chips', onRender },
+        React.createElement(SessionStatusStrip, { sessionId: session.id as string }),
+        React.createElement(SessionRow, { ...(props as any), session: { label: 'api', identityColorKey: 'mauve', color: '', createdAt: 0, sessionType: 'local', ...session } })))
+      await Promise.resolve()
+    })
+  }
+
+  it('a Codex session: a new list with the same chip re-renders neither; a renamed identity shows on both', async () => {
+    let renders = 0
+    await both({ id: 'x10', provider: 'codex', status: 'idle', providerAccountId: personal.id }, () => { renders++ })
+    const before = renders
+    await act(async () => { useProviderAccountsStore.setState({ snapshot: { ...snapshot(), revision: 99 } }) })
+    await act(async () => { useProviderAccountsStore.setState({ snapshot: snapshot({ accounts: snapshot().accounts.map((a) => (a.id === claudeMain.id ? { ...a, providerLabel: 'else@example.com' } : a)) }) }) })
+    expect(renders).toBe(before)
+    await act(async () => { useProviderAccountsStore.setState({ snapshot: snapshot({ identities: snapshot().identities.map((i) => (i.id === 'id-personal' ? { ...i, friendlyName: 'Home' } : i)) }) }) })
+    expect(renders).toBeGreaterThan(before)
+    expect(container.querySelector('[data-testid="account-name"]')!.textContent).toBe('Home')
+    expect(Array.from(container.querySelectorAll('button')).some((b) => b.textContent === 'Home')).toBe(true)
+  })
+
+  it('a Claude session: its email chip\'s colour alone is read, so a new list with the same colour re-renders neither', async () => {
+    let renders = 0
+    await both({ id: 'x11', provider: 'claude', status: 'idle', accountEmail: 'alex@claude.example' }, () => { renders++ })
+    const before = renders
+    await act(async () => { useProviderAccountsStore.setState({ snapshot: { ...snapshot(), revision: 7 } }) })
+    expect(renders).toBe(before)
+  })
+})

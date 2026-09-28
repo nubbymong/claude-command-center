@@ -236,7 +236,7 @@ export interface ElectronAPI {
       providerAccountId?: string
       /** WP2: THIS launch's acknowledgement of an unverified sign-in. */
       acknowledgeRealmOnly?: boolean
-    }) => Promise<{ started: false } | ({ started: false } & import('../shared/providers').ProviderLaunchRefused) | void>
+    }) => Promise<{ started: false } | ({ started: false } & import('../shared/providers').ProviderLaunchRefused) | { started: true; carry: import('../shared/providers').ConversationCarryNotice } | void>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void
     kill: (sessionId: string) => void
@@ -671,9 +671,6 @@ export interface ElectronAPI {
     usageStream: (providerId: ProviderId, onResult: (view: ProviderAccountUsageView) => void, opts?: { read?: boolean }) => Promise<ProviderUsageStreamResult>
     usageStreamStop: (providerId: ProviderId) => Promise<AccountsResult>
     usageOne: (accountId: string, opts?: { read?: boolean }) => Promise<AccountsResult<{ usage: ProviderAccountUsageView }>>
-    /** P3.6 (row 22): a Switch account carries the session's conversation
-     *  into the account it moves to (main's own record of the conversation). */
-    carryConversation: (req: { sessionId: string; accountId: string }) => Promise<AccountsResult<{ carried: 'copied' | 'present' | 'none' }>>
   }
   github: GitHubBridge
   hooks: HooksBridge
@@ -1400,7 +1397,6 @@ const electronAPI: ElectronAPI = {
     },
     usageStreamStop: (providerId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM_STOP, { providerId }),
     usageOne: (accountId, opts) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_USAGE_ONE, { accountId, ...(opts?.read === true ? { read: true } : {}) }),
-    carryConversation: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_CARRY_CONVERSATION, { sessionId: req.sessionId, accountId: req.accountId }),
   },
   github: {
     getConfig: () => ipcRenderer.invoke(IPC.GITHUB_CONFIG_GET),

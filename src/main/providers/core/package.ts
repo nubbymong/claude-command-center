@@ -181,7 +181,7 @@ export type RealmFolderFailureCode =
   | 'too-large'              // a history copy found more than it carries over: nothing changed
   | 'cancelled'              // a history copy stopped on request
   | 'conversation-missing'   // a conversation copy found no transcript of it in the source realm
-  | 'conversation-differs'   // a conversation copy found a different transcript of it already in the destination: left as it is
+  | 'conversation-differs'   // a conversation copy found a transcript of it in the destination that went its own way: left as it is
   | 'io-failed'
 
 export interface RealmFolderResult {
@@ -229,16 +229,18 @@ export interface ProviderRealmFolderOperations {
   /** A running session switched to another account of the same provider
    *  (P3.6, row 22): copy one conversation's transcript from the realm of the
    *  account it ran under into the realm of the account it moves to, so the
-   *  respawn resumes it there. The destination is an app-managed folder in
-   *  use; the source may be one or the provider's own shared home, which is
-   *  only read. Both realm locks are held for the copy (no sign-in, sign-out
-   *  or removal meanwhile); the caller holds a lease on both accounts. The
-   *  transcript is found by the provider's own lookup in the source realm
-   *  only, copied whole or not at all, bounded, never through a link and
-   *  never over anything: the same transcript already there is `present`, a
-   *  different one is refused (`conversation-differs`). Absent: the provider
-   *  keeps no conversation a session could carry. */
-  copyConversation?(from: RealmRef, to: RealmRef, conversation: { id: string; cwd?: string }): Promise<RealmFolderResult & { carried?: 'copied' | 'present' }>
+   *  respawn resumes it there. Each is an app-managed folder in use or the
+   *  provider's own shared home (as every Claude profile shares one
+   *  conversations folder); the source is only read. Both realm locks are
+   *  held for the copy (no sign-in, sign-out or removal meanwhile); the
+   *  caller holds a lease on both accounts. The transcript is found by the
+   *  provider's own lookup in the source realm only, copied whole or not at
+   *  all, bounded, never through a link and never replacing anything: the
+   *  same transcript already there is `present`, an earlier copy that is
+   *  exactly the start of it has the rest added (`extended`), and one that
+   *  went its own way is refused (`conversation-differs`). Absent: the
+   *  provider keeps no conversation a session could carry. */
+  copyConversation?(from: RealmRef, to: RealmRef, conversation: { id: string; cwd?: string }): Promise<RealmFolderResult & { carried?: 'copied' | 'present' | 'extended' }>
 }
 
 /** What a launch in a bound realm needs, proven at launch time (plan A10):

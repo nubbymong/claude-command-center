@@ -5,7 +5,7 @@ import { usesCodex } from '../onboarding/provider-choice'
 import RateLimitBar, { RateLimitBarPending, RateLimitBarNoReading } from './terminal/RateLimitBar'
 import { bucketPastReset } from '../../shared/usage-labels'
 import { useRenderAtNextReset } from '../hooks/useRenderAtNextReset'
-import { useProviderAccountsStore, accountDisplayName } from '../stores/providerAccountsStore'
+import { useProviderAccountsStore } from '../stores/providerAccountsStore'
 import { formatTokens, formatDuration } from '../utils/terminalFormatting'
 import { canSwitchAccountForSession } from '../utils/sessionLaunch'
 import { useCodexReviewUsage } from '../hooks/useCodexReviewUsage'
@@ -15,8 +15,8 @@ import { useResolvedTheme } from '../hooks/useThemeController'
 import { useRegionTypography } from '../hooks/useTypography'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { resolveAccountNameByEmail } from '../../shared/account-chip-color'
-import { switchAccountItems, switchItemHint } from '../utils/switchAccountItems'
-import { chipColourKeyForEmail, providerAccountChip } from '../utils/accountChip'
+import { switchItemHint } from '../utils/switchAccountItems'
+import { useProviderAccountChip, useEmailChipColourKey, useSwitchAccountItems } from '../hooks/useAccountChip'
 import { resolveIdentityColor } from '../../shared/identity-colors'
 import ToolbarPopup from './ToolbarPopup'
 import {
@@ -98,12 +98,17 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   const profiles = useAccountProfilesStore((s) => s.profiles)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
-  const accountsSnapshot = useProviderAccountsStore((s) => s.snapshot)
   // Mid-session account switch (respawn + resume): gated on having at least 2
   // accounts of the session's provider (need a real choice). Selector form on
   // every read so the strip never re-renders on unrelated store churn.
   // P3.6 (row 22): one list for every provider (utils/switchAccountItems).
-  const switchItems = switchAccountItems(session, { profiles, aliases: accountAliases, snapshot: accountsSnapshot })
+  // Only the list, the chip and its colour are read from the account list
+  // (hooks/useAccountChip): a change elsewhere in it re-renders nothing here.
+  const switchItems = useSwitchAccountItems(session, { profiles, aliases: accountAliases })
+  // P3.6 (row 20): a session that runs under a registry account (Codex) shows
+  // that account's identity chip, by the footer's label rule.
+  const providerChip = useProviderAccountChip(session)
+  const emailColourKey = useEmailChipColourKey(session?.accountEmail, { profiles, overrides: accountColourOverrides }, session?.accountColour)
   const canSwitchAccount = canSwitchAccountForSession({ provider: session?.provider, isSsh: !!session?.sshConfig, shellOnly: !!session?.shellOnly, profileCount: profiles.length, providerAccountCount: switchItems.length })
   const registry = useRegistryStore((s) => s.registry)
   // Copilot AI-credit meter gate. The chip self-gates on githubAiUsageEnabled
@@ -205,9 +210,6 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
     )
   }
 
-  // P3.6 (row 20): a session that runs under a registry account (Codex) shows
-  // that account's identity chip, by the footer's label rule.
-  const providerChip = providerAccountChip(session, accountsSnapshot, accountDisplayName)
   // A Codex strip has no controls cluster, so with the master off only its
   // account item is left (always-on, as Claude's): with nothing to show at the
   // far left either, collapse the band entirely.
@@ -270,9 +272,7 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   // P3.6 (row 7): the identity's colour when the account list names it
   // (utils/accountChip), else the email override as before.
   const accountDot = resolveIdentityColor(
-    providerChip
-      ? providerChip.colourKey
-      : chipColourKeyForEmail(session.accountEmail, { profiles, snapshot: accountsSnapshot, overrides: accountColourOverrides }, session.accountColour),
+    providerChip ? providerChip.colourKey : emailColourKey,
     theme,
   )
   const accountTitle = providerChip ? providerChip.title : session.accountEmail

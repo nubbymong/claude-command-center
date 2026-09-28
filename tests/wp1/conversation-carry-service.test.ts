@@ -6,7 +6,9 @@
 // account it ran under are main's own record (the caller passes them, never
 // the renderer); both accounts are leased under the registry lock for the
 // whole copy and released on every path; the destination must be one a launch
-// could run on now; this computer's own sign-in is never written to.
+// could run on now. This computer's own sign-in is carried to and from under
+// the same rules (settled by parity: every Claude profile shares one
+// conversations folder).
 //
 // PURE: the real Codex package on a fake CLI and an in-memory folder tree;
 // the file work (conversation-carry.ts) is a stub that records what it was
@@ -52,16 +54,22 @@ describe('carrying a switched session\'s conversation (P3.6, row 22)', () => {
     expect(leftOver()).toBe(0)
   })
 
-  it('the conversation already there is present; a different copy there is refused in plain words; both release', async () => {
+  it('the conversation already there is present; an earlier copy brought up to date is extended; a different copy there is refused in plain words; all release', async () => {
     const present = await world(() => ({ ok: true, carried: 'present', bytes: 1 }))
     expect(await present.h.service.carryConversation({ accountId: present.b }, on(present.a))).toEqual({ ok: true, carried: 'present' })
+    const extended = await world(() => ({ ok: true, carried: 'extended', bytes: 1 }))
+    expect(await extended.h.service.carryConversation({ accountId: extended.b }, on(extended.a))).toEqual({ ok: true, carried: 'extended' })
+    expect(extended.leftOver()).toBe(0)
     const differs = await world(() => ({ ok: false, code: 'exists-different' }))
     const r = await differs.h.service.carryConversation({ accountId: differs.b }, on(differs.a))
     expect(r).toMatchObject({ ok: false, code: 'conversation-differs' })
     expect(!r.ok && r.message).toMatch(/already holds a different copy/)
     expect(differs.leftOver()).toBe(0)
     const thrown = await world(() => { throw new Error('disk') })
-    expect(await thrown.h.service.carryConversation({ accountId: thrown.b }, on(thrown.a))).toMatchObject({ ok: false, code: 'io-failed' })
+    // In the copy's own words (quality round 1, item 6).
+    const failed = await thrown.h.service.carryConversation({ accountId: thrown.b }, on(thrown.a))
+    expect(failed).toMatchObject({ ok: false, code: 'io-failed' })
+    expect(!failed.ok && failed.message).toMatch(/could not be copied into the other Codex account's folder, so it was not carried over/)
     expect(thrown.leftOver()).toBe(0)
   })
 
@@ -92,18 +100,77 @@ describe('carrying a switched session\'s conversation (P3.6, row 22)', () => {
     expect(leftOver()).toBe(0)
   })
 
-  it('this computer\'s own sign-in is never written to: switching to it carries nothing; switching away from it reads it', async () => {
+  it('this computer\'s own sign-in (ADR-009 thesis 14, settled by parity): switching to it carries the conversation into its folder, and away from it reads it, both accounts held', async () => {
     const { h, a, seen, leftOver } = await world()
     h.signedIn.set(EXT_HOME.toLowerCase(), 'chatgpt')
     const adopted = await h.service.adoptExternalDefault({ providerId: 'codex' })
     if (!adopted.ok) throw new Error(adopted.code)
     const ext = adopted.accountId
-    const r = await h.service.carryConversation({ accountId: ext }, on(a))
-    expect(r).toMatchObject({ ok: false, code: 'not-managed' })
-    expect(!r.ok && r.message).toMatch(/does not write to/)
-    expect(seen).toEqual([])
+    expect(await h.service.carryConversation({ accountId: ext }, on(a))).toEqual({ ok: true, carried: 'copied' })
+    expect(seen[0].input.toHome).toBe(EXT_HOME)
+    expect(seen[0].operations[a]).toBe(1)
+    expect(seen[0].operations[ext]).toBe(1)
     expect(await h.service.carryConversation({ accountId: a }, on(ext))).toEqual({ ok: true, carried: 'copied' })
-    expect(seen[0].input.fromSessionsDir).toBe(`${EXT_HOME}\\sessions`)
+    expect(seen[1].input.fromSessionsDir).toBe(`${EXT_HOME}\\sessions`)
+    expect(leftOver()).toBe(0)
+  })
+
+  it('a destination blocked by a changed sign-in (ADR-009 thesis 15): refused before anything is held or copied', async () => {
+    const { h, a, b, realm, seen, leftOver } = await world()
+    h.signedIn.set(managedHome(realm(b)).toLowerCase(), 'api-key')
+    await h.service.refreshStatus({ accountId: b })
+    expect(findAccount(h.doc(), b)!.operationalState).toBe('blocked')
+    expect(await h.service.carryConversation({ accountId: b }, on(a))).toMatchObject({ ok: false, code: 'lifecycle' })
+    expect(seen).toEqual([])
+    expect(leftOver()).toBe(0)
+  })
+
+  it('a sign-in running on either account (ADR-009 thesis 15): busy, nothing copied, and nothing left held', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    let hold = false
+    const seen: CodexCarryInput[] = []
+    let h!: Harness
+    h = await harness({
+      conversationCarry: async (i) => { seen.push(i); return { ok: true, carried: 'copied', bytes: 1 } },
+      script: {
+        login: async (r) => {
+          if (hold) await gate
+          h.signedIn.set(r.home.toLowerCase(), 'chatgpt')
+          return { exitCode: 0, stdout: 'Successfully logged in\n' }
+        },
+      },
+    })
+    const a = await addCodexAccount(h, 'A')
+    const b = await addCodexAccount(h, 'B')
+    hold = true
+    const again = h.service.signInAgain({ sameAccount: true, accountId: b, method: 'browser' }, 1)
+    for (let i = 0; i < 50 && h.leases.describe(b)['sign-in'] === 0; i++) await new Promise((r) => setTimeout(r, 5))
+    expect(h.leases.describe(b)['sign-in']).toBeGreaterThan(0)
+    expect(await h.service.carryConversation({ accountId: b }, on(a))).toMatchObject({ ok: false, code: 'busy' })
+    expect(await h.service.carryConversation({ accountId: a }, on(b))).toMatchObject({ ok: false, code: 'busy' })
+    expect(h.leases.describe(a).operation).toBe(0)
+    release()
+    await again
+    expect(seen).toEqual([])
+  })
+
+  it('two sessions switched opposite ways at once (ADR-009 thesis 13): both conversations are carried', async () => {
+    const order: string[] = []
+    const { h, a, b, seen, leftOver } = await world(async (i) => {
+      order.push('start')
+      await new Promise((r) => setTimeout(r, 30))
+      order.push('end')
+      return { ok: true, carried: 'copied', bytes: i.id.length }
+    })
+    const [one, two] = await Promise.all([
+      h.service.carryConversation({ accountId: b }, on(a)),
+      h.service.carryConversation({ accountId: a }, on(b)),
+    ])
+    expect(one).toEqual({ ok: true, carried: 'copied' })
+    expect(two).toEqual({ ok: true, carried: 'copied' })
+    expect(seen).toHaveLength(2)
+    expect(order).toEqual(['start', 'end', 'start', 'end'])
     expect(leftOver()).toBe(0)
   })
 

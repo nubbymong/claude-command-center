@@ -13,8 +13,7 @@ import { useResolvedTheme } from '../../hooks/useThemeController'
 import { useAccountProfilesStore } from '../../stores/accountProfilesStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { resolveAccountNameByEmail } from '../../../shared/account-chip-color'
-import { useProviderAccountsStore, accountDisplayName } from '../../stores/providerAccountsStore'
-import { chipColourKeyForEmail, providerAccountChip } from '../../utils/accountChip'
+import { useProviderAccountChip, useEmailChipColourKey } from '../../hooks/useAccountChip'
 
 interface SessionRowProps {
   session: Session
@@ -100,13 +99,15 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
   const profiles = useAccountProfilesStore((s) => s.profiles)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
-  // P3.6 (row 7): the colour is the account's identity's when the account
-  // list names it (utils/accountChip), else the email override as before.
-  const accountsSnapshot = useProviderAccountsStore((s) => s.snapshot)
   // P3.6 (row 20): a session that runs under a registry account (Codex)
   // carries that account's identity on this line too, as the strip does.
-  const providerChip = providerAccountChip(session, accountsSnapshot, accountDisplayName)
+  // Only the chip and its colour are read from the account list
+  // (hooks/useAccountChip): a change elsewhere in it re-renders no card.
+  const providerChip = useProviderAccountChip(session)
   const accountEmail = providerChip ? undefined : (session.accountEmail || session.sshRemoteAccount)
+  // P3.6 (row 7): the colour is the account's identity's when the account
+  // list names it (utils/accountChip), else the email override as before.
+  const emailColourKey = useEmailChipColourKey(accountEmail, { profiles, overrides: accountColourOverrides }, session.accountColour)
   const accountName = providerChip
     ? providerChip.name
     : accountEmail
@@ -115,10 +116,7 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
   const accountDot = providerChip
     ? resolveIdentityColor(providerChip.colourKey, theme)
     : accountEmail
-      ? resolveIdentityColor(
-          chipColourKeyForEmail(accountEmail, { profiles, snapshot: accountsSnapshot, overrides: accountColourOverrides }, session.accountColour),
-          theme,
-        )
+      ? resolveIdentityColor(emailColourKey, theme)
       : null
   const accountTitle = providerChip ? providerChip.title : accountEmail
 
