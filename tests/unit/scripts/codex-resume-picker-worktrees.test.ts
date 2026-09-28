@@ -23,6 +23,7 @@ const lib = require('../../../scripts/lib/codex-resume-picker-lib.js') as {
   pickDecision: (resumeUuid: string | null) => { id: string } | { fresh: true }
   childEnv: (env: Record<string, string | undefined>) => Record<string, string | undefined>
   resolveRetargetCwd: (resumeId: string | null, sourceCwd: string | undefined, currentCwd: string, existsSync: (p: string) => boolean, platform?: string) => { cwd: string | null }
+  listWorktrees: (cwd: string, platform?: string, deps?: { env?: Record<string, string | undefined>; isFile?: (p: string) => boolean; spawn?: (file: string, args: string[], opts: never) => unknown }) => Array<{ path: string; branch: string | null; isMain: boolean }>
 }
 
 const ID1 = '019dd000-0001-7000-8000-000000000101'
@@ -290,5 +291,66 @@ describe('the conversation the picker opens (rows 32, 38)', () => {
     expect(lib.resolveRetargetCwd(ID1, join(wt, 'gone'), '/main', existsSync)).toEqual({ cwd: null })
     expect(lib.resolveRetargetCwd(null, wt, '/main', existsSync)).toEqual({ cwd: null })
     expect(lib.resolveRetargetCwd(ID1, 'F:/Repo/Demo', 'f:\\repo\\demo', () => true, 'win32')).toEqual({ cwd: null })
+  })
+})
+
+// P3.5 fix round 1 (thesis 19): the worktree list fails safe and never runs a
+// `git` found in the project folder: git is named by an absolute path from
+// PATH's absolute entries (as the reviewer's findGit), with a hardened
+// command line, and on Windows with NoDefaultCurrentDirectoryInExePath=1.
+// The spawn and the file check are injected: nothing is started.
+describe('listWorktrees (thesis 19)', () => {
+  type Call = { file: string; args: string[]; opts: { cwd?: string; env?: Record<string, string | undefined>; timeout?: number; windowsHide?: boolean; shell?: unknown } }
+  const ESC = String.fromCharCode(27)
+  const run = (answer: unknown, env: Record<string, string | undefined>, platform = 'win32', gitAt: string | ((p: string) => boolean) = 'C:\\Git\\cmd\\git.exe', cwd = 'F:\\repo\\demo') => {
+    const calls: Call[] = []
+    const out = lib.listWorktrees(cwd, platform, {
+      env,
+      isFile: (p: string) => (typeof gitAt === 'function' ? gitAt(p) : p === gitAt),
+      spawn: (file: string, args: string[], opts: Call['opts']) => { calls.push({ file, args, opts }); if (answer instanceof Error) throw answer; return answer },
+    })
+    return { out, calls }
+  }
+  const OWN = [{ path: 'F:\\repo\\demo', branch: null, isMain: true }]
+
+  it('runs git by an absolute path from PATH\'s absolute entries, never one resolved from the project folder, with its command line hardened', () => {
+    const { out, calls } = run(
+      { status: 0, stdout: 'worktree F:/repo/demo\nbranch refs/heads/main\n\nworktree F:/repo/wt\nbranch refs/heads/wt\n' },
+      { Path: '.;relative\\bin;%SystemRoot%;"C:\\Git\\cmd"', NODEFAULTCURRENTDIRECTORYINEXEPATH: '0' },
+    )
+    expect(calls).toHaveLength(1)
+    expect(calls[0].file).toBe('C:\\Git\\cmd\\git.exe')
+    expect(calls[0].args).toEqual(['--no-pager', '-c', 'core.fsmonitor=false', 'worktree', 'list', '--porcelain'])
+    expect(calls[0].opts).toMatchObject({ cwd: 'F:\\repo\\demo', timeout: 5000, windowsHide: true })
+    expect(calls[0].opts.shell).toBeFalsy()
+    const spellings = Object.keys(calls[0].opts.env ?? {}).filter((k) => k.toUpperCase() === 'NODEFAULTCURRENTDIRECTORYINEXEPATH')
+    expect(spellings).toEqual(['NoDefaultCurrentDirectoryInExePath'])
+    expect(calls[0].opts.env?.NoDefaultCurrentDirectoryInExePath).toBe('1')
+    expect(out.map((w: { path: string }) => w.path)).toEqual(['F:/repo/demo', 'F:/repo/wt'])
+  })
+
+  it('a git in the project folder or a relative PATH entry is never run: with no git on the absolute entries it lists the configured folder alone', () => {
+    // Whatever a relative entry would name "exists": it is still never run.
+    const { out, calls } = run({ status: 0, stdout: 'worktree F:/repo/wt\n' }, { PATH: '.;relative;%CD%' }, 'win32', (p) => !/^[A-Za-z]:[\\/]/.test(p))
+    expect(calls).toEqual([])
+    expect(out).toEqual(OWN)
+    const inProject = run({ status: 0, stdout: 'worktree F:/repo/wt\n' }, { PATH: 'F:\\other' }, 'win32', 'F:\\repo\\demo\\git.exe')
+    expect(inProject.calls).toEqual([])
+  })
+
+  it('fails safe: git missing, a non-zero exit, no output, garbage, a throw', () => {
+    for (const answer of [{ error: new Error('ENOENT') }, { status: 128, stdout: 'worktree F:/repo/wt\n' }, { status: 0, stdout: '' }, { status: 0, stdout: 'not porcelain at all\n' + String.fromCharCode(0, 1) }, new Error('spawn failed')]) {
+      expect(run(answer, { PATH: 'C:\\Git\\cmd' }).out, String(answer)).toEqual(OWN)
+    }
+  })
+
+  it('keeps only absolute worktree paths with no control characters', () => {
+    const text = ['worktree F:/repo/demo', '', 'worktree relative/wt', '', `worktree F:/repo/bad${ESC}[2J`, '', 'worktree \\\\host\\share\\wt', ''].join('\n')
+    const { out } = run({ status: 0, stdout: text }, { PATH: 'C:\\Git\\cmd' })
+    expect(out.map((w: { path: string }) => w.path)).toEqual(['F:/repo/demo', '\\\\host\\share\\wt'])
+    const posix = run({ status: 0, stdout: 'worktree /srv/demo\n\nworktree srv/rel\n' }, { PATH: 'bin:/usr/bin' }, 'linux', '/usr/bin/git', '/srv/demo')
+    expect(posix.calls[0].file).toBe('/usr/bin/git')
+    expect(posix.calls[0].opts.env?.NoDefaultCurrentDirectoryInExePath).toBeUndefined()
+    expect(posix.out.map((w: { path: string }) => w.path)).toEqual(['/srv/demo'])
   })
 })
