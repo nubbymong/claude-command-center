@@ -21,6 +21,8 @@ import { createCodexAuthOperations } from './auth-operations'
 import { createCodexReviewOperations } from './review'
 import type { CodexAuthDeps, CodexAuthOperations } from './auth-operations'
 import { createCodexRealmFolders, createCodexRealmLocks, resolveCodexRealmRoots } from './realm-folders'
+import { carryCodexRollout } from './conversation-carry'
+import type { CodexConversationCarry } from './conversation-carry'
 import { codexExternalDefaultHome, codexHomeDisplay } from './realm-paths'
 import { createCodexLiveUsage, createCodexUsageOperations, realCodexUsageFsPort } from './usage'
 import type { CodexLiveUsage, CodexUsageFsPort } from './usage'
@@ -65,6 +67,9 @@ export {
   CODEX_HISTORY_MAX_ENTRIES, CODEX_FOLDER_BATCH,
 } from './realm-folders'
 export type { CodexRealmFsPort, CodexRealmFsAsync, CodexFsEntry, CodexRealmLocks, CodexFolderLookup, CodexRealmFolderDeps, CodexRealmFolderLimits, CodexRootsResult } from './realm-folders'
+// P3.6: a switched session's conversation carried into the new account's folder.
+export { carryCodexRollout, CODEX_CARRY_MAX_BYTES } from './conversation-carry'
+export type { CodexConversationCarry, CodexCarryInput, CodexCarryResult, CodexCarryCode } from './conversation-carry'
 // Usage track MP2/MP3: the allowance reading and the usage port.
 export { normaliseCodexRateLimits, mergeAllowanceReadings, readingToBuckets, CODEX_DEFAULT_LIMIT_ID } from './rate-limits'
 export {
@@ -265,6 +270,8 @@ export interface CodexPackageDeps {
   usageFs?: CodexUsageFsPort
   /** Replaces the live usage figures the sessions record, for a test. */
   liveUsage?: CodexLiveUsage
+  /** Replaces the file work of a conversation copy (P3.6), for a test. */
+  conversationCarry?: CodexConversationCarry
 }
 
 /** The CODEX_HOME the app inherited, in every spelling, captured once when
@@ -333,7 +340,9 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
         liveUsage,
         () => proven,
       ),
-      realmFolders: createCodexRealmFolders({ lookupRealm, fs: realmFs, locks, ...(deps.realmLimits ? { limits: deps.realmLimits } : {}) }),
+      // P3.6: a switched session's conversation is carried with the real
+      // file system (conversation-carry.ts), under these same realm locks.
+      realmFolders: createCodexRealmFolders({ lookupRealm, fs: realmFs, locks, carry: deps.conversationCarry ?? carryCodexRollout, ...(deps.realmLimits ? { limits: deps.realmLimits } : {}) }),
       // The user's own ~/.codex (or inherited CODEX_HOME), adopted only when
       // the user chooses to use it and it is signed in (owner decision
       // 2026-09-26): realm-only, never vouched for (design 6.3).

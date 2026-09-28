@@ -5,7 +5,7 @@
 // through the legacy reconcile, exactly as at start. No file is written and
 // no process is started.
 import { createCodexPackage } from '../../src/main/providers/codex'
-import type { CodexRealmFsPort, CodexCommand, CodexRunOptions, CodexRunResult, CodexDiscoveryDeps, CodexFsEntry, CodexUsageFsPort, CodexLiveUsage, CodexRealmFolderLimits } from '../../src/main/providers/codex'
+import type { CodexRealmFsPort, CodexCommand, CodexRunOptions, CodexRunResult, CodexDiscoveryDeps, CodexFsEntry, CodexUsageFsPort, CodexLiveUsage, CodexRealmFolderLimits, CodexConversationCarry } from '../../src/main/providers/codex'
 import { createClaudePackage } from '../../src/main/providers/claude'
 import type { ClaudeReviewPorts } from '../../src/main/providers/claude'
 import { AccountRegistryStore, AccountsService, ConsumerLeaseRegistry, SecretHandleStore, registerProviderPackage, _resetProviderRegistryForTest } from '../../src/main/providers/core'
@@ -170,6 +170,9 @@ export interface HarnessOpts {
   /** Wraps the Codex package's sign-in operations as the service sees them
    *  (P3.3: a provider that reports a subject). Absent: Codex's own. */
   authWrap?: (auth: NonNullable<ProviderPackage['auth']>) => NonNullable<ProviderPackage['auth']>
+  /** The file work of a conversation copy (P3.6). Absent: a stub that
+   *  refuses, so no test touches a real disk through it. */
+  conversationCarry?: CodexConversationCarry
 }
 
 /** A usage filesystem with nothing in it. */
@@ -253,6 +256,7 @@ export async function harness(o: HarnessOpts = {}) {
     ...(o.realmLimits ? { realmLimits: o.realmLimits } : {}),
     usageFs: o.usageFs ?? EMPTY_USAGE_FS,
     ...(o.liveUsage ? { liveUsage: o.liveUsage } : {}),
+    conversationCarry: o.conversationCarry ?? (async () => ({ ok: false, code: 'io-failed' })),
     hostHome: { env: o.hostEnv ?? {}, homeDir: USER },
     discoveryDeps: async (): Promise<CodexDiscoveryDeps> => {
       discoveries++

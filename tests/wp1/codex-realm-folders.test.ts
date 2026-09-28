@@ -1440,3 +1440,117 @@ describe('the package exposes folder operations only when wired, sharing one loc
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// P3.6 (row 22): a switched session's conversation, copied between realms.
+// The realm checks, the locks and the refusals here; the file work is the
+// carry port's (tests/unit/providers/codex/conversation-carry.test.ts).
+// ---------------------------------------------------------------------------
+
+describe('a conversation copied into another account\'s folder (P3.6, row 22)', () => {
+  const CID = '019dd000-0006-7000-8000-0000000000c1'
+  type CarryCall = { fromSessionsDir: string; toHome: string; id: string; preferCwd?: string }
+  function carrying(answer: (c: CarryCall) => unknown = () => ({ ok: true, carried: 'copied', bytes: 10 })) {
+    const w = world()
+    w.realms.set(RA, managed(RA, 'active'))
+    w.realms.set(RB, managed(RB, 'active'))
+    w.fs.dir(w.home(RA))
+    w.fs.dir(w.home(RB))
+    w.fs.dir(w.api.join(w.USER, '.codex'))
+    const calls: CarryCall[] = []
+    const keyOf = (h: string) => { const e = w.fs.lstat(h); return codexRealmLockKey(w.fs.realpath(h), e.dev, e.ino) }
+    const heldDuring: boolean[] = []
+    const folders = createCodexRealmFolders({
+      lookupRealm: w.lookupRealm, fs: w.fs, locks: w.locks,
+      carry: async (c) => {
+        calls.push(c)
+        // Both realm locks are held while the file work runs.
+        const src = w.api.dirname(c.fromSessionsDir)
+        for (const h of [src, c.toHome]) { const r = w.locks.hold(keyOf(h)); heldDuring.push(r === null); r?.() }
+        return answer(c) as never
+      },
+    })
+    return { w, folders, calls, heldDuring, keyOf }
+  }
+
+  it('copies from the account the session ran under into the one it moves to, both realm locks held, then released', async () => {
+    const { w, folders, calls, heldDuring, keyOf } = carrying()
+    const r = await folders.copyConversation!(A, B, { id: CID, cwd: 'C:\\p\\demo' })
+    expect(r).toEqual({ ok: true, carried: 'copied' })
+    expect(calls).toEqual([{ fromSessionsDir: w.api.join(w.home(RA), 'sessions'), toHome: w.home(RB), id: CID, preferCwd: 'C:\\p\\demo' }])
+    expect(heldDuring).toEqual([true, true])
+    for (const h of [w.home(RA), w.home(RB)]) { const again = w.locks.hold(keyOf(h)); expect(again).not.toBeNull(); again!() }
+    expect(mutating(w.fs.ops)).toEqual([])
+  })
+
+  it('this computer\'s own sign-in may be the source (only read), never the destination', async () => {
+    const { w, folders, calls } = carrying()
+    expect(await folders.copyConversation!(X, B, { id: CID })).toEqual({ ok: true, carried: 'copied' })
+    expect(calls[0].fromSessionsDir).toBe(w.api.join(w.USER, '.codex', 'sessions'))
+    expect(await folders.copyConversation!(A, X, { id: CID })).toMatchObject({ ok: false, code: 'not-managed' })
+    expect(calls).toHaveLength(1)
+  })
+
+  it('refused before any file work: a realm not in use, the same realm, a destination that is a link, not a conversation id', async () => {
+    const { w, folders, calls } = carrying()
+    w.realms.set(RB, managed(RB, 'pending'))
+    expect(await folders.copyConversation!(A, B, { id: CID })).toMatchObject({ ok: false, code: 'lifecycle' })
+    w.realms.set(RB, managed(RB, 'active'))
+    w.realms.set(RA, managed(RA, 'retiring'))
+    expect(await folders.copyConversation!(A, B, { id: CID })).toMatchObject({ ok: false, code: 'lifecycle' })
+    w.realms.set(RA, managed(RA, 'active'))
+    expect(await folders.copyConversation!(A, A, { id: CID })).toMatchObject({ ok: false, code: 'unsafe-path' })
+    for (const id of ['', '..\\..\\x', `${CID}.jsonl`, 42]) {
+      expect(await folders.copyConversation!(A, B, { id } as never)).toMatchObject({ ok: false, code: 'conversation-missing' })
+    }
+    expect(await folders.copyConversation!(A, { authRealmId: 'realm-unknown' }, { id: CID })).toMatchObject({ ok: false, code: 'realm-unavailable' })
+    w.fs.rmdir(w.home(RB))
+    w.fs.dir('C:\\Users\\u\\Documents')
+    w.fs.link(w.home(RB), 'C:\\Users\\u\\Documents')
+    expect(await folders.copyConversation!(A, B, { id: CID })).toMatchObject({ ok: false, code: 'unsafe-path' })
+    expect(calls).toEqual([])
+  })
+
+  it('a sign-in, sign-out or removal holding either realm: busy, and nothing is left held', async () => {
+    const { w, folders, calls, keyOf } = carrying()
+    const held = w.locks.hold(keyOf(w.home(RB)))!
+    expect(await folders.copyConversation!(A, B, { id: CID })).toMatchObject({ ok: false, code: 'busy' })
+    held()
+    const srcAgain = w.locks.hold(keyOf(w.home(RA)))
+    expect(srcAgain).not.toBeNull()
+    expect(await folders.copyConversation!(A, B, { id: CID })).toMatchObject({ ok: false, code: 'busy' })
+    srcAgain!()
+    expect(calls).toEqual([])
+  })
+
+  it('the carry\'s refusals in this module\'s words; a throw is io-failed; the locks go either way', async () => {
+    const answers: Array<[unknown, Record<string, unknown>]> = [
+      [{ ok: true, carried: 'present', bytes: 1 }, { ok: true, carried: 'present' }],
+      [{ ok: false, code: 'not-found' }, { ok: false, code: 'conversation-missing' }],
+      [{ ok: false, code: 'exists-different' }, { ok: false, code: 'conversation-differs' }],
+      [{ ok: false, code: 'too-large' }, { ok: false, code: 'too-large', message: 'This conversation is larger than the app carries between Codex accounts, so it was not carried over.' }],
+      [{ ok: false, code: 'constructor' }, { ok: false, code: 'io-failed' }],
+      [{ ok: true, carried: 'everything' }, { ok: false, code: 'io-failed' }],
+      [null, { ok: false, code: 'io-failed' }],
+    ]
+    for (const [answer, want] of answers) {
+      const { w, folders, keyOf } = carrying(() => answer)
+      expect(await folders.copyConversation!(A, B, { id: CID }), JSON.stringify(answer)).toMatchObject(want)
+      const again = w.locks.hold(keyOf(w.home(RB)))
+      expect(again).not.toBeNull()
+      again!()
+    }
+    const { w, folders, keyOf } = carrying(() => { throw new Error('disk') })
+    expect(await folders.copyConversation!(A, B, { id: CID })).toMatchObject({ ok: false, code: 'io-failed' })
+    for (const h of [w.home(RA), w.home(RB)]) { const again = w.locks.hold(keyOf(h)); expect(again).not.toBeNull(); again!() }
+  })
+
+  it('without a carry port nothing is copied', async () => {
+    const w = world()
+    w.realms.set(RA, managed(RA, 'active'))
+    w.realms.set(RB, managed(RB, 'active'))
+    w.fs.dir(w.home(RA))
+    w.fs.dir(w.home(RB))
+    expect(await w.folders.copyConversation!(A, B, { id: CID })).toMatchObject({ ok: false, code: 'io-failed' })
+  })
+})

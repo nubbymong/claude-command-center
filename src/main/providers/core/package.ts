@@ -180,6 +180,8 @@ export type RealmFolderFailureCode =
   | 'changed'                // the folder changed while in use, and the operation stopped
   | 'too-large'              // a history copy found more than it carries over: nothing changed
   | 'cancelled'              // a history copy stopped on request
+  | 'conversation-missing'   // a conversation copy found no transcript of it in the source realm
+  | 'conversation-differs'   // a conversation copy found a different transcript of it already in the destination: left as it is
   | 'io-failed'
 
 export interface RealmFolderResult {
@@ -224,6 +226,19 @@ export interface ProviderRealmFolderOperations {
    *  those that became a second name of the same file. `signal` stops it at
    *  the next batch (cancelled). Absent: the provider keeps no such history. */
   copyHistory?(from: RealmRef, to: RealmRef, opts?: { earlier?: readonly RealmRef[]; signal?: AbortSignal }): Promise<RealmFolderResult & { copied?: number; linked?: number; skipped?: number }>
+  /** A running session switched to another account of the same provider
+   *  (P3.6, row 22): copy one conversation's transcript from the realm of the
+   *  account it ran under into the realm of the account it moves to, so the
+   *  respawn resumes it there. The destination is an app-managed folder in
+   *  use; the source may be one or the provider's own shared home, which is
+   *  only read. Both realm locks are held for the copy (no sign-in, sign-out
+   *  or removal meanwhile); the caller holds a lease on both accounts. The
+   *  transcript is found by the provider's own lookup in the source realm
+   *  only, copied whole or not at all, bounded, never through a link and
+   *  never over anything: the same transcript already there is `present`, a
+   *  different one is refused (`conversation-differs`). Absent: the provider
+   *  keeps no conversation a session could carry. */
+  copyConversation?(from: RealmRef, to: RealmRef, conversation: { id: string; cwd?: string }): Promise<RealmFolderResult & { carried?: 'copied' | 'present' }>
 }
 
 /** What a launch in a bound realm needs, proven at launch time (plan A10):

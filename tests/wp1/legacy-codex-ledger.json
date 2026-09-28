@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "cb0381575a280fae4ec3f62031fbd7be6c55193694f0e463a702716a1d74ef62",
-  "manifestHead": "57ce396a71fde4191ecabc3069c4b38cd3beb6e0",
+  "manifestPathDigest": "2b0062b78a18d499be47ebdae610d7d6a393da4492645351e775d88aee23099a",
+  "manifestHead": "68d00f624fdc850595a2a7e38b8b9e75c611b5d0",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -849,6 +849,17 @@
       "note": "created by WP2; replaces the legacy runCodexProcess/runCodexStreaming in auth.ts once the auth slice lands"
     },
     {
+      "path": "src/main/providers/codex/conversation-carry.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.6 (row 22; completion plan section 8; P3.1 evidence answer 1, docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md): a switched session's rollout copied into the new account's sessions folder, found by the P3.5 lookup in the source realm only, bounded, whole lines, no link followed, exclusive temporary file then a no-clobber hard link, the same bytes already there present, anything else refused (WP1.28, WP1.45); tests/unit/providers/codex/conversation-carry.test.ts",
+      "note": "file work only; the realm checks and locks are realm-folders.ts copyConversation, the leases accounts-service.ts carryConversation"
+    },
+    {
       "path": "src/main/providers/codex/discovery.ts",
       "predicates": [
         "P01",
@@ -883,7 +894,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "move",
-      "evidence": "CodexProvider class contract pinned by tests/wp1/codex-characterization.test.ts C2 (WP1.54); entry-point rule tests/wp1/dependency-boundaries.test.ts (WP1.66); WP2 final fixes: CodexProvider.resolveBinary and resumeCommand, which nothing called, refuse instead of resolving the codex on PATH (not used for Codex: launches go through the managed launch; C2 inverted), and cli.discovery and install.recipes are declared supported, what the package implements; realm.isolated stays unknown because the contract backs it with realms.realmEnvPatch, which Codex does not expose (WP1.17, WP1.18); tests/unit/providers/codex/spawn.test.ts, tests/wp1/provider-conformance.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): the wired package exposes the usage port (account.usage supported, unknown unwired) and CodexProvider records each session's allowance by its sessions folder (WP1.41); tests/wp1/provider-conformance.test.ts; tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP3 round-1 review fixes: the usage port uses the checked sessions folder, and a session opens and releases its realm's live figure (WP1.68); tests/unit/providers/codex/telemetry.test.ts; tests/unit/main/provider-account-usage.test.ts; WP2 P3 usage track MP3 round-2 review fixes: exports the lookup that tells unavailable from no reading, and the day-entry and timeout bounds (WP1.68); tests/unit/providers/codex/usage-last-seen.test.ts; WP2 P3 usage track MP7 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): exports the app-server client and the read result type (WP1.41); tests/unit/providers/codex/app-server-client.test.ts; WP2 P3 usage track MP8 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): wires the port's read to the auth operations and keys the verdict cache on the proven executable (codexExecutableKey) (WP1.41); tests/unit/main/codex-usage-read.test.ts; WP2 P3 usage track MP9 round 1 (review fixes: B-F1, B-F2, Q-1 to Q-5): the usage index reads a realm's sessions folder held to the canonical-home check (WP1.2); tests/wp1/codex-auth-adapter.test.ts; WP2 PR 3 P3.5: the session telemetry passes the resumed id, the pick file and the claim listener to the watcher (WP1.68); tests/unit/providers/codex/spawn-resume.test.ts",
+      "evidence": "CodexProvider class contract pinned by tests/wp1/codex-characterization.test.ts C2 (WP1.54); entry-point rule tests/wp1/dependency-boundaries.test.ts (WP1.66); WP2 final fixes: CodexProvider.resolveBinary and resumeCommand, which nothing called, refuse instead of resolving the codex on PATH (not used for Codex: launches go through the managed launch; C2 inverted), and cli.discovery and install.recipes are declared supported, what the package implements; realm.isolated stays unknown because the contract backs it with realms.realmEnvPatch, which Codex does not expose (WP1.17, WP1.18); tests/unit/providers/codex/spawn.test.ts, tests/wp1/provider-conformance.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): the wired package exposes the usage port (account.usage supported, unknown unwired) and CodexProvider records each session's allowance by its sessions folder (WP1.41); tests/wp1/provider-conformance.test.ts; tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP3 round-1 review fixes: the usage port uses the checked sessions folder, and a session opens and releases its realm's live figure (WP1.68); tests/unit/providers/codex/telemetry.test.ts; tests/unit/main/provider-account-usage.test.ts; WP2 P3 usage track MP3 round-2 review fixes: exports the lookup that tells unavailable from no reading, and the day-entry and timeout bounds (WP1.68); tests/unit/providers/codex/usage-last-seen.test.ts; WP2 P3 usage track MP7 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): exports the app-server client and the read result type (WP1.41); tests/unit/providers/codex/app-server-client.test.ts; WP2 P3 usage track MP8 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): wires the port's read to the auth operations and keys the verdict cache on the proven executable (codexExecutableKey) (WP1.41); tests/unit/main/codex-usage-read.test.ts; WP2 P3 usage track MP9 round 1 (review fixes: B-F1, B-F2, Q-1 to Q-5): the usage index reads a realm's sessions folder held to the canonical-home check (WP1.2); tests/wp1/codex-auth-adapter.test.ts; WP2 PR 3 P3.5: the session telemetry passes the resumed id, the pick file and the claim listener to the watcher (WP1.68); tests/unit/providers/codex/spawn-resume.test.ts; WP2 PR 3 P3.6 (row 22): the realm folders get the conversation carry (conversation-carry.ts), replaceable only by a test (WP1.28); tests/wp1/conversation-carry-service.test.ts",
       "note": "becomes the Codex package public entry point; CodexProvider (session parity surface) retained for the runtime work package, its two PATH lookups refused; auth/setup/realm operations exported alongside"
     },
     {
@@ -963,7 +974,7 @@
       ],
       "category": "AUTH",
       "disposition": "added",
-      "evidence": "new WP2 managed Codex account folders: the resources directory and the external home canonicalised; the external home refused on any overlap with the managed tree by canonical path and file identity, and whenever it cannot be checked; a pending setup's home created before sign-in as a real owner-only (POSIX) folder with links and reparse points refused; an abandoned setup's home removed only after proving it is inside the managed root, holds no stored sign-in and only plain files and folders on one volume, under the realm lock sign-in, sign-out and status share; covered by tests/wp1/codex-realm-folders.test.ts and tests/wp1/codex-realm-isolation.test.ts (WP1.28, WP1.30, WP1.45; the fake-CLI half of WP1.10); WP2 PR 3 P3.3 (review rounds 2 and 3): a staged sign in again carries the account's history (sessions and history.jsonl) into its replacement before the switch, asynchronously in batches, each file a hard link else a byte copy, never over anything, only a file whose every name the app gave it, bounded by its own bound; a replacement holding it is removed past the removal bound, the registry read again between batches (WP1.52); tests/wp1/reauth-staging.test.ts, tests/wp1/codex-realm-folders.test.ts",
+      "evidence": "new WP2 managed Codex account folders: the resources directory and the external home canonicalised; the external home refused on any overlap with the managed tree by canonical path and file identity, and whenever it cannot be checked; a pending setup's home created before sign-in as a real owner-only (POSIX) folder with links and reparse points refused; an abandoned setup's home removed only after proving it is inside the managed root, holds no stored sign-in and only plain files and folders on one volume, under the realm lock sign-in, sign-out and status share; covered by tests/wp1/codex-realm-folders.test.ts and tests/wp1/codex-realm-isolation.test.ts (WP1.28, WP1.30, WP1.45; the fake-CLI half of WP1.10); WP2 PR 3 P3.3 (review rounds 2 and 3): a staged sign in again carries the account's history (sessions and history.jsonl) into its replacement before the switch, asynchronously in batches, each file a hard link else a byte copy, never over anything, only a file whose every name the app gave it, bounded by its own bound; a replacement holding it is removed past the removal bound, the registry read again between batches (WP1.52); tests/wp1/reauth-staging.test.ts, tests/wp1/codex-realm-folders.test.ts; WP2 PR 3 P3.6 (row 22): copyConversation, a switched session's conversation copied from the realm it ran in (managed, or this computer's own home, only read) into an app-managed realm in use, both realm locks held, the file work through the carry port (WP1.28, WP1.45); tests/wp1/codex-realm-folders.test.ts",
       "note": "created by WP2; Windows ACL hardening deferred with the registry (aicc_planning #103)"
     },
     {
@@ -1155,7 +1166,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "replace",
-      "evidence": "Claude env shape pinned by tests/wp1/claude-characterization.test.ts C1 and tests/unit/pty-spawn-env.test.ts (both retained as protection, WP1.54); binding/lease behaviour by tests/wp1/launch-handoff.test.ts and tests/wp1/consumer-leases.test.ts (WP1.38, WP1.42, WP1.46); WP2 commit 6g: the Codex spawn identity re-export removed with codex-spawn-identity.ts (tests/wp1/legacy-codex-retired.test.ts, WP1.57); the WP2 final fixes changed comments only (the codex_review registration comment states the per-connection conditions main offers the tool on, and the End comment names the quoted tmux target it kills); the WP2 T24 fix, not Codex code, changed End: endSshRemoteDetailed resolves a detailed result, reads its target the moment it is called, and reads the End sudo marker from the exec output to report container-needs-sudo when a rootful container's sudo needs a password End does not hold (tests/unit/main/ssh-end-remote-password.test.ts); WP2 PR 3 P3.5 (rows 34, 35; parity): the Codex branch resumes a restored session's persisted conversation or, on a Restart, the one the session kept across the kill (never over the picker), starts where the builder says, and keeps the conversation the status line claims, bounded (WP1.38); tests/unit/main/codex-resume-launch.test.ts",
+      "evidence": "Claude env shape pinned by tests/wp1/claude-characterization.test.ts C1 and tests/unit/pty-spawn-env.test.ts (both retained as protection, WP1.54); binding/lease behaviour by tests/wp1/launch-handoff.test.ts and tests/wp1/consumer-leases.test.ts (WP1.38, WP1.42, WP1.46); WP2 commit 6g: the Codex spawn identity re-export removed with codex-spawn-identity.ts (tests/wp1/legacy-codex-retired.test.ts, WP1.57); the WP2 final fixes changed comments only (the codex_review registration comment states the per-connection conditions main offers the tool on, and the End comment names the quoted tmux target it kills); the WP2 T24 fix, not Codex code, changed End: endSshRemoteDetailed resolves a detailed result, reads its target the moment it is called, and reads the End sudo marker from the exec output to report container-needs-sudo when a rootful container's sudo needs a password End does not hold (tests/unit/main/ssh-end-remote-password.test.ts); WP2 PR 3 P3.5 (rows 34, 35; parity): the Codex branch resumes a restored session's persisted conversation or, on a Restart, the one the session kept across the kill (never over the picker), starts where the builder says, and keeps the conversation the status line claims, bounded (WP1.38); tests/unit/main/codex-resume-launch.test.ts; WP2 PR 3 P3.6 (row 22): the kept Codex conversation records the account of the launch that resumed or claimed it (getKeptCodexConversationSource), which a Switch account carries it from; session:save still gets the conversation only (WP1.42); tests/unit/main/codex-resume-launch.test.ts",
       "note": "WP2 commit 4: the Codex branch runs only from the prepared launch (executable, realm env with CODEX_HOME, sessions folder) and holds its account lease until its process ends; the binding and lease are taken in pty:spawn through the accounts service. The Claude branch is unchanged (withProfileHome); running Claude sessions are counted for a Claude switch-off. Codex identity capture removed"
     },
     {
@@ -3777,7 +3788,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "new WP2 PR 3 P3.5 (rows 34, 35; parity) test (tests/unit/main/codex-resume-launch.test.ts): a restored Codex session hands the builder its persisted conversation and starts where the builder says; Restart resumes the conversation the session kept across the kill; the resume picker is never overridden by it and lets it go; only a conversation id is kept, bounded (WP1.38)",
+      "evidence": "new WP2 PR 3 P3.5 (rows 34, 35; parity) test (tests/unit/main/codex-resume-launch.test.ts): a restored Codex session hands the builder its persisted conversation and starts where the builder says; Restart resumes the conversation the session kept across the kill; the resume picker is never overridden by it and lets it go; only a conversation id is kept, bounded (WP1.38); WP2 PR 3 P3.6 (row 22): the kept conversation records the account it ran under, never persisted (WP1.68)",
       "note": "created by WP2 PR 3 P3.5"
     },
     {
@@ -4385,6 +4396,17 @@
       "disposition": "added",
       "evidence": "new WP2 P3 usage track MP7 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): the runner's open-stdin mode and the constant app-server command line (WP1.41, WP1.68); tests/unit/providers/codex/cli-runner-open-stdin.test.ts; WP2 P3 usage track MP7 round-1 review fixes (the scoped WP1.41 exception; ADR-022): a case for a UTF-8 character split across output chunks (WP1.41); tests/unit/providers/codex/cli-runner-open-stdin.test.ts; WP2 P3 usage track MP8 round 2 (VM walk and review fixes; the scoped WP1.41 exception; ADR-022): the helper argv for the native and the shim spawn (WP1.41); tests/unit/providers/codex/cli-runner-open-stdin.test.ts; WP2 P3 usage track MP8 round 3 (VM walk and review fixes; the scoped WP1.41 exception; ADR-022): the constant argv, and a case that it never carries a feature flag or config override (WP1.41); tests/unit/providers/codex/cli-runner-open-stdin.test.ts",
       "note": ""
+    },
+    {
+      "path": "tests/unit/providers/codex/conversation-carry.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.6 (row 22) test (tests/unit/providers/codex/conversation-carry.test.ts): the carried copy lands at the same place and resumes by id there; whole lines; never over anything, never through a link; bounded; only the source realm's own conversation (WP1.28, WP1.68)",
+      "note": "real folders under the system temp folder; no Codex process"
     },
     {
       "path": "tests/unit/providers/codex/mcp-config.test.ts",

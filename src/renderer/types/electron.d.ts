@@ -944,6 +944,9 @@ export interface ElectronAPI {
     usageStreamStop?: (providerId: ProviderAccountsProviderId) => Promise<ProviderAccountsResult>
     /** `read`: only for a card's Retry. */
     usageOne: (accountId: string, opts?: { read?: boolean }) => Promise<ProviderAccountsResult<{ usage: ProviderAccountUsageView }>>
+    /** P3.6 (row 22): a Switch account carries the session's conversation
+     *  into the account it moves to (main's own record of the conversation). */
+    carryConversation: (req: { sessionId: string; accountId: string }) => Promise<ProviderAccountsResult<{ carried: 'copied' | 'present' | 'none' }>>
   }
 }
 

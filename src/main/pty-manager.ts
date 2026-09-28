@@ -397,13 +397,15 @@ const codexTelemetrySources = new Map<string, TelemetrySource>()
 // nothing lets it go. session:save persists it (session-resume-enrich), so a
 // relaunch resumes it too. Only a conversation id is kept. Bounded, the
 // oldest tab's first (a closed tab's entry is never used again).
+// P3.6 (row 22): with it, the account of the launch that resumed or claimed
+// it (its lease's), which a Switch account carries it from; never persisted.
 export const KEPT_CODEX_CONVERSATIONS_MAX = 512
-const keptCodexConversations = new Map<string, { uuid: string; cwd: string }>()
+const keptCodexConversations = new Map<string, { uuid: string; cwd: string; accountId?: string }>()
 
-function keepCodexConversation(sessionId: string, conversation: { uuid: string; cwd: string }): void {
+function keepCodexConversation(sessionId: string, conversation: { uuid: string; cwd: string }, accountId?: string): void {
   if (typeof conversation.uuid !== 'string' || !UUID_RE.test(conversation.uuid) || typeof conversation.cwd !== 'string') return
   keptCodexConversations.delete(sessionId)
-  keptCodexConversations.set(sessionId, { uuid: conversation.uuid, cwd: conversation.cwd })
+  keptCodexConversations.set(sessionId, { uuid: conversation.uuid, cwd: conversation.cwd, ...(typeof accountId === 'string' && accountId ? { accountId } : {}) })
   while (keptCodexConversations.size > KEPT_CODEX_CONVERSATIONS_MAX) {
     const oldest = keptCodexConversations.keys().next().value
     if (oldest === undefined) break
@@ -414,7 +416,15 @@ function keepCodexConversation(sessionId: string, conversation: { uuid: string; 
 /** The conversation a Codex session is on, for session:save (P3.5). */
 export function getKeptCodexConversation(sessionId: string): { uuid: string; cwd: string } | undefined {
   const kept = keptCodexConversations.get(sessionId)
-  return kept ? { ...kept } : undefined
+  return kept ? { uuid: kept.uuid, cwd: kept.cwd } : undefined
+}
+
+/** P3.6 (row 22): the conversation a Codex session is on and the account it
+ *  ran under, for a Switch account to carry it into another account; none
+ *  unless both are known. */
+export function getKeptCodexConversationSource(sessionId: string): { uuid: string; cwd: string; accountId: string } | undefined {
+  const kept = keptCodexConversations.get(sessionId)
+  return kept && kept.accountId ? { uuid: kept.uuid, cwd: kept.cwd, accountId: kept.accountId } : undefined
 }
 
 // T8b (bug #5): exact-conversation resume target captured at the TOP of a
@@ -4235,7 +4245,7 @@ function spawnPtyResolved(
       // The tab is on the conversation it resumes; a launch that resumes
       // nothing (the picker, a fresh start) lets the kept one go until the
       // status line claims the next.
-      if (built.resumeId) keepCodexConversation(sessionId, { uuid: built.resumeId, cwd: codexCwd })
+      if (built.resumeId) keepCodexConversation(sessionId, { uuid: built.resumeId, cwd: codexCwd }, launch.lease.accountId)
       else keptCodexConversations.delete(sessionId)
       // Said, never silent: the conversation's rollout does not record the
       // directory this session kept, so it resumes in the configured one.
@@ -4283,7 +4293,7 @@ function spawnPtyResolved(
           ...(built.resumeId ? { resumeId: built.resumeId } : {}),
           ...(built.resumeId && built.resumePath ? { resumePath: built.resumePath } : {}),
           ...(built.pickFile ? { pickFile: built.pickFile, pickFolder: built.pickFolder } : {}),
-          onClaim: (claimed) => keepCodexConversation(sessionId, { uuid: claimed.id, cwd: claimed.cwd }),
+          onClaim: (claimed) => keepCodexConversation(sessionId, { uuid: claimed.id, cwd: claimed.cwd }, launch.lease.accountId),
           // The picker decided again after a claim: the session is no longer on it.
           onRelease: () => { keptCodexConversations.delete(sessionId) },
         },

@@ -3094,6 +3094,79 @@ export class AccountsService {
     return this.deps.leases.releaseOwner(kind, ownerId)
   }
 
+  /**
+   * A running session switched to another account of its provider (P3.6,
+   * row 22; parity with Claude's switch, which keeps the conversation): the
+   * conversation the session is on is carried into the account it moves to,
+   * and the respawn resumes it there by id.
+   *
+   * `conversation` is main's own record of what the session is on and of the
+   * account it ran under (pty-manager), never the renderer's; the renderer
+   * names only the session and the account to move to. Refused unless both
+   * accounts are the same provider's, the provider is on and its package
+   * copies conversations, and the destination is one a launch could run on
+   * now (active, not blocked, its realm locatable, no sign-in replacing it).
+   * Both accounts are leased under the registry lock for the whole copy (no
+   * sign-out, archive, inactivation or switch-off meanwhile), and the leases
+   * are released on every path. `none`: nothing to carry (the session is on
+   * no known conversation, or already on that account).
+   */
+  async carryConversation(
+    input: { accountId: string },
+    conversation: { uuid: string; cwd: string; accountId: string } | undefined,
+  ): Promise<AccountsResult<{ carried: 'copied' | 'present' | 'none' }>> {
+    const targetId = input && typeof input === 'object' ? (input as { accountId?: unknown }).accountId : undefined
+    if (typeof targetId !== 'string' || !targetId) return failure('invalid-request')
+    if (!conversation) return { ok: true, carried: 'none' }
+    if (typeof conversation.uuid !== 'string' || typeof conversation.accountId !== 'string' || typeof conversation.cwd !== 'string') return failure('invalid-request')
+    if (conversation.accountId === targetId) return { ok: true, carried: 'none' }
+    const ready = this.ready()
+    if ('ok' in ready) return ready
+    const target = findAccount(ready.doc, targetId)
+    const source = findAccount(ready.doc, conversation.accountId)
+    if (!target || !source) return failure('not-found')
+    if (target.providerId !== source.providerId) return failure('invalid-request', 'A session moves only to another account of its own provider.')
+    const p = this.pkg(target.providerId)
+    const folders = p?.realmFolders
+    if (!p || !folders || typeof folders.copyConversation !== 'function') return failure('unsupported')
+    const notNow = this.cliRefusal(p.id)
+    if (notNow) return notNow
+    const leases: AccountLease[] = []
+    try {
+      for (const accountId of [source.id, target.id]) {
+        const leased = await this.operationLease(ready.store, accountId, p.id)
+        if ('ok' in leased) return leased
+        leases.push(leased)
+      }
+      // Held now: the registry as it stands, the destination checked as a
+      // launch is (acquireLaunchLease), the source not archived.
+      const doc = ready.store.current()
+      if (!doc || ready.store.status().mode !== 'ready') return failure('registry-unavailable')
+      const s = findAccount(doc, source.id)
+      const t = findAccount(doc, target.id)
+      if (!s || !t) return failure('not-found')
+      if (s.lifecycle === 'archived') return failure('lifecycle', 'The account this session ran under is archived.')
+      const b = resolveLaunchBinding(doc, { providerId: p.id, providerAccountId: t.id })
+      if (!b.ok) return failure(b.code === 'realm-unavailable' ? 'realm-unavailable' : b.code === 'not-active' || b.code === 'blocked' ? 'lifecycle' : b.code === 'provider-mismatch' ? 'invalid-request' : b.code, b.message)
+      if (this.unrecordedSignIns.has(t.id)) return failure('sign-in-changed', 'This account signed in again, but the app could not record it. Check it in Accounts before using it.')
+      // The provider's own shared home is never written by the app (it is
+      // only adopted, read and signed in or out through the provider), so
+      // nothing is carried into it: the switch starts a new conversation.
+      if (findRealm(doc, b.binding.authRealmId)?.ownership === 'external-default') {
+        return failure('not-managed', "The sign-in already on this computer keeps its own folder, which the app does not write to, so the conversation was not carried there.")
+      }
+      const copied = await folders.copyConversation({ authRealmId: s.authRealmId }, { authRealmId: b.binding.authRealmId }, { id: conversation.uuid, cwd: conversation.cwd })
+        .catch((): { ok: false; code: 'io-failed'; message?: string; carried?: undefined } => ({ ok: false, code: 'io-failed' }))
+      if (!copied || copied.ok !== true) {
+        const code = (copied?.code ?? 'io-failed') as AccountsFailureCode
+        return failure(code, typeof copied?.message === 'string' ? copied.message : undefined)
+      }
+      return { ok: true, carried: copied.carried === 'present' ? 'present' : 'copied' }
+    } finally {
+      for (const l of leases) { try { l.release() } catch { /* idempotent */ } }
+    }
+  }
+
   /** A renderer went away: stop what it started, release what it held. */
   releaseRenderer(senderId: number): void {
     for (const run of this.signIns.values()) if (run.senderId === senderId) run.controller.abort()
