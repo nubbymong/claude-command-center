@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-28T15:11:16.204Z",
-  "head": "7811229f39236cdc5a41d08f1fa153b8a71cc085",
-  "tree": "78a9d51eab37f0f443d55271d689c247b426c0e5",
+  "generatedAt": "2026-09-28T15:16:05.133Z",
+  "head": "cc68f3f6a1ce460fee96fbbb3ea235c3913ab83c",
+  "tree": "551dc3ed5078cd0d27801c2ed9a054ce04239066",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -3384,7 +3384,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 43
+      "lineCount": 44
     },
     {
       "path": "tests/unit/renderer/hello-codex.acceptance.test.ts",
