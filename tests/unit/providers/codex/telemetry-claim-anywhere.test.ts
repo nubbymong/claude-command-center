@@ -172,7 +172,11 @@ describe('a resumed conversation is found by its id, wherever it is (rows 34, 38
 })
 
 describe('the conversation the resume picker opened (rows 32, 38)', () => {
-  it('is claimed once its rollout grows after the pick, and the pick file is removed', async () => {
+  // P3.5 VM finding V2: at the pick, as a resume by id on relaunch or Restart
+  // is at its launch: the status line shows the conversation's figures before
+  // its first new turn. A resume that then fails falls back to a new
+  // conversation, and that later decision lets this claim go.
+  it('is claimed at the pick, its figures shown at once, and the pick file is removed', async () => {
     vi.useFakeTimers()
     const sessions = realm()
     const pickFile = join(sessions, '..', 'pick.json')
@@ -183,8 +187,8 @@ describe('the conversation the resume picker opened (rows 32, 38)', () => {
     writeFileSync(pickFile, JSON.stringify({ id: ID_A }))
     await vi.advanceTimersByTimeAsync(1_500)
     expect(existsSync(pickFile)).toBe(false)
-    // Not yet: the picked conversation has not been written to since the pick.
-    expect(claims).toEqual([])
+    expect(claims).toEqual([{ id: ID_A, cwd: '/p/wt' }])
+    expect(updates.at(-1)?.inputTokens).toBe(10)
     appendFileSync(file, tokenLine(new Date().toISOString(), 11) + '\n')
     await vi.advanceTimersByTimeAsync(1_500)
     src.stop()
@@ -205,7 +209,7 @@ describe('the conversation the resume picker opened (rows 32, 38)', () => {
     rollout(folder(sessions, now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate()), ID_B, '/p/demo', now.toISOString(), 2)
     await vi.advanceTimersByTimeAsync(1_500)
     src.stop()
-    expect(claims).toEqual([])
+    expect(claims).toEqual([{ id: ID_A, cwd: '/p/demo' }])
   })
 
   it('a pick that is neither a conversation id nor a new conversation is removed once and decides nothing', async () => {
@@ -281,7 +285,7 @@ describe('the conversation the resume picker opened (rows 32, 38)', () => {
     const pickFile = join(sessions, '..', 'pick.json')
     const old = new Date(Date.now() - 2 * 24 * 3600 * 1000)
     rollout(folder(sessions, old.getUTCFullYear(), old.getUTCMonth() + 1, old.getUTCDate()), ID_A, '/p/demo', old.toISOString(), 10)
-    const { claims, src } = watch(sessions, '/p/demo', { pickFile })
+    const { claims, releases, src } = watch(sessions, '/p/demo', { pickFile })
     writeFileSync(pickFile, JSON.stringify({ id: ID_A }))
     await vi.advanceTimersByTimeAsync(1_500)
     writeFileSync(pickFile, JSON.stringify({ fresh: true }))
@@ -290,7 +294,9 @@ describe('the conversation the resume picker opened (rows 32, 38)', () => {
     rollout(folder(sessions, now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate()), ID_B, '/p/demo', new Date(Date.now() + 200).toISOString(), 3)
     await vi.advanceTimersByTimeAsync(600)
     src.stop()
-    expect(claims).toEqual([{ id: ID_B, cwd: '/p/demo' }])
+    // The picked conversation was claimed at the pick (VM finding V2), and let go by the fallback.
+    expect(claims).toEqual([{ id: ID_A, cwd: '/p/demo' }, { id: ID_B, cwd: '/p/demo' }])
+    expect(releases).toEqual([1])
   })
 
   it('stop removes a pick file still waiting to be read', () => {
@@ -322,7 +328,7 @@ describe('two sessions in the same folder', () => {
     expect(fresh.claims).toEqual([{ id: ID_B, cwd: '/p/demo' }])
   })
 
-  it('a picker session that resumes one conversation never takes the new session\'s, and takes its own once it grows', async () => {
+  it('a picker session that resumes one conversation never takes the new session\'s, and takes its own at the pick', async () => {
     vi.useFakeTimers()
     const sessions = realm()
     const pickFile = join(sessions, '..', 'pick-a.json')
@@ -332,6 +338,7 @@ describe('two sessions in the same folder', () => {
     const fresh = watch(sessions, '/p/demo', {})
     writeFileSync(pickFile, JSON.stringify({ id: ID_A }))
     await vi.advanceTimersByTimeAsync(1_500)
+    expect(picker.claims).toEqual([{ id: ID_A, cwd: '/p/demo' }])
     rollout(today(sessions), ID_B, '/p/demo', new Date(Date.now() + 200).toISOString(), 5)
     appendFileSync(mine, tokenLine(new Date().toISOString(), 12) + '\n')
     await vi.advanceTimersByTimeAsync(1_500)
@@ -339,6 +346,55 @@ describe('two sessions in the same folder', () => {
     fresh.src.stop()
     expect(picker.claims).toEqual([{ id: ID_A, cwd: '/p/demo' }])
     expect(fresh.claims).toEqual([{ id: ID_B, cwd: '/p/demo' }])
+  })
+
+  it('a pick of a conversation another tab holds is not taken while it holds it; once let go it is', async () => {
+    vi.useFakeTimers()
+    const sessions = realm()
+    const pickFile = join(sessions, '..', 'pick-a.json')
+    const old = new Date(Date.now() - 2 * 24 * 3600 * 1000)
+    rollout(folder(sessions, old.getUTCFullYear(), old.getUTCMonth() + 1, old.getUTCDate()), ID_A, '/p/demo', old.toISOString(), 10)
+    const holder = watch(sessions, '/p/demo', { resumeId: ID_A })
+    await vi.advanceTimersByTimeAsync(300)
+    expect(holder.claims).toEqual([{ id: ID_A, cwd: '/p/demo' }])
+    const picker = watch(sessions, '/p/demo', { pickFile })
+    writeFileSync(pickFile, JSON.stringify({ id: ID_A }))
+    await vi.advanceTimersByTimeAsync(2_500)
+    expect(picker.claims).toEqual([])
+    expect(picker.updates).toEqual([])
+    holder.src.stop()
+    await vi.advanceTimersByTimeAsync(1_500)
+    picker.src.stop()
+    expect(picker.claims).toEqual([{ id: ID_A, cwd: '/p/demo' }])
+  })
+
+  it('a pick let go by another tab after its day folder became a link is not taken', async (ctx) => {
+    vi.useFakeTimers()
+    const sessions = realm()
+    const pickFile = join(sessions, '..', 'pick-a.json')
+    const old = new Date(Date.now() - 2 * 24 * 3600 * 1000)
+    const day = folder(sessions, old.getUTCFullYear(), old.getUTCMonth() + 1, old.getUTCDate())
+    rollout(day, ID_A, '/p/demo', old.toISOString(), 10)
+    const holder = watch(sessions, '/p/demo', { resumeId: ID_A })
+    await vi.advanceTimersByTimeAsync(300)
+    expect(holder.claims).toEqual([{ id: ID_A, cwd: '/p/demo' }])
+    const picker = watch(sessions, '/p/demo', { pickFile })
+    writeFileSync(pickFile, JSON.stringify({ id: ID_A }))
+    await vi.advanceTimersByTimeAsync(600)
+    expect(picker.claims).toEqual([])
+    // The day folder is moved out of the realm and a link to it put in its place.
+    const moved = join(sessions, '..', 'moved-day')
+    renameSync(day, moved)
+    try { symlinkSync(moved, day, 'junction') } catch { holder.src.stop(); picker.src.stop(); ctx.skip(); return }
+    try {
+      holder.src.stop()
+      await vi.advanceTimersByTimeAsync(2_500)
+      picker.src.stop()
+      expect(picker.claims).toEqual([])
+      expect(picker.updates).toEqual([])
+    } finally {
+      dropLink(day)
+    }
   })
 
   it('a picker session that chose a new conversation never takes one begun before its choice', async () => {
@@ -631,7 +687,7 @@ describe('the pick folder is the one made for the launch (fix round 3)', () => {
 // the walk's bounds on every such pick. A resume by id still prefers the
 // session's folder.
 describe('a pick from another worktree is looked up without the session\'s folder', () => {
-  it('visits only what lies before its rollout, and claims it once it grows', async () => {
+  it('visits only what lies before its rollout, and claims it at the pick', async () => {
     vi.useFakeTimers()
     const sessions = realm()
     const OTHER = (n: number) => `019dd000-0001-7000-8000-${String(n).padStart(12, '0')}`
@@ -652,6 +708,7 @@ describe('a pick from another worktree is looked up without the session\'s folde
     // The year, its three months, the twenty days of September, and that day's four files.
     expect(visited).toBeGreaterThan(0)
     expect(visited).toBeLessThanOrEqual(1 + 3 + 20 + 4)
+    expect(claims).toEqual([{ id: ID_A, cwd: '/wt/other' }])
     appendFileSync(picked, tokenLine(new Date().toISOString(), 6) + '\n')
     await vi.advanceTimersByTimeAsync(600)
     src.stop()
