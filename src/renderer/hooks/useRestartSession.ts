@@ -139,8 +139,12 @@ export function useRestartSession(
     if (refuseRestart(session.id)) return
     // Kill the old PTY (also clears spawn tracker so new one will spawn)
     killSessionPty(session.id)
-    // Show resume picker on restart so user can pick a conversation, unless
-    // this provider's plain "Restart" starts a new one (canvas F7).
+    // Mark the resume picker, unless this provider's plain "Restart" does not
+    // open it (canvas F7). Either way main resumes the conversation the
+    // session is on when it knows it -- over a picker a plain Restart marked,
+    // never over an explicit "Restart and pick a conversation" (P3.5); with
+    // none known, a Restart that marked the picker shows it, and a plain
+    // Restart that did not starts a new conversation.
     const pick = options?.pickConversation ?? restartPicksConversation(session.provider)
     if (session.sessionType === 'local' && !session.shellOnly && pick) {
       markSessionForResumePicker(session.id)

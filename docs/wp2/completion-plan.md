@@ -536,19 +536,39 @@ keeps the tabs launched while its prompt was open, and Refresh never offers
 them again. SSH radius: only the Codex local branch of `pty-manager.ts`; no
 SSH code path changed. Row 38's midnight-UTC limitation (section 7, item 6)
 is fixed, verification owed.
-Limits, recorded, none a UX decision: the name file Claude's picker prefers
-(written by the logs binder against an exact bind) is not written for Codex,
-so a Codex name comes from the session state while the session is open or
-saved; it rides with the exact bind of a NEW Codex conversation (today a claim
-by folder and time, as before; two new sessions of one account in one folder
-started within seconds can swap) with the Codex hooks (P3.10) and Codex runs
-in the logs (P3.12). A conversation switched inside the Codex TUI (its own
-resume or new) is not followed until P3.10's SessionStart hook. A Codex
-session's Claude review root stays its configured directory, never one a
-resumed rollout names. Once the picker has named a conversation, only that
-conversation is claimed, never a new rollout another session writes in the
-same folder; so the fresh session the picker falls back to after a failed
-resume gets no status line. Switch account (row 35's other half) is P3.6.
+Fix round 1 (the reviews and the ADR-009 thesis check; 2026-09-28; 0cb77940,
+16091336, 6400f8a8, 42bb5f5c): the
+picker records every decision (`{ id }` for a resume; `{ fresh: true }` for a
+new conversation, nothing to list, or the fallback after a resume failed),
+each written whole (a new owner-only file renamed over the pick file); the
+watcher claims nothing before a decision, after `{ id }` only that
+conversation, after `{ fresh }` only a rollout created from the decision on;
+the pick is read only as a small regular file, never through a link, and dealt
+with once. A claimed rollout is read by size first and only what it gained,
+at a claim its head and tail; a conversation another session holds is not
+walked for again. The walk is bounded and follows no link at any level; of
+two rollouts with one id the one recording the kept directory wins, then the
+one in its own date folder, and a resume says in the log when none records
+the kept directory. The review root stays the configured folder (asserted).
+The picker finds git by an absolute path on PATH's absolute entries with a
+hardened command line and fails safe. A second C item: a session file
+written while the resume prompt is unanswered keeps its offer (every writer
+goes through `buildSessionState`).
+Limits and deviations, recorded, none a UX decision: the name file Claude's
+picker prefers (written by the logs binder against an exact bind) is not
+written for Codex, so a Codex name comes from the session state while the
+session is open or saved; it rides with Codex runs in the logs (P3.12).
+Two NEW sessions of one account in one folder, both launched directly or
+both choosing New conversation within about a second of each other, can
+still take each other's rollout until the exact claim from the SessionStart
+hook (P3.10); a picker session no longer takes another session's rollout.
+A conversation switched inside the Codex TUI (its own resume or new) is not
+followed until P3.10. A file with a second hard name is accepted (a staged
+Sign in again leaves every carried file so) and checked like any other.
+Row 35 deviates from Claude by the F7 menu: with no known conversation
+Claude's Restart opens the picker, Codex's plain Restart starts a new
+conversation ("Restart and pick a conversation" is the picker). Switch
+account (row 35's other half) is P3.6.
 Owed: the independent spec and code-quality reviews; the ADR-009 pass (the
 `codex resume <id>` argv, the pick file, the picker's environment and its
 worktree start); the SSH live matrix at the final head (`pty-manager.ts`
@@ -615,7 +635,15 @@ automated input). SSH radius: yes. The C item "untracked local Claude spawn"
 (section 7) is in the same part of `pty-manager.ts` as the Watchdog's local
 arm site, so it is fixed here. Lifts P3.4's `needsClaude` from the showcase's
 watchdog page and What's New's "Session Watchdog." line once the Watchdog
-arms for Codex.
+arms for Codex. From P3.5: the exact claim of a NEW Codex conversation from
+the SessionStart hook's `transcript_path` (P3.1 evidence, answer 4), as
+Claude's exact bind (#480); until then two new sessions of one account in one
+folder, launched within about a second of each other, can take each other's
+rollout (P3.5's pick protocol already keeps a picker session from taking
+another's, and a resume by id takes only its own); and following a
+conversation switched inside the Codex TUI (its own resume or new: the
+SessionStart hook's `source` and `transcript_path`), so the session keeps,
+persists and on Restart resumes the conversation it is on.
 
 **P3.11 Extra CLI arguments.** Claude's field and IPC character guard for
 Codex, rejecting the flags the app manages (model, effort, permissions, MCP,
@@ -632,7 +660,13 @@ rollouts. Likely files: `src/main/logging/*`, `session-capabilities.ts`,
 `pty-manager.ts` (run registration). ADR-009: yes (paths inside the resources
 directory, IPC). SSH radius: yes. The onboarding Transparency page's "Index
 conversation logs" card still names only Claude's transcripts (left by
-P3.4): it names what is indexed once Codex's are.
+P3.4): it names what is indexed once Codex's are. From P3.5: the name file
+Claude's picker prefers (`<transcript>.ccc-name.json`, written by the logs
+binder on a rename and on an exact bind, session-name-sidecar.ts) is written
+next to a Codex rollout too, against an exact claim only, so a renamed Codex
+conversation keeps its name in the resume picker after its tab is closed
+(today the picker names it from the session state while the tab is open or
+saved).
 
 **P3.13 Multi Spawn and Quick Start.** N copies of a Multi Spawn Codex config,
 one lease each; Quick Start with Codex; a test on the Codex path. Enforcing the
