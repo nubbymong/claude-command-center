@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "9ebf71461aa027044c2d56a2f0f14ef78b46c4e7cb6524058c3f29dd8db3683c",
-  "manifestHead": "f65de184120aad9c7b017afea3446eb581f8abf6",
+  "manifestPathDigest": "bb3674ca41f086f9fd8b859e7d1743386967b1717d0d73d1d7b172952c62a57b",
+  "manifestHead": "0b6c8f0a229a96d0b2ab6b9fd1bbadc6802b0394",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -1399,7 +1399,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "replace",
-      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); WP1.33 mapping: adapted in place for WP2 P3 usage track MP13 (the user-facing sweep for the usage UX the owner approved 2026-09-27): the rail step names the Usage page; the tour is otherwise unchanged (WP1.33); tests/unit/renderer/guided-tour-counter.test.tsx",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); WP1.33 mapping: adapted in place for WP2 P3 usage track MP13 (the user-facing sweep for the usage UX the owner approved 2026-09-27): the rail step names the Usage page; the tour is otherwise unchanged (WP1.33); tests/unit/renderer/guided-tour-counter.test.tsx; WP2 PR 3 P3.4 closure (row 14): the first card names the assistants in use (both on unchanged; Claude Code or Codex alone when only one is), read as the title bar reads them (WP1.2); tests/unit/renderer/guided-tour-provider-copy.test.tsx",
       "note": ""
     },
     {
@@ -4823,6 +4823,17 @@
       "category": "TEST",
       "disposition": "added",
       "evidence": "new WP2 P3 usage track MP5 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, usage footer option B, D2, D3) test (tests/unit/renderer/footer-identity-pills.test.tsx): identity grouping per provider, the Claude-only regression (names, colours, order, \"+N\"), marks and rules, D2 and D3, the overflow's identities and sub-rows, per-provider hidden labels, and the statusline fields it reads (WP1.68); WP2 P3 usage track MP6 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, usage footer settings, D2, Q1.5): the case that a waiting pill says so in its tooltip (WP1.68); tests/unit/renderer/footer-identity-pills.test.tsx; WP2 P3 usage track MP5 review fixes: cases for the current window, the unknown email, two Codex accounts, reset times in tooltips, the overflow placeholders, the dot titles, and the byte-for-byte Claude-only HTML against the pre-MP5 HTML recorded once in 02c1280b (scenario tests/fixtures/footer/claude-only-scenario.ts) (WP1.68); tests/unit/renderer/footer-identity-pills.test.tsx; WP2 P3 usage track MP5 spec fix (Q1.2 as approved): cases for two Codex accounts on one identity, and the Claude-only regression now asserts each pill's text, tooltip, order, colours and meters as recorded before MP5 (WP1.68); tests/unit/renderer/footer-identity-pills.test.tsx",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/guided-tour-provider-copy.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.4 closure test (parity row 14): the guided tour's first card names the assistants in use, as the title bar reads them (usesClaude, usesCodex): both on word for word as before, Claude Code alone with Codex off or not answered yet, Codex alone with Claude Code off, and it follows a switch (WP1.2); tests/unit/renderer/guided-tour-provider-copy.test.tsx",
       "note": ""
     },
     {
