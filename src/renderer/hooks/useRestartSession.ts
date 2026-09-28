@@ -18,7 +18,8 @@ export interface RestartOptions {
   /** Open the resume picker so the user picks the conversation (canvas F7,
    *  "Restart and pick a conversation"). Absent, the provider's default
    *  applies (restartPicksConversation): some providers always offer it,
-   *  others offer a plain "Restart" that starts a new conversation. */
+   *  others offer a plain "Restart" that carries on with the conversation
+   *  the tab is on (main resumes it; P3.5). */
   pickConversation?: boolean
 }
 

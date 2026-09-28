@@ -47,9 +47,11 @@ export const NEEDS_ATTENTION_TEXT = noticeText(NEEDS_ATTENTION)
 export const SIGNED_IN_ELSEWHERE_TEXT = noticeText(SIGNED_IN_ELSEWHERE)
 
 /** Whether a provider's plain "Restart" opens the resume picker (canvas F7).
- *  A Claude restart always has. A Codex session has two restarts: "Restart"
- *  starts a new conversation, "Restart and pick a conversation" opens the
- *  picker (useRestartSession's `pickConversation`). */
+ *  A Claude restart always has (main resumes the conversation the tab is on
+ *  instead, when it knows it). A Codex session has two restarts: "Restart"
+ *  carries on with the conversation the tab is on (P3.5: main resumes the
+ *  one it kept; a new one when there is none), "Restart and pick a
+ *  conversation" opens the picker (useRestartSession's `pickConversation`). */
 export function restartPicksConversation(provider: ProviderId | undefined): boolean {
   return (provider ?? 'claude') !== 'codex'
 }

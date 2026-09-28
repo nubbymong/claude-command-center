@@ -28,7 +28,7 @@ import { execSync, execFile } from 'child_process'
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { shouldRegisterRun } from './logging/should-register-run'
 import { getLogSupervisor, getTranscriptBinder } from './logging/logging-service'
-import { resolveResumeTargetFromTranscript, mangleCwdToProjectDir } from './logging/transcript-discovery'
+import { resolveResumeTargetFromTranscript, mangleCwdToProjectDir, UUID_RE } from './logging/transcript-discovery'
 import { buildClaudeLaunchCommand, resolveResumeLaunch, recoverOrphanResumeLaunch, buildResumeTranscriptPath, quoteArgForShell, modelFlag, expandResumeTargetCwd, parseWorktreePaths } from './spawn-claude-command'
 import { ensureCompanionDir, nodeFsCompanionDeps } from './logging/companion-dir'
 import { forgetSessionName } from './logging/session-name-sidecar'
@@ -389,6 +389,33 @@ const refreshWaitSpawns = new Map<string, {
 
 // Codex-provider telemetry sources: keyed by sessionId, stopped on PTY exit / kill.
 const codexTelemetrySources = new Map<string, TelemetrySource>()
+
+// P3.5 (rows 34, 35): the conversation each Codex session is on -- the one its
+// status line claimed, or the one an exact resume started -- as the transcript
+// binder knows each Claude tab's. Unlike lastResumeTarget it is NOT cleared by
+// killPty: a Restart kills first and resumes it after; a launch that resumes
+// nothing lets it go. session:save persists it (session-resume-enrich), so a
+// relaunch resumes it too. Only a conversation id is kept. Bounded, the
+// oldest tab's first (a closed tab's entry is never used again).
+export const KEPT_CODEX_CONVERSATIONS_MAX = 512
+const keptCodexConversations = new Map<string, { uuid: string; cwd: string }>()
+
+function keepCodexConversation(sessionId: string, conversation: { uuid: string; cwd: string }): void {
+  if (typeof conversation.uuid !== 'string' || !UUID_RE.test(conversation.uuid) || typeof conversation.cwd !== 'string') return
+  keptCodexConversations.delete(sessionId)
+  keptCodexConversations.set(sessionId, { uuid: conversation.uuid, cwd: conversation.cwd })
+  while (keptCodexConversations.size > KEPT_CODEX_CONVERSATIONS_MAX) {
+    const oldest = keptCodexConversations.keys().next().value
+    if (oldest === undefined) break
+    keptCodexConversations.delete(oldest)
+  }
+}
+
+/** The conversation a Codex session is on, for session:save (P3.5). */
+export function getKeptCodexConversation(sessionId: string): { uuid: string; cwd: string } | undefined {
+  const kept = keptCodexConversations.get(sessionId)
+  return kept ? { ...kept } : undefined
+}
 
 // T8b (bug #5): exact-conversation resume target captured at the TOP of a
 // respawn (in-session Restart / Switch-account), keyed by sessionId. Captured
@@ -1387,6 +1414,9 @@ function spawnPtyResolved(
      * SAME conversation it was on at quit (not the newest in the cwd's folder).
      * In-session Restart/Switch DO NOT set this — main self-captures via
      * lastResumeTarget. Fail-open: ignored if the transcript/cwd no longer exist.
+     * Codex (P3.5): the same field, resumed with `codex resume <id>` when the
+     * conversation's rollout is in the launch's realm; a Restart resumes the
+     * tab's kept conversation (keptCodexConversations).
      */
     resume?: { uuid: string; cwd: string }
     provider?: 'claude' | 'codex'
@@ -4174,22 +4204,40 @@ function spawnPtyResolved(
     let started: pty.IPty | undefined
     try {
       const provider = getProvider('codex')
-      const { cmd: spawnCmd, args: spawnArgs, env: spawnEnv, commandLine } = provider.buildSpawnCommand({
+      // P3.5 (rows 34, 35): the conversation to resume exactly, as the Claude
+      // branch does -- a restored tab's persisted one (options.resume), else,
+      // on a Restart, the one the tab is on (kept across the kill). "Restart
+      // and pick a conversation" (the picker) is never overridden by the kept
+      // one. The builder resumes it only when its rollout is in this launch's
+      // realm, checks the id again, and says where the CLI starts.
+      const resumeTarget = options?.resume ?? (options?.useResumePicker ? undefined : keptCodexConversations.get(sessionId))
+      const built = provider.buildSpawnCommand({
         sessionId,
         provider: 'codex',
-        cwd: options?.cwd,
+        // The configured directory, resolved: where an exact resume falls
+        // back to when the conversation's own directory does not hold.
+        cwd: resolvedCwd,
         cols,
         rows,
         useResumePicker: options?.useResumePicker,
         codexOptions: options?.codexOptions,
         realmLaunch: { executable: launch.executable, env: launch.env, sessionsDir: launch.sessionsDir },
+        ...(resumeTarget ? { resume: { uuid: resumeTarget.uuid, cwd: resumeTarget.cwd } } : {}),
         // Same light/dark signal the local Claude spawn gets (book item 34).
         hostColorScheme: resolveHostColorScheme(
           readConfig<{ theme?: string }>('settings')?.theme,
           nativeTheme.shouldUseDarkColors,
         ),
       })
-      logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${commandLine ?? spawnArgs.join(' ')} cwd=${describePathForLog(resolvedCwd)}`)
+      const { cmd: spawnCmd, args: spawnArgs, env: spawnEnv, commandLine } = built
+      // Where the CLI runs: the resumed conversation's own directory, else the configured one.
+      const codexCwd = built.cwd || resolvedCwd
+      // The tab is on the conversation it resumes; a launch that resumes
+      // nothing (the picker, a fresh start) lets the kept one go until the
+      // status line claims the next.
+      if (built.resumeId) keepCodexConversation(sessionId, { uuid: built.resumeId, cwd: codexCwd })
+      else keptCodexConversations.delete(sessionId)
+      logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${commandLine ?? spawnArgs.join(' ')} cwd=${describePathForLog(codexCwd)} (resume=${built.resumeId ?? 'none'})`)
       // Codex sessions never designate a canvas worktree; drop any inherited
       // hint, in every spelling (Windows names are case-insensitive).
       for (const k of Object.keys(spawnEnv)) if (k.toUpperCase() === 'CCC_SESSION_WORKTREE') delete (spawnEnv as Record<string, string>)[k]
@@ -4204,7 +4252,7 @@ function spawnPtyResolved(
         name: 'xterm-256color',
         cols,
         rows,
-        cwd: resolvedCwd,
+        cwd: codexCwd,
         env: spawnEnv,
         useConpty: true,
       })
@@ -4221,7 +4269,16 @@ function spawnPtyResolved(
       const codexTelSrc = provider.ingestSessionTelemetry(
         sessionId,
         // The realm's own transcripts: a managed account never writes to ~/.codex.
-        { cwd: resolvedCwd, spawnTimestamp: codexSpawnTimestamp, sessionsDir: launch.sessionsDir },
+        // P3.5: the resumed conversation is claimed wherever it is, the
+        // picker's pick through its file, and the tab keeps what is claimed.
+        {
+          cwd: codexCwd,
+          spawnTimestamp: codexSpawnTimestamp,
+          sessionsDir: launch.sessionsDir,
+          ...(built.resumeId ? { resumeId: built.resumeId } : {}),
+          ...(built.pickFile ? { pickFile: built.pickFile } : {}),
+          onClaim: (claimed) => keepCodexConversation(sessionId, { uuid: claimed.id, cwd: claimed.cwd }),
+        },
         (data) => {
           // Copilot review on PR #31 (p9.17): decorate at the send site so
           // the renderer receives accountColour. decorateStatuslineWithColour
@@ -4236,8 +4293,10 @@ function spawnPtyResolved(
       )
       codexTelemetrySources.set(sessionId, codexTelSrc)
       // WP2 commit 5b: a local Codex session may ask for a Claude review of
-      // the project it runs in -- the directory its PTY started in, never
-      // home or above it (the codex_review rule, #188). Whether the tool is
+      // its configured project directory, never home or above it (the
+      // codex_review rule, #188) -- and never the directory a resumed
+      // conversation's rollout names (P3.5), which is transcript content, the
+      // same line the Agent Canvas root holds in the Claude branch. Whether the tool is
       // offered is decided per MCP connection; killPty's unregister (run
       // before every spawn) clears this, so a respawn re-decides.
       if (isHomeOrAncestor(resolvedCwd)) {

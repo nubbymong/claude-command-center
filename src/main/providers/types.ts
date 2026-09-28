@@ -63,6 +63,47 @@ export interface SpawnOptions {
    *  credentials removed, CODEX_HOME set) and its transcript folder. A Codex
    *  spawn runs only from this. Set by main; never from the renderer. */
   realmLaunch?: { executable: string; env: Record<string, string>; sessionsDir: string }
+  /** Codex (P3.5): the conversation to resume exactly -- the persisted
+   *  target of a restored tab, or the tab's kept conversation on a Restart.
+   *  The builder resumes it only when its rollout is in `realmLaunch`'s own
+   *  sessions folder, and checks the id again before it reaches argv. Set by
+   *  main only. */
+  resume?: { uuid: string; cwd: string }
+}
+
+/** What a provider's builder hands the PTY. `commandLine` (Windows only): the
+ *  whole command line after `cmd`, which node-pty passes VERBATIM -- a cmd.exe
+ *  `/s /c` line cannot survive its per-argument quoting; when present it is
+ *  what runs, and `args` is empty. Codex (P3.5): `cwd`, the directory the CLI
+ *  must start in when it is not the configured one (an exact resume in the
+ *  conversation's own directory); `resumeId`, the conversation it resumes;
+ *  `pickFile`, where the resume picker records the conversation it opens. */
+export interface ProviderSpawnCommand {
+  cmd: string
+  args: string[]
+  env: Record<string, string>
+  commandLine?: string
+  cwd?: string
+  resumeId?: string
+  pickFile?: string
+}
+
+/** How a session's telemetry finds its transcript. `cwd`: the resolved
+ *  working directory the PTY runs in, which Codex uses to claim a new
+ *  rollout. `spawnTimestamp`: Date.now() captured immediately before
+ *  pty.spawn(), the lower bound of that claim (ts >= spawn - 5s).
+ *  `sessionsDir`: where the session's realm writes its transcripts (Codex).
+ *  Codex (P3.5): `resumeId`, the conversation the launch resumes (claimed
+ *  wherever it is); `pickFile`, where the resume picker records its pick;
+ *  `onClaim`, told which conversation the session is on once claimed.
+ *  Claude ignores all of it (its telemetry is the statusline file watcher). */
+export interface TelemetryOptions {
+  cwd: string
+  spawnTimestamp: number
+  sessionsDir?: string
+  resumeId?: string
+  pickFile?: string
+  onClaim?: (claim: { id: string; cwd: string }) => void
 }
 
 export interface TelemetrySource {
@@ -84,10 +125,8 @@ export interface SessionProvider {
   readonly displayName: string
 
   resolveBinary(legacyVersion?: LegacyVersion): { cmd: string; args: string[] } | null
-  /** `commandLine` (Windows only): the whole command line after `cmd`, which
-   *  node-pty passes VERBATIM -- a cmd.exe `/s /c` line cannot survive its
-   *  per-argument quoting. When present it is what runs, and `args` is empty. */
-  buildSpawnCommand(opts: SpawnOptions): { cmd: string; args: string[]; env: Record<string, string>; commandLine?: string }
+  /** See ProviderSpawnCommand. */
+  buildSpawnCommand(opts: SpawnOptions): ProviderSpawnCommand
   detectUiRunning(data: string): boolean
 
   /** Optional -- Claude only; Codex has no statusline shim. */
@@ -99,19 +138,10 @@ export interface SessionProvider {
    * copies `scripts/codex-resume-picker.js`.
    */
   deployResumePickerScript?(resourcesDir: string): Promise<void>
-  /**
-   * Subscribe to live telemetry for a spawned session.
-   *
-   * opts.cwd            -- resolved working directory passed to the PTY spawn.
-   *                        Used by the Codex provider to claim the correct rollout file.
-   * opts.spawnTimestamp -- Date.now() captured immediately before pty.spawn().
-   *                        Used as the lower-bound for the rollout claim window (ts >= spawn - 5s).
-   * opts.sessionsDir    -- where the session's realm writes its transcripts (Codex).
-   * Claude provider ignores opts (its telemetry comes from the statusline file watcher).
-   */
+  /** Subscribe to live telemetry for a spawned session (see TelemetryOptions). */
   ingestSessionTelemetry(
     sessionId: string,
-    opts: { cwd: string; spawnTimestamp: number; sessionsDir?: string },
+    opts: TelemetryOptions,
     onUpdate: (data: StatuslineData) => void,
   ): TelemetrySource
   listHistorySessions(): Promise<HistorySession[]>

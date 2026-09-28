@@ -40,7 +40,17 @@ export interface ResumeEnrichDeps {
   isExactBindSourceActive: () => boolean
   /** Derive {uuid, cwd} from a transcript path, or null on any failure. */
   resolveResumeTargetFromTranscript: (transcriptPath: string) => { uuid: string; cwd: string } | null
+  /**
+   * P3.5: the conversation a non-Claude (Codex) tab is on, as its provider
+   * keeps it in main (pty-manager's kept conversation: the one its status
+   * line claimed, or the one an exact resume started), or null. Absent: such
+   * tabs are left as they are.
+   */
+  getProviderResumeTarget?: (sessionId: string) => { uuid: string; cwd: string } | null | undefined
 }
+
+/** A conversation id, as every resume target must carry (the spawn schema's form). */
+const CONVERSATION_ID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
 
 /**
  * Enrich a SessionState IN PLACE with each Claude session's exact-conversation
@@ -51,8 +61,10 @@ export interface ResumeEnrichDeps {
  *     carried (from restore, or the renderer's own enrichment). The fallback is
  *     therefore never worse than today's behaviour.
  *   - A null binder (logging disabled) is a whole no-op.
- *   - Shell-only and non-Claude (Codex/SSH) sessions are skipped — the binder only
- *     tracks local Claude transcripts.
+ *   - Shell-only sessions are skipped; non-Claude (Codex) sessions never read
+ *     the binder, which only tracks local Claude transcripts: P3.5 stamps them
+ *     from their provider's kept conversation (getProviderResumeTarget), a
+ *     conversation id only.
  *   - Never throws: a per-session failure leaves that one record unchanged.
  *
  * Returns the same object (mutated) for call-site convenience.
@@ -65,7 +77,14 @@ export function enrichSessionStateWithResumeTargets(
   for (const s of state.sessions) {
     try {
       if (!s || s.shellOnly) continue
-      if ((s.provider ?? 'claude') !== 'claude') continue
+      if ((s.provider ?? 'claude') !== 'claude') {
+        const kept = deps.getProviderResumeTarget?.(s.id)
+        if (kept && typeof kept.uuid === 'string' && CONVERSATION_ID_RE.test(kept.uuid) && typeof kept.cwd === 'string' && kept.cwd) {
+          s.resumeUuid = kept.uuid
+          s.resumeCwd = kept.cwd
+        }
+        continue
+      }
       // #480: EXACT bind only — this must not persist a heuristic (cross-prone)
       // guess. The hooks-off fallback re-enables the heuristic only when no
       // authenticated source can arrive.
