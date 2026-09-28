@@ -17,13 +17,18 @@ describe('AccountLaunchGate is suppressed by the boot-gate chain', () => {
 
   it('App passes the live boot gate to the account picker', () => {
     // Without this the per-session account pickers of a restore paint on top of
-    // the Multi Spawn startup page, which by design comes AFTER resume.
-    expect(APP).toContain('<AccountLaunchGate suppressed={bootGate !== null} />')
+    // the Multi Spawn startup page, which by design comes AFTER resume. P3.5 VM
+    // finding V1: not held back by the resume offer itself, so a launch made
+    // while it is up shows its dialog (launchDialogsSuppressed).
+    expect(APP).toContain('<AccountLaunchGate suppressed={launchDialogsSuppressed(bootGate)} />')
+    expect(APP).toContain('<LaunchAckConfirm suppressed={launchDialogsSuppressed(bootGate)} />')
+    expect(APP).not.toContain('suppressed={bootGate !== null}')
   })
 
   it('the gate is not ALSO rendered unsuppressed somewhere', () => {
     const uses = APP.match(/<AccountLaunchGate\b/g) ?? []
     expect(uses.length, 'exactly one render site').toBe(1)
+    expect((APP.match(/<LaunchAckConfirm\b/g) ?? []).length, 'exactly one confirm render site').toBe(1)
   })
 
   it('SentinelPanel keeps its own suppression', () => {
