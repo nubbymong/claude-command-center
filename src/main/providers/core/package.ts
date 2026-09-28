@@ -101,6 +101,9 @@ export interface AuthOperationResult {
   providerAuthorityId?: string
   providerLabel?: string
   planLabel?: string
+  /** A sign-out: its CLI ran (whatever followed), so the realm may have
+   *  changed even when the result says why it could not be read back. */
+  ran?: boolean
 }
 
 /** The CLI discovery last resolved, for a package whose update commands

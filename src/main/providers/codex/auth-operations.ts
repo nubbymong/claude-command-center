@@ -544,13 +544,15 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
         try {
           const out = await run(r, 'logout', { timeoutMs: LOGOUT_TIMEOUT_MS })
           if (isRefusal(out)) return out
-          if (out.timedOut) return refuse('timed-out')
+          // A failure after the CLI ran says so (ran): whatever the read-back
+          // then gave, the realm may have changed (review round 3, C3).
+          if (out.timedOut) return { ...refuse('timed-out'), ran: true }
           if (out.spawnError) return refuse('not-started')
           // The verdict is the realm's state afterwards, not logout's exit code.
           const s = await readStatus(r)
           if (s.state === 'signed-out') return { ok: true, state: 'signed-out' }
-          if (s.state === 'signed-in') return { ...refuse('still-signed-in'), state: 'signed-in', credential: credentialOf(s.via) }
-          return refuse(s.code, s.message)
+          if (s.state === 'signed-in') return { ...refuse('still-signed-in'), state: 'signed-in', credential: credentialOf(s.via), ran: true }
+          return { ...refuse(s.code, s.message), ran: true }
         } finally {
           releaseAfterKills(r, release)
         }
