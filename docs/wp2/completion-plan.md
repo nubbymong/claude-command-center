@@ -284,10 +284,11 @@ released from it until section 7 holds.
 5. **Dependabot PRs:** every Dependabot PR open at the cut (today #620 to
    #624) rolled in (owner decision recorded 2026-09-26); #621, the Electron 44
    major, with its own ADR-009 pass and a VM packaging run.
-6. **Known defects settled.** The four C items in the checklist's P2
+6. **Known defects settled.** The five C items in the checklist's P2
    acceptance section (the narrow-window overlap of the partner label, the
    renderer-only one-at-a-time rule, Resume replacing the tab list while its
-   prompt is open, the untracked local Claude spawn) and the Codex statusline's
+   prompt is open, a session file written while the resume prompt is
+   unanswered, the untracked local Claude spawn) and the Codex statusline's
    midnight-UTC limitation (row 38) are fixed or each given an explicit owner
    disposition; the one pre-existing e2e failure, reproduced on beta, routed
    privately, is settled through that route (owner rule: no release with known
@@ -554,17 +555,36 @@ The picker finds git by an absolute path on PATH's absolute entries with a
 hardened command line and fails safe. A second C item: a session file
 written while the resume prompt is unanswered keeps its offer (every writer
 goes through `buildSessionState`).
+Fix round 2 (2026-09-28; 1616ff1f, 259847f0, cc4383ff): a resume walks the
+realm once, stopping at the conversation's rollout in its own date folder,
+and the watcher takes the rollout the launch chose without a second walk; a
+claimed rollout's line split across two reads, or inside a character, is
+read whole. After a claim the picker's watcher keeps reading the pick file:
+a later decision (the fallback after a resume that failed) lets the claim
+go, the session stops keeping that conversation, and it claims again by the
+same rules. The pick file sits in a folder made for each launch, owner-only
+where the platform keeps modes, removed with it. A rename the platform
+refuses for a moment is tried again briefly (150 ms in all); a decision
+still not recorded is said in the terminal and the launch goes on (the
+watcher claims nothing new, never a conversation the picker did not name).
+The picker starts a conversation in its worktree only when that is a
+directory, as main checks.
 Limits and deviations, recorded, none a UX decision: the name file Claude's
 picker prefers (written by the logs binder against an exact bind) is not
 written for Codex, so a Codex name comes from the session state while the
 session is open or saved; it rides with Codex runs in the logs (P3.12).
-Two NEW sessions of one account in one folder, both launched directly or
-both choosing New conversation within about a second of each other, can
+Two NEW sessions of one account in one folder, launched directly or choosing
+New conversation in the picker, started within seconds of each other, can
 still take each other's rollout until the exact claim from the SessionStart
-hook (P3.10); a picker session no longer takes another session's rollout.
+hook (P3.10); each then keeps the other's conversation, so a Restart or a
+relaunch resumes the swapped one. A picker session that resumes a
+conversation takes only that one, and so does a resume by id.
 A conversation switched inside the Codex TUI (its own resume or new) is not
 followed until P3.10. A file with a second hard name is accepted (a staged
-Sign in again leaves every carried file so) and checked like any other.
+Sign in again links each carried file, and copies it where linking is
+refused) and checked like any other. The pick file is writable by the same
+user; it can only name a conversation in the session's own account folder,
+and the resume folder and id are checked again by main.
 Row 35 deviates from Claude by the F7 menu: with no known conversation
 Claude's Restart opens the picker, Codex's plain Restart starts a new
 conversation ("Restart and pick a conversation" is the picker). Switch
@@ -638,9 +658,11 @@ watchdog page and What's New's "Session Watchdog." line once the Watchdog
 arms for Codex. From P3.5: the exact claim of a NEW Codex conversation from
 the SessionStart hook's `transcript_path` (P3.1 evidence, answer 4), as
 Claude's exact bind (#480); until then two new sessions of one account in one
-folder, launched within about a second of each other, can take each other's
-rollout (P3.5's pick protocol already keeps a picker session from taking
-another's, and a resume by id takes only its own); and following a
+folder (launched directly or choosing New conversation), started within
+seconds of each other, can take each other's rollout, and each then keeps the
+other's conversation for Restart and relaunch (P3.5's pick protocol already
+keeps a picker session that resumes a conversation from taking another's,
+and a resume by id takes only its own); and following a
 conversation switched inside the Codex TUI (its own resume or new: the
 SessionStart hook's `source` and `transcript_path`), so the session keeps,
 persists and on Restart resumes the conversation it is on.
