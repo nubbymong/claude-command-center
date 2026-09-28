@@ -83,6 +83,51 @@ export function chipColourKeyForEmail(email: string | undefined, sources: ChipSo
 }
 
 /**
+ * The registry account a session of an account-attributed provider (one
+ * whose sessions each run under a registry account: Codex) runs under: the
+ * one it names, else that provider's default. The rule the footer and the
+ * strip's billing line read (usage track MP5, MP6). Never an account of
+ * another provider, nor an archived default.
+ */
+export function sessionProviderAccount(
+  session: { provider?: ProviderId; providerAccountId?: string },
+  snapshot: AccountsSnapshot | null,
+): AccountView | undefined {
+  const providerId = session.provider
+  if (!snapshot || !providerId) return undefined
+  return session.providerAccountId
+    ? snapshot.accounts.find((a) => a.id === session.providerAccountId && a.providerId === providerId)
+    : snapshot.accounts.find((a) => a.providerId === providerId && a.isProviderDefault && a.lifecycle !== 'archived')
+}
+
+/** What a chip for a registry account shows. */
+export interface ProviderAccountChip {
+  accountId: string
+  /** The footer's label rule (accountDisplayName): the identity's name, else
+   *  the account's label; this computer's own sign-in named for what it is. */
+  name: string
+  colourKey: IdentityColorKey
+  /** The account's own label (an email, or a key's name) for the tooltip. */
+  title: string
+}
+
+/** The chip of a session that runs under a registry account (Codex): its
+ *  account's identity name and colour. Null for a session of the provider
+ *  whose chips go by email (Claude Code), a terminal-only tab, or when the
+ *  account list cannot name the account. */
+export function providerAccountChip(
+  session: { provider?: ProviderId; providerAccountId?: string; shellOnly?: boolean },
+  snapshot: AccountsSnapshot | null,
+  displayName: (snapshot: AccountsSnapshot | null, account: AccountView) => string,
+): ProviderAccountChip | null {
+  if (session.shellOnly || (session.provider ?? 'claude') === 'claude') return null
+  const account = sessionProviderAccount(session, snapshot)
+  if (!account) return null
+  const name = displayName(snapshot, account)
+  return { accountId: account.id, name, colourKey: identityColourOf(snapshot, account) ?? 'mauve', title: account.providerLabel?.trim() || name }
+}
+
+/**
  * The colour KEY of a chip for a Claude profile known by its id (the launch
  * picker): that profile's own identity, else its override, else its own key,
  * else mauve (as before).

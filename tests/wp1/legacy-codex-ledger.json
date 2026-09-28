@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "cd50346c7f97f7cfd3772d1ba25799acfe3cb60da44b98125b2c4c8ccec6b122",
-  "manifestHead": "506faf1933ab72b350734206c1f343f6dd196ad8",
+  "manifestPathDigest": "cb0381575a280fae4ec3f62031fbd7be6c55193694f0e463a702716a1d74ef62",
+  "manifestHead": "57ce396a71fde4191ecabc3069c4b38cd3beb6e0",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -1556,7 +1556,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "replace",
-      "evidence": "WP2 reconfirm (owner decision 2026-09-26, U3): the codex_review usage poll runs only when Codex is answered on (usesCodex, provider-choice.ts: the saved setting says on; the settings load drops one saved without the answer); an unanswered Codex is not set up and main offers it no review, so the strip never asks for or shows a review count for it (WP1.5); tests/unit/renderer/session-status-strip.test.ts; before that the file changed since the base only for #618, an unrelated SSH scroll fix, and in the WP2 final fixes, a corrected comment on the codex_review usage poll; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); reads settings.codexEnabled and the provider labels; WP2 P3 usage track MP6 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, usage footer settings, D2, Q1.5): the weekly window reads Weekly on every path; D2 static no-reading meters with a re-render at the next reset; the waiting placeholder for any provider that reports usage, never for a session nothing will report or an API-key account (its registry account, else the provider default); the cost tooltip per Q1.5 (WP1.68); tests/unit/renderer/strip-usage-consistency.test.ts",
+      "evidence": "WP2 reconfirm (owner decision 2026-09-26, U3): the codex_review usage poll runs only when Codex is answered on (usesCodex, provider-choice.ts: the saved setting says on; the settings load drops one saved without the answer); an unanswered Codex is not set up and main offers it no review, so the strip never asks for or shows a review count for it (WP1.5); tests/unit/renderer/session-status-strip.test.ts; before that the file changed since the base only for #618, an unrelated SSH scroll fix, and in the WP2 final fixes, a corrected comment on the codex_review usage poll; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); reads settings.codexEnabled and the provider labels; WP2 P3 usage track MP6 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, usage footer settings, D2, Q1.5): the weekly window reads Weekly on every path; D2 static no-reading meters with a re-render at the next reset; the waiting placeholder for any provider that reports usage, never for a session nothing will report or an API-key account (its registry account, else the provider default); the cost tooltip per Q1.5 (WP1.68); tests/unit/renderer/strip-usage-consistency.test.ts; WP2 PR 3 P3.6 (rows 7 and 20): the account chip reads the identity (utils/accountChip), a Codex session's from its registry account, and a Codex strip keeps its account item with the master switch off, as Claude's (WP1.68); tests/unit/renderer/account-chip-identity.test.tsx, tests/unit/renderer/codex-account-chip.test.ts",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
@@ -1836,8 +1836,8 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled (the saved Codex switch, which main also reads as the Codex package's enablement key) and the provider labels",
+      "disposition": "replace",
+      "evidence": "WP2 PR 3 P3.6 (rows 7 and 20; completion plan section 8): the card's account line reads the identity (utils/accountChip), and a Codex session's card names its registry account and wears its identity colour, as the strip does (WP1.40, WP1.68); tests/unit/renderer/account-chip-identity.test.tsx, tests/unit/renderer/codex-account-chip.test.ts; before that unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); reads settings.codexEnabled (the saved Codex switch, which main also reads as the Codex package's enablement key) and the provider labels",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
@@ -2415,6 +2415,17 @@
       "disposition": "replace",
       "evidence": "type-level; provider API typing exercised by tests/wp1/provider-ipc.test.ts (WP1.57); WP2 commit 6g: the codex API typing removed (tests/wp1/legacy-codex-retired.test.ts, WP1.57); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the typed refusal answers on the launch channels; tests/unit/renderer/terminalview-account-launch.test.tsx; WP2 P3 usage track MP6 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, usage footer settings, D2, Q1.5): the renderer API type carries the provider-neutral usage stream calls the preload has (usage track MP4) and the cached-labels call (MP6) (WP1.39); tests/unit/renderer/account-usage-panel-streaming.test.tsx; tests/unit/renderer/settings-footer-bars.test.tsx; WP2 P3 usage track MP8 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): usageStreamStop (WP1.39); tests/unit/renderer/account-usage-panel-streaming.test.tsx; WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): tokenomics.accounts (WP1.39); tests/unit/tokenomics/tokenomics2-handlers.test.ts; WP2 P3 usage track MP8 round 2 (VM walk and review fixes; the scoped WP1.41 exception; ADR-022): the read ask on providerAccounts.usageStream and usageOne (WP1.39); tests/unit/renderer/account-usage-panel-streaming.test.tsx",
       "note": "codex API typing replaced by the provider-neutral API typing"
+    },
+    {
+      "path": "src/renderer/utils/accountChip.ts",
+      "predicates": [
+        "P05",
+        "P11"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "added",
+      "evidence": "WP2 PR 3 P3.6 (rows 7 and 20; completion plan section 8): the account chips read the account's identity (a Claude chip by the one profile with its email, else the email override as before, design 19; a Codex session's chip by its registry account, else the provider default, the footer's label rule) (WP1.40, WP1.68); tests/unit/renderer/account-chip-identity.test.tsx, tests/unit/renderer/codex-account-chip.test.ts",
+      "note": "renderer presentation only; provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
       "path": "src/renderer/utils/bootGates.ts",
@@ -4746,6 +4757,17 @@
       "disposition": "added",
       "evidence": "WP2 commit 6d code review switches, one per direction, with the reviewer account and readiness (WP1.68); tests/unit/renderer/code-review-tools.test.tsx; WP2 PR 3 P3.4: one case added, Codex review usable with the mirror note while Claude Code is off (WP1.2); tests/unit/renderer/code-review-tools.test.tsx",
       "note": "fixture snapshots name Codex accounts and the preload surface"
+    },
+    {
+      "path": "tests/unit/renderer/codex-account-chip.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.6 (row 20) test (tests/unit/renderer/codex-account-chip.test.ts): a Codex session's account chip on the strip and its sidebar card, from the identity (WP1.68)",
+      "note": ""
     },
     {
       "path": "tests/unit/renderer/codex-mini-icon.test.ts",
