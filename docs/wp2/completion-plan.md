@@ -632,12 +632,18 @@ tail re-checks it is still reading the claimed file: each read compares the
 opened file with the one claimed (device and file id, recorded at the
 claim), and another file at that path is not read, the claim is let go as a
 new decision would let it go, and claiming goes on by the same rules.
-Owed: the final round review; the
-SSH live matrix at the final head (`pty-manager.ts` edited); a VM recheck of
-V1 and V2; the carried-over conversation after a staged Sign in again (P3.3)
-on the VM, an owner action, since it needs a second real sign-in; whether
-`codex resume <id>` in the recorded directory asks anything; the owner's
-approval of the P3.5 VM screenshots (the picker with worktrees and names).
+The final round reviewed PASS. VM recheck at 33329a78 (2026-09-28, real Codex 0.155.1 with both providers on): the e2e suite
+passed 81/81; V1, the launch dialogs show while the resume offer is up and
+stay held back under the Multi Spawn page; V2, a picker resume shows its
+status line about 0.3 s after the pick; rows 34, 35 and 32 pass again. The
+owner approved the P3.5 screenshots on 2026-09-28 (the canvas "P3.5 History
+and resume screens", v1; `.ccc-canvas/screens/p3.5-33329a78/`, local and
+gitignored).
+Owed: the review of 33329a78; the SSH live matrix at the final head
+(`pty-manager.ts` edited); the carried-over conversation after a staged Sign
+in again (P3.3) with a real CLI on the VM, an owner action, since it needs a
+second real sign-in; a session crossing midnight UTC on the VM; whether
+`codex resume <id>` in the recorded directory asks anything.
 
 **P3.6 Account chip and Switch account** (after P3.5). The strip's Codex
 account pill with its Switch account menu (inactive accounts greyed, this
