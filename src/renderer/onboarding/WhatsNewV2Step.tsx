@@ -6,6 +6,7 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { showcasesFor, ShowcasePage } from './showcase-pages'
 import { ShowcaseVignette } from './ShowcaseVignette'
 import { RenamePageView } from './RenamePage'
+import { usesClaude, claudeWasMissingAtSetup } from './provider-choice'
 
 declare const __APP_VERSION__: string
 
@@ -26,6 +27,11 @@ export interface WhatsNewItem {
   /** Id of a showcase page (showcase-pages.ts). Grows a "See it →" chip that
    *  jumps to that page; an id with no matching page renders no chip. */
   seeIt?: string
+  /** P3.4 (row 14): the line is about something that needs Claude Code in
+   *  this release, so it is hidden while Claude Code is off (as upgradeOnly
+   *  hides a line from a fresh install). Lift it when the feature reaches
+   *  Codex. */
+  needsClaude?: boolean
 }
 
 export interface WhatsNewSection {
@@ -90,16 +96,16 @@ const SECTIONS_21: WhatsNewSection[] = [
   {
     heading: 'Working with Claude',
     items: [
-      { title: 'Agent Canvas.', desc: "Claude draws a mockup in the app. Mark up what's wrong; it picks the notes up.", seeIt: 'canvas' },
-      { title: 'Session Watchdog.', desc: 'Waits out a rate limit and types the retry itself. Off by default.', seeIt: 'watchdog' },
-      { title: 'Ask Conductor.', desc: 'A session that has read the docs — and can install a helper skill for the rest.', seeIt: 'askConductor' },
+      { title: 'Agent Canvas.', desc: "Claude draws a mockup in the app. Mark up what's wrong; it picks the notes up.", seeIt: 'canvas', needsClaude: true },
+      { title: 'Session Watchdog.', desc: 'Waits out a rate limit and types the retry itself. Off by default.', seeIt: 'watchdog', needsClaude: true },
+      { title: 'Ask Conductor.', desc: 'A session that has read the docs — and can install a helper skill for the rest.', seeIt: 'askConductor', needsClaude: true },
     ],
   },
   {
     heading: 'Accounts & usage',
     items: [
-      { title: 'Switch mid-session.', desc: 'Sign in to claude.ai in-app, change account without losing the session.', seeIt: 'accounts' },
-      { title: 'Insights.', desc: 'Usage reports across every account at once, not one at a time.' },
+      { title: 'Switch mid-session.', desc: 'Sign in to claude.ai in-app, change account without losing the session.', seeIt: 'accounts', needsClaude: true },
+      { title: 'Insights.', desc: 'Usage reports across every account at once, not one at a time.', needsClaude: true },
     ],
   },
   {
@@ -220,15 +226,19 @@ export function WhatsNewV2Step({
   // step is mounted must re-derive the prelude instead of stranding pageIx.
   const lastSeen = useAppMetaStore((s) => s.meta.lastSeenVersion)
   const channel = useSettingsStore((s) => s.settings.updateChannel)
+  // P3.4 (row 14): with Claude Code off (or setup found no Claude Code and
+  // the run goes on with Codex only, as the Welcome page reads it) a line or
+  // page about something that needs Claude Code is not shown.
+  const withClaude = useSettingsStore((s) => usesClaude(s.settings)) && !claudeWasMissingAtSetup()
   const sections = sectionsFor(lastSeen, LINE_SOURCE)
-    .map((s) => (fresh ? { ...s, items: s.items.filter((it) => !it.upgradeOnly) } : s))
+    .map((s) => ({ ...s, items: s.items.filter((it) => !(fresh && it.upgradeOnly) && (withClaude || !it.needsClaude)) }))
     .filter((s) => s.items.length > 0)
   const count = sections.reduce((n, s) => n + s.items.length, 0)
   // The showcase (owner design 2026-08-24): the summary is page 0; each
   // flagship feature of the line gets a full page behind it. With no pages
   // authored for a line this collapses to exactly the old single-page step —
   // no dots, no skip, the harness CTA — so nothing regresses.
-  const showcases = showcasesFor(LINE_SOURCE)
+  const showcases = showcasesFor(LINE_SOURCE).filter((p) => withClaude || !p.needsClaude)
   // #525: pre-rename upgraders AND fresh installs (owner call, canvas R1)
   // open on the rename/roadmap page — and beta-channel testers on any
   // prerelease build (owner call, canvas R2). Post-rename STABLE upgraders'

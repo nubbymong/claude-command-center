@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "037c84e662f3ddd1349cef1a5bbf334f5519af9436ffd4b07174faad9ac85915",
-  "manifestHead": "f1ccb5f24f999769275887322b0adca57b7486ef",
+  "manifestPathDigest": "4d3a4228ddd3ca680f166f071ad6876122ee984baae5556d6f07915cc118b190",
+  "manifestHead": "aa0411b097e7b3df22554bbe20a9c400e68123f5",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -1326,7 +1326,7 @@
       ],
       "category": "ACCOUNT",
       "disposition": "replace",
-      "evidence": "WP2 P3 usage track MP4 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, Account usage option A, D2, D4, D5): the Account usage page lists each provider that is on in its own section; Codex's accounts come from the registry the renderer already holds and their allowance views from the provider-neutral usage stream (never a provider-specific channel); nothing of Codex is asked for until it is answered on and nothing of Claude Code while it is off (WP1.39, WP1.60 enable/disable); tests/unit/renderer/account-usage-panel-streaming.test.tsx; tests/unit/renderer/account-usage-panel.test.tsx; WP2 P3 usage track MP5 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, usage footer option B, D2, D3): the next-reset re-render moved to a shared hook the footer uses too; tests/unit/renderer/account-usage-panel-streaming.test.tsx; WP2 P3 usage track MP4 review fixes: each provider loads on its own (a switch re-streams only that provider, Refresh both); an account the registry adds, or one whose sign-in changes, reads again alone; a window focus reloads quietly at most once a minute; Retry rows name their account; a failed Claude Code list keeps its heading without a count; section headings are headings and each bar names its bucket (WP1.39, WP1.60 enable/disable); tests/unit/renderer/account-usage-panel-streaming.test.tsx; tests/unit/renderer/account-usage-panel.test.tsx; WP2 P3 usage track MP6 review fixes: a window focus reloads Codex alone (Claude Code's closed accounts call a rate-limited endpoint and keep their cadence); a registry copy arriving while the stream runs reads nothing again (WP1.60 enable/disable); tests/unit/renderer/account-usage-panel-streaming.test.tsx; WP2 P3 usage track MP8 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): the page closing stops its Codex stream in main (WP1.60 enable/disable); tests/unit/renderer/account-usage-panel-streaming.test.tsx; WP2 P3 usage track MP8 round 2 (VM walk and review fixes; the scoped WP1.41 exception; ADR-022): only opening the page, Refresh and a card's Retry ask for a fresh Codex read; the focus reload and a registry change show what is there (WP1.60 enable/disable); tests/unit/renderer/account-usage-panel-streaming.test.tsx",
+      "evidence": "WP2 P3 usage track MP4 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, Account usage option A, D2, D4, D5): the Account usage page lists each provider that is on in its own section; Codex's accounts come from the registry the renderer already holds and their allowance views from the provider-neutral usage stream (never a provider-specific channel); nothing of Codex is asked for until it is answered on and nothing of Claude Code while it is off (WP1.39, WP1.60 enable/disable); tests/unit/renderer/account-usage-panel-streaming.test.tsx; tests/unit/renderer/account-usage-panel.test.tsx; WP2 P3 usage track MP5 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, usage footer option B, D2, D3): the next-reset re-render moved to a shared hook the footer uses too; tests/unit/renderer/account-usage-panel-streaming.test.tsx; WP2 P3 usage track MP4 review fixes: each provider loads on its own (a switch re-streams only that provider, Refresh both); an account the registry adds, or one whose sign-in changes, reads again alone; a window focus reloads quietly at most once a minute; Retry rows name their account; a failed Claude Code list keeps its heading without a count; section headings are headings and each bar names its bucket (WP1.39, WP1.60 enable/disable); tests/unit/renderer/account-usage-panel-streaming.test.tsx; tests/unit/renderer/account-usage-panel.test.tsx; WP2 P3 usage track MP6 review fixes: a window focus reloads Codex alone (Claude Code's closed accounts call a rate-limited endpoint and keep their cadence); a registry copy arriving while the stream runs reads nothing again (WP1.60 enable/disable); tests/unit/renderer/account-usage-panel-streaming.test.tsx; WP2 P3 usage track MP8 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): the page closing stops its Codex stream in main (WP1.60 enable/disable); tests/unit/renderer/account-usage-panel-streaming.test.tsx; WP2 P3 usage track MP8 round 2 (VM walk and review fixes; the scoped WP1.41 exception; ADR-022): only opening the page, Refresh and a card's Retry ask for a fresh Codex read; the focus reload and a registry change show what is there (WP1.60 enable/disable); tests/unit/renderer/account-usage-panel-streaming.test.tsx; WP2 PR 3 P3.4: the D5 line moved to lib/claudeOff.ts (CLAUDE_OFF_ACCOUNTS_LINE) so the onboarding recap reads the same words; unchanged here (WP1.2); tests/unit/renderer/claude-off-onboarding.test.tsx",
       "note": ""
     },
     {
@@ -1707,17 +1707,18 @@
       ],
       "category": "REVIEW-MCP",
       "disposition": "added",
-      "evidence": "WP2 commit 6d code review switches, one per direction, with the reviewer account and readiness (WP1.68); tests/unit/renderer/code-review-tools.test.tsx; WP2 final fixes: the Claude Code off message names the way back, built by the shared providerOffMessage (WP1.6); tests/unit/renderer/code-review-tools.test.tsx",
+      "evidence": "WP2 commit 6d code review switches, one per direction, with the reviewer account and readiness (WP1.68); tests/unit/renderer/code-review-tools.test.tsx; WP2 final fixes: the Claude Code off message names the way back, built by the shared providerOffMessage (WP1.6); tests/unit/renderer/code-review-tools.test.tsx; WP2 PR 3 P3.4 (parity row 14): Codex review keeps its switch with the note \"Only Claude sessions use it; Claude Code is off.\" while Claude Code is off, the mirror of Claude review while Codex is off (WP1.2); tests/unit/renderer/code-review-tools.test.tsx",
       "note": "Settings, Built-in Tools: Codex review and Claude review rows; ~/.codex appears only in copy"
     },
     {
       "path": "src/renderer/components/settings/accounts/AccountsSurface.tsx",
       "predicates": [
-        "P05"
+        "P05",
+        "P11"
       ],
       "category": "OTHER",
       "disposition": "added",
-      "evidence": "WP2 commit 6b Accounts surface, one provider-neutral surface (WP1.39); tests/unit/renderer/accounts-surface.test.tsx",
+      "evidence": "WP2 commit 6b Accounts surface, one provider-neutral surface (WP1.39); tests/unit/renderer/accounts-surface.test.tsx; WP2 PR 3 P3.4 (parity row 14): with Claude Code off the registry callout no longer says the Claude accounts still work (WP1.2); tests/unit/renderer/accounts-surface.test.tsx",
       "note": "a provider-name comparison chooses which section a provider gets; no Codex code path"
     },
     {
@@ -1973,7 +1974,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "replace",
-      "evidence": "WP2 commit 6 (a switch per review direction): the Code review card is now Codex review, for Claude sessions and blocked while Codex is off, beside a Claude review card for Codex sessions that stays a live switch with a note while Codex is off; the Codex-off note points at Settings, Accounts (WP1.6); tests/unit/renderer/onboarding-review-tools.test.tsx; WP2 final fixes: Built-in Tools spelled as the Settings section is; WP2 P2 review round 1 (owner decision 2026-09-26, U3): the Codex state is read through codexPreference (provider-choice.ts), so an unanswered Codex reads not set up; the file no longer reads codexEnabled itself (the P05 hit is gone) (WP1.5); tests/unit/renderer/onboarding-review-tools.test.tsx",
+      "evidence": "WP2 commit 6 (a switch per review direction): the Code review card is now Codex review, for Claude sessions and blocked while Codex is off, beside a Claude review card for Codex sessions that stays a live switch with a note while Codex is off; the Codex-off note points at Settings, Accounts (WP1.6); tests/unit/renderer/onboarding-review-tools.test.tsx; WP2 final fixes: Built-in Tools spelled as the Settings section is; WP2 P2 review round 1 (owner decision 2026-09-26, U3): the Codex state is read through codexPreference (provider-choice.ts), so an unanswered Codex reads not set up; the file no longer reads codexEnabled itself (the P05 hit is gone) (WP1.5); tests/unit/renderer/onboarding-review-tools.test.tsx; WP2 PR 3 P3.4 (parity row 14): with Claude Code off the heading asks about your sessions, Claude review is blocked and Codex review carries the mirror note (WP1.2); tests/unit/renderer/claude-off-onboarding.test.tsx",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
@@ -2082,7 +2083,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "replace",
-      "evidence": "WP2 commit 6: the recap names which built-in tools are on, Claude review included, and the Codex row points at Settings, Accounts (WP1.6); tests/unit/renderer/onboarding-review-tools.test.tsx, tests/unit/renderer/onboarding-transparency-recap.test.tsx; WP2 P2 review round 1 (owner decision 2026-09-26, U3): the recap reads the Codex state through codexPreference (provider-choice.ts), an unanswered Codex reading Not set up; the file no longer reads codexEnabled itself (the P05 hit is gone) (WP1.5); tests/unit/renderer/onboarding-transparency-recap.test.tsx",
+      "evidence": "WP2 commit 6: the recap names which built-in tools are on, Claude review included, and the Codex row points at Settings, Accounts (WP1.6); tests/unit/renderer/onboarding-review-tools.test.tsx, tests/unit/renderer/onboarding-transparency-recap.test.tsx; WP2 P2 review round 1 (owner decision 2026-09-26, U3): the recap reads the Codex state through codexPreference (provider-choice.ts), an unanswered Codex reading Not set up; the file no longer reads codexEnabled itself (the P05 hit is gone) (WP1.5); tests/unit/renderer/onboarding-transparency-recap.test.tsx; WP2 PR 3 P3.4 (parity row 14; OD27 M1 D5): with Claude Code off the Account row reads the D5 line, no Claude sign-in is read, and Claude review is not counted (WP1.2); tests/unit/renderer/claude-off-onboarding.test.tsx",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
@@ -2101,8 +2102,8 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); its Codex mention is unchanged; the WP2 final fixes respelled one title Built-in Tools, as the Settings section is",
+      "disposition": "replace",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); its Codex mention is unchanged; the WP2 final fixes respelled one title Built-in Tools, as the Settings section is; WP2 PR 3 P3.4 (parity row 14): a line that needs Claude Code in this release (needsClaude) is hidden while Claude Code is off or setup found none, and a section left empty goes (WP1.2); tests/unit/renderer/whatsnew-showcase.test.tsx",
       "note": ""
     },
     {
@@ -2209,8 +2210,8 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
+      "disposition": "replace",
+      "evidence": "user-facing copy/labels only, no account/auth/setup logic; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); WP2 PR 3 P3.4 (parity row 14): the pages about something that needs Claude Code in this release (canvas, remote resume, accounts, watchdog, Ask Conductor) carry needsClaude and are not shown while Claude Code is off (WP1.2); tests/unit/renderer/whatsnew-showcase.test.tsx",
       "note": ""
     },
     {
@@ -4568,7 +4569,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "WP2 commit 6b Accounts surface, one provider-neutral surface (WP1.39); tests/unit/renderer/accounts-surface.test.tsx; WP2 reconfirm (owner decision 2026-09-26): Not set up on the Providers card, Yes, I use Codex only records the answer, the adoption offer with honest text and Check again (WP1.39, WP1.43); tests/unit/renderer/accounts-surface.test.tsx",
+      "evidence": "WP2 commit 6b Accounts surface, one provider-neutral surface (WP1.39); tests/unit/renderer/accounts-surface.test.tsx; WP2 reconfirm (owner decision 2026-09-26): Not set up on the Providers card, Yes, I use Codex only records the answer, the adoption offer with honest text and Check again (WP1.39, WP1.43); tests/unit/renderer/accounts-surface.test.tsx; WP2 PR 3 P3.4: one case added, the registry callout while Claude Code is off (WP1.2); tests/unit/renderer/accounts-surface.test.tsx",
       "note": "fixture snapshots name Codex accounts"
     },
     {
@@ -4625,6 +4626,17 @@
       "note": ""
     },
     {
+      "path": "tests/unit/renderer/claude-off-onboarding.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.4 test (parity row 14; OD27 M1 D5): with Claude Code off the Built-in Tools page asks about your sessions, blocks Claude review and notes Codex review (the Codex-off rules the other way round), and the recap's Account row reads the D5 line with no Claude sign-in read (WP1.2); tests/unit/renderer/claude-off-onboarding.test.tsx",
+      "note": "created by WP2 PR 3 P3.4; the P05 hits are the Codex-only settings fixture (codexEnabled)"
+    },
+    {
       "path": "tests/unit/renderer/code-review-tools.test.tsx",
       "predicates": [
         "P04",
@@ -4634,7 +4646,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "WP2 commit 6d code review switches, one per direction, with the reviewer account and readiness (WP1.68); tests/unit/renderer/code-review-tools.test.tsx",
+      "evidence": "WP2 commit 6d code review switches, one per direction, with the reviewer account and readiness (WP1.68); tests/unit/renderer/code-review-tools.test.tsx; WP2 PR 3 P3.4: one case added, Codex review usable with the mirror note while Claude Code is off (WP1.2); tests/unit/renderer/code-review-tools.test.tsx",
       "note": "fixture snapshots name Codex accounts and the preload surface"
     },
     {
@@ -5550,11 +5562,12 @@
     {
       "path": "tests/unit/renderer/whatsnew-showcase.test.tsx",
       "predicates": [
+        "P05",
         "P13"
       ],
       "category": "TEST",
-      "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "disposition": "replace",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json; WP2 PR 3 P3.4 (parity row 14): its existing cases are unchanged; two cases added, the Claude-only lines and pages hidden while Claude Code is off and in a run that goes on with Codex only (WP1.2); tests/unit/renderer/whatsnew-showcase.test.tsx",
       "note": ""
     },
     {

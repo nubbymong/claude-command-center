@@ -11,7 +11,7 @@ import type { AccountUsage, UsageBucket } from '../../shared/usage-types'
 import { bucketPastReset, relAgo } from '../../shared/usage-labels'
 import type { AccountProfile } from '../../shared/account-types'
 import type { AccountsSnapshot, AccountView, ProviderAccountUsageView, ProviderId } from '../../shared/providers'
-import { useClaudeOff } from '../lib/claudeOff'
+import { useClaudeOff, CLAUDE_OFF_ACCOUNTS_LINE } from '../lib/claudeOff'
 import { useRenderAtNextReset } from '../hooks/useRenderAtNextReset'
 import { useSettingsStore } from '../stores/settingsStore'
 import { usesCodex } from '../onboarding/provider-choice'
@@ -21,7 +21,7 @@ import {
 
 /** D5 (usage UX, approved as drawn): the one line the page shows for Claude
  *  Code while it is switched off. */
-export const CLAUDE_OFF_USAGE_LINE = 'Claude Code is off. Turn it on in Settings, Accounts to see its accounts.'
+export const CLAUDE_OFF_USAGE_LINE = CLAUDE_OFF_ACCOUNTS_LINE
 
 /** Usage track MP4 (approved canvas, Account usage option A): the notes a
  *  Codex account shows in place of bars. */
