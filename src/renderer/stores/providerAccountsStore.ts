@@ -353,6 +353,14 @@ export function accountDisplayName(snapshot: AccountsSnapshot | null, account: A
   return ACCOUNT_NAME_FALLBACK
 }
 
+/** An account's name inside a sentence: this computer's own sign-in in lower
+ *  case (externalHomeLabelInSentence); any other name as it is. */
+export function accountNameInSentence(snapshot: AccountsSnapshot | null, account: AccountView): string {
+  if (!account.external) return accountDisplayName(snapshot, account)
+  const p = providerView(snapshot, account.providerId)
+  return externalHomeLabelInSentence(p ?? { providerId: account.providerId, displayName: account.providerId }, externalHomeFolder(snapshot, account.providerId))
+}
+
 /** What the reviewer line under a provider's section says. `label` is the
  *  parenthesised suffix: `reviewer` only for a chosen reviewer that can run
  *  here (a refused account is never shown as the reviewer), `default` when
@@ -555,6 +563,12 @@ export function externalHomeLabel(p: Pick<ProviderInstallationView, 'providerId'
   return folder ? `This computer's ${p.displayName} (${folder})` : `This computer's ${p.displayName}`
 }
 
+/** That name inside a sentence, lower case as the copy says it mid-sentence
+ *  ("Sign in to this computer's Codex (~/.codex) again?"). */
+export function externalHomeLabelInSentence(p: Pick<ProviderInstallationView, 'providerId' | 'displayName'>, folder: string | null): string {
+  return folder ? `this computer's ${p.displayName} (${folder})` : `this computer's ${p.displayName}`
+}
+
 /** That folder as a sentence names it: the folder main named, else "this
  *  computer's <provider> folder", which claims none. */
 export function externalHomeWhere(snapshot: AccountsSnapshot | null, p: Pick<ProviderInstallationView, 'providerId' | 'displayName'>): string {
@@ -646,8 +660,9 @@ const EXTERNAL_SIGN_IN_COMMAND: Readonly<Partial<Record<ProviderId, string>>> = 
 
 /** What a signed-out or expired row for the provider's own home on this
  *  computer says to do, or null when there is nothing to say. */
-export function externalSignInHint(account: Pick<AccountView, 'external' | 'lastKnownAuthState' | 'operationalState'>, provider: Pick<ProviderInstallationView, 'providerId'>): string | null {
-  if (!account.external || account.operationalState === 'blocked') return null
+export function externalSignInHint(account: Pick<AccountView, 'external' | 'lastKnownAuthState' | 'operationalState' | 'signingIn'>, provider: Pick<ProviderInstallationView, 'providerId'>): string | null {
+  // While the app signs it in again (in place), there is nothing to run.
+  if (!account.external || account.operationalState === 'blocked' || account.signingIn) return null
   if (account.lastKnownAuthState !== 'signed-out' && account.lastKnownAuthState !== 'expired') return null
   const command = EXTERNAL_SIGN_IN_COMMAND[provider.providerId]
   return command ? `Run ${command} in a terminal, then Check sign-in.` : null

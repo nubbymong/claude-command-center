@@ -116,6 +116,8 @@ export interface AccountView {
    *  -- the provider cannot sign it out now; `failed` -- a removal did not
    *  finish, and a check of the sign-in tries again. Absent otherwise. */
   oldSignInLeft?: 'kept' | 'unavailable' | 'failed'
+  /** A sign-in of this account runs now (its Sign in again). Absent otherwise. */
+  signingIn?: true
   /** Sessions running on this account now. */
   runningSessions: number
   /** Reviewer invocations running on this account now. */
@@ -154,6 +156,8 @@ export interface PendingSetupView {
   createdAt: number
   /** A sign-in for it is running now. */
   signingIn: boolean
+  /** Its Discard runs now (signing it out, removing its folder). Absent otherwise. */
+  discardRunning?: true
   /** A sign in again of this account, not a new one: it is finished by that
    *  sign in again, or discarded; never named as a new account. */
   replacesAccountId?: string

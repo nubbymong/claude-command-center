@@ -13,6 +13,7 @@ import { resolveIdentityColor } from '../../../../shared/identity-colors'
 import {
   useProviderAccountsStore, providerAccountActions, providerView, selectProviderAccounts, accountDisplayName, canOfferMakeReviewer,
   showsReviewerBadge, accountFailureText, accountState, signInMethodLabel, externalHomeLabel, externalHomeFolder, canOfferSignInAgain,
+  externalHomeLabelInSentence, accountNameInSentence,
   canOfferMakeInactive, canOfferMakeActive, canOfferArchive, externalAdoption, canOfferCheckSignIn, signInCheckText, externalSignInHint,
   selectArchivedAccounts, canOfferRestore, linkedAccounts, linkedAccountLabel, blockerSessions, sessionTitle, unnamedHolders, oldSignInText,
 } from '../../../stores/providerAccountsStore'
@@ -39,7 +40,7 @@ function ExternalAckDialog({ kind, provider, onConfirm, onCancel }: {
 }) {
   useDialogEscape(onCancel)
   const folder = useProviderAccountsStore((s) => externalHomeFolder(s.snapshot, provider.providerId))
-  const home = externalHomeLabel(provider, folder)
+  const home = externalHomeLabelInSentence(provider, folder)
   const title = kind === 'logout' ? `Sign out of ${home}?` : kind === 'archive' ? `Archive ${home}?` : `Sign in to ${home} again?`
   return (
     <AccountsModal labelledBy="external-ack-title" role="alertdialog" testId="external-ack-dialog" overlayTestId="external-ack-overlay">
@@ -83,6 +84,8 @@ function ManagedAccountRow({ account, provider, snapshot, onAddAccount }: {
   const id = account.id
   const manageable = provider.enabled
   const name = accountDisplayName(snapshot, account)
+  // The same name inside a sentence (this computer's own sign-in in lower case).
+  const inSentence = accountNameInSentence(snapshot, account)
   const email = account.providerLabel && account.providerLabel !== name ? account.providerLabel : null
   const method = signInMethodLabel(account, provider)
   const state = accountState(account)
@@ -210,7 +213,7 @@ function ManagedAccountRow({ account, provider, snapshot, onAddAccount }: {
           tint={tint}
           onOpen={manageable ? () => setEditing((e) => !e) : undefined}
           open={editing}
-          label={`Edit ${name}: name, colour, group and linked accounts`}
+          label={`Edit ${inSentence}: name, colour, group and linked accounts`}
           testId={`account-chip-${id}`}
           chipRef={chipRef}
         />
@@ -249,6 +252,7 @@ function ManagedAccountRow({ account, provider, snapshot, onAddAccount }: {
           {/* Never on a blocked row, whichever lands first: the answer or the
               snapshot that blocked the account. */}
           {checked && !blocked && <MutedLine testId={`account-checked-${id}`}>{signInCheckText(checked)}</MutedLine>}
+          {account.signingIn && <MutedLine testId={`account-signing-in-${id}`}>Signing in now</MutedLine>}
           {externalHint && <MutedLine testId={`account-external-hint-${id}`}>{externalHint}</MutedLine>}
           {account.oldSignInLeft && !blocked && manageable && <MutedLine testId={`account-old-sign-in-${id}`}>{oldSignInText(account.oldSignInLeft, provider.displayName)}</MutedLine>}
           <RunningPill count={account.runningSessions} testId={`account-running-${id}`} />
@@ -262,7 +266,7 @@ function ManagedAccountRow({ account, provider, snapshot, onAddAccount }: {
       menu={(
         <RowMenu
           items={items}
-          label={`Actions for ${name}`}
+          label={`Actions for ${inSentence}`}
           disabled={busy}
           testId={`account-menu-btn-${id}`}
           itemTestId={(key) => `account-menu-${key}-${id}`}
@@ -276,7 +280,7 @@ function ManagedAccountRow({ account, provider, snapshot, onAddAccount }: {
         <SignInAgainDialog
           provider={provider}
           account={account}
-          name={name}
+          name={inSentence}
           onClose={() => setSigningInAgain(false)}
           onNewAccount={(initialMethod) => { setSigningInAgain(false); onAddAccount({ initialMethod }) }}
           onSeparate={(resume) => onAddAccount({ resume })}
@@ -360,7 +364,10 @@ function PendingSetupRow({ setup, manageable, onResume, replacesName }: { setup:
   const again = setup.replacesAccountId !== undefined
   // One being discarded is finished only by Discard.
   const discarding = setup.state === 'discarding'
-  const resumable = manageable && !setup.external && !setup.signingIn && !again && !discarding
+  // Its Discard is running now (a Cancel's, or this row's): shown as running
+  // until it ends, never offered again meanwhile.
+  const discardRunning = setup.discardRunning === true
+  const resumable = manageable && !setup.external && !setup.signingIn && !again && !discarding && !discardRunning
   return (
     <div className="py-2" style={{ borderTop: '1px solid var(--border-subtle)' }} data-testid={`pending-setup-${setup.accountId}`}>
       <div className="flex items-center gap-3">
@@ -368,13 +375,14 @@ function PendingSetupRow({ setup, manageable, onResume, replacesName }: { setup:
           <div className="text-[12.5px]" style={{ color: 'var(--text-primary)' }}>{again ? `Sign in again${replacesName ? ` for ${replacesName}` : ''}, not finished` : `${methodWord(setup.method)}, not finished`}</div>
           <MutedLine>
             {setup.signingIn ? 'Signing in now'
+              : discardRunning ? 'Discarding now'
               : discarding ? 'Discarding did not finish; Discard finishes it'
               : again ? 'Discard it, then sign in again'
                 : setup.state === 'credentials-written' ? 'Signed in; it still needs a name' : 'Started ' + new Date(setup.createdAt).toLocaleString()}
           </MutedLine>
         </div>
         {resumable && <RowButton onClick={onResume} disabled={busy} testId={`pending-setup-resume-${setup.accountId}`}>Resume</RowButton>}
-        {manageable && <RowButton onClick={() => { void discard() }} disabled={busy || setup.signingIn} testId={`pending-setup-discard-${setup.accountId}`}>Discard</RowButton>}
+        {manageable && !discardRunning && <RowButton onClick={() => { void discard() }} disabled={busy || setup.signingIn} testId={`pending-setup-discard-${setup.accountId}`}>Discard</RowButton>}
       </div>
       {error && <ErrorLine>{error}</ErrorLine>}
     </div>

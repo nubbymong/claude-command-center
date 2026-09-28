@@ -313,6 +313,9 @@ export class AccountsService {
   private readonly lastSaved = new Map<ProviderId, ProviderPreference>()
   private readonly installations = new Map<ProviderId, DiscoveryResult>()
   private readonly signIns = new Map<string, SignInRun>()
+  /** Setups whose Discard is running now: listed as running, never offered
+   *  Discard again meanwhile (VM round, V1). */
+  private readonly discardsRunning = new Set<string>()
   private readonly signedInWith = new Map<string, SignInMethod>()
   /** Reviewer choices cleared at start-up because they can never run here
    *  (clearUnusableReviewerDefaults); shown once, removed by a new choice. */
@@ -541,6 +544,7 @@ export class AccountsService {
       // An old sign-in a sign in again has not removed yet (design 9.2), and why.
       const old = doc ? unsettledSupersededRealms(doc, a.id) : []
       if (old.length > 0) view.oldSignInLeft = this.oldSignInView(this.pkg(a.providerId), old)
+      if (this.signIns.has(a.id)) view.signingIn = true
       const legacyId = doc?.legacyLinks.find((l) => l.accountId === a.id)?.legacyId
       if (legacyId !== undefined) view.legacyId = legacyId
       const refusal = doc ? this.reviewRefusalOf(doc, a, memo) : undefined
@@ -555,6 +559,7 @@ export class AccountsService {
       external: doc ? findRealm(doc, j.realmId)?.ownership === 'external-default' : false,
       createdAt: j.createdAt,
       signingIn: this.signIns.has(j.accountId),
+      ...(this.discardsRunning.has(j.accountId) ? { discardRunning: true as const } : {}),
       ...(j.replacesAccountId !== undefined ? { replacesAccountId: j.replacesAccountId } : {}),
     }))
     const externalDefaults: ExternalDefaultView[] = packages.filter((p) => p.externalDefaultRealm).map((p) => {
@@ -1635,6 +1640,9 @@ export class AccountsService {
       return this.deps.leases.hold(j.accountId, j.providerId) ?? failure('busy')
     })
     if (typeof release !== 'function') return release
+    // Listed as running from here until it ends, whatever it ends with.
+    this.discardsRunning.add(j.accountId)
+    this.changed()
     try {
       // Write-ahead (review round 2, L1-1): the registry says this setup is
       // being discarded, on disk, before anything is signed out or removed.
@@ -1665,7 +1673,9 @@ export class AccountsService {
       this.deps.secrets.discardForAccount(j.accountId)
       return { ok: true }
     } finally {
+      this.discardsRunning.delete(j.accountId)
       release()
+      this.changed()
     }
   }
 
