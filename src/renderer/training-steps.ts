@@ -219,7 +219,7 @@ export const trainingSteps: TrainingStep[] = [
       'Each Codex account has its **own sign-in folder**. New sessions use the default account. Code reviews use the reviewer default, or the default if none is set',
       'The Codex sign-in already on this computer can be used too, but it must be confirmed at each launch, and cannot run reviews',
       'Sign in with ChatGPT or an API key -- the key goes to Codex, and this app never stores it',
-      'The session header has a **Restart** menu: Restart for a new conversation, or **Restart and pick a conversation** to resume a recent one',
+      'The session header has a **Restart** menu: Restart carries on with the same conversation, or **Restart and pick a conversation** to resume a recent one',
       'Six gpt-5 models in the dropdown: gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, gpt-5.3-codex-spark, gpt-5.2; permission presets, model and reasoning effort are set on the Codex config',
       '**Tokenomics** shows Codex spend beside Claude, per account (the Provider and Account filters), per day and per model; each Codex account\'s allowance is on the **Usage page**; the Logs page does not index Codex conversations yet',
     ],

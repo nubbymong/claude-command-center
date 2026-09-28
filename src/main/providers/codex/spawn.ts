@@ -4,11 +4,13 @@ import * as path from 'path'
 import { execSync } from 'child_process'
 import { sandboxFor, approvalFor } from './permissions'
 import { getResourcesDirectory } from '../../ipc/setup-handlers'
-import type { SpawnOptions } from '../types'
+import type { SpawnOptions, ProviderSpawnCommand } from '../types'
 import { getConductorMcpPort, issueMcpSessionToken } from '../../conductor-mcp-server'
-import { readConfig } from '../../config-manager'
+import { readConfig, getConfigDir } from '../../config-manager'
 import { colorFgBgValue } from '../host-color-scheme'
 import { codexShellEnv } from './cli-runner'
+import { CODEX_CONVERSATION_ID_RE, resolveCodexResume } from './rollout-lookup'
+import { randomId } from '../../../shared/id'
 
 export function resolveCodexBinary(): { cmd: string; args: string[] } | null {
   if (os.platform() !== 'win32') {
@@ -174,7 +176,7 @@ function setOwned(env: Record<string, string>, name: string, value: string, win3
   env[name] = value
 }
 
-export function buildCodexSpawn(opts: SpawnOptions): { cmd: string; args: string[]; env: Record<string, string>; commandLine?: string } {
+export function buildCodexSpawn(opts: SpawnOptions): ProviderSpawnCommand {
   const co = opts.codexOptions
   if (!co) throw new Error('codexOptions required for Codex spawn')
 
@@ -257,6 +259,28 @@ export function buildCodexSpawn(opts: SpawnOptions): { cmd: string; args: string
   if (win32) setOwned(env, 'NoDefaultCurrentDirectoryInExePath', '1', win32)
   const viaCmdExe = win32 && /\.(cmd|bat)$/i.test(executable)
 
+  // P3.5 (rows 34, 35): an exact resume, as Claude's `claude --resume <uuid>`
+  // (resolveResumeLaunch): the conversation's rollout must be in THIS realm's
+  // sessions folder, and the CLI starts in the directory the conversation ran
+  // in when that still holds (resolveCodexResume). It bypasses the picker, as
+  // Claude's exact resume does. A miss falls back to the picker or a fresh
+  // start, never to another account's conversation.
+  const resumed = opts.resume ? resolveCodexResume(opts.resume, { sessionsDir: launch.sessionsDir, configuredCwd: opts.cwd ?? '' }) : null
+  if (resumed) {
+    // The id goes into argv: only a conversation id ever does, whatever the
+    // lookup answered (the spawn schema and the lookup check it first).
+    if (!CODEX_CONVERSATION_ID_RE.test(resumed.resumeId)) {
+      throw new Error('Cannot resume the Codex conversation: its id is not a conversation id.')
+    }
+    const args = ['resume', resumed.resumeId, ...flags]
+    const cwd = resumed.cwd || undefined
+    if (viaCmdExe) {
+      const target = codexCmdExeTarget(executable, args, env)
+      return { cmd: target.cmd, args: [], commandLine: target.commandLine, env, resumeId: resumed.resumeId, cwd }
+    }
+    return { cmd: executable, args, env, resumeId: resumed.resumeId, cwd }
+  }
+
   // Picker swap: when useResumePicker is true and the picker script is
   // deployed, run `node <picker> <flags>` instead of `codex <flags>`. The
   // picker forwards the flags to `codex resume <uuid>` on pick or to fresh
@@ -271,9 +295,19 @@ export function buildCodexSpawn(opts: SpawnOptions): { cmd: string; args: string
       if (viaCmdExe) codexCmdExeTarget(executable, flags, env)
       const pickerEnv = { ...env }
       setOwned(pickerEnv, 'CCC_CODEX_EXECUTABLE', executable, win32)
+      // P3.5 (rows 32, 38): where the picker records the conversation it
+      // opens, so the status line and the tab follow THAT conversation: a
+      // new, unguessable name in the temp folder, made by the picker only
+      // (exclusive create) and read and removed by the watcher.
+      const pickFile = path.join(os.tmpdir(), `ccc-codex-pick-${randomId()}.json`)
+      setOwned(pickerEnv, 'CCC_CODEX_PICK_FILE', pickFile, win32)
+      // The app's config folder, so the picker can name each conversation
+      // with its tab's name (session-state.json), as Claude's picker does.
+      // Read-only, best-effort.
+      try { setOwned(pickerEnv, 'CCC_CONFIG_DIR', getConfigDir(), win32) } catch { /* no names */ }
       // Bare 'node' fails under node-pty/ConPTY on Windows (no PATH lookup).
       // Resolve to the full node.exe path via `where node`. See resolveNodeExe.
-      return { cmd: resolveNodeExe(), args: [pickerScript, ...flags], env: pickerEnv }
+      return { cmd: resolveNodeExe(), args: [pickerScript, ...flags], env: pickerEnv, pickFile }
     }
     // Fallthrough: picker missing, spawn codex directly.
   }

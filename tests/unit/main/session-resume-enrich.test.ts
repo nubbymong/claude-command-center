@@ -110,3 +110,40 @@ describe('enrichSessionStateWithResumeTargets', () => {
     expect(() => enrichSessionStateWithResumeTargets(s, mkDeps())).not.toThrow()
   })
 })
+
+// P3.5 (row 34): a Codex session keeps the conversation it is on (pty-manager's
+// kept conversation), and session:save persists it the way it persists a
+// Claude tab's, so a relaunch resumes it (`codex resume <id>`).
+describe('enrichSessionStateWithResumeTargets for a Codex session (P3.5)', () => {
+  const CODEX = { uuid: '019dd000-0001-7000-8000-0000000000e1', cwd: 'C:/p/demo' }
+
+  it('persists the conversation the tab is on, from its provider, never from the Claude binder', () => {
+    const s = state([{ id: 's1', provider: 'codex' }])
+    const getExact = vi.fn(() => EXACT)
+    enrichSessionStateWithResumeTargets(s, mkDeps({ getExactResumeTarget: getExact, getProviderResumeTarget: () => CODEX }))
+    expect(getExact).not.toHaveBeenCalled()
+    expect(s.sessions[0]).toMatchObject({ resumeUuid: CODEX.uuid, resumeCwd: CODEX.cwd })
+  })
+
+  it('keeps what the record carried while the tab is on no known conversation', () => {
+    const s = state([{ id: 's1', provider: 'codex', resumeUuid: CODEX.uuid, resumeCwd: 'C:/old' }])
+    enrichSessionStateWithResumeTargets(s, mkDeps({ getProviderResumeTarget: () => null }))
+    expect(s.sessions[0]).toMatchObject({ resumeUuid: CODEX.uuid, resumeCwd: 'C:/old' })
+  })
+
+  it('persists only a conversation id, with a directory', () => {
+    const s = state([{ id: 's1', provider: 'codex' }, { id: 's2', provider: 'codex' }])
+    enrichSessionStateWithResumeTargets(s, mkDeps({ getProviderResumeTarget: (id) => (id === 's1' ? { uuid: '--resume', cwd: 'C:/p' } : { uuid: CODEX.uuid, cwd: '' }) }))
+    expect(s.sessions[0].resumeUuid).toBeUndefined()
+    expect(s.sessions[1].resumeUuid).toBeUndefined()
+  })
+
+  it('never for a shell-only tab, and a Claude tab never takes it', () => {
+    const provider = vi.fn(() => CODEX)
+    const s = state([{ id: 's1', provider: 'codex', shellOnly: true }, { id: 's2', provider: 'claude' }])
+    enrichSessionStateWithResumeTargets(s, mkDeps({ getExactResumeTarget: () => null, getProviderResumeTarget: provider }))
+    expect(provider).not.toHaveBeenCalled()
+    expect(s.sessions[0].resumeUuid).toBeUndefined()
+    expect(s.sessions[1].resumeUuid).toBeUndefined()
+  })
+})

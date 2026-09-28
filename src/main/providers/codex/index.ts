@@ -1,8 +1,9 @@
 // Codex provider package: public entry point (WP1, design 7.1). Everything
 // outside this directory imports from here; the dependency-boundary test
 // ratchets the remaining deep imports down to zero.
-import type { SessionProvider, SpawnOptions, TelemetrySource, HistorySession } from '../types'
+import type { SessionProvider, SpawnOptions, TelemetrySource, HistorySession, ProviderSpawnCommand, TelemetryOptions } from '../types'
 import type { LegacyVersion, StatuslineData } from '../../../shared/types'
+import type { AllowanceReading } from '../../../shared/usage-types'
 import type { ProviderCapabilities, AuthRealm, RealmUse } from '../../../shared/providers'
 import type { ProviderPackage, RealmRef } from '../core'
 import { CODEX_ENABLEMENT } from './enablement'
@@ -90,7 +91,7 @@ export class CodexProvider implements SessionProvider {
     throw new Error(`resolveBinary is ${CODEX_MANAGED_LAUNCH_ONLY}`)
   }
 
-  buildSpawnCommand(opts: SpawnOptions): { cmd: string; args: string[]; env: Record<string, string>; commandLine?: string } {
+  buildSpawnCommand(opts: SpawnOptions): ProviderSpawnCommand {
     return buildCodexSpawn(opts)
   }
 
@@ -100,7 +101,7 @@ export class CodexProvider implements SessionProvider {
 
   ingestSessionTelemetry(
     sessionId: string,
-    opts: { cwd: string; spawnTimestamp: number; sessionsDir?: string },
+    opts: TelemetryOptions,
     onUpdate: (data: StatuslineData) => void,
   ): TelemetrySource {
     // Only the session's own realm (WP2): with none there is nothing to watch,
@@ -108,7 +109,12 @@ export class CodexProvider implements SessionProvider {
     if (!opts.sessionsDir) return { stop() {} }
     const sessionsDir = opts.sessionsDir
     const live = this.liveUsage
-    const watch = watchAndClaimRollout(sessionId, opts.cwd, opts.spawnTimestamp, onUpdate, sessionsDir, live ? (reading) => live.record(sessionsDir, reading) : undefined)
+    // P3.5: how the watcher finds a resumed conversation, and who hears which
+    // conversation it claimed.
+    const onAllowance = live ? (reading: AllowanceReading) => live.record(sessionsDir, reading) : undefined
+    const watch = opts.resumeId || opts.pickFile || opts.onClaim
+      ? watchAndClaimRollout(sessionId, opts.cwd, opts.spawnTimestamp, onUpdate, sessionsDir, onAllowance, { resumeId: opts.resumeId, pickFile: opts.pickFile, onClaim: opts.onClaim })
+      : watchAndClaimRollout(sessionId, opts.cwd, opts.spawnTimestamp, onUpdate, sessionsDir, onAllowance)
     if (!live) return watch
     // The realm's live figure lasts while one of its sessions still reports.
     const release = live.open(sessionsDir)

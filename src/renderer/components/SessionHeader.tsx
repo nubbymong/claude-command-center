@@ -66,9 +66,10 @@ function AskHeaderLead({ session }: { session: Session }) {
 }
 
 /**
- * A Codex session's Restart (canvas F7): a menu with "Restart" (a new
- * conversation) and "Restart and pick a conversation" (the resume picker, the
- * existing terminal script). A Codex session has no Model / Compact / Restart
+ * A Codex session's Restart (canvas F7): a menu with "Restart" (the same
+ * conversation, as Claude's Restart: main resumes the one the tab is on, P3.5;
+ * a new one when it is on none) and "Restart and pick a conversation" (the
+ * resume picker, the existing terminal script). A Codex session has no Model / Compact / Restart
  * cluster in the status strip -- those write Claude slash commands -- so its
  * Restart lives here, where the canvas puts it. A launch on an unverified
  * sign-in asks for its confirmation again on the way back up (TerminalView).
