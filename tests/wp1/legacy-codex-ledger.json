@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "be2999b708f2819cb282fee4680388eb343f91218eca27c50b51fb3ed92468aa",
-  "manifestHead": "f6b8adab4ce669744afdf826e62c3beb317268a6",
+  "manifestPathDigest": "037c84e662f3ddd1349cef1a5bbf334f5519af9436ffd4b07174faad9ac85915",
+  "manifestHead": "f1ccb5f24f999769275887322b0adca57b7486ef",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -1159,6 +1159,16 @@
       "note": "re-dispositioned in WP2 commit 4 (was retain)"
     },
     {
+      "path": "src/main/service-status.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "replace",
+      "evidence": "WP2 PR 3 P3.4 (parity rows 14 and 45; OD27 M1 D5, docs/wp1/owner-decisions-2026-09-27.md: a provider that is off makes no calls): each provider's public status page is read only while that provider is on, Codex's from OpenAI's status page (its Codex CLI and Codex API components), an off provider's reading leaves the payload, a settings save that turns one on or off is acted on at once, and a reply is read defensively (WP1.2, WP1.60); tests/unit/main/service-status-providers.test.ts",
+      "note": "the P14 hits are the OpenAI status source for Codex and its payload fields; no legacy Codex code path"
+    },
+    {
       "path": "src/main/session-resume-enrich.ts",
       "predicates": [
         "P05",
@@ -1594,6 +1604,16 @@
       "disposition": "replace",
       "evidence": "WP2 commit 6c: a Codex launch runs on the session's saved Codex account or the Codex default, resolved by utils/launchAccount.ts and sent as providerAccountId, with this launch's acknowledgement where the account needs one (WP1.38, WP1.42, WP1.45); tests/unit/renderer/terminalview-account-launch.test.tsx; WP2 commit 6e: a transient install tab runs its command once; a Restart opens a plain shell (WP1.2); tests/unit/renderer/transient-terminal.test.tsx; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): a refused restore or Restart says why in the tab and keeps the session, and nothing is asked first while the provider is off; tests/unit/renderer/terminalview-account-launch.test.tsx",
       "note": "the Claude profile picker (shouldGateAccountChoice) stays Claude-only; a Codex launch resolves its own account through utils/launchAccount.ts"
+    },
+    {
+      "path": "src/renderer/components/TitleBar.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "replace",
+      "evidence": "WP2 PR 3 P3.4 (parity rows 14 and 45; OD27 M1 D5): each provider's status pills only while it is on, a Codex pill from OpenAI's status page (the Codex API as its own pill only when not operational, as Claude's API is), and the tint from the pills shown only (WP1.2, WP1.60); tests/unit/renderer/titlebar-provider-status.test.tsx, tests/unit/renderer/titlebar-surface.test.tsx",
+      "note": "the P11 hits are the Codex pill, its tooltip and the payload fields it reads"
     },
     {
       "path": "src/renderer/components/codex/CodexSettingsTab.tsx",
@@ -4012,6 +4032,17 @@
       "note": "re-dispositioned in WP2 commit 4 (was retain)"
     },
     {
+      "path": "tests/unit/main/service-status-providers.test.ts",
+      "predicates": [
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.4 test (parity rows 14 and 45; OD27 M1 D5): Anthropic's page is read only while Claude Code is on and OpenAI's only while Codex is on, an off provider's reading leaves the payload, a settings save acts on a switch at once and on nothing else, and a reply is read defensively (WP1.2, WP1.60); tests/unit/main/service-status-providers.test.ts",
+      "note": "created by WP2 PR 3 P3.4; the P04 hits are the test's own on/off map (on.codex), not a home resolver"
+    },
+    {
       "path": "tests/unit/main/session-resume-enrich.test.ts",
       "predicates": [
         "P13"
@@ -5432,6 +5463,18 @@
       "disposition": "added",
       "evidence": "WP2 commit 6c launch path and restart menu (WP1.42); tests/unit/renderer/terminalview-account-launch.test.tsx; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): a refused restore or Restart says why in the tab and keeps the session; no sign-in question, account picker or Connecting card while the provider is off; tests/unit/renderer/terminalview-account-launch.test.tsx",
       "note": "drives the real TerminalView launch path"
+    },
+    {
+      "path": "tests/unit/renderer/titlebar-provider-status.test.tsx",
+      "predicates": [
+        "P04",
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.4 test (parity rows 14 and 45; OD27 M1 D5): the title bar shows Claude Code's pills only while it is on and a Codex pill only while Codex is on, a reading taken before a switch-off neither shows nor tints, and the Codex API pill appears only when not operational (WP1.2, WP1.60); tests/unit/renderer/titlebar-provider-status.test.tsx",
+      "note": "created by WP2 PR 3 P3.4; the P04 and P05 hits are the fixture's own options (opts.codex), not a home resolver or a provider conditional"
     },
     {
       "path": "tests/unit/renderer/token-contrast.test.ts",

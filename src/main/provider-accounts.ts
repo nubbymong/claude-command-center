@@ -60,6 +60,19 @@ function preferenceOf(providerId: ProviderId): ProviderPreference {
   return providerPreferenceFromSettings(pkg?.enablement, settings)
 }
 
+/** Whether the provider is on now: as the accounts service answers it (a
+ *  switch made there, else the saved setting), or before the service exists
+ *  the saved setting by the package's own enablement data. Not answered yet,
+ *  and a setting that cannot be read, are not on. For work that only runs
+ *  while a provider is on (its status page, P3.4). */
+export function providerOnNow(providerId: ProviderId): boolean {
+  try {
+    return (service ? service.preferenceOf(providerId) : preferenceOf(providerId)) === 'on'
+  } catch {
+    return false
+  }
+}
+
 /** Owner-enabled experimental capabilities: a provider-scoped allowlist in
  *  settings; anything malformed is ignored. */
 export function experimentalFromSettings(settings: Record<string, unknown> | null): ScopedCapabilityKey[] {
