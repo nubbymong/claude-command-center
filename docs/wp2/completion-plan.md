@@ -601,8 +601,8 @@ refused) and checked like any other. The pick file is writable by the same
 user. Since b969e828 an `{ id }` pick is taken when the decision is read,
 not once its rollout grows; it can still only name a conversation in the
 session's own account folder, and the resume folder and id are checked again
-by main. Its folder is looked at before each use, so a same-user swap
-between that look and the act is not excluded.
+by main. Its folder is looked at before each use; the check and the read
+or removal are separate steps.
 Row 35 deviates from Claude by the F7 menu: with no known conversation
 Claude's Restart opens the picker, Codex's plain Restart starts a new
 conversation ("Restart and pick a conversation" is the picker). Switch

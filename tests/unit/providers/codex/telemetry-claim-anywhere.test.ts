@@ -834,3 +834,26 @@ describe('the tail re-checks it is still reading the claimed file', () => {
     }
   })
 })
+
+// P3.5 final round (lens A minor): a new pick looks again at once, but never
+// sooner than a second after the last walk of the realm, however often the
+// pick file changes.
+describe('picks that follow one another quickly', () => {
+  it('walk the realm at most once a second', async () => {
+    vi.useFakeTimers()
+    const sessions = realm()
+    mkdirSync(sessions, { recursive: true })
+    const pickFile = join(sessions, '..', 'pick.json')
+    const { claims, src } = watch(sessions, '/p/demo', { pickFile })
+    const before = __codexRolloutLookupsForTests()
+    for (let i = 0; i < 12; i++) {
+      writeFileSync(pickFile, JSON.stringify({ id: `019dd000-0001-7000-8000-${String(900 + i).padStart(12, '0')}` }))
+      await vi.advanceTimersByTimeAsync(250)
+    }
+    src.stop()
+    // Twelve picks over three seconds: a walk at most once a second.
+    expect(__codexRolloutLookupsForTests() - before).toBeLessThanOrEqual(4)
+    expect(__codexRolloutLookupsForTests() - before).toBeGreaterThan(0)
+    expect(claims).toEqual([])
+  })
+})
