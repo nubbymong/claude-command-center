@@ -64,7 +64,8 @@
  * at all — which is why a launch could paint release notes, a resume prompt and
  * a findings panel on top of one another. Sentinel is not a gate (it owns no
  * turn in the sequence); it is simply suppressed while any gate is up, as is the
- * pre-spawn account picker (#607) and the new-account prompt.
+ * new-account prompt, and the pre-spawn account picker (#607) and launch
+ * confirm are while any gate but the resume offer is (launchDialogsSuppressed).
  *
  * THE INVARIANT (#609): a gate this returns MUST render. Splitting the decision
  * — selecting a gate here while its render site ALSO tests something else — can
@@ -161,4 +162,22 @@ export function bootChain(s: BootGateState): { gate: BootGate | null; helloCodex
     helloCodexGatesClear: pickBootGate({ ...s, helloCodexOpen: true }) === 'helloCodex',
     helloCodexTurn: gate === 'helloCodex',
   }
+}
+
+/**
+ * Whether the dialogs a launch can need before it starts -- the account
+ * choice (AccountLaunchGate) and the confirm for an unverified sign-in
+ * (LaunchAckConfirm) -- are held back by the gate on screen. They own no
+ * turn in the chain, so a gate holds them back (their queue waits, nothing
+ * is answered) and they surface once it clears: a restore starts its
+ * sessions the moment the resume offer is answered, and their dialogs must
+ * not paint over the page after it (the Multi Spawn startup page, #607).
+ * The resume offer itself does not hold them back (P3.5 VM finding V1): it
+ * is not modal, the user can launch a session while it is up, and no
+ * restore has started before it is answered, so a dialog then is for a
+ * launch the user just made; held back, that launch showed nothing and
+ * started nothing until the offer was answered.
+ */
+export function launchDialogsSuppressed(gate: BootGate | null): boolean {
+  return gate !== null && gate !== 'resume'
 }

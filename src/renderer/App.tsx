@@ -93,7 +93,7 @@ import { setupSleepListeners } from './stores/sleepStore'
 import { setupActiveListeners } from './stores/activeStore'
 import LoggingConsentPrompt from './components/LoggingConsentPrompt'
 import LogsWipeModal from './components/LogsWipeModal'
-import { bootChain } from './utils/bootGates'
+import { bootChain, launchDialogsSuppressed } from './utils/bootGates'
 import ResumeSessionsPrompt from './components/ResumeSessionsPrompt'
 import GitHubPanel from './components/github/GitHubPanel'
 import OnboardingModal from './components/github/onboarding/OnboardingModal'
@@ -1623,17 +1623,19 @@ export default function App() {
             under on its first spawn (multi-account only). App-root so it
             overlays every view -- but NOT on top of a boot gate. Like
             SentinelPanel it owns no turn in the sequence, so it is suppressed
-            while any gate is up; unlike SentinelPanel it holds spawns awaiting
+            while a gate is up; unlike SentinelPanel it holds spawns awaiting
             a promise, and those simply keep waiting (no timeout on that path),
             so the queue surfaces intact once the chain clears. Without this a
             restore painted its per-session account pickers over the Multi Spawn
-            startup page, which by design comes AFTER resume. */}
-        <AccountLaunchGate suppressed={bootGate !== null} />
+            startup page, which by design comes AFTER resume. The resume offer
+            itself does not suppress it: a session launched while the offer is
+            up shows its dialog (launchDialogsSuppressed, P3.5 VM finding V1). */}
+        <AccountLaunchGate suppressed={launchDialogsSuppressed(bootGate)} />
         {/* WP2: the per-launch confirm for an unverified sign-in (a
             provider's own home shared with other apps on this computer).
             Same placement and the same suppression rule as the account gate
             above. */}
-        <LaunchAckConfirm suppressed={bootGate !== null} />
+        <LaunchAckConfirm suppressed={launchDialogsSuppressed(bootGate)} />
         {/* Sentinel findings panel: global overlay, driven by sentinelStore.
             Suppressed while ANY boot gate is up — it is not a gate itself (it
             owns no turn in the sequence and can arrive at any time), but it
