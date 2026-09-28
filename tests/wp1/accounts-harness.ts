@@ -10,7 +10,7 @@ import { createClaudePackage } from '../../src/main/providers/claude'
 import type { ClaudeReviewPorts } from '../../src/main/providers/claude'
 import { AccountRegistryStore, AccountsService, ConsumerLeaseRegistry, SecretHandleStore, registerProviderPackage, _resetProviderRegistryForTest } from '../../src/main/providers/core'
 import type { RegistryFsPort, ProviderPackage, LegacyAccountsPort, AccountsServiceDeps } from '../../src/main/providers/core'
-import { findRealm } from '../../src/shared/providers'
+import { findRealm, realmOperable } from '../../src/shared/providers'
 import type { LegacyAccountSnapshot, ProviderId, ProviderPreference, ScopedCapabilityKey, ProviderRegistryDoc, ProviderCapabilities } from '../../src/shared/providers'
 
 export class MemoryPort implements RegistryFsPort {
@@ -119,6 +119,9 @@ export interface HarnessOpts {
   usageReads?: AccountsServiceDeps['usageReads']
   /** Whether the registry's load has run (MP9). Absent: never settled. */
   registrySettled?: () => boolean
+  /** Wraps the Codex package's sign-in operations as the service sees them
+   *  (P3.3: a provider that reports a subject). Absent: Codex's own. */
+  authWrap?: (auth: NonNullable<ProviderPackage['auth']>) => NonNullable<ProviderPackage['auth']>
 }
 
 /** A usage filesystem with nothing in it. */
@@ -192,7 +195,8 @@ export async function harness(o: HarnessOpts = {}) {
       lookup: async (ref) => {
         const doc = active?.current()
         const realm = doc ? findRealm(doc, ref.authRealmId) : undefined
-        return realm ? { ok: true, realm, resourcesDir: RES } : { ok: false }
+        // The composition root's rule (compose.ts): never a retired realm.
+        return realm && realmOperable(realm) ? { ok: true, realm, resourcesDir: RES } : { ok: false }
       },
       mkdirSecure: (dir) => folders.fs.mkdirSecure(dir),
     },
@@ -245,7 +249,11 @@ export async function harness(o: HarnessOpts = {}) {
   }
   // Codex as the service sees it, with capabilities a test may turn off.
   let capOverride: Partial<ProviderCapabilities> = {}
-  const codexView: ProviderPackage = { ...codex, get capabilities() { return { ...codex.capabilities, ...capOverride } as ProviderCapabilities } }
+  const codexView: ProviderPackage = {
+    ...codex,
+    ...(o.authWrap && codex.auth ? { auth: o.authWrap(codex.auth) } : {}),
+    get capabilities() { return { ...codex.capabilities, ...capOverride } as ProviderCapabilities },
+  }
   const packages: ProviderPackage[] = [claude, codexView]
   // The store the service is handed: swappable, as a resources-directory change swaps it.
   let active: AccountRegistryStore | null = store

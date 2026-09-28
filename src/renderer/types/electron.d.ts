@@ -908,7 +908,7 @@ export interface ElectronAPI {
     sendSecret: (deposit: SecretDeposit) => void
     signIn: (req: SignInRequest) => Promise<ProviderAccountsResult<{ state: KnownAuthState }>>
     /** Sign an existing managed account in again, in its own realm. */
-    signInAgain: (req: SignInRequest) => Promise<ProviderAccountsResult<{ state: KnownAuthState }>>
+    signInAgain: (req: SignInRequest) => Promise<ProviderAccountsResult<{ state: KnownAuthState; separateAccountId?: string }>>
     onSignInOutput: (cb: (event: SignInOutputEvent) => void) => () => void
     cancelSignIn: (accountId: string) => Promise<ProviderAccountsResult>
     completeSetup: (req: CompleteSetupRequest) => Promise<ProviderAccountsResult<{ accountId: string }>>

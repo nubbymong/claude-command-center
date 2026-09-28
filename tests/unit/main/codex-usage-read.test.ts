@@ -25,6 +25,7 @@ import type { Harness, CliRun } from '../../wp1/accounts-harness'
 import { createCodexLiveUsage, createCodexUsageOperations, codexExecutableKey, CODEX_DEFAULT_LIMIT_ID } from '../../../src/main/providers/codex'
 import type { CodexUsageFsPort, CodexRunResult, CodexUsageRead, CodexUsageReadOptions } from '../../../src/main/providers/codex'
 import { USAGE_READ_TRANSIENT_LIMIT } from '../../../src/main/providers/core'
+import { recordAuthCheck } from '../../../src/shared/providers'
 import type { ProviderAccountUsageView, ProviderPreference } from '../../../src/shared/providers'
 import type { AllowanceReading } from '../../../src/shared/usage-types'
 
@@ -402,9 +403,16 @@ describe('who is read (ADR-022, bound 2)', () => {
   it('an account whose new sign-in could not be recorded is never read', async () => {
     const t = await setup()
     const a = await addCodexAccount(t.h, 'A')
+    // Signed out, so the new sign-in runs in its own realm (P3.3: one that is
+    // signed in is staged, and a record that cannot be written leaves it on
+    // its own sign-in, unchanged). The login works; recording it does not.
+    expect(await t.h.service.logout({ accountId: a })).toEqual({ ok: true, state: 'signed-out' })
     t.h.port.failWrites = [t.h.port.writes + 1]
     expect((await t.h.service.signInAgain({ accountId: a, method: 'browser' }, 1)).ok).toBe(false)
-    expect(t.h.doc().accounts.find((x) => x.id === a)!.lastKnownAuthState).toBe('signed-in')
+    // The record still says signed out, but the realm is signed in now: made
+    // to say signed in by hand, the unrecorded sign-in still keeps it unread.
+    const recorded = await t.h.store.mutate((d, now) => recordAuthCheck(d, a, { state: 'signed-in' }, now))
+    expect(recorded.ok).toBe(true)
     await t.h.service.readAccountUsage({ accountId: a }, READ)
     await stream(t)
     expect(helperRuns(t.h)).toEqual([])

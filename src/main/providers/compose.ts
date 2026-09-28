@@ -11,7 +11,7 @@ import { createClaudePackage } from './claude'
 import type { ClaudeLegacyAccountsIo, ClaudeReviewPorts } from './claude'
 import { createCodexPackage, cliCommandLine, codexShellEnv, runCodexCli, defaultCodexRunDeps, flushPendingCodexKills } from './codex'
 import type { CodexRealmSource } from './codex'
-import { findRealm } from '../../shared/providers'
+import { findRealm, realmOperable } from '../../shared/providers'
 import { readProfilesStrict, updateProfilesStrict, mkdirSecure, profileRealmLaunch, profileReviewRefusal, recordProfileReviewPreflight } from '../account-profiles'
 import { holdProfileForRun } from '../profile-consumers'
 import { resolveClaudeExecutable } from '../claude-cli-version'
@@ -39,10 +39,12 @@ export const codexRealmSource: CodexRealmSource = {
     const doc = getAccountRegistry()?.current()
     const realm = doc ? findRealm(doc, ref.authRealmId) : undefined
     const resourcesDir = getAccountRegistryResourcesDir()
-    // Only a realm being set up or in use: a retired one (an archived
-    // account's) may name the same external home a newer account now uses,
+    // Only a realm being set up or in use, or an app-managed one an account
+    // moved off whose sign-in is still to be removed (a sign in again: only
+    // its status and sign-out run there). Never a retired one: an archived
+    // account's may name the same external home a newer account now uses,
     // and nothing may run there on the old record's behalf.
-    const live = realm?.lifecycle === 'pending' || realm?.lifecycle === 'active'
+    const live = realmOperable(realm)
     return realm && live && resourcesDir ? { ok: true, realm, resourcesDir } : { ok: false }
   },
   mkdirSecure: (dir) => mkdirSecure(dir),
