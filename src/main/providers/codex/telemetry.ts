@@ -356,8 +356,15 @@ export interface CodexClaimOptions {
   onRelease?: () => void
 }
 
-/** How often a claim by id walks the realm's sessions folder while unclaimed. */
+/** How often a claim by id walks the realm's sessions folder while unclaimed:
+ *  first after LOOKUP_INTERVAL_MS, the wait doubling after each walk that
+ *  finds nothing, up to LOOKUP_INTERVAL_MAX_MS; after LOOKUP_MAX_MISSES such
+ *  walks, not again until a new decision or a claim let go (P3.5 final
+ *  round: a picked rollout removed after the picker listed it is not
+ *  walked for once a second for the tab's life). */
 const LOOKUP_INTERVAL_MS = 1_000
+const LOOKUP_INTERVAL_MAX_MS = 30_000
+const LOOKUP_MAX_MISSES = 10
 /** The most of a pick file that is read. */
 const PICK_FILE_MAX_BYTES = 1_024
 /** How far before a New conversation decision a new rollout may say it began
@@ -487,7 +494,16 @@ export function watchAndClaimRollout(
   let heldElsewhere: { path: string; id: string } | null = null
   /** Files whose first line settled as not this session's: never read again. */
   const settled = new Set<string>()
-  let lastLookupAt = Number.NEGATIVE_INFINITY
+  /** When the next walk may run, the wait after a walk that finds nothing,
+   *  and the walks since one last found it. */
+  let nextLookupAt = Number.NEGATIVE_INFINITY
+  let lookupWait = LOOKUP_INTERVAL_MS
+  let lookupMisses = 0
+  /** The claimed rollout as claimed: its device and file id, exact. The tail
+   *  re-checks it is still reading the claimed file (P3.5 final round). */
+  let claimedIdentity: string | null = null
+  /** Set by a read that opened another file at the claimed path. */
+  let claimedFileChanged = false
   /** The picker's latest decision (none yet: nothing is claimed). */
   let decision: PickDecision | null = null
   /** A pick entry already dealt with (read, or refused), by its identity: never read again. */
@@ -496,6 +512,8 @@ export function watchAndClaimRollout(
   function claim(fullPath: string, found: RolloutSessionMeta): void {
     claimedPath = fullPath
     claimed.add(fullPath)
+    claimedIdentity = fileIdentity(fullPath)
+    claimedFileChanged = false
     if (claimOpts?.onClaim && CODEX_CONVERSATION_ID_RE.test(found.id)) {
       try { claimOpts.onClaim({ id: found.id, cwd: found.cwd }) } catch { /* a listener never stops the watch */ }
     }
@@ -519,7 +537,11 @@ export function watchAndClaimRollout(
         const next = readPick()
         if (next) { release(); decision = next; startClaimPolling(); return }
       }
-      if (readNew(claimedPath)) emit()
+      const read = readNew(claimedPath)
+      // Another file at the claimed path (P3.5 final round): not read; the
+      // claim is let go, as a new decision would, and claiming goes on.
+      if (claimedFileChanged) { release(); startClaimPolling(); return }
+      if (read) emit()
     }, 500)
 
     // Claimed -- the interval can stop polling
@@ -536,6 +558,9 @@ export function watchAndClaimRollout(
     if (tailIntervalHandle) { clearInterval(tailIntervalHandle); tailIntervalHandle = null }
     if (claimedPath) claimed.delete(claimedPath)
     claimedPath = null
+    claimedIdentity = null
+    claimedFileChanged = false
+    resetLookup()
     readState = newRolloutReadState()
     offset = 0
     contextWindow = null
@@ -560,12 +585,38 @@ export function watchAndClaimRollout(
       heldElsewhere = null
       if (again) return again
     }
+    if (lookupMisses >= LOOKUP_MAX_MISSES) return null
     const now = Date.now()
-    if (now - lastLookupAt < LOOKUP_INTERVAL_MS) return null
-    lastLookupAt = now
+    if (now < nextLookupAt) return null
     const found = findCodexRollout(sessionsDir, id, undefined, preferCwd)
-    if (found && claimed.has(found.path)) { heldElsewhere = { path: found.path, id }; return null }
+    if (!found) {
+      lookupMisses++
+      nextLookupAt = now + lookupWait
+      lookupWait = Math.min(lookupWait * 2, LOOKUP_INTERVAL_MAX_MS)
+      return null
+    }
+    lookupMisses = 0
+    lookupWait = LOOKUP_INTERVAL_MS
+    nextLookupAt = now + LOOKUP_INTERVAL_MS
+    if (claimed.has(found.path)) { heldElsewhere = { path: found.path, id }; return null }
     return found
+  }
+
+  /** Look again at once, at the first wait: a new decision, or a claim let go. */
+  function resetLookup(): void {
+    nextLookupAt = Number.NEGATIVE_INFINITY
+    lookupWait = LOOKUP_INTERVAL_MS
+    lookupMisses = 0
+  }
+
+  /** `file`'s device and file id, exact, when it is a plain file; else null. */
+  function fileIdentity(file: string): string | null {
+    try {
+      const st = lstatSync(file, { bigint: true })
+      return st.isFile() ? `${st.dev}:${st.ino}` : null
+    } catch {
+      return null
+    }
   }
 
   /** `file`, when it is still a plain file whose session_meta names `id`. */
@@ -598,7 +649,15 @@ export function watchAndClaimRollout(
     let fd: number | null = null
     try {
       fd = openSync(file, 'r')
-      const size = fstatSync(fd).size
+      // The tail re-checks it is still reading the claimed file (P3.5 final
+      // round): the opened file must be the one claimed (device and file id,
+      // recorded at the claim); another file at that path is not read.
+      const opened = fstatSync(fd, { bigint: true })
+      if (claimedIdentity === null || `${opened.dev}:${opened.ino}` !== claimedIdentity) {
+        claimedFileChanged = true
+        return false
+      }
+      const size = Number(opened.size)
       if (offset > 0 && size === offset) return false
       if (offset === 0 || size < offset || size - offset > READ_STEP_MAX_BYTES) {
         readState = newRolloutReadState()
@@ -733,7 +792,7 @@ export function watchAndClaimRollout(
     let since = spawnTimestamp - 5000
     if (pickFile) {
       const next = readPick()
-      if (next) decision = next
+      if (next) { decision = next; resetLookup() }
       if (!decision) return
       if (decision.kind === 'fresh') {
         // A new conversation: only a rollout created from the decision on.

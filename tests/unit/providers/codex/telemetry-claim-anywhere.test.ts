@@ -9,7 +9,7 @@ import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirS
 import { join, dirname, basename } from 'path'
 import { tmpdir } from 'os'
 import { watchAndClaimRollout } from '../../../../src/main/providers/codex/telemetry'
-import { codexFolderIdentity, __codexRolloutEntriesVisitedForTests } from '../../../../src/main/providers/codex/rollout-lookup'
+import { codexFolderIdentity, __codexRolloutEntriesVisitedForTests, __codexRolloutLookupsForTests } from '../../../../src/main/providers/codex/rollout-lookup'
 import type { StatuslineData } from '../../../../src/shared/types'
 
 const ID_A = '019dd000-0001-7000-8000-00000000000a'
@@ -724,5 +724,113 @@ describe('a pick from another worktree is looked up without the session\'s folde
     await vi.advanceTimersByTimeAsync(300)
     src.stop()
     expect(claims).toEqual([{ id: ID_A, cwd: '/p/demo' }])
+  })
+})
+
+// P3.5 final round (quality minor): a picked conversation that cannot be found
+// (its rollout removed after the picker listed it) is looked for less and less
+// often (1 s, doubling to 30 s) and no more after a bounded number of misses;
+// a later decision looks again.
+describe('a pick whose rollout cannot be found', () => {
+  it('is looked for with a growing wait, then no more; a later decision looks again', async () => {
+    vi.useFakeTimers()
+    const sessions = realm()
+    mkdirSync(sessions, { recursive: true })
+    const pickFile = join(sessions, '..', 'pick.json')
+    const { claims, src } = watch(sessions, '/p/demo', { pickFile })
+    const before = __codexRolloutLookupsForTests()
+    writeFileSync(pickFile, JSON.stringify({ id: ID_A }))
+    await vi.advanceTimersByTimeAsync(10_000)
+    // At 0, 1, 3 and 7 s: never once a second.
+    expect(__codexRolloutLookupsForTests() - before).toBeLessThanOrEqual(4)
+    // The wait doubles to 30 s: all ten walks are done within about two and a half minutes.
+    await vi.advanceTimersByTimeAsync(170_000)
+    const walked = __codexRolloutLookupsForTests() - before
+    expect(walked).toBe(10)
+    await vi.advanceTimersByTimeAsync(20 * 60_000)
+    expect(__codexRolloutLookupsForTests() - before).toBe(walked)
+    // A later decision looks again, at once.
+    const old = new Date(Date.now() - 2 * 24 * 3600 * 1000)
+    rollout(folder(sessions, old.getUTCFullYear(), old.getUTCMonth() + 1, old.getUTCDate()), ID_B, '/p/demo', old.toISOString(), 4)
+    writeFileSync(pickFile, JSON.stringify({ id: ID_B }))
+    await vi.advanceTimersByTimeAsync(600)
+    src.stop()
+    expect(claims).toEqual([{ id: ID_B, cwd: '/p/demo' }])
+  })
+})
+
+// P3.5 final round (hardening): the tail re-checks it is still reading the
+// claimed file. Each read compares the opened file with the one claimed (its
+// device and file id, recorded at the claim); another file at that path is not
+// read: the claim is let go, as a new decision would let it go, and claiming
+// goes on by the same rules.
+describe('the tail re-checks it is still reading the claimed file', () => {
+  const dayOf = (sessions: string) => {
+    const old = new Date(Date.now() - 2 * 24 * 3600 * 1000)
+    return folder(sessions, old.getUTCFullYear(), old.getUTCMonth() + 1, old.getUTCDate())
+  }
+
+  it('another file put at the claimed path is not read: the claim is let go', async () => {
+    vi.useFakeTimers()
+    const at = new Date(Date.now() - 2 * 24 * 3600 * 1000).toISOString()
+    const sessions = realm()
+    const file = rollout(dayOf(sessions), ID_A, '/p/demo', at, 10)
+    const { claims, releases, updates, src } = watch(sessions, '/p/demo', { resumeId: ID_A })
+    await vi.advanceTimersByTimeAsync(300)
+    expect(claims).toEqual([{ id: ID_A, cwd: '/p/demo' }])
+    // Another conversation's file put in its place (written aside, renamed over it).
+    const other = file + '.new'
+    writeFileSync(other, [metaLine(ID_B, '/p/demo', at), tokenLine(at, 10), tokenLine(at, 999)].join('\n') + '\n')
+    renameSync(other, file)
+    await vi.advanceTimersByTimeAsync(2_000)
+    src.stop()
+    expect(releases).toEqual([1])
+    expect(updates.some((u) => u.inputTokens === 999)).toBe(false)
+    expect(updates.at(-1)).toEqual({ sessionId: 'sess-p35', inputTokens: 0, outputTokens: 0, costUsd: 0, contextUsedPercent: 0 })
+    expect(claims).toEqual([{ id: ID_A, cwd: '/p/demo' }])
+  })
+
+  it('a copy of the conversation put at the claimed path: let go, then claimed again by the same rules and read afresh', async () => {
+    vi.useFakeTimers()
+    const at = new Date(Date.now() - 2 * 24 * 3600 * 1000).toISOString()
+    const sessions = realm()
+    const file = rollout(dayOf(sessions), ID_A, '/p/demo', at, 10)
+    const { claims, releases, updates, src } = watch(sessions, '/p/demo', { resumeId: ID_A })
+    await vi.advanceTimersByTimeAsync(300)
+    const other = file + '.new'
+    writeFileSync(other, [metaLine(ID_A, '/p/demo', at), tokenLine(at, 7)].join('\n') + '\n')
+    renameSync(other, file)
+    await vi.advanceTimersByTimeAsync(3_000)
+    src.stop()
+    expect(releases).toEqual([1])
+    expect(claims).toEqual([{ id: ID_A, cwd: '/p/demo' }, { id: ID_A, cwd: '/p/demo' }])
+    expect(updates.at(-1)?.inputTokens).toBe(7)
+  })
+
+  it('a day folder turned into a link to another folder after the claim: its file is not read, and the claim is let go', async (ctx) => {
+    vi.useFakeTimers()
+    const at = new Date(Date.now() - 2 * 24 * 3600 * 1000).toISOString()
+    const sessions = realm()
+    const day = dayOf(sessions)
+    rollout(day, ID_A, '/p/demo', at, 10)
+    const { claims, releases, updates, src } = watch(sessions, '/p/demo', { resumeId: ID_A })
+    await vi.advanceTimersByTimeAsync(300)
+    expect(claims).toEqual([{ id: ID_A, cwd: '/p/demo' }])
+    // The day folder moved aside; a link in its place to another folder with a file of the same name.
+    const aside = join(sessions, '..', 'aside-day')
+    renameSync(day, aside)
+    const elsewhere = join(sessions, '..', 'elsewhere-day')
+    mkdirSync(elsewhere)
+    rollout(elsewhere, ID_A, '/p/demo', at, 999)
+    try { symlinkSync(elsewhere, day, 'junction') } catch { src.stop(); ctx.skip(); return }
+    try {
+      await vi.advanceTimersByTimeAsync(2_000)
+      src.stop()
+      expect(releases).toEqual([1])
+      expect(updates.some((u) => u.inputTokens === 999)).toBe(false)
+      expect(claims).toEqual([{ id: ID_A, cwd: '/p/demo' }])
+    } finally {
+      dropLink(day)
+    }
   })
 })
