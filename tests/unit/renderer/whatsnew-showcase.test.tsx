@@ -101,12 +101,25 @@ describe('showcase-pages — the curated set', () => {
 
   it('P3.4 (row 14): with Claude Code off, what needs Claude Code in this release is not shown', () => {
     const CLAUDE_ONLY_PAGES = ['canvas', 'remoteResume', 'accounts', 'watchdog', 'askConductor']
-    const CLAUDE_ONLY_ITEMS = ['Agent Canvas.', 'Session Watchdog.', 'Ask Conductor.', 'Switch mid-session.', 'Insights.']
+    // The two remote lines (VM round, M1): SSH Persistent keeps the remote
+    // session alive by wrapping the remote claude command, and the only agent
+    // an SSH session runs in this release is Claude Code, so both go with the
+    // remote resume page.
+    const REMOTE_ITEMS = ['SSH Persistent.', 'Remote Resumable.']
+    const CLAUDE_ONLY_ITEMS = ['Agent Canvas.', 'Session Watchdog.', 'Ask Conductor.', 'Switch mid-session.', 'Insights.', ...REMOTE_ITEMS]
     // Claude Code on: everything, as before.
     render()
     expect(container.textContent).toContain('Working with Claude')
     for (const t of CLAUDE_ONLY_ITEMS) expect(container.textContent, t).toContain(t)
+    expect(q('see-remoteResume')).not.toBeNull()
     expect(q('whatsnew-hint')!.textContent).toContain(`Page 1 of ${1 + SHOWCASES_21.length}`)
+    const claudeOnlyText = container.textContent
+    act(() => root.unmount())
+    root = createRoot(container)
+    // Both on: exactly what Claude Code alone shows.
+    settingsState.settings = { updateChannel: 'stable', claudeEnabled: true, codexEnabled: true }
+    render()
+    expect(container.textContent).toBe(claudeOnlyText)
     act(() => root.unmount())
     root = createRoot(container)
     // Claude Code off: those items and pages go; a section left empty goes too.
@@ -117,11 +130,14 @@ describe('showcase-pages — the curated set', () => {
     for (const t of CLAUDE_ONLY_ITEMS) expect(container.textContent, t).not.toContain(t)
     const shown = SHOWCASES_21.filter((p: { id: string }) => !CLAUDE_ONLY_PAGES.includes(p.id))
     expect(q('whatsnew-hint')!.textContent).toContain(`Page 1 of ${1 + shown.length}`)
-    // Remote Resumable stays on the summary (its line names no provider); its
-    // page, written about resuming Claude, does not, so it has no chip.
-    expect(container.textContent).toContain('Remote Resumable.')
+    // The Sessions section stays for the lines that do not need Claude Code;
+    // the remote resume page and its chip go with the two remote lines.
+    expect(q('section-sessions')).not.toBeNull()
+    expect(q('section-sessions')!.textContent).toContain('Partner terminal.')
     expect(q('see-remoteResume')).toBeNull()
     expect(q('see-oneRow')).not.toBeNull()
+    const all21 = sectionsFor('2.1.0-beta.17', '2.1.0').flatMap((s) => s.items)
+    for (const t of REMOTE_ITEMS) expect(all21.find((i) => i.title === t)?.needsClaude, t).toBe(true)
     // The 2.0 set's guide line promises Ask ("a session that has read the
     // docs"), which needs Claude Code until P4.3; the partner terminal works
     // beside a Codex session too, so it stays.
@@ -137,9 +153,11 @@ describe('showcase-pages — the curated set', () => {
     noteClaudeMissingAtSetup()
     try {
       render()
-      expect(container.textContent).toContain('Remote Resumable.') // the summary page is the one shown
+      expect(container.textContent).toContain('One row.') // the summary page is the one shown
       expect(container.textContent).not.toContain('Working with Claude')
       expect(container.textContent).not.toContain('Agent Canvas.')
+      expect(container.textContent).not.toContain('SSH Persistent.')
+      expect(container.textContent).not.toContain('Remote Resumable.')
     } finally {
       resetProviderChoiceForTests()
     }

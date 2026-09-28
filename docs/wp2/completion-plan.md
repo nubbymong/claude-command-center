@@ -446,8 +446,8 @@ say the same); the recap's Account row reads the D5 line and no Claude
 sign-in is read; What's New and its showcase hide what needs Claude Code in
 this release (`needsClaude`; each flag is lifted by the phase that brings its
 feature to Codex, recorded in that phase's entry: P3.6, P3.10, P4.1, P4.3 and
-P4.7; the remote resume page keeps it, since Codex over SSH is outside this
-release); the registry callout no longer says the Claude accounts still
+P4.7; the remote resume page, and the SSH Persistent and Remote Resumable
+lines, keep it, since Codex over SSH is outside this release); the registry callout no longer says the Claude accounts still
 work. Hello Codex page 1 already read without Claude (unchanged). The partner
 terminal line stays (it works beside a Codex session). Left to their phases:
 the Sentinel card (P3.9), the log indexing card (P3.12), Ask (row 53, PR 4).
@@ -458,6 +458,13 @@ stop aborts a read in flight, and a second start is ignored; the renderer's
 pull answers the app's own window only; no remote text reaches the renderer
 (only the app's ids and labels and a known status). Owed: the ADR-009 attack
 pass, and a VM walk in Codex-only mode.
+Follow-up (the quality review's minor and the VM walk's M1): a burst of
+accounts-service changes is acted on once, after it, so each provider's
+on/off is read from the settings once per burst rather than once per change
+(a settings save in the same turn is that one refresh); What's New's SSH
+Persistent and Remote Resumable lines carry the flag with the remote resume
+page, since the persistent remote session wraps the remote claude command
+and the only agent an SSH session runs in this release is Claude Code.
 
 **P3.5 History and resume.** The claimed session id kept with the tab; exact
 resume on relaunch in the same realm; Restart resumes the same conversation
@@ -619,8 +626,8 @@ Notes that bind the build:
   what it brings to Codex and rewords it for both providers: P4.1 the Agent
   Canvas page and What's New line; P4.3 the Ask Conductor page and line and
   the 2.0 set's "A guide that answers back." line; P4.7 the "Insights." line.
-  The remote resume page keeps its flag (Codex over SSH is outside this
-  release).
+  The remote resume page and the SSH Persistent and Remote Resumable lines
+  keep their flag (Codex over SSH is outside this release).
 - **P4.6.** WP1 design principle 4 says the app does not copy credentials.
   Claude's SSO path copies claude.ai cookies from a browser the app launches,
   so P4.6 builds the in-app sign-in window only; the cookie path goes to the

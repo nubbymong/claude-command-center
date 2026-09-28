@@ -33,7 +33,10 @@ export interface WhatsNewItem {
    *  to Codex lifts it (named in that phase's entry of
    *  docs/wp2/completion-plan.md: Switch mid-session P3.6, Session Watchdog
    *  P3.10, Agent Canvas P4.1, Ask Conductor and the guide line P4.3,
-   *  Insights P4.7). */
+   *  Insights P4.7). SSH Persistent and Remote Resumable keep it, as the
+   *  remote resume page does: the persistent remote session wraps the
+   *  remote claude command, and the only agent an SSH session runs in
+   *  this release is Claude Code. */
   needsClaude?: boolean
 }
 
@@ -87,12 +90,12 @@ const SECTIONS_21: WhatsNewSection[] = [
   {
     heading: 'Sessions',
     items: [
-      { title: 'SSH Persistent.', desc: 'A connection kind of its own — the remote session survives a dropped VPN.' },
+      { title: 'SSH Persistent.', desc: 'A connection kind of its own — the remote session survives a dropped VPN.', needsClaude: true },
       { title: 'Partner terminal.', desc: 'A plain shell beside your session, labelled so you always know which is which.' },
       { title: 'One row.', desc: 'The tools and your command buttons sit in a single row under the terminal.', seeIt: 'oneRow' },
       { title: 'Two-mode panel.', desc: 'Saved configs and Running sessions each get a tab, with Quick Start pins — and the panel resizes.', seeIt: 'panel' },
       { title: 'Multi Spawn.', desc: 'Mark a config to run several copies at once; everything else is safe from a stray double launch.', seeIt: 'multiSpawn' },
-      { title: 'Remote Resumable.', desc: 'A persistent SSH session you left running waits at the foot of Running, one click from where you were.', seeIt: 'remoteResume' },
+      { title: 'Remote Resumable.', desc: 'A persistent SSH session you left running waits at the foot of Running, one click from where you were.', seeIt: 'remoteResume', needsClaude: true },
       { title: 'Marks you can read.', desc: 'Plain SSH, persistent and container sessions each wear their own mark, everywhere they appear.', seeIt: 'sidebarMarks' },
     ],
   },
