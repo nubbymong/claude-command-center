@@ -389,7 +389,15 @@ replacement realm: subject match, a mismatch becomes a separate account, an
 unverifiable one asks, the old realm is retired, and an interrupted run
 recovers (WP1.52). Likely files: `accounts-service.ts`,
 `providers/codex/auth-operations.ts`, `realm-paths.ts`, the registry journal,
-the Sign in again dialog, IPC. ADR-009: yes.
+the Sign in again dialog, IPC. ADR-009: yes. Built (review round 1,
+2026-09-28): the old sign-in is removed only once design 9.2's proof exists;
+until then it is kept, visible ("the old sign-in is kept"), and archiving
+the account removes it. The proof is owed: a second real sign-in on the test
+VM at 0.153.4 and 0.155.1 showing that signing out the old folder never signs
+the new one out, for file and keyring stores (an owner action; it would turn
+on the Codex capability `auth.retireReplaced`), and each folder's
+credential store recorded as its own file. This computer's own sign-in is
+signed in again in place, after its warning (design 9.2, last paragraph).
 
 **P3.4 Codex-only mode and provider status.** Each provider's status pills
 only while it is on, with an OpenAI status pill for Codex; no Claude prompts
@@ -405,7 +413,13 @@ resume on relaunch in the same realm; Restart resumes the same conversation
 (picking another stays a choice); the picker lists worktree conversations and
 names; the statusline after resuming a conversation from an earlier day or
 across midnight UTC (the claim re-reads its date folder and finds a resumed
-rollout wherever it is: row 38's defect). Likely
+rollout wherever it is: row 38's defect). The folder an account left after
+a staged Sign in again (P3.3) keeps its conversations reachable: today
+`sessionsRoots` and `sessionsDirs` (`src/main/providers/core/accounts-service.ts`)
+read only active realms, so resume, Logs and the Tokenomics watcher lose
+them. Required test: a conversation written in the old folder is still
+listed for resume and still counted, attributed to the same account, after
+the account moved to its new folder. Likely
 files: `src/main/session-resume-enrich.ts`, `src/renderer/session-persistence.ts`,
 `providers/codex/spawn.ts`, `providers/codex/resume-picker.ts`,
 `scripts/lib/codex-resume-picker-lib.js`, `providers/codex/telemetry.ts`,

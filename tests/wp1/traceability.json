@@ -762,10 +762,13 @@
       "title": "Managed re-authentication: subject match, mismatch-to-separate-account, unverifiable confirmation, old-realm retirement and recovery; in-place external re-auth rules",
       "kind": "automated",
       "tests": [
-        "tests/wp1/reauth-staging.test.ts"
+        "tests/wp1/reauth-staging.test.ts",
+        "tests/wp1/account-lifecycle.test.ts",
+        "tests/wp1/provider-ipc.test.ts",
+        "tests/unit/renderer/accounts-surface.test.tsx"
       ],
       "evidence": [],
-      "status": "planned",
+      "status": "evidenced",
       "currentTests": [],
       "baseCoverage": "new capability, none on base"
     },
