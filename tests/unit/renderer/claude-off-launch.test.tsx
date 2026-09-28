@@ -21,6 +21,7 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
+import type { LaunchGateConfig } from '../../../src/renderer/hooks/useLaunchConfig'
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -171,7 +172,7 @@ describe('what a tab of a blocked config reads when it opens (the resume prompt 
     expect(launchBlockedTabText({ provider: 'codex' }, {})).toBe('Not started. Codex is not set up yet. Set it up in Settings, Accounts, then Restart this tab.')
     expect(launchBlockedTabText({ provider: 'claude' }, { claudeEnabled: false, codexEnabled: true })).toBe('Not started. Claude Code is off. Turn it on in Settings, Accounts, then Restart this tab.')
     // A saved session with no provider is Claude.
-    expect(launchBlockedTabText({}, { claudeEnabled: false, codexEnabled: true })).toBe('Not started. Claude Code is off. Turn it on in Settings, Accounts, then Restart this tab.')
+    expect(launchBlockedTabText({} as LaunchGateConfig, { claudeEnabled: false, codexEnabled: true })).toBe('Not started. Claude Code is off. Turn it on in Settings, Accounts, then Restart this tab.')
     // A terminal-only session runs no Claude; a provider that is on launches.
     expect(launchBlockedTabText({ provider: 'claude', shellOnly: true }, { claudeEnabled: false, codexEnabled: true })).toBeUndefined()
     expect(launchBlockedTabText({ provider: 'codex' }, { codexEnabled: true })).toBeUndefined()

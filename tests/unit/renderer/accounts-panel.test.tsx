@@ -25,16 +25,16 @@ import type { AccountProfile } from '../../../src/shared/account-types'
 // ---------------------------------------------------------------------------
 // Electron API mock
 
-const listMock = vi.fn<[], Promise<AccountProfile[]>>()
-const deleteMock = vi.fn<[string], Promise<{ ok: boolean; error?: string }>>()
-const renameMock = vi.fn<[string, string], Promise<{ ok: boolean }>>()
-const setActiveMock = vi.fn<[string, boolean], Promise<{ ok: boolean; error?: string }>>()
-const globalEmailMock = vi.fn<[], Promise<string | null>>()
-const refreshIdentityMock = vi.fn<[string], Promise<{ ok: boolean; email: string; configDir: string } | null>>()
+const listMock = vi.fn<() => Promise<AccountProfile[]>>()
+const deleteMock = vi.fn<(id: string) => Promise<{ ok: boolean; error?: string }>>()
+const renameMock = vi.fn<(id: string, name: string) => Promise<{ ok: boolean }>>()
+const setActiveMock = vi.fn<(id: string, active: boolean) => Promise<{ ok: boolean; error?: string }>>()
+const globalEmailMock = vi.fn<() => Promise<string | null>>()
+const refreshIdentityMock = vi.fn<(id: string) => Promise<{ ok: boolean; email: string; configDir: string } | null>>()
 const managedLaunchReportsMock = vi.fn()
 const updateSettingsMock = vi.fn()
 
-const configSaveMock = vi.fn<[string, unknown], Promise<unknown>>().mockResolvedValue(undefined)
+const configSaveMock = vi.fn<(key: string, value: unknown) => Promise<unknown>>().mockResolvedValue(undefined)
 
 ;(globalThis as any).window = (globalThis as any).window ?? {}
 ;(globalThis as any).window.electronAPI = {
