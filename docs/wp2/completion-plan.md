@@ -613,8 +613,8 @@ resumes the same conversation), 35 (Restart keeps it), 32 (worktree
 conversations listed, named and started in their worktree; names and labels
 shown as plain text) and 38 for a conversation from an earlier date folder,
 and both C items. Row 38's midnight UTC case is covered by unit tests with
-fake timers only, not on the VM. Two findings, fixed after it (mocked, VM
-recheck owed): V1, a launch that needs a dialog (the account choice with two
+fake timers only, not on the VM. Two findings, fixed after it (mocked; VM
+recheck PASS at 33329a78, below): V1, a launch that needs a dialog (the account choice with two
 or more accounts, or the confirm for a sign-in already on this computer) made
 while the resume offer was up showed nothing and started nothing until the
 offer was answered; those dialogs are now held back by every boot gate but
@@ -639,7 +639,8 @@ status line about 0.3 s after the pick; rows 34, 35 and 32 pass again. The
 owner approved the P3.5 screenshots on 2026-09-28 (the canvas "P3.5 History
 and resume screens", v1; `.ccc-canvas/screens/p3.5-33329a78/`, local and
 gitignored).
-Owed: the review of 33329a78; the SSH live matrix at the final head
+33329a78 (the follow-up to ADR-009 lens A's minor) reviewed: quality PASS.
+Owed: the SSH live matrix at the final head
 (`pty-manager.ts` edited); the carried-over conversation after a staged Sign
 in again (P3.3) with a real CLI on the VM, an owner action, since it needs a
 second real sign-in; a session crossing midnight UTC on the VM; whether
