@@ -423,12 +423,32 @@ function pickDecision(resumeUuid) {
   return isResumeId(resumeUuid) ? { id: resumeUuid } : { fresh: true }
 }
 
+// A rename Windows refuses for a moment (another program -- a virus
+// scanner, the app reading the last decision -- has one of the files open)
+// is tried again, a short wait apart: four more tries, 150 ms of waiting in
+// all, never more, so the launch is never held up for longer.
+const PICK_RENAME_RETRY_CODES = new Set(['EPERM', 'EBUSY', 'EACCES'])
+const PICK_RENAME_WAITS_MS = [10, 20, 40, 80]
+
+function sleepSync(ms) {
+  try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms) } catch { /* no wait */ }
+}
+
+const PICK_IO = {
+  writeFileSync: (file, data, opts) => fs.writeFileSync(file, data, opts),
+  renameSync: (from, to) => fs.renameSync(from, to),
+  unlinkSync: (file) => fs.unlinkSync(file),
+  sleep: sleepSync,
+}
+
 // A decision is written whole: into a new file beside the pick file
 // (exclusive create, owner-only where the platform keeps modes), then
 // renamed over it, which replaces whatever entry is there -- a link
 // included -- and never writes through one; a folder there is left as it
-// is. To an absolute path only. Best-effort: false when not written.
-function writePick(file, decision) {
+// is. To an absolute path only. Best-effort: false when not written (the
+// new file is then removed). `ops` replaces the file operations in tests.
+function writePick(file, decision, ops) {
+  const io = { ...PICK_IO, ...(ops || {}) }
   let body = null
   if (decision && typeof decision === 'object') {
     const keys = Object.keys(decision)
@@ -438,17 +458,38 @@ function writePick(file, decision) {
   if (typeof file !== 'string' || !path.isAbsolute(file) || !body) return false
   const tmp = `${file}.${crypto.randomBytes(8).toString('hex')}.tmp`
   try {
-    fs.writeFileSync(tmp, JSON.stringify(body), { flag: 'wx', mode: 0o600 })
+    io.writeFileSync(tmp, JSON.stringify(body), { flag: 'wx', mode: 0o600 })
   } catch {
     return false
   }
-  try {
-    fs.renameSync(tmp, file)
-    return true
-  } catch {
-    try { fs.unlinkSync(tmp) } catch { /* nothing left to remove */ }
-    return false
+  for (let attempt = 0; ; attempt++) {
+    try {
+      io.renameSync(tmp, file)
+      return true
+    } catch (err) {
+      const code = err && err.code
+      if (attempt < PICK_RENAME_WAITS_MS.length && PICK_RENAME_RETRY_CODES.has(code)) {
+        io.sleep(PICK_RENAME_WAITS_MS[attempt])
+        continue
+      }
+      break
+    }
   }
+  try { io.unlinkSync(tmp) } catch { /* nothing left to remove */ }
+  return false
+}
+
+// A decision the app asked for (it named a pick file) and could not be told
+// leaves the watcher where it was: before a first decision it claims
+// nothing, so the status line stays empty; after one it keeps following the
+// conversation it has. It never claims one the picker did not name. The
+// launch goes on either way; the terminal says so. Returns that notice, or
+// null when the decision was recorded or none was asked for.
+const PICK_NOT_RECORDED_NOTICE = '\n  AI Code Conductor could not be told which conversation this session runs, so its status line will not follow it. The conversation itself is not affected.\n'
+
+function recordPick(file, resumeUuid, ops) {
+  if (typeof file !== 'string' || file === '') return null
+  return writePick(file, pickDecision(resumeUuid), ops) ? null : PICK_NOT_RECORDED_NOTICE
 }
 
 // The environment Codex itself starts with: the picker's own, without the
@@ -465,13 +506,18 @@ function childEnv(env) {
 
 // Where the chosen conversation's CLI starts: its own worktree (the path
 // git reported, never one a rollout names) when that is another directory
-// that exists; otherwise the current one (null). Claude's picker's
+// that exists (the picker passes isDirectory, the check main's resume makes;
+// fix round 2); otherwise the current one (null). Claude's picker's
 // resolveRetargetCwd, less the project-settings gate a managed Claude
 // launch carries (a Codex launch has none).
-function resolveRetargetCwd(resumeId, sourceCwd, currentCwd, existsFn, platform) {
+function isDirectory(p) {
+  try { return fs.statSync(p).isDirectory() } catch { return false }
+}
+
+function resolveRetargetCwd(resumeId, sourceCwd, currentCwd, isDirFn, platform) {
   if (!resumeId || !sourceCwd) return { cwd: null }
   try {
-    if (samePath(sourceCwd, currentCwd, platform || process.platform) || !existsFn(sourceCwd)) return { cwd: null }
+    if (samePath(sourceCwd, currentCwd, platform || process.platform) || !isDirFn(sourceCwd)) return { cwd: null }
   } catch {
     return { cwd: null }
   }
@@ -555,5 +601,5 @@ function isResumeId(id) {
 
 module.exports = {
   parseRollout, walkRollouts, buildResumeArgs, shouldFallback, shouldUseShell, launchTarget, isResumeId,
-  samePath, parseWorktrees, listWorktrees, worktreeLabelFor, displayText, buildPickerRows, loadWorkNames, pickDecision, writePick, childEnv, resolveRetargetCwd, timeAgo,
+  samePath, parseWorktrees, listWorktrees, worktreeLabelFor, displayText, buildPickerRows, loadWorkNames, pickDecision, writePick, recordPick, childEnv, isDirectory, resolveRetargetCwd, timeAgo,
 }

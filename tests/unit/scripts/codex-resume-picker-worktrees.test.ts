@@ -8,7 +8,7 @@
 // Real files in temp folders; nothing is started (git's output is parsed from
 // a string, as Claude's parseWorktrees test does).
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync, linkSync, readdirSync, statSync, symlinkSync, lstatSync } from 'fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync, linkSync, readdirSync, statSync, symlinkSync, lstatSync, renameSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 
@@ -19,10 +19,12 @@ const lib = require('../../../scripts/lib/codex-resume-picker-lib.js') as {
   loadWorkNames: (configDir: string | undefined) => Map<string, string>
   displayText: (raw: unknown, max?: number) => string
   buildPickerRows: (conversations: Array<Record<string, unknown>>, names: Map<string, string>, width: number, now?: number) => Array<{ num: string; title: string; named: boolean; sub: string | null; meta: string; tag: string | null }>
-  writePick: (file: string | undefined, decision: { id: string } | { fresh: true }) => boolean
+  writePick: (file: string | undefined, decision: { id: string } | { fresh: true }, ops?: { renameSync?: (from: string, to: string) => void; sleep?: (ms: number) => void }) => boolean
+  recordPick: (file: string | undefined, resumeUuid: string | null, ops?: { renameSync?: (from: string, to: string) => void; sleep?: (ms: number) => void }) => string | null
+  isDirectory: (p: string) => boolean
   pickDecision: (resumeUuid: string | null) => { id: string } | { fresh: true }
   childEnv: (env: Record<string, string | undefined>) => Record<string, string | undefined>
-  resolveRetargetCwd: (resumeId: string | null, sourceCwd: string | undefined, currentCwd: string, existsSync: (p: string) => boolean, platform?: string) => { cwd: string | null }
+  resolveRetargetCwd: (resumeId: string | null, sourceCwd: string | undefined, currentCwd: string, isDir: (p: string) => boolean, platform?: string) => { cwd: string | null }
   listWorktrees: (cwd: string, platform?: string, deps?: { env?: Record<string, string | undefined>; isFile?: (p: string) => boolean; spawn?: (file: string, args: string[], opts: never) => unknown }) => Array<{ path: string; branch: string | null; isMain: boolean }>
 }
 
@@ -206,14 +208,19 @@ describe('everything shown is plain text (row 32)', () => {
     // goes through launchCodex, which records its decision first; the
     // fallback after a failed resume records a new conversation.
     const launch = script.slice(script.indexOf('function launchCodex('))
-    expect(launch.indexOf('lib.writePick(process.env.CCC_CODEX_PICK_FILE, lib.pickDecision(resumeUuid))')).toBeGreaterThan(-1)
-    expect(launch.indexOf('lib.writePick(process.env.CCC_CODEX_PICK_FILE, lib.pickDecision(resumeUuid))')).toBeLessThan(launch.indexOf('run(lib.buildResumeArgs('))
+    expect(launch.indexOf('noteUnrecorded(lib.recordPick(process.env.CCC_CODEX_PICK_FILE, resumeUuid))')).toBeGreaterThan(-1)
+    expect(launch.indexOf('noteUnrecorded(lib.recordPick(process.env.CCC_CODEX_PICK_FILE, resumeUuid))')).toBeLessThan(launch.indexOf('run(lib.buildResumeArgs('))
     const fallback = launch.slice(launch.indexOf('if (lib.shouldFallback('))
-    expect(fallback.indexOf('lib.writePick(process.env.CCC_CODEX_PICK_FILE, lib.pickDecision(null))')).toBeGreaterThan(-1)
-    expect(fallback.indexOf('lib.writePick(process.env.CCC_CODEX_PICK_FILE, lib.pickDecision(null))')).toBeLessThan(fallback.indexOf('run(forwarded)'))
+    expect(fallback.indexOf('noteUnrecorded(lib.recordPick(process.env.CCC_CODEX_PICK_FILE, null))')).toBeGreaterThan(-1)
+    expect(fallback.indexOf('noteUnrecorded(lib.recordPick(process.env.CCC_CODEX_PICK_FILE, null))')).toBeLessThan(fallback.indexOf('run(forwarded)'))
+    // A decision not recorded is said, and the launch goes on either way.
+    const note = script.slice(script.indexOf('function noteUnrecorded('), script.indexOf('function launchCodex('))
+    expect(note).toContain('if (notice) console.error(notice)')
+    expect(note).not.toMatch(/process\.exit|throw /)
+    expect(script).not.toMatch(/lib\.writePick\(/)
     expect(script.match(/spawnSync\(/g)).toHaveLength(1)
     expect(script).toContain('launchCodex(id, conv.sourceCwd)')
-    expect(script).toContain('lib.resolveRetargetCwd(resumeUuid, sourceCwd, process.cwd(), fs.existsSync)')
+    expect(script).toContain('lib.resolveRetargetCwd(resumeUuid, sourceCwd, process.cwd(), lib.isDirectory)')
     expect(script).toMatch(/spawnSync\(target\.file, target\.args, \{[^}]*\benv,[^}]*retarget\.cwd/)
     expect(script).toContain('const env = lib.childEnv(process.env)')
     expect(script).toContain('lib.walkRollouts(home, 30, worktrees)')
@@ -291,6 +298,103 @@ describe('the conversation the picker opens (rows 32, 38)', () => {
     expect(lib.resolveRetargetCwd(ID1, join(wt, 'gone'), '/main', existsSync)).toEqual({ cwd: null })
     expect(lib.resolveRetargetCwd(null, wt, '/main', existsSync)).toEqual({ cwd: null })
     expect(lib.resolveRetargetCwd(ID1, 'F:/Repo/Demo', 'f:\\repo\\demo', () => true, 'win32')).toEqual({ cwd: null })
+  })
+})
+
+// P3.5 fix round 2 (quality nit 4): Windows can refuse the rename for a moment
+// while another program (a virus scanner, the app reading the last decision)
+// has one of the files open. The rename is tried again a few times, a short
+// wait apart, then given up: the picker never holds the session's launch up
+// for longer than that, and it says what then happens.
+describe('a pick the platform refuses for a moment (fix round 2)', () => {
+  const refusing = (codes: string[]) => {
+    const seen = { renames: 0, waits: [] as number[] }
+    const ops = {
+      renameSync: (from: string, to: string) => {
+        const code = codes[seen.renames++]
+        if (code === undefined) { renameSync(from, to); return }
+        throw Object.assign(new Error(code), { code })
+      },
+      sleep: (ms: number) => { seen.waits.push(ms) },
+    }
+    return { seen, ops }
+  }
+
+  it('is tried again, a short wait apart, and then written', () => {
+    const dir = temp('pick-retry')
+    const file = join(dir, 'pick.json')
+    const { seen, ops } = refusing(['EBUSY', 'EPERM', 'EACCES'])
+    expect(lib.writePick(file, lib.pickDecision(ID1), ops)).toBe(true)
+    expect(seen.renames).toBe(4)
+    expect(seen.waits).toHaveLength(3)
+    for (const w of seen.waits) expect(w).toBeGreaterThan(0)
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ id: ID1 })
+    expect(readdirSync(dir)).toEqual(['pick.json'])
+  })
+
+  it('is given up after a few tries, a fraction of a second in all, and nothing is left beside it', () => {
+    const dir = temp('pick-refused')
+    const file = join(dir, 'pick.json')
+    const { seen, ops } = refusing(Array(50).fill('EBUSY'))
+    expect(lib.writePick(file, lib.pickDecision(ID1), ops)).toBe(false)
+    expect(seen.renames).toBeGreaterThanOrEqual(3)
+    expect(seen.renames).toBeLessThanOrEqual(6)
+    expect(seen.waits.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(500)
+    expect(readdirSync(dir)).toEqual([])
+  })
+
+  it('an error a wait does not cure is not tried again', () => {
+    const dir = temp('pick-exdev')
+    const { seen, ops } = refusing(['EXDEV', 'EXDEV'])
+    expect(lib.writePick(join(dir, 'pick.json'), lib.pickDecision(null), ops)).toBe(false)
+    expect(seen.renames).toBe(1)
+    expect(seen.waits).toEqual([])
+    expect(readdirSync(dir)).toEqual([])
+  })
+
+  it('really waits between the tries, and not for long', () => {
+    const dir = temp('pick-wait')
+    let renames = 0
+    const ops = { renameSync: () => { renames++; throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' }) } }
+    const t0 = Date.now()
+    expect(lib.writePick(join(dir, 'pick.json'), lib.pickDecision(ID1), ops)).toBe(false)
+    const took = Date.now() - t0
+    expect(renames).toBeGreaterThan(1)
+    expect(took).toBeGreaterThanOrEqual(50)
+    expect(took).toBeLessThan(2_000)
+  })
+
+  it('a decision not recorded is said in the terminal; none is said when it was, or when the app asked for none', () => {
+    const dir = temp('pick-notice')
+    const file = join(dir, 'pick.json')
+    expect(lib.recordPick(file, ID1)).toBeNull()
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ id: ID1 })
+    expect(lib.recordPick(undefined, ID1)).toBeNull()
+    expect(lib.recordPick('', null)).toBeNull()
+    const { ops } = refusing(Array(50).fill('EPERM'))
+    const notice = lib.recordPick(file, null, ops)
+    expect(typeof notice).toBe('string')
+    expect(notice).toMatch(/status line/)
+    expect(notice).toMatch(/conversation itself is not affected/)
+    // The earlier decision stays; nothing else is left beside it.
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ id: ID1 })
+    expect(readdirSync(dir)).toEqual(['pick.json'])
+  })
+})
+
+// P3.5 fix round 2 (lens B minor): the chosen conversation's worktree is used
+// only when it is a directory, as main's resume check requires.
+describe('the worktree a pick starts in is a directory (fix round 2)', () => {
+  it('a file, or nothing, at the worktree path starts it here instead', () => {
+    const wt = temp('wt-dir')
+    const file = join(temp('wt-file'), 'not-a-folder')
+    writeFileSync(file, 'x')
+    expect(lib.isDirectory(wt)).toBe(true)
+    expect(lib.isDirectory(file)).toBe(false)
+    expect(lib.isDirectory(join(wt, 'gone'))).toBe(false)
+    expect(lib.resolveRetargetCwd(ID1, wt, temp('here'), lib.isDirectory)).toEqual({ cwd: wt })
+    expect(lib.resolveRetargetCwd(ID1, file, temp('here2'), lib.isDirectory)).toEqual({ cwd: null })
+    expect(lib.resolveRetargetCwd(ID1, join(wt, 'gone'), temp('here3'), lib.isDirectory)).toEqual({ cwd: null })
   })
 })
 

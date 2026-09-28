@@ -131,6 +131,12 @@ async function main() {
   })
 }
 
+// A decision the app could not be told is said in the terminal (see
+// lib.recordPick); the launch goes on either way.
+function noteUnrecorded(notice) {
+  if (notice) console.error(notice)
+}
+
 // -- launchCodex ----------------------------------------------------
 // Every start goes through here: a pick, New conversation, nothing to list,
 // a failed main(). It first tells the app what this session now runs (the
@@ -146,8 +152,8 @@ function launchCodex(resumeUuid, sourceCwd) {
     console.error('\n  Failed to launch codex: the app did not pass the Codex executable for this session.\n')
     process.exit(1)
   }
-  lib.writePick(process.env.CCC_CODEX_PICK_FILE, lib.pickDecision(resumeUuid))
-  const retarget = lib.resolveRetargetCwd(resumeUuid, sourceCwd, process.cwd(), fs.existsSync)
+  noteUnrecorded(lib.recordPick(process.env.CCC_CODEX_PICK_FILE, resumeUuid))
+  const retarget = lib.resolveRetargetCwd(resumeUuid, sourceCwd, process.cwd(), lib.isDirectory)
   // Codex itself never gets the pick file's name.
   const env = lib.childEnv(process.env)
   const run = (args) => {
@@ -172,7 +178,7 @@ function launchCodex(resumeUuid, sourceCwd) {
   if (lib.shouldFallback(resumeUuid, result.status)) {
     console.log('\n  Conversation no longer available -- starting fresh session...\n')
     // The session now runs a new conversation: the app follows that one.
-    lib.writePick(process.env.CCC_CODEX_PICK_FILE, lib.pickDecision(null))
+    noteUnrecorded(lib.recordPick(process.env.CCC_CODEX_PICK_FILE, null))
     const fresh = run(forwarded)
     if (fresh.error) {
       console.error(`\n  Failed to launch codex: ${fresh.error.message}\n`)
