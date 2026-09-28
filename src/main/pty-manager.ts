@@ -4282,7 +4282,7 @@ function spawnPtyResolved(
           sessionsDir: launch.sessionsDir,
           ...(built.resumeId ? { resumeId: built.resumeId } : {}),
           ...(built.resumeId && built.resumePath ? { resumePath: built.resumePath } : {}),
-          ...(built.pickFile ? { pickFile: built.pickFile } : {}),
+          ...(built.pickFile ? { pickFile: built.pickFile, pickFolder: built.pickFolder } : {}),
           onClaim: (claimed) => keepCodexConversation(sessionId, { uuid: claimed.id, cwd: claimed.cwd }),
           // The picker decided again after a claim: the session is no longer on it.
           onRelease: () => { keptCodexConversations.delete(sessionId) },

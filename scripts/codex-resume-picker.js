@@ -152,7 +152,7 @@ function launchCodex(resumeUuid, sourceCwd) {
     console.error('\n  Failed to launch codex: the app did not pass the Codex executable for this session.\n')
     process.exit(1)
   }
-  noteUnrecorded(lib.recordPick(process.env.CCC_CODEX_PICK_FILE, resumeUuid))
+  noteUnrecorded(lib.recordPick(process.env.CCC_CODEX_PICK_FILE, resumeUuid, process.env.CCC_CODEX_PICK_DIR_ID))
   const retarget = lib.resolveRetargetCwd(resumeUuid, sourceCwd, process.cwd(), lib.isDirectory)
   // Codex itself never gets the pick file's name.
   const env = lib.childEnv(process.env)
@@ -178,7 +178,7 @@ function launchCodex(resumeUuid, sourceCwd) {
   if (lib.shouldFallback(resumeUuid, result.status)) {
     console.log('\n  Conversation no longer available -- starting fresh session...\n')
     // The session now runs a new conversation: the app follows that one.
-    noteUnrecorded(lib.recordPick(process.env.CCC_CODEX_PICK_FILE, null))
+    noteUnrecorded(lib.recordPick(process.env.CCC_CODEX_PICK_FILE, null, process.env.CCC_CODEX_PICK_DIR_ID))
     const fresh = run(forwarded)
     if (fresh.error) {
       console.error(`\n  Failed to launch codex: ${fresh.error.message}\n`)

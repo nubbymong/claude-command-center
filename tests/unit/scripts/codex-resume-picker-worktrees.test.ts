@@ -8,7 +8,8 @@
 // Real files in temp folders; nothing is started (git's output is parsed from
 // a string, as Claude's parseWorktrees test does).
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync, linkSync, readdirSync, statSync, symlinkSync, lstatSync, renameSync } from 'fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, rmdirSync, unlinkSync, readFileSync, existsSync, linkSync, readdirSync, statSync, symlinkSync, lstatSync, renameSync } from 'fs'
+import { codexFolderIdentity } from '../../../src/main/providers/codex/rollout-lookup'
 import { join, dirname, basename } from 'path'
 import { tmpdir } from 'os'
 
@@ -19,8 +20,9 @@ const lib = require('../../../scripts/lib/codex-resume-picker-lib.js') as {
   loadWorkNames: (configDir: string | undefined) => Map<string, string>
   displayText: (raw: unknown, max?: number) => string
   buildPickerRows: (conversations: Array<Record<string, unknown>>, names: Map<string, string>, width: number, now?: number) => Array<{ num: string; title: string; named: boolean; sub: string | null; meta: string; tag: string | null }>
-  writePick: (file: string | undefined, decision: { id: string } | { fresh: true }, ops?: { renameSync?: (from: string, to: string) => void; sleep?: (ms: number) => void }) => boolean
-  recordPick: (file: string | undefined, resumeUuid: string | null, ops?: { renameSync?: (from: string, to: string) => void; sleep?: (ms: number) => void }) => string | null
+  writePick: (file: string | undefined, decision: { id: string } | { fresh: true }, ops?: { renameSync?: (from: string, to: string) => void; sleep?: (ms: number) => void; dirId?: string }) => boolean
+  recordPick: (file: string | undefined, resumeUuid: string | null, dirId?: string | null, ops?: { renameSync?: (from: string, to: string) => void; sleep?: (ms: number) => void }) => string | null
+  folderIdOf: (dir: string) => string | null
   isDirectory: (p: string) => boolean
   pickDecision: (resumeUuid: string | null) => { id: string } | { fresh: true }
   childEnv: (env: Record<string, string | undefined>) => Record<string, string | undefined>
@@ -210,11 +212,11 @@ describe('everything shown is plain text (row 32)', () => {
     // goes through launchCodex, which records its decision first; the
     // fallback after a failed resume records a new conversation.
     const launch = script.slice(script.indexOf('function launchCodex('))
-    expect(launch.indexOf('noteUnrecorded(lib.recordPick(process.env.CCC_CODEX_PICK_FILE, resumeUuid))')).toBeGreaterThan(-1)
-    expect(launch.indexOf('noteUnrecorded(lib.recordPick(process.env.CCC_CODEX_PICK_FILE, resumeUuid))')).toBeLessThan(launch.indexOf('run(lib.buildResumeArgs('))
+    expect(launch.indexOf('noteUnrecorded(lib.recordPick(process.env.CCC_CODEX_PICK_FILE, resumeUuid, process.env.CCC_CODEX_PICK_DIR_ID))')).toBeGreaterThan(-1)
+    expect(launch.indexOf('noteUnrecorded(lib.recordPick(process.env.CCC_CODEX_PICK_FILE, resumeUuid, process.env.CCC_CODEX_PICK_DIR_ID))')).toBeLessThan(launch.indexOf('run(lib.buildResumeArgs('))
     const fallback = launch.slice(launch.indexOf('if (lib.shouldFallback('))
-    expect(fallback.indexOf('noteUnrecorded(lib.recordPick(process.env.CCC_CODEX_PICK_FILE, null))')).toBeGreaterThan(-1)
-    expect(fallback.indexOf('noteUnrecorded(lib.recordPick(process.env.CCC_CODEX_PICK_FILE, null))')).toBeLessThan(fallback.indexOf('run(forwarded)'))
+    expect(fallback.indexOf('noteUnrecorded(lib.recordPick(process.env.CCC_CODEX_PICK_FILE, null, process.env.CCC_CODEX_PICK_DIR_ID))')).toBeGreaterThan(-1)
+    expect(fallback.indexOf('noteUnrecorded(lib.recordPick(process.env.CCC_CODEX_PICK_FILE, null, process.env.CCC_CODEX_PICK_DIR_ID))')).toBeLessThan(fallback.indexOf('run(forwarded)'))
     // A decision not recorded is said, and the launch goes on either way.
     const note = script.slice(script.indexOf('function noteUnrecorded('), script.indexOf('function launchCodex('))
     expect(note).toContain('if (notice) console.error(notice)')
@@ -290,7 +292,7 @@ describe('the conversation the picker opens (rows 32, 38)', () => {
   })
 
   it('Codex itself never gets the pick file\'s name, in any spelling', () => {
-    const env = lib.childEnv({ PATH: '/bin', CCC_CODEX_PICK_FILE: '/t/p.json', ccc_codex_pick_file: '/t/q.json', CODEX_HOME: '/r' })
+    const env = lib.childEnv({ PATH: '/bin', CCC_CODEX_PICK_FILE: '/t/p.json', ccc_codex_pick_file: '/t/q.json', CCC_CODEX_PICK_DIR_ID: '1:2', Ccc_Codex_Pick_Dir_Id: '3:4', CODEX_HOME: '/r' })
     expect(env).toEqual({ PATH: '/bin', CODEX_HOME: '/r' })
   })
 
@@ -369,18 +371,93 @@ describe('a pick the platform refuses for a moment (fix round 2)', () => {
   it('a decision not recorded is said in the terminal; none is said when it was, or when the app asked for none', () => {
     const dir = temp('pick-notice')
     const file = join(dir, 'pick.json')
-    expect(lib.recordPick(file, ID1)).toBeNull()
+    expect(lib.recordPick(file, ID1, lib.folderIdOf(dir))).toBeNull()
     expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ id: ID1 })
     expect(lib.recordPick(undefined, ID1)).toBeNull()
     expect(lib.recordPick('', null)).toBeNull()
     const { ops } = refusing(Array(50).fill('EPERM'))
-    const notice = lib.recordPick(file, null, ops)
+    const notice = lib.recordPick(file, null, lib.folderIdOf(dir), ops)
     expect(typeof notice).toBe('string')
     expect(notice).toMatch(/status line/)
     expect(notice).toMatch(/conversation itself is not affected/)
     // The earlier decision stays; nothing else is left beside it.
     expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ id: ID1 })
     expect(readdirSync(dir)).toEqual(['pick.json'])
+  })
+})
+
+// P3.5 fix round 3 (lens A): the picker writes its pick only into the folder
+// the app made for the launch: a real folder (not a link or junction) whose
+// device and file id are the ones the app recorded (CCC_CODEX_PICK_DIR_ID),
+// looked at before the new file is written and again before its rename.
+describe('the pick is written only into the folder the app made (fix round 3)', () => {
+  /** Removes a link (a junction on Windows), if still there, and never what it points at. */
+  const dropLink = (p: string) => {
+    const st = lstatSync(p, { throwIfNoEntry: false })
+    if (!st) return
+    if (!st.isSymbolicLink()) throw new Error('not a link: ' + p)
+    try { unlinkSync(p) } catch { rmdirSync(p) }
+  }
+
+  it('its id as the app recorded it: written; any other id, or none, and nothing is written', () => {
+    const dir = temp('pick-own')
+    const file = join(dir, 'pick.json')
+    const id = lib.folderIdOf(dir)
+    expect(id).toBe(codexFolderIdentity(dir)?.id)
+    expect(lib.writePick(file, lib.pickDecision(ID1), { dirId: id! })).toBe(true)
+    expect(lib.writePick(file, lib.pickDecision(ID2), { dirId: '1:2' })).toBe(false)
+    expect(lib.writePick(file, lib.pickDecision(ID2), { dirId: '' })).toBe(false)
+    expect(lib.recordPick(file, ID2, undefined)).toMatch(/status line/)
+    expect(lib.recordPick(file, ID2, null)).toMatch(/status line/)
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ id: ID1 })
+    expect(readdirSync(dir)).toEqual(['pick.json'])
+  })
+
+  it('a pick folder swapped for a link to another folder is never written through', (ctx) => {
+    const victim = temp('pick-victim')
+    writeFileSync(join(victim, 'pick.json'), 'theirs')
+    const own = join(temp('pick-holder'), 'ccc-codex-pick-x')
+    mkdirSync(own)
+    const id = lib.folderIdOf(own)!
+    rmdirSync(own)
+    // A junction on Windows; a folder link elsewhere.
+    try { symlinkSync(victim, own, 'junction') } catch { ctx.skip(); return }
+    try {
+      expect(lib.folderIdOf(own)).toBeNull()
+      expect(lib.recordPick(join(own, 'pick.json'), ID1, id)).toMatch(/status line/)
+      // Not even its new file is written there.
+      const writes: string[] = []
+      expect(lib.writePick(join(own, 'pick.json'), lib.pickDecision(ID1), { dirId: id, writeFileSync: (p: string, d: string, o: object) => { writes.push(p); writeFileSync(p, d, o) } } as never)).toBe(false)
+      expect(writes).toEqual([])
+      expect(readFileSync(join(victim, 'pick.json'), 'utf8')).toBe('theirs')
+      expect(readdirSync(victim)).toEqual(['pick.json'])
+    } finally {
+      dropLink(own)
+    }
+  })
+
+  it('another folder put in its place is not written into', () => {
+    const own = join(temp('pick-holder'), 'ccc-codex-pick-y')
+    mkdirSync(own)
+    const id = lib.folderIdOf(own)!
+    // The folder made is moved aside (its file id stays taken) and another put in its place.
+    renameSync(own, own + '-aside')
+    mkdirSync(own)
+    expect(lib.folderIdOf(own)).not.toBe(id)
+    expect(lib.recordPick(join(own, 'pick.json'), ID1, id)).toMatch(/status line/)
+    expect(readdirSync(own)).toEqual([])
+  })
+
+  it('the folder made, swapped between the write and the rename: nothing is renamed, and nothing is left in the folder now there', () => {
+    const dir = temp('pick-late-swap')
+    const file = join(dir, 'pick.json')
+    const id = lib.folderIdOf(dir)!
+    let renames = 0
+    const ops = { dirId: id, renameSync: () => { renames++ }, writeFileSync: (f: string, data: string, o: object) => { writeFileSync(f, data, o); renameSync(dir, dir + '-aside'); mkdirSync(dir) } }
+    expect(lib.writePick(file, lib.pickDecision(ID1), ops as never)).toBe(false)
+    expect(renames).toBe(0)
+    expect(readdirSync(dir)).toEqual([])
+    removeOwn(dir + '-aside')
   })
 })
 

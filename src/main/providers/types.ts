@@ -91,6 +91,16 @@ export interface ProviderSpawnCommand {
   /** The rollout of the resumed conversation the builder chose. */
   resumePath?: string
   pickFile?: string
+  /** The folder made for the pick file, as it was when made (fix round 3). */
+  pickFolder?: PickFolderIdentity
+}
+
+/** A folder as it was when made: what it is (its device and file id, exact)
+ *  and where it really is (every link on the way resolved). The resume
+ *  picker's pick folder is used only while it is still this folder. */
+export interface PickFolderIdentity {
+  id: string
+  real: string
 }
 
 /** How a session's telemetry finds its transcript. `cwd`: the resolved
@@ -111,6 +121,9 @@ export interface TelemetryOptions {
    *  when it is still that conversation's, in this realm. */
   resumePath?: string
   pickFile?: string
+  /** The pick file's folder as it was made: no pick is read, and nothing
+   *  there removed, unless it is still that folder. */
+  pickFolder?: PickFolderIdentity
   onClaim?: (claim: { id: string; cwd: string }) => void
   /** Told when a claim is let go (the picker decided again after it). */
   onRelease?: () => void

@@ -5,10 +5,11 @@
 // the spawn, so a resumed conversation from an earlier day, or one crossing
 // midnight UTC, got no status line. Real files in a temp folder; fake timers.
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'fs'
+import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'fs'
 import { join, dirname, basename } from 'path'
 import { tmpdir } from 'os'
 import { watchAndClaimRollout } from '../../../../src/main/providers/codex/telemetry'
+import { codexFolderIdentity } from '../../../../src/main/providers/codex/rollout-lookup'
 import type { StatuslineData } from '../../../../src/shared/types'
 
 const ID_A = '019dd000-0001-7000-8000-00000000000a'
@@ -63,8 +64,10 @@ function watch(sessions: string, cwd: string, opts?: Parameters<typeof watchAndC
   const updates: StatuslineData[] = []
   const claims: Array<{ id: string; cwd: string }> = []
   const releases: number[] = []
+  // The pick folder as the builder records it when made, unless a test gives one (fix round 3).
+  const withFolder = opts && opts.pickFile && !('pickFolder' in opts) ? { ...opts, pickFolder: codexFolderIdentity(dirname(opts.pickFile)) ?? undefined } : opts
   const src = watchAndClaimRollout('sess-p35', cwd, Date.now(), (d) => updates.push(d), sessions, undefined,
-    opts ? { ...opts, onClaim: (c) => claims.push(c), onRelease: () => releases.push(claims.length) } : undefined)
+    withFolder ? { ...withFolder, onClaim: (c) => claims.push(c), onRelease: () => releases.push(claims.length) } : undefined)
   return { updates, claims, releases, src }
 }
 
@@ -456,6 +459,8 @@ describe('a decision after a claim', () => {
     writeFileSync(pickFile, JSON.stringify({ fresh: true }))
     await vi.advanceTimersByTimeAsync(600)
     expect(releases).toEqual([1])
+    // Fix round 3: the status line no longer shows the conversation let go.
+    expect(updates.at(-1)).toEqual({ sessionId: 'sess-p35', inputTokens: 0, outputTokens: 0, costUsd: 0, contextUsedPercent: 0 })
     const now = new Date()
     rollout(folder(sessions, now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate()), ID_B, '/p/demo', new Date(Date.now() + 200).toISOString(), 3)
     await vi.advanceTimersByTimeAsync(600)
@@ -501,5 +506,120 @@ describe('the pick file\'s folder', () => {
     mkdirSync(shared)
     watch(sessions, '/p/demo', { pickFile: join(shared, 'pick.json') }).src.stop()
     expect(existsSync(shared)).toBe(true)
+  })
+})
+
+// P3.5 fix round 3 (lens A): the pick folder is used only while it is the
+// folder the builder made for the launch (its identity recorded then): one
+// swapped for a link or junction to another folder, or for another folder,
+// is never read, written through or emptied. Links are never followed at the
+// folder level.
+describe('the pick folder is the one made for the launch (fix round 3)', () => {
+  const todayDir = (sessions: string) => { const n = new Date(); return folder(sessions, n.getUTCFullYear(), n.getUTCMonth() + 1, n.getUTCDate()) }
+
+  it('a pick folder swapped for a link to another folder: nothing there is read or removed', async (ctx) => {
+    vi.useFakeTimers()
+    const sessions = realm()
+    mkdirSync(sessions, { recursive: true })
+    const victim = mkdtempSync(join(tmpdir(), 'ccc-test-codex-claim-'))
+    temps.push(victim)
+    writeFileSync(join(victim, 'pick.json'), JSON.stringify({ fresh: true }))
+    writeFileSync(join(victim, 'keep.txt'), 'x')
+    const own = mkdtempSync(join(tmpdir(), 'ccc-codex-pick-'))
+    const made = codexFolderIdentity(own)!
+    expect(made).toBeTruthy()
+    rmdirSync(own)
+    // A junction on Windows; a folder link elsewhere.
+    try { symlinkSync(victim, own, 'junction') } catch { ctx.skip(); return }
+    try {
+      expect(codexFolderIdentity(own)).toBeNull()
+      const { claims, src } = watch(sessions, '/p/demo', { pickFile: join(own, 'pick.json'), pickFolder: made })
+      rollout(todayDir(sessions), ID_B, '/p/demo', new Date(Date.now() + 200).toISOString(), 2)
+      await vi.advanceTimersByTimeAsync(1_500)
+      src.stop()
+      expect(claims).toEqual([])
+      expect(readFileSync(join(victim, 'pick.json'), 'utf8')).toBe(JSON.stringify({ fresh: true }))
+      expect(readdirSync(victim).sort()).toEqual(['keep.txt', 'pick.json'])
+      expect(lstatSync(own).isSymbolicLink()).toBe(true)
+    } finally {
+      dropLink(own)
+    }
+  })
+
+  it('a pick folder replaced by another folder: its pick is not read, and nothing there is removed', async () => {
+    vi.useFakeTimers()
+    const sessions = realm()
+    mkdirSync(sessions, { recursive: true })
+    const own = mkdtempSync(join(tmpdir(), 'ccc-codex-pick-'))
+    const made = codexFolderIdentity(own)!
+    // The folder made is moved aside (so its file id stays taken) and another put in its place.
+    const aside = own + '-aside'
+    renameSync(own, aside)
+    pickDirs.push(aside, own)
+    mkdirSync(own)
+    expect(codexFolderIdentity(own)?.id).not.toBe(made.id)
+    writeFileSync(join(own, 'pick.json'), JSON.stringify({ fresh: true }))
+    const { claims, src } = watch(sessions, '/p/demo', { pickFile: join(own, 'pick.json'), pickFolder: made })
+    rollout(todayDir(sessions), ID_B, '/p/demo', new Date(Date.now() + 200).toISOString(), 2)
+    await vi.advanceTimersByTimeAsync(1_500)
+    src.stop()
+    expect(claims).toEqual([])
+    expect(readdirSync(own)).toEqual(['pick.json'])
+  })
+
+  it('a folder whose real path is not the one recorded: no pick is read', async () => {
+    vi.useFakeTimers()
+    const sessions = realm()
+    mkdirSync(sessions, { recursive: true })
+    const pickFile = join(sessions, '..', 'pick.json')
+    writeFileSync(pickFile, JSON.stringify({ fresh: true }))
+    const made = codexFolderIdentity(dirname(pickFile))!
+    const { claims, src } = watch(sessions, '/p/demo', { pickFile, pickFolder: { id: made.id, real: join(made.real, 'elsewhere') } })
+    rollout(todayDir(sessions), ID_B, '/p/demo', new Date(Date.now() + 200).toISOString(), 2)
+    await vi.advanceTimersByTimeAsync(1_500)
+    src.stop()
+    expect(claims).toEqual([])
+    expect(existsSync(pickFile)).toBe(true)
+  })
+
+  it('with no folder identity recorded, no pick is read and nothing removed', async () => {
+    vi.useFakeTimers()
+    const sessions = realm()
+    mkdirSync(sessions, { recursive: true })
+    const pickFile = join(sessions, '..', 'pick.json')
+    writeFileSync(pickFile, JSON.stringify({ fresh: true }))
+    const { claims, src } = watch(sessions, '/p/demo', { pickFile, pickFolder: undefined })
+    rollout(todayDir(sessions), ID_B, '/p/demo', new Date(Date.now() + 200).toISOString(), 2)
+    await vi.advanceTimersByTimeAsync(1_500)
+    src.stop()
+    expect(claims).toEqual([])
+    expect(existsSync(pickFile)).toBe(true)
+  })
+
+  it('the folder made for the launch: its pick is read, and at stop a half-written pick is removed with the folder; any other file stays', async () => {
+    vi.useFakeTimers()
+    const sessions = realm()
+    mkdirSync(sessions, { recursive: true })
+    const own = mkdtempSync(join(tmpdir(), 'ccc-codex-pick-'))
+    pickDirs.push(own)
+    const pickFile = join(own, 'pick.json')
+    writeFileSync(pickFile, JSON.stringify({ fresh: true }))
+    const { claims, src } = watch(sessions, '/p/demo', { pickFile })
+    await vi.advanceTimersByTimeAsync(300)
+    rollout(todayDir(sessions), ID_B, '/p/demo', new Date(Date.now() + 200).toISOString(), 2)
+    await vi.advanceTimersByTimeAsync(600)
+    expect(claims).toEqual([{ id: ID_B, cwd: '/p/demo' }])
+    // What a picker stopped between its write and its rename leaves behind.
+    writeFileSync(join(own, 'pick.json.0123456789abcdef.tmp'), JSON.stringify({ fresh: true }))
+    src.stop()
+    expect(existsSync(own)).toBe(false)
+
+    const other = mkdtempSync(join(tmpdir(), 'ccc-codex-pick-'))
+    pickDirs.push(other)
+    writeFileSync(join(other, 'pick.json.fedcba9876543210.tmp'), '{}')
+    writeFileSync(join(other, 'pick.json.not-hex.tmp'), '{}')
+    watch(sessions, '/p/demo', { pickFile: join(other, 'pick.json') }).src.stop()
+    expect(readdirSync(other)).toEqual(['pick.json.not-hex.tmp'])
+    unlinkSync(join(other, 'pick.json.not-hex.tmp'))
   })
 })

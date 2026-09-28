@@ -19,6 +19,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { isHomeOrAncestor } from '../../path-utils'
+import type { PickFolderIdentity } from '../types'
 
 /** A conversation id as Codex writes it and as a launch may name it: the
  *  canonical UUID form, the same one the spawn schema requires of a resume
@@ -132,6 +133,19 @@ function subFolders(dir: string, re: RegExp, budget: { entries: number }): strin
 /** Whether `dir` is a real folder, not a link or junction to one. */
 export function isRealFolder(dir: string): boolean {
   try { return fs.lstatSync(dir).isDirectory() } catch { return false }
+}
+
+/** `dir`'s identity (see PickFolderIdentity): its device and file id, read
+ *  exactly, and its real path. Null unless it is a real folder, not a link
+ *  or junction to one. The resume picker reads the same id (lstat, exact). */
+export function codexFolderIdentity(dir: string): PickFolderIdentity | null {
+  try {
+    const st = fs.lstatSync(dir, { bigint: true })
+    if (!st.isDirectory() || st.isSymbolicLink()) return null
+    return { id: `${st.dev}:${st.ino}`, real: fs.realpathSync.native(dir) }
+  } catch {
+    return null
+  }
 }
 
 export interface FoundRollout {
