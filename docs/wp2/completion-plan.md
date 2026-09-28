@@ -444,11 +444,20 @@ name the host. With Claude Code off: Built-in Tools asks about your sessions,
 blocks Claude review and notes Codex review (and Settings' Code review rows
 say the same); the recap's Account row reads the D5 line and no Claude
 sign-in is read; What's New and its showcase hide what needs Claude Code in
-this release (`needsClaude`, to come off as P3.6, P3.10 and PR 4 bring those
-features to Codex); the registry callout no longer says the Claude accounts
-still work. Hello Codex page 1 already read without Claude (unchanged). Left
-to their phases: the Sentinel card (P3.9), the log indexing card (P3.12), Ask
-(row 53, PR 4). Owed: the ADR-009 pass, and a VM walk in Codex-only mode.
+this release (`needsClaude`; each flag is lifted by the phase that brings its
+feature to Codex, recorded in that phase's entry: P3.6, P3.10, P4.1, P4.3 and
+P4.7; the remote resume page keeps it, since Codex over SSH is outside this
+release); the registry callout no longer says the Claude accounts still
+work. Hello Codex page 1 already read without Claude (unchanged). The partner
+terminal line stays (it works beside a Codex session). Left to their phases:
+the Sentinel card (P3.9), the log indexing card (P3.12), Ask (row 53, PR 4).
+Fix round 1 (the reviews and the ADR-009 thesis check): the on/off the pages
+are read by fails closed on settings that cannot be read; each read has an
+overall deadline, each provider's page settles on its own, a switch-off or
+stop aborts a read in flight, and a second start is ignored; the renderer's
+pull answers the app's own window only; no remote text reaches the renderer
+(only the app's ids and labels and a known status). Owed: the ADR-009 attack
+pass, and a VM walk in Codex-only mode.
 
 **P3.5 History and resume.** The claimed session id kept with the tab; exact
 resume on relaunch in the same realm; Restart resumes the same conversation
@@ -479,7 +488,10 @@ fallback of section 5. Likely files: `SessionStatusStrip.tsx`,
 `sidebar/SessionRow.tsx`, `hooks/useSwitchAccount.ts`, `utils/sessionLaunch.ts`,
 `accounts-service.ts`, a main-side rollout copy, IPC. ADR-009: yes (a copy
 between realm folders inside the resources directory, leases, IPC). SSH
-radius: no, unless `pty-manager.ts` changes.
+radius: no, unless `pty-manager.ts` changes. Lifts P3.4's `needsClaude` from
+the showcase's accounts page (`showcase-pages.ts`) and What's New's "Switch
+mid-session." line (`WhatsNewV2Step.tsx`) once a Codex account switches
+mid-session, rewording them for both providers.
 
 **P3.7 Statusline segments and settings.** The account chip, duration, and
 line counts if Codex reports them (P3.1); the Status Line settings cover them
@@ -504,7 +516,10 @@ raises a finding; flags and the rollout format are checked; the analysis
 whichever provider is on. With both on it runs on the provider the "Ask
 Conductor runs on" setting names (question 1, decided: OD27 M4).
 Likely files: `src/main/sentinel/*`, the Sentinel page and dot,
-`providers/codex/discovery.ts`. ADR-009: yes (a new CLI run).
+`providers/codex/discovery.ts`. ADR-009: yes (a new CLI run). The onboarding
+Transparency page's Sentinel card still says it watches Claude Code updates
+and spends Claude tokens (left by P3.4): it says what Sentinel watches and
+runs on once this lands.
 
 **P3.10 Activity, attention, Watchdog and hooks.** Codex `notify` and hook
 events feed the attention dot, waiting-for-input, the busy sweep and the sleep
@@ -515,7 +530,9 @@ by default). Likely files: `providers/codex/spawn.ts`, the hooks gateway,
 `HooksGatewaySection.tsx`. ADR-009: yes (launch argv, a loopback listener,
 automated input). SSH radius: yes. The C item "untracked local Claude spawn"
 (section 7) is in the same part of `pty-manager.ts` as the Watchdog's local
-arm site, so it is fixed here.
+arm site, so it is fixed here. Lifts P3.4's `needsClaude` from the showcase's
+watchdog page and What's New's "Session Watchdog." line once the Watchdog
+arms for Codex.
 
 **P3.11 Extra CLI arguments.** Claude's field and IPC character guard for
 Codex, rejecting the flags the app manages (model, effort, permissions, MCP,
@@ -530,7 +547,9 @@ Codex tabs; the GitHub panel's session context reads the session's realm
 rollouts. Likely files: `src/main/logging/*`, `session-capabilities.ts`,
 `CommandBar.tsx`, `src/main/github/session/transcript-loader.ts`,
 `pty-manager.ts` (run registration). ADR-009: yes (paths inside the resources
-directory, IPC). SSH radius: yes.
+directory, IPC). SSH radius: yes. The onboarding Transparency page's "Index
+conversation logs" card still names only Claude's transcripts (left by
+P3.4): it names what is indexed once Codex's are.
 
 **P3.13 Multi Spawn and Quick Start.** N copies of a Multi Spawn Codex config,
 one lease each; Quick Start with Codex; a test on the Codex path. Enforcing the
@@ -585,7 +604,7 @@ when PR 3 is complete.
 
 The 15 rows: 15, 16, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 66, 67, 68.
 
-Two notes that bind the build:
+Notes that bind the build:
 
 - **P4.3.** Ask's opening question rides the Claude launch today
   (`askConductor.ts`); a Codex launch needs its own path, which is launch
@@ -596,6 +615,12 @@ Two notes that bind the build:
   the provider's type badge while both are on; and a closed Ask tab that is
   revived reads the provider again rather than keeping the one it was opened
   with (`askConductor.ts:178-208` keeps it today).
+- **P4.1, P4.3, P4.7: P3.4's showcase flags.** Each lifts `needsClaude` from
+  what it brings to Codex and rewords it for both providers: P4.1 the Agent
+  Canvas page and What's New line; P4.3 the Ask Conductor page and line and
+  the 2.0 set's "A guide that answers back." line; P4.7 the "Insights." line.
+  The remote resume page keeps its flag (Codex over SSH is outside this
+  release).
 - **P4.6.** WP1 design principle 4 says the app does not copy credentials.
   Claude's SSO path copies claude.ai cookies from a browser the app launches,
   so P4.6 builds the in-app sign-in window only; the cookie path goes to the
