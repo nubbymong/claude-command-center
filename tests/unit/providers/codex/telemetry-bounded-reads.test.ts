@@ -9,15 +9,17 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'fs'
 import { join, dirname, basename } from 'path'
 import { tmpdir } from 'os'
-import { watchAndClaimRollout, __codexRolloutBytesReadForTests, CLAIM_HEAD_BYTES, CLAIM_TAIL_BYTES } from '../../../../src/main/providers/codex/telemetry'
+import { watchAndClaimRollout, __codexRolloutBytesReadForTests, __codexCountsSettledForTests, CLAIM_HEAD_BYTES, CLAIM_TAIL_BYTES } from '../../../../src/main/providers/codex/telemetry'
 import { __codexRolloutLookupsForTests } from '../../../../src/main/providers/codex/rollout-lookup'
 import type { StatuslineData } from '../../../../src/shared/types'
 
 const ID = '019dd000-0001-7000-8000-0000000000b1'
 const ID2 = '019dd000-0001-7000-8000-0000000000b2'
 const temps: string[] = []
-afterEach(() => {
+afterEach(async () => {
   vi.useRealTimers()
+  // Every background count has let go of its rollout before its folder is removed (CI at 427807fb).
+  await __codexCountsSettledForTests()
   // Only a folder this file made (its own prefix, directly in the temp folder) is removed.
   for (const t of temps.splice(0)) if (dirname(t) === tmpdir() && /^ccc-test-codex-reads-/.test(basename(t))) rmSync(t, { recursive: true, force: true })
 })

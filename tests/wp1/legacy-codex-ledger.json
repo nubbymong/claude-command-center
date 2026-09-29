@@ -2,7 +2,7 @@
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "manifestPathDigest": "0943260e052b869e07477e4b12e76c7f758ede6a756288c3b75ac18601018bf8",
-  "manifestHead": "c67b10417297f76faa935fd7fea28126deded8bf",
+  "manifestHead": "3f1f91025f199a370098dd323ba95d146efffb3f",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -4758,7 +4758,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "new WP2 PR 3 P3.7 review follow-up test (tests/unit/providers/codex/telemetry-settle-reject.test.ts): a run's running time that cannot be kept once its background count lands is logged, and neither the settle nor a claim waiting on it rejects unhandled (WP1.68)",
+      "evidence": "new WP2 PR 3 P3.7 review follow-up test (tests/unit/providers/codex/telemetry-settle-reject.test.ts), reworked after CI at 427807fb: keeping a run's running time that throws is logged, the status line still updates, and neither the watch nor its end throws (WP1.68)",
       "note": "created by WP2 PR 3 P3.7; the running-time store is replaced by vi.mock to throw on demand; real files in a temp folder, no Codex process"
     },
     {

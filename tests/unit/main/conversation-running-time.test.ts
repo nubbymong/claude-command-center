@@ -10,6 +10,7 @@ import {
   conversationRunningTimesForSave,
   rememberConversationRunningTimesFrom,
   CONVERSATION_RUNNING_TIMES_KEPT,
+  CONVERSATION_GAPS_KEPT,
   __resetConversationRunningTimesForTests,
 } from '../../../src/main/conversation-running-time'
 
@@ -29,12 +30,12 @@ describe('a conversation\'s running time, as main keeps it', () => {
   it('is kept by conversation id, whatever its case, and read back as a copy', () => {
     expect(conversationRunningTime(A)).toBeNull()
     noteConversationRunningTime(A.toUpperCase(), 90_000, NOW - 1_000)
-    expect(conversationRunningTime(A)).toEqual({ ms: 90_000, until: NOW - 1_000 })
+    expect(conversationRunningTime(A)).toEqual({ ms: 90_000, until: NOW - 1_000, gaps: [] })
     const got = conversationRunningTime(A)!
     got.ms = 1
-    expect(conversationRunningTime(A)).toEqual({ ms: 90_000, until: NOW - 1_000 })
+    expect(conversationRunningTime(A)).toEqual({ ms: 90_000, until: NOW - 1_000, gaps: [] })
     noteConversationRunningTime(A, 120_000, NOW)
-    expect(conversationRunningTime(A)).toEqual({ ms: 120_000, until: NOW })
+    expect(conversationRunningTime(A)).toEqual({ ms: 120_000, until: NOW, gaps: [] })
   })
 
   it('refuses what is not a conversation id or not a time', () => {
@@ -56,7 +57,7 @@ describe('a conversation\'s running time, as main keeps it', () => {
     expect(conversationRunningTime(idOf(2))).toBeNull()
     expect(conversationRunningTime(idOf(1))).not.toBeNull()
     expect(conversationRunningTime(idOf(3))).not.toBeNull()
-    expect(conversationRunningTime(A)).toEqual({ ms: 5_000, until: NOW })
+    expect(conversationRunningTime(A)).toEqual({ ms: 5_000, until: NOW, gaps: [] })
   })
 
   it('is written for the saved state as a list of id, time and until', () => {
@@ -83,9 +84,9 @@ describe('read back from the saved state at load', () => {
   it('an entry main already has counted further is kept as main has it', () => {
     noteConversationRunningTime(A, 9_000, NOW)
     rememberConversationRunningTimesFrom({ conversationRunningTimes: [{ id: A.toUpperCase(), ms: 1_000, until: NOW - 60_000 }, { id: B, ms: 3_000, until: NOW - 1 }] })
-    expect(conversationRunningTime(A)).toEqual({ ms: 9_000, until: NOW })
+    expect(conversationRunningTime(A)).toEqual({ ms: 9_000, until: NOW, gaps: [] })
     rememberConversationRunningTimesFrom({ conversationRunningTimes: [{ id: B, ms: 4_000, until: NOW }] })
-    expect(conversationRunningTime(B)).toEqual({ ms: 4_000, until: NOW })
+    expect(conversationRunningTime(B)).toEqual({ ms: 4_000, until: NOW, gaps: [] })
   })
 
   it('reads no more entries than it keeps', () => {
@@ -93,5 +94,48 @@ describe('read back from the saved state at load', () => {
     rememberConversationRunningTimesFrom({ conversationRunningTimes: list })
     expect(conversationRunningTimesForSave()).toHaveLength(CONVERSATION_RUNNING_TIMES_KEPT)
     expect(conversationRunningTime(idOf(CONVERSATION_RUNNING_TIMES_KEPT + 1))).toBeNull()
+  })
+})
+
+
+// CI at 427807fb: a run that ends before its count of a large rollout is
+// done is kept at once, and the spans whose completed turns it had not
+// counted are kept as gaps for the next run to count.
+describe('the gaps kept with a conversation\'s time', () => {
+  it('are kept with it, handed out as a copy, and saved only where there are some', () => {
+    noteConversationRunningTime(A, 1_000, NOW, [{ from: 0, to: NOW - 5_000 }])
+    noteConversationRunningTime(B, 2_000, NOW)
+    const got = conversationRunningTime(A)!
+    expect(got).toEqual({ ms: 1_000, until: NOW, gaps: [{ from: 0, to: NOW - 5_000 }] })
+    got.gaps[0].to = 1
+    expect(conversationRunningTime(A)!.gaps).toEqual([{ from: 0, to: NOW - 5_000 }])
+    expect(conversationRunningTimesForSave()).toEqual([{ id: A, ms: 1_000, until: NOW, gaps: [{ from: 0, to: NOW - 5_000 }] }, { id: B, ms: 2_000, until: NOW }])
+  })
+
+  it('only spans before the time counted up to; at most CONVERSATION_GAPS_KEPT, the latest', () => {
+    const many = Array.from({ length: CONVERSATION_GAPS_KEPT + 3 }, (_, i) => ({ from: 1_000 * i + 1, to: 1_000 * i + 500 }))
+    // Given newest first, with some that are not spans before NOW among them.
+    noteConversationRunningTime(A, 1_000, NOW, [{ from: 5, to: 5 }, { from: 9, to: 3 }, { from: -1, to: 4 }, { from: 1, to: NOW + 1 }, { from: '10', to: 20 } as never, ...[...many].reverse()])
+    expect(conversationRunningTime(A)!.gaps).toEqual(many.slice(-CONVERSATION_GAPS_KEPT))
+  })
+
+  it('a gap that is not a span of numbers from 0 on, ending by its until, is passed over whatever else is kept', () => {
+    noteConversationRunningTime(A, 1_000, NOW, [{ from: 5, to: 5 }, { from: 9, to: 3 }, { from: -1, to: 4 }, { from: '10', to: 20 } as never, { from: 1, to: 2 }])
+    expect(conversationRunningTime(A)!.gaps).toEqual([{ from: 1, to: 2 }])
+  })
+
+  it('reads no more than four times as many gaps as it keeps', () => {
+    const junk = Array.from({ length: CONVERSATION_GAPS_KEPT * 4 }, () => ({ from: 'x', to: 0 }))
+    noteConversationRunningTime(A, 1_000, NOW, [...junk, { from: 1, to: 2 }] as never)
+    expect(conversationRunningTime(A)!.gaps).toEqual([])
+  })
+
+  it('read back from the saved state schema-checked: a gap that is not a span before its time is passed over', () => {
+    rememberConversationRunningTimesFrom({ conversationRunningTimes: [
+      { id: A, ms: 1_000, until: NOW, gaps: [{ from: 0, to: NOW - 1 }, { from: 'x', to: 5 }, null, { from: 10, to: NOW + 5 }, 7] },
+      { id: B, ms: 2_000, until: NOW, gaps: 'not a list' },
+    ] })
+    expect(conversationRunningTime(A)!.gaps).toEqual([{ from: 0, to: NOW - 1 }])
+    expect(conversationRunningTime(B)).toEqual({ ms: 2_000, until: NOW, gaps: [] })
   })
 })

@@ -864,7 +864,8 @@ as Claude reports, and a claim let go clears it with the tokens
 (`providers/codex/telemetry.ts`, `telemetry-lines.test.ts`). A large rollout
 is read as its head and tail (P3.5); the edits between them are counted once
 in the background, a chunk at a time, only while the file is the one claimed,
-and dropped once nothing waits for it. Its limit: no more than 8 MiB of one
+and it stops, closing the rollout, once the watch ends or the claim is let
+go. Its limit: no more than 8 MiB of one
 line is held (review fix: one huge line never takes hundreds of MB or stalls
 main), so an edit record longer than that (a file of about that size written
 in one patch) between the head and the tail is not counted. The add and delete shapes are the Codex protocol's; P3.1 recorded
@@ -890,21 +891,25 @@ completed in that time (`task_complete.duration_ms`), each only for its part
 inside it; a large rollout's turns between its head and tail are added by the
 background count. A claim let go settles its time and clears the figure.
 Review fixes: two tabs on one conversation count the time they both ran it
-once (a run is counted from no earlier than the time main already kept); a
-run that ends before a large rollout's background count lands is kept once
-the count has, turns included, and a claim of that conversation meanwhile
-takes the kept time again once it is, reading the rollout again in the window
-that follows it. Review round 2: the runs waiting to be kept for one
-conversation are kept in turn, and a run whose base was read while an earlier
-one waited adds its own part to what is kept once that one has (its time from
-no earlier than that run's end, and the turns the rollout proves since); a
-background count stops after 60 s, as the carry does (a volume that stops
-answering), and what it would have found (lines, and turns between a large
-rollout's head and tail) is then not counted. Parity checked: the Duration moves when the rollout changes,
+once (a run is counted from no earlier than the time main already kept). A
+run that ends before a large rollout's background count lands is kept at
+once, without the turns that count had yet to confirm; the spans of time
+holding them are kept with it as gaps (at most 8 per conversation, the
+latest; saved and read back with it, schema-checked), which the next run
+counts. So a count never reads on after its watch has ended or its claim was
+let go: it starts no further read and closes the rollout when the read in
+hand returns (CI at 427807fb: on Windows a rollout still open kept its folder
+from being removed; that runner removes a file deleted while open only once
+it is closed). A background count also stops after 60 s, as the carry does (a
+volume that stops answering), and what it would have found (lines, and turns
+between a large rollout's head and tail) is then not counted, the turns' span
+kept as a gap; a read held up by such a volume keeps the rollout open until
+the system returns it. Parity checked: the Duration moves when the rollout changes,
 as Claude's moves when its status line updates on Claude's own events (the
 app's Claude status line sets no refresh interval). Every save writes the
 kept list: at the 1000-entry limit about 110 KB of the session file,
-accepted. Its limits: of a run outside the app only its completed turns count (its idle
+accepted. Its limits: a conversation's gaps past the latest 8 are dropped and
+their turns not counted; of a run outside the app only its completed turns count (its idle
 time, an unfinished turn, and the time from its start to its first turn and
 from its last event to its exit are not recorded); a run in the app is kept up
 to its last status line update when the app itself closes before the watch
