@@ -341,7 +341,7 @@ describe("a later launch on this computer's own sign-in asks first", () => {
   // P3.6 VM finding V3: a Claude switch never asks at launch, so it has no
   // such Cancel; a Codex switch declined there goes back to where it was.
   it('a Switch account onto it, declined: the tab goes back to the account it was switched from, and says so; accepted or asked nothing, the origin is spent', async () => {
-    noteSwitchOrigin('s-1', 'acc-work')
+    noteSwitchOrigin('s-1', 'acc-work', 'acc-local')
     mount(codexSession({ providerAccountId: 'acc-local' }))
     await settle()
     expect(useLaunchAckStore.getState().queue).toHaveLength(1)
@@ -357,7 +357,7 @@ describe("a later launch on this computer's own sign-in asks first", () => {
     await settle()
     expect(H.persisted).toHaveLength(1)
     // Accepted: the switch stands, and the origin is spent.
-    noteSwitchOrigin('s-1', 'acc-work')
+    noteSwitchOrigin('s-1', 'acc-work', 'acc-local')
     await restartTo(codexSession({ providerAccountId: 'acc-local' }), 'c')
     await answer(true)
     await settle()
@@ -365,9 +365,43 @@ describe("a later launch on this computer's own sign-in asks first", () => {
     expect(switchOrigin('s-1')).toBeNull()
     expect(H.persisted).toHaveLength(1)
     // Onto an account that asks nothing: spent at once.
-    noteSwitchOrigin('s-1', 'acc-local')
+    noteSwitchOrigin('s-1', 'acc-local', 'acc-work')
     await restartTo(codexSession({ providerAccountId: 'acc-work' }), 'd')
     expect(switchOrigin('s-1')).toBeNull()
+  })
+
+  // Review F1: an origin is honoured only by the launch its switch was to.
+  it('an origin left by a switch to another account: a declined launch here moves nothing, says the plain words, and spends it', async () => {
+    noteSwitchOrigin('s-1', 'acc-work', 'acc-personal')
+    mount(codexSession({ providerAccountId: 'acc-local' }))
+    await settle()
+    await answer(false)
+    await settle()
+    expect(H.persisted).toEqual([])
+    expect(termLines()).toContain('Not started: the launch was not confirmed. Restart the session to be asked again.')
+    expect(termLines()).not.toContain('back on')
+    expect(switchOrigin('s-1')).toBeNull()
+  })
+
+  // Review F2: only an account that can still launch is gone back to.
+  it('declined, and the account it came from can no longer be used (inactive, blocked, archived, gone): the default account instead, in words that say so', async () => {
+    for (const [from, key] of [['acc-parked', 'p'], ['acc-old', 'o'], ['acc-gone', 'g'], ['acc-nope', 'n'], ['acc-claude-main', 'c']] as const) {
+      H.persisted.length = 0
+      noteSwitchOrigin('s-1', from, 'acc-local')
+      await restartTo(codexSession({ providerAccountId: 'acc-local' }), key)
+      await answer(false)
+      await settle()
+      expect(H.persisted, from).toEqual([['s-1', undefined]])
+      expect(termLines(), from).toContain('Not started: the launch was not confirmed. The account the session was on can no longer be used, so it is on the default account, Work, now. Restart the session to start it there.')
+    }
+    // It came from the provider default: that is where it goes back.
+    H.persisted.length = 0
+    noteSwitchOrigin('s-1', undefined, 'acc-local')
+    await restartTo(codexSession({ providerAccountId: 'acc-local' }), 'd')
+    await answer(false)
+    await settle()
+    expect(H.persisted).toEqual([['s-1', undefined]])
+    expect(termLines()).toContain('so the session is back on Work.')
   })
 
   it('declined: nothing spawns, and the terminal says why', async () => {

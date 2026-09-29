@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { ProviderId, CodexOptions, TerminalOptions, SshRuntime } from '../../shared/types'
 import type { IdentityColorKey } from '../../shared/identity-colors'
 import { sshAuthGiveUpMemory } from './sshAuthGiveUp'
+import { forgetSwitchOrigin } from '../utils/switchOrigin'
 
 export type SessionStatus = 'idle' | 'working' | 'complete' | 'error' | 'disconnected'
 export type SessionType = 'local' | 'ssh'
@@ -260,6 +261,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       // A removed session's shimmer give-up memory must not outlive it (the id
       // would leak, and a reused id would inherit a stale "stay blank").
       sshAuthGiveUpMemory.clear(id)
+      // Nor a Switch account's origin (P3.6): a closed tab, or a restart, is
+      // never taken back by a later declined launch (utils/switchOrigin).
+      forgetSwitchOrigin(id)
       const sessions = state.sessions.filter((s) => s.id !== id)
       const activeSessionId =
         state.activeSessionId === id

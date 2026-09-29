@@ -39,7 +39,7 @@ function refuseRestart(sessionId: string): boolean {
 export function useRestartSession(
   session: Session | null | undefined,
   isShowingPartner = false,
-): { restart: (overrides?: Partial<Session>, options?: RestartOptions) => void; recover: () => void } {
+): { restart: (overrides?: Partial<Session>, options?: RestartOptions) => boolean; recover: () => void } {
   const forceRemount = useCallback(
     (status: 'idle' | 'working', overrides?: Partial<Session>) => {
       if (!session) return
@@ -115,8 +115,10 @@ export function useRestartSession(
     [session],
   )
 
-  const restart = useCallback((overrides?: Partial<Session>, options?: RestartOptions) => {
-    if (!session) return
+  /** True when the session was restarted; false when there was none, or
+   *  the restart was refused (refuseRestart). */
+  const restart = useCallback((overrides?: Partial<Session>, options?: RestartOptions): boolean => {
+    if (!session) return false
     if (isShowingPartner) {
       // The remount below re-keys the main view too. A main tab whose launch
       // started nothing keeps that flag through it, and the remounted view
@@ -134,9 +136,9 @@ export function useRestartSession(
       const live = store.getSession(session.id)
       store.removeSession(session.id)
       store.addSession({ ...session, ...live, ...overrides, id: session.id, status: session.status, createdAt: Date.now() })
-      return
+      return true
     }
-    if (refuseRestart(session.id)) return
+    if (refuseRestart(session.id)) return false
     // Kill the old PTY (also clears spawn tracker so new one will spawn)
     killSessionPty(session.id)
     // Mark the resume picker, unless this provider's plain "Restart" does not
@@ -154,6 +156,7 @@ export function useRestartSession(
     useAccountGateStore.getState().markPredetermined(session.id)
     // Force re-mount with clean metadata
     forceRemount('idle', overrides)
+    return true
   }, [session, isShowingPartner, forceRemount])
 
   const recover = useCallback(() => {
