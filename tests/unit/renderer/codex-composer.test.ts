@@ -12,6 +12,9 @@ import { describe, it, expect, vi } from 'vitest'
 import {
   codexComposerState,
   codexComposerText,
+  readCodexScreen,
+  codexPlanModeOnScreen,
+  planModeNote,
   typeIntoCodexComposer,
   typeWhenCodexComposerReady,
   CODEX_SUBMIT_DELAY_MS,
@@ -64,6 +67,70 @@ describe('codexComposerState', () => {
   })
 })
 
+// P3.8 round 2 (FT, WW): the footer is anchored (a level of Codex's, or
+// "default", after the model; the model one of the session's when known), so
+// Codex's own hint lines never read as a ready prompt; only Codex's two dim
+// placeholders read as an empty composer; its approval requests block.
+describe('the ready marker is anchored (round 2)', () => {
+  const GLYPH = String.fromCharCode(0x203a)
+  const DOT = String.fromCharCode(0xb7)
+  const withRow = (row: ScreenLine, under: string): ScreenLine[] => [...S.READY.slice(0, 10), row, S.plain(''), S.plain(under)]
+  const emptyRow = { text: `${GLYPH} Ask Codex to do anything`, typed: GLYPH }
+
+  it("Codex's own hint lines under a prompt-glyph row are not a footer", () => {
+    for (const hint of [`  enter select ${DOT} esc back`, `  enter insert ${DOT} esc close ${DOT} tab switch search modes`,
+      `  left/right group ${DOT} e edit shortcut ${DOT} c custom`, `  MCP servers ${DOT} 2 enabled`, `  Git ${DOT} main`, `  dismiss ${DOT} type to continue`]) {
+      expect(codexComposerState(withRow(S.plain(`${GLYPH} 4. Extra high        Extra high reasoning depth`), hint)), hint).toBe('not-ready')
+      expect(codexComposerState(withRow(emptyRow, hint)), hint).toBe('not-ready')
+    }
+  })
+
+  it('a footer naming "default" for the effort is one (a model whose own level applies)', () => {
+    expect(codexComposerState(withRow(emptyRow, `  gpt-5.2 default ${DOT} C:\\p`))).toBe('ready')
+  })
+
+  it("with the session's models known, the footer must name one of them", () => {
+    expect(codexComposerState(S.READY, ['gpt-6-astra', 'gpt-5.5'])).toBe('ready')
+    expect(codexComposerState(S.READY, ['gpt-5.5'])).toBe('not-ready')
+    // A model's dot is a dot, not any character.
+    expect(codexComposerState(withRow(emptyRow, `  gpt-5x5 high ${DOT} C:/p`), ['gpt-5.5'])).toBe('not-ready')
+    expect(codexComposerState(withRow(emptyRow, `  gpt-5.5 high ${DOT} C:/p`), ['gpt-5.5'])).toBe('ready')
+  })
+
+  it("only Codex's two dim placeholders read as empty: a dim paste marker is content", () => {
+    expect(codexComposerText(withRow({ text: `${GLYPH} Ask a follow-up question`, typed: GLYPH }, `  gpt-5.5 high ${DOT} C:\\p`))).toBe('')
+    const paste = withRow({ text: `${GLYPH} [Pasted Content 1843 chars]`, typed: GLYPH }, `  gpt-5.5 high ${DOT} C:\\p`)
+    expect(codexComposerText(paste)).toBe('[Pasted Content 1843 chars]')
+    const h = harness(paste)
+    expect(typeIntoCodexComposer('s1', '/compact', h.deps).reason).toMatch(/already typed/)
+    expect(h.writes).toEqual([])
+  })
+
+  it("Codex's approval requests block, wherever they are drawn", () => {
+    for (const text of ['  Would you like to run the following command?', '  Would you like to make the following edits?',
+      '  Would you like to grant these permissions?', '  Do you want to approve network access to "example.com"?',
+      '  Would you like to send input to the existing terminal?', '  codex needs your approval.']) {
+      expect(codexComposerState([...S.READY.slice(0, 10), S.plain(text), ...S.READY.slice(10)]), text).toBe('not-ready')
+    }
+  })
+
+  it('a footer that is not the last row (wrapped by a narrow window, or a row under it) is said as such (WW)', () => {
+    const wrapped = [...S.READY.slice(0, 10), emptyRow, S.plain(''), S.plain(`  gpt-6-astra low ${DOT} C:\\Users\\alex\\projects\\a-very-long`), S.plain('  -folder-name')]
+    expect(readCodexScreen(wrapped).screen).toBe('unrecognised')
+    const h = harness(wrapped)
+    expect(typeIntoCodexComposer('s1', '/compact', h.deps).reason).toMatch(/could not be read/)
+    expect(readCodexScreen(S.LOADING).screen).not.toBe('unrecognised')
+    expect(typeIntoCodexComposer('s1', '/compact', harness(S.LOADING).deps).reason).toMatch(/not at its prompt/)
+  })
+
+  it("reads Codex's Plan mode from the footer, and nothing when no footer shows", () => {
+    expect(codexPlanModeOnScreen(S.READY_PLAN)).toBe(true)
+    expect(codexPlanModeOnScreen(S.READY)).toBe(false)
+    expect(codexPlanModeOnScreen(S.TYPED_PLAN)).toBeNull()
+    expect(codexPlanModeOnScreen(null)).toBeNull()
+  })
+})
+
 /** A fake session run and screen for the typing helpers. */
 function harness(screen: ScreenLine[] | null) {
   const writes: string[] = []
@@ -77,6 +144,7 @@ function harness(screen: ScreenLine[] | null) {
     write: (_id, d) => { writes.push(d); if (d !== '\r' && state.screen) state.screen = typedInto(state.screen, d) },
     setTimeout: (fn, ms) => { const id = nextId++; timers.push({ fn, at: now + ms, id }); return id },
     clearTimeout: (id) => { timers = timers.filter((t) => t.id !== id) },
+    pending: new Set<string>(),
   }
   const advance = (ms: number) => {
     const until = now + ms
@@ -159,9 +227,65 @@ describe('typeIntoCodexComposer', () => {
     h.advance(CODEX_SUBMIT_DELAY_MS * 2)
     expect(h.writes).toEqual(['/compact'])
   })
+
+  // P3.8 round 2 (G5): the Enter goes only to a screen showing the command
+  // typed at the composer with nothing in the way, not merely a composer row
+  // holding it.
+  it('no Enter when a prompt, a running turn or anything but its popup shows with the command typed', () => {
+    const GLYPH = String.fromCharCode(0x203a)
+    for (const later of [
+      [S.plain(`${GLYPH} /compact`), S.plain(''), S.plain('  Update available! 0.156.0'), S.plain('  Press enter to continue')],
+      [S.plain(`${GLYPH} /compact`), S.plain(''), S.plain('  Working (2s, esc to interrupt)')],
+      [S.plain(`${GLYPH} /compact`), S.plain(''), S.plain('  Something else entirely')],
+      // Above the command, with only its popup under it: a notice, or a turn running.
+      [S.plain('  Press enter to continue'), S.plain(`${GLYPH} /compact`), S.plain(''), S.plain('  /compact  summarize conversation')],
+      [S.plain('  Working (2s, esc to interrupt)'), S.plain(`${GLYPH} /compact`), S.plain(''), S.plain('  /compact  summarize conversation')],
+    ]) {
+      const h = harness(S.READY)
+      typeIntoCodexComposer('s1', '/compact', h.deps)
+      h.state.screen = later
+      h.advance(CODEX_SUBMIT_DELAY_MS)
+      expect(h.writes, later.map((l) => l.text).join(' | ')).toEqual(['/compact'])
+    }
+  })
+
+  // P3.8 round 2 (DP): while a command's Enter is pending for a session,
+  // nothing more is typed into it (a second press before Codex redraws would
+  // type the command twice).
+  it('refuses a second command while one is pending for the session, and takes one again once it is sent or dropped', () => {
+    const h = harness(S.READY)
+    const lagging = { ...h.deps, write: (_id: string, d: string) => { h.writes.push(d) } } // Codex has not redrawn yet
+    expect(typeIntoCodexComposer('s1', '/compact', lagging).typed).toBe(true)
+    const second = typeIntoCodexComposer('s1', '/compact', lagging)
+    expect(second.typed).toBe(false)
+    expect(second.reason).toMatch(/already on its way/)
+    expect(typeIntoCodexComposer('s1', '/model', lagging).typed).toBe(false)
+    expect(typeIntoCodexComposer('s2', '/compact', lagging).typed).toBe(true)
+    expect(h.writes).toEqual(['/compact', '/compact'])
+    h.advance(CODEX_SUBMIT_DELAY_MS)
+    expect(typeIntoCodexComposer('s1', '/compact', lagging).typed).toBe(true)
+    const r = typeIntoCodexComposer('s3', '/compact', lagging)
+    r.cancel()
+    expect(typeIntoCodexComposer('s3', '/compact', lagging).typed).toBe(true)
+  })
+
+  it('reports whether the Enter was sent', () => {
+    const sent = vi.fn()
+    const h = harness(S.READY)
+    typeIntoCodexComposer('s1', '/compact', h.deps, { onSettled: sent })
+    h.advance(CODEX_SUBMIT_DELAY_MS)
+    expect(sent).toHaveBeenCalledWith(true)
+    const withheld = vi.fn()
+    const h2 = harness(S.READY)
+    typeIntoCodexComposer('s1', '/compact', h2.deps, { onSettled: withheld })
+    h2.state.screen = S.TYPED_AFTER_USER
+    h2.advance(CODEX_SUBMIT_DELAY_MS)
+    expect(withheld).toHaveBeenCalledWith(false)
+    expect(withheld).toHaveBeenCalledTimes(1)
+  })
 })
 
-describe('typeWhenCodexComposerReady (Plan mode at launch, L2)', () => {
+describe('typeWhenCodexComposerReady (Plan mode at launch, L2; round 2, PM1: the first ready screen only)', () => {
   it('waits through loading and the trust prompt, then types the command once the composer is ready', () => {
     const h = harness(S.LOADING)
     const onGiveUp = vi.fn()
@@ -187,7 +311,7 @@ describe('typeWhenCodexComposerReady (Plan mode at launch, L2)', () => {
     h.advance(10_000)
     expect(h.writes).toEqual([])
     expect(onGiveUp).toHaveBeenCalledTimes(1)
-    expect(String(onGiveUp.mock.calls[0][0])).toMatch(/\/plan/)
+    expect(onGiveUp).toHaveBeenCalledWith('timeout')
   })
 
   it('stops, silently, when the run it waited for ends or is replaced; cancel() stops it too', () => {
@@ -207,23 +331,66 @@ describe('typeWhenCodexComposerReady (Plan mode at launch, L2)', () => {
     expect(h2.writes).toEqual([])
   })
 
-  it('cancel() after it typed drops the pending Enter too', () => {
+  it('cancel() after it typed drops the pending Enter too, and reports nothing (the view is gone)', () => {
     const h = harness(S.READY)
-    const w = typeWhenCodexComposerReady('s1', '/plan', { timeoutMs: 60_000, onGiveUp: vi.fn() }, h.deps)
+    const onGiveUp = vi.fn()
+    const w = typeWhenCodexComposerReady('s1', '/plan', { timeoutMs: 60_000, onGiveUp }, h.deps)
     h.advance(0)
     expect(h.writes).toEqual(['/plan'])
     w.cancel()
     h.advance(CODEX_SUBMIT_DELAY_MS * 2)
     expect(h.writes).toEqual(['/plan'])
+    expect(onGiveUp).not.toHaveBeenCalled()
   })
 
-  it('waits while the user is typing, then types once the composer is empty again', () => {
-    const h = harness(S.USER_TYPING)
-    typeWhenCodexComposerReady('s1', '/plan', { timeoutMs: 60_000, onGiveUp: vi.fn() }, h.deps)
-    h.advance(CODEX_READY_POLL_MS * 5)
-    expect(h.writes).toEqual([])
-    h.state.screen = S.READY
+  it("the first ready screen already holds the user's text: gives up at once, and types nothing even when the composer empties", () => {
+    const h = harness(S.LOADING)
+    const onGiveUp = vi.fn()
+    typeWhenCodexComposerReady('s1', '/plan', { timeoutMs: 60_000, onGiveUp }, h.deps)
+    h.advance(CODEX_READY_POLL_MS * 2)
+    h.state.screen = S.USER_TYPING
     h.advance(CODEX_READY_POLL_MS)
+    expect(onGiveUp).toHaveBeenCalledWith('interrupted')
+    h.state.screen = S.READY
+    h.advance(60_000)
+    expect(h.writes).toEqual([])
+    expect(onGiveUp).toHaveBeenCalledTimes(1)
+  })
+
+  it('a turn seen running (the user typed and submitted first) gives up: /plan never lands mid-conversation', () => {
+    const h = harness(S.TRUST)
+    const onGiveUp = vi.fn()
+    typeWhenCodexComposerReady('s1', '/plan', { timeoutMs: 60_000, onGiveUp }, h.deps)
+    h.advance(CODEX_READY_POLL_MS)
+    h.state.screen = S.WORKING_NOW
+    h.advance(CODEX_READY_POLL_MS)
+    h.state.screen = S.READY
+    h.advance(60_000)
+    expect(h.writes).toEqual([])
+    expect(onGiveUp).toHaveBeenCalledWith('interrupted')
+    expect(onGiveUp).toHaveBeenCalledTimes(1)
+  })
+
+  it('typed but its Enter withheld (the user typed within the window): says so', () => {
+    const h = harness(S.READY)
+    const onGiveUp = vi.fn()
+    typeWhenCodexComposerReady('s1', '/plan', { timeoutMs: 60_000, onGiveUp }, h.deps)
+    h.advance(0)
     expect(h.writes).toEqual(['/plan'])
+    h.state.screen = S.TYPED_AFTER_USER
+    h.advance(CODEX_SUBMIT_DELAY_MS)
+    expect(h.writes).toEqual(['/plan'])
+    expect(onGiveUp).toHaveBeenCalledWith('not-sent')
+  })
+
+  it('the note says Plan mode is not on, that the session is read-only, and how to go on', () => {
+    for (const why of ['timeout', 'interrupted', 'not-sent'] as const) {
+      const note = planModeNote(why)
+      expect(note).toMatch(/Plan mode is not on/)
+      expect(note).toMatch(/read-only/)
+      expect(note).toMatch(/\/plan/)
+      expect(note).toMatch(/\/permissions/)
+    }
+    expect(planModeNote('timeout')).not.toBe(planModeNote('interrupted'))
   })
 })

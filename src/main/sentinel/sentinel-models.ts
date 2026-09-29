@@ -170,7 +170,8 @@ export function codexModelCoverageFindings(
 ): SentinelFinding[] {
   const out: SentinelFinding[] = []
   const result = evaluateCodexModelCoverage(registry, expected)
-  if (!result.ok && result.missing.length === 0) {
+  const duplicated = new Set(result.duplicates ?? [])
+  if (!result.ok && result.missing.length === 0 && duplicated.size === 0) {
     out.push({
       id: 'models:codex-list-unreadable',
       kind: 'compat',
@@ -185,7 +186,23 @@ export function codexModelCoverageFindings(
   }
   const versions = Array.isArray(expected?.cliVersions) && expected!.cliVersions.length ? `Codex ${expected!.cliVersions.join(' and ')}, ` : ''
   const shipped = `the Codex model list shipped with this build (${versions}${expected?.fetchedAt ?? 'undated'})`
+  // P3.8 round 2 (GS): an id the registry lists more than once covers
+  // nothing (the pickers would disagree about it); said as such.
+  for (const id of duplicated) {
+    out.push({
+      id: `models:codex-duplicate:${id}`,
+      kind: 'compat',
+      severity: 'warn',
+      title: `${id} is in the model registry more than once`,
+      evidence: `resources/model-registry.json (with any overlay) lists ${id} more than once, so which picker offers it is ambiguous; keep one entry, in the codex family.`,
+      affectedFeature: 'sessions',
+      badgeText: `Model listed twice: ${id}`,
+      status: 'open',
+      createdAt: now,
+    })
+  }
   for (const m of result.missing) {
+    if (duplicated.has(m.id)) continue
     const name = m.label ?? m.id
     out.push({
       id: `models:codex-missing:${m.id}`,

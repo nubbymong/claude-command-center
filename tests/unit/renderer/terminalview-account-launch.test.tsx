@@ -126,10 +126,11 @@ vi.mock('../../../src/renderer/components/SshFlowOverlay', async () => {
 vi.mock('../../../src/renderer/utils/resumePicker', () => ({ shouldUseResumePicker: () => false }))
 // P3.8 round 1 (L2): the Plan mode wait, observed (its own behaviour is
 // tests/unit/renderer/codex-composer.test.ts).
-const planWait = vi.hoisted(() => ({ calls: [] as Array<{ id: string; cmd: string; opts: { timeoutMs: number; onGiveUp: (n: string) => void } }>, cancels: 0 }))
-vi.mock('../../../src/renderer/lib/codexComposer', () => ({
+const planWait = vi.hoisted(() => ({ calls: [] as Array<{ id: string; cmd: string; opts: { timeoutMs: number; onGiveUp: (why: 'timeout' | 'interrupted' | 'not-sent') => void } }>, cancels: 0 }))
+vi.mock('../../../src/renderer/lib/codexComposer', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/renderer/lib/codexComposer')>()),
   CODEX_PLAN_MODE_WAIT_MS: 120_000,
-  typeWhenCodexComposerReady: (id: string, cmd: string, opts: { timeoutMs: number; onGiveUp: (n: string) => void }) => {
+  typeWhenCodexComposerReady: (id: string, cmd: string, opts: { timeoutMs: number; onGiveUp: (why: 'timeout' | 'interrupted' | 'not-sent') => void }) => {
     planWait.calls.push({ id, cmd, opts })
     return { cancel: () => { planWait.cancels++ } }
   },
@@ -300,8 +301,11 @@ describe("a Codex session's account reaches pty:spawn", () => {
     await act(async () => { settles[0].resolve({ started: true }) })
     await settle()
     expect(planWait.calls.map((c) => [c.id, c.cmd, c.opts.timeoutMs])).toEqual([['s-1', '/plan', 120_000]])
-    await act(async () => { planWait.calls[0].opts.onGiveUp('/plan was not sent: Codex did not reach its prompt in time.') })
-    expect(switchNote()).toBe('/plan was not sent: Codex did not reach its prompt in time.')
+    // Round 2 (PM1): the note says Plan mode is not on and the session is read-only.
+    await act(async () => { planWait.calls[0].opts.onGiveUp('interrupted') })
+    const { planModeNote } = await import('../../../src/renderer/lib/codexComposer')
+    expect(switchNote()).toBe(planModeNote('interrupted'))
+    expect(switchNote()).toMatch(/Plan mode is not on.*read-only/)
     await restartTo(codexSession({ codexOptions: { permissionsPreset: 'standard' } }), 'b')
     await act(async () => { settles[1].resolve({ started: true }) })
     await settle()

@@ -147,6 +147,18 @@ describe("Compact on a Codex tab runs Codex's own /compact, only at its ready pr
     expect(writes()).toEqual([['s1', '/compact'], ['s1', '\r']])
   })
 
+  it('a second press before Codex redraws types nothing more, and says why (round 2, DP)', () => {
+    write.mockImplementation(() => {}) // the echo lags: the screen still shows an empty composer
+    render()
+    act(() => { button('Compact the conversation')!.click() })
+    act(() => { vi.advanceTimersByTime(100) })
+    act(() => { button('Compact the conversation')!.click() })
+    expect(writes()).toEqual([['s1', '/compact']])
+    expect(note()).toMatch(/already on its way/)
+    act(() => { vi.advanceTimersByTime(CODEX_SUBMIT_DELAY_MS * 3) })
+    expect(writes()).toEqual([['s1', '/compact']])
+  })
+
   it('text the user types in the window keeps its Enter: /compact is left typed, never sent with it (C3)', () => {
     render()
     act(() => { button('Compact the conversation')!.click() })

@@ -338,4 +338,34 @@ describe('the Codex model pill on a live session (P3.8 round 1)', () => {
     show()
     expect(container.textContent).not.toContain('Restart session to apply')
   })
+
+  // P3.8 round 2 (PM1): the pill says what is true. A live Plan mode session
+  // runs read-only; it reads "plan" only while Codex's own footer shows its
+  // Plan mode. A stopped session's choice reads "plan" (applied at its start).
+  it("a live Plan mode session's pill reads read-only until Codex's footer shows Plan mode", async () => {
+    vi.useFakeTimers()
+    const S = await import('./codex-composer-screens')
+    screen = S.READY
+    off = registerScreenReader('s-1', () => screen as never)
+    markSpawned('s-1')
+    const planOption = () => {
+      const sel = Array.from(container.querySelectorAll('select')).find((s) => Array.from(s.options).some((o) => o.value === 'unrestricted')) as HTMLSelectElement
+      return Array.from(sel.options).find((o) => o.value === 'plan')!.textContent
+    }
+    mockSessions = [liveCodex({ codexOptions: { model: 'gpt-5.5', permissionsPreset: 'plan' } })]
+    show()
+    expect(planOption()).toMatch(/read-only/)
+    screen = S.READY_PLAN
+    act(() => { vi.advanceTimersByTime(1000) })
+    expect(planOption()).toBe('plan')
+    screen = S.TYPED_PLAN // a popup is up: no footer to go by, the last reading holds
+    act(() => { vi.advanceTimersByTime(1000) })
+    expect(planOption()).toBe('plan')
+    screen = S.READY // Codex left Plan mode (the plan accepted): read-only still
+    act(() => { vi.advanceTimersByTime(1000) })
+    expect(planOption()).toMatch(/read-only/)
+    mockSessions = [{ ...mkStopped(), codexOptions: { model: 'gpt-5.5', permissionsPreset: 'plan' } }]
+    show()
+    expect(planOption()).toBe('plan')
+  })
 })

@@ -43,7 +43,7 @@ import { getTerminalTheme } from './terminal/terminalTheme'
 import { installTerminalKeybindings } from './terminal/terminalKeybindings'
 import { registerRepainter, requestResync } from './terminal/repaintRegistry'
 import { registerScreenReader, readXtermScreen } from './terminal/screenRegistry'
-import { typeWhenCodexComposerReady, CODEX_PLAN_MODE_WAIT_MS } from '../lib/codexComposer'
+import { typeWhenCodexComposerReady, planModeNote, CODEX_PLAN_MODE_WAIT_MS } from '../lib/codexComposer'
 import { createGeometryResync, type GeometryResync } from './terminal/geometryResync'
 import { createTmuxWheelScroll, registerTmuxWheelScroll, type TmuxWheelScroll } from './terminal/tmuxWheelScroll'
 import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS, gpuRenderingEnabled } from '../stores/settingsStore'
@@ -1129,16 +1129,18 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
                 // run's, and is dropped. Main starting nothing (a preparation
                 // closed or swept meanwhile) ends the start here instead.
                 if (!nothingStarted) markLive()
-                // P3.8 round 1 (L2): Plan mode, Claude's launch option. Codex has
-                // no launch flag for it, so its own /plan is typed once its
-                // composer is ready (never into the folder-trust prompt, a
-                // picker or the user's typing), within a bounded wait; a note
-                // above the terminal says so if it never is.
+                // P3.8 (L2; round 2, PM1): Plan mode, Claude's launch option.
+                // Codex has no launch flag for it: the session starts read-only
+                // (main), and its own /plan is typed into its FIRST ready
+                // prompt only (never the folder-trust prompt, a picker, the
+                // user's typing or after a turn), within a bounded wait; a note
+                // above the terminal says so when it is not, and that the
+                // session is read-only.
                 if (!nothingStarted && provider === 'codex' && !shellOnly && codexOptions?.permissionsPreset === 'plan') {
                   planModeWait?.cancel()
                   planModeWait = typeWhenCodexComposerReady(sessionId, '/plan', {
                     timeoutMs: CODEX_PLAN_MODE_WAIT_MS,
-                    onGiveUp: (note) => { if (!disposed) setSwitchNote(terminalNoteLine(note)) },
+                    onGiveUp: (why) => { if (!disposed) setSwitchNote(terminalNoteLine(planModeNote(why))) },
                   })
                 }
                 settleOwnStart(nothingStarted ? 'nothing-started' : 'started', endText)

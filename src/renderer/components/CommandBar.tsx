@@ -22,7 +22,8 @@ import { buildCommandLine, commandSecretRef, commandSecretKey } from '../../shar
 import { isAllowedBrowserUrl } from '../../shared/browser-url'
 import { trackUsage } from '../stores/tipsStore'
 import { codexModelOptions, codexEffortSupported } from '../codex-models'
-import { typeIntoCodexComposer, type CodexTyping } from '../lib/codexComposer'
+import { typeIntoCodexComposer, codexPlanModeOnScreen, type CodexTyping } from '../lib/codexComposer'
+import { readSessionScreen } from './terminal/screenRegistry'
 import { useRegistryStore } from '../stores/registryStore'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { sessionCapabilities } from '../lib/session-capabilities'
@@ -59,8 +60,8 @@ export function openSettingsTab(tab: string): void {
 
 // -- Codex toolbar sub-components --
 
-/** P3.8 round 1 (L2): 'plan' is Claude's Plan mode launch option (Standard,
- *  then Codex's own /plan once its prompt is ready). */
+/** P3.8 (L2; round 2, PM1): 'plan' is Claude's Plan mode launch option
+ *  (read-only, then Codex's own /plan in its first ready prompt). */
 const CODEX_PRESETS = ['read-only', 'standard', 'plan', 'auto', 'unrestricted'] as const
 type CodexPreset = typeof CODEX_PRESETS[number]
 
@@ -124,16 +125,47 @@ function CodexModelDropdown({ value, onChange }: { value: string; onChange: (nex
   )
 }
 
-function PermissionsPresetDropdown({ value, onChange }: { value: CodexPreset; onChange: (next: CodexPreset) => void }) {
+/** How often a live Plan mode session's pill reads Codex's footer. */
+const PLAN_MODE_READ_MS = 1000
+
+/**
+ * P3.8 round 2 (PM1): whether Codex's own footer shows its Plan mode, read
+ * from the session's live screen while `active`; the last reading holds
+ * while no footer shows (a popup or a prompt is up). null until one is read.
+ */
+function useCodexPlanModeShown(sessionId: string, active: boolean): boolean | null {
+  const [shown, setShown] = React.useState<boolean | null>(null)
+  React.useEffect(() => {
+    setShown(null)
+    if (!active) return
+    const read = () => {
+      const now = codexPlanModeOnScreen(readSessionScreen(sessionId))
+      if (now !== null) setShown(now)
+    }
+    read()
+    const t = setInterval(read, PLAN_MODE_READ_MS)
+    return () => clearInterval(t)
+  }, [sessionId, active])
+  return shown
+}
+
+function PermissionsPresetDropdown({ sessionId, live, value, onChange }: { sessionId: string; live: boolean; value: CodexPreset; onChange: (next: CodexPreset) => void }) {
   const [dirty, setDirty] = React.useState(false)
+  // P3.8 round 2 (PM1): a live Plan mode session starts read-only and is in
+  // Codex's Plan mode only while its footer says so; the pill says which. A
+  // choice not yet applied (dirty) or a stopped session's reads as chosen.
+  const truthful = live && value === 'plan' && !dirty
+  const planShown = useCodexPlanModeShown(sessionId, truthful)
+  const label = (p: CodexPreset): string => (p === 'plan' && truthful && planShown !== true ? 'read-only (Plan mode off)' : p)
   return (
     <div className="flex items-center gap-1">
       <select
         value={value}
         onChange={(e) => { setDirty(true); onChange(e.target.value as CodexPreset) }}
         className="bg-base border border-surface1 rounded px-1.5 h-7 text-xs text-text"
+        title={truthful ? (planShown === true ? "In Codex's Plan mode (read-only)" : 'Read-only; Codex is not in Plan mode: type /plan to plan, /permissions to change what it may do') : undefined}
       >
-        {CODEX_PRESETS.map((p) => (<option key={p} value={p}>{p}</option>))}
+        {CODEX_PRESETS.map((p) => (<option key={p} value={p}>{label(p)}</option>))}
       </select>
       {dirty && <span className="text-[10px] text-overlay1">Restart session to apply</span>}
     </div>
@@ -905,6 +937,8 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
                 apply" goes with the Restart it asked for. */}
             <PermissionsPresetDropdown
               key={`preset-${session.createdAt}`}
+              sessionId={session.id}
+              live={!session.ptyExited && !session.neverStarted}
               value={session.codexOptions.permissionsPreset ?? 'standard'}
               onChange={(next) => updateSession(session.id, { codexOptions: { ...session.codexOptions!, permissionsPreset: next } })}
             />
