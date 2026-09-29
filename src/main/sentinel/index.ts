@@ -316,6 +316,7 @@ async function claudeAnalysisRunner(signal: AbortSignal): Promise<AnalysisRunner
   try {
     const { spawnClaudeHeadless } = await headlessRunner()
     const { home, accountLabel } = await analysisHome()
+    const transportEnv = await analysisTransportEnv(home)
     const parent = analysisParent()
     let cwd: string
     try {
@@ -326,7 +327,7 @@ async function claudeAnalysisRunner(signal: AbortSignal): Promise<AnalysisRunner
     }
     handedOver = true
     return {
-      run: (args, t, stdin) => spawnClaudeHeadless(args, t, stdin, home, signal, { cwd, env: CLAUDE_ANALYSIS_ENV }),
+      run: (args, t, stdin) => spawnClaudeHeadless(args, t, stdin, home, signal, { cwd, env: CLAUDE_ANALYSIS_ENV, transportEnv }),
       accountLabel,
       end: () => {
         // Only the folder this run made: its own prefix, in the runs folder.
@@ -336,6 +337,31 @@ async function claudeAnalysisRunner(signal: AbortSignal): Promise<AnalysisRunner
     }
   } finally {
     if (!handedOver) begun.end()
+  }
+}
+
+/** The largest settings file read for its transport variables (the CLI's own cap). */
+const SETTINGS_READ_MAX_BYTES = 2 * 1024 * 1024
+
+/** P3.9 round 3: the analysis loads no settings file, so the network
+ *  settings its account's settings file sets (proxies, certificates: only
+ *  what the Claude package classifies as transport and keeps) are handed to
+ *  it as variables. The account's own settings file: its profile home's, or
+ *  the shared Claude folder for the default account. None when there is no
+ *  such file, it is too large, or the package cannot say. Never throws. */
+async function analysisTransportEnv(home: string | null): Promise<Readonly<Record<string, string>>> {
+  try {
+    const { tryGetProviderPackage } = await import('../providers/core')
+    const pick = tryGetProviderPackage('claude')?.managedLaunch?.transportSettingsEnv
+    if (typeof pick !== 'function') return {}
+    const { sharedRoot } = await import('../account-profiles')
+    const dir = home ? path.join(home, '.claude') : sharedRoot()
+    const file = path.join(dir, 'settings.json')
+    const st = fs.statSync(file)
+    if (!st.isFile() || st.size > SETTINGS_READ_MAX_BYTES) return {}
+    return pick(fs.readFileSync(file, 'utf8'))
+  } catch {
+    return {}
   }
 }
 
@@ -536,6 +562,9 @@ interface UpdateSubject {
   notes: (u: Update) => Promise<UpdateNotes | null>
   unavailable: string
   recordSeen: (s: SentinelState, version: string) => void
+  /** Round 3: the assistant's name and its notes' name, for what is said. */
+  name: string
+  notesName: string
 }
 const CLAUDE_UPDATE: UpdateSubject = {
   notes: async (u) => {
@@ -544,6 +573,8 @@ const CLAUDE_UPDATE: UpdateSubject = {
   },
   unavailable: CLAUDE_CHANGELOG_UNAVAILABLE,
   recordSeen: (s, v) => s.setLastSeenCcVersion(v),
+  name: 'Claude Code',
+  notesName: 'changelog',
 }
 const CODEX_UPDATE: UpdateSubject = {
   notes: async (u) => {
@@ -552,13 +583,15 @@ const CODEX_UPDATE: UpdateSubject = {
   },
   unavailable: CODEX_NOTES_UNAVAILABLE,
   recordSeen: (s, v) => s.setLastSeenCodexVersion(v),
+  name: 'Codex',
+  notesName: 'release notes',
 }
 const SUBJECTS: Record<SentinelProvider, UpdateSubject> = { claude: CLAUDE_UPDATE, codex: CODEX_UPDATE }
 
 /** One update's analysis: its changelog (Claude Code's) or release notes
  *  (Codex's) between the last version and this one, checked against that
  *  provider's surfaces on the runner that is on. */
-async function analyzeOne(u: Update, signal: AbortSignal): Promise<{ ok: true; findings: SentinelFinding[]; note: string | null } | { ok: false; error: string; note?: string | null }> {
+async function analyzeOne(u: Update, signal: AbortSignal): Promise<{ ok: true; findings: SentinelFinding[]; unverified: number; note: string | null } | { ok: false; error: string; note?: string | null }> {
   const subject = SUBJECTS[u.provider]
   const notes = await subject.notes(u)
   // Analysis-unavailable is the degraded state, shown as a calm note -- not a
@@ -584,6 +617,14 @@ async function analyzeOne(u: Update, signal: AbortSignal): Promise<{ ok: true; f
   }
 }
 
+/** Said when some of an analysis's findings could not be matched to the
+ *  notes it was sent (round 3). */
+export function unverifiedMessage(u: Update, count: number): string {
+  const subject = SUBJECTS[u.provider]
+  const what = count === 1 ? 'One finding' : `${count} findings`
+  return `${what} from the analysis of ${subject.name} ${u.version} could not be matched to its ${subject.notesName}, so ${count === 1 ? 'it is' : 'they are'} not shown and the update will be analysed again at the next check.`
+}
+
 /** Analyse each update in turn. A new run supersedes any in-flight one
  *  (kills its process tree) so a stale analysis can't finish late and
  *  clobber state or leave `analyzing` stuck. `carried`: problems met before
@@ -603,7 +644,11 @@ async function analyzeUpdates(updates: Update[], carried: string[] = []): Promis
     if (r.note) notes.push(r.note)
     if (r.ok) {
       for (const f of r.findings) state.upsertFinding(f)
-      SUBJECTS[u.provider].recordSeen(state, u.version)
+      // Round 3: findings that could not be matched to the notes are not
+      // shown, so the update is not checked yet: it is analysed again at the
+      // next check, and the panel says why (never "no breaking changes").
+      if (r.unverified > 0) errors.push(unverifiedMessage(u, r.unverified))
+      else SUBJECTS[u.provider].recordSeen(state, u.version)
     } else if (r.error) {
       errors.push(r.error)
     }

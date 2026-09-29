@@ -54,6 +54,18 @@ describe('spawnClaudeHeadless: the run\'s own folder and switches (P3.9 round 2)
     expect(spawnCalls[0].opts.env.CLAUDE_CODE_DISABLE_CLAUDE_MDS).toBe('0')
   })
 
+  it('round 3: network settings ride as their own variables, after the account\'s and before the switches; only plain single lines', async () => {
+    await spawnClaudeHeadless(['-p'], 1000, 'prompt', null, undefined, {
+      cwd: FOLDER,
+      env: CLAUDE_ANALYSIS_ENV,
+      transportEnv: { HTTPS_PROXY: 'http://proxy.example:8080', NODE_EXTRA_CA_CERTS: 'C:\\certs\\corp.pem', CLAUDE_CODE_DISABLE_CLAUDE_MDS: '0' },
+    })
+    expect(spawnCalls[0].opts.env).toMatchObject({ HTTPS_PROXY: 'http://proxy.example:8080', NODE_EXTRA_CA_CERTS: 'C:\\certs\\corp.pem', CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1' })
+    for (const bad of <Array<Record<string, string>>>[{ https_proxy: 'x' }, { HTTPS_PROXY: 'a\nB=1' }, { HTTPS_PROXY: 'a\rb' }, { HTTPS_PROXY: 'x'.repeat(4097) }, { 'A-B': 'x' }]) {
+      expect(() => assertHeadlessOptions({ transportEnv: bad }), JSON.stringify(bad)).toThrow()
+    }
+  })
+
   it('refuses a relative folder, or a variable that is not a plain Claude Code switch, before anything starts', () => {
     for (const bad of [
       { cwd: 'relative/folder' },

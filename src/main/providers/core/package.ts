@@ -448,6 +448,12 @@ export interface ProviderManagedLaunchOperations {
   authoritySettingsKeys(raw: string): readonly string[]
   /** Report on one composed launch. A diagnostic, never the boundary. */
   preflight(input: ManagedLaunchPreflightInput): ManagedLaunchPreflight
+  /** P3.9 round 3: the network settings (proxies, certificates) a settings
+   *  file's `env` block sets, for a headless run that loads no settings file
+   *  yet must still reach the provider: only the names the provider
+   *  classifies as transport and keeps, canonically named, with plain string
+   *  values. Pure: takes text, returns the variables. */
+  transportSettingsEnv?(raw: string): Readonly<Record<string, string>>
 }
 
 export interface ProviderPackage {

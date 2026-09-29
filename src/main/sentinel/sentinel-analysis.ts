@@ -58,10 +58,12 @@ export const CLAUDE_ANALYSIS_DENIED_TOOLS = [
  *    (their permissions, hooks, plugins and instructions): the CLI's own
  *    empty list, the form it passes to its own child runs;
  *  - `--strict-mcp-config` with no --mcp-config loads no MCP server;
- *  - the denied names are a second layer.
+ *  - the denied names are a second layer;
+ *  - `--no-session-persistence` (round 3) keeps no transcript of the run in
+ *    the account's projects folder.
  *  The run's working folder is an empty one of its own (sentinel/index.ts). */
 export const CLAUDE_ANALYSIS_ARGS: readonly string[] = [
-  '-p', '--model', 'sonnet', '--output-format', 'json', '--strict-mcp-config', '--setting-sources=', '--tools=', '--disallowedTools', CLAUDE_ANALYSIS_DENIED_TOOLS,
+  '-p', '--model', 'sonnet', '--output-format', 'json', '--no-session-persistence', '--strict-mcp-config', '--setting-sources=', '--tools=', '--disallowedTools', CLAUDE_ANALYSIS_DENIED_TOOLS,
 ]
 
 /** Claude Code's own switches for the analysis run: no CLAUDE.md or memory
@@ -170,9 +172,17 @@ function unwrapPayload(stdout: string): string {
  *  one passage of them is dropped. Every finding's text is made prose-safe
  *  and redacted, and its id comes from its quote (round 2). */
 export function parseAnalysisOutput(stdout: string, from: string, to: string, subject: SentinelProvider = 'claude', notes?: string): SentinelFinding[] | null {
+  return parseAnalysisReply(stdout, from, to, subject, notes)?.findings ?? null
+}
+
+/** As parseAnalysisOutput, and (round 3) how many of the reply's findings
+ *  could not be matched to the notes and were dropped: the analysis did not
+ *  finish its work when that is not 0. */
+export function parseAnalysisReply(stdout: string, from: string, to: string, subject: SentinelProvider = 'claude', notes?: string): { findings: SentinelFinding[]; unverified: number } | null {
   try {
     const all = OutputSchema.parse(JSON.parse(unwrapPayload(stdout))).breakingChanges
     const quoted = typeof notes === 'string' ? all.filter((b) => evidenceIsQuoted(b.evidence, notes)) : all
+    const unverified = all.length - quoted.length
     const parsed = {
       breakingChanges: quoted.map((b) => ({
         key: quoteKey(b.evidence),
@@ -187,7 +197,7 @@ export function parseAnalysisOutput(stdout: string, from: string, to: string, su
     // P3.9: a Codex update's findings are Codex's (their own ids, marked so),
     // and carry no Claude Code version.
     if (subject === 'codex') {
-      return parsed.breakingChanges.map((b) => ({
+      return { unverified, findings: parsed.breakingChanges.map((b) => ({
         id: `codex-update:${to}:${b.key}`,
         kind: 'compat' as const,
         severity: 'high' as const,
@@ -198,9 +208,9 @@ export function parseAnalysisOutput(stdout: string, from: string, to: string, su
         provider: 'codex' as const,
         status: 'open' as const,
         createdAt: Date.now(),
-      }))
+      })) }
     }
-    return parsed.breakingChanges.map((b) => ({
+    return { unverified, findings: parsed.breakingChanges.map((b) => ({
       id: `cc:${to}:${b.key}`,
       kind: 'compat' as const,
       severity: 'high' as const,
@@ -212,7 +222,7 @@ export function parseAnalysisOutput(stdout: string, from: string, to: string, su
       createdAt: Date.now(),
       ccVersionFrom: from,
       ccVersionTo: to,
-    }))
+    })) }
   } catch { return null }
 }
 
@@ -261,10 +271,45 @@ export function envelopeError(stdout: string): { rateLimited: boolean; reason: s
   if (!isError) return null
   // `result` on an api_error is the CLI's own error string (not model output).
   // Strip control chars + trim + cap, so nothing pathological reaches the panel.
-  const raw = typeof env.result === 'string' ? env.result.replace(CONTROL_CHARS, ' ').trim() : ''
-  const reason = raw ? raw.slice(0, ENVELOPE_REASON_MAX) : status !== null ? `the account returned HTTP ${status}` : 'the account could not be reached'
+  const raw = typeof env.result === 'string' ? plainErrorReason(env.result) : ''
+  const reason = raw || (status !== null ? `the account returned HTTP ${status}` : 'the account could not be reached')
   const rateLimited = status === 429 || /\blimit\b/i.test(reason)
   return { rateLimited, reason }
+}
+
+/** The message a JSON error body carries, if it has one. */
+function jsonErrorMessage(body: string): string | null {
+  const pick = (v: unknown): string | null => {
+    if (typeof v === 'string') return v
+    if (!v || typeof v !== 'object') return null
+    const o = v as Record<string, unknown>
+    return pick(o.message) ?? pick(o.error) ?? pick(o.detail) ?? null
+  }
+  try { return pick(JSON.parse(body)) } catch { /* cut short, or not JSON */ }
+  const m = /"message"\s*:\s*"((?:[^"\\]|\\.){1,400})"/.exec(body)
+  if (!m) return null
+  try { return JSON.parse(`"${m[1]}"`) as string } catch { return m[1] }
+}
+
+/** P3.9 round 3 (J2): a failure's reason as one plain line: a JSON error
+ *  body replaced by the message it carries (never the JSON itself), control
+ *  characters and runs of space collapsed, no closing full stop (the
+ *  sentence around it adds one), and cut at a word, said so, past
+ *  ENVELOPE_REASON_MAX characters. Exported for the test. */
+export function plainErrorReason(text: string): string {
+  let t = String(text).replace(CONTROL_CHARS, ' ')
+  const brace = t.indexOf('{')
+  if (brace >= 0) {
+    const message = jsonErrorMessage(t.slice(brace))
+    const lead = t.slice(0, brace).replace(/[\s:]+$/, '')
+    t = message ? (lead ? `${lead}: ${message}` : message) : lead
+  }
+  t = t.replace(/\s+/g, ' ').trim().replace(/[\s.]+$/, '')
+  if (t.length > ENVELOPE_REASON_MAX) {
+    const cut = t.slice(0, ENVELOPE_REASON_MAX)
+    t = `${cut.replace(/\s+\S*$/, '').replace(/[\s.,;:]+$/, '') || cut} (cut short)`
+  }
+  return t
 }
 
 // Graceful-degrade copy for a failed AI pass. The deterministic backstop runs
@@ -299,7 +344,7 @@ export async function runAnalysis(opts: {
   subject?: SentinelProvider
   /** Where fence markers come from (the test; default analysisNonce). */
   nonce?: () => string
-}): Promise<{ ok: true; findings: SentinelFinding[] } | { ok: false; error: string }> {
+}): Promise<{ ok: true; findings: SentinelFinding[]; unverified: number } | { ok: false; error: string }> {
   const subject = opts.subject ?? 'claude'
   const prompt = buildAnalysisPrompt(opts.changelog, subject, opts.nonce ?? analysisNonce)
   if (prompt === null) return { ok: false, error: ANALYSIS_UNFENCED }
@@ -310,8 +355,8 @@ export async function runAnalysis(opts: {
     const res = await opts.runner(args, 180000, prompt)          // 3-minute cap
     lastStderr = res.stderr
     if (res.code === 0) {
-      const findings = parseAnalysisOutput(res.stdout, opts.from, opts.to, subject, opts.changelog)
-      if (findings) return { ok: true, findings }
+      const reply = parseAnalysisReply(res.stdout, opts.from, opts.to, subject, opts.changelog)
+      if (reply) return { ok: true, findings: reply.findings, unverified: reply.unverified }
       lastEnvErr = null                              // ran, but output unparseable: not an API error
     } else {
       lastEnvErr = envelopeError(res.stdout)

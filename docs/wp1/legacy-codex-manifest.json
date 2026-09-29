@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-29T18:49:07.174Z",
-  "head": "1f01066773de20e786b0aeaa649369cc06ee7684",
-  "tree": "cc3443379c2382541627266bf53ef27b10f74ed9",
+  "generatedAt": "2026-09-29T20:07:59.329Z",
+  "head": "84fd2d030012c3695a147e8cb8c05585da25e55a",
+  "tree": "04094c72e50b8474628026c226da8913b9dc5cfb",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2507,
+  "trackedFileCount": 2509,
   "excludedFileCount": 384,
-  "scannedFileCount": 2123,
+  "scannedFileCount": 2125,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 561,
-  "pathDigest": "cfaa526da5fff7efa61de9bacdc1aa7ee85056a0b2cb317e99b522b65ef6308c",
+  "matchedPathCount": 562,
+  "pathDigest": "c0e036e0e920285a69fa4a3e94b0da99cbd71b0b00a1086feeaca9ed79a5dafc",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -636,7 +636,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 128
+      "lineCount": 149
     },
     {
       "path": "src/main/providers/codex/conversation-carry.ts",
@@ -887,7 +887,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 101
+      "lineCount": 102
     },
     {
       "path": "src/main/sentinel/sentinel-analysis.ts",
@@ -3081,7 +3081,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 126
+      "lineCount": 128
     },
     {
       "path": "tests/unit/main/service-status-providers.test.ts",
@@ -3269,6 +3269,14 @@
         "P13"
       ],
       "lineCount": 1
+    },
+    {
+      "path": "tests/unit/providers/codex/analysis-features.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 5
     },
     {
       "path": "tests/unit/providers/codex/app-server-client.test.ts",
@@ -4454,7 +4462,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 37
+      "lineCount": 51
     },
     {
       "path": "tests/unit/sentinel-codex-changelog.test.ts",

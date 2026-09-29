@@ -12,7 +12,7 @@ import { deployClaudeStatuslineScript, deployClaudeResumePickerScript } from './
 import { watchClaudeStatuslineFile, listClaudeResumableSessions } from './telemetry'
 import {
   claudeAuthorityEnvVariables, CLAUDE_MIN_MANAGED_CLI_VERSION,
-  sanitizeClaudeManagedSettings, claudeAuthoritySettingsKeys, claudeManagedLaunchPreflight,
+  sanitizeClaudeManagedSettings, claudeAuthoritySettingsKeys, claudeManagedLaunchPreflight, claudeTransportSettingsEnv,
 } from './managed-launch'
 import { createClaudeLegacyAccountsPort } from './legacy-store'
 import type { ClaudeLegacyAccountsIo } from './legacy-store'
@@ -28,7 +28,7 @@ export {
   CLAUDE_REMOVED_SETTINGS_KEYS, CLAUDE_MIN_MANAGED_CLI_VERSION,
   isClaudeAuthorityEnvVariable, sanitizeClaudeManagedSettings, claudeAuthoritySettingsKeys,
   claudeAuthorityFamilyRules,
-  claudeManagedCliCompatibility, claudeManagedLaunchPreflight,
+  claudeManagedCliCompatibility, claudeManagedLaunchPreflight, claudeTransportSettingsEnv,
 } from './managed-launch'
 export type { AuthorityKind, AuthorityEntry } from './managed-launch'
 
@@ -214,6 +214,7 @@ export function createClaudePackage(deps: ClaudePackageDeps = {}): ProviderPacka
       sanitizeManagedSettings: sanitizeClaudeManagedSettings,
       authoritySettingsKeys: claudeAuthoritySettingsKeys,
       preflight: claudeManagedLaunchPreflight,
+      transportSettingsEnv: claudeTransportSettingsEnv,
     },
     ...(deps.legacyAccountsIo ? { legacyAccounts: createClaudeLegacyAccountsPort(deps.legacyAccountsIo) } : {}),
     // A reviewer for Codex sessions: discovery, a review-only launch in the

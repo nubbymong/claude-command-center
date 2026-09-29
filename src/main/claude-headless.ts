@@ -85,10 +85,16 @@ export function assertSafeArgv(args: string[]): void {
 export interface HeadlessSpawnOptions {
   cwd?: string
   env?: Readonly<Record<string, string>>
+  /** P3.9 round 3: network settings (proxies, certificates) from the
+   *  account's settings file, for a run that loads no settings file. Upper-
+   *  case names; values with no NUL, CR or LF, at most 4096 characters. Set
+   *  after the account's environment and before `env`. */
+  transportEnv?: Readonly<Record<string, string>>
 }
 
 const HEADLESS_ENV_NAME = /^CLAUDE_CODE_[A-Z0-9_]+$/
 const HEADLESS_ENV_VALUE = /^[A-Za-z0-9._-]{0,64}$/
+const TRANSPORT_ENV_NAME = /^[A-Z][A-Z0-9_]{0,63}$/
 
 /** Throws on options a headless run never takes (a programming error, as
  *  assertSafeArgv's are): a relative folder, or a variable that is not one
@@ -100,6 +106,11 @@ export function assertHeadlessOptions(opts: HeadlessSpawnOptions): void {
   for (const [k, v] of Object.entries(opts.env ?? {})) {
     if (!HEADLESS_ENV_NAME.test(k) || typeof v !== 'string' || !HEADLESS_ENV_VALUE.test(v)) {
       throw new Error(`[claude-headless] environment variable ${JSON.stringify(k)} is not one a headless run takes`)
+    }
+  }
+  for (const [k, v] of Object.entries(opts.transportEnv ?? {})) {
+    if (!TRANSPORT_ENV_NAME.test(k) || typeof v !== 'string' || v.length > 4096 || /[\0\r\n]/.test(v)) {
+      throw new Error(`[claude-headless] transport variable ${JSON.stringify(k)} is not one a headless run takes`)
     }
   }
 }
@@ -156,7 +167,7 @@ export function spawnClaudeHeadless(
   // deferral shape as the refresh wait, for the same single-subprocess reason.
   const profileId = profileIdFromHome(home)
   const cwd = opts.cwd ?? process.cwd()
-  const extraEnv = { ...(opts.env ?? {}) }
+  const extraEnv = { ...(opts.transportEnv ?? {}), ...(opts.env ?? {}) }
   const release = profileId ? acquireProfileConsumer(profileId, { maxAgeMs: timeoutMs + HEADLESS_CONSUMER_GRACE_MS }) : null
   const pending = profileId ? pendingProfileRefresh(profileId) : null
   const cachedGate = profileId ? peekGateVerdict(cwd) : null

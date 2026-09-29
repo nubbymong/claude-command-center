@@ -104,7 +104,7 @@ vi.mock('../../../src/main/provider-accounts', () => ({
 }))
 vi.mock('../../../src/main/providers/core', async (orig) => ({
   ...(await orig<typeof import('../../../src/main/providers/core')>()),
-  tryGetProviderPackage: (id: string) => id !== 'codex' ? null : {
+  tryGetProviderPackage: (id: string) => id === 'claude' ? (transport.pick ? { id, managedLaunch: { transportSettingsEnv: (raw: string) => transport.pick!(raw) } } : null) : id !== 'codex' ? null : {
     id, displayName: 'Codex',
     setup: { supportedVersions: { minimum: '0.153.4', maximumTested: '0.156.1' } },
     review: {
@@ -125,16 +125,20 @@ vi.mock('../../../src/main/config-manager', () => ({
 vi.mock('../../../src/main/account-profiles', () => ({
   resolveHeadlessProfileHome: () => ({ home: null, profileId: null }),
   listProfiles: () => [],
+  // Round 3: the default account's Claude folder is this suite's own.
+  sharedRoot: () => path.join(dir, 'shared-claude'),
 }))
 /** Round 2: where each Claude analysis ran, as it started. */
-const claudeRuns: Array<{ cwd: string; listing: string[]; env: Record<string, string> | undefined }> = []
+const claudeRuns: Array<{ cwd: string; listing: string[]; env: Record<string, string> | undefined; transportEnv?: Record<string, string> }> = []
+/** Round 3: the Claude package's transport picker (none unless a case sets it). */
+const transport = vi.hoisted(() => ({ pick: null as null | ((raw: string) => Record<string, string>) }))
 const versionThrows = vi.hoisted(() => ({ on: false }))
-const spawnClaudeHeadless = vi.fn(async (args: string[], _t?: number, _stdin?: string, _home?: string | null, _signal?: AbortSignal, opts?: { cwd?: string; env?: Record<string, string> }) => {
+const spawnClaudeHeadless = vi.fn(async (args: string[], _t?: number, _stdin?: string, _home?: string | null, _signal?: AbortSignal, opts?: { cwd?: string; env?: Record<string, string>; transportEnv?: Record<string, string> }) => {
   if (args[0] === '--version') {
     if (versionThrows.on) throw new Error('the version check broke')
     return { code: 0, stdout: '2.1.300 (Claude Code)', stderr: '' }
   }
-  if (opts?.cwd) claudeRuns.push({ cwd: opts.cwd, listing: fs.readdirSync(opts.cwd), env: opts.env })
+  if (opts?.cwd) claudeRuns.push({ cwd: opts.cwd, listing: fs.readdirSync(opts.cwd), env: opts.env, transportEnv: opts.transportEnv })
   return { code: 0, stdout: JSON.stringify({ type: 'result', result: JSON.stringify({ breakingChanges: [] }) }), stderr: '' }
 })
 vi.mock('../../../src/main/claude-headless', () => ({ spawnClaudeHeadless: (...a: unknown[]) => spawnClaudeHeadless(...(a as [string[], number, string])) }))
@@ -175,6 +179,7 @@ beforeEach(() => {
   settings.value = null
   spawnClaudeHeadless.mockClear()
   claudeRuns.length = 0
+  transport.pick = null
   versionThrows.on = false
   fsHooks.beforeMkdtemp = null
   fetchChangelog.mockClear()
@@ -346,13 +351,28 @@ describe("the analysis of a Codex update, on the provider that is on (row 42; OD
     expect(f).toMatchObject({ provider: 'codex', surface: 3, severity: 'high' })
   })
 
-  it('a finding that does not quote the notes sent is dropped', async () => {
+  it('a finding that does not quote the notes sent is dropped; round 3: the version is then not checked, and the panel says why', async () => {
     svc.pref.claude = 'off'
     review.answer = () => reply('{"tokens":{"refresh_token":"FAKE"}}')
     const s = await sentinel({ lastSeenCodexVersion: '0.153.4' })
     await s.sentinelStartupCheck()
     expect(ids(s).some((i) => i.startsWith('codex-update:'))).toBe(false)
-    expect(s.getSentinelState()!.snapshot().lastSeenCodexVersion).toBe('0.155.1')
+    const snap = s.getSentinelState()!.snapshot()
+    expect(snap.lastSeenCodexVersion).toBe('0.153.4')
+    expect(snap.lastAnalysisError).toBe('One finding from the analysis of Codex 0.155.1 could not be matched to its release notes, so it is not shown and the update will be analysed again at the next check.')
+  })
+
+  it("round 3: the analysis account's network settings (proxy, certificates) reach the Claude run; nothing else of its settings file", async () => {
+    transport.pick = (raw: string) => {
+      const env = (JSON.parse(raw) as { env: Record<string, string> }).env
+      return { HTTPS_PROXY: env.HTTPS_PROXY, NODE_EXTRA_CA_CERTS: env.NODE_EXTRA_CA_CERTS }
+    }
+    fs.mkdirSync(path.join(dir, 'shared-claude'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'shared-claude', 'settings.json'), JSON.stringify({ env: { HTTPS_PROXY: 'http://proxy.example:8080', NODE_EXTRA_CA_CERTS: '/etc/ca.pem', ANTHROPIC_API_KEY: 'x' } }))
+    const s = await sentinel({ lastSeenCcVersion: '2.1.300', lastSeenCodexVersion: '0.153.4' })
+    await s.sentinelStartupCheck()
+    expect(claudeRuns).toHaveLength(1)
+    expect(claudeRuns[0].transportEnv).toEqual({ HTTPS_PROXY: 'http://proxy.example:8080', NODE_EXTRA_CA_CERTS: '/etc/ca.pem' })
   })
 
   it('Codex only: the Codex update runs on Codex and no Claude process starts at all', async () => {

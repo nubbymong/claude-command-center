@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { buildAnalysisPrompt, parseAnalysisOutput, runAnalysis, analysisFailureMessage, envelopeError, CLAUDE_ANALYSIS_ARGS, CLAUDE_ANALYSIS_ENV, CLAUDE_ANALYSIS_DENIED_TOOLS, ANALYSIS_MARK_TRIES, ANALYSIS_UNFENCED, FINDING_TITLE_MAX, FINDING_WHAT_BREAKS_MAX, analysisNonce, evidenceIsQuoted } from '../../src/main/sentinel/sentinel-analysis'
 import { QUOTE_MIN_CHARS, normaliseQuoteText, dropTokenRuns, analysisFindingKey } from '../../src/main/sentinel/sentinel-quote'
+import { plainErrorReason } from '../../src/main/sentinel/sentinel-analysis'
 import { assertSafeArgv, assertHeadlessOptions } from '../../src/main/claude-headless'
 
 /** The real shape claude -p prints on a 429 (captured from CC 2.1.239, #430). */
@@ -323,7 +324,7 @@ describe('the analysis, round 2', () => {
   const ACCT = 'acct-FAKE-0000-1111'
 
   it('the Claude Code argv: an empty tool list and no settings sources, each one argument that survives the shell; the names denied as well', () => {
-    expect([...CLAUDE_ANALYSIS_ARGS]).toEqual(['-p', '--model', 'sonnet', '--output-format', 'json', '--strict-mcp-config', '--setting-sources=', '--tools=', '--disallowedTools', CLAUDE_ANALYSIS_DENIED_TOOLS])
+    expect([...CLAUDE_ANALYSIS_ARGS]).toEqual(['-p', '--model', 'sonnet', '--output-format', 'json', '--no-session-persistence', '--strict-mcp-config', '--setting-sources=', '--tools=', '--disallowedTools', CLAUDE_ANALYSIS_DENIED_TOOLS])
     // The only tools argument is the empty list; nothing allows a tool back.
     expect(CLAUDE_ANALYSIS_ARGS.filter((a) => a.startsWith('--tools'))).toEqual(['--tools='])
     expect(CLAUDE_ANALYSIS_ARGS.some((a) => /^--allowed-?tools/i.test(a))).toBe(false)
@@ -407,5 +408,110 @@ describe('the analysis, round 2', () => {
     const r = await runAnalysis({ runner: async () => { ran = true; return { code: 0, stdout: '{"breakingChanges":[]}', stderr: '' } }, changelog: 'holds abcabcabcabcabca', from: 'a', to: 'b', nonce: always })
     expect(r).toEqual({ ok: false, error: ANALYSIS_UNFENCED })
     expect(ran).toBe(false)
+  })
+})
+
+// P3.9 round 3. A title or what-breaks line keeps no credential shape, whole
+// or taken apart, and every name (a defence in depth, behind the empty tool
+// list); the quote check reads past markdown and typographic quotes, takes a
+// whole line however short and an elided line, and says how many findings it
+// could not match; an old finding keys as a new one; a failure reads as one
+// plain line.
+describe('the analysis, round 3', () => {
+  const NOTES = '## 2.1.0\n- Removed the `--sandbox` flag from `codex exec`; use `--permissions` instead.\n- Removed `-q`\n- Fixed a bug where the OAuth token: refresh failed on Windows after sleep\n- Renamed CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC to CLAUDE_CODE_OFFLINE\n'
+  const LINE = '- Removed the `--sandbox` flag from `codex exec`; use `--permissions` instead.'
+  const OPAQUE = 'v1.FAKEopaqueRefreshToken0123456789abcdefFAKEopaque0123456789'
+  const g = (s: string, n: number, sep: string) => (s.match(new RegExp(`.{1,${n}}`, 'g')) ?? []).join(sep)
+  const item = (o: Record<string, string>) => ({ title: 'Sandbox flag removed', evidence: LINE, surface: 1, whatBreaks: 'Codex sessions will not start.', ...o })
+  const reply = (...items: object[]) => JSON.stringify({ breakingChanges: items })
+  const lsq = String.fromCharCode(0x2018)
+  const rsq = String.fromCharCode(0x2019)
+  const ell = String.fromCharCode(0x2026)
+
+  it('L1: credential shapes taken apart or not become [removed] (R3E1)', () => {
+    const shapes: Record<string, string> = {
+      groups8space: g(OPAQUE, 8, ' '),
+      groups4comma: g('0123456789abcdef0123456789abcdef', 4, ','),
+      groups3dash: g(OPAQUE.replace(/\./g, ''), 3, '-'),
+      groups3space: g(OPAQUE.replace(/\./g, ''), 3, ' '),
+      email: 'owner.name@example.com',
+      uuidLower: '1b4e28ba-2fa1-11d2-883f-0016d3cca427',
+      splitSk: 'sk-ant- oat01- FAKEFAKE FAKEFAKE 0000',
+      ghp: 'ghp_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE0000',
+      akia: 'AKIAFAKEFAKEFAKE0000',
+    }
+    for (const [name, shape] of Object.entries(shapes)) {
+      const out = dropTokenRuns(`Before ${shape} after`)
+      // The prose around it stays; no six characters of the shape in a row survive, separators aside.
+      expect(out.startsWith('Before ') && out.endsWith(' after') && out.includes('[removed]'), `${name}: ${out}`).toBe(true)
+      const squeeze = (x: string) => x.replace(/[\s.,:;|_-]/g, '')
+      const kept = squeeze(out)
+      const sq = squeeze(shape)
+      for (let i = 0; i + 6 <= sq.length; i++) expect(kept.includes(sq.slice(i, i + 6)), `${name}: ${out}`).toBe(false)
+    }
+  })
+
+  it('L1: names are kept: UPPER_SNAKE variables, flags, lowercase model and package names, paths, versions, dates', () => {
+    for (const t of [
+      'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC renamed',
+      'ANTHROPIC_DEFAULT_SONNET_MODEL_20250929 renamed',
+      '--max-thinking-tokens-2048-for-the-plan-mode removed',
+      '--dangerously-bypass-approvals-and-sandbox renamed',
+      'gpt-5.1-codex-max removed',
+      'OAuth2 refresh broken',
+      'Codex 0.155.1 removes the --sandbox flag; gpt-5.5 sessions will not start (see rust-v0.155.1)',
+      'The statusLine hook now reads ~/.claude/settings.json and /usr/local/bin/claude',
+      'Sessions using the new API version 2023-06-01 fail',
+      'The rollout JSONL files under CODEX_HOME/sessions moved',
+      'Windows 11 x64 builds of Claude Code 2.1.284 changed the TUI',
+    ]) expect(dropTokenRuns(t), t).toBe(t)
+  })
+
+  it('L2: the quote check reads past backticks, typographic quotes and an ellipsis within one line, and takes a whole short line (R3Q1)', () => {
+    expect(evidenceIsQuoted('- Removed `-q`', NOTES)).toBe(true)
+    expect(evidenceIsQuoted('Removed -q', NOTES)).toBe(true)
+    expect(evidenceIsQuoted('Removed the --sandbox flag from codex exec; use --permissions instead.', NOTES)).toBe(true)
+    expect(evidenceIsQuoted(`Removed the ${lsq}--sandbox${rsq} flag from codex exec`, NOTES)).toBe(false)
+    expect(evidenceIsQuoted(`Removed the '--sandbox' flag from codex exec`, 'x Removed the \'--sandbox\' flag from codex exec y')).toBe(true)
+    expect(evidenceIsQuoted(`Removed the ${lsq}--sandbox${rsq} flag from codex exec`, 'x Removed the \'--sandbox\' flag from codex exec y')).toBe(true)
+    expect(evidenceIsQuoted(`Removed the \`--sandbox\` flag ${ell} use \`--permissions\` instead.`, NOTES)).toBe(true)
+    expect(evidenceIsQuoted('Removed the `--sandbox` flag ... use `--permissions` instead.', NOTES)).toBe(true)
+    // Not a passage: pieces of two lines, out of order, pieces too short, or a short piece that is no whole line.
+    expect(evidenceIsQuoted('- Removed `-q`\n- Renamed CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC to CLAUDE_CODE_OFFLINE', NOTES)).toBe(false)
+    expect(evidenceIsQuoted('use --permissions instead ... Removed the --sandbox flag', NOTES)).toBe(false)
+    expect(evidenceIsQuoted('Removed ... flag ... instead', NOTES)).toBe(false)
+    expect(evidenceIsQuoted('Removed the', NOTES)).toBe(false)
+    expect(evidenceIsQuoted(OPAQUE.split('').join('\n'), NOTES)).toBe(false)
+  })
+
+  it('L2: the findings that could not be matched are counted', async () => {
+    const r = await runAnalysis({ runner: async () => ({ code: 0, stdout: reply(item({}), item({ evidence: 'Something the notes never said at all.' })), stderr: '' }), changelog: NOTES, from: '2.0.0', to: '2.1.0' })
+    expect(r.ok && r.findings.length).toBe(1)
+    expect(r.ok && r.unverified).toBe(1)
+    const all = await runAnalysis({ runner: async () => ({ code: 0, stdout: reply(item({})), stderr: '' }), changelog: NOTES, from: '2.0.0', to: '2.1.0' })
+    expect(all.ok && all.unverified).toBe(0)
+  })
+
+  it('L3: a finding stored with its raw quote keys as one stored redacted (R3D1); the id is a hash of the quote only', () => {
+    const tokenLine = '- Fixed a bug where the token sk-ant-api03-FAKEFAKEFAKEFAKEFAKEFAKE0000 refresh failed'
+    const notes = `## 2.1.0\n${tokenLine}\n`
+    const fresh = parseAnalysisOutput(reply(item({ evidence: tokenLine })), '2.0.0', '2.1.0', 'claude', notes)![0]
+    expect(fresh.evidence).not.toContain('FAKEFAKEFAKE')
+    expect(analysisFindingKey({ id: 'cc:2.1.0:0', evidence: tokenLine })).toBe(analysisFindingKey(fresh))
+    expect(fresh.id).toMatch(/^cc:2\.1\.0:[0-9a-f]{12}$/)
+    expect(fresh.id).not.toContain('sk-')
+  })
+
+  it('J2: a failure reads as one plain line: the JSON body becomes its message, no double full stop, cut at a word', () => {
+    const vm = 'Codex exited with code 1: unexpected status 400 Bad Request: {"error":{"message":"The model is not supported.","type":"invalid_request_error","param":null}}.'
+    expect(plainErrorReason(vm)).toBe('Codex exited with code 1: unexpected status 400 Bad Request: The model is not supported')
+    const msg = analysisFailureMessage('', envelopeError(JSON.stringify({ is_error: true, result: vm })))
+    expect(msg).not.toContain('{')
+    expect(msg).not.toContain('..')
+    expect(plainErrorReason('Codex exited with code 1: {"error":{"message":"cut')).toBe('Codex exited with code 1')
+    const long = plainErrorReason('word '.repeat(60))
+    expect(long.endsWith(' (cut short)')).toBe(true)
+    expect(long.length).toBeLessThan(200)
+    expect(plainErrorReason('API Error: 400 capture server said no.')).toBe('API Error: 400 capture server said no')
   })
 })

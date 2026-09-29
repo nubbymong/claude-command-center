@@ -296,6 +296,35 @@ export function sanitizeClaudeManagedSettings(raw: string): SanitizedManagedSett
   }
 }
 
+/** The longest value a transport variable is taken with. */
+const TRANSPORT_VALUE_MAX = 4096
+
+/**
+ * P3.9 round 3: the transport variables (proxies, certificates, TLS) a
+ * settings file's `env` block sets, as the manifest classifies them
+ * (`kind: 'transport'`, `settingsEnv: 'keep'`), for a headless run that
+ * loads no settings file (Sentinel's analysis) yet must reach the API the
+ * way the account's sessions do. Matched case-insensitively and returned
+ * under the manifest's own spelling; a value that is not a string, is longer
+ * than TRANSPORT_VALUE_MAX or holds a NUL, CR or LF is left out. A file that
+ * is not a JSON object gives none. Pure.
+ */
+export function claudeTransportSettingsEnv(raw: string): Readonly<Record<string, string>> {
+  const out: Record<string, string> = {}
+  let parsed: unknown
+  try { parsed = JSON.parse(stripLeadingBom(String(raw))) } catch { return out }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return out
+  const env = (parsed as Record<string, unknown>).env
+  if (!env || typeof env !== 'object' || Array.isArray(env)) return out
+  for (const [key, value] of Object.entries(env as Record<string, unknown>)) {
+    const entry = authorityEntryFor(key)
+    if (!entry || entry.kind !== 'transport' || entry.settingsEnv !== 'keep') continue
+    if (typeof value !== 'string' || value.length > TRANSPORT_VALUE_MAX || /[\0\r\n]/.test(value)) continue
+    out[entry.name] = value
+  }
+  return out
+}
+
 /**
  * The authority-bearing keys a settings payload CONTAINS -- read-only, and
  * WITHOUT producing a sanitised copy.

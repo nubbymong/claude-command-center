@@ -395,9 +395,13 @@ describe('the text-only analysis against the fake Codex CLI (real processes; P3.
     fs.mkdirSync(folder, { recursive: true })
     const helperPid = path.join(dir, 'helper.pid')
     try { fs.unlinkSync(helperPid) } catch { /* none yet */ }
-    // On Windows the run lasts past the early read of its chain (the only
-    // table that can name a helper whose parent has gone).
-    const exitMs = IS_WIN ? CODEX_TREE_PRIME_MS + 3000 : 300
+    // Round 3: codex exits within a second. On POSIX the read at its first
+    // output (the helper already started) proves the helper the run's. On
+    // Windows the process table is read through PowerShell, which takes
+    // about a second to answer, so this run lasts past that read; how
+    // often a real sub-second failure is caught there is the VM's to
+    // measure (the reads start at the spawn and at the first output).
+    const exitMs = IS_WIN ? CODEX_TREE_PRIME_MS + 1000 : 800
     const started = Date.now()
     const r = await createCodexReviewOperations().run({ executable: exe, env: { ...env(), FAKE_ANALYSIS: 'early', FAKE_EXIT_MS: String(exitMs) }, cwd: folder, prompt: 'notes', timeoutMs: 120_000, purpose: 'analysis' })
     const took = Date.now() - started

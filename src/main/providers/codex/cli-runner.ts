@@ -72,11 +72,15 @@ const ARGS: Readonly<Record<CodexCliOperation, readonly string[]>> = {
   // project's files). Every key is in both supported CLIs (their feature
   // lists and config keys); an unknown one makes the run fail, which fails
   // closed. No -m (round 2): Codex runs its own default model for the
-  // account, as the list that CLI offers names it.
+  // account, as the list that CLI offers names it. Round 3: code_mode and
+  // code_mode_host too (both CLIs' feature lists name them; code_mode_host is
+  // on by default); js_repl and apply_patch_freeform are listed as removed
+  // (off) in both, so they are not named.
   'analysis': [
     'exec', '--json', '--ephemeral', '--skip-git-repo-check', '--ignore-user-config', '--ignore-rules', '--sandbox', 'read-only',
     '--disable', 'shell_tool', '--disable', 'unified_exec', '--disable', 'apps', '--disable', 'plugins', '--disable', 'browser_use',
     '--disable', 'computer_use', '--disable', 'image_generation', '--disable', 'view_image', '--disable', 'multi_agent', '--disable', 'hooks',
+    '--disable', 'code_mode', '--disable', 'code_mode_host',
     '-c', 'web_search=disabled', '-c', 'project_doc_max_bytes=0', '-c', 'project_root_markers=[]', '-',
   ],
 }
@@ -239,8 +243,13 @@ export interface CodexRunOptions {
  *  one, and one whose own read fails still has an earlier table. */
 export type CodexKillTree = ((child: ChildProcess, opts?: { scope?: CodexKillScope }) => Promise<void> | void) & {
   prime?: (child: ChildProcess) => void
-  /** P3.9 round 2: after the root has exited, ends what is provably left of
-   *  the run (see makeCodexKillTree). Never rejects. */
+  /** P3.9 round 3: reads the process table now (bounded, see
+   *  makeCodexKillTree) and records which processes it proves are the
+   *  run's. `since`: when the run's root was started. */
+  observe?: (child: ChildProcess, since: number) => void
+  /** P3.9 round 2, round 3: after the root has exited, ends what the
+   *  records prove is left of the run (see makeCodexKillTree). Never
+   *  rejects. */
   leftovers?: (child: ChildProcess, window: CodexRunWindow) => Promise<void>
 }
 
@@ -354,11 +363,20 @@ export function parseLinuxStat(text: string): CodexProcessEntry | null {
   return { pid, ppid, name: text.slice(open + 1, close), ...(Number.isFinite(created) ? { created } : {}) }
 }
 
-/** `ps -o pid= -o ppid= -o comm=` lines; macOS prints the image path, which
- *  may hold spaces. Exported for the test. */
+/** `ps -o pid= -o ppid= -o lstart= -o comm=` lines; macOS prints the image
+ *  path, which may hold spaces. Round 3: `lstart` (the C locale's
+ *  "Tue Sep 29 17:33:53 2026", to the second) is the start time a run's
+ *  records need; a row without one is read as before, with none.
+ *  Exported for the test. */
 export function parsePosixProcessTable(text: string): CodexProcessEntry[] {
   const out: CodexProcessEntry[] = []
   for (const line of String(text).split(/\r?\n/)) {
+    const t = /^\s*(\d+)\s+(\d+)\s+([A-Z][a-z]{2} [A-Z][a-z]{2} [ \d]\d \d{2}:\d{2}:\d{2} \d{4})\s+(.+?)\s*$/.exec(line)
+    if (t) {
+      const created = Date.parse(t[3])
+      out.push({ pid: Number(t[1]), ppid: Number(t[2]), name: t[4], ...(Number.isFinite(created) ? { created } : {}) })
+      continue
+    }
     const m = /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line)
     if (m) out.push({ pid: Number(m[1]), ppid: Number(m[2]), name: m[3] })
   }
@@ -417,7 +435,7 @@ export function makeCodexProcessLister(
     return async () => readProc()
   }
   const ps = ['/bin/ps', '/usr/bin/ps'].find(exists)
-  return ps ? read(ps, ['-ww', '-A', '-o', 'pid=', '-o', 'ppid=', '-o', 'comm='], { cwd: '/', env: { PATH: '/usr/bin:/bin', LC_ALL: 'C' } }, parsePosixProcessTable) : null
+  return ps ? read(ps, ['-ww', '-A', '-o', 'pid=', '-o', 'ppid=', '-o', 'lstart=', '-o', 'comm='], { cwd: '/', env: { PATH: '/usr/bin:/bin', LC_ALL: 'C' } }, parsePosixProcessTable) : null
 }
 
 /** Room past the kill's phases for a taskkill ended by its own timeout,
@@ -532,6 +550,9 @@ export function makeCodexKillTree(
   // when the read began.
   type Primed = { done: Promise<void>; started: number; table?: CodexProcessEntry[] | null }
   const primed = new WeakMap<ChildProcess, Primed>()
+  // Round 3: what the reads taken while an observed run ran proved is its.
+  type Observed = { since: number; members: Map<string, CodexRunMember>; reads: number; inFlight: Set<Promise<void>> }
+  const observed = new WeakMap<ChildProcess, Observed>()
   /** A table and when the read that gave it began. */
   type Answer = { table: CodexProcessEntry[]; started: number }
   const bounded = <T>(p: Promise<T>, ms: number): Promise<T | null> => new Promise((resolve) => {
@@ -632,34 +653,58 @@ export function makeCodexKillTree(
     let answer: Promise<CodexProcessEntry[]>
     try { answer = primeListProcesses() } catch { answer = Promise.reject(new Error('no table')) }
     entry.done = Promise.resolve(answer).then(
-      (table) => { entry.table = Array.isArray(table) ? table : null },
+      (table) => {
+        entry.table = Array.isArray(table) ? table : null
+        // Round 3: a run that is being observed learns from this read too.
+        const rec = observed.get(child)
+        if (rec && entry.table) codexRecordRunMembers(pid, entry.table, { started: entry.started, since: rec.since, filetime: platform === 'win32' }, rec.members)
+      },
       () => { entry.table = null },
     )
     primed.set(child, entry)
+  }
+  kill.observe = (child, since) => {
+    const pid = child.pid
+    if (!listProcesses || !pid || !running(child) || !Number.isFinite(since)) return
+    let rec = observed.get(child)
+    if (!rec) { rec = { since, members: new Map(), reads: 0, inFlight: new Set() }; observed.set(child, rec) }
+    if (rec.reads >= CODEX_OBSERVE_MAX_READS || rec.inFlight.size >= CODEX_OBSERVE_MAX_IN_FLIGHT) return
+    rec.reads++
+    const r = rec
+    const reading = read(listProcesses, CODEX_PROCESS_TABLE_TIMEOUT_MS).then((a) => {
+      if (a) codexRecordRunMembers(pid, a.table, { started: a.started, since: r.since, filetime: platform === 'win32' }, r.members)
+    }, () => undefined)
+    r.inFlight.add(reading)
+    void reading.finally(() => { r.inFlight.delete(reading) })
   }
   kill.leftovers = async (child, window) => {
     try {
       const pid = child.pid
       // Only once the root has exited; a running root is stopped by kill().
       if (!pid || running(child)) return
+      const rec = observed.get(child)
+      // A read already under way may be the one that saw the run's helpers.
+      if (rec && rec.inFlight.size) await bounded(Promise.all([...rec.inFlight]), CODEX_PROCESS_TABLE_TIMEOUT_MS)
+      const now = await read(listProcesses, CODEX_PROCESS_TABLE_TIMEOUT_MS)
+      if (!now || !rec) return
       if (platform !== 'win32') {
-        // The run led its own process group (detached): what is left of it
-        // is still in that group, and a group id is not reused while any
-        // member lives. Signalled as a group, never by a child's pid.
-        try { killGroup(pid) } catch { /* nothing left */ }
+        // The run led its own process group (detached). The group is
+        // signalled only while a member the records saw is still running
+        // with the start time they saw (round 3): then the group id is still
+        // the run's. Never a child's pid.
+        if (codexRunMemberAlive(rec.members, now.table)) { try { killGroup(pid) } catch { /* nothing left */ } }
         return
       }
       if (!systemRoot || !isWindowsAbsolute(systemRoot)) return
-      const now = await read(listProcesses, CODEX_PROCESS_TABLE_TIMEOUT_MS)
-      if (!now) return
-      const pids = codexLeftoverPids(pid, now.table, primed.get(child)?.table ?? null, window)
+      const pids = codexLeftoverPids(pid, now.table, rec.members, window)
       if (!pids.length) return
       const taskkill = path.win32.join(systemRoot, 'System32', 'taskkill.exe')
       await new Promise<void>((resolve) => {
         let k: ChildProcess
         try {
-          // /T: each pid named is this run's, and so is everything below it.
-          k = spawn(taskkill, ['/F', '/T', ...pids.flatMap((p) => ['/PID', String(p)])], { stdio: 'ignore', windowsHide: true, cwd: systemRoot, timeout: CODEX_TASKKILL_TIMEOUT_MS })
+          // No /T: exactly the pids named, each proved the run's (its
+          // descendants included, by start time, in codexLeftoverPids).
+          k = spawn(taskkill, ['/F', ...pids.flatMap((p) => ['/PID', String(p)])], { stdio: 'ignore', windowsHide: true, cwd: systemRoot, timeout: CODEX_TASKKILL_TIMEOUT_MS })
         } catch {
           resolve()
           return
@@ -674,49 +719,158 @@ export function makeCodexKillTree(
 
 /** Milliseconds between the Windows FILETIME epoch (1601) and the Unix one. */
 const FILETIME_UNIX_OFFSET_MS = 11_644_473_600_000
-/** Clock slack either side of a run's window. */
-const LEFTOVER_WINDOW_SLACK_MS = 1_000
+/** Clock slack before the root's start (the table's and the app's clocks round differently). */
+const ROOT_START_SLACK_MS = 1_000
+/** At most this many observing reads per run, and this many at once. */
+export const CODEX_OBSERVE_MAX_READS = 8
+export const CODEX_OBSERVE_MAX_IN_FLIGHT = 2
+/** When a running exec run is observed, after its start (plus at its start and first output). */
+export const CODEX_OBSERVE_AT_MS: readonly number[] = [1_000, 2_000, 4_000, 8_000, 16_000, 32_000]
 
-/** P3.9 round 2 (Windows): what is provably left of a run whose root has
- *  exited, from a table read now. A process is the run's only when its
- *  parent is the root, or a member of the run's chain that an earlier read
- *  (`primedTable`, taken while the root ran) found, and it was started
- *  inside the run's window: while the root ran, no pid of the run could be
- *  anyone else's. A chain member still running with the start time that
- *  read saw is the run's too. Nothing at all when the root's pid is in use
- *  again. Leaves out the root itself. Exported for the test. */
+/** A process the reads proved is the run's: its pid with its start time (the
+ *  table's own units), its parent, and when a read that began at `lastSeen`
+ *  (Unix ms) last listed it running. */
+export interface CodexRunMember { pid: number; ppid: number; created: number; lastSeen: number }
+
+const memberKey = (pid: number, created: number) => `${pid}:${created}`
+
+/** P3.9 round 3: records, from one table read, the processes it proves are
+ *  the run's. `started` (Unix ms): when the read began; `since`: when the
+ *  root was started. Only rows with a start time count.
+ *  - The root, when its row is its own: on Windows started no earlier than
+ *    `since` (a clock slack aside) and before the read began, which a
+ *    later holder of its pid cannot be (the read begins only while the root
+ *    runs).
+ *  - Everything running below it, each started no earlier than its parent.
+ *  - A process whose parent is a recorded member: when that parent is
+ *    running now with the start time recorded (then its pid is its own),
+ *    started no earlier than it; otherwise, on Windows, only if it started
+ *    while a read saw that parent running (no later than `lastSeen`): its
+ *    parent id was that parent's then, whoever holds the pid now.
+ *  A member is keyed by its pid AND its start time, so a later holder of a
+ *  member's pid is never taken for it.
+ *  `lastSeen`, on Windows: the read captured its table no earlier than it
+ *  began, nor than the newest start time in that table (every process in it
+ *  had started); rows dated after `recordedAt` (the time of this call, the
+ *  read long done) do not count. Exported for the test. */
+export function codexRecordRunMembers(
+  rootPid: number,
+  table: readonly CodexProcessEntry[],
+  read: { started: number; since: number; filetime: boolean; recordedAt?: number },
+  members: Map<string, CodexRunMember>,
+): void {
+  if (!Number.isSafeInteger(rootPid) || rootPid <= 0 || !Number.isFinite(read.started) || !Number.isFinite(read.since)) return
+  const rows = table.filter((e) => e && Number.isSafeInteger(e.pid) && Number.isSafeInteger(e.ppid) && e.pid > 0 && e.pid !== e.ppid && typeof e.created === 'number' && Number.isFinite(e.created))
+  const byPid = new Map<number, CodexProcessEntry>()
+  for (const e of rows) if (!byPid.has(e.pid)) byPid.set(e.pid, e)
+  const unix = (created: number) => created - FILETIME_UNIX_OFFSET_MS
+  const recordedAt = read.recordedAt ?? Date.now()
+  let seenAt = read.started
+  if (read.filetime) for (const e of rows) { const t = unix(e.created!); if (t > seenAt && t <= recordedAt) seenAt = t }
+  const add = (e: CodexProcessEntry): boolean => {
+    const k = memberKey(e.pid, e.created!)
+    const m = members.get(k)
+    if (m) { m.lastSeen = Math.max(m.lastSeen, seenAt); return false }
+    members.set(k, { pid: e.pid, ppid: e.ppid, created: e.created!, lastSeen: seenAt })
+    return true
+  }
+  const isMember = (e: CodexProcessEntry) => members.has(memberKey(e.pid, e.created!))
+  // A member already recorded and running now is seen again.
+  for (const e of rows) if (isMember(e)) add(e)
+  const root = byPid.get(rootPid)
+  const rootOwn = !!root && (!read.filetime || (unix(root.created!) >= read.since - ROOT_START_SLACK_MS && unix(root.created!) <= read.started))
+  const queue: CodexProcessEntry[] = []
+  if (root && rootOwn) { add(root); queue.push(root) }
+  for (let i = 0; i < queue.length; i++) {
+    const parent = queue[i]
+    for (const c of rows) {
+      if (c.ppid !== parent.pid || isMember(c) || c.created! < parent.created!) continue
+      add(c)
+      queue.push(c)
+    }
+  }
+  // Below recorded members, to a fixpoint.
+  for (let changed = true; changed;) {
+    changed = false
+    for (const e of rows) {
+      if (isMember(e)) continue
+      for (const m of members.values()) {
+        if (m.pid !== e.ppid || e.created! < m.created) continue
+        const holder = byPid.get(m.pid)
+        const parentRunning = !!holder && holder.created === m.created
+        if (!parentRunning && !(read.filetime && unix(e.created!) <= m.lastSeen)) continue
+        if (add(e)) changed = true
+        break
+      }
+    }
+  }
+}
+
+/** Whether a member the records saw is running now with the start time
+ *  they saw. Exported for the test. */
+export function codexRunMemberAlive(members: ReadonlyMap<string, CodexRunMember>, table: readonly CodexProcessEntry[]): boolean {
+  for (const e of table) {
+    if (e && typeof e.created === 'number' && members.has(memberKey(e.pid, e.created))) return true
+  }
+  return false
+}
+
+/** P3.9 round 3 (Windows; K1): what is provably left of a run whose root has
+ *  exited, from a table read now and the records the reads taken while it
+ *  ran made. A process is the run's only when:
+ *  - the records list it with the start time it has now; or
+ *  - its parent is the root and it started inside the root's lifetime
+ *    (`window`: the root cannot have handed its pid on before it exited);
+ *  - or its parent is a recorded member that is running now with the start
+ *    time recorded (and it started no earlier), or it started while a read
+ *    saw that member running (whoever holds the member's pid now).
+ *  Never a pid the records list with another start time; nothing at all
+ *  when the root's pid is in use again. Everything running below a process
+ *  it names is named too, by start time. Leaves first; never the root.
+ *  Exported for the test. */
 export function codexLeftoverPids(
   rootPid: number,
   table: readonly CodexProcessEntry[],
-  primedTable: readonly CodexProcessEntry[] | null,
+  members: ReadonlyMap<string, CodexRunMember>,
   window: CodexRunWindow,
 ): number[] {
   if (!Number.isSafeInteger(rootPid) || rootPid <= 0) return []
   if (!Number.isFinite(window.since) || !Number.isFinite(window.until) || window.until < window.since) return []
-  const rows = table.filter((e) => e && Number.isSafeInteger(e.pid) && Number.isSafeInteger(e.ppid) && e.pid > 0 && e.pid !== e.ppid)
+  const rows = table.filter((e) => e && Number.isSafeInteger(e.pid) && Number.isSafeInteger(e.ppid) && e.pid > 0 && e.pid !== e.ppid && typeof e.created === 'number' && Number.isFinite(e.created))
   if (rows.some((e) => e.pid === rootPid)) return []
-  const unix = (e: CodexProcessEntry) => (e.created === undefined ? undefined : e.created - FILETIME_UNIX_OFFSET_MS)
-  const inWindow = (e: CodexProcessEntry) => {
-    const t = unix(e)
-    return t !== undefined && t >= window.since - LEFTOVER_WINDOW_SLACK_MS && t <= window.until + LEFTOVER_WINDOW_SLACK_MS
+  const byPid = new Map<number, CodexProcessEntry>()
+  for (const e of rows) if (!byPid.has(e.pid)) byPid.set(e.pid, e)
+  const unix = (created: number) => created - FILETIME_UNIX_OFFSET_MS
+  const recordedPids = new Set([...members.values()].map((m) => m.pid))
+  const own = (e: CodexProcessEntry): boolean => {
+    if (members.has(memberKey(e.pid, e.created!))) return true
+    if (recordedPids.has(e.pid)) return false
+    const t = unix(e.created!)
+    if (e.ppid === rootPid) return t >= window.since && t <= window.until
+    for (const m of members.values()) {
+      if (m.pid !== e.ppid || e.created! < m.created) continue
+      const holder = byPid.get(m.pid)
+      if (holder && holder.created === m.created) return true
+      // Started while the member was seen running: its pid was the member's
+      // then, whoever holds it now.
+      if (t <= m.lastSeen) return true
+    }
+    return false
   }
-  const parents = new Set<number>([rootPid])
-  const out = new Set<number>()
-  if (primedTable) {
-    const byPid = new Map(primedTable.filter((e) => e && Number.isSafeInteger(e.pid)).map((e) => [e.pid, e]))
-    for (const p of codexChainPids(rootPid, primedTable, 'all')) {
-      if (p === rootPid) continue
-      const then = byPid.get(p)
-      if (!then || !inWindow(then)) continue
-      parents.add(p)
-      const alive = rows.find((e) => e.pid === p)
-      if (alive && alive.created !== undefined && alive.created === then.created) out.add(p)
+  const out: number[] = []
+  const seen = new Set<number>()
+  const queue = rows.filter(own)
+  for (const e of queue) seen.add(e.pid)
+  for (let i = 0; i < queue.length; i++) {
+    const parent = queue[i]
+    for (const c of rows) {
+      if (c.ppid !== parent.pid || seen.has(c.pid) || c.created! < parent.created! || (recordedPids.has(c.pid) && !members.has(memberKey(c.pid, c.created!)))) continue
+      seen.add(c.pid)
+      queue.push(c)
     }
   }
-  for (const e of rows) {
-    if (parents.has(e.ppid) && !parents.has(e.pid) && inWindow(e)) out.add(e.pid)
-  }
-  return [...out]
+  for (const e of queue) out.push(e.pid)
+  return out.reverse()
 }
 
 export function defaultCodexRunDeps(platform: NodeJS.Platform = process.platform, systemRoot = process.env.SystemRoot): CodexRunDeps {
@@ -770,12 +924,15 @@ export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: Code
     let primeTimer: ReturnType<typeof setTimeout> | null = null
     let exitTimer: ReturnType<typeof setTimeout> | null = null
     let spawnedAt = 0
+    const observeTimers: Array<ReturnType<typeof setTimeout>> = []
+    let heard = false
     const finish = (r: Omit<CodexRunResult, 'stdout' | 'stderr' | 'truncated'>) => {
       if (settled) return
       settled = true
       if (timer) clearTimeout(timer)
       if (primeTimer) clearTimeout(primeTimer)
       if (exitTimer) clearTimeout(exitTimer)
+      for (const t of observeTimers) clearTimeout(t)
       opts.signal?.removeEventListener('abort', onAbort)
       resolve({ ...r, stdout, stderr, truncated })
     }
@@ -857,7 +1014,15 @@ export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: Code
       finish({ exitCode: null, timedOut: false, spawnError: e instanceof Error ? e.message : String(e) })
       return
     }
+    // Round 3: an exec run is observed while it runs -- at its start, at its
+    // first output and on a bounded schedule -- so the reads that prove what
+    // is its exist even when it exits within a second.
+    const observe = () => {
+      if (afterExit === undefined || settled || stopping || exited !== undefined || !child) return
+      try { deps.killTree.observe?.(child, spawnedAt) } catch { /* the leftovers step works from what it has */ }
+    }
     const collect = (stream: 'stdout' | 'stderr') => (chunk: Buffer | string) => {
+      if (!heard) { heard = true; observe() }
       if (settled || stopping) return
       const text = chunk.toString()
       if (opts.onChunk) { try { opts.onChunk(text, stream) } catch { /* a consumer never breaks the run */ } }
@@ -868,6 +1033,14 @@ export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: Code
       if (stream === 'stdout') stdout += kept
       else stderr += kept
       if (kept) { try { opts.onOutput?.(kept, stream) } catch { /* a consumer never breaks the run */ } }
+    }
+    observe()
+    if (afterExit !== undefined && deps.killTree.observe) {
+      for (const at of CODEX_OBSERVE_AT_MS) {
+        const t = setTimeout(observe, at)
+        ;(t as unknown as { unref?: () => void }).unref?.()
+        observeTimers.push(t)
+      }
     }
     child.stdout?.setEncoding?.('utf8')
     child.stderr?.setEncoding?.('utf8')
@@ -881,7 +1054,7 @@ export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: Code
       if (afterExit === undefined || settled || stopping || exitTimer) return
       const c = child!
       const until = Date.now()
-      exitTimer = setTimeout(() => {
+      exitTimer = setTimeout(() => setImmediate(() => {
         exitTimer = null
         if (settled || stopping) return
         stopping = true
@@ -890,7 +1063,7 @@ export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: Code
         let ended: Promise<void>
         try { ended = Promise.resolve(deps.killTree.leftovers?.(c, { since: spawnedAt, until })).then(() => undefined, () => undefined) } catch { ended = Promise.resolve() }
         void settleWithin(ended, CODEX_KILL_SETTLE_MS).then(() => finish({ exitCode: exited ?? null, timedOut: false }))
-      }, afterExit)
+      }), afterExit)
     })
     // While a stop is under way it alone settles the run: a close or an error
     // caused by the kill is not the run's own result.
