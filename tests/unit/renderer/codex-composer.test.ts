@@ -19,6 +19,8 @@ import {
   typeWhenCodexComposerReady,
   CODEX_SUBMIT_DELAY_MS,
   CODEX_READY_POLL_MS,
+  StartupDoneRuns,
+  STARTUP_DONE_MAX,
   type ScreenLine,
   type CodexComposerDeps,
 } from '../../../src/renderer/lib/codexComposer'
@@ -326,7 +328,7 @@ function harness(screen: ScreenLine[] | null) {
     setTimeout: (fn, ms) => { const id = nextId++; timers.push({ fn, at: now + ms, id }); return id },
     clearTimeout: (id) => { timers = timers.filter((t) => t.id !== id) },
     pending: new Set<string>(),
-    startupDone: new Set<string>(),
+    startupDone: new StartupDoneRuns(),
   }
   const advance = (ms: number) => {
     const until = now + ms
@@ -577,5 +579,29 @@ describe('typeWhenCodexComposerReady (Plan mode at launch, L2; round 2, PM1: the
       expect(note).toMatch(/\/permissions/)
     }
     expect(planModeNote('timeout')).not.toBe(planModeNote('interrupted'))
+  })
+})
+
+// P3.8 round 5 (quality): the runs past their start-up are kept one per
+// session (its latest run), a session seen with no live run is let go, and
+// at most STARTUP_DONE_MAX sessions are held (the oldest let go first).
+describe('the runs past their start-up are bounded', () => {
+  it('keeps one run per session, forgets a session whose run ended, and holds at most the bound', () => {
+    const runs = new StartupDoneRuns()
+    runs.add('s1', 'a')
+    runs.add('s1', 'b')
+    expect(runs.has('s1', 'a')).toBe(false)
+    expect(runs.has('s1', 'b')).toBe(true)
+    expect(runs.size).toBe(1)
+    for (let i = 0; i < STARTUP_DONE_MAX + 50; i++) runs.add(`x${i}`, 'k')
+    expect(runs.size).toBe(STARTUP_DONE_MAX)
+    expect(runs.has(`x${STARTUP_DONE_MAX + 49}`, 'k')).toBe(true)
+    expect(runs.has('x0', 'k')).toBe(false)
+    const h = harness(S.WORKING_NOW)
+    typeIntoCodexComposer('s1', '/compact', h.deps) // a turn seen: the run is past its start-up
+    expect(h.deps.startupDone!.size).toBe(1)
+    h.state.run = null
+    typeIntoCodexComposer('s1', '/compact', h.deps) // the run ended
+    expect(h.deps.startupDone!.size).toBe(0)
   })
 })
