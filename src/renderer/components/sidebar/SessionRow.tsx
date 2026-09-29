@@ -61,11 +61,13 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
   const st = toSessionState(session.status, needsAttention)
   const pct = session.contextPercent ?? 0
 
-  // Sleeping (canvas "Session sleep indicator"): Watchdog-only source, Claude
-  // sessions only for now (owner calls, 2026-08-27). Attention outranks the
-  // moon inside isAsleep; the graceTick subscription re-derives when a dismiss
-  // grace window expires without any other store change.
-  const isClaudeSession = !session.shellOnly && (session.provider ?? 'claude') === 'claude'
+  // Sleeping (canvas "Session sleep indicator"): Watchdog-only source, agent
+  // sessions (owner calls, 2026-08-27; P3.10, row 46: a Codex session too,
+  // now that the Watchdog watches it). Attention outranks the moon inside
+  // isAsleep; the graceTick subscription re-derives when a dismiss grace
+  // window expires without any other store change.
+  const provider = session.provider ?? 'claude'
+  const isAgentSession = !session.shellOnly && (provider === 'claude' || provider === 'codex')
   const silentSince = useSleepStore((s) => s.silentSince[session.id])
   const dismissedAt = useSleepStore((s) => s.attentionDismissedAt[session.id])
   useSleepStore((s) => s.graceTick)
@@ -73,16 +75,16 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
   // false before the passive effect stamps the grace, so the prop alone would
   // flash the moon for one frame between those two moments.
   const asleep =
-    isClaudeSession &&
+    isAgentSession &&
     isAsleep({ silentSince, dismissedAt, needsAttention: needsAttention || session.needsAttention === true, now: Date.now() })
   // Active (owner call, 2026-08-27): a subtle green sweep on the context bar
-  // while this Claude session's PTY output is moving — the inverse of the moon.
+  // while this agent session's PTY output is moving: the inverse of the moon.
   // Precedence ATTENTION > ACTIVE > SLEEP > idle: attention and sleep both
-  // suppress it (sleep can't co-occur anyway — moving vs. 120s silent). Claude
-  // only, like the moon.
+  // suppress it (sleep can't co-occur anyway: moving vs. 120s silent). Agent
+  // sessions only, like the moon (P3.10, row 46: Codex's too).
   const outputMoving = useActiveStore((s) => s.activeIds.has(session.id))
   const showActive =
-    isClaudeSession &&
+    isAgentSession &&
     outputMoving &&
     !asleep &&
     !(needsAttention || session.needsAttention === true)
@@ -233,7 +235,7 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
           {silentSince != null && <MoonBadge sinceMs={silentSince} />}
         </FadeSlot>
         <FadeSlot show={showActive}>
-          <WorkingBadge />
+          <WorkingBadge agent={provider === 'codex' ? 'Codex' : 'Claude'} />
         </FadeSlot>
         <SessionTypeBadge kind={session.shellOnly ? 'shell' : (session.provider ?? 'claude') === 'codex' ? 'codex' : 'claude'} />
         <WatchdogBadge watchdog={session.watchdog} />

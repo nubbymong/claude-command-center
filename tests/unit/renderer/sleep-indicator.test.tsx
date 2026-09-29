@@ -10,7 +10,8 @@
  *  - ATTENTION always outranks the moon.
  *  - After an attention dismiss the moon waits at least 60 s (grace restarts
  *    at the dismiss), and the grace expiry re-derives without another push.
- *  - Claude sessions only (no moon on codex/shell cards).
+ *  - Agent sessions only: Claude's and, since P3.10 (row 46), Codex's (the
+ *    Watchdog watches a local Codex session too); never a shell card.
  *  - Variant B: the moon is an ADDITIONAL chip; the type badge stays.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -178,10 +179,16 @@ describe('SessionRow moon badge', () => {
     expect(container.querySelector('[data-testid="moon-badge"]')).toBeNull()
   })
 
-  it('Claude sessions only: codex and shell cards never show a moon', () => {
+  // P3.10 (row 46): the Watchdog watches a Codex session too, so its silence
+  // shows as a moon as Claude's does; a shell never sleeps visibly.
+  it('agent sessions: a codex card shows a moon as a Claude card does', () => {
     sleep('s1')
     act(() => { root.render(createElement(SessionRow, { session: makeSession({ provider: 'codex' }), ...baseProps })) })
-    expect(container.querySelector('[data-testid="moon-badge"]')).toBeNull()
+    expect(container.querySelector('[data-testid="moon-badge"]')).not.toBeNull()
+  })
+
+  it('a shell card never shows a moon', () => {
+    sleep('s1')
     act(() => { root.render(createElement(SessionRow, { session: makeSession({ shellOnly: true }), ...baseProps })) })
     expect(container.querySelector('[data-testid="moon-badge"]')).toBeNull()
   })

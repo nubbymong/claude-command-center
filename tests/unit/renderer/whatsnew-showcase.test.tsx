@@ -102,13 +102,14 @@ describe('showcase-pages — the curated set', () => {
   it('P3.4 (row 14): with Claude Code off, what needs Claude Code in this release is not shown', () => {
     // P3.6 lifted the accounts page and the Switch mid-session line (a Codex
     // account switches mid-session too); claude.ai in the app stays Claude's.
-    const CLAUDE_ONLY_PAGES = ['canvas', 'remoteResume', 'watchdog', 'askConductor']
+    // P3.10 lifted the watchdog page and its line (the Watchdog arms for Codex).
+    const CLAUDE_ONLY_PAGES = ['canvas', 'remoteResume', 'askConductor']
     // The two remote lines (VM round, M1): SSH Persistent keeps the remote
     // session alive by wrapping the remote claude command, and the only agent
     // an SSH session runs in this release is Claude Code, so both go with the
     // remote resume page.
     const REMOTE_ITEMS = ['SSH Persistent.', 'Remote Resumable.']
-    const CLAUDE_ONLY_ITEMS = ['Agent Canvas.', 'Session Watchdog.', 'Ask Conductor.', 'claude.ai in the app.', 'Insights.', ...REMOTE_ITEMS]
+    const CLAUDE_ONLY_ITEMS = ['Agent Canvas.', 'Ask Conductor.', 'claude.ai in the app.', 'Insights.', ...REMOTE_ITEMS]
     // Claude Code on: everything, as before.
     render()
     expect(container.textContent).toContain('Working with Claude')
@@ -150,6 +151,26 @@ describe('showcase-pages — the curated set', () => {
     expect(all20.find((i) => i.title === 'Partner terminal.')?.needsClaude).toBeUndefined()
     // ...and names no provider (row 64 did the same for the strip and tips).
     expect(all20.find((i) => i.title === 'Partner terminal.')?.desc).toBe('A plain shell beside your session, labelled so you always know which is which.')
+  })
+
+  it('P3.10 (row 43): the Watchdog is told for both providers, and shows with Claude Code off', () => {
+    const lines = sectionsFor('2.1.0-beta.17', '2.1.0').flatMap((s) => s.items)
+    const wd = lines.find((i) => i.title === 'Session Watchdog.')!
+    expect(wd.needsClaude).toBeUndefined()
+    expect(wd.seeIt).toBe('watchdog')
+    expect(wd.desc).not.toMatch(/claude|codex/i)
+    const page = SHOWCASES_21.find((p: { id: string }) => p.id === 'watchdog')!
+    expect(page.needsClaude).toBeUndefined()
+    expect(`${page.heading} ${page.tagline} ${page.where.pre}${page.where.em}${page.where.post}`).not.toMatch(/claude|codex/i)
+    for (const pt of page.points) expect(pt.needsClaude, pt.lead).toBeUndefined()
+    settingsState.settings = { updateChannel: 'stable', claudeEnabled: false, codexEnabled: true }
+    render()
+    expect(container.textContent).toContain('Session Watchdog.')
+    // Its section no longer says Claude with Claude Code off.
+    expect(container.textContent).toContain('Working with Codex')
+    expect(container.textContent).not.toContain('Working with Claude')
+    click(q('see-watchdog'))
+    expect(q('showcase-page-watchdog')).not.toBeNull()
   })
 
   it('P3.6 (row 22): the switch is told for both providers; with Claude Code off, nothing about Claude\'s own services', () => {

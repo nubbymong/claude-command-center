@@ -212,25 +212,35 @@ describe('a Codex session\'s Duration is its conversation\'s running time', () =
   })
 
   // Review fix 1: another tab resumed the conversation while this one held
-  // it; it claims once this one lets go, and the time they both ran it is
-  // counted once, not from the other tab's own launch.
-  it('two tabs on one conversation: the time they both ran it is counted once', async () => {
+  // it; the time they both ran it is counted once, not from the other tab's
+  // own launch. P3.10 (the P3.7 VM finding): that tab shows the
+  // conversation's figures too, its Duration the same as this one's; this one
+  // keeps the time, and once it lets go the other keeps it on from there.
+  it('two tabs on one conversation: both show its Duration, and the time they both ran it is counted once', async () => {
     vi.useFakeTimers()
     const t0 = Date.parse('2026-09-29T10:00:00.000Z')
     vi.setSystemTime(t0)
     const sessions = realm()
-    rolloutAt(sessions, ID, t0 - 600_000, [metaLine(ID, '/p/demo', t0 - 600_000), tokenLine(t0 - 590_000, 5)])
+    const file = rolloutAt(sessions, ID, t0 - 600_000, [metaLine(ID, '/p/demo', t0 - 600_000), tokenLine(t0 - 590_000, 5)])
     const x = watch(sessions, '/p/demo', { resumeId: ID })
     await vi.advanceTimersByTimeAsync(10_000)
     const y = watch(sessions, '/p/demo', { resumeId: ID })
-    expect(y.updates).toEqual([])
-    // Inside the other tab's 30 s no-claim deadline.
+    await vi.advanceTimersByTimeAsync(0)
+    // Beside x: what main keeps (x's run from its launch), counted on to now.
+    expect(y.updates.at(-1)?.totalDurationMs).toBe(10_000)
+    expect(y.updates.at(-1)?.inputTokens).toBe(5)
     await vi.advanceTimersByTimeAsync(20_000)
     x.src.stop()
+    // y kept nothing of its own meanwhile: the shared 20 s are counted once.
     expect(conversationRunningTime(ID)).toEqual({ ms: 30_000, until: t0 + 30_000, gaps: [] })
     await vi.advanceTimersByTimeAsync(250)
+    appendFileSync(file, tokenLine(t0 + 30_250, 6) + '\n')
+    await vi.advanceTimersByTimeAsync(500)
+    // x has let go: y keeps the time on from x's end (its tail reads at
+    // 30.5 s, a poll every 500 ms from its claim at 10 s).
+    expect(y.updates.at(-1)?.totalDurationMs).toBe(30_500)
     y.src.stop()
-    expect(y.updates[0]?.totalDurationMs).toBe(30_250)
+    expect(conversationRunningTime(ID)?.ms).toBe(30_750)
   })
 
   // A large rollout's run whose background count has not landed when it

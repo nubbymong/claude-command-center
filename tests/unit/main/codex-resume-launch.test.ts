@@ -282,17 +282,17 @@ describe('the kept conversation records the account it ran under (P3.6)', () => 
 
   it('a resumed conversation is kept with the account its launch holds; what is saved stays the conversation alone', () => {
     start({ resume: { uuid: ID, cwd: '/p/demo' }, codexLaunch: on('acct-a') })
-    expect(getKeptCodexConversationSource(SID)).toEqual({ uuid: ID, cwd: `/conversations/${ID}`, accountId: 'acct-a', uncertain: false })
+    expect(getKeptCodexConversationSource(SID)).toEqual({ uuid: ID, cwd: `/conversations/${ID}`, accountId: 'acct-a', uncertain: false, unconfirmed: false })
     expect(getKeptCodexConversation(SID)).toEqual({ uuid: ID, cwd: `/conversations/${ID}` })
   })
 
   it('a claimed conversation takes the launch\'s account, and a later launch that resumes it on another account records that one', () => {
     start({ codexLaunch: on('acct-a') })
     claim(ID, '/p/demo')
-    expect(getKeptCodexConversationSource(SID)).toEqual({ uuid: ID, cwd: '/p/demo', accountId: 'acct-a', uncertain: false })
+    expect(getKeptCodexConversationSource(SID)).toEqual({ uuid: ID, cwd: '/p/demo', accountId: 'acct-a', uncertain: false, unconfirmed: false })
     killPty(SID)
     start({ codexLaunch: on('acct-b') })
-    expect(getKeptCodexConversationSource(SID)).toEqual({ uuid: ID, cwd: `/conversations/${ID}`, accountId: 'acct-b', uncertain: false })
+    expect(getKeptCodexConversationSource(SID)).toEqual({ uuid: ID, cwd: `/conversations/${ID}`, accountId: 'acct-b', uncertain: false, unconfirmed: false })
   })
 
   it('nothing to carry without both: no conversation, or a launch that names no account', () => {

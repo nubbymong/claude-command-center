@@ -122,6 +122,8 @@
       "scripts/resume-picker.js",
       "scripts/codex-resume-picker.js",
       "scripts/lib/codex-resume-picker-lib.js",
+      "scripts/ccc-codex-hook.js",
+      "scripts/ccc-codex-hook.cmd",
       "scripts/vision-cli.js",
       "scripts/vision-prompt.txt",
       "NOTICE"

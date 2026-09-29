@@ -11,6 +11,7 @@ import { resolveCodexBinary, buildCodexSpawn } from './spawn'
 import { detectCodexUi } from './ui-detection'
 import { watchAndClaimRollout } from './telemetry'
 import { deployCodexResumePickerScript } from './resume-picker'
+import { deployCodexHookScripts, sweepStaleCodexHookFolders, writeCodexHookFile, removeCodexHookFile } from './hooks'
 import { CODEX_PINNED_CLI_VERSION, CODEX_MIN_SUPPORTED_VERSION, CODEX_MAX_TESTED_VERSION } from './cli-contract'
 import { codexInstallRecipes } from './install-recipes'
 import { codexOperationBaseEnv } from './process-env'
@@ -75,6 +76,12 @@ export {
   CODEX_HISTORY_MAX_ENTRIES, CODEX_FOLDER_BATCH,
 } from './realm-folders'
 export type { CodexRealmFsPort, CodexRealmFsAsync, CodexFsEntry, CodexRealmLocks, CodexFolderLookup, CodexRealmFolderDeps, CodexRealmFolderLimits, CodexRootsResult } from './realm-folders'
+// P3.10: Codex's hooks, delivered to the Hooks gateway.
+export {
+  writeCodexHookFile, removeCodexHookFile, sweepStaleCodexHookFolders, codexHookCommand, codexHookConfigArgs, deployCodexHookScripts,
+  CODEX_HOOK_EVENTS, CODEX_HOOK_CLIENT_HEADER, CODEX_HOOK_CLIENT, CODEX_HOOK_FILE_ENV, CODEX_HOOK_DIR_PREFIX, CODEX_HOOK_STALE_MS,
+} from './hooks'
+export type { CodexHookFile, CodexHookEvent } from './hooks'
 // P3.6: a switched session's conversation carried into the new account's folder.
 export { carryCodexRollout, CODEX_CARRY_MAX_BYTES, CODEX_CARRY_STALE_TEMP_MS } from './conversation-carry'
 export type { CodexConversationCarry, CodexCarryInput, CodexCarryResult, CodexCarryCode } from './conversation-carry'
@@ -131,7 +138,13 @@ export class CodexProvider implements SessionProvider {
     if (!live) return watch
     // The realm's live figure lasts while one of its sessions still reports.
     const release = live.open(sessionsDir)
-    return { stop() { try { watch.stop() } finally { release() } } }
+    return {
+      stop() { try { watch.stop() } finally { release() } },
+      // P3.10: the exact claim from the session's own hook, and another
+      // session's proof that an inferred claim here is not this one's.
+      noteExactRollout: (rolloutPath: string) => watch.noteExactRollout?.(rolloutPath) ?? null,
+      refuteInferredClaim: (rolloutPath: string) => watch.refuteInferredClaim?.(rolloutPath) ?? false,
+    }
   }
 
   async listHistorySessions(): Promise<HistorySession[]> {
@@ -151,7 +164,27 @@ export class CodexProvider implements SessionProvider {
   }
 
   async deployResumePickerScript(resourcesDir: string): Promise<void> {
-    return deployCodexResumePickerScript(resourcesDir)
+    // P3.10: hook folders a crash or a quit left behind (a day old), first,
+    // so a failed deploy never skips it.
+    try { sweepStaleCodexHookFolders() } catch { /* best-effort */ }
+    await deployCodexResumePickerScript(resourcesDir)
+    // P3.10: the hook forwarder (and its Windows wrapper) beside the picker.
+    await deployCodexHookScripts(resourcesDir)
+  }
+
+  /** P3.10: the session's hook file, for its launch's hooks. */
+  prepareSessionHooks(sessionId: string, port: number, secret: string): { hookFile: string; dispose(): void } | null {
+    const written = writeCodexHookFile(sessionId, port, secret)
+    if (!written) return null
+    let disposed = false
+    return {
+      hookFile: written.file,
+      dispose: () => {
+        if (disposed) return
+        disposed = true
+        removeCodexHookFile(written)
+      },
+    }
   }
 }
 

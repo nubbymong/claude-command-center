@@ -218,12 +218,21 @@ describe('SessionRow — the sweep, precedence and Claude-only gate', () => {
     expect(container.querySelector('[data-testid="moon-badge"]')).not.toBeNull()
   })
 
-  it('Claude only: a codex session never gets the sweep or the pill', () => {
+  // P3.10 (row 46): a Codex session gets the sweep and the pill as Claude's
+  // does (fed from its PTY output, the same source); a shell never does.
+  it('agent sessions: a codex session gets the sweep and the pill, which names Codex', () => {
     useActiveStore.setState({ activeIds: new Set(['s1']) })
     render(makeSession({ provider: 'codex' }))
-    // codex still has a meter row, but never the active sweep or the working pill
     expect(fill()).not.toBeNull()
-    expect(fill()?.className).not.toContain('meter-active')
+    expect(fill()?.className).toContain('meter-active')
+    expect(wbadge()).not.toBeNull()
+    expect(wbadge()?.getAttribute('title')).toMatch(/^Codex is working/)
+  })
+
+  it('a moving shell session never gets the pill (no meter row either)', () => {
+    useActiveStore.setState({ activeIds: new Set(['s1']) })
+    render(makeSession({ shellOnly: true }))
     expect(wbadge()).toBeNull()
+    expect(fill()).toBeNull()
   })
 })

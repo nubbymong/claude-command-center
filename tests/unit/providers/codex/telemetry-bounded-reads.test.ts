@@ -101,7 +101,10 @@ describe('what a watcher reads of a rollout', () => {
     expect(updates.at(-1)?.inputTokens).toBe(9)
   })
 
-  it('a conversation another session holds is not walked for every second; once let go it is taken', async () => {
+  // P3.10: a conversation another session holds is read beside it (the P3.7
+  // VM finding: both tabs show its figures), so it is found by one walk and
+  // never walked for again, held or let go.
+  it('a conversation another session holds is not walked for every second; it is read beside the holder, found by one walk', async () => {
     vi.useFakeTimers()
     const sessions = realm()
     const old = new Date(Date.now() - 24 * 3600 * 1000)
@@ -115,10 +118,11 @@ describe('what a watcher reads of a rollout', () => {
     await vi.advanceTimersByTimeAsync(5_000)
     expect(__codexRolloutLookupsForTests()).toBe(walks)
     expect(second.claims).toEqual([])
+    expect(second.updates.at(-1)?.inputTokens).toBe(3)
     first.src.stop()
-    await vi.advanceTimersByTimeAsync(300)
+    await vi.advanceTimersByTimeAsync(3_000)
     second.src.stop()
-    expect(second.claims).toEqual([ID2])
+    expect(__codexRolloutLookupsForTests()).toBe(walks)
   })
 })
 

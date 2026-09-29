@@ -324,14 +324,16 @@ export function MoonBadge({ sinceMs }: { sinceMs: number }) {
  * MOVING — the inverse of the moon, in the same slot (variant B) and at the
  * same chip weight as every other badge (tinted, not bold). A green play glyph
  * with a gentle pulse; the motion is what says "live". Gated in SessionRow
- * (Claude-only, suppressed by attention and sleep — it can never co-occur with
- * the moon). Pairs with the context-bar sweep, which stays.
+ * (agent sessions: Claude's, and Codex's since P3.10; suppressed by attention
+ * and sleep; it can never co-occur with the moon). Pairs with the
+ * context-bar sweep, which stays. `agent` names who is working (P3.10).
  */
-export function WorkingBadge() {
+const EM_DASH = String.fromCharCode(0x2014)
+export function WorkingBadge({ agent = 'Claude' }: { agent?: 'Claude' | 'Codex' } = {}) {
   return (
     <div
       className="flex items-center justify-center h-4 px-1 rounded shrink-0 bg-green/20 text-green working-pill"
-      title="Claude is working — output is moving"
+      title={`${agent} is working ${EM_DASH} output is moving`}
       data-testid="working-badge"
     >
       <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" aria-hidden>

@@ -8,7 +8,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'fs'
 import { join, dirname, basename } from 'path'
 import { tmpdir } from 'os'
-import { watchAndClaimRollout } from '../../../../src/main/providers/codex/telemetry'
+import { watchAndClaimRollout, __codexRolloutReadersForTests } from '../../../../src/main/providers/codex/telemetry'
 import { codexFolderIdentity, __codexRolloutEntriesVisitedForTests, __codexRolloutLookupsForTests } from '../../../../src/main/providers/codex/rollout-lookup'
 import type { StatuslineData } from '../../../../src/shared/types'
 
@@ -396,9 +396,10 @@ describe('two sessions in the same folder', () => {
     await vi.advanceTimersByTimeAsync(300)
     expect(x.claims.map((c) => c.id)).toEqual([ID_A])
     expect(x.certainty).toEqual([true])
-    // A resume by id is exact: certain.
-    const resumed = watch(sessions, '/p/demo', { resumeId: ID_A })
+    // A resume by id is exact: certain. (Started once x has let go: while x
+    // reads it, a resume by id reads it beside x, as shared; P3.10.)
     x.src.stop()
+    const resumed = watch(sessions, '/p/demo', { resumeId: ID_A })
     await vi.advanceTimersByTimeAsync(1_300)
     expect(resumed.claims.map((c) => c.id)).toEqual([ID_A])
     expect(resumed.certainty).toEqual([true])
@@ -438,12 +439,15 @@ describe('two sessions in the same folder', () => {
     expect(fresh.claims).toEqual([{ id: ID_B, cwd: '/p/demo' }])
   })
 
-  it('a pick of a conversation another tab holds is not taken while it holds it; once let go it is', async () => {
+  // P3.10 (the P3.7 VM finding): a second tab on a conversation another tab
+  // holds showed no figures; Claude shows them in both. It is read beside the
+  // holder now, and still reported as shared (main records it on both).
+  it('a pick of a conversation another tab holds is read beside it (both tabs show its figures), reported as shared; the holder letting go changes nothing', async () => {
     vi.useFakeTimers()
     const sessions = realm()
     const pickFile = join(sessions, '..', 'pick-a.json')
     const old = new Date(Date.now() - 2 * 24 * 3600 * 1000)
-    rollout(folder(sessions, old.getUTCFullYear(), old.getUTCMonth() + 1, old.getUTCDate()), ID_A, '/p/demo', old.toISOString(), 10)
+    const file = rollout(folder(sessions, old.getUTCFullYear(), old.getUTCMonth() + 1, old.getUTCDate()), ID_A, '/p/demo', old.toISOString(), 10)
     const holder = watch(sessions, '/p/demo', { resumeId: ID_A })
     await vi.advanceTimersByTimeAsync(300)
     expect(holder.claims).toEqual([{ id: ID_A, cwd: '/p/demo' }])
@@ -451,17 +455,25 @@ describe('two sessions in the same folder', () => {
     writeFileSync(pickFile, JSON.stringify({ id: ID_A }))
     await vi.advanceTimersByTimeAsync(2_500)
     expect(picker.claims).toEqual([])
-    expect(picker.updates).toEqual([])
+    expect(picker.shared).toEqual([{ id: ID_A, cwd: '/p/demo' }])
+    expect(picker.updates.at(-1)?.inputTokens).toBe(10)
+    expect(__codexRolloutReadersForTests(file)).toBe(2)
     holder.src.stop()
+    expect(__codexRolloutReadersForTests(file)).toBe(1)
+    appendFileSync(file, tokenLine(new Date().toISOString(), 12) + '\n')
     await vi.advanceTimersByTimeAsync(1_500)
+    expect(picker.updates.at(-1)?.inputTokens).toBe(12)
+    expect(holder.updates.at(-1)?.inputTokens).toBe(10)
     picker.src.stop()
-    expect(picker.claims).toEqual([{ id: ID_A, cwd: '/p/demo' }])
+    expect(__codexRolloutReadersForTests(file)).toBe(0)
+    expect(picker.claims).toEqual([])
+    expect(picker.releases).toEqual([])
   })
 
   // P3.6 VM finding V2: a session on a conversation another tab holds is on
   // it all the same (a pick, or a resume by id, is exact): said once, so main
   // records it, while the rollout stays the holder's to read.
-  it('a pick of a conversation another tab holds: the session is said to be on it, once, without taking or reading it; a later pick takes that back', async () => {
+  it('a pick of a conversation another tab holds: the session is said to be on it, once, reading it beside the holder (P3.10); a later pick takes that back', async () => {
     vi.useFakeTimers()
     const sessions = realm()
     const pickFile = join(sessions, '..', 'pick-a.json')
@@ -474,7 +486,7 @@ describe('two sessions in the same folder', () => {
     await vi.advanceTimersByTimeAsync(5_000)
     expect(picker.shared).toEqual([{ id: ID_A, cwd: '/p/demo' }])
     expect(picker.claims).toEqual([])
-    expect(picker.updates).toEqual([])
+    expect(picker.updates.at(-1)?.inputTokens).toBe(10)
     expect(picker.releases).toEqual([])
     // A new conversation instead: the session is no longer on it.
     writeFileSync(pickFile, JSON.stringify({ fresh: true }))
@@ -485,27 +497,32 @@ describe('two sessions in the same folder', () => {
     expect(picker.shared).toEqual([{ id: ID_A, cwd: '/p/demo' }])
   })
 
-  it('a resume by id of a conversation another tab holds: the session is said to be on it; once let go it is claimed as before', async () => {
+  it('a resume by id of a conversation another tab holds: the session is said to be on it and reads it too (P3.10); the holder letting go changes nothing', async () => {
     vi.useFakeTimers()
     const sessions = realm()
     const old = new Date(Date.now() - 2 * 24 * 3600 * 1000)
-    rollout(folder(sessions, old.getUTCFullYear(), old.getUTCMonth() + 1, old.getUTCDate()), ID_A, '/p/demo', old.toISOString(), 10)
+    const file = rollout(folder(sessions, old.getUTCFullYear(), old.getUTCMonth() + 1, old.getUTCDate()), ID_A, '/p/demo', old.toISOString(), 10)
     const holder = watch(sessions, '/p/demo', { resumeId: ID_A })
     await vi.advanceTimersByTimeAsync(300)
     const second = watch(sessions, '/p/demo', { resumeId: ID_A })
     await vi.advanceTimersByTimeAsync(1_500)
     expect(second.shared).toEqual([{ id: ID_A, cwd: '/p/demo' }])
     expect(second.claims).toEqual([])
-    expect(second.updates).toEqual([])
+    expect(second.updates.at(-1)?.inputTokens).toBe(10)
     holder.src.stop()
+    appendFileSync(file, tokenLine(new Date().toISOString(), 14) + '\n')
     await vi.advanceTimersByTimeAsync(1_500)
+    expect(second.updates.at(-1)?.inputTokens).toBe(14)
     second.src.stop()
-    expect(second.claims).toEqual([{ id: ID_A, cwd: '/p/demo' }])
+    expect(second.claims).toEqual([])
     expect(second.shared).toEqual([{ id: ID_A, cwd: '/p/demo' }])
     expect(second.releases).toEqual([])
   })
 
-  it('a pick let go by another tab after its day folder became a link is not taken', async (ctx) => {
+  // P3.10: a pick of a conversation another tab holds is read beside it
+  // (shared), so the question is whether it is ever taken through a link:
+  // never; the walk follows no link, held or not.
+  it('a pick of a conversation another tab holds, whose day folder is by then a link, is not taken or read', async (ctx) => {
     vi.useFakeTimers()
     const sessions = realm()
     const pickFile = join(sessions, '..', 'pick-a.json')
@@ -515,19 +532,19 @@ describe('two sessions in the same folder', () => {
     const holder = watch(sessions, '/p/demo', { resumeId: ID_A })
     await vi.advanceTimersByTimeAsync(300)
     expect(holder.claims).toEqual([{ id: ID_A, cwd: '/p/demo' }])
-    const picker = watch(sessions, '/p/demo', { pickFile })
-    writeFileSync(pickFile, JSON.stringify({ id: ID_A }))
-    await vi.advanceTimersByTimeAsync(600)
-    expect(picker.claims).toEqual([])
     // The day folder is moved out of the realm and a link to it put in its place.
     const moved = join(sessions, '..', 'moved-day')
     renameSync(day, moved)
-    try { symlinkSync(moved, day, 'junction') } catch { holder.src.stop(); picker.src.stop(); ctx.skip(); return }
+    try { symlinkSync(moved, day, 'junction') } catch { holder.src.stop(); ctx.skip(); return }
     try {
+      const picker = watch(sessions, '/p/demo', { pickFile })
+      writeFileSync(pickFile, JSON.stringify({ id: ID_A }))
+      await vi.advanceTimersByTimeAsync(2_500)
       holder.src.stop()
       await vi.advanceTimersByTimeAsync(2_500)
       picker.src.stop()
       expect(picker.claims).toEqual([])
+      expect(picker.shared).toEqual([])
       expect(picker.updates).toEqual([])
     } finally {
       dropLink(day)

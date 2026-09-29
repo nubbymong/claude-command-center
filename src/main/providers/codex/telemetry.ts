@@ -575,11 +575,30 @@ export function withAllowance(sl: StatuslineData, reading: AllowanceReading | nu
 // ── Watch-and-claim pipeline ─────────────────────────────────────────────────
 
 /**
- * Module-level set of rollout file paths that have already been claimed by an
- * active watcher. Prevents two concurrent sessions from both latching onto the
- * same file. stop() removes the path so the set stays bounded over app lifetime.
+ * Module-level count of the active watchers reading each rollout file path.
+ * A NEW conversation's rollout is taken by one watcher only (the scan skips a
+ * path any watcher reads), so two concurrent sessions never both latch onto
+ * the same new file. A conversation named exactly (a resume by id, a pick, a
+ * hook) is read by every session on it (P3.10: the P3.7 VM finding, a second
+ * tab on a conversation another tab held showed no figures, where Claude shows
+ * them in both). stop() and a release take the count down, so the map stays
+ * bounded over the app's life.
  */
-const claimed = new Set<string>()
+const readers = new Map<string, number>()
+const claimed = {
+  has: (p: string): boolean => (readers.get(p) ?? 0) > 0,
+  add: (p: string): void => { readers.set(p, (readers.get(p) ?? 0) + 1) },
+  delete: (p: string): void => {
+    const n = (readers.get(p) ?? 0) - 1
+    if (n > 0) readers.set(p, n)
+    else readers.delete(p)
+  },
+}
+/** How many watchers read `rolloutPath` (tests read it). */
+export function __codexRolloutReadersForTests(rolloutPath: string): number { return readers.get(rolloutPath) ?? 0 }
+/** P3.10: the one watcher per rollout that keeps its conversation's running
+ *  time (P3.7); the others reading it show what main keeps. */
+const keepers = new Map<string, object>()
 
 /**
  * P3.6 (ADR-009 round 1, B1): the launches still waiting to claim a NEW
@@ -635,18 +654,21 @@ export interface CodexClaimOptions {
    *  directory its rollout records. Only a conversation id is reported.
    *  `certain` (P3.6): false when the rollout could have been another
    *  launch's (see pendingNewClaims); a resume by id, or the conversation a
-   *  picker named, is always certain. */
-  onClaim?: (claim: { id: string; cwd: string; certain: boolean }) => void
+   *  picker named, is always certain. `exact` (P3.10): the conversation is
+   *  known, not inferred from a folder and a time: a resume by id, the one a
+   *  picker named, or the one the session's own hook reported (told again,
+   *  with `fromHook`, when a hook confirms an inferred claim). */
+  onClaim?: (claim: { id: string; cwd: string; certain: boolean; exact: boolean; fromHook: boolean }) => void
   /** Told when a claim is let go: the picker decided again after it (fix
    *  round 2), so the session is no longer on that conversation. Told too
    *  when a later decision takes back a conversation reported by onShared. */
   onRelease?: () => void
   /** P3.6 (VM finding V2): told which conversation the session is on
-   *  when another session holds its rollout: a resume by id, or the
-   *  conversation a picker named, is exact, so it is the session's all the
-   *  same. Its rollout is neither claimed nor read here (the holder reads
-   *  it); once the holder lets it go, it is claimed as before. */
-  onShared?: (conversation: { id: string; cwd: string }) => void
+   *  when another session holds its rollout: a resume by id, the
+   *  conversation a picker named or the one its own hook reported is exact,
+   *  so it is the session's all the same. P3.10: its rollout is read here
+   *  too, so this tab shows the conversation's figures as the holder does. */
+  onShared?: (conversation: { id: string; cwd: string; exact: boolean; fromHook: boolean }) => void
 }
 
 /** How often a claim by id walks the realm's sessions folder while unclaimed:
@@ -783,11 +805,17 @@ export function watchAndClaimRollout(
    *  (through its last complete line). */
   let readState = newRolloutReadState()
   let offset = 0
-  /** A conversation another session holds: not walked for again while it does. */
-  let heldElsewhere: { path: string; id: string } | null = null
-  /** The conversation reported through onShared while another session holds
-   *  its rollout (P3.6 VM finding V2); null when none. */
-  let sharedId: string | null = null
+  /** How the claim was made (P3.10): known rather than inferred (a resume by
+   *  id, a pick, the session's own hook), confirmed by that hook, and read
+   *  beside another session that holds the same conversation. */
+  let claimExact = false
+  let claimFromHook = false
+  let claimShared = false
+  /** This watcher, as the keeper of a rollout's running time (keepers). */
+  const self = {}
+  /** The conversation read beside the tab that keeps its time; null when
+   *  this watcher keeps it (run), or claims nothing. */
+  let sharedRunId: string | null = null
   /** Files whose first line settled as not this session's: never read again. */
   const settled = new Set<string>()
   /** When the next walk may run, the wait after a walk that finds nothing,
@@ -832,37 +860,30 @@ export function watchAndClaimRollout(
   }
   if (pending) pendingNewClaims.add(pending)
 
-  /** The session is on `found`, a conversation another session holds
-   *  (P3.6 VM finding V2): said once per holding (lookup does not walk for
-   *  it again while it is held), never claimed or read here. */
-  function reportShared(found: FoundRollout): void {
-    if (!CODEX_CONVERSATION_ID_RE.test(found.meta.id)) return
-    sharedId = found.meta.id
-    if (claimOpts?.onShared) {
-      try { claimOpts.onShared({ id: found.meta.id, cwd: found.meta.cwd }) } catch { /* a listener never stops the watch */ }
-    }
+  /** Tell the session which conversation it is on and how that is known:
+   *  onShared while another session reads the same rollout (P3.6 VM finding
+   *  V2), else onClaim. */
+  function report(found: RolloutSessionMeta, certain: boolean): void {
+    if (!CODEX_CONVERSATION_ID_RE.test(found.id)) return
+    try {
+      if (claimShared && claimOpts?.onShared) claimOpts.onShared({ id: found.id, cwd: found.cwd, exact: claimExact, fromHook: claimFromHook })
+      else if (!claimShared && claimOpts?.onClaim) claimOpts.onClaim({ id: found.id, cwd: found.cwd, certain, exact: claimExact, fromHook: claimFromHook })
+    } catch { /* a listener never stops the watch */ }
   }
 
-  /** A later decision: the conversation reported as shared is no longer the
-   *  session's. */
-  function dropShared(): void {
-    if (sharedId === null) return
-    sharedId = null
-    if (claimOpts?.onRelease) {
-      try { claimOpts.onRelease() } catch { /* a listener never stops the watch */ }
-    }
-  }
-
-  function claim(fullPath: string, found: RolloutSessionMeta, certain = true): void {
-    // A claim replaces a shared report (the holder let it go): onClaim says so.
-    sharedId = null
+  /** Claim `fullPath` and read it. `how.exact`: the conversation is known
+   *  (a resume by id, a pick, the session's own hook), not inferred from its
+   *  folder and time; `how.shared`: another session reads it too (P3.10: it
+   *  is read here all the same, so both tabs show its figures). */
+  function claim(fullPath: string, found: RolloutSessionMeta, certain: boolean, how: { exact: boolean; shared?: boolean; fromHook?: boolean }): void {
+    claimShared = how.shared === true
+    claimExact = how.exact
+    claimFromHook = how.fromHook === true
     claimedPath = fullPath
     claimed.add(fullPath)
     claimedIdentity = fileIdentity(fullPath)
     claimedFileChanged = false
-    if (claimOpts?.onClaim && CODEX_CONVERSATION_ID_RE.test(found.id)) {
-      try { claimOpts.onClaim({ id: found.id, cwd: found.cwd, certain }) } catch { /* a listener never stops the watch */ }
-    }
+    report(found, certain)
 
     // Its running time (P3.7, row 36), as Claude Code's Duration: what main
     // kept of the conversation's earlier runs, the turns its rollout records
@@ -870,8 +891,16 @@ export function watchAndClaimRollout(
     // before the app first ran it), and this run from its start: the launch,
     // or for the resume picker the choice made in it (Claude Code counts a
     // resumed conversation from its restore).
+    // P3.10: one watcher keeps a rollout's running time (the first that read
+    // it); another reading it beside that one shows what main keeps, counted
+    // on to now, and takes the keeping over once the keeper has let go
+    // (emit), so two tabs on one conversation still count their shared time
+    // once (P3.7's review fix) and both show the same Duration.
+    sharedRunId = null
     if (CODEX_CONVERSATION_ID_RE.test(found.id)) {
-      beginRun(found.id, pickFile && !resumeId ? (decision?.kind === 'fresh' ? decision.at : Date.now()) : spawnTimestamp)
+      if (!keepers.has(fullPath)) keepers.set(fullPath, self)
+      if (keepers.get(fullPath) === self) beginRun(found.id, pickFile && !resumeId ? (decision?.kind === 'fresh' ? decision.at : Date.now()) : spawnTimestamp)
+      else sharedRunId = found.id
     }
 
     // What is already there: all of it when small, else its head and its
@@ -948,6 +977,8 @@ export function watchAndClaimRollout(
   /** This run of the claimed conversation is over (the claim let go, or the
    *  watch ended with the process): main keeps its running time up to now. */
   function settleRun(): void {
+    sharedRunId = null
+    if (claimedPath && keepers.get(claimedPath) === self) keepers.delete(claimedPath)
     if (!run) return
     const r = run
     run = null
@@ -964,11 +995,13 @@ export function watchAndClaimRollout(
     claimedPath = null
     claimedIdentity = null
     claimedFileChanged = false
+    claimExact = false
+    claimFromHook = false
+    claimShared = false
     resetLookup()
     readState = newRolloutReadState()
     offset = 0
     contextWindow = null
-    heldElsewhere = null
     try { onUpdate({ sessionId, inputTokens: 0, outputTokens: 0, costUsd: 0, contextUsedPercent: 0, linesAdded: 0, linesRemoved: 0, totalDurationMs: 0 }) } catch { /* a sink that throws never stops the watch */ }
     if (claimOpts?.onRelease) {
       try { claimOpts.onRelease() } catch { /* a listener never stops the watch */ }
@@ -976,19 +1009,13 @@ export function watchAndClaimRollout(
   }
 
   /** The rollout of conversation `id` in this realm, looked up at most once a
-   *  second. One another session holds is remembered and not walked for
-   *  again while it is held; once let go it is checked again and taken.
+   *  second, and whether another session reads it already (P3.10: it is
+   *  read here too, as a shared claim, where before it was only reported).
    *  `preferCwd`: the folder a resume by id prefers (the session's own); a
    *  pick names a conversation, not a folder, and gives none (fix round 3:
    *  one picked from another worktree never records the session's folder,
    *  so preferring it would walk on to the walk's bounds on every pick). */
-  function lookup(id: string, preferCwd?: string): FoundRollout | null {
-    if (heldElsewhere && heldElsewhere.id === id) {
-      if (claimed.has(heldElsewhere.path)) return null
-      const again = stillTheConversation(heldElsewhere.path, id)
-      heldElsewhere = null
-      if (again) return again
-    }
+  function lookup(id: string, preferCwd?: string): { found: FoundRollout; shared: boolean } | null {
     if (lookupMisses >= LOOKUP_MAX_MISSES) return null
     const now = Date.now()
     if (now < nextLookupAt || now - lastWalkAt < LOOKUP_INTERVAL_MS) return null
@@ -1003,8 +1030,7 @@ export function watchAndClaimRollout(
     lookupMisses = 0
     lookupWait = LOOKUP_INTERVAL_MS
     nextLookupAt = now + LOOKUP_INTERVAL_MS
-    if (claimed.has(found.path)) { heldElsewhere = { path: found.path, id }; reportShared(found); return null }
-    return found
+    return { found, shared: claimed.has(found.path) }
   }
 
   /** Look again at once, at the first wait: a new decision, or a claim let go. */
@@ -1137,10 +1163,22 @@ export function watchAndClaimRollout(
     // running time, which main keeps as it goes (a relaunch after the app
     // itself stopped short carries on from the last update).
     const lines: Partial<StatuslineData> = { linesAdded: readState.linesAdded, linesRemoved: readState.linesRemoved }
+    // P3.10: read beside another tab, and that tab has let go: this one keeps
+    // the conversation's time from where main has it (that tab's end).
+    if (!run && sharedRunId && claimedPath && !keepers.has(claimedPath)) {
+      keepers.set(claimedPath, self)
+      const id = sharedRunId
+      sharedRunId = null
+      beginRun(id, conversationRunningTime(id)?.until ?? Date.now())
+    }
     if (run) {
       const now = Date.now()
       lines.totalDurationMs = runningMs(run, readState, now)
       keepRun(run, readState, now)
+    } else if (sharedRunId) {
+      // Beside the tab that keeps it: what main keeps, counted on to now.
+      const kept = conversationRunningTime(sharedRunId)
+      lines.totalDurationMs = kept ? kept.ms + Math.max(0, Date.now() - kept.until) : 0
     }
     try {
       if (readState.latest) {
@@ -1226,11 +1264,11 @@ export function watchAndClaimRollout(
       if (givenPath) {
         const given = givenPath
         givenPath = null
-        const found = realFolderChain(sessionsDir, dirname(given)) && !claimed.has(given) ? stillTheConversation(given, resumeId) : null
-        if (found) { claim(found.path, found.meta); return }
+        const found = realFolderChain(sessionsDir, dirname(given)) ? stillTheConversation(given, resumeId) : null
+        if (found) { claim(found.path, found.meta, true, { exact: true, shared: claimed.has(found.path) }); return }
       }
-      const found = lookup(resumeId, sessionCwd)
-      if (found) claim(found.path, found.meta)
+      const looked = lookup(resumeId, sessionCwd)
+      if (looked) claim(looked.found.path, looked.found.meta, true, { exact: true, shared: looked.shared })
       return
     }
 
@@ -1240,7 +1278,7 @@ export function watchAndClaimRollout(
     let since = spawnTimestamp - 5000
     if (pickFile) {
       const next = readPick()
-      if (next) { dropShared(); decision = next; resetLookup() }
+      if (next) { decision = next; resetLookup() }
       if (!decision) return
       if (decision.kind === 'fresh') {
         // A new conversation: only a rollout created from the decision on.
@@ -1251,13 +1289,12 @@ export function watchAndClaimRollout(
         // line shows at once rather than at its first new turn. Only its own
         // rollout, with the checks a launch's chosen rollout gets: inside this
         // realm's real folders, a plain file whose session_meta names the id
-        // (the walk, or stillTheConversation once another session lets it
-        // go), and not held by another session (lookup never returns one
-        // another session holds). A resume that then fails
+        // (the walk); one another session holds is read here too (P3.10,
+        // shared). A resume that then fails
         // falls back to a new conversation, and that decision lets this
         // claim go (release).
-        const found = lookup(decision.id)
-        if (found && realFolderChain(sessionsDir, dirname(found.path))) claim(found.path, found.meta)
+        const looked = lookup(decision.id)
+        if (looked && realFolderChain(sessionsDir, dirname(looked.found.path))) claim(looked.found.path, looked.found.meta, true, { exact: true, shared: looked.shared })
         // Only the named conversation is this session's.
         return
       }
@@ -1306,7 +1343,30 @@ export function watchAndClaimRollout(
     const at = first.meta.at
     const rivals = [...pendingNewClaims].filter((p) => p !== pending && sameDirectory(p.sessionsDir, sessionsDir) && p.cwd === sessionCwd && p.admits(at))
     for (const p of rivals) p.contested = true
-    claim(first.path, first.meta, candidates === 1 && rivals.length === 0 && !pending?.contested)
+    claim(first.path, first.meta, candidates === 1 && rivals.length === 0 && !pending?.contested, { exact: false })
+  }
+
+  /** `rolloutPath` as this realm's rollout it names, spelled as the walk
+   *  spells it (the realm's sessions folder, then its year, month and day
+   *  folders and the file's own name), or null: it must lie in a day folder
+   *  of this realm (real folders at every level, never a link), be a plain
+   *  file named `rollout-...-<id>.jsonl`, and its session_meta must name that
+   *  id. Untrusted input (a hook's payload): refused on any doubt. */
+  function exactRollout(rolloutPath: string): { path: string; meta: RolloutSessionMeta } | null {
+    if (typeof rolloutPath !== 'string' || !rolloutPath || rolloutPath.length > 4096 || /[\x00-\x1f\x7f]/.test(rolloutPath)) return null
+    if (!isAbsolute(rolloutPath)) return null
+    const rel = relative(sessionsDir, rolloutPath)
+    if (!rel || rel.startsWith('..') || isAbsolute(rel)) return null
+    const parts = rel.split(sep)
+    if (parts.length !== 4) return null
+    const [year, month, day, name] = parts
+    if (!/^\d{4}$/.test(year) || !/^\d{2}$/.test(month) || !/^\d{2}$/.test(day)) return null
+    const m = /^rollout-.+-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\.jsonl$/.exec(name)
+    if (!m) return null
+    const file = join(sessionsDir, year, month, day, name)
+    if (!realFolderChain(sessionsDir, dirname(file))) return null
+    const found = stillTheConversation(file, m[1])
+    return found ? { path: found.path, meta: found.meta } : null
   }
 
   // Set up the 250ms polling interval before the initial tryClaim() call so
@@ -1358,6 +1418,46 @@ export function watchAndClaimRollout(
   }, 30_000)
 
   return {
+    /** P3.10: the session's own hook (authenticated by its gateway token)
+     *  reported the rollout its Codex is on. That is exact, as Claude's
+     *  SessionStart bind is (#480): a claim of the same file becomes exact;
+     *  a claim of another file (an inferred claim that took the wrong new
+     *  rollout, or a conversation switched inside the TUI with its own resume
+     *  or new) is let go and this one claimed, read beside any other session
+     *  on it. A picker launch's decisions are the picker's word; this is the
+     *  process's own, and wins. */
+    noteExactRollout(rolloutPath: string): { id: string; cwd: string } | null {
+      if (stopped) return null
+      const exact = exactRollout(rolloutPath)
+      if (!exact) return null
+      if (claimedPath === exact.path) {
+        if (!claimExact || !claimFromHook) {
+          claimExact = true
+          claimFromHook = true
+          report(exact.meta, true)
+        }
+        return { id: exact.meta.id, cwd: exact.meta.cwd }
+      }
+      if (claimedPath) release()
+      if (intervalHandle) { clearInterval(intervalHandle); intervalHandle = null }
+      claim(exact.path, exact.meta, true, { exact: true, fromHook: true, shared: claimed.has(exact.path) })
+      return { id: exact.meta.id, cwd: exact.meta.cwd }
+    },
+    /** P3.10: another session's own hook proved `rolloutPath` is that
+     *  session's conversation. An inferred claim of it here (a new
+     *  conversation taken by folder and time) was the wrong one: it is let
+     *  go, never taken by inference again, and claiming goes on. An exact
+     *  claim (a resume by id, a pick, this session's own hook) is kept: two
+     *  tabs can be on one conversation. */
+    refuteInferredClaim(rolloutPath: string): boolean {
+      if (stopped || !claimedPath || claimExact) return false
+      const exact = exactRollout(rolloutPath)
+      if (!exact || exact.path !== claimedPath) return false
+      settled.add(exact.path)
+      release()
+      startClaimPolling()
+      return true
+    },
     stop(): void {
       stopped = true
       // The run is over with its process (P3.7): its running time is kept.

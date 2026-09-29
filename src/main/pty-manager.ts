@@ -404,17 +404,105 @@ const codexTelemetrySources = new Map<string, TelemetrySource>()
 // P3.6 (row 22): with it, the account of the launch that resumed or claimed
 // it (its lease's), which a Switch account carries it from; never persisted.
 export const KEPT_CODEX_CONVERSATIONS_MAX = 512
-const keptCodexConversations = new Map<string, { uuid: string; cwd: string; accountId?: string }>()
+// P3.10: `inferred` -- the conversation was taken by folder and time (a new
+// one), not known (a resume by id, a pick, or the session's own hook);
+// `hookedRealm` -- the launch that took it carried the app's hooks, in that
+// realm (its sessions folder).
+const keptCodexConversations = new Map<string, { uuid: string; cwd: string; accountId?: string; inferred?: boolean; hookedRealm?: string }>()
 
-function keepCodexConversation(sessionId: string, conversation: { uuid: string; cwd: string }, accountId?: string): void {
+function keepCodexConversation(sessionId: string, conversation: { uuid: string; cwd: string }, accountId?: string, how?: { inferred: boolean; hookedRealm?: string }): void {
   if (typeof conversation.uuid !== 'string' || !UUID_RE.test(conversation.uuid) || typeof conversation.cwd !== 'string') return
   keptCodexConversations.delete(sessionId)
-  keptCodexConversations.set(sessionId, { uuid: conversation.uuid, cwd: conversation.cwd, ...(typeof accountId === 'string' && accountId ? { accountId } : {}) })
+  keptCodexConversations.set(sessionId, {
+    uuid: conversation.uuid,
+    cwd: conversation.cwd,
+    ...(typeof accountId === 'string' && accountId ? { accountId } : {}),
+    ...(how?.inferred ? { inferred: true } : {}),
+    ...(how?.hookedRealm ? { hookedRealm: how.hookedRealm } : {}),
+  })
   while (keptCodexConversations.size > KEPT_CODEX_CONVERSATIONS_MAX) {
     const oldest = keptCodexConversations.keys().next().value
     if (oldest === undefined) break
     keptCodexConversations.delete(oldest)
   }
+}
+
+// P3.10 (rows 43, 46, 47, 63): the Codex launches given the app's hooks (see
+// providers/codex/hooks.ts), their hook files (removed with the session's
+// resources), the realm each runs in, and the realms (sessions folders) a hook
+// has been heard from in this run -- proof that the user trusted the app's
+// hooks there (Codex asks once per account folder). A hook's rollout path is
+// the exact claim of the conversation the session is on (as Claude's #480
+// bind); the last one taken is kept so the frequent events (a prompt, each
+// tool) cost one comparison.
+const codexHookFiles = new Map<string, { hookFile: string; dispose(): void }>()
+const codexHookedLaunches = new Map<string, string>()
+const codexHookRealms = new Set<string>()
+const lastCodexHookRollout = new Map<string, string>()
+export const CODEX_HOOK_REALMS_MAX = 256
+
+function forgetCodexHooks(sessionId: string): void {
+  const file = codexHookFiles.get(sessionId)
+  if (file) {
+    codexHookFiles.delete(sessionId)
+    try { file.dispose() } catch { /* best-effort */ }
+  }
+  codexHookedLaunches.delete(sessionId)
+  lastCodexHookRollout.delete(sessionId)
+}
+
+/**
+ * P3.10: a hook of Codex session `sessionId` (authenticated by the gateway
+ * with that session's token) named `rolloutPath` as the transcript it is on.
+ * True when the session is a Codex one, so the caller hands the path to no
+ * Claude sink (the Claude transcript binder, the Claude account attribution).
+ * Its realm counts as one whose hooks run; its telemetry claims the rollout
+ * exactly (checked there: a rollout inside the realm whose session_meta names
+ * the id in its name), and any other session's claim of that rollout that was
+ * only inferred is let go (it was the wrong new conversation).
+ */
+export function noteCodexHookTranscript(sessionId: string, rolloutPath: string): boolean {
+  if (ptySessions.get(sessionId)?.agent !== 'codex') return false
+  const realm = codexHookedLaunches.get(sessionId)
+  // A Codex session this launch gave no hooks: nothing it says is taken.
+  if (!realm) return true
+  if (!codexHookRealms.has(realm)) {
+    codexHookRealms.add(realm)
+    while (codexHookRealms.size > CODEX_HOOK_REALMS_MAX) {
+      const oldest = codexHookRealms.values().next().value
+      if (oldest === undefined) break
+      codexHookRealms.delete(oldest)
+    }
+  }
+  if (lastCodexHookRollout.get(sessionId) === rolloutPath) return true
+  const tel = codexTelemetrySources.get(sessionId)
+  const took = tel?.noteExactRollout?.(rolloutPath) ?? null
+  if (!took) {
+    logWarn(`[pty] Codex session ${sessionId}: a hook named a transcript that is not a rollout of its account folder (length ${typeof rolloutPath === 'string' ? rolloutPath.length : 'n/a'}); ignored`)
+    return true
+  }
+  lastCodexHookRollout.set(sessionId, rolloutPath)
+  for (const [other, source] of codexTelemetrySources) {
+    if (other === sessionId) continue
+    try {
+      if (source.refuteInferredClaim?.(rolloutPath)) logInfo(`[pty] Codex session ${other}: its inferred conversation is ${sessionId}'s (that session's hook said so); it claims again`)
+    } catch { /* one session's watch never breaks another's */ }
+  }
+  return true
+}
+
+/** P3.10: whether `sessionId` runs Codex now (a live PTY started as a Codex
+ *  session). The attention source maps Codex's own hook events with it. */
+export function isCodexPtySession(sessionId: string): boolean {
+  return ptySessions.get(sessionId)?.agent === 'codex'
+}
+
+function unmarkCodexConversationUncertain(uuid: string): void {
+  if (typeof uuid === 'string') uncertainCodexConversations.delete(uuid.toLowerCase())
+}
+
+function sameConversationId(a: string | undefined, b: string | undefined): boolean {
+  return typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase()
 }
 
 /** The conversation a Codex session is on, for session:save (P3.5). */
@@ -426,10 +514,17 @@ export function getKeptCodexConversation(sessionId: string): { uuid: string; cwd
 /** P3.6 (row 22): the conversation a Codex session is on and the account it
  *  ran under, for a Switch account to carry it into another account; none
  *  unless both are known. `uncertain`: its claim could have been another
- *  session's (see uncertainCodexConversations), so it is never carried. */
-export function getKeptCodexConversationSource(sessionId: string): { uuid: string; cwd: string; accountId: string; uncertain: boolean } | undefined {
+ *  session's (see uncertainCodexConversations), so it is never carried.
+ *  P3.10 `unconfirmed`: it was only inferred, by a launch that carried the
+ *  app's hooks, in a realm whose hooks have been heard from -- so Codex runs
+ *  them there, and would have named this session's conversation had it sent
+ *  a message: the inferred rollout may be another writer's, so it is never
+ *  carried either (it holds no message of this session's). */
+export function getKeptCodexConversationSource(sessionId: string): { uuid: string; cwd: string; accountId: string; uncertain: boolean; unconfirmed: boolean } | undefined {
   const kept = keptCodexConversations.get(sessionId)
-  return kept && kept.accountId ? { uuid: kept.uuid, cwd: kept.cwd, accountId: kept.accountId, uncertain: uncertainCodexConversations.has(kept.uuid.toLowerCase()) } : undefined
+  if (!kept || !kept.accountId) return undefined
+  const unconfirmed = kept.inferred === true && !!kept.hookedRealm && codexHookRealms.has(kept.hookedRealm)
+  return { uuid: kept.uuid, cwd: kept.cwd, accountId: kept.accountId, uncertain: uncertainCodexConversations.has(kept.uuid.toLowerCase()), unconfirmed }
 }
 
 // P3.6 (ADR-009 round 1, B1; owner decision): conversations whose claim was
@@ -4319,8 +4414,25 @@ function spawnPtyResolved(
     // node-pty resolver miss). A spawn that failed releases its lease, and
     // ends a PTY it had already started, so no Codex runs unheld.
     let started: pty.IPty | undefined
+    // P3.10 (rows 43, 46, 47, 63): the app's hooks for this launch, when the
+    // Hooks gateway is on and listening -- as the Claude branch's injectHooks:
+    // a token minted for the session, and the file that hands it to the hook
+    // (never a command line). The previous launch's are gone with its
+    // resources (killPty above).
+    let hookFile: { hookFile: string; dispose(): void } | null = null
     try {
       const provider = getProvider('codex')
+      const gw = getGateway()
+      const gwStatus = gw?.status()
+      if (gw && gwStatus?.listening && gwStatus.port && provider.prepareSessionHooks) {
+        try {
+          const secret = gw.registerSession(sessionId)
+          hookFile = provider.prepareSessionHooks(sessionId, gwStatus.port, secret)
+        } catch (err) {
+          logError(`[pty] Failed to prepare Codex hooks for ${sessionId}: ${(err as Error)?.message ?? err}`)
+          hookFile = null
+        }
+      }
       // P3.5 (rows 34, 35): the conversation to resume exactly, as the Claude
       // branch does -- a restored tab's persisted one (options.resume), else,
       // on a Restart, the one the tab is on (kept across the kill). "Restart
@@ -4347,14 +4459,26 @@ function spawnPtyResolved(
           readConfig<{ theme?: string }>('settings')?.theme,
           nativeTheme.shouldUseDarkColors,
         ),
+        ...(hookFile ? { codexHooks: { hookFile: hookFile.hookFile } } : {}),
       })
       const { cmd: spawnCmd, args: spawnArgs, env: spawnEnv, commandLine } = built
+      // P3.10: a hook file the launch did not use goes at once; one it uses
+      // goes with the session's resources.
+      const hookedRealm = built.hooksInstalled === true && hookFile ? launch.sessionsDir : undefined
+      if (hookFile && hookedRealm) {
+        codexHookFiles.set(sessionId, hookFile)
+        codexHookedLaunches.set(sessionId, hookedRealm)
+      } else if (hookFile) {
+        try { hookFile.dispose() } catch { /* best-effort */ }
+      }
+      hookFile = null
+      logInfo(`[pty-manager] Codex hooks for ${sessionId}: ${hookedRealm ? 'on' : 'off (the Hooks gateway is off or not listening, or the hook could not be given on this launch)'}`)
       // Where the CLI runs: the resumed conversation's own directory, else the configured one.
       const codexCwd = built.cwd || resolvedCwd
       // The tab is on the conversation it resumes; a launch that resumes
       // nothing (the picker, a fresh start) lets the kept one go until the
       // status line claims the next.
-      if (built.resumeId) keepCodexConversation(sessionId, { uuid: built.resumeId, cwd: codexCwd }, launch.lease.accountId)
+      if (built.resumeId) keepCodexConversation(sessionId, { uuid: built.resumeId, cwd: codexCwd }, launch.lease.accountId, { inferred: false, hookedRealm })
       else keptCodexConversations.delete(sessionId)
       // Said, never silent: the conversation's rollout does not record the
       // directory this session kept, so it resumes in the configured one.
@@ -4384,6 +4508,9 @@ function spawnPtyResolved(
         if (win.isDestroyed()) return
         if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) return // rc.15 review R9
         getPtyIntegrityMonitor()?.recordPtyData(sessionId, data.length)
+        // P3.10 (rows 43, 46): the Watchdog's pane and silence clock, as a
+        // Claude session's; a no-op until the session arms one (off by default).
+        getWatchdogManager()?.feedData(sessionId, data)
         win.webContents.send(`pty:data:${sessionId}`, data)
       })
       // Start rollout watch-and-claim telemetry. Updates are dispatched to the
@@ -4403,17 +4530,23 @@ function spawnPtyResolved(
           ...(built.resumeId && built.resumePath ? { resumePath: built.resumePath } : {}),
           ...(built.pickFile ? { pickFile: built.pickFile, pickFolder: built.pickFolder } : {}),
           onClaim: (claimed) => {
-            keepCodexConversation(sessionId, { uuid: claimed.id, cwd: claimed.cwd }, launch.lease.accountId)
+            keepCodexConversation(sessionId, { uuid: claimed.id, cwd: claimed.cwd }, launch.lease.accountId, { inferred: claimed.exact !== true, hookedRealm })
             // P3.6: a claim that could have been another session's.
             if (claimed.certain !== true) markCodexConversationUncertain(claimed.id)
+            // P3.10: the session's own hook named it: this session is on it,
+            // as Codex says, which clears P3.6's doubt -- unless it is the
+            // conversation this launch resumed by id (the app's own choice,
+            // from a record that may already be in doubt: that stays).
+            else if (claimed.fromHook === true && !sameConversationId(claimed.id, built.resumeId)) unmarkCodexConversationUncertain(claimed.id)
           },
           // The picker decided again after a claim: the session is no longer on it.
           onRelease: () => { keptCodexConversations.delete(sessionId) },
           // P3.6 (VM finding V2): on a conversation another session holds
-          // (picked, or resumed by id): recorded as this session's too, so a
-          // Switch refuses it as in use and says so.
+          // (picked, resumed by id, or named by its hook): recorded as this
+          // session's too, so a Switch refuses it as in use and says so.
           onShared: (shared) => {
-            keepCodexConversation(sessionId, { uuid: shared.id, cwd: shared.cwd }, launch.lease.accountId)
+            keepCodexConversation(sessionId, { uuid: shared.id, cwd: shared.cwd }, launch.lease.accountId, { inferred: shared.exact !== true, hookedRealm })
+            if (shared.fromHook === true && !sameConversationId(shared.id, built.resumeId)) unmarkCodexConversationUncertain(shared.id)
           },
         },
         (data) => {
@@ -4442,6 +4575,9 @@ function spawnPtyResolved(
         registerClaudeReviewSession(sessionId, resolvedCwd)
       }
     } catch (err) {
+      // P3.10: a launch that failed keeps no hook file or hooked mark.
+      if (hookFile) { try { hookFile.dispose() } catch { /* best-effort */ } }
+      forgetCodexHooks(sessionId)
       if (codexLaunchLeases.get(sessionId) === launch.lease) codexLaunchLeases.delete(sessionId)
       if (started) {
         // A PTY that started: its lease goes when its process does.
@@ -4638,6 +4774,14 @@ function spawnPtyResolved(
     // succeeds (see below) so a spawn throw can't leak the per-session map entry,
     // and shell-only sessions (no Claude) never capture.
 
+    // C item (completion plan, section 7; fixed in P3.10): everything from the
+    // spawn to the data hook can throw (a quoting refusal, a store refusing a
+    // root, a settings read), and a throw here used to leave the process just
+    // started running untracked: no session entry, no exit handler, never
+    // killed. It is now ended, with what this spawn had taken, and the throw
+    // goes on to the caller as before (the Codex branch does the same).
+    let localStarted: pty.IPty | undefined
+    try {
     if (shellOnly) {
       logInfo(`[pty-manager] Launching shell-only PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${describePathForLog(resolvedCwd)}${options?.elevated ? ' (elevated)' : ''}`)
 
@@ -4649,6 +4793,7 @@ function spawnPtyResolved(
         env: finalSpawnEnv,
         useConpty: true
       })
+      localStarted = ptyProcess
 
       // #48: hold the profile for this shell's life (see shellOnlyProfileHolds).
       // Only after pty.spawn succeeded, mirroring B3 for the identity capture:
@@ -4821,6 +4966,7 @@ function spawnPtyResolved(
         env: finalSpawnEnv,
         useConpty: true
       })
+      localStarted = ptyProcess
 
       // B3: capture identity ONLY after the spawn succeeds — if pty.spawn throws,
       // no map entry is created (no leak), and shell-only sessions never reach
@@ -5130,6 +5276,20 @@ function spawnPtyResolved(
       getWatchdogManager()?.feedData(sessionId, data)
       win.webContents.send(`pty:data:${sessionId}`, data)
     })
+    } catch (err) {
+      if (localStarted) {
+        logWarn(`[pty] Local spawn for ${sessionId} failed after its process started; the process is ended (${(err as Error)?.message ?? err})`)
+        try { localStarted.kill() } catch { /* already gone */ }
+        try { getGateway()?.unregisterSession(sessionId) } catch { /* gateway stopped */ }
+        try { removeLocalSessionSettings(sessionId) } catch { /* best-effort */ }
+        try { removeLocalSessionMcpConfig(sessionId) } catch { /* best-effort */ }
+        try { removeLocalSessionStatusUrl(sessionId) } catch { /* best-effort */ }
+        try { cleanupSessionResources(sessionId) } catch { /* best-effort */ }
+        try { clearClaudeAccount(sessionId) } catch { /* best-effort */ }
+        try { stopWatchingAccountIdentity(sessionId) } catch { /* best-effort */ }
+      }
+      throw err
+    }
   }
 
   ptySessions.set(sessionId, { ptyProcess, sessionId, agent: options?.shellOnly ? null : (options?.provider ?? 'claude') })
@@ -5141,12 +5301,16 @@ function spawnPtyResolved(
   // the claude-running latch inside the SSH flow (see setFlowState) — at spawn
   // its PTY carries the handshake (auth prompts, remote-controlled MOTD), which
   // the watchdog must never be in a position to type into.
-  // Never Codex, a bare shell (shellOnly), or an Ask Conductor one-shot (#266
+  // Never a bare shell (shellOnly), or an Ask Conductor one-shot (#266
   // MAJOR-5: an ephemeral ask surface must not grow a retry badge). No-op when
   // the feature is off (default). feedData already flows for every session.
-  if (!options?.shellOnly && !options?.ssh && (options?.provider ?? 'claude') === 'claude') {
+  // P3.10 (row 43): a LOCAL Codex session too, with Codex's own patterns
+  // (watchdog/codex-patterns.ts); Codex runs on this computer only in this
+  // release, so there is no SSH Codex session to arm.
+  const watchdogProvider = options?.provider ?? 'claude'
+  if (!options?.shellOnly && !options?.ssh && (watchdogProvider === 'claude' || watchdogProvider === 'codex')) {
     getWatchdogManager()?.startWatchdog(sessionId, {
-      provider: options?.provider,
+      provider: watchdogProvider,
       ssh: false,
       shellOnly: false,
       // Explicit kind flag (#266 MAJOR-5), never the askPrompt heuristic: that
@@ -5631,6 +5795,10 @@ function cleanupSessionResources(sessionId: string): void {
     try { codexTel.stop() } catch { /* noop */ }
     codexTelemetrySources.delete(sessionId)
   }
+  // P3.10: the launch's hook file (its token) and its hooked mark go with
+  // the session's resources; the gateway's token for it goes on exit, as a
+  // Claude session's does, and a respawn mints a new one.
+  forgetCodexHooks(sessionId)
   // Clear the SSH flow controller too -- otherwise a stale entry keeps
   // a closure over the old ptyProcess and a renderer click after
   // session restart would write to a dead pty.

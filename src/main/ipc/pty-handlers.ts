@@ -158,6 +158,9 @@ interface RespawnCarry {
 /** The words for a conversation whose claim was not certain (P3.6, owner
  *  decision on ADR-009 round 1, B1). */
 const UNCERTAIN_WORDS = 'Another session started in the same folder at about the same time, so the app could not be sure which conversation was this one, and did not carry it over.'
+/** P3.10: the claim was only inferred where Codex's hooks run (they name the
+ *  conversation with the first message sent). */
+const UNCONFIRMED_WORDS = 'Codex had not yet said which conversation this session is on (it does with the first message you send), so the app did not carry it over.'
 
 /**
  * P3.6 (row 22; ADR-009 thesis 3): a Codex session respawned on another
@@ -190,6 +193,13 @@ async function carryForRespawn(sessionId: string, accountId: string, service: Pi
   if (kept.uncertain) {
     logWarn(`[pty] Session ${sessionId}: its conversation's claim was not certain, so it was not carried into the new account; a new one starts there`)
     return { uuid: kept.uuid, fresh: true, notice: { code: 'conversation-uncertain', message: UNCERTAIN_WORDS } }
+  }
+  // P3.10: Codex's hooks run in this account's folder, yet none has named this
+  // session's conversation (it does with the first message sent): what the
+  // session was on was only inferred, and could be another writer's.
+  if (kept.unconfirmed) {
+    logWarn(`[pty] Session ${sessionId}: Codex had not named its conversation yet, so it was not carried into the new account; a new one starts there`)
+    return { uuid: kept.uuid, fresh: true, notice: { code: 'conversation-uncertain', message: UNCONFIRMED_WORDS } }
   }
   const ended = await codexRunEnded(sessionId, CODEX_CARRY_EXIT_WAIT_MS)
   if (!current()) return undefined

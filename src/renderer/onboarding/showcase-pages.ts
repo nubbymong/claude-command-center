@@ -62,10 +62,10 @@ export interface ShowcasePage {
   /** P3.4 (row 14): the page is about something that needs Claude Code in
    *  this release (Claude sessions only), so it is not shown while Claude
    *  Code is off. The phase that brings the feature to Codex lifts it (named
-   *  in that phase's entry of docs/wp2/completion-plan.md: watchdog P3.10,
-   *  canvas P4.1, askConductor P4.3; P3.6 lifted it from accounts, whose
-   *  Insights point keeps it); remoteResume keeps it, since Codex over SSH is
-   *  outside this release. */
+   *  in that phase's entry of docs/wp2/completion-plan.md: canvas P4.1,
+   *  askConductor P4.3; P3.6 lifted it from accounts, whose Insights point
+   *  keeps it, and P3.10 from watchdog); remoteResume keeps it, since Codex
+   *  over SSH is outside this release. */
   needsClaude?: boolean
 }
 
@@ -166,7 +166,6 @@ export const SHOWCASES_21: ShowcasePage[] = [
   },
   {
     id: 'watchdog',
-    needsClaude: true,
     heading: "The Watchdog waits so you don't have to",
     tagline: "A rate limit doesn't have to end your evening: the session reads the banner, waits out the reset, and types the retry itself.",
     points: [
