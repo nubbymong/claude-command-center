@@ -3,16 +3,20 @@
  *
  * Tails the rollout JSONL that Codex writes to
  * ~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl
- * and converts token_count events into StatuslineData updates.
+ * and converts token_count events into StatuslineData updates, with the
+ * lines its completed edits changed (P3.7).
  *
  * Exports:
  *   parseCodexRollout       -- parse raw JSONL text into typed events
  *   mapTokenCountToStatusline -- convert a TokenCountEvent to StatuslineData
  *   withAllowance           -- put the validated allowance on an update (MP2)
+ *   countFileChangeLines    -- the lines one recorded edit added and removed (P3.7)
+ *   countRolloutEditLines   -- the same over a byte range of a rollout, in the background (P3.7)
  *   watchAndClaimRollout    -- 250ms-poll claim + 500ms-poll tail pipeline
  */
 
-import { readdirSync, lstatSync, unlinkSync, rmdirSync, openSync, fstatSync, readSync, closeSync, constants as fsConstants } from 'fs'
+import { readdirSync, lstatSync, unlinkSync, rmdirSync, openSync, fstatSync, readSync, closeSync, constants as fsConstants, promises as fsp } from 'fs'
+import type { FileHandle } from 'fs/promises'
 import { join, relative, isAbsolute, sep, dirname, basename } from 'path'
 import { computeCodexCostUsd } from './pricing'
 import { CODEX_CONVERSATION_ID_RE, codexDayFolders, codexFolderIdentity, findCodexRollout, isRealFolder, parseSessionMetaLine, readRolloutFirstLine, sameDirectory } from './rollout-lookup'
@@ -105,16 +109,87 @@ export interface TokenCountEvent {
  *                    newest reading of each limit, stamped with the time of the
  *                    newest event that had one; null when none did (merged a
  *                    reading at a time: the same result as merging them all)
+ *   linesAdded,   -- the lines the edits read so far added and removed
+ *   linesRemoved     (P3.7, row 36; countFileChangeLines)
  */
 export interface RolloutReadState {
   meta: RolloutMeta | null
   contextWindow: number | null
   latest: TokenCountEvent | null
   allowance: AllowanceReading | null
+  linesAdded: number
+  linesRemoved: number
 }
 
 export function newRolloutReadState(): RolloutReadState {
-  return { meta: null, contextWindow: null, latest: null, allowance: null }
+  return { meta: null, contextWindow: null, latest: null, allowance: null, linesAdded: 0, linesRemoved: 0 }
+}
+
+/** Added and removed line counts. */
+export interface LineCounts {
+  added: number
+  removed: number
+}
+
+/** How many lines `text` holds (a last line with no newline counts). */
+function textLineCount(text: string): number {
+  if (!text) return 0
+  const breaks = text.split('\n').length - 1
+  return text.endsWith('\n') ? breaks : breaks + 1
+}
+
+/** The lines one unified diff adds and removes: only lines inside a hunk,
+ *  each hunk read for exactly the lines its header counts, so a file header
+ *  before or between hunks is never taken for a change. */
+function unifiedDiffLines(diff: string): LineCounts {
+  const out: LineCounts = { added: 0, removed: 0 }
+  let oldLeft = 0
+  let newLeft = 0
+  for (const line of diff.split('\n')) {
+    if (oldLeft > 0 || newLeft > 0) {
+      const c = line.charAt(0)
+      if (c === '+') { out.added++; newLeft--; continue }
+      if (c === '-') { out.removed++; oldLeft--; continue }
+      if (c === ' ' || line === '') { oldLeft--; newLeft--; continue }
+      if (c === '\\') continue
+      // Not a hunk line: the hunk ended early; look for the next header.
+      oldLeft = 0
+      newLeft = 0
+    }
+    const h = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/.exec(line)
+    if (h) {
+      oldLeft = h[1] === undefined ? 1 : Number(h[1])
+      newLeft = h[2] === undefined ? 1 : Number(h[2])
+    }
+  }
+  return out
+}
+
+/**
+ * The lines one recorded edit added and removed (P3.7, row 36). Codex writes
+ * no line count (P3.1 evidence, answer 5): a completed edit is an
+ * item_completed event whose item is a FileChange, with a change per file.
+ * An `update` carries a unified diff, whose hunk lines are counted; an `add`
+ * or a `delete` carries the file's content, counted as added or removed.
+ * Anything else counts nothing.
+ */
+export function countFileChangeLines(changes: unknown): LineCounts {
+  const out: LineCounts = { added: 0, removed: 0 }
+  if (!changes || typeof changes !== 'object' || Array.isArray(changes)) return out
+  for (const change of Object.values(changes as Record<string, unknown>)) {
+    if (!change || typeof change !== 'object') continue
+    const c = change as { type?: unknown; unified_diff?: unknown; content?: unknown }
+    if (typeof c.unified_diff === 'string') {
+      const d = unifiedDiffLines(c.unified_diff)
+      out.added += d.added
+      out.removed += d.removed
+    } else if (c.type === 'add' && typeof c.content === 'string') {
+      out.added += textLineCount(c.content)
+    } else if (c.type === 'delete' && typeof c.content === 'string') {
+      out.removed += textLineCount(c.content)
+    }
+  }
+  return out
 }
 
 /** One JSONL line of a rollout into `state`; `onTokenCount` hears each usage
@@ -155,6 +230,17 @@ export function applyRolloutLine(state: RolloutReadState, line: string, onTokenC
   if (payload.type === 'task_started') {
     const cw = payload.model_context_window
     if (typeof cw === 'number') state.contextWindow = cw
+    return
+  }
+
+  // An edit Codex applied (P3.7): only a completed one changed the files.
+  if (payload.type === 'item_completed') {
+    const item = payload.item as { type?: unknown; status?: unknown; changes?: unknown } | null | undefined
+    if (item && typeof item === 'object' && item.type === 'FileChange' && item.status === 'completed') {
+      const n = countFileChangeLines(item.changes)
+      state.linesAdded += n.added
+      state.linesRemoved += n.removed
+    }
     return
   }
 
@@ -209,6 +295,8 @@ export function applyRolloutLine(state: RolloutReadState, line: string, onTokenC
  *                    rate_limits (the pre-response info-null one included): the
  *                    newest reading of each limit, stamped with the time of the
  *                    newest event that had one; null when none did
+ *   linesAdded,   -- the lines its completed edits added and removed (P3.7)
+ *   linesRemoved
  *
  * Throws if no session_meta line is found.
  */
@@ -217,6 +305,8 @@ export function parseCodexRollout(text: string): {
   tokenCounts: TokenCountEvent[]
   contextWindow: number | null
   allowance: AllowanceReading | null
+  linesAdded: number
+  linesRemoved: number
 } {
   const state = newRolloutReadState()
   const tokenCounts: TokenCountEvent[] = []
@@ -224,7 +314,98 @@ export function parseCodexRollout(text: string): {
     if (line) applyRolloutLine(state, line, (tc) => tokenCounts.push(tc))
   }
   if (!state.meta) throw new Error('rollout missing session_meta')
-  return { meta: state.meta, tokenCounts, contextWindow: state.contextWindow, allowance: state.allowance }
+  return { meta: state.meta, tokenCounts, contextWindow: state.contextWindow, allowance: state.allowance, linesAdded: state.linesAdded, linesRemoved: state.linesRemoved }
+}
+
+/** How much of a rollout the background count reads at a time, and the
+ *  longest line it keeps to look at (a longer one is passed over). */
+export const EDIT_COUNT_CHUNK_BYTES = 1024 * 1024
+export const EDIT_COUNT_LINE_MAX_BYTES = 64 * 1024 * 1024
+/** The text every line holding an edit contains; no other line is parsed. */
+const FILE_CHANGE_MARK = Buffer.from('"FileChange"')
+
+/** Bytes the background counts have read, and the most of one line any of
+ *  them held at once (tests read them). */
+let editCountBytesRead = 0
+let editCountMostHeld = 0
+export function __codexEditCountBytesReadForTests(): number { return editCountBytesRead }
+/** The most held since the last call, then starts again. */
+export function __codexEditCountTakeMostHeldForTests(): number { const n = editCountMostHeld; editCountMostHeld = 0; return n }
+
+/**
+ * The lines the completed edits in whole lines of `file` from byte `start`
+ * to `end` added and removed (P3.7): what a watcher that read only a large
+ * rollout's head and tail did not see. Read apart from the status line's own
+ * reads, a chunk at a time, while the opened file is still `identity` (its
+ * device and file id, as the watcher claimed it). Null when it is not, when
+ * the read fails, or when `stale()` says the count is no longer wanted (it
+ * is asked before each chunk, and last once the file is closed). A last line
+ * with no newline before `end` is not a whole record and is not counted; a
+ * line longer than `lineMaxBytes` is passed over, never held.
+ */
+export async function countRolloutEditLines(
+  file: string,
+  identity: string,
+  start: number,
+  end: number,
+  stale: () => boolean = () => false,
+  limits: { chunkBytes?: number; lineMaxBytes?: number } = {},
+): Promise<LineCounts | null> {
+  const chunkBytes = Math.max(1, limits.chunkBytes ?? EDIT_COUNT_CHUNK_BYTES)
+  const lineMax = limits.lineMaxBytes ?? EDIT_COUNT_LINE_MAX_BYTES
+  const counted = newRolloutReadState()
+  let result: LineCounts | null = null
+  let fh: FileHandle | null = null
+  try {
+    fh = await fsp.open(file, 'r')
+    const st = await fh.stat({ bigint: true })
+    if (`${st.dev}:${st.ino}` !== identity) return null
+    /** The line read so far across chunks, and its length (Infinity once it
+     *  is longer than lineMax: it is being passed over and nothing is held). */
+    const pieces: Buffer[] = []
+    let pending = 0
+    const take = (line: Buffer): void => {
+      if (line.includes(FILE_CHANGE_MARK)) applyRolloutLine(counted, line.toString('utf-8'))
+    }
+    let pos = start
+    while (pos < end) {
+      if (stale()) return null
+      const len = Math.min(chunkBytes, end - pos)
+      const buf = Buffer.alloc(len)
+      const { bytesRead } = await fh.read(buf, 0, len, pos)
+      if (bytesRead <= 0) break
+      editCountBytesRead += bytesRead
+      pos += bytesRead
+      const chunk = buf.subarray(0, bytesRead)
+      let at = 0
+      for (let nl = chunk.indexOf(0x0a, at); nl >= 0; nl = chunk.indexOf(0x0a, at)) {
+        const part = chunk.subarray(at, nl)
+        if (pending + part.length <= lineMax) take(pieces.length ? Buffer.concat([...pieces, part]) : part)
+        pieces.length = 0
+        pending = 0
+        at = nl + 1
+      }
+      if (at < chunk.length) {
+        const rest = chunk.subarray(at)
+        if (pending + rest.length > lineMax) {
+          pieces.length = 0
+          pending = Number.POSITIVE_INFINITY
+        } else {
+          pieces.push(rest)
+          pending += rest.length
+          if (pending > editCountMostHeld) editCountMostHeld = pending
+        }
+      }
+    }
+    result = { added: counted.linesAdded, removed: counted.linesRemoved }
+  } catch {
+    result = null
+  } finally {
+    if (fh) { try { await fh.close() } catch { /* already closed */ } }
+  }
+  // Asked last, once the file is closed: nothing runs between this answer
+  // and the caller's use of the count.
+  return result && !stale() ? result : null
 }
 
 // ── Mapper ───────────────────────────────────────────────────────────────────
@@ -642,7 +823,7 @@ export function watchAndClaimRollout(
     offset = 0
     contextWindow = null
     heldElsewhere = null
-    try { onUpdate({ sessionId, inputTokens: 0, outputTokens: 0, costUsd: 0, contextUsedPercent: 0 }) } catch { /* a sink that throws never stops the watch */ }
+    try { onUpdate({ sessionId, inputTokens: 0, outputTokens: 0, costUsd: 0, contextUsedPercent: 0, linesAdded: 0, linesRemoved: 0 }) } catch { /* a sink that throws never stops the watch */ }
     if (claimOpts?.onRelease) {
       try { claimOpts.onRelease() } catch { /* a listener never stops the watch */ }
     }
@@ -722,7 +903,8 @@ export function watchAndClaimRollout(
    *  rollout replaced by a smaller one, or a gain past READ_STEP_MAX_BYTES):
    *  all of it when it is no bigger than its head and tail, else its head
    *  (session_meta, the first task_started) and its tail (the newest
-   *  events), each bounded. */
+   *  events), each bounded; the edits between them are counted in the
+   *  background (countBetween, P3.7). */
   function readNew(file: string): boolean {
     let fd: number | null = null
     try {
@@ -746,13 +928,17 @@ export function watchAndClaimRollout(
           offset = applyLines(readSpan(fd, 0, size))
           return offset > 0
         }
-        applyLines(readSpan(fd, 0, CLAIM_HEAD_BYTES))
+        const headUsed = applyLines(readSpan(fd, 0, CLAIM_HEAD_BYTES))
         const tailStart = size - CLAIM_TAIL_BYTES
         const tail = readSpan(fd, tailStart, size)
         // The tail's first line may be cut: it is skipped.
         const first = tail.indexOf(0x0a) + 1
         const used = first > 0 ? applyLines(tail.subarray(first)) : 0
         offset = first > 0 ? tailStart + first + used : size
+        // The edits between the head and the tail (P3.7): counted in the
+        // background, whole lines only, so the lines changed are the whole
+        // conversation's.
+        countBetween(file, openedIdentity, headUsed, tailStart + first)
         return true
       }
       const used = applyLines(readSpan(fd, offset, size))
@@ -766,6 +952,25 @@ export function watchAndClaimRollout(
     }
   }
 
+  /** The edits in bytes [start, end) of the claimed rollout, which a head and
+   *  tail read passed over, added to what this read state counted once the
+   *  background count is done (P3.7). Once the watch stopped, or the read
+   *  state was replaced (a later read from the start, or the claim let go),
+   *  the count stops reading and nothing is said; another file at the path
+   *  is never read (countRolloutEditLines). */
+  function countBetween(file: string, identity: string, start: number, end: number): void {
+    const state = readState
+    const stale = (): boolean => stopped || readState !== state
+    // Its last question to stale() comes after it closed the file, so the
+    // answer still holds here.
+    void countRolloutEditLines(file, identity, start, end, stale).then((n) => {
+      if (!n) return
+      state.linesAdded += n.added
+      state.linesRemoved += n.removed
+      emit()
+    }, () => { /* the count never stops the watch */ })
+  }
+
   /** The status line from what the rollout has said, once its session_meta was read. */
   function emit(): void {
     const meta = readState.meta
@@ -775,12 +980,15 @@ export function watchAndClaimRollout(
     if (allowance && onAllowance) {
       try { onAllowance(allowance) } catch { /* the live figure never stops the watch */ }
     }
+    // The conversation's lines changed ride on every update (P3.7, row 36):
+    // zero until an edit lands, as Claude Code reports them.
+    const lines = { linesAdded: readState.linesAdded, linesRemoved: readState.linesRemoved }
     try {
       if (readState.latest) {
-        onUpdate(withAllowance(mapTokenCountToStatusline(readState.latest, meta, sessionId, contextWindow), allowance))
+        onUpdate({ ...withAllowance(mapTokenCountToStatusline(readState.latest, meta, sessionId, contextWindow), allowance), ...lines })
       } else if (allowance) {
         // Only the pre-response event so far: its allowance is already real.
-        onUpdate(withAllowance({ sessionId }, allowance))
+        onUpdate({ ...withAllowance({ sessionId }, allowance), ...lines })
       }
     } catch { /* a sink that throws never stops the watch */ }
   }

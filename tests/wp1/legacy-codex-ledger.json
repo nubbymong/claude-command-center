@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "b09d73454672c9d0af7784cd61428d3cd70fa524479b57bc96c55c0c221bb81e",
-  "manifestHead": "78f2fcec25fd88753721cd0c03a5433c26eb931a",
+  "manifestPathDigest": "f614c0f92f552936cd72c5bf19412c7c5413e82f33a7d9b474772164a5017d75",
+  "manifestHead": "8e175cedbe665a3ed5e7eb1ce05351e92b0dbbc8",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -4590,6 +4590,19 @@
       "disposition": "added",
       "evidence": "new WP2 PR 3 P3.5 final round test (tests/unit/providers/codex/telemetry-claim-identity.test.ts): when the claimed rollout identity could not be recorded at the claim (its lstat failing, simulated), the first read records it, so the claim is kept and followed rather than let go and taken again on every read (WP1.68)",
       "note": "created by WP2 PR 3 P3.5 final round; fs is mocked to fail one lstat of the rollout"
+    },
+    {
+      "path": "tests/unit/providers/codex/telemetry-lines.test.ts",
+      "predicates": [
+        "P01",
+        "P07",
+        "P10",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.7 (row 36) test (tests/unit/providers/codex/telemetry-lines.test.ts): a Codex session's lines changed, counted from the completed FileChange edits its rollout records (P3.1 evidence answer 5; the recorded 0.153.4 and 0.155.1 edit fixtures), over the whole conversation, on every status line update and cleared when a claim is let go; the edits between a large rollout's head and tail counted in the background, bounded, identity-checked and dropped once stale (WP1.68)",
+      "note": "created by WP2 PR 3 P3.7; real files in a temp folder, no Codex process; fs.promises.open is gated in one test"
     },
     {
       "path": "tests/unit/providers/codex/telemetry.test.ts",
