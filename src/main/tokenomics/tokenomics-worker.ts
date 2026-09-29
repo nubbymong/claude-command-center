@@ -845,7 +845,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
   }
 
   function open(msg: Extract<ToTkWorker, { type: 'open' }>): void {
-    db = openTkDb(msg.dbPath)
+    db = openTkDb(msg.dbPath, { log: (m) => logw('warn', m) })
     setPricing(msg.pricing)
     configs = msg.configs
     if (configs.length) db.upsertConfigs(configs)

@@ -93,6 +93,23 @@ describe('Codex turns priced by their own id (P3.8 round 1)', () => {
     db.close()
   })
 
+  // Round 3 (Q2): a re-key that cannot run (the rows cannot be written: a
+  // read-only or locked file, here a trigger refusing the update) costs the
+  // open nothing; it is logged, and the rows wait for an open that can.
+  it('an open whose re-key fails still opens, says so in the log, and leaves the rows as they were', () => {
+    let db = openTkDb(dbPath)
+    db.insertEvents([ev(1, 'codex', 'gpt-5.3-codex-spark', 'gpt-5.3-codex', 'x-refused')])
+    db.raw.exec("CREATE TRIGGER no_rekey BEFORE UPDATE OF priceModel ON tk_events BEGIN SELECT RAISE(ABORT, 'read-only'); END")
+    db.close()
+    const log: string[] = []
+    db = openTkDbRaw(dbPath, { log: (m) => log.push(m) })
+    opened.push(db)
+    expect(log.join('\n')).toMatch(/not refreshed.*read-only/)
+    expect(db.raw.prepare("SELECT priceModel FROM tk_events WHERE provider = 'codex'").all()).toEqual([{ priceModel: 'gpt-5.3-codex' }])
+    expect(db.querySummary(PRICING, {}, T0 + 86_400_000).kpis.lifeToDateCostUsd).toBeCloseTo(1.75, 6)
+    db.close()
+  })
+
   // Round 2 (UP): the price keys the stored usage names are read once and
   // again only after a write (a new turn, a rollup rebuild), not on every
   // query; a key a new turn names is bound at once.

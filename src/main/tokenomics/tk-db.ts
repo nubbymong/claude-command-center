@@ -307,8 +307,23 @@ export interface TkDb {
   close(): void
 }
 
-export function openTkDb(dbPath: string): TkDb {
+/** How an open reports what it could not do but went on without (P3.8
+ *  round 3): the worker passes its log. */
+export interface TkDbOpenOptions { log?: (message: string) => void }
+
+export function openTkDb(dbPath: string, opts: TkDbOpenOptions = {}): TkDb {
   const sqlite = new Database(dbPath)
+  // P3.8 round 3 (DB): an open that fails while it is set up (a locked file,
+  // say) closes the handle it opened before the error goes on.
+  try {
+    return setUpTkDb(sqlite, opts)
+  } catch (err) {
+    try { sqlite.close() } catch { /* already closed */ }
+    throw err
+  }
+}
+
+function setUpTkDb(sqlite: Database.Database, opts: TkDbOpenOptions): TkDb {
   sqlite.exec(DDL)
 
   // `CREATE TABLE IF NOT EXISTS` leaves an existing tk_files alone, so the
@@ -697,11 +712,14 @@ export function openTkDb(dbPath: string): TkDb {
         AND sessionId IN (SELECT sessionId FROM tk_sessions WHERE provider = 'codex');
     `)
   })
+  // Round 3 (Q2): a re-key that cannot run (a read-only or locked file)
+  // costs the open nothing: the rows wait for an open that can write them,
+  // and it is logged. With nothing to change it only scans (30 ms at 200,000
+  // rows on the VM), so no index is added for it.
   try {
     exactCodexPriceModel()
   } catch (err) {
-    try { sqlite.close() } catch { /* already closed */ }
-    throw err
+    opts.log?.(`[tokenomics] Codex price keys not refreshed this open: ${err instanceof Error ? err.message : String(err)}`)
   }
 
   /** P3.8 rounds 1 and 2 (Q2, UP): the price keys the stored usage names, for

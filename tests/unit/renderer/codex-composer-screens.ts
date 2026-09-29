@@ -143,3 +143,30 @@ export const REASONING_PICKER: ScreenLine[] = [
   plain(''),
   plain('  Press enter to confirm or esc to go back'),
 ]
+
+/** 0.153.4 at start-up (P3.8 round 3, V1; the VM's round 2 captures): after drawing its prompt, Codex boots its MCP
+ *  servers with a status row that reads like a turn ("esc to interrupt"). Still starting: not ready, not busy. */
+export const BOOTING_153: ScreenLine[] = [
+  ...banner('0.153.4', 'gpt-6-astra'),
+  plain(`Booting MCP server: conductor (0s ${BULLET} esc to interrupt)`),
+  plain(''),
+  plain(''),
+  placeholder(),
+  plain(''),
+  footer('gpt-6-astra default'),
+  ...tail(2),
+]
+
+/** /plan typed just before the boot row came up (0.153.4, V1): the boot row above it, its popup under it. */
+export const TYPED_PLAN_BOOTING_153: ScreenLine[] = [
+  ...banner('0.153.4', 'gpt-6-astra'),
+  plain(`Booting MCP server: conductor (0s ${BULLET} esc to interrupt)`),
+  plain(''),
+  plain(''),
+  plain(`${PROMPT} /plan`),
+  plain(''),
+  plain('  /plan  switch to Plan mode'),
+]
+
+/** 0.153.4 ready, its MCP servers booted. */
+export const READY_153: ScreenLine[] = [...banner('0.153.4', 'gpt-6-astra'), placeholder(), plain(''), footer('gpt-6-astra default'), ...tail(4)]

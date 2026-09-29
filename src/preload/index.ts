@@ -236,7 +236,7 @@ export interface ElectronAPI {
       providerAccountId?: string
       /** WP2: THIS launch's acknowledgement of an unverified sign-in. */
       acknowledgeRealmOnly?: boolean
-    }) => Promise<{ started: false } | ({ started: false } & import('../shared/providers').ProviderLaunchRefused) | { started: true; carry: import('../shared/providers').ConversationCarryNotice } | void>
+    }) => Promise<{ started: false } | ({ started: false } & import('../shared/providers').ProviderLaunchRefused) | { started: true; carry?: import('../shared/providers').ConversationCarryNotice; launched?: { codexPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted' | 'plan' } } | void>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void
     kill: (sessionId: string) => void

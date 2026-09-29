@@ -45,7 +45,7 @@ export type CodexComposerState = 'ready' | 'busy' | 'not-ready'
 /** What the live screen shows, in more detail than the state (round 2, WW):
  *  'unrecognised' is a composer with a footer under it that is not the last
  *  row (a narrow window wraps it, or a row is drawn under it). */
-export type CodexScreenKind = 'ready' | 'busy' | 'blocked' | 'no-prompt' | 'unrecognised'
+export type CodexScreenKind = 'ready' | 'busy' | 'blocked' | 'no-prompt' | 'unrecognised' | 'starting'
 
 /** Codex's prompt glyphs: the composer's, and the one it draws at ultra. */
 const GLYPHS = String.fromCharCode(0x203a) + String.fromCharCode(0xbb)
@@ -84,6 +84,11 @@ const BLOCKING_RE = [
 ]
 /** A turn running (its status row). */
 const BUSY_RE = /esc to interrupt/i
+/** Codex still starting (round 3, V1): 0.153.4 boots its MCP servers after
+ *  drawing its prompt, under a status row that reads like a turn ("Booting
+ *  MCP server: conductor (0s . esc to interrupt)"); the binaries also say
+ *  "Starting MCP servers". Not busy, and not the user's doing. */
+const STARTING_RE = /\b(?:Booting MCP server|Starting MCP servers?)\b/i
 /** The composer's placeholders (the binaries' strings), drawn dim. */
 const PLACEHOLDERS = ['Ask Codex to do anything', 'Ask a follow-up question']
 /** A row of the slash-command popup under a typed command. */
@@ -108,21 +113,29 @@ function composerContent(row: ScreenLine): string {
   return all
 }
 
-/** What the live screen shows, and the composer's content when there is one. */
-export function readCodexScreen(lines: ScreenLine[] | null | undefined, models?: readonly string[] | null): { screen: CodexScreenKind; text: string } {
-  if (!lines || lines.length === 0) return { screen: 'no-prompt', text: '' }
-  if (blocked(lines)) return { screen: 'blocked', text: '' }
+/** The screen's structure: what it shows, the composer's content, and the
+ *  footer row under the composer when that is the last row. */
+function layout(lines: ScreenLine[] | null | undefined, models?: readonly string[] | null): { screen: CodexScreenKind; text: string; footer: string | null } {
+  if (!lines || lines.length === 0) return { screen: 'no-prompt', text: '', footer: null }
+  if (blocked(lines)) return { screen: 'blocked', text: '', footer: null }
   const shown = lines.filter(nonBlank)
   const i = composerIndex(shown)
-  if (i < 0) return { screen: 'no-prompt', text: '' }
-  const text = composerContent(shown[i])
+  const text = i < 0 ? '' : composerContent(shown[i])
+  if (shown.some((l) => STARTING_RE.test(l.text))) return { screen: 'starting', text, footer: null }
+  if (i < 0) return { screen: 'no-prompt', text: '', footer: null }
   const footer = footerRe(models)
   const below = shown.slice(i + 1)
   if (below.length === 1 && footer.test(below[0].text)) {
-    return { screen: shown.some((l) => BUSY_RE.test(l.text)) ? 'busy' : 'ready', text }
+    return { screen: shown.some((l) => BUSY_RE.test(l.text)) ? 'busy' : 'ready', text, footer: below[0].text }
   }
-  if (below.some((l) => footer.test(l.text))) return { screen: 'unrecognised', text }
-  return { screen: 'no-prompt', text }
+  if (below.some((l) => footer.test(l.text))) return { screen: 'unrecognised', text, footer: null }
+  return { screen: 'no-prompt', text, footer: null }
+}
+
+/** What the live screen shows, and the composer's content when there is one. */
+export function readCodexScreen(lines: ScreenLine[] | null | undefined, models?: readonly string[] | null): { screen: CodexScreenKind; text: string } {
+  const { screen, text } = layout(lines, models)
+  return { screen, text }
 }
 
 /** Whether Codex's composer is the one taking keys, from the live screen. */
@@ -150,14 +163,24 @@ export function codexCommandTyped(lines: ScreenLine[] | null | undefined, comman
   return shown.slice(i + 1).every((l) => POPUP_ROW_RE.test(l.text) || footer.test(l.text))
 }
 
-/** Whether Codex's footer shows its Plan mode (round 2, PM1): true or false
- *  from the last footer on screen, null when no footer shows (a popup or a
- *  prompt is up: nothing to go by). */
+/** Codex's Plan mode label, right-aligned in its footer after the folder. */
+const PLAN_MODE_SEGMENT_RE = /^Plan mode(?: \(shift\+tab to cycle\))?$/
+/** Whether Codex's footer shows its Plan mode (rounds 2 and 3; PM1, T19):
+ *  read only from the footer row under the composer (the screen's own
+ *  structure, the session's models when given), and only from its
+ *  right-aligned segment after the folder, so neither a folder named "Plan
+ *  mode" nor a footer-shaped line elsewhere reads as it. null when no footer
+ *  shows there (a popup, a prompt or start-up: nothing to go by). */
 export function codexPlanModeOnScreen(lines: ScreenLine[] | null | undefined, models?: readonly string[] | null): boolean | null {
-  if (!lines) return null
-  const footer = footerRe(models)
-  for (let k = lines.length - 1; k >= 0; k--) if (footer.test(lines[k].text)) return /\bPlan mode\b/.test(lines[k].text)
-  return null
+  const { screen, footer } = layout(lines, models)
+  if ((screen !== 'ready' && screen !== 'busy') || footer === null) return null
+  const right = / {3,}(\S(?:.*\S)?)\s*$/.exec(footer)
+  return !!right && PLAN_MODE_SEGMENT_RE.test(right[1])
+}
+
+/** The session's Plan mode reading, from its live screen and its models. */
+export function codexPlanModeShown(sessionId: string, deps: CodexComposerDeps = defaultCodexComposerDeps): boolean | null {
+  return codexPlanModeOnScreen(deps.readScreen(sessionId), deps.footerModels?.(sessionId) ?? null)
 }
 
 export const NOT_AT_PROMPT = 'Codex is not at its prompt, so nothing was sent.'
@@ -165,6 +188,7 @@ export const BUSY_NOW = 'Codex is busy with a turn, so nothing was sent.'
 export const TEXT_IN_PROMPT = 'Something is already typed at the Codex prompt, so nothing was added.'
 export const UNREADABLE_PROMPT = "Codex's prompt could not be read (a narrow window can wrap its status line), so nothing was sent."
 export const SENDING_ALREADY = 'A command is already on its way to Codex, so nothing more was sent.'
+export const STARTING_NOW = 'Codex is still starting (its MCP servers), so nothing was sent.'
 
 /** The run a command is typed into: its session record's start and its PTY's
  *  spawn token (a Restart bumps the first, a new PTY the second). */
@@ -232,21 +256,39 @@ export interface CodexTyping {
   cancel: () => void
 }
 
+/** Why a typed command's Enter was not pressed (round 3, V1): the typing was
+ *  cancelled; the run changed; the composer holds something other than the
+ *  command ('text'); a prompt is up ('blocked'); a turn is running; Codex is
+ *  still starting; or the screen could not be read. */
+export type CodexWithheld = 'cancelled' | 'run-changed' | 'text' | 'blocked' | 'busy' | 'starting' | 'unreadable'
+export interface CodexSettled {
+  /** Why the Enter was withheld; absent when it was sent. */
+  reason?: CodexWithheld
+  /** Whether what the app typed was erased again (only its own characters). */
+  erased: boolean
+}
+
+/** One Backspace (DEL), as a terminal sends the key. */
+const BACKSPACE = String.fromCharCode(0x7f)
+
 /**
  * Type `command` into the session's composer, then press Enter on its own
  * CODEX_SUBMIT_DELAY_MS later. Types nothing (and says why) unless the
  * composer is ready and empty, the session has a live run, and no other
  * command's Enter is pending for it. The Enter is pressed only if, by then,
  * the run is the same one (same session start, same PTY) and the screen shows
- * exactly `command` typed with nothing in the way: text the user typed in the
- * meantime, a prompt drawn over it, a turn, a Restart or an exit each leave
- * the command typed and unsent. `onSettled` hears whether the Enter was sent.
+ * exactly `command` typed with nothing in the way. When it is withheld, what
+ * the app typed is erased (round 3, V1) so nothing is left behind, but only
+ * in the same run, only while the composer holds exactly the command (text
+ * the user typed is never touched) and never while a prompt is up (its keys
+ * are the prompt's). `onSettled` hears whether the Enter was sent, and why
+ * not. A write that throws still settles the typing (round 3, Q1).
  */
 export function typeIntoCodexComposer(
   sessionId: string,
   command: string,
   deps: CodexComposerDeps = defaultCodexComposerDeps,
-  opts: { onSettled?: (sent: boolean) => void } = {},
+  opts: { onSettled?: (sent: boolean, how: CodexSettled) => void } = {},
 ): CodexTyping {
   const none = (reason: string): CodexTyping => ({ typed: false, reason, cancel: () => {} })
   const pending = deps.pending ?? pendingSessions
@@ -254,6 +296,7 @@ export function typeIntoCodexComposer(
   const run = deps.currentRun(sessionId)
   if (!run) return none(NOT_AT_PROMPT)
   const read = readCodexScreen(deps.readScreen(sessionId), deps.footerModels?.(sessionId) ?? null)
+  if (read.screen === 'starting') return none(STARTING_NOW)
   if (read.screen === 'busy') return none(BUSY_NOW)
   if (read.screen === 'unrecognised') return none(UNREADABLE_PROMPT)
   if (read.screen !== 'ready') return none(NOT_AT_PROMPT)
@@ -261,52 +304,85 @@ export function typeIntoCodexComposer(
   pending.add(sessionId)
   deps.write(sessionId, command)
   let settled = false
-  const settle = (sent: boolean): void => {
+  const settle = (sent: boolean, how: CodexSettled): void => {
     if (settled) return
     settled = true
     pending.delete(sessionId)
-    opts.onSettled?.(sent)
+    opts.onSettled?.(sent, how)
   }
   let handle: unknown = deps.setTimeout(() => {
     handle = null
-    const sent = sameRun(run, deps.currentRun(sessionId))
-      && codexCommandTyped(deps.readScreen(sessionId), command, deps.footerModels?.(sessionId) ?? null)
-    if (sent) deps.write(sessionId, '\r')
-    settle(sent)
+    let sent = false
+    let how: CodexSettled = { reason: 'run-changed', erased: false }
+    try {
+      if (!sameRun(run, deps.currentRun(sessionId))) return
+      const models = deps.footerModels?.(sessionId) ?? null
+      const screen = deps.readScreen(sessionId)
+      if (codexCommandTyped(screen, command, models)) {
+        deps.write(sessionId, '\r')
+        sent = true
+        how = { erased: false }
+        return
+      }
+      const now = readCodexScreen(screen, models).screen
+      const own = codexComposerText(screen) === command
+      const reason: CodexWithheld = now === 'blocked' ? 'blocked'
+        : !own ? 'text'
+          : now === 'starting' ? 'starting'
+            : now === 'busy' ? 'busy'
+              : 'unreadable'
+      const erase = own && now !== 'blocked'
+      if (erase) deps.write(sessionId, BACKSPACE.repeat(command.length))
+      how = { reason, erased: erase }
+    } finally {
+      settle(sent, how)
+    }
   }, CODEX_SUBMIT_DELAY_MS)
   return {
     typed: true,
     cancel: () => {
       if (handle !== null) deps.clearTimeout(handle)
       handle = null
-      settle(false)
+      settle(false, { reason: 'cancelled', erased: false })
     },
   }
 }
 
-/** Why a Plan mode launch's /plan was not sent: the composer never became
- *  ready in time; something was typed, or a turn ran, before its first ready
- *  screen; or it was typed but its Enter was withheld. */
-export type CodexWaitEnd = 'timeout' | 'interrupted' | 'not-sent'
+/** Why a Plan mode launch's /plan was not sent (rounds 2 and 3): the prompt
+ *  never came in time; something was typed, or a turn ran, first; Codex put
+ *  up a prompt; its prompt could not be read; it kept starting (its MCP
+ *  servers) through every try; or it could not be sent at all. */
+export type CodexWaitEnd = 'timeout' | 'interrupted' | 'blocked' | 'unreadable' | 'starting' | 'not-sent'
 
-/** The note a Plan mode launch shows when /plan was not sent (round 2, PM1):
- *  the session started read-only, and how to go on. */
+/** How often a Plan mode launch types /plan again after Codex's start-up row
+ *  came up under it (round 3, V1); each try is erased when it is withheld. */
+export const CODEX_PLAN_MODE_TRIES = 4
+
+/** The note a Plan mode launch shows when /plan was not sent (rounds 2 and
+ *  3): the real reason, that the session started read-only, and how to go
+ *  on. */
 export function planModeNote(why: CodexWaitEnd): string {
   const cause = why === 'timeout' ? 'Codex did not reach its prompt in time'
-    : why === 'interrupted' ? 'something was typed at the prompt before it was ready'
-      : '/plan could not be sent'
+    : why === 'interrupted' ? 'something was typed at the prompt, or a turn started, before /plan could be sent'
+      : why === 'blocked' ? 'Codex asked a question before /plan could be sent'
+        : why === 'unreadable' ? "Codex's prompt could not be read (a narrow window can wrap its status line)"
+          : why === 'starting' ? 'Codex was still starting (its MCP servers) each time /plan was tried'
+            : '/plan could not be sent'
   return `Plan mode is not on: ${cause}. The session started read-only: type /plan to plan first, or /permissions to change what Codex may do.`
 }
 
 /**
- * Plan mode at launch (round 2, PM1): type `command` into the run's FIRST
- * ready screen only. Waits while Codex loads, asks to trust the folder or
- * offers a picker; types when the composer is first ready and empty. Gives up
- * (nothing typed, `onGiveUp` told why) when that first ready screen already
- * holds text, a turn is seen running, the Enter is withheld, or `timeoutMs`
- * passes. Stops silently when the run it started with ends or is replaced,
- * and on cancel(). Never types into the trust prompt or a picker: they are
- * not the ready composer.
+ * Plan mode at launch (rounds 2 and 3; PM1, V1): type `command` into the
+ * run's FIRST ready screen only. Waits while Codex loads, asks to trust the
+ * folder, offers a picker or is still starting (its MCP servers); types when
+ * the composer is first ready and empty. When Codex's start-up row comes up
+ * after the command was typed, its Enter is withheld and what was typed is
+ * erased, and the wait goes on (at most CODEX_PLAN_MODE_TRIES tries). Gives
+ * up (`onGiveUp` told the real reason; nothing left typed) when that first
+ * ready screen already holds text, a turn is seen running, a prompt or the
+ * user's text stops the Enter, or `timeoutMs` passes. Stops silently when the
+ * run it started with ends or is replaced, and on cancel(). Never types into
+ * the trust prompt or a picker: they are not the ready composer.
  */
 export function typeWhenCodexComposerReady(
   sessionId: string,
@@ -316,11 +392,27 @@ export function typeWhenCodexComposerReady(
 ): { cancel: () => void } {
   const run = deps.currentRun(sessionId)
   let waited = 0
+  let tries = 0
   let handle: unknown = null
   let typing: CodexTyping | null = null
   let cancelled = false
   let done = !run
   const giveUp = (why: CodexWaitEnd): void => { if (!cancelled) opts.onGiveUp(why) }
+  const withheld = (sent: boolean, how: CodexSettled): void => {
+    if (sent || cancelled || how.reason === 'cancelled' || how.reason === 'run-changed') return
+    if (how.reason === 'starting' && how.erased && tries < CODEX_PLAN_MODE_TRIES) {
+      // Codex's start-up row came up under what was typed; it is erased:
+      // wait for the prompt again, within the same time.
+      done = false
+      typing = null
+      handle = deps.setTimeout(poll, CODEX_READY_POLL_MS)
+      return
+    }
+    giveUp(how.reason === 'text' || how.reason === 'busy' ? 'interrupted'
+      : how.reason === 'blocked' ? 'blocked'
+        : how.reason === 'starting' ? 'starting'
+          : 'unreadable')
+  }
   const poll = (): void => {
     handle = null
     if (done) return
@@ -333,7 +425,8 @@ export function typeWhenCodexComposerReady(
     }
     if (read.screen === 'ready') {
       done = true
-      typing = typeIntoCodexComposer(sessionId, command, deps, { onSettled: (sent) => { if (!sent) giveUp('not-sent') } })
+      tries++
+      typing = typeIntoCodexComposer(sessionId, command, deps, { onSettled: withheld })
       if (!typing.typed) giveUp('not-sent')
       return
     }
