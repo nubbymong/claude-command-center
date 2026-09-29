@@ -7,7 +7,7 @@ import { createSplashWindow, closeSplashWindow, SPLASH_MIN_MS, SPLASH_POST_READY
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerAccountWebHandlers } from './ipc/account-web-handlers'
 import { sweepAbandonedProfiles } from './account-web/sign-in'
-import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine, getKeptCodexConversation, uncertainCodexConversationIds, rememberUncertainCodexConversationsFrom } from './pty-manager'
+import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine } from './pty-manager'
 import { registerResumeHandlers } from './ipc/resume-handlers'
 import { registerCliHandlers } from './ipc/cli-handlers'
 import { registerClipboardHandlers } from './ipc/clipboard-handlers'
@@ -81,7 +81,7 @@ import { startCanvasMarkerQueue } from './canvas/canvas-marker-delivery'
 import { startAttentionSource } from './attention-source'
 import { startJankDetector } from './jank-detector'
 import { HooksGateway } from './hooks/hooks-gateway'
-import { setGateway, getGateway, isExactBindSourceActive } from './hooks'
+import { setGateway, getGateway } from './hooks'
 import { ServiceSupervisor } from './services/service-supervisor'
 import { forkHooksChild } from './services/fork-hooks-child'
 import { start as startLoopStallMonitor, stop as stopLoopStallMonitor } from './services/loop-stall-monitor'
@@ -95,9 +95,8 @@ import { killAllAgents } from './cloud-agent-manager'
 import { startServiceStatusPoller, stopServiceStatusPoller, registerServiceStatusHandlers, refreshServiceStatus } from './service-status'
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
 import { startUpdateServer, stopUpdateServer } from './update-server'
-import { saveSessionState, loadSessionState, clearSessionState, hasSavedSessionState, SessionState } from './session-state'
-import { createSessionDurability } from './session-durability'
-import { resolveResumeTargetFromTranscript } from './logging/transcript-discovery'
+import { loadSessionState, clearSessionState, hasSavedSessionState, SessionState } from './session-state'
+import { createAppSessionDurability } from './app-session-durability'
 import { getConfigDir, snapshotConfig, readConfig } from './config-manager'
 import { stopGlobalVision, killSpawnedBrowser, cleanupLegacyVisionMarkers } from './vision-manager'
 import { startConductorMcpServer, stopConductorMcpServer, startBrowserAtBoot } from './conductor-mcp-server'
@@ -123,27 +122,8 @@ installGlobalErrorHandlers()
 // the cached state on any non-graceful exit (Group 2); noteCleared drops the cache
 // on an intentional clear so the flush never resurrects a discarded set (F1). The
 // binder is read lazily per call — it may init after this module loads.
-const sessionDurability = createSessionDurability({
-  enrichDeps: {
-    // #480: exact bind is the source of truth; the heuristic path is used only as
-    // the hooks-off fallback (gated by isExactBindSourceActive) so this main-side
-    // enrichment can never persist a cross-prone heuristic guess in the default
-    // (hooks-on) config — matching the resume-handlers IPC.
-    getExactResumeTarget: (id) => getTranscriptBinder()?.getExactResumeTarget(id) ?? null,
-    getLatestTranscriptPath: (id) => getTranscriptBinder()?.getLatestTranscriptPath(id) ?? null,
-    isExactBindSourceActive,
-    resolveResumeTargetFromTranscript,
-    // P3.5: the conversation a Codex session is on, as main keeps it (pty-manager).
-    getProviderResumeTarget: (id) => getKeptCodexConversation(id) ?? null,
-    // P3.6: the conversations a Switch account never carries, kept across a relaunch.
-    getUncertainProviderConversations: uncertainCodexConversationIds,
-  },
-  save: saveSessionState,
-  load: loadSessionState,
-  // P3.6: read back before any restored session respawns.
-  readBack: rememberUncertainCodexConversationsFrom,
-  log: logInfo,
-})
+// Composed from main's live sources in app-session-durability.ts (tested there).
+const sessionDurability = createAppSessionDurability()
 
 // Multi-instance (dev alongside prod): a dev build must NOT share prod's data
 // dir (CONFIG/sessions/transcripts/profiles). Point it at a dedicated dev root

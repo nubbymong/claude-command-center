@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "c7ccb7bd6de688927c0f99dbaed7b95e5c675af200a242a42626d46b7963cd73",
-  "manifestHead": "cf8f42d4932a2b44e183bb56ed98ee24449e3561",
+  "manifestPathDigest": "b09d73454672c9d0af7784cd61428d3cd70fa524479b57bc96c55c0c221bb81e",
+  "manifestHead": "78f2fcec25fd88753721cd0c03a5433c26eb931a",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -392,6 +392,16 @@
       "disposition": "retain",
       "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the status shape gains notChecked (Claude Code only), set when the CLI is not asked because Claude Code is off; tests/unit/main/probes-provider-off.test.ts",
       "note": "Claude-only; mentions Codex in a comment (corrected in WP2 commit 6g: Codex sign-in is judged by `codex login status`, never by reading the credential file)"
+    },
+    {
+      "path": "src/main/app-session-durability.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.6 (row 22) module, the final round of its ADR-009 pass (a quality nit): the app session durability core composed from main's live sources, moved out of src/main/index.ts unchanged so the wiring is unit-tested; the session:load step hands the loaded state to pty-manager's read-back of the uncertain claims, and a save stamps the conversation main keeps for a Codex session with the list saved beside it (WP1.33, WP1.38); tests/unit/main/app-session-durability.test.ts",
+      "note": "names pty-manager's Codex read-back and kept-conversation functions only; no Codex code path of its own"
     },
     {
       "path": "src/main/atomic-write.ts",
@@ -3727,6 +3737,16 @@
       "disposition": "added",
       "evidence": "new WP2 P3 usage track MP9 (394b09c7 code-quality review) test (tests/unit/main/account-registry-load-settled.test.ts): the account registry load counts as run once it has, a load that threw included, and the runtime hands the accounts service that answer (WP1.2)",
       "note": "created by WP2 usage track MP13 round 1"
+    },
+    {
+      "path": "tests/unit/main/app-session-durability.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.6 (row 22) test (tests/unit/main/app-session-durability.test.ts): the session:load step hands the loaded state to main's read-back, and a save stamps the kept conversation and the list of uncertain claims, through the composed core with main's sources replaced (WP1.33, WP1.38)",
+      "note": "session-state, pty-manager, hooks, logging and the debug logger are replaced by vi.mock; no Codex process"
     },
     {
       "path": "tests/unit/main/canvas-mcp-tool.test.ts",

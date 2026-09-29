@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-29T00:55:15.068Z",
-  "head": "cf8f42d4932a2b44e183bb56ed98ee24449e3561",
-  "tree": "23e342d6c8ac8db2e504d7dc5e14e01b7c8e1b38",
+  "generatedAt": "2026-09-29T02:11:29.649Z",
+  "head": "78f2fcec25fd88753721cd0c03a5433c26eb931a",
+  "tree": "cbf6a0619246d38f22a1f132a7e165b716017258",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2462,
+  "trackedFileCount": 2464,
   "excludedFileCount": 384,
-  "scannedFileCount": 2078,
+  "scannedFileCount": 2080,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 510,
-  "pathDigest": "c7ccb7bd6de688927c0f99dbaed7b95e5c675af200a242a42626d46b7963cd73",
+  "matchedPathCount": 512,
+  "pathDigest": "b09d73454672c9d0af7784cd61428d3cd70fa524479b57bc96c55c0c221bb81e",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 173
+      "lineCount": 176
     },
     {
       "path": "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
@@ -323,6 +323,13 @@
       "lineCount": 3
     },
     {
+      "path": "src/main/app-session-durability.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 5
+    },
+    {
       "path": "src/main/atomic-write.ts",
       "predicates": [
         "P14"
@@ -440,7 +447,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 8
+      "lineCount": 5
     },
     {
       "path": "src/main/install-secret.ts",
@@ -472,7 +479,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 70
+      "lineCount": 71
     },
     {
       "path": "src/main/ipc/tokenomics2-handlers.ts",
@@ -841,7 +848,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 160
+      "lineCount": 177
     },
     {
       "path": "src/main/sanitize-restored-spawn-options.ts",
@@ -865,7 +872,7 @@
         "P05",
         "P14"
       ],
-      "lineCount": 3
+      "lineCount": 6
     },
     {
       "path": "src/main/tokenomics/tk-attribution.ts",
@@ -1829,7 +1836,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 26
+      "lineCount": 28
     },
     {
       "path": "tests/e2e/codex-reconfirm-upgrade.spec.ts",
@@ -2614,6 +2621,13 @@
       "lineCount": 1
     },
     {
+      "path": "tests/unit/main/app-session-durability.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 5
+    },
+    {
       "path": "tests/unit/main/canvas-mcp-tool.test.ts",
       "predicates": [
         "P13"
@@ -2897,7 +2911,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 15
+      "lineCount": 28
     },
     {
       "path": "tests/unit/main/ssh-end-remote-password.test.ts",
@@ -3096,7 +3110,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 63
+      "lineCount": 70
     },
     {
       "path": "tests/unit/providers/codex/mcp-config.test.ts",

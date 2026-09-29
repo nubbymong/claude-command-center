@@ -753,7 +753,17 @@ the same folder on this computer's own sign-in, or a second copy of the app)
 can still make a claim look certain, so a switch could copy the
 conversation that writer is on (owner decision: this computer's sign-in keeps
 carrying, rather than every claim there being marked not certain; PR 3 does
-not leave draft before P3.10).
+not leave draft before P3.10). Also until P3.10's exact claim, and fail-safe:
+a new session that never claims its rollout (for example one left more than
+30 s at a Codex startup prompt, where the rollout watch stops at its
+deadline) counts as a possible holder until its process ends, so a claim of a
+new conversation in that account and folder meanwhile is not certain, and a
+conversation claimed then stays uncertain across relaunches: a Switch starts
+a new conversation on the new account for it.
+Narrowed, not closed (ADR-009 round 2, N5): a day folder swapped for a link in
+the moment between a new copy landing and the check of where it landed can
+leave the app's own copy at the folder's earlier target. Nothing is deleted,
+and only a program running as the same user can make that swap.
 Deviation, recorded (fix round 1, accepted in review round 2): the "no link
 followed" rule starts at a realm's home. This computer's own home is taken at
 its real path, as the CLI takes it and as a Claude account's home is
@@ -778,6 +788,9 @@ one ~/.claude/projects); (2) a switch BACK to an account whose copy is exactly
 the start of the conversation brings that copy up to date; only a copy that
 went its own way there is left as it is, the session carrying on from it and
 the note saying so.
+Done: the ADR-009 pass (the copy, the leases, the respawn's carry in pty:spawn,
+the pty-manager record; independent attacker sub-agents, bounded rounds: pass 1 at cf8f42d4 FINDINGS (one major, the cross-tab claim), fixed in 62cf7d8b and 31da7fb1; pass 2 at 31da7fb1 PASS; the cleanup at 78f2fcec confirmed by both lenses); the independent spec and quality reviews,
+PASS at 78f2fcec.
 Owed: the server half of P3.1 answer 1 (whether OpenAI accepts a conversation
 resumed under another account; a second signed-in account on the VM, row 15's
 disposable identities, an owner action); a VM walk of the switch with real
@@ -785,9 +798,8 @@ Codex 0.153.4 and 0.155.1 (managed to managed, from and to this computer's
 sign-in, back again, a conversation from an earlier day); the e2e suite at the
 final head; owner screenshots of the strip pill and its menu, the right-click
 menu, the sidebar card's Codex line, the chips' colours, and the reworded
-What's New and accounts pages, both themes; the ADR-009 pass (the copy, the
-leases, the respawn's carry in pty:spawn, the pty-manager record); the independent spec and quality
-reviews; the SSH live matrix at PR 3's final head.
+What's New and accounts pages, both themes; the SSH live matrix at PR 3's
+final head.
 
 **P3.7 Statusline segments and settings.** Duration and line counts if Codex
 reports them (P3.1; the account chip landed in P3.6); the Status Line settings cover them
@@ -840,7 +852,9 @@ uncertain case (a claim that could have been another session's is never
 carried by a Switch account), so a Switch then carries every conversation,
 and closes P3.6's other limit (a writer outside the app, such as the user's
 own Codex CLI in the same folder on this computer's own sign-in, making a
-claim look certain);
+claim look certain) and its fail-safe case (a new session that never claimed
+its rollout counting as a possible holder until its process ends, so claims
+in its account and folder meanwhile are not certain);
 and following a
 conversation switched inside the Codex TUI (its own resume or new: the
 SessionStart hook's `source` and `transcript_path`), so the session keeps,
