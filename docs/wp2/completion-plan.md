@@ -61,19 +61,19 @@ still owes recorded in 4. "2; 3" means partly built in 2, the rest in 3.
 
 ## 2. Summary
 
-- 75 rows: **37 DONE, 21 PARTIAL, 17 OPEN** (recounted after P3.8 round 2,
-  with section 4's P3.2 to P3.8 rows brought current from their phase
-  records; they agree with the parity checklist).
-- The 38 rows not DONE, by gap: **implementation 24, verification 10, owner
+- 75 rows: **39 DONE, 19 PARTIAL, 17 OPEN** (recounted after P3.9, with
+  section 4's P3.2 to P3.9 rows brought current from their phase records;
+  they agree with the parity checklist).
+- The 36 rows not DONE, by gap: **implementation 22, verification 10, owner
   4** (rows 15 and 58, an owner action and a record to sign; rows 22 and 41,
   each built as a default pending the owner's decision, section 10). Row 53
   moved from owner to implementation when the owner decided it
   (`docs/wp1/owner-decisions-2026-09-27.md`, M4).
-- By PR: **23 in PR 3, 15 in PR 4**. No row changes package. The Ask Conductor
+- By PR: **21 in PR 3, 15 in PR 4**. No row changes package. The Ask Conductor
   part of row 14 goes with row 53 into PR 4, because it is the same change.
-- 32 DONE rows still owe verification. The 12 built in PR 3 (rows 7, 8, 10,
-  20, 24, 28, 36, 37, 38, 40, 61 and 69) owe their VM checks under PR 3's gate
-  6 (section 6). The other 20 (rows 1, 2, 3, 4, 6, 9, 12, 13, 18, 21, 23, 25,
+- 34 DONE rows still owe verification. The 14 built in PR 3 (rows 7, 8, 10,
+  20, 24, 28, 36, 37, 38, 39, 40, 42, 61 and 69) owe their VM checks under
+  PR 3's gate 6 (section 6). The other 20 (rows 1, 2, 3, 4, 6, 9, 12, 13, 18, 21, 23, 25,
   27, 29, 33, 48, 49, 50, 64 and 74) owe real-CLI, per-OS or packaged
   verification, recorded in PR 4 and closed at release level. The other 5
   DONE rows (5, 19, 26, 30, 75) owe nothing.
@@ -160,10 +160,10 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 36 | Statusline segments | DONE (the account chip in P3.6, 68d00f62; Lines changed and Duration in P3.7, 5de7a4c4, 9f2bd164; mocked) | Parity (line counts: evidence first; section 19 if Codex reports none) | verification: the VM run and the owner's screenshot review; the real-CLI line count and a TUI resume's Duration on 0.153.4 and 0.155.1 | 3 |
 | 37 | Statusline settings | DONE (P2; P3.7, 5de7a4c4, 9f2bd164; mocked): the settings apply to Codex, and Lines changed and Duration show for a Codex session | Parity | verification: the VM screenshot of the Status Line tab with Codex on, both themes | 2; 3 |
 | 38 | Statusline after resuming an old rollout | DONE (P3.5, 28f42af2, 90a717df; mocked; VM c2c42e22): the claim re-reads its date folders on every poll and finds a resumed conversation wherever it is | Parity | verification: a session crossing midnight UTC on a real CLI | 3 |
-| 39 | Model catalogue | PARTIAL: the registry's Codex models, the list the supported CLIs (0.153.4 and 0.155.1) offer in their own picker, Sentinel's check against that list as shipped, and the release gate's Codex half (P3.8, 260d4abc; round 1, caef0d42). The live read of the installed CLI's list is P3.9's (`codex debug models`); until then Sentinel's Codex check reports only an overlay's changes and a stale list | Parity: the model registry plus Sentinel's coverage check. Not app-server `model/list`: OD27 M2 allows usage reads only | implementation (P3.9: the live read); owner: whether gpt-5.2 stays (section 10) | 3 |
+| 39 | Model catalogue | DONE: the registry's Codex models, the list the supported CLIs (0.153.4 and 0.155.1) offer in their own picker, Sentinel's check, and the release gate's Codex half (P3.8, 260d4abc; round 1, caef0d42); P3.9 (3a4ed400; mocked): Sentinel's Codex check compares the registry with the list the installed CLI offers, read from it (`codex debug models --bundled` in an empty folder, no sign-in), naming its version, else the shipped list | Parity: the model registry plus Sentinel's coverage check. Not app-server `model/list`: OD27 M2 allows usage reads only | verification: the live read on the VM (0.153.4 and 0.155.1); the gpt-5.2 notice to the owner stands (section 10) | 3 |
 | 40 | Effort | DONE (P3.8, 260d4abc; round 1, caef0d42): each Codex model's own levels, from the CLI's catalogue (0.155.1's are the same, VM); a launch drops a saved effort its model cannot run. The CLI accepts max and ultra at launch on both versions (VM) | Parity | verification: whether the server takes max and ultra (a real sign-in; the CLI does not check at launch) | 3 |
 | 41 | Mid-session model and effort | PARTIAL, built as the default pending the owner's decision (P3.8 round 1, caef0d42): on a live session the command bar's model pill types a bare `/model`, only at Codex's ready prompt, which opens Codex's own model-and-effort picker and keeps the conversation; a stopped session keeps the select, applied at its next start | Parity: applied live, keeping the conversation. Codex has no one-line form (VM: `/model <slug>` is sent as a message; there is no `/effort`), so Claude's one-step switch cannot carry over as it is | owner: the default (section 10, question 2); verification: the pill on the VM | 3 |
-| 42 | Sentinel | PARTIAL: Claude runs only (`src/main/sentinel/index.ts`) | Parity: version drift, flags and the rollout format checked, with findings; the analysis runs on whichever provider is on | implementation | 3 |
+| 42 | Sentinel | DONE (P3.9, 3a4ed400; mocked): while Codex is on, its version against the supported range (a finding outside it), the live model list (row 39), and a changed version's release notes analysed against its launch flags, TUI, rollout session files and config and account files; the analysis runs on the provider that is on (both on: the one Ask Conductor runs on, Claude Code until PR 4's row); the same panel, dot, Settings section and Transparency card | Parity: version drift, flags and the rollout format checked, with findings; the analysis runs on whichever provider is on | verification: the VM run (real CLIs and a real Codex analysis) and the owner's screenshot review | 3 |
 | 43 | Watchdog | OPEN: never armed for Codex (`src/main/pty-manager.ts`, the local arm site) | Parity: auto-retry and silence detection; aicc_planning#72 (a CLI without its own patterns reports Watchdog unavailable, never Claude's) | implementation | 3 |
 | 44 | Services (PTY integrity) | PARTIAL: built, unproven (Codex output is fed to the monitor) | Parity | verification | 3 |
 | 45 | Provider status pill | PARTIAL (P3.4, aa0411b0, 87ba9c2d; the VM walk PASS at c7f9a34a and f65de184): an OpenAI status pill beside Anthropic's, each read and shown only while its provider is on | Parity: an OpenAI status pill beside Anthropic's, each shown only while its provider is on | verification: the Desktop test gate (owner); macOS and Linux; packaged | 3 |
@@ -1191,6 +1191,66 @@ Transparency page's Sentinel card still says it watches Claude Code updates
 and spends Claude tokens (left by P3.4): it says what Sentinel watches and
 runs on once this lands.
 
+Built (2026-09-29; 3a4ed400; mocked). Row 39, the live read: the Codex package
+reads the model list the installed CLI offers in its own picker,
+`codex debug models --bundled` (a constant argv; `--bundled` prints the
+catalogue shipped in the binary and skips the refresh a signed-in home makes
+from the account; 0.153.4's strings), run only on the executable discovery
+proved, re-verified before and after the run, never for a version the
+managed flows may not use, in a fresh empty Codex home made for the read and
+removed after it, under the allowlisted environment, 15 s and 4 Mi
+characters, and parsed strictly (`model-catalogue.ts`,
+`model-catalogue.test.ts`; the accounts service's `readModelCatalogue` runs
+it behind the launch rule, before and after the wait for the CLI's proof).
+Deviation, recorded: the read runs in an empty folder, not an account's.
+In a signed-in folder Codex refreshes its list from OpenAI with that account's
+sign-in and writes its model cache (PRIVACY.md's usage row), so the empty
+folder is what keeps this entry's "no sign-in, no network", as discovery's
+`--version` already does. Sentinel's Codex check compares both arms with that
+list and names the version (live mode), so with 0.155.1 installed gpt-5.2 is
+said as a model that version no longer lists (section 10's notice, resolved
+per installed version); without a live list the shipped one answers as
+before, its stale note only then (`sentinel-codex-models.test.ts`). Row 42:
+while Codex is on, the start-up check and a Re-run check the installed Codex
+version (a fresh `codex --version` through the accounts service's discovery,
+as Claude's check runs `claude --version`) against the supported range: too
+old is a severe break (its sessions will not start), newer than tested a
+notice (`sentinel-codex.ts`). A changed version (the first check is a
+baseline, as Claude's) has its release notes (openai/codex GitHub releases,
+published stable ones only, capped, headings demoted, control characters
+dropped; `sentinel-codex-changelog.ts`) analysed against the four surfaces
+the app relies on in Codex: its launch flags, the TUI, the rollout session
+files and CODEX_HOME's config and account files, so the flags and the
+rollout format are checked as Claude's statusline contract is
+(`sentinel-analysis.ts`). The analysis runs on the provider that is on; with
+both on, on the one Ask Conductor runs on (OD27 M4, read from its saved
+choice, `src/shared/ask-conductor-provider.ts`; the Settings row is PR 4's,
+so Claude Code until then). On Codex it is a prepared reviewer launch (the
+account leased, the proven executable, the account's folder with ambient
+credentials removed, read-only, the prompt on stdin) in a fresh empty temp
+folder, removed after it and after any kill still under way; the account is
+Settings' Sentinel choice, else the review default, as Claude's analysis
+account falls back to the primary (`sentinel-codex-service.test.ts`). Codex
+off or not set up: nothing of it runs or is said; Sentinel's Codex runs count
+as Codex in use (`provider-in-use.test.ts`). The same panel, dot and Settings
+section, no parallel UI: they name the assistants in use and their versions,
+say whose update is analysed and tag a Codex finding, and the Analysis account
+select lists the Codex accounts when the analysis runs on Codex
+(`sentinel-panel-copy.test.tsx`, `settings-sentinel-codex.test.tsx`); the
+Transparency page's Sentinel card says what Sentinel watches and runs on
+(`onboarding-transparency-recap.test.tsx`); app knowledge, the Feature Guide's
+Sentinel card and PRIVACY.md say the same. SSH radius: none. Mutation: 53
+mutants, all red. Owed: the independent reviews and the ADR-009 pass; the VM
+run (`codex debug models --bundled` on 0.153.4 and 0.155.1: accepted, the
+same list as the plain command, no request, nothing left outside its empty
+folder; the start-up check and a Re-run with Codex only and both on, the
+newer-than-tested finding on 0.157.1 and the gpt-5.2 notice on 0.155.1; a
+Codex analysis with a real sign-in, its folder removed and the account's
+config.toml unchanged; the release-notes read from GitHub; the fake-CLI case,
+CI and VM only); the owner's review of the screenshots (the panel, the dot's
+tooltip while analysing, Settings' Sentinel section and the Transparency
+card, with Codex only and both on, both themes).
+
 **P3.10 Activity, attention, Watchdog and hooks.** Codex `notify` and hook
 events feed the attention dot, waiting-for-input, the busy sweep and the sleep
 moon; the Hooks gateway and notification rules route them; the Watchdog is
@@ -1428,7 +1488,9 @@ gallery (a declined confirm after a Switch).
 - Row 39: gpt-5.2 stays in the Codex model list while a supported CLI version
   lists it: 0.153.4 does, 0.155.1 no longer does (it still starts with
   `-m gpt-5.2`). The owner may judge otherwise. P3.9's live read
-  (`codex debug models`) resolves the list per installed version.
+  (`codex debug models`, built in 3a4ed400) resolves it per installed version:
+  with 0.155.1 installed, Sentinel says gpt-5.2 is a model that version no
+  longer lists.
 
 ### Owner actions that are not UX decisions
 
