@@ -182,6 +182,12 @@ export default function SentinelPanel() {
             <DialogCallout tone="warning">{snap.lastAnalysisError}</DialogCallout>
           </div>
         )}
+        {/* P3.9 round 1: an analysis that read part of the notes says so. */}
+        {!snap?.analyzing && snap?.lastAnalysisNote && (
+          <div className="px-[18px] pt-3 shrink-0">
+            <DialogCallout tone="info" testId="sentinel-analysis-note">{snap.lastAnalysisNote}</DialogCallout>
+          </div>
+        )}
 
         {/* Body: one honest state at a time. Never a green "compatible" verdict
             while analyzing or after a failed run (the AI didn't get to say). */}

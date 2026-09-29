@@ -148,6 +148,8 @@ export function createClaudeReviewOperations(deps: ClaudeReviewDeps): ProviderRe
     async run(input: ReviewRunInput): Promise<ReviewRunResult> {
       const cancelled: ReviewRunResult = { ok: false, code: 'cancelled', message: 'The review was cancelled.' }
       if (input.signal?.aborted) return cancelled
+      // P3.9 round 1: this reviewer has no text-only form; it never runs one.
+      if (input.purpose !== undefined && input.purpose !== 'review') return { ok: false, code: 'not-started', message: 'Claude Code reviews do not run a text-only analysis.' }
       const win32 = platform === 'win32'
       const env = reviewerEnv(input.env, platform)
       const cmd = deps.commandLine(input.executable, CLAUDE_REVIEW_ARGS, platform, deps.shellEnv(env, platform))

@@ -33,7 +33,7 @@ import fs from 'node:fs'
 import { spawn as nodeSpawn, execFile, execFileSync } from 'node:child_process'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 
-export type CodexCliOperation = 'version' | 'status' | 'logout' | 'login-browser' | 'login-device' | 'login-api-key' | 'review' | 'app-server' | 'models'
+export type CodexCliOperation = 'version' | 'status' | 'logout' | 'login-browser' | 'login-device' | 'login-api-key' | 'review' | 'app-server' | 'models' | 'analysis'
 
 const ARGS: Readonly<Record<CodexCliOperation, readonly string[]>> = {
   'version': ['--version'],
@@ -60,6 +60,22 @@ const ARGS: Readonly<Record<CodexCliOperation, readonly string[]>> = {
   // account and prints the catalogue shipped in the binary; the caller runs
   // it in a fresh, empty home (model-catalogue.ts), never an account's.
   'models': ['debug', 'models', '--bundled'],
+  // P3.9 round 1: a text-only analysis whose prompt (on stdin) carries all its
+  // material: Sentinel's check of an update's notes. As the reviewer, and
+  // besides: no user config (its MCP servers, hooks and profiles) and no
+  // rules files; no tool that runs a command, browses, connects an app or a
+  // plugin, makes or views an image, or starts another agent; web search
+  // off; no project instructions (AGENTS.md) loaded at all; and the working
+  // folder is the project root (no search of the folders above it for a
+  // project's files). Every key is in both supported CLIs (their feature
+  // lists and config keys); an unknown one makes the run fail, which fails
+  // closed.
+  'analysis': [
+    'exec', '--json', '--ephemeral', '--skip-git-repo-check', '--ignore-user-config', '--ignore-rules', '--sandbox', 'read-only',
+    '--disable', 'shell_tool', '--disable', 'unified_exec', '--disable', 'apps', '--disable', 'plugins', '--disable', 'browser_use',
+    '--disable', 'computer_use', '--disable', 'image_generation', '--disable', 'view_image', '--disable', 'multi_agent', '--disable', 'hooks',
+    '-c', 'web_search=disabled', '-c', 'project_doc_max_bytes=0', '-c', 'project_root_markers=[]', '-m', 'gpt-5.5', '-',
+  ],
 }
 
 export interface CodexCommand {
@@ -110,8 +126,10 @@ export function codexCommandLine(
 }
 
 /** The characters a constant argv element may carry: none that cmd.exe, a
- *  shim or a shell reads (no space, quote, `% & ^ | < > ( ) !`). */
-const PLAIN_ARG = /^[A-Za-z0-9._,:=/-]+$/
+ *  shim or a shell reads (no space, quote, `% & ^ | < > ( ) !`). Square
+ *  brackets (P3.9 round 1: a TOML empty list in a `-c` override) are plain
+ *  text to cmd.exe, and no route here passes argv through any other shell. */
+const PLAIN_ARG = /^[A-Za-z0-9._,:=/[\]-]+$/
 
 /** codexCommandLine's rules for any CLI's CONSTANT argv (WP2 commit 5b: the
  *  composition root hands this to the Claude package, which imports nothing

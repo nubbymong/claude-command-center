@@ -40,5 +40,8 @@ export interface SentinelStateSnapshot {
   analyzingProvider?: SentinelProvider | null
   lastAnalysisAt: number | null
   lastAnalysisError: string | null
+  /** P3.9 round 1: said beside a completed analysis that did not read all of
+   *  the notes in full (some were cut, or not every version could be read). */
+  lastAnalysisNote?: string | null
   findings: SentinelFinding[]
 }

@@ -32,6 +32,7 @@ import type { CodexFolderLookup, CodexFsEntry, CodexRealmFsPort, CodexRealmFolde
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { sweepStaleFolders } from '../../stale-folder-sweep'
 
 // WP2 Codex adapter: the CLI contract, install recipes, the allowlisted
 // subprocess environment, realm paths, the CLI runner and discovery.
@@ -510,11 +511,22 @@ function realCatalogueDeps(): Omit<CodexCatalogueDeps, 'proven'> {
     executablePorts: realExecutablePorts(platform),
     baseEnv: () => codexOperationBaseEnv(process.env, platform),
     run: (cmd, opts) => runCodexCli(cmd, opts, defaultCodexRunDeps(platform)),
-    scratchHome: () => {
-      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-codex-models-'))
-      return { home, dispose: () => fs.rmSync(home, { recursive: true, force: true }) }
-    },
+    scratchHome: () => codexModelsScratchHome(os.tmpdir()),
   }
+}
+
+/** The model list read's empty homes, under the temp folder (P3.9). */
+export const CODEX_MODELS_HOME_PREFIX = 'ccc-codex-models-'
+/** A run's own folder older than this is a leftover (P3.9 round 1). */
+export const STALE_RUN_FOLDER_MS = 60 * 60 * 1000
+
+/** A fresh empty home for one model list read, under `parent`, removed by
+ *  its dispose. P3.9 round 1: a home an earlier read left behind (a crash or
+ *  a quit mid-read) goes first: own prefix, real folders only, an hour old. */
+export function codexModelsScratchHome(parent: string): { home: string; dispose(): void } {
+  sweepStaleFolders(parent, CODEX_MODELS_HOME_PREFIX, { maxAgeMs: STALE_RUN_FOLDER_MS })
+  const home = fs.mkdtempSync(path.join(parent, CODEX_MODELS_HOME_PREFIX))
+  return { home, dispose: () => fs.rmSync(home, { recursive: true, force: true }) }
 }
 
 /** The real ports behind discovery: the session resolver, the filesystem,

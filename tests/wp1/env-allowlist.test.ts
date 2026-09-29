@@ -46,6 +46,12 @@ describe('the Codex CLI subprocess environment (POSIX)', () => {
     expect(codexCliEnv({ DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/1000/bus' }, '/r', 'linux').DBUS_SESSION_BUS_ADDRESS).toBe('unix:path=/run/user/1000/bus')
     expect(codexCliEnv({ XDG_RUNTIME_DIR: 'relative' }, '/r', 'linux').XDG_RUNTIME_DIR).toBeUndefined()
   })
+
+  it('PATH keeps only absolute entries, as the reviewer environment does; with none left it is omitted', () => {
+    expect(codexCliEnv({ PATH: '/usr/bin:bin::./x:/opt/node/bin' }, '/r', 'linux').PATH).toBe('/usr/bin:/opt/node/bin')
+    expect('PATH' in codexCliEnv({ PATH: 'bin:.:' }, '/r', 'linux')).toBe(false)
+    expect('PATH' in codexCliEnv({ PATH: '' }, '/r', 'linux')).toBe(false)
+  })
 })
 
 describe('the Codex CLI subprocess environment (Windows)', () => {
@@ -58,6 +64,13 @@ describe('the Codex CLI subprocess environment (Windows)', () => {
     expect(codexCliEnv({}, 'C:\\r', 'win32').NoDefaultCurrentDirectoryInExePath).toBe('1')
     expect(codexCliEnv({ NODEFAULTCURRENTDIRECTORYINEXEPATH: '' }, 'C:\\r', 'win32').NoDefaultCurrentDirectoryInExePath).toBe('1')
     expect(Object.keys(codexCliEnv({ nodefaultcurrentdirectoryinexepath: '0' }, 'C:\\r', 'win32')).filter((k) => /nodefault/i.test(k))).toEqual(['NoDefaultCurrentDirectoryInExePath'])
+  })
+
+  it('PATH keeps only absolute entries (a drive, a share, or either quoted), under the spelling it came in', () => {
+    const env = codexCliEnv({ Path: 'C:\\Windows;tools;;.\\bin;"D:\\Program Files\\x";\\\\srv\\share;C:rel;\\rooted' }, 'C:\\r', 'win32')
+    expect(env.Path).toBe('C:\\Windows;"D:\\Program Files\\x";\\\\srv\\share')
+    expect(Object.keys(env).filter((k) => k.toUpperCase() === 'PATH')).toEqual(['Path'])
+    expect(Object.keys(codexCliEnv({ PATH: 'tools;.' }, 'C:\\r', 'win32')).some((k) => k.toUpperCase() === 'PATH')).toBe(false)
   })
 
   it('a Unicode lookalike name (long s, dotless i) is never folded onto an allowed one', () => {

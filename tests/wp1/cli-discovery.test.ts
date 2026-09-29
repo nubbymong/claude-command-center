@@ -9,7 +9,7 @@ import {
   CODEX_MIN_SUPPORTED_VERSION, CODEX_PINNED_CLI_VERSION, CODEX_MAX_TESTED_VERSION,
 } from '../../src/main/providers/codex'
 import { EventEmitter } from 'node:events'
-import { codexCommandLine, codexShellEnv, runCodexCli, discoverCodex, verifyCodexExecutable, codexCompatibilityAllowsUse, makeCodexKillTree, extractMarkedPath, CODEX_TREE_PRIME_MS, CODEX_PRIME_TABLE_TIMEOUT_MS, codexWrapperLinePids } from '../../src/main/providers/codex'
+import { codexCommandLine, cliCommandLine, codexShellEnv, runCodexCli, discoverCodex, verifyCodexExecutable, codexCompatibilityAllowsUse, makeCodexKillTree, extractMarkedPath, CODEX_TREE_PRIME_MS, CODEX_PRIME_TABLE_TIMEOUT_MS, codexWrapperLinePids } from '../../src/main/providers/codex'
 import { codexChainPids, parseWindowsProcessTable, parsePosixProcessTable, parseLinuxStat, makeCodexProcessLister, CODEX_KILL_SETTLE_MS, CODEX_PROCESS_TABLE_TIMEOUT_MS, CODEX_TASKKILL_TIMEOUT_MS, CODEX_KILL_WORST_MS, flushPendingCodexKills, WINDOWS_PROCESS_QUERY } from '../../src/main/providers/codex'
 import type { CodexDiscoveryDeps, CodexRunResult, CodexRunDeps, CodexProcessEntry } from '../../src/main/providers/codex'
 import { createCodexReviewOperations, createCodexExecEventReader, parseCodexExecEvents, REVIEW_MAX_TEXT } from '../../src/main/providers/codex'
@@ -1507,6 +1507,51 @@ describe('the Codex reviewer: ADR-009 confirmation fixes (WP2 5a)', () => {
     const ac = new AbortController()
     ac.abort()
     expect(await ops(f.deps).run({ ...base, signal: ac.signal })).toMatchObject({ ok: false, code: 'cancelled' })
+  })
+})
+
+// P3.9 round 1: Sentinel's analysis of a Codex update is a text-only run of
+// a prompt that carries all its material. Its own constant argv: no user
+// config or rules, no tool that runs, browses, connects or views, web search
+// off, no project instructions, and the working folder is the project root.
+describe('the text-only analysis run (P3.9 round 1)', () => {
+  const ANALYSIS = [
+    'exec', '--json', '--ephemeral', '--skip-git-repo-check', '--ignore-user-config', '--ignore-rules', '--sandbox', 'read-only',
+    '--disable', 'shell_tool', '--disable', 'unified_exec', '--disable', 'apps', '--disable', 'plugins', '--disable', 'browser_use',
+    '--disable', 'computer_use', '--disable', 'image_generation', '--disable', 'view_image', '--disable', 'multi_agent', '--disable', 'hooks',
+    '-c', 'web_search=disabled', '-c', 'project_doc_max_bytes=0', '-c', 'project_root_markers=[]', '-m', 'gpt-5.5', '-',
+  ]
+  const REVIEW = ['exec', '--json', '--ephemeral', '--skip-git-repo-check', '--sandbox', 'read-only', '-m', 'gpt-5.5', '-']
+  const input = (over: Record<string, unknown> = {}) => ({
+    executable: 'C:\\Tools\\codex.exe', cwd: 'D:\\runs\\ccc-sentinel-codex-x', prompt: 'Analyse these notes.', timeoutMs: 1000,
+    env: { PATH: 'C:\\Windows', SystemRoot: 'C:\\Windows', CODEX_HOME: 'C:\\res\\codex-realms\\r1' },
+    ...over,
+  })
+
+  it('purpose analysis runs the analysis argv; a review, or no purpose, runs the review argv unchanged', () => {
+    const { deps, spawned } = fakeDeps()
+    const ops = createCodexReviewOperations({ platform: 'win32', runDeps: () => deps })
+    void ops.run(input({ purpose: 'analysis' }))
+    void ops.run(input({ purpose: 'review' }))
+    void ops.run(input())
+    expect(spawned.map((s) => s.args)).toEqual([ANALYSIS, REVIEW, REVIEW])
+    expect(spawned[0].opts).toMatchObject({ cwd: 'D:\\runs\\ccc-sentinel-codex-x', shell: false })
+    expect(spawned[0].child.stdin!.end).toHaveBeenCalledWith('Analyse these notes.')
+  })
+
+  it('through a Windows shim the same constant line is written verbatim, the empty list included', () => {
+    const { deps, spawned } = fakeDeps()
+    void createCodexReviewOperations({ platform: 'win32', runDeps: () => deps }).run(input({ purpose: 'analysis', executable: 'C:\\npm\\codex.cmd' }))
+    expect(spawned[0].file).toBe('C:\\Windows\\System32\\cmd.exe')
+    expect(spawned[0].args).toEqual(['/d', '/v:off', '/s', '/c', '""C:\\npm\\codex.cmd" ' + ANALYSIS.join(' ') + '"'])
+    expect(codexCommandLine('/usr/bin/codex', 'analysis', 'linux', {})).toEqual({ file: '/usr/bin/codex', args: ANALYSIS, verbatim: false, cwd: '/usr/bin' })
+  })
+
+  it('a square bracket is plain text on every route; the characters a shell or cmd.exe reads are still refused', () => {
+    expect(cliCommandLine('C:\\npm\\x.cmd', ['-c', 'k=[]'], 'win32', { SystemRoot: 'C:\\Windows' }, 'X')).not.toHaveProperty('refused')
+    for (const bad of ['k=[ ]', 'k=["a"]', 'k=[%x%]', 'k=[!x!]', 'k=[a&b]', 'k=(x)', 'k=[a^b]', 'k=[a|b]', 'k=[<a]']) {
+      expect(cliCommandLine('C:\\npm\\x.cmd', ['-c', bad], 'win32', { SystemRoot: 'C:\\Windows' }, 'X'), bad).toHaveProperty('refused')
+    }
   })
 })
 

@@ -337,6 +337,11 @@ export interface ReviewRunInput {
   /** From the prepared launch: the reviewer account's realm, for a provider
    *  that also holds the account's own credentials while it runs (Claude). */
   realm?: RealmRef
+  /** P3.9 round 1: `analysis` is a text-only run of a prompt that carries
+   *  all its material (Sentinel's check of an update's notes): no tools, no
+   *  project or user instructions, nothing the working folder holds. A
+   *  package that cannot run one that way refuses it. Absent: a review. */
+  purpose?: 'review' | 'analysis'
 }
 
 export interface ReviewUsage {
