@@ -41,7 +41,8 @@
 //      src/shared/model-registry.ts); tests/unit/model-coverage-parity.test.ts
 //      holds the two to identical verdicts. Missing = FAIL, printed as a diff;
 //      a pickable Codex model the list no longer names = WARNING; an empty or
-//      missing list fails closed.
+//      missing list fails closed. Only an id the Codex picker offers covers
+//      one, and an id the registry lists twice covers nothing and FAILs.
 //
 // Usage
 //   node scripts/release-gate.mjs                      # version from package.json
@@ -94,6 +95,13 @@ export const DEFAULT_CODEX_EXPECTED_PATH = path.join(ROOT, 'resources', 'codex-m
 /** The registry family whose models Codex sessions run (familyProvider in
  *  src/shared/model-registry.ts). */
 export const CODEX_FAMILY = 'codex'
+/** A Codex model id the picker offers and a launch takes (isCodexModelId in
+ *  src/shared/model-registry.ts; the parity test holds the two together). */
+export const CODEX_MODEL_ID_MAX = 64
+export const CODEX_MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:\/-]*$/
+export function isCodexModelId(v) {
+  return typeof v === 'string' && v.length > 0 && v.length <= CODEX_MODEL_ID_MAX && CODEX_MODEL_ID_RE.test(v)
+}
 
 // ── pure helpers (unit-tested) ──────────────────────────────────────
 
@@ -219,9 +227,18 @@ export function evaluateModels({ registry, expected }) {
  */
 export function evaluateCodexModels({ registry, expected }) {
   const usable = (m) => !!m && typeof m.id === 'string' && m.id.length > 0
-  const codexModels = ((registry && registry.models) || [])
-    .filter((m) => usable(m) && m.family === CODEX_FAMILY && m.pickable !== false)
-  const expectedModels = ((expected && expected.models) || []).filter(usable)
+  // Round 2 (GS): a file whose `models` is not a list reads as empty (fail
+  // closed); an id listed twice covers nothing (the pickers would disagree
+  // about it); only an id the Codex picker offers covers one.
+  const entries = (registry && Array.isArray(registry.models) ? registry.models : []).filter(usable)
+  const count = new Map()
+  for (const m of entries) count.set(m.id, (count.get(m.id) || 0) + 1)
+  const expectedModels = (expected && Array.isArray(expected.models) ? expected.models : []).filter(usable)
+  const listed = new Set(expectedModels.map((m) => m.id))
+  const duplicates = [...count].filter(([id, n]) => n > 1
+    && (listed.has(id) || entries.some((m) => m.id === id && m.family === CODEX_FAMILY))).map(([id]) => id)
+  const codexModels = entries.filter((m) => m.family === CODEX_FAMILY && m.pickable !== false
+    && isCodexModelId(m.id) && count.get(m.id) === 1)
   // Fail closed, as the Claude half: a list with nothing in it must not pass.
   if (expectedModels.length === 0) {
     return {
@@ -240,14 +257,14 @@ export function evaluateCodexModels({ registry, expected }) {
   // A pickable Codex model the list no longer names -- flagged, not fatal.
   // Overlay entries (they carry `provenance`) are never flagged: a model the
   // overlay just added is necessarily absent from a list read before it.
-  const listed = new Set(expectedModels.map((m) => m.id))
   const extra = codexModels
     .filter((m) => !listed.has(m.id) && !m.provenance)
     .map((m) => ({ id: m.id, label: m.label }))
   return {
-    ok: missing.length === 0,
-    reason: missing.length === 0 ? null : `${missing.length} model(s) the Codex CLI lists are not in the registry`,
-    missing, extra, covered,
+    ok: missing.length === 0 && duplicates.length === 0,
+    reason: missing.length > 0 ? `${missing.length} model(s) the Codex CLI lists are not in the registry`
+      : duplicates.length > 0 ? `${duplicates.length} Codex model id(s) are listed more than once in the registry` : null,
+    missing, extra, covered, duplicates,
   }
 }
 
@@ -300,6 +317,7 @@ export function formatReport({ version, repo, milestoneResult, modelsResult, exp
       out.push('          reasoning levels as `efforts`) or refresh resources/codex-model-catalogue.json if the CLI changed;')
       out.push('          that file says how.')
     }
+    for (const id of r.duplicates || []) out.push(`          ${id} is listed more than once in resources/model-registry.json: keep one entry, in the codex family`)
     for (const m of r.extra) out.push(`  WARN  ${m.id}${m.label ? ` (${m.label})` : ''} is a Codex model in the registry but the Codex list no longer names it: retired? (not fatal)`)
   }
   return out

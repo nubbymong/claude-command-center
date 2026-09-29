@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-29T09:55:15.024Z",
-  "head": "caef0d42f3a2d5be175e0d6540c8ae9dee2766fe",
-  "tree": "aca918617daa9ef5993b29ca52efded8aa7f2c97",
+  "generatedAt": "2026-09-29T11:29:21.462Z",
+  "head": "3f458ac4227bbb59f168d5ec0b0a0a34467b1f02",
+  "tree": "27c33997d00cebccfe79ab1f3a18d52afb8dd4fd",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -140,7 +140,7 @@
   "unscopedMentions": [],
   "unreadable": [],
   "matchedPathCount": 534,
-  "pathDigest": "37a50419a3226e2d1fd710f5ae93ab562f9d5ed46704cdf0b40c63822e95feee",
+  "pathDigest": "a1d5a14ec00fdebbc1114927c40b3e411048e4b8dc9272fd6cdebde72404a9e4",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -189,14 +189,14 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 252
+      "lineCount": 272
     },
     {
       "path": "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
       "predicates": [
         "P12"
       ],
-      "lineCount": 63
+      "lineCount": 67
     },
     {
       "path": "docs/wp2/hello-codex-spec.md",
@@ -307,7 +307,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 50
+      "lineCount": 60
     },
     {
       "path": "scripts/release.js",
@@ -886,7 +886,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 29
+      "lineCount": 31
     },
     {
       "path": "src/main/service-status.ts",
@@ -916,7 +916,7 @@
         "P05",
         "P14"
       ],
-      "lineCount": 62
+      "lineCount": 60
     },
     {
       "path": "src/main/tokenomics/tk-parse.ts",
@@ -1040,7 +1040,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 47
+      "lineCount": 55
     },
     {
       "path": "src/renderer/components/ConductorMcpPage.tsx",
@@ -1436,9 +1436,10 @@
       "path": "src/renderer/lib/codexComposer.ts",
       "predicates": [
         "P01",
+        "P07",
         "P11"
       ],
-      "lineCount": 39
+      "lineCount": 67
     },
     {
       "path": "src/renderer/lib/command-upgrade.ts",
@@ -1822,7 +1823,7 @@
         "P05",
         "P14"
       ],
-      "lineCount": 41
+      "lineCount": 48
     },
     {
       "path": "src/shared/providers/accounts-view.ts",
@@ -3032,7 +3033,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 26
+      "lineCount": 34
     },
     {
       "path": "tests/unit/model-picker-rows.test.ts",
@@ -3055,7 +3056,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 20
+      "lineCount": 23
     },
     {
       "path": "tests/unit/native/tk-db-downgrade.native.test.ts",
@@ -3270,7 +3271,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 233
+      "lineCount": 235
     },
     {
       "path": "tests/unit/providers/codex/telemetry-bounded-reads.test.ts",
@@ -3524,7 +3525,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 55
+      "lineCount": 105
     },
     {
       "path": "tests/unit/renderer/codex-mini-icon.test.ts",
@@ -3599,7 +3600,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 54
+      "lineCount": 62
     },
     {
       "path": "tests/unit/renderer/commandbar-one-row.test.tsx",
@@ -4055,7 +4056,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 28
+      "lineCount": 30
     },
     {
       "path": "tests/unit/renderer/session-status-strip-labelless-model.test.tsx",
@@ -4270,7 +4271,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 41
+      "lineCount": 47
     },
     {
       "path": "tests/unit/sentinel-codex-models.test.ts",
@@ -4278,7 +4279,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 30
+      "lineCount": 41
     },
     {
       "path": "tests/unit/sentinel-models.test.ts",

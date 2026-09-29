@@ -501,6 +501,9 @@ export interface ModelCoverageResult {
   missing: ExpectedModelSpec[]               // article lists it, the registry does not
   extra: ExpectedModelSpec[]                 // registry carries it, the article does not (retired/renamed?)
   covered: { id: string; by: string }[]
+  /** The Codex half (P3.8 round 2, GS): Codex ids the registry lists more
+   *  than once; they cover nothing and fail the check. */
+  duplicates?: string[]
 }
 
 /** True for an entry that came from the overlay (Sentinel- or user-added). */
@@ -569,14 +572,25 @@ export function evaluateModelCoverage(
  * over the codex family only: an id is covered by a registry entry of that
  * family with the same id (Codex ids carry no date suffix); `extra` is a
  * launchable Codex model the list no longer names, never an overlay entry;
- * an empty or missing list fails closed.
+ * an empty or missing list fails closed. Round 2 (GS): only an id the Codex
+ * picker offers (isCodexModelId) covers one; an id the registry lists more
+ * than once covers nothing and fails the check (the pickers would disagree
+ * about it); a file whose `models` is not a list reads as empty.
  */
 export function evaluateCodexModelCoverage(
   registry: ModelRegistry,
   expected: ExpectedModelSet | null | undefined,
 ): ModelCoverageResult {
-  const codexModels = usableEntries(registry).filter((m) => familyProvider(m.family) === 'codex' && m.pickable !== false)
-  const expectedModels = (expected?.models ?? []).filter((m) => !!m && typeof m.id === 'string' && m.id.length > 0)
+  const entries = Array.isArray(registry?.models) ? usableEntries(registry) : []
+  const count = new Map<string, number>()
+  for (const m of entries) count.set(m.id, (count.get(m.id) ?? 0) + 1)
+  const expectedModels = (Array.isArray(expected?.models) ? expected!.models : [])
+    .filter((m) => !!m && typeof m.id === 'string' && m.id.length > 0)
+  const listedIds = new Set(expectedModels.map((m) => m.id))
+  const duplicates = [...count].filter(([id, n]) => n > 1
+    && (listedIds.has(id) || entries.some((m) => m.id === id && familyProvider(m.family) === 'codex'))).map(([id]) => id)
+  const codexModels = entries.filter((m) => familyProvider(m.family) === 'codex' && m.pickable !== false
+    && isCodexModelId(m.id) && count.get(m.id) === 1)
   if (expectedModels.length === 0) {
     return {
       ok: false,
@@ -591,13 +605,13 @@ export function evaluateCodexModelCoverage(
     if (hit) covered.push({ id: exp.id, by: hit.id })
     else missing.push({ id: exp.id, label: exp.label })
   }
-  const listed = new Set(expectedModels.map((m) => m.id))
   const extra = codexModels
-    .filter((m) => !listed.has(m.id) && !isOverlaySourced(m))
+    .filter((m) => !listedIds.has(m.id) && !isOverlaySourced(m))
     .map((m) => ({ id: m.id, label: m.label }))
   return {
-    ok: missing.length === 0,
-    reason: missing.length === 0 ? null : `${missing.length} model(s) the Codex CLI lists are not in the registry`,
-    missing, extra, covered,
+    ok: missing.length === 0 && duplicates.length === 0,
+    reason: missing.length > 0 ? `${missing.length} model(s) the Codex CLI lists are not in the registry`
+      : duplicates.length > 0 ? `${duplicates.length} Codex model id(s) are listed more than once in the registry` : null,
+    missing, extra, covered, duplicates,
   }
 }

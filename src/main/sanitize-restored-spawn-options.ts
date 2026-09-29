@@ -29,9 +29,9 @@
 import { UUID_RE } from './logging/transcript-discovery'
 import { CODEX_MODEL_ID_MAX, CODEX_MODEL_ID_RE } from '../shared/model-registry'
 
-/** The Codex permission presets. 'plan' (P3.8 round 1, L2) is Claude's Plan mode
- *  launch option: it launches with 'standard''s sandbox and approvals, then
- *  Codex's own /plan is typed once its composer is ready. */
+/** The Codex permission presets. 'plan' (P3.8, L2; round 2, PM1) is Claude's
+ *  Plan mode launch option: it launches read-only, as 'read-only' does, then
+ *  Codex's own /plan is typed into its first ready prompt. */
 export const CODEX_PRESETS = ['read-only', 'standard', 'auto', 'unrestricted', 'plan'] as const
 
 // ── The spawn schema's own rules for the two persisted claude fields ─────────

@@ -335,6 +335,20 @@ describe('release-gate Codex models', () => {
     }
   })
 
+  it('a Codex id the registry lists twice refuses, and the report names it (round 2, GS)', async () => {
+    const registry = { models: [{ id: 'gpt-5.5', family: 'opus', label: 'x' }, ...REGISTRY_OK.models] }
+    const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: fakeGitHub([{ number: 7, title: '2.1.0-beta.17' }], { 7: [] }).listAll, registry, expected: EXPECTED, codexExpected: CODEX_EXPECTED, log: silent })
+    expect(r.exitCode).toBe(EXIT_REFUSED)
+    expect(r.lines.join('\n')).toMatch(/gpt-5\.5 is listed more than once in resources\/model-registry\.json/)
+  })
+
+  it('a malformed Codex list refuses rather than throwing (round 2, GS)', async () => {
+    for (const codexExpected of [{ models: {} }, { models: 'gpt-5.5' }, { models: [{ id: 42 }] }]) {
+      const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: fakeGitHub([{ number: 7, title: '2.1.0-beta.17' }], { 7: [] }).listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected, log: silent })
+      expect(r.exitCode, JSON.stringify(codexExpected)).toBe(EXIT_REFUSED)
+    }
+  })
+
   it('only the codex family counts: a Claude-family entry with a Codex id does not cover it', () => {
     const registry = { models: [{ id: 'gpt-5.5', family: 'opus', label: 'x' }] }
     const r = evaluateCodexModels({ registry, expected: CODEX_EXPECTED })

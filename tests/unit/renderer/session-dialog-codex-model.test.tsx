@@ -107,13 +107,16 @@ describe("the Codex model list is the registry's catalogue (row 39)", () => {
   })
 
   // P3.8 round 1 (L2): Plan mode is one of the permissions choices, as it is
-  // Claude's permission mode; it launches as Standard, then types /plan.
+  // Claude's permission mode; it launches read-only, then types /plan.
   it('offers Plan mode among the permissions, and saves it', () => {
     const onConfirm = newCodexConfig()
     const radios = Array.from(container.querySelectorAll('input[name="codex-permissions"]')) as HTMLInputElement[]
     const title = (i: HTMLInputElement) => i.closest('label')!.querySelector('.text-sm')!.textContent
     expect(radios.map(title)).toEqual(['Read-only', 'Standard', 'Plan mode', 'Auto', 'Unrestricted'])
     const plan = radios.find((i) => title(i) === 'Plan mode')!
+    // Round 2 (PM1): it says what it does: starts read-only, /permissions to widen.
+    expect(plan.closest('label')!.textContent).toMatch(/read-only/i)
+    expect(plan.closest('label')!.textContent).toMatch(/\/permissions/)
     act(() => { plan.click() })
     submit()
     expect(saved(onConfirm).permissionsPreset).toBe('plan')

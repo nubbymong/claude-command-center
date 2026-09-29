@@ -287,9 +287,19 @@ timings. No real account was used; what needs one is listed at the end.
   gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna and gpt-5.5, with the same levels as 0.153.4; it no longer lists gpt-5.2,
   though `-m gpt-5.2` still starts. Both versions start with max and ultra on gpt-6-astra and on gpt-5.5 (whose
   levels stop at xhigh): there is no check at launch.
+- [run] The footer names "default" for the effort when a model is launched with none (gpt-5.2, gpt-5.3-codex), and
+  a resumed session may show its folder under `~`.
+- [run] 0.155.1's TUI tip: "Use /permissions to control when Codex asks for confirmation." [strings] The command
+  list: "/permissions - choose what Codex is allowed to do": the way out of a read-only launch.
+- [strings] The composer's placeholders: "Ask Codex to do anything" and "Ask a follow-up question". Codex's approval
+  requests: "Would you like to run the following command?", "Would you like to make the following edits?", "Would you
+  like to grant these permissions?", "Do you want to approve network access to ...", "Would you like to send input to
+  the existing terminal?", "... needs your approval." Its hint lines use the same middle dot as the footer ("enter
+  select", "MCP servers", "Git", "left/right group"), with no reasoning level after a model.
 - Not established (they need a real sign-in and network): whether the server accepts max and ultra where the
   catalogue does not list them; what a real `/compact` does to a conversation; `-m gpt-5.2` on 0.155.1 against the
   server; whether `codex debug models` refreshes from the account when signed in.
+  The approval modal itself is not reachable without a working model (the dead proxy stops every turn).
 
 ## Rows this affects
 

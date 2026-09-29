@@ -50,6 +50,22 @@ describe('Sentinel Codex model coverage (row 39)', () => {
     expect(codexModelCoverageFindings(reg, CODEX_EXPECTED_MODEL_SET, NOW).some((x) => x.id.includes('claude-'))).toBe(false)
   })
 
+  // P3.8 round 2 (GS): an id the registry lists twice is reported as such
+  // (the pickers would disagree about it), not as "could not be verified".
+  it('reports a Codex id the registry lists more than once', () => {
+    const dup = { ...reg, models: [{ id: 'gpt-5.5', patterns: [], family: 'opus', label: 'GPT-5.5 (Claude row)' }, ...reg.models] } as unknown as ModelRegistry
+    const f = codexModelCoverageFindings(dup, CODEX_EXPECTED_MODEL_SET, NOW)
+    expect(f.map((x) => x.id)).toContain('models:codex-duplicate:gpt-5.5')
+    expect(f.map((x) => x.id)).not.toContain('models:codex-list-unreadable')
+    expect(f.map((x) => x.id)).not.toContain('models:codex-missing:gpt-5.5')
+    // A duplicated Codex id the list does not name: still its own finding, not "could not be verified".
+    const unlisted = { ...reg, models: [...reg.models, { id: 'gpt-7', patterns: [], family: 'codex', label: 'GPT-7' }, { id: 'gpt-7', patterns: [], family: 'codex', label: 'GPT-7' }] } as unknown as ModelRegistry
+    const g = codexModelCoverageFindings(unlisted, CODEX_EXPECTED_MODEL_SET, NOW).map((x) => x.id)
+    expect(g).toContain('models:codex-duplicate:gpt-7')
+    expect(g).not.toContain('models:codex-list-unreadable')
+    expect(f.find((x) => x.id === 'models:codex-duplicate:gpt-5.5')!.title).toBe('gpt-5.5 is in the model registry more than once')
+  })
+
   it('an empty or missing list is one "could not be verified" finding, not a wall of retired models (fail closed)', () => {
     for (const expected of [null, undefined, listOf([])]) {
       const f = codexModelCoverageFindings(reg, expected, NOW)

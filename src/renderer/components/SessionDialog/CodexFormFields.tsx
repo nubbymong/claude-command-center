@@ -43,10 +43,10 @@ interface Props {
 const PRESETS = [
   { id: 'read-only' as const,    label: 'Read-only',    desc: 'Safe browsing -- no file writes' },
   { id: 'standard' as const,     label: 'Standard',     desc: 'Recommended -- workspace writes, prompts on tool use' },
-  // P3.8 round 1 (L2): Claude's Plan mode launch option. Codex has no launch
-  // flag for it: the session starts as Standard and Codex's own /plan is typed
-  // once its prompt is ready.
-  { id: 'plan' as const,         label: 'Plan mode',    desc: 'Starts in Codex Plan mode -- plans first, then Standard' },
+  // P3.8 (L2; round 2, PM1): Claude's Plan mode launch option. Codex has no
+  // launch flag for it: the session starts read-only and Codex's own /plan is
+  // typed into its first ready prompt; /permissions widens it later.
+  { id: 'plan' as const,         label: 'Plan mode',    desc: 'Starts read-only in Codex Plan mode -- plans first; /permissions lets it write' },
   { id: 'auto' as const,         label: 'Auto',         desc: 'Workspace writes, no prompts' },
   { id: 'unrestricted' as const, label: 'Unrestricted', desc: 'Full machine access -- rare' },
 ]

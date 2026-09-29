@@ -103,6 +103,15 @@ const CODEX_CASES: { name: string; registry: ModelRegistry; expected: ExpectedMo
   { name: 'empty list (fails closed)', registry: reg(cx(['gpt-5.5'])), expected: exp([]) },
   { name: 'a list of only unusable entries (fails closed)', registry: reg(cx(['gpt-5.5'])), expected: { models: [{ id: '' }] } as unknown as ExpectedModelSet },
   { name: 'everything missing', registry: reg([]), expected: exp(['gpt-5.5', 'gpt-6-astra']) },
+  // Round 2 (GS): an id listed twice in the registry covers nothing (the
+  // pickers would disagree about it), and an id the picker never offers
+  // (isCodexModelId) covers nothing; a malformed file fails closed.
+  { name: 'a duplicate id: a Claude-family copy first', registry: reg([{ id: 'gpt-6-astra', patterns: [], family: 'opus', label: 'Astra (Claude row)', articleExempt: true }, ...cx(['gpt-6-astra', 'gpt-5.5'])]), expected: exp(['gpt-6-astra', 'gpt-5.5']) },
+  { name: 'a duplicate id: two Codex copies', registry: reg([...cx(['gpt-5.5']), ...cx(['gpt-5.5'])]), expected: exp(['gpt-5.5']) },
+  { name: 'a duplicate Codex id the list does not name', registry: reg([...cx(['gpt-5.5']), ...cx(['gpt-7']), ...cx(['gpt-7'])]), expected: exp(['gpt-5.5']) },
+  { name: 'ids the picker never offers, in both files', registry: reg([...cx(['gpt-5.5']), ...cx(['gpt-7 x', 'g'.repeat(65), '-gpt-7'])]), expected: exp(['gpt-5.5', 'gpt-7 x', 'g'.repeat(65), '-gpt-7']) },
+  { name: 'a list whose models is not an array (fails closed)', registry: reg(cx(['gpt-5.5'])), expected: { models: { 0: { id: 'gpt-5.5' } } } as unknown as ExpectedModelSet },
+  { name: 'a registry whose models is not an array', registry: { models: { 0: { id: 'gpt-5.5', family: 'codex' } }, families: {}, effortLevels: [], dropdown: [] } as unknown as ModelRegistry, expected: exp(['gpt-5.5']) },
 ]
 
 describe('release gate and shared Codex model coverage agree (P3.8 G1)', () => {
@@ -116,6 +125,7 @@ describe('release gate and shared Codex model coverage agree (P3.8 G1)', () => {
       expect(shared.covered.map((m) => `${m.id}<-${m.by}`))
         .toEqual(gate.covered.map((m: { id: string; by: string }) => `${m.id}<-${m.by}`))
       expect(shared.reason).toBe(gate.reason)
+      expect(shared.duplicates ?? []).toEqual(gate.duplicates ?? [])
     })
   }
 
@@ -132,6 +142,16 @@ describe('release gate and shared Codex model coverage agree (P3.8 G1)', () => {
     expect(v('unusable list entries are skipped').ok).toBe(true)
     expect(v('empty list (fails closed)').ok).toBe(false)
     expect(v('a list of only unusable entries (fails closed)').ok).toBe(false)
+    expect(v('a duplicate id: a Claude-family copy first').missing.map((m: { id: string }) => m.id)).toEqual(['gpt-6-astra'])
+    expect(v('a duplicate id: a Claude-family copy first').duplicates).toEqual(['gpt-6-astra'])
+    expect(v('a duplicate id: two Codex copies').ok).toBe(false)
+    expect(v('a duplicate Codex id the list does not name').ok).toBe(false)
+    expect(v('a duplicate Codex id the list does not name').duplicates).toEqual(['gpt-7'])
+    expect(v('a duplicate Codex id the list does not name').extra).toEqual([])
+    expect(v('ids the picker never offers, in both files').missing.map((m: { id: string }) => m.id)).toEqual(['gpt-7 x', 'g'.repeat(65), '-gpt-7'])
+    expect(v('ids the picker never offers, in both files').extra).toEqual([])
+    expect(v('a list whose models is not an array (fails closed)').ok).toBe(false)
+    expect(v('a registry whose models is not an array').missing.map((m: { id: string }) => m.id)).toEqual(['gpt-5.5'])
   })
 
   it('the shipped registry satisfies the shipped Codex list', () => {

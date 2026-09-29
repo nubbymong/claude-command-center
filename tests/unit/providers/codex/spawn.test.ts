@@ -142,20 +142,22 @@ describe('CodexProvider', () => {
     expect(out.args.find(a => a.startsWith('model_reasoning_effort='))).toBeUndefined()
   })
 
-  // P3.8 round 1 (L2): Plan mode launches with Standard's sandbox and
-  // approvals (Codex has no launch flag for it; /plan is typed later).
-  it('the plan preset launches as standard does, with no flag of its own', () => {
+  // P3.8 round 1 (L2): Codex has no launch flag for Plan mode; /plan is typed
+  // later. Round 2 (PM1): a Plan mode launch is READ-ONLY (the CLI's own
+  // sandbox option), so no turn can write before Codex's Plan mode is on;
+  // leaving read-only later is Codex's own /permissions.
+  it('the plan preset launches read-only, as the read-only preset does, with no flag of its own', () => {
     const out = new CodexProvider().buildSpawnCommand({
       sessionId: 'sid', realmLaunch: launch,
       codexOptions: { model: 'gpt-5.5', permissionsPreset: 'plan' },
     })
-    const std = new CodexProvider().buildSpawnCommand({
+    const readOnly = new CodexProvider().buildSpawnCommand({
       sessionId: 'sid', realmLaunch: launch,
-      codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' },
+      codexOptions: { model: 'gpt-5.5', permissionsPreset: 'read-only' },
     })
-    expect(out.args).toEqual(std.args)
-    expect(out.args.join(' ')).toContain('--sandbox workspace-write --ask-for-approval on-request')
-    expect(out.args.join(' ')).not.toMatch(/plan/)
+    expect(out.args).toEqual(readOnly.args)
+    expect(out.args.join(' ')).toContain('--sandbox read-only --ask-for-approval on-request')
+    expect(out.args.join(' ')).not.toMatch(/workspace-write|plan/)
   })
 
   // P3.8 (row 40): the levels the registry offers Codex reach the launch as

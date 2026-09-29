@@ -418,8 +418,9 @@ export const spawnOptionsSchema = z.object({
     // An allowlist, never a free string: it becomes `-c model_reasoning_effort=<value>`.
     // The list lives with the sanitizer, which drops exactly what this rejects (P3.8).
     reasoningEffort: z.enum(CODEX_EFFORTS).optional(),
-    // P3.8 round 1 (L2): 'plan' launches as 'standard' does, then types Codex's
-    // own /plan once its composer is ready (renderer, lib/codexComposer.ts).
+    // P3.8 (L2; round 2, PM1): 'plan' launches read-only, as 'read-only' does,
+    // then Codex's own /plan is typed into its first ready prompt (renderer,
+    // lib/codexComposer.ts).
     permissionsPreset: z.enum(CODEX_PRESETS),
   }).optional(),
   // WP2 (plan A10): the Codex account the session runs under -- an opaque
