@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-29T06:26:13.140Z",
-  "head": "713061f871f490022ad83a2199266e08fb353f3b",
-  "tree": "f5c9be08906b030347a69d48606a6a304ee506e2",
+  "generatedAt": "2026-09-29T07:38:36.354Z",
+  "head": "427807fbcea585a7d6e09385c0642aceb87eaf75",
+  "tree": "3810879c98499d3b4b3a34360e8f201b5354b1c4",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2470,
+  "trackedFileCount": 2478,
   "excludedFileCount": 384,
-  "scannedFileCount": 2086,
+  "scannedFileCount": 2094,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 517,
-  "pathDigest": "f252db869e3bf60b85e52c35ea1f44e2d9caeff5857f3c0599787fedea65976c",
+  "matchedPathCount": 528,
+  "pathDigest": "308aaea904bfad30a8bdce468157eba8bb97544d742819a58980b9e28a610724",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -196,7 +196,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 57
+      "lineCount": 59
     },
     {
       "path": "docs/wp2/hello-codex-spec.md",
@@ -227,6 +227,14 @@
       "lineCount": 3
     },
     {
+      "path": "resources/codex-model-catalogue.json",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "lineCount": 8
+    },
+    {
       "path": "resources/codex-pricing.json",
       "predicates": [
         "P01",
@@ -239,7 +247,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 2
+      "lineCount": 9
     },
     {
       "path": "scripts/capture-training-screenshots.ts",
@@ -486,7 +494,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 71
+      "lineCount": 73
     },
     {
       "path": "src/main/ipc/tokenomics2-handlers.ts",
@@ -698,7 +706,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 7
+      "lineCount": 16
     },
     {
       "path": "src/main/providers/codex/process-env.ts",
@@ -864,7 +872,21 @@
         "P07",
         "P14"
       ],
-      "lineCount": 40
+      "lineCount": 50
+    },
+    {
+      "path": "src/main/sentinel/index.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 13
+    },
+    {
+      "path": "src/main/sentinel/sentinel-models.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 28
     },
     {
       "path": "src/main/service-status.ts",
@@ -908,7 +930,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 7
+      "lineCount": 19
     },
     {
       "path": "src/main/tokenomics/tk-supervisor.ts",
@@ -980,7 +1002,7 @@
         "P01",
         "P11"
       ],
-      "lineCount": 7
+      "lineCount": 19
     },
     {
       "path": "src/renderer/components/AccountUsagePanel.tsx",
@@ -1018,7 +1040,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 24
+      "lineCount": 29
     },
     {
       "path": "src/renderer/components/ConductorMcpPage.tsx",
@@ -1110,7 +1132,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 89
+      "lineCount": 95
     },
     {
       "path": "src/renderer/components/SessionDialog/CodexFormFields.tsx",
@@ -1119,7 +1141,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 34
+      "lineCount": 39
     },
     {
       "path": "src/renderer/components/SessionDialog/ProviderSegmentedControl.tsx",
@@ -1142,7 +1164,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 26
+      "lineCount": 37
     },
     {
       "path": "src/renderer/components/SettingsPage.tsx",
@@ -1789,9 +1811,10 @@
     {
       "path": "src/shared/model-registry.ts",
       "predicates": [
+        "P05",
         "P14"
       ],
-      "lineCount": 2
+      "lineCount": 25
     },
     {
       "path": "src/shared/providers/accounts-view.ts",
@@ -1843,7 +1866,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 28
+      "lineCount": 30
     },
     {
       "path": "tests/e2e/codex-reconfirm-upgrade.spec.ts",
@@ -2582,6 +2605,15 @@
       "lineCount": 4
     },
     {
+      "path": "tests/unit/codex-model-registry.test.ts",
+      "predicates": [
+        "P01",
+        "P05",
+        "P13"
+      ],
+      "lineCount": 47
+    },
+    {
       "path": "tests/unit/conductor-secret-rotation.test.ts",
       "predicates": [
         "P07",
@@ -2682,6 +2714,17 @@
         "P13"
       ],
       "lineCount": 4
+    },
+    {
+      "path": "tests/unit/main/codex-effort-allowlist.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P05",
+        "P07",
+        "P13"
+      ],
+      "lineCount": 30
     },
     {
       "path": "tests/unit/main/codex-resume-launch.test.ts",
@@ -2913,6 +2956,13 @@
       "lineCount": 48
     },
     {
+      "path": "tests/unit/main/sentinel-and-cli-setup-provider-off.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 24
+    },
+    {
       "path": "tests/unit/main/service-status-providers.test.ts",
       "predicates": [
         "P04",
@@ -2979,9 +3029,10 @@
     {
       "path": "tests/unit/model-picker-rows.test.ts",
       "predicates": [
+        "P05",
         "P13"
       ],
-      "lineCount": 1
+      "lineCount": 5
     },
     {
       "path": "tests/unit/model-registry-resolve.test.ts",
@@ -3145,6 +3196,14 @@
       "lineCount": 2
     },
     {
+      "path": "tests/unit/providers/codex/pricing-live.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 23
+    },
+    {
       "path": "tests/unit/providers/codex/pricing.test.ts",
       "predicates": [
         "P01",
@@ -3195,7 +3254,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 213
+      "lineCount": 224
     },
     {
       "path": "tests/unit/providers/codex/telemetry-bounded-reads.test.ts",
@@ -3433,7 +3492,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 22
+      "lineCount": 23
     },
     {
       "path": "tests/unit/renderer/codex-mini-icon.test.ts",
@@ -3449,7 +3508,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 5
+      "lineCount": 30
     },
     {
       "path": "tests/unit/renderer/codex-reconfirm-gate.test.ts",
@@ -3508,7 +3567,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 15
+      "lineCount": 37
     },
     {
       "path": "tests/unit/renderer/commandbar-one-row.test.tsx",
@@ -3859,6 +3918,17 @@
       "lineCount": 90
     },
     {
+      "path": "tests/unit/renderer/session-dialog-codex-model.test.tsx",
+      "predicates": [
+        "P01",
+        "P04",
+        "P05",
+        "P07",
+        "P13"
+      ],
+      "lineCount": 33
+    },
+    {
       "path": "tests/unit/renderer/session-dialog-credentials.test.tsx",
       "predicates": [
         "P13"
@@ -3941,6 +4011,14 @@
       "lineCount": 3
     },
     {
+      "path": "tests/unit/renderer/session-status-strip-codex-controls.test.tsx",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 20
+    },
+    {
       "path": "tests/unit/renderer/session-status-strip-labelless-model.test.tsx",
       "predicates": [
         "P05",
@@ -3953,7 +4031,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 3
+      "lineCount": 5
     },
     {
       "path": "tests/unit/renderer/session-status-strip.test.ts",
@@ -3961,7 +4039,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 39
+      "lineCount": 40
     },
     {
       "path": "tests/unit/renderer/session-statusstrip-copilot.test.tsx",
@@ -4156,6 +4234,14 @@
       "lineCount": 2
     },
     {
+      "path": "tests/unit/sentinel-codex-models.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 30
+    },
+    {
       "path": "tests/unit/sentinel-models.test.ts",
       "predicates": [
         "P13"
@@ -4173,6 +4259,14 @@
     {
       "path": "tests/unit/tokenomics/tk-parse.test.ts",
       "predicates": [
+        "P13"
+      ],
+      "lineCount": 12
+    },
+    {
+      "path": "tests/unit/tokenomics/tk-pricing-live-codex.test.ts",
+      "predicates": [
+        "P01",
         "P13"
       ],
       "lineCount": 12

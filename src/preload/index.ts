@@ -228,7 +228,7 @@ export interface ElectronAPI {
       provider?: 'claude' | 'codex'
       codexOptions?: {
         model?: string
-        reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+        reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
         permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
       }
       /** WP2: the Codex account the session runs under (an opaque registry

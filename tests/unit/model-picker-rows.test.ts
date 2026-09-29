@@ -25,9 +25,11 @@ describe('buildModelPickerRows (#385)', () => {
     expect(aliases.every((r) => r.group === ALIAS_GROUP_LABEL)).toBe(true)
   })
 
-  it('derives a pinned row for every launchable model', () => {
+  it('derives a pinned row for every launchable Claude model', () => {
     const pinned = buildModelPickerRows(reg).filter((r) => r.kind === 'pinned')
-    const launchable = reg.models.filter((m) => m.pickable !== false)
+    // P3.8: the registry also carries Codex's models (the codex family); they
+    // are Codex's picker rows, never Claude's (tests/unit/codex-model-registry.test.ts).
+    const launchable = reg.models.filter((m) => m.pickable !== false && m.family !== 'codex')
     expect(pinned.map((r) => r.value).sort()).toEqual(launchable.map((m) => m.id).sort())
     expect(pinned.find((r) => r.value === 'claude-opus-4-6')!.label).toBe('Opus 4.6')
   })

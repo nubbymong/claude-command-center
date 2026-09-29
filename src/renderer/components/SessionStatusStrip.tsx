@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useRef, useEffect } from 'react'
 import { useSessionStore, type Session } from '../stores/sessionStore'
 import { useSettingsStore, DEFAULT_STATUS_LINE } from '../stores/settingsStore'
 import { usesCodex } from '../onboarding/provider-choice'
@@ -56,6 +56,15 @@ const CONTROL_PILL =
 // Stable empty-array reference so the Zustand selector doesn't return a fresh
 // [] each render (which would trip the re-render cascade guard).
 const EMPTY_HIDDEN: string[] = []
+
+/**
+ * P3.8 (row 61): how long after typing a Codex command its Enter follows.
+ * Codex's composer takes a burst of typed characters ending in Enter as a
+ * paste (the CLI's paste-burst handling, `disable_paste_burst` in its config),
+ * which turns the Enter into a newline instead of a submit; typed apart, once
+ * the burst is over, it submits.
+ */
+export const CODEX_SUBMIT_DELAY_MS = 300
 
 // SessionStatusStrip (v2 shell, UAT R2): the per-session telemetry + controls
 // band. Lives directly above the command rows, under the terminal -- the old
@@ -149,6 +158,33 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   const write = (cmd: string) => {
     writeSessionInput(sessionId, cmd)
   }
+  // P3.8 (row 61): a Codex command's Enter, pending for CODEX_SUBMIT_DELAY_MS.
+  // It goes only to the run it was typed into: the strip going away (a Restart
+  // remounts it, the tab closing unmounts it) cancels it, and it is checked
+  // against the run (createdAt, which a Restart bumps) and the run's end at
+  // the time it fires, so it can never answer the next run's first prompt.
+  const pendingSubmit = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const liveSession = useRef(session)
+  liveSession.current = session
+  useEffect(() => () => {
+    if (pendingSubmit.current) clearTimeout(pendingSubmit.current)
+    pendingSubmit.current = null
+  }, [])
+  const writeCodexCommand = (cmd: '/compact') => {
+    if (pendingSubmit.current || !session) return
+    const run = session.createdAt
+    write(cmd)
+    pendingSubmit.current = setTimeout(() => {
+      pendingSubmit.current = null
+      const s = liveSession.current
+      if (!s || s.createdAt !== run || s.ptyExited) return
+      write('\r')
+    }, CODEX_SUBMIT_DELAY_MS)
+  }
+  const onCompact = () => {
+    if (isClaude) write('/compact\n')
+    else writeCodexCommand('/compact')
+  }
   const onModel = (si: number, v: string) => {
     // These values are written straight into a live PTY as a slash-command
     // LINE, with no schema in front of them. Pinned rows are derived from the
@@ -210,10 +246,12 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
     )
   }
 
-  // A Codex strip has no controls cluster, so with the master off only its
-  // account item is left (always-on, as Claude's): with nothing to show at the
-  // far left either, collapse the band entirely.
-  if (!statusLineEnabled && !isClaude && !(canSwitchAccount || (sl.showAccount && providerChip))) return null
+  // P3.8 (row 61): a Codex session's strip has the controls cluster too
+  // (Compact and Restart; its Model pill is not built yet), so with the master
+  // off it keeps them, as a Claude session's does. A provider with no controls
+  // and nothing at the far left collapses the band.
+  const hasControls = isClaude || session.provider === 'codex'
+  if (!statusLineEnabled && !hasControls && !(canSwitchAccount || (sl.showAccount && providerChip))) return null
 
   // "The meters should appear, but nothing has arrived yet." Shimmering forever
   // on a session that has nothing to say is worse than the blank it replaces, so
@@ -501,15 +539,17 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
         <div className="flex-1" aria-hidden />
       )}
 
-      {/* Controls (Claude only): Mode + Model as a pair, Compact as a normal
-          action, Restart visually separated behind a divider with a quiet
-          danger-on-hover treatment. (UAT R2 Tasks 2 + 4.) */}
-      {isClaude && (
+      {/* Controls: Mode + Model as a pair, Compact as a normal action, Restart
+          visually separated behind a divider with a quiet danger-on-hover
+          treatment. (UAT R2 Tasks 2 + 4.) A Codex session has them too (P3.8,
+          row 61), Compact running Codex's own /compact; its Model pill is not
+          built yet (row 41), so its model stays in the telemetry band. */}
+      {hasControls && (
         <div className="flex items-center gap-1 shrink-0">
           {/* Account switch moved to the far-left of the strip (first child,
               above) so the account sits in one consistent place for every
               session type. The Model / Compact / Restart controls remain here. */}
-          <div className="relative">
+          {isClaude && (<div className="relative">
             <button
               onClick={() => setOpenPicker(openPicker === 'model' ? null : 'model')}
               className={CONTROL_PILL}
@@ -551,9 +591,9 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
                 onClose={() => setOpenPicker(null)}
               />
             )}
-          </div>
+          </div>)}
           <button
-            onClick={() => write('/compact\n')}
+            onClick={onCompact}
             className={CONTROL_PILL}
             style={{
               background: 'var(--surface-raised)',

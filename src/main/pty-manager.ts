@@ -1539,7 +1539,7 @@ function spawnPtyResolved(
     provider?: 'claude' | 'codex'
     codexOptions?: {
       model?: string
-      reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+      reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
       permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
     }
     /** MAIN-INTERNAL (WP2, plan A10): the Codex session's prepared launch --

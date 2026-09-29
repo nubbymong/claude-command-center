@@ -32,6 +32,7 @@ import {
   extraArgsRefineOk,
   CODEX_MODEL_MAX,
   CODEX_MODEL_RE,
+  CODEX_EFFORTS,
 } from '../sanitize-restored-spawn-options'
 
 /** SSH options as received from the renderer (no passwords — only configId) */
@@ -411,7 +412,9 @@ export const spawnOptionsSchema = z.object({
     // launch argument. The value list lives in sanitize-restored-spawn-options.ts
     // so the fail-open sanitizer drops exactly what this parse would reject.
     model: z.string().max(CODEX_MODEL_MAX).regex(CODEX_MODEL_RE).optional().or(z.literal('')),
-    reasoningEffort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
+    // An allowlist, never a free string: it becomes `-c model_reasoning_effort=<value>`.
+    // The list lives with the sanitizer, which drops exactly what this rejects (P3.8).
+    reasoningEffort: z.enum(CODEX_EFFORTS).optional(),
     permissionsPreset: z.enum(['read-only', 'standard', 'auto', 'unrestricted']),
   }).optional(),
   // WP2 (plan A10): the Codex account the session runs under -- an opaque
@@ -669,7 +672,7 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     provider?: 'claude' | 'codex'
     codexOptions?: {
       model?: string
-      reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+      reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
       permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
     }
     providerAccountId?: string

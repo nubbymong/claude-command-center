@@ -21,7 +21,8 @@ import { generateId } from '../utils/id'
 import { buildCommandLine, commandSecretRef, commandSecretKey } from '../../shared/command-secret'
 import { isAllowedBrowserUrl } from '../../shared/browser-url'
 import { trackUsage } from '../stores/tipsStore'
-import { CODEX_MODELS } from '../codex-models'
+import { codexModelOptions, codexEffortSupported } from '../codex-models'
+import { useRegistryStore } from '../stores/registryStore'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { sessionCapabilities } from '../lib/session-capabilities'
 import { planBar, inapplicability, effectiveKind, type BandPlan } from './command-bar/layout'
@@ -60,8 +61,11 @@ export function openSettingsTab(tab: string): void {
 const CODEX_PRESETS = ['read-only', 'standard', 'auto', 'unrestricted'] as const
 type CodexPreset = typeof CODEX_PRESETS[number]
 
+/** P3.8 (row 39): the registry's Codex models, as the session dialog offers
+ *  them ('' = Default: Codex's own choice). */
 function CodexModelDropdown({ value, onChange }: { value: string; onChange: (next: string) => void }) {
   const [dirty, setDirty] = React.useState(false)
+  const registry = useRegistryStore((s) => s.registry)
   return (
     <div className="flex items-center gap-1">
       <select
@@ -69,7 +73,7 @@ function CodexModelDropdown({ value, onChange }: { value: string; onChange: (nex
         onChange={(e) => { setDirty(true); onChange(e.target.value) }}
         className="bg-base border border-surface1 rounded px-1.5 h-7 text-xs text-text"
       >
-        {CODEX_MODELS.map((m) => (<option key={m} value={m}>{m}</option>))}
+        {codexModelOptions(registry, value).map((m) => (<option key={m.value || 'default'} value={m.value}>{m.label}</option>))}
       </select>
       {dirty && <span className="text-[10px] text-overlay1">Restart session to apply</span>}
     </div>
@@ -858,8 +862,14 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
               onChange={(next) => updateSession(session.id, { codexOptions: { ...session.codexOptions!, permissionsPreset: next } })}
             />
             <CodexModelDropdown
-              value={session.codexOptions.model ?? 'gpt-5.5'}
-              onChange={(next) => updateSession(session.id, { codexOptions: { ...session.codexOptions!, model: next } })}
+              value={session.codexOptions.model ?? ''}
+              onChange={(next) => {
+                // As the session dialog: an effort the new model cannot run
+                // drops to Default rather than ride the next start.
+                const co = session.codexOptions!
+                const keep = codexEffortSupported(useRegistryStore.getState().registry, next, co.reasoningEffort)
+                updateSession(session.id, { codexOptions: { ...co, model: next || undefined, ...(keep ? {} : { reasoningEffort: undefined }) } })
+              }}
             />
           </>
         )}

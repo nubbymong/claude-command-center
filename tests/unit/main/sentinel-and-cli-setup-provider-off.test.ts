@@ -28,10 +28,12 @@ vi.mock('electron', () => ({
   dialog: { showOpenDialog: vi.fn() },
   app: { getPath: () => os.tmpdir() },
 }))
-const acct = vi.hoisted(() => ({ claude: 'on' as 'on' | 'off' | 'unreadable' }))
+const acct = vi.hoisted(() => ({ claude: 'on' as 'on' | 'off' | 'unreadable', codexSwitch: 'on' as 'on' | 'off' }))
 vi.mock('../../../src/main/provider-accounts', () => ({
   getAccountsService: () => ({
-    launchRefusal: (id: string) => id !== 'claude' || acct.claude === 'on' ? null
+    launchRefusal: (id: string) => id === 'codex'
+      ? (acct.codexSwitch === 'on' ? null : { code: 'provider-off', providerId: 'codex', message: 'Codex is off. Turn it on in Settings, Accounts.' })
+      : id !== 'claude' || acct.claude === 'on' ? null
       : acct.claude === 'off' ? { code: 'provider-off', providerId: 'claude', message: 'Claude Code is off. Turn it on in Settings, Accounts.' }
       : { code: 'provider-state-unknown', providerId: 'claude', message: 'This app could not read whether Claude Code is on. Check Settings, Accounts.' },
   }),
@@ -44,6 +46,19 @@ const spawnClaudeHeadless = vi.fn(async (_args: string[]) => {
 vi.mock('../../../src/main/claude-headless', () => ({ spawnClaudeHeadless: (...a: unknown[]) => spawnClaudeHeadless(...(a as [string[]])) }))
 const fetchArticleModelIds = vi.fn(async () => null)
 vi.mock('../../../src/main/sentinel/sentinel-model-article', () => ({ fetchArticleModelIds: () => fetchArticleModelIds() }))
+// P3.8 (row 39): the Codex half of the model coverage check, observed (the real
+// one runs unless a test scripts it).
+const codexCheck = vi.hoisted(() => ({ calls: 0, script: null as null | (() => unknown[]) }))
+vi.mock('../../../src/main/sentinel/sentinel-models', async (orig) => {
+  const real = await orig<typeof import('../../../src/main/sentinel/sentinel-models')>()
+  return {
+    ...real,
+    codexModelCoverageFindings: (...a: Parameters<typeof real.codexModelCoverageFindings>) => {
+      codexCheck.calls++
+      return codexCheck.script ? codexCheck.script() : real.codexModelCoverageFindings(...a)
+    },
+  }
+})
 const fetchChangelog = vi.fn(async () => null)
 vi.mock('../../../src/main/sentinel/sentinel-changelog', async (orig) => ({
   ...(await orig<typeof import('../../../src/main/sentinel/sentinel-changelog')>()),
@@ -71,6 +86,9 @@ let dir = ''
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-sentinel-off-'))
   acct.claude = 'on'
+  acct.codexSwitch = 'on'
+  codexCheck.calls = 0
+  codexCheck.script = null
   spawnClaudeHeadless.mockClear()
   hold.headless = null
   fetchArticleModelIds.mockClear()
@@ -86,6 +104,38 @@ async function sentinel() {
   mod.initSentinel(dir)
   return mod
 }
+
+describe("Sentinel's Codex model coverage check (P3.8, row 39)", () => {
+  const finding = { id: 'models:codex-missing:gpt-6-nova', kind: 'compat', severity: 'warn', title: 't', evidence: 'e', status: 'open', createdAt: 1 }
+
+  it('runs at start while Codex is on, and records what it finds', async () => {
+    const s = await sentinel()
+    codexCheck.script = () => [finding]
+    await s.sentinelStartupCheck()
+    expect(codexCheck.calls).toBe(1)
+    expect(s.getSentinelState()!.snapshot().findings.map((f) => f.id)).toContain('models:codex-missing:gpt-6-nova')
+  })
+
+  it('does not run while Codex is off or not set up: a Claude-only user sees nothing about Codex models', async () => {
+    const s = await sentinel()
+    acct.codexSwitch = 'off'
+    codexCheck.script = () => [finding]
+    await s.sentinelStartupCheck()
+    expect(codexCheck.calls).toBe(0)
+    expect(s.getSentinelState()!.snapshot().findings.some((f) => f.id.startsWith('models:codex-'))).toBe(false)
+    // Claude's half still ran.
+    expect(fetchArticleModelIds).toHaveBeenCalledTimes(1)
+  })
+
+  it('a check that throws is a finding of its own, and does not stop the rest of the start-up check', async () => {
+    const s = await sentinel()
+    codexCheck.script = () => { throw new Error('boom') }
+    await s.sentinelStartupCheck()
+    const ids = s.getSentinelState()!.snapshot().findings.map((f) => f.id)
+    expect(ids).toContain('models:codex-check-failed')
+    expect(spawnClaudeHeadless).toHaveBeenCalled()
+  })
+})
 
 describe('Sentinel while Claude Code is off', () => {
   it("a user's Re-run: refused, the panel says why, and no Claude process starts", async () => {
