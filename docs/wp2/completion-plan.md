@@ -802,9 +802,17 @@ the note saying so.
 Done: the ADR-009 pass (the copy, the leases, the respawn's carry in pty:spawn,
 the pty-manager record; independent attacker sub-agents, bounded rounds: pass 1 at cf8f42d4 FINDINGS (one major, the cross-tab claim), fixed in 62cf7d8b and 31da7fb1; pass 2 at 31da7fb1 PASS; the cleanup at 78f2fcec confirmed by both lenses); the independent spec and quality reviews,
 PASS at 78f2fcec; the VM walk at 1063e3d9 (WINDOWS_1, MOCKED: fake CLI, fictional accounts; e2e 81/81): main's switch logic passed every case, and its findings are fixed: V1, the note was written into the terminal and the new session's first frame on Windows (ConPTY's) cleared it, so it is now shown in the new-account notice's place above the terminal, outside its buffer, until dismissed; V2, a tab that picked a conversation another tab holds on the same account was never recorded on it, so its Switch started a new conversation silently, and it is now recorded (the rollout stays the holder's to read), so its Switch refuses it as in use and says so; V3, Cancel on the confirm-at-launch question after a Switch left the tab on the new account; a Claude switch never asks at launch, so this is the owner's call, and the default pending that decision takes the tab back to the account it came from (or to the default account when that one can no longer launch); V4, the note is the app's muted text, which the token-contrast tests hold in both themes; V5, the claude.ai items in a Codex tab's right-click menu, predates P3.6 (#216) and is P4.6's (row 58, the per-account web session).
+Done too: the VM re-check at 2cbf27ac (MOCKED; e2e 81/81) passed V1 to V4,
+and its findings are dealt with: W1, the note's dismiss sat under the GitHub
+button that floats over the terminal's top-right corner, so the bar now keeps
+that corner clear; W2, a declined switch goes back to a signed-out account and
+the Switch list gives a signed-out account no state, which parity settles
+unchanged (Claude's list shows a signed-out profile with no state, and a
+switch to it launches, the sign-in done inside the session); N1, a switch
+whose restart is refused now puts the pin back on the account the tab is on.
 Owed: the owner's decision on V3 (restore the previous account on a declined
-confirm, the default until then); the VM re-check of V1 to V4; the owner's
-review of the screenshots (the strip pill and its menu, the right-click menu,
+confirm, the default until then); the VM check of W1 (to ride on P3.7's VM
+run); the owner's review of the screenshots (the strip pill and its menu, the right-click menu,
 the sidebar card's Codex line, the chips' colours, the note, a declined
 confirm after a Switch, and the reworded What's New and accounts pages, both
 themes); the owner's real-account resume (the server half of P3.1 answer

@@ -163,7 +163,7 @@ describe('switching a Codex session\'s account', () => {
 
   // Review F1: nothing is left to take a tab back later: a switch whose
   // restart is refused moved nothing, and a closed tab keeps nothing.
-  it('a switch whose restart is refused leaves no origin, an earlier one included; a closed tab keeps none', async () => {
+  it('a switch whose restart is refused leaves no origin, an earlier one included, and the pin where it was; a closed tab keeps none', async () => {
     mount(codexSession())
     noteSwitchOrigin('sess-x', parked.id, work.id)
     refusal.next = 'Already running.'
@@ -175,6 +175,8 @@ describe('switching a Codex session\'s account', () => {
     }
     expect(killSessionPtyMock).not.toHaveBeenCalled()
     expect(switchOrigin('sess-x')).toBeNull()
+    // Nothing moved, so the pin is back on the account the tab is on (review N1).
+    expect(stored().providerAccountId).toBe(work.id)
     switchFn!('sess-x', local.id)
     await settle()
     expect(switchOrigin('sess-x')).toEqual({ from: work.id, to: local.id })
