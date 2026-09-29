@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-29T20:59:55.904Z",
-  "head": "2499766e4691c5e53de5c4e90cdccf377486eb93",
-  "tree": "a5c20ffc9c0c10fc50c054c0fcc5758eddfcaccf",
+  "generatedAt": "2026-09-29T21:09:37.159Z",
+  "head": "0638cf370a10fb750bee38cf7facd6ee033b0195",
+  "tree": "e815309715e4eeebf80fd5608c15956ea370b8d6",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -636,7 +636,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 161
+      "lineCount": 164
     },
     {
       "path": "src/main/providers/codex/conversation-carry.ts",
@@ -4500,7 +4500,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 11
+      "lineCount": 17
     },
     {
       "path": "tests/unit/status-ingest.test.ts",

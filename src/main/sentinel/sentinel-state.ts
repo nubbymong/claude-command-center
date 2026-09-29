@@ -60,21 +60,27 @@ export class SentinelState {
   /** P3.9: the Codex version the last completed check saw. */
   setLastSeenCodexVersion(v: string): void { this.state = { ...this.state, lastSeenCodexVersion: v }; this.persist() }
   /** Round 4: one more analysis of `key` (`<provider>:<version>`) whose
-   *  findings could not all be matched to its notes; the count so far. */
+   *  findings could not all be matched to its notes; the count so far.
+   *  Round 5: the counts of that provider's other versions (superseded
+   *  before their last try) are dropped. */
   countUnverified(key: string): number {
-    const tries = { ...(this.state.unverifiedTries ?? {}) }
+    const tries: Record<string, number> = {}
+    const provider = key.slice(0, key.indexOf(':') + 1)
+    for (const [k, v] of Object.entries(this.state.unverifiedTries ?? {})) if (k === key || !provider || !k.startsWith(provider)) tries[k] = v
     const now = (typeof tries[key] === 'number' && Number.isFinite(tries[key]) ? tries[key] : 0) + 1
     tries[key] = now
     this.state = { ...this.state, unverifiedTries: tries }
     this.persist()
     return now
   }
-  /** Round 4: forget `key`'s count (its version is recorded). */
+  /** Round 4: forget `key`'s count (its version is recorded); round 5:
+   *  and every other count of the same provider. */
   clearUnverified(key: string): void {
     const tries = this.state.unverifiedTries
-    if (!tries || !(key in tries)) return
-    const rest = { ...tries }
-    delete rest[key]
+    const provider = key.slice(0, key.indexOf(':') + 1)
+    if (!tries || !Object.keys(tries).some((k) => k === key || (provider && k.startsWith(provider)))) return
+    const rest: Record<string, number> = {}
+    for (const [k, v] of Object.entries(tries)) if (k !== key && !(provider && k.startsWith(provider))) rest[k] = v
     this.state = { ...this.state, unverifiedTries: rest }
     this.persist()
   }

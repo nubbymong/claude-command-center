@@ -254,8 +254,10 @@ export type CodexKillTree = ((child: ChildProcess, opts?: { scope?: CodexKillSco
   leftovers?: (child: ChildProcess, window: CodexRunWindow) => Promise<void>
 }
 
-/** Why a run is read (round 4): a scheduled read is skipped once a read
- *  has found the run's chain alone, running codex and nothing beyond it. */
+/** Why a run is read (round 4): the scheduled reads stop once two of them
+ *  in a row have found the run's chain alone, running codex and nothing
+ *  beyond it (round 5: the reads at the start and first output never count
+ *  toward that, since codex may start a helper after them). */
 export type CodexObserveReason = 'start' | 'output' | 'schedule'
 
 /** Which processes a stop takes: the run's own chain, or every process below its root. */
@@ -558,7 +560,7 @@ export function makeCodexKillTree(
   type Primed = { done: Promise<void>; started: number; table?: CodexProcessEntry[] | null }
   const primed = new WeakMap<ChildProcess, Primed>()
   // Round 3: what the reads taken while an observed run ran proved is its.
-  type Observed = { since: number; members: Map<string, CodexRunMember>; reads: number; inFlight: Set<Promise<void>>; chainOnly: boolean }
+  type Observed = { since: number; members: Map<string, CodexRunMember>; reads: number; inFlight: Set<Promise<void>>; quietScheduled: number }
   const observed = new WeakMap<ChildProcess, Observed>()
   /** A table and when the read that gave it began. */
   type Answer = { table: CodexProcessEntry[]; started: number }
@@ -674,17 +676,18 @@ export function makeCodexKillTree(
     const pid = child.pid
     if (!listProcesses || !pid || !running(child) || !Number.isFinite(since)) return
     let rec = observed.get(child)
-    if (!rec) { rec = { since, members: new Map(), reads: 0, inFlight: new Set(), chainOnly: false }; observed.set(child, rec) }
-    // Round 4: a run whose chain was found alone is not read on the schedule
-    // again (the reads at its start and first output still happen).
-    if (why === 'schedule' && rec.chainOnly) return
+    if (!rec) { rec = { since, members: new Map(), reads: 0, inFlight: new Set(), quietScheduled: 0 }; observed.set(child, rec) }
+    // Rounds 4 and 5: once two scheduled reads in a row have found the chain
+    // alone, the schedule stops (the reads at the start and first output
+    // still happen, and never count toward it).
+    if (why === 'schedule' && rec.quietScheduled >= CODEX_OBSERVE_QUIET_READS) return
     if (rec.reads >= CODEX_OBSERVE_MAX_READS || rec.inFlight.size >= CODEX_OBSERVE_MAX_IN_FLIGHT) return
     rec.reads++
     const r = rec
     const reading = read(listProcesses, CODEX_PROCESS_TABLE_TIMEOUT_MS).then((a) => {
       if (!a) return
       codexRecordRunMembers(pid, a.table, { started: a.started, since: r.since, filetime: platform === 'win32' }, r.members)
-      if (codexChainAlone(pid, a.table)) r.chainOnly = true
+      if (why === 'schedule') r.quietScheduled = codexChainAlone(pid, a.table) ? r.quietScheduled + 1 : 0
     }, () => undefined)
     r.inFlight.add(reading)
     void reading.finally(() => { r.inFlight.delete(reading) })
@@ -745,6 +748,8 @@ const ROOT_START_SLACK_MS = 1_000
 /** At most this many observing reads per run, and this many at once. */
 export const CODEX_OBSERVE_MAX_READS = 8
 export const CODEX_OBSERVE_MAX_IN_FLIGHT = 2
+/** Scheduled reads in a row that find the chain alone before the schedule stops (round 5). */
+export const CODEX_OBSERVE_QUIET_READS = 2
 /** When a running exec run is observed, after its start (plus at its start and first output). */
 export const CODEX_OBSERVE_AT_MS: readonly number[] = [1_000, 2_000, 4_000, 8_000, 16_000, 32_000]
 

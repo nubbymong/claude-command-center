@@ -110,3 +110,20 @@ describe('SentinelState: a dismissal made before quotes were redacted (round 3)'
     expect(s.snapshot().findings.map((f) => [f.id, f.status])).toEqual([['cc:2.1.0:0', 'dismissed']])
   })
 })
+
+// P3.9 rounds 4 and 5: the counts of analyses whose findings could not be
+// matched, per provider and version; a later version of the same provider
+// drops the earlier one's count, and recording a version drops them all.
+describe('SentinelState: unmatched-analysis counts (rounds 4 and 5)', () => {
+  it('counts per version, drops a superseded version, and forgets a provider once its version is recorded', () => {
+    const s = new SentinelState(dir)
+    expect(s.countUnverified('codex:0.155.1')).toBe(1)
+    expect(s.countUnverified('codex:0.155.1')).toBe(2)
+    expect(s.countUnverified('claude:2.1.300')).toBe(1)
+    expect(s.countUnverified('codex:0.156.0')).toBe(1)
+    expect(s.snapshot().unverifiedTries).toEqual({ 'claude:2.1.300': 1, 'codex:0.156.0': 1 })
+    expect(new SentinelState(dir).snapshot().unverifiedTries).toEqual({ 'claude:2.1.300': 1, 'codex:0.156.0': 1 })
+    s.clearUnverified('codex:0.157.0')
+    expect(s.snapshot().unverifiedTries).toEqual({ 'claude:2.1.300': 1 })
+  })
+})
