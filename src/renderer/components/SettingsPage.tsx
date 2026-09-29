@@ -78,7 +78,8 @@ const TABS: { id: SettingsTab; label: string }[] = [
  *  too (one status strip for every session), and say which items it cannot
  *  fill yet. Usage track MP6: a Codex session's account now shows (the
  *  footer names it through the registry), so the note no longer says it
- *  does not. */
+ *  does not. P3.7 (rows 36, 37): nor its lines changed, counted from the
+ *  edits its rollout records; Codex reports no session time. */
 function StatuslineCodexBanner() {
   const activeSession = useSessionStore((s) => s.sessions.find((sess) => sess.id === s.activeSessionId))
   const codexOn = useSettingsStore((s) => usesCodex(s.settings))
@@ -86,7 +87,7 @@ function StatuslineCodexBanner() {
   if (!isCodex && !codexOn) return null
   return (
     <div className="rounded-md bg-blue/10 border border-blue/30 p-3 mb-3 text-sm text-blue" data-testid="statusline-codex-note">
-      These settings apply to Codex sessions too. A Codex session does not report lines changed or session time yet, so those items do not show for it.
+      These settings apply to Codex sessions too. A Codex session does not report session time yet, so Duration does not show for it.
     </div>
   )
 }
@@ -727,9 +728,9 @@ type BooleanStatusLineKey = {
 // Labels shared verbatim with onboarding p4's element switches (StatusLineStep
 // ELEMS) so the same element carries the same name on both surfaces.
 const STATUS_LINE_TOGGLES: { key: BooleanStatusLineKey; label: string; description: string }[] = [
-  { key: 'showModel', label: 'Model', description: 'Shows the active Claude model' },
+  { key: 'showModel', label: 'Model', description: 'Shows the active model' },
   { key: 'showEffort', label: 'Effort level', description: 'Active reasoning effort next to the model' },
-  { key: 'showAccount', label: 'Account', description: 'Claude account this session runs as' },
+  { key: 'showAccount', label: 'Account', description: 'The account this session runs as' },
   { key: 'showTokens', label: 'Token usage', description: 'Input tokens / context window' },
   { key: 'showContextBar', label: 'Context bar', description: 'Visual progress bar + percentage' },
   { key: 'showCost', label: 'Cost', description: 'API equivalent cost estimate' },

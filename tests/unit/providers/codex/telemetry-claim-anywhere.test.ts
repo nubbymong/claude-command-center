@@ -652,8 +652,9 @@ describe('a decision after a claim', () => {
     writeFileSync(pickFile, JSON.stringify({ fresh: true }))
     await vi.advanceTimersByTimeAsync(600)
     expect(releases).toEqual([1])
-    // Fix round 3: the status line no longer shows the conversation let go.
-    expect(updates.at(-1)).toEqual({ sessionId: 'sess-p35', inputTokens: 0, outputTokens: 0, costUsd: 0, contextUsedPercent: 0 })
+    // Fix round 3: the status line no longer shows the conversation let go
+    // (P3.7: its lines changed included).
+    expect(updates.at(-1)).toEqual({ sessionId: 'sess-p35', inputTokens: 0, outputTokens: 0, costUsd: 0, contextUsedPercent: 0, linesAdded: 0, linesRemoved: 0 })
     const now = new Date()
     rollout(folder(sessions, now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate()), ID_B, '/p/demo', new Date(Date.now() + 200).toISOString(), 3)
     await vi.advanceTimersByTimeAsync(600)
@@ -923,7 +924,7 @@ describe('the tail re-checks it is still reading the claimed file', () => {
     src.stop()
     expect(releases).toEqual([1])
     expect(updates.some((u) => u.inputTokens === 999)).toBe(false)
-    expect(updates.at(-1)).toEqual({ sessionId: 'sess-p35', inputTokens: 0, outputTokens: 0, costUsd: 0, contextUsedPercent: 0 })
+    expect(updates.at(-1)).toEqual({ sessionId: 'sess-p35', inputTokens: 0, outputTokens: 0, costUsd: 0, contextUsedPercent: 0, linesAdded: 0, linesRemoved: 0 })
     expect(claims).toEqual([{ id: ID_A, cwd: '/p/demo' }])
   })
 
