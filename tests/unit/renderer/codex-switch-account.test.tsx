@@ -49,6 +49,7 @@ const { useSwitchAccount } = await import('../../../src/renderer/hooks/useSwitch
 const { switchAccountItems, switchItemHint } = await import('../../../src/renderer/utils/switchAccountItems')
 const { canSwitchAccountForSession } = await import('../../../src/renderer/utils/sessionLaunch')
 const { carryNote, terminalNoteLine } = await import('../../../src/renderer/utils/launchNote')
+const { switchOrigin, forgetSwitchOrigin } = await import('../../../src/renderer/utils/switchOrigin')
 const { default: SessionContextMenu } = await import('../../../src/renderer/components/sidebar/SessionContextMenu')
 const { snapshot, work, personal, local, old, parked, gone } = await import('./accounts-snapshot-harness')
 const { middleTruncateEmail } = await import('../../../src/shared/account-chip-color')
@@ -146,6 +147,9 @@ describe('switching a Codex session\'s account', () => {
     // thesis 3): there is no such call to make. And no usage read either.
     expect(touched).toEqual([])
     expect(fetchOneMock).not.toHaveBeenCalled()
+    // VM finding V3: where it came from, for a launch there that is declined.
+    expect(switchOrigin('sess-x')).toEqual({ from: work.id })
+    forgetSwitchOrigin('sess-x')
   })
 
   it('a save that fails still switches: the account is pinned on the session and the restart goes ahead', async () => {

@@ -378,8 +378,15 @@ export interface CodexClaimOptions {
    *  picker named, is always certain. */
   onClaim?: (claim: { id: string; cwd: string; certain: boolean }) => void
   /** Told when a claim is let go: the picker decided again after it (fix
-   *  round 2), so the session is no longer on that conversation. */
+   *  round 2), so the session is no longer on that conversation. Told too
+   *  when a later decision takes back a conversation reported by onShared. */
   onRelease?: () => void
+  /** P3.6 (VM finding V2): told which conversation the session is on
+   *  when another session holds its rollout: a resume by id, or the
+   *  conversation a picker named, is exact, so it is the session's all the
+   *  same. Its rollout is neither claimed nor read here (the holder reads
+   *  it); once the holder lets it go, it is claimed as before. */
+  onShared?: (conversation: { id: string; cwd: string }) => void
 }
 
 /** How often a claim by id walks the realm's sessions folder while unclaimed:
@@ -518,6 +525,9 @@ export function watchAndClaimRollout(
   let offset = 0
   /** A conversation another session holds: not walked for again while it does. */
   let heldElsewhere: { path: string; id: string } | null = null
+  /** The conversation reported through onShared while another session holds
+   *  its rollout (P3.6 VM finding V2); null when none. */
+  let sharedId: string | null = null
   /** Files whose first line settled as not this session's: never read again. */
   const settled = new Set<string>()
   /** When the next walk may run, the wait after a walk that finds nothing,
@@ -553,7 +563,30 @@ export function watchAndClaimRollout(
   }
   if (pending) pendingNewClaims.add(pending)
 
+  /** The session is on `found`, a conversation another session holds
+   *  (P3.6 VM finding V2): said once per holding (lookup does not walk for
+   *  it again while it is held), never claimed or read here. */
+  function reportShared(found: FoundRollout): void {
+    if (!CODEX_CONVERSATION_ID_RE.test(found.meta.id)) return
+    sharedId = found.meta.id
+    if (claimOpts?.onShared) {
+      try { claimOpts.onShared({ id: found.meta.id, cwd: found.meta.cwd }) } catch { /* a listener never stops the watch */ }
+    }
+  }
+
+  /** A later decision: the conversation reported as shared is no longer the
+   *  session's. */
+  function dropShared(): void {
+    if (sharedId === null) return
+    sharedId = null
+    if (claimOpts?.onRelease) {
+      try { claimOpts.onRelease() } catch { /* a listener never stops the watch */ }
+    }
+  }
+
   function claim(fullPath: string, found: RolloutSessionMeta, certain = true): void {
+    // A claim replaces a shared report (the holder let it go): onClaim says so.
+    sharedId = null
     claimedPath = fullPath
     claimed.add(fullPath)
     claimedIdentity = fileIdentity(fullPath)
@@ -643,7 +676,7 @@ export function watchAndClaimRollout(
     lookupMisses = 0
     lookupWait = LOOKUP_INTERVAL_MS
     nextLookupAt = now + LOOKUP_INTERVAL_MS
-    if (claimed.has(found.path)) { heldElsewhere = { path: found.path, id }; return null }
+    if (claimed.has(found.path)) { heldElsewhere = { path: found.path, id }; reportShared(found); return null }
     return found
   }
 
@@ -840,7 +873,7 @@ export function watchAndClaimRollout(
     let since = spawnTimestamp - 5000
     if (pickFile) {
       const next = readPick()
-      if (next) { decision = next; resetLookup() }
+      if (next) { dropShared(); decision = next; resetLookup() }
       if (!decision) return
       if (decision.kind === 'fresh') {
         // A new conversation: only a rollout created from the decision on.

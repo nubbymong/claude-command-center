@@ -4409,6 +4409,12 @@ function spawnPtyResolved(
           },
           // The picker decided again after a claim: the session is no longer on it.
           onRelease: () => { keptCodexConversations.delete(sessionId) },
+          // P3.6 (VM finding V2): on a conversation another session holds
+          // (picked, or resumed by id): recorded as this session's too, so a
+          // Switch refuses it as in use and says so.
+          onShared: (shared) => {
+            keepCodexConversation(sessionId, { uuid: shared.id, cwd: shared.cwd }, launch.lease.accountId)
+          },
         },
         (data) => {
           // Copilot review on PR #31 (p9.17): decorate at the send site so

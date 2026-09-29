@@ -699,7 +699,8 @@ on; no renderer channel names a conversation, so the first build's
 `providerAccounts:carryConversation` is gone; ADR-009 round 1: a
 conversation another open session is on, as main recorded it, is never
 carried, so it is neither forked nor added to under that session, and the
-terminal says why), holding an operation lease on both accounts under the
+tab says why; a tab that picks a conversation another tab holds is recorded
+on it too, VM finding V2), holding an operation lease on both accounts under the
 registry lock and both realm locks for the copy (`realm-folders.ts`
 copyConversation; a copy the other way at once is waited for, briefly; a
 spawn superseded or closed meanwhile carries nothing, and a copy already
@@ -738,7 +739,7 @@ has claimed nothing waits until its process ends, past its no-claim deadline
 too; ADR-009 round 2), when the launch saw more than one it could take, and
 for every launch such a claim competed with (`providers/codex/telemetry.ts`). A Switch account never
 carries or brings up to date a conversation claimed that way: the respawn
-on the new account starts a new conversation and the terminal says, in its
+on the new account starts a new conversation and the tab says, in its
 own words, that the app could not be sure which conversation was this one; a
 Restart on the same account resumes it as P3.5 does. Main keeps these by
 conversation id and saves them with the session state, so a relaunch that
@@ -771,8 +772,11 @@ its real path, as the CLI takes it and as a Claude account's home is
 it leads; any link below it is refused, and one that leads into the app's own
 account folders makes every Codex realm unavailable (overlaps-external). Section 5's fallback: when the conversation did not come along
 whole, the spawn answers main's reason and whether the launch resumed it from
-a copy already there, and the terminal says so, once, dimmed, in words true
-for that (`utils/launchNote.ts`, with the app's spoofing-character rule).
+a copy already there, and the tab says so once, above its terminal and
+outside its buffer, in the app's muted text, until dismissed, in words true
+for that (`utils/launchNote.ts`, with the app's spoofing-character rule; VM
+findings V1 and V4). A Switch whose launch then asks for confirmation and is
+declined takes the tab back to the account it came from (VM finding V3).
 No usage read is started for the pick (ADR-022). A second pick is ignored
 while the first is still being saved; once its restart begins, a pick is a
 switch of its own. What's New's line and the accounts page show with Claude Code off,
@@ -790,16 +794,17 @@ went its own way there is left as it is, the session carrying on from it and
 the note saying so.
 Done: the ADR-009 pass (the copy, the leases, the respawn's carry in pty:spawn,
 the pty-manager record; independent attacker sub-agents, bounded rounds: pass 1 at cf8f42d4 FINDINGS (one major, the cross-tab claim), fixed in 62cf7d8b and 31da7fb1; pass 2 at 31da7fb1 PASS; the cleanup at 78f2fcec confirmed by both lenses); the independent spec and quality reviews,
-PASS at 78f2fcec.
-Owed: the server half of P3.1 answer 1 (whether OpenAI accepts a conversation
-resumed under another account; a second signed-in account on the VM, row 15's
-disposable identities, an owner action); a VM walk of the switch with real
-Codex 0.153.4 and 0.155.1 (managed to managed, from and to this computer's
-sign-in, back again, a conversation from an earlier day); the e2e suite at the
-final head; owner screenshots of the strip pill and its menu, the right-click
-menu, the sidebar card's Codex line, the chips' colours, and the reworded
-What's New and accounts pages, both themes; the SSH live matrix at PR 3's
-final head.
+PASS at 78f2fcec; the VM walk at 1063e3d9 (WINDOWS_1, MOCKED: fake CLI, fictional accounts; e2e 81/81): main's switch logic passed every case, and its findings are fixed: V1, the note was written into the terminal and the new session's first frame on Windows (ConPTY's) cleared it, so it is now shown above the terminal, outside its buffer, until dismissed, as the new-account notice is; V2, a tab that picked a conversation another tab holds on the same account was never recorded on it, so its Switch started a new conversation silently, and it is now recorded (the rollout stays the holder's to read), so its Switch refuses it as in use and says so; V3, Cancel on the confirm-at-launch question after a Switch left the tab on the new account, and it now takes the tab back to the account it came from (a Claude switch never asks at launch); V4, the note is the app's muted text, which the token-contrast tests hold in both themes; V5, the claude.ai items in a Codex tab's right-click menu, predates P3.6 (#216) and is P4.6's (row 58, the per-account web session).
+Owed: the VM re-check of V1 to V4; the owner's review of the screenshots (the
+strip pill and its menu, the right-click menu, the sidebar card's Codex line,
+the chips' colours, the note, and the reworded What's New and accounts pages,
+both themes); the owner's real-account resume (the server half of P3.1 answer
+1: whether OpenAI accepts a conversation resumed under another account; a
+second signed-in account, row 15's disposable identities) and the real-CLI
+walk of the switch with Codex 0.153.4 and 0.155.1 (managed to managed, from
+and to this computer's sign-in, back again, a conversation from an earlier
+day); the e2e suite at the final head; the SSH live matrix at PR 3's final
+head.
 
 **P3.7 Statusline segments and settings.** Duration and line counts if Codex
 reports them (P3.1; the account chip landed in P3.6); the Status Line settings cover them

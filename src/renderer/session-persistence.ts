@@ -288,7 +288,7 @@ export async function persistLastUsedAccount(sessionId: string, profileId: strin
  * profile, and flush it to disk eagerly so a crash cannot lose the switch.
  * The store update is synchronous, before any respawn reads it.
  */
-export async function persistSessionProviderAccount(sessionId: string, providerAccountId: string): Promise<void> {
+export async function persistSessionProviderAccount(sessionId: string, providerAccountId: string | undefined): Promise<void> {
   useSessionStore.getState().updateSession(sessionId, { providerAccountId })
   try {
     await window.electronAPI.session.save(buildSessionState())

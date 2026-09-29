@@ -39,6 +39,9 @@ const h = vi.hoisted(() => ({
   watchers: [] as Array<{ stop: () => void }>,
   carries: [] as unknown[][],
   resumable: false,
+  // P3.6 VM finding V2: the pick file a picker launch is given (and its folder).
+  pickFile: null as string | null,
+  pickFolder: null as unknown,
   installs: 0,
   credentialLoads: 0,
   legacyInstalled: true,
@@ -100,7 +103,7 @@ vi.mock('../../src/main/providers', () => ({
       const env = { ...launch.env, CLAUDE_MULTI_SESSION_ID: String(opts.sessionId) }
       // P3.6: the realm holds the conversation asked for (the resume finds it).
       const resume = opts.resume as { uuid: string } | undefined
-      const found = h.resumable && resume ? { resumeId: resume.uuid } : {}
+      const found = h.resumable && resume ? { resumeId: resume.uuid } : opts.useResumePicker && h.pickFile ? { pickFile: h.pickFile, pickFolder: h.pickFolder } : {}
       return h.commandLine ? { cmd: 'C:/Windows/System32/cmd.exe', args: [], env, commandLine: h.commandLine, ...found } : { cmd: launch.executable, args: ['--sandbox', 'read-only'], env, ...found }
     },
     ingestSessionTelemetry: (sessionId: string, opts: Record<string, unknown>) => {
@@ -109,8 +112,8 @@ vi.mock('../../src/main/providers', () => ({
       // P3.6: the real watcher, for the claim race (real folders under the
       // system temp folder; no Codex process).
       if (h.realWatch && h.watchFn) {
-        const o = opts as { cwd: string; spawnTimestamp: number; sessionsDir: string; resumeId?: string; resumePath?: string; onClaim?: (c: unknown) => void; onRelease?: () => void }
-        const w = h.watchFn(sessionId, o.cwd, o.spawnTimestamp, () => {}, o.sessionsDir, undefined, { resumeId: o.resumeId, resumePath: o.resumePath, onClaim: o.onClaim, onRelease: o.onRelease })
+        const o = opts as { cwd: string; spawnTimestamp: number; sessionsDir: string; resumeId?: string; resumePath?: string; pickFile?: string; pickFolder?: unknown; onClaim?: (c: unknown) => void; onRelease?: () => void; onShared?: (c: unknown) => void }
+        const w = h.watchFn(sessionId, o.cwd, o.spawnTimestamp, () => {}, o.sessionsDir, undefined, { resumeId: o.resumeId, resumePath: o.resumePath, pickFile: o.pickFile, pickFolder: o.pickFolder, onClaim: o.onClaim, onRelease: o.onRelease, onShared: o.onShared })
         h.watchers.push(w)
         return w
       }
@@ -180,7 +183,7 @@ vi.mock('../../src/main/provider-accounts', () => ({
 
 const { spawnPty, killPty, killAllPty, holdsCodexLaunchLease, countUnleasedAgentSessions, beginSpawnPreparation, CODEX_LEASE_EXIT_GRACE_MS, codexRunEnded, rememberUncertainCodexConversationsFrom, getKeptCodexConversation } = await import('../../src/main/pty-manager')
 h.watchFn = (await import('../../src/main/providers/codex/telemetry')).watchAndClaimRollout as never
-const { codexDayFolders } = await import('../../src/main/providers/codex/rollout-lookup')
+const { codexDayFolders, codexFolderIdentity } = await import('../../src/main/providers/codex/rollout-lookup')
 const { registerPtyHandlers, CODEX_CARRY_EXIT_WAIT_MS, CODEX_CARRY_TIMEOUT_MS } = await import('../../src/main/ipc/pty-handlers')
 type Launch = NonNullable<NonNullable<Parameters<typeof spawnPty>[2]>['codexLaunch']>
 
@@ -883,6 +886,8 @@ describe('a conversation whose claim was not certain is never carried (P3.6, own
   beforeEach(() => { seq++; sid = `lh-p36u-${seq}-a`; sid2 = `lh-p36u-${seq}-b` })
   afterEach(() => {
     h.realWatch = false
+    h.pickFile = null
+    h.pickFolder = null
     for (const w of h.watchers.splice(0)) { try { w.stop() } catch { /* stopped */ } }
     for (const id of [sid, sid2]) { try { killPty(id) } catch { /* not running */ } }
     // TEST CLEANUP GUARD: only a folder this block made (its own prefix,
@@ -962,6 +967,44 @@ describe('a conversation whose claim was not certain is never carried (P3.6, own
     onAccount('acct-c')
     await expect(spawnFor(sid2, { ...codexRequest, cwd: proj, providerAccountId: 'acct-c' })).resolves.toMatchObject({ started: true, carry: { code: 'conversation-uncertain', resumed: false } })
     expect(h.carries).toEqual([])
+  })
+
+  // P3.6 VM finding V2: a second tab that picks the conversation a first tab
+  // holds on the same account is on it too, so its Switch refuses it as in
+  // use and says so, as the other in-use case does. (A resume by id is kept
+  // at its launch already, P3.5.)
+  it('a second tab that picks the conversation a first tab holds on one account: recorded on it, so its Switch refuses it as in use and starts a new one', async () => {
+    const base = nfs.mkdtempSync(path.join(os.tmpdir(), PREFIX))
+    bases.push(base)
+    const sessA = path.join(base, 'A', 'sessions')
+    nfs.mkdirSync(sessA, { recursive: true })
+    const proj = path.join(base, 'proj')
+    nfs.mkdirSync(proj)
+    const pickDir = path.join(base, 'pick')
+    nfs.mkdirSync(pickDir)
+    const conv = '019dd000-0036-7000-8000-0000000000dd'
+    rolloutIn(sessA, conv, proj)
+    h.realWatch = true
+    h.resumable = true
+    onAccount('acct-a', sessA)
+    await spawnFor(sid, { ...codexRequest, cwd: proj, providerAccountId: 'acct-a', resume: { uuid: conv, cwd: proj } })
+    await until(() => getKeptCodexConversation(sid)?.uuid === conv)
+    // The second tab opens the picker, which names that conversation.
+    h.resumable = false
+    h.pickFile = path.join(pickDir, 'pick.json')
+    h.pickFolder = codexFolderIdentity(pickDir)
+    await spawnFor(sid2, { ...codexRequest, cwd: proj, providerAccountId: 'acct-a', useResumePicker: true })
+    expect(getKeptCodexConversation(sid2)).toBeUndefined()
+    nfs.writeFileSync(h.pickFile, JSON.stringify({ id: conv }))
+    await until(() => getKeptCodexConversation(sid2)?.uuid === conv)
+    // The second tab switches; the first is still running on the conversation.
+    killFor(sid2)
+    exitPty(h.ptys[1], 0)
+    onAccount('acct-b')
+    await expect(spawnFor(sid2, { ...codexRequest, cwd: proj, providerAccountId: 'acct-b' })).resolves.toEqual({ started: true, carry: { code: 'in-use', message: 'Another open session is on this conversation, so it was not carried over.', resumed: false } })
+    expect(h.carries).toEqual([])
+    expect(h.built.at(-1)).toMatchObject({ sessionId: sid2 })
+    expect(h.built.at(-1)!.resume).toBeUndefined()
   })
 
   it('kept across a relaunch: a restored tab on a conversation whose claim was not certain is still never carried', async () => {

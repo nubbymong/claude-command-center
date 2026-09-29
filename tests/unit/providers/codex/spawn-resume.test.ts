@@ -260,6 +260,10 @@ describe('the status line is told how to find the conversation (row 38)', () => 
     const pickFolder = { id: '1:2', real: '/t' }
     new CodexProvider().ingestSessionTelemetry('sid', { cwd: '/w', spawnTimestamp: 7, sessionsDir: '/r/sessions', pickFile: '/t/p.json', pickFolder }, cb)
     expect(vi.mocked(watchAndClaimRollout).mock.calls[1][6]).toEqual({ pickFile: '/t/p.json', pickFolder })
+    // P3.6 VM finding V2: the listener for a conversation another session holds.
+    const onShared = () => {}
+    new CodexProvider().ingestSessionTelemetry('sid', { cwd: '/w', spawnTimestamp: 7, sessionsDir: '/r/sessions', onShared }, cb)
+    expect((vi.mocked(watchAndClaimRollout).mock.calls[2][6] as { onShared?: unknown }).onShared).toBe(onShared)
     vi.mocked(watchAndClaimRollout).mockClear()
     new CodexProvider().ingestSessionTelemetry('sid', { cwd: '/w', spawnTimestamp: 7, sessionsDir: '/r/sessions' }, cb)
     expect(vi.mocked(watchAndClaimRollout).mock.calls[0]).toEqual(['sid', '/w', 7, cb, '/r/sessions', undefined])
