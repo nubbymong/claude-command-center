@@ -160,10 +160,10 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 36 | Statusline segments | DONE (the account chip in P3.6, 68d00f62; Lines changed and Duration in P3.7, 5de7a4c4, 9f2bd164; mocked) | Parity (line counts: evidence first; section 19 if Codex reports none) | verification: the VM run and the owner's screenshot review; the real-CLI line count and a TUI resume's Duration on 0.153.4 and 0.155.1 | 3 |
 | 37 | Statusline settings | DONE (P2; P3.7, 5de7a4c4, 9f2bd164; mocked): the settings apply to Codex, and Lines changed and Duration show for a Codex session | Parity | verification: the VM screenshot of the Status Line tab with Codex on, both themes | 2; 3 |
 | 38 | Statusline after resuming an old rollout | DONE (P3.5, 28f42af2, 90a717df; mocked; VM c2c42e22): the claim re-reads its date folders on every poll and finds a resumed conversation wherever it is | Parity | verification: a session crossing midnight UTC on a real CLI | 3 |
-| 39 | Model catalogue | DONE: the registry's Codex models, the list the supported CLIs (0.153.4 and 0.155.1) offer in their own picker, Sentinel's check, and the release gate's Codex half (P3.8, 260d4abc; round 1, caef0d42); P3.9 (3a4ed400; mocked): Sentinel's Codex check compares the registry with the list the installed CLI offers, read from it (`codex debug models --bundled` in an empty folder, no sign-in), naming its version, else the shipped list | Parity: the model registry plus Sentinel's coverage check. Not app-server `model/list`: OD27 M2 allows usage reads only | verification: the live read on the VM (0.153.4 and 0.155.1); the gpt-5.2 notice to the owner stands (section 10) | 3 |
+| 39 | Model catalogue | DONE: the registry's Codex models, the list the supported CLIs (0.153.4 and 0.155.1) offer in their own picker, Sentinel's check, and the release gate's Codex half (P3.8, 260d4abc; round 1, caef0d42); P3.9 (3a4ed400; mocked): Sentinel's Codex check compares the registry with the list the installed CLI offers, read from it (`codex debug models --bundled` in an empty folder, no sign-in), naming its version, else the shipped list | Parity: the model registry plus Sentinel's coverage check. Not app-server `model/list`: OD27 M2 allows usage reads only | verification: done on the VM at 7678c433 (`--bundled` accepted on 0.153.4 and 0.155.1, the same list as the plain command, no connection); the gpt-5.2 notice to the owner stands (section 10) | 3 |
 | 40 | Effort | DONE (P3.8, 260d4abc; round 1, caef0d42): each Codex model's own levels, from the CLI's catalogue (0.155.1's are the same, VM); a launch drops a saved effort its model cannot run. The CLI accepts max and ultra at launch on both versions (VM) | Parity | verification: whether the server takes max and ultra (a real sign-in; the CLI does not check at launch) | 3 |
 | 41 | Mid-session model and effort | PARTIAL, built as the default pending the owner's decision (P3.8 round 1, caef0d42): on a live session the command bar's model pill types a bare `/model`, only at Codex's ready prompt, which opens Codex's own model-and-effort picker and keeps the conversation; a stopped session keeps the select, applied at its next start | Parity: applied live, keeping the conversation. Codex has no one-line form (VM: `/model <slug>` is sent as a message; there is no `/effort`), so Claude's one-step switch cannot carry over as it is | owner: the default (section 10, question 2); verification: the pill on the VM | 3 |
-| 42 | Sentinel | DONE (P3.9, 3a4ed400; mocked): while Codex is on, its version against the supported range (a finding outside it), the live model list (row 39), and a changed version's release notes analysed against its launch flags, TUI, rollout session files and config and account files; the analysis runs on the provider that is on (both on: the one Ask Conductor runs on, Claude Code until PR 4's row); the same panel, dot, Settings section and Transparency card | Parity: version drift, flags and the rollout format checked, with findings; the analysis runs on whichever provider is on | verification: the VM run (real CLIs and a real Codex analysis) and the owner's screenshot review | 3 |
+| 42 | Sentinel | DONE (P3.9, 3a4ed400; mocked): while Codex is on, its version against the supported range (a finding outside it), the live model list (row 39), and a changed version's release notes analysed against its launch flags, TUI, rollout session files and config and account files; the analysis runs on the provider that is on (both on: the one Ask Conductor runs on, Claude Code until PR 4's row); the same panel, dot, Settings section and Transparency card | Parity: version drift, flags and the rollout format checked, with findings; the analysis runs on whichever provider is on | verification: the VM run at 7678c433 (the findings as specified; a Codex-run analysis left config.toml unchanged; the notes read failed, fixed in round 1, e357fe33, with the ADR-009 pass 1 findings); owed: the VM re-check of round 1, a completed real analysis (owner) and the owner's screenshot review | 3 |
 | 43 | Watchdog | OPEN: never armed for Codex (`src/main/pty-manager.ts`, the local arm site) | Parity: auto-retry and silence detection; aicc_planning#72 (a CLI without its own patterns reports Watchdog unavailable, never Claude's) | implementation | 3 |
 | 44 | Services (PTY integrity) | PARTIAL: built, unproven (Codex output is fed to the monitor) | Parity | verification | 3 |
 | 45 | Provider status pill | PARTIAL (P3.4, aa0411b0, 87ba9c2d; the VM walk PASS at c7f9a34a and f65de184): an OpenAI status pill beside Anthropic's, each read and shown only while its provider is on | Parity: an OpenAI status pill beside Anthropic's, each shown only while its provider is on | verification: the Desktop test gate (owner); macOS and Linux; packaged | 3 |
@@ -1251,6 +1251,55 @@ CI and VM only); the owner's review of the screenshots (the panel, the dot's
 tooltip while analysing, Settings' Sentinel section and the Transparency
 card, with Codex only and both on, both themes).
 
+ADR-009 pass 1 (2026-09-29, at 7678c433): FINDINGS, two major, with minor
+items from it and the spec and code-quality reviews; all fixed in round 1
+(e357fe33; mocked). The analysis is text only on both providers. Claude Code's
+`claude -p` loads no MCP server (`--strict-mcp-config`) and may use no
+tool (`--disallowedTools`, each by name). Codex's is the reviewer's own
+`analysis` run (`cli-runner.ts`): no user config or rules files
+(`--ignore-user-config`, `--ignore-rules`); no tool that runs a command,
+browses, connects an app or a plugin, makes or views an image or starts
+another agent (`--disable` per feature; every name in both supported CLIs,
+and an unknown one fails the run); web search off; no project instructions
+(`project_doc_max_bytes=0`); and the working folder is the project root
+(`project_root_markers=[]`, and an empty `.git` file in it), so no folder
+above it is searched. That folder is made in Sentinel's own runs folder in
+the resources folder (a real folder, never a link, this user's), no longer
+the shared temp folder, and the Claude reviewer refuses a text-only run
+(`cli-discovery.test.ts`, `claude-reviewer.test.ts`,
+`sentinel-codex-service.test.ts`). The notes sit between two lines that
+carry a fresh random marker, called data and never instructions; a finding
+whose evidence is not a quote of the notes is dropped; every finding's text
+is made prose-safe and redacted; and a finding's id comes from what it says,
+for both providers (`sentinel-analysis.test.ts`). The release notes are
+read one version at a time (`/releases/tags/rust-v<version>`, each reply
+capped at 2 MiB, at most 16 requests and 45 s): the VM's list reply was
+29.6 MB, over the old cap, so every read had failed. The installed
+version's own notes come first (none, no analysis), then the stable versions
+since the last one seen, newest first; a downgrade, a Re-run, a new major or
+a prerelease installed reads the installed version's notes only, so nothing
+newer is analysed under its id; each version's notes get their share of
+20,000 characters, and notes read only in part are said in the panel
+(`sentinel-codex-changelog.test.ts`). The start-up check uses the look the
+app took at start (no second `codex --version`; a Re-run still looks
+afresh), runs beside Claude Code's, and nothing in the Codex half stops
+Claude Code's. Folders a run leaves behind (a crash or a quit) are swept by
+the next run: its own prefix, real folders only, an hour old
+(`stale-folder-sweep.test.ts`, `models-scratch-home.test.ts`). The Codex
+CLI environment keeps only absolute PATH entries, as the reviewer's does
+(`env-allowlist.test.ts`). PRIVACY.md says the analysis account falls back
+to the review default, the notes are read one version at a time, and the
+analysis uses no tools. Mutation: 72 mutants, 71 red and one equivalent red. VM at
+7678c433: the bundled read accepted on 0.153.4 and 0.155.1 (the same list as
+the plain command, no connection, nothing written); the version and model
+findings as specified with Codex only and both on; a Codex-run analysis left
+both accounts' config.toml byte-identical and its folder removed; the
+release-notes read failed on every run (the oversized list, fixed above).
+Owed: the VM re-check of round 1 (both CLIs honour the override keys and
+feature names, no AGENTS.md above the run's folder is read, the tools are
+off), a completed real analysis (the owner, a real model), the ADR-009
+re-attack and the owner's screenshot review.
+
 **P3.10 Activity, attention, Watchdog and hooks.** Codex `notify` and hook
 events feed the attention dot, waiting-for-input, the busy sweep and the sleep
 moon; the Hooks gateway and notification rules route them; the Watchdog is
@@ -1371,7 +1420,11 @@ Notes that bind the build:
   default, never rewritten when a provider is turned off; the dock row wears
   the provider's type badge while both are on; and a closed Ask tab that is
   revived reads the provider again rather than keeping the one it was opened
-  with (`askConductor.ts:178-208` keeps it today).
+  with (`askConductor.ts:178-208` keeps it today). The row writes the saved
+  choice `askConductorProvider` that P3.9 already reads for Sentinel's
+  analysis (`src/shared/ask-conductor-provider.ts`), and P4.3 updates the
+  sentences that say the analysis runs on Claude Code while both are on:
+  PRIVACY.md's Sentinel row and app knowledge's Sentinel card.
 - **P4.1, P4.3, P4.7: P3.4's showcase flags.** Each lifts `needsClaude` from
   what it brings to Codex and rewords it for both providers: P4.1 the Agent
   Canvas page and What's New line; P4.3 the Ask Conductor page and line and
