@@ -5,7 +5,7 @@
 // all, never over anything, never through a link, bounded, and the carried
 // copy resumes by id there (P3.5's resolveCodexResume).
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, readdirSync, existsSync, statSync, lstatSync, linkSync, renameSync, unlinkSync, utimesSync, appendFileSync, constants, promises as fsp } from 'fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, readdirSync, existsSync, statSync, lstatSync, linkSync, renameSync, unlinkSync, utimesSync, appendFileSync, rmdirSync, realpathSync, promises as fsp } from 'fs'
 import { join, dirname, basename } from 'path'
 import { tmpdir } from 'os'
 import { carryCodexRollout, CODEX_CARRY_MAX_BYTES, CODEX_CARRY_STALE_TEMP_MS } from '../../../../src/main/providers/codex/conversation-carry'
@@ -102,8 +102,9 @@ describe('carryCodexRollout', () => {
     const ino = statSync(r.dest).ino
     expect(await carryCodexRollout({ fromSessionsDir: join(r.from, 'sessions'), toHome: r.to, id: ID })).toEqual({ ok: true, carried: 'extended', bytes: Buffer.byteLength(r.body) })
     expect(readFileSync(r.dest, 'utf8')).toBe(r.body)
-    // The same file, added to in place; the source untouched.
-    expect(statSync(r.dest).ino).toBe(ino)
+    // The whole copy under that name (ADR-009 round 1, A3: nothing is ever
+    // written through the earlier copy); the source untouched.
+    expect(statSync(r.dest).ino === ino && ino !== 0).toBe(false)
     expect(readFileSync(r.file, 'utf8')).toBe(r.body)
     expect(leftoversOf(r)).toEqual([])
     // Asked again: now the same conversation, present.
@@ -344,7 +345,7 @@ describe('carryCodexRollout when something is swapped after its checks', () => {
     const diverged = meta(ID, 'C:\\p\\demo') + turn(1) + turn(8) + turn(8) + turn(8)
     let staged = false
     onOpen(async (p, flags, open) => {
-      if (!staged && same(p, r.dest) && typeof flags === 'number' && (flags & constants.O_RDWR) !== 0) {
+      if (!staged && same(p, r.dest) && typeof flags === 'number') {
         staged = true
         renameSync(r.dest, join(aside, 'measured.jsonl'))
         writeFileSync(r.dest, diverged)
@@ -357,23 +358,19 @@ describe('carryCodexRollout when something is swapped after its checks', () => {
     expect(leftoversOf(r)).toEqual([])
   })
 
-  it('A -> B -> A where something else writes to that copy while it is brought up to date: said as changed, not as carried', async () => {
+  it('A -> B -> A where the CLI adds to that copy just before it is replaced: never replaced, and not said as carried', async () => {
     const r = realms()
+    const older = meta(ID, 'C:\\p\\demo') + turn(1)
     mkdirSync(dirname(r.dest), { recursive: true })
-    writeFileSync(r.dest, meta(ID, 'C:\\p\\demo') + turn(1))
+    writeFileSync(r.dest, older)
     let staged = false
-    onOpen(async (p, flags, open) => {
-      const h = await open()
-      if (!same(p, r.dest) || typeof flags !== 'number' || (flags & constants.O_RDWR) === 0) return h
-      const sync = h.sync.bind(h)
-      ;(h as { sync: () => Promise<void> }).sync = async () => {
-        if (!staged) { staged = true; appendFileSync(r.dest, turn(5)) }
-        return sync()
-      }
-      return h
-    })
+    vi.spyOn(fsp, 'link').mockImplementation((async (a: string, b: string) => {
+      await realLink(a, b)
+      if (!staged && dirname(b).toLowerCase() === dirname(r.dest).toLowerCase()) { staged = true; appendFileSync(r.dest, turn(5)) }
+    }) as never)
     expect(await carryCodexRollout({ fromSessionsDir: join(r.from, 'sessions'), toHome: r.to, id: ID })).toEqual({ ok: false, code: 'changed' })
     expect(staged).toBe(true)
+    expect(readFileSync(r.dest, 'utf8')).toBe(older + turn(5))
     expect(leftoversOf(r)).toEqual([])
   })
 
@@ -384,7 +381,7 @@ describe('carryCodexRollout when something is swapped after its checks', () => {
     writeFileSync(r.dest, older)
     let staged = false
     onOpen(async (p, flags, open) => {
-      if (!staged && same(p, r.dest) && typeof flags === 'number' && (flags & constants.O_RDWR) !== 0) {
+      if (!staged && same(p, r.dest) && typeof flags === 'number') {
         staged = true
         appendFileSync(r.dest, turn(5))
       }
@@ -422,7 +419,7 @@ describe('carryCodexRollout when something is swapped after its checks', () => {
     let staged = false
     onOpen(async (p, flags, open) => {
       const h = await open()
-      if (!same(p, r.dest) || typeof flags !== 'number' || (flags & constants.O_RDWR) === 0) return h
+      if (!same(p, r.dest) || typeof flags !== 'number') return h
       const read = h.read.bind(h) as (...a: unknown[]) => Promise<unknown>
       ;(h as unknown as { read: (...a: unknown[]) => Promise<unknown> }).read = async (...a: unknown[]) => {
         const got = await read(...a)
@@ -453,7 +450,7 @@ describe('carryCodexRollout when something is swapped after its checks', () => {
     let staged = false
     onOpen(async (p, flags, open) => {
       const h = await open()
-      if (!same(p, r.dest) || typeof flags !== 'number' || (flags & constants.O_RDWR) === 0) return h
+      if (!same(p, r.dest) || typeof flags !== 'number') return h
       // Staged as the compared copy is let go (Windows renames no folder
       // while a file in it is open).
       const close = h.close.bind(h)
@@ -494,6 +491,173 @@ describe('carryCodexRollout when something is swapped after its checks', () => {
     expect(readFileSync(join(outside, 'realm-day', NAME), 'utf8')).toBe(older)
     expect(readFileSync(join(retiredDay, NAME), 'utf8')).toBe(older)
     expect(leftovers(join(r.to, 'sessions'))).toEqual([])
+  })
+
+  // ADR-009 round 1, lens A (T1): the rename that brings an earlier copy up
+  // to date runs inside the day folder, from a second name made and checked
+  // there, so a folder swapped at that moment can replace no file elsewhere.
+  it('A (signed in again) -> B -> A with the day folder swapped for a junction to a folder holding a file of that name the moment the copy is renamed in: that file is never replaced', async () => {
+    const r = realms()
+    const older = meta(ID, 'C:\\p\\demo') + turn(1)
+    mkdirSync(dirname(r.dest), { recursive: true })
+    const retiredDay = join(temp('retired'), 'sessions', '2026', '09', '20')
+    mkdirSync(retiredDay, { recursive: true })
+    writeFileSync(join(retiredDay, NAME), older)
+    linkSync(join(retiredDay, NAME), r.dest)
+    const outside = temp('outside')
+    mkdirSync(join(outside, 'day'))
+    const victim = join(outside, 'day', NAME)
+    writeFileSync(victim, 'a file of this name outside the realm\n')
+    const realRename = fsp.rename.bind(fsp)
+    vi.spyOn(fsp, 'rename').mockImplementation((async (a: string, b: string) => {
+      renameSync(dirname(r.dest), join(outside, 'realm-day'))
+      symlinkSync(join(outside, 'day'), dirname(r.dest), 'junction')
+      return realRename(a, b)
+    }) as never)
+    expect(await carryCodexRollout({ fromSessionsDir: join(r.from, 'sessions'), toHome: r.to, id: ID })).toEqual({ ok: false, code: 'changed' })
+    expect(readFileSync(victim, 'utf8')).toBe('a file of this name outside the realm\n')
+    expect(readdirSync(join(outside, 'day'))).toEqual([NAME])
+    expect(readFileSync(join(outside, 'realm-day', NAME), 'utf8')).toBe(older)
+    expect(readFileSync(join(retiredDay, NAME), 'utf8')).toBe(older)
+  })
+
+  // Lens A (T1b): a copy that did not land where it was meant to is taken
+  // back only while the file at the path it really is now is the one written
+  // here, so a link re-pointed meanwhile never turns the removal onto
+  // another file.
+  it('a copy that landed through a link, the link re-pointed as it is taken back: the file the link now leads to is never removed', async () => {
+    const r = realms()
+    mkdirSync(dirname(r.dest), { recursive: true })
+    const outside = temp('outside')
+    const X = join(outside, 'X')
+    const Y = join(outside, 'Y')
+    mkdirSync(X)
+    mkdirSync(Y)
+    const victim = join(Y, NAME)
+    writeFileSync(victim, 'a file of that name elsewhere\n')
+    const day = dirname(r.dest)
+    let armed = false
+    vi.spyOn(fsp, 'link').mockImplementation((async (a: string, b: string) => {
+      renameSync(day, join(outside, 'realm-day'))
+      symlinkSync(X, day, 'junction')
+      await realLink(a, b)
+      armed = true
+    }) as never)
+    const realNative = realpathSync.native
+    vi.spyOn(realpathSync, 'native').mockImplementation(((p: string, o?: unknown) => {
+      if (armed && same(p, r.dest)) {
+        armed = false
+        rmdirSync(day)
+        symlinkSync(Y, day, 'junction')
+      }
+      return (realNative as (p: string, o?: unknown) => string)(p, o)
+    }) as never)
+    expect(await carryCodexRollout({ fromSessionsDir: join(r.from, 'sessions'), toHome: r.to, id: ID })).toEqual({ ok: false, code: 'changed' })
+    expect(readFileSync(victim, 'utf8')).toBe('a file of that name elsewhere\n')
+  })
+
+  // Lens A (T3): the earlier copy is compared through a handle, and the
+  // folder toggled between the checks of where that handle's file is: the
+  // copy outside is never written, and nothing is said as carried.
+  it('A -> B -> A with the day folder toggled to a junction to a copy outside the realm and back around the checks: that copy is never written, and nothing is said as carried', async () => {
+    const r = realms()
+    const older = meta(ID, 'C:\\p\\demo') + turn(1)
+    mkdirSync(dirname(r.dest), { recursive: true })
+    writeFileSync(r.dest, older)
+    const outside = temp('outside')
+    const X = join(outside, 'X')
+    mkdirSync(X)
+    const victim = join(X, NAME)
+    writeFileSync(victim, older)
+    const day = dirname(r.dest)
+    const aside = join(outside, 'realm-day')
+    let srcCalls = 0
+    let state: 'idle' | 'swapped' | 'done' = 'idle'
+    const realNative = realpathSync.native
+    vi.spyOn(realpathSync, 'native').mockImplementation(((p: string, o?: unknown) => {
+      if (state === 'swapped' && same(p, r.dest)) { rmdirSync(day); renameSync(aside, day); state = 'done' }
+      const v = (realNative as (p: string, o?: unknown) => string)(p, o)
+      if (state === 'idle' && same(p, r.file) && ++srcCalls === 2) { renameSync(day, aside); symlinkSync(X, day, 'junction'); state = 'swapped' }
+      return v
+    }) as never)
+    const out = await carryCodexRollout({ fromSessionsDir: join(r.from, 'sessions'), toHome: r.to, id: ID })
+    expect(state).toBe('done')
+    expect(out).toEqual({ ok: false, code: 'changed' })
+    expect(readFileSync(victim, 'utf8')).toBe(older)
+    expect(readFileSync(r.dest, 'utf8')).toBe(older)
+  })
+
+  // Lens A (T2): the temporary file is checked to be in the realm's own
+  // sessions folder before anything of the conversation is written to it.
+  it('the sessions folder swapped for a junction just as the temporary file is made: nothing of the conversation is written there', async () => {
+    const r = realms(meta(ID, 'C:\\p\\demo') + turn(1) + turn(2))
+    mkdirSync(join(r.to, 'sessions'), { recursive: true })
+    const outside = temp('outside')
+    const X = join(outside, 'X')
+    mkdirSync(X)
+    let written = 0
+    onOpen(async (p, flags, open) => {
+      if (flags === 'wx' && isTemp(p)) {
+        renameSync(join(r.to, 'sessions'), join(outside, 'realm-sessions'))
+        symlinkSync(X, join(r.to, 'sessions'), 'junction')
+        const h = await open()
+        const write = h.write.bind(h) as (...a: unknown[]) => Promise<unknown>
+        ;(h as unknown as { write: (...a: unknown[]) => Promise<unknown> }).write = async (...a: unknown[]) => { written++; return write(...a) }
+        return h
+      }
+      return open()
+    })
+    expect(await carryCodexRollout({ fromSessionsDir: join(r.from, 'sessions'), toHome: r.to, id: ID })).toEqual({ ok: false, code: 'changed' })
+    expect(written).toBe(0)
+    expect(readdirSync(X)).toEqual([])
+  })
+
+  // Quality: a rename a virus scanner or an indexer holds up is tried again, briefly.
+  it('a rename held up for a moment (EPERM, EBUSY) is tried again; one held up for good is io-failed, and the earlier copy and its other name stay as they were', async () => {
+    const r = realms()
+    const older = meta(ID, 'C:\\p\\demo') + turn(1)
+    mkdirSync(dirname(r.dest), { recursive: true })
+    const retiredDay = join(temp('retired'), 'sessions', '2026', '09', '20')
+    mkdirSync(retiredDay, { recursive: true })
+    writeFileSync(join(retiredDay, NAME), older)
+    linkSync(join(retiredDay, NAME), r.dest)
+    const realRename = fsp.rename.bind(fsp)
+    let refusals = 2
+    const spy = vi.spyOn(fsp, 'rename').mockImplementation((async (a: string, b: string) => {
+      if (refusals-- > 0) throw Object.assign(new Error(refusals % 2 ? 'EPERM' : 'EBUSY'), { code: refusals % 2 ? 'EPERM' : 'EBUSY' })
+      return realRename(a, b)
+    }) as never)
+    expect(await carryCodexRollout({ fromSessionsDir: join(r.from, 'sessions'), toHome: r.to, id: ID })).toEqual({ ok: true, carried: 'extended', bytes: Buffer.byteLength(r.body) })
+    expect(readFileSync(r.dest, 'utf8')).toBe(r.body)
+    spy.mockRestore()
+    const r2 = realms()
+    mkdirSync(dirname(r2.dest), { recursive: true })
+    const retired2 = join(temp('retired'), 'day')
+    mkdirSync(retired2)
+    writeFileSync(join(retired2, NAME), older)
+    linkSync(join(retired2, NAME), r2.dest)
+    let tries = 0
+    vi.spyOn(fsp, 'rename').mockImplementation((async () => { tries++; throw Object.assign(new Error('EPERM'), { code: 'EPERM' }) }) as never)
+    expect(await carryCodexRollout({ fromSessionsDir: join(r2.from, 'sessions'), toHome: r2.to, id: ID })).toEqual({ ok: false, code: 'io-failed' })
+    expect(tries).toBeGreaterThan(1)
+    expect(tries).toBeLessThanOrEqual(5)
+    expect(readFileSync(r2.dest, 'utf8')).toBe(older)
+    expect(readFileSync(join(retired2, NAME), 'utf8')).toBe(older)
+    expect(leftoversOf(r2)).toEqual([])
+  })
+
+  // ADR-009 round 1, B2 and A6: a carry the respawn no longer wants (it was
+  // superseded, closed or ran out of time) stops at its next step.
+  it('asked to stop part way (the respawn is no longer current): cancelled, nothing left behind', async () => {
+    const r = realms(meta(ID, 'C:\\p\\demo') + turn(1).repeat(3000))
+    let asked = 0
+    const out = await carryCodexRollout({ fromSessionsDir: join(r.from, 'sessions'), toHome: r.to, id: ID, shouldStop: () => ++asked > 2 })
+    expect(out).toEqual({ ok: false, code: 'cancelled' })
+    expect(asked).toBeGreaterThan(2)
+    expect(existsSync(r.dest)).toBe(false)
+    expect(leftoversOf(r)).toEqual([])
+    // A stop question that throws counts as stop.
+    expect(await carryCodexRollout({ fromSessionsDir: join(r.from, 'sessions'), toHome: r.to, id: ID, shouldStop: () => { throw new Error('x') } })).toEqual({ ok: false, code: 'cancelled' })
   })
 
   it('a copy that fails to take its name: io-failed, and the temporary file goes', async () => {

@@ -48,7 +48,7 @@ describe('carrying a switched session\'s conversation (P3.6, row 22)', () => {
     const r = await h.service.carryConversation({ accountId: b }, on(a))
     expect(r).toEqual({ ok: true, carried: 'copied' })
     expect(seen).toHaveLength(1)
-    expect(seen[0].input).toEqual({ fromSessionsDir: `${managedHome(realm(a))}\\sessions`, toHome: managedHome(realm(b)), id: CID, preferCwd: 'C:\\p\\demo' })
+    expect(seen[0].input).toEqual({ fromSessionsDir: `${managedHome(realm(a))}\\sessions`, toHome: managedHome(realm(b)), id: CID, preferCwd: 'C:\\p\\demo', shouldStop: expect.any(Function) })
     expect(seen[0].operations[a]).toBe(1)
     expect(seen[0].operations[b]).toBe(1)
     expect(leftOver()).toBe(0)
@@ -71,6 +71,18 @@ describe('carrying a switched session\'s conversation (P3.6, row 22)', () => {
     expect(failed).toMatchObject({ ok: false, code: 'io-failed' })
     expect(!failed.ok && failed.message).toMatch(/could not be copied into the other Codex account's folder, so it was not carried over/)
     expect(thrown.leftOver()).toBe(0)
+  })
+
+  it('a respawn that no longer wants the copy (superseded, closed or out of time): cancelled once the realms are held, nothing copied, everything let go (ADR-009 round 1, B2)', async () => {
+    const { h, a, b, seen, leftOver } = await world()
+    expect(await h.service.carryConversation({ accountId: b }, on(a), { current: () => false })).toMatchObject({ ok: false, code: 'cancelled' })
+    expect(seen).toEqual([])
+    expect(leftOver()).toBe(0)
+    let wanted = true
+    expect(await h.service.carryConversation({ accountId: b }, on(a), { current: () => wanted })).toEqual({ ok: true, carried: 'copied' })
+    expect(seen[0].input.shouldStop!()).toBe(false)
+    wanted = false
+    expect(seen[0].input.shouldStop!()).toBe(true)
   })
 
   it('nothing to carry: no conversation on record, or it is already on that account', async () => {

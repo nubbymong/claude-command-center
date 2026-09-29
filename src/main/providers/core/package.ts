@@ -235,12 +235,16 @@ export interface ProviderRealmFolderOperations {
    *  held for the copy (no sign-in, sign-out or removal meanwhile); the
    *  caller holds a lease on both accounts. The transcript is found by the
    *  provider's own lookup in the source realm only, copied whole or not at
-   *  all, bounded, never through a link and never replacing anything: the
-   *  same transcript already there is `present`, an earlier copy that is
-   *  exactly the start of it has the rest added (`extended`), and one that
-   *  went its own way is refused (`conversation-differs`). Absent: the
-   *  provider keeps no conversation a session could carry. */
-  copyConversation?(from: RealmRef, to: RealmRef, conversation: { id: string; cwd?: string }): Promise<RealmFolderResult & { carried?: 'copied' | 'present' | 'extended' }>
+   *  all, bounded and never through a link. A new copy replaces nothing;
+   *  the same transcript already there is `present`; an earlier copy that is
+   *  exactly the start of it is replaced under its own name only by the
+   *  whole copy (`extended`: another name of that file keeps what it had);
+   *  one that went its own way is refused (`conversation-differs`).
+   *  `current`: whether the caller still wants the copy, asked once both
+   *  locks are held and before each step of the file work (no: `cancelled`,
+   *  nothing left behind). Absent: the provider keeps no conversation a
+   *  session could carry. */
+  copyConversation?(from: RealmRef, to: RealmRef, conversation: { id: string; cwd?: string }, opts?: { current?: () => boolean }): Promise<RealmFolderResult & { carried?: 'copied' | 'present' | 'extended' }>
 }
 
 /** What a launch in a bound realm needs, proven at launch time (plan A10):

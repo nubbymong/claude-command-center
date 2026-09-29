@@ -688,27 +688,46 @@ archived left out; Claude's rows unchanged), offered for a local Codex
 session with two or more accounts, on every platform. A pick pins the account
 and saves it, then restarts the session on it, as Claude's switch does; main's
 respawn of that session carries the conversation (fix round 1: kill, carry,
-spawn, in `pty:spawn`, once the old process has ended, waiting at most 5 s;
+spawn, in `pty:spawn`, once the old process has ended, waiting at most 5 s,
+else nothing is carried; a killed run that never reports its end counts as
+over once the grace its account lease is released after has passed, so a
+later respawn carries, and lines such a run writes after that can be missed;
 the conversation and the account it ran under are main's own record of the
 session being respawned, pty-manager keeping the launch's account with the
 kept conversation, and the destination is the account the launch was prepared
 on; no renderer channel names a conversation, so the first build's
-`providerAccounts:carryConversation` is gone), holding an operation lease on
-both accounts under the registry lock and both realm locks for the copy
-(`realm-folders.ts` copyConversation; a copy the other way at once is waited
-for, briefly; a spawn superseded or closed meanwhile carries nothing), the
-file work in `conversation-carry.ts` (P3.5's lookup in the source realm only,
-bounded at 256 MiB, whole lines, no link followed below a realm's home, an
-exclusive temporary file in the destination's sessions folder then a hard
-link that never replaces anything, checked after it lands; a temporary file a
+`providerAccounts:carryConversation` is gone; ADR-009 round 1: a
+conversation another open session is on, as main recorded it, is never
+carried, so it is neither forked nor added to under that session, and the
+terminal says why), holding an operation lease on both accounts under the
+registry lock and both realm locks for the copy (`realm-folders.ts`
+copyConversation; a copy the other way at once is waited for, briefly; a
+spawn superseded or closed meanwhile carries nothing, and a copy already
+running is told so once it holds the realms and before each step, and stops
+leaving nothing behind; the copy has 60 s inside the respawn, after which the
+session starts without it, in the failed-carry words), the file work in
+`conversation-carry.ts` (P3.5's lookup in the source realm only, bounded at
+256 MiB, whole lines, no link followed below a realm's home; an exclusive
+temporary file in the destination's sessions folder, checked to be there
+before anything is written to it; a new copy takes its name with a hard link,
+which replaces nothing, and is checked after it lands; a temporary file a
 stopped carry left is swept by the next one once stale; the same bytes already
 there are present; an earlier copy that is exactly the start of the
-conversation, and still that size when it is written, has the rest added: in
-place when that is its only name, else (a staged Sign in again leaves the
-history as second names of the kept earlier folder's files) the whole copy is
-renamed over that one name, so the earlier folder keeps what it had and
-nothing is written through it; anything else is refused); the launch then
-resumes it by id in the new account's folder through P3.5's path and checks.
+conversation, and still that size, is replaced under its own name only by the
+whole copy (ADR-009 round 1: renamed from a second name made and checked
+inside the same day folder, so it can replace no name elsewhere; nothing is
+ever written through the earlier copy, and another name of it, as a staged
+Sign in again leaves in the kept earlier folder, keeps what it had; a rename
+something holds open for a moment is tried again, briefly); anything else is
+refused; a folder the copy made through a folder swapped for a link is taken
+back while empty, and anything the copy takes back is removed only while the
+file at its real path is still the one it made); the launch then resumes it
+by id in the new account's folder through P3.5's path and checks.
+Recorded as intended (ADR-009 round 1, B3; Claude parity): any respawn onto
+another account carries the conversation, a plain Restart of a tab that names
+no account after the default account changed included, as any respawn of a
+Claude session under another profile resumes the same conversation from the
+one shared projects folder (`launch-handoff-pty.test.ts`).
 Deviation, recorded (fix round 1, accepted in review round 2): the "no link
 followed" rule starts at a realm's home. This computer's own home is taken at
 its real path, as the CLI takes it and as a Claude account's home is

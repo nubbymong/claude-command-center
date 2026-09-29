@@ -427,34 +427,51 @@ export function getKeptCodexConversationSource(sessionId: string): { uuid: strin
   return kept && kept.accountId ? { uuid: kept.uuid, cwd: kept.cwd, accountId: kept.accountId } : undefined
 }
 
+/** P3.6 (row 22; ADR-009 round 1, B1): whether another session with a
+ *  running Codex process (it holds its account lease) is on conversation
+ *  `uuid`, as main recorded it. A Switch account never copies or brings up
+ *  to date a conversation another open session is on: that would fork it,
+ *  or put this session's turns into the rollout the other is writing. */
+export function codexConversationHeldElsewhere(sessionId: string, uuid: string): boolean {
+  const want = String(uuid).toLowerCase()
+  for (const [other, kept] of keptCodexConversations) {
+    if (other !== sessionId && kept.uuid.toLowerCase() === want && codexLaunchLeases.has(other)) return true
+  }
+  return false
+}
+
 // P3.6 (row 22; quality round 1): a Switch account carries the conversation
 // only once the session's previous Codex process has ended, so nothing it
 // writes after the copy is lost. killPty records the end of each Codex run it
-// kills (its process's exit); the respawn waits for it, bounded. An entry
-// goes when its process has ended, or after the grace its account lease is
-// released after (releaseCodexLeaseOnExit) when no exit is ever reported;
-// a later kill of the session replaces it.
-const endingCodexRuns = new Map<string, Promise<void>>()
+// kills; the respawn waits for it, bounded. An entry settles true when its
+// process reports its end, and false once the grace its account lease is
+// released after (releaseCodexLeaseOnExit) has passed with no end reported;
+// either way it then goes, and from then on the run counts as over, as its
+// lease does (lines such a run writes later can be missed). A later kill of
+// the session replaces it.
+const endingCodexRuns = new Map<string, Promise<boolean>>()
 
 function noteCodexRunEnding(sessionId: string, proc: pty.IPty): void {
-  let ended!: () => void
-  const done = new Promise<void>((resolve) => { ended = resolve })
+  let settleWith!: (reported: boolean) => void
+  const done = new Promise<boolean>((resolve) => { settleWith = resolve })
   endingCodexRuns.set(sessionId, done)
   let timer: ReturnType<typeof setTimeout> | undefined
-  const settle = (): void => {
+  const settle = (reported: boolean): void => {
     if (timer) clearTimeout(timer)
-    ended()
+    settleWith(reported)
     if (endingCodexRuns.get(sessionId) === done) endingCodexRuns.delete(sessionId)
   }
-  timer = setTimeout(settle, CODEX_LEASE_EXIT_GRACE_MS)
+  timer = setTimeout(() => settle(false), CODEX_LEASE_EXIT_GRACE_MS)
   ;(timer as unknown as { unref?: () => void }).unref?.()
-  try { proc.onExit(() => settle()) } catch { settle() }
+  try { proc.onExit(() => settle(true)) } catch { settle(true) }
 }
 
-/** P3.6: whether this session has no Codex process left running -- none
- *  live, and the one killed last has ended -- waiting at most `timeoutMs`
- *  for that one. False while one still runs (never killed) or when the
- *  killed one has not ended in time. */
+/** P3.6: true when this session has no Codex run still going: none live,
+ *  and none killed whose end is awaited (the last one killed reported its
+ *  end, or its grace passed before this was asked). Waits at most
+ *  `timeoutMs` for an awaited end: false when a run is live (never killed),
+ *  when its end is not reported in that time, or when its grace passes
+ *  first with no end reported. */
 export async function codexRunEnded(sessionId: string, timeoutMs: number): Promise<boolean> {
   if (codexLaunchLeases.has(sessionId)) return false
   const ending = endingCodexRuns.get(sessionId)
@@ -462,7 +479,7 @@ export async function codexRunEnded(sessionId: string, timeoutMs: number): Promi
   let timer: ReturnType<typeof setTimeout> | undefined
   const late = new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), timeoutMs) })
   try {
-    return await Promise.race([ending.then(() => true), late])
+    return await Promise.race([ending, late])
   } finally {
     if (timer) clearTimeout(timer)
   }

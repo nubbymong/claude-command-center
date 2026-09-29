@@ -1458,21 +1458,42 @@ describe('a conversation copied into another account\'s folder (P3.6, row 22)', 
     w.fs.dir(w.home(RB))
     w.fs.dir(w.api.join(w.USER, '.codex'), o.extHome ?? {})
     const calls: CarryCall[] = []
+    const stops: Array<() => boolean> = []
     const keyOf = (h: string) => { const e = w.fs.lstat(h); return codexRealmLockKey(w.fs.realpath(h), e.dev, e.ino) }
     const heldDuring: boolean[] = []
     const folders = createCodexRealmFolders({
       lookupRealm: w.lookupRealm, fs: w.fs, locks: w.locks,
       limits: { carryLockWaitMs },
       carry: async (c) => {
-        calls.push(c)
+        const { shouldStop, ...call } = c as CarryCall & { shouldStop?: () => boolean }
+        calls.push(call)
+        if (shouldStop) stops.push(shouldStop)
         // Both realm locks are held while the file work runs.
         const src = w.api.dirname(c.fromSessionsDir)
         for (const h of [src, c.toHome]) { const r = w.locks.hold(keyOf(h)); heldDuring.push(r === null); r?.() }
         return answer(c) as never
       },
     })
-    return { w, folders, calls, heldDuring, keyOf }
+    return { w, folders, calls, heldDuring, keyOf, stops }
   }
+
+  it('a copy its caller no longer wants (a respawn superseded, closed or out of time) stops once both locks are held, before any file work, and lets them go (ADR-009 round 1, B2)', async () => {
+    const { w, folders, calls, keyOf, stops } = carrying()
+    expect(await folders.copyConversation!(A, B, { id: CID }, { current: () => false })).toMatchObject({ ok: false, code: 'cancelled' })
+    expect(await folders.copyConversation!(A, B, { id: CID }, { current: () => { throw new Error('x') } })).toMatchObject({ ok: false, code: 'cancelled' })
+    expect(calls).toEqual([])
+    for (const h of [w.home(RA), w.home(RB)]) { const again = w.locks.hold(keyOf(h)); expect(again).not.toBeNull(); again!() }
+    // Wanted at the start: the file work is told, and asks before each step.
+    let wanted = true
+    expect(await folders.copyConversation!(A, B, { id: CID }, { current: () => wanted })).toEqual({ ok: true, carried: 'copied' })
+    expect(stops).toHaveLength(1)
+    expect(stops[0]()).toBe(false)
+    wanted = false
+    expect(stops[0]()).toBe(true)
+    // The file work's own stop, in this module's words.
+    const stopped = carrying(() => ({ ok: false, code: 'cancelled' }))
+    expect(await stopped.folders.copyConversation!(A, B, { id: CID })).toMatchObject({ ok: false, code: 'cancelled' })
+  })
 
   it('copies from the account the session ran under into the one it moves to, both realm locks held, then released', async () => {
     const { w, folders, calls, heldDuring, keyOf } = carrying()

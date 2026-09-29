@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-28T22:21:58.951Z",
-  "head": "bb99d2da8e118eba3c155844818502db120accd3",
-  "tree": "b0f26420bf42fc2755e5a160a9b48bba236dda3f",
+  "generatedAt": "2026-09-29T00:55:15.068Z",
+  "head": "cf8f42d4932a2b44e183bb56ed98ee24449e3561",
+  "tree": "23e342d6c8ac8db2e504d7dc5e14e01b7c8e1b38",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2460,
+  "trackedFileCount": 2462,
   "excludedFileCount": 384,
-  "scannedFileCount": 2076,
+  "scannedFileCount": 2078,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 509,
-  "pathDigest": "a499f01686768226ee90c8c404c560b1821a9181ea3f702baa6f58ff5c77829e",
+  "matchedPathCount": 510,
+  "pathDigest": "c7ccb7bd6de688927c0f99dbaed7b95e5c675af200a242a42626d46b7963cd73",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 171
+      "lineCount": 173
     },
     {
       "path": "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
@@ -440,7 +440,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 9
+      "lineCount": 8
     },
     {
       "path": "src/main/install-secret.ts",
@@ -472,7 +472,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 58
+      "lineCount": 70
     },
     {
       "path": "src/main/ipc/tokenomics2-handlers.ts",
@@ -622,7 +622,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 16
+      "lineCount": 21
     },
     {
       "path": "src/main/providers/codex/discovery.ts",
@@ -710,7 +710,7 @@
         "P05",
         "P14"
       ],
-      "lineCount": 126
+      "lineCount": 131
     },
     {
       "path": "src/main/providers/codex/realm-paths.ts",
@@ -841,7 +841,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 143
+      "lineCount": 160
     },
     {
       "path": "src/main/sanitize-restored-spawn-options.ts",
@@ -2837,7 +2837,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 20
+      "lineCount": 24
     },
     {
       "path": "tests/unit/main/pty-managed-deferral-carries-launch.test.ts",
@@ -2859,7 +2859,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 15
+      "lineCount": 19
     },
     {
       "path": "tests/unit/main/pty-spawn-waits-for-refresh.test.ts",
@@ -3083,12 +3083,20 @@
       "lineCount": 18
     },
     {
+      "path": "tests/unit/providers/codex/conversation-carry-folders.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 6
+    },
+    {
       "path": "tests/unit/providers/codex/conversation-carry.test.ts",
       "predicates": [
         "P01",
         "P13"
       ],
-      "lineCount": 26
+      "lineCount": 63
     },
     {
       "path": "tests/unit/providers/codex/mcp-config.test.ts",
@@ -3369,7 +3377,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 20
+      "lineCount": 22
     },
     {
       "path": "tests/unit/renderer/codex-mini-icon.test.ts",
@@ -3421,7 +3429,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 28
+      "lineCount": 25
     },
     {
       "path": "tests/unit/renderer/command-bar-layout.test.ts",
@@ -3991,7 +3999,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 90
+      "lineCount": 91
     },
     {
       "path": "tests/unit/renderer/titlebar-provider-status.test.tsx",
