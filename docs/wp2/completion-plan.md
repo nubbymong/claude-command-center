@@ -842,6 +842,49 @@ reports them (P3.1; the account chip landed in P3.6); the Status Line settings c
 and the Codex note there is updated. Likely files: `providers/codex/telemetry.ts`,
 `SessionStatusStrip.tsx`, `SettingsPage.tsx`. The C item "narrow-window
 overlap" fits here.
+Built (2026-09-29; 5de7a4c4, b1cffc71; mocked). Row 36, lines changed: the
+strip was already one for every provider, so the work is the figure. It is
+counted from the completed FileChange edits a Codex rollout records (P3.1
+evidence, answer 5): an update by its unified diff's hunk headers, a new
+file's content as added, a deleted one's as removed; a failed, declined or
+unfinished edit counts nothing. It covers the whole conversation, as Claude
+Code's does: its CLI restores lines and duration from the transcript when it
+resumes (the cost ledger of the pinned 2.1.284 build), so a resumed Codex
+conversation counts the edits it made before. It is zero until an edit lands,
+as Claude reports, and a claim let go clears it with the tokens
+(`providers/codex/telemetry.ts`, `telemetry-lines.test.ts`). A large rollout
+is read as its head and tail (P3.5); the edits between them are counted once
+in the background, a chunk at a time, only while the file is the one claimed,
+and dropped once the watch stops or the claim is let go. Its limit: no more
+than 64 MiB of one line is held, so an edit record longer than that (a file
+of about that size written in one patch) between the head and the tail is not
+counted. The add and delete shapes are the Codex protocol's; P3.1 recorded
+only an update. Row 37: the Status Line settings' Codex note now says only
+that session time is not reported, and the Model and Account items name no
+provider (the Account item hides a Codex chip since P3.6). The C item: the
+partner terminal strip keeps the floating GitHub button's corner clear
+(pr-12, as the switch note since P3.6's W1); its note wraps and its Back
+button never shrinks, on Claude and Codex tabs alike (`session-launch.test.ts`).
+SSH radius: no (`pty-manager.ts` and the SSH files untouched).
+Stopped for the owner, duration (the plan is silent and parity cannot settle
+it): Claude Code's is the conversation's wall-clock time across its runs,
+restored when it resumes; Codex records each turn's duration
+(`task_complete.duration_ms`) but no session time and no start of a run. The
+options: (a) this launch's wall-clock time, measured by the app (as Claude's
+for a new session; it starts again after a Restart, a Switch or a relaunch,
+where Claude's carries on); (b) Codex's own working time, the sum of the
+turns' durations in the rollout (it carries on across resumes as Claude's
+does, but leaves out idle time); (c) Duration stays hidden for a Codex
+session, and row 36 takes a section 19 record for it; (d) the app keeps each
+conversation's time across its runs in the saved session state (the closest
+to Claude; new saved state). Until then Duration does not show for a Codex
+session, and the note says so.
+Owed: the owner's decision on duration; the independent spec and
+code-quality reviews; the VM run (a Codex tab's lines changed after a real
+edit and after a resume; the Status Line tab with Codex on; the partner strip
+at a narrow window on a Claude and a Codex tab; P3.6's W1) and the owner's
+review of its screenshots, both themes; the real-CLI count of a new and a
+deleted file on 0.153.4 and 0.155.1.
 
 **P3.8 Model, effort, pricing, compact and plan mode.** The catalogue from the
 model registry with Sentinel's coverage check; per-model effort levels; model
