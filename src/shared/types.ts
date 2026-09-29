@@ -292,6 +292,10 @@ export interface SessionState {
    *  on files written before this feature; round-trips untouched through the
    *  main-side save/load (only `sessions` is migrated). */
   detachedRemotes?: DetachedRemote[]
+  /** P3.6: Codex conversations whose claim was not certain (two new sessions
+   *  in one folder), written by main at every save and read back by main at
+   *  load, so a Switch account never carries one after a relaunch either. */
+  codexUncertainConversations?: string[]
 }
 
 /**

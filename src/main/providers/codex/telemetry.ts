@@ -15,7 +15,7 @@
 import { readdirSync, lstatSync, unlinkSync, rmdirSync, openSync, fstatSync, readSync, closeSync, constants as fsConstants } from 'fs'
 import { join, relative, isAbsolute, sep, dirname, basename } from 'path'
 import { computeCodexCostUsd } from './pricing'
-import { CODEX_CONVERSATION_ID_RE, codexDayFolders, codexFolderIdentity, findCodexRollout, isRealFolder, parseSessionMetaLine, readRolloutFirstLine } from './rollout-lookup'
+import { CODEX_CONVERSATION_ID_RE, codexDayFolders, codexFolderIdentity, findCodexRollout, isRealFolder, parseSessionMetaLine, readRolloutFirstLine, sameDirectory } from './rollout-lookup'
 import type { FoundRollout, RolloutSessionMeta } from './rollout-lookup'
 import type { PickFolderIdentity } from '../types'
 import { normaliseCodexRateLimits, mergeAllowanceReadings, readingToBuckets, isoFromEpochMs, CODEX_DEFAULT_LIMIT_ID } from './rate-limits'
@@ -322,6 +322,27 @@ export function withAllowance(sl: StatuslineData, reading: AllowanceReading | nu
 const claimed = new Set<string>()
 
 /**
+ * P3.6 (ADR-009 round 1, B1): the launches still waiting to claim a NEW
+ * conversation, in every realm. Two new sessions in one folder of one realm,
+ * started within the claim window, can take each other's rollout (P3.5's
+ * recorded limit, until P3.10's exact claim). A claim made while another such
+ * launch could have taken the same rollout, or while this launch saw more
+ * than one rollout it could take, is reported as not certain, and so is the
+ * later claim of every launch it competed with. The claim itself is P3.5's,
+ * unchanged; a Switch account never carries a conversation claimed that way
+ * (pty-manager).
+ */
+interface PendingNewClaim {
+  sessionsDir: string
+  cwd: string
+  /** Whether this launch would take a new rollout that began at `at`. */
+  admits(at: number): boolean
+  /** Another launch's claim competed with this one: its own is not certain. */
+  contested: boolean
+}
+const pendingNewClaims = new Set<PendingNewClaim>()
+
+/**
  * How a watcher finds its rollout (P3.5, rows 34 and 38). All optional: a
  * launch that names none claims a new rollout by directory and time, as
  * before.
@@ -349,8 +370,11 @@ export interface CodexClaimOptions {
    *  link or junction). Without it no pick is read. */
   pickFolder?: PickFolderIdentity
   /** Told once which conversation the watcher claimed: its id and the
-   *  directory its rollout records. Only a conversation id is reported. */
-  onClaim?: (claim: { id: string; cwd: string }) => void
+   *  directory its rollout records. Only a conversation id is reported.
+   *  `certain` (P3.6): false when the rollout could have been another
+   *  launch's (see pendingNewClaims); a resume by id, or the conversation a
+   *  picker named, is always certain. */
+  onClaim?: (claim: { id: string; cwd: string; certain: boolean }) => void
   /** Told when a claim is let go: the picker decided again after it (fix
    *  round 2), so the session is no longer on that conversation. */
   onRelease?: () => void
@@ -511,14 +535,29 @@ export function watchAndClaimRollout(
   let decision: PickDecision | null = null
   /** A pick entry already dealt with (read, or refused), by its identity: never read again. */
   let handledPick: string | null = null
+  /** The no-claim deadline passed: this launch claims nothing more. */
+  let givenUp = false
+  /** This launch among those waiting for a new conversation (P3.6); a resume
+   *  by id never takes a new one. */
+  const pending: PendingNewClaim | null = resumeId ? null : {
+    sessionsDir,
+    cwd: sessionCwd,
+    admits: (at: number) => {
+      if (stopped || givenUp || claimedPath) return false
+      if (pickFile) return decision?.kind === 'fresh' && at >= decision.at - FRESH_DECISION_TOLERANCE_MS
+      return at >= spawnTimestamp - 5000
+    },
+    contested: false,
+  }
+  if (pending) pendingNewClaims.add(pending)
 
-  function claim(fullPath: string, found: RolloutSessionMeta): void {
+  function claim(fullPath: string, found: RolloutSessionMeta, certain = true): void {
     claimedPath = fullPath
     claimed.add(fullPath)
     claimedIdentity = fileIdentity(fullPath)
     claimedFileChanged = false
     if (claimOpts?.onClaim && CODEX_CONVERSATION_ID_RE.test(found.id)) {
-      try { claimOpts.onClaim({ id: found.id, cwd: found.cwd }) } catch { /* a listener never stops the watch */ }
+      try { claimOpts.onClaim({ id: found.id, cwd: found.cwd, certain }) } catch { /* a listener never stops the watch */ }
     }
 
     // What is already there: all of it when small, else its head and its
@@ -823,6 +862,10 @@ export function watchAndClaimRollout(
     }
 
     const now = Date.now()
+    // The first rollout this launch would take (P3.5's claim, unchanged), and
+    // how many it could take (P3.6: more than one is not a certain claim).
+    let first: { path: string; meta: RolloutSessionMeta } | null = null
+    let candidates = 0
     for (const dateDir of codexDayFolders(sessionsDir, [now, now - 24 * 3600 * 1000])) {
       // Real folders only, at every level, and plain files only: a link or
       // junction anywhere on the way is not followed (P3.5 fix round 1).
@@ -845,12 +888,23 @@ export function watchAndClaimRollout(
         if (head.kind === 'too-long') { settled.add(fullPath); continue }
         const found = parseSessionMetaLine(head.line)
         if (found && found.cwd === sessionCwd && found.at >= since) {
-          claim(fullPath, found)
-          return
+          candidates++
+          if (!first) first = { path: fullPath, meta: found }
+          continue
         }
         settled.add(fullPath)
       }
     }
+    if (!first) return
+    // Certain only when no other launch waiting for a new conversation in
+    // this realm and folder could take this rollout, this launch saw no other
+    // it could take, and no earlier claim competed with this launch; every
+    // launch this claim competes with is marked, so its own claim is not
+    // certain either.
+    const at = first.meta.at
+    const rivals = [...pendingNewClaims].filter((p) => p !== pending && sameDirectory(p.sessionsDir, sessionsDir) && p.cwd === sessionCwd && p.admits(at))
+    for (const p of rivals) p.contested = true
+    claim(first.path, first.meta, candidates === 1 && rivals.length === 0 && !pending?.contested)
   }
 
   // Set up the 250ms polling interval before the initial tryClaim() call so
@@ -889,6 +943,8 @@ export function watchAndClaimRollout(
 
   const timeoutHandle = waitsForUser ? null : setTimeout(() => {
     if (!claimedPath && !stopped) {
+      givenUp = true
+      if (pending) pendingNewClaims.delete(pending)
       console.warn(
         `[codex/telemetry] no rollout claimed for session ${sessionId} after 30s -- assuming --ephemeral`,
       )
@@ -904,6 +960,7 @@ export function watchAndClaimRollout(
   return {
     stop(): void {
       stopped = true
+      if (pending) pendingNewClaims.delete(pending)
       if (warnHandle) clearTimeout(warnHandle)
       if (timeoutHandle) clearTimeout(timeoutHandle)
       if (intervalHandle) {

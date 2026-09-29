@@ -728,6 +728,21 @@ another account carries the conversation, a plain Restart of a tab that names
 no account after the default account changed included, as any respawn of a
 Claude session under another profile resumes the same conversation from the
 one shared projects folder (`launch-handoff-pty.test.ts`).
+Guard and its limit, recorded (owner decision on ADR-009 round 1, B1, option
+2): P3.5's claim and its recorded limit are unchanged, but a claim of a new
+conversation is marked not certain when another launch waiting for a new one
+in the same realm and folder could have taken the same rollout, when the
+launch saw more than one it could take, and for every launch such a claim
+competed with (`providers/codex/telemetry.ts`). A Switch account never
+carries or brings up to date a conversation claimed that way: the respawn
+on the new account starts a new conversation and the terminal says, in its
+own words, that the app could not be sure which conversation was this one; a
+Restart on the same account resumes it as P3.5 does. Main keeps these by
+conversation id and saves them with the session state, so a relaunch that
+resumes one keeps it uncertain (`telemetry-claim-anywhere.test.ts`,
+`launch-handoff-pty.test.ts`, `session-resume-enrich.test.ts`). The limit:
+two new sessions of one account started together in one folder cannot take
+their conversation to another account until P3.10's exact claim.
 Deviation, recorded (fix round 1, accepted in review round 2): the "no link
 followed" rule starts at a realm's home. This computer's own home is taken at
 its real path, as the CLI takes it and as a Claude account's home is
@@ -809,7 +824,10 @@ folder (launched directly or choosing New conversation), started within
 seconds of each other, can take each other's rollout, and each then keeps the
 other's conversation for Restart and relaunch (P3.5's pick protocol already
 keeps a picker session that resumes a conversation from taking another's,
-and a resume by id takes only its own); and following a
+and a resume by id takes only its own); the exact claim also clears P3.6's
+uncertain case (a claim that could have been another session's is never
+carried by a Switch account), so a Switch then carries every conversation;
+and following a
 conversation switched inside the Codex TUI (its own resume or new: the
 SessionStart hook's `source` and `transcript_path`), so the session keeps,
 persists and on Restart resumes the conversation it is on.

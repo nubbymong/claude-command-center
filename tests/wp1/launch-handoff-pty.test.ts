@@ -34,6 +34,9 @@ const h = vi.hoisted(() => ({
   prepare: null as null | ((input: Record<string, unknown>) => Promise<unknown>),
   prepareCalls: 0,
   carry: null as null | ((...a: unknown[]) => Promise<unknown>),
+  realWatch: false,
+  watchFn: null as null | ((...a: any[]) => { stop: () => void }),
+  watchers: [] as Array<{ stop: () => void }>,
   carries: [] as unknown[][],
   resumable: false,
   installs: 0,
@@ -103,6 +106,14 @@ vi.mock('../../src/main/providers', () => ({
     ingestSessionTelemetry: (sessionId: string, opts: Record<string, unknown>) => {
       if (h.failTelemetry) throw new Error('telemetry failed')
       h.telemetry.push({ sessionId, opts })
+      // P3.6: the real watcher, for the claim race (real folders under the
+      // system temp folder; no Codex process).
+      if (h.realWatch && h.watchFn) {
+        const o = opts as { cwd: string; spawnTimestamp: number; sessionsDir: string; resumeId?: string; resumePath?: string; onClaim?: (c: unknown) => void; onRelease?: () => void }
+        const w = h.watchFn(sessionId, o.cwd, o.spawnTimestamp, () => {}, o.sessionsDir, undefined, { resumeId: o.resumeId, resumePath: o.resumePath, onClaim: o.onClaim, onRelease: o.onRelease })
+        h.watchers.push(w)
+        return w
+      }
       return { stop: () => {} }
     },
   }),
@@ -167,7 +178,9 @@ vi.mock('../../src/main/provider-accounts', () => ({
   }),
 }))
 
-const { spawnPty, killPty, killAllPty, holdsCodexLaunchLease, countUnleasedAgentSessions, beginSpawnPreparation, CODEX_LEASE_EXIT_GRACE_MS, codexRunEnded } = await import('../../src/main/pty-manager')
+const { spawnPty, killPty, killAllPty, holdsCodexLaunchLease, countUnleasedAgentSessions, beginSpawnPreparation, CODEX_LEASE_EXIT_GRACE_MS, codexRunEnded, rememberUncertainCodexConversations } = await import('../../src/main/pty-manager')
+h.watchFn = (await import('../../src/main/providers/codex/telemetry')).watchAndClaimRollout as never
+const { codexDayFolders } = await import('../../src/main/providers/codex/rollout-lookup')
 const { registerPtyHandlers, CODEX_CARRY_EXIT_WAIT_MS, CODEX_CARRY_TIMEOUT_MS } = await import('../../src/main/ipc/pty-handlers')
 type Launch = NonNullable<NonNullable<Parameters<typeof spawnPty>[2]>['codexLaunch']>
 
@@ -494,9 +507,10 @@ describe('a respawn on another account carries this session\'s conversation (P3.
   beforeEach(() => { seq++; sid = `lh-p36-${seq}-a`; sid2 = `lh-p36-${seq}-b` })
   const CID = '019dd000-0006-7000-8000-0000000000c1'
   const OTHER = '019dd000-0006-7000-8000-0000000000c2'
-  const on = (tag: string, accountId: string) => {
+  const on = (tag: string, accountId: string, sessionsDir?: string) => {
     const l = launch(tag)
     ;(l.lease as unknown as { accountId: string }).accountId = accountId
+    if (sessionsDir) (l as unknown as { sessionsDir: string }).sessionsDir = sessionsDir
     return l
   }
   const spawnFor = (id: string, opts: Record<string, unknown>) => h.handlers.get('pty:spawn')!({}, id, opts)
@@ -505,7 +519,8 @@ describe('a respawn on another account carries this session\'s conversation (P3.
   const killPtyFor = (id: string) => h.listeners.get('pty:kill')!({}, id)
   const claim = (of: string, id: string, cwd = '/p/demo') => {
     const t = [...h.telemetry].reverse().find((x) => x.sessionId === of)!
-    ;(t.opts.onClaim as (c: { id: string; cwd: string }) => void)({ id, cwd })
+    // A claim the watcher was certain of (P3.6): the case these tests are about.
+    ;(t.opts.onClaim as (c: { id: string; cwd: string; certain: boolean }) => void)({ id, cwd, certain: true })
   }
   const onAccount = (accountId: string) => { h.prepare = async () => prepared(on(accountId, accountId)) }
   const request = (accountId: string, extra: Record<string, unknown> = {}) => ({ ...codexRequest, providerAccountId: accountId, ...extra })
@@ -826,5 +841,111 @@ describe('a respawn on another account carries this session\'s conversation (P3.
     }
     expect(CODEX_CARRY_TIMEOUT_MS).toBeGreaterThanOrEqual(10_000)
     expect(CODEX_CARRY_TIMEOUT_MS).toBeLessThanOrEqual(5 * 60_000)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// P3.6 (ADR-009 round 1, B1; owner decision, option 2): P3.5's claim is kept
+// as it is, with its recorded limit (two new tabs on one account in one folder
+// can take each other's rollout until P3.10's exact claim), but a claim that
+// could have been the other tab's is not certain, and a Switch account never
+// carries or brings up to date one of those: it starts a new conversation on
+// the new account and says why. A Restart on the same account keeps P3.5's
+// behaviour. The uncertainty is kept across a relaunch.
+// ---------------------------------------------------------------------------
+
+describe('a conversation whose claim was not certain is never carried (P3.6, owner decision)', () => {
+  let seq = 0
+  let sid = ''
+  let sid2 = ''
+  const PREFIX = 'ccc-p36-claimrace-'
+  const bases: string[] = []
+  beforeEach(() => { seq++; sid = `lh-p36u-${seq}-a`; sid2 = `lh-p36u-${seq}-b` })
+  afterEach(() => {
+    h.realWatch = false
+    for (const w of h.watchers.splice(0)) { try { w.stop() } catch { /* stopped */ } }
+    for (const id of [sid, sid2]) { try { killPty(id) } catch { /* not running */ } }
+    // TEST CLEANUP GUARD: only a folder this block made (its own prefix,
+    // directly in the system temp folder) is removed.
+    for (const b of bases.splice(0)) if (path.dirname(b) === os.tmpdir() && path.basename(b).startsWith(PREFIX)) require('node:fs').rmSync(b, { recursive: true, force: true })
+  })
+  const nfs = require('node:fs') as typeof import('node:fs')
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+  const spawnFor = (id: string, opts: Record<string, unknown>) => h.handlers.get('pty:spawn')!({}, id, opts)
+  const killFor = (id: string) => h.listeners.get('pty:kill')!({}, id)
+  const onAccount = (accountId: string, sessionsDir?: string) => {
+    h.prepare = async () => {
+      const l = launch(accountId)
+      ;(l.lease as unknown as { accountId: string }).accountId = accountId
+      if (sessionsDir) (l as unknown as { sessionsDir: string }).sessionsDir = sessionsDir
+      return prepared(l)
+    }
+  }
+  const metaOf = (id: string, cwd: string, iso: string) => JSON.stringify({ timestamp: iso, type: 'session_meta', payload: { id, timestamp: iso, cwd, cli_version: '0.155.1' } })
+  function rolloutIn(sessions: string, id: string, cwd: string) {
+    const dir = codexDayFolders(sessions, [Date.now()])[0]
+    nfs.mkdirSync(dir, { recursive: true })
+    const iso = new Date().toISOString()
+    nfs.writeFileSync(path.join(dir, `rollout-${iso.slice(0, 19).replace(/:/g, '-')}-${id}.jsonl`), metaOf(id, cwd, iso) + '\n', 'utf-8')
+  }
+  const UNCERTAIN = 'Another session started in the same folder at about the same time, so the app could not be sure which conversation was this one, and did not carry it over.'
+
+  it('two new tabs on one account in one folder, the later one\'s rollout first (the cross-claim shape): a Restart on that account resumes as before; a Switch carries nothing and starts a new conversation there, saying why', async () => {
+    const base = nfs.mkdtempSync(path.join(os.tmpdir(), PREFIX))
+    bases.push(base)
+    const sessA = path.join(base, 'A', 'sessions')
+    nfs.mkdirSync(sessA, { recursive: true })
+    const proj = path.join(base, 'proj')
+    nfs.mkdirSync(proj)
+    const convX = '019dd000-0036-7000-8000-0000000000aa'
+    const convY = '019dd000-0036-7000-8000-0000000000bb'
+    h.realWatch = true
+    onAccount('acct-a', sessA)
+    await spawnFor(sid, { ...codexRequest, cwd: proj, providerAccountId: 'acct-a' })
+    await sleep(90)
+    await spawnFor(sid2, { ...codexRequest, cwd: proj, providerAccountId: 'acct-a' })
+    const cwdSeen = String((h.telemetry.find((t) => t.sessionId === sid)!.opts as { cwd: string }).cwd)
+    rolloutIn(sessA, convY, cwdSeen)
+    await sleep(600)
+    rolloutIn(sessA, convX, cwdSeen)
+    await sleep(600)
+    const claimedByX = [...h.telemetry].reverse().find((t) => t.sessionId === sid)
+    expect(claimedByX).toBeTruthy()
+    // A Restart on the same account: P3.5's behaviour, the kept one resumed.
+    killFor(sid)
+    for (const p of h.ptys) exitPty(p, 0)
+    h.resumable = true
+    onAccount('acct-a', sessA)
+    await expect(spawnFor(sid, { ...codexRequest, cwd: proj, providerAccountId: 'acct-a' })).resolves.toBeUndefined()
+    const keptUuid = (h.built.at(-1)!.resume as { uuid: string }).uuid
+    expect([convX, convY]).toContain(keptUuid)
+    expect(h.carries).toEqual([])
+    // A Switch to another account: nothing carried, a new conversation there.
+    killFor(sid)
+    for (const p of h.ptys) exitPty(p, 0)
+    onAccount('acct-b')
+    await expect(spawnFor(sid, { ...codexRequest, cwd: proj, providerAccountId: 'acct-b' })).resolves.toEqual({ started: true, carry: { code: 'conversation-uncertain', message: UNCERTAIN, resumed: false } })
+    expect(h.carries).toEqual([])
+    expect(h.built.at(-1)!.resume).toBeUndefined()
+    // The other tab too.
+    killFor(sid2)
+    for (const p of h.ptys) exitPty(p, 0)
+    onAccount('acct-c')
+    await expect(spawnFor(sid2, { ...codexRequest, cwd: proj, providerAccountId: 'acct-c' })).resolves.toMatchObject({ started: true, carry: { code: 'conversation-uncertain', resumed: false } })
+    expect(h.carries).toEqual([])
+  })
+
+  it('kept across a relaunch: a restored tab on a conversation whose claim was not certain is still never carried', async () => {
+    const CID = '019dd000-0036-7000-8000-0000000000cc'
+    // What main read back from the saved session state at load.
+    rememberUncertainCodexConversations([CID, 'not-an-id', 42])
+    onAccount('acct-a')
+    h.resumable = true
+    await spawnFor(sid, { ...codexRequest, providerAccountId: 'acct-a', resume: { uuid: CID, cwd: os.tmpdir() } })
+    killFor(sid)
+    for (const p of h.ptys) exitPty(p, 0)
+    onAccount('acct-b')
+    await expect(spawnFor(sid, { ...codexRequest, providerAccountId: 'acct-b' })).resolves.toMatchObject({ started: true, carry: { code: 'conversation-uncertain', resumed: false } })
+    expect(h.carries).toEqual([])
   })
 })

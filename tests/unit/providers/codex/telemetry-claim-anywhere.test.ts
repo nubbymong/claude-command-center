@@ -63,12 +63,14 @@ function rollout(dir: string, id: string, cwd: string, iso: string, input?: numb
 function watch(sessions: string, cwd: string, opts?: Parameters<typeof watchAndClaimRollout>[6]) {
   const updates: StatuslineData[] = []
   const claims: Array<{ id: string; cwd: string }> = []
+  /** P3.6: whether each claim was certain, apart from what it claimed. */
+  const certainty: boolean[] = []
   const releases: number[] = []
   // The pick folder as the builder records it when made, unless a test gives one (fix round 3).
   const withFolder = opts && opts.pickFile && !('pickFolder' in opts) ? { ...opts, pickFolder: codexFolderIdentity(dirname(opts.pickFile)) ?? undefined } : opts
   const src = watchAndClaimRollout('sess-p35', cwd, Date.now(), (d) => updates.push(d), sessions, undefined,
-    withFolder ? { ...withFolder, onClaim: (c) => claims.push(c), onRelease: () => releases.push(claims.length) } : undefined)
-  return { updates, claims, releases, src }
+    withFolder ? { ...withFolder, onClaim: (c) => { claims.push({ id: c.id, cwd: c.cwd }); certainty.push(c.certain) }, onRelease: () => releases.push(claims.length) } : undefined)
+  return { updates, claims, certainty, releases, src }
 }
 
 describe('a new conversation is found in the day folder it lands in (row 38)', () => {
@@ -107,6 +109,8 @@ describe('a new conversation is found in the day folder it lands in (row 38)', (
     await vi.advanceTimersByTimeAsync(300)
     first.src.stop()
     expect(first.claims).toEqual([{ id: ID_A, cwd: '/p/demo' }])
+    // Alone in its folder and realm, with one rollout it could take: certain (P3.6).
+    expect(first.certainty).toEqual([true])
     rollout(dir, '--resume', '/p/other', new Date(Date.now() + 100).toISOString(), 6)
     const second = watch(sessions, '/p/other', {})
     await vi.advanceTimersByTimeAsync(300)
@@ -314,6 +318,62 @@ describe('the conversation the resume picker opened (rows 32, 38)', () => {
 // take each other's rollout when one of them resumes or goes through the picker.
 describe('two sessions in the same folder', () => {
   const today = (sessions: string) => { const n = new Date(); return folder(sessions, n.getUTCFullYear(), n.getUTCMonth() + 1, n.getUTCDate()) }
+
+  // P3.6 (ADR-009 round 1, B1; owner decision): P3.5's claim is unchanged
+  // (its recorded limit: two new sessions in one folder can take each
+  // other's rollout until P3.10's exact claim), but a claim that could have
+  // been the other session's says so, and a Switch account never carries it.
+  it('two new sessions in one folder, the later one\'s rollout first (the cross-claim shape): each claims as before, and neither claim is certain', async () => {
+    vi.useFakeTimers()
+    const sessions = realm()
+    const x = watch(sessions, '/p/demo', {})
+    await vi.advanceTimersByTimeAsync(100)
+    const y = watch(sessions, '/p/demo', {})
+    rollout(today(sessions), ID_B, '/p/demo', new Date(Date.now() + 50).toISOString(), 5)
+    await vi.advanceTimersByTimeAsync(600)
+    rollout(today(sessions), ID_A, '/p/demo', new Date(Date.now() + 50).toISOString(), 6)
+    await vi.advanceTimersByTimeAsync(600)
+    x.src.stop()
+    y.src.stop()
+    // P3.5's claim as it was: the first to look takes the first rollout.
+    expect(x.claims.map((c) => c.id)).toEqual([ID_B])
+    expect(y.claims.map((c) => c.id)).toEqual([ID_A])
+    expect(x.certainty).toEqual([false])
+    expect(y.certainty).toEqual([false])
+  })
+
+  it('a new session that sees two rollouts it could take: its claim is not certain', async () => {
+    vi.useFakeTimers()
+    const sessions = realm()
+    rollout(today(sessions), ID_A, '/p/demo', new Date(Date.now() + 50).toISOString(), 5)
+    rollout(today(sessions), ID_B, '/p/demo', new Date(Date.now() + 60).toISOString(), 6)
+    const only = watch(sessions, '/p/demo', {})
+    await vi.advanceTimersByTimeAsync(300)
+    only.src.stop()
+    expect(only.claims).toHaveLength(1)
+    expect(only.certainty).toEqual([false])
+  })
+
+  it('new sessions in other folders or other realms, or ones already closed or with their claim made, leave a claim certain', async () => {
+    vi.useFakeTimers()
+    const sessions = realm()
+    const elsewhere = watch(sessions, '/p/other', {})
+    const otherRealm = watch(realm(), '/p/demo', {})
+    const closed = watch(sessions, '/p/demo', {})
+    closed.src.stop()
+    const x = watch(sessions, '/p/demo', {})
+    rollout(today(sessions), ID_A, '/p/demo', new Date(Date.now() + 50).toISOString(), 5)
+    await vi.advanceTimersByTimeAsync(300)
+    expect(x.claims.map((c) => c.id)).toEqual([ID_A])
+    expect(x.certainty).toEqual([true])
+    // A resume by id is exact: certain.
+    const resumed = watch(sessions, '/p/demo', { resumeId: ID_A })
+    x.src.stop()
+    await vi.advanceTimersByTimeAsync(1_300)
+    expect(resumed.claims.map((c) => c.id)).toEqual([ID_A])
+    expect(resumed.certainty).toEqual([true])
+    for (const w of [elsewhere, otherRealm, resumed]) w.src.stop()
+  })
 
   it('a picker session that has not chosen yet never takes a new session\'s rollout; the new session does', async () => {
     vi.useFakeTimers()

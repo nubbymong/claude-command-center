@@ -144,7 +144,16 @@ const CARRY_FAILED_WORDS = "The conversation could not be copied into the other 
 
 /** A respawn's carry: the conversation it was for, and why it did not come
  *  along (`resumed` is settled by the spawn). */
-interface RespawnCarry { uuid: string; notice?: Omit<ConversationCarryNotice, 'resumed'> }
+interface RespawnCarry {
+  uuid: string
+  notice?: Omit<ConversationCarryNotice, 'resumed'>
+  /** The launch resumes no kept conversation: it starts a new one. */
+  fresh?: boolean
+}
+
+/** The words for a conversation whose claim was not certain (P3.6, owner
+ *  decision on ADR-009 round 1, B1). */
+const UNCERTAIN_WORDS = 'Another session started in the same folder at about the same time, so the app could not be sure which conversation was this one, and did not carry it over.'
 
 /**
  * P3.6 (row 22; ADR-009 thesis 3): a Codex session respawned on another
@@ -171,6 +180,13 @@ async function carryForRespawn(sessionId: string, accountId: string, service: Pi
   // nothing claims another conversation for it meanwhile.
   const kept = getKeptCodexConversationSource(sessionId)
   if (!kept || kept.accountId === accountId || !current()) return undefined
+  // Its claim could have been another session's (two new sessions in one
+  // folder, P3.5's recorded limit until P3.10's exact claim): never carried,
+  // and not resumed on the new account either, which starts a new one.
+  if (kept.uncertain) {
+    logWarn(`[pty] Session ${sessionId}: its conversation's claim was not certain, so it was not carried into the new account; a new one starts there`)
+    return { uuid: kept.uuid, fresh: true, notice: { code: 'conversation-uncertain', message: UNCERTAIN_WORDS } }
+  }
   const ended = await codexRunEnded(sessionId, CODEX_CARRY_EXIT_WAIT_MS)
   if (!current()) return undefined
   if (!ended) {
@@ -187,7 +203,7 @@ async function carryForRespawn(sessionId: string, accountId: string, service: Pi
   const late = new Promise<'late'>((resolve) => { timer = setTimeout(() => { expired = true; resolve('late') }, CODEX_CARRY_TIMEOUT_MS) })
   let r: Awaited<ReturnType<AccountsService['carryConversation']>> | null | 'late'
   try {
-    r = await Promise.race([service.carryConversation({ accountId }, kept, { current: live }).catch(() => null), late])
+    r = await Promise.race([service.carryConversation({ accountId }, { uuid: kept.uuid, cwd: kept.cwd, accountId: kept.accountId }, { current: live }).catch(() => null), late])
   } finally {
     if (timer) clearTimeout(timer)
   }
@@ -846,6 +862,7 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
         // that names its own (a restored tab) or opens the picker has none
         // to carry.
         if (!options?.resume && !options?.useResumePicker) carry = await carryForRespawn(sessionId, prepared.lease.accountId, service, () => !preparation || preparation.current)
+        if (carry?.fresh) resolvedOptions = { ...resolvedOptions, codexLaunch: { ...resolvedOptions!.codexLaunch!, freshConversation: true } }
       }
 
       // Closed, swept or superseded while it was prepared: start nothing, and

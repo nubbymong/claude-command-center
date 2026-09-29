@@ -228,6 +228,7 @@ export type AccountsFailureCode =
   | 'sign-in-changed'          // the realm now holds another sign-in: reconcile it first (design 5.5)
   | 'review-unavailable'       // this account cannot run reviews here, or the app could not tell: the message says which
   | 'internal'                 // unexpected; the app log has the detail
+  | 'conversation-uncertain'   // P3.6: the session's conversation could have been another session's, so a switch did not carry it
   | AuthOperationCode
   | RealmFolderCode
 
