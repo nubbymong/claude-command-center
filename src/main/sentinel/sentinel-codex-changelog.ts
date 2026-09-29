@@ -132,17 +132,27 @@ export async function fetchCodexReleaseNotes(
     for (let minor = upperMinor; minor >= lastMinor && !stop; minor--) {
       const start = minor === lastMinor ? lastStart : 0
       // In the installed version's minor the bound is known: below it (a
-      // prerelease installed stops below its own number too).
+      // prerelease installed stops below its own number too), and its
+      // patches are read newest first. An older minor's end is not known:
+      // it is read upward to its first missing patch and kept only whole,
+      // so a read cut short (round 2) keeps nothing older than what it
+      // missed and the notes read are always the newest ones.
       const knownEnd = minor === upperMinor ? upperPatch : null
-      for (let patch = start; patch < (knownEnd ?? start + MAX_PATCHES_PER_MINOR); patch++) {
+      const patches: number[] = []
+      if (knownEnd !== null) for (let p = knownEnd - 1; p >= start; p--) patches.push(p)
+      else for (let p = start; p < start + MAX_PATCHES_PER_MINOR; p++) patches.push(p)
+      const found: Array<{ version: string; body: string }> = []
+      let whole = true
+      for (const patch of patches) {
         const version = `${major}.${minor}.${patch}`
         const answer = await ask(`rust-v${version}`)
-        if (answer === null) { stop = true; break }
-        if (answer.status === 'failed') { incomplete = true; stop = true; break }
+        if (answer === null) { stop = true; whole = false; break }
+        if (answer.status === 'failed') { incomplete = true; stop = true; whole = false; break }
         if (answer.status === 'missing') { if (knownEnd === null) break; continue }
         const body = releaseBody(answer, `rust-v${version}`, false)
-        if (body !== null) entries.push({ version, body })
+        if (body !== null) found.push({ version, body })
       }
+      if (knownEnd !== null || whole) entries.push(...found)
     }
   }
   const { text, cutVersions } = assembleCodexNotes(entries)

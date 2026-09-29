@@ -144,6 +144,27 @@ describe('fetchCodexReleaseNotes: version by version, the installed one first', 
     expect(n.versions).not.toContain('0.101.0')
   })
 
+  it('round 2: the installed minor is read newest first, and an older minor cut short is not kept, so what is read is the newest', async () => {
+    // Twenty patches of the installed minor: the budget keeps the newest.
+    const many = Array.from({ length: 21 }, (_, p) => release(`rust-v0.155.${p}`, `N155${p}`))
+    const gh = fakeGitHub(many)
+    const n = (await fetchCodexReleaseNotes('0.155.0', '0.155.20', { fetchTag: gh.fetchTag }))!
+    expect(gh.asked.length).toBe(CODEX_NOTES_MAX_REQUESTS)
+    expect(n.versions[0]).toBe('0.155.20')
+    expect(n.versions).toContain('0.155.19')
+    expect(n.versions).not.toContain('0.155.1')
+    expect(gh.asked.slice(0, 3)).toEqual(['rust-v0.155.20', 'rust-v0.155.19', 'rust-v0.155.18'])
+    expect(n.cut).toMatch(/Not every Codex version's release notes/)
+    // An older minor the budget cut short is dropped whole: nothing kept is
+    // older than a version that was not read.
+    const two = [...Array.from({ length: 4 }, (_, p) => release(`rust-v0.155.${p}`, 'x')), ...Array.from({ length: 20 }, (_, p) => release(`rust-v0.154.${p}`, 'y'))]
+    const g2 = fakeGitHub(two)
+    const m = (await fetchCodexReleaseNotes('0.153.9', '0.155.3', { fetchTag: g2.fetchTag }))!
+    expect(m.versions).toEqual(['0.155.3', '0.155.2', '0.155.1', '0.155.0'])
+    expect(g2.asked).toContain('rust-v0.154.0')
+    expect(m.cut).toMatch(/Not every/)
+  })
+
   it('a request that fails (a limit, no network) ends the read with what it has, said', async () => {
     const gh = fakeGitHub(GH, { 'rust-v0.155.0': { status: 'failed' } })
     const n = (await fetchCodexReleaseNotes('0.153.4', '0.155.1', { fetchTag: gh.fetchTag }))!

@@ -70,3 +70,26 @@ describe('SentinelState for Codex (P3.9)', () => {
     expect(s.snapshot().lastAnalysisNote).toBeNull()
   })
 })
+
+// P3.9 round 2: an analysis finding is known by its version and its quote.
+// One kept before (under an older id, or worded differently) stands for a
+// later one with the same quote, so a dismissal stays; another quote, or
+// another version, is a finding of its own.
+describe('SentinelState: analysis findings by version and quote (round 2)', () => {
+  const QUOTE = '- Hooks now require matcher-wrapped arrays in settings.'
+  const cc = (id: string, evidence = QUOTE, title = 'Hooks schema changed') => ({ id, kind: 'compat' as const, severity: 'high' as const, title, evidence, status: 'open' as const, createdAt: 1 })
+  it('a finding dismissed under the older id keeps its dismissal when the same quote comes back under the new one', () => {
+    const s = new SentinelState(dir)
+    s.upsertFinding(cc('cc:2.1.0:0'))
+    s.setStatus('cc:2.1.0:0', 'dismissed')
+    s.upsertFinding(cc('cc:2.1.0:0123456789ab', '"' + QUOTE + '"', 'Worded otherwise'))
+    expect(s.snapshot().findings.map((f) => [f.id, f.status])).toEqual([['cc:2.1.0:0', 'dismissed']])
+    s.upsertFinding(cc('codex-update:0.155.1:0123456789ab'))
+    s.upsertFinding(cc('cc:2.1.1:0123456789ab'))
+    s.upsertFinding(cc('cc:2.1.0:ba9876543210', '- Another line of the changelog entirely.'))
+    expect(s.snapshot().findings.map((f) => f.id)).toEqual(['cc:2.1.0:0', 'codex-update:0.155.1:0123456789ab', 'cc:2.1.1:0123456789ab', 'cc:2.1.0:ba9876543210'])
+    // Only analysis findings are matched this way.
+    s.upsertFinding({ ...finding, id: 'obs:model:claude-x-2', evidence: QUOTE })
+    expect(s.snapshot().findings.some((f) => f.id === 'obs:model:claude-x-2')).toBe(true)
+  })
+})

@@ -3,6 +3,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { atomicWriteFileSync } from '../atomic-write'
+import { analysisFindingKey } from './sentinel-quote'
 import type { SentinelFinding, SentinelStateSnapshot, FindingStatus, SentinelProvider } from '../../shared/sentinel-types'
 
 export class SentinelState {
@@ -43,6 +44,11 @@ export class SentinelState {
   upsertFinding(f: SentinelFinding): void {
     const existing = this.state.findings.find((x) => x.id === f.id)
     if (existing) return                       // dedup; never resurrect dismissed/applied
+    // P3.9 round 2: an analysis finding of the same version with the same
+    // quote is the same finding, whatever its id (one kept under an older id,
+    // or one worded differently): it keeps that one's status.
+    const key = analysisFindingKey(f)
+    if (key !== null && this.state.findings.some((x) => analysisFindingKey(x) === key)) return
     this.state = { ...this.state, findings: [...this.state.findings, f] }
     this.persist()
   }

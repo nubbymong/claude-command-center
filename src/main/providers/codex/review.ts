@@ -99,6 +99,10 @@ export function parseCodexExecEvents(stdout: string): CodexExecOutcome {
   return reader.end()
 }
 
+/** How long an exec run waits for its output pipes to close after codex
+ *  has exited (P3.9 round 2): the last lines arrive well inside it. */
+export const CODEX_EXEC_EXIT_SETTLE_MS = 2_000
+
 export function createCodexReviewOperations(deps: { platform?: NodeJS.Platform; runDeps?: () => CodexRunDeps } = {}): ProviderReviewOperations {
   const platform = deps.platform ?? process.platform
   return {
@@ -124,7 +128,10 @@ export function createCodexReviewOperations(deps: { platform?: NodeJS.Platform; 
       }
       const r = await runCodexCli(
         { ...cmd, cwd: input.cwd },
-        { env, timeoutMs: input.timeoutMs, stdin: input.prompt, maxOutput: REVIEW_MAX_CAPTURE, onChunk, ...(input.signal ? { signal: input.signal } : {}) },
+        // P3.9 round 2: settle soon after codex exits, even while a process it
+        // started still holds the output pipes, and a stop takes everything
+        // below the root (an exec run starts no program of the user's).
+        { env, timeoutMs: input.timeoutMs, stdin: input.prompt, maxOutput: REVIEW_MAX_CAPTURE, onChunk, settleAfterExitMs: CODEX_EXEC_EXIT_SETTLE_MS, killScope: 'tree', ...(input.signal ? { signal: input.signal } : {}) },
         ...(deps.runDeps ? [deps.runDeps()] : []),
       )
       const out = reader.end()

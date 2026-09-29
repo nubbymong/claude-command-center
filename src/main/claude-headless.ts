@@ -1,6 +1,7 @@
 // claude-headless.ts — Reusable headless `claude` process spawner.
 // Used by insights-runner and the Sentinel AI analysis runner.
 import { spawn, execSync } from 'child_process'
+import * as path from 'path'
 import { logInfo, logError } from './debug-logger'
 import { withProfileHome } from './pty-manager'
 import { gateManagedLaunch, peekGateVerdict } from './managed-launch-diagnostics'
@@ -77,6 +78,32 @@ export function assertSafeArgv(args: string[]): void {
   }
 }
 
+/** P3.9 round 2: a run's own working folder and environment switches.
+ *  `cwd` must be absolute (default: this process's own folder, as before).
+ *  `env` adds only Claude Code's own switches (CLAUDE_CODE_*, plain values):
+ *  set after the account's environment, so they hold for this run. */
+export interface HeadlessSpawnOptions {
+  cwd?: string
+  env?: Readonly<Record<string, string>>
+}
+
+const HEADLESS_ENV_NAME = /^CLAUDE_CODE_[A-Z0-9_]+$/
+const HEADLESS_ENV_VALUE = /^[A-Za-z0-9._-]{0,64}$/
+
+/** Throws on options a headless run never takes (a programming error, as
+ *  assertSafeArgv's are): a relative folder, or a variable that is not one
+ *  of Claude Code's own switches with a plain value. */
+export function assertHeadlessOptions(opts: HeadlessSpawnOptions): void {
+  if (opts.cwd !== undefined && (typeof opts.cwd !== 'string' || !path.isAbsolute(opts.cwd))) {
+    throw new Error('[claude-headless] the working folder must be an absolute path')
+  }
+  for (const [k, v] of Object.entries(opts.env ?? {})) {
+    if (!HEADLESS_ENV_NAME.test(k) || typeof v !== 'string' || !HEADLESS_ENV_VALUE.test(v)) {
+      throw new Error(`[claude-headless] environment variable ${JSON.stringify(k)} is not one a headless run takes`)
+    }
+  }
+}
+
 /**
  * Spawn `claude` as a headless child process (shell:true so both claude.exe and
  * claude.cmd are found on PATH).  Returns stdout/stderr and the exit code.
@@ -89,15 +116,18 @@ export function assertSafeArgv(args: string[]): void {
  * @param timeoutMs   Kill and resolve with code 1 after this many ms (default 10 min)
  * @param stdinData   Optional data to pipe into stdin
  * @param home        Per-account fake HOME injected via withProfileHome; null = default
+ * @param opts        The run's own working folder and Claude Code switches (see HeadlessSpawnOptions)
  */
 export function spawnClaudeHeadless(
   args: string[],
   timeoutMs = 600000,
   stdinData?: string,
   home: string | null = null,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  opts: HeadlessSpawnOptions = {},
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   assertSafeArgv(args)
+  assertHeadlessOptions(opts)
   // #48/#49: a headless run under a profile home is a credential consumer like
   // any session, and this is the ONE place every such run passes through
   // (insights KPI extraction, the cross-account synthesis, Sentinel analysis).
@@ -125,13 +155,14 @@ export function spawnClaudeHeadless(
   // one after the reuse window) defers the spawn behind the gate -- the same
   // deferral shape as the refresh wait, for the same single-subprocess reason.
   const profileId = profileIdFromHome(home)
-  const cwd = process.cwd()
+  const cwd = opts.cwd ?? process.cwd()
+  const extraEnv = { ...(opts.env ?? {}) }
   const release = profileId ? acquireProfileConsumer(profileId, { maxAgeMs: timeoutMs + HEADLESS_CONSUMER_GRACE_MS }) : null
   const pending = profileId ? pendingProfileRefresh(profileId) : null
   const cachedGate = profileId ? peekGateVerdict(cwd) : null
   const p = pending || (profileId && cachedGate === undefined)
-    ? Promise.resolve(pending).then(() => cachedGate ?? gateManagedLaunch(cwd)).then((gate) => spawnNow(args, timeoutMs, stdinData, home, signal, cwd, gate))
-    : spawnNow(args, timeoutMs, stdinData, home, signal, cwd, cachedGate ?? null)
+    ? Promise.resolve(pending).then(() => cachedGate ?? gateManagedLaunch(cwd)).then((gate) => spawnNow(args, timeoutMs, stdinData, home, signal, cwd, gate, extraEnv))
+    : spawnNow(args, timeoutMs, stdinData, home, signal, cwd, cachedGate ?? null, extraEnv)
   if (release) p.then(release, release)
   return p
 }
@@ -144,6 +175,7 @@ function spawnNow(
   signal: AbortSignal | undefined,
   cwd: string,
   projectGate: ProjectGateResult | null,
+  extraEnv: Record<string, string> = {},
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   // The environment is composed OUTSIDE the promise executor. withProfileHome
   // THROWS to refuse a managed launch (the project gate found an authority key
@@ -160,7 +192,7 @@ function spawnNow(
     // `headless` is the launch id the Accounts panel shows beside a finding:
     // these runs have no PTY session to name, and a report with no launch on
     // it is a report nobody can place.
-    env = withProfileHome({ ...process.env } as Record<string, string>, home, { launchId: 'headless', cwd, probe: true, projectGate })
+    env = { ...withProfileHome({ ...process.env } as Record<string, string>, home, { launchId: 'headless', cwd, probe: true, projectGate }), ...extraEnv }
   } catch (e) {
     const message = (e as Error)?.message ?? String(e)
     logError(`[claude-headless] Not spawning: ${message}`)
@@ -173,6 +205,7 @@ function spawnNow(
       shell: true,
       windowsHide: true,
       env,
+      cwd,
     })
 
     // Pipe prompt via stdin if provided

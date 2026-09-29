@@ -9,6 +9,7 @@ import {
   CODEX_MIN_SUPPORTED_VERSION, CODEX_PINNED_CLI_VERSION, CODEX_MAX_TESTED_VERSION,
 } from '../../src/main/providers/codex'
 import { EventEmitter } from 'node:events'
+import { codexLeftoverPids, CODEX_EXEC_EXIT_SETTLE_MS } from '../../src/main/providers/codex'
 import { codexCommandLine, cliCommandLine, codexShellEnv, runCodexCli, discoverCodex, verifyCodexExecutable, codexCompatibilityAllowsUse, makeCodexKillTree, extractMarkedPath, CODEX_TREE_PRIME_MS, CODEX_PRIME_TABLE_TIMEOUT_MS, codexWrapperLinePids } from '../../src/main/providers/codex'
 import { codexChainPids, parseWindowsProcessTable, parsePosixProcessTable, parseLinuxStat, makeCodexProcessLister, CODEX_KILL_SETTLE_MS, CODEX_PROCESS_TABLE_TIMEOUT_MS, CODEX_TASKKILL_TIMEOUT_MS, CODEX_KILL_WORST_MS, flushPendingCodexKills, WINDOWS_PROCESS_QUERY } from '../../src/main/providers/codex'
 import type { CodexDiscoveryDeps, CodexRunResult, CodexRunDeps, CodexProcessEntry } from '../../src/main/providers/codex'
@@ -1514,12 +1515,205 @@ describe('the Codex reviewer: ADR-009 confirmation fixes (WP2 5a)', () => {
 // a prompt that carries all its material. Its own constant argv: no user
 // config or rules, no tool that runs, browses, connects or views, web search
 // off, no project instructions, and the working folder is the project root.
+// P3.9 round 2 (G1): the VM saw codex exit 0.2 s after a failed request
+// while a helper it had started (a suspended git) held the output pipes, and
+// the run waited out its whole deadline, then read as a timeout. An exec run
+// now settles soon after its root exits, ends what is provably left of it,
+// and a stop takes everything below a still-running root.
+describe('an exec run settles after its root exits (P3.9 round 2)', () => {
+  const cmd = { file: 'C:\\x\\codex.exe', args: ['exec'], verbatim: false, cwd: 'C:\\x' }
+
+  it('settles soon after the exit even while the pipes stay open, with the exit code, not as a stop; the leftovers are ended first', async () => {
+    vi.useFakeTimers()
+    try {
+      const { deps, spawned, killed } = fakeDeps()
+      const windows: Array<{ since: number; until: number }> = []
+      let leftoversFor: unknown = null
+      const killTree = Object.assign((c: unknown) => { killed.push(c as never) }, { leftovers: async (c: unknown, w: { since: number; until: number }) => { leftoversFor = c; windows.push(w) } })
+      let settled = false
+      const p = runCodexCli(cmd, { env: {}, timeoutMs: 600_000, settleAfterExitMs: 2000 }, { ...deps, killTree }).then((r) => { settled = true; return r })
+      const c = spawned[0].child
+      c.stdout.emit('data', '{"type":"turn.failed"}\n')
+      c.emit('exit', 1)
+      await vi.advanceTimersByTimeAsync(1999)
+      expect(settled).toBe(false)
+      await vi.advanceTimersByTimeAsync(10)
+      const r = await p
+      expect(r).toMatchObject({ exitCode: 1, timedOut: false, stdout: '{"type":"turn.failed"}\n' })
+      expect(r.stopped).toBeUndefined()
+      expect(leftoversFor).toBe(c)
+      expect(windows).toHaveLength(1)
+      expect(windows[0].since).toBeLessThanOrEqual(windows[0].until)
+      expect(killed).toEqual([])
+    } finally { vi.useRealTimers() }
+  })
+
+  it('a close inside the grace settles at once and ends nothing; without the option a run waits for close, as before', async () => {
+    vi.useFakeTimers()
+    try {
+      const { deps, spawned } = fakeDeps()
+      const leftovers = vi.fn(async () => {})
+      const killTree = Object.assign(() => {}, { leftovers })
+      const p = runCodexCli(cmd, { env: {}, timeoutMs: 600_000, settleAfterExitMs: 2000 }, { ...deps, killTree })
+      spawned[0].child.emit('exit', 0)
+      spawned[0].child.emit('close', 0)
+      expect(await p).toMatchObject({ exitCode: 0, timedOut: false })
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(leftovers).not.toHaveBeenCalled()
+      const q = runCodexCli(cmd, { env: {}, timeoutMs: 5000 }, { ...deps, killTree })
+      let done = false
+      void q.then(() => { done = true })
+      spawned[1].child.emit('exit', 0)
+      await vi.advanceTimersByTimeAsync(4000)
+      expect(done).toBe(false)
+      expect(leftovers).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1100)
+      expect(await q).toMatchObject({ exitCode: 0, stopped: 'deadline' })
+    } finally { vi.useRealTimers() }
+  })
+
+  it('a leftovers kill that never answers does not hold the run past its bound; an unusable grace starts nothing', async () => {
+    vi.useFakeTimers()
+    try {
+      const { deps, spawned } = fakeDeps()
+      const killTree = Object.assign(() => {}, { leftovers: () => new Promise<void>(() => {}) })
+      const p = runCodexCli(cmd, { env: {}, timeoutMs: 600_000, settleAfterExitMs: 10 }, { ...deps, killTree })
+      spawned[0].child.emit('exit', 0)
+      await vi.advanceTimersByTimeAsync(10 + CODEX_KILL_SETTLE_MS + 5)
+      expect(await p).toMatchObject({ exitCode: 0, timedOut: false })
+    } finally { vi.useRealTimers() }
+    const { deps, spawned } = fakeDeps()
+    for (const bad of [-1, Number.NaN, Infinity, 2 ** 31]) expect(await runCodexCli(cmd, { env: {}, timeoutMs: 1000, settleAfterExitMs: bad }, deps), String(bad)).toMatchObject({ spawnError: 'invalid settle' })
+    expect(spawned).toHaveLength(0)
+  })
+
+  it('a stop passes the scope asked for to the kill (default: the chain)', async () => {
+    const scopes: unknown[] = []
+    for (const killScope of ['tree', undefined] as const) {
+      const { deps, spawned } = fakeDeps()
+      const killTree = (c: EventEmitter, o?: { scope?: string }) => { scopes.push(o?.scope); queueMicrotask(() => c.emit('exit', null, 'SIGKILL')) }
+      const ac = new AbortController()
+      const p = runCodexCli(cmd, { env: {}, timeoutMs: 60_000, signal: ac.signal, ...(killScope ? { killScope } : {}) }, { ...deps, killTree: killTree as never })
+      void spawned
+      ac.abort()
+      await p
+    }
+    expect(scopes).toEqual(['tree', 'chain'])
+  })
+
+  it('the whole tree below a live root, any image, for a tree stop; the chain alone otherwise', () => {
+    const table: CodexProcessEntry[] = [
+      { pid: 10, ppid: 1, name: 'cmd.exe', created: 100 }, { pid: 11, ppid: 10, name: 'node.exe', created: 101 },
+      { pid: 12, ppid: 11, name: 'codex.exe', created: 102 }, { pid: 13, ppid: 12, name: 'git.exe', created: 103 },
+      { pid: 14, ppid: 13, name: 'conhost.exe', created: 104 }, { pid: 15, ppid: 12, name: 'old.exe', created: 50 },
+    ]
+    expect(codexChainPids(10, table).sort()).toEqual([10, 11, 12])
+    expect(codexChainPids(10, table, 'all').sort()).toEqual([10, 11, 12, 13, 14])
+  })
+
+  it("what is provably left of a run: the root's children and its chain's, started while it ran, never with its pid in use again", () => {
+    const FT = 11_644_473_600_000
+    const at = (unixMs: number) => unixMs + FT
+    const w = { since: 1_000_000, until: 1_005_000 }
+    // Direct route: the helper's parent is the root itself.
+    const direct: CodexProcessEntry[] = [
+      { pid: 900, ppid: 12, name: 'git.exe', created: at(1_000_200) },
+      { pid: 901, ppid: 900, name: 'conhost.exe', created: at(1_000_210) },
+      { pid: 902, ppid: 12, name: 'git.exe', created: at(900_000) },        // before the run: not its child
+      { pid: 903, ppid: 12, name: 'git.exe', created: at(1_007_000) },      // after its root exited
+      { pid: 904, ppid: 77, name: 'git.exe', created: at(1_000_300) },      // someone else's
+      { pid: 905, ppid: 12, name: 'git.exe' },                               // no start time: not provably
+    ]
+    expect(codexLeftoverPids(12, direct, null, w)).toEqual([900])
+    // The root's pid in use again: nothing at all.
+    expect(codexLeftoverPids(12, [...direct, { pid: 12, ppid: 3, name: 'x.exe', created: at(1_006_000) }], null, w)).toEqual([])
+    // Shim route: the chain the early read saw names codex, the helper's parent.
+    const primed: CodexProcessEntry[] = [
+      { pid: 10, ppid: 1, name: 'cmd.exe', created: at(1_000_000) }, { pid: 11, ppid: 10, name: 'node.exe', created: at(1_000_050) },
+      { pid: 12, ppid: 11, name: 'codex.exe', created: at(1_000_100) }, { pid: 13, ppid: 12, name: 'git.exe', created: at(1_000_200) },
+    ]
+    const now: CodexProcessEntry[] = [
+      { pid: 13, ppid: 12, name: 'git.exe', created: at(1_000_200) },     // still there, the same process
+      { pid: 20, ppid: 12, name: 'git.exe', created: at(1_004_000) },     // started later by codex
+      { pid: 11, ppid: 99, name: 'other.exe', created: at(1_006_500) },   // node's pid, reused after the run
+      { pid: 21, ppid: 11, name: 'child.exe', created: at(1_006_600) },   // the reuser's child
+    ]
+    expect(codexLeftoverPids(10, now, primed, w).sort()).toEqual([13, 20])
+    expect(codexLeftoverPids(10, now, null, w)).toEqual([])
+    expect(codexLeftoverPids(10, now, primed, { since: 5, until: 1 })).toEqual([])
+    expect(codexLeftoverPids(0, now, primed, w)).toEqual([])
+  })
+
+  it('a tree stop kills every process below the live root, any image; a chain stop only the chain', async () => {
+    const calls: Array<readonly string[]> = []
+    const spawn = ((_f: string, args: readonly string[]) => { calls.push(args); const k = new EventEmitter(); queueMicrotask(() => k.emit('exit', 0)); return k }) as never
+    const table: CodexProcessEntry[] = [{ pid: 7, ppid: 1, name: 'codex.exe', created: 100 }, { pid: 8, ppid: 7, name: 'git.exe', created: 101 }]
+    const child = () => Object.assign(new EventEmitter(), { pid: 7, exitCode: null, signalCode: null, kill: vi.fn() })
+    await makeCodexKillTree('win32', spawn, 'C:\\Windows', async () => table)(child() as never, { scope: 'tree' })
+    await makeCodexKillTree('win32', spawn, 'C:\\Windows', async () => table)(child() as never)
+    expect(calls).toEqual([['/F', '/PID', '8', '/PID', '7'], ['/F', '/PID', '7']])
+  })
+
+  it('the leftovers kill: a POSIX run is signalled as its group; Windows reads the table and ends the named pids with their trees; nothing while the root runs', async () => {
+    const groups: number[] = []
+    const exited = Object.assign(new EventEmitter(), { pid: 12, exitCode: 1, signalCode: null, kill: vi.fn() })
+    const running = Object.assign(new EventEmitter(), { pid: 12, exitCode: null, signalCode: null, kill: vi.fn() })
+    const posix = makeCodexKillTree('linux', (() => { throw new Error('no spawn') }) as never, undefined, null, null, (g) => { groups.push(g) })
+    await posix.leftovers!(running as never, { since: 0, until: 1 })
+    await posix.leftovers!(exited as never, { since: 0, until: 1 })
+    expect(groups).toEqual([12])
+    const FT = 11_644_473_600_000
+    const calls: Array<readonly string[]> = []
+    const spawn = ((_f: string, args: readonly string[]) => { calls.push(args); const k = new EventEmitter(); queueMicrotask(() => k.emit('exit', 0)); return k }) as never
+    const now = Date.now()
+    const win = makeCodexKillTree('win32', spawn, 'C:\\Windows', async () => [{ pid: 900, ppid: 12, name: 'git.exe', created: now - 500 + FT }], null)
+    await win.leftovers!(running as never, { since: now - 1000, until: now })
+    expect(calls).toEqual([])
+    await win.leftovers!(exited as never, { since: now - 1000, until: now })
+    expect(calls).toEqual([['/F', '/T', '/PID', '900']])
+    const none = makeCodexKillTree('win32', spawn, 'C:\\Windows', async () => [], null)
+    await none.leftovers!(exited as never, { since: now - 1000, until: now })
+    expect(calls).toHaveLength(1)
+  })
+
+  it('a stopped review or analysis takes the whole tree below codex', async () => {
+    const { deps, spawned } = fakeDeps()
+    const scopes: unknown[] = []
+    const killTree = (c: EventEmitter, o?: { scope?: string }) => { scopes.push(o?.scope); queueMicrotask(() => c.emit('exit', null, 'SIGKILL')) }
+    const ac = new AbortController()
+    const p = createCodexReviewOperations({ platform: 'win32', runDeps: () => ({ ...deps, killTree: killTree as never }) }).run({
+      executable: 'C:\\Tools\\codex.exe', cwd: 'D:\\p', prompt: 'x', timeoutMs: 60_000, env: { SystemRoot: 'C:\\Windows' }, purpose: 'analysis', signal: ac.signal,
+    })
+    expect(spawned).toHaveLength(1)
+    ac.abort()
+    expect(await p).toMatchObject({ ok: false, code: 'cancelled' })
+    expect(scopes).toEqual(['tree'])
+  })
+
+  it("the reviewer, codex failing at once while a helper holds the pipes: the real error, soon, not a timeout", async () => {
+    vi.useFakeTimers()
+    try {
+      const { deps, spawned } = fakeDeps()
+      const p = createCodexReviewOperations({ platform: 'win32', runDeps: () => deps }).run({
+        executable: 'C:\\Tools\\codex.exe', cwd: 'D:\\p', prompt: 'x', timeoutMs: 180_000, env: { SystemRoot: 'C:\\Windows' }, purpose: 'analysis',
+      })
+      const c = spawned[0].child
+      c.stdout.emit('data', JSON.stringify({ type: 'turn.failed', error: { message: 'unexpected status 400 Bad Request' } }) + '\n')
+      c.emit('exit', 1)
+      await vi.advanceTimersByTimeAsync(CODEX_EXEC_EXIT_SETTLE_MS + 10)
+      const r = await p
+      expect(r).toMatchObject({ ok: false, code: 'failed' })
+      expect(r.ok ? '' : r.message).toContain('unexpected status 400 Bad Request')
+    } finally { vi.useRealTimers() }
+  })
+})
+
 describe('the text-only analysis run (P3.9 round 1)', () => {
   const ANALYSIS = [
     'exec', '--json', '--ephemeral', '--skip-git-repo-check', '--ignore-user-config', '--ignore-rules', '--sandbox', 'read-only',
     '--disable', 'shell_tool', '--disable', 'unified_exec', '--disable', 'apps', '--disable', 'plugins', '--disable', 'browser_use',
     '--disable', 'computer_use', '--disable', 'image_generation', '--disable', 'view_image', '--disable', 'multi_agent', '--disable', 'hooks',
-    '-c', 'web_search=disabled', '-c', 'project_doc_max_bytes=0', '-c', 'project_root_markers=[]', '-m', 'gpt-5.5', '-',
+    '-c', 'web_search=disabled', '-c', 'project_doc_max_bytes=0', '-c', 'project_root_markers=[]', '-',
   ]
   const REVIEW = ['exec', '--json', '--ephemeral', '--skip-git-repo-check', '--sandbox', 'read-only', '-m', 'gpt-5.5', '-']
   const input = (over: Record<string, unknown> = {}) => ({
