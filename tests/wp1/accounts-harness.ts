@@ -5,7 +5,7 @@
 // through the legacy reconcile, exactly as at start. No file is written and
 // no process is started.
 import { createCodexPackage } from '../../src/main/providers/codex'
-import type { CodexRealmFsPort, CodexCommand, CodexRunOptions, CodexRunResult, CodexDiscoveryDeps, CodexFsEntry, CodexUsageFsPort, CodexLiveUsage, CodexRealmFolderLimits, CodexConversationCarry } from '../../src/main/providers/codex'
+import type { CodexRealmFsPort, CodexCommand, CodexRunOptions, CodexRunResult, CodexDiscoveryDeps, CodexFsEntry, CodexUsageFsPort, CodexLiveUsage, CodexRealmFolderLimits, CodexConversationCarry, CodexCatalogueDeps } from '../../src/main/providers/codex'
 import { createClaudePackage } from '../../src/main/providers/claude'
 import type { ClaudeReviewPorts } from '../../src/main/providers/claude'
 import { AccountRegistryStore, AccountsService, ConsumerLeaseRegistry, SecretHandleStore, registerProviderPackage, _resetProviderRegistryForTest } from '../../src/main/providers/core'
@@ -173,6 +173,9 @@ export interface HarnessOpts {
   /** The file work of a conversation copy (P3.6). Absent: a stub that
    *  refuses, so no test touches a real disk through it. */
   conversationCarry?: CodexConversationCarry
+  /** The model catalogue read's ports (P3.9). Absent: a stub whose run
+   *  fails, so no test starts a process or makes a folder through it. */
+  catalogueDeps?: () => Omit<CodexCatalogueDeps, 'proven'>
 }
 
 /** A usage filesystem with nothing in it. */
@@ -257,6 +260,12 @@ export async function harness(o: HarnessOpts = {}) {
     usageFs: o.usageFs ?? EMPTY_USAGE_FS,
     ...(o.liveUsage ? { liveUsage: o.liveUsage } : {}),
     conversationCarry: o.conversationCarry ?? (async () => ({ ok: false, code: 'io-failed' })),
+    catalogueDeps: o.catalogueDeps ?? (() => ({
+      executablePorts: { resolve: () => EXE, realpath: (p) => p, stat: () => state.exeStat, platform: 'win32' },
+      baseEnv: async () => ({ PATH: 'C:\\Tools', SystemRoot: 'C:\\Windows' }),
+      run: async () => ({ exitCode: null, stdout: '', stderr: '', timedOut: false, truncated: false, spawnError: 'no process in this harness' }),
+      scratchHome: () => ({ home: 'C:\\tmp\\models', dispose: () => {} }),
+    })),
     hostHome: { env: o.hostEnv ?? {}, homeDir: USER },
     discoveryDeps: async (): Promise<CodexDiscoveryDeps> => {
       discoveries++

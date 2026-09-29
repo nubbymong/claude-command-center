@@ -11,12 +11,14 @@ import { resolveCodexBinary, buildCodexSpawn } from './spawn'
 import { detectCodexUi } from './ui-detection'
 import { watchAndClaimRollout } from './telemetry'
 import { deployCodexResumePickerScript } from './resume-picker'
-import { CODEX_PINNED_CLI_VERSION, CODEX_MIN_SUPPORTED_VERSION } from './cli-contract'
+import { CODEX_PINNED_CLI_VERSION, CODEX_MIN_SUPPORTED_VERSION, CODEX_MAX_TESTED_VERSION } from './cli-contract'
 import { codexInstallRecipes } from './install-recipes'
 import { codexOperationBaseEnv } from './process-env'
 import { runCodexCli, defaultCodexRunDeps } from './cli-runner'
 import { discoverCodex } from './discovery'
 import type { CodexDiscovery, CodexDiscoveryDeps } from './discovery'
+import { readCodexModelCatalogue } from './model-catalogue'
+import type { CodexCatalogueDeps } from './model-catalogue'
 import { createCodexAuthOperations } from './auth-operations'
 import { createCodexReviewOperations } from './review'
 import type { CodexAuthDeps, CodexAuthOperations } from './auth-operations'
@@ -40,6 +42,11 @@ export {
 } from './cli-runner'
 export type { CodexCliOperation, CodexCommand, CodexRunResult, CodexRunOptions, CodexRunDeps, CodexProcessEntry, CodexKillTree, CodexStdinWriter } from './cli-runner'
 export { discoverCodex, verifyCodexExecutable, codexCompatibilityAllowsUse } from './discovery'
+// P3.9 (row 39): the installed CLI's own model list, for Sentinel.
+export {
+  readCodexModelCatalogue, parseCodexModelCatalogue, CODEX_CATALOGUE_TIMEOUT_MS, CODEX_CATALOGUE_MAX_CHARS, CODEX_CATALOGUE_MAX_MODELS, CODEX_CATALOGUE_LABEL_MAX,
+} from './model-catalogue'
+export type { CodexCatalogueDeps } from './model-catalogue'
 export { createCodexReviewOperations, createCodexExecEventReader, parseCodexExecEvents, REVIEW_MAX_TEXT } from './review'
 export type { CodexDiscovery, CodexDiscoveryDeps, CodexExecutableIdentity, CodexExecutableCheck, CodexFileStat } from './discovery'
 export { codexLoginShellPath, codexOperationBaseEnv, extractMarkedPath, absolutePathEntries } from './process-env'
@@ -257,6 +264,9 @@ export interface CodexPackageDeps {
   auth?: Pick<CodexAuthDeps, 'takeSecret'>
   /** The discovery ports; the real ones unless a test supplies its own. */
   discoveryDeps?: () => Promise<CodexDiscoveryDeps>
+  /** The model catalogue read's ports (P3.9), for a test. `proven` is not
+   *  replaceable: it is always this package's own last discovery. */
+  catalogueDeps?: () => Omit<CodexCatalogueDeps, 'proven'>
   /** Replaces real auth ports, for a test. `proven` is not replaceable: it is
    *  always this package's own last discovery. */
   authPorts?: Partial<Omit<CodexAuthDeps, 'proven' | 'lookupRealm' | 'takeSecret' | 'locks'>>
@@ -329,6 +339,13 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
     setup: {
       discover,
       installRecipes: codexInstallRecipes,
+      supportedVersions: Object.freeze({ minimum: CODEX_MIN_SUPPORTED_VERSION, maximumTested: CODEX_MAX_TESTED_VERSION }),
+      // P3.9 (row 39): the proven CLI's own model list, in a fresh empty
+      // home (model-catalogue.ts). Only the CLI this package last proved.
+      modelCatalogue: (opts) => {
+        const ports = (deps.catalogueDeps ?? realCatalogueDeps)()
+        return readCodexModelCatalogue({ executablePorts: ports.executablePorts, baseEnv: ports.baseEnv, run: ports.run, scratchHome: ports.scratchHome, proven: () => proven }, opts ?? {})
+      },
     },
     // A reviewer for another provider's sessions (plan: provider review
     // through MCP), run from a launch the accounts service prepared.
@@ -478,6 +495,24 @@ function realAuthDeps(injected: Pick<CodexAuthDeps, 'lookupRealm' | 'takeSecret'
       } catch (e) {
         return (e as NodeJS.ErrnoException)?.code !== 'ENOENT'
       }
+    },
+  }
+}
+
+/** The real ports behind the model catalogue read (P3.9): the session
+ *  resolver and the filesystem to re-verify the executable, the operation
+ *  environment, the runner, and a fresh empty home under the temp folder,
+ *  removed after the read -- never the user's own ~/.codex or an account's
+ *  folder. Built per call, so the environment is read fresh. */
+function realCatalogueDeps(): Omit<CodexCatalogueDeps, 'proven'> {
+  const platform = process.platform
+  return {
+    executablePorts: realExecutablePorts(platform),
+    baseEnv: () => codexOperationBaseEnv(process.env, platform),
+    run: (cmd, opts) => runCodexCli(cmd, opts, defaultCodexRunDeps(platform)),
+    scratchHome: () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-codex-models-'))
+      return { home, dispose: () => fs.rmSync(home, { recursive: true, force: true }) }
     },
   }
 }

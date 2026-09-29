@@ -28,6 +28,9 @@ import { BuildIdentityLine } from './BuildIdentityLine'
 import { shortSha } from '../../shared/build-identity'
 import { usesClaude, usesCodex } from '../onboarding/provider-choice'
 import { ProviderMark } from './sidebar/Badges'
+import { sentinelAnalysisProvider } from '../../shared/ask-conductor-provider'
+import { sentinelSettingsText } from './sentinel/sentinel-report-text'
+import { useProviderAccountsStore, sentinelCodexAccountChoices, accountDisplayName } from '../stores/providerAccountsStore'
 import { FOOTER_BARE_LABEL_PROVIDER, footerHiddenLabelsFor } from '../../shared/usage-labels'
 import type { ProviderId } from '../../shared/providers'
 declare const __BUILD_TIME__: string
@@ -123,6 +126,13 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
   const updateSettings = useSettingsStore((s) => s.updateSettings)
   const updateAppMeta = useAppMetaStore((s) => s.update)
   const sentinelAccountProfiles = useAccountProfilesStore((s) => s.profiles)
+  // P3.9: Sentinel watches the assistants in use, and its analysis runs on
+  // the one that is on (both on: the one Ask Conductor runs on); its account
+  // select lists that assistant's accounts.
+  const providerSnapshot = useProviderAccountsStore((s) => s.snapshot)
+  const sentinelScope = { claudeOn: usesClaude(settings), codexOn: usesCodex(settings) }
+  const sentinelRunsOn = sentinelAnalysisProvider(sentinelScope.claudeOn, sentinelScope.codexOn, settings)
+  const sentinelCodexAccounts = sentinelCodexAccountChoices(providerSnapshot)
   const [showWhatsNew, setShowWhatsNew] = useState(false)
   const [showTraining, setShowTraining] = useState(false)
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab ?? 'general')
@@ -337,7 +347,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   />
                   <span>
                     Enable Sentinel
-                    <span className="block text-[10px] text-[var(--text-muted)]">Detects Claude Code updates and proposes registry fixes. Off by default because it spends Claude tokens on a Claude update. Takes effect after restart.</span>
+                    <span className="block text-[10px] text-[var(--text-muted)]">{sentinelSettingsText(sentinelScope, sentinelRunsOn)}</span>
                   </span>
                 </label>
                 <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
@@ -350,6 +360,30 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   Auto-open findings panel
                   <span className="text-[10px] text-[var(--text-muted)]">(When an analysis completes with open findings)</span>
                 </label>
+                {sentinelRunsOn === 'codex' ? (
+                <Field label="Analysis account">
+                  <select
+                    // A stored id that is no longer offered shows the default,
+                    // as the Claude select does (main falls back the same way).
+                    value={sentinelCodexAccounts.some((a) => a.id === settings.sentinelCodexAccountId)
+                      ? settings.sentinelCodexAccountId ?? ''
+                      : ''}
+                    onChange={(e) => save({ sentinelCodexAccountId: e.target.value || null })}
+                    aria-label="Codex account for Sentinel's analysis"
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-64 focus-ring-strong focus:border-blue/50 transition-colors"
+                  >
+                    <option value="">Codex review account (default)</option>
+                    {sentinelCodexAccounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {accountDisplayName(providerSnapshot, a)}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="block text-[10px] text-[var(--text-muted)] mt-1">
+                    The Codex account Sentinel's background analysis runs under. Switch it if that account hits its usage limit. Applies to the next analysis or Re-run.
+                  </span>
+                </Field>
+                ) : (
                 <Field label="Analysis account">
                   <select
                     // A stored id whose profile was deleted would render the
@@ -372,6 +406,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                     The account Sentinel's background analysis runs under. Switch it if that account hits its usage limit. Applies to the next analysis or Re-run.
                   </span>
                 </Field>
+                )}
               </Section>
 
               <Section title="Session Watchdog" icon={<path d="M8 2v4M8 2a6 6 0 1 0 3.5 1.1M11 2l1.5 1.5" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />}>

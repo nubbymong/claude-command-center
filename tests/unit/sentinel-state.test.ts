@@ -41,3 +41,22 @@ describe('SentinelState', () => {
     expect(new SentinelState(dir).snapshot().findings).toEqual([])
   })
 })
+
+// P3.9: the Codex version the last check saw persists; whose update was being
+// analysed does not survive a restart (nothing is analysing at load).
+describe('SentinelState for Codex (P3.9)', () => {
+  it('persists and reloads lastSeenCodexVersion; a state file from before has none', () => {
+    const s = new SentinelState(dir)
+    expect(s.snapshot().lastSeenCodexVersion).toBeNull()
+    s.setLastSeenCodexVersion('0.155.1')
+    expect(new SentinelState(dir).snapshot()).toMatchObject({ lastSeenCodexVersion: '0.155.1', lastSeenCcVersion: null })
+  })
+  it('setAnalyzing names whose update runs, and clears it when it stops; a reload never starts analysing', () => {
+    const s = new SentinelState(dir)
+    s.setAnalyzing(true, null, 'codex')
+    expect(s.snapshot()).toMatchObject({ analyzing: true, analyzingProvider: 'codex' })
+    expect(new SentinelState(dir).snapshot()).toMatchObject({ analyzing: false, analyzingProvider: null })
+    s.setAnalyzing(false)
+    expect(s.snapshot()).toMatchObject({ analyzing: false, analyzingProvider: null })
+  })
+})

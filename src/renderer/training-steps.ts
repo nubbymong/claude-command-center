@@ -654,10 +654,10 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '1.5.37',
     section: 'admin',
     summary:
-      'An opt-in watcher that notices when Claude Code updates and checks whether the new version might affect the app. It surfaces findings in a labelled "Sentinel" chip and a panel, proposes registry fixes you apply yourself, and never changes anything automatically.',
+      'An opt-in watcher that notices when Claude Code or Codex updates and checks whether the new version might affect the app. It surfaces findings in a labelled "Sentinel" chip and a panel, proposes registry fixes you apply yourself, and never changes anything automatically.',
     highlights: [
-      'Runs on startup when Claude Code\'s version changes; **fail-open** so it never blocks the app',
-      'Checks the CC changelog against the app\'s compatibility assumptions',
+      'Runs on startup when the Claude Code or Codex version changes; **fail-open** so it never blocks the app',
+      'Checks the Claude Code changelog or the Codex release notes against the app\'s compatibility assumptions',
       'Proposes **model and effort registry** fixes you **Apply** (or Dismiss) -- never automatic',
       'A hot-reloadable registry means unknown or brand-new models still get a colour, label, and pricing',
       'Opt-in -- turn it on or off in **Settings → General → Sentinel**',
@@ -668,9 +668,9 @@ export const trainingSteps: TrainingStep[] = [
       { label: 'Apply a fix', value: 'Sentinel panel → Apply on a proposal' },
     ],
     proTip:
-      'When a finding offers an Apply button it is a safe registry change you can take in one click; everything else is a compatibility report so you know what to watch after a Claude Code update.',
+      'When a finding offers an Apply button it is a safe registry change you can take in one click; everything else is a compatibility report so you know what to watch after a Claude Code or Codex update.',
     bullets: [
-      'Opt-in watcher that flags when a **Claude Code update** might affect the app',
+      'Opt-in watcher that flags when a **Claude Code or Codex update** might affect the app',
       'Findings show in a labelled **Sentinel chip** and a panel',
       'Proposes **registry fixes you apply yourself** -- nothing changes automatically',
       'Toggle it in **Settings → Sentinel**',
