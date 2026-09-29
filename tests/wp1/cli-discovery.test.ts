@@ -9,7 +9,8 @@ import {
   CODEX_MIN_SUPPORTED_VERSION, CODEX_PINNED_CLI_VERSION, CODEX_MAX_TESTED_VERSION,
 } from '../../src/main/providers/codex'
 import { EventEmitter } from 'node:events'
-import { codexLeftoverPids, CODEX_EXEC_EXIT_SETTLE_MS } from '../../src/main/providers/codex'
+import { codexLeftoverPids, codexRecordRunMembers, CODEX_EXEC_EXIT_SETTLE_MS, CODEX_OBSERVE_AT_MS, CODEX_OBSERVE_MAX_READS, CODEX_OBSERVE_MAX_IN_FLIGHT } from '../../src/main/providers/codex'
+import type { CodexRunMember } from '../../src/main/providers/codex'
 import { codexCommandLine, cliCommandLine, codexShellEnv, runCodexCli, discoverCodex, verifyCodexExecutable, codexCompatibilityAllowsUse, makeCodexKillTree, extractMarkedPath, CODEX_TREE_PRIME_MS, CODEX_PRIME_TABLE_TIMEOUT_MS, codexWrapperLinePids } from '../../src/main/providers/codex'
 import { codexChainPids, parseWindowsProcessTable, parsePosixProcessTable, parseLinuxStat, makeCodexProcessLister, CODEX_KILL_SETTLE_MS, CODEX_PROCESS_TABLE_TIMEOUT_MS, CODEX_TASKKILL_TIMEOUT_MS, CODEX_KILL_WORST_MS, flushPendingCodexKills, WINDOWS_PROCESS_QUERY } from '../../src/main/providers/codex'
 import type { CodexDiscoveryDeps, CodexRunResult, CodexRunDeps, CodexProcessEntry } from '../../src/main/providers/codex'
@@ -340,6 +341,18 @@ describe('the kill reaches only the run\'s own chain (a browser a sign-in opened
       { pid: 20, ppid: 1, name: 'node' },
       { pid: 21, ppid: 20, name: '/Applications/My App.app/Contents/MacOS/codex' },
     ])
+  })
+
+  it('P3.9 round 3: the ps rows carry their start time (lstart, C locale) when ps prints it', () => {
+    const rows = parsePosixProcessTable('   20     1 Tue Sep 29 17:33:53 2026 node\n   21    20 Mon Sep  1 07:03:05 2026 /Applications/My App.app/Contents/MacOS/codex\n   22    20 Xyz Abc 99 99:99:99 2026 odd\n')
+    expect(rows.map((r) => [r.pid, r.ppid, r.name])).toEqual([[20, 1, 'node'], [21, 20, '/Applications/My App.app/Contents/MacOS/codex'], [22, 20, 'odd']])
+    expect(rows[0].created).toBe(Date.parse('Tue Sep 29 17:33:53 2026'))
+    expect(rows[1].created).toBe(Date.parse('Mon Sep  1 07:03:05 2026'))
+    expect(rows[2].created).toBeUndefined()
+    const calls: Array<readonly string[]> = []
+    const list = makeCodexProcessLister('darwin', undefined, { exists: (f) => f === '/bin/ps', execFile: (_f, args, _o, cb) => { calls.push(args); cb(null, '') } })
+    void list!()
+    expect(calls[0]).toEqual(['-ww', '-A', '-o', 'pid=', '-o', 'ppid=', '-o', 'lstart=', '-o', 'comm='])
   })
 
   const child = (pid = 10) => Object.assign(new EventEmitter(), { pid, exitCode: null as number | null, signalCode: null, kill: vi.fn() })
@@ -1611,69 +1624,198 @@ describe('an exec run settles after its root exits (P3.9 round 2)', () => {
     expect(codexChainPids(10, table, 'all').sort()).toEqual([10, 11, 12, 13, 14])
   })
 
-  it("what is provably left of a run: the root's children and its chain's, started while it ran, never with its pid in use again", () => {
-    const FT = 11_644_473_600_000
-    const at = (unixMs: number) => unixMs + FT
-    const w = { since: 1_000_000, until: 1_005_000 }
-    // Direct route: the helper's parent is the root itself.
-    const direct: CodexProcessEntry[] = [
-      { pid: 900, ppid: 12, name: 'git.exe', created: at(1_000_200) },
-      { pid: 901, ppid: 900, name: 'conhost.exe', created: at(1_000_210) },
-      { pid: 902, ppid: 12, name: 'git.exe', created: at(900_000) },        // before the run: not its child
-      { pid: 903, ppid: 12, name: 'git.exe', created: at(1_007_000) },      // after its root exited
-      { pid: 904, ppid: 77, name: 'git.exe', created: at(1_000_300) },      // someone else's
-      { pid: 905, ppid: 12, name: 'git.exe' },                               // no start time: not provably
-    ]
-    expect(codexLeftoverPids(12, direct, null, w)).toEqual([900])
-    // The root's pid in use again: nothing at all.
-    expect(codexLeftoverPids(12, [...direct, { pid: 12, ppid: 3, name: 'x.exe', created: at(1_006_000) }], null, w)).toEqual([])
-    // Shim route: the chain the early read saw names codex, the helper's parent.
-    const primed: CodexProcessEntry[] = [
-      { pid: 10, ppid: 1, name: 'cmd.exe', created: at(1_000_000) }, { pid: 11, ppid: 10, name: 'node.exe', created: at(1_000_050) },
-      { pid: 12, ppid: 11, name: 'codex.exe', created: at(1_000_100) }, { pid: 13, ppid: 12, name: 'git.exe', created: at(1_000_200) },
-    ]
+  // P3.9 round 3 (K1): a process is ended only when the records the reads
+  // taken while the run ran made prove it is the run's. The table of ADR-009
+  // pass 3's probe (r3-kill): a stranger has reused the pid of an exited
+  // chain member; neither it nor its child may be touched.
+  const FT = 11_644_473_600_000
+  const at = (unixMs: number) => unixMs + FT
+  const T0 = 1_790_000_000_000
+  const records = (table: CodexProcessEntry[], started: number, rootPid = 1000, since = T0) => {
+    const members = new Map<string, CodexRunMember>()
+    codexRecordRunMembers(rootPid, table, { started, since, filetime: true, recordedAt: started + 5_000 }, members)
+    return members
+  }
+  const primedK1: CodexProcessEntry[] = [
+    { pid: 1000, ppid: 500, name: 'cmd.exe', created: at(T0) },
+    { pid: 1004, ppid: 1000, name: 'node.exe', created: at(T0 + 100) },
+    { pid: 1008, ppid: 1004, name: 'codex.exe', created: at(T0 + 200) },
+    { pid: 1012, ppid: 1008, name: 'git.exe', created: at(T0 + 1500) },
+  ]
+
+  it('K1: a stranger that reused an exited member\'s pid, and its child, are never ended; a recorded helper still running is', () => {
+    const members = records(primedK1, T0 + 1_200)
+    expect([...members.values()].map((m) => m.pid).sort()).toEqual([1000, 1004, 1008, 1012])
     const now: CodexProcessEntry[] = [
-      { pid: 13, ppid: 12, name: 'git.exe', created: at(1_000_200) },     // still there, the same process
-      { pid: 20, ppid: 12, name: 'git.exe', created: at(1_004_000) },     // started later by codex
-      { pid: 11, ppid: 99, name: 'other.exe', created: at(1_006_500) },   // node's pid, reused after the run
-      { pid: 21, ppid: 11, name: 'child.exe', created: at(1_006_600) },   // the reuser's child
+      { pid: 1016, ppid: 1008, name: 'git.exe', created: at(T0 + 1_600) },     // codex's, but no read saw codex alive then
+      { pid: 1012, ppid: 7777, name: 'cmd.exe', created: at(T0 + 30_000) },   // another app's shell on git's old pid
+      { pid: 2020, ppid: 1012, name: 'node.exe', created: at(T0 + 31_000) },  // that shell's child
+      { pid: 7777, ppid: 4, name: 'Code.exe', created: at(T0 - 3_600_000) },
     ]
-    expect(codexLeftoverPids(10, now, primed, w).sort()).toEqual([13, 20])
-    expect(codexLeftoverPids(10, now, null, w)).toEqual([])
-    expect(codexLeftoverPids(10, now, primed, { since: 5, until: 1 })).toEqual([])
-    expect(codexLeftoverPids(0, now, primed, w)).toEqual([])
+    expect(codexLeftoverPids(1000, now, members, { since: T0, until: T0 + 60_000 })).toEqual([])
+    // The recorded helper, still running with the start time recorded, is the run's.
+    const still: CodexProcessEntry[] = [{ pid: 1012, ppid: 1008, name: 'git.exe', created: at(T0 + 1_500) }, { pid: 1013, ppid: 1012, name: 'conhost.exe', created: at(T0 + 1_510) }]
+    expect(codexLeftoverPids(1000, still, members, { since: T0, until: T0 + 60_000 })).toEqual([1013, 1012])
   })
 
-  it('a tree stop kills every process below the live root, any image; a chain stop only the chain', async () => {
-    const calls: Array<readonly string[]> = []
-    const spawn = ((_f: string, args: readonly string[]) => { calls.push(args); const k = new EventEmitter(); queueMicrotask(() => k.emit('exit', 0)); return k }) as never
-    const table: CodexProcessEntry[] = [{ pid: 7, ppid: 1, name: 'codex.exe', created: 100 }, { pid: 8, ppid: 7, name: 'git.exe', created: 101 }]
-    const child = () => Object.assign(new EventEmitter(), { pid: 7, exitCode: null, signalCode: null, kill: vi.fn() })
-    await makeCodexKillTree('win32', spawn, 'C:\\Windows', async () => table)(child() as never, { scope: 'tree' })
-    await makeCodexKillTree('win32', spawn, 'C:\\Windows', async () => table)(child() as never)
-    expect(calls).toEqual([['/F', '/PID', '8', '/PID', '7'], ['/F', '/PID', '7']])
+  it("K1: a child of a recorded member that has gone is the run's only if it started while a read saw that member running", () => {
+    // A busy machine: the read's table holds a process started at T0 + 1700,
+    // so every process in it was seen running at T0 + 1700 at least.
+    const members = records([...primedK1, { pid: 3000, ppid: 4, name: 'powershell.exe', created: at(T0 + 1_700) }], T0 + 1_200)
+    const now: CodexProcessEntry[] = [
+      { pid: 1016, ppid: 1008, name: 'git.exe', created: at(T0 + 1_600) },   // started while codex was seen running
+      { pid: 1020, ppid: 1008, name: 'git.exe', created: at(T0 + 1_800) },   // after: codex may have gone and its pid moved on
+    ]
+    expect(codexLeftoverPids(1000, now, members, { since: T0, until: T0 + 60_000 })).toEqual([1016])
+    // A recorded member running now with its recorded start time vouches for a child started after it.
+    const alive = [...now, { pid: 1008, ppid: 1004, name: 'codex.exe', created: at(T0 + 200) }]
+    expect(codexLeftoverPids(1000, alive, members, { since: T0, until: T0 + 60_000 }).sort()).toEqual([1008, 1016, 1020])
+    // ...but not one holding its pid with another start time.
+    const moved = [...now, { pid: 1008, ppid: 9, name: 'other.exe', created: at(T0 + 50_000) }]
+    expect(codexLeftoverPids(1000, moved, members, { since: T0, until: T0 + 60_000 })).toEqual([1016])
+    // Never a pid the records hold with another start time, whatever its parent says;
+    // never a child that says it started before its recorded parent did.
+    const odd: CodexProcessEntry[] = [
+      { pid: 1012, ppid: 1008, name: 'git.exe', created: at(T0 + 1_550) },
+      { pid: 1040, ppid: 1008, name: 'x.exe', created: at(T0 + 150) },
+    ]
+    expect(codexLeftoverPids(1000, odd, members, { since: T0, until: T0 + 60_000 })).toEqual([])
   })
 
-  it('the leftovers kill: a POSIX run is signalled as its group; Windows reads the table and ends the named pids with their trees; nothing while the root runs', async () => {
+  it("the root's own children: started inside its lifetime only, with no read at all; nothing when its pid is in use again", () => {
+    const w = { since: T0, until: T0 + 5_000 }
+    const now: CodexProcessEntry[] = [
+      { pid: 900, ppid: 1000, name: 'git.exe', created: at(T0 + 200) },
+      { pid: 901, ppid: 900, name: 'conhost.exe', created: at(T0 + 210) },
+      { pid: 902, ppid: 1000, name: 'git.exe', created: at(T0 - 1) },         // before the root started
+      { pid: 903, ppid: 1000, name: 'git.exe', created: at(T0 + 5_001) },     // after it exited
+      { pid: 905, ppid: 1000, name: 'git.exe' },                               // no start time
+      { pid: 906, ppid: 900, name: 'stale.exe', created: at(T0 + 100) },      // says it started before its parent
+    ]
+    expect(codexLeftoverPids(1000, now, new Map(), w)).toEqual([901, 900])
+    expect(codexLeftoverPids(1000, [...now, { pid: 1000, ppid: 3, name: 'x.exe', created: at(T0 + 6_000) }], new Map(), w)).toEqual([])
+    expect(codexLeftoverPids(1000, now, new Map(), { since: 5, until: 1 })).toEqual([])
+    expect(codexLeftoverPids(0, now, new Map(), w)).toEqual([])
+  })
+
+  it('the records: the root only when its row is its own; below it by start time; a pid another process holds now never', () => {
+    // A root row started after the read began is a later holder of its pid.
+    expect(records([{ pid: 1000, ppid: 1, name: 'x.exe', created: at(T0 + 5_000) }], T0 + 1_000).size).toBe(0)
+    expect(records([{ pid: 1000, ppid: 1, name: 'x.exe', created: at(T0 - 5_000) }], T0 + 1_000).size).toBe(0)
+    // A child that says it started before its parent is not provably its child.
+    const m = records([{ pid: 1000, ppid: 1, name: 'cmd.exe', created: at(T0) }, { pid: 5, ppid: 1000, name: 'old.exe', created: at(T0 - 10) }], T0 + 1_000)
+    expect([...m.values()].map((x) => x.pid)).toEqual([1000])
+    // A later read learns the orphan of a member it saw before, but not one under a pid now held by another.
+    const members = records(primedK1, T0 + 1_200)
+    codexRecordRunMembers(1000, [
+      { pid: 1030, ppid: 1008, name: 'git.exe', created: at(T0 + 1_400) },
+      { pid: 1004, ppid: 9, name: 'stranger.exe', created: at(T0 + 9_000) },
+      { pid: 1031, ppid: 1004, name: 'child.exe', created: at(T0 + 9_100) },
+    ], { started: T0 + 10_000, since: T0, filetime: true, recordedAt: T0 + 11_000 }, members)
+    const pids = [...members.values()].map((x) => x.pid)
+    expect(pids).toContain(1030)
+    expect(pids).not.toContain(1031)
+    expect([...members.values()].filter((x) => x.pid === 1004)).toHaveLength(1)
+    // The time a read saw its members running: its newest start time, but never one dated after the read was recorded.
+    const future = records([...primedK1, { pid: 3001, ppid: 4, name: 'skewed.exe', created: at(T0 + 999_999) }], T0 + 1_200)
+    expect([...future.values()].every((x) => x.lastSeen === T0 + 1_500)).toBe(true)
+  })
+
+  it('PG (POSIX): the group is signalled only while a member the reads saw still runs with its start time', async () => {
     const groups: number[] = []
-    const exited = Object.assign(new EventEmitter(), { pid: 12, exitCode: 1, signalCode: null, kill: vi.fn() })
-    const running = Object.assign(new EventEmitter(), { pid: 12, exitCode: null, signalCode: null, kill: vi.fn() })
-    const posix = makeCodexKillTree('linux', (() => { throw new Error('no spawn') }) as never, undefined, null, null, (g) => { groups.push(g) })
-    await posix.leftovers!(running as never, { since: 0, until: 1 })
-    await posix.leftovers!(exited as never, { since: 0, until: 1 })
+    const kid = (exitCode: number | null) => Object.assign(new EventEmitter(), { pid: 12, exitCode, signalCode: null, kill: vi.fn() })
+    const run = kid(null)
+    let table: CodexProcessEntry[] = [{ pid: 12, ppid: 1, name: 'node', created: 100 }, { pid: 13, ppid: 12, name: 'git', created: 101 }]
+    const posix = makeCodexKillTree('linux', (() => { throw new Error('no spawn') }) as never, undefined, async () => table, null, (g) => { groups.push(g) })
+    posix.observe!(run as never, Date.now())
+    await new Promise((r) => setTimeout(r, 0))
+    // Still running: the leftovers step does nothing.
+    await posix.leftovers!(run as never, { since: 0, until: 1 })
+    expect(groups).toEqual([])
+    run.exitCode = 1
+    table = [{ pid: 13, ppid: 1, name: 'git', created: 101 }]
+    await posix.leftovers!(run as never, { since: 0, until: 1 })
     expect(groups).toEqual([12])
-    const FT = 11_644_473_600_000
+    // A process holding the member's pid with another start time: no signal.
+    table = [{ pid: 13, ppid: 1, name: 'other', created: 999 }]
+    await posix.leftovers!(run as never, { since: 0, until: 1 })
+    expect(groups).toEqual([12])
+    // Never observed: no signal.
+    const other = kid(1)
+    await posix.leftovers!(other as never, { since: 0, until: 1 })
+    expect(groups).toEqual([12])
+  })
+
+  it('Windows: the reads taken while it ran name the leftovers; taskkill gets exactly those pids, no /T', async () => {
     const calls: Array<readonly string[]> = []
     const spawn = ((_f: string, args: readonly string[]) => { calls.push(args); const k = new EventEmitter(); queueMicrotask(() => k.emit('exit', 0)); return k }) as never
     const now = Date.now()
-    const win = makeCodexKillTree('win32', spawn, 'C:\\Windows', async () => [{ pid: 900, ppid: 12, name: 'git.exe', created: now - 500 + FT }], null)
-    await win.leftovers!(running as never, { since: now - 1000, until: now })
-    expect(calls).toEqual([])
-    await win.leftovers!(exited as never, { since: now - 1000, until: now })
-    expect(calls).toEqual([['/F', '/T', '/PID', '900']])
-    const none = makeCodexKillTree('win32', spawn, 'C:\\Windows', async () => [], null)
-    await none.leftovers!(exited as never, { since: now - 1000, until: now })
-    expect(calls).toHaveLength(1)
+    let table: CodexProcessEntry[] = [
+      { pid: 12, ppid: 1, name: 'cmd.exe', created: at(now - 50) }, { pid: 13, ppid: 12, name: 'node.exe', created: at(now - 40) },
+      { pid: 14, ppid: 13, name: 'codex.exe', created: at(now - 30) }, { pid: 15, ppid: 14, name: 'git.exe', created: at(now - 20) },
+    ]
+    const run = Object.assign(new EventEmitter(), { pid: 12, exitCode: null as number | null, signalCode: null, kill: vi.fn() })
+    // The read taken while it ran answers only after the run has exited: the
+    // leftovers step waits for it rather than judge without it.
+    let answer!: () => void
+    const late = new Promise<void>((r) => { answer = r })
+    let first = true
+    const win = makeCodexKillTree('win32', spawn, 'C:\\Windows', async () => {
+      if (first) { first = false; const seen = table; await late; return seen }
+      return table
+    }, null)
+    win.observe!(run as never, now - 100)
+    await new Promise((r) => setTimeout(r, 0))
+    run.exitCode = 1
+    table = [{ pid: 15, ppid: 14, name: 'git.exe', created: at(now - 20) }, { pid: 77, ppid: 14, name: 'late.exe', created: at(now + 60_000) }]
+    const done = win.leftovers!(run as never, { since: now - 100, until: now })
+    await new Promise((r) => setTimeout(r, 0))
+    answer()
+    await done
+    expect(calls).toEqual([['/F', '/PID', '15']])
+  })
+
+  it('K2: an exec run is observed at its start, at its first output and on a bounded schedule; a run that is not an exec run never', async () => {
+    vi.useFakeTimers()
+    try {
+      const { deps, spawned } = fakeDeps()
+      const seen: number[] = []
+      const killTree = Object.assign(() => {}, { observe: () => { seen.push(Date.now()) }, leftovers: async () => {} })
+      const cmd = { file: 'C:\\x\\codex.exe', args: ['exec'], verbatim: false, cwd: 'C:\\x' }
+      const p = runCodexCli(cmd, { env: {}, timeoutMs: 600_000, settleAfterExitMs: 2000 }, { ...deps, killTree })
+      expect(seen).toHaveLength(1)
+      spawned[0].child.stdout.emit('data', 'x')
+      spawned[0].child.stdout.emit('data', 'y')
+      expect(seen).toHaveLength(2)
+      await vi.advanceTimersByTimeAsync(CODEX_OBSERVE_AT_MS[CODEX_OBSERVE_AT_MS.length - 1] + 1)
+      expect(seen).toHaveLength(2 + CODEX_OBSERVE_AT_MS.length)
+      expect(2 + CODEX_OBSERVE_AT_MS.length).toBeLessThanOrEqual(CODEX_OBSERVE_MAX_READS)
+      spawned[0].child.emit('exit', 0)
+      spawned[0].child.emit('close', 0)
+      await p
+      const q = runCodexCli(cmd, { env: {}, timeoutMs: 600_000 }, { ...deps, killTree })
+      spawned[1].child.stdout.emit('data', 'x')
+      await vi.advanceTimersByTimeAsync(40_000)
+      expect(seen).toHaveLength(2 + CODEX_OBSERVE_AT_MS.length)
+      spawned[1].child.emit('exit', 0)
+      spawned[1].child.emit('close', 0)
+      await q
+    } finally { vi.useRealTimers() }
+  })
+
+  it('K2: the reads are bounded per run and at once', async () => {
+    let reads = 0
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    const run = Object.assign(new EventEmitter(), { pid: 12, exitCode: null as number | null, signalCode: null, kill: vi.fn() })
+    const win = makeCodexKillTree('win32', (() => { throw new Error('no') }) as never, 'C:\\Windows', async () => { reads++; await gate; return [] }, null)
+    for (let i = 0; i < 20; i++) win.observe!(run as never, Date.now())
+    await new Promise((r) => setTimeout(r, 0))
+    expect(reads).toBe(CODEX_OBSERVE_MAX_IN_FLIGHT)
+    release()
+    await new Promise((r) => setTimeout(r, 0))
+    for (let i = 0; i < 20; i++) { win.observe!(run as never, Date.now()); await new Promise((r) => setTimeout(r, 0)) }
+    expect(reads).toBe(CODEX_OBSERVE_MAX_READS)
   })
 
   it('a stopped review or analysis takes the whole tree below codex', async () => {
@@ -1713,6 +1855,7 @@ describe('the text-only analysis run (P3.9 round 1)', () => {
     'exec', '--json', '--ephemeral', '--skip-git-repo-check', '--ignore-user-config', '--ignore-rules', '--sandbox', 'read-only',
     '--disable', 'shell_tool', '--disable', 'unified_exec', '--disable', 'apps', '--disable', 'plugins', '--disable', 'browser_use',
     '--disable', 'computer_use', '--disable', 'image_generation', '--disable', 'view_image', '--disable', 'multi_agent', '--disable', 'hooks',
+    '--disable', 'code_mode', '--disable', 'code_mode_host',
     '-c', 'web_search=disabled', '-c', 'project_doc_max_bytes=0', '-c', 'project_root_markers=[]', '-',
   ]
   const REVIEW = ['exec', '--json', '--ephemeral', '--skip-git-repo-check', '--sandbox', 'read-only', '-m', 'gpt-5.5', '-']

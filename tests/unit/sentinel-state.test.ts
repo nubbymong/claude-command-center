@@ -93,3 +93,20 @@ describe('SentinelState: analysis findings by version and quote (round 2)', () =
     expect(s.snapshot().findings.some((f) => f.id === 'obs:model:claude-x-2')).toBe(true)
   })
 })
+
+// P3.9 round 3 (R3D1): a finding dismissed before its quote was stored
+// redacted keeps its dismissal when the same passage comes back redacted.
+describe('SentinelState: a dismissal made before quotes were redacted (round 3)', () => {
+  it('the new, redacted finding of the same passage stays out', async () => {
+    const { parseAnalysisOutput } = await import('../../src/main/sentinel/sentinel-analysis')
+    const line = '- Fixed a bug where the token sk-ant-api03-FAKEFAKEFAKEFAKEFAKEFAKE0000 refresh failed on Windows'
+    const s = new SentinelState(dir)
+    s.upsertFinding({ id: 'cc:2.1.0:0', kind: 'compat', severity: 'high', title: 'old', evidence: line, status: 'open', createdAt: 1 })
+    s.setStatus('cc:2.1.0:0', 'dismissed')
+    const fresh = parseAnalysisOutput(JSON.stringify({ breakingChanges: [{ title: 'Token refresh', evidence: line, surface: 4, whatBreaks: 'Accounts break.' }] }), '2.0.0', '2.1.0', 'claude', '## 2.1.0\n' + line)!
+    expect(fresh).toHaveLength(1)
+    expect(fresh[0].evidence).not.toContain('FAKEFAKE')
+    s.upsertFinding(fresh[0])
+    expect(s.snapshot().findings.map((f) => [f.id, f.status])).toEqual([['cc:2.1.0:0', 'dismissed']])
+  })
+})
