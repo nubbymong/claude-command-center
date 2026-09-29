@@ -45,6 +45,12 @@ function realms(body = meta(ID, 'C:\\p\\demo') + turn(1) + turn(2)) {
 const leftovers = (dir: string) => (existsSync(dir) ? readdirSync(dir).filter((n) => n.startsWith('.ccc-carry-')) : [])
 /** A carry's temporary files, where it makes them (the sessions folder) and where the copy lands. */
 const leftoversOf = (r: { to: string; dest: string }) => [...leftovers(join(r.to, 'sessions')), ...leftovers(dirname(r.dest))]
+/** Removes the link at `p` (a junction on Windows; a symlink on POSIX, where
+ *  rmdir refuses one with ENOTDIR), never what it leads to, and nothing else. */
+const dropLink = (p: string) => {
+  if (!lstatSync(p).isSymbolicLink()) throw new Error('not a link: ' + p)
+  try { unlinkSync(p) } catch { rmdirSync(p) }
+}
 
 describe('carryCodexRollout', () => {
   it('copies the rollout byte for byte to the same place in the other account\'s folder, which resumes it by id', async () => {
@@ -379,7 +385,7 @@ describe('carryCodexRollout when something is swapped after its checks', () => {
     const realNative = realpathSync.native
     vi.spyOn(realpathSync, 'native').mockImplementation(((p: string, o?: unknown) => {
       if (armed && same(p, r.dest) && ++calls === 2) {
-        rmdirSync(day)
+        dropLink(day)
         symlinkSync(Y, day, 'junction')
       }
       return (realNative as (p: string, o?: unknown) => string)(p, o)
@@ -624,7 +630,7 @@ describe('carryCodexRollout when something is swapped after its checks', () => {
     vi.spyOn(realpathSync, 'native').mockImplementation(((p: string, o?: unknown) => {
       if (armed && same(p, r.dest)) {
         armed = false
-        rmdirSync(day)
+        dropLink(day)
         symlinkSync(Y, day, 'junction')
       }
       return (realNative as (p: string, o?: unknown) => string)(p, o)
@@ -658,7 +664,7 @@ describe('carryCodexRollout when something is swapped after its checks', () => {
     const realNative = realpathSync.native
     vi.spyOn(realpathSync, 'native').mockImplementation(((p: string, o?: unknown) => {
       if (staged && inDay(p) && ++seen === 2) {
-        rmdirSync(day)
+        dropLink(day)
         symlinkSync(Y, day, 'junction')
       }
       return (realNative as (p: string, o?: unknown) => string)(p, o)
@@ -688,16 +694,18 @@ describe('carryCodexRollout when something is swapped after its checks', () => {
     let state: 'idle' | 'swapped' | 'done' = 'idle'
     const realNative = realpathSync.native
     vi.spyOn(realpathSync, 'native').mockImplementation(((p: string, o?: unknown) => {
-      if (state === 'swapped' && same(p, r.dest)) { rmdirSync(day); renameSync(aside, day); state = 'done' }
+      if (state === 'swapped' && same(p, r.dest)) { dropLink(day); renameSync(aside, day); state = 'done' }
       const v = (realNative as (p: string, o?: unknown) => string)(p, o)
       if (state === 'idle' && same(p, r.file) && ++srcCalls === 2) { renameSync(day, aside); symlinkSync(X, day, 'junction'); state = 'swapped' }
       return v
     }) as never)
     const out = await carryCodexRollout({ fromSessionsDir: join(r.from, 'sessions'), toHome: r.to, id: ID })
-    expect(state).toBe('done')
+    // What it proves first: refused, and neither copy written.
     expect(out).toEqual({ ok: false, code: 'changed' })
     expect(readFileSync(victim, 'utf8')).toBe(older)
     expect(readFileSync(r.dest, 'utf8')).toBe(older)
+    // And that it was staged: swapped around the checks, and toggled back.
+    expect(state).toBe('done')
   })
 
   // Lens A (T2): the temporary file is checked to be in the realm's own

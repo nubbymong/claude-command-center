@@ -31,7 +31,7 @@ vi.mock('fs', async (importOriginal) => {
 })
 
 const fsMod = await import('fs')
-const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, readdirSync, renameSync, rmdirSync, existsSync, linkSync, realpathSync, promises: fsp } = fsMod
+const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, readdirSync, renameSync, rmdirSync, existsSync, linkSync, realpathSync, lstatSync, unlinkSync, promises: fsp } = fsMod
 const { join, dirname, basename } = await import('path')
 const { tmpdir } = await import('os')
 const { carryCodexRollout } = await import('../../../../src/main/providers/codex/conversation-carry')
@@ -60,6 +60,12 @@ afterEach(() => {
 const line = (o: object) => JSON.stringify(o) + '\n'
 const meta = line({ timestamp: '2026-09-20T10:00:00.000Z', type: 'session_meta', payload: { id: ID, cwd: '/p' } })
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
+/** Removes the link at `p` (a junction on Windows; a symlink on POSIX, where
+ *  rmdir refuses one with ENOTDIR), never what it leads to, and nothing else. */
+const dropLink = (p: string) => {
+  if (!lstatSync(p).isSymbolicLink()) throw new Error('not a link: ' + p)
+  try { unlinkSync(p) } catch { rmdirSync(p) }
+}
 
 /** A source realm holding the conversation, and a destination home. */
 function realms(body = meta + line({ n: 1 }) + line({ n: 2 })) {
@@ -120,7 +126,7 @@ describe('carryCodexRollout renames over an earlier copy only inside the realm',
     const day = dirname(r.dest)
     const aside = join(outside, 'realm-day')
     const toJunction = () => { renameSync(day, aside); symlinkSync(X, day, 'junction') }
-    const toReal = () => { rmdirSync(day); renameSync(aside, day) }
+    const toReal = () => { dropLink(day); renameSync(aside, day) }
     let stage: 'idle' | 'linked' | 'checked' = 'idle'
     const realLink = fsp.link.bind(fsp)
     const realRename = fsp.rename.bind(fsp)
