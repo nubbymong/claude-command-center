@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { z } from 'zod'
-import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemoteDetailed, probeTmuxLive, holdsCodexLaunchLease, codexLaunchLeaseTaken, beginSpawnPreparation, isSessionWritable, SSHOptions, SshEndTarget, getKeptCodexConversation, getKeptCodexConversationSource, codexRunEnded } from '../pty-manager'
+import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemoteDetailed, probeTmuxLive, holdsCodexLaunchLease, codexLaunchLeaseTaken, beginSpawnPreparation, isSessionWritable, SSHOptions, SshEndTarget, getKeptCodexConversation, getKeptCodexConversationSource, codexRunEnded, codexConversationHeldElsewhere } from '../pty-manager'
 import type { CodexLaunch } from '../pty-manager'
 import { getAccountsService } from '../provider-accounts'
 import { providerLaunchRefusal } from '../provider-launch-gate'
@@ -132,6 +132,16 @@ let codexLaunchSeq = 0
  *  lost. */
 export const CODEX_CARRY_EXIT_WAIT_MS = 5_000
 
+/** P3.6 (ADR-009 round 1, A6): how long a respawn waits for the copy itself.
+ *  A copy of the largest rollout takes well under a second on a local disk;
+ *  a volume that stops answering must not hold the session's start. Past it
+ *  the respawn goes on without the conversation (the failed-carry words),
+ *  and the copy stops at its next step, leaving nothing behind. */
+export const CODEX_CARRY_TIMEOUT_MS = 60_000
+
+/** The failed-carry words (realm-folders' own for an io-failed copy). */
+const CARRY_FAILED_WORDS = "The conversation could not be copied into the other Codex account's folder, so it was not carried over."
+
 /** A respawn's carry: the conversation it was for, and why it did not come
  *  along (`resumed` is settled by the spawn). */
 interface RespawnCarry { uuid: string; notice?: Omit<ConversationCarryNotice, 'resumed'> }
@@ -149,7 +159,12 @@ interface RespawnCarry { uuid: string; notice?: Omit<ConversationCarryNotice, 'r
  * conversation known, or already on that account), and when this spawn is
  * no longer the session's (`current`: closed, swept or superseded, before
  * or during the wait): it starts nothing, and never holds the realms against
- * the spawn that replaced it, which carries for itself.
+ * the spawn that replaced it, which carries for itself. The copy is told the
+ * same (it stops at its next step, even once it holds the realms), and it is
+ * given CODEX_CARRY_TIMEOUT_MS. A conversation another open session is on
+ * is never carried (ADR-009 round 1, B1): copying it would fork it, and
+ * bringing a copy of it up to date would put this session's turns into the
+ * rollout the other is writing.
  */
 async function carryForRespawn(sessionId: string, accountId: string, service: Pick<AccountsService, 'carryConversation'>, current: () => boolean): Promise<RespawnCarry | undefined> {
   // Final once the old run was killed: killPty stops its status line, so
@@ -162,8 +177,24 @@ async function carryForRespawn(sessionId: string, accountId: string, service: Pi
     logWarn(`[pty] Session ${sessionId}: its previous Codex run had not ended, so its conversation was not carried into the new account`)
     return { uuid: kept.uuid, notice: { code: 'busy', message: "The session's previous run had not ended yet, so its conversation was not carried over." } }
   }
-  let r: Awaited<ReturnType<AccountsService['carryConversation']>> | null
-  try { r = await service.carryConversation({ accountId }, kept) } catch { r = null }
+  if (codexConversationHeldElsewhere(sessionId, kept.uuid)) {
+    logWarn(`[pty] Session ${sessionId}: another open session is on its conversation, so it was not carried into the new account`)
+    return { uuid: kept.uuid, notice: { code: 'in-use', message: 'Another open session is on this conversation, so it was not carried over.' } }
+  }
+  let expired = false
+  const live = (): boolean => !expired && current()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<'late'>((resolve) => { timer = setTimeout(() => { expired = true; resolve('late') }, CODEX_CARRY_TIMEOUT_MS) })
+  let r: Awaited<ReturnType<AccountsService['carryConversation']>> | null | 'late'
+  try {
+    r = await Promise.race([service.carryConversation({ accountId }, kept, { current: live }).catch(() => null), late])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+  if (r === 'late') {
+    logWarn(`[pty] Session ${sessionId}: its conversation took too long to copy into the new account, so it was not carried`)
+    return { uuid: kept.uuid, notice: { code: 'io-failed', message: CARRY_FAILED_WORDS } }
+  }
   if (r && r.ok) {
     logInfo(`[pty] Session ${sessionId}: its conversation was carried into the new account (${r.carried})`)
     return { uuid: kept.uuid }

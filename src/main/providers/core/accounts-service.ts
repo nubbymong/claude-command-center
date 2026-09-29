@@ -3114,11 +3114,15 @@ export class AccountsService {
    * lock for the whole copy (no sign-out, archive, inactivation or
    * switch-off meanwhile), and the leases are released on every path.
    * `none`: nothing to carry (the session is on no known conversation, or
-   * already on that account).
+   * already on that account). `opts.current`: whether the respawn still
+   * wants the copy (it is superseded, closed or out of time when not),
+   * passed to the folder work (copyConversation), which asks it once the
+   * realm locks are held and before each step (`cancelled`).
    */
   async carryConversation(
     input: { accountId: string },
     conversation: { uuid: string; cwd: string; accountId: string } | undefined,
+    opts?: { current?: () => boolean },
   ): Promise<AccountsResult<{ carried: 'copied' | 'present' | 'extended' | 'none' }>> {
     const targetId = input && typeof input === 'object' ? (input as { accountId?: unknown }).accountId : undefined
     if (typeof targetId !== 'string' || !targetId) return failure('invalid-request')
@@ -3154,7 +3158,8 @@ export class AccountsService {
       const b = resolveLaunchBinding(doc, { providerId: p.id, providerAccountId: t.id })
       if (!b.ok) return failure(b.code === 'realm-unavailable' ? 'realm-unavailable' : b.code === 'not-active' || b.code === 'blocked' ? 'lifecycle' : b.code === 'provider-mismatch' ? 'invalid-request' : b.code, b.message)
       if (this.unrecordedSignIns.has(t.id)) return failure('sign-in-changed', 'This account signed in again, but the app could not record it. Check it in Accounts before using it.')
-      const copied = await folders.copyConversation({ authRealmId: s.authRealmId }, { authRealmId: b.binding.authRealmId }, { id: conversation.uuid, cwd: conversation.cwd })
+      const current = opts?.current
+      const copied = await folders.copyConversation({ authRealmId: s.authRealmId }, { authRealmId: b.binding.authRealmId }, { id: conversation.uuid, cwd: conversation.cwd }, typeof current === 'function' ? { current } : undefined)
         .catch((): { ok: false; code: 'io-failed'; message?: string; carried?: undefined } => ({ ok: false, code: 'io-failed' }))
       if (!copied || copied.ok !== true) {
         const code = (copied?.code ?? 'io-failed') as AccountsFailureCode

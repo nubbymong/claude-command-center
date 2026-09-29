@@ -167,8 +167,8 @@ vi.mock('../../src/main/provider-accounts', () => ({
   }),
 }))
 
-const { spawnPty, killPty, killAllPty, holdsCodexLaunchLease, countUnleasedAgentSessions, beginSpawnPreparation, CODEX_LEASE_EXIT_GRACE_MS } = await import('../../src/main/pty-manager')
-const { registerPtyHandlers, CODEX_CARRY_EXIT_WAIT_MS } = await import('../../src/main/ipc/pty-handlers')
+const { spawnPty, killPty, killAllPty, holdsCodexLaunchLease, countUnleasedAgentSessions, beginSpawnPreparation, CODEX_LEASE_EXIT_GRACE_MS, codexRunEnded } = await import('../../src/main/pty-manager')
+const { registerPtyHandlers, CODEX_CARRY_EXIT_WAIT_MS, CODEX_CARRY_TIMEOUT_MS } = await import('../../src/main/ipc/pty-handlers')
 type Launch = NonNullable<NonNullable<Parameters<typeof spawnPty>[2]>['codexLaunch']>
 
 const SID = 'lh0000000000000000000001'
@@ -502,6 +502,7 @@ describe('a respawn on another account carries this session\'s conversation (P3.
   const spawnFor = (id: string, opts: Record<string, unknown>) => h.handlers.get('pty:spawn')!({}, id, opts)
   const spawnIn = (opts: Record<string, unknown>) => spawnFor(sid, opts)
   const killIn = () => h.listeners.get('pty:kill')!({}, sid)
+  const killPtyFor = (id: string) => h.listeners.get('pty:kill')!({}, id)
   const claim = (of: string, id: string, cwd = '/p/demo') => {
     const t = [...h.telemetry].reverse().find((x) => x.sessionId === of)!
     ;(t.opts.onClaim as (c: { id: string; cwd: string }) => void)({ id, cwd })
@@ -524,7 +525,7 @@ describe('a respawn on another account carries this session\'s conversation (P3.
     expect(h.ptys).toHaveLength(1)
     exitPty(h.ptys[0], 0)
     await expect(req).resolves.toBeUndefined()
-    expect(h.carries).toEqual([[{ accountId: 'acct-b' }, { uuid: CID, cwd: '/p/demo', accountId: 'acct-a' }]])
+    expect(h.carries.map((c) => c.slice(0, 2))).toEqual([[{ accountId: 'acct-b' }, { uuid: CID, cwd: '/p/demo', accountId: 'acct-a' }]])
     expect(h.ptys).toHaveLength(2)
     expect(h.built.at(-1)).toMatchObject({ resume: { uuid: CID } })
     // The destination is the account this launch was prepared on: the
@@ -533,7 +534,7 @@ describe('a respawn on another account carries this session\'s conversation (P3.
     exitPty(h.ptys[1], 0)
     onAccount('acct-default')
     await expect(spawnIn({ ...codexRequest })).resolves.toBeUndefined()
-    expect(h.carries[1]).toEqual([{ accountId: 'acct-default' }, expect.objectContaining({ uuid: CID, accountId: 'acct-b' })])
+    expect(h.carries[1].slice(0, 2)).toEqual([{ accountId: 'acct-default' }, expect.objectContaining({ uuid: CID, accountId: 'acct-b' })])
   })
 
   it('ADR-009 thesis 3: the respawn of one session carries that session\'s conversation, never another tab\'s, and never one the request names', async () => {
@@ -703,5 +704,127 @@ describe('a respawn on another account carries this session\'s conversation (P3.
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  // ADR-009 round 1 (quality R3): the wait says what happened: true when the
+  // killed run reported its end, false when its grace passed first with no
+  // end reported; once that grace is over the run counts as over, as its
+  // account lease does.
+  it('a wait on a killed run is answered truthfully: false when its grace passes with no end reported, true once it is over', async () => {
+    onAccount('acct-a')
+    await spawnIn(request('acct-a'))
+    vi.useFakeTimers()
+    try {
+      killIn()
+      const waited = codexRunEnded(sid, CODEX_LEASE_EXIT_GRACE_MS * 2)
+      await vi.advanceTimersByTimeAsync(CODEX_LEASE_EXIT_GRACE_MS + 1)
+      await expect(waited).resolves.toBe(false)
+      await expect(codexRunEnded(sid, 0)).resolves.toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+    // A run that reports its end: true.
+    onAccount('acct-a')
+    await spawnIn(request('acct-a'))
+    killIn()
+    const ended = codexRunEnded(sid, 5_000)
+    exitPty(h.ptys.at(-1)!, 0)
+    await expect(ended).resolves.toBe(true)
+  })
+
+  // ADR-009 round 1, B1 (b): a conversation another open session is on is
+  // never carried, so it is neither forked nor added to under that session.
+  it('two open sessions on one conversation: a switch of one carries nothing, and says another open session is on it', async () => {
+    onAccount('acct-a')
+    await spawnIn(request('acct-a'))
+    claim(sid, CID)
+    await spawnFor(sid2, request('acct-a'))
+    claim(sid2, CID)
+    killIn()
+    exitPty(h.ptys[0], 0)
+    onAccount('acct-b')
+    await expect(spawnIn(request('acct-b'))).resolves.toEqual({ started: true, carry: { code: 'in-use', message: 'Another open session is on this conversation, so it was not carried over.', resumed: false } })
+    expect(h.carries).toEqual([])
+    // Once the other session has closed, the conversation is this one's to carry.
+    killPtyFor(sid2)
+    exitPty(h.ptys[1], 0)
+    killIn()
+    exitPty(h.ptys.at(-1)!, 0)
+    claim(sid, CID)
+    onAccount('acct-c')
+    h.resumable = true
+    await expect(spawnIn(request('acct-c'))).resolves.toBeUndefined()
+    expect(h.carries).toHaveLength(1)
+  })
+
+  // ADR-009 round 1, B2: a copy already under way is told once its respawn
+  // is no longer the session's, so it stops and the newer respawn carries.
+  it('a respawn superseded while its copy runs: the copy is told it is no longer wanted', async () => {
+    onAccount('acct-a')
+    await spawnIn(request('acct-a'))
+    claim(sid, CID)
+    killIn()
+    exitPty(h.ptys[0], 0)
+    let release!: () => void
+    const blocked = new Promise<void>((r) => { release = r })
+    let firstCurrent: (() => boolean) | undefined
+    h.carry = async (...a: unknown[]) => {
+      if (!firstCurrent) { firstCurrent = (a[2] as { current: () => boolean }).current; await blocked; return { ok: false, code: 'cancelled', message: 'Stopped on request; nothing was changed.' } }
+      return { ok: true, carried: 'copied' }
+    }
+    onAccount('acct-b')
+    const first = spawnIn(request('acct-b'))
+    for (let i = 0; i < 20 && !firstCurrent; i++) await flush()
+    expect(firstCurrent!()).toBe(true)
+    onAccount('acct-c')
+    const second = spawnIn(request('acct-c'))
+    for (let i = 0; i < 5; i++) await flush()
+    expect(firstCurrent!()).toBe(false)
+    release()
+    await expect(first).resolves.toEqual({ started: false })
+    await second
+    expect(h.carries.map((c) => (c[0] as { accountId: string }).accountId)).toEqual(['acct-b', 'acct-c'])
+  })
+
+  // ADR-009 round 1, B3 (decided: Claude parity): any respawn onto another
+  // account carries the conversation, a plain Restart of a tab that names no
+  // account after the default account changed included, as every Claude
+  // profile's respawn resumes the same conversation from the one shared
+  // projects folder.
+  it('a plain Restart of a tab that names no account, after the default account changed, carries the conversation into the new default (Claude parity)', async () => {
+    onAccount('acct-work')
+    await spawnIn({ ...codexRequest })
+    claim(sid, CID)
+    killIn()
+    exitPty(h.ptys[0], 0)
+    onAccount('acct-personal')
+    h.resumable = true
+    await expect(spawnIn({ ...codexRequest })).resolves.toBeUndefined()
+    expect(h.carries.map((c) => c.slice(0, 2))).toEqual([[{ accountId: 'acct-personal' }, expect.objectContaining({ uuid: CID, accountId: 'acct-work' })]])
+  })
+
+  // ADR-009 round 1, A6: the copy has a time bound inside the respawn.
+  it('a copy that does not finish in time: the respawn goes on without the conversation in the failed-carry words, and the copy is told to stop', async () => {
+    onAccount('acct-a')
+    await spawnIn(request('acct-a'))
+    claim(sid, CID)
+    killIn()
+    exitPty(h.ptys[0], 0)
+    let told: (() => boolean) | undefined
+    h.carry = (...a: unknown[]) => { told = (a[2] as { current: () => boolean }).current; return new Promise(() => {}) }
+    onAccount('acct-b')
+    vi.useFakeTimers()
+    try {
+      const req = spawnIn(request('acct-b'))
+      await vi.advanceTimersByTimeAsync(CODEX_CARRY_TIMEOUT_MS - 100)
+      expect(told!()).toBe(true)
+      await vi.advanceTimersByTimeAsync(200)
+      await expect(req).resolves.toEqual({ started: true, carry: { code: 'io-failed', message: "The conversation could not be copied into the other Codex account's folder, so it was not carried over.", resumed: false } })
+      expect(told!()).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(CODEX_CARRY_TIMEOUT_MS).toBeGreaterThanOrEqual(10_000)
+    expect(CODEX_CARRY_TIMEOUT_MS).toBeLessThanOrEqual(5 * 60_000)
   })
 })

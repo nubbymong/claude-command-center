@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "a499f01686768226ee90c8c404c560b1821a9181ea3f702baa6f58ff5c77829e",
-  "manifestHead": "bb99d2da8e118eba3c155844818502db120accd3",
+  "manifestPathDigest": "c7ccb7bd6de688927c0f99dbaed7b95e5c675af200a242a42626d46b7963cd73",
+  "manifestHead": "cf8f42d4932a2b44e183bb56ed98ee24449e3561",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -4419,6 +4419,17 @@
       "note": ""
     },
     {
+      "path": "tests/unit/providers/codex/conversation-carry-folders.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.6 (row 22) ADR-009 round 1 test (tests/unit/providers/codex/conversation-carry-folders.test.ts): a folder the carry made through a folder swapped for a junction is taken back, one it did not make never is, and the rename over an earlier copy replaces no file outside the realm (WP1.28, WP1.68)",
+      "note": "real folders under the system temp folder; only the module mkdirSync and lstatSync are watched; no Codex process"
+    },
+    {
       "path": "tests/unit/providers/codex/conversation-carry.test.ts",
       "predicates": [
         "P01",
@@ -4426,7 +4437,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "new WP2 PR 3 P3.6 (row 22) test (tests/unit/providers/codex/conversation-carry.test.ts): the carried copy lands at the same place and resumes by id there; whole lines; never over anything, never through a link; bounded; only the source realm's own conversation (WP1.28, WP1.68)",
+      "evidence": "new WP2 PR 3 P3.6 (row 22) test (tests/unit/providers/codex/conversation-carry.test.ts): the carried copy lands at the same place and resumes by id there; whole lines; a new copy never over anything, never through a link; bounded; only the source realm's own conversation (WP1.28, WP1.68)",
       "note": "real folders under the system temp folder; no Codex process"
     },
     {

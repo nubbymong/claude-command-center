@@ -23,26 +23,31 @@
  *   - the copy lands at the same place in the destination's sessions folder
  *     (the same date folders, the same name), each folder on the way made
  *     owner-only when absent and required to be a real folder at its own
- *     canonical path;
+ *     canonical path (one made here that turns out not to be, a folder above
+ *     it swapped for a link meanwhile, is taken back while empty);
  *   - it is written to a new temporary file in the destination's sessions
- *     folder (exclusive create, owner-only), flushed, checked, then given its
- *     final name with a hard link, which never replaces anything: the file
+ *     folder (exclusive create, owner-only), checked to be there before
+ *     anything is written to it, flushed, checked, then given its final name:
+ *     a new name with a hard link, which never replaces anything; the file
  *     appears whole or not at all, and one that landed anywhere but the
- *     realm's own folder (a folder on the way swapped for a link after the
- *     checks) is taken back;
+ *     realm's own folder is taken back;
  *   - a file already at the final name: the same bytes mean the
  *     conversation is already there (`present`); an earlier copy of it that
  *     is exactly the start of this one (the session was on that account
  *     before: A -> B -> A), and still that size, is brought up to date
- *     (`extended`): in place, through a handle checked to be that file in
- *     the realm's own folder, when that is its only name; else the whole
- *     copy is renamed over this one name, so another name of that file (the
- *     account's kept earlier folder, after a staged sign in again) keeps
- *     what it had and nothing is written through it. Anything else went its
- *     own way there and is left as it is;
+ *     (`extended`) by renaming the whole copy over that one name, from a
+ *     second name made inside the same day folder and checked there, so the
+ *     rename replaces only that name in the realm's own folder; nothing is
+ *     ever written through the earlier copy, and another name of it (the
+ *     account's kept earlier folder, after a staged sign in again) keeps what
+ *     it had. Anything else went its own way there and is left as it is;
+ *   - nothing is removed except the files and folders made here, each only
+ *     while the file or folder at its real path is still the one made;
  *   - the temporary file is removed on every path, and one a carry that
  *     stopped part way left behind is removed by the next carry into that
- *     realm once it is stale (by its own name and age: see sweepStaleTemps).
+ *     realm once it is stale (by its own name and age: see sweepStaleTemps);
+ *   - `shouldStop` (the respawn it is for is no longer current, or ran out of
+ *     time) stops it before the next step: nothing is left behind.
  * A volume that reports no file ids cannot show that a file is the one
  * checked, so every identity compare fails closed there and nothing is
  * carried to one.
@@ -70,6 +75,11 @@ const CHUNK = 1024 * 1024
 /** Entries of a sessions folder the sweep looks at (it holds year folders). */
 const SWEEP_MAX_ENTRIES = 10_000
 
+/** A rename a virus scanner or an indexer holds up (Windows: EPERM, EBUSY,
+ *  EACCES while it has the file open) is tried again, briefly. */
+const RENAME_TRIES = 5
+const RENAME_RETRY_MS = 40
+
 const OWNER_ONLY_DIR = 0o700
 const OWNER_ONLY_FILE = 0o600
 
@@ -77,7 +87,7 @@ const OWNER_ONLY_FILE = 0o600
 const TEMP_PREFIX = '.ccc-carry-'
 const TEMP_NAME_RE = /^\.ccc-carry-[0-9a-f]{24}\.tmp$/
 
-export type CodexCarryCode = 'not-found' | 'exists-different' | 'too-large' | 'unsafe-path' | 'changed' | 'io-failed'
+export type CodexCarryCode = 'not-found' | 'exists-different' | 'too-large' | 'unsafe-path' | 'changed' | 'io-failed' | 'cancelled'
 export type CodexCarryResult =
   | { ok: true; carried: 'copied' | 'present' | 'extended'; bytes: number }
   | { ok: false; code: CodexCarryCode }
@@ -93,6 +103,9 @@ export interface CodexCarryInput {
   /** The directory the session kept, which picks among copies (P3.5). */
   preferCwd?: string
   maxBytes?: number
+  /** Asked before each step: true stops the carry there (`cancelled`), with
+   *  nothing left behind. A throw counts as true. */
+  shouldStop?: () => boolean
 }
 
 export type CodexConversationCarry = (input: CodexCarryInput) => Promise<CodexCarryResult>
@@ -110,17 +123,72 @@ function realCanonicalFolder(dir: string): boolean {
   return isRealFolder(dir) && canonical(dir)
 }
 
+type Identity = { dev: bigint; ino: bigint }
+/** A file id the volume reported. One that reports 0 gives nothing to
+ *  compare: identity is unknown there, and never taken as a match. */
+const idKnown = (a: Identity) => a.ino !== 0n
+const sameFile = (a: Identity, b: Identity) => idKnown(a) && idKnown(b) && a.dev === b.dev && a.ino === b.ino
+
+function identityOf(p: string): Identity | null {
+  try { const st = fs.lstatSync(p, { bigint: true }); return { dev: st.dev, ino: st.ino } } catch { return null }
+}
+
+/** The file at `p` is `st`, a plain file, at its own canonical path. */
+function stillAt(p: string, st: Identity): boolean {
+  try {
+    const now = fs.lstatSync(p, { bigint: true })
+    return now.isFile() && !now.isSymbolicLink() && sameFile(now, st) && canonical(p)
+  } catch {
+    return false
+  }
+}
+
+/** The size of the plain file at `p`, or -1. */
+function sizeAt(p: string): number {
+  try { const st = fs.lstatSync(p); return st.isFile() && !st.isSymbolicLink() ? st.size : -1 } catch { return -1 }
+}
+
+/**
+ * Remove `p`, a file made here, but only while the file at the path it really
+ * is now is that file: the path is resolved first and the identity looked at
+ * there, so a link re-pointed meanwhile never turns the removal onto another
+ * file (then it is left, and the carry says it did not happen). Where the
+ * volume reports no file ids, `byName` allows a plain file at the resolved
+ * path (a random name this module made exclusively).
+ */
+async function removeIfStill(p: string, st: Identity, byName = false): Promise<void> {
+  let real: string
+  try { real = fs.realpathSync.native(p) } catch { return }
+  try {
+    const now = fs.lstatSync(real, { bigint: true })
+    if (!now.isFile() || now.isSymbolicLink()) return
+    if (idKnown(st) ? !sameFile(now, st) : !byName) return
+    await fs.promises.unlink(real)
+  } catch { /* gone meanwhile */ }
+}
+
 /** `dir`, made owner-only when absent (never through a link), and a real
  *  folder at its own canonical path either way. Its parent is checked by the
- *  caller first. */
+ *  caller first. One made here that is not where it was meant to be (a
+ *  folder above it swapped for a link meanwhile) is taken back: only that
+ *  folder, at its real path, and only while it is empty. */
 function ensureFolder(dir: string): boolean {
+  let made: Identity | null = null
   try {
     fs.lstatSync(dir)
   } catch (e) {
     if (errCode(e) !== 'ENOENT') return false
-    try { fs.mkdirSync(dir, { mode: OWNER_ONLY_DIR }) } catch (e2) { if (errCode(e2) !== 'EEXIST') return false }
+    try { fs.mkdirSync(dir, { mode: OWNER_ONLY_DIR }); made = identityOf(dir) } catch (e2) { if (errCode(e2) !== 'EEXIST') return false }
   }
-  return realCanonicalFolder(dir)
+  if (realCanonicalFolder(dir)) return true
+  if (made && idKnown(made)) {
+    try {
+      const real = fs.realpathSync.native(dir)
+      const now = fs.lstatSync(real, { bigint: true })
+      if (now.isDirectory() && sameFile(now, made)) fs.rmdirSync(real)
+    } catch { /* not empty, or gone: left */ }
+  }
+  return false
 }
 
 /** The rollout's place below its sessions folder, when it is exactly
@@ -135,22 +203,6 @@ function rolloutPlace(sessionsDir: string, file: string, id: string): string[] |
   const lower = name.toLowerCase()
   if (name.length > 200 || !/^[A-Za-z0-9._-]+$/.test(name) || !lower.startsWith('rollout-') || !lower.endsWith(`-${id.toLowerCase()}.jsonl`)) return null
   return parts
-}
-
-type Identity = { dev: bigint; ino: bigint }
-/** A file id the volume reported. One that reports 0 gives nothing to
- *  compare: identity is unknown there, and never taken as a match. */
-const idKnown = (a: Identity) => a.ino !== 0n
-const sameFile = (a: Identity, b: Identity) => idKnown(a) && idKnown(b) && a.dev === b.dev && a.ino === b.ino
-
-/** The file at `p` is `st`, a plain file, at its own canonical path. */
-function stillAt(p: string, st: Identity): boolean {
-  try {
-    const now = fs.lstatSync(p, { bigint: true })
-    return now.isFile() && !now.isSymbolicLink() && sameFile(now, st) && canonical(p)
-  } catch {
-    return false
-  }
 }
 
 /**
@@ -189,22 +241,18 @@ async function sameBytes(a: fs.promises.FileHandle, b: fs.promises.FileHandle, l
   return true
 }
 
-/** Bytes [from, to) of `src` written to `dst` at the same offsets. */
-async function copyRange(src: fs.promises.FileHandle, dst: fs.promises.FileHandle, from: number, to: number): Promise<boolean> {
-  const buf = Buffer.alloc(Math.min(CHUNK, Math.max(1, to - from)))
-  let at = from
-  while (at < to) {
-    const { bytesRead } = await src.read(buf, 0, Math.min(buf.length, to - at), at)
-    if (bytesRead <= 0) return false
-    let written = 0
-    while (written < bytesRead) {
-      const w = await dst.write(buf, written, bytesRead - written, at + written)
-      if (w.bytesWritten <= 0) return false
-      written += w.bytesWritten
+/** fs.rename, tried again briefly while something holds the file open. */
+async function renameWithRetry(from: string, to: string): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await fs.promises.rename(from, to)
+      return
+    } catch (e) {
+      const code = errCode(e)
+      if (attempt >= RENAME_TRIES || (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES')) throw e
+      await new Promise<void>((resolve) => { setTimeout(resolve, RENAME_RETRY_MS) })
     }
-    at += bytesRead
   }
-  return true
 }
 
 /**
@@ -214,12 +262,17 @@ async function copyRange(src: fs.promises.FileHandle, dst: fs.promises.FileHandl
 export async function carryCodexRollout(input: CodexCarryInput): Promise<CodexCarryResult> {
   const { fromSessionsDir, toHome, id } = input ?? ({} as CodexCarryInput)
   const max = typeof input?.maxBytes === 'number' && Number.isInteger(input.maxBytes) && input.maxBytes > 0 ? Math.min(input.maxBytes, CODEX_CARRY_MAX_BYTES) : CODEX_CARRY_MAX_BYTES
+  const stopped = (): boolean => {
+    if (typeof input?.shouldStop !== 'function') return false
+    try { return input.shouldStop() !== false } catch { return true }
+  }
   if (typeof id !== 'string' || !CODEX_CONVERSATION_ID_RE.test(id)) return fail('not-found')
   if (typeof fromSessionsDir !== 'string' || typeof toHome !== 'string' || !path.isAbsolute(fromSessionsDir) || !path.isAbsolute(toHome)) return fail('unsafe-path')
   if (!realCanonicalFolder(fromSessionsDir)) return fail('not-found')
   if (!realCanonicalFolder(toHome)) return fail('unsafe-path')
   const toSessions = path.join(toHome, 'sessions')
   if (sameDirectory(fromSessionsDir, toSessions)) return fail('unsafe-path')
+  if (stopped()) return fail('cancelled')
 
   // The source: P3.5's lookup, in this realm's own folder only.
   const found = findCodexRollout(fromSessionsDir, id, undefined, input.preferCwd)
@@ -252,13 +305,10 @@ export async function carryCodexRollout(input: CodexCarryInput): Promise<CodexCa
   const dropTemp = async () => {
     const made = tempMade
     tempMade = null
-    if (!made) return
-    try {
-      const now = fs.lstatSync(tempPath, { bigint: true })
-      if (idKnown(made) ? sameFile(now, made) : now.isFile() && !now.isSymbolicLink()) await fs.promises.unlink(tempPath)
-    } catch { /* already gone */ }
+    if (made) await removeIfStill(tempPath, made, true)
   }
   try {
+    if (stopped()) return fail('cancelled')
     // Open the source and check it is the file that was looked up.
     try { src = await fs.promises.open(found.path, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0)) } catch { return fail('changed') }
     const opened = await src.stat({ bigint: true })
@@ -272,10 +322,15 @@ export async function carryCodexRollout(input: CodexCarryInput): Promise<CodexCa
     tempMade = { dev: madeStat.dev, ino: madeStat.ino }
     // Without a file id what lands cannot be told from anything else.
     if (!idKnown(tempMade)) return fail('unsafe-path')
+    // Made where it was meant to be (the sessions folder was not swapped for
+    // a link before it was made): nothing of the conversation is written
+    // anywhere else, even for the copy's while.
+    if (!stillAt(tempPath, tempMade)) return fail('changed')
     const buf = Buffer.alloc(CHUNK)
     let at = 0
     let lastLineEnd = 0
     while (at < size) {
+      if (stopped()) return fail('cancelled')
       const { bytesRead } = await src.read(buf, 0, Math.min(CHUNK, size - at), at)
       if (bytesRead <= 0) break
       const nl = buf.subarray(0, bytesRead).lastIndexOf(0x0a)
@@ -303,18 +358,49 @@ export async function carryCodexRollout(input: CodexCarryInput): Promise<CodexCa
     const head = readRolloutFirstLine(tempPath)
     const meta = head && head.kind === 'line' ? parseSessionMetaLine(head.line) : null
     if (!meta || meta.id.toLowerCase() !== id.toLowerCase()) return fail('changed')
+    if (stopped()) return fail('cancelled')
+    const made = tempMade
 
     /** The copy took the final name: it landed where it was meant to (no
      *  folder on the way was swapped for a link since the checks) and it is
-     *  the file written here. Otherwise the name goes again, but only while
-     *  it is that file. */
+     *  the file written here. Otherwise it is taken back, but only while the
+     *  file at the path it really is now is that file; else it is left. */
     const tookName = async (): Promise<boolean> => {
       let landed: fs.BigIntStats | null = null
       try { landed = fs.lstatSync(finalPath, { bigint: true }) } catch { landed = null }
-      const ours = !!landed && !!tempMade && sameFile(landed, tempMade)
-      if (ours && canonical(finalPath)) return true
-      try { if (ours) await fs.promises.unlink(finalPath) } catch { /* left for the next attempt */ }
+      if (landed && sameFile(landed, made) && canonical(finalPath)) return true
+      await removeIfStill(finalPath, made)
       return false
+    }
+
+    /** The whole copy renamed over the final name (an earlier copy brought up
+     *  to date): a second name of it is made inside the day folder, checked
+     *  to be there and to be the file written here, and renamed over the
+     *  final name within that folder, so it can replace no name elsewhere.
+     *  The earlier copy must still be the one compared, that size, at the
+     *  final name. Nothing is written through it. */
+    const replaceName = async (earlier: Identity, have: number): Promise<CodexCarryResult> => {
+      const inner = path.join(dayDir, `${TEMP_PREFIX}${randomBytes(12).toString('hex')}.tmp`)
+      try { await fs.promises.link(tempPath, inner) } catch { return fail('io-failed') }
+      let renamed = false
+      try {
+        if (!stillAt(inner, made)) return fail('changed')
+        // Nothing was added to the earlier copy since it was compared: the
+        // CLI may write to a sign-in's folder at any time (this computer's
+        // own sign-in is not the app's to hold), and what it added is never
+        // replaced.
+        if (!stillAt(finalPath, earlier) || sizeAt(finalPath) !== have) return fail('changed')
+        if (stopped()) return fail('cancelled')
+        try {
+          await renameWithRetry(inner, finalPath)
+        } catch (e) {
+          return errCode(e) === 'ENOENT' ? fail('changed') : fail('io-failed')
+        }
+        renamed = true
+        return (await tookName()) ? { ok: true, carried: 'extended', bytes: lastLineEnd } : fail('changed')
+      } finally {
+        if (!renamed) await removeIfStill(inner, made)
+      }
     }
 
     // Something already at the final name: the same bytes are present; an
@@ -328,50 +414,25 @@ export async function carryCodexRollout(input: CodexCarryInput): Promise<CodexCa
       if (have > lastLineEnd) return fail('exists-different')
       let a: fs.promises.FileHandle | null = null
       let b: fs.promises.FileHandle | null = null
+      let earlier: Identity
       try {
-        const noFollow = fs.constants.O_NOFOLLOW ?? 0
-        a = await fs.promises.open(finalPath, (have === lastLineEnd ? fs.constants.O_RDONLY : fs.constants.O_RDWR) | noFollow)
+        a = await fs.promises.open(finalPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0))
         b = await fs.promises.open(tempPath, 'r')
         // The file this handle holds is the one measured, still that size,
-        // and the one at the final name, in the realm's own folder: no
-        // folder on the way became a link since the checks.
+        // and the one at the final name, in the realm's own folder.
         const aStat = await a.stat({ bigint: true })
         if (!aStat.isFile() || !sameFile(aStat, there) || Number(aStat.size) !== have) return fail('changed')
         if (!stillAt(finalPath, aStat)) return fail('changed')
         if (!(await sameBytes(a, b, have))) return fail('exists-different')
         if (have === lastLineEnd) return { ok: true, carried: 'present', bytes: lastLineEnd }
-        // Nothing was added to it while it was compared: the CLI may write
-        // to a sign-in's folder at any time (this computer's own sign-in is
-        // not the app's to hold), and what it added is never written over.
-        const measured = await a.stat({ bigint: true })
-        if (Number(measured.size) !== have) return fail('changed')
-        if (aStat.nlink === 1n) {
-          // Its only name: the lines said since are added in place, through
-          // this handle, so to nothing else.
-          if (!(await copyRange(b, a, have, lastLineEnd))) return fail('io-failed')
-          await a.sync()
-          // Nothing else wrote to it meanwhile.
-          const grown = await a.stat({ bigint: true })
-          if (Number(grown.size) !== lastLineEnd) return fail('changed')
-          return { ok: true, carried: 'extended', bytes: lastLineEnd }
-        }
-        // A second name of another file (a staged sign in again's history
-        // shares its files with the account's kept earlier folder): nothing
-        // is written through it. This name alone takes the whole copy, the
-        // temporary file renamed over it; the other keeps what it had.
-        await a.close()
-        a = null
-        await b.close()
-        b = null
-        if (!stillAt(finalPath, aStat)) return fail('changed')
-        await fs.promises.rename(tempPath, finalPath)
-        return (await tookName()) ? { ok: true, carried: 'extended', bytes: lastLineEnd } : fail('changed')
+        earlier = { dev: aStat.dev, ino: aStat.ino }
       } catch {
         return fail('io-failed')
       } finally {
         await a?.close().catch(() => undefined)
         await b?.close().catch(() => undefined)
       }
+      return replaceName(earlier, have)
     }
     try {
       fs.lstatSync(finalPath)

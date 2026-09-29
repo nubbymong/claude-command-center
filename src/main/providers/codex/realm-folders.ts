@@ -914,6 +914,7 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
     'unsafe-path': fail('unsafe-path'),
     'changed': CARRY_CHANGED,
     'io-failed': fail('io-failed'),
+    'cancelled': fail('cancelled'),
   }
 
   /** The realm a conversation copy reads or writes, as it stands: a managed
@@ -951,7 +952,14 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
    *  history copy checks them, and both realm locks are held for the copy
    *  (no sign-in, sign-out, history copy or removal meanwhile); the file
    *  work is the carry port's. */
-  function copyConversation(from: RealmRef, to: RealmRef, conversation: { id: string; cwd?: string }): Promise<RealmFolderResult & { carried?: 'copied' | 'present' | 'extended' }> {
+  function copyConversation(from: RealmRef, to: RealmRef, conversation: { id: string; cwd?: string }, opts?: { current?: () => boolean }): Promise<RealmFolderResult & { carried?: 'copied' | 'present' | 'extended' }> {
+    // Whether what asked for the copy still wants it (a respawn superseded,
+    // closed or out of time does not): asked once both locks are held, and
+    // by the file work before each step. A throw counts as no.
+    const current = (): boolean => {
+      if (typeof opts?.current !== 'function') return true
+      try { return opts.current() === true } catch { return false }
+    }
     // Every io-failed, a throw included, is said in the copy's own words.
     return guard(async () => {
       const carry = deps.carry
@@ -978,9 +986,11 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
       try {
         // Under the locks: still the folders that were checked.
         if (!unchanged(src.home, s.home) || !unchanged(dst.home, d.home)) return CARRY_CHANGED
+        // No longer wanted: the locks go at once, before any file work.
+        if (!current()) return fail('cancelled')
         let r: Awaited<ReturnType<CodexConversationCarry>>
         try {
-          r = await carry({ fromSessionsDir: pathApi.join(src.home, 'sessions'), toHome: dst.home, id, ...(preferCwd ? { preferCwd } : {}) })
+          r = await carry({ fromSessionsDir: pathApi.join(src.home, 'sessions'), toHome: dst.home, id, ...(preferCwd ? { preferCwd } : {}), shouldStop: () => !current() })
         } catch {
           return fail('io-failed')
         }
