@@ -19,6 +19,8 @@ import React from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -334,6 +336,30 @@ describe("a Codex session's account reaches pty:spawn", () => {
     const el = container.querySelector('[data-testid="switch-note"]') as HTMLElement
     expect(el.style.color).toBe('var(--text-muted)')
     expect(el.style.background).toBe('var(--surface-panel)')
+  })
+
+  // VM re-check W1: the GitHub button floats over the terminal's top-right
+  // corner (GitHubPanel's gh-fab: absolute top-2 right-2, an 18px icon in
+  // p-1.5 with a 1px border, so 32px wide from 8px in). The bar keeps pr-12
+  // (48px) clear there, so its dismiss is never under that button. jsdom
+  // cannot hit-test, so both halves of the rule are pinned.
+  it('P3.6: the note bar keeps the floating GitHub button\'s corner clear, so its dismiss is never under it', async () => {
+    mount(codexSession({ providerAccountId: 'acc-personal' }))
+    await settle()
+    await act(async () => { settles[0].resolve({ started: true, carry: { code: 'too-large', message: 'Too large.', resumed: false } }) })
+    await settle()
+    const el = container.querySelector('[data-testid="switch-note"]') as HTMLElement
+    const classes = el.className.split(/\s+/)
+    expect(classes).toContain('pr-12')
+    expect(classes.filter((c) => /^(px|pr)-/.test(c))).toEqual(['pr-12'])
+    const gh = readFileSync(resolve(__dirname, '../../../src/renderer/components/github/GitHubPanel.tsx'), 'utf8')
+    const fabs = [...gh.matchAll(/className="(gh-fab [^"]*)"/g)].map((m) => m[1])
+    expect(fabs.length).toBeGreaterThan(0)
+    for (const f of fabs) {
+      expect(f).toContain('absolute top-2 right-2')
+      expect(f).toContain('p-1.5')
+    }
+    expect(gh.split('<svg width="18" height="18"').length - 1).toBeGreaterThanOrEqual(fabs.length)
   })
 })
 

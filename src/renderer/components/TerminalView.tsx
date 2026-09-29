@@ -1780,7 +1780,10 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         <div
           role="status"
           data-testid="switch-note"
-          className="border-b border-surface0 text-xs px-3 py-1.5 shrink-0 flex items-start gap-2"
+          // pr-12 (48px) keeps the dismiss clear of the GitHub button that
+          // floats over this corner (GitHubPanel gh-fab: absolute top-2
+          // right-2, 32px with its padding and border): 8 + 32 + 8 px.
+          className="border-b border-surface0 text-xs pl-3 pr-12 py-1.5 shrink-0 flex items-start gap-2"
           style={{ background: 'var(--surface-panel)', color: 'var(--text-muted)' }}
         >
           <span className="flex-1 min-w-0">{switchNote}</span>

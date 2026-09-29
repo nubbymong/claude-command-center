@@ -140,9 +140,15 @@ function switchProviderAccount(
       // 2. Restart there. Main's respawn carries the conversation into it
       //    once the old process has ended, then resumes it by id (P3.5). A
       //    launch there that asks and is declined takes the tab back (VM
-      //    finding V3; utils/switchOrigin); a refused restart moved nothing.
-      if (restart({ providerAccountId: target.id })) noteSwitchOrigin(sessionId, from, target.id)
-      else forgetSwitchOrigin(sessionId)
+      //    finding V3; utils/switchOrigin).
+      if (restart({ providerAccountId: target.id })) {
+        noteSwitchOrigin(sessionId, from, target.id)
+      } else {
+        // Refused (the Multi Spawn rule): nothing moved, so the pin goes
+        // back to the account the tab is on, and no origin is kept.
+        forgetSwitchOrigin(sessionId)
+        await persistSessionProviderAccount(sessionId, session.providerAccountId)
+      }
     } finally {
       switching.delete(sessionId)
     }
