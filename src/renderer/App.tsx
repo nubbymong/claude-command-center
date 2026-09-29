@@ -1128,9 +1128,14 @@ export default function App() {
                           another terminal, so a user who switched could be
                           typing into a plain shell believing it was Claude, with
                           the only cue a label change on one button in the command
-                          bar. This strip states it and carries the way back. */}
+                          bar. This strip states it and carries the way back.
+                          P3.7 (the C item "narrow-window overlap", row 64):
+                          pr-12 keeps the way back clear of the GitHub button
+                          floating over this corner (GitHubPanel gh-fab:
+                          absolute top-2 right-2, 32px), as the switch note
+                          does; the note wraps, the button never shrinks. */}
                       <div
-                        className="flex-none flex items-center gap-2 px-3 py-1 text-[11px] border-b"
+                        className="flex-none flex items-center gap-2 pl-3 pr-12 py-1 text-[11px] border-b"
                         style={{
                           background: 'color-mix(in srgb, var(--color-green) 12%, transparent)',
                           borderColor: 'color-mix(in srgb, var(--color-green) 28%, transparent)',
@@ -1142,10 +1147,10 @@ export default function App() {
                           <polyline points="4 17 10 11 4 5" />
                           <line x1="12" y1="19" x2="20" y2="19" />
                         </svg>
-                        <span>Partner terminal &mdash; a plain shell, not {agentName}</span>
+                        <span className="min-w-0">Partner terminal &mdash; a plain shell, not {agentName}</span>
                         <button
                           onClick={() => togglePartner(session.id)}
-                          className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded focus-ring transition-colors hover:bg-surface1"
+                          className="ml-auto shrink-0 whitespace-nowrap flex items-center gap-1 px-2 py-0.5 rounded focus-ring transition-colors hover:bg-surface1"
                           style={{ color: 'var(--color-text)' }}
                           title={`Back to the ${agentName} terminal`}
                         >
