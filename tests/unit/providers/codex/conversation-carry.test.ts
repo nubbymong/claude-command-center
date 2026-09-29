@@ -370,6 +370,10 @@ describe('carryCodexRollout when something is swapped after its checks', () => {
     let staged = false
     let armed = false
     let calls = 0
+    // The re-point, when it runs, and anything that stopped it (a throw in
+    // the spy is swallowed by the carry's canonical check).
+    let repointed = false
+    let repointError: unknown = null
     vi.spyOn(fsp, 'link').mockImplementation((async (a: string, b: string) => {
       if (staged || !same(b, r.dest)) return realLink(a, b)
       staged = true
@@ -385,8 +389,7 @@ describe('carryCodexRollout when something is swapped after its checks', () => {
     const realNative = realpathSync.native
     vi.spyOn(realpathSync, 'native').mockImplementation(((p: string, o?: unknown) => {
       if (armed && same(p, r.dest) && ++calls === 2) {
-        dropLink(day)
-        symlinkSync(Y, day, 'junction')
+        try { dropLink(day); symlinkSync(Y, day, 'junction'); repointed = true } catch (e) { repointError = e; throw e }
       }
       return (realNative as (p: string, o?: unknown) => string)(p, o)
     }) as never)
@@ -394,6 +397,13 @@ describe('carryCodexRollout when something is swapped after its checks', () => {
     expect(staged).toBe(true)
     expect(existsSync(join(X, NAME))).toBe(false)
     expect(readFileSync(victim, 'utf8')).toBe('a file of that name elsewhere\n')
+    // The re-point bites only on a second resolve of the landing (the take-back
+    // by its path resolved again; that mutant fails above). Here the landing
+    // is resolved once, where it landed, and the re-point, had it run, ran
+    // whole.
+    expect(calls).toBe(1)
+    expect(repointed).toBe(false)
+    expect(repointError).toBeNull()
   })
 
   it('A -> B -> A with the day folder swapped for a junction to a copy outside the realm: that copy is never added to', async () => {
@@ -620,23 +630,29 @@ describe('carryCodexRollout when something is swapped after its checks', () => {
     writeFileSync(victim, 'a file of that name elsewhere\n')
     const day = dirname(r.dest)
     let armed = false
+    let landed = false
+    let repointError: unknown = null
     vi.spyOn(fsp, 'link').mockImplementation((async (a: string, b: string) => {
       renameSync(day, join(outside, 'realm-day'))
       symlinkSync(X, day, 'junction')
       await realLink(a, b)
       armed = true
+      landed = true
     }) as never)
     const realNative = realpathSync.native
     vi.spyOn(realpathSync, 'native').mockImplementation(((p: string, o?: unknown) => {
       if (armed && same(p, r.dest)) {
         armed = false
-        dropLink(day)
-        symlinkSync(Y, day, 'junction')
+        try { dropLink(day); symlinkSync(Y, day, 'junction') } catch (e) { repointError = e; throw e }
       }
       return (realNative as (p: string, o?: unknown) => string)(p, o)
     }) as never)
     expect(await carryCodexRollout({ fromSessionsDir: join(r.from, 'sessions'), toHome: r.to, id: ID })).toEqual({ ok: false, code: 'changed' })
     expect(readFileSync(victim, 'utf8')).toBe('a file of that name elsewhere\n')
+    // Staged: the copy's name landed through the swapped folder. The re-point
+    // bites only if the landing is resolved again; had it run, it ran whole.
+    expect(landed).toBe(true)
+    expect(repointError).toBeNull()
   })
 
   // ADR-009 round 2 (C5): the copy's second name, made through a day folder
@@ -654,6 +670,8 @@ describe('carryCodexRollout when something is swapped after its checks', () => {
     const inDay = (p: unknown) => isTemp(p) && same(dirname(String(p)), day)
     let staged = false
     let seen = 0
+    let repointed = false
+    let repointError: unknown = null
     vi.spyOn(fsp, 'link').mockImplementation((async (a: string, b: string) => {
       if (staged || !inDay(b)) return realLink(a, b)
       staged = true
@@ -664,8 +682,7 @@ describe('carryCodexRollout when something is swapped after its checks', () => {
     const realNative = realpathSync.native
     vi.spyOn(realpathSync, 'native').mockImplementation(((p: string, o?: unknown) => {
       if (staged && inDay(p) && ++seen === 2) {
-        dropLink(day)
-        symlinkSync(Y, day, 'junction')
+        try { dropLink(day); symlinkSync(Y, day, 'junction'); repointed = true } catch (e) { repointError = e; throw e }
       }
       return (realNative as (p: string, o?: unknown) => string)(p, o)
     }) as never)
@@ -673,6 +690,11 @@ describe('carryCodexRollout when something is swapped after its checks', () => {
     expect(staged).toBe(true)
     expect(readdirSync(X)).toEqual([])
     expect(readdirSync(Y)).toEqual([])
+    // As above: the second name is resolved once, where it landed; the
+    // re-point bites only on a second resolve (that mutant fails above).
+    expect(seen).toBe(1)
+    expect(repointed).toBe(false)
+    expect(repointError).toBeNull()
   })
 
   // Lens A (T3): the earlier copy is compared through a handle, and the
