@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-29T06:05:08.322Z",
-  "head": "4045df81452d601d5764ad03a56376701254f236",
-  "tree": "f845958b905b9179beec2a1bd6eabe74c098055c",
+  "generatedAt": "2026-09-29T06:22:41.063Z",
+  "head": "97b3b864bff2dd823d6e9410460a0ce0fbf7088e",
+  "tree": "595b0c2da376b29592657e924059729df1b8944d",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -781,7 +781,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 55
+      "lineCount": 56
     },
     {
       "path": "src/main/providers/codex/ui-detection.ts",
@@ -3231,7 +3231,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 21
+      "lineCount": 23
     },
     {
       "path": "tests/unit/providers/codex/telemetry-lines.test.ts",
@@ -3241,7 +3241,7 @@
         "P10",
         "P13"
       ],
-      "lineCount": 33
+      "lineCount": 35
     },
     {
       "path": "tests/unit/providers/codex/telemetry.test.ts",
