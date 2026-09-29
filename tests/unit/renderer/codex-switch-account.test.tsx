@@ -58,6 +58,7 @@ const { switchAccountItems, switchItemHint } = await import('../../../src/render
 const { canSwitchAccountForSession } = await import('../../../src/renderer/utils/sessionLaunch')
 const { carryNote, terminalNoteLine } = await import('../../../src/renderer/utils/launchNote')
 const { switchOrigin, noteSwitchOrigin, forgetSwitchOrigin } = await import('../../../src/renderer/utils/switchOrigin')
+const { useLaunchAckStore } = await import('../../../src/renderer/stores/launchAckStore')
 const { default: SessionContextMenu } = await import('../../../src/renderer/components/sidebar/SessionContextMenu')
 const { snapshot, work, personal, local, old, parked, gone } = await import('./accounts-snapshot-harness')
 const { middleTruncateEmail } = await import('../../../src/shared/account-chip-color')
@@ -182,6 +183,27 @@ describe('switching a Codex session\'s account', () => {
     expect(switchOrigin('sess-x')).toEqual({ from: work.id, to: local.id })
     useSessionStore.getState().removeSession('sess-x')
     expect(switchOrigin('sess-x')).toBeNull()
+  })
+
+  // Final nits (review of e170052d): the pin put back is the live one, and an
+  // earlier switch's origin stays while that switch's launch is still asking.
+  it('a refused switch puts back the pin as the store has it, and keeps an earlier origin whose launch is still asking', async () => {
+    mount(codexSession())
+    // The tab's record moved on since this view last rendered it.
+    useSessionStore.getState().updateSession('sess-x', { providerAccountId: local.id })
+    noteSwitchOrigin('sess-x', parked.id, local.id)
+    void useLaunchAckStore.getState().request({ sessionId: 'sess-x', sessionLabel: 'api', accountName: 'External', external: true, unknown: false })
+    refusal.next = 'Already running.'
+    try {
+      switchFn!('sess-x', personal.id)
+      await settle()
+    } finally {
+      refusal.next = undefined
+      useLaunchAckStore.getState().withdraw('sess-x')
+    }
+    expect(killSessionPtyMock).not.toHaveBeenCalled()
+    expect(stored().providerAccountId).toBe(local.id)
+    expect(switchOrigin('sess-x')).toEqual({ from: parked.id, to: local.id })
   })
 
   // Review F3 (ADR-009 lens B): a second switch before the first one's launch
