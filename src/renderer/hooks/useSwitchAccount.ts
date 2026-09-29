@@ -1,10 +1,11 @@
 import { useCallback } from 'react'
-import { Session } from '../stores/sessionStore'
+import { Session, useSessionStore } from '../stores/sessionStore'
 import { persistLastUsedAccount, persistSessionProviderAccount } from '../session-persistence'
 import { useRestartSession } from './useRestartSession'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { isAccountActive } from '../../shared/account-types'
 import { useProviderAccountsStore } from '../stores/providerAccountsStore'
+import { useLaunchAckStore } from '../stores/launchAckStore'
 import { sessionProviderAccount } from '../utils/accountChip'
 import { noteSwitchOrigin, switchOrigin, forgetSwitchOrigin } from '../utils/switchOrigin'
 
@@ -130,6 +131,9 @@ function switchProviderAccount(
   switching.add(sessionId)
   void (async () => {
     try {
+      // The pin as it is now, read live (a captured session may be stale):
+      // what a refused restart puts back.
+      const pinned = useSessionStore.getState().getSession(sessionId)?.providerAccountId
       // 1. Pin the new account and save it.
       await persistSessionProviderAccount(sessionId, target.id)
       // The account the tab is really on: an earlier switch's origin while
@@ -145,9 +149,10 @@ function switchProviderAccount(
         noteSwitchOrigin(sessionId, from, target.id)
       } else {
         // Refused (the Multi Spawn rule): nothing moved, so the pin goes
-        // back to the account the tab is on, and no origin is kept.
-        forgetSwitchOrigin(sessionId)
-        await persistSessionProviderAccount(sessionId, session.providerAccountId)
+        // back to what it was. An earlier switch's origin stays while that
+        // switch's launch is still asking; any other is spent.
+        if (!(earlier && useLaunchAckStore.getState().isPending(sessionId))) forgetSwitchOrigin(sessionId)
+        await persistSessionProviderAccount(sessionId, pinned)
       }
     } finally {
       switching.delete(sessionId)

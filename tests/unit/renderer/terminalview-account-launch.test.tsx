@@ -353,13 +353,20 @@ describe("a Codex session's account reaches pty:spawn", () => {
     expect(classes).toContain('pr-12')
     expect(classes.filter((c) => /^(px|pr)-/.test(c))).toEqual(['pr-12'])
     const gh = readFileSync(resolve(__dirname, '../../../src/renderer/components/github/GitHubPanel.tsx'), 'utf8')
-    const fabs = [...gh.matchAll(/className="(gh-fab [^"]*)"/g)].map((m) => m[1])
+    // Each gh-fab button on its own: its place, its padding, no width of its
+    // own, and nothing inside it but its one 18px icon (no label).
+    const fabs = [...gh.matchAll(/<button\s+data-testid="gh-fab"([\s\S]*?)<\/button>/g)].map((m) => m[1])
     expect(fabs.length).toBeGreaterThan(0)
-    for (const f of fabs) {
-      expect(f).toContain('absolute top-2 right-2')
-      expect(f).toContain('p-1.5')
+    for (const fab of fabs) {
+      const classes = (/className="(gh-fab [^"]*)"/.exec(fab)?.[1] ?? '').split(/\s+/)
+      expect(classes).toEqual(expect.arrayContaining(['absolute', 'top-2', 'right-2', 'p-1.5']))
+      expect(classes.filter((c) => /^(w|min-w|px|pl|pr)-/.test(c))).toEqual([])
+      const icons = fab.match(/<svg\b[\s\S]*?<\/svg>/g) ?? []
+      expect(icons).toHaveLength(1)
+      expect(icons[0]).toMatch(/^<svg width="18" height="18"/)
+      expect(fab.slice(0, fab.indexOf('<svg'))).toMatch(/>\s*$/)
+      expect(fab.slice(fab.indexOf('</svg>') + '</svg>'.length)).toMatch(/^\s*$/)
     }
-    expect(gh.split('<svg width="18" height="18"').length - 1).toBeGreaterThanOrEqual(fabs.length)
   })
 })
 
