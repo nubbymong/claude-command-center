@@ -32,6 +32,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { spawn as nodeSpawn, execFile, execFileSync } from 'node:child_process'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
+import { logInfo } from '../../debug-logger'
 
 export type CodexCliOperation = 'version' | 'status' | 'logout' | 'login-browser' | 'login-device' | 'login-api-key' | 'review' | 'app-server' | 'models' | 'analysis'
 
@@ -246,12 +247,16 @@ export type CodexKillTree = ((child: ChildProcess, opts?: { scope?: CodexKillSco
   /** P3.9 round 3: reads the process table now (bounded, see
    *  makeCodexKillTree) and records which processes it proves are the
    *  run's. `since`: when the run's root was started. */
-  observe?: (child: ChildProcess, since: number) => void
+  observe?: (child: ChildProcess, since: number, why?: CodexObserveReason) => void
   /** P3.9 round 2, round 3: after the root has exited, ends what the
    *  records prove is left of the run (see makeCodexKillTree). Never
    *  rejects. */
   leftovers?: (child: ChildProcess, window: CodexRunWindow) => Promise<void>
 }
+
+/** Why a run is read (round 4): a scheduled read is skipped once a read
+ *  has found the run's chain alone, running codex and nothing beyond it. */
+export type CodexObserveReason = 'start' | 'output' | 'schedule'
 
 /** Which processes a stop takes: the run's own chain, or every process below its root. */
 export type CodexKillScope = 'chain' | 'tree'
@@ -542,6 +547,8 @@ export function makeCodexKillTree(
   primeListProcesses: (() => Promise<CodexProcessEntry[]>) | null = listProcesses,
   /** Signals a POSIX process group (the leftovers of a run); for the test. */
   killGroup: (pgid: number) => void = (pgid) => { process.kill(-pgid, 'SIGKILL') },
+  /** One line about a leftover kill's outcome (round 4); for the test. */
+  log: (line: string) => void = (line) => { logInfo(line) },
 ): CodexKillTree {
   const running = (child: ChildProcess) => !!child.pid && child.exitCode === null && child.signalCode === null
   const killRoot = (child: ChildProcess) => { try { if (running(child)) child.kill('SIGKILL') } catch { /* already gone */ } }
@@ -551,7 +558,7 @@ export function makeCodexKillTree(
   type Primed = { done: Promise<void>; started: number; table?: CodexProcessEntry[] | null }
   const primed = new WeakMap<ChildProcess, Primed>()
   // Round 3: what the reads taken while an observed run ran proved is its.
-  type Observed = { since: number; members: Map<string, CodexRunMember>; reads: number; inFlight: Set<Promise<void>> }
+  type Observed = { since: number; members: Map<string, CodexRunMember>; reads: number; inFlight: Set<Promise<void>>; chainOnly: boolean }
   const observed = new WeakMap<ChildProcess, Observed>()
   /** A table and when the read that gave it began. */
   type Answer = { table: CodexProcessEntry[]; started: number }
@@ -663,16 +670,21 @@ export function makeCodexKillTree(
     )
     primed.set(child, entry)
   }
-  kill.observe = (child, since) => {
+  kill.observe = (child, since, why = 'start') => {
     const pid = child.pid
     if (!listProcesses || !pid || !running(child) || !Number.isFinite(since)) return
     let rec = observed.get(child)
-    if (!rec) { rec = { since, members: new Map(), reads: 0, inFlight: new Set() }; observed.set(child, rec) }
+    if (!rec) { rec = { since, members: new Map(), reads: 0, inFlight: new Set(), chainOnly: false }; observed.set(child, rec) }
+    // Round 4: a run whose chain was found alone is not read on the schedule
+    // again (the reads at its start and first output still happen).
+    if (why === 'schedule' && rec.chainOnly) return
     if (rec.reads >= CODEX_OBSERVE_MAX_READS || rec.inFlight.size >= CODEX_OBSERVE_MAX_IN_FLIGHT) return
     rec.reads++
     const r = rec
     const reading = read(listProcesses, CODEX_PROCESS_TABLE_TIMEOUT_MS).then((a) => {
-      if (a) codexRecordRunMembers(pid, a.table, { started: a.started, since: r.since, filetime: platform === 'win32' }, r.members)
+      if (!a) return
+      codexRecordRunMembers(pid, a.table, { started: a.started, since: r.since, filetime: platform === 'win32' }, r.members)
+      if (codexChainAlone(pid, a.table)) r.chainOnly = true
     }, () => undefined)
     r.inFlight.add(reading)
     void reading.finally(() => { r.inFlight.delete(reading) })
@@ -704,13 +716,22 @@ export function makeCodexKillTree(
         try {
           // No /T: exactly the pids named, each proved the run's (its
           // descendants included, by start time, in codexLeftoverPids).
-          k = spawn(taskkill, ['/F', ...pids.flatMap((p) => ['/PID', String(p)])], { stdio: 'ignore', windowsHide: true, cwd: systemRoot, timeout: CODEX_TASKKILL_TIMEOUT_MS })
+          k = spawn(taskkill, ['/F', ...pids.flatMap((p) => ['/PID', String(p)])], { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true, cwd: systemRoot, timeout: CODEX_TASKKILL_TIMEOUT_MS })
         } catch {
+          try { log(`[codex] leftover kill of ${pids.join(',')} did not start`) } catch { /* a log never breaks the cleanup */ }
           resolve()
           return
         }
-        k.on('error', () => resolve())
-        k.on('exit', () => resolve())
+        // Round 4: one line with taskkill's result, so a helper it could not
+        // end (access denied: held by Codex's own sandbox) is on the record.
+        let stderr = ''
+        k.stderr?.on('data', (c: Buffer | string) => { if (stderr.length < 2000) stderr += String(c) })
+        const said = (code: number | null) => {
+          const why = stderr.replace(/\s+/g, ' ').trim().slice(0, 300)
+          try { log(`[codex] leftover kill of ${pids.join(',')}: taskkill exit ${code ?? 'none'}${why ? `: ${why}` : ''}`) } catch { /* a log never breaks the cleanup */ }
+        }
+        k.on('error', (e) => { said(null); void e; resolve() })
+        k.on('exit', (code) => { said(typeof code === 'number' ? code : null); resolve() })
       })
     } catch { /* best effort: the run has settled regardless */ }
   }
@@ -804,6 +825,18 @@ export function codexRecordRunMembers(
       }
     }
   }
+}
+
+/** Round 4: whether a table shows the run's chain alone: its root running,
+ *  codex itself (a chain image that is not a wrapper) below it, and nothing
+ *  below the root that is not a chain image. Exported for the test. */
+export function codexChainAlone(rootPid: number, table: readonly CodexProcessEntry[]): boolean {
+  if (!table.some((e) => e && e.pid === rootPid)) return false
+  const all = codexChainPids(rootPid, table, 'all')
+  const chain = codexChainPids(rootPid, table, 'chain')
+  if (all.length !== chain.length) return false
+  const names = new Map(table.filter((e) => e && typeof e.name === 'string').map((e) => [e.pid, (e.name.split(/[\\/]/).pop() ?? '').trim().toLowerCase()]))
+  return chain.some((p) => { const n = names.get(p) ?? ''; return CHAIN_IMAGE.test(n) && !WRAPPER_IMAGE.test(n) })
 }
 
 /** Whether a member the records saw is running now with the start time
@@ -1017,12 +1050,12 @@ export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: Code
     // Round 3: an exec run is observed while it runs -- at its start, at its
     // first output and on a bounded schedule -- so the reads that prove what
     // is its exist even when it exits within a second.
-    const observe = () => {
+    const observe = (why: CodexObserveReason) => {
       if (afterExit === undefined || settled || stopping || exited !== undefined || !child) return
-      try { deps.killTree.observe?.(child, spawnedAt) } catch { /* the leftovers step works from what it has */ }
+      try { deps.killTree.observe?.(child, spawnedAt, why) } catch { /* the leftovers step works from what it has */ }
     }
     const collect = (stream: 'stdout' | 'stderr') => (chunk: Buffer | string) => {
-      if (!heard) { heard = true; observe() }
+      if (!heard) { heard = true; observe('output') }
       if (settled || stopping) return
       const text = chunk.toString()
       if (opts.onChunk) { try { opts.onChunk(text, stream) } catch { /* a consumer never breaks the run */ } }
@@ -1034,10 +1067,10 @@ export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: Code
       else stderr += kept
       if (kept) { try { opts.onOutput?.(kept, stream) } catch { /* a consumer never breaks the run */ } }
     }
-    observe()
+    observe('start')
     if (afterExit !== undefined && deps.killTree.observe) {
       for (const at of CODEX_OBSERVE_AT_MS) {
-        const t = setTimeout(observe, at)
+        const t = setTimeout(() => observe('schedule'), at)
         ;(t as unknown as { unref?: () => void }).unref?.()
         observeTimers.push(t)
       }

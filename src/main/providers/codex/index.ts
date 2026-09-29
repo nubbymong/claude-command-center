@@ -38,10 +38,10 @@ import { sweepStaleFolders } from '../../stale-folder-sweep'
 // subprocess environment, realm paths, the CLI runner and discovery.
 export {
   codexCommandLine, cliCommandLine, codexShellEnv, runCodexCli, defaultCodexRunDeps, makeCodexKillTree, makeCodexProcessLister,
-  codexChainPids, codexLeftoverPids, codexRecordRunMembers, codexRunMemberAlive, CODEX_OBSERVE_MAX_READS, CODEX_OBSERVE_MAX_IN_FLIGHT, CODEX_OBSERVE_AT_MS, parseWindowsProcessTable, parsePosixProcessTable, parseLinuxStat, WINDOWS_PROCESS_QUERY,
+  codexChainPids, codexLeftoverPids, codexRecordRunMembers, codexRunMemberAlive, codexChainAlone, CODEX_OBSERVE_MAX_READS, CODEX_OBSERVE_MAX_IN_FLIGHT, CODEX_OBSERVE_AT_MS, parseWindowsProcessTable, parsePosixProcessTable, parseLinuxStat, WINDOWS_PROCESS_QUERY,
   CODEX_KILL_SETTLE_MS, CODEX_PROCESS_TABLE_TIMEOUT_MS, CODEX_TASKKILL_TIMEOUT_MS, CODEX_TREE_PRIME_MS, CODEX_PRIME_TABLE_TIMEOUT_MS, codexWrapperLinePids, CODEX_KILL_WORST_MS, flushPendingCodexKills,
 } from './cli-runner'
-export type { CodexCliOperation, CodexCommand, CodexRunResult, CodexRunOptions, CodexRunDeps, CodexProcessEntry, CodexKillTree, CodexKillScope, CodexRunWindow, CodexRunMember, CodexStdinWriter } from './cli-runner'
+export type { CodexCliOperation, CodexCommand, CodexRunResult, CodexRunOptions, CodexRunDeps, CodexProcessEntry, CodexKillTree, CodexKillScope, CodexObserveReason, CodexRunWindow, CodexRunMember, CodexStdinWriter } from './cli-runner'
 export { discoverCodex, verifyCodexExecutable, codexCompatibilityAllowsUse } from './discovery'
 // P3.9 (row 39): the installed CLI's own model list, for Sentinel.
 export {

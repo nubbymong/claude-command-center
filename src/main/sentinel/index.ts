@@ -625,6 +625,18 @@ export function unverifiedMessage(u: Update, count: number): string {
   return `${what} from the analysis of ${subject.name} ${u.version} could not be matched to its ${subject.notesName}, so ${count === 1 ? 'it is' : 'they are'} not shown and the update will be analysed again at the next check.`
 }
 
+/** How many analyses of one update may find nothing they can match before
+ *  the update is recorded as checked anyway (round 4). */
+export const UNVERIFIED_MAX_TRIES = 3
+
+/** Said when an update is recorded as checked after UNVERIFIED_MAX_TRIES
+ *  analyses whose findings could not all be matched (round 4). */
+export function unverifiedRecordedMessage(u: Update, count: number, tries: number): string {
+  const subject = SUBJECTS[u.provider]
+  const what = count === 1 ? 'One finding' : `${count} findings`
+  return `${what} from the analysis of ${subject.name} ${u.version} could not be matched to its ${subject.notesName} after ${tries} analyses, so ${count === 1 ? 'it is' : 'they are'} not shown and the update is recorded as checked.`
+}
+
 /** Analyse each update in turn. A new run supersedes any in-flight one
  *  (kills its process tree) so a stale analysis can't finish late and
  *  clobber state or leave `analyzing` stuck. `carried`: problems met before
@@ -647,8 +659,23 @@ async function analyzeUpdates(updates: Update[], carried: string[] = []): Promis
       // Round 3: findings that could not be matched to the notes are not
       // shown, so the update is not checked yet: it is analysed again at the
       // next check, and the panel says why (never "no breaking changes").
-      if (r.unverified > 0) errors.push(unverifiedMessage(u, r.unverified))
-      else SUBJECTS[u.provider].recordSeen(state, u.version)
+      // Round 4: at most UNVERIFIED_MAX_TRIES times, so a start never runs an
+      // analysis on the account for the same update forever: then the
+      // version is recorded as checked, with a note that says so.
+      const key = `${u.provider}:${u.version}`
+      if (r.unverified > 0) {
+        const tries = state.countUnverified(key)
+        if (tries >= UNVERIFIED_MAX_TRIES) {
+          SUBJECTS[u.provider].recordSeen(state, u.version)
+          state.clearUnverified(key)
+          notes.push(unverifiedRecordedMessage(u, r.unverified, tries))
+        } else {
+          errors.push(unverifiedMessage(u, r.unverified))
+        }
+      } else {
+        SUBJECTS[u.provider].recordSeen(state, u.version)
+        state.clearUnverified(key)
+      }
     } else if (r.error) {
       errors.push(r.error)
     }

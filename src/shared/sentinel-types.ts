@@ -43,5 +43,9 @@ export interface SentinelStateSnapshot {
   /** P3.9 round 1: said beside a completed analysis that did not read all of
    *  the notes in full (some were cut, or not every version could be read). */
   lastAnalysisNote?: string | null
+  /** P3.9 round 4: per `<provider>:<version>`, how many analyses of that
+   *  update had findings that could not be matched to its notes (it is
+   *  recorded as checked, with a note, after UNVERIFIED_MAX_TRIES). */
+  unverifiedTries?: Record<string, number>
   findings: SentinelFinding[]
 }
