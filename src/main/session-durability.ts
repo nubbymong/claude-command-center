@@ -2,7 +2,8 @@
  * session-durability.ts — the cross-exit durability core for session-state (#397).
  *
  * Holds the last-known ENRICHED session state and the save / flush / clear logic
- * that index.ts wires to the `session:save` IPC and the process-exit hooks. Kept
+ * that index.ts wires to the `session:save` IPC and the process-exit hooks (the
+ * instance composed in app-session-durability.ts). Kept
  * out of index.ts so it is unit-testable without the Electron main entry (the
  * adversarial-review lens that found the cache was untestable, and F1 — the exit
  * flush resurrecting an intentionally-cleared set — lived here unseen).
