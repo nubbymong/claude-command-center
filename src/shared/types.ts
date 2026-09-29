@@ -302,8 +302,9 @@ export interface SessionState {
   /** P3.7: each conversation's running time (main's
    *  conversation-running-time.ts), written by main at every save and read
    *  back by main at load, schema-checked, so a session's Duration carries on
-   *  across a relaunch. */
-  conversationRunningTimes?: Array<{ id: string; ms: number; until: number }>
+   *  across a relaunch. `gaps`: spans whose completed turns are not in `ms`
+   *  yet (the next run counts them). */
+  conversationRunningTimes?: Array<{ id: string; ms: number; until: number; gaps?: Array<{ from: number; to: number }> }>
 }
 
 /**

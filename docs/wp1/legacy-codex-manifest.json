@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-29T13:12:37.934Z",
-  "head": "c67b10417297f76faa935fd7fea28126deded8bf",
-  "tree": "c2e44d3caef8e91213436691b39c6e863d8f3513",
+  "generatedAt": "2026-09-29T13:33:00.946Z",
+  "head": "3f1f91025f199a370098dd323ba95d146efffb3f",
+  "tree": "2b73723aa896829ebeeb927bb0d094959f3875aa",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -3287,7 +3287,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 20
+      "lineCount": 21
     },
     {
       "path": "tests/unit/providers/codex/telemetry-claim-anywhere.test.ts",
@@ -3314,7 +3314,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 23
+      "lineCount": 27
     },
     {
       "path": "tests/unit/providers/codex/telemetry-lines.test.ts",
@@ -3324,7 +3324,7 @@
         "P10",
         "P13"
       ],
-      "lineCount": 35
+      "lineCount": 39
     },
     {
       "path": "tests/unit/providers/codex/telemetry-settle-reject.test.ts",

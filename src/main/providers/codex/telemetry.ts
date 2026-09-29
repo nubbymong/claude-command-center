@@ -113,9 +113,9 @@ export interface TokenCountEvent {
  *                    reading at a time: the same result as merging them all)
  *   linesAdded,   -- the lines the edits read so far added and removed
  *   linesRemoved     (P3.7, row 36; countFileChangeLines)
- *   turnWindow,   -- the running time the rollout proves in a window (P3.7):
- *   turnMs           the turns it records as completed inside it, each only
- *                    for its part inside (none without a window)
+ *   turnWindows,  -- the running time the rollout proves in some spans of
+ *   turnMs           time (P3.7): the turns it records as completed inside
+ *                    one, each only for its part inside (none without one)
  */
 export interface RolloutReadState {
   meta: RolloutMeta | null
@@ -124,18 +124,19 @@ export interface RolloutReadState {
   allowance: AllowanceReading | null
   linesAdded: number
   linesRemoved: number
-  turnWindow: TurnWindow | null
+  turnWindows: TurnWindow[]
   turnMs: number
 }
 
-/** A span of time (epoch milliseconds, both ends excluded). */
+/** A span of time (epoch milliseconds, both ends excluded; 0 as `from` is
+ *  from the start of time). */
 export interface TurnWindow {
   from: number
   to: number
 }
 
-export function newRolloutReadState(turnWindow: TurnWindow | null = null): RolloutReadState {
-  return { meta: null, contextWindow: null, latest: null, allowance: null, linesAdded: 0, linesRemoved: 0, turnWindow, turnMs: 0 }
+export function newRolloutReadState(turnWindows: TurnWindow[] = []): RolloutReadState {
+  return { meta: null, contextWindow: null, latest: null, allowance: null, linesAdded: 0, linesRemoved: 0, turnWindows, turnMs: 0 }
 }
 
 /** Added and removed line counts. */
@@ -253,14 +254,14 @@ export function applyRolloutLine(state: RolloutReadState, line: string, onTokenC
 
   // A turn Codex completed (P3.7): the time it records the turn took
   // (duration_ms, both versions) is running time the rollout proves. Counted
-  // only inside the read state's window, and of a turn that began before the
-  // window only its part inside it.
+  // only inside one of the read state's windows (they never overlap), and of
+  // a turn that began before that window only its part inside it.
   if (payload.type === 'task_complete') {
-    const w = state.turnWindow
     const ms = Number.isFinite(payload.duration_ms) ? payload.duration_ms as number : 0
     // A timestamp that does not parse is NaN, never inside a window.
     const at = Date.parse(String(evt.timestamp ?? ''))
-    if (w && ms > 0 && at > w.from && at < w.to) state.turnMs += Math.min(ms, at - w.from)
+    const w = ms > 0 ? state.turnWindows.find((x) => at > x.from && at < x.to) : undefined
+    if (w) state.turnMs += Math.min(ms, at - w.from)
     return
   }
 
@@ -371,22 +372,28 @@ export function __codexEditCountTakeMostHeldForTests(): number { const n = editC
  *  60 s too): past it there is no count, and the count stops at its next
  *  chunk if a read held up ever returns. */
 export const EDIT_COUNT_MAX_MS = 60_000
-let editCountMaxMs = EDIT_COUNT_MAX_MS
-/** Tests narrow the default limit; answers the one it replaced. */
-export function __setCodexEditCountMaxMsForTests(ms: number): number { const was = editCountMaxMs; editCountMaxMs = ms; return was }
+
+/** The counts whose file is not closed yet (tests wait for them). */
+const countsOpen = new Set<Promise<unknown>>()
+/** Resolves once every background count has closed its file. */
+export async function __codexCountsSettledForTests(): Promise<void> {
+  while (countsOpen.size) await Promise.all([...countsOpen])
+}
 
 /**
  * The lines the completed edits in whole lines of `file` from byte `start`
  * to `end` added and removed, and the running time its completed turns prove
- * inside `turnWindow` (none without one) (P3.7): what a watcher that read
+ * inside `turnWindows` (none without any) (P3.7): what a watcher that read
  * only a large rollout's head and tail did not see. Read apart from the status line's own
  * reads, a chunk at a time, while the opened file is still `identity` (its
  * device and file id, as the watcher claimed it). Null when it is not, when
  * the read fails, when `stale()` says the count is no longer wanted (it
- * is asked before each chunk, and last once the file is closed), or once
- * `limits.maxMs` (EDIT_COUNT_MAX_MS) has passed, even with a read held up. A
- * last line with no newline before `end` is not a whole record and is not
- * counted; a line longer than `lineMaxBytes` is passed over, never held.
+ * is asked before each chunk, and last once the file is closed: once it is,
+ * no further read starts and the file is closed when the read in hand
+ * returns), or once `limits.maxMs` (EDIT_COUNT_MAX_MS) has passed, even with
+ * a read held up. A last line with no newline before `end` is not a whole
+ * record and is not counted; a line longer than `lineMaxBytes` is passed
+ * over, never held.
  */
 export async function countRolloutRange(
   file: string,
@@ -395,16 +402,19 @@ export async function countRolloutRange(
   end: number,
   stale: () => boolean = () => false,
   limits: { chunkBytes?: number; lineMaxBytes?: number; maxMs?: number } = {},
-  turnWindow: TurnWindow | null = null,
+  turnWindows: TurnWindow[] = [],
 ): Promise<RangeCounts | null> {
   let expired = false
   let timer: ReturnType<typeof setTimeout> | undefined
   const deadline = new Promise<null>((resolve) => {
-    timer = setTimeout(() => { expired = true; resolve(null) }, limits.maxMs ?? editCountMaxMs)
+    timer = setTimeout(() => { expired = true; resolve(null) }, limits.maxMs ?? EDIT_COUNT_MAX_MS)
     ;(timer as { unref?: () => void }).unref?.()
   })
+  const counting = countRange(file, identity, start, end, () => expired || stale(), limits, turnWindows)
+  countsOpen.add(counting)
+  void counting.finally(() => { countsOpen.delete(counting) })
   try {
-    return await Promise.race([countRange(file, identity, start, end, () => expired || stale(), limits, turnWindow), deadline])
+    return await Promise.race([counting, deadline])
   } finally {
     clearTimeout(timer)
   }
@@ -418,11 +428,11 @@ async function countRange(
   end: number,
   stale: () => boolean,
   limits: { chunkBytes?: number; lineMaxBytes?: number },
-  turnWindow: TurnWindow | null,
+  turnWindows: TurnWindow[],
 ): Promise<RangeCounts | null> {
   const chunkBytes = Math.max(1, limits.chunkBytes ?? EDIT_COUNT_CHUNK_BYTES)
   const lineMax = limits.lineMaxBytes ?? EDIT_COUNT_LINE_MAX_BYTES
-  const counted = newRolloutReadState(turnWindow)
+  const counted = newRolloutReadState(turnWindows)
   let result: RangeCounts | null = null
   let fh: FileHandle | null = null
   try {
@@ -593,15 +603,6 @@ interface PendingNewClaim {
   contested: boolean
 }
 const pendingNewClaims = new Set<PendingNewClaim>()
-
-/**
- * P3.7 review: a run of a conversation whose running time is kept only once
- * its read state's background count lands (the watch ended, or the claim was
- * let go, before it did), by conversation id (lower case). A claim of that
- * conversation meanwhile, in any tab, takes its kept time again once it is
- * kept. Each entry goes once its time is kept.
- */
-const pendingSettles = new Map<string, Promise<void>>()
 
 /**
  * How a watcher finds its rollout (P3.5, rows 34 and 38). All optional: a
@@ -807,19 +808,14 @@ export function watchAndClaimRollout(
   /** A pick entry already dealt with (read, or refused), by its identity: never read again. */
   let handledPick: string | null = null
   /** This launch's run of the claimed conversation (P3.7, row 36): its id,
-   *  when this launch's run of it began (`launched`), the moment counted from
-   *  (`start`: that, or later if main already kept time past it), the
-   *  running time main kept of it before, and whether that was read while
-   *  an earlier run's time was still waiting to be kept (`provisional`). */
-  let run: { id: string; launched: number; start: number; before: number; provisional: boolean } | null = null
-  /** The time before this run that main did not see: the turns the rollout
-   *  records as completed in it are what it proves (P3.7). */
-  let turnWindow: TurnWindow | null = null
-  /** The background count of each read state still running (P3.7), and the
-   *  read states a settle waits on: counted on even once the watch stopped
-   *  or the state was replaced. */
-  const counts = new Map<RolloutReadState, Promise<void>>()
-  const settleWaits = new Set<RolloutReadState>()
+   *  the moment counted from (`start`: the launch, or later if main already
+   *  kept time past it), the running time main kept of it before, and the
+   *  spans of time whose completed turns are not in that (`windows`): the
+   *  time main did not see before this run, and any gaps main kept. */
+  let run: { id: string; start: number; before: number; windows: TurnWindow[] } | null = null
+  /** Read states whose proven turns are not all counted: a background count
+   *  of the part between the head and the tail is running, or gave none. */
+  const turnsIncomplete = new WeakSet<RolloutReadState>()
   /** This launch among those waiting for a new conversation (P3.6); a resume
    *  by id never takes a new one. */
   const pending: PendingNewClaim | null = resumeId ? null : {
@@ -875,22 +871,7 @@ export function watchAndClaimRollout(
     // or for the resume picker the choice made in it (Claude Code counts a
     // resumed conversation from its restore).
     if (CODEX_CONVERSATION_ID_RE.test(found.id)) {
-      const id = found.id
-      // An earlier run's time not kept yet (its count still running): what
-      // is kept now is provisional. Once it is kept, take it again, and read
-      // the rollout again from its start in the window that follows it.
-      const waiting = pendingSettles.get(id.toLowerCase())
-      beginRun(id, pickFile && !resumeId ? (decision?.kind === 'fresh' ? decision.at : Date.now()) : spawnTimestamp, !!waiting)
-      const mine = run
-      if (waiting && mine) {
-        void waiting.then(() => {
-          // Only while this claim's run is still the watch's own: a claim let
-          // go, a watch stopped and a later claim each replace it.
-          if (run !== mine) return
-          beginRun(id, mine.launched, false)
-          offset = 0
-        })
-      }
+      beginRun(found.id, pickFile && !resumeId ? (decision?.kind === 'fresh' ? decision.at : Date.now()) : spawnTimestamp)
     }
 
     // What is already there: all of it when small, else its head and its
@@ -930,11 +911,17 @@ export function watchAndClaimRollout(
    *  what main keeps of it now. Counted from no earlier than the time main
    *  already kept (P3.7 review): another tab's run of the conversation that
    *  ended after this launch began already counted the time they shared. */
-  function beginRun(id: string, launched: number, provisional: boolean): void {
+  function beginRun(id: string, launched: number): void {
     const kept = conversationRunningTime(id)
     const start = kept ? Math.max(launched, kept.until) : launched
-    run = { id, launched, start, before: kept ? kept.ms : 0, provisional }
-    turnWindow = { from: kept ? kept.until : Number.NEGATIVE_INFINITY, to: start }
+    // An empty span (a run launched as the last one ended) holds no turn,
+    // and the store keeps no empty gap.
+    run = {
+      id,
+      start,
+      before: kept ? kept.ms : 0,
+      windows: [...(kept ? kept.gaps : []), { from: kept ? kept.until : 0, to: start }],
+    }
   }
 
   /** The claimed conversation's running time at `now`, with the turns
@@ -943,45 +930,28 @@ export function watchAndClaimRollout(
     return r.before + state.turnMs + Math.max(0, now - r.start)
   }
 
+  /** Main keeps the run's running time up to `now` (P3.7): with the turns
+   *  `state` proves once they are all counted; while they are not (a large
+   *  rollout's background count is running, or gave none), without them, and
+   *  the run's windows are kept as gaps for the next run to count (CI at
+   *  427807fb: a run no longer waits on its count once it is over, so the
+   *  count lets go of the rollout at once). */
+  function keepRun(r: NonNullable<typeof run>, state: RolloutReadState, now: number): void {
+    try {
+      if (turnsIncomplete.has(state)) noteConversationRunningTime(r.id, r.before + Math.max(0, now - r.start), now, r.windows)
+      else noteConversationRunningTime(r.id, runningMs(r, state, now), now)
+    } catch (err) {
+      console.warn(`[codex/telemetry] the running time of session ${sessionId} could not be kept: ${(err as Error)?.message ?? err}`)
+    }
+  }
+
   /** This run of the claimed conversation is over (the claim let go, or the
-   *  watch ended with the process): main keeps its running time up to now,
-   *  once the read state's background count, if one is running, has landed
-   *  with the turns it finds (P3.7 review), and after any earlier run's time
-   *  still waiting to be kept (review round 2). A run whose base was read
-   *  while an earlier one waited (provisional) adds its own part to what is
-   *  kept by then: its live time from no earlier than that, and the turns
-   *  the rollout proves between that and its start (counted again, within
-   *  the count's time limit), since its own read used the older window. */
+   *  watch ended with the process): main keeps its running time up to now. */
   function settleRun(): void {
     if (!run) return
     const r = run
-    const state = readState
-    const end = Date.now()
-    const file = claimedPath
-    const identity = claimedIdentity
     run = null
-    const key = r.id.toLowerCase()
-    const earlier = pendingSettles.get(key)
-    const count = r.provisional ? undefined : counts.get(state)
-    if (!earlier && !count) { noteConversationRunningTime(r.id, runningMs(r, state, end), end); return }
-    if (count) settleWaits.add(state)
-    const settled: Promise<void> = Promise.all([count, earlier]).then(async () => {
-      settleWaits.delete(state)
-      if (!r.provisional) { noteConversationRunningTime(r.id, runningMs(r, state, end), end); return }
-      const kept = conversationRunningTime(r.id)
-      const from = kept ? kept.until : Number.NEGATIVE_INFINITY
-      const start = Math.max(r.launched, from)
-      const proven = file && identity
-        ? await countRolloutRange(file, identity, 0, Number.POSITIVE_INFINITY, () => false, {}, { from, to: start })
-        : null
-      // It claimed after the earlier run let the conversation go, so it ends
-      // after that run did.
-      noteConversationRunningTime(r.id, (kept ? kept.ms : 0) + (proven ? proven.turnMs : 0) + Math.max(0, end - start), end)
-    }).catch((err: unknown) => {
-      // A settle never rejects: claims wait on it (P3.7 review follow-up).
-      console.warn(`[codex/telemetry] the running time of a run of session ${sessionId} could not be kept: ${(err as Error)?.message ?? err}`)
-    }).finally(() => { if (pendingSettles.get(key) === settled) pendingSettles.delete(key) })
-    pendingSettles.set(key, settled)
+    keepRun(r, readState, Date.now())
   }
 
   /** Let the claim go: stop following its rollout, and say so. The status
@@ -1099,7 +1069,7 @@ export function watchAndClaimRollout(
       const size = Number(opened.size)
       if (offset > 0 && size === offset) return false
       if (offset === 0 || size < offset || size - offset > READ_STEP_MAX_BYTES) {
-        readState = newRolloutReadState(turnWindow)
+        readState = newRolloutReadState(run ? run.windows : [])
         if (size <= CLAIM_HEAD_BYTES + CLAIM_TAIL_BYTES) {
           offset = applyLines(readSpan(fd, 0, size))
           return offset > 0
@@ -1130,27 +1100,27 @@ export function watchAndClaimRollout(
 
   /** The edits and completed turns in bytes [start, end) of the claimed
    *  rollout, which a head and tail read passed over, added to what this read
-   *  state counted once the background count is done (P3.7). It is wanted
-   *  while the state is the watch's own, or while a settle waits on it (the
-   *  run's time is kept with the turns it finds); otherwise (the watch
-   *  stopped, or the state was replaced by a later read from the start) it
-   *  stops reading. The status line hears of it only while the state is
-   *  still the watch's own. Another file at the path is never read
-   *  (countRolloutRange). */
+   *  state counted once the background count is done (P3.7). Until then (or
+   *  if it gives none) the state's proven turns are not all counted. It is
+   *  wanted only while the state is the watch's own: once the watch stopped,
+   *  the claim was let go or the state was replaced by a later read from the
+   *  start, it starts no further read and lets go of the rollout (CI at
+   *  427807fb: on Windows a file still open keeps its folder from being
+   *  removed). Another file at the path is never read (countRolloutRange). */
   function countBetween(file: string, identity: string, start: number, end: number): void {
     const state = readState
     const live = (): boolean => !stopped && readState === state
-    const stale = (): boolean => !live() && !settleWaits.has(state)
+    turnsIncomplete.add(state)
     // Its last question to stale() comes after it closed the file, so the
     // answer still holds here.
-    const done = countRolloutRange(file, identity, start, end, stale, {}, state.turnWindow).then((n) => {
+    void countRolloutRange(file, identity, start, end, () => !live(), {}, state.turnWindows).then((n) => {
       if (!n) return
       state.linesAdded += n.added
       state.linesRemoved += n.removed
       state.turnMs += n.turnMs
-      if (live()) emit()
-    }, () => { /* the count never stops the watch */ }).finally(() => { counts.delete(state) })
-    counts.set(state, done)
+      turnsIncomplete.delete(state)
+      emit()
+    }, () => { /* the count never stops the watch */ })
   }
 
   /** The status line from what the rollout has said, once its session_meta was read. */
@@ -1170,7 +1140,7 @@ export function watchAndClaimRollout(
     if (run) {
       const now = Date.now()
       lines.totalDurationMs = runningMs(run, readState, now)
-      noteConversationRunningTime(run.id, lines.totalDurationMs, now)
+      keepRun(run, readState, now)
     }
     try {
       if (readState.latest) {

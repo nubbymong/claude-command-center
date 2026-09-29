@@ -20,14 +20,17 @@ import {
   CLAIM_TAIL_BYTES,
   EDIT_COUNT_LINE_MAX_BYTES,
   EDIT_COUNT_MAX_MS,
+  __codexCountsSettledForTests,
 } from '../../../../src/main/providers/codex/telemetry'
 import { codexFolderIdentity } from '../../../../src/main/providers/codex/rollout-lookup'
 import type { StatuslineData } from '../../../../src/shared/types'
 
 const ID = '019dd000-0001-7000-8000-0000000000c1'
 const temps: string[] = []
-afterEach(() => {
+afterEach(async () => {
   vi.useRealTimers()
+  // Every background count has let go of its rollout before its folder is removed (CI at 427807fb).
+  await __codexCountsSettledForTests()
   // Only a folder this file made (its own prefix, directly in the temp folder) is removed.
   for (const t of temps.splice(0)) if (dirname(t) === tmpdir() && /^ccc-test-codex-lines-/.test(basename(t))) rmSync(t, { recursive: true, force: true })
 })
@@ -185,6 +188,49 @@ describe('a Codex session\'s status line carries its lines changed', () => {
   })
 })
 
+/** Every rollout the background counts open, each read slowed by `delayMs`,
+ *  with the reads started and the handles opened and closed. */
+function slowHandles(delayMs: number) {
+  const realOpen = fsPromises.open
+  const log = { reads: 0, opened: 0, closed: 0 }
+  const spy = vi.spyOn(fsPromises, 'open').mockImplementation((async (...args: Parameters<typeof fsPromises.open>) => {
+    const fh = await realOpen.apply(fsPromises, args)
+    log.opened++
+    const read = fh.read.bind(fh) as (...a: unknown[]) => Promise<unknown>
+    const close = fh.close.bind(fh)
+    ;(fh as unknown as { read: unknown }).read = async (...a: unknown[]) => { log.reads++; await new Promise((r) => setTimeout(r, delayMs)); return read(...a) }
+    ;(fh as unknown as { close: unknown }).close = async () => { log.closed++; return close() }
+    return fh
+  }) as typeof fsPromises.open)
+  return { log, spy }
+}
+
+// CI (Windows, 427807fb): a watch that ended still had its background count
+// reading the rollout, so the file stayed open and its folder could not be
+// removed (a file deleted while open stays until it is closed). The count
+// now starts no read once the watch has ended or its claim is let go, and
+// closes the rollout when the read in hand returns.
+describe('a watch that ends, or a claim let go, while the background count reads', () => {
+  it('the count starts no further read, and lets go of the rollout', async () => {
+    const sessions = realm()
+    const old = new Date(Date.now() - 3 * 24 * 3600 * 1000)
+    writeFileSync(join(dayOf(sessions, old), `rollout-x-${ID}.jsonl`), metaLine(ID, '/p/demo', old.toISOString()) + '\n' + filler(5 * 1024 * 1024) + tokenLine(old.toISOString(), 777) + '\n')
+    const h = slowHandles(50)
+    try {
+      const { src } = watch(sessions, '/p/demo', ID)
+      await vi.waitFor(() => expect(h.log.reads).toBeGreaterThan(0), { timeout: 5_000, interval: 5 })
+      const readsAtStop = h.log.reads
+      src.stop()
+      await new Promise((r) => setTimeout(r, 300))
+      expect(h.log.reads).toBe(readsAtStop)
+      await __codexCountsSettledForTests()
+      expect(h.log.closed).toBe(h.log.opened)
+    } finally {
+      h.spy.mockRestore()
+    }
+  })
+})
+
 describe('a large rollout: the edits between its head and its tail', () => {
   /** meta, then three edits spread through the middle, then one in the tail with the newest figures. */
   function large(sessions: string, middleEdits = 3): string {
@@ -224,10 +270,10 @@ describe('a large rollout: the edits between its head and its tail', () => {
     expect(updates.map((u) => u.linesAdded)).toEqual([2])
   })
 
-  // Review fix 2: a claim let go settles the conversation's running time
-  // once the count lands (its turns count too), so the count reads on; it
-  // still says nothing more for the conversation let go.
-  it('a claim let go while that count waits to open the file: the count reads on for the time kept, and nothing more is said', async () => {
+  // CI at 427807fb: a claim let go keeps its conversation's time at once
+  // (the turns its count had not confirmed kept as a gap), so the count
+  // reads no further and lets go of the rollout.
+  it('a claim let go while that count waits to open the file: it stops without reading any of it, and nothing more is said', async () => {
     const sessions = realm()
     large(sessions)
     const pickFile = join(sessions, '..', 'pick.json')
@@ -253,8 +299,8 @@ describe('a large rollout: the edits between its head and its tail', () => {
       await vi.waitFor(() => expect(releases).toBe(1), { timeout: 5_000, interval: 20 })
       const before = __codexEditCountBytesReadForTests()
       letOpen()
-      await vi.waitFor(() => expect(__codexEditCountBytesReadForTests()).toBeGreaterThan(before), { timeout: 5_000, interval: 20 })
-      await new Promise((r) => setTimeout(r, 300))
+      await __codexCountsSettledForTests()
+      expect(__codexEditCountBytesReadForTests()).toBe(before)
       expect(updates.some((u) => u.linesAdded === 8)).toBe(false)
     } finally {
       src.stop()
