@@ -7,7 +7,7 @@ import { createSplashWindow, closeSplashWindow, SPLASH_MIN_MS, SPLASH_POST_READY
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerAccountWebHandlers } from './ipc/account-web-handlers'
 import { sweepAbandonedProfiles } from './account-web/sign-in'
-import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine, getKeptCodexConversation } from './pty-manager'
+import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine, getKeptCodexConversation, uncertainCodexConversationIds, rememberUncertainCodexConversations } from './pty-manager'
 import { registerResumeHandlers } from './ipc/resume-handlers'
 import { registerCliHandlers } from './ipc/cli-handlers'
 import { registerClipboardHandlers } from './ipc/clipboard-handlers'
@@ -135,6 +135,8 @@ const sessionDurability = createSessionDurability({
     resolveResumeTargetFromTranscript,
     // P3.5: the conversation a Codex session is on, as main keeps it (pty-manager).
     getProviderResumeTarget: (id) => getKeptCodexConversation(id) ?? null,
+    // P3.6: the conversations a Switch account never carries, kept across a relaunch.
+    getUncertainProviderConversations: uncertainCodexConversationIds,
   },
   save: saveSessionState,
   log: logInfo,
@@ -310,7 +312,10 @@ function registerMainWindowIpc(): void {
   })
 
   ipcMain.handle('session:load', async () => {
-    return loadSessionState()
+    const state = loadSessionState()
+    // P3.6: main's own list, read back before any restored session respawns.
+    rememberUncertainCodexConversations(state?.codexUncertainConversations)
+    return state
   })
 
   ipcMain.handle('session:clear', async () => {

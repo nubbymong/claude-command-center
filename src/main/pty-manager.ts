@@ -297,6 +297,10 @@ export interface CodexLaunch {
   executable: string
   env: Record<string, string>
   sessionsDir: string
+  /** P3.6 (main only): this launch resumes no kept conversation. A respawn
+   *  onto another account from a conversation whose claim was not certain
+   *  starts a new one there (pty-handlers carryForRespawn). */
+  freshConversation?: boolean
 }
 
 // WP2 (plan A10): the account lease of each running Codex session, so a
@@ -421,10 +425,47 @@ export function getKeptCodexConversation(sessionId: string): { uuid: string; cwd
 
 /** P3.6 (row 22): the conversation a Codex session is on and the account it
  *  ran under, for a Switch account to carry it into another account; none
- *  unless both are known. */
-export function getKeptCodexConversationSource(sessionId: string): { uuid: string; cwd: string; accountId: string } | undefined {
+ *  unless both are known. `uncertain`: its claim could have been another
+ *  session's (see uncertainCodexConversations), so it is never carried. */
+export function getKeptCodexConversationSource(sessionId: string): { uuid: string; cwd: string; accountId: string; uncertain: boolean } | undefined {
   const kept = keptCodexConversations.get(sessionId)
-  return kept && kept.accountId ? { uuid: kept.uuid, cwd: kept.cwd, accountId: kept.accountId } : undefined
+  return kept && kept.accountId ? { uuid: kept.uuid, cwd: kept.cwd, accountId: kept.accountId, uncertain: uncertainCodexConversations.has(kept.uuid.toLowerCase()) } : undefined
+}
+
+// P3.6 (ADR-009 round 1, B1; owner decision): conversations whose claim was
+// not certain -- two new sessions in one folder of one realm, started within
+// the claim window, can take each other's rollout (P3.5's recorded limit,
+// until P3.10's exact claim). P3.5's claim, Restart and relaunch are
+// unchanged; a Switch account never carries or brings up to date one of
+// these, and starts a new conversation on the new account instead. Kept by
+// conversation id, so a relaunch that resumes one keeps it uncertain: main
+// saves the list with the session state and reads it back when the state is
+// loaded. Bounded, the oldest first out.
+export const UNCERTAIN_CODEX_CONVERSATIONS_MAX = 512
+const uncertainCodexConversations = new Set<string>()
+
+function markCodexConversationUncertain(uuid: string): void {
+  if (typeof uuid !== 'string' || !UUID_RE.test(uuid)) return
+  const key = uuid.toLowerCase()
+  uncertainCodexConversations.delete(key)
+  uncertainCodexConversations.add(key)
+  while (uncertainCodexConversations.size > UNCERTAIN_CODEX_CONVERSATIONS_MAX) {
+    const oldest = uncertainCodexConversations.values().next().value
+    if (oldest === undefined) break
+    uncertainCodexConversations.delete(oldest)
+  }
+}
+
+/** The conversations whose claim was not certain, for the session state. */
+export function uncertainCodexConversationIds(): string[] {
+  return [...uncertainCodexConversations]
+}
+
+/** The list the session state saved (on load): anything that is not a
+ *  conversation id is ignored. */
+export function rememberUncertainCodexConversations(ids: unknown): void {
+  if (!Array.isArray(ids)) return
+  for (const id of ids.slice(-UNCERTAIN_CODEX_CONVERSATIONS_MAX)) if (typeof id === 'string') markCodexConversationUncertain(id)
 }
 
 /** P3.6 (row 22; ADR-009 round 1, B1): whether another session with a
@@ -4278,7 +4319,9 @@ function spawnPtyResolved(
       // and pick a conversation" (the picker) is never overridden by the kept
       // one. The builder resumes it only when its rollout is in this launch's
       // realm, checks the id again, and says where the CLI starts.
-      const resumeTarget = options?.resume ?? (options?.useResumePicker ? undefined : keptCodexConversations.get(sessionId))
+      // P3.6: a respawn onto another account from a conversation whose claim
+      // was not certain resumes none (`freshConversation`, main only).
+      const resumeTarget = options?.resume ?? (options?.useResumePicker || launch.freshConversation === true ? undefined : keptCodexConversations.get(sessionId))
       const built = provider.buildSpawnCommand({
         sessionId,
         provider: 'codex',
@@ -4351,7 +4394,11 @@ function spawnPtyResolved(
           ...(built.resumeId ? { resumeId: built.resumeId } : {}),
           ...(built.resumeId && built.resumePath ? { resumePath: built.resumePath } : {}),
           ...(built.pickFile ? { pickFile: built.pickFile, pickFolder: built.pickFolder } : {}),
-          onClaim: (claimed) => keepCodexConversation(sessionId, { uuid: claimed.id, cwd: claimed.cwd }, launch.lease.accountId),
+          onClaim: (claimed) => {
+            keepCodexConversation(sessionId, { uuid: claimed.id, cwd: claimed.cwd }, launch.lease.accountId)
+            // P3.6: a claim that could have been another session's.
+            if (claimed.certain !== true) markCodexConversationUncertain(claimed.id)
+          },
           // The picker decided again after a claim: the session is no longer on it.
           onRelease: () => { keptCodexConversations.delete(sessionId) },
         },

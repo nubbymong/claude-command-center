@@ -143,7 +143,7 @@ const launch = () => ({ lease: { release: vi.fn() }, executable: '/proven/codex'
 const start = (extra: Partial<SpawnOpts> = {}, sid = SID) =>
   spawnPty(fakeWin, sid, { cwd: os.tmpdir(), provider: 'codex', codexOptions: { permissionsPreset: 'read-only' }, codexLaunch: launch(), ...extra })
 const lastTelemetry = () => h.telemetry[h.telemetry.length - 1].opts
-const claim = (id: string, cwd: string) => (lastTelemetry().onClaim as (c: { id: string; cwd: string }) => void)({ id, cwd })
+const claim = (id: string, cwd: string, certain = true) => (lastTelemetry().onClaim as (c: { id: string; cwd: string; certain: boolean }) => void)({ id, cwd, certain })
 
 beforeEach(() => {
   SID = `cr${String(++seq).padStart(22, '0')}`
@@ -282,17 +282,17 @@ describe('the kept conversation records the account it ran under (P3.6)', () => 
 
   it('a resumed conversation is kept with the account its launch holds; what is saved stays the conversation alone', () => {
     start({ resume: { uuid: ID, cwd: '/p/demo' }, codexLaunch: on('acct-a') })
-    expect(getKeptCodexConversationSource(SID)).toEqual({ uuid: ID, cwd: `/conversations/${ID}`, accountId: 'acct-a' })
+    expect(getKeptCodexConversationSource(SID)).toEqual({ uuid: ID, cwd: `/conversations/${ID}`, accountId: 'acct-a', uncertain: false })
     expect(getKeptCodexConversation(SID)).toEqual({ uuid: ID, cwd: `/conversations/${ID}` })
   })
 
   it('a claimed conversation takes the launch\'s account, and a later launch that resumes it on another account records that one', () => {
     start({ codexLaunch: on('acct-a') })
     claim(ID, '/p/demo')
-    expect(getKeptCodexConversationSource(SID)).toEqual({ uuid: ID, cwd: '/p/demo', accountId: 'acct-a' })
+    expect(getKeptCodexConversationSource(SID)).toEqual({ uuid: ID, cwd: '/p/demo', accountId: 'acct-a', uncertain: false })
     killPty(SID)
     start({ codexLaunch: on('acct-b') })
-    expect(getKeptCodexConversationSource(SID)).toEqual({ uuid: ID, cwd: `/conversations/${ID}`, accountId: 'acct-b' })
+    expect(getKeptCodexConversationSource(SID)).toEqual({ uuid: ID, cwd: `/conversations/${ID}`, accountId: 'acct-b', uncertain: false })
   })
 
   it('nothing to carry without both: no conversation, or a launch that names no account', () => {

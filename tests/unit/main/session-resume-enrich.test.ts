@@ -147,3 +147,34 @@ describe('enrichSessionStateWithResumeTargets for a Codex session (P3.5)', () =>
     expect(s.sessions[1].resumeUuid).toBeUndefined()
   })
 })
+
+// P3.6 (ADR-009 round 1, B1; owner decision): the Codex conversations whose
+// claim was not certain are saved with the state, so a relaunch that resumes
+// one still never has it carried by a Switch account. Main writes the list at
+// every save (only the ones a saved session is on) and reads it back at load.
+describe('enrichSessionStateWithResumeTargets keeps the uncertain claims (P3.6)', () => {
+  const ON = '019dd000-0001-7000-8000-0000000000f1'
+  const GONE = '019dd000-0001-7000-8000-0000000000f2'
+
+  it('writes those a saved session is on, whatever their case; drops the rest; and removes the list when none is left', () => {
+    const s = state([{ id: 's1', provider: 'codex' }, { id: 's2', provider: 'codex' }])
+    enrichSessionStateWithResumeTargets(s, mkDeps({
+      getProviderResumeTarget: (id) => (id === 's1' ? { uuid: ON, cwd: 'C:/p' } : null),
+      getUncertainProviderConversations: () => [ON.toUpperCase(), GONE],
+    }))
+    expect(s.codexUncertainConversations).toEqual([ON.toUpperCase()])
+    const later = state([{ id: 's1', provider: 'codex', resumeUuid: GONE, resumeCwd: 'C:/p' }])
+    later.codexUncertainConversations = [ON]
+    enrichSessionStateWithResumeTargets(later, mkDeps({ getProviderResumeTarget: () => null, getUncertainProviderConversations: () => [ON] }))
+    expect(later.codexUncertainConversations).toBeUndefined()
+  })
+
+  it('without the source, the saved list is left as it is; a source that throws leaves it too', () => {
+    const s = state([{ id: 's1', provider: 'codex', resumeUuid: ON, resumeCwd: 'C:/p' }])
+    s.codexUncertainConversations = [ON]
+    enrichSessionStateWithResumeTargets(s, mkDeps())
+    expect(s.codexUncertainConversations).toEqual([ON])
+    enrichSessionStateWithResumeTargets(s, mkDeps({ getUncertainProviderConversations: () => { throw new Error('x') } }))
+    expect(s.codexUncertainConversations).toEqual([ON])
+  })
+})

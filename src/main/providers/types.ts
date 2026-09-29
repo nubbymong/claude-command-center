@@ -124,7 +124,9 @@ export interface TelemetryOptions {
   /** The pick file's folder as it was made: no pick is read, and nothing
    *  there removed, unless it is still that folder. */
   pickFolder?: PickFolderIdentity
-  onClaim?: (claim: { id: string; cwd: string }) => void
+  /** `certain` (P3.6): false when the rollout could have been another
+   *  launch's (two new sessions in one folder, P3.5's recorded limit). */
+  onClaim?: (claim: { id: string; cwd: string; certain: boolean }) => void
   /** Told when a claim is let go (the picker decided again after it). */
   onRelease?: () => void
 }

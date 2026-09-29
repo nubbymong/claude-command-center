@@ -47,6 +47,12 @@ export interface ResumeEnrichDeps {
    * tabs are left as they are.
    */
   getProviderResumeTarget?: (sessionId: string) => { uuid: string; cwd: string } | null | undefined
+  /**
+   * P3.6: the conversations whose claim was not certain (pty-manager), saved
+   * with the state so a relaunch that resumes one keeps it from being carried
+   * by a Switch account. Only those a saved session is on are written.
+   */
+  getUncertainProviderConversations?: () => string[]
 }
 
 /** A conversation id, as every resume target must carry (the spawn schema's form). */
@@ -100,6 +106,16 @@ export function enrichSessionStateWithResumeTargets(
       }
     } catch {
       // best-effort: leave this record exactly as it was
+    }
+  }
+  if (deps.getUncertainProviderConversations) {
+    try {
+      const on = new Set(state.sessions.map((s) => (s && typeof s.resumeUuid === 'string' ? s.resumeUuid.toLowerCase() : '')).filter(Boolean))
+      const kept = deps.getUncertainProviderConversations().filter((id) => typeof id === 'string' && on.has(id.toLowerCase()))
+      if (kept.length) state.codexUncertainConversations = kept
+      else delete state.codexUncertainConversations
+    } catch {
+      // best-effort: the list stays as it was
     }
   }
   return state
