@@ -9,7 +9,7 @@ import {
   CODEX_MIN_SUPPORTED_VERSION, CODEX_PINNED_CLI_VERSION, CODEX_MAX_TESTED_VERSION,
 } from '../../src/main/providers/codex'
 import { EventEmitter } from 'node:events'
-import { codexLeftoverPids, codexRecordRunMembers, CODEX_EXEC_EXIT_SETTLE_MS, CODEX_OBSERVE_AT_MS, CODEX_OBSERVE_MAX_READS, CODEX_OBSERVE_MAX_IN_FLIGHT } from '../../src/main/providers/codex'
+import { codexLeftoverPids, codexChainAlone, codexRecordRunMembers, CODEX_EXEC_EXIT_SETTLE_MS, CODEX_OBSERVE_AT_MS, CODEX_OBSERVE_MAX_READS, CODEX_OBSERVE_MAX_IN_FLIGHT } from '../../src/main/providers/codex'
 import type { CodexRunMember } from '../../src/main/providers/codex'
 import { codexCommandLine, cliCommandLine, codexShellEnv, runCodexCli, discoverCodex, verifyCodexExecutable, codexCompatibilityAllowsUse, makeCodexKillTree, extractMarkedPath, CODEX_TREE_PRIME_MS, CODEX_PRIME_TABLE_TIMEOUT_MS, codexWrapperLinePids } from '../../src/main/providers/codex'
 import { codexChainPids, parseWindowsProcessTable, parsePosixProcessTable, parseLinuxStat, makeCodexProcessLister, CODEX_KILL_SETTLE_MS, CODEX_PROCESS_TABLE_TIMEOUT_MS, CODEX_TASKKILL_TIMEOUT_MS, CODEX_KILL_WORST_MS, flushPendingCodexKills, WINDOWS_PROCESS_QUERY } from '../../src/main/providers/codex'
@@ -1801,6 +1801,58 @@ describe('an exec run settles after its root exits (P3.9 round 2)', () => {
       spawned[1].child.emit('close', 0)
       await q
     } finally { vi.useRealTimers() }
+  })
+
+  it('round 4: once a read finds the chain alone, the scheduled reads stop; the reads at start and first output still happen', async () => {
+    const chain: CodexProcessEntry[] = [
+      { pid: 12, ppid: 1, name: 'cmd.exe', created: 100 }, { pid: 13, ppid: 12, name: 'node.exe', created: 101 }, { pid: 14, ppid: 13, name: 'codex.exe', created: 102 },
+    ]
+    expect(codexChainAlone(12, chain)).toBe(true)
+    expect(codexChainAlone(12, chain.slice(0, 2))).toBe(false)                                   // codex not started yet
+    expect(codexChainAlone(12, [...chain, { pid: 15, ppid: 14, name: 'git.exe', created: 103 }])).toBe(false)
+    expect(codexChainAlone(12, chain.slice(1))).toBe(false)                                       // no root
+    let reads = 0
+    const run = Object.assign(new EventEmitter(), { pid: 12, exitCode: null as number | null, signalCode: null, kill: vi.fn() })
+    const win = makeCodexKillTree('win32', (() => { throw new Error('no') }) as never, 'C:\\Windows', async () => { reads++; return chain }, null)
+    win.observe!(run as never, Date.now(), 'start')
+    await new Promise((r) => setTimeout(r, 0))
+    win.observe!(run as never, Date.now(), 'schedule')
+    await new Promise((r) => setTimeout(r, 0))
+    expect(reads).toBe(1)
+    win.observe!(run as never, Date.now(), 'output')
+    await new Promise((r) => setTimeout(r, 0))
+    expect(reads).toBe(2)
+    // A run with a helper beyond its chain is read on the schedule as before.
+    let more = 0
+    const busy = Object.assign(new EventEmitter(), { pid: 12, exitCode: null as number | null, signalCode: null, kill: vi.fn() })
+    const other = makeCodexKillTree('win32', (() => { throw new Error('no') }) as never, 'C:\\Windows', async () => { more++; return [...chain, { pid: 15, ppid: 14, name: 'git.exe', created: 103 }] }, null)
+    other.observe!(busy as never, Date.now(), 'start')
+    await new Promise((r) => setTimeout(r, 0))
+    other.observe!(busy as never, Date.now(), 'schedule')
+    await new Promise((r) => setTimeout(r, 0))
+    expect(more).toBe(2)
+  })
+
+  it('round 4: a leftover kill says what taskkill answered, in one line', async () => {
+    const FT2 = 11_644_473_600_000
+    const lines: string[] = []
+    const spawn = ((_f: string, _args: readonly string[], opts: Record<string, unknown>) => {
+      expect(opts.stdio).toEqual(['ignore', 'ignore', 'pipe'])
+      const stderr = new EventEmitter()
+      const k = Object.assign(new EventEmitter(), { stderr })
+      queueMicrotask(() => { stderr.emit('data', 'ERROR: The process with PID 15 could not be terminated.\r\nReason: Access is denied.\r\n'); k.emit('exit', 128) })
+      return k
+    }) as never
+    const now = Date.now()
+    const run = Object.assign(new EventEmitter(), { pid: 12, exitCode: null as number | null, signalCode: null, kill: vi.fn() })
+    let table: CodexProcessEntry[] = [{ pid: 12, ppid: 1, name: 'codex.exe', created: now - 50 + FT2 }, { pid: 15, ppid: 12, name: 'git.exe', created: now - 20 + FT2 }]
+    const win = makeCodexKillTree('win32', spawn, 'C:\\Windows', async () => table, null, undefined, (l) => { lines.push(l) })
+    win.observe!(run as never, now - 100, 'start')
+    await new Promise((r) => setTimeout(r, 0))
+    run.exitCode = 1
+    table = [{ pid: 15, ppid: 12, name: 'git.exe', created: now - 20 + FT2 }]
+    await win.leftovers!(run as never, { since: now - 100, until: now })
+    expect(lines).toEqual(['[codex] leftover kill of 15: taskkill exit 128: ERROR: The process with PID 15 could not be terminated. Reason: Access is denied.'])
   })
 
   it('K2: the reads are bounded per run and at once', async () => {

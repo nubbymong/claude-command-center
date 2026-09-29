@@ -59,6 +59,25 @@ export class SentinelState {
   setLastSeenCcVersion(v: string): void { this.state = { ...this.state, lastSeenCcVersion: v }; this.persist() }
   /** P3.9: the Codex version the last completed check saw. */
   setLastSeenCodexVersion(v: string): void { this.state = { ...this.state, lastSeenCodexVersion: v }; this.persist() }
+  /** Round 4: one more analysis of `key` (`<provider>:<version>`) whose
+   *  findings could not all be matched to its notes; the count so far. */
+  countUnverified(key: string): number {
+    const tries = { ...(this.state.unverifiedTries ?? {}) }
+    const now = (typeof tries[key] === 'number' && Number.isFinite(tries[key]) ? tries[key] : 0) + 1
+    tries[key] = now
+    this.state = { ...this.state, unverifiedTries: tries }
+    this.persist()
+    return now
+  }
+  /** Round 4: forget `key`'s count (its version is recorded). */
+  clearUnverified(key: string): void {
+    const tries = this.state.unverifiedTries
+    if (!tries || !(key in tries)) return
+    const rest = { ...tries }
+    delete rest[key]
+    this.state = { ...this.state, unverifiedTries: rest }
+    this.persist()
+  }
   /** `provider` (P3.9): whose update the analysis starting now is about.
    *  `note` (round 1): what to say beside a completed analysis that did not
    *  read everything in full; cleared when a new one starts. */

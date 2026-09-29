@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-29T20:14:27.195Z",
-  "head": "5fd82db8c8fcdc550bb7e1c5de9be8ac401db75d",
-  "tree": "46a87d3b35556c69d169b6f9f5b0dc9f9bdb9dbb",
+  "generatedAt": "2026-09-29T20:59:55.904Z",
+  "head": "2499766e4691c5e53de5c4e90cdccf377486eb93",
+  "tree": "a5c20ffc9c0c10fc50c054c0fcc5758eddfcaccf",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 337
+      "lineCount": 340
     },
     {
       "path": "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
@@ -636,7 +636,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 149
+      "lineCount": 161
     },
     {
       "path": "src/main/providers/codex/conversation-carry.ts",
@@ -3081,7 +3081,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 128
+      "lineCount": 132
     },
     {
       "path": "tests/unit/main/service-status-providers.test.ts",

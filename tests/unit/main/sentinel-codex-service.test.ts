@@ -375,6 +375,28 @@ describe("the analysis of a Codex update, on the provider that is on (row 42; OD
     expect(claudeRuns[0].transportEnv).toEqual({ HTTPS_PROXY: 'http://proxy.example:8080', NODE_EXTRA_CA_CERTS: '/etc/ca.pem' })
   })
 
+  it('round 4: an update whose findings never match is analysed at most 3 times, then recorded as checked with a note', async () => {
+    svc.pref.claude = 'off'
+    review.answer = () => reply('{"tokens":{"refresh_token":"FAKE"}}')
+    const s = await sentinel({ lastSeenCodexVersion: '0.153.4' })
+    for (let i = 1; i <= 2; i++) {
+      await s.sentinelStartupCheck()
+      const snap = s.getSentinelState()!.snapshot()
+      expect(snap.lastSeenCodexVersion, `start ${i}`).toBe('0.153.4')
+      expect(snap.lastAnalysisError, `start ${i}`).toContain('will be analysed again at the next check')
+    }
+    await s.sentinelStartupCheck()
+    const snap = s.getSentinelState()!.snapshot()
+    expect(review.runs).toHaveLength(3)
+    expect(snap.lastSeenCodexVersion).toBe('0.155.1')
+    expect(snap.lastAnalysisError).toBeNull()
+    expect(snap.lastAnalysisNote).toBe('One finding from the analysis of Codex 0.155.1 could not be matched to its release notes after 3 analyses, so it is not shown and the update is recorded as checked.')
+    expect(snap.unverifiedTries ?? {}).toEqual({})
+    // Checked now: the next start runs no analysis of it.
+    await s.sentinelStartupCheck()
+    expect(review.runs).toHaveLength(3)
+  })
+
   it('Codex only: the Codex update runs on Codex and no Claude process starts at all', async () => {
     svc.pref.claude = 'off'
     const s = await sentinel({ lastSeenCodexVersion: '0.153.4' })
