@@ -19,6 +19,7 @@ import {
   CLAIM_HEAD_BYTES,
   CLAIM_TAIL_BYTES,
   EDIT_COUNT_LINE_MAX_BYTES,
+  EDIT_COUNT_MAX_MS,
 } from '../../../../src/main/providers/codex/telemetry'
 import { codexFolderIdentity } from '../../../../src/main/providers/codex/rollout-lookup'
 import type { StatuslineData } from '../../../../src/shared/types'
@@ -333,6 +334,32 @@ describe('countRolloutRange (the background count)', () => {
     const { file, text } = fileWith([editLine(iso)])
     let asks = 0
     expect(await countRolloutRange(file, identityOf(file), 0, text.length, () => ++asks > 1)).toBeNull()
+  })
+
+  // Review round 2, fix 2: bounded in time, as the carry is: a read that
+  // never returns (a volume that stops answering) gives no count once the
+  // limit has passed, and the count stops at its next chunk if it ever does.
+  it('a count held up past its time limit gives no count, and reads nothing more once let go', async () => {
+    const { file, text } = fileWith([editLine(iso), editLine(iso)])
+    const realOpen = fsPromises.open
+    let letOpen!: () => void
+    const held = new Promise<void>((r) => { letOpen = r })
+    const spy = vi.spyOn(fsPromises, 'open').mockImplementation((async (...args: Parameters<typeof fsPromises.open>) => {
+      await held
+      return realOpen.apply(fsPromises, args)
+    }) as typeof fsPromises.open)
+    try {
+      const counting = countRolloutRange(file, identityOf(file), 0, text.length, () => false, { maxMs: 100 })
+      const settled = await Promise.race([counting, new Promise((r) => setTimeout(() => r('still running'), 1_000))])
+      expect(settled).toBeNull()
+      const before = __codexEditCountBytesReadForTests()
+      letOpen()
+      await new Promise((r) => setTimeout(r, 200))
+      expect(__codexEditCountBytesReadForTests()).toBe(before)
+    } finally {
+      spy.mockRestore()
+    }
+    expect(EDIT_COUNT_MAX_MS).toBe(60_000)
   })
 
   it('a line with the edit mark is read as an edit; the others are passed over', async () => {

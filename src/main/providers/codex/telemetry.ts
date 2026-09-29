@@ -367,6 +367,14 @@ export function __codexEditCountBytesReadForTests(): number { return editCountBy
 /** The most held since the last call, then starts again. */
 export function __codexEditCountTakeMostHeldForTests(): number { const n = editCountMostHeld; editCountMostHeld = 0; return n }
 
+/** How long a background count may take (P3.7 review round 2; the carry has
+ *  60 s too): past it there is no count, and the count stops at its next
+ *  chunk if a read held up ever returns. */
+export const EDIT_COUNT_MAX_MS = 60_000
+let editCountMaxMs = EDIT_COUNT_MAX_MS
+/** Tests narrow the default limit; answers the one it replaced. */
+export function __setCodexEditCountMaxMsForTests(ms: number): number { const was = editCountMaxMs; editCountMaxMs = ms; return was }
+
 /**
  * The lines the completed edits in whole lines of `file` from byte `start`
  * to `end` added and removed, and the running time its completed turns prove
@@ -374,10 +382,11 @@ export function __codexEditCountTakeMostHeldForTests(): number { const n = editC
  * only a large rollout's head and tail did not see. Read apart from the status line's own
  * reads, a chunk at a time, while the opened file is still `identity` (its
  * device and file id, as the watcher claimed it). Null when it is not, when
- * the read fails, or when `stale()` says the count is no longer wanted (it
- * is asked before each chunk, and last once the file is closed). A last line
- * with no newline before `end` is not a whole record and is not counted; a
- * line longer than `lineMaxBytes` is passed over, never held.
+ * the read fails, when `stale()` says the count is no longer wanted (it
+ * is asked before each chunk, and last once the file is closed), or once
+ * `limits.maxMs` (EDIT_COUNT_MAX_MS) has passed, even with a read held up. A
+ * last line with no newline before `end` is not a whole record and is not
+ * counted; a line longer than `lineMaxBytes` is passed over, never held.
  */
 export async function countRolloutRange(
   file: string,
@@ -385,8 +394,31 @@ export async function countRolloutRange(
   start: number,
   end: number,
   stale: () => boolean = () => false,
-  limits: { chunkBytes?: number; lineMaxBytes?: number } = {},
+  limits: { chunkBytes?: number; lineMaxBytes?: number; maxMs?: number } = {},
   turnWindow: TurnWindow | null = null,
+): Promise<RangeCounts | null> {
+  let expired = false
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<null>((resolve) => {
+    timer = setTimeout(() => { expired = true; resolve(null) }, limits.maxMs ?? editCountMaxMs)
+    ;(timer as { unref?: () => void }).unref?.()
+  })
+  try {
+    return await Promise.race([countRange(file, identity, start, end, () => expired || stale(), limits, turnWindow), deadline])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** countRolloutRange's count itself, with no time limit of its own. */
+async function countRange(
+  file: string,
+  identity: string,
+  start: number,
+  end: number,
+  stale: () => boolean,
+  limits: { chunkBytes?: number; lineMaxBytes?: number },
+  turnWindow: TurnWindow | null,
 ): Promise<RangeCounts | null> {
   const chunkBytes = Math.max(1, limits.chunkBytes ?? EDIT_COUNT_CHUNK_BYTES)
   const lineMax = limits.lineMaxBytes ?? EDIT_COUNT_LINE_MAX_BYTES
@@ -776,9 +808,10 @@ export function watchAndClaimRollout(
   let handledPick: string | null = null
   /** This launch's run of the claimed conversation (P3.7, row 36): its id,
    *  when this launch's run of it began (`launched`), the moment counted from
-   *  (`start`: that, or later if main already kept time past it), and the
-   *  running time main kept of it before. */
-  let run: { id: string; launched: number; start: number; before: number } | null = null
+   *  (`start`: that, or later if main already kept time past it), the
+   *  running time main kept of it before, and whether that was read while
+   *  an earlier run's time was still waiting to be kept (`provisional`). */
+  let run: { id: string; launched: number; start: number; before: number; provisional: boolean } | null = null
   /** The time before this run that main did not see: the turns the rollout
    *  records as completed in it are what it proves (P3.7). */
   let turnWindow: TurnWindow | null = null
@@ -843,18 +876,18 @@ export function watchAndClaimRollout(
     // resumed conversation from its restore).
     if (CODEX_CONVERSATION_ID_RE.test(found.id)) {
       const id = found.id
-      beginRun(id, pickFile && !resumeId ? (decision?.kind === 'fresh' ? decision.at : Date.now()) : spawnTimestamp)
-      // An earlier run's time not kept yet (its count still running): once it
-      // is, take it again, and read the rollout again from its start in the
-      // window that follows it.
+      // An earlier run's time not kept yet (its count still running): what
+      // is kept now is provisional. Once it is kept, take it again, and read
+      // the rollout again from its start in the window that follows it.
       const waiting = pendingSettles.get(id.toLowerCase())
+      beginRun(id, pickFile && !resumeId ? (decision?.kind === 'fresh' ? decision.at : Date.now()) : spawnTimestamp, !!waiting)
       const mine = run
       if (waiting && mine) {
         void waiting.then(() => {
           // Only while this claim's run is still the watch's own: a claim let
           // go, a watch stopped and a later claim each replace it.
           if (run !== mine) return
-          beginRun(id, mine.launched)
+          beginRun(id, mine.launched, false)
           offset = 0
         })
       }
@@ -897,10 +930,10 @@ export function watchAndClaimRollout(
    *  what main keeps of it now. Counted from no earlier than the time main
    *  already kept (P3.7 review): another tab's run of the conversation that
    *  ended after this launch began already counted the time they shared. */
-  function beginRun(id: string, launched: number): void {
+  function beginRun(id: string, launched: number, provisional: boolean): void {
     const kept = conversationRunningTime(id)
     const start = kept ? Math.max(launched, kept.until) : launched
-    run = { id, launched, start, before: kept ? kept.ms : 0 }
+    run = { id, launched, start, before: kept ? kept.ms : 0, provisional }
     turnWindow = { from: kept ? kept.until : Number.NEGATIVE_INFINITY, to: start }
   }
 
@@ -913,21 +946,37 @@ export function watchAndClaimRollout(
   /** This run of the claimed conversation is over (the claim let go, or the
    *  watch ended with the process): main keeps its running time up to now,
    *  once the read state's background count, if one is running, has landed
-   *  with the turns it finds (P3.7 review). */
+   *  with the turns it finds (P3.7 review), and after any earlier run's time
+   *  still waiting to be kept (review round 2). A run whose base was read
+   *  while an earlier one waited (provisional) adds its own part to what is
+   *  kept by then: its live time from no earlier than that, and the turns
+   *  the rollout proves between that and its start (counted again, within
+   *  the count's time limit), since its own read used the older window. */
   function settleRun(): void {
     if (!run) return
     const r = run
     const state = readState
-    const now = Date.now()
+    const end = Date.now()
+    const file = claimedPath
+    const identity = claimedIdentity
     run = null
-    const keep = (): void => noteConversationRunningTime(r.id, runningMs(r, state, now), now)
-    const count = counts.get(state)
-    if (!count) { keep(); return }
-    settleWaits.add(state)
     const key = r.id.toLowerCase()
-    const settled: Promise<void> = count.then(() => {
+    const earlier = pendingSettles.get(key)
+    const count = r.provisional ? undefined : counts.get(state)
+    if (!earlier && !count) { noteConversationRunningTime(r.id, runningMs(r, state, end), end); return }
+    if (count) settleWaits.add(state)
+    const settled: Promise<void> = Promise.all([count, earlier]).then(async () => {
       settleWaits.delete(state)
-      keep()
+      if (!r.provisional) { noteConversationRunningTime(r.id, runningMs(r, state, end), end); return }
+      const kept = conversationRunningTime(r.id)
+      const from = kept ? kept.until : Number.NEGATIVE_INFINITY
+      const start = Math.max(r.launched, from)
+      const proven = file && identity
+        ? await countRolloutRange(file, identity, 0, Number.POSITIVE_INFINITY, () => false, {}, { from, to: start })
+        : null
+      // It claimed after the earlier run let the conversation go, so it ends
+      // after that run did. Nothing here throws: the count answers null.
+      noteConversationRunningTime(r.id, (kept ? kept.ms : 0) + (proven ? proven.turnMs : 0) + Math.max(0, end - start), end)
     }).finally(() => { if (pendingSettles.get(key) === settled) pendingSettles.delete(key) })
     pendingSettles.set(key, settled)
   }

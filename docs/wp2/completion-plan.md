@@ -885,7 +885,13 @@ once (a run is counted from no earlier than the time main already kept); a
 run that ends before a large rollout's background count lands is kept once
 the count has, turns included, and a claim of that conversation meanwhile
 takes the kept time again once it is, reading the rollout again in the window
-that follows it. Parity checked: the Duration moves when the rollout changes,
+that follows it. Review round 2: the runs waiting to be kept for one
+conversation are kept in turn, and a run whose base was read while an earlier
+one waited adds its own part to what is kept once that one has (its time from
+no earlier than that run's end, and the turns the rollout proves since); a
+background count stops after 60 s, as the carry does (a volume that stops
+answering), and what it would have found (lines, and turns between a large
+rollout's head and tail) is then not counted. Parity checked: the Duration moves when the rollout changes,
 as Claude's moves when its status line updates on Claude's own events (the
 app's Claude status line sets no refresh interval). Every save writes the
 kept list: at the 1000-entry limit about 110 KB of the session file,
