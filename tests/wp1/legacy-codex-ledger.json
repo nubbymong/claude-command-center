@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "91bb85bdc903143d92aa1426b16d3ad696607109c5ed3ed410bfc83250fb5d80",
-  "manifestHead": "97b3b864bff2dd823d6e9410460a0ce0fbf7088e",
+  "manifestPathDigest": "f252db869e3bf60b85e52c35ea1f44e2d9caeff5857f3c0599787fedea65976c",
+  "manifestHead": "713061f871f490022ad83a2199266e08fb353f3b",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -4635,6 +4635,18 @@
       "disposition": "added",
       "evidence": "new WP2 PR 3 P3.7 (row 36) test (tests/unit/providers/codex/telemetry-lines.test.ts): a Codex session's lines changed, counted from the completed FileChange edits its rollout records (P3.1 evidence answer 5; the recorded 0.153.4 and 0.155.1 edit fixtures), over the whole conversation, on every status line update and cleared when a claim is let go; the edits between a large rollout's head and tail counted in the background, bounded, identity-checked and dropped once stale (WP1.68)",
       "note": "created by WP2 PR 3 P3.7; real files in a temp folder, no Codex process; fs.promises.open is gated in one test"
+    },
+    {
+      "path": "tests/unit/providers/codex/telemetry-settle-reject.test.ts",
+      "predicates": [
+        "P01",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.7 review follow-up test (tests/unit/providers/codex/telemetry-settle-reject.test.ts): a run's running time that cannot be kept once its background count lands is logged, and neither the settle nor a claim waiting on it rejects unhandled (WP1.68)",
+      "note": "created by WP2 PR 3 P3.7; the running-time store is replaced by vi.mock to throw on demand; real files in a temp folder, no Codex process"
     },
     {
       "path": "tests/unit/providers/codex/telemetry.test.ts",
