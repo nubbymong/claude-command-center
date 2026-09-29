@@ -11,8 +11,13 @@
  * The caller (realm-folders.ts copyConversation) has located both realms from
  * the registry, checked them and holds both realm locks; the accounts service
  * holds a lease on both accounts, and the session's own process has ended
- * (the carry runs in main's respawn, between the kill and the spawn). This
- * module does the file work only:
+ * (the carry runs in main's respawn, between the kill and the spawn). Both
+ * roots it is handed are canonical: the caller derives them from the app's
+ * roots taken at their real path (resolveCodexRealmRoots), with the same
+ * realpath flavour as here (realpathSync.native, which also expands an 8.3
+ * short name), so a root reached through a link, a junction or a short name
+ * is refused here, never resolved (a folder swapped for a link is never
+ * followed). This module does the file work only:
  *   - the source is found by P3.5's lookup, in the source realm's sessions
  *     folder only, following no link at any level, its name and its
  *     session_meta agreeing on the id; it is opened and checked to be that
