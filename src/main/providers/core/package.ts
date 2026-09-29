@@ -114,11 +114,39 @@ export interface InstalledCli {
   executable?: string
 }
 
+/** One model the installed CLI offers in its own model picker (P3.9, row 39). */
+export interface ModelCatalogueEntry {
+  id: string
+  label: string
+}
+
+/** Why a model catalogue read gave no list (P3.9). */
+export type ModelCatalogueFailureCode =
+  | 'not-proven'           // discovery has not proven a CLI this run
+  | 'unsupported-version'  // the proven CLI's version may not be used
+  | 'executable-changed'   // PATH now resolves another file, or the file was replaced
+  | 'not-started'          // the CLI could not be run
+  | 'failed'               // it ran and failed, timed out or was stopped
+  | 'unreadable'           // its output was not a list this app reads
+
+/** The models the installed CLI offers, read from the CLI itself (P3.9),
+ *  with the version that answered; or why there is no list. */
+export type ModelCatalogueResult =
+  | { ok: true; version: string; models: ModelCatalogueEntry[] }
+  | { ok: false; code: ModelCatalogueFailureCode; detail: string }
+
 export interface ProviderSetupOperations {
   discover(): Promise<DiscoveryResult>
   /** `installed`: what discovery last resolved, so an update command updates
    *  that same install (the one sessions run). */
   installRecipes(platform: CapabilityPlatform, installed?: InstalledCli): readonly InstallRecipe[]
+  /** The versions the app's managed flows support (P3.9: Sentinel names the
+   *  range in a version finding). Absent: the package states no range. */
+  readonly supportedVersions?: { minimum: string; maximumTested: string }
+  /** Present when the CLI can list the models its own picker offers without
+   *  a sign-in or the network (P3.9: Sentinel's live model check). It runs
+   *  only the executable discovery last proved, in no account's folder. */
+  modelCatalogue?(opts?: { signal?: AbortSignal }): Promise<ModelCatalogueResult>
 }
 
 export interface AuthLoginInput {

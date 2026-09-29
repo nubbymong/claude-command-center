@@ -394,6 +394,14 @@ export function canOfferMakeReviewer(snapshot: AccountsSnapshot | null, account:
   return !!providerView(snapshot, account.providerId)?.review
 }
 
+/** The Codex accounts Sentinel's analysis may run under (P3.9), as the
+ *  Settings select lists them: the ones a review could run on unattended
+ *  (active, not blocked, vouched for, nothing stopping reviews on this
+ *  platform), in the list's order. */
+export function sentinelCodexAccountChoices(snapshot: AccountsSnapshot | null): AccountView[] {
+  return selectProviderAccounts(snapshot, 'codex').filter((a) => a.lifecycle === 'active' && a.operationalState !== 'blocked' && !a.unverified && !a.external && !a.reviewRefusal)
+}
+
 /** Whether an account may be offered "Sign in again": not archived and not
  *  blocked (it is reconciled first). Signed in too (P3.3, design 9.2): main
  *  then signs in to a new folder and moves the account there only once that

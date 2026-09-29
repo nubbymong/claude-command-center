@@ -47,7 +47,7 @@ import type {
   ResolveConflictRequest, SetReviewerDefaultRequest, ReviewerChoice, ReviewRefusalView, ReviewReadinessView, ProviderLaunchRefusal,
   ProviderAccountUsageView, ProviderUsageStreamResult, AuthRealm, SignInAgainResult, SignInPhase,
 } from '../../../shared/providers'
-import type { ProviderPackage, DiscoveryResult, AuthCredentialKind, AuthOperationResult, AuthLoginInput, InstallRecipe, ExternalDefaultRealmSpec, RealmRef, UsageReading, UsageReadOutcome } from './package'
+import type { ProviderPackage, DiscoveryResult, AuthCredentialKind, AuthOperationResult, AuthLoginInput, InstallRecipe, ExternalDefaultRealmSpec, RealmRef, UsageReading, UsageReadOutcome, ModelCatalogueResult } from './package'
 import type { AccountRegistryStore, StoreResult } from './account-registry-store'
 import type { ConsumerLeaseRegistry, AccountLease, LaunchLeaseKind } from './consumer-leases'
 import { LAUNCH_LEASE_KINDS } from './consumer-leases'
@@ -767,6 +767,31 @@ export class AccountsService {
     }
     await this.discoverOnce(p)
     return { ok: true, installation: this.installationView(p) }
+  }
+
+  /** The models the provider's installed CLI offers in its own picker, read
+   *  from the CLI (P3.9, row 39: Sentinel's live model check). Like every
+   *  CLI a provider runs, the launch rule decides first, and again after the
+   *  wait for its proof (a discovery in flight is joined); the package runs
+   *  only the executable discovery proved, in no account's folder. A package
+   *  without the read answers `unsupported`. Never throws. */
+  async readModelCatalogue(providerId: ProviderId, opts: { signal?: AbortSignal } = {}): Promise<AccountsResult<{ catalogue: ModelCatalogueResult }>> {
+    const p = this.pkg(providerId)
+    const setup = p?.setup
+    if (!p || !setup || typeof setup.modelCatalogue !== 'function') return failure('unsupported')
+    const refused = this.cliRefusal(p.id)
+    if (refused) return refused
+    try { await this.ensureDiscovered(p) } catch { /* the read below says there is no proof */ }
+    const notNow = this.cliRefusal(p.id)
+    if (notNow) return notNow
+    let catalogue: ModelCatalogueResult
+    try {
+      catalogue = await setup.modelCatalogue(opts)
+    } catch {
+      catalogue = { ok: false, code: 'failed', detail: 'the model list could not be read' }
+    }
+    if (!catalogue || typeof catalogue !== 'object') catalogue = { ok: false, code: 'failed', detail: 'the model list could not be read' }
+    return { ok: true, catalogue }
   }
 
   /** Once at start, after the service is up: look for the CLI of every

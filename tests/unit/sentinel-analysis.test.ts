@@ -176,3 +176,43 @@ describe('envelopeError', () => {
     expect(e.reason.length).toBeLessThanOrEqual(160)
   })
 })
+
+// P3.9 (row 42): a Codex update is analysed the same way, against the four
+// surfaces the app relies on in Codex (its launch flags and its session files
+// among them), and its findings are Codex's.
+describe('the analysis of a Codex update (P3.9)', () => {
+  it("the prompt names Codex's release notes and its four surfaces, flags and session files included, and stays lean", () => {
+    const p = buildAnalysisPrompt('## 0.156.1\n- a change', 'codex')
+    expect(p.length).toBeLessThan(4000)
+    expect(p).toContain('OpenAI Codex CLI')
+    expect(p).toContain('--- RELEASE NOTES ---')
+    expect(p).toContain('1. Session launch')
+    expect(p).toMatch(/-m <model>, -c key=value overrides, --sandbox, --ask-for-approval and the resume subcommand/)
+    expect(p).toContain('3. Session files: the rollout JSONL files under CODEX_HOME/sessions')
+    expect(p).toContain('4. Config & account files')
+    expect(p).not.toMatch(/Claude Code/)
+    expect(p).not.toMatch(/statusline hook/i)
+    // ASCII only (added text).
+    expect([...p].every((c) => c.charCodeAt(0) < 128)).toBe(true)
+    // The Claude prompt is unchanged by default.
+    expect(buildAnalysisPrompt('x')).toBe(buildAnalysisPrompt('x', 'claude'))
+    expect(buildAnalysisPrompt('x')).toContain('--- CHANGELOG ---')
+  })
+
+  it("a Codex update's findings have their own ids, are marked as Codex's and carry no Claude Code version", () => {
+    const f = parseAnalysisOutput(goodJson, '0.155.1', '0.156.1', 'codex')!
+    expect(f[0]).toMatchObject({ id: 'codex-update:0.156.1:0', provider: 'codex', kind: 'compat', severity: 'high', surface: 3, status: 'open' })
+    expect(f[0].ccVersionFrom).toBeUndefined()
+    expect(f[0].ccVersionTo).toBeUndefined()
+    // Claude's are unchanged.
+    expect(parseAnalysisOutput(goodJson, '2.0.13', '2.1.0')![0].provider).toBeUndefined()
+  })
+
+  it('runAnalysis sends the Codex prompt and reads Codex findings when the update is Codex\'s', async () => {
+    let seenStdin = ''
+    const runner = async (_a: string[], _t: number, stdin?: string) => { seenStdin = stdin ?? ''; return { code: 0, stdout: goodJson, stderr: '' } }
+    const r = await runAnalysis({ runner, changelog: 'NOTES-MARKER', from: '0.155.1', to: '0.156.1', subject: 'codex' })
+    expect(seenStdin).toContain('--- RELEASE NOTES ---\nNOTES-MARKER')
+    expect(r.ok && r.findings[0].id).toBe('codex-update:0.156.1:0')
+  })
+})

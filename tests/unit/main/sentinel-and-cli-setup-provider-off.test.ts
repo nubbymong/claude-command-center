@@ -59,7 +59,7 @@ vi.mock('../../../src/main/sentinel/sentinel-models', async (orig) => {
     },
   }
 })
-const fetchChangelog = vi.fn(async () => null)
+const fetchChangelog = vi.fn(async () => null as string | null)
 vi.mock('../../../src/main/sentinel/sentinel-changelog', async (orig) => ({
   ...(await orig<typeof import('../../../src/main/sentinel/sentinel-changelog')>()),
   fetchChangelog: () => fetchChangelog(),
@@ -86,7 +86,11 @@ let dir = ''
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-sentinel-off-'))
   acct.claude = 'on'
-  acct.codexSwitch = 'on'
+  // A Claude Code user who has not set Codex up: since P3.9 a Codex that is
+  // on is checked too (its own suite: sentinel-codex-service.test.ts), so the
+  // Claude paths below are proven with Codex off, and the Codex model check's
+  // tests turn it on.
+  acct.codexSwitch = 'off'
   codexCheck.calls = 0
   codexCheck.script = null
   spawnClaudeHeadless.mockClear()
@@ -106,6 +110,7 @@ async function sentinel() {
 }
 
 describe("Sentinel's Codex model coverage check (P3.8, row 39)", () => {
+  beforeEach(() => { acct.codexSwitch = 'on' })
   const finding = { id: 'models:codex-missing:gpt-6-nova', kind: 'compat', severity: 'warn', title: 't', evidence: 'e', status: 'open', createdAt: 1 }
 
   it('runs at start while Codex is on, and records what it finds', async () => {

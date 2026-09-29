@@ -83,3 +83,49 @@ describe('Sentinel Codex model coverage (row 39)', () => {
     expect(f[0].title).toBe('The Codex model list has not been re-checked in a while')
   })
 })
+
+// P3.9 (row 39): the live read. The installed CLI's own list, read from it
+// (`codex debug models --bundled`), is the reference when there is one, for
+// both arms, so the check follows the version actually installed.
+describe('Sentinel Codex model coverage against the installed CLI (row 39, P3.9)', () => {
+  const live = (version: string, ids: string[]) => ({ version, models: ids.map((id) => ({ id, label: id.toUpperCase() })) })
+  const V155 = CODEX_IDS.filter((id) => id !== 'gpt-5.2')
+
+  it("0.155.1 installed: gpt-5.2, which it no longer lists, is said for that version (the owner's gpt-5.2 notice, resolved per version)", () => {
+    const f = codexModelCoverageFindings(reg, CODEX_EXPECTED_MODEL_SET, NOW, live('0.155.1', V155))
+    expect(f).toHaveLength(1)
+    expect(f[0]).toMatchObject({ id: 'models:codex-retired:gpt-5.2', kind: 'compat', severity: 'warn', provider: 'codex', affectedFeature: 'sessions' })
+    expect(f[0].title).toBe('GPT-5.2 is still selectable but Codex 0.155.1 no longer lists it')
+    expect(f[0].evidence).toContain('the model list of the installed Codex 0.155.1, read from it just now')
+  })
+
+  it('0.153.4 installed: the registry covers its list, so nothing is said', () => {
+    expect(codexModelCoverageFindings(reg, CODEX_EXPECTED_MODEL_SET, NOW, live('0.153.4', CODEX_IDS))).toEqual([])
+  })
+
+  it('a model the installed CLI offers that the picker does not is said, from the live list, even when the shipped list lacks it too', () => {
+    const f = codexModelCoverageFindings(reg, CODEX_EXPECTED_MODEL_SET, NOW, live('0.157.1', [...CODEX_IDS, 'gpt-6-nova']))
+    expect(f.map((x) => x.id)).toEqual(['models:codex-missing:gpt-6-nova'])
+    expect(f[0].evidence).toContain('the installed Codex 0.157.1')
+    expect(f[0].provider).toBe('codex')
+  })
+
+  it('a live read has just answered first-hand: a stale shipped list is not said', () => {
+    const stale = listOf(CODEX_IDS, new Date(NOW - (FIXTURE_STALE_DAYS + 30) * DAY).toISOString().slice(0, 10))
+    expect(codexModelCoverageFindings(reg, stale, NOW).map((x) => x.id)).toEqual([`models:codex-list-stale:${stale.fetchedAt}`])
+    expect(codexModelCoverageFindings(reg, stale, NOW, live('0.155.1', CODEX_IDS))).toEqual([])
+  })
+
+  it('no live list, or an empty one, falls back to the shipped list (fail closed, never "Codex lists nothing")', () => {
+    for (const l of [null, undefined, { version: '0.155.1', models: [] }, { version: undefined as unknown as string, models: [{ id: 'gpt-5.5', label: 'x' }] }]) {
+      const f = codexModelCoverageFindings(reg, listOf(CODEX_IDS.filter((id) => id !== 'gpt-5.2')), NOW, l)
+      expect(f.map((x) => x.id), JSON.stringify(l)).toEqual(['models:codex-retired:gpt-5.2'])
+      expect(f[0].title).toBe('GPT-5.2 is still selectable but Codex no longer lists it')
+    }
+  })
+
+  it('an overlay-added Codex model is never "retired" by the live list either', () => {
+    const merged = mergeRegistry(reg, { models: [{ id: 'gpt-6-nova', patterns: [], family: 'codex', label: 'GPT-6-Nova', provenance: { addedBy: 'user', date: '2026-09-29' } }] })
+    expect(codexModelCoverageFindings(merged, CODEX_EXPECTED_MODEL_SET, NOW, live('0.153.4', CODEX_IDS))).toEqual([])
+  })
+})

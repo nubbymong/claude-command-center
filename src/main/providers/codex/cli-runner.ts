@@ -33,7 +33,7 @@ import fs from 'node:fs'
 import { spawn as nodeSpawn, execFile, execFileSync } from 'node:child_process'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 
-export type CodexCliOperation = 'version' | 'status' | 'logout' | 'login-browser' | 'login-device' | 'login-api-key' | 'review' | 'app-server'
+export type CodexCliOperation = 'version' | 'status' | 'logout' | 'login-browser' | 'login-device' | 'login-api-key' | 'review' | 'app-server' | 'models'
 
 const ARGS: Readonly<Record<CodexCliOperation, readonly string[]>> = {
   'version': ['--version'],
@@ -55,6 +55,11 @@ const ARGS: Readonly<Record<CodexCliOperation, readonly string[]>> = {
   // realm on every read, so no flag is used. Its messages arrive on stdin
   // (the runner's open-stdin mode), never here.
   'app-server': ['app-server'],
+  // P3.9 (row 39): the model catalogue the CLI's own picker offers, as JSON.
+  // `--bundled` skips the refresh a signed-in home would make from the
+  // account and prints the catalogue shipped in the binary; the caller runs
+  // it in a fresh, empty home (model-catalogue.ts), never an account's.
+  'models': ['debug', 'models', '--bundled'],
 }
 
 export interface CodexCommand {

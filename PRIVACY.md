@@ -96,14 +96,16 @@ is not affected by that switch.
   sign-in on the Set up Codex page, or Use this computer's Codex sign-in in
   Settings, Accounts. A
   session runs in it only after you confirm that launch, it is never used for
-  a code review, and the app never signs in to it; signing out of it asks you
-  first. Two things are read regardless: the conversation files in
+  a code review or Sentinel's analysis, and the app never signs in to it;
+  signing out of it asks you first. Two things are read regardless: the conversation files in
   `~/.codex/sessions` (for the local Tokenomics index, like the ones in each
   Codex account's folder), and, when the app's built-in tool server starts or
   stops, Codex's `config.toml` in your own Codex folder, from which the app
   removes an entry that older versions of this app added, if one is still
   there. Checking which Codex version is
-  installed runs it against a new, empty folder, never your own.
+  installed runs it against a new, empty folder, never your own, and so does
+  Sentinel's read of the models the installed Codex offers (`codex debug
+  models --bundled`, the list built into Codex, with no sign-in).
 
 ## Every network request the app makes
 
@@ -114,6 +116,7 @@ is not affected by that switch.
 | `status.openai.com` | OpenAI's public service-status page, for the title bar's Codex status pill | While Codex is on: when the app starts, every 5 minutes, and at once when Codex is turned on. Never while it is off or not set up |
 | `api.github.com`, `github.com` | Checks for app updates and downloads them; powers the optional GitHub integration | On update checks, and when you use the GitHub features |
 | `raw.githubusercontent.com` | Fetches a public model-pricing table (LiteLLM's open dataset) so cost figures are accurate | At most once every 24 hours, cached locally |
+| `support.claude.com`, `raw.githubusercontent.com`, `api.github.com` | Sentinel (off by default), for the assistants in use: Anthropic's public Claude Code model list and Claude Code's public changelog (the anthropics/claude-code repository), and Codex's public release notes (the openai/codex repository's releases, from GitHub's API), all read without any sign-in. Its analysis of an update is a run of the assistant in use (with both on, Claude Code): Claude Code in its analysis account, or Codex in the Codex account chosen for it in Settings, Sentinel, with that account's own sign-in, as any run of it | Only while Sentinel is on: the model list when the app starts; the changelog or release notes, and the analysis, when the installed version has changed since Sentinel last checked, and when you press Re-run in its panel |
 | OpenAI: `chatgpt.com`, and with Codex 0.155.1 also `sdmntprsouthcentralus.oaiusercontent.com` (OpenAI's content storage) | Codex's own usage check for a Codex account with no session open, run by the Codex command-line tool in that account's folder with that account's own sign-in. Codex reads the account's usage allowance, and on the same start refreshes its list of models and checks its plugin cache, as it does whenever it runs | Only when you open the Usage page, press Refresh or use an account card's Retry; about a second, one account at a time. Never for an API-key account, for your own Codex folder, or for an account a session or review is using |
 
 To avoid the Codex usage check, leave the Usage page closed: it runs only on

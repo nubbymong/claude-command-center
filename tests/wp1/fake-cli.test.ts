@@ -12,7 +12,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { spawn as nodeSpawn } from 'node:child_process'
-import { codexCommandLine, cliCommandLine, codexShellEnv, runCodexCli, discoverCodex, codexCliEnv, parseCodexLoginStatus, createCodexAuthOperations, createCodexReviewOperations, makeCodexKillTree, makeCodexProcessLister, CODEX_KILL_SETTLE_MS, CODEX_TREE_PRIME_MS, CODEX_KILL_WORST_MS } from '../../src/main/providers/codex'
+import { codexCommandLine, cliCommandLine, codexShellEnv, runCodexCli, discoverCodex, codexCliEnv, parseCodexLoginStatus, createCodexAuthOperations, createCodexReviewOperations, makeCodexKillTree, makeCodexProcessLister, CODEX_KILL_SETTLE_MS, CODEX_TREE_PRIME_MS, CODEX_KILL_WORST_MS, readCodexModelCatalogue } from '../../src/main/providers/codex'
 import { createClaudeReviewLaunch, createClaudeReviewOperations, CLAUDE_REVIEW_ARGS } from '../../src/main/providers/claude'
 import { produceReviewDiff, defaultReviewDiffDeps, findGit } from '../../src/main/review-diff'
 import type { CodexCliOperation, CodexDiscovery, CodexAuthDeps } from '../../src/main/providers/codex'
@@ -64,6 +64,14 @@ if (a === 'login' || a === 'login --device-auth') {
   process.stdout.write('Successfully logged in\\n'); process.exit(0)
 }
 if (a === 'logout') { try { fs.unlinkSync(auth) } catch {} process.stdout.write('Successfully logged out\\n'); process.exit(0) }
+if (a === 'debug models --bundled') {
+  // P3.9: the model catalogue read. Leaves a helper folder in its home, as
+  // the real CLI prepares its home, and reports where it ran.
+  fs.mkdirSync(path.join(home, 'tmp'), { recursive: true })
+  fs.writeFileSync(path.join(__dirname, 'models-seen.json'), JSON.stringify({ home, cwd: process.cwd() }))
+  process.stdout.write(JSON.stringify({ models: [{ slug: 'gpt-5.5', display_name: 'GPT-5.5', visibility: 'list', priority: 2 }, { slug: 'gpt-5.4', display_name: 'GPT-5.4', visibility: 'hide', priority: 1 }, { slug: 'gpt-6-astra', display_name: 'GPT-6-Astra', visibility: 'list', priority: 1 }] }) + '\\n')
+  process.exit(0)
+}
 if (a === 'exec --json --ephemeral --skip-git-repo-check --sandbox read-only -m gpt-5.5 -') {
   // A review (WP2 5a): reports what reached it -- the request from stdin, its
   // working folder, any Conductor variable -- as the pinned JSONL events.
@@ -277,6 +285,47 @@ describe('the runner against a fake Codex CLI (real processes)', () => {
 
 // WP2 5a: the Codex reviewer over the real runner and, on Windows, the real
 // npm shim and cmd.exe -- the request reaches Codex byte for byte on stdin.
+describe('the model catalogue read against the fake Codex CLI (real processes; P3.9)', () => {
+  it('runs debug models --bundled on the proven file through the real shim, in a fresh empty home that is removed after, with no ambient credential', async () => {
+    const realStat = (p: string) => {
+      const s = fs.statSync(p, { bigint: true })
+      return { size: Number(s.size), mtimeMs: Number(s.mtimeMs), ctimeMs: Number(s.ctimeMs), dev: String(s.dev), ino: String(s.ino), isFile: s.isFile() }
+    }
+    const versionHome = home('models-version')
+    const proven = await discoverCodex({
+      resolve: () => exe, realpath: (p) => fs.realpathSync.native(p), stat: realStat,
+      run: (cmd, env) => runCodexCli(cmd, { env, timeoutMs: 20_000 }),
+      env: poisoned, platform: process.platform,
+      versionHome: () => ({ home: versionHome, dispose: () => {} }), now: () => 1,
+    })
+    expect(proven.state).toBe('found')
+    const parent = path.join(dir, 'models-homes')
+    fs.mkdirSync(parent, { recursive: true })
+    const made: string[] = []
+    const r = await readCodexModelCatalogue({
+      proven: () => proven,
+      executablePorts: { resolve: () => exe, realpath: (p) => fs.realpathSync.native(p), stat: realStat, platform: process.platform },
+      baseEnv: async () => poisoned,
+      run: (cmd, opts) => runCodexCli(cmd, opts),
+      scratchHome: () => {
+        const h = fs.mkdtempSync(path.join(parent, 'h-'))
+        made.push(h)
+        // TEST CLEANUP GUARD: only this test's own folder, by its prefix and parent.
+        return { home: h, dispose: () => { if (path.basename(h).startsWith('h-') && path.dirname(h) === parent) fs.rmSync(h, { recursive: true, force: true }) } }
+      },
+    })
+    expect(r).toEqual({ ok: true, version: '0.155.1', models: [{ id: 'gpt-6-astra', label: 'GPT-6-Astra' }, { id: 'gpt-5.5', label: 'GPT-5.5' }] })
+    const seen = JSON.parse(fs.readFileSync(path.join(dir, 'models-seen.json'), 'utf8')) as { home: string; cwd: string }
+    expect(made).toHaveLength(1)
+    expect(path.resolve(seen.home)).toBe(path.resolve(made[0]))
+    // Removed after the read, the helper folder the CLI made in it included.
+    expect(fs.existsSync(made[0])).toBe(false)
+    // Started in the executable's own folder, never a project.
+    expect(fs.realpathSync.native(seen.cwd).toLowerCase()).toBe(dir.toLowerCase())
+    if (IS_WIN) expect(fs.existsSync(path.join(dir, 'PLANTED-RAN'))).toBe(false)
+  })
+})
+
 describe('the Codex reviewer against the fake Codex CLI (real processes)', () => {
   it('the request arrives intact on stdin, in the project, with no Conductor variable; relative PATH entries and a node in the project are never used', async () => {
     const project = path.join(dir, 'project')

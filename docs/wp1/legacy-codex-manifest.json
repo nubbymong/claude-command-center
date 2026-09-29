@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-29T13:33:00.946Z",
-  "head": "3f1f91025f199a370098dd323ba95d146efffb3f",
-  "tree": "2b73723aa896829ebeeb927bb0d094959f3875aa",
+  "generatedAt": "2026-09-29T14:37:20.715Z",
+  "head": "d9a4990f1d6bed64adce0fb77ed5d70d9d451117",
+  "tree": "f7251d0c9dba19edccd2b6945601330fd1da3277",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2491,
+  "trackedFileCount": 2501,
   "excludedFileCount": 384,
-  "scannedFileCount": 2107,
+  "scannedFileCount": 2117,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 537,
-  "pathDigest": "0943260e052b869e07477e4b12e76c7f758ede6a756288c3b75ac18601018bf8",
+  "matchedPathCount": 557,
+  "pathDigest": "b2b3e89130d5459f560ccde480a8bfc1e47044485f4533d2498d2b01efafa128",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -161,7 +161,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 42
+      "lineCount": 45
     },
     {
       "path": "README.md",
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 284
+      "lineCount": 286
     },
     {
       "path": "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
@@ -537,7 +537,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 1
+      "lineCount": 5
     },
     {
       "path": "src/main/providers/claude/discovery.ts",
@@ -673,7 +673,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 191
+      "lineCount": 204
     },
     {
       "path": "src/main/providers/codex/install-recipes.ts",
@@ -692,6 +692,14 @@
         "P14"
       ],
       "lineCount": 21
+    },
+    {
+      "path": "src/main/providers/codex/model-catalogue.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "lineCount": 45
     },
     {
       "path": "src/main/providers/codex/permissions.ts",
@@ -879,14 +887,45 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 13
+      "lineCount": 84
+    },
+    {
+      "path": "src/main/sentinel/sentinel-analysis.ts",
+      "predicates": [
+        "P04",
+        "P14"
+      ],
+      "lineCount": 20
+    },
+    {
+      "path": "src/main/sentinel/sentinel-codex-changelog.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "lineCount": 17
+    },
+    {
+      "path": "src/main/sentinel/sentinel-codex.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "lineCount": 16
     },
     {
       "path": "src/main/sentinel/sentinel-models.ts",
       "predicates": [
         "P14"
       ],
-      "lineCount": 31
+      "lineCount": 41
+    },
+    {
+      "path": "src/main/sentinel/sentinel-state.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 3
     },
     {
       "path": "src/main/service-status.ts",
@@ -1172,7 +1211,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 38
+      "lineCount": 50
     },
     {
       "path": "src/renderer/components/SetupDialog.tsx",
@@ -1252,6 +1291,27 @@
         "P11"
       ],
       "lineCount": 6
+    },
+    {
+      "path": "src/renderer/components/sentinel/SentinelDot.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "src/renderer/components/sentinel/SentinelPanel.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "lineCount": 4
+    },
+    {
+      "path": "src/renderer/components/sentinel/sentinel-report-text.ts",
+      "predicates": [
+        "P11"
+      ],
+      "lineCount": 25
     },
     {
       "path": "src/renderer/components/settings/CodeReviewTools.tsx",
@@ -1533,7 +1593,7 @@
       "predicates": [
         "P11"
       ],
-      "lineCount": 7
+      "lineCount": 9
     },
     {
       "path": "src/renderer/onboarding/WelcomeStep.tsx",
@@ -1689,7 +1749,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 34
+      "lineCount": 37
     },
     {
       "path": "src/renderer/stores/sessionStore.ts",
@@ -1705,7 +1765,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 32
+      "lineCount": 36
     },
     {
       "path": "src/renderer/stores/tipsStore.ts",
@@ -1736,7 +1796,7 @@
       "predicates": [
         "P11"
       ],
-      "lineCount": 48
+      "lineCount": 53
     },
     {
       "path": "src/renderer/types/electron.d.ts",
@@ -1793,7 +1853,14 @@
         "P12",
         "P14"
       ],
-      "lineCount": 69
+      "lineCount": 71
+    },
+    {
+      "path": "src/shared/ask-conductor-provider.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 9
     },
     {
       "path": "src/shared/canvas.ts",
@@ -1875,6 +1942,13 @@
         "P14"
       ],
       "lineCount": 3
+    },
+    {
+      "path": "src/shared/sentinel-types.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 7
     },
     {
       "path": "src/shared/types.ts",
@@ -2008,6 +2082,14 @@
         "P13"
       ],
       "lineCount": 9
+    },
+    {
+      "path": "tests/fixtures/codex/cli/0.153.4/debug-models-bundled.trimmed.json",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 3
     },
     {
       "path": "tests/fixtures/codex/cli/0.153.4/exec-edit-json.jsonl",
@@ -2879,7 +2961,7 @@
         "P10",
         "P13"
       ],
-      "lineCount": 10
+      "lineCount": 20
     },
     {
       "path": "tests/unit/main/provider-launch-gate.test.ts",
@@ -2976,7 +3058,16 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 24
+      "lineCount": 28
+    },
+    {
+      "path": "tests/unit/main/sentinel-codex-service.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 97
     },
     {
       "path": "tests/unit/main/service-status-providers.test.ts",
@@ -3210,6 +3301,16 @@
         "P13"
       ],
       "lineCount": 31
+    },
+    {
+      "path": "tests/unit/providers/codex/model-catalogue.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P09",
+        "P13"
+      ],
+      "lineCount": 88
     },
     {
       "path": "tests/unit/providers/codex/permissions.test.ts",
@@ -3532,7 +3633,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 154
+      "lineCount": 156
     },
     {
       "path": "tests/unit/renderer/codex-mini-icon.test.ts",
@@ -3874,7 +3975,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 12
+      "lineCount": 22
     },
     {
       "path": "tests/unit/renderer/onboarding-welcome-copy.test.tsx",
@@ -3945,6 +4046,21 @@
         "P13"
       ],
       "lineCount": 4
+    },
+    {
+      "path": "tests/unit/renderer/sentinel-panel-copy.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "lineCount": 25
+    },
+    {
+      "path": "tests/unit/renderer/sentinel-report-text.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 28
     },
     {
       "path": "tests/unit/renderer/session-auth-pending.test.tsx",
@@ -4126,6 +4242,15 @@
       "lineCount": 27
     },
     {
+      "path": "tests/unit/renderer/settings-sentinel-codex.test.tsx",
+      "predicates": [
+        "P01",
+        "P05",
+        "P13"
+      ],
+      "lineCount": 22
+    },
+    {
       "path": "tests/unit/renderer/setup-codex-only.test.tsx",
       "predicates": [
         "P01",
@@ -4295,12 +4420,36 @@
       "lineCount": 47
     },
     {
+      "path": "tests/unit/sentinel-analysis.test.ts",
+      "predicates": [
+        "P04",
+        "P13"
+      ],
+      "lineCount": 15
+    },
+    {
+      "path": "tests/unit/sentinel-codex-changelog.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 28
+    },
+    {
       "path": "tests/unit/sentinel-codex-models.test.ts",
       "predicates": [
         "P01",
         "P13"
       ],
-      "lineCount": 41
+      "lineCount": 63
+    },
+    {
+      "path": "tests/unit/sentinel-codex.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 38
     },
     {
       "path": "tests/unit/sentinel-models.test.ts",
@@ -4308,6 +4457,13 @@
         "P13"
       ],
       "lineCount": 3
+    },
+    {
+      "path": "tests/unit/sentinel-state.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 8
     },
     {
       "path": "tests/unit/status-ingest.test.ts",

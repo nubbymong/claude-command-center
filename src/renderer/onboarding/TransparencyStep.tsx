@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useSettingsStore, type UpdateChannel } from '../stores/settingsStore'
-import { codexPreference, usesClaude } from './provider-choice'
+import { codexPreference, usesClaude, usesCodex } from './provider-choice'
+import { sentinelAnalysisProvider } from '../../shared/ask-conductor-provider'
+import { sentinelTransparencyText } from '../components/sentinel/sentinel-report-text'
 import { CLAUDE_OFF_ACCOUNTS_LINE } from '../lib/claudeOff'
 import { useGitHubStore } from '../stores/githubStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
@@ -166,6 +168,10 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
 
   const loggingOn = settings.loggingEnabled !== false
   const sentinelOn = settings.sentinelEnabled === true
+  // P3.9: what Sentinel watches (the assistants in use) and what its
+  // analysis runs on (both on: the one Ask Conductor runs on).
+  const sentinelScope = { claudeOn: usesClaude(settings), codexOn: usesCodex(settings) }
+  const sentinelRunsOn = sentinelAnalysisProvider(sentinelScope.claudeOn, sentinelScope.codexOn, settings)
 
   const finish = () => {
     // The consent is the page itself: reaching Next means it was seen.
@@ -214,10 +220,7 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
             <div className="tc-ic">{SHIELD}</div>
             <div className="tc-body">
               <div className="tc-t">Sentinel</div>
-              <div className="tc-d">
-                Watches Claude Code updates for changes that could break your setup and proposes fixes. Off by
-                default because it spends Claude tokens when Claude updates. Takes effect after a restart.
-              </div>
+              <div className="tc-d">{sentinelTransparencyText(sentinelScope, sentinelRunsOn)}</div>
             </div>
             <button
               className={sentinelOn ? 'tc-sw on' : 'tc-sw'}

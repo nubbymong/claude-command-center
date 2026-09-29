@@ -4,7 +4,7 @@
 // breaking surface), which also removes the large-stdin hang that stalled the
 // old ~21KB manifest prompt (anthropics/claude-code#7263).
 import { z } from 'zod'
-import type { SentinelFinding } from '../../shared/sentinel-types'
+import type { SentinelFinding, SentinelProvider } from '../../shared/sentinel-types'
 
 // The only things that, if CC changes them, actually stop CCC working. The AI
 // checks the changelog against ONLY these four surfaces.
@@ -15,6 +15,17 @@ const CCC_BREAKING_SURFACE = [
   '4. Config & account files — the shape of ~/.claude/settings.json and ~/.claude.json that the Conductor multi-account isolation and hook install depend on. Break = multi-account or hooks break.',
 ].join('\n')
 
+// P3.9 (row 42): the same four surfaces for a Codex update, as the Conductor
+// relies on the Codex CLI. "Flags and the rollout format are checked" here:
+// the launch flags (1) and the session files the status line, usage and
+// resume read (3).
+const CODEX_BREAKING_SURFACE = [
+  '1. Session launch: how `codex` is started (the flags the Conductor passes: -m <model>, -c key=value overrides, --sandbox, --ask-for-approval and the resume subcommand; the CODEX_HOME environment variable; PATH and the npm or standalone install layout). Break = Conductor Codex sessions will not start, or ignore their settings.',
+  '2. Terminal embedding: the Codex TUI inside xterm.js (its composer and footer lines, the /model, /compact, /plan and /permissions commands the Conductor types, alternate screen, escape sequences). Break = the session renders garbled or the commands the Conductor types stop working.',
+  '3. Session files: the rollout JSONL files under CODEX_HOME/sessions (session_meta, turn_context and token_count events with usage and rate limits) that the Conductor reads for its status line, usage, cost and resume. Break = status line, usage or resume readouts die.',
+  '4. Config & account files: the CODEX_HOME layout (config.toml, the sign-in file, the sessions folder), the output of `codex login status`, `codex --version` and `codex debug models`, which the Conductor\'s per-account folders, sign-in checks and model list depend on. Break = accounts, sign-in or the model list break.',
+].join('\n')
+
 const BreakingChangeSchema = z.object({
   title: z.string().min(1).max(200),
   evidence: z.string().min(1).max(2000),   // exact changelog line(s), quoted
@@ -23,7 +34,25 @@ const BreakingChangeSchema = z.object({
 })
 const OutputSchema = z.object({ breakingChanges: z.array(BreakingChangeSchema).max(5) })
 
-export function buildAnalysisPrompt(changelog: string): string {
+/** The prompt for one update's analysis. `subject` (P3.9): whose update the
+ *  changelog is, Claude Code's (the default, unchanged) or Codex's. */
+export function buildAnalysisPrompt(changelog: string, subject: SentinelProvider = 'claude'): string {
+  if (subject === 'codex') {
+    return [
+      'You are Sentinel, the compatibility watcher in AI Code Conductor (the "Conductor"), a desktop app that runs the OpenAI Codex CLI inside embedded terminals, each account in its own CODEX_HOME folder.',
+      'Read the Codex CLI release notes below and report ONLY changes that would SEVERELY BREAK the Conductor (stop it working) by hitting one of these four surfaces:',
+      CODEX_BREAKING_SURFACE,
+      '',
+      'Ignore everything else: new features, new models, model or pricing housekeeping, performance, cosmetic or informational changes, and anything that only affects enterprise or managed-configuration installs. A change is NOT breaking just because it is new.',
+      '',
+      'Output STRICT JSON only, no markdown and no prose: {"breakingChanges": [ ... ]} where each item is',
+      '{"title": "<short>", "evidence": "<exact release-note line(s), quoted verbatim>", "surface": <1-4>, "whatBreaks": "<one sentence: what stops working in the Conductor>"}.',
+      'Quote the release notes verbatim in evidence. List at most 5. If nothing severely breaks the Conductor, return {"breakingChanges": []}.',
+      '',
+      '--- RELEASE NOTES ---',
+      changelog,
+    ].join('\n')
+  }
   return [
     'You are Sentinel, the compatibility watcher in AI Code Conductor (the "Conductor"), a desktop app that runs the Claude Code (CC) CLI inside embedded terminals.',
     'Read the CC changelog below and report ONLY changes that would SEVERELY BREAK the Conductor — stop it working — by hitting one of these four surfaces:',
@@ -53,11 +82,27 @@ function unwrapPayload(stdout: string): string {
   return text
 }
 
-export function parseAnalysisOutput(stdout: string, from: string, to: string): SentinelFinding[] | null {
+export function parseAnalysisOutput(stdout: string, from: string, to: string, subject: SentinelProvider = 'claude'): SentinelFinding[] | null {
   try {
     const parsed = OutputSchema.parse(JSON.parse(unwrapPayload(stdout)))
     // Every breaking change is a high-severity compat finding (the panel has one
     // list now). whatBreaks rides in badgeText; surface tags which contract broke.
+    // P3.9: a Codex update's findings are Codex's (their own ids, marked so),
+    // and carry no Claude Code version.
+    if (subject === 'codex') {
+      return parsed.breakingChanges.map((b, i) => ({
+        id: `codex-update:${to}:${i}`,
+        kind: 'compat' as const,
+        severity: 'high' as const,
+        title: b.title,
+        evidence: b.evidence,
+        badgeText: b.whatBreaks,
+        surface: b.surface,
+        provider: 'codex' as const,
+        status: 'open' as const,
+        createdAt: Date.now(),
+      }))
+    }
     return parsed.breakingChanges.map((b, i) => ({
       id: `cc:${to}:${i}`,
       kind: 'compat' as const,
@@ -153,8 +198,11 @@ export function analysisFailureMessage(
 
 export async function runAnalysis(opts: {
   runner: HeadlessRunner; changelog: string; from: string; to: string; accountLabel?: string | null
+  /** P3.9: whose update this is (the prompt's surfaces and the findings' ids). */
+  subject?: SentinelProvider
 }): Promise<{ ok: true; findings: SentinelFinding[] } | { ok: false; error: string }> {
-  const prompt = buildAnalysisPrompt(opts.changelog)
+  const subject = opts.subject ?? 'claude'
+  const prompt = buildAnalysisPrompt(opts.changelog, subject)
   const args = ['-p', '--model', 'sonnet', '--output-format', 'json']
   let lastStderr = ''
   let lastEnvErr: { rateLimited: boolean; reason: string } | null = null
@@ -162,7 +210,7 @@ export async function runAnalysis(opts: {
     const res = await opts.runner(args, 180000, prompt)          // 3-minute cap
     lastStderr = res.stderr
     if (res.code === 0) {
-      const findings = parseAnalysisOutput(res.stdout, opts.from, opts.to)
+      const findings = parseAnalysisOutput(res.stdout, opts.from, opts.to, subject)
       if (findings) return { ok: true, findings }
       lastEnvErr = null                              // ran, but output unparseable: not an API error
     } else {

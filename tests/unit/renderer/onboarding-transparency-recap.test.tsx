@@ -169,3 +169,47 @@ describe('Transparency recap rows', () => {
     }
   })
 })
+
+// P3.9 (row 42; left by P3.4): the Sentinel card says what Sentinel watches
+// (the assistants in use) and what its analysis runs on and spends.
+describe('Transparency, the Sentinel card (P3.9)', () => {
+  let container: HTMLDivElement
+  let root: Root
+  beforeEach(() => {
+    ;(window as any).electronAPI.accountProfiles = { globalEmail: vi.fn(() => Promise.resolve(null)) }
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+  })
+  afterEach(() => {
+    act(() => { root.unmount() })
+    container.remove()
+  })
+  const cardText = (): string => {
+    const title = [...container.querySelectorAll('.tc-t')].find((e) => e.textContent === 'Sentinel')
+    expect(title, 'the Sentinel card').toBeTruthy()
+    return title!.parentElement!.querySelector('.tc-d')!.textContent ?? ''
+  }
+  const renderWith = (over: Partial<Settings>) => {
+    setSettings(over)
+    act(() => { root.render(React.createElement(TransparencyStep, { onNext: () => {}, onBack: () => {} })) })
+  }
+
+  it('Claude Code alone: as before', () => {
+    renderWith({})
+    expect(cardText()).toBe('Watches Claude Code updates for changes that could break your setup and proposes fixes. Off by default because it spends Claude tokens when Claude updates. Takes effect after a restart.')
+  })
+
+  it('Codex alone: Codex updates, Codex usage, nothing about Claude', () => {
+    renderWith({ claudeEnabled: false, codexEnabled: true, codexAnswered: true })
+    expect(cardText()).toBe('Watches Codex updates for changes that could break your setup and proposes fixes. Off by default because it spends Codex usage when Codex updates. Takes effect after a restart.')
+  })
+
+  it('both on: both are watched; the analysis spends the tokens of the one Ask Conductor runs on', () => {
+    renderWith({ claudeEnabled: true, codexEnabled: true, codexAnswered: true })
+    expect(cardText()).toContain('Watches Claude Code and Codex updates')
+    expect(cardText()).toContain('its analysis spends Claude tokens when either updates.')
+    renderWith({ claudeEnabled: true, codexEnabled: true, codexAnswered: true, askConductorProvider: 'codex' } as Partial<Settings>)
+    expect(cardText()).toContain('its analysis spends Codex usage when either updates.')
+  })
+})

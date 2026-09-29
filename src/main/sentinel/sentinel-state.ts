@@ -3,12 +3,12 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { atomicWriteFileSync } from '../atomic-write'
-import type { SentinelFinding, SentinelStateSnapshot, FindingStatus } from '../../shared/sentinel-types'
+import type { SentinelFinding, SentinelStateSnapshot, FindingStatus, SentinelProvider } from '../../shared/sentinel-types'
 
 export class SentinelState {
   private file: string
   private state: SentinelStateSnapshot = {
-    lastSeenCcVersion: null, analyzing: false, lastAnalysisAt: null, lastAnalysisError: null, findings: [],
+    lastSeenCcVersion: null, lastSeenCodexVersion: null, analyzing: false, analyzingProvider: null, lastAnalysisAt: null, lastAnalysisError: null, findings: [],
   }
   private subs = new Set<(s: SentinelStateSnapshot) => void>()
 
@@ -17,7 +17,7 @@ export class SentinelState {
     try {
       if (fs.existsSync(this.file)) {
         const loaded = JSON.parse(fs.readFileSync(this.file, 'utf-8'))
-        if (loaded && Array.isArray(loaded.findings)) this.state = { ...this.state, ...loaded, analyzing: false }
+        if (loaded && Array.isArray(loaded.findings)) this.state = { ...this.state, ...loaded, analyzing: false, analyzingProvider: null }
       }
     } catch { /* corrupt -> empty (fail-open) */ }
   }
@@ -51,8 +51,11 @@ export class SentinelState {
     this.persist()
   }
   setLastSeenCcVersion(v: string): void { this.state = { ...this.state, lastSeenCcVersion: v }; this.persist() }
-  setAnalyzing(analyzing: boolean, error: string | null = null): void {
-    this.state = { ...this.state, analyzing, lastAnalysisError: error, lastAnalysisAt: analyzing ? this.state.lastAnalysisAt : Date.now() }
+  /** P3.9: the Codex version the last completed check saw. */
+  setLastSeenCodexVersion(v: string): void { this.state = { ...this.state, lastSeenCodexVersion: v }; this.persist() }
+  /** `provider` (P3.9): whose update the analysis starting now is about. */
+  setAnalyzing(analyzing: boolean, error: string | null = null, provider: SentinelProvider | null = null): void {
+    this.state = { ...this.state, analyzing, analyzingProvider: analyzing ? provider : null, lastAnalysisError: error, lastAnalysisAt: analyzing ? this.state.lastAnalysisAt : Date.now() }
     this.persist()
   }
 }
