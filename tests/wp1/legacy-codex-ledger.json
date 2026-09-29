@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "b2b3e89130d5459f560ccde480a8bfc1e47044485f4533d2498d2b01efafa128",
-  "manifestHead": "3a4ed4008701b4393c73417899b7c8b6e7cc7694",
+  "manifestPathDigest": "c78deb8e9d2776a9d0f38c53ee047c789019850c743126e495e5f751632de03e",
+  "manifestHead": "7678c433987510128fc0993c4312eeb4078f271d",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -151,7 +151,7 @@
       ],
       "category": "DOCS",
       "disposition": "replace",
-      "evidence": "WP1.36 documentation sweep recorded in docs/wp1/evidence/release-qualification.md; WP2 P3 usage track MP13 (the user-facing sweep for the usage UX the owner approved 2026-09-27): the network table lists the Codex usage check (OpenAI hosts, the model list refresh and the plugin cache check, when it runs and how to avoid it), and the stored data the account each session ran under (WP1.36); WP2 PR 3 P3.4 (parity row 45): the network table lists status.openai.com for the Codex status pill and says when each status page is read, and that it is never read while its provider is off (WP1.36); tests/unit/main/service-status-providers.test.ts; WP2 PR 3 P3.9 (rows 39, 42): Sentinel's requests (Claude Code's model list and changelog, Codex's release notes from GitHub's API) and its analysis on the assistant in use, and the Codex model list read in an empty folder (WP1.35); tests/unit/sentinel-codex-changelog.test.ts",
+      "evidence": "WP1.36 documentation sweep recorded in docs/wp1/evidence/release-qualification.md; WP2 P3 usage track MP13 (the user-facing sweep for the usage UX the owner approved 2026-09-27): the network table lists the Codex usage check (OpenAI hosts, the model list refresh and the plugin cache check, when it runs and how to avoid it), and the stored data the account each session ran under (WP1.36); WP2 PR 3 P3.4 (parity row 45): the network table lists status.openai.com for the Codex status pill and says when each status page is read, and that it is never read while its provider is off (WP1.36); tests/unit/main/service-status-providers.test.ts; WP2 PR 3 P3.9 (rows 39, 42): Sentinel's requests (Claude Code's model list and changelog, Codex's release notes from GitHub's API) and its analysis on the assistant in use, and the Codex model list read in an empty folder (WP1.35); tests/unit/sentinel-codex-changelog.test.ts; WP2 PR 3 P3.9 round 1: Sentinel's row says the notes are read one version at a time, the Codex analysis account falls back to the review default, and the analysis uses no tools in an empty folder of its own (WP1.35); tests/unit/sentinel-codex-changelog.test.ts, tests/unit/main/sentinel-codex-service.test.ts",
       "note": "describe managed Codex homes under the app data root"
     },
     {
@@ -776,7 +776,7 @@
       ],
       "category": "AUTH",
       "disposition": "added",
-      "evidence": "new WP2 commit 5b adapter: one isolated claude -p --restricted per review for a Codex session, constant argv, request on stdin, depth guard, the reviewer account held as a credential consumer, run through the CLI runner (tests/wp1/claude-reviewer.test.ts; tests/wp1/fake-cli.test.ts \"the Claude reviewer against a fake Claude CLI\") (WP1.38, WP1.46)",
+      "evidence": "new WP2 commit 5b adapter: one isolated claude -p --restricted per review for a Codex session, constant argv, request on stdin, depth guard, the reviewer account held as a credential consumer, run through the CLI runner (tests/wp1/claude-reviewer.test.ts; tests/wp1/fake-cli.test.ts \"the Claude reviewer against a fake Claude CLI\") (WP1.38, WP1.46); WP2 PR 3 P3.9 round 1: a text-only analysis is refused before anything is held or run; reviews are unchanged (WP1.38, WP1.46); tests/wp1/claude-reviewer.test.ts",
       "note": "created by WP2 commit 5b"
     },
     {
@@ -865,7 +865,7 @@
       ],
       "category": "AUTH",
       "disposition": "added",
-      "evidence": "new WP2 Codex adapter module: the allowlisted setup/auth subprocess environment (D3); covered by tests/wp1/env-allowlist.test.ts (WP1.38)",
+      "evidence": "new WP2 Codex adapter module: the allowlisted setup/auth subprocess environment (D3); covered by tests/wp1/env-allowlist.test.ts (WP1.38); WP2 PR 3 P3.9 round 1: PATH keeps only absolute entries, as the reviewer environment does, and is omitted when none is left (WP1.38); tests/wp1/env-allowlist.test.ts",
       "note": "created by WP2"
     },
     {
@@ -876,7 +876,7 @@
       ],
       "category": "AUTH",
       "disposition": "added",
-      "evidence": "new WP2 Codex CLI runner: constant argv per operation, allowlisted env, Windows shim through absolute cmd.exe, a kill limited to the run's own cmd/node/codex chain that settles once it lands; covered by tests/wp1/cli-discovery.test.ts and tests/wp1/fake-cli.test.ts (WP1.17, WP1.62); WP2 P3 usage track MP7 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): the constant app-server operation and an open-stdin mode (a writer handed to the caller after the spawn; the deadline, cancel and kill chain unchanged; exclusive with stdin) (WP1.41, WP1.68); tests/unit/providers/codex/cli-runner-open-stdin.test.ts; WP2 P3 usage track MP8 round 2 (VM walk and review fixes; the scoped WP1.41 exception; ADR-022): the helper argv turns remote plugins off for this process only (app-server --disable remote_plugin, accepted by 0.153.4 and 0.155.1) (WP1.41, WP1.68); tests/unit/providers/codex/cli-runner-open-stdin.test.ts; WP2 P3 usage track MP8 round 3 (VM walk and review fixes; the scoped WP1.41 exception; ADR-022): the helper argv is the constant app-server again, with no feature flag or config override: the VM showed --disable remote_plugin made the helper contact GitHub and leave clone folders in the realm (WP1.41, WP1.68); tests/unit/providers/codex/cli-runner-open-stdin.test.ts; WP2 PR 3 P3.9 (rows 39, 42): one more constant operation, models = debug models --bundled (WP1.62); tests/unit/providers/codex/model-catalogue.test.ts, tests/wp1/fake-cli.test.ts",
+      "evidence": "new WP2 Codex CLI runner: constant argv per operation, allowlisted env, Windows shim through absolute cmd.exe, a kill limited to the run's own cmd/node/codex chain that settles once it lands; covered by tests/wp1/cli-discovery.test.ts and tests/wp1/fake-cli.test.ts (WP1.17, WP1.62); WP2 P3 usage track MP7 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): the constant app-server operation and an open-stdin mode (a writer handed to the caller after the spawn; the deadline, cancel and kill chain unchanged; exclusive with stdin) (WP1.41, WP1.68); tests/unit/providers/codex/cli-runner-open-stdin.test.ts; WP2 P3 usage track MP8 round 2 (VM walk and review fixes; the scoped WP1.41 exception; ADR-022): the helper argv turns remote plugins off for this process only (app-server --disable remote_plugin, accepted by 0.153.4 and 0.155.1) (WP1.41, WP1.68); tests/unit/providers/codex/cli-runner-open-stdin.test.ts; WP2 P3 usage track MP8 round 3 (VM walk and review fixes; the scoped WP1.41 exception; ADR-022): the helper argv is the constant app-server again, with no feature flag or config override: the VM showed --disable remote_plugin made the helper contact GitHub and leave clone folders in the realm (WP1.41, WP1.68); tests/unit/providers/codex/cli-runner-open-stdin.test.ts; WP2 PR 3 P3.9 (rows 39, 42): one more constant operation, models = debug models --bundled (WP1.62); tests/unit/providers/codex/model-catalogue.test.ts, tests/wp1/fake-cli.test.ts; WP2 PR 3 P3.9 round 1: one more constant operation, analysis: the reviewer's exec with no user config or rules files, each tool feature disabled by name, web search off, no project instructions and the working folder its own project root (-c overrides); a square bracket is plain argv text (WP1.62); tests/wp1/cli-discovery.test.ts",
       "note": "created by WP2; replaces the legacy runCodexProcess/runCodexStreaming in auth.ts once the auth slice lands"
     },
     {
@@ -925,7 +925,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "move",
-      "evidence": "CodexProvider class contract pinned by tests/wp1/codex-characterization.test.ts C2 (WP1.54); entry-point rule tests/wp1/dependency-boundaries.test.ts (WP1.66); WP2 final fixes: CodexProvider.resolveBinary and resumeCommand, which nothing called, refuse instead of resolving the codex on PATH (not used for Codex: launches go through the managed launch; C2 inverted), and cli.discovery and install.recipes are declared supported, what the package implements; realm.isolated stays unknown because the contract backs it with realms.realmEnvPatch, which Codex does not expose (WP1.17, WP1.18); tests/unit/providers/codex/spawn.test.ts, tests/wp1/provider-conformance.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): the wired package exposes the usage port (account.usage supported, unknown unwired) and CodexProvider records each session's allowance by its sessions folder (WP1.41); tests/wp1/provider-conformance.test.ts; tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP3 round-1 review fixes: the usage port uses the checked sessions folder, and a session opens and releases its realm's live figure (WP1.68); tests/unit/providers/codex/telemetry.test.ts; tests/unit/main/provider-account-usage.test.ts; WP2 P3 usage track MP3 round-2 review fixes: exports the lookup that tells unavailable from no reading, and the day-entry and timeout bounds (WP1.68); tests/unit/providers/codex/usage-last-seen.test.ts; WP2 P3 usage track MP7 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): exports the app-server client and the read result type (WP1.41); tests/unit/providers/codex/app-server-client.test.ts; WP2 P3 usage track MP8 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): wires the port's read to the auth operations and keys the verdict cache on the proven executable (codexExecutableKey) (WP1.41); tests/unit/main/codex-usage-read.test.ts; WP2 P3 usage track MP9 round 1 (review fixes: B-F1, B-F2, Q-1 to Q-5): the usage index reads a realm's sessions folder held to the canonical-home check (WP1.2); tests/wp1/codex-auth-adapter.test.ts; WP2 PR 3 P3.5: the session telemetry passes the resumed id, the pick file and the claim listener to the watcher (WP1.68); tests/unit/providers/codex/spawn-resume.test.ts; WP2 PR 3 P3.6 (row 22): the realm folders get the conversation carry (conversation-carry.ts), replaceable only by a test (WP1.28); tests/wp1/conversation-carry-service.test.ts; WP2 PR 3 P3.9 (rows 39, 42): the package's setup operations state the supported range and read the proven CLI's model list (model-catalogue.ts), with test ports that never replace the proof (WP1.17, WP1.49); tests/unit/providers/codex/model-catalogue.test.ts",
+      "evidence": "CodexProvider class contract pinned by tests/wp1/codex-characterization.test.ts C2 (WP1.54); entry-point rule tests/wp1/dependency-boundaries.test.ts (WP1.66); WP2 final fixes: CodexProvider.resolveBinary and resumeCommand, which nothing called, refuse instead of resolving the codex on PATH (not used for Codex: launches go through the managed launch; C2 inverted), and cli.discovery and install.recipes are declared supported, what the package implements; realm.isolated stays unknown because the contract backs it with realms.realmEnvPatch, which Codex does not expose (WP1.17, WP1.18); tests/unit/providers/codex/spawn.test.ts, tests/wp1/provider-conformance.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): the wired package exposes the usage port (account.usage supported, unknown unwired) and CodexProvider records each session's allowance by its sessions folder (WP1.41); tests/wp1/provider-conformance.test.ts; tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP3 round-1 review fixes: the usage port uses the checked sessions folder, and a session opens and releases its realm's live figure (WP1.68); tests/unit/providers/codex/telemetry.test.ts; tests/unit/main/provider-account-usage.test.ts; WP2 P3 usage track MP3 round-2 review fixes: exports the lookup that tells unavailable from no reading, and the day-entry and timeout bounds (WP1.68); tests/unit/providers/codex/usage-last-seen.test.ts; WP2 P3 usage track MP7 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): exports the app-server client and the read result type (WP1.41); tests/unit/providers/codex/app-server-client.test.ts; WP2 P3 usage track MP8 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): wires the port's read to the auth operations and keys the verdict cache on the proven executable (codexExecutableKey) (WP1.41); tests/unit/main/codex-usage-read.test.ts; WP2 P3 usage track MP9 round 1 (review fixes: B-F1, B-F2, Q-1 to Q-5): the usage index reads a realm's sessions folder held to the canonical-home check (WP1.2); tests/wp1/codex-auth-adapter.test.ts; WP2 PR 3 P3.5: the session telemetry passes the resumed id, the pick file and the claim listener to the watcher (WP1.68); tests/unit/providers/codex/spawn-resume.test.ts; WP2 PR 3 P3.6 (row 22): the realm folders get the conversation carry (conversation-carry.ts), replaceable only by a test (WP1.28); tests/wp1/conversation-carry-service.test.ts; WP2 PR 3 P3.9 (rows 39, 42): the package's setup operations state the supported range and read the proven CLI's model list (model-catalogue.ts), with test ports that never replace the proof (WP1.17, WP1.49); tests/unit/providers/codex/model-catalogue.test.ts; WP2 PR 3 P3.9 round 1: the model list read's empty home is made by codexModelsScratchHome, which first sweeps homes an earlier read left behind (own prefix, real folders, an hour old) (WP1.17); tests/unit/providers/codex/models-scratch-home.test.ts",
       "note": "becomes the Codex package public entry point; CodexProvider (session parity surface) retained for the runtime work package, its two PATH lookups refused; auth/setup/realm operations exported alongside"
     },
     {
@@ -1053,7 +1053,7 @@
       ],
       "category": "AUTH",
       "disposition": "added",
-      "evidence": "new WP2 commit 5a adapter: one isolated codex exec per review from the launch the accounts service prepared (realm environment, proven executable), request on stdin, depth guard strips the requesting session Conductor bearer and id, runs through the CLI runner (tests/wp1/cli-discovery.test.ts \"the Codex reviewer (WP2 5a)\"; tests/unit/main/codex-review-mcp-tool.test.ts) (WP1.38, WP1.42)",
+      "evidence": "new WP2 commit 5a adapter: one isolated codex exec per review from the launch the accounts service prepared (realm environment, proven executable), request on stdin, depth guard strips the requesting session Conductor bearer and id, runs through the CLI runner (tests/wp1/cli-discovery.test.ts \"the Codex reviewer (WP2 5a)\"; tests/unit/main/codex-review-mcp-tool.test.ts) (WP1.38, WP1.42); WP2 PR 3 P3.9 round 1: a run whose purpose is analysis uses the analysis operation's constant argv; a review, or no purpose, is unchanged (WP1.38, WP1.42); tests/wp1/cli-discovery.test.ts",
       "note": "created by WP2 commit 5a; replaces the legacy runCodexStreaming review path"
     },
     {
@@ -1151,7 +1151,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "added",
-      "evidence": "provider package contract; tests/wp1/provider-core.test.ts, tests/wp1/dependency-boundaries.test.ts R1 (WP1.55); WP2 reconfirm (owner decision 2026-09-26): ProviderEnablementSpec.answeredKey, data, validated at registration (WP1.60 enable/disable); tests/unit/main/codex-unanswered-service.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): the optional usage port (live, lastSeen), reads only (WP1.55); tests/wp1/provider-core.test.ts; WP2 P3 usage track MP3 round-1 review fixes: the usage port answers a lookup that can refuse a realm (WP1.55); tests/wp1/provider-conformance.test.ts; WP2 P3 usage track MP8 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): the optional read on the usage port and its result types (WP1.55); tests/unit/main/codex-usage-read.test.ts; WP2 P3 usage track MP9 round 1 (review fixes: B-F1, B-F2, Q-1 to Q-5): the launch sessionsDir contract names the canonical-home check (WP1.2); tests/wp1/codex-auth-adapter.test.ts; WP2 PR 3 P3.9 (rows 39, 42): the setup operations may state the supported versions and read the installed CLI's model list (provider-neutral types) (WP1.41); tests/unit/providers/codex/model-catalogue.test.ts",
+      "evidence": "provider package contract; tests/wp1/provider-core.test.ts, tests/wp1/dependency-boundaries.test.ts R1 (WP1.55); WP2 reconfirm (owner decision 2026-09-26): ProviderEnablementSpec.answeredKey, data, validated at registration (WP1.60 enable/disable); tests/unit/main/codex-unanswered-service.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): the optional usage port (live, lastSeen), reads only (WP1.55); tests/wp1/provider-core.test.ts; WP2 P3 usage track MP3 round-1 review fixes: the usage port answers a lookup that can refuse a realm (WP1.55); tests/wp1/provider-conformance.test.ts; WP2 P3 usage track MP8 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): the optional read on the usage port and its result types (WP1.55); tests/unit/main/codex-usage-read.test.ts; WP2 P3 usage track MP9 round 1 (review fixes: B-F1, B-F2, Q-1 to Q-5): the launch sessionsDir contract names the canonical-home check (WP1.2); tests/wp1/codex-auth-adapter.test.ts; WP2 PR 3 P3.9 (rows 39, 42): the setup operations may state the supported versions and read the installed CLI's model list (provider-neutral types) (WP1.41); tests/unit/providers/codex/model-catalogue.test.ts; WP2 PR 3 P3.9 round 1: a review run may name its purpose, analysis being a text-only run a package that cannot do so refuses (provider-neutral type) (WP1.41); tests/wp1/claude-reviewer.test.ts, tests/wp1/cli-discovery.test.ts",
       "note": "names both providers in a comment only"
     },
     {
@@ -1230,7 +1230,7 @@
       ],
       "category": "MODELS-PRICING",
       "disposition": "replace",
-      "evidence": "WP2 PR 3 P3.8 (row 39): the start-up model coverage check runs the Codex half after Claude's, only while Codex is on (the launch rule's silent form), CLI-free, a throw raising its own finding (WP1.60, WP1.68); tests/unit/main/sentinel-and-cli-setup-provider-off.test.ts; WP2 PR 3 P3.9 (rows 39, 42): while Codex is on, the start-up check and a Re-run check the installed Codex version against the supported range, compare the registry with the model list that CLI offers (read live, else the shipped list), and analyse a changed Codex version's release notes; each analysis runs on the provider that is on (both on: the Ask Conductor choice, Claude Code by default), Codex as a prepared reviewer launch in a fresh temp folder; Codex off or not set up runs and says nothing; Sentinel's Codex runs count as Codex in use (WP1.60, WP1.68); tests/unit/main/sentinel-codex-service.test.ts, tests/unit/main/sentinel-and-cli-setup-provider-off.test.ts",
+      "evidence": "WP2 PR 3 P3.8 (row 39): the start-up model coverage check runs the Codex half after Claude's, only while Codex is on (the launch rule's silent form), CLI-free, a throw raising its own finding (WP1.60, WP1.68); tests/unit/main/sentinel-and-cli-setup-provider-off.test.ts; WP2 PR 3 P3.9 (rows 39, 42): while Codex is on, the start-up check and a Re-run check the installed Codex version against the supported range, compare the registry with the model list that CLI offers (read live, else the shipped list), and analyse a changed Codex version's release notes; each analysis runs on the provider that is on (both on: the Ask Conductor choice, Claude Code by default), Codex as a prepared reviewer launch in a fresh temp folder; Codex off or not set up runs and says nothing; Sentinel's Codex runs count as Codex in use (WP1.60, WP1.68); tests/unit/main/sentinel-codex-service.test.ts, tests/unit/main/sentinel-and-cli-setup-provider-off.test.ts; WP2 PR 3 P3.9 round 1: the Codex analysis is a text-only reviewer run in a fresh folder, marked as its own project root, in Sentinel's own runs folder (a real folder, never a link), leftovers swept; the start-up check uses the look the app took at start and runs beside Claude Code's, and nothing in the Codex half stops Claude Code's; a Re-run looks afresh; notes read only in part are said (WP1.60, WP1.68); tests/unit/main/sentinel-codex-service.test.ts",
       "note": "Claude's version check and analysis are unchanged"
     },
     {
@@ -1241,7 +1241,7 @@
       ],
       "category": "MODELS-PRICING",
       "disposition": "replace",
-      "evidence": "WP2 PR 3 P3.9 (rows 39, 42): the analysis of a Codex update checks its release notes against the four surfaces the app relies on in Codex (launch flags, terminal embedding, the rollout session files, CODEX_HOME's config and account files); a Codex update's findings get their own ids (codex-update:) and are marked as Codex's; the Claude prompt and findings are unchanged; the P04 hit is the prompt's text naming CODEX_HOME, not a home resolver (WP1.68); tests/unit/sentinel-analysis.test.ts",
+      "evidence": "WP2 PR 3 P3.9 (rows 39, 42): the analysis of a Codex update checks its release notes against the four surfaces the app relies on in Codex (launch flags, terminal embedding, the rollout session files, CODEX_HOME's config and account files); a Codex update's findings get their own ids (codex-update:) and are marked as Codex's; the Claude prompt and findings are unchanged; the P04 hit is the prompt's text naming CODEX_HOME, not a home resolver (WP1.68); tests/unit/sentinel-analysis.test.ts; WP2 PR 3 P3.9 round 1: Claude Code's analysis loads no MCP server and may use no tool; the notes are fenced by a fresh marker; a finding whose evidence is not a quote of the notes is dropped; a finding's text is made prose-safe and redacted and its id comes from what it says, for both providers (WP1.68); tests/unit/sentinel-analysis.test.ts",
       "note": "Claude Code's analysis is unchanged"
     },
     {
@@ -1252,7 +1252,7 @@
       ],
       "category": "MODELS-PRICING",
       "disposition": "added",
-      "evidence": "new WP2 PR 3 P3.9 (rows 39, 42) module (src/main/sentinel/sentinel-codex-changelog.ts): Codex's public release notes read from GitHub's API (openai/codex releases, anonymous, capped as they arrive, non-200 or unreadable is no notes), only published stable rust-v<semver> releases, each release's headings demoted and control characters dropped, as changelog sections for the analysis of a Codex update (WP1.68); tests/unit/sentinel-codex-changelog.test.ts",
+      "evidence": "new WP2 PR 3 P3.9 (rows 39, 42) module (src/main/sentinel/sentinel-codex-changelog.ts): Codex's public release notes read from GitHub's API (openai/codex releases, anonymous, capped as they arrive, non-200 or unreadable is no notes), only published stable rust-v<semver> releases, each release's headings demoted and control characters dropped, as changelog sections for the analysis of a Codex update (WP1.68); tests/unit/sentinel-codex-changelog.test.ts; WP2 PR 3 P3.9 round 1: the notes are read one version at a time (/releases/tags/rust-v<version>, each reply capped at 2 MiB, at most 16 requests and 45 s), the installed version's own first, then the stable versions since the last one seen, newest first; a downgrade, a Re-run, a new major or a prerelease installed reads the installed version's only; each version's notes get their share and a cut is said (WP1.68); tests/unit/sentinel-codex-changelog.test.ts",
       "note": "created by WP2 PR 3 P3.9; main process only"
     },
     {
@@ -1283,7 +1283,7 @@
       ],
       "category": "MODELS-PRICING",
       "disposition": "replace",
-      "evidence": "WP2 PR 3 P3.9 (rows 39, 42): Sentinel's state keeps the Codex version the last check saw (lastSeenCodexVersion) and whose update the analysis in flight is about; a reload never starts analysing (WP1.68); tests/unit/sentinel-state.test.ts, tests/unit/main/sentinel-codex-service.test.ts",
+      "evidence": "WP2 PR 3 P3.9 (rows 39, 42): Sentinel's state keeps the Codex version the last check saw (lastSeenCodexVersion) and whose update the analysis in flight is about; a reload never starts analysing (WP1.68); tests/unit/sentinel-state.test.ts, tests/unit/main/sentinel-codex-service.test.ts; WP2 PR 3 P3.9 round 1: a note beside a completed analysis that did not read every note in full, cleared when the next starts (WP1.68); tests/unit/sentinel-state.test.ts",
       "note": "Claude Code's fields are unchanged"
     },
     {
@@ -1306,6 +1306,16 @@
       "disposition": "replace",
       "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); skips non-Claude sessions (runtime work package scope); WP2 PR 3 P3.5 (row 34, parity): a Codex session is stamped with the conversation main keeps for it (getProviderResumeTarget), a conversation id only; the Claude path is unchanged (WP1.33); tests/unit/main/session-resume-enrich.test.ts",
       "note": "P3.5 rebuilt it for non-Claude sessions (replace)"
+    },
+    {
+      "path": "src/main/stale-folder-sweep.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.9 round 1 module (src/main/stale-folder-sweep.ts): folders a run makes for itself and removes after it (the Codex model list read's empty home, Sentinel's analysis folder) that a crash or a quit left behind are swept by the next run: only direct children of the one parent, only the run's own prefix, only real folders (a link is never followed or removed), on POSIX only this user's, only past an age no live run reaches; never throws (WP1.68); tests/unit/main/stale-folder-sweep.test.ts, tests/unit/providers/codex/models-scratch-home.test.ts, tests/unit/main/sentinel-codex-service.test.ts",
+      "note": "created by WP2 PR 3 P3.9 round 1; the P14 hit is a comment naming the Codex model list read"
     },
     {
       "path": "src/main/tokenomics/tk-attribution.ts",
@@ -1843,7 +1853,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "replace",
-      "evidence": "WP2 PR 3 P3.9 (rows 39, 42): the same panel for Codex, no parallel UI: the subtitle and the all-clear name each assistant in use and its version (a provider that is off shows nothing), the analysing line says whose update it is, a Codex finding wears a Codex tag and its own surface name, and Copy writes the report for the assistants in use (WP1.68); tests/unit/renderer/sentinel-panel-copy.test.tsx",
+      "evidence": "WP2 PR 3 P3.9 (rows 39, 42): the same panel for Codex, no parallel UI: the subtitle and the all-clear name each assistant in use and its version (a provider that is off shows nothing), the analysing line says whose update it is, a Codex finding wears a Codex tag and its own surface name, and Copy writes the report for the assistants in use (WP1.68); tests/unit/renderer/sentinel-panel-copy.test.tsx; WP2 PR 3 P3.9 round 1: the note beside a completed analysis that read part of the notes is shown as an info callout (WP1.68); tests/unit/main/sentinel-codex-service.test.ts",
       "note": "renderer only; Claude Code alone reads exactly as before"
     },
     {
@@ -2791,7 +2801,7 @@
       ],
       "category": "MODELS-PRICING",
       "disposition": "replace",
-      "evidence": "WP2 PR 3 P3.9 (rows 39, 42): a finding may name the assistant it is about (provider), and the state the Codex version last seen and whose update is being analysed; optional fields, so earlier state files still load (WP1.68); tests/unit/sentinel-state.test.ts",
+      "evidence": "WP2 PR 3 P3.9 (rows 39, 42): a finding may name the assistant it is about (provider), and the state the Codex version last seen and whose update is being analysed; optional fields, so earlier state files still load (WP1.68); tests/unit/sentinel-state.test.ts; WP2 PR 3 P3.9 round 1: lastAnalysisNote, optional (WP1.68); tests/unit/sentinel-state.test.ts",
       "note": "types only"
     },
     {
@@ -4412,6 +4422,16 @@
       "note": ""
     },
     {
+      "path": "tests/unit/main/stale-folder-sweep.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.9 round 1 test (tests/unit/main/stale-folder-sweep.test.ts): the sweep through an injected filesystem: own-prefix real folders past the age only, a link never removed, another user's folder kept on POSIX, a short prefix or a name with a separator never touched, and one folder that cannot be read or removed never stops the rest (WP1.68)",
+      "note": "created by WP2 PR 3 P3.9 round 1; pure"
+    },
+    {
       "path": "tests/unit/main/tokenomics-attribution.test.ts",
       "predicates": [
         "P13"
@@ -4734,6 +4754,17 @@
       "disposition": "added",
       "evidence": "new WP2 PR 3 P3.9 (rows 39, 42) test (tests/unit/providers/codex/model-catalogue.test.ts): the catalogue parse (the 0.153.4 fixture reads as the shipped list; fail closed on anything else; a polluted prototype adds nothing), the read's gates (proof, version, executable identity before and after), its fixed argv, empty home and allowlisted environment (the P04 and P09 hits assert CODEX_HOME is never ~/.codex and no ambient key reaches the run), and the accounts service's read behind the launch rule (WP1.17, WP1.49, WP1.60)",
       "note": "created by WP2 PR 3 P3.9; pure"
+    },
+    {
+      "path": "tests/unit/providers/codex/models-scratch-home.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.9 round 1 test (tests/unit/providers/codex/models-scratch-home.test.ts): the Codex model list read's empty home is made under its parent and removed by its dispose, and a home an earlier read left behind is swept while a young one, another name and a link are kept; runs in the suite's own folder, never the shared temp folder (WP1.17, WP1.68)",
+      "note": "created by WP2 PR 3 P3.9 round 1; its own mkdtemp folder only"
     },
     {
       "path": "tests/unit/providers/codex/permissions.test.ts",

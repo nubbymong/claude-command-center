@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-29T14:43:03.095Z",
-  "head": "3a4ed4008701b4393c73417899b7c8b6e7cc7694",
-  "tree": "8ec9e712737f4a8472edae5766fd9a62697c57a7",
+  "generatedAt": "2026-09-29T16:42:34.435Z",
+  "head": "7678c433987510128fc0993c4312eeb4078f271d",
+  "tree": "e401d81e87fa048a682897b4ae3ea4726525aa59",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2501,
+  "trackedFileCount": 2504,
   "excludedFileCount": 384,
-  "scannedFileCount": 2117,
+  "scannedFileCount": 2120,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 557,
-  "pathDigest": "b2b3e89130d5459f560ccde480a8bfc1e47044485f4533d2498d2b01efafa128",
+  "matchedPathCount": 560,
+  "pathDigest": "c78deb8e9d2776a9d0f38c53ee047c789019850c743126e495e5f751632de03e",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -673,7 +673,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 204
+      "lineCount": 208
     },
     {
       "path": "src/main/providers/codex/install-recipes.ts",
@@ -887,7 +887,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 84
+      "lineCount": 99
     },
     {
       "path": "src/main/sentinel/sentinel-analysis.ts",
@@ -903,7 +903,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 17
+      "lineCount": 33
     },
     {
       "path": "src/main/sentinel/sentinel-codex.ts",
@@ -941,6 +941,13 @@
         "P14"
       ],
       "lineCount": 6
+    },
+    {
+      "path": "src/main/stale-folder-sweep.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 1
     },
     {
       "path": "src/main/tokenomics/tk-attribution.ts",
@@ -3067,7 +3074,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 97
+      "lineCount": 115
     },
     {
       "path": "tests/unit/main/service-status-providers.test.ts",
@@ -3097,6 +3104,13 @@
         "P13"
       ],
       "lineCount": 5
+    },
+    {
+      "path": "tests/unit/main/stale-folder-sweep.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 22
     },
     {
       "path": "tests/unit/main/tokenomics-attribution.test.ts",
@@ -3311,6 +3325,14 @@
         "P13"
       ],
       "lineCount": 88
+    },
+    {
+      "path": "tests/unit/providers/codex/models-scratch-home.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 9
     },
     {
       "path": "tests/unit/providers/codex/permissions.test.ts",
@@ -4425,7 +4447,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 15
+      "lineCount": 27
     },
     {
       "path": "tests/unit/sentinel-codex-changelog.test.ts",
@@ -4433,7 +4455,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 28
+      "lineCount": 43
     },
     {
       "path": "tests/unit/sentinel-codex-models.test.ts",
@@ -4463,7 +4485,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 8
+      "lineCount": 9
     },
     {
       "path": "tests/unit/status-ingest.test.ts",

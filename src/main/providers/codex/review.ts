@@ -105,7 +105,9 @@ export function createCodexReviewOperations(deps: { platform?: NodeJS.Platform; 
     async run(input: ReviewRunInput): Promise<ReviewRunResult> {
       const win32 = platform === 'win32'
       const env = reviewerEnv(input.env, platform)
-      const cmd = codexCommandLine(input.executable, 'review', platform, codexShellEnv(env, platform))
+      // P3.9 round 1: a text-only analysis runs its own constant argv (no
+      // tools, no instructions from the folder; cli-runner.ts, `analysis`).
+      const cmd = codexCommandLine(input.executable, input.purpose === 'analysis' ? 'analysis' : 'review', platform, codexShellEnv(env, platform))
       if ('refused' in cmd) return { ok: false, code: 'not-started', message: `Codex could not be started: ${cmd.refused}.` }
       // cmd.exe cannot use a network path as its current directory: it would
       // start the shim in the Windows folder and Codex would review that.

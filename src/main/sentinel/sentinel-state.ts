@@ -53,9 +53,11 @@ export class SentinelState {
   setLastSeenCcVersion(v: string): void { this.state = { ...this.state, lastSeenCcVersion: v }; this.persist() }
   /** P3.9: the Codex version the last completed check saw. */
   setLastSeenCodexVersion(v: string): void { this.state = { ...this.state, lastSeenCodexVersion: v }; this.persist() }
-  /** `provider` (P3.9): whose update the analysis starting now is about. */
-  setAnalyzing(analyzing: boolean, error: string | null = null, provider: SentinelProvider | null = null): void {
-    this.state = { ...this.state, analyzing, analyzingProvider: analyzing ? provider : null, lastAnalysisError: error, lastAnalysisAt: analyzing ? this.state.lastAnalysisAt : Date.now() }
+  /** `provider` (P3.9): whose update the analysis starting now is about.
+   *  `note` (round 1): what to say beside a completed analysis that did not
+   *  read everything in full; cleared when a new one starts. */
+  setAnalyzing(analyzing: boolean, error: string | null = null, provider: SentinelProvider | null = null, note: string | null = null): void {
+    this.state = { ...this.state, analyzing, analyzingProvider: analyzing ? provider : null, lastAnalysisError: error, lastAnalysisNote: analyzing ? null : note, lastAnalysisAt: analyzing ? this.state.lastAnalysisAt : Date.now() }
     this.persist()
   }
 }
