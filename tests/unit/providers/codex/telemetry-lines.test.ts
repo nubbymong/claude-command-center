@@ -18,6 +18,7 @@ import {
   __codexEditCountTakeMostHeldForTests,
   CLAIM_HEAD_BYTES,
   CLAIM_TAIL_BYTES,
+  EDIT_COUNT_LINE_MAX_BYTES,
 } from '../../../../src/main/providers/codex/telemetry'
 import { codexFolderIdentity } from '../../../../src/main/providers/codex/rollout-lookup'
 import type { StatuslineData } from '../../../../src/shared/types'
@@ -222,7 +223,10 @@ describe('a large rollout: the edits between its head and its tail', () => {
     expect(updates.map((u) => u.linesAdded)).toEqual([2])
   })
 
-  it('a claim let go while that count waits to open the file: it stops without reading any of it', async () => {
+  // Review fix 2: a claim let go settles the conversation's running time
+  // once the count lands (its turns count too), so the count reads on; it
+  // still says nothing more for the conversation let go.
+  it('a claim let go while that count waits to open the file: the count reads on for the time kept, and nothing more is said', async () => {
     const sessions = realm()
     large(sessions)
     const pickFile = join(sessions, '..', 'pick.json')
@@ -248,9 +252,37 @@ describe('a large rollout: the edits between its head and its tail', () => {
       await vi.waitFor(() => expect(releases).toBe(1), { timeout: 5_000, interval: 20 })
       const before = __codexEditCountBytesReadForTests()
       letOpen()
+      await vi.waitFor(() => expect(__codexEditCountBytesReadForTests()).toBeGreaterThan(before), { timeout: 5_000, interval: 20 })
+      await new Promise((r) => setTimeout(r, 300))
+      expect(updates.some((u) => u.linesAdded === 8)).toBe(false)
+    } finally {
+      src.stop()
+      spy.mockRestore()
+    }
+  })
+
+  it('a later read from the start (a gain too large to read on) replaces the read state: its earlier count stops without reading any of it', async () => {
+    const sessions = realm()
+    const file = large(sessions)
+    const realOpen = fsPromises.open
+    let letOpen!: () => void
+    const gate = new Promise<void>((r) => { letOpen = r })
+    let opens = 0
+    const spy = vi.spyOn(fsPromises, 'open').mockImplementation((async (...args: Parameters<typeof fsPromises.open>) => {
+      if (opens++ === 0) await gate
+      return realOpen.apply(fsPromises, args)
+    }) as typeof fsPromises.open)
+    const { updates, src } = watch(sessions, '/p/demo', ID)
+    try {
+      expect(updates[0]).toMatchObject({ linesAdded: 2 })
+      appendFileSync(file, filler(1536 * 1024) + editLine(new Date().toISOString()) + '\n' + tokenLine(new Date().toISOString(), 999) + '\n')
+      // Read again from the start: the tail's edit, and the second count's four between.
+      await vi.waitFor(() => expect(updates.at(-1)).toMatchObject({ inputTokens: 999, linesAdded: 10 }), { timeout: 10_000, interval: 20 })
+      const before = __codexEditCountBytesReadForTests()
+      letOpen()
       await new Promise((r) => setTimeout(r, 300))
       expect(__codexEditCountBytesReadForTests()).toBe(before)
-      expect(updates.some((u) => u.linesAdded === 8)).toBe(false)
+      expect(updates.at(-1)).toMatchObject({ linesAdded: 10 })
     } finally {
       src.stop()
       spy.mockRestore()
@@ -317,5 +349,16 @@ describe('countRolloutRange (the background count)', () => {
     // Read in one chunk, the same line is passed over too.
     expect(await countRolloutRange(file, identityOf(file), 0, text.length, () => false, { lineMaxBytes: 400 })).toEqual({ added: 2, removed: 1, turnMs: 0 })
     expect(await countRolloutRange(file, identityOf(file), 0, text.length, () => false, { chunkBytes: 50, lineMaxBytes: big.length })).toEqual({ added: 402, removed: 1, turnMs: 0 })
+  })
+
+  // Review fix 3: the most of one line it holds is 8 MiB, so one huge line
+  // never takes hundreds of MB or a long stall; an edit record longer than
+  // that (between a large rollout's head and tail) is not counted.
+  it('by default it keeps a line of up to 8 MiB: an edit record longer than that is not counted, one just shorter is', async () => {
+    expect(EDIT_COUNT_LINE_MAX_BYTES).toBe(8 * 1024 * 1024)
+    const over = fileWith([editLine(iso, { '/p/big.ts': { type: 'add', content: 'y'.repeat(EDIT_COUNT_LINE_MAX_BYTES) } }), editLine(iso)])
+    expect(await countRolloutRange(over.file, identityOf(over.file), 0, over.text.length)).toEqual({ added: 2, removed: 1, turnMs: 0 })
+    const under = fileWith([editLine(iso, { '/p/big.ts': { type: 'add', content: 'y'.repeat(EDIT_COUNT_LINE_MAX_BYTES - 4096) } })])
+    expect(await countRolloutRange(under.file, identityOf(under.file), 0, under.text.length)).toEqual({ added: 1, removed: 0, turnMs: 0 })
   })
 })

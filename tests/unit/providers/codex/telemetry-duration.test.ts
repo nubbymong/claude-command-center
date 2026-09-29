@@ -8,10 +8,10 @@
 // for time the app did not see it takes what the rollout proves: the turns
 // it records as completed then. Real files in a temp folder; fake timers.
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
-import { appendFileSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'fs'
+import { appendFileSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync, promises as fsPromises } from 'fs'
 import { join, dirname, basename } from 'path'
 import { tmpdir } from 'os'
-import { watchAndClaimRollout, countRolloutRange, CLAIM_HEAD_BYTES, CLAIM_TAIL_BYTES } from '../../../../src/main/providers/codex/telemetry'
+import { watchAndClaimRollout, countRolloutRange, CLAIM_HEAD_BYTES, CLAIM_TAIL_BYTES, __codexEditCountBytesReadForTests } from '../../../../src/main/providers/codex/telemetry'
 import { codexFolderIdentity } from '../../../../src/main/providers/codex/rollout-lookup'
 import { conversationRunningTime, noteConversationRunningTime, __resetConversationRunningTimesForTests } from '../../../../src/main/conversation-running-time'
 import type { StatuslineData } from '../../../../src/shared/types'
@@ -21,6 +21,7 @@ const temps: string[] = []
 beforeEach(() => { __resetConversationRunningTimesForTests() })
 afterEach(() => {
   vi.useRealTimers()
+  vi.restoreAllMocks()
   // Only a folder this file made (its own prefix, directly in the temp folder) is removed.
   for (const t of temps.splice(0)) if (dirname(t) === tmpdir() && /^ccc-test-codex-duration-/.test(basename(t))) rmSync(t, { recursive: true, force: true })
 })
@@ -187,6 +188,158 @@ describe('a Codex session\'s Duration is its conversation\'s running time', () =
     await vi.advanceTimersByTimeAsync(1_000)
     src.stop()
     expect(conversationRunningTime(ID)).toEqual({ ms: releasedAt - claimedAt, until: releasedAt })
+  })
+
+  // Review fix 1: another tab resumed the conversation while this one held
+  // it; it claims once this one lets go, and the time they both ran it is
+  // counted once, not from the other tab's own launch.
+  it('two tabs on one conversation: the time they both ran it is counted once', async () => {
+    vi.useFakeTimers()
+    const t0 = Date.parse('2026-09-29T10:00:00.000Z')
+    vi.setSystemTime(t0)
+    const sessions = realm()
+    rolloutAt(sessions, ID, t0 - 600_000, [metaLine(ID, '/p/demo', t0 - 600_000), tokenLine(t0 - 590_000, 5)])
+    const x = watch(sessions, '/p/demo', { resumeId: ID })
+    await vi.advanceTimersByTimeAsync(10_000)
+    const y = watch(sessions, '/p/demo', { resumeId: ID })
+    expect(y.updates).toEqual([])
+    // Inside the other tab's 30 s no-claim deadline.
+    await vi.advanceTimersByTimeAsync(20_000)
+    x.src.stop()
+    expect(conversationRunningTime(ID)).toEqual({ ms: 30_000, until: t0 + 30_000 })
+    await vi.advanceTimersByTimeAsync(250)
+    y.src.stop()
+    expect(y.updates[0]?.totalDurationMs).toBe(30_250)
+  })
+
+  // Review fix 2: a large rollout's watch that ends before its background
+  // count lands keeps its time once the count has, with the turns it found;
+  // a relaunch that claims meanwhile takes that time again once it is kept.
+  function largeWithTurns(sessions: string): void {
+    const t = Date.now() - 3 * 24 * 3600 * 1000
+    let body = metaLine(ID, '/p/demo', t) + '\n' + filler(1024 * 1024)
+    for (let i = 0; i < 3; i++) body += doneLine(t + 1_000 * (i + 1), 1_000) + '\n' + filler(1024 * 1024)
+    body += filler(512 * 1024) + doneLine(t + 10_000, 500) + '\n' + tokenLine(t + 10_000, 777) + '\n'
+    writeFileSync(join(dayOf(sessions, new Date(t)), `rollout-x-${ID}.jsonl`), body)
+  }
+
+  it('a large rollout\'s watch ending before its background count lands: its time is kept once the count has, turns included, and nothing more is said', async () => {
+    const sessions = realm()
+    largeWithTurns(sessions)
+    const x = watch(sessions, '/p/demo', { resumeId: ID })
+    x.src.stop()
+    await vi.waitFor(() => expect(conversationRunningTime(ID)?.ms).toBeGreaterThanOrEqual(3_500), { timeout: 3_000, interval: 20 })
+    expect(conversationRunningTime(ID)!.ms).toBeLessThan(3_500 + 3_000)
+    expect(x.updates).toHaveLength(1)
+  })
+
+  it('a relaunch that claims before the last run\'s time is kept: it takes that time again once it is, and counts no turn twice', async () => {
+    const sessions = realm()
+    largeWithTurns(sessions)
+    const x = watch(sessions, '/p/demo', { resumeId: ID })
+    x.src.stop()
+    const y = watch(sessions, '/p/demo', { resumeId: ID })
+    try {
+      await vi.waitFor(() => expect(y.updates.at(-1)?.totalDurationMs).toBeGreaterThanOrEqual(3_500), { timeout: 5_000, interval: 20 })
+      expect(y.updates.at(-1)?.totalDurationMs).toBeLessThan(3_500 + 5_000)
+    } finally {
+      y.src.stop()
+    }
+  })
+
+  it('a relaunch that counted the turns itself before the last run\'s time was kept: once kept, they are counted there only', async () => {
+    const sessions = realm()
+    largeWithTurns(sessions)
+    const realOpen = fsPromises.open
+    let letOpen!: () => void
+    const gate = new Promise<void>((r) => { letOpen = r })
+    let opens = 0
+    const spy = vi.spyOn(fsPromises, 'open').mockImplementation((async (...args: Parameters<typeof fsPromises.open>) => {
+      if (opens++ === 0) await gate
+      return realOpen.apply(fsPromises, args)
+    }) as typeof fsPromises.open)
+    const x = watch(sessions, '/p/demo', { resumeId: ID })
+    x.src.stop()
+    // The relaunch finds no time kept yet, so it counts every turn in its own window.
+    __resetConversationRunningTimesForTests()
+    const y = watch(sessions, '/p/demo', { resumeId: ID })
+    try {
+      await vi.waitFor(() => expect(y.updates.at(-1)?.totalDurationMs).toBeGreaterThanOrEqual(3_500), { timeout: 5_000, interval: 20 })
+      letOpen()
+      await vi.waitFor(() => expect(conversationRunningTime(ID)?.ms).toBeGreaterThanOrEqual(3_500), { timeout: 5_000, interval: 20 })
+      const file = join(dayOf(sessions, new Date(Date.now() - 3 * 24 * 3600 * 1000)), `rollout-x-${ID}.jsonl`)
+      appendFileSync(file, tokenLine(Date.now(), 800) + '\n')
+      await vi.waitFor(() => expect(y.updates.at(-1)?.inputTokens).toBe(800), { timeout: 5_000, interval: 20 })
+      expect(y.updates.at(-1)?.totalDurationMs).toBeLessThan(3_500 + 3_000)
+    } finally {
+      y.src.stop()
+      spy.mockRestore()
+    }
+  })
+
+  it('a watch ending after its background count landed: its time is kept at once', async () => {
+    const sessions = realm()
+    largeWithTurns(sessions)
+    const x = watch(sessions, '/p/demo', { resumeId: ID })
+    await vi.waitFor(() => expect(x.updates.at(-1)?.totalDurationMs).toBeGreaterThanOrEqual(3_500), { timeout: 5_000, interval: 20 })
+    await new Promise((r) => setTimeout(r, 50))
+    const before = Date.now()
+    x.src.stop()
+    expect(conversationRunningTime(ID)!.until).toBeGreaterThanOrEqual(before)
+  })
+
+  it('a relaunch after the last run\'s time is kept: read once, not again', async () => {
+    const sessions = realm()
+    largeWithTurns(sessions)
+    const x = watch(sessions, '/p/demo', { resumeId: ID })
+    x.src.stop()
+    await vi.waitFor(() => expect(conversationRunningTime(ID)?.ms).toBeGreaterThanOrEqual(3_500), { timeout: 5_000, interval: 20 })
+    const before = __codexEditCountBytesReadForTests()
+    const y = watch(sessions, '/p/demo', { resumeId: ID })
+    try {
+      await vi.waitFor(() => expect(__codexEditCountBytesReadForTests()).toBeGreaterThan(before), { timeout: 5_000, interval: 20 })
+      await new Promise((r) => setTimeout(r, 900))
+      // One background count of the part between the head and the tail (about 3.3 MiB), not two.
+      expect(__codexEditCountBytesReadForTests() - before).toBeLessThan(5 * 1024 * 1024)
+    } finally {
+      y.src.stop()
+    }
+  })
+
+  it('a tab that moved on to another conversation before the last run\'s time was kept stays on its own', async () => {
+    const sessions = realm()
+    largeWithTurns(sessions)
+    const realOpen = fsPromises.open
+    let letOpen!: () => void
+    const gate = new Promise<void>((r) => { letOpen = r })
+    let opens = 0
+    const spy = vi.spyOn(fsPromises, 'open').mockImplementation((async (...args: Parameters<typeof fsPromises.open>) => {
+      if (opens++ === 0) await gate
+      return realOpen.apply(fsPromises, args)
+    }) as typeof fsPromises.open)
+    // The first run's count is held, so its time is not kept yet.
+    const x = watch(sessions, '/p/demo', { resumeId: ID })
+    x.src.stop()
+    const pickFile = join(sessions, '..', 'pick.json')
+    const y = watch(sessions, '/p/demo', { pickFile, pickFolder: codexFolderIdentity(dirname(pickFile)) ?? undefined })
+    try {
+      writeFileSync(pickFile, JSON.stringify({ id: ID }))
+      await vi.waitFor(() => expect(y.updates.at(-1)?.inputTokens).toBe(777), { timeout: 5_000, interval: 20 })
+      // The picker decides again: a new conversation, which then begins.
+      writeFileSync(pickFile, JSON.stringify({ fresh: true }))
+      await vi.waitFor(() => expect(y.updates.at(-1)?.inputTokens).toBe(0), { timeout: 5_000, interval: 20 })
+      const other = '019dd000-0001-7000-8000-0000000000d2'
+      rolloutAt(sessions, other, Date.now(), [metaLine(other, '/p/demo', Date.now()), tokenLine(Date.now(), 5)])
+      await vi.waitFor(() => expect(y.updates.at(-1)?.inputTokens).toBe(5), { timeout: 5_000, interval: 20 })
+      letOpen()
+      await vi.waitFor(() => expect(conversationRunningTime(ID)?.ms).toBeGreaterThanOrEqual(3_500), { timeout: 5_000, interval: 20 })
+      await new Promise((r) => setTimeout(r, 900))
+      expect(y.updates.at(-1)?.inputTokens).toBe(5)
+      expect(y.updates.at(-1)?.totalDurationMs).toBeLessThan(3_000)
+    } finally {
+      y.src.stop()
+      spy.mockRestore()
+    }
   })
 
   it('a launch dated ahead of the clock (the clock moved back): no time below nothing', async () => {

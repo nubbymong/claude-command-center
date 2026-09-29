@@ -855,10 +855,10 @@ as Claude reports, and a claim let go clears it with the tokens
 (`providers/codex/telemetry.ts`, `telemetry-lines.test.ts`). A large rollout
 is read as its head and tail (P3.5); the edits between them are counted once
 in the background, a chunk at a time, only while the file is the one claimed,
-and dropped once the watch stops or the claim is let go. Its limit: no more
-than 64 MiB of one line is held, so an edit record longer than that (a file
-of about that size written in one patch) between the head and the tail is not
-counted. The add and delete shapes are the Codex protocol's; P3.1 recorded
+and dropped once nothing waits for it. Its limit: no more than 8 MiB of one
+line is held (review fix: one huge line never takes hundreds of MB or stalls
+main), so an edit record longer than that (a file of about that size written
+in one patch) between the head and the tail is not counted. The add and delete shapes are the Codex protocol's; P3.1 recorded
 only an update. Row 36, duration (9f2bd164; settled by parity, the
 coordinator's ruling after the first build stopped on it): the same quantity
 as Claude Code's, the conversation's wall-clock running time, idle included,
@@ -879,8 +879,17 @@ main did not see (before the app first ran the conversation, and runs outside
 the app since its last run), what the rollout proves: the turns it records as
 completed in that time (`task_complete.duration_ms`), each only for its part
 inside it; a large rollout's turns between its head and tail are added by the
-background count. A claim let go settles its time and clears the figure. Its
-limits: of a run outside the app only its completed turns count (its idle
+background count. A claim let go settles its time and clears the figure.
+Review fixes: two tabs on one conversation count the time they both ran it
+once (a run is counted from no earlier than the time main already kept); a
+run that ends before a large rollout's background count lands is kept once
+the count has, turns included, and a claim of that conversation meanwhile
+takes the kept time again once it is, reading the rollout again in the window
+that follows it. Parity checked: the Duration moves when the rollout changes,
+as Claude's moves when its status line updates on Claude's own events (the
+app's Claude status line sets no refresh interval). Every save writes the
+kept list: at the 1000-entry limit about 110 KB of the session file,
+accepted. Its limits: of a run outside the app only its completed turns count (its idle
 time, an unfinished turn, and the time from its start to its first turn and
 from its last event to its exit are not recorded); a run in the app is kept up
 to its last status line update when the app itself closes before the watch

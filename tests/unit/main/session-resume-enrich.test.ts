@@ -205,14 +205,22 @@ describe('enrichSessionStateWithResumeTargets saves the conversations\' running 
     expect(s.conversationRunningTimes).toBeUndefined()
   })
 
-  it('without the source, or with one that throws or gives no list, the saved list is left as it is', () => {
+  it('without the source, the saved list is left as it is', () => {
     const s = state([{ id: 's1', provider: 'codex' }])
     s.conversationRunningTimes = MAIN
     enrichSessionStateWithResumeTargets(s, mkDeps())
     expect(s.conversationRunningTimes).toEqual(MAIN)
+  })
+
+  // Review fix 5 (as P3.6's C8 for the uncertain list): the list is main's
+  // own; when main cannot give it, none is written, never the renderer's.
+  it('a source that throws or gives no list: the list the renderer sent is removed', () => {
+    const s = state([{ id: 's1', provider: 'codex' }])
+    s.conversationRunningTimes = MAIN
     enrichSessionStateWithResumeTargets(s, mkDeps({ getConversationRunningTimes: () => { throw new Error('x') } }))
-    expect(s.conversationRunningTimes).toEqual(MAIN)
+    expect(s.conversationRunningTimes).toBeUndefined()
+    s.conversationRunningTimes = MAIN
     enrichSessionStateWithResumeTargets(s, mkDeps({ getConversationRunningTimes: () => 'not a list' as never }))
-    expect(s.conversationRunningTimes).toEqual(MAIN)
+    expect(s.conversationRunningTimes).toBeUndefined()
   })
 })
