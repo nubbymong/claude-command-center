@@ -1,0 +1,97 @@
+// P3.7 (row 36): how long each provider conversation the app has run has
+// been running, kept by main across launches and relaunches, so a Codex
+// session's Duration is the conversation's running time, as Claude Code's is
+// (its CLI restores it from the transcript when it resumes). Main writes it
+// into the saved session state and reads it back at load, schema-checked.
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import {
+  conversationRunningTime,
+  noteConversationRunningTime,
+  conversationRunningTimesForSave,
+  rememberConversationRunningTimesFrom,
+  CONVERSATION_RUNNING_TIMES_KEPT,
+  __resetConversationRunningTimesForTests,
+} from '../../../src/main/conversation-running-time'
+
+const A = '019dd000-0001-7000-8000-0000000000a1'
+const B = '019dd000-0001-7000-8000-0000000000b2'
+const NOW = Date.parse('2026-09-29T12:00:00.000Z')
+const idOf = (n: number) => `019dd000-0001-7000-8000-${String(n).padStart(12, '0')}`
+
+beforeEach(() => {
+  vi.useFakeTimers()
+  vi.setSystemTime(NOW)
+  __resetConversationRunningTimesForTests()
+})
+afterEach(() => { vi.useRealTimers() })
+
+describe('a conversation\'s running time, as main keeps it', () => {
+  it('is kept by conversation id, whatever its case, and read back as a copy', () => {
+    expect(conversationRunningTime(A)).toBeNull()
+    noteConversationRunningTime(A.toUpperCase(), 90_000, NOW - 1_000)
+    expect(conversationRunningTime(A)).toEqual({ ms: 90_000, until: NOW - 1_000 })
+    const got = conversationRunningTime(A)!
+    got.ms = 1
+    expect(conversationRunningTime(A)).toEqual({ ms: 90_000, until: NOW - 1_000 })
+    noteConversationRunningTime(A, 120_000, NOW)
+    expect(conversationRunningTime(A)).toEqual({ ms: 120_000, until: NOW })
+  })
+
+  it('refuses what is not a conversation id or not a time', () => {
+    for (const [id, ms, until] of [
+      ['not-an-id', 1, NOW], ['', 1, NOW], [A, -1, NOW], [A, Number.NaN, NOW], [A, Number.POSITIVE_INFINITY, NOW],
+      [A, 11 * 365 * 24 * 3600 * 1000, NOW], [A, 1, -1], [A, 1, Number.NaN], [A, 1, NOW + 2 * 24 * 3600 * 1000],
+    ] as Array<[string, number, number]>) {
+      noteConversationRunningTime(id, ms, until)
+    }
+    expect(conversationRunningTimesForSave()).toEqual([])
+  })
+
+  it('keeps the most recent ones only: past the limit, the one counted up to the earliest goes, whenever it was noted', () => {
+    // The first noted is recent; the earliest counted is the second noted.
+    noteConversationRunningTime(idOf(1), 1_000, NOW - 10)
+    for (let i = 1; i < CONVERSATION_RUNNING_TIMES_KEPT; i++) noteConversationRunningTime(idOf(i + 1), 1_000, NOW - 1_000_000 + i)
+    noteConversationRunningTime(A, 5_000, NOW)
+    expect(conversationRunningTimesForSave()).toHaveLength(CONVERSATION_RUNNING_TIMES_KEPT)
+    expect(conversationRunningTime(idOf(2))).toBeNull()
+    expect(conversationRunningTime(idOf(1))).not.toBeNull()
+    expect(conversationRunningTime(idOf(3))).not.toBeNull()
+    expect(conversationRunningTime(A)).toEqual({ ms: 5_000, until: NOW })
+  })
+
+  it('is written for the saved state as a list of id, time and until', () => {
+    noteConversationRunningTime(A, 1_000, NOW - 5)
+    noteConversationRunningTime(B, 2_000, NOW)
+    expect(conversationRunningTimesForSave()).toEqual([{ id: A, ms: 1_000, until: NOW - 5 }, { id: B, ms: 2_000, until: NOW }])
+  })
+})
+
+describe('read back from the saved state at load', () => {
+  it('takes each well-formed entry; anything else in the state is ignored', () => {
+    rememberConversationRunningTimesFrom({ sessions: [], conversationRunningTimes: [
+      { id: A, ms: 1_000, until: NOW - 10 },
+      { id: 'x', ms: 1, until: NOW }, { id: B, ms: '5', until: NOW }, { id: B, ms: 5, until: NOW + 2 * 24 * 3600 * 1000 },
+      { id: B, ms: -5, until: NOW }, null, 7, 'text', { id: B },
+    ] })
+    expect(conversationRunningTimesForSave()).toEqual([{ id: A, ms: 1_000, until: NOW - 10 }])
+    for (const state of [null, undefined, 7, 'x', {}, { conversationRunningTimes: 'x' }, { conversationRunningTimes: { id: A } }]) {
+      rememberConversationRunningTimesFrom(state)
+    }
+    expect(conversationRunningTimesForSave()).toEqual([{ id: A, ms: 1_000, until: NOW - 10 }])
+  })
+
+  it('an entry main already has counted further is kept as main has it', () => {
+    noteConversationRunningTime(A, 9_000, NOW)
+    rememberConversationRunningTimesFrom({ conversationRunningTimes: [{ id: A.toUpperCase(), ms: 1_000, until: NOW - 60_000 }, { id: B, ms: 3_000, until: NOW - 1 }] })
+    expect(conversationRunningTime(A)).toEqual({ ms: 9_000, until: NOW })
+    rememberConversationRunningTimesFrom({ conversationRunningTimes: [{ id: B, ms: 4_000, until: NOW }] })
+    expect(conversationRunningTime(B)).toEqual({ ms: 4_000, until: NOW })
+  })
+
+  it('reads no more entries than it keeps', () => {
+    const list = Array.from({ length: CONVERSATION_RUNNING_TIMES_KEPT + 50 }, (_, i) => ({ id: idOf(i + 1), ms: 1, until: NOW - 5_000 + i }))
+    rememberConversationRunningTimesFrom({ conversationRunningTimes: list })
+    expect(conversationRunningTimesForSave()).toHaveLength(CONVERSATION_RUNNING_TIMES_KEPT)
+    expect(conversationRunningTime(idOf(CONVERSATION_RUNNING_TIMES_KEPT + 1))).toBeNull()
+  })
+})

@@ -10,7 +10,7 @@ import { join, dirname, basename } from 'path'
 import { tmpdir } from 'os'
 import {
   countFileChangeLines,
-  countRolloutEditLines,
+  countRolloutRange,
   parseCodexRollout,
   watchAndClaimRollout,
   __codexRolloutBytesReadForTests,
@@ -258,7 +258,7 @@ describe('a large rollout: the edits between its head and its tail', () => {
   })
 })
 
-describe('countRolloutEditLines (the background count)', () => {
+describe('countRolloutRange (the background count)', () => {
   function fileWith(lines: string[]): { file: string; text: string } {
     const dir = realm()
     mkdirSync(dir, { recursive: true })
@@ -273,49 +273,49 @@ describe('countRolloutEditLines (the background count)', () => {
     const { file, text } = fileWith([editLine(iso), editLine(iso), editLine(iso)])
     const firstEnd = text.indexOf('\n') + 1
     const lastStart = text.lastIndexOf('\n', text.length - 2) + 1
-    expect(await countRolloutEditLines(file, identityOf(file), firstEnd, lastStart)).toEqual({ added: 2, removed: 1 })
-    expect(await countRolloutEditLines(file, identityOf(file), 0, text.length)).toEqual({ added: 6, removed: 3 })
+    expect(await countRolloutRange(file, identityOf(file), firstEnd, lastStart)).toEqual({ added: 2, removed: 1, turnMs: 0 })
+    expect(await countRolloutRange(file, identityOf(file), 0, text.length)).toEqual({ added: 6, removed: 3, turnMs: 0 })
     // A last line with no newline before the end is not a whole record.
-    expect(await countRolloutEditLines(file, identityOf(file), 0, text.length - 1)).toEqual({ added: 4, removed: 2 })
+    expect(await countRolloutRange(file, identityOf(file), 0, text.length - 1)).toEqual({ added: 4, removed: 2, turnMs: 0 })
   })
 
   it('a line read across several reads counts once', async () => {
     const { file, text } = fileWith([editLine(iso), filler(300).trimEnd(), editLine(iso)])
-    expect(await countRolloutEditLines(file, identityOf(file), 0, text.length, () => false, { chunkBytes: 7 })).toEqual({ added: 4, removed: 2 })
+    expect(await countRolloutRange(file, identityOf(file), 0, text.length, () => false, { chunkBytes: 7 })).toEqual({ added: 4, removed: 2, turnMs: 0 })
   })
 
   it('another file at the path: no count', async () => {
     const { file, text } = fileWith([editLine(iso)])
-    expect(await countRolloutEditLines(file, '1:2', 0, text.length)).toBeNull()
+    expect(await countRolloutRange(file, '1:2', 0, text.length)).toBeNull()
   })
 
   it('no longer wanted part way: no count, and it reads no further', async () => {
     const { file, text } = fileWith([editLine(iso), editLine(iso), editLine(iso)])
     let asks = 0
     const before = __codexEditCountBytesReadForTests()
-    expect(await countRolloutEditLines(file, identityOf(file), 0, text.length, () => ++asks > 2, { chunkBytes: 64 })).toBeNull()
+    expect(await countRolloutRange(file, identityOf(file), 0, text.length, () => ++asks > 2, { chunkBytes: 64 })).toBeNull()
     expect(__codexEditCountBytesReadForTests() - before).toBe(128)
   })
 
   it('no longer wanted once the last chunk is read: no count', async () => {
     const { file, text } = fileWith([editLine(iso)])
     let asks = 0
-    expect(await countRolloutEditLines(file, identityOf(file), 0, text.length, () => ++asks > 1)).toBeNull()
+    expect(await countRolloutRange(file, identityOf(file), 0, text.length, () => ++asks > 1)).toBeNull()
   })
 
   it('a line with the edit mark is read as an edit; the others are passed over', async () => {
     const { file, text } = fileWith([editLine(iso), tokenLine(iso, 3)])
-    expect(await countRolloutEditLines(file, identityOf(file), 0, text.length)).toEqual({ added: 2, removed: 1 })
+    expect(await countRolloutRange(file, identityOf(file), 0, text.length)).toEqual({ added: 2, removed: 1, turnMs: 0 })
   })
 
   it('a line longer than the most it keeps is passed over without being held, and the next line still counts', async () => {
     const big = editLine(iso, { '/p/big.ts': { type: 'add', content: 'y\n'.repeat(400) } })
     const { file, text } = fileWith([big, editLine(iso)])
     __codexEditCountTakeMostHeldForTests()
-    expect(await countRolloutEditLines(file, identityOf(file), 0, text.length, () => false, { chunkBytes: 50, lineMaxBytes: 400 })).toEqual({ added: 2, removed: 1 })
+    expect(await countRolloutRange(file, identityOf(file), 0, text.length, () => false, { chunkBytes: 50, lineMaxBytes: 400 })).toEqual({ added: 2, removed: 1, turnMs: 0 })
     expect(__codexEditCountTakeMostHeldForTests()).toBeLessThanOrEqual(400)
     // Read in one chunk, the same line is passed over too.
-    expect(await countRolloutEditLines(file, identityOf(file), 0, text.length, () => false, { lineMaxBytes: 400 })).toEqual({ added: 2, removed: 1 })
-    expect(await countRolloutEditLines(file, identityOf(file), 0, text.length, () => false, { chunkBytes: 50, lineMaxBytes: big.length })).toEqual({ added: 402, removed: 1 })
+    expect(await countRolloutRange(file, identityOf(file), 0, text.length, () => false, { lineMaxBytes: 400 })).toEqual({ added: 2, removed: 1, turnMs: 0 })
+    expect(await countRolloutRange(file, identityOf(file), 0, text.length, () => false, { chunkBytes: 50, lineMaxBytes: big.length })).toEqual({ added: 402, removed: 1, turnMs: 0 })
   })
 })

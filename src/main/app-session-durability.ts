@@ -18,6 +18,7 @@ import { isExactBindSourceActive } from './hooks'
 import { getTranscriptBinder } from './logging/logging-service'
 import { resolveResumeTargetFromTranscript } from './logging/transcript-discovery'
 import { getKeptCodexConversation, uncertainCodexConversationIds, rememberUncertainCodexConversationsFrom } from './pty-manager'
+import { conversationRunningTimesForSave, rememberConversationRunningTimesFrom } from './conversation-running-time'
 import { logInfo } from './debug-logger'
 
 export function createAppSessionDurability(): SessionDurability {
@@ -35,11 +36,20 @@ export function createAppSessionDurability(): SessionDurability {
       getProviderResumeTarget: (id) => getKeptCodexConversation(id) ?? null,
       // P3.6: the conversations a Switch account never carries, kept across a relaunch.
       getUncertainProviderConversations: uncertainCodexConversationIds,
+      // P3.7: each conversation's running time, carried on across a relaunch.
+      getConversationRunningTimes: conversationRunningTimesForSave,
     },
     save: saveSessionState,
     load: loadSessionState,
-    // P3.6: read back before any restored session respawns.
-    readBack: rememberUncertainCodexConversationsFrom,
+    // P3.6: read back before any restored session respawns. P3.7: the running
+    // times too, even when the uncertain list cannot be read back.
+    readBack: (state) => {
+      try {
+        rememberUncertainCodexConversationsFrom(state)
+      } finally {
+        rememberConversationRunningTimesFrom(state)
+      }
+    },
     log: logInfo,
   })
 }

@@ -15,6 +15,10 @@ const h = vi.hoisted(() => ({
   readBack: [] as unknown[],
   uncertain: [] as string[],
   kept: new Map<string, { uuid: string; cwd: string }>(),
+  /** P3.7: main's conversation running times, and what was handed to their read-back. */
+  times: [] as Array<{ id: string; ms: number; until: number }>,
+  timesReadBack: [] as unknown[],
+  uncertainReadBackThrows: false,
 }))
 
 vi.mock('../../../src/main/session-state', () => ({
@@ -24,7 +28,11 @@ vi.mock('../../../src/main/session-state', () => ({
 vi.mock('../../../src/main/pty-manager', () => ({
   getKeptCodexConversation: (id: string) => h.kept.get(id),
   uncertainCodexConversationIds: () => [...h.uncertain],
-  rememberUncertainCodexConversationsFrom: (state: unknown) => { h.readBack.push(state) },
+  rememberUncertainCodexConversationsFrom: (state: unknown) => { h.readBack.push(state); if (h.uncertainReadBackThrows) throw new Error('unreadable') },
+}))
+vi.mock('../../../src/main/conversation-running-time', () => ({
+  conversationRunningTimesForSave: () => [...h.times],
+  rememberConversationRunningTimesFrom: (state: unknown) => { h.timesReadBack.push(state) },
 }))
 vi.mock('../../../src/main/hooks', () => ({ isExactBindSourceActive: () => true }))
 vi.mock('../../../src/main/logging/logging-service', () => ({ getTranscriptBinder: () => null }))
@@ -41,6 +49,9 @@ beforeEach(() => {
   h.readBack = []
   h.uncertain = []
   h.kept.clear()
+  h.times = []
+  h.timesReadBack = []
+  h.uncertainReadBackThrows = false
 })
 
 describe('the app\'s session durability core, as main composes it', () => {
@@ -56,6 +67,17 @@ describe('the app\'s session durability core, as main composes it', () => {
     const d = createAppSessionDurability()
     expect(d.load()).toBe(state)
     expect(h.readBack).toEqual([state])
+    // P3.7: and to the read-back of the conversations' running time.
+    expect(h.timesReadBack).toEqual([state])
+  })
+
+  it('load: the running times are read back even when the uncertain list cannot be', () => {
+    const state = { sessions: [], activeSessionId: null, savedAt: 1 } as unknown as SessionState
+    h.loaded = state
+    h.uncertainReadBackThrows = true
+    const d = createAppSessionDurability()
+    expect(d.load()).toBe(state)
+    expect(h.timesReadBack).toEqual([state])
   })
 
   it('load with nothing saved: null, and the read-back is handed null', () => {
@@ -71,5 +93,12 @@ describe('the app\'s session durability core, as main composes it', () => {
     expect(d.saveEnriched({ sessions: [{ id: 's1', provider: 'codex' }], activeSessionId: 's1', savedAt: 1 } as unknown as SessionState)).toBe(true)
     expect(h.saved).toHaveLength(1)
     expect(h.saved[0]).toMatchObject({ sessions: [{ id: 's1', resumeUuid: CONV, resumeCwd: 'C:/p' }], codexUncertainConversations: [CONV] })
+  })
+
+  it('save: main\'s running time of each conversation is saved with it (P3.7)', () => {
+    h.times = [{ id: CONV, ms: 61_000, until: 5 }]
+    const d = createAppSessionDurability()
+    expect(d.saveEnriched({ sessions: [], activeSessionId: null, savedAt: 1 } as unknown as SessionState)).toBe(true)
+    expect(h.saved[0]).toMatchObject({ conversationRunningTimes: [{ id: CONV, ms: 61_000, until: 5 }] })
   })
 })

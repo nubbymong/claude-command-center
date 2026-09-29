@@ -53,6 +53,13 @@ export interface ResumeEnrichDeps {
    * by a Switch account. Only those a saved session is on are written.
    */
   getUncertainProviderConversations?: () => string[]
+  /**
+   * P3.7: each conversation's running time, as main keeps it
+   * (conversation-running-time.ts), saved with the state at every save,
+   * whichever tabs are open (a closed tab's conversation can be resumed
+   * later), so a session's Duration carries on across a relaunch.
+   */
+  getConversationRunningTimes?: () => Array<{ id: string; ms: number; until: number }>
 }
 
 /** A conversation id, as every resume target must carry (the spawn schema's form). */
@@ -128,6 +135,18 @@ export function enrichSessionStateWithResumeTargets(
         // own list, whole, never what the renderer sent.
         state.codexUncertainConversations = all
       }
+    }
+  }
+  if (deps.getConversationRunningTimes) {
+    try {
+      const times = deps.getConversationRunningTimes()
+      if (Array.isArray(times)) {
+        // Main's own list, never what the renderer sent.
+        if (times.length) state.conversationRunningTimes = times
+        else delete state.conversationRunningTimes
+      }
+    } catch {
+      // Main cannot say: the list stays as it was.
     }
   }
   return state

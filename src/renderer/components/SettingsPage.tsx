@@ -75,11 +75,12 @@ const TABS: { id: SettingsTab; label: string }[] = [
 ]
 
 /** With Codex in use, or a Codex session in front: these settings apply to it
- *  too (one status strip for every session), and say which items it cannot
- *  fill yet. Usage track MP6: a Codex session's account now shows (the
- *  footer names it through the registry), so the note no longer says it
- *  does not. P3.7 (rows 36, 37): nor its lines changed, counted from the
- *  edits its rollout records; Codex reports no session time. */
+ *  too (one status strip for every session). Usage track MP6: a Codex
+ *  session's account now shows (the footer names it through the registry),
+ *  so the note no longer says it does not. P3.7 (rows 36, 37): nor its lines
+ *  changed (counted from the edits its rollout records) or its Duration (the
+ *  conversation's running time), so it names no item a Codex session cannot
+ *  fill. */
 function StatuslineCodexBanner() {
   const activeSession = useSessionStore((s) => s.sessions.find((sess) => sess.id === s.activeSessionId))
   const codexOn = useSettingsStore((s) => usesCodex(s.settings))
@@ -87,7 +88,7 @@ function StatuslineCodexBanner() {
   if (!isCodex && !codexOn) return null
   return (
     <div className="rounded-md bg-blue/10 border border-blue/30 p-3 mb-3 text-sm text-blue" data-testid="statusline-codex-note">
-      These settings apply to Codex sessions too. A Codex session does not report session time yet, so Duration does not show for it.
+      These settings apply to Codex sessions too.
     </div>
   )
 }

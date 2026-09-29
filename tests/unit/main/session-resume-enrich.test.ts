@@ -189,3 +189,30 @@ describe('enrichSessionStateWithResumeTargets keeps the uncertain claims (P3.6)'
     expect(s.codexUncertainConversations).toEqual([ON, GONE])
   })
 })
+
+// P3.7 (row 36): each conversation's running time, main's own, is saved with
+// the state at every save (whichever tabs are open: a closed tab's
+// conversation can be resumed later), so a relaunch carries it on.
+describe('enrichSessionStateWithResumeTargets saves the conversations\' running time (P3.7)', () => {
+  const MAIN = [{ id: '019dd000-0001-7000-8000-0000000000f1', ms: 5_000, until: 100 }]
+
+  it('writes main\'s list, replacing the one the renderer sent; an empty one removes it', () => {
+    const s = state([{ id: 's1', provider: 'codex' }])
+    s.conversationRunningTimes = [{ id: '019dd000-0001-7000-8000-0000000000f9', ms: 999_999, until: 5 }]
+    enrichSessionStateWithResumeTargets(s, mkDeps({ getConversationRunningTimes: () => MAIN }))
+    expect(s.conversationRunningTimes).toEqual(MAIN)
+    enrichSessionStateWithResumeTargets(s, mkDeps({ getConversationRunningTimes: () => [] }))
+    expect(s.conversationRunningTimes).toBeUndefined()
+  })
+
+  it('without the source, or with one that throws or gives no list, the saved list is left as it is', () => {
+    const s = state([{ id: 's1', provider: 'codex' }])
+    s.conversationRunningTimes = MAIN
+    enrichSessionStateWithResumeTargets(s, mkDeps())
+    expect(s.conversationRunningTimes).toEqual(MAIN)
+    enrichSessionStateWithResumeTargets(s, mkDeps({ getConversationRunningTimes: () => { throw new Error('x') } }))
+    expect(s.conversationRunningTimes).toEqual(MAIN)
+    enrichSessionStateWithResumeTargets(s, mkDeps({ getConversationRunningTimes: () => 'not a list' as never }))
+    expect(s.conversationRunningTimes).toEqual(MAIN)
+  })
+})

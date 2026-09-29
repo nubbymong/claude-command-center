@@ -296,6 +296,11 @@ export interface SessionState {
    *  in one folder), written by main at every save and read back by main at
    *  load, so a Switch account never carries one after a relaunch either. */
   codexUncertainConversations?: string[]
+  /** P3.7: each conversation's running time (main's
+   *  conversation-running-time.ts), written by main at every save and read
+   *  back by main at load, schema-checked, so a session's Duration carries on
+   *  across a relaunch. */
+  conversationRunningTimes?: Array<{ id: string; ms: number; until: number }>
 }
 
 /**

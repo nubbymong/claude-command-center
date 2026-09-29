@@ -83,10 +83,11 @@ describe('Statusline tab provider-aware banner', () => {
     mockActiveSessionId = 's-1'
     act(() => { root.render(React.createElement(SettingsPage as React.ComponentType<{ initialTab?: string }>, { initialTab: 'statusline' })) })
     // Usage track MP6: its account now shows (the footer names it), so the
-    // note no longer says it does not. P3.7: nor its lines changed, which a
-    // Codex session now reports (counted from the edits its rollout records).
+    // note no longer says it does not. P3.7: nor its lines changed (counted
+    // from the edits its rollout records) or its Duration (the conversation's
+    // running time), so it names no item it cannot fill.
     expect(container.querySelector('[data-testid="statusline-codex-note"]')?.textContent).toBe(
-      'These settings apply to Codex sessions too. A Codex session does not report session time yet, so Duration does not show for it.',
+      'These settings apply to Codex sessions too.',
     )
     expect(container.textContent).not.toMatch(/Claude-only/)
   })
