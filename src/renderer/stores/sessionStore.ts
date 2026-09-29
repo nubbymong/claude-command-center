@@ -210,6 +210,10 @@ export interface Session {
    *  here. Renderer-only, not persisted. */
   sshRemoteAccount?: string
   codexOptions?: CodexOptions
+  /** P3.8 round 3 (PB1): the permissions preset this Codex run launched
+   *  with, as main reported it at the spawn; per run and not persisted. The
+   *  command bar compares the choice for the next start with it. */
+  launchedCodexPreset?: CodexOptions['permissionsPreset']
   /** WP2: the provider account this Codex session runs under, copied from
    *  its config (an opaque registry id). Absent = the provider default. The
    *  per-launch acknowledgement an unverified sign-in needs is never kept

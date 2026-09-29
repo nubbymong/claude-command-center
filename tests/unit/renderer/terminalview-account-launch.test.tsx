@@ -316,6 +316,23 @@ describe("a Codex session's account reaches pty:spawn", () => {
     expect(planWait.calls).toHaveLength(1)
   })
 
+  // P3.8 round 3 (PB1): each run records the preset main says it launched
+  // with; the Plan mode wait follows it.
+  it('records the preset each Codex run launched with, as main reports it, and waits for /plan only on a Plan mode launch', async () => {
+    planWait.calls.length = 0
+    mount(codexSession({ codexOptions: { permissionsPreset: 'plan' } }))
+    await settle()
+    await act(async () => { settles[0].resolve({ started: true, launched: { codexPreset: 'standard' } }) })
+    await settle()
+    expect(H.updates.filter((u) => 'launchedCodexPreset' in u.patch).map((u) => u.patch.launchedCodexPreset)).toEqual(['standard'])
+    expect(planWait.calls).toHaveLength(0)
+    await restartTo(codexSession({ codexOptions: { permissionsPreset: 'plan' } }), 'b')
+    await act(async () => { settles[1].resolve({ started: true, launched: { codexPreset: 'plan' } }) })
+    await settle()
+    expect(H.updates.filter((u) => 'launchedCodexPreset' in u.patch).map((u) => u.patch.launchedCodexPreset)).toEqual(['standard', 'plan'])
+    expect(planWait.calls).toHaveLength(1)
+  })
+
   it('Plan mode: the view going away cancels the wait', async () => {
     planWait.calls.length = 0
     planWait.cancels = 0
@@ -385,6 +402,19 @@ describe("a Codex session's account reaches pty:spawn", () => {
     const dismiss = container.querySelector('[data-testid="switch-note"] button') as HTMLButtonElement
     await act(async () => { dismiss.click() })
     expect(switchNote()).toBeNull()
+  })
+
+  // P3.8 round 3 (CM): Codex's footer says how much context is LEFT; the
+  // meter shows how much is used (the VM capture of 0.155.1's raw bytes).
+  it("reads Codex's \"100% context left\" as none used", async () => {
+    mount(codexSession())
+    await settle()
+    await act(async () => { settles[0].resolve({ started: true }) })
+    await settle()
+    const readings = () => H.updates.filter((u) => 'contextPercent' in u.patch).map((u) => u.patch.contextPercent)
+    await act(async () => { sendData?.('\x1b[2mtab to queue message\x1b[22m\x1b[145X\x1b[2m\x1b[145C100% context left\x1b[22m  \r\n') })
+    await act(async () => { await new Promise((r) => setTimeout(r, 400)) })
+    expect(readings()).toEqual([0])
   })
 
   // P3.6 VM finding V4: the note reads in the light theme too: the app's

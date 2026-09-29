@@ -206,6 +206,9 @@ function launch(tag: string): Launch & { lease: { release: ReturnType<typeof vi.
 /** What the accounts service returns for a launch it prepared. */
 const prepared = (l: Launch) => ({ ok: true, lease: l.lease, binding: {}, realmOnly: false, home: 'h', executable: l.executable, env: l.env, sessionsDir: l.sessionsDir })
 const codexOptions = { permissionsPreset: 'read-only' as const }
+/** P3.8 round 3 (PB1): a started Codex spawn reports the preset it launched
+ *  with; with no carry note it says nothing else. */
+const STARTED = { started: true, launched: { codexPreset: 'read-only' as const } }
 const codexRequest = { cwd: os.tmpdir(), provider: 'codex', codexOptions }
 const start = (l: Launch | undefined) => spawnPty(fakeWin, SID, { cwd: os.tmpdir(), provider: 'codex', codexOptions, codexLaunch: l })
 const flush = () => new Promise((r) => setTimeout(r, 0))
@@ -542,7 +545,7 @@ describe('a respawn on another account carries this session\'s conversation (P3.
     expect(h.carries).toEqual([])
     expect(h.ptys).toHaveLength(1)
     exitPty(h.ptys[0], 0)
-    await expect(req).resolves.toBeUndefined()
+    await expect(req).resolves.toEqual(STARTED)
     expect(h.carries.map((c) => c.slice(0, 2))).toEqual([[{ accountId: 'acct-b' }, { uuid: CID, cwd: '/p/demo', accountId: 'acct-a' }]])
     expect(h.ptys).toHaveLength(2)
     expect(h.built.at(-1)).toMatchObject({ resume: { uuid: CID } })
@@ -551,7 +554,7 @@ describe('a respawn on another account carries this session\'s conversation (P3.
     killIn()
     exitPty(h.ptys[1], 0)
     onAccount('acct-default')
-    await expect(spawnIn({ ...codexRequest })).resolves.toBeUndefined()
+    await expect(spawnIn({ ...codexRequest })).resolves.toEqual(STARTED)
     expect(h.carries[1].slice(0, 2)).toEqual([{ accountId: 'acct-default' }, expect.objectContaining({ uuid: CID, accountId: 'acct-b' })])
   })
 
@@ -592,13 +595,13 @@ describe('a respawn on another account carries this session\'s conversation (P3.
     h.carry = async () => ({ ok: false, code: 'conversation-differs', message: 'It differs there.' })
     h.resumable = true
     onAccount('acct-b')
-    await expect(spawnIn(request('acct-b'))).resolves.toEqual({ started: true, carry: { code: 'conversation-differs', message: 'It differs there.', resumed: true } })
+    await expect(spawnIn(request('acct-b'))).resolves.toEqual({ ...STARTED, carry: { code: 'conversation-differs', message: 'It differs there.', resumed: true } })
     killIn()
     exitPty(h.ptys.at(-1)!, 0)
     h.carry = async () => ({ ok: false, code: 'too-large', message: 'Too large.' })
     h.resumable = false
     onAccount('acct-a')
-    await expect(spawnIn(request('acct-a'))).resolves.toEqual({ started: true, carry: { code: 'too-large', message: 'Too large.', resumed: false } })
+    await expect(spawnIn(request('acct-a'))).resolves.toEqual({ ...STARTED, carry: { code: 'too-large', message: 'Too large.', resumed: false } })
     // Carried, but the launch did not resume it: said too, never silent.
     claim(sid, CID)
     killIn()
@@ -612,7 +615,7 @@ describe('a respawn on another account carries this session\'s conversation (P3.
     exitPty(h.ptys.at(-1)!, 0)
     h.carry = async () => { throw new Error('boom') }
     onAccount('acct-a')
-    await expect(spawnIn(request('acct-a'))).resolves.toEqual({ started: true, carry: { code: 'internal', message: 'The conversation could not be carried over.', resumed: false } })
+    await expect(spawnIn(request('acct-a'))).resolves.toEqual({ ...STARTED, carry: { code: 'internal', message: 'The conversation could not be carried over.', resumed: false } })
   })
 
   it('an old process still running, or not ended within the bound: nothing is carried, and the spawn says so', async () => {
@@ -646,11 +649,11 @@ describe('a respawn on another account carries this session\'s conversation (P3.
     claim(sid, CID)
     killIn()
     exitPty(h.ptys[0], 0)
-    await expect(spawnIn(request('acct-a'))).resolves.toBeUndefined()
+    await expect(spawnIn(request('acct-a'))).resolves.toEqual(STARTED)
     killIn()
     exitPty(h.ptys.at(-1)!, 0)
     onAccount('acct-b')
-    await expect(spawnIn(request('acct-b'))).resolves.toBeUndefined()
+    await expect(spawnIn(request('acct-b'))).resolves.toEqual(STARTED)
     expect(h.carries).toEqual([])
   })
 
@@ -670,7 +673,7 @@ describe('a respawn on another account carries this session\'s conversation (P3.
     expect(h.carries).toEqual([])
     exitPty(h.ptys[0], 0)
     await expect(first).resolves.toEqual({ started: false })
-    await expect(second).resolves.toBeUndefined()
+    await expect(second).resolves.toEqual(STARTED)
     expect(h.carries).toHaveLength(1)
     expect(h.ptys).toHaveLength(2)
   })
@@ -718,7 +721,7 @@ describe('a respawn on another account carries this session\'s conversation (P3.
       const req = spawnIn(request('acct-b'))
       await vi.advanceTimersByTimeAsync(10)
       expect(h.carries).toHaveLength(1)
-      await expect(req).resolves.toBeUndefined()
+      await expect(req).resolves.toEqual(STARTED)
     } finally {
       vi.useRealTimers()
     }
@@ -761,7 +764,7 @@ describe('a respawn on another account carries this session\'s conversation (P3.
     killIn()
     exitPty(h.ptys[0], 0)
     onAccount('acct-b')
-    await expect(spawnIn(request('acct-b'))).resolves.toEqual({ started: true, carry: { code: 'in-use', message: 'Another open session is on this conversation, so it was not carried over.', resumed: false } })
+    await expect(spawnIn(request('acct-b'))).resolves.toEqual({ ...STARTED, carry: { code: 'in-use', message: 'Another open session is on this conversation, so it was not carried over.', resumed: false } })
     expect(h.carries).toEqual([])
     // Once the other session has closed, the conversation is this one's to carry.
     killPtyFor(sid2)
@@ -771,7 +774,7 @@ describe('a respawn on another account carries this session\'s conversation (P3.
     claim(sid, CID)
     onAccount('acct-c')
     h.resumable = true
-    await expect(spawnIn(request('acct-c'))).resolves.toBeUndefined()
+    await expect(spawnIn(request('acct-c'))).resolves.toEqual(STARTED)
     expect(h.carries).toHaveLength(1)
   })
 
@@ -789,7 +792,7 @@ describe('a respawn on another account carries this session\'s conversation (P3.
     // The copy there is one the launch could resume.
     h.resumable = true
     onAccount('acct-b')
-    await expect(spawnIn(request('acct-b'))).resolves.toEqual({ started: true, carry: { code: 'in-use', message: 'Another open session is on this conversation, so it was not carried over.', resumed: false } })
+    await expect(spawnIn(request('acct-b'))).resolves.toEqual({ ...STARTED, carry: { code: 'in-use', message: 'Another open session is on this conversation, so it was not carried over.', resumed: false } })
     expect(h.carries).toEqual([])
     expect(h.built.at(-1)).toMatchObject({ sessionId: sid })
     expect(h.built.at(-1)!.resume).toBeUndefined()
@@ -837,7 +840,7 @@ describe('a respawn on another account carries this session\'s conversation (P3.
     exitPty(h.ptys[0], 0)
     onAccount('acct-personal')
     h.resumable = true
-    await expect(spawnIn({ ...codexRequest })).resolves.toBeUndefined()
+    await expect(spawnIn({ ...codexRequest })).resolves.toEqual(STARTED)
     expect(h.carries.map((c) => c.slice(0, 2))).toEqual([[{ accountId: 'acct-personal' }, expect.objectContaining({ uuid: CID, accountId: 'acct-work' })]])
   })
 
@@ -857,7 +860,7 @@ describe('a respawn on another account carries this session\'s conversation (P3.
       await vi.advanceTimersByTimeAsync(CODEX_CARRY_TIMEOUT_MS - 100)
       expect(told!()).toBe(true)
       await vi.advanceTimersByTimeAsync(200)
-      await expect(req).resolves.toEqual({ started: true, carry: { code: 'io-failed', message: "The conversation could not be copied into the other Codex account's folder, so it was not carried over.", resumed: false } })
+      await expect(req).resolves.toEqual({ ...STARTED, carry: { code: 'io-failed', message: "The conversation could not be copied into the other Codex account's folder, so it was not carried over.", resumed: false } })
       expect(told!()).toBe(false)
     } finally {
       vi.useRealTimers()
@@ -950,7 +953,7 @@ describe('a conversation whose claim was not certain is never carried (P3.6, own
     for (const p of h.ptys) exitPty(p, 0)
     h.resumable = true
     onAccount('acct-a', sessA)
-    await expect(spawnFor(sid, { ...codexRequest, cwd: proj, providerAccountId: 'acct-a' })).resolves.toBeUndefined()
+    await expect(spawnFor(sid, { ...codexRequest, cwd: proj, providerAccountId: 'acct-a' })).resolves.toEqual(STARTED)
     const keptUuid = (h.built.at(-1)!.resume as { uuid: string }).uuid
     expect([convX, convY]).toContain(keptUuid)
     expect(h.carries).toEqual([])
@@ -958,7 +961,7 @@ describe('a conversation whose claim was not certain is never carried (P3.6, own
     killFor(sid)
     for (const p of h.ptys) exitPty(p, 0)
     onAccount('acct-b')
-    await expect(spawnFor(sid, { ...codexRequest, cwd: proj, providerAccountId: 'acct-b' })).resolves.toEqual({ started: true, carry: { code: 'conversation-uncertain', message: UNCERTAIN, resumed: false } })
+    await expect(spawnFor(sid, { ...codexRequest, cwd: proj, providerAccountId: 'acct-b' })).resolves.toEqual({ ...STARTED, carry: { code: 'conversation-uncertain', message: UNCERTAIN, resumed: false } })
     expect(h.carries).toEqual([])
     expect(h.built.at(-1)!.resume).toBeUndefined()
     // The other tab too.
@@ -1001,7 +1004,7 @@ describe('a conversation whose claim was not certain is never carried (P3.6, own
     killFor(sid2)
     exitPty(h.ptys[1], 0)
     onAccount('acct-b')
-    await expect(spawnFor(sid2, { ...codexRequest, cwd: proj, providerAccountId: 'acct-b' })).resolves.toEqual({ started: true, carry: { code: 'in-use', message: 'Another open session is on this conversation, so it was not carried over.', resumed: false } })
+    await expect(spawnFor(sid2, { ...codexRequest, cwd: proj, providerAccountId: 'acct-b' })).resolves.toEqual({ ...STARTED, carry: { code: 'in-use', message: 'Another open session is on this conversation, so it was not carried over.', resumed: false } })
     expect(h.carries).toEqual([])
     expect(h.built.at(-1)).toMatchObject({ sessionId: sid2 })
     expect(h.built.at(-1)!.resume).toBeUndefined()

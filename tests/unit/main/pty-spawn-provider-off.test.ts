@@ -167,6 +167,19 @@ describe('pty:spawn refuses a launch of a provider that is off', () => {
     expect(spawnPty.mock.calls[0][2].codexOptions.reasoningEffort).toBeUndefined()
   })
 
+  // P3.8 round 3 (PB1): main says which preset each Codex run launched with,
+  // so the renderer's permissions pill compares the next start's choice with
+  // what is running rather than with its own record of a change.
+  it('a started Codex run reports the preset it launched with; a Claude run reports none', async () => {
+    set('on', 'on')
+    for (const preset of ['plan', 'standard', 'read-only'] as const) {
+      const r = await spawn({}, SID, { cwd: 'C:/w', provider: 'codex', codexOptions: { model: 'gpt-5.5', permissionsPreset: preset } })
+      expect(r, preset).toEqual({ started: true, launched: { codexPreset: preset } })
+    }
+    const claude = await spawn({}, SID, { cwd: 'C:/w', provider: 'claude' })
+    expect(claude === undefined || !('launched' in (claude as object))).toBe(true)
+  })
+
   it('a terminal-only session runs no provider: it starts while every provider is off', async () => {
     set('off', 'off')
     await spawn({}, SID, { cwd: 'C:/w', shellOnly: true })

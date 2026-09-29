@@ -352,7 +352,7 @@ describe('the Codex model pill on a live session (P3.8 round 1)', () => {
       const sel = Array.from(container.querySelectorAll('select')).find((s) => Array.from(s.options).some((o) => o.value === 'unrestricted')) as HTMLSelectElement
       return Array.from(sel.options).find((o) => o.value === 'plan')!.textContent
     }
-    mockSessions = [liveCodex({ codexOptions: { model: 'gpt-5.5', permissionsPreset: 'plan' } })]
+    mockSessions = [liveCodex({ codexOptions: { model: 'gpt-5.5', permissionsPreset: 'plan' }, launchedCodexPreset: 'plan' })]
     show()
     expect(planOption()).toMatch(/read-only/)
     screen = S.READY_PLAN
@@ -367,5 +367,34 @@ describe('the Codex model pill on a live session (P3.8 round 1)', () => {
     mockSessions = [{ ...mkStopped(), codexOptions: { model: 'gpt-5.5', permissionsPreset: 'plan' } }]
     show()
     expect(planOption()).toBe('plan')
+  })
+
+  // P3.8 round 3 (PB1): the pill compares the choice for the next start with
+  // the preset the run launched with (main's record), not with its own record
+  // of a change, so a tab switch loses nothing: a Standard run with Plan mode
+  // picked for its next start reads "plan", with "Restart session to apply".
+  it('a Standard run with Plan mode picked for the next start reads plan, keeps its Restart hint across a remount, and loses it once the run is Plan mode', async () => {
+    vi.useFakeTimers()
+    const S = await import('./codex-composer-screens')
+    screen = S.READY
+    off = registerScreenReader('s-1', () => screen as never)
+    markSpawned('s-1')
+    const selected = () => {
+      const sel = Array.from(container.querySelectorAll('select')).find((s) => Array.from(s.options).some((o) => o.value === 'unrestricted')) as HTMLSelectElement
+      return sel.options[sel.selectedIndex].textContent
+    }
+    mockSessions = [liveCodex({ codexOptions: { model: 'gpt-5.5', permissionsPreset: 'plan' }, launchedCodexPreset: 'standard' })]
+    show()
+    expect(selected()).toBe('plan')
+    expect(container.textContent).toContain('Restart session to apply')
+    act(() => { root.unmount() })
+    root = createRoot(container)
+    show() // the tab shown again (the bar remounted)
+    expect(selected()).toBe('plan')
+    expect(container.textContent).toContain('Restart session to apply')
+    mockSessions = [liveCodex({ createdAt: 2000, codexOptions: { model: 'gpt-5.5', permissionsPreset: 'plan' }, launchedCodexPreset: 'plan' })]
+    show()
+    expect(selected()).toMatch(/read-only/)
+    expect(container.textContent).not.toContain('Restart session to apply')
   })
 })

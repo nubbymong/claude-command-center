@@ -129,6 +129,130 @@ describe('the ready marker is anchored (round 2)', () => {
     expect(codexPlanModeOnScreen(S.TYPED_PLAN)).toBeNull()
     expect(codexPlanModeOnScreen(null)).toBeNull()
   })
+
+  // Round 3 (T19): only the footer row under the composer counts, and only its
+  // right-aligned segment after the folder.
+  it('a folder named "Plan mode", or a footer-shaped line drawn under a prompt, never reads as Plan mode', () => {
+    expect(codexPlanModeOnScreen(withRow(emptyRow, `  gpt-6-astra low ${DOT} C:/dev/Plan mode`))).toBe(false)
+    expect(codexPlanModeOnScreen(withRow(emptyRow, `  gpt-6-astra low ${DOT} C:/dev/x Plan mode (shift+tab to cycle)`))).toBe(false)
+    const underPrompt = [...S.READY.slice(0, 10), S.plain('  Would you like to run the following command?'), S.plain(`${GLYPH} 1. Yes`),
+      S.plain(`  gpt-6-astra low ${DOT} C:/p                                        Plan mode (shift+tab to cycle)`)]
+    expect(codexPlanModeOnScreen(underPrompt)).toBeNull()
+    const historyLine = [...S.READY.slice(0, 10), S.plain(`  gpt-6-astra low ${DOT} C:/p                                        Plan mode`), ...S.READY.slice(10)]
+    expect(codexPlanModeOnScreen(historyLine)).toBe(false)
+    const turnRunning = [...S.READY.slice(0, 10), S.plain('  Working (2s, esc to interrupt)'), emptyRow, S.plain(''),
+      S.plain(`  gpt-6-astra medium ${DOT} C:/p ${DOT} renaming...                               Plan mode`)]
+    expect(codexPlanModeOnScreen(turnRunning)).toBe(true)
+  })
+
+  it("with the session's models known, a footer naming another model reads nothing", () => {
+    expect(codexPlanModeOnScreen(S.READY_PLAN, ['gpt-6-astra'])).toBe(true)
+    expect(codexPlanModeOnScreen(S.READY_PLAN, ['gpt-5.5'])).toBeNull()
+  })
+})
+
+// P3.8 round 3 (V1): 0.153.4 boots its MCP servers after drawing its prompt,
+// with a status row reading like a turn. That is "still starting": not busy,
+// not the user's doing. Nothing is typed while it shows, and a command whose
+// Enter is withheld is erased, only the app's own characters and only while
+// the composer holds exactly them, so nothing is left behind.
+describe('Codex still starting (round 3, V1)', () => {
+  const DEL = String.fromCharCode(0x7f)
+  const GLYPH = String.fromCharCode(0x203a)
+
+  it('the MCP boot row reads as still starting', () => {
+    expect(readCodexScreen(S.BOOTING_153).screen).toBe('starting')
+    expect(codexComposerState(S.BOOTING_153)).toBe('not-ready')
+    expect(codexComposerState(S.READY_153)).toBe('ready')
+    const h = harness(S.BOOTING_153)
+    const r = typeIntoCodexComposer('s1', '/compact', h.deps)
+    expect(r.typed).toBe(false)
+    expect(r.reason).toMatch(/still starting/)
+    expect(h.writes).toEqual([])
+  })
+
+  it('Plan mode waits out the boot row, then types /plan once Codex is ready', () => {
+    const h = harness(S.LOADING)
+    const onGiveUp = vi.fn()
+    typeWhenCodexComposerReady('s1', '/plan', { timeoutMs: 60_000, onGiveUp }, h.deps)
+    h.advance(CODEX_READY_POLL_MS * 2)
+    h.state.screen = S.BOOTING_153
+    h.advance(CODEX_READY_POLL_MS * 8)
+    expect(h.writes).toEqual([])
+    h.state.screen = S.READY_153
+    h.advance(CODEX_READY_POLL_MS)
+    h.advance(CODEX_SUBMIT_DELAY_MS)
+    expect(h.writes).toEqual(['/plan', '\r'])
+    expect(onGiveUp).not.toHaveBeenCalled()
+  })
+
+  it('the boot row coming up after /plan was typed: its Enter is withheld, /plan erased, and typed again once ready (the VM case)', () => {
+    const h = harness(S.READY_153)
+    const onGiveUp = vi.fn()
+    typeWhenCodexComposerReady('s1', '/plan', { timeoutMs: 60_000, onGiveUp }, h.deps)
+    h.advance(0)
+    expect(h.writes).toEqual(['/plan'])
+    h.state.screen = S.TYPED_PLAN_BOOTING_153
+    h.advance(CODEX_SUBMIT_DELAY_MS)
+    expect(h.writes).toEqual(['/plan', DEL.repeat(5)])
+    h.state.screen = S.BOOTING_153 // Codex took the erase
+    h.advance(CODEX_READY_POLL_MS * 4)
+    h.state.screen = S.READY_153
+    h.advance(CODEX_READY_POLL_MS)
+    h.advance(CODEX_SUBMIT_DELAY_MS)
+    expect(h.writes).toEqual(['/plan', DEL.repeat(5), '/plan', '\r'])
+    expect(onGiveUp).not.toHaveBeenCalled()
+  })
+
+  it('gives up, naming the reason, when the boot row keeps coming back', () => {
+    const h = harness(S.READY_153)
+    const onGiveUp = vi.fn()
+    typeWhenCodexComposerReady('s1', '/plan', { timeoutMs: 60_000, onGiveUp }, h.deps)
+    for (let i = 0; i < 6; i++) {
+      h.state.screen = S.READY_153
+      h.advance(CODEX_READY_POLL_MS)
+      h.state.screen = S.TYPED_PLAN_BOOTING_153
+      h.advance(CODEX_SUBMIT_DELAY_MS)
+    }
+    expect(onGiveUp).toHaveBeenCalledTimes(1)
+    expect(onGiveUp).toHaveBeenCalledWith('starting')
+    expect(h.writes.filter((w) => w === '/plan').length).toBe(h.writes.filter((w) => w === DEL.repeat(5)).length)
+    expect(planModeNote('starting')).toMatch(/still starting/)
+  })
+
+  it('erases only when the composer holds exactly what the app typed, and never under a prompt', () => {
+    for (const [later, erased] of [
+      [[S.plain('  Working (2s, esc to interrupt)'), S.plain(`${GLYPH} /compact`), S.plain(''), S.plain('  /compact  summarize conversation')], true],
+      [[S.plain(`${GLYPH} half a question/compact`), S.plain(''), S.plain('  /compact  summarize conversation')], false],
+      [[S.plain(`${GLYPH} /compact`), S.plain(''), S.plain('  Update available! 0.156.0'), S.plain('  Press enter to continue')], false],
+    ] as const) {
+      const h = harness(S.READY)
+      typeIntoCodexComposer('s1', '/compact', h.deps)
+      h.state.screen = later as unknown as ScreenLine[]
+      h.advance(CODEX_SUBMIT_DELAY_MS)
+      expect(h.writes, String(erased)).toEqual(erased ? ['/compact', DEL.repeat(8)] : ['/compact'])
+    }
+  })
+
+  it('nothing is written into a run that changed before the Enter, not even the erase', () => {
+    const h = harness(S.READY)
+    typeIntoCodexComposer('s1', '/compact', h.deps)
+    h.state.run = { createdAt: 2000, spawnToken: 8 }
+    h.advance(CODEX_SUBMIT_DELAY_MS)
+    expect(h.writes).toEqual(['/compact'])
+  })
+
+  // Round 3 (Q1): a write that throws at the Enter still settles the typing.
+  it('a failing write at the Enter still settles it, so the session is not left refusing commands', () => {
+    const h = harness(S.READY)
+    const settled = vi.fn()
+    const throwing = { ...h.deps, write: (id: string, d: string) => { if (d === '\r') throw new Error('pty gone'); h.deps.write(id, d) } }
+    typeIntoCodexComposer('s1', '/compact', throwing, { onSettled: settled })
+    expect(() => h.advance(CODEX_SUBMIT_DELAY_MS)).toThrow('pty gone')
+    expect(settled).toHaveBeenCalledTimes(1)
+    h.state.screen = S.READY
+    expect(typeIntoCodexComposer('s1', '/compact', h.deps).typed).toBe(true)
+  })
 })
 
 /** A fake session run and screen for the typing helpers. */
@@ -141,7 +265,8 @@ function harness(screen: ScreenLine[] | null) {
   const deps: CodexComposerDeps = {
     readScreen: () => state.screen,
     currentRun: () => state.run,
-    write: (_id, d) => { writes.push(d); if (d !== '\r' && state.screen) state.screen = typedInto(state.screen, d) },
+    // A run of DEL (the app erasing what it typed) changes nothing here: the tests set Codex's next screen.
+    write: (_id, d) => { writes.push(d); if (d !== '\r' && !/^\x7f+$/.test(d) && state.screen) state.screen = typedInto(state.screen, d) },
     setTimeout: (fn, ms) => { const id = nextId++; timers.push({ fn, at: now + ms, id }); return id },
     clearTimeout: (id) => { timers = timers.filter((t) => t.id !== id) },
     pending: new Set<string>(),
@@ -245,7 +370,9 @@ describe('typeIntoCodexComposer', () => {
       typeIntoCodexComposer('s1', '/compact', h.deps)
       h.state.screen = later
       h.advance(CODEX_SUBMIT_DELAY_MS)
-      expect(h.writes, later.map((l) => l.text).join(' | ')).toEqual(['/compact'])
+      // No Enter (round 3 erases the command where the composer takes keys; see below).
+      expect(h.writes[0]).toBe('/compact')
+      expect(h.writes, later.map((l) => l.text).join(' | ')).not.toContain('\r')
     }
   })
 
@@ -274,13 +401,14 @@ describe('typeIntoCodexComposer', () => {
     const h = harness(S.READY)
     typeIntoCodexComposer('s1', '/compact', h.deps, { onSettled: sent })
     h.advance(CODEX_SUBMIT_DELAY_MS)
-    expect(sent).toHaveBeenCalledWith(true)
+    expect(sent.mock.calls[0][0]).toBe(true)
     const withheld = vi.fn()
     const h2 = harness(S.READY)
     typeIntoCodexComposer('s1', '/compact', h2.deps, { onSettled: withheld })
     h2.state.screen = S.TYPED_AFTER_USER
     h2.advance(CODEX_SUBMIT_DELAY_MS)
-    expect(withheld).toHaveBeenCalledWith(false)
+    expect(withheld.mock.calls[0][0]).toBe(false)
+    expect(withheld.mock.calls[0][1]).toMatchObject({ reason: 'text', erased: false })
     expect(withheld).toHaveBeenCalledTimes(1)
   })
 })
@@ -371,7 +499,7 @@ describe('typeWhenCodexComposerReady (Plan mode at launch, L2; round 2, PM1: the
     expect(onGiveUp).toHaveBeenCalledTimes(1)
   })
 
-  it('typed but its Enter withheld (the user typed within the window): says so', () => {
+  it("typed but its Enter withheld (the user typed within the window): says so, as the user's typing", () => {
     const h = harness(S.READY)
     const onGiveUp = vi.fn()
     typeWhenCodexComposerReady('s1', '/plan', { timeoutMs: 60_000, onGiveUp }, h.deps)
@@ -380,11 +508,11 @@ describe('typeWhenCodexComposerReady (Plan mode at launch, L2; round 2, PM1: the
     h.state.screen = S.TYPED_AFTER_USER
     h.advance(CODEX_SUBMIT_DELAY_MS)
     expect(h.writes).toEqual(['/plan'])
-    expect(onGiveUp).toHaveBeenCalledWith('not-sent')
+    expect(onGiveUp).toHaveBeenCalledWith('interrupted')
   })
 
   it('the note says Plan mode is not on, that the session is read-only, and how to go on', () => {
-    for (const why of ['timeout', 'interrupted', 'not-sent'] as const) {
+    for (const why of ['timeout', 'interrupted', 'blocked', 'unreadable', 'starting', 'not-sent'] as const) {
       const note = planModeNote(why)
       expect(note).toMatch(/Plan mode is not on/)
       expect(note).toMatch(/read-only/)

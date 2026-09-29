@@ -43,6 +43,7 @@ import { getTerminalTheme } from './terminal/terminalTheme'
 import { installTerminalKeybindings } from './terminal/terminalKeybindings'
 import { registerRepainter, requestResync } from './terminal/repaintRegistry'
 import { registerScreenReader, readXtermScreen } from './terminal/screenRegistry'
+import { readContextPercent, stripTerminalControls } from './terminal/contextPercent'
 import { typeWhenCodexComposerReady, planModeNote, CODEX_PLAN_MODE_WAIT_MS } from '../lib/codexComposer'
 import { createGeometryResync, type GeometryResync } from './terminal/geometryResync'
 import { createTmuxWheelScroll, registerTmuxWheelScroll, type TmuxWheelScroll } from './terminal/tmuxWheelScroll'
@@ -1129,6 +1130,11 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
                 // run's, and is dropped. Main starting nothing (a preparation
                 // closed or swept meanwhile) ends the start here instead.
                 if (!nothingStarted) markLive()
+                // P3.8 round 3 (PB1): the preset this run launched with, as
+                // main reports it, for the command bar's permissions pill.
+                const launchedPreset = !nothingStarted && result && typeof result === 'object' && 'launched' in result
+                  ? result.launched?.codexPreset : undefined
+                if (!nothingStarted && provider === 'codex' && !shellOnly) updateSession(sessionId, { launchedCodexPreset: launchedPreset })
                 // P3.8 (L2; round 2, PM1): Plan mode, Claude's launch option.
                 // Codex has no launch flag for it: the session starts read-only
                 // (main), and its own /plan is typed into its FIRST ready
@@ -1136,7 +1142,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
                 // user's typing or after a turn), within a bounded wait; a note
                 // above the terminal says so when it is not, and that the
                 // session is read-only.
-                if (!nothingStarted && provider === 'codex' && !shellOnly && codexOptions?.permissionsPreset === 'plan') {
+                if (!nothingStarted && provider === 'codex' && !shellOnly && (launchedPreset ?? codexOptions?.permissionsPreset) === 'plan') {
                   planModeWait?.cancel()
                   planModeWait = typeWhenCodexComposerReady(sessionId, '/plan', {
                     timeoutMs: CODEX_PLAN_MODE_WAIT_MS,
@@ -1296,25 +1302,20 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           pendingParseData = ''
           if (!data) return
 
-          const stripped = data
-            .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
-            .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
-            .replace(/\x1b[()][A-Z0-9]/g, '')
-            .replace(/\x1b[=>]/g, '')
+          const stripped = stripTerminalControls(data)
 
           contextBuffer += stripped
           if (contextBuffer.length > CONTEXT_BUFFER_MAX) {
             contextBuffer = contextBuffer.slice(-CONTEXT_BUFFER_MAX)
           }
 
-          const contextMatch = contextBuffer.match(/(\d+(?:\.\d+)?)%\s*(?:context|of context|used|remaining|ctx)/i)
-            || contextBuffer.match(/context[:\s]+(\d+(?:\.\d+)?)%/i)
-            || contextBuffer.match(/(\d+(?:\.\d+)?)%\s*\|\s*\$/i)
-          if (contextMatch) {
-            const pct = parseFloat(contextMatch[1])
+          // P3.8 round 3 (CM): "N% context left" is the share left, and the
+          // meter shows the share used (terminal/contextPercent.ts).
+          const contextReading = readContextPercent(contextBuffer)
+          if (contextReading) {
             const updates: Record<string, any> = {}
-            if (pct >= 0 && pct <= 100) {
-              updates.contextPercent = pct
+            if (contextReading.used !== null) {
+              updates.contextPercent = contextReading.used
             }
 
             const costMatch = contextBuffer.match(/\$(\d+(?:\.\d+)?)/)

@@ -300,6 +300,13 @@ timings. No real account was used; what needs one is listed at the end.
   catalogue does not list them; what a real `/compact` does to a conversation; `-m gpt-5.2` on 0.155.1 against the
   server; whether `codex debug models` refreshes from the account when signed in.
   The approval modal itself is not reachable without a working model (the dead proxy stops every turn).
+- [run] Round 2 re-check (25616c3f, the app on the VM): 0.153.4 draws "Booting MCP server: conductor (0s, esc to
+  interrupt)" (the app's own MCP server; the separator is a bullet) after its first ready screen; 0.155.1 draws no
+  such row. [strings] Both binaries also carry "Starting MCP servers".
+- [run] `/permissions` opens "Update Model Permissions" on both versions: 1. Read Only (current, on a read-only
+  launch), 2. Ask for approval, 3. Approve for me, 4. Full Access.
+- [run] With a message waiting, the composer's hint row reads "tab to queue message" and, right-aligned, "100% context
+  left": the share of context LEFT, not used.
 
 ## Rows this affects
 

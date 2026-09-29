@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-29T11:30:05.201Z",
-  "head": "f1783110a48c84d5d63bf8e9d74aa202ea70cf66",
-  "tree": "2d40baaf627c031189fc002216ee8bf759dc1d95",
+  "generatedAt": "2026-09-29T12:39:03.457Z",
+  "head": "25616c3f7b0f13119a7ed12ea04c289deb7cfc13",
+  "tree": "c6424ee0f9d3c56fbc43f1610ab114cf863b4dc4",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2488,
+  "trackedFileCount": 2491,
   "excludedFileCount": 384,
-  "scannedFileCount": 2104,
+  "scannedFileCount": 2107,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 534,
-  "pathDigest": "a1d5a14ec00fdebbc1114927c40b3e411048e4b8dc9272fd6cdebde72404a9e4",
+  "matchedPathCount": 535,
+  "pathDigest": "fe446e32c38bd9c1c9d8e17ca2157f303b1c4ff7982206c0213131d08d6498f0",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 272
+      "lineCount": 281
     },
     {
       "path": "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
@@ -494,7 +494,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 87
+      "lineCount": 92
     },
     {
       "path": "src/main/ipc/tokenomics2-handlers.ts",
@@ -916,7 +916,7 @@
         "P05",
         "P14"
       ],
-      "lineCount": 60
+      "lineCount": 61
     },
     {
       "path": "src/main/tokenomics/tk-parse.ts",
@@ -986,7 +986,7 @@
         "P08",
         "P14"
       ],
-      "lineCount": 17
+      "lineCount": 18
     },
     {
       "path": "src/renderer/App.tsx",
@@ -1040,7 +1040,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 55
+      "lineCount": 56
     },
     {
       "path": "src/renderer/components/ConductorMcpPage.tsx",
@@ -1197,7 +1197,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 42
+      "lineCount": 45
     },
     {
       "path": "src/renderer/components/TitleBar.tsx",
@@ -1439,7 +1439,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 67
+      "lineCount": 95
     },
     {
       "path": "src/renderer/lib/command-upgrade.ts",
@@ -1690,7 +1690,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 13
+      "lineCount": 16
     },
     {
       "path": "src/renderer/stores/settingsStore.ts",
@@ -1738,7 +1738,7 @@
         "P08",
         "P11"
       ],
-      "lineCount": 14
+      "lineCount": 16
     },
     {
       "path": "src/renderer/utils/accountChip.ts",
@@ -2939,7 +2939,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 32
+      "lineCount": 37
     },
     {
       "path": "tests/unit/main/pty-spawn-waits-for-refresh.test.ts",
@@ -3056,7 +3056,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 23
+      "lineCount": 25
     },
     {
       "path": "tests/unit/native/tk-db-downgrade.native.test.ts",
@@ -3517,7 +3517,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 9
+      "lineCount": 10
     },
     {
       "path": "tests/unit/renderer/codex-composer.test.ts",
@@ -3525,7 +3525,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 105
+      "lineCount": 140
     },
     {
       "path": "tests/unit/renderer/codex-mini-icon.test.ts",
@@ -3600,7 +3600,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 62
+      "lineCount": 67
     },
     {
       "path": "tests/unit/renderer/commandbar-one-row.test.tsx",
@@ -3639,6 +3639,13 @@
         "P13"
       ],
       "lineCount": 3
+    },
+    {
+      "path": "tests/unit/renderer/context-percent.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 2
     },
     {
       "path": "tests/unit/renderer/footer-hidden-buckets-migration.test.ts",
@@ -4173,7 +4180,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 121
+      "lineCount": 133
     },
     {
       "path": "tests/unit/renderer/titlebar-provider-status.test.tsx",

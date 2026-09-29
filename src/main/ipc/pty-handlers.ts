@@ -944,14 +944,21 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
 
       if (preparation) preparation.spawn(resolvedOptions)
       else spawnPty(win, sessionId, resolvedOptions)
+      // P3.8 round 3 (PB1): the permissions preset this run launched with,
+      // main's record of what it started, so the renderer's pill compares a
+      // choice for the next start with what is running.
+      const launched = options?.provider === 'codex' && !options?.shellOnly && resolvedOptions?.codexOptions
+        ? { codexPreset: resolvedOptions.codexOptions.permissionsPreset }
+        : undefined
       // P3.6: what the terminal says when the conversation did not come
       // along whole, from what the launch actually did (it resumed that
       // conversation, from a copy already in the account, or started anew).
       if (carry) {
         const resumed = getKeptCodexConversation(sessionId)?.uuid === carry.uuid
-        if (carry.notice) return { started: true as const, carry: { ...carry.notice, resumed } }
-        if (!resumed) return { started: true as const, carry: { code: 'conversation-missing' as const, message: 'The conversation was copied into that account, but the new session did not resume it.', resumed: false } }
+        if (carry.notice) return { started: true as const, carry: { ...carry.notice, resumed }, ...(launched ? { launched } : {}) }
+        if (!resumed) return { started: true as const, carry: { code: 'conversation-missing' as const, message: 'The conversation was copied into that account, but the new session did not resume it.', resumed: false }, ...(launched ? { launched } : {}) }
       }
+      if (launched) return { started: true as const, launched }
     } catch (err) {
       if (codexLease) {
         // Registered, but the spawn failed after that: a Codex PTY is running
