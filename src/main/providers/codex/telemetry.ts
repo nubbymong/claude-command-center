@@ -975,8 +975,11 @@ export function watchAndClaimRollout(
         ? await countRolloutRange(file, identity, 0, Number.POSITIVE_INFINITY, () => false, {}, { from, to: start })
         : null
       // It claimed after the earlier run let the conversation go, so it ends
-      // after that run did. Nothing here throws: the count answers null.
+      // after that run did.
       noteConversationRunningTime(r.id, (kept ? kept.ms : 0) + (proven ? proven.turnMs : 0) + Math.max(0, end - start), end)
+    }).catch((err: unknown) => {
+      // A settle never rejects: claims wait on it (P3.7 review follow-up).
+      console.warn(`[codex/telemetry] the running time of a run of session ${sessionId} could not be kept: ${(err as Error)?.message ?? err}`)
     }).finally(() => { if (pendingSettles.get(key) === settled) pendingSettles.delete(key) })
     pendingSettles.set(key, settled)
   }
