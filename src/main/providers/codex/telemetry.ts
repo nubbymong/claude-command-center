@@ -328,7 +328,9 @@ const claimed = new Set<string>()
  * recorded limit, until P3.10's exact claim). A claim made while another such
  * launch could have taken the same rollout, or while this launch saw more
  * than one rollout it could take, is reported as not certain, and so is the
- * later claim of every launch it competed with. The claim itself is P3.5's,
+ * later claim of every launch it competed with. A launch that has claimed
+ * nothing counts as waiting from its start until its process ends (stop),
+ * past its no-claim deadline too. The claim itself is P3.5's,
  * unchanged; a Switch account never carries a conversation claimed that way
  * (pty-manager).
  */
@@ -535,15 +537,15 @@ export function watchAndClaimRollout(
   let decision: PickDecision | null = null
   /** A pick entry already dealt with (read, or refused), by its identity: never read again. */
   let handledPick: string | null = null
-  /** The no-claim deadline passed: this launch claims nothing more. */
-  let givenUp = false
   /** This launch among those waiting for a new conversation (P3.6); a resume
    *  by id never takes a new one. */
   const pending: PendingNewClaim | null = resumeId ? null : {
     sessionsDir,
     cwd: sessionCwd,
     admits: (at: number) => {
-      if (stopped || givenUp || claimedPath) return false
+      // Waiting while its process runs (ADR-009 round 2, C2): a launch past
+      // its no-claim deadline may still write the rollout another takes.
+      if (stopped || claimedPath) return false
       if (pickFile) return decision?.kind === 'fresh' && at >= decision.at - FRESH_DECISION_TOLERANCE_MS
       return at >= spawnTimestamp - 5000
     },
@@ -943,8 +945,6 @@ export function watchAndClaimRollout(
 
   const timeoutHandle = waitsForUser ? null : setTimeout(() => {
     if (!claimedPath && !stopped) {
-      givenUp = true
-      if (pending) pendingNewClaims.delete(pending)
       console.warn(
         `[codex/telemetry] no rollout claimed for session ${sessionId} after 30s -- assuming --ephemeral`,
       )

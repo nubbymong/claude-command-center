@@ -7,7 +7,7 @@ import { createSplashWindow, closeSplashWindow, SPLASH_MIN_MS, SPLASH_POST_READY
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerAccountWebHandlers } from './ipc/account-web-handlers'
 import { sweepAbandonedProfiles } from './account-web/sign-in'
-import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine, getKeptCodexConversation, uncertainCodexConversationIds, rememberUncertainCodexConversations } from './pty-manager'
+import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine, getKeptCodexConversation, uncertainCodexConversationIds, rememberUncertainCodexConversationsFrom } from './pty-manager'
 import { registerResumeHandlers } from './ipc/resume-handlers'
 import { registerCliHandlers } from './ipc/cli-handlers'
 import { registerClipboardHandlers } from './ipc/clipboard-handlers'
@@ -139,6 +139,9 @@ const sessionDurability = createSessionDurability({
     getUncertainProviderConversations: uncertainCodexConversationIds,
   },
   save: saveSessionState,
+  load: loadSessionState,
+  // P3.6: read back before any restored session respawns.
+  readBack: rememberUncertainCodexConversationsFrom,
   log: logInfo,
 })
 
@@ -312,10 +315,7 @@ function registerMainWindowIpc(): void {
   })
 
   ipcMain.handle('session:load', async () => {
-    const state = loadSessionState()
-    // P3.6: main's own list, read back before any restored session respawns.
-    rememberUncertainCodexConversations(state?.codexUncertainConversations)
-    return state
+    return sessionDurability.load()
   })
 
   ipcMain.handle('session:clear', async () => {

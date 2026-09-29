@@ -468,6 +468,14 @@ export function rememberUncertainCodexConversations(ids: unknown): void {
   for (const id of ids.slice(-UNCERTAIN_CODEX_CONVERSATIONS_MAX)) if (typeof id === 'string') markCodexConversationUncertain(id)
 }
 
+/** The same, from a loaded session state (session-durability's read-back
+ *  at load, before any restored session respawns): the list saved in it,
+ *  whatever else it holds. Nothing for anything but a state. */
+export function rememberUncertainCodexConversationsFrom(state: unknown): void {
+  if (!state || typeof state !== 'object') return
+  rememberUncertainCodexConversations((state as { codexUncertainConversations?: unknown }).codexUncertainConversations)
+}
+
 /** P3.6 (row 22; ADR-009 round 1, B1): whether another session with a
  *  running Codex process (it holds its account lease) is on conversation
  *  `uuid`, as main recorded it. A Switch account never copies or brings up

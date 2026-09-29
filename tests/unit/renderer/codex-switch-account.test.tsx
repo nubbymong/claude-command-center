@@ -200,6 +200,12 @@ describe('the note a Switch account\'s respawn says', () => {
     expect(carryNote({ code: 'too-large', message: 'This conversation is larger than the app carries between Codex accounts, so it was not carried over.', resumed: false }, 'Personal'))
       .toBe('Switched to Personal. This conversation is larger than the app carries between Codex accounts, so it was not carried over. This is a new conversation.')
     expect(carryNote({ code: 'internal', message: '  ', resumed: false }, 'Personal')).toBe('Switched to Personal. The conversation could not be carried over. This is a new conversation.')
+    // ADR-009 round 2 (C1): another open session on the conversation is
+    // never resumed on the new account (main answers resumed: false), so the
+    // line never speaks of the copy already in that account.
+    const inUse = carryNote({ code: 'in-use', message: 'Another open session is on this conversation, so it was not carried over.', resumed: false }, 'Personal')
+    expect(inUse).toBe('Switched to Personal. Another open session is on this conversation, so it was not carried over. This is a new conversation.')
+    expect(inUse).not.toMatch(/already in that account/)
   })
 
   it('resumed from a copy that went its own way there: carries on from that copy, never called a new conversation', () => {

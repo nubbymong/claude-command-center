@@ -28,9 +28,10 @@
  *   - it is written to a new temporary file in the destination's sessions
  *     folder (exclusive create, owner-only), checked to be there before
  *     anything is written to it, flushed, checked, then given its final name:
- *     a new name with a hard link, which never replaces anything; the file
- *     appears whole or not at all, and one that landed anywhere but the
- *     realm's own folder is taken back;
+ *     a second name made inside the day folder and checked there, then a
+ *     hard link to the final name within that folder, which never replaces
+ *     anything; the file appears whole or not at all, and one that landed
+ *     anywhere but the realm's own folder is taken back;
  *   - a file already at the final name: the same bytes mean the
  *     conversation is already there (`present`); an earlier copy of it that
  *     is exactly the start of this one (the session was on that account
@@ -43,9 +44,10 @@
  *     it had. Anything else went its own way there and is left as it is;
  *   - nothing is removed except the files and folders made here, each only
  *     while the file or folder at its real path is still the one made;
- *   - the temporary file is removed on every path, and one a carry that
- *     stopped part way left behind is removed by the next carry into that
- *     realm once it is stale (by its own name and age: see sweepStaleTemps);
+ *   - the temporary file and the second name are removed on every path, and
+ *     one a carry that stopped part way left behind is removed by the next
+ *     carry into that realm's sessions folder, or into that day folder, once
+ *     it is stale (by its own name and age: see sweepStaleTemps);
  *   - `shouldStop` (the respawn it is for is no longer current, or ran out of
  *     time) stops it before the next step: nothing is left behind.
  * A volume that reports no file ids cannot show that a file is the one
@@ -157,8 +159,20 @@ function sizeAt(p: string): number {
  * path (a random name this module made exclusively).
  */
 async function removeIfStill(p: string, st: Identity, byName = false): Promise<void> {
-  let real: string
-  try { real = fs.realpathSync.native(p) } catch { return }
+  await removeAtReal(realOf(p), st, byName)
+}
+
+/** The path `p` really is now (no link on the way), or null. */
+function realOf(p: string): string | null {
+  try { return fs.realpathSync.native(p) } catch { return null }
+}
+
+/** Remove the file at `real` (a path resolved when the file landed there),
+ *  only while it is still `st` (see removeIfStill). A landing's real path is
+ *  taken right after it lands, so a link re-pointed later never turns the
+ *  removal elsewhere and leaves the file behind (ADR-009 round 2, N5). */
+async function removeAtReal(real: string | null, st: Identity, byName = false): Promise<void> {
+  if (!real) return
   try {
     const now = fs.lstatSync(real, { bigint: true })
     if (!now.isFile() || now.isSymbolicLink()) return
@@ -207,21 +221,28 @@ function rolloutPlace(sessionsDir: string, file: string, id: string): string[] |
 
 /**
  * Carry temporary files a carry that stopped part way (the app ended mid-copy)
- * left in a realm's sessions folder: this module's own naming only, a plain
- * file, not changed for CODEX_CARRY_STALE_TEMP_MS. Judged by name and age,
- * never by file id, so a volume that reports none is swept too. The caller
- * holds the realm's lock, so no carry of this app is writing one now.
+ * left in a folder it writes them to (a realm's sessions folder, or the day
+ * folder a second name is made in): this module's own naming only, a plain
+ * file, not changed for CODEX_CARRY_STALE_TEMP_MS. Judged by name and age;
+ * removed at the path it really is, and only while the file there is the
+ * one looked at (by its file id, or where the volume reports none, as a
+ * plain file). The caller holds the realm's lock, so no carry of this app is
+ * writing one now.
  */
-function sweepStaleTemps(sessionsDir: string, now: number): void {
+function sweepStaleTemps(dir: string, now: number): void {
   let names: string[]
-  try { names = fs.readdirSync(sessionsDir) } catch { return }
+  try { names = fs.readdirSync(dir) } catch { return }
   for (const name of names.slice(0, SWEEP_MAX_ENTRIES)) {
     if (!TEMP_NAME_RE.test(name)) continue
-    const p = path.join(sessionsDir, name)
+    const p = path.join(dir, name)
     try {
-      const st = fs.lstatSync(p)
-      if (!st.isFile() || st.isSymbolicLink() || now - st.mtimeMs < CODEX_CARRY_STALE_TEMP_MS) continue
-      fs.unlinkSync(p)
+      const st = fs.lstatSync(p, { bigint: true })
+      if (!st.isFile() || st.isSymbolicLink() || now - Number(st.mtimeMs) < CODEX_CARRY_STALE_TEMP_MS) continue
+      const real = fs.realpathSync.native(p)
+      const there = fs.lstatSync(real, { bigint: true })
+      if (!there.isFile() || there.isSymbolicLink()) continue
+      if (idKnown(st) ? !sameFile(there, st) : false) continue
+      fs.unlinkSync(real)
     } catch { /* gone meanwhile, or not removable: the next carry looks again */ }
   }
 }
@@ -286,13 +307,15 @@ export async function carryCodexRollout(input: CodexCarryInput): Promise<CodexCa
   if (!canonical(found.path)) return fail('unsafe-path')
 
   // The destination's folders, each checked (or made) in turn; what a
-  // stopped carry left in its sessions folder goes first.
+  // stopped carry left in its sessions folder, and in the day folder the
+  // copy's second name is made in, goes first.
   if (!ensureFolder(toSessions)) return fail('unsafe-path')
   sweepStaleTemps(toSessions, Date.now())
   const dayDir = path.join(toSessions, place[0], place[1], place[2])
   for (const dir of [path.join(toSessions, place[0]), path.join(toSessions, place[0], place[1]), dayDir]) {
     if (!ensureFolder(dir)) return fail('unsafe-path')
   }
+  sweepStaleTemps(dayDir, Date.now())
   const finalPath = path.join(dayDir, place[3])
   const tempPath = path.join(toSessions, `${TEMP_PREFIX}${randomBytes(12).toString('hex')}.tmp`)
 
@@ -361,16 +384,26 @@ export async function carryCodexRollout(input: CodexCarryInput): Promise<CodexCa
     if (stopped()) return fail('cancelled')
     const made = tempMade
 
-    /** The copy took the final name: it landed where it was meant to (no
-     *  folder on the way was swapped for a link since the checks) and it is
-     *  the file written here. Otherwise it is taken back, but only while the
-     *  file at the path it really is now is that file; else it is left. */
-    const tookName = async (): Promise<boolean> => {
+    /** The copy took the final name: where it landed (its real path, taken
+     *  right after it landed) is the final name itself (no folder on the way
+     *  was swapped for a link since the checks) and it is the file written
+     *  here. Otherwise it is taken back from where it landed, but only while
+     *  the file there is that file; else it is left. */
+    const tookName = async (landedAt: string | null): Promise<boolean> => {
       let landed: fs.BigIntStats | null = null
-      try { landed = fs.lstatSync(finalPath, { bigint: true }) } catch { landed = null }
-      if (landed && sameFile(landed, made) && canonical(finalPath)) return true
-      await removeIfStill(finalPath, made)
+      try { landed = landedAt ? fs.lstatSync(landedAt, { bigint: true }) : null } catch { landed = null }
+      if (landedAt && landed && landed.isFile() && sameFile(landed, made) && sameDirectory(landedAt, finalPath)) return true
+      await removeAtReal(landedAt, made)
       return false
+    }
+
+    /** A second name of the copy inside the day folder, and where it really
+     *  landed (taken at once): checked before it is used, and removed from
+     *  there on every path. */
+    const secondName = async (): Promise<{ inner: string; innerAt: string | null } | null> => {
+      const inner = path.join(dayDir, `${TEMP_PREFIX}${randomBytes(12).toString('hex')}.tmp`)
+      try { await fs.promises.link(tempPath, inner) } catch { return null }
+      return { inner, innerAt: realOf(inner) }
     }
 
     /** The whole copy renamed over the final name (an earlier copy brought up
@@ -380,11 +413,12 @@ export async function carryCodexRollout(input: CodexCarryInput): Promise<CodexCa
      *  The earlier copy must still be the one compared, that size, at the
      *  final name. Nothing is written through it. */
     const replaceName = async (earlier: Identity, have: number): Promise<CodexCarryResult> => {
-      const inner = path.join(dayDir, `${TEMP_PREFIX}${randomBytes(12).toString('hex')}.tmp`)
-      try { await fs.promises.link(tempPath, inner) } catch { return fail('io-failed') }
+      const second = await secondName()
+      if (!second) return fail('io-failed')
+      const { inner, innerAt } = second
       let renamed = false
       try {
-        if (!stillAt(inner, made)) return fail('changed')
+        if (!innerAt || !sameDirectory(innerAt, inner) || !stillAt(inner, made)) return fail('changed')
         // Nothing was added to the earlier copy since it was compared: the
         // CLI may write to a sign-in's folder at any time (this computer's
         // own sign-in is not the app's to hold), and what it added is never
@@ -397,9 +431,9 @@ export async function carryCodexRollout(input: CodexCarryInput): Promise<CodexCa
           return errCode(e) === 'ENOENT' ? fail('changed') : fail('io-failed')
         }
         renamed = true
-        return (await tookName()) ? { ok: true, carried: 'extended', bytes: lastLineEnd } : fail('changed')
+        return (await tookName(realOf(finalPath))) ? { ok: true, carried: 'extended', bytes: lastLineEnd } : fail('changed')
       } finally {
-        if (!renamed) await removeIfStill(inner, made)
+        if (!renamed) await removeAtReal(innerAt, made)
       }
     }
 
@@ -440,12 +474,28 @@ export async function carryCodexRollout(input: CodexCarryInput): Promise<CodexCa
     } catch (e) {
       if (errCode(e) !== 'ENOENT') return fail('io-failed')
     }
+    // A new copy takes its name from inside the day folder too (ADR-009
+    // round 2, N5): a second name of it is made there and checked to be
+    // there and to be the file written here, then linked to the final name
+    // within that folder. A hard link replaces nothing, and a folder swapped
+    // for a link after the check lands nothing of it elsewhere. The second
+    // name goes on every path.
+    const second = await secondName()
+    if (!second) return fail('io-failed')
+    const { inner, innerAt } = second
     try {
-      await fs.promises.link(tempPath, finalPath)
-    } catch (e) {
-      return errCode(e) === 'EEXIST' ? await settle() : fail('io-failed')
+      if (!innerAt || !sameDirectory(innerAt, inner) || !stillAt(inner, made)) return fail('changed')
+      if (stopped()) return fail('cancelled')
+      try {
+        await fs.promises.link(inner, finalPath)
+      } catch (e) {
+        const code = errCode(e)
+        return code === 'EEXIST' ? await settle() : code === 'ENOENT' ? fail('changed') : fail('io-failed')
+      }
+      return (await tookName(realOf(finalPath))) ? { ok: true, carried: 'copied', bytes: lastLineEnd } : fail('changed')
+    } finally {
+      await removeAtReal(innerAt, made)
     }
-    return (await tookName()) ? { ok: true, carried: 'copied', bytes: lastLineEnd } : fail('changed')
   } catch {
     return fail('io-failed')
   } finally {

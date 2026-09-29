@@ -109,13 +109,25 @@ export function enrichSessionStateWithResumeTargets(
     }
   }
   if (deps.getUncertainProviderConversations) {
+    let all: string[] | null = null
     try {
-      const on = new Set(state.sessions.map((s) => (s && typeof s.resumeUuid === 'string' ? s.resumeUuid.toLowerCase() : '')).filter(Boolean))
-      const kept = deps.getUncertainProviderConversations().filter((id) => typeof id === 'string' && on.has(id.toLowerCase()))
-      if (kept.length) state.codexUncertainConversations = kept
-      else delete state.codexUncertainConversations
+      const got = deps.getUncertainProviderConversations()
+      all = Array.isArray(got) ? got.filter((id): id is string => typeof id === 'string') : null
     } catch {
-      // best-effort: the list stays as it was
+      // Main cannot say: the list stays as it was.
+      all = null
+    }
+    if (all) {
+      try {
+        const on = new Set(state.sessions.map((s) => (s && typeof s.resumeUuid === 'string' ? s.resumeUuid.toLowerCase() : '')).filter(Boolean))
+        const kept = all.filter((id) => on.has(id.toLowerCase()))
+        if (kept.length) state.codexUncertainConversations = kept
+        else delete state.codexUncertainConversations
+      } catch {
+        // The saved sessions could not be read (ADR-009 round 2, C8): main's
+        // own list, whole, never what the renderer sent.
+        state.codexUncertainConversations = all
+      }
     }
   }
   return state

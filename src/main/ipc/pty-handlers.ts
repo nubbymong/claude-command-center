@@ -195,7 +195,9 @@ async function carryForRespawn(sessionId: string, accountId: string, service: Pi
   }
   if (codexConversationHeldElsewhere(sessionId, kept.uuid)) {
     logWarn(`[pty] Session ${sessionId}: another open session is on its conversation, so it was not carried into the new account`)
-    return { uuid: kept.uuid, notice: { code: 'in-use', message: 'Another open session is on this conversation, so it was not carried over.' } }
+    // Nor resumed on the new account (ADR-009 round 2, C1): the other
+    // session may be on it there, and two sessions would write one rollout.
+    return { uuid: kept.uuid, fresh: true, notice: { code: 'in-use', message: 'Another open session is on this conversation, so it was not carried over.' } }
   }
   let expired = false
   const live = (): boolean => !expired && current()

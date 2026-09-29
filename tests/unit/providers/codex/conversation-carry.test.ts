@@ -305,12 +305,81 @@ describe('carryCodexRollout when something is swapped after its checks', () => {
     const r = realms()
     vi.spyOn(fsp, 'link').mockImplementation((async (a: string, b: string) => {
       await realLink(a, b)
+      // The final name only (the copy takes it from its second name).
+      if (!same(b, r.dest)) return
       unlinkSync(b)
       writeFileSync(b, 'someone else\n')
     }) as never)
     expect(await carryCodexRollout({ fromSessionsDir: join(r.from, 'sessions'), toHome: r.to, id: ID })).toEqual({ ok: false, code: 'changed' })
     expect(readFileSync(r.dest, 'utf8')).toBe('someone else\n')
     expect(leftoversOf(r)).toEqual([])
+  })
+
+  // ADR-009 round 2 (C5, lens A N5): a new copy takes its final name from a
+  // second name inside the day folder, so a folder swapped for a link as it
+  // does lands nothing elsewhere, even for a moment.
+  it('a new copy, the day folder swapped for a junction to a folder outside the realm just as it takes its final name: nothing of it lands there, even for a moment', async () => {
+    const r = realms()
+    const outside = temp('outside')
+    const X = join(outside, 'X')
+    mkdirSync(X)
+    const day = dirname(r.dest)
+    let staged = false
+    let landedOutside = false
+    vi.spyOn(fsp, 'link').mockImplementation((async (a: string, b: string) => {
+      if (staged || !same(b, r.dest)) return realLink(a, b)
+      staged = true
+      renameSync(day, join(outside, 'realm-day'))
+      symlinkSync(X, day, 'junction')
+      try { await realLink(a, b) } finally { landedOutside = existsSync(join(X, NAME)) }
+    }) as never)
+    expect(await carryCodexRollout({ fromSessionsDir: join(r.from, 'sessions'), toHome: r.to, id: ID })).toEqual({ ok: false, code: 'changed' })
+    expect(staged).toBe(true)
+    expect(landedOutside).toBe(false)
+    expect(readdirSync(X)).toEqual([])
+  })
+
+  // C5: a copy that did land elsewhere (its second name given a name there
+  // too) is taken back from where it landed, a path taken right after it
+  // landed, so a link re-pointed as it is taken back never leaves it behind.
+  it('a new copy that landed outside the realm, the junction re-pointed as it is taken back: it is taken back from where it landed, and no file elsewhere is removed', async () => {
+    const r = realms()
+    const outside = temp('outside')
+    const X = join(outside, 'X')
+    const Y = join(outside, 'Y')
+    mkdirSync(X)
+    mkdirSync(Y)
+    const victim = join(Y, NAME)
+    writeFileSync(victim, 'a file of that name elsewhere\n')
+    const day = dirname(r.dest)
+    const realmDay = join(outside, 'realm-day')
+    let staged = false
+    let armed = false
+    let calls = 0
+    vi.spyOn(fsp, 'link').mockImplementation((async (a: string, b: string) => {
+      if (staged || !same(b, r.dest)) return realLink(a, b)
+      staged = true
+      renameSync(day, realmDay)
+      // The copy's second name, where the day folder went, given the same
+      // name in X: the link through the junction then finds it.
+      const moved = join(realmDay, basename(a))
+      if (existsSync(moved)) linkSync(moved, join(X, basename(a)))
+      symlinkSync(X, day, 'junction')
+      await realLink(a, b)
+      armed = true
+    }) as never)
+    const realNative = realpathSync.native
+    vi.spyOn(realpathSync, 'native').mockImplementation(((p: string, o?: unknown) => {
+      if (armed && same(p, r.dest) && ++calls === 2) {
+        rmdirSync(day)
+        symlinkSync(Y, day, 'junction')
+      }
+      return (realNative as (p: string, o?: unknown) => string)(p, o)
+    }) as never)
+    expect(await carryCodexRollout({ fromSessionsDir: join(r.from, 'sessions'), toHome: r.to, id: ID })).toEqual({ ok: false, code: 'changed' })
+    expect(staged).toBe(true)
+    expect(existsSync(join(X, NAME))).toBe(false)
+    expect(readFileSync(victim, 'utf8')).toBe('a file of that name elsewhere\n')
   })
 
   it('A -> B -> A with the day folder swapped for a junction to a copy outside the realm: that copy is never added to', async () => {
@@ -556,6 +625,42 @@ describe('carryCodexRollout when something is swapped after its checks', () => {
     expect(readFileSync(victim, 'utf8')).toBe('a file of that name elsewhere\n')
   })
 
+  // ADR-009 round 2 (C5): the copy's second name, made through a day folder
+  // swapped for a junction, is taken back from where it landed (a path taken
+  // right after it landed), so a junction re-pointed meanwhile never leaves it
+  // behind outside the realm.
+  it('the second name landed outside the realm through a day folder swapped for a junction, re-pointed as it is taken back: it is taken back from where it landed', async () => {
+    const r = realms()
+    const outside = temp('outside')
+    const X = join(outside, 'X')
+    const Y = join(outside, 'Y')
+    mkdirSync(X)
+    mkdirSync(Y)
+    const day = dirname(r.dest)
+    const inDay = (p: unknown) => isTemp(p) && same(dirname(String(p)), day)
+    let staged = false
+    let seen = 0
+    vi.spyOn(fsp, 'link').mockImplementation((async (a: string, b: string) => {
+      if (staged || !inDay(b)) return realLink(a, b)
+      staged = true
+      renameSync(day, join(outside, 'realm-day'))
+      symlinkSync(X, day, 'junction')
+      return realLink(a, b)
+    }) as never)
+    const realNative = realpathSync.native
+    vi.spyOn(realpathSync, 'native').mockImplementation(((p: string, o?: unknown) => {
+      if (staged && inDay(p) && ++seen === 2) {
+        rmdirSync(day)
+        symlinkSync(Y, day, 'junction')
+      }
+      return (realNative as (p: string, o?: unknown) => string)(p, o)
+    }) as never)
+    expect(await carryCodexRollout({ fromSessionsDir: join(r.from, 'sessions'), toHome: r.to, id: ID })).toEqual({ ok: false, code: 'changed' })
+    expect(staged).toBe(true)
+    expect(readdirSync(X)).toEqual([])
+    expect(readdirSync(Y)).toEqual([])
+  })
+
   // Lens A (T3): the earlier copy is compared through a handle, and the
   // folder toggled between the checks of where that handle's file is: the
   // copy outside is never written, and nothing is said as carried.
@@ -713,5 +818,49 @@ describe('carryCodexRollout sweeps what a stopped carry left', () => {
     // Minutes, never a day: a carry in flight is never taken for a stale one.
     expect(CODEX_CARRY_STALE_TEMP_MS).toBeGreaterThanOrEqual(60_000)
     expect(CODEX_CARRY_STALE_TEMP_MS).toBeLessThanOrEqual(24 * 60 * 60 * 1000)
+  })
+
+  // ADR-009 round 2 (C3): a carry that stopped after its second name was made
+  // left that name in the day folder; the next carry into that day removes it.
+  it('a stale second name left in the day folder goes too; a fresh one stays', async () => {
+    const r = realms()
+    const day = dirname(r.dest)
+    mkdirSync(day, { recursive: true })
+    const old = new Date(Date.now() - CODEX_CARRY_STALE_TEMP_MS - 60_000)
+    const stale = join(day, `.ccc-carry-${'d'.repeat(24)}.tmp`)
+    writeFileSync(stale, 'x'.repeat(64))
+    utimesSync(stale, old, old)
+    const fresh = join(day, `.ccc-carry-${'e'.repeat(24)}.tmp`)
+    writeFileSync(fresh, 'y')
+    expect(await carryCodexRollout({ fromSessionsDir: join(r.from, 'sessions'), toHome: r.to, id: ID })).toMatchObject({ ok: true, carried: 'copied' })
+    expect(existsSync(stale)).toBe(false)
+    expect(existsSync(fresh)).toBe(true)
+  })
+
+  it('a stale one swapped for another file as it is removed: that file stays', async () => {
+    const r = realms()
+    const day = dirname(r.dest)
+    mkdirSync(day, { recursive: true })
+    const old = new Date(Date.now() - CODEX_CARRY_STALE_TEMP_MS - 60_000)
+    const stale = join(day, `.ccc-carry-${'f'.repeat(24)}.tmp`)
+    writeFileSync(stale, 'x'.repeat(64))
+    utimesSync(stale, old, old)
+    let swapped = false
+    const realNative = realpathSync.native
+    const spy = vi.spyOn(realpathSync, 'native').mockImplementation(((p: string, o?: unknown) => {
+      if (!swapped && String(p).toLowerCase() === stale.toLowerCase()) {
+        swapped = true
+        unlinkSync(stale)
+        writeFileSync(stale, 'another file\n')
+      }
+      return (realNative as (p: string, o?: unknown) => string)(p, o)
+    }) as never)
+    try {
+      expect(await carryCodexRollout({ fromSessionsDir: join(r.from, 'sessions'), toHome: r.to, id: ID })).toMatchObject({ ok: true, carried: 'copied' })
+    } finally {
+      spy.mockRestore()
+    }
+    expect(swapped).toBe(true)
+    expect(readFileSync(stale, 'utf8')).toBe('another file\n')
   })
 })

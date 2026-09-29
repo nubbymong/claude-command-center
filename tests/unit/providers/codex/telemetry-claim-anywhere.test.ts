@@ -354,6 +354,34 @@ describe('two sessions in the same folder', () => {
     expect(only.certainty).toEqual([false])
   })
 
+  // ADR-009 round 2 (C2): a new session that has claimed nothing waits until
+  // its process ends (stop), past its no-claim deadline too: it may still
+  // write the rollout a later session in its folder takes.
+  it('a new session past its no-claim deadline but still running: a later claim in its folder is not certain; once it has ended, one is', async () => {
+    vi.useFakeTimers()
+    const sessions = realm()
+    const y = watch(sessions, '/p/demo', {})
+    await vi.advanceTimersByTimeAsync(25_000)
+    const x = watch(sessions, '/p/demo', {})
+    // y is past its 30 s deadline, x is not.
+    await vi.advanceTimersByTimeAsync(6_000)
+    rollout(today(sessions), ID_A, '/p/demo', new Date(Date.now() + 50).toISOString(), 5)
+    await vi.advanceTimersByTimeAsync(600)
+    expect(y.claims).toEqual([])
+    expect(x.claims.map((c) => c.id)).toEqual([ID_A])
+    expect(x.certainty).toEqual([false])
+    // y's process ended: a new session's claim is certain again.
+    y.src.stop()
+    x.src.stop()
+    await vi.advanceTimersByTimeAsync(10_000)
+    const z = watch(sessions, '/p/demo', {})
+    rollout(today(sessions), ID_B, '/p/demo', new Date(Date.now() + 50).toISOString(), 6)
+    await vi.advanceTimersByTimeAsync(600)
+    z.src.stop()
+    expect(z.claims.map((c) => c.id)).toEqual([ID_B])
+    expect(z.certainty).toEqual([true])
+  })
+
   it('new sessions in other folders or other realms, or ones already closed or with their claim made, leave a claim certain', async () => {
     vi.useFakeTimers()
     const sessions = realm()
