@@ -973,7 +973,7 @@ describe('the roots the carry is handed', () => {
     expect(readFileSync(out.dest!, 'utf8')).toBe(out.body)
   })
 
-  it('one realpath flavour on the whole path: the app\'s folder port and the carry both take real paths with realpathSync.native (fs.promises.realpath has its semantics), never the JavaScript realpathSync, which keeps an 8.3 name', () => {
+  it('one realpath flavour on the whole path: the app\'s folder port, the carry and the lookup\'s folder identity take real paths with realpathSync.native (fs.promises.realpath has its semantics), never the JavaScript realpathSync, which keeps an 8.3 name', () => {
     const index = readFileSync(resolve(__dirname, '../../../../src/main/providers/codex/index.ts'), 'utf8')
     const port = index.slice(index.indexOf('function realRealmFsPort'), index.indexOf('function testAuthPorts'))
     expect(port).toContain('realpath: (p) => fs.realpathSync.native(p)')
@@ -982,5 +982,9 @@ describe('the roots the carry is handed', () => {
     const carry = readFileSync(resolve(__dirname, '../../../../src/main/providers/codex/conversation-carry.ts'), 'utf8')
     expect(carry).toContain('realpathSync.native(')
     expect(carry).not.toMatch(/realpathSync\(/)
+    // The folder identity a pick and a resume compare (codexFolderIdentity).
+    const lookup = readFileSync(resolve(__dirname, '../../../../src/main/providers/codex/rollout-lookup.ts'), 'utf8')
+    expect(lookup).toContain('real: fs.realpathSync.native(dir)')
+    expect(lookup).not.toMatch(/realpathSync\(/)
   })
 })

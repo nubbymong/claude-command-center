@@ -809,7 +809,10 @@ that corner clear; W2, a declined switch goes back to a signed-out account and
 the Switch list gives a signed-out account no state, which parity settles
 unchanged (Claude's list shows a signed-out profile with no state, and a
 switch to it launches, the sign-in done inside the session); N1, a switch
-whose restart is refused now puts the pin back on the account the tab is on.
+whose restart is refused now puts the pin back on the account the tab is on;
+its limit: a decline that lands during the switch's own pin save
+(milliseconds, and the user must act inside them) can still be overwritten
+when that switch's restart is refused.
 CI at 1063e3d9 (the Windows and macOS test jobs): the two carry test files
 failed because a runner's temp folder is not at its canonical path (an 8.3
 short name on Windows, /var -> /private/var on macOS) and the carry refuses a
