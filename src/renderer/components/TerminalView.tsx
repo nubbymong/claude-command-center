@@ -1005,15 +1005,23 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
             if (replaced) { await runLaunchStep(resolvedProfileId, replaced.plan, replaced.step); return }
             const origin = switchOrigin(sessionId)
             forgetSwitchOrigin(sessionId)
-            if (!yes && origin) {
-              // P3.6 (VM finding V3): a Switch account whose launch was not
-              // confirmed takes the tab back to the account it came from, so
-              // a Restart starts it there (a Claude switch never asks).
-              void persistSessionProviderAccount(sessionId, origin.from)
+            if (!yes && origin && origin.to === plan.accountId) {
+              // P3.6 (VM finding V3; the owner's call pending, a Claude switch
+              // never asks): the Switch account whose launch this is, not
+              // confirmed, takes the tab back to the account it came from,
+              // when that account can still launch (active, not blocked, of
+              // this provider), else to the provider's default account; a
+              // Restart starts it there.
               const snap = useProviderAccountsStore.getState().snapshot
-              const back = sessionProviderAccount({ provider, providerAccountId: origin.from }, snap)
-              const backName = back ? accountDisplayName(snap, back) : 'the account it was on'
-              settleOwnStart('nothing-started', terminalNoteLine(`Not started: the launch was not confirmed, so the session is back on ${backName}. Restart the session to start it there.`))
+              const usable = origin.from === undefined || !!snap?.accounts.some((a) => a.id === origin.from && a.providerId === provider && a.lifecycle === 'active' && a.operationalState !== 'blocked')
+              const back = usable ? origin.from : undefined
+              void persistSessionProviderAccount(sessionId, back)
+              const shown = sessionProviderAccount({ provider, providerAccountId: back }, snap)
+              const shownName = shown ? accountDisplayName(snap, shown) : null
+              const line = usable
+                ? `Not started: the launch was not confirmed, so the session is back on ${shownName ?? 'the account it was on'}. Restart the session to start it there.`
+                : `Not started: the launch was not confirmed. The account the session was on can no longer be used, so it is on ${shownName ? `the default account, ${shownName},` : 'the default account'} now. Restart the session to start it there.`
+              settleOwnStart('nothing-started', terminalNoteLine(line))
               return
             }
             if (!yes) {
@@ -1765,9 +1773,9 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         </div>
       )}
       {switchNote && (
-        // P3.6 (VM findings V1 and V4): outside the terminal's buffer, as
-        // the new-account notice above is, so no clear-screen from the
-        // session removes it; muted text in the app's tested treatment
+        // P3.6 (VM findings V1 and V4): in the new-account notice's place
+        // above the terminal, outside its buffer, so no clear-screen from
+        // the session removes it; muted text in the app's tested treatment
         // (--text-muted on --surface-panel, token-contrast.test.ts).
         <div
           role="status"

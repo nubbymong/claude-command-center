@@ -31,6 +31,14 @@ vi.mock('../../../src/renderer/utils/resumePicker', () => ({
   shouldUseResumePicker: vi.fn(() => false),
 }))
 
+// Review F1: a restart the Multi Spawn rule refuses (useRestartSession's
+// refuseRestart), when a test sets one.
+const refusal = vi.hoisted(() => ({ next: undefined as string | undefined }))
+vi.mock('../../../src/renderer/hooks/useLaunchConfig', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/renderer/hooks/useLaunchConfig')>()),
+  restartLaunchRefusal: () => refusal.next,
+}))
+
 const saveMock = vi.fn(async () => true)
 const touched: string[] = []
 const fetchOneMock = vi.fn(async () => null)
@@ -49,7 +57,7 @@ const { useSwitchAccount } = await import('../../../src/renderer/hooks/useSwitch
 const { switchAccountItems, switchItemHint } = await import('../../../src/renderer/utils/switchAccountItems')
 const { canSwitchAccountForSession } = await import('../../../src/renderer/utils/sessionLaunch')
 const { carryNote, terminalNoteLine } = await import('../../../src/renderer/utils/launchNote')
-const { switchOrigin, forgetSwitchOrigin } = await import('../../../src/renderer/utils/switchOrigin')
+const { switchOrigin, noteSwitchOrigin, forgetSwitchOrigin } = await import('../../../src/renderer/utils/switchOrigin')
 const { default: SessionContextMenu } = await import('../../../src/renderer/components/sidebar/SessionContextMenu')
 const { snapshot, work, personal, local, old, parked, gone } = await import('./accounts-snapshot-harness')
 const { middleTruncateEmail } = await import('../../../src/shared/account-chip-color')
@@ -65,6 +73,7 @@ beforeEach(() => {
   useAccountProfilesStore.setState({ profiles: [] })
   killSessionPtyMock.mockReset(); markSessionForResumePickerMock.mockReset(); saveMock.mockClear(); fetchOneMock.mockClear()
   touched.length = 0
+  forgetSwitchOrigin('sess-x')
 })
 afterEach(() => { useProviderAccountsStore.setState({ snapshot: null, loaded: false }) })
 
@@ -148,7 +157,44 @@ describe('switching a Codex session\'s account', () => {
     expect(touched).toEqual([])
     expect(fetchOneMock).not.toHaveBeenCalled()
     // VM finding V3: where it came from, for a launch there that is declined.
-    expect(switchOrigin('sess-x')).toEqual({ from: work.id })
+    expect(switchOrigin('sess-x')).toEqual({ from: work.id, to: personal.id })
+    forgetSwitchOrigin('sess-x')
+  })
+
+  // Review F1: nothing is left to take a tab back later: a switch whose
+  // restart is refused moved nothing, and a closed tab keeps nothing.
+  it('a switch whose restart is refused leaves no origin, an earlier one included; a closed tab keeps none', async () => {
+    mount(codexSession())
+    noteSwitchOrigin('sess-x', parked.id, work.id)
+    refusal.next = 'Already running.'
+    try {
+      switchFn!('sess-x', personal.id)
+      await settle()
+    } finally {
+      refusal.next = undefined
+    }
+    expect(killSessionPtyMock).not.toHaveBeenCalled()
+    expect(switchOrigin('sess-x')).toBeNull()
+    switchFn!('sess-x', local.id)
+    await settle()
+    expect(switchOrigin('sess-x')).toEqual({ from: work.id, to: local.id })
+    useSessionStore.getState().removeSession('sess-x')
+    expect(switchOrigin('sess-x')).toBeNull()
+  })
+
+  // Review F3 (ADR-009 lens B): a second switch before the first one's launch
+  // is answered keeps the account the tab was really on.
+  it('a second switch before the first one\'s launch is answered keeps the first origin, with the new target', async () => {
+    mount(codexSession())
+    switchFn!('sess-x', local.id)
+    await settle()
+    expect(switchOrigin('sess-x')).toEqual({ from: work.id, to: local.id })
+    // The tab now shows the first switch's account; its launch is still asking.
+    act(() => { root.render(React.createElement(Harness, { session: codexSession({ providerAccountId: local.id }) })) })
+    switchFn!('sess-x', personal.id)
+    await settle()
+    expect(stored().providerAccountId).toBe(personal.id)
+    expect(switchOrigin('sess-x')).toEqual({ from: work.id, to: personal.id })
     forgetSwitchOrigin('sess-x')
   })
 

@@ -593,7 +593,11 @@ New conversation in the picker, started within seconds of each other, can
 still take each other's rollout until the exact claim from the SessionStart
 hook (P3.10); each then keeps the other's conversation, so a Restart or a
 relaunch resumes the swapped one. A picker session that resumes a
-conversation takes only that one, and so does a resume by id.
+conversation takes only that one, and so does a resume by id. Since P3.6
+(VM finding V2), a conversation a picker session resumes while another tab
+holds its rollout is kept for the session too (its rollout stays the
+holder's to read), so that session's plain Restart and a relaunch resume it,
+as they do any conversation the picker decided.
 A conversation switched inside the Codex TUI (its own resume or new) is not
 followed until P3.10. A file with a second hard name is accepted (a staged
 Sign in again links each carried file, and copies it where linking is
@@ -775,8 +779,11 @@ whole, the spawn answers main's reason and whether the launch resumed it from
 a copy already there, and the tab says so once, above its terminal and
 outside its buffer, in the app's muted text, until dismissed, in words true
 for that (`utils/launchNote.ts`, with the app's spoofing-character rule; VM
-findings V1 and V4). A Switch whose launch then asks for confirmation and is
-declined takes the tab back to the account it came from (VM finding V3).
+findings V1 and V4). Default pending the owner's decision (VM finding V3; a
+Claude switch never asks at launch, so parity cannot settle it): a Switch
+whose launch then asks for confirmation and is declined takes the tab back
+to the account it came from, or to the default account when that one can no
+longer launch, and says which.
 No usage read is started for the pick (ADR-022). A second pick is ignored
 while the first is still being saved; once its restart begins, a pick is a
 switch of its own. What's New's line and the accounts page show with Claude Code off,
@@ -794,11 +801,13 @@ went its own way there is left as it is, the session carrying on from it and
 the note saying so.
 Done: the ADR-009 pass (the copy, the leases, the respawn's carry in pty:spawn,
 the pty-manager record; independent attacker sub-agents, bounded rounds: pass 1 at cf8f42d4 FINDINGS (one major, the cross-tab claim), fixed in 62cf7d8b and 31da7fb1; pass 2 at 31da7fb1 PASS; the cleanup at 78f2fcec confirmed by both lenses); the independent spec and quality reviews,
-PASS at 78f2fcec; the VM walk at 1063e3d9 (WINDOWS_1, MOCKED: fake CLI, fictional accounts; e2e 81/81): main's switch logic passed every case, and its findings are fixed: V1, the note was written into the terminal and the new session's first frame on Windows (ConPTY's) cleared it, so it is now shown above the terminal, outside its buffer, until dismissed, as the new-account notice is; V2, a tab that picked a conversation another tab holds on the same account was never recorded on it, so its Switch started a new conversation silently, and it is now recorded (the rollout stays the holder's to read), so its Switch refuses it as in use and says so; V3, Cancel on the confirm-at-launch question after a Switch left the tab on the new account, and it now takes the tab back to the account it came from (a Claude switch never asks at launch); V4, the note is the app's muted text, which the token-contrast tests hold in both themes; V5, the claude.ai items in a Codex tab's right-click menu, predates P3.6 (#216) and is P4.6's (row 58, the per-account web session).
-Owed: the VM re-check of V1 to V4; the owner's review of the screenshots (the
-strip pill and its menu, the right-click menu, the sidebar card's Codex line,
-the chips' colours, the note, and the reworded What's New and accounts pages,
-both themes); the owner's real-account resume (the server half of P3.1 answer
+PASS at 78f2fcec; the VM walk at 1063e3d9 (WINDOWS_1, MOCKED: fake CLI, fictional accounts; e2e 81/81): main's switch logic passed every case, and its findings are fixed: V1, the note was written into the terminal and the new session's first frame on Windows (ConPTY's) cleared it, so it is now shown in the new-account notice's place above the terminal, outside its buffer, until dismissed; V2, a tab that picked a conversation another tab holds on the same account was never recorded on it, so its Switch started a new conversation silently, and it is now recorded (the rollout stays the holder's to read), so its Switch refuses it as in use and says so; V3, Cancel on the confirm-at-launch question after a Switch left the tab on the new account; a Claude switch never asks at launch, so this is the owner's call, and the default pending that decision takes the tab back to the account it came from (or to the default account when that one can no longer launch); V4, the note is the app's muted text, which the token-contrast tests hold in both themes; V5, the claude.ai items in a Codex tab's right-click menu, predates P3.6 (#216) and is P4.6's (row 58, the per-account web session).
+Owed: the owner's decision on V3 (restore the previous account on a declined
+confirm, the default until then); the VM re-check of V1 to V4; the owner's
+review of the screenshots (the strip pill and its menu, the right-click menu,
+the sidebar card's Codex line, the chips' colours, the note, a declined
+confirm after a Switch, and the reworded What's New and accounts pages, both
+themes); the owner's real-account resume (the server half of P3.1 answer
 1: whether OpenAI accepts a conversation resumed under another account; a
 second signed-in account, row 15's disposable identities) and the real-CLI
 walk of the switch with Codex 0.153.4 and 0.155.1 (managed to managed, from
@@ -964,7 +973,11 @@ Notes that bind the build:
 - **P4.6.** WP1 design principle 4 says the app does not copy credentials.
   Claude's SSO path copies claude.ai cookies from a browser the app launches,
   so P4.6 builds the in-app sign-in window only; the cookie path goes to the
-  owner only if a Codex account turns out to need it.
+  owner only if a Codex account turns out to need it. A Codex tab's
+  right-click menu still offers Claude's "Authenticate claude.ai..." and
+  "Open artifacts" (they predate P3.6, #216: the menu falls back to the
+  primary Claude profile; P3.6 VM finding V5): P4.6 gives a Codex tab its
+  own web-session item, and the artifacts record decides the other.
 
 ## 10. Unresolved UX decisions
 
