@@ -32,12 +32,22 @@
 //      to the undated entry by prefix; the CLI accepts both). Missing = FAIL,
 //      printed as a diff. A registry Claude model the article no longer lists
 //      is a WARNING (flagged, not fatal): the owner decides whether it retired.
+//   3. CODEX MODELS  (P3.8, row 39) Every id in the list the supported Codex
+//      CLI offers in its own model picker (resources/codex-model-catalogue.json,
+//      read from the CLI's bundled catalogue; the file says how) must be a
+//      pickable model of the registry's codex family, by exact id (Codex ids
+//      carry no date suffix). The Sentinel Codex model check runs the same
+//      comparison over the same file (evaluateCodexModelCoverage in
+//      src/shared/model-registry.ts); tests/unit/model-coverage-parity.test.ts
+//      holds the two to identical verdicts. Missing = FAIL, printed as a diff;
+//      a pickable Codex model the list no longer names = WARNING; an empty or
+//      missing list fails closed.
 //
 // Usage
 //   node scripts/release-gate.mjs                      # version from package.json
 //   node scripts/release-gate.mjs --version 2.1.0-beta.17
 //   node scripts/release-gate.mjs --repo owner/name    # default: $GITHUB_REPOSITORY, else package.json repository, else the origin remote
-//   node scripts/release-gate.mjs --registry <path> --expected <path>
+//   node scripts/release-gate.mjs --registry <path> --expected <path> --codex-expected <path>
 //
 // Auth: GITHUB_TOKEN or GH_TOKEN (read access is enough), else `gh auth token`.
 //
@@ -78,6 +88,12 @@ export const DEFAULT_REGISTRY_PATH = path.join(ROOT, 'resources', 'model-registr
 // Lives under resources/ (not scripts/fixtures/) so the packaged app can read
 // the SAME snapshot: the Sentinel model check imports it at runtime (#385).
 export const DEFAULT_EXPECTED_PATH = path.join(ROOT, 'resources', 'claude-code-model-configuration.json')
+// The Codex half's list (P3.8, row 39); the Sentinel Codex model check imports
+// the same file.
+export const DEFAULT_CODEX_EXPECTED_PATH = path.join(ROOT, 'resources', 'codex-model-catalogue.json')
+/** The registry family whose models Codex sessions run (familyProvider in
+ *  src/shared/model-registry.ts). */
+export const CODEX_FAMILY = 'codex'
 
 // ── pure helpers (unit-tested) ──────────────────────────────────────
 
@@ -189,8 +205,54 @@ export function evaluateModels({ registry, expected }) {
   }
 }
 
-/** Render both verdicts as the lines the gate prints. */
-export function formatReport({ version, repo, milestoneResult, modelsResult, expectedMeta }) {
+/**
+ * The Codex half's verdict (P3.8, row 39): the registry's pickable codex-family
+ * models against the list the supported Codex CLI offers. A copy of
+ * evaluateCodexModelCoverage in src/shared/model-registry.ts (this script runs
+ * before `npm ci` and cannot import it); tests/unit/model-coverage-parity.test.ts
+ * holds the two to identical verdicts.
+ *
+ * @param {object} input
+ * @param {{models:Array<{id:string,family?:string,label?:string,pickable?:boolean,provenance?:object}>}} input.registry
+ * @param {{models:Array<{id:string,label?:string}>,cliVersions?:string[],fetchedAt?:string}|null|undefined} input.expected
+ * @returns {{ ok: boolean, reason: string|null, missing: Array<{id:string,label?:string}>, extra: Array<{id:string,label?:string}>, covered: Array<{id:string,by:string}> }}
+ */
+export function evaluateCodexModels({ registry, expected }) {
+  const usable = (m) => !!m && typeof m.id === 'string' && m.id.length > 0
+  const codexModels = ((registry && registry.models) || [])
+    .filter((m) => usable(m) && m.family === CODEX_FAMILY && m.pickable !== false)
+  const expectedModels = ((expected && expected.models) || []).filter(usable)
+  // Fail closed, as the Claude half: a list with nothing in it must not pass.
+  if (expectedModels.length === 0) {
+    return {
+      ok: false,
+      reason: 'the expected Codex models list is empty or missing, so the registry cannot be verified (fail closed)',
+      missing: [], extra: [], covered: [],
+    }
+  }
+  const missing = []
+  const covered = []
+  for (const exp of expectedModels) {
+    const hit = codexModels.find((m) => m.id === exp.id)
+    if (hit) covered.push({ id: exp.id, by: hit.id })
+    else missing.push({ id: exp.id, label: exp.label })
+  }
+  // A pickable Codex model the list no longer names -- flagged, not fatal.
+  // Overlay entries (they carry `provenance`) are never flagged: a model the
+  // overlay just added is necessarily absent from a list read before it.
+  const listed = new Set(expectedModels.map((m) => m.id))
+  const extra = codexModels
+    .filter((m) => !listed.has(m.id) && !m.provenance)
+    .map((m) => ({ id: m.id, label: m.label }))
+  return {
+    ok: missing.length === 0,
+    reason: missing.length === 0 ? null : `${missing.length} model(s) the Codex CLI lists are not in the registry`,
+    missing, extra, covered,
+  }
+}
+
+/** Render the verdicts as the lines the gate prints. */
+export function formatReport({ version, repo, milestoneResult, modelsResult, expectedMeta, codexResult, codexMeta }) {
   const out = []
   out.push(`Release gate for v${version}${repo ? ` (${repo})` : ''}`)
   out.push('')
@@ -223,6 +285,22 @@ export function formatReport({ version, repo, milestoneResult, modelsResult, exp
       out.push('          if the article changed — that file says how.')
     }
     for (const m of r.extra) out.push(`  WARN  ${m.id}${m.label ? ` (${m.label})` : ''} is in the registry but the article no longer lists it — retired? (not fatal)`)
+  }
+  // -- Codex models (P3.8, row 39)
+  if (codexResult) {
+    const r = codexResult
+    const versions = codexMeta && Array.isArray(codexMeta.cliVersions) && codexMeta.cliVersions.length
+      ? ` Codex ${codexMeta.cliVersions.join(' and ')}` : ' the Codex CLI'
+    const at = codexMeta && codexMeta.fetchedAt ? ` (list read ${codexMeta.fetchedAt})` : ''
+    if (r.ok) out.push(`  OK    Codex models: the registry covers all ${r.covered.length} models${versions} lists${at}`)
+    else {
+      out.push(`  FAIL  Codex models: ${r.reason}${at}`)
+      for (const m of r.missing) out.push(`          - ${m.id}${m.label ? `  (${m.label})` : ''}   the Codex list names it, resources/model-registry.json has no pickable codex-family entry for it`)
+      out.push('          Add the missing entries to resources/model-registry.json `models` (family "codex", with the model\'s')
+      out.push('          reasoning levels as `efforts`) or refresh resources/codex-model-catalogue.json if the CLI changed;')
+      out.push('          that file says how.')
+    }
+    for (const m of r.extra) out.push(`  WARN  ${m.id}${m.label ? ` (${m.label})` : ''} is a Codex model in the registry but the Codex list no longer names it: retired? (not fatal)`)
   }
   return out
 }
@@ -272,11 +350,13 @@ export function repoFromGitRemote(runGit = (args) => execFileSync('git', args, {
 // ── the gate ────────────────────────────────────────────────────────
 
 /**
- * Run both checks. Everything external is injectable so the verdict logic is
+ * Run the checks. Everything external is injectable so the verdict logic is
  * testable with no network: `listAll(path)` must return the parsed JSON array
- * for a GitHub REST list endpoint.
+ * for a GitHub REST list endpoint. `codexExpected` is the Codex half's list
+ * (resources/codex-model-catalogue.json); a caller that leaves it out is
+ * refused, as an empty list is (fail closed).
  *
- * @returns {Promise<{ exitCode: number, lines: string[], milestoneResult: object|null, modelsResult: object|null }>}
+ * @returns {Promise<{ exitCode: number, lines: string[], milestoneResult: object|null, modelsResult: object|null, codexResult: object|null }>}
  */
 export async function runGate({
   version,
@@ -284,11 +364,13 @@ export async function runGate({
   listAll,
   registry,
   expected,
+  codexExpected,
   log = (s) => console.log(s),
 } = {}) {
   const lines = []
   let milestoneResult = null
   let modelsResult = null
+  let codexResult = null
   let cannotEvaluate = null
 
   if (!version) cannotEvaluate = 'no version given and none readable from package.json'
@@ -308,6 +390,7 @@ export async function runGate({
   if (!cannotEvaluate) {
     try {
       modelsResult = evaluateModels({ registry, expected })
+      codexResult = evaluateCodexModels({ registry, expected: codexExpected })
     } catch (err) {
       cannotEvaluate = `could not evaluate the model registry: ${err && err.message ? err.message : err}`
     }
@@ -317,15 +400,15 @@ export async function runGate({
     lines.push(`Release gate for v${version || '?'}: CANNOT EVALUATE — ${cannotEvaluate}`)
     lines.push('An unevaluated gate is a refused gate. Fix the cause and re-run.')
     for (const l of lines) log(l)
-    return { exitCode: EXIT_CANNOT_EVALUATE, lines, milestoneResult, modelsResult }
+    return { exitCode: EXIT_CANNOT_EVALUATE, lines, milestoneResult, modelsResult, codexResult }
   }
 
-  lines.push(...formatReport({ version, repo, milestoneResult, modelsResult, expectedMeta: expected }))
-  const ok = milestoneResult.ok && modelsResult.ok
+  lines.push(...formatReport({ version, repo, milestoneResult, modelsResult, expectedMeta: expected, codexResult, codexMeta: codexExpected }))
+  const ok = milestoneResult.ok && modelsResult.ok && codexResult.ok
   lines.push('')
   lines.push(ok ? `PASS  v${version} may be cut.` : `REFUSED  v${version} must not be cut until the FAIL lines above are cleared.`)
   for (const l of lines) log(l)
-  return { exitCode: ok ? EXIT_OK : EXIT_REFUSED, lines, milestoneResult, modelsResult }
+  return { exitCode: ok ? EXIT_OK : EXIT_REFUSED, lines, milestoneResult, modelsResult, codexResult }
 }
 
 // ── CLI ─────────────────────────────────────────────────────────────
@@ -343,11 +426,13 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   const repo = argValue(argv, '--repo') || env.GITHUB_REPOSITORY || repoFromPackageJson(pkg) || repoFromGitRemote()
   const registryPath = argValue(argv, '--registry') || DEFAULT_REGISTRY_PATH
   const expectedPath = argValue(argv, '--expected') || DEFAULT_EXPECTED_PATH
+  const codexExpectedPath = argValue(argv, '--codex-expected') || DEFAULT_CODEX_EXPECTED_PATH
 
-  let registry, expected
+  let registry, expected, codexExpected
   try {
     registry = readJson(registryPath)
     expected = readJson(expectedPath)
+    codexExpected = readJson(codexExpectedPath)
   } catch (err) {
     console.error(`Release gate: CANNOT EVALUATE — ${err.message}`)
     return EXIT_CANNOT_EVALUATE
@@ -356,7 +441,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   const token = resolveToken(env)
   if (!token) console.error('Release gate: no GITHUB_TOKEN/GH_TOKEN and `gh auth token` gave nothing — trying unauthenticated (public repo, rate-limited)')
   const listAll = (p) => githubListAll(p, { token })
-  const { exitCode } = await runGate({ version, repo, listAll, registry, expected })
+  const { exitCode } = await runGate({ version, repo, listAll, registry, expected, codexExpected })
   return exitCode
 }
 

@@ -10,10 +10,15 @@
     "resources/model-registry.json must carry every id here as a pickable model of the codex family, with that",
     "model's supported_reasoning_levels as its `efforts`; tests/unit/codex-model-registry.test.ts pins it.",
     "Read by src/main/sentinel/sentinel-models.ts, which reports a model listed here that the registry lacks, and a",
-    "Codex model the registry offers that this list no longer names. Sentinel reports a stale snapshot after 90 days."
+    "Codex model the registry offers that this list no longer names. Sentinel reports a stale snapshot after 90 days.",
+    "The list is the union over the supported CLI versions (cliVersions): a model stays while a supported version lists it.",
+    "gpt-5.2 is listed by 0.153.4 only; 0.155.1 no longer lists it (it still accepts `-m gpt-5.2` at launch). It is kept",
+    "while 0.153.4 is supported; whether to drop it is the owner's call (completion plan section 10). P3.9's live read",
+    "(`codex debug models`, no sign-in, no network) resolves the list per installed version.",
+    "Also checked by the release gate (scripts/release-gate.mjs, check 3) over this same file."
   ],
   "source": "the model catalogue bundled with the Codex CLI",
-  "cliVersions": ["0.153.4"],
+  "cliVersions": ["0.153.4", "0.155.1"],
   "fetchedAt": "2026-09-29",
   "models": [
     { "label": "GPT-6-Astra", "id": "gpt-6-astra" },
@@ -21,6 +26,6 @@
     { "label": "GPT-5.6-Terra", "id": "gpt-5.6-terra" },
     { "label": "GPT-5.6-Luna", "id": "gpt-5.6-luna" },
     { "label": "GPT-5.5", "id": "gpt-5.5" },
-    { "label": "GPT-5.2", "id": "gpt-5.2" }
+    { "label": "GPT-5.2", "id": "gpt-5.2", "cliVersions": ["0.153.4"] }
   ]
 }

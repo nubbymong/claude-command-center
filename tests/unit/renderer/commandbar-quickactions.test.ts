@@ -189,7 +189,9 @@ describe('CommandBar session controls and chip look', () => {
   })
 
   it('keeps the Codex inline dropdowns for a codex session', () => {
-    mockSessions = [mkCodex()]
+    // P3.8 round 1 (L1): the model select is a stopped session's (applied at
+    // the next start); a live one's pill opens Codex's own picker.
+    mockSessions = [{ ...mkCodex(), ptyExited: true }]
     mockActiveSessionId = 's-1'
     renderBar(root)
     const text = container.textContent ?? ''

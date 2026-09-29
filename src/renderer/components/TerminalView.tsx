@@ -42,6 +42,8 @@ import { decideFollow } from '../utils/terminalScroll'
 import { getTerminalTheme } from './terminal/terminalTheme'
 import { installTerminalKeybindings } from './terminal/terminalKeybindings'
 import { registerRepainter, requestResync } from './terminal/repaintRegistry'
+import { registerScreenReader, readXtermScreen } from './terminal/screenRegistry'
+import { typeWhenCodexComposerReady, CODEX_PLAN_MODE_WAIT_MS } from '../lib/codexComposer'
 import { createGeometryResync, type GeometryResync } from './terminal/geometryResync'
 import { createTmuxWheelScroll, registerTmuxWheelScroll, type TmuxWheelScroll } from './terminal/tmuxWheelScroll'
 import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS, gpuRenderingEnabled } from '../stores/settingsStore'
@@ -524,6 +526,10 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     let repainter: StaleGlyphRepainter | null = null
     /** Undo the #379 fix-E registration; see registerRepainter below. */
     let unregisterRepainter: (() => void) | null = null
+    /** P3.8 round 1: undo the screen reader registration (screenRegistry). */
+    let unregisterScreen: (() => void) | null = null
+    /** P3.8 round 1 (L2): a Plan mode launch's wait for the ready composer. */
+    let planModeWait: { cancel: () => void } | null = null
     let lastWheelAt = Number.NEGATIVE_INFINITY
 
     // PTY-integrity instrumentation (scoped to this session's mount; resets on
@@ -837,6 +843,9 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         settleStrong: (quietMs, intervalMs) => repainter?.settleStrong(quietMs, intervalMs),
         resync: () => { geometryResync?.fire() },
       })
+      // P3.8 round 1: the live screen, for the gate a Codex command (/compact,
+      // /model, /plan) is typed behind (lib/codexComposer.ts).
+      unregisterScreen = registerScreenReader(sessionId, () => (term ? readXtermScreen(term) : null))
 
       // #119: cursor options passed to the Terminal constructor do NOT reliably
       // initialize the WebGL renderer's cursor layer — the caret stays absent
@@ -1120,6 +1129,18 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
                 // run's, and is dropped. Main starting nothing (a preparation
                 // closed or swept meanwhile) ends the start here instead.
                 if (!nothingStarted) markLive()
+                // P3.8 round 1 (L2): Plan mode, Claude's launch option. Codex has
+                // no launch flag for it, so its own /plan is typed once its
+                // composer is ready (never into the folder-trust prompt, a
+                // picker or the user's typing), within a bounded wait; a note
+                // above the terminal says so if it never is.
+                if (!nothingStarted && provider === 'codex' && !shellOnly && codexOptions?.permissionsPreset === 'plan') {
+                  planModeWait?.cancel()
+                  planModeWait = typeWhenCodexComposerReady(sessionId, '/plan', {
+                    timeoutMs: CODEX_PLAN_MODE_WAIT_MS,
+                    onGiveUp: (note) => { if (!disposed) setSwitchNote(terminalNoteLine(note)) },
+                  })
+                }
                 settleOwnStart(nothingStarted ? 'nothing-started' : 'started', endText)
               }, (err: unknown) => {
                 // BUG-2: spawn was fire-and-forget, so a main-process throw (e.g.
@@ -1690,6 +1711,8 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // a copy-mode belief left over from this one must not survive the swap.
       tmuxWheelRef.current.reset()
       unregisterRepainter?.()
+      unregisterScreen?.()
+      planModeWait?.cancel()
       geometryResync?.dispose()
       repainter?.dispose()
       if (repainterRef.current === repainter) repainterRef.current = null

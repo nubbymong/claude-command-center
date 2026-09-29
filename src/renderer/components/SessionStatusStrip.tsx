@@ -30,6 +30,7 @@ import { resolvePickedModelId } from '../../shared/model-registry'
 import { useRegistryStore } from '../stores/registryStore'
 import AiUsageChip from './github/AiUsageChip'
 import { writeSessionInput } from './terminal/tmuxWheelScroll'
+import { typeIntoCodexComposer, type CodexTyping } from '../lib/codexComposer'
 
 interface SessionStatusStripProps {
   /** The PTY/session id for THIS terminal. Telemetry is read for this
@@ -57,14 +58,9 @@ const CONTROL_PILL =
 // [] each render (which would trip the re-render cascade guard).
 const EMPTY_HIDDEN: string[] = []
 
-/**
- * P3.8 (row 61): how long after typing a Codex command its Enter follows.
- * Codex's composer takes a burst of typed characters ending in Enter as a
- * paste (the CLI's paste-burst handling, `disable_paste_burst` in its config),
- * which turns the Enter into a newline instead of a submit; typed apart, once
- * the burst is over, it submits.
- */
-export const CODEX_SUBMIT_DELAY_MS = 300
+/** How long the strip's note says why a Codex command was not sent (P3.8
+ *  round 1, C1). */
+export const CODEX_NOTE_MS = 6000
 
 // SessionStatusStrip (v2 shell, UAT R2): the per-session telemetry + controls
 // band. Lives directly above the command rows, under the terminal -- the old
@@ -158,32 +154,34 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   const write = (cmd: string) => {
     writeSessionInput(sessionId, cmd)
   }
-  // P3.8 (row 61): a Codex command's Enter, pending for CODEX_SUBMIT_DELAY_MS.
-  // It goes only to the run it was typed into: the strip going away (a Restart
-  // remounts it, the tab closing unmounts it) cancels it, and it is checked
-  // against the run (createdAt, which a Restart bumps) and the run's end at
-  // the time it fires, so it can never answer the next run's first prompt.
-  const pendingSubmit = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const liveSession = useRef(session)
-  liveSession.current = session
+  // P3.8 round 1 (row 61; C1, C2, C3): Compact on a Codex session types
+  // Codex's own /compact only into its ready, empty composer, and presses
+  // Enter only in the same run once the composer holds exactly /compact
+  // (lib/codexComposer.ts, from the VM probe's screens); otherwise it types
+  // nothing and says why. App renders one strip, re-pointed at whichever tab
+  // is shown: a press's pending Enter belongs to the session it was pressed
+  // on, and is dropped when the strip is re-pointed or goes away.
+  const pendingCodexCommand = useRef<CodexTyping | null>(null)
+  const [codexNote, setCodexNote] = useState<string | null>(null)
   useEffect(() => () => {
-    if (pendingSubmit.current) clearTimeout(pendingSubmit.current)
-    pendingSubmit.current = null
-  }, [])
-  const writeCodexCommand = (cmd: '/compact') => {
-    if (pendingSubmit.current || !session) return
-    const run = session.createdAt
-    write(cmd)
-    pendingSubmit.current = setTimeout(() => {
-      pendingSubmit.current = null
-      const s = liveSession.current
-      if (!s || s.createdAt !== run || s.ptyExited) return
-      write('\r')
-    }, CODEX_SUBMIT_DELAY_MS)
-  }
+    pendingCodexCommand.current?.cancel()
+    pendingCodexCommand.current = null
+    setCodexNote(null)
+  }, [sessionId])
+  useEffect(() => {
+    if (!codexNote) return
+    const t = setTimeout(() => setCodexNote(null), CODEX_NOTE_MS)
+    return () => clearTimeout(t)
+  }, [codexNote])
   const onCompact = () => {
-    if (isClaude) write('/compact\n')
-    else writeCodexCommand('/compact')
+    if (isClaude) { write('/compact\n'); return }
+    const typing = typeIntoCodexComposer(sessionId, '/compact')
+    if (typing.typed) {
+      pendingCodexCommand.current = typing
+      setCodexNote(null)
+    } else {
+      setCodexNote(typing.reason ?? null)
+    }
   }
   const onModel = (si: number, v: string) => {
     // These values are written straight into a live PTY as a slash-command
@@ -592,6 +590,13 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
               />
             )}
           </div>)}
+          {/* Why a Codex command was not sent (not at its prompt, busy, or text
+              already typed there): said here for a moment, never typed. */}
+          {codexNote && (
+            <span role="status" className="text-xs truncate max-w-[22rem]" style={{ color: 'var(--text-muted)' }} data-testid="codex-command-note">
+              {codexNote}
+            </span>
+          )}
           <button
             onClick={onCompact}
             className={CONTROL_PILL}

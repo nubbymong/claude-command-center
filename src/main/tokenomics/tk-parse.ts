@@ -1,12 +1,32 @@
 import type { TkEvent } from './tk-types'
 
+/** A price-key list's lookup index: a Set for the exact hits, and each
+ *  model's answer remembered (P3.8 round 1, Q2). Built once per list: the
+ *  worker hands the same array until the prices change. */
+interface PriceKeyIndex { exact: Set<string>; memo: Map<string, string> }
+const priceKeyIndexes = new WeakMap<string[], PriceKeyIndex>()
+/** Remembered answers per list, at most: a bound, not a working limit. */
+const PRICE_MEMO_MAX = 10_000
+
+/** A Claude model's price key: its own id when priced, else the longest
+ *  price key it starts with (a dated id takes its undated entry), else
+ *  itself (no price). */
 function toPriceModel(model: string, priceKeys: string[]): string {
-  if (priceKeys.includes(model)) return model
+  let index = priceKeyIndexes.get(priceKeys)
+  if (!index) {
+    index = { exact: new Set(priceKeys), memo: new Map() }
+    priceKeyIndexes.set(priceKeys, index)
+  }
+  if (index.exact.has(model)) return model
+  const known = index.memo.get(model)
+  if (known !== undefined) return known
   let best = ''
   for (const k of priceKeys) {
     if (model.startsWith(k) && k.length > best.length) best = k
   }
-  return best || model
+  const answer = best || model
+  if (index.memo.size < PRICE_MEMO_MAX) index.memo.set(model, answer)
+  return answer
 }
 
 export function extractCwdFromLine(line: string): string | null {
@@ -52,7 +72,9 @@ export function parseClaudeUsageLine(line: string, priceKeys: string[]): TkEvent
  *  it does produce as 'unknown', which matches no pricing row and costs $0. */
 export interface CodexRolloutSeed { sessionId?: string; cwd?: string; model?: string }
 
-export function codexEventsFromRollout(text: string, priceKeys: string[], startOrdinal: number, seed?: CodexRolloutSeed): TkEvent[] {
+/** `_priceKeys` is kept for callers: a Codex turn is priced by its model's
+ *  own id (P3.8 round 1), so no key list decides it. */
+export function codexEventsFromRollout(text: string, _priceKeys: string[], startOrdinal: number, seed?: CodexRolloutSeed): TkEvent[] {
   const lines = text.split('\n').filter(Boolean)
   // Anything the file itself states overrides the seed: the seed is only a
   // stand-in for header lines this slice of the file cannot see.
@@ -130,7 +152,10 @@ export function codexEventsFromRollout(text: string, priceKeys: string[], startO
       sessionId,
       provider: 'codex',
       model: turnModel,
-      priceModel: toPriceModel(turnModel, priceKeys),
+      // P3.8 round 1 (M1): priced by its own id, exactly as the session strip
+      // prices it (providers/codex/pricing.ts): a model no price names has no
+      // price, never a shorter key's.
+      priceModel: turnModel,
       ts,
       cwd,
       inTok: t.inNonCached,

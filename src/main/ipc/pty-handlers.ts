@@ -24,6 +24,8 @@ import { detachedDestinationAgrees, type SshDestinationSource } from '../../shar
 import { readDetachedRemotesRegistry } from '../session-state'
 import { pingHost } from '../host-ping'
 import { noteSessionSpawnForCanvas } from '../canvas/canvas-session-link'
+import { getRegistry } from '../model-registry-service'
+import { codexEffortRuns } from '../../shared/model-registry'
 import {
   sanitizeRestoredSpawnOptions,
   PERMISSION_MODES,
@@ -33,6 +35,7 @@ import {
   CODEX_MODEL_MAX,
   CODEX_MODEL_RE,
   CODEX_EFFORTS,
+  CODEX_PRESETS,
 } from '../sanitize-restored-spawn-options'
 
 /** SSH options as received from the renderer (no passwords — only configId) */
@@ -415,7 +418,9 @@ export const spawnOptionsSchema = z.object({
     // An allowlist, never a free string: it becomes `-c model_reasoning_effort=<value>`.
     // The list lives with the sanitizer, which drops exactly what this rejects (P3.8).
     reasoningEffort: z.enum(CODEX_EFFORTS).optional(),
-    permissionsPreset: z.enum(['read-only', 'standard', 'auto', 'unrestricted']),
+    // P3.8 round 1 (L2): 'plan' launches as 'standard' does, then types Codex's
+    // own /plan once its composer is ready (renderer, lib/codexComposer.ts).
+    permissionsPreset: z.enum(CODEX_PRESETS),
   }).optional(),
   // WP2 (plan A10): the Codex account the session runs under -- an opaque
   // registry id, validated by the accounts service. Absent = the provider
@@ -673,7 +678,7 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     codexOptions?: {
       model?: string
       reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
-      permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
+      permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted' | 'plan'
     }
     providerAccountId?: string
     acknowledgeRealmOnly?: boolean
@@ -690,6 +695,15 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
       spawnOptionsSchema.parse(options)
     } catch (err) {
       throw new Error(`Invalid parameters: ${err instanceof Error ? err.message : String(err)}`)
+    }
+    // P3.8 round 1 (J2): a Codex session starts on an effort its model runs.
+    // A saved config launched from the list skips the dialog that drops one
+    // it cannot run, so the launch drops it too: the model's own default then
+    // applies. Only ever removes (the value was allowlisted above).
+    if (options?.provider === 'codex' && options.codexOptions?.reasoningEffort
+        && !codexEffortRuns(getRegistry(), options.codexOptions.model, options.codexOptions.reasoningEffort)) {
+      logInfo(`[pty] ${sessionId}: the Codex effort is not one its model runs; starting on the model default`)
+      options = { ...options, codexOptions: { ...options.codexOptions, reasoningEffort: undefined } }
     }
 
     const win = getWindow()

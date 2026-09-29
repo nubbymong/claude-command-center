@@ -6,7 +6,7 @@ import { useResolvedTheme } from '../hooks/useThemeController'
 import { useRegistryStore } from '../stores/registryStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { modelGroupsFromRegistry, effortsForModel, PERMISSION_MODES } from '../lib/claude-cli-options'
-import { codexEffortSupported } from '../codex-models'
+import { codexEffortSupported, codexNewConfigModel } from '../codex-models'
 import { trackUsage } from '../stores/tipsStore'
 import { generateId } from '../utils/id'
 import { resolveAllowMultiSpawnOnSave } from '../utils/multiSpawn'
@@ -239,10 +239,13 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
   // P3.8 (rows 39, 40), as Claude's above: an edit reopens what is stored ('' =
   // Default, no flag) rather than rewriting it to the new-config values, and a
   // saved effort its model cannot run is dropped on load (and again on save).
-  const initialCodexModel = initial ? (initial.codexOptions?.model ?? '') : 'gpt-5.5'
+  // A new config starts as a new Claude config does (P3.8 round 1, J1): on
+  // the first model of the list (Claude's starts on its newest Opus) at
+  // Default effort.
+  const initialCodexModel = initial ? (initial.codexOptions?.model ?? '') : codexNewConfigModel(registry)
   const [codexModel, setCodexModel] = useState(initialCodexModel)
   const [codexEffort, setCodexEffort] = useState<NonNullable<CodexOptions['reasoningEffort']> | ''>(() => {
-    const saved = initial ? (initial.codexOptions?.reasoningEffort ?? '') : 'medium'
+    const saved = initial ? (initial.codexOptions?.reasoningEffort ?? '') : ''
     return codexEffortSupported(registry, initialCodexModel, saved) ? saved : ''
   })
   const [codexPreset, setCodexPreset] = useState<CodexOptions['permissionsPreset']>(initial?.codexOptions?.permissionsPreset ?? 'standard')

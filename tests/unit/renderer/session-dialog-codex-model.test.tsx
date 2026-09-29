@@ -94,14 +94,29 @@ const edit = (codexOptions: Record<string, unknown>) =>
   render({ initial: { id: 'c1', provider: 'codex', sessionType: 'local', label: 'x', workingDirectory: 'C:\\proj', color: '', codexOptions } })
 
 describe("the Codex model list is the registry's catalogue (row 39)", () => {
-  it('offers Default and the Codex CLI catalogue, a new config starting on gpt-5.5 at medium as before', () => {
+  // P3.8 round 1 (J1): a new config starts as a new Claude config does: on the
+  // first model of the list (Claude's is its newest Opus) at Default effort.
+  it('offers Default and the Codex CLI catalogue; a new config starts on the first model at Default effort, as a new Claude config does', () => {
     const onConfirm = newCodexConfig()
     expect(options(modelSel()).map((o) => o.value)).toEqual(['', 'gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.2'])
     expect(options(modelSel())[0].text).toBe('Default: follows Codex')
-    expect(modelSel().value).toBe('gpt-5.5')
-    expect(effortSel().value).toBe('medium')
+    expect(modelSel().value).toBe('gpt-6-astra')
+    expect(effortSel().value).toBe('')
     submit()
-    expect(saved(onConfirm)).toEqual({ model: 'gpt-5.5', reasoningEffort: 'medium', permissionsPreset: 'standard' })
+    expect(saved(onConfirm)).toEqual({ model: 'gpt-6-astra', reasoningEffort: undefined, permissionsPreset: 'standard' })
+  })
+
+  // P3.8 round 1 (L2): Plan mode is one of the permissions choices, as it is
+  // Claude's permission mode; it launches as Standard, then types /plan.
+  it('offers Plan mode among the permissions, and saves it', () => {
+    const onConfirm = newCodexConfig()
+    const radios = Array.from(container.querySelectorAll('input[name="codex-permissions"]')) as HTMLInputElement[]
+    const title = (i: HTMLInputElement) => i.closest('label')!.querySelector('.text-sm')!.textContent
+    expect(radios.map(title)).toEqual(['Read-only', 'Standard', 'Plan mode', 'Auto', 'Unrestricted'])
+    const plan = radios.find((i) => title(i) === 'Plan mode')!
+    act(() => { plan.click() })
+    submit()
+    expect(saved(onConfirm).permissionsPreset).toBe('plan')
   })
 
   it('Default saves no model, so Codex chooses', () => {
@@ -115,6 +130,7 @@ describe("the Codex model list is the registry's catalogue (row 39)", () => {
 describe('Codex efforts per model (row 40)', () => {
   it("lists Codex's levels with the ones the model lacks disabled", () => {
     newCodexConfig()
+    choose(modelSel(), 'gpt-5.5')
     expect(options(effortSel()).map((o) => o.value)).toEqual(['', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
     expect(options(effortSel()).filter((o) => o.disabled).map((o) => o.value)).toEqual(['max', 'ultra'])
     choose(modelSel(), 'gpt-6-astra')

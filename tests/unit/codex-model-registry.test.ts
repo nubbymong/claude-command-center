@@ -14,6 +14,7 @@ import {
   effortLevelsFor,
   mergeRegistry,
   evaluateCodexModelCoverage,
+  isCodexModelId,
   type ModelRegistry,
   type ExpectedModelSet,
   type OverlayModelEntry,
@@ -66,6 +67,32 @@ describe('Codex model catalogue from the registry (row 39)', () => {
     const merged = mergeRegistry(reg, { models: [added] })
     expect(buildModelPickerRows(merged, 'codex').map((r) => r.value)).toContain('gpt-6-nova')
     expect(buildModelPickerRows(merged).map((r) => r.value)).not.toContain('gpt-6-nova')
+  })
+
+  // P3.8 round 1 (R1): the Codex picker offers only ids a launch takes, and
+  // which provider a shipped model belongs to is the code's, not an overlay's.
+  it('never offers a Codex id the launch would refuse', () => {
+    const bad = ['gpt 7', '-c', 'g'.repeat(65), 'gpt-7\r\n', 'gpt-7\u202etxt', 'a/../../x ']
+    const merged = mergeRegistry(reg, { models: bad.map((id) => ({ id, patterns: [], family: 'codex', label: id, provenance: { addedBy: 'user' as const, date: '2026-09-29' } })) })
+    const offered = buildModelPickerRows(merged, 'codex').map((r) => r.value)
+    for (const id of bad) expect(offered, JSON.stringify(id)).not.toContain(id)
+    expect(offered).toEqual(CODEX_IDS)
+    expect(isCodexModelId('gpt-5.5')).toBe(true)
+    for (const id of bad) expect(isCodexModelId(id), JSON.stringify(id)).toBe(false)
+  })
+
+  it('an overlay cannot move a shipped Codex model into a Claude family, nor a shipped Claude model into the codex family', () => {
+    const prov = { addedBy: 'user' as const, date: '2026-09-29' }
+    const toClaude = mergeRegistry(reg, { models: [{ id: 'gpt-5.5', patterns: [], family: 'opus', label: 'GPT-5.5', provenance: prov }] })
+    expect(buildModelPickerRows(toClaude).map((r) => r.value)).not.toContain('gpt-5.5')
+    expect(buildModelPickerRows(toClaude, 'codex').map((r) => r.value)).toContain('gpt-5.5')
+    const opus = reg.models.find((m) => m.id === 'claude-opus-5')!
+    const toCodex = mergeRegistry(reg, { models: [{ ...opus, family: 'codex', provenance: prov }] })
+    expect(buildModelPickerRows(toCodex).map((r) => r.value)).toEqual(buildModelPickerRows(reg).map((r) => r.value))
+    expect(buildModelPickerRows(toCodex, 'codex').map((r) => r.value)).toEqual(CODEX_IDS)
+    // The same provider is still the overlay's to change (a Sentinel or user edit of a shipped model).
+    const relabelled = mergeRegistry(reg, { models: [{ id: 'gpt-5.5', patterns: [], family: 'codex', label: 'GPT-5.5 (edited)', provenance: prov }] })
+    expect(buildModelPickerRows(relabelled, 'codex').find((r) => r.value === 'gpt-5.5')!.label).toBe('GPT-5.5 (edited)')
   })
 
   it('covers the shipped Codex catalogue snapshot exactly', () => {

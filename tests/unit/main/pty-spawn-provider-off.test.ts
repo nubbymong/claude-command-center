@@ -152,6 +152,21 @@ describe('pty:spawn refuses a launch of a provider that is off', () => {
     expect(spawnPty).toHaveBeenCalledTimes(1)
   })
 
+  // P3.8 round 1 (J2): a saved config launched from the list (no dialog in
+  // between) still starts on an effort its model runs: one it cannot run is
+  // dropped at the launch, and the model's own default applies.
+  it('a Codex launch whose saved effort its model cannot run starts on the model default; one it runs is kept', async () => {
+    set('on', 'on')
+    await spawn({}, SID, { cwd: 'C:/w', provider: 'codex', codexOptions: { model: 'gpt-5.6-luna', reasoningEffort: 'ultra', permissionsPreset: 'standard' } })
+    expect(spawnPty.mock.calls[0][2].codexOptions).toEqual({ model: 'gpt-5.6-luna', reasoningEffort: undefined, permissionsPreset: 'standard' })
+    spawnPty.mockClear()
+    await spawn({}, SID, { cwd: 'C:/w', provider: 'codex', codexOptions: { model: 'gpt-5.6-luna', reasoningEffort: 'max', permissionsPreset: 'standard' } })
+    expect(spawnPty.mock.calls[0][2].codexOptions.reasoningEffort).toBe('max')
+    spawnPty.mockClear()
+    await spawn({}, SID, { cwd: 'C:/w', provider: 'codex', codexOptions: { model: 'gpt-5.5', reasoningEffort: 'minimal', permissionsPreset: 'standard' } })
+    expect(spawnPty.mock.calls[0][2].codexOptions.reasoningEffort).toBeUndefined()
+  })
+
   it('a terminal-only session runs no provider: it starts while every provider is off', async () => {
     set('off', 'off')
     await spawn({}, SID, { cwd: 'C:/w', shellOnly: true })
