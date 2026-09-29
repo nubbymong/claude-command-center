@@ -4,14 +4,15 @@
  * Tails the rollout JSONL that Codex writes to
  * ~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl
  * and converts token_count events into StatuslineData updates, with the
- * lines its completed edits changed (P3.7).
+ * lines its completed edits changed and the conversation's running time
+ * (P3.7).
  *
  * Exports:
  *   parseCodexRollout       -- parse raw JSONL text into typed events
  *   mapTokenCountToStatusline -- convert a TokenCountEvent to StatuslineData
  *   withAllowance           -- put the validated allowance on an update (MP2)
  *   countFileChangeLines    -- the lines one recorded edit added and removed (P3.7)
- *   countRolloutEditLines   -- the same over a byte range of a rollout, in the background (P3.7)
+ *   countRolloutRange       -- those, and the completed turns' time, over a byte range, in the background (P3.7)
  *   watchAndClaimRollout    -- 250ms-poll claim + 500ms-poll tail pipeline
  */
 
@@ -23,6 +24,7 @@ import { CODEX_CONVERSATION_ID_RE, codexDayFolders, codexFolderIdentity, findCod
 import type { FoundRollout, RolloutSessionMeta } from './rollout-lookup'
 import type { PickFolderIdentity } from '../types'
 import { normaliseCodexRateLimits, mergeAllowanceReadings, readingToBuckets, isoFromEpochMs, CODEX_DEFAULT_LIMIT_ID } from './rate-limits'
+import { conversationRunningTime, noteConversationRunningTime } from '../../conversation-running-time'
 import type { StatuslineData } from '../../../shared/types'
 import type { AllowanceReading } from '../../../shared/usage-types'
 import type { TelemetrySource } from '../types'
@@ -111,6 +113,9 @@ export interface TokenCountEvent {
  *                    reading at a time: the same result as merging them all)
  *   linesAdded,   -- the lines the edits read so far added and removed
  *   linesRemoved     (P3.7, row 36; countFileChangeLines)
+ *   turnWindow,   -- the running time the rollout proves in a window (P3.7):
+ *   turnMs           the turns it records as completed inside it, each only
+ *                    for its part inside (none without a window)
  */
 export interface RolloutReadState {
   meta: RolloutMeta | null
@@ -119,16 +124,29 @@ export interface RolloutReadState {
   allowance: AllowanceReading | null
   linesAdded: number
   linesRemoved: number
+  turnWindow: TurnWindow | null
+  turnMs: number
 }
 
-export function newRolloutReadState(): RolloutReadState {
-  return { meta: null, contextWindow: null, latest: null, allowance: null, linesAdded: 0, linesRemoved: 0 }
+/** A span of time (epoch milliseconds, both ends excluded). */
+export interface TurnWindow {
+  from: number
+  to: number
+}
+
+export function newRolloutReadState(turnWindow: TurnWindow | null = null): RolloutReadState {
+  return { meta: null, contextWindow: null, latest: null, allowance: null, linesAdded: 0, linesRemoved: 0, turnWindow, turnMs: 0 }
 }
 
 /** Added and removed line counts. */
 export interface LineCounts {
   added: number
   removed: number
+}
+
+/** What a background count found in a range of a rollout (countRolloutRange). */
+export interface RangeCounts extends LineCounts {
+  turnMs: number
 }
 
 /** How many lines `text` holds (a last line with no newline counts). */
@@ -233,6 +251,19 @@ export function applyRolloutLine(state: RolloutReadState, line: string, onTokenC
     return
   }
 
+  // A turn Codex completed (P3.7): the time it records the turn took
+  // (duration_ms, both versions) is running time the rollout proves. Counted
+  // only inside the read state's window, and of a turn that began before the
+  // window only its part inside it.
+  if (payload.type === 'task_complete') {
+    const w = state.turnWindow
+    const ms = Number.isFinite(payload.duration_ms) ? payload.duration_ms as number : 0
+    // A timestamp that does not parse is NaN, never inside a window.
+    const at = Date.parse(String(evt.timestamp ?? ''))
+    if (w && ms > 0 && at > w.from && at < w.to) state.turnMs += Math.min(ms, at - w.from)
+    return
+  }
+
   // An edit Codex applied (P3.7): only a completed one changed the files.
   if (payload.type === 'item_completed') {
     const item = payload.item as { type?: unknown; status?: unknown; changes?: unknown } | null | undefined
@@ -321,8 +352,10 @@ export function parseCodexRollout(text: string): {
  *  longest line it keeps to look at (a longer one is passed over). */
 export const EDIT_COUNT_CHUNK_BYTES = 1024 * 1024
 export const EDIT_COUNT_LINE_MAX_BYTES = 64 * 1024 * 1024
-/** The text every line holding an edit contains; no other line is parsed. */
+/** The text every line holding an edit, or a completed turn, contains; no
+ *  other line is parsed. */
 const FILE_CHANGE_MARK = Buffer.from('"FileChange"')
+const TASK_COMPLETE_MARK = Buffer.from('"task_complete"')
 
 /** Bytes the background counts have read, and the most of one line any of
  *  them held at once (tests read them). */
@@ -334,8 +367,9 @@ export function __codexEditCountTakeMostHeldForTests(): number { const n = editC
 
 /**
  * The lines the completed edits in whole lines of `file` from byte `start`
- * to `end` added and removed (P3.7): what a watcher that read only a large
- * rollout's head and tail did not see. Read apart from the status line's own
+ * to `end` added and removed, and the running time its completed turns prove
+ * inside `turnWindow` (none without one) (P3.7): what a watcher that read
+ * only a large rollout's head and tail did not see. Read apart from the status line's own
  * reads, a chunk at a time, while the opened file is still `identity` (its
  * device and file id, as the watcher claimed it). Null when it is not, when
  * the read fails, or when `stale()` says the count is no longer wanted (it
@@ -343,18 +377,19 @@ export function __codexEditCountTakeMostHeldForTests(): number { const n = editC
  * with no newline before `end` is not a whole record and is not counted; a
  * line longer than `lineMaxBytes` is passed over, never held.
  */
-export async function countRolloutEditLines(
+export async function countRolloutRange(
   file: string,
   identity: string,
   start: number,
   end: number,
   stale: () => boolean = () => false,
   limits: { chunkBytes?: number; lineMaxBytes?: number } = {},
-): Promise<LineCounts | null> {
+  turnWindow: TurnWindow | null = null,
+): Promise<RangeCounts | null> {
   const chunkBytes = Math.max(1, limits.chunkBytes ?? EDIT_COUNT_CHUNK_BYTES)
   const lineMax = limits.lineMaxBytes ?? EDIT_COUNT_LINE_MAX_BYTES
-  const counted = newRolloutReadState()
-  let result: LineCounts | null = null
+  const counted = newRolloutReadState(turnWindow)
+  let result: RangeCounts | null = null
   let fh: FileHandle | null = null
   try {
     fh = await fsp.open(file, 'r')
@@ -365,7 +400,7 @@ export async function countRolloutEditLines(
     const pieces: Buffer[] = []
     let pending = 0
     const take = (line: Buffer): void => {
-      if (line.includes(FILE_CHANGE_MARK)) applyRolloutLine(counted, line.toString('utf-8'))
+      if (line.includes(FILE_CHANGE_MARK) || line.includes(TASK_COMPLETE_MARK)) applyRolloutLine(counted, line.toString('utf-8'))
     }
     let pos = start
     while (pos < end) {
@@ -397,7 +432,7 @@ export async function countRolloutEditLines(
         }
       }
     }
-    result = { added: counted.linesAdded, removed: counted.linesRemoved }
+    result = { added: counted.linesAdded, removed: counted.linesRemoved, turnMs: counted.turnMs }
   } catch {
     result = null
   } finally {
@@ -728,6 +763,12 @@ export function watchAndClaimRollout(
   let decision: PickDecision | null = null
   /** A pick entry already dealt with (read, or refused), by its identity: never read again. */
   let handledPick: string | null = null
+  /** This launch's run of the claimed conversation (P3.7, row 36): its id,
+   *  when the run began, and the running time main kept of it before. */
+  let run: { id: string; start: number; before: number } | null = null
+  /** The time before this run that main did not see: the turns the rollout
+   *  records as completed in it are what it proves (P3.7). */
+  let turnWindow: TurnWindow | null = null
   /** This launch among those waiting for a new conversation (P3.6); a resume
    *  by id never takes a new one. */
   const pending: PendingNewClaim | null = resumeId ? null : {
@@ -776,6 +817,19 @@ export function watchAndClaimRollout(
       try { claimOpts.onClaim({ id: found.id, cwd: found.cwd, certain }) } catch { /* a listener never stops the watch */ }
     }
 
+    // Its running time (P3.7, row 36), as Claude Code's Duration: what main
+    // kept of the conversation's earlier runs, the turns its rollout records
+    // as completed in the time main did not see (runs outside the app, or
+    // before the app first ran it), and this run from its start: the launch,
+    // or for the resume picker the choice made in it (Claude Code counts a
+    // resumed conversation from its restore).
+    if (CODEX_CONVERSATION_ID_RE.test(found.id)) {
+      const start = pickFile && !resumeId ? (decision?.kind === 'fresh' ? decision.at : Date.now()) : spawnTimestamp
+      const kept = conversationRunningTime(found.id)
+      run = { id: found.id, start, before: kept ? kept.ms : 0 }
+      turnWindow = { from: kept ? kept.until : Number.NEGATIVE_INFINITY, to: start }
+    }
+
     // What is already there: all of it when small, else its head and its
     // tail (a resumed conversation's rollout can be large; P3.5 fix round 1).
     offset = 0
@@ -809,10 +863,25 @@ export function watchAndClaimRollout(
     }
   }
 
+  /** The claimed conversation's running time at `now` (P3.7). */
+  function runningMs(r: { start: number; before: number }, now: number): number {
+    return r.before + readState.turnMs + Math.max(0, now - r.start)
+  }
+
+  /** This run of the claimed conversation is over (the claim let go, or the
+   *  watch ended with the process): main keeps its running time up to now. */
+  function settleRun(): void {
+    if (!run) return
+    const now = Date.now()
+    noteConversationRunningTime(run.id, runningMs(run, now), now)
+    run = null
+  }
+
   /** Let the claim go: stop following its rollout, and say so. The status
    *  line no longer shows that conversation's figures (fix round 3): its
    *  tokens, cost and context go to zero until the next claim reports. */
   function release(): void {
+    settleRun()
     if (tailIntervalHandle) { clearInterval(tailIntervalHandle); tailIntervalHandle = null }
     if (claimedPath) claimed.delete(claimedPath)
     claimedPath = null
@@ -823,7 +892,7 @@ export function watchAndClaimRollout(
     offset = 0
     contextWindow = null
     heldElsewhere = null
-    try { onUpdate({ sessionId, inputTokens: 0, outputTokens: 0, costUsd: 0, contextUsedPercent: 0, linesAdded: 0, linesRemoved: 0 }) } catch { /* a sink that throws never stops the watch */ }
+    try { onUpdate({ sessionId, inputTokens: 0, outputTokens: 0, costUsd: 0, contextUsedPercent: 0, linesAdded: 0, linesRemoved: 0, totalDurationMs: 0 }) } catch { /* a sink that throws never stops the watch */ }
     if (claimOpts?.onRelease) {
       try { claimOpts.onRelease() } catch { /* a listener never stops the watch */ }
     }
@@ -923,7 +992,7 @@ export function watchAndClaimRollout(
       const size = Number(opened.size)
       if (offset > 0 && size === offset) return false
       if (offset === 0 || size < offset || size - offset > READ_STEP_MAX_BYTES) {
-        readState = newRolloutReadState()
+        readState = newRolloutReadState(turnWindow)
         if (size <= CLAIM_HEAD_BYTES + CLAIM_TAIL_BYTES) {
           offset = applyLines(readSpan(fd, 0, size))
           return offset > 0
@@ -935,9 +1004,9 @@ export function watchAndClaimRollout(
         const first = tail.indexOf(0x0a) + 1
         const used = first > 0 ? applyLines(tail.subarray(first)) : 0
         offset = first > 0 ? tailStart + first + used : size
-        // The edits between the head and the tail (P3.7): counted in the
-        // background, whole lines only, so the lines changed are the whole
-        // conversation's.
+        // The edits and completed turns between the head and the tail
+        // (P3.7): counted in the background, whole lines only, so the lines
+        // changed and the running time are the whole conversation's.
         countBetween(file, openedIdentity, headUsed, tailStart + first)
         return true
       }
@@ -952,21 +1021,22 @@ export function watchAndClaimRollout(
     }
   }
 
-  /** The edits in bytes [start, end) of the claimed rollout, which a head and
-   *  tail read passed over, added to what this read state counted once the
-   *  background count is done (P3.7). Once the watch stopped, or the read
-   *  state was replaced (a later read from the start, or the claim let go),
-   *  the count stops reading and nothing is said; another file at the path
-   *  is never read (countRolloutEditLines). */
+  /** The edits and completed turns in bytes [start, end) of the claimed
+   *  rollout, which a head and tail read passed over, added to what this read
+   *  state counted once the background count is done (P3.7). Once the watch
+   *  stopped, or the read state was replaced (a later read from the start,
+   *  or the claim let go), the count stops reading and nothing is said;
+   *  another file at the path is never read (countRolloutRange). */
   function countBetween(file: string, identity: string, start: number, end: number): void {
     const state = readState
     const stale = (): boolean => stopped || readState !== state
     // Its last question to stale() comes after it closed the file, so the
     // answer still holds here.
-    void countRolloutEditLines(file, identity, start, end, stale).then((n) => {
+    void countRolloutRange(file, identity, start, end, stale, {}, state.turnWindow).then((n) => {
       if (!n) return
       state.linesAdded += n.added
       state.linesRemoved += n.removed
+      state.turnMs += n.turnMs
       emit()
     }, () => { /* the count never stops the watch */ })
   }
@@ -981,8 +1051,15 @@ export function watchAndClaimRollout(
       try { onAllowance(allowance) } catch { /* the live figure never stops the watch */ }
     }
     // The conversation's lines changed ride on every update (P3.7, row 36):
-    // zero until an edit lands, as Claude Code reports them.
-    const lines = { linesAdded: readState.linesAdded, linesRemoved: readState.linesRemoved }
+    // zero until an edit lands, as Claude Code reports them. So does its
+    // running time, which main keeps as it goes (a relaunch after the app
+    // itself stopped short carries on from the last update).
+    const lines: Partial<StatuslineData> = { linesAdded: readState.linesAdded, linesRemoved: readState.linesRemoved }
+    if (run) {
+      const now = Date.now()
+      lines.totalDurationMs = runningMs(run, now)
+      noteConversationRunningTime(run.id, lines.totalDurationMs, now)
+    }
     try {
       if (readState.latest) {
         onUpdate({ ...withAllowance(mapTokenCountToStatusline(readState.latest, meta, sessionId, contextWindow), allowance), ...lines })
@@ -1201,6 +1278,8 @@ export function watchAndClaimRollout(
   return {
     stop(): void {
       stopped = true
+      // The run is over with its process (P3.7): its running time is kept.
+      settleRun()
       if (pending) pendingNewClaims.delete(pending)
       if (warnHandle) clearTimeout(warnHandle)
       if (timeoutHandle) clearTimeout(timeoutHandle)

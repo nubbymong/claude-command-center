@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "f614c0f92f552936cd72c5bf19412c7c5413e82f33a7d9b474772164a5017d75",
-  "manifestHead": "b1cffc71d83e28779f290ed5f80ba62590f73795",
+  "manifestPathDigest": "91bb85bdc903143d92aa1426b16d3ad696607109c5ed3ed410bfc83250fb5d80",
+  "manifestHead": "d32114bfeb9784f9c2bff9741da46a7d64bc0a8a",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -569,6 +569,16 @@
       "disposition": "retain",
       "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); tests/unit/config-manager-migration.test.ts",
       "note": "config migration strips legacy fields per provider; not account state"
+    },
+    {
+      "path": "src/main/conversation-running-time.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "OTHER",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.7 (row 36) module: each provider conversation's running time, kept by main by conversation id (the most recent 1000), written into the saved session state at every save and read back at load, schema-checked, so a Codex session's Duration carries on across launches and relaunches as Claude Code's does (WP1.33, WP1.38); tests/unit/main/conversation-running-time.test.ts",
+      "note": "provider-neutral (ids and numbers only); names Codex in its header only, as the reason the rollout cannot tell runs apart; the Codex watcher is its writer"
     },
     {
       "path": "src/main/hooks/per-session-settings.ts",
@@ -3968,6 +3978,16 @@
       "note": ""
     },
     {
+      "path": "tests/unit/main/conversation-running-time.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.7 (row 36) test (tests/unit/main/conversation-running-time.test.ts): the running-time store keeps each conversation's time by id, refuses what is not an id or a time, keeps the most recent entries, and reads the saved list back schema-checked without undoing a later count (WP1.33, WP1.38)",
+      "note": "created by WP2 PR 3 P3.7; pure, fake timers only"
+    },
+    {
       "path": "tests/unit/main/install-tab-command-secrets.test.ts",
       "predicates": [
         "P13"
@@ -4590,6 +4610,18 @@
       "disposition": "added",
       "evidence": "new WP2 PR 3 P3.5 final round test (tests/unit/providers/codex/telemetry-claim-identity.test.ts): when the claimed rollout identity could not be recorded at the claim (its lstat failing, simulated), the first read records it, so the claim is kept and followed rather than let go and taken again on every read (WP1.68)",
       "note": "created by WP2 PR 3 P3.5 final round; fs is mocked to fail one lstat of the rollout"
+    },
+    {
+      "path": "tests/unit/providers/codex/telemetry-duration.test.ts",
+      "predicates": [
+        "P01",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.7 (row 36) test (tests/unit/providers/codex/telemetry-duration.test.ts): a Codex session's Duration is its conversation's running time (the app's launches of it, kept by main, from the launch or the picker's choice to the watch's end), plus the turns the rollout records as completed in the time main did not see (the recorded 0.155.1 rollout), each only for its part inside that time; a claim let go settles and clears it (WP1.68)",
+      "note": "created by WP2 PR 3 P3.7; real files in a temp folder, no Codex process"
     },
     {
       "path": "tests/unit/providers/codex/telemetry-lines.test.ts",

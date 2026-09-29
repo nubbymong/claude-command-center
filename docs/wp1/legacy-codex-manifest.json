@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-29T05:19:08.317Z",
-  "head": "b1cffc71d83e28779f290ed5f80ba62590f73795",
-  "tree": "a62f5c7ed8cfbf7d97c2181d3c7899b85fe31c98",
+  "generatedAt": "2026-09-29T05:39:51.404Z",
+  "head": "d32114bfeb9784f9c2bff9741da46a7d64bc0a8a",
+  "tree": "dfba8bf9346d710459c15b2b5eebf8aebff72fa4",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2466,
+  "trackedFileCount": 2469,
   "excludedFileCount": 384,
-  "scannedFileCount": 2082,
+  "scannedFileCount": 2085,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 513,
-  "pathDigest": "f614c0f92f552936cd72c5bf19412c7c5413e82f33a7d9b474772164a5017d75",
+  "matchedPathCount": 516,
+  "pathDigest": "91bb85bdc903143d92aa1426b16d3ad696607109c5ed3ed410bfc83250fb5d80",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -434,6 +434,13 @@
         "P14"
       ],
       "lineCount": 5
+    },
+    {
+      "path": "src/main/conversation-running-time.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 2
     },
     {
       "path": "src/main/hooks/per-session-settings.ts",
@@ -774,7 +781,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 53
+      "lineCount": 55
     },
     {
       "path": "src/main/providers/codex/ui-detection.ts",
@@ -2778,6 +2785,13 @@
       "lineCount": 3
     },
     {
+      "path": "tests/unit/main/conversation-running-time.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
       "path": "tests/unit/main/install-tab-command-secrets.test.ts",
       "predicates": [
         "P13"
@@ -2911,7 +2925,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 28
+      "lineCount": 30
     },
     {
       "path": "tests/unit/main/ssh-end-remote-password.test.ts",
@@ -3209,6 +3223,15 @@
         "P13"
       ],
       "lineCount": 5
+    },
+    {
+      "path": "tests/unit/providers/codex/telemetry-duration.test.ts",
+      "predicates": [
+        "P01",
+        "P07",
+        "P13"
+      ],
+      "lineCount": 17
     },
     {
       "path": "tests/unit/providers/codex/telemetry-lines.test.ts",
@@ -4006,7 +4029,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 19
+      "lineCount": 18
     },
     {
       "path": "tests/unit/renderer/strip-usage-consistency.test.ts",
