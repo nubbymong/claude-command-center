@@ -135,7 +135,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 25 | Tokenomics reads managed realms and `~/.codex` | DONE | OD20 D10; OD26 U3 | verification: real rollouts | 2, v4 |
 | 26 | Tokenomics attribution and filters | DONE | Canvas 2026-09-26 (Tokenomics, option A); OD27 M1 | none | 2 |
 | 27 | Subagent collision | DONE | The #307 fix (`7fc96639`) | verification: a real 0.155.1 subagent rollout | 2, v4 |
-| 28 | Codex pricing | PARTIAL: "no price" and one cached-input rule built (MP11); prices are a static table of three models (`resources/codex-pricing.json`), so four of the six models on offer (`src/renderer/codex-models.ts`) read "no price" | PLAN usage track MP11; parity: Claude's prices come from the live LiteLLM fetch with a fallback, and the same fetch extends to OpenAI models (resolution recorded 2026-09-26) | implementation | 2; 3 |
+| 28 | Codex pricing | DONE (P3.8, 260d4abc): live OpenAI prices from the LiteLLM fetch Claude's prices come from, the static table as the fallback, "no price" for anything neither prices | PLAN usage track MP11; parity: Claude's prices come from the live LiteLLM fetch with a fallback, and the same fetch extends to OpenAI models (resolution recorded 2026-09-26) | verification: a real fetch (which catalogue models the list prices) | 2; 3 |
 | 29 | Plan type | DONE | OD27 M1 | verification: macOS, Linux, packaged | 2, v4 |
 | 30 | Tokenomics totals split by provider | DONE | Canvas 2026-09-26 (Tokenomics, option A) | none | 2 |
 
@@ -151,9 +151,9 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 36 | Statusline segments | PARTIAL: no account chip, lines or duration | Parity (line counts: evidence first; section 19 if Codex reports none) | implementation | 3 |
 | 37 | Statusline settings | PARTIAL: they apply to Codex (P2); row 36's segments missing | Parity | implementation | 2; 3 |
 | 38 | Statusline after resuming an old rollout | PARTIAL: the claim looks only in today's UTC date folder (`src/main/providers/codex/telemetry.ts:341-349`, a documented limitation), so a conversation from an earlier day, or one that crosses midnight UTC, gets no statusline | Parity | implementation (re-read the date folder each poll and find a resumed rollout wherever it is); a known defect until then (section 7) | 3 |
-| 39 | Model catalogue | PARTIAL: a static list of six (`src/renderer/codex-models.ts`) | Parity: the model registry plus Sentinel's coverage check. Not app-server `model/list`: OD27 M2 allows usage reads only | implementation | 3 |
-| 40 | Effort | PARTIAL: no per-model levels | Parity | implementation | 3 |
-| 41 | Mid-session model and effort | PARTIAL: needs a Restart, which starts a new conversation | Parity: applied live, keeping the conversation (evidence first: Codex's own model command on the supported versions) | implementation | 3 |
+| 39 | Model catalogue | PARTIAL: the registry's Codex models, the supported CLI's own picker list, and Sentinel's check against that list as shipped (P3.8, 260d4abc); Sentinel's live read of the list is not built | Parity: the model registry plus Sentinel's coverage check. Not app-server `model/list`: OD27 M2 allows usage reads only | implementation (the live read; its source with the owner); verification: 0.155.1's list | 3 |
+| 40 | Effort | DONE (P3.8, 260d4abc): each Codex model's own levels, from the CLI's catalogue | Parity | verification: 0.155.1's levels; a real launch at max and ultra | 3 |
+| 41 | Mid-session model and effort | PARTIAL: the command bar's model pill takes effect at the next Restart, which resumes the conversation (P3.5); nothing is applied live | Parity: applied live, keeping the conversation (evidence first: Codex's own model command on the supported versions) | implementation (evidence first: `/model` with an argument on the VM; how the strip applies it, with the owner) | 3 |
 | 42 | Sentinel | PARTIAL: Claude runs only (`src/main/sentinel/index.ts`) | Parity: version drift, flags and the rollout format checked, with findings; the analysis runs on whichever provider is on | implementation | 3 |
 | 43 | Watchdog | OPEN: never armed for Codex (`src/main/pty-manager.ts`, the local arm site) | Parity: auto-retry and silence detection; aicc_planning#72 (a CLI without its own patterns reports Watchdog unavailable, never Claude's) | implementation | 3 |
 | 44 | Services (PTY integrity) | PARTIAL: built, unproven (Codex output is fed to the monitor) | Parity | verification | 3 |
@@ -183,7 +183,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 |---|---|---|---|---|---|
 | 59 | PR CI on Linux | OPEN: Windows and macOS only (`.github/workflows/ci.yml`) | OD20 D5 | implementation | 4 |
 | 60 | Real-CLI coverage in CI | OPEN: no workflow installs Codex | OD20 D7; WP1.71 | implementation | 4 |
-| 61 | Compact | OPEN: Claude only (the strip's controls) | Parity: Codex's own compact command (evidence first) | implementation | 3 |
+| 61 | Compact | DONE (P3.8, 260d4abc): the strip's Compact on a Codex session types Codex's own /compact | Parity: Codex's own compact command (evidence first) | verification: the real TUI submits and compacts, 0.153.4 and 0.155.1 | 3 |
 | 62 | Extra CLI arguments | OPEN: Claude only (`extraArgs`, `src/shared/types.ts:126-130`) | Parity: the same field and IPC character guard, plus a block-list of the flags the app manages and of any setting that changes the account, provider or endpoint | implementation | 3 |
 | 63 | Hooks gateway and notification rules | OPEN: Claude sessions only (`HooksGatewaySection.tsx:84`) | Parity: route Codex `notify` and hook events | implementation | 3 |
 | 64 | Partner terminal wording | DONE | P2 | verification: per OS | 2, v4 |
@@ -191,7 +191,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 66 | Packaged smoke | PARTIAL: Windows only, an unsigned candidate on a used VM | OD20 D8; WP1.63 | verification (release level; owner hosts) | 4 |
 | 67 | E2E mode matrix | PARTIAL | WP1.1, WP1.60 | implementation (restart, enable/disable, real launch cases); verification | 2; 4 |
 | 68 | Insights | OPEN: Claude only; Claude's Insights types Claude Code's own `/insights` in a terminal (`src/main/insights-runner.ts:234-237`) | Parity, recorded 2026-09-26 (the parity reset's "Resolved by parity" list, sessions batch; not one of that day's open questions): a Conductor-native Codex report, run with `codex exec`. A mockup comes before the build (section 10) | implementation | 4 |
-| 69 | Plan mode | OPEN: no Codex option (`SessionDialog/CodexFormFields.tsx:162-170`) | Parity: Claude's Plan mode launch option (`src/renderer/lib/claude-cli-options.ts:85`); Codex documents a plan command; evidence first, section 19 if absent | implementation | 3 |
+| 69 | Plan mode | OPEN: no Codex option (not built in P3.8: typing `/plan` needs a proven moment when the composer is ready) | Parity: Claude's Plan mode launch option (`src/renderer/lib/claude-cli-options.ts:85`); Codex documents a plan command; evidence first, section 19 if absent | implementation (evidence first: the raw output of a starting session on the VM) | 3 |
 | 70 | Image paste | PARTIAL: built, unproven; the tip still says "Claude's prompt" (`tips-library.ts:370`) | Parity | verification (and the tip) | 3 |
 | 71 | Copy, paste, scrollback, mouse | PARTIAL: built, unproven; the trace is from 0.125 | Parity | verification (re-captured at 0.155.1) | 3 |
 | 72 | Multi Spawn and Quick Start with Codex | PARTIAL: one at a time is done (P2) | Parity: N copies with one lease each; Quick Start | implementation | 2; 3 |
@@ -930,6 +930,57 @@ kept for anything unpriced. Likely files: `src/renderer/codex-models.ts`,
 `providers/codex/spawn.ts`, `providers/codex/pricing.ts`,
 `src/main/tokenomics/tk-pricing.ts`, `src/main/sentinel/sentinel-models.ts`.
 ADR-009: yes (launch argv; keystrokes written into the terminal).
+Built (2026-09-29; 260d4abc; mocked). Evidence first: the 0.153.4 binary on the
+development machine, read as bytes and never run (P3.1 evidence, addendum 12):
+its bundled model catalogue (the list `codex debug models` renders) offers
+gpt-6-astra, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5 and gpt-5.2, each
+with its own reasoning levels (low to ultra at most); gpt-5.4, gpt-5.4-mini,
+gpt-5.3-codex and gpt-5.3-codex-spark, four of the six the app offered, are not
+offered by it. Row 39: every Codex model list (the session dialog, the command
+bar pill) is the model registry's, as Claude's is: the codex family in
+`resources/model-registry.json` holds that list, in its order, with Default
+(no `-m`, Codex's own choice) first and a saved model the list no longer
+offers shown and kept; Claude's pickers never show a Codex row, and the codex
+family is Codex's by a rule in code, so an overlay cannot move a Codex model
+into a Claude picker (`codex-model-registry.test.ts`, `codex-models.test.ts`,
+`commandbar-codex-toolbar.test.ts`). Sentinel checks the registry's Codex
+models against that list as shipped with the build
+(`resources/codex-model-catalogue.json`), only while Codex is on, as Claude's
+half checks the article snapshot (`sentinel-codex-models.test.ts`,
+`sentinel-and-cli-setup-provider-off.test.ts`). Row 40: each Codex model offers
+its own levels from Codex's level list (low, medium, high, xhigh, max, ultra),
+the ones it lacks disabled; a model change, a load and a save drop an effort
+the model cannot run, as Claude's are dropped; the launch allowlist adds max
+and ultra (the CLI's values) and a restored effort off it is dropped
+(`session-dialog-codex-model.test.tsx`, `codex-effort-allowlist.test.ts`); an
+edit reopens what is stored rather than rewriting a Default to gpt-5.5 and
+medium. Row 28: the LiteLLM fetch that prices Claude takes the OpenAI prices
+too, checked (an OpenAI chat or responses model, a plain id, bounded
+non-negative prices, a bounded count), saved beside Claude's for a day and read
+back checked; a Codex model is priced live, else by the table, else "no price",
+by its own id only, and the strip and Tokenomics price a turn alike
+(`pricing-live.test.ts`, `tk-pricing-live-codex.test.ts`). Row 61: a Codex
+session's strip has the controls cluster (Compact and Restart, kept with the
+status line off); Compact types Codex's own `/compact` and, 300 ms later,
+Enter, because Codex's composer takes a fast burst ending in Enter as a paste
+(its `disable_paste_burst` handling), and only into the same run: a Restart,
+the run ending or the strip going cancels the Enter
+(`session-status-strip-codex-controls.test.tsx`). SSH radius: `pty-manager.ts`
+changes one type only (its compiled output is byte-identical), as does the
+preload. Not built, with the orchestrator for the owner: row 41 (the evidence
+shows no argument form for `/model` and no `/effort` command: effort is
+`/model`'s second step; whether `/model <slug>` is taken inline is unproven,
+so how the strip applies a model and effort live needs a VM probe and a
+choice); row 69 (the first screen can be the folder-trust prompt, or a model
+notice, where a typed Enter answers it, so `/plan` needs a proven marker that
+the composer is ready: a VM capture of the raw output of a new and a resumed
+session, in a trusted and an untrusted folder, on both versions); Sentinel's
+live read of the Codex list (Claude's half reads the article when online) and
+the release gate's Codex half. Owed: the independent reviews and the ADR-009
+pass; the VM run (0.155.1's catalogue read the same way; the Codex fields and
+the command bar pill; Compact on a real 0.153.4 and 0.155.1 TUI; a launch at
+max and ultra; a real price fetch) and the owner's review of its screenshots,
+both themes.
 
 **P3.9 Sentinel for Codex.** Codex version drift against the supported range
 raises a finding; flags and the rollout format are checked; the analysis
