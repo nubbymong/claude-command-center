@@ -7,8 +7,9 @@
 // come along, and whether the launch resumed the conversation anyway, from a
 // copy already in that account, or started a new one (completion plan
 // section 5's fallback: the switch goes ahead with an honest notice). The
-// view that started the session writes the line once, dimmed, before the
-// session's own output (TerminalView). Nothing when it came along.
+// view that started the session shows the line once, above the terminal and
+// outside its buffer, until dismissed (TerminalView; VM finding V1: a new
+// PTY's first frame on Windows clears the screen). Nothing when it came along.
 import { stripSpoofableText } from '../../shared/safe-text'
 import type { ConversationCarryNotice } from '../../shared/providers'
 

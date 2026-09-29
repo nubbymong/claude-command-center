@@ -129,6 +129,11 @@ export interface TelemetryOptions {
   onClaim?: (claim: { id: string; cwd: string; certain: boolean }) => void
   /** Told when a claim is let go (the picker decided again after it). */
   onRelease?: () => void
+  /** P3.6 (VM finding V2): the conversation the session is on when another
+   *  session holds its rollout (a resume by id, or the one a picker named):
+   *  the session's all the same, though its rollout is not claimed or read
+   *  here. onRelease is told when a later decision takes it back. */
+  onShared?: (conversation: { id: string; cwd: string }) => void
 }
 
 export interface TelemetrySource {

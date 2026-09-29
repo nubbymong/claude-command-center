@@ -66,11 +66,13 @@ function watch(sessions: string, cwd: string, opts?: Parameters<typeof watchAndC
   /** P3.6: whether each claim was certain, apart from what it claimed. */
   const certainty: boolean[] = []
   const releases: number[] = []
+  /** P3.6 (VM finding V2): conversations the session is on while another session holds them. */
+  const shared: Array<{ id: string; cwd: string }> = []
   // The pick folder as the builder records it when made, unless a test gives one (fix round 3).
   const withFolder = opts && opts.pickFile && !('pickFolder' in opts) ? { ...opts, pickFolder: codexFolderIdentity(dirname(opts.pickFile)) ?? undefined } : opts
   const src = watchAndClaimRollout('sess-p35', cwd, Date.now(), (d) => updates.push(d), sessions, undefined,
-    withFolder ? { ...withFolder, onClaim: (c) => { claims.push({ id: c.id, cwd: c.cwd }); certainty.push(c.certain) }, onRelease: () => releases.push(claims.length) } : undefined)
-  return { updates, claims, certainty, releases, src }
+    withFolder ? { ...withFolder, onClaim: (c) => { claims.push({ id: c.id, cwd: c.cwd }); certainty.push(c.certain) }, onRelease: () => releases.push(claims.length), onShared: (c) => shared.push({ id: c.id, cwd: c.cwd }) } : undefined)
+  return { updates, claims, certainty, releases, shared, src }
 }
 
 describe('a new conversation is found in the day folder it lands in (row 38)', () => {
@@ -454,6 +456,53 @@ describe('two sessions in the same folder', () => {
     await vi.advanceTimersByTimeAsync(1_500)
     picker.src.stop()
     expect(picker.claims).toEqual([{ id: ID_A, cwd: '/p/demo' }])
+  })
+
+  // P3.6 VM finding V2: a session on a conversation another tab holds is on
+  // it all the same (a pick, or a resume by id, is exact): said once, so main
+  // records it, while the rollout stays the holder's to read.
+  it('a pick of a conversation another tab holds: the session is said to be on it, once, without taking or reading it; a later pick takes that back', async () => {
+    vi.useFakeTimers()
+    const sessions = realm()
+    const pickFile = join(sessions, '..', 'pick-a.json')
+    const old = new Date(Date.now() - 2 * 24 * 3600 * 1000)
+    rollout(folder(sessions, old.getUTCFullYear(), old.getUTCMonth() + 1, old.getUTCDate()), ID_A, '/p/demo', old.toISOString(), 10)
+    const holder = watch(sessions, '/p/demo', { resumeId: ID_A })
+    await vi.advanceTimersByTimeAsync(300)
+    const picker = watch(sessions, '/p/demo', { pickFile })
+    writeFileSync(pickFile, JSON.stringify({ id: ID_A }))
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(picker.shared).toEqual([{ id: ID_A, cwd: '/p/demo' }])
+    expect(picker.claims).toEqual([])
+    expect(picker.updates).toEqual([])
+    expect(picker.releases).toEqual([])
+    // A new conversation instead: the session is no longer on it.
+    writeFileSync(pickFile, JSON.stringify({ fresh: true }))
+    await vi.advanceTimersByTimeAsync(1_500)
+    expect(picker.releases).toEqual([0])
+    picker.src.stop()
+    holder.src.stop()
+    expect(picker.shared).toEqual([{ id: ID_A, cwd: '/p/demo' }])
+  })
+
+  it('a resume by id of a conversation another tab holds: the session is said to be on it; once let go it is claimed as before', async () => {
+    vi.useFakeTimers()
+    const sessions = realm()
+    const old = new Date(Date.now() - 2 * 24 * 3600 * 1000)
+    rollout(folder(sessions, old.getUTCFullYear(), old.getUTCMonth() + 1, old.getUTCDate()), ID_A, '/p/demo', old.toISOString(), 10)
+    const holder = watch(sessions, '/p/demo', { resumeId: ID_A })
+    await vi.advanceTimersByTimeAsync(300)
+    const second = watch(sessions, '/p/demo', { resumeId: ID_A })
+    await vi.advanceTimersByTimeAsync(1_500)
+    expect(second.shared).toEqual([{ id: ID_A, cwd: '/p/demo' }])
+    expect(second.claims).toEqual([])
+    expect(second.updates).toEqual([])
+    holder.src.stop()
+    await vi.advanceTimersByTimeAsync(1_500)
+    second.src.stop()
+    expect(second.claims).toEqual([{ id: ID_A, cwd: '/p/demo' }])
+    expect(second.shared).toEqual([{ id: ID_A, cwd: '/p/demo' }])
+    expect(second.releases).toEqual([])
   })
 
   it('a pick let go by another tab after its day folder became a link is not taken', async (ctx) => {

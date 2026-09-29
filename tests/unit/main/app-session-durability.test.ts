@@ -6,6 +6,8 @@
 // launch-handoff-pty.test.ts's (kept across a relaunch).
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { SessionState } from '../../../src/main/session-state'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 const h = vi.hoisted(() => ({
   loaded: null as unknown,
@@ -42,6 +44,12 @@ beforeEach(() => {
 })
 
 describe('the app\'s session durability core, as main composes it', () => {
+  // The session:load IPC is this core's load step, so the read-back runs on it.
+  it('index.ts: session:load returns sessionDurability.load()', () => {
+    const index = readFileSync(resolve(__dirname, '../../../src/main/index.ts'), 'utf8')
+    expect(index).toMatch(/ipcMain\.handle\('session:load', async \(\) => \{\s*return sessionDurability\.load\(\)\s*\}\)/)
+  })
+
   it('load: the saved state is returned, and handed to main\'s read-back once', () => {
     const state = { sessions: [], activeSessionId: null, savedAt: 1 } as unknown as SessionState
     h.loaded = state

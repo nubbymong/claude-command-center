@@ -6,6 +6,7 @@ import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { isAccountActive } from '../../shared/account-types'
 import { useProviderAccountsStore } from '../stores/providerAccountsStore'
 import { sessionProviderAccount } from '../utils/accountChip'
+import { noteSwitchOrigin } from '../utils/switchOrigin'
 
 /**
  * Guard for the mid-session account switch. A switch is only meaningful when
@@ -127,6 +128,9 @@ function switchProviderAccount(
   if (!target || target.lifecycle !== 'active' || target.operationalState === 'blocked') return
   const sessionId = session.id
   switching.add(sessionId)
+  // A launch there that is asked about and declined takes the tab back to
+  // the account it is on now (VM finding V3; utils/switchOrigin).
+  noteSwitchOrigin(sessionId, session.providerAccountId)
   void (async () => {
     try {
       // 1. Pin the new account and save it.

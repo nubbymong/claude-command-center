@@ -45,7 +45,8 @@ const H = vi.hoisted(() => {
     paste() {}
     clearSelection() {}
     getSelection() { return '' }
-    write() {}
+    // ED2 (erase the viewport), as xterm applies it: what was written goes.
+    write(s: unknown) { if (typeof s === 'string' && s.includes('\x1b[2J')) this.lines = [] }
     writeln(s: string) { this.lines.push(s) }
     dispose() {}
   }
@@ -60,7 +61,9 @@ const H = vi.hoisted(() => {
   const tokens = new Map<string, number>()
   const counter = { last: 0 }
   const cleared: string[] = []
-  return { MockTerminal, sessionState, updates, spawned, tokens, counter, cleared }
+  /** persistSessionProviderAccount calls: [sessionId, providerAccountId]. */
+  const persisted: unknown[][] = []
+  return { MockTerminal, sessionState, updates, spawned, tokens, counter, cleared, persisted }
 })
 
 vi.mock('@xterm/xterm/css/xterm.css', () => ({ default: {} }))
@@ -97,7 +100,10 @@ vi.mock('../../../src/renderer/stores/sessionStore', () => ({
   useSessionStore: Object.assign((sel: any) => sel(H.sessionState), { getState: () => H.sessionState }),
 }))
 vi.mock('../../../src/renderer/hooks/useRestartSession', () => ({ useRestartSession: () => ({ restart: () => {} }) }))
-vi.mock('../../../src/renderer/session-persistence', () => ({ persistLastUsedAccount: () => {} }))
+vi.mock('../../../src/renderer/session-persistence', () => ({
+  persistLastUsedAccount: () => {},
+  persistSessionProviderAccount: (...a: unknown[]) => { H.persisted.push(a); return Promise.resolve() },
+}))
 vi.mock('../../../src/renderer/stores/accountProfilesStore', () => {
   const st = { profiles: [] }
   return { useAccountProfilesStore: Object.assign((sel: any) => sel(st), { getState: () => st }) }
@@ -145,13 +151,15 @@ type Settle = { resolve: (v?: unknown) => void; reject: (e: unknown) => void }
 const settles: Settle[] = []
 const spawn = vi.fn((_id: string, _opts: Record<string, unknown>) => new Promise((resolve, reject) => { settles.push({ resolve, reject }) }))
 let fireExit: ((code: number) => void) | null = null
+/** The session's output, as main sends it to the view listening now. */
+let sendData: ((data: string) => void) | null = null
 ;(globalThis as any).window.electronAPI = {
   ...(globalThis as any).window.electronAPI,
   pty: {
     write: vi.fn(),
     resize: vi.fn(),
     spawn,
-    onData: vi.fn(() => () => {}),
+    onData: vi.fn((_id: string, cb: (data: string) => void) => { sendData = cb; return () => { if (sendData === cb) sendData = null } }),
     onExit: vi.fn((_id: string, cb: (code: number) => void) => { fireExit = cb; return () => { if (fireExit === cb) fireExit = null } }),
   },
   inputDebug: { enabled: vi.fn(async () => false), log: vi.fn() },
@@ -185,6 +193,7 @@ const { useLaunchAckStore, grantLaunchAcknowledgement, consumeLaunchAcknowledgem
 const { useAccountGateStore } = await import('../../../src/renderer/stores/accountGateStore')
 const { snapshot, provider, account } = await import('./accounts-snapshot-harness')
 const { forgetSpawnEnd } = await import('../../../src/renderer/utils/spawnEndNotice')
+const { noteSwitchOrigin, switchOrigin, forgetSwitchOrigin } = await import('../../../src/renderer/utils/switchOrigin')
 const { useConfigStore } = await import('../../../src/renderer/stores/configStore')
 
 let container: HTMLDivElement
@@ -215,6 +224,8 @@ const restartTo = async (session: Record<string, unknown>, key: string) => {
   await settle()
 }
 const termLines = () => (H.MockTerminal.last?.lines ?? []).join('\n')
+/** The switch note above the terminal (P3.6), or null when none. */
+const switchNote = () => container.querySelector('[data-testid="switch-note"] span')?.textContent ?? null
 const exitedMarks = () => H.updates.filter((u) => u.patch.ptyExited === true)
 const answer = async (yes: boolean) => {
   const q = useLaunchAckStore.getState().queue
@@ -228,11 +239,14 @@ beforeEach(() => {
   spawn.mockClear()
   settles.length = 0
   fireExit = null
+  sendData = null
   H.updates.length = 0
   H.spawned.clear()
   H.tokens.clear()
   forgetSpawnEnd('s-1')
   H.cleared.length = 0
+  H.persisted.length = 0
+  forgetSwitchOrigin('s-1')
   H.MockTerminal.last = null
   useProviderAccountsStore.setState({ snapshot: snapshot(), loaded: true })
   useLaunchAckStore.setState({ queue: [] })
@@ -269,30 +283,93 @@ describe("a Codex session's account reaches pty:spawn", () => {
     expect(spawn.mock.calls[0][1].providerAccountId).toBeUndefined()
   })
 
-  it('P3.6: a respawn on another account whose conversation did not come along whole says so once, dimmed, from main\'s answer; spoofing characters never reach the terminal', async () => {
+  it('P3.6: a respawn on another account whose conversation did not come along whole says so once, above the terminal, from main\'s answer, cleaned as the terminal\'s lines are', async () => {
     mount(codexSession({ providerAccountId: 'acc-personal' }))
     await settle()
     expect(spawn).toHaveBeenCalledTimes(1)
     const RLO = String.fromCharCode(0x202e)
     await act(async () => { settles[0].resolve({ started: true, carry: { code: 'too-large', message: `Too large.${RLO}\u001b[2J`, resumed: false } }) })
     await settle()
-    expect(H.MockTerminal.last.lines).toContain('\x1b[90mSwitched to Personal. Too large.  [2J This is a new conversation.\x1b[0m')
-    expect(termLines().split('Switched to').length).toBe(2)
+    expect(switchNote()).toBe('Switched to Personal. Too large.  [2J This is a new conversation.')
+    expect(container.querySelectorAll('[data-testid="switch-note"]')).toHaveLength(1)
+    expect(termLines()).not.toContain('Switched to')
     // Resumed from a copy already there: said as that, never a new conversation.
     await restartTo(codexSession({ providerAccountId: 'acc-personal' }), 'b')
     await act(async () => { settles[1].resolve({ started: true, carry: { code: 'conversation-differs', message: 'x', resumed: true } }) })
     await settle()
-    expect(termLines()).toContain('so the session carries on from that copy.')
-    expect(termLines()).not.toContain('This is a new conversation.')
+    expect(switchNote()).toContain('so the session carries on from that copy.')
+    expect(switchNote()).not.toContain('This is a new conversation.')
     // Carried whole, or nothing to carry: nothing is said.
     await restartTo(codexSession({ providerAccountId: 'acc-personal' }), 'c')
     await act(async () => { settles[2].resolve(undefined) })
     await settle()
-    expect(termLines()).not.toContain('Switched to')
+    expect(switchNote()).toBeNull()
+  })
+
+  // P3.6 VM finding V1: on Windows the new PTY's first output is ConPTY's
+  // first frame, which clears the screen; the note must outlive it.
+  it('P3.6: the note stays once the new session\'s first output clears the screen, until dismissed', async () => {
+    mount(codexSession({ providerAccountId: 'acc-personal' }))
+    await settle()
+    await act(async () => { settles[0].resolve({ started: true, carry: { code: 'in-use', message: 'Another open session is on this conversation, so it was not carried over.', resumed: false } }) })
+    await settle()
+    const said = 'Switched to Personal. Another open session is on this conversation, so it was not carried over. This is a new conversation.'
+    await act(async () => { sendData?.('\x1b[?25l\x1b[2J\x1b[m\x1b[2;1Hthe session\'s first screen') })
+    await settle()
+    expect(`${switchNote() ?? ''}\n${termLines()}`).toContain(said)
+    // Dismissed: gone.
+    const dismiss = container.querySelector('[data-testid="switch-note"] button') as HTMLButtonElement
+    await act(async () => { dismiss.click() })
+    expect(switchNote()).toBeNull()
+  })
+
+  // P3.6 VM finding V4: the note reads in the light theme too: the app's
+  // muted text on the panel surface, the pair token-contrast.test.ts holds
+  // to 4.5:1 in both themes.
+  it('P3.6: the note is the app\'s muted text on the panel surface', async () => {
+    mount(codexSession({ providerAccountId: 'acc-personal' }))
+    await settle()
+    await act(async () => { settles[0].resolve({ started: true, carry: { code: 'too-large', message: 'Too large.', resumed: false } }) })
+    await settle()
+    const el = container.querySelector('[data-testid="switch-note"]') as HTMLElement
+    expect(el.style.color).toBe('var(--text-muted)')
+    expect(el.style.background).toBe('var(--surface-panel)')
   })
 })
 
 describe("a later launch on this computer's own sign-in asks first", () => {
+  // P3.6 VM finding V3: a Claude switch never asks at launch, so it has no
+  // such Cancel; a Codex switch declined there goes back to where it was.
+  it('a Switch account onto it, declined: the tab goes back to the account it was switched from, and says so; accepted or asked nothing, the origin is spent', async () => {
+    noteSwitchOrigin('s-1', 'acc-work')
+    mount(codexSession({ providerAccountId: 'acc-local' }))
+    await settle()
+    expect(useLaunchAckStore.getState().queue).toHaveLength(1)
+    await answer(false)
+    await settle()
+    expect(spawn).not.toHaveBeenCalled()
+    expect(H.persisted).toEqual([['s-1', 'acc-work']])
+    expect(termLines()).toMatch(/Not started: the launch was not confirmed, so the session is back on Work\. Restart the session to start it there\./)
+    expect(switchOrigin('s-1')).toBeNull()
+    // A declined launch that was no switch changes no account.
+    await restartTo(codexSession({ providerAccountId: 'acc-local' }), 'b')
+    await answer(false)
+    await settle()
+    expect(H.persisted).toHaveLength(1)
+    // Accepted: the switch stands, and the origin is spent.
+    noteSwitchOrigin('s-1', 'acc-work')
+    await restartTo(codexSession({ providerAccountId: 'acc-local' }), 'c')
+    await answer(true)
+    await settle()
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(switchOrigin('s-1')).toBeNull()
+    expect(H.persisted).toHaveLength(1)
+    // Onto an account that asks nothing: spent at once.
+    noteSwitchOrigin('s-1', 'acc-local')
+    await restartTo(codexSession({ providerAccountId: 'acc-work' }), 'd')
+    expect(switchOrigin('s-1')).toBeNull()
+  })
+
   it('declined: nothing spawns, and the terminal says why', async () => {
     mount(codexSession({ providerAccountId: 'acc-local' }))
     await settle()
