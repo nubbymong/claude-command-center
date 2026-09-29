@@ -142,6 +142,22 @@ describe('CodexProvider', () => {
     expect(out.args.find(a => a.startsWith('model_reasoning_effort='))).toBeUndefined()
   })
 
+  // P3.8 round 1 (L2): Plan mode launches with Standard's sandbox and
+  // approvals (Codex has no launch flag for it; /plan is typed later).
+  it('the plan preset launches as standard does, with no flag of its own', () => {
+    const out = new CodexProvider().buildSpawnCommand({
+      sessionId: 'sid', realmLaunch: launch,
+      codexOptions: { model: 'gpt-5.5', permissionsPreset: 'plan' },
+    })
+    const std = new CodexProvider().buildSpawnCommand({
+      sessionId: 'sid', realmLaunch: launch,
+      codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' },
+    })
+    expect(out.args).toEqual(std.args)
+    expect(out.args.join(' ')).toContain('--sandbox workspace-write --ask-for-approval on-request')
+    expect(out.args.join(' ')).not.toMatch(/plan/)
+  })
+
   // P3.8 (row 40): the levels the registry offers Codex reach the launch as
   // they are (the spawn schema holds them to CODEX_EFFORTS first); Default (no
   // model, no effort) adds neither flag, so Codex chooses.

@@ -174,7 +174,7 @@ export interface CodexOptions {
   /** Absent (or 'none') = the model's own default; the spawn allowlist is
    *  CODEX_EFFORTS (sanitize-restored-spawn-options.ts). */
   reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
-  permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
+  permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted' | 'plan'
 }
 
 // ── Session Persistence ──

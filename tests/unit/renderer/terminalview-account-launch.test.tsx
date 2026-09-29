@@ -31,7 +31,7 @@ const H = vi.hoisted(() => {
     cols = 80
     rows = 24
     element: HTMLElement | null = null
-    buffer = { active: { type: 'normal', viewportY: 0, baseY: 0, length: 0, cursorY: 0 } }
+    buffer = { active: { type: 'normal', viewportY: 0, baseY: 0, length: 0, cursorY: 0, getLine: (_y: number) => undefined } }
     lines: string[] = []
     focus = () => {}
     scrollToBottom = () => {}
@@ -124,6 +124,16 @@ vi.mock('../../../src/renderer/components/SshFlowOverlay', async () => {
   return { default: () => R.createElement('div', { 'data-testid': 'ssh-flow-overlay' }) }
 })
 vi.mock('../../../src/renderer/utils/resumePicker', () => ({ shouldUseResumePicker: () => false }))
+// P3.8 round 1 (L2): the Plan mode wait, observed (its own behaviour is
+// tests/unit/renderer/codex-composer.test.ts).
+const planWait = vi.hoisted(() => ({ calls: [] as Array<{ id: string; cmd: string; opts: { timeoutMs: number; onGiveUp: (n: string) => void } }>, cancels: 0 }))
+vi.mock('../../../src/renderer/lib/codexComposer', () => ({
+  CODEX_PLAN_MODE_WAIT_MS: 120_000,
+  typeWhenCodexComposerReady: (id: string, cmd: string, opts: { timeoutMs: number; onGiveUp: (n: string) => void }) => {
+    planWait.calls.push({ id, cmd, opts })
+    return { cancel: () => { planWait.cancels++ } }
+  },
+}))
 vi.mock('../../../src/renderer/components/TerminalContextMenu', () => ({ default: () => null }))
 vi.mock('../../../src/renderer/stores/settingsStore', () => {
   // The user said they use Codex: its sessions launch (a test turns a provider off).
@@ -277,6 +287,54 @@ describe("a Codex session's account reaches pty:spawn", () => {
     mount(codexSession())
     await settle()
     expect(spawn.mock.calls[0][1].providerAccountId).toBeUndefined()
+  })
+
+  // P3.8 round 1 (L2): Plan mode is Claude's launch option; Codex has no
+  // launch flag for it, so a started Codex session on the Plan mode choice
+  // waits for its ready composer and types /plan, and says so if it cannot.
+  it('Plan mode: a started Codex session waits for its composer to type /plan; nothing for another choice or a start that started nothing', async () => {
+    planWait.calls.length = 0
+    mount(codexSession({ codexOptions: { permissionsPreset: 'plan' } }))
+    await settle()
+    expect(planWait.calls).toHaveLength(0)
+    await act(async () => { settles[0].resolve({ started: true }) })
+    await settle()
+    expect(planWait.calls.map((c) => [c.id, c.cmd, c.opts.timeoutMs])).toEqual([['s-1', '/plan', 120_000]])
+    await act(async () => { planWait.calls[0].opts.onGiveUp('/plan was not sent: Codex did not reach its prompt in time.') })
+    expect(switchNote()).toBe('/plan was not sent: Codex did not reach its prompt in time.')
+    await restartTo(codexSession({ codexOptions: { permissionsPreset: 'standard' } }), 'b')
+    await act(async () => { settles[1].resolve({ started: true }) })
+    await settle()
+    expect(planWait.calls).toHaveLength(1)
+    await restartTo(codexSession({ codexOptions: { permissionsPreset: 'plan' } }), 'c')
+    await act(async () => { settles[2].resolve({ started: false }) })
+    await settle()
+    expect(planWait.calls).toHaveLength(1)
+  })
+
+  it('Plan mode: the view going away cancels the wait', async () => {
+    planWait.calls.length = 0
+    planWait.cancels = 0
+    mount(codexSession({ codexOptions: { permissionsPreset: 'plan' } }))
+    await settle()
+    await act(async () => { settles[0].resolve({ started: true }) })
+    await settle()
+    expect(planWait.calls).toHaveLength(1)
+    act(() => { root.unmount() })
+    root = createRoot(container)
+    expect(planWait.cancels).toBeGreaterThanOrEqual(1)
+  })
+
+  it('registers the terminal\'s live screen for the Codex command gate, and removes it with the view', async () => {
+    const { readSessionScreen } = await import('../../../src/renderer/components/terminal/screenRegistry')
+    mount(codexSession())
+    await settle()
+    const screen = readSessionScreen('s-1')
+    expect(Array.isArray(screen)).toBe(true)
+    expect(screen).toHaveLength(24)
+    act(() => { root.unmount() })
+    root = createRoot(container)
+    expect(readSessionScreen('s-1')).toBeNull()
   })
 
   it('a Claude session never sends one', async () => {

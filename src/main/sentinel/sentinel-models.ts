@@ -157,6 +157,11 @@ export function modelCoverageFindings(
  * Snapshot only: the build carries the one reference there is (the CLI's own
  * catalogue, read from the supported versions), so every finding names that
  * list and its date, and a list older than FIXTURE_STALE_DAYS says so.
+ *
+ * Until P3.9 reads the installed CLI's list live (`codex debug models`), both
+ * inputs ship with the build, so at runtime this reports only what the
+ * overlay changes and a stale list; a registry that disagrees with the list
+ * is refused earlier, by the release gate (scripts/release-gate.mjs, check 3).
  */
 export function codexModelCoverageFindings(
   registry: ModelRegistry,

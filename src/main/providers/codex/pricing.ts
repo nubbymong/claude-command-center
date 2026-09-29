@@ -1,4 +1,5 @@
 import pricingData from '../../../../resources/codex-pricing.json'
+import { checkedPer1M, isPriceRecord as isRecord } from '../../tokenomics/price-checks'
 
 interface ModelPricing {
   inputPer1M: number
@@ -18,21 +19,18 @@ const warnedModels = new Set<string>()
 // part here. The list is untrusted network input (and its saved copy a local
 // file): only an OpenAI chat or responses model, with a plain id and finite,
 // bounded, non-negative prices, is taken, and a model is looked up by its
-// exact id only.
+// exact id only. Both providers' prices are read through the same checks
+// (tokenomics/price-checks.ts).
 
 /** A Codex model id as it may be priced: letters, digits, `.`, `_`, `:`, `-`,
  *  starting with a letter or digit (no path, no space, no control character). */
 const PRICED_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/
-/** No real price is anywhere near this ($100,000 per 1M tokens): above it an
- *  entry is taken to be garbage, not a price. */
-const MAX_PER_1M = 100_000
 /** The most live prices kept (the whole list holds a few hundred OpenAI models). */
 export const MAX_LIVE_CODEX_PRICES = 2000
 
 let live: Map<string, ModelPricing> = new Map()
 
-const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
-const usablePer1M = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= MAX_PER_1M
+const usablePer1M = (v: unknown): v is number => checkedPer1M(v) !== null
 
 /**
  * The OpenAI models of a LiteLLM price list (model_prices_and_context_window.json),
@@ -80,6 +78,8 @@ export function parseCachedCodexPricing(saved: unknown): Map<string, ModelPricin
     if (!PRICED_ID_RE.test(id) || !isRecord(p)) continue
     if (!usablePer1M(p.inputPer1M) || !usablePer1M(p.outputPer1M)) continue
     if (p.cachedInputPer1M !== null && !usablePer1M(p.cachedInputPer1M)) continue
+    // As the list's: an entry with neither an input nor an output price is none.
+    if (p.inputPer1M === 0 && p.outputPer1M === 0) continue
     out.set(id, { inputPer1M: p.inputPer1M, cachedInputPer1M: p.cachedInputPer1M as number | null, outputPer1M: p.outputPer1M })
   }
   return out

@@ -15,6 +15,18 @@ const codex = (reasoningEffort: unknown) => ({
   cwd: 'C:/work', provider: 'codex', codexOptions: { model: 'gpt-6-astra', reasoningEffort, permissionsPreset: 'standard' },
 })
 
+// P3.8 round 1 (L2): Plan mode is a permissions choice, as Claude's is.
+describe('the Codex permission presets at the spawn boundary', () => {
+  const preset = (permissionsPreset: unknown) => ({ cwd: 'C:/work', provider: 'codex', codexOptions: { permissionsPreset } })
+  it('takes plan beside the four it had, and nothing else', () => {
+    for (const p of ['read-only', 'standard', 'auto', 'unrestricted', 'plan']) expect(spawnOptionsSchema.parse(preset(p))?.codexOptions?.permissionsPreset).toBe(p)
+    for (const bad of ['Plan', 'plan ', 'planning', '', 7]) expect(() => spawnOptionsSchema.parse(preset(bad)), JSON.stringify(bad)).toThrow()
+  })
+  it('a restored plan session keeps plan', () => {
+    expect(sanitizeRestoredSpawnOptions({ provider: 'codex', codexOptions: { permissionsPreset: 'plan' } }).codexOptions.permissionsPreset).toBe('plan')
+  })
+})
+
 describe('the Codex reasoning effort allowlist', () => {
   it('is the Codex CLI effort set', () => {
     expect([...CODEX_EFFORTS]).toEqual(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])

@@ -7,7 +7,7 @@
  * Codex CLI lists in its own model picker (resources/codex-model-catalogue.json,
  * checked by Sentinel), in its order. A hand-kept list lived here until P3.8.
  */
-import { buildModelPickerRows, type ModelRegistry } from '../shared/model-registry'
+import { buildModelPickerRows, codexEffortRuns, type ModelRegistry } from '../shared/model-registry'
 import { effortsForModel } from './lib/claude-cli-options'
 
 export interface CodexPickerOption {
@@ -51,6 +51,12 @@ export function codexEffortOptions(registry: ModelRegistry, model: string | null
  *  does not hold (a legacy 'none' or 'minimal') never does, so a model change
  *  or a load clamps it to Default, as Claude's effort is clamped. */
 export function codexEffortSupported(registry: ModelRegistry, model: string | null | undefined, effort: string | null | undefined): boolean {
-  if (!effort) return true
-  return effortsForModel(registry, model || null, 'codex').some((e) => e.value === effort && !e.disabled)
+  return codexEffortRuns(registry, model, effort)
+}
+
+/** The model a new Codex config starts on (P3.8 round 1, J1): the first model
+ *  of the Codex list, as a new Claude config starts on the first row of
+ *  Claude's (its newest Opus); '' (Default) when the list is empty. */
+export function codexNewConfigModel(registry: ModelRegistry): string {
+  return buildModelPickerRows(registry, 'codex')[0]?.value ?? CODEX_DEFAULT
 }

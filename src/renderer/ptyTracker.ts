@@ -21,6 +21,13 @@ export function markSpawned(sessionId: string): number {
   return token
 }
 
+/** The token of the spawn that started the session's current PTY, if any
+ *  (P3.8 round 1: a typed command's Enter goes only to the run it was typed
+ *  into). */
+export function currentSpawnToken(sessionId: string): number | undefined {
+  return spawnedPtys.get(sessionId)
+}
+
 /** Whether the spawn holding `token` is still this session's current one. */
 export function isCurrentSpawn(sessionId: string, token: number | undefined): boolean {
   return token !== undefined && spawnedPtys.get(sessionId) === token

@@ -229,7 +229,7 @@ export interface ElectronAPI {
       codexOptions?: {
         model?: string
         reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
-        permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
+        permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted' | 'plan'
       }
       /** WP2: the Codex account the session runs under (an opaque registry
        *  id). Absent = the provider default. */

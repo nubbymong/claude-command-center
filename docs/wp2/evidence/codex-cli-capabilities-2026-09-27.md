@@ -263,6 +263,34 @@ model catalogue JSON bundled in it (the `models.json` `codex debug models` rende
 - [strings] The TUI config has `disable_paste_burst`: the composer treats a fast burst of typed characters as a
   paste. There is `plan_mode_reasoning_effort` but no key that starts a session in Plan mode.
 
+### 13. Addendum (P3.8, 2026-09-29): the TUI on the VM (rows 39, 40, 41, 61, 69)
+
+Run on the Windows test VM against both versions, in throwaway `CODEX_HOME` folders signed in with a fake API key
+behind a dead proxy (no request left the VM), through a pseudo-terminal driver that kept the raw output with its
+timings. No real account was used; what needs one is listed at the end.
+
+- [run] Row 41: `/model gpt-5.5` and `/model gpt-5.5 high`, each followed by Enter, are sent as a message (a turn
+  starts) and switch nothing; `/effort` is "Unrecognized command" and stays in the composer; `/reasoning` is sent as
+  a message. A bare `/model` and Enter opens "Select Model and Effort": the models (six on 0.153.4, five on 0.155.1),
+  then "Select Reasoning Level". There is no one-line command for a model or an effort.
+- [run] Row 69, the ready marker: in an untrusted folder the banner (model "loading") and the composer's dim
+  placeholder are drawn within about 90 ms, before the folder-trust prompt (311 ms on 0.153.4, 493 ms on 0.155.1);
+  once it is answered, the footer (model, effort and folder) appears about 50 ms later. A trusted folder shows the
+  footer at about 300 ms, a `resume --last` at about 70 ms. The footer on the last line, with no trust prompt on
+  screen, marks a ready composer; the placeholder does not. At ultra effort the composer's glyph changes.
+- [run] Row 69: `/plan` and Enter works on both versions ("Model changed to ... for Plan mode", the footer reads
+  "Plan mode"), and the rollout's `turn_context` records the plan collaboration mode.
+- [run] Row 61: typing `/compact`, then Enter 300 ms later, submits it on both versions; one write of `/compact` and
+  Enter does not (the text stays in the composer).
+- [run] Rows 39, 40: `codex debug models` prints the catalogue as JSON (slug, display name, default and supported
+  reasoning levels, visibility) with no sign-in and no network, writing nothing. 0.155.1 lists gpt-6-astra,
+  gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna and gpt-5.5, with the same levels as 0.153.4; it no longer lists gpt-5.2,
+  though `-m gpt-5.2` still starts. Both versions start with max and ultra on gpt-6-astra and on gpt-5.5 (whose
+  levels stop at xhigh): there is no check at launch.
+- Not established (they need a real sign-in and network): whether the server accepts max and ultra where the
+  catalogue does not list them; what a real `/compact` does to a conversation; `-m gpt-5.2` on 0.155.1 against the
+  server; whether `codex debug models` refreshes from the account when signed in.
+
 ## Rows this affects
 
 | Row | Result |
@@ -273,8 +301,8 @@ model catalogue JSON bundled in it (the `models.json` `codex debug models` rende
 | 34 | Unblocked: `codex exec resume <id>` / `codex resume <id>` in the same realm. |
 | 36 | Unblocked by derivation: count `+`/`-` lines of each `FileChange.unified_diff` in the rollout. No section 19 record needed. |
 | 38 | Unblocked: a resume appends to the original file; find it by id or take `transcript_path` from a hook. |
-| 41, 61, 69 | `/model`, `/compact`, `/plan` exist on both versions; plan mode has no launch flag. Addendum 12: no `/effort`; `/model` shows no argument form. |
-| 39, 40 | Addendum 12: the catalogue's picker models and their effort levels (0.153.4; 0.155.1 owed). |
+| 41, 61, 69 | `/model`, `/compact`, `/plan` exist on both versions; plan mode has no launch flag. Addendum 12: no `/effort`; `/model` shows no argument form. Addendum 13: `/model <slug>` is sent as a message; the footer marks a ready composer; `/plan` and a delayed-Enter `/compact` work on both versions. |
+| 39, 40 | Addendum 12: the catalogue's picker models and their effort levels (0.153.4). Addendum 13: 0.155.1's list (no gpt-5.2) and levels; `codex debug models` needs no sign-in. |
 | 43, 46, 47, 63 | Hook and notify payloads recorded, including PreToolUse and PostToolUse; PermissionRequest exists but was not observed. |
 | 51 | Instructions via `developer_instructions` or a skill; no MCP roots; MCP tools via tool search. |
 | 55, 56 | Memory files and log folders located; memories off by default. |

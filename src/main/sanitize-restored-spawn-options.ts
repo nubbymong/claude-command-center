@@ -27,8 +27,12 @@
  * mutates the input.
  */
 import { UUID_RE } from './logging/transcript-discovery'
+import { CODEX_MODEL_ID_MAX, CODEX_MODEL_ID_RE } from '../shared/model-registry'
 
-export const CODEX_PRESETS = ['read-only', 'standard', 'auto', 'unrestricted'] as const
+/** The Codex permission presets. 'plan' (P3.8 round 1, L2) is Claude's Plan mode
+ *  launch option: it launches with 'standard''s sandbox and approvals, then
+ *  Codex's own /plan is typed once its composer is ready. */
+export const CODEX_PRESETS = ['read-only', 'standard', 'auto', 'unrestricted', 'plan'] as const
 
 // ── The spawn schema's own rules for the two persisted claude fields ─────────
 // Exported and consumed by spawnOptionsSchema (pty-handlers) so the sanitizer
@@ -41,9 +45,10 @@ export const PERMISSION_MODES = ['default', 'acceptEdits', 'auto', 'plan', 'dont
 /** A Codex model id (`gpt-5.5`, `gpt-oss:20b`, `provider/model`), bounded and
  *  charset-limited like the Claude model: it becomes a launch argument. The
  *  first character is alphanumeric, so the value can never read as a flag.
- *  '' means "no override", as for Claude. */
-export const CODEX_MODEL_MAX = 64
-export const CODEX_MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:\/-]*$/
+ *  '' means "no override", as for Claude. One definition, shared with the
+ *  Codex picker (P3.8 round 1): it offers only ids that pass. */
+export const CODEX_MODEL_MAX = CODEX_MODEL_ID_MAX
+export const CODEX_MODEL_RE = CODEX_MODEL_ID_RE
 
 /** The Codex CLI's reasoning efforts (its ReasoningEffort values, 0.153.4),
  *  the only values `-c model_reasoning_effort=<value>` is built from (P3.8,

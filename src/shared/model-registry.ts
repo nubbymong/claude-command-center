@@ -71,7 +71,16 @@ export interface RegistryOverlay {
 export function mergeRegistry(baseline: ModelRegistry, overlay: RegistryOverlay | null): ModelRegistry {
   if (!overlay) return { ...baseline, models: [...baseline.models], families: { ...baseline.families } }
   const byId = new Map<string, ModelEntry>(baseline.models.map((m) => [m.id, m]))
-  for (const o of overlay.models ?? []) byId.set(o.id, o)
+  const shipped = new Map<string, ModelEntry>(baseline.models.map((m) => [m.id, m]))
+  for (const o of overlay.models ?? []) {
+    // P3.8 round 1 (R1): which provider a shipped model belongs to is the
+    // code's, not an overlay's. An overlay entry that would move a shipped id
+    // to the other provider (a Codex id into a Claude family, a Claude id
+    // into the codex family) is ignored; the shipped entry stays.
+    const base = o ? shipped.get(o.id) : undefined
+    if (base && familyProvider(base.family) !== familyProvider(o.family)) continue
+    byId.set(o.id, o)
+  }
   return {
     ...baseline,
     models: [...byId.values()],
@@ -275,6 +284,18 @@ export function familyProvider(family: string | null | undefined): ModelProvider
   return family === CODEX_FAMILY ? 'codex' : 'claude'
 }
 
+/** A Codex model id as a launch takes it (`-m <id>`): bounded, charset-limited,
+ *  its first character a letter or digit so it can never read as a flag. The
+ *  pty:spawn schema holds a Codex model to this (sanitize-restored-spawn-
+ *  options.ts re-exports it), and the Codex picker offers only ids that pass
+ *  (P3.8 round 1, R1): a row it offered could otherwise be one the launch
+ *  refuses. */
+export const CODEX_MODEL_ID_MAX = 64
+export const CODEX_MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:\/-]*$/
+export function isCodexModelId(v: unknown): v is string {
+  return typeof v === 'string' && v.length > 0 && v.length <= CODEX_MODEL_ID_MAX && CODEX_MODEL_ID_RE.test(v)
+}
+
 /** A provider's effort levels, in display order: Claude Code's are the
  *  registry's `effortLevels`, another provider's its `providerEffortLevels`
  *  entry (none when the registry has none for it). */
@@ -369,6 +390,9 @@ export function buildModelPickerRows(registry: ModelRegistry, provider: ModelPro
       continue
     }
     if (familyProvider(m.family) !== provider) continue
+    // P3.8 round 1 (R1): a Codex row is only an id a launch takes (`-m <id>`);
+    // an overlay id the pty:spawn schema would refuse is never offered.
+    if (provider === 'codex' && !isCodexModelId(m.id)) continue
     if (seen.has(m.id)) continue
     seen.add(m.id)
     const row: ModelPickerRow = {
@@ -437,6 +461,18 @@ export function buildEffortRows(
     value: l.value, label: l.label, hint: l.hint,
     supported: allowed ? allowed.has(l.value) : true,
   }))
+}
+
+/**
+ * Whether a Codex session on `model` runs `effort` (P3.8): no effort (the
+ * model's own default) always does; a level Codex's list does not hold (a
+ * legacy 'none' or 'minimal') never does; otherwise the model's own levels
+ * decide, a model the registry cannot place taking any level. The session
+ * dialog, the command bar pill and the launch in main all ask this.
+ */
+export function codexEffortRuns(registry: ModelRegistry, model: string | null | undefined, effort: string | null | undefined): boolean {
+  if (!effort) return true
+  return buildEffortRows(registry, model || null, 'codex').some((e) => e.value === effort && e.supported)
 }
 
 // ── Model coverage vs. the published Claude Code model configuration (#385) ──

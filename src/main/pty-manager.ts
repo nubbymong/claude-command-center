@@ -1540,7 +1540,7 @@ function spawnPtyResolved(
     codexOptions?: {
       model?: string
       reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
-      permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
+      permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted' | 'plan'
     }
     /** MAIN-INTERNAL (WP2, plan A10): the Codex session's prepared launch --
      *  its account lease, executable and realm environment. Set only by
