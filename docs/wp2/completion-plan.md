@@ -71,11 +71,12 @@ still owes recorded in 4. "2; 3" means partly built in 2, the rest in 3.
   (`docs/wp1/owner-decisions-2026-09-27.md`, M4).
 - By PR: **23 in PR 3, 15 in PR 4**. No row changes package. The Ask Conductor
   part of row 14 goes with row 53 into PR 4, because it is the same change.
-- 32 DONE rows still owe real-CLI, per-OS, packaged or VM verification,
-  recorded in PR 4 and closed at release level: rows 1, 2, 3, 4, 6, 7, 8, 9,
-  10, 12, 13, 18, 20, 21, 23, 24, 25, 27, 28, 29, 33, 36, 37, 38, 40, 48, 49,
-  50, 61, 64, 69 and 74. The other 5 DONE rows (5, 19, 26, 30, 75) owe
-  nothing.
+- 32 DONE rows still owe verification. The 12 built in PR 3 (rows 7, 8, 10,
+  20, 24, 28, 36, 37, 38, 40, 61 and 69) owe their VM checks under PR 3's gate
+  6 (section 6). The other 20 (rows 1, 2, 3, 4, 6, 9, 12, 13, 18, 21, 23, 25,
+  27, 29, 33, 48, 49, 50, 64 and 74) owe real-CLI, per-OS or packaged
+  verification, recorded in PR 4 and closed at release level. The other 5
+  DONE rows (5, 19, 26, 30, 75) owe nothing.
 - Row 17 was counted PARTIAL here, from the code, while the checklist marked
   it VERIFIED; the checklist now marks it PARTIAL too (no Codex credits row
   yet; `src/shared/app-knowledge.ts` says so as a known issue). The checklist
@@ -199,7 +200,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 66 | Packaged smoke | PARTIAL: Windows only, an unsigned candidate on a used VM | OD20 D8; WP1.63 | verification (release level; owner hosts) | 4 |
 | 67 | E2E mode matrix | PARTIAL | WP1.1, WP1.60 | implementation (restart, enable/disable, real launch cases); verification | 2; 4 |
 | 68 | Insights | OPEN: Claude only; Claude's Insights types Claude Code's own `/insights` in a terminal (`src/main/insights-runner.ts:234-237`) | Parity, recorded 2026-09-26 (the parity reset's "Resolved by parity" list, sessions batch; not one of that day's open questions): a Conductor-native Codex report, run with `codex exec`. A mockup comes before the build (section 10) | implementation | 4 |
-| 69 | Plan mode | DONE (P3.8 round 1, caef0d42; round 2, f1783110): a "Plan mode" permissions choice, as Claude's launch option: the session starts READ-ONLY and Codex's own `/plan` is typed into its first ready prompt only (never the folder-trust prompt, the user's typing or after a turn), within a bounded wait; otherwise a note says Plan mode is not on and the session is read-only. The pill reads "plan" only while Codex's footer shows its Plan mode | Parity: Claude's Plan mode launch option (`src/renderer/lib/claude-cli-options.ts:85`); Codex has `/plan` on both supported versions and no launch flag for it (VM), so no section 19 record | verification: Plan mode on the VM; the approval flow with a working model (owner-only) | 3 |
+| 69 | Plan mode | DONE (P3.8 round 1, caef0d42; round 2, f1783110): a "Plan mode" permissions choice, as Claude's launch option: the session starts READ-ONLY and Codex's own `/plan` is typed into its first ready prompt only (never the folder-trust prompt, the user's typing or after a turn), within a bounded wait; otherwise a note says Plan mode is not on and the session is read-only. The pill reads "plan" only while Codex's footer shows its Plan mode | Parity: Claude's Plan mode launch option (`src/renderer/lib/claude-cli-options.ts:85`); Codex has `/plan` on both supported versions and no launch flag for it (VM), so no section 19 record | verification: Plan mode on the VM, 0.153.4's fresh launches included (round 3); the approval flow with a working model (owner-only) | 3 |
 | 70 | Image paste | PARTIAL: built, unproven; the tip still says "Claude's prompt" (`tips-library.ts:370`) | Parity | verification (and the tip) | 3 |
 | 71 | Copy, paste, scrollback, mouse | PARTIAL: built, unproven; the trace is from 0.125 | Parity | verification (re-captured at 0.155.1) | 3 |
 | 72 | Multi Spawn and Quick Start with Codex | PARTIAL: one at a time is done (P2) | Parity: N copies with one lease each; Quick Start | implementation | 2; 3 |
@@ -356,7 +357,7 @@ from P3.1, and then only that row.
 | P3.6 Account chip and Switch account | 20, 22 | Y | Y | APPROVED |
 | P3.7 Statusline segments and settings | 36, 37 | N | N | APPROVED |
 | P3.8 Model, effort, pricing, compact, plan mode | 28, 39, 40, 41, 61, 69 | Y | N | APPROVED |
-| P3.9 Sentinel for Codex | 42 | Y | N | APPROVED |
+| P3.9 Sentinel for Codex | 42, 39 (live read) | Y | N | APPROVED |
 | P3.10 Activity, attention, Watchdog and hooks | 43, 46, 47, 63 | Y | Y | APPROVED |
 | P3.11 Extra CLI arguments | 62 | Y | Y | APPROVED |
 | P3.12 Logs and GitHub context | 31, 65 | Y | Y | APPROVED |
@@ -1067,7 +1068,7 @@ prompt never comes (`codex-composer.test.ts`, `spawn.test.ts`,
 `terminalview-account-launch.test.tsx`). The permissions pill of a live Plan
 mode session reads "plan" only while Codex's own footer shows its Plan mode,
 else "read-only (Plan mode off)" (`commandbar-codex-toolbar.test.ts`); the
-dialog's Plan mode says it starts read-only. Claude's Plan mode starts in plan
+dialog's Plan mode says it starts read-only. Deviation, recorded: Claude's Plan mode starts in plan
 (`--permission-mode plan`) and its accepted plan moves on to the mode the user
 picks; Codex's accepted plan leaves Plan mode, not read-only, and the user
 widens it with Codex's own `/permissions` (section 10). The composer gate:
@@ -1097,6 +1098,48 @@ the Codex picker offers, and read a file whose `models` is not a list as empty
 of round 2; the VM run of round 2 (Plan mode read-only, its note and the
 pill's reading; the composer gate on the real TUIs); the native tests on CI
 and the VM.
+
+Round 3 (2026-09-29; e9f2cd51; mocked), after ADR-009 pass 3 (PASS on both
+lenses, three minors), the spec and quality reviews, and the VM re-check at
+25616c3f. Row 69, the VM finding: 0.153.4 boots its MCP servers after drawing
+its prompt, under a status row that reads like a turn ("Booting MCP server:
+conductor (0s . esc to interrupt)"); fresh Plan mode launches left `/plan`
+typed (6 of 7) or gave up saying something was typed (1 of 7). That row now
+reads as "still starting": nothing is typed while it shows (Compact says so),
+and Plan mode waits it out. Every typed command whose Enter is withheld is
+erased again, only the app's own characters, only in the same run, only while
+the composer holds exactly them and never while a prompt is up; Plan mode
+then waits for the prompt and types `/plan` again (at most four tries), and
+its note names the real reason (`codex-composer.test.ts`, from the VM's raw
+screens). The permissions pill compares the choice for the next start with
+the preset the run launched with, which main now reports with each Codex
+spawn (a Standard run with Plan mode picked for its next start reads "plan"
+and keeps "Restart session to apply" across a tab switch), and reads Codex's
+Plan mode only from the footer row under the composer, in the right-aligned
+segment after the folder (`commandbar-codex-toolbar.test.ts`,
+`terminalview-account-launch.test.tsx`, `pty-spawn-provider-off.test.ts`); the
+pill is Codex's only (Claude's mode picker is the bottom bar's), so nothing
+changes for Claude. A write that throws at the Enter still settles the
+typing. Row 28: a re-key that cannot run (a read-only or locked file) is
+logged and the open goes on; with nothing to change it only scans (30 ms at
+200,000 rows on the VM), so no index is added; an open that fails while it
+is set up closes the handle it opened (`tk-db-open-failure.test.ts`,
+`tk-db-codex-exact-price.native.test.ts`). Pre-existing, fixed here (VM S5):
+the terminal's context reading took Codex's footer "N% context left" as the
+share used, so a Codex tab showed a full, red meter; a figure followed by
+"left" or "remaining" now reads as the share left
+(`terminal/contextPercent.ts`, `context-percent.test.ts`).
+
+ADR-009 for P3.8: pass 1 at 3ff8c361, FINDINGS (one major: Tokenomics
+priced a Codex turn by a model-name prefix), fixed in caef0d42; pass 2 at
+3f458ac4, FINDINGS (one major: a Plan mode run's first turn could run before
+Plan mode was on), fixed in f1783110; pass 3 at 25616c3f, PASS on both lenses
+(its minors fixed in round 3). VM: the round 2 re-check at 25616c3f (e2e
+81/81; native 11 files, 135 tests; Plan mode read-only launches, 6 of 6 clean
+starts on 0.155.1; `/permissions` on both versions; the 0.153.4 start-up
+finding above). Owed: the reviews of round 3 and the VM re-check of this
+round (0.153.4's fresh Plan mode launches, the pill across a tab switch, the
+context meter); the native tests on CI and the VM.
 
 **P3.9 Sentinel for Codex.** Codex version drift against the supported range
 raises a finding; flags and the rollout format are checked; row 39's live
@@ -1259,7 +1302,7 @@ Notes that bind the build:
 | 53 Ask Conductor | Ask is a real Claude session (`askConductor.ts:255` pins the provider; `help-workspace.ts` stages a `CLAUDE.md`), blocked with Claude Code off (`askConductorGate.ts`). Design section 2: the app works fully in Codex-only mode | **Codex only: settled** (Ask runs on the one provider that is on). **Both on: decided by the owner** on 2026-09-27 (OD27 M4, option B), below. There was no Claude behaviour to copy (OD26 P1, second case). |
 | 58 Web sign-in and artifacts | `src/main/account-web/artifacts.ts` opens claude.ai artifacts as an account; `account-pane.ts` gives the browser pane an account surface on claude.ai; the checklist's limits: nothing assumes a CLI sign-in gives ChatGPT browser cookies or an artifacts equivalent | **Web session: settled by parity** (chatgpt.com in the pane's account surface, signed in per Codex account). **Artifacts: not a UX choice.** No Codex equivalent is known (the checklist assumes none), so this is a section 19 record for the owner to sign, with the command lists of 0.153.4 and 0.155.1 as its evidence (P3.1). Should P3.1 find an equivalent, parity settles it instead. |
 | 68 Insights | `insights-runner.ts:234-237` types Claude Code's own `/insights` into a terminal and reads the report it writes; `InsightsPage.tsx:277-296` tells a Codex-only user that Insights come from Claude sessions. The parity reset of 2026-09-26 resolved it in its "Resolved by parity" list (sessions batch): a Conductor-native Codex report, run with `codex exec`; it was not one of that day's open questions | **Settled by parity (2026-09-26).** A one-line notice to the owner, not a question: Insights gets a Codex report the app makes with `codex exec`, shown in the page's existing layout, figures and run history, on the account's own Codex allowance as Claude's report uses Claude's. A mockup goes on the Agent Canvas before the build (P4.7), made from `src/renderer/components/InsightsPage.tsx`, `src/main/insights-runner.ts` and `src/main/insights-cross-account.ts` (ADR-013). |
-| 69 Plan mode | Claude's launch options include "Plan mode" (`claude-cli-options.ts:85`), a launch option only; the Codex form offers permission presets only (`CodexFormFields.tsx:162-170`); the capability leads say Codex documents a plan command | **Decidable by parity.** Codex gets Plan mode as a launch option, as Claude has it (P3.8), once P3.1 confirms the command on the supported versions. If it is absent, that is a section 19 record, not a UX question. **Settled and built (P3.8 round 1, caef0d42; round 2, f1783110):** the VM probe found `/plan` on both versions and no launch flag, so the choice launches READ-ONLY and types `/plan` into Codex's first ready prompt only. Claude's Plan mode starts in plan (`--permission-mode plan`) and its accepted plan moves on to the mode the user picks; Codex's accepted plan leaves Plan mode but not read-only, and the user widens what Codex may do with its own `/permissions` ("choose what Codex is allowed to do": the binaries' command list, and the TUI's own tip on 0.155.1). |
+| 69 Plan mode | Claude's launch options include "Plan mode" (`claude-cli-options.ts:85`), a launch option only; the Codex form offers permission presets only (`CodexFormFields.tsx:162-170`); the capability leads say Codex documents a plan command | **Decidable by parity.** Codex gets Plan mode as a launch option, as Claude has it (P3.8), once P3.1 confirms the command on the supported versions. If it is absent, that is a section 19 record, not a UX question. **Settled and built (P3.8 round 1, caef0d42; round 2, f1783110):** the VM probe found `/plan` on both versions and no launch flag, so the choice launches READ-ONLY and types `/plan` into Codex's first ready prompt only. **Deviation, recorded** (as P3.5's F7 menu): Claude's Plan mode starts in plan (`--permission-mode plan`) and its accepted plan moves on to the mode the user picks; Codex's accepted plan leaves Plan mode but not read-only, and the user widens what Codex may do with its own `/permissions` ("choose what Codex is allowed to do"; on the VM it opens "Update Model Permissions": Read Only, Ask for approval, Approve for me, Full Access, on both versions). |
 | 22 Switch account: a declined confirm | P3.6 VM finding V3: Cancel on Codex's confirm-at-launch question after a Switch left the tab on the new account. A Claude switch never asks at launch, so there is no Claude behaviour to copy | **Parity cannot settle it.** Built as the default pending the owner's decision: question 3 below. |
 | 41 Mid-session model and effort | Claude's pill switches model and effort in one step, live. The VM probe (evidence addendum 13): Codex has no one-line form (`/model <slug>` and `/model <slug> <effort>` are sent as a message; `/effort` is unrecognised); its own route is a two-step picker opened by a bare `/model`, which keeps the conversation | **Parity cannot carry over as it is.** Built as the default pending the owner's decision: question 2 below. |
 
