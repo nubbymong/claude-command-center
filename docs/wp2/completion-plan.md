@@ -810,6 +810,17 @@ the Switch list gives a signed-out account no state, which parity settles
 unchanged (Claude's list shows a signed-out profile with no state, and a
 switch to it launches, the sign-in done inside the session); N1, a switch
 whose restart is refused now puts the pin back on the account the tab is on.
+CI at 1063e3d9 (the Windows and macOS test jobs): the two carry test files
+failed because a runner's temp folder is not at its canonical path (an 8.3
+short name on Windows, /var -> /private/var on macOS) and the carry refuses a
+root that is not, by design. Users are not affected: the app derives every
+account folder from its roots taken at their real path (realm-folders
+resolveCodexRealmRoots) with the carry's own realpath flavour
+(realpathSync.native, which also expands a short name). The tests now take
+their temp folder at its real path, and pins were added: the carry's input
+contract, the app's own path with a resources folder reached through a
+junction or typed with an 8.3 short name, and one realpath flavour
+(`conversation-carry.test.ts`).
 Owed: the owner's decision on V3 (restore the previous account on a declined
 confirm, the default until then); the VM check of W1 (to ride on P3.7's VM
 run); the owner's review of the screenshots (the strip pill and its menu, the right-click menu,

@@ -5,20 +5,28 @@
 // all, never over anything, never through a link, bounded, and the carried
 // copy resumes by id there (P3.5's resolveCodexResume).
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, readdirSync, existsSync, statSync, lstatSync, linkSync, renameSync, unlinkSync, utimesSync, appendFileSync, rmdirSync, realpathSync, promises as fsp } from 'fs'
-import { join, dirname, basename } from 'path'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, readdirSync, existsSync, statSync, lstatSync, linkSync, renameSync, unlinkSync, utimesSync, appendFileSync, rmdirSync, realpathSync, promises as fsp, type BigIntStats } from 'fs'
+import { join, dirname, basename, resolve } from 'path'
 import { tmpdir } from 'os'
 import { carryCodexRollout, CODEX_CARRY_MAX_BYTES, CODEX_CARRY_STALE_TEMP_MS } from '../../../../src/main/providers/codex/conversation-carry'
 import { resolveCodexResume } from '../../../../src/main/providers/codex/rollout-lookup'
+import { createCodexRealmFolders, createCodexRealmLocks, resolveCodexRealmRoots, type CodexRealmFsPort, type CodexFsEntry } from '../../../../src/main/providers/codex/realm-folders'
 
 const ID = '019dd000-0006-7000-8000-0000000000c1'
 const PREFIX = 'ccc-p36-carry-'
 const temps: string[] = []
-const temp = (tag: string) => { const d = mkdtempSync(join(tmpdir(), `${PREFIX}${tag}-`)); temps.push(d); return d }
+// The system temp folder at its real path, as the app takes its own roots
+// before any account folder is derived from them (realm-folders
+// resolveCodexRealmRoots, the same realpathSync.native): the carry is handed
+// canonical roots and refuses any other (below, "the input contract"). A CI
+// runner's is not canonical (an 8.3 alias on Windows, /var -> /private/var on
+// macOS).
+const TMP = realpathSync.native(tmpdir())
+const temp = (tag: string) => { const d = mkdtempSync(join(TMP, `${PREFIX}${tag}-`)); temps.push(d); return d }
 // TEST CLEANUP GUARD: only a folder this file made (its own prefix, directly
 // in the system temp folder) is removed, never a path the code under test
 // computed.
-afterEach(() => { for (const d of temps.splice(0)) if (dirname(d) === tmpdir() && basename(d).startsWith(PREFIX)) rmSync(d, { recursive: true, force: true }) })
+afterEach(() => { for (const d of temps.splice(0)) if (dirname(d) === TMP && basename(d).startsWith(PREFIX)) rmSync(d, { recursive: true, force: true }) })
 
 const meta = (id: string, cwd: string) => JSON.stringify({ timestamp: '2026-09-20T10:00:00.000Z', type: 'session_meta', payload: { id, cwd } }) + '\n'
 const turn = (n: number) => JSON.stringify({ type: 'response_item', payload: { n } }) + '\n'
@@ -862,5 +870,117 @@ describe('carryCodexRollout sweeps what a stopped carry left', () => {
     }
     expect(swapped).toBe(true)
     expect(readFileSync(stale, 'utf8')).toBe('another file\n')
+  })
+})
+
+// P3.6 CI finding (1063e3d9): the roots the carry is handed. The carry takes
+// no root through a link: it refuses one that is not at its own canonical
+// path (the input contract), and the app hands it canonical ones, deriving
+// every account folder from its roots taken at their real path first
+// (realm-folders resolveCodexRealmRoots), with the same realpath flavour as
+// the carry (realpathSync.native), so a resources folder reached through a
+// link, a junction or an 8.3 short name above it still carries end to end.
+describe('the roots the carry is handed', () => {
+  const RA = `realm-${'a'.repeat(16)}`
+  const RB = `realm-${'b'.repeat(16)}`
+  /** The app's folder port on the real filesystem (as codex/index.ts builds it). */
+  const realmFs = (): CodexRealmFsPort => {
+    const entry = (s: BigIntStats): CodexFsEntry => ({
+      kind: s.isSymbolicLink() ? 'link' : s.isDirectory() ? 'dir' : s.isFile() ? 'file' : 'other',
+      dev: String(s.dev),
+      ino: String(s.ino),
+      mode: Number(s.mode & 0o7777n),
+      nlink: Number(s.nlink),
+    })
+    return {
+      platform: process.platform,
+      realpath: (p) => realpathSync.native(p),
+      lstat: (p) => entry(lstatSync(p, { bigint: true })),
+      mkdirSecure: (d) => { mkdirSync(d, { recursive: true }) },
+      mkdir: (d, mode) => { mkdirSync(d, { mode }) },
+      chmod: () => {},
+      readdir: (d) => readdirSync(d),
+      unlink: (p) => unlinkSync(p),
+      rmdir: (p) => rmdirSync(p),
+    }
+  }
+  /** The switch's copy through the app's own path: roots resolved from the
+   *  resources folder as typed, two managed accounts under them, the
+   *  conversation carried from one to the other. */
+  async function throughTheApp(typedResources: string, noHome: string) {
+    const port = realmFs()
+    const r = resolveCodexRealmRoots({ resourcesDir: typedResources, env: {}, homeDir: noHome }, port)
+    if (!r.ok) return { result: r, resourcesDir: null as string | null, dest: null as string | null, body: '' }
+    const root = join(r.roots.resourcesDir, 'codex-realms')
+    const day = join(root, RA, 'sessions', '2026', '09', '20')
+    mkdirSync(day, { recursive: true })
+    mkdirSync(join(root, RB))
+    const body = meta(ID, 'C:\\p\\demo') + turn(1)
+    writeFileSync(join(day, NAME), body)
+    const record = (id: string) => ({ id, providerId: 'codex', kind: 'codex-home', ownership: 'conductor-managed', pathRef: `managed:${id}`, lifecycle: 'active' })
+    const folders = createCodexRealmFolders({
+      lookupRealm: async (ref) => ({ ok: true, realm: record(ref.authRealmId), roots: r.roots }) as never,
+      fs: port,
+      locks: createCodexRealmLocks(),
+      carry: carryCodexRollout,
+    })
+    const result = await folders.copyConversation!({ authRealmId: RA }, { authRealmId: RB }, { id: ID })
+    return { result, resourcesDir: r.roots.resourcesDir, dest: join(root, RB, 'sessions', '2026', '09', '20', NAME), body }
+  }
+
+  it('the input contract: a root reached through a link above it is not the realm\'s own (the source is not found, the destination refused, nothing written); the same roots at their real path carry', async () => {
+    const base = temp('contract')
+    const real = join(base, 'real')
+    mkdirSync(real)
+    const alias = join(base, 'alias')
+    symlinkSync(real, alias, 'junction')
+    const day = join(real, 'from', 'sessions', '2026', '09', '20')
+    mkdirSync(day, { recursive: true })
+    mkdirSync(join(real, 'to'))
+    writeFileSync(join(day, NAME), meta(ID, '/p') + turn(1))
+    expect(await carryCodexRollout({ fromSessionsDir: join(alias, 'from', 'sessions'), toHome: join(real, 'to'), id: ID })).toEqual({ ok: false, code: 'not-found' })
+    expect(await carryCodexRollout({ fromSessionsDir: join(real, 'from', 'sessions'), toHome: join(alias, 'to'), id: ID })).toEqual({ ok: false, code: 'unsafe-path' })
+    expect(readdirSync(join(real, 'to'))).toEqual([])
+    expect(await carryCodexRollout({ fromSessionsDir: join(real, 'from', 'sessions'), toHome: join(real, 'to'), id: ID })).toMatchObject({ ok: true, carried: 'copied' })
+  })
+
+  it('the app\'s own path: a resources folder reached through a junction (a symlink on POSIX) above it resolves to its real path, and the conversation carries from one account to the other', async () => {
+    const base = temp('roots')
+    const real = join(base, 'real')
+    mkdirSync(join(real, 'res'), { recursive: true })
+    const alias = join(base, 'alias')
+    symlinkSync(real, alias, 'junction')
+    const out = await throughTheApp(join(alias, 'res'), join(base, 'no-home'))
+    expect(out.resourcesDir).toBe(realpathSync.native(join(real, 'res')))
+    expect(out.result).toEqual({ ok: true, carried: 'copied' })
+    expect(readFileSync(out.dest!, 'utf8')).toBe(out.body)
+  })
+
+  // Skipped where the volume makes no 8.3 short names (they can be turned
+  // off per volume); a CI Windows runner's temp folder is itself under one.
+  it('the app\'s own path: a resources folder typed with an 8.3 short name resolves to the long name, and the conversation carries (Windows)', async (ctx) => {
+    if (process.platform !== 'win32') { ctx.skip(); return }
+    const base = temp('short')
+    const longName = 'ccclongfoldernamefortest'
+    mkdirSync(join(base, longName, 'res'), { recursive: true })
+    const short = join(base, 'CCCLON~1')
+    let hasShort = false
+    try { hasShort = existsSync(short) && realpathSync.native(short).toLowerCase() === join(base, longName).toLowerCase() } catch { hasShort = false }
+    if (!hasShort) { ctx.skip(); return }
+    const out = await throughTheApp(join(short, 'res'), join(base, 'no-home'))
+    expect(out.resourcesDir!.toLowerCase()).toBe(join(base, longName, 'res').toLowerCase())
+    expect(out.result).toEqual({ ok: true, carried: 'copied' })
+    expect(readFileSync(out.dest!, 'utf8')).toBe(out.body)
+  })
+
+  it('one realpath flavour on the whole path: the app\'s folder port and the carry both take real paths with realpathSync.native (fs.promises.realpath has its semantics), never the JavaScript realpathSync, which keeps an 8.3 name', () => {
+    const index = readFileSync(resolve(__dirname, '../../../../src/main/providers/codex/index.ts'), 'utf8')
+    const port = index.slice(index.indexOf('function realRealmFsPort'), index.indexOf('function testAuthPorts'))
+    expect(port).toContain('realpath: (p) => fs.realpathSync.native(p)')
+    expect(port).toContain('realpath: (p) => fs.promises.realpath(p)')
+    expect(port).not.toMatch(/realpathSync\(/)
+    const carry = readFileSync(resolve(__dirname, '../../../../src/main/providers/codex/conversation-carry.ts'), 'utf8')
+    expect(carry).toContain('realpathSync.native(')
+    expect(carry).not.toMatch(/realpathSync\(/)
   })
 })

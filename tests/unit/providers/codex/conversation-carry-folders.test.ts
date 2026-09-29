@@ -31,7 +31,7 @@ vi.mock('fs', async (importOriginal) => {
 })
 
 const fsMod = await import('fs')
-const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, readdirSync, renameSync, rmdirSync, existsSync, linkSync, promises: fsp } = fsMod
+const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, readdirSync, renameSync, rmdirSync, existsSync, linkSync, realpathSync, promises: fsp } = fsMod
 const { join, dirname, basename } = await import('path')
 const { tmpdir } = await import('os')
 const { carryCodexRollout } = await import('../../../../src/main/providers/codex/conversation-carry')
@@ -40,7 +40,13 @@ const ID = '019dd000-0006-7000-8000-0000000000c1'
 const PREFIX = 'ccc-p36-carryf-'
 const NAME = `rollout-2026-09-20T03-00-00-${ID}.jsonl`
 const temps: string[] = []
-const temp = (tag: string) => { const d = mkdtempSync(join(tmpdir(), `${PREFIX}${tag}-`)); temps.push(d); return d }
+// The system temp folder at its real path, as the app takes its own roots
+// before any account folder is derived from them (realm-folders
+// resolveCodexRealmRoots, the same realpathSync.native): the carry is handed
+// canonical roots and refuses any other. A CI runner's is not canonical (an
+// 8.3 alias on Windows, /var -> /private/var on macOS).
+const TMP = realpathSync.native(tmpdir())
+const temp = (tag: string) => { const d = mkdtempSync(join(TMP, `${PREFIX}${tag}-`)); temps.push(d); return d }
 // TEST CLEANUP GUARD: only a folder this file made (its own prefix, directly
 // in the system temp folder) is removed, never a path the code under test
 // computed.
@@ -48,7 +54,7 @@ afterEach(() => {
   hook.onMkdir = null
   hook.onLstat = null
   vi.restoreAllMocks()
-  for (const d of temps.splice(0)) if (dirname(d) === tmpdir() && basename(d).startsWith(PREFIX)) rmSync(d, { recursive: true, force: true })
+  for (const d of temps.splice(0)) if (dirname(d) === TMP && basename(d).startsWith(PREFIX)) rmSync(d, { recursive: true, force: true })
 })
 
 const line = (o: object) => JSON.stringify(o) + '\n'
