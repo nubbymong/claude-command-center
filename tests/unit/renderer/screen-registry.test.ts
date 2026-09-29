@@ -32,14 +32,16 @@ describe('readXtermScreen', () => {
     const rows = [cells('old scrollback'), cells('\u203a Ask Codex to do anything', 2), cells('  gpt-6-astra low \u00b7 C:\\p')]
     const screen = readXtermScreen(fakeTerm(rows, { baseY: 1, screenRows: 2, cols: 40 }))
     expect(screen).toEqual([
-      { text: '\u203a Ask Codex to do anything', typed: '\u203a' },
-      { text: '  gpt-6-astra low \u00b7 C:\\p', typed: '  gpt-6-astra low \u00b7 C:\\p' },
+      { text: '\u203a Ask Codex to do anything', typed: '\u203a', width: 40, end: 26 },
+      { text: '  gpt-6-astra low \u00b7 C:\\p', typed: '  gpt-6-astra low \u00b7 C:\\p', width: 40, end: 24 },
     ])
   })
 
+  // P3.8 round 4 (E4): each row says its width and where its last non-blank cell ends (a right-aligned segment's
+  // end), a wide character counting its two cells.
   it('skips the second half of a wide character, and reads a missing row as blank', () => {
     const rows = [[['\u6f22', 2, false], ['', 0, false], ['x', 1, false]] as Array<[string, number, boolean]>]
-    expect(readXtermScreen(fakeTerm(rows, { screenRows: 2, cols: 3 }))).toEqual([{ text: '\u6f22x', typed: '\u6f22x' }, { text: '', typed: '' }])
+    expect(readXtermScreen(fakeTerm(rows, { screenRows: 2, cols: 3 }))).toEqual([{ text: '\u6f22x', typed: '\u6f22x', width: 3, end: 3 }, { text: '', typed: '', width: 3, end: 0 }])
   })
 })
 

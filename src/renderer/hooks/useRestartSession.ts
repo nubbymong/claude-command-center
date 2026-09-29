@@ -65,6 +65,9 @@ export function useRestartSession(
         costUsd: undefined,
         needsAttention: false,
         modelName: undefined,
+        // P3.8 round 4 (L1): the preset the last Codex run launched with was
+        // that run's; the new run's spawn reports its own.
+        launchedCodexPreset: undefined,
         // Graceful-fail: the previous run's live indicators must not linger on the
         // restarted card. Clearing effortLive re-hides the effort pill (and fastMode
         // the bolt) until the new run's first statusline tick confirms them.

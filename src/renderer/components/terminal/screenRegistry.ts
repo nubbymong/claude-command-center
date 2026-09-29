@@ -15,6 +15,11 @@ export interface ScreenLine {
   text: string
   /** The same row with every dim cell (a placeholder) as a space, trimmed. */
   typed: string
+  /** The row's width in cells, and the cell just past its last non-blank one
+   *  (P3.8 round 4: where a right-aligned segment ends). Absent when the
+   *  reader does not know them. */
+  width?: number
+  end?: number
 }
 
 export type ScreenReader = () => ScreenLine[] | null
@@ -55,9 +60,10 @@ export function readXtermScreen(term: XtermLike): ScreenLine[] {
   const out: ScreenLine[] = []
   for (let y = buf.baseY; y < buf.baseY + term.rows; y++) {
     const line = buf.getLine(y)
-    if (!line) { out.push({ text: '', typed: '' }); continue }
+    if (!line) { out.push({ text: '', typed: '', width: term.cols, end: 0 }); continue }
     let text = ''
     let typed = ''
+    let end = 0
     for (let x = 0; x < term.cols; x++) {
       const cell = line.getCell(x)
       if (!cell) break
@@ -65,8 +71,9 @@ export function readXtermScreen(term: XtermLike): ScreenLine[] {
       const ch = cell.getChars() || ' '
       text += ch
       typed += cell.isDim() ? ' '.repeat(ch.length) : ch
+      if (ch.trim() !== '') end = x + Math.max(1, cell.getWidth())
     }
-    out.push({ text: text.replace(/\s+$/, ''), typed: typed.replace(/\s+$/, '') })
+    out.push({ text: text.replace(/\s+$/, ''), typed: typed.replace(/\s+$/, ''), width: term.cols, end })
   }
   return out
 }

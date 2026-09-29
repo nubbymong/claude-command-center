@@ -145,6 +145,19 @@ describe('the ready marker is anchored (round 2)', () => {
     expect(codexPlanModeOnScreen(turnRunning)).toBe(true)
   })
 
+  // Round 4 (E4): Codex's right segment ends two cells from the right edge
+  // (the raw footer bytes: the segment, then two spaces), so a folder whose
+  // name ends in spaces and "Plan mode" does not read as it.
+  it('reads Plan mode only from a segment ending two cells from the right edge', () => {
+    const W = 120
+    const at = (text: string, end: number): ScreenLine => ({ text, typed: text, width: W, end })
+    const label = 'Plan mode (shift+tab to cycle)'
+    const real = `  gpt-6-astra low ${DOT} C:/p`.padEnd(W - 2 - label.length) + label
+    expect(codexPlanModeOnScreen([...S.READY.slice(0, 10), emptyRow, S.plain(''), at(real, W - 2)])).toBe(true)
+    const spoof = `  gpt-6-astra low ${DOT} C:/a   Plan mode`
+    expect(codexPlanModeOnScreen([...S.READY.slice(0, 10), emptyRow, S.plain(''), at(spoof, spoof.length)])).toBe(false)
+  })
+
   it("with the session's models known, a footer naming another model reads nothing", () => {
     expect(codexPlanModeOnScreen(S.READY_PLAN, ['gpt-6-astra'])).toBe(true)
     expect(codexPlanModeOnScreen(S.READY_PLAN, ['gpt-5.5'])).toBeNull()
@@ -194,6 +207,8 @@ describe('Codex still starting (round 3, V1)', () => {
     expect(h.writes).toEqual(['/plan'])
     h.state.screen = S.TYPED_PLAN_BOOTING_153
     h.advance(CODEX_SUBMIT_DELAY_MS)
+    expect(h.writes).toEqual(['/plan']) // round 4 (E1): read again one poll later first
+    h.advance(CODEX_READY_POLL_MS)
     expect(h.writes).toEqual(['/plan', DEL.repeat(5)])
     h.state.screen = S.BOOTING_153 // Codex took the erase
     h.advance(CODEX_READY_POLL_MS * 4)
@@ -212,7 +227,7 @@ describe('Codex still starting (round 3, V1)', () => {
       h.state.screen = S.READY_153
       h.advance(CODEX_READY_POLL_MS)
       h.state.screen = S.TYPED_PLAN_BOOTING_153
-      h.advance(CODEX_SUBMIT_DELAY_MS)
+      h.advance(CODEX_SUBMIT_DELAY_MS + CODEX_READY_POLL_MS) // the Enter withheld, then read again and erased
     }
     expect(onGiveUp).toHaveBeenCalledTimes(1)
     expect(onGiveUp).toHaveBeenCalledWith('starting')
@@ -229,9 +244,50 @@ describe('Codex still starting (round 3, V1)', () => {
       const h = harness(S.READY)
       typeIntoCodexComposer('s1', '/compact', h.deps)
       h.state.screen = later as unknown as ScreenLine[]
-      h.advance(CODEX_SUBMIT_DELAY_MS)
+      h.advance(CODEX_SUBMIT_DELAY_MS + CODEX_READY_POLL_MS)
       expect(h.writes, String(erased)).toEqual(erased ? ['/compact', DEL.repeat(8)] : ['/compact'])
     }
+  })
+
+  // Round 4 (E1): the erase waits one poll and reads again, so the user's
+  // keys echoed late are never erased with it.
+  it("with the user's keys echoed late, nothing is erased and Plan mode gives up with the note", () => {
+    const h = harness(S.READY_153)
+    const onGiveUp = vi.fn()
+    typeWhenCodexComposerReady('s1', '/plan', { timeoutMs: 60_000, onGiveUp }, h.deps)
+    h.advance(0)
+    h.state.screen = S.TYPED_PLAN_BOOTING_153 // at the Enter: /plan alone, the user's keys not yet echoed
+    h.advance(CODEX_SUBMIT_DELAY_MS)
+    expect(h.writes).toEqual(['/plan'])
+    h.state.screen = S.TYPED_PLAN_BOOTING_153.map((l) => (l.text === `${GLYPH} /plan` ? S.plain(`${GLYPH} /planfix the `) : l))
+    h.advance(CODEX_READY_POLL_MS)
+    h.advance(60_000)
+    expect(h.writes).toEqual(['/plan'])
+    expect(onGiveUp).toHaveBeenCalledWith('interrupted')
+    expect(onGiveUp).toHaveBeenCalledTimes(1)
+  })
+
+  // Round 4 (E3): the start-up row counts only in its place, the row
+  // directly above the composer, and only during the run's start-up (until
+  // its first turn is seen or a command is sent).
+  it('a "Booting MCP server" line printed in the transcript never hides a running turn', () => {
+    const BULLET = String.fromCharCode(0x2022)
+    const DOT = String.fromCharCode(0xb7)
+    const printed = [...S.READY.slice(0, 10), S.plain(`Booting MCP server: conductor (0s ${BULLET} esc to interrupt)`), S.plain(`${GLYPH} hello`),
+      S.plain('  Working (2s, esc to interrupt)'), { text: `${GLYPH} Ask Codex to do anything`, typed: GLYPH }, S.plain(''), S.plain(`  gpt-6-astra low ${DOT} C:/p`)]
+    expect(readCodexScreen(printed).screen).toBe('busy')
+    const h = harness(printed)
+    expect(typeIntoCodexComposer('s1', '/compact', h.deps).reason).toMatch(/busy/)
+  })
+
+  it("after the run's first turn, a start-up row reads as the turn it looks like", () => {
+    expect(readCodexScreen(S.BOOTING_153, null, { startup: false }).screen).toBe('busy')
+    const h = harness(S.WORKING_NOW)
+    expect(typeIntoCodexComposer('s1', '/compact', h.deps).reason).toMatch(/busy/) // a turn seen in this run
+    h.state.screen = S.BOOTING_153
+    expect(typeIntoCodexComposer('s1', '/compact', h.deps).reason).toMatch(/busy/)
+    h.state.run = { createdAt: 1000, spawnToken: 8 } // a new run starts up again
+    expect(typeIntoCodexComposer('s1', '/compact', h.deps).reason).toMatch(/still starting/)
   })
 
   it('nothing is written into a run that changed before the Enter, not even the erase', () => {
@@ -270,6 +326,7 @@ function harness(screen: ScreenLine[] | null) {
     setTimeout: (fn, ms) => { const id = nextId++; timers.push({ fn, at: now + ms, id }); return id },
     clearTimeout: (id) => { timers = timers.filter((t) => t.id !== id) },
     pending: new Set<string>(),
+    startupDone: new Set<string>(),
   }
   const advance = (ms: number) => {
     const until = now + ms

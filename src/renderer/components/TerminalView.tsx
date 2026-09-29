@@ -1134,7 +1134,8 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
                 // main reports it, for the command bar's permissions pill.
                 const launchedPreset = !nothingStarted && result && typeof result === 'object' && 'launched' in result
                   ? result.launched?.codexPreset : undefined
-                if (!nothingStarted && provider === 'codex' && !shellOnly) updateSession(sessionId, { launchedCodexPreset: launchedPreset })
+                // A launch that started nothing (refused, cancelled) has none.
+                if (provider === 'codex' && !shellOnly) updateSession(sessionId, { launchedCodexPreset: nothingStarted ? undefined : launchedPreset })
                 // P3.8 (L2; round 2, PM1): Plan mode, Claude's launch option.
                 // Codex has no launch flag for it: the session starts read-only
                 // (main), and its own /plan is typed into its FIRST ready
