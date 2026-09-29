@@ -163,7 +163,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 39 | Model catalogue | DONE: the registry's Codex models, the list the supported CLIs (0.153.4 and 0.155.1) offer in their own picker, Sentinel's check, and the release gate's Codex half (P3.8, 260d4abc; round 1, caef0d42); P3.9 (3a4ed400; mocked): Sentinel's Codex check compares the registry with the list the installed CLI offers, read from it (`codex debug models --bundled` in an empty folder, no sign-in), naming its version, else the shipped list | Parity: the model registry plus Sentinel's coverage check. Not app-server `model/list`: OD27 M2 allows usage reads only | verification: done on the VM at 7678c433 (`--bundled` accepted on 0.153.4 and 0.155.1, the same list as the plain command, no connection); the gpt-5.2 notice to the owner stands (section 10) | 3 |
 | 40 | Effort | DONE (P3.8, 260d4abc; round 1, caef0d42): each Codex model's own levels, from the CLI's catalogue (0.155.1's are the same, VM); a launch drops a saved effort its model cannot run. The CLI accepts max and ultra at launch on both versions (VM) | Parity | verification: whether the server takes max and ultra (a real sign-in; the CLI does not check at launch) | 3 |
 | 41 | Mid-session model and effort | PARTIAL, built as the default pending the owner's decision (P3.8 round 1, caef0d42): on a live session the command bar's model pill types a bare `/model`, only at Codex's ready prompt, which opens Codex's own model-and-effort picker and keeps the conversation; a stopped session keeps the select, applied at its next start | Parity: applied live, keeping the conversation. Codex has no one-line form (VM: `/model <slug>` is sent as a message; there is no `/effort`), so Claude's one-step switch cannot carry over as it is | owner: the default (section 10, question 2); verification: the pill on the VM | 3 |
-| 42 | Sentinel | DONE (P3.9, 3a4ed400; mocked): while Codex is on, its version against the supported range (a finding outside it), the live model list (row 39), and a changed version's release notes analysed against its launch flags, TUI, rollout session files and config and account files; the analysis runs on the provider that is on (both on: the one Ask Conductor runs on, Claude Code until PR 4's row); the same panel, dot, Settings section and Transparency card | Parity: version drift, flags and the rollout format checked, with findings; the analysis runs on whichever provider is on | verification: the VM run at 7678c433 (the findings as specified; a Codex-run analysis left config.toml unchanged; the notes read failed, fixed in round 1, e357fe33, with the ADR-009 pass 1 findings); the VM re-check at 82c78680, five of six passed, its bug and the ADR-009 pass 2 findings fixed in round 2, 1f010667); owed: the re-attack, the VM re-check of round 2, a completed real analysis (owner) and the owner's screenshot review | 3 |
+| 42 | Sentinel | DONE (P3.9, 3a4ed400; mocked): while Codex is on, its version against the supported range (a finding outside it), the live model list (row 39), and a changed version's release notes analysed against its launch flags, TUI, rollout session files and config and account files; the analysis runs on the provider that is on (both on: the one Ask Conductor runs on, Claude Code until PR 4's row); the same panel, dot, Settings section and Transparency card | Parity: version drift, flags and the rollout format checked, with findings; the analysis runs on whichever provider is on | verification: the VM run at 7678c433 (the findings as specified; a Codex-run analysis left config.toml unchanged; the notes read failed, fixed in round 1, e357fe33, with the ADR-009 pass 1 findings); the VM re-check at 82c78680, five of six passed, its bug and the ADR-009 pass 2 findings fixed in round 2, 1f010667); the VM re-check at 84fd2d03, the suspended git left by a fast failure fixed in round 3, 5fd82db8); ADR-009: FINDINGS after pass 3, P3.9 quarantined, a fresh pass owed before #626 leaves draft; owed: the VM re-check of round 3, a completed real analysis (owner) and the owner's screenshot review | 3 |
 | 43 | Watchdog | OPEN: never armed for Codex (`src/main/pty-manager.ts`, the local arm site) | Parity: auto-retry and silence detection; aicc_planning#72 (a CLI without its own patterns reports Watchdog unavailable, never Claude's) | implementation | 3 |
 | 44 | Services (PTY integrity) | PARTIAL: built, unproven (Codex output is fed to the monitor) | Parity | verification | 3 |
 | 45 | Provider status pill | PARTIAL (P3.4, aa0411b0, 87ba9c2d; the VM walk PASS at c7f9a34a and f65de184): an OpenAI status pill beside Anthropic's, each read and shown only while its provider is on | Parity: an OpenAI status pill beside Anthropic's, each shown only while its provider is on | verification: the Desktop test gate (owner); macOS and Linux; packaged | 3 |
@@ -1350,6 +1350,57 @@ the independent reviews of round 2, the ADR-009 re-attack, the VM re-check
 settings or CLAUDE.md read; a fast Codex failure settles at once with its
 error and leaves no suspended git), a completed real analysis (the owner,
 a real model) and the owner's screenshot review.
+
+ADR-009 history: pass 1 (at 7678c433) FINDINGS, two major, fixed in round
+1; pass 2 (at 82c78680) FINDINGS, one major, fixed in round 2; pass 3 (at
+84fd2d03) lens B PASS with five minor items, lens A FINDINGS with one major
+in the round-2 run cleanup. The bounded rounds are then exhausted: the
+phase verdict is FINDINGS and P3.9 is quarantined. The fixes were still
+made (round 3, 5fd82db8; mocked), and a fresh independent ADR-009 pass
+(PR-level) is owed before #626 leaves draft. The VM re-check at 84fd2d03:
+Claude Code's analysis offered no tools, read none of the planted
+instruction or settings files and ran in the runs folder; the Codex
+analysis with no model named reached the model; a fast Codex failure
+settled about 2.5 s after it exited with its real error; but in two of six
+fast failures a suspended git that Codex had started was left running
+(fixed here; the VM re-check is owed). Round 3: after an exec run's root
+has exited, a process is ended only when reads of the process table taken
+while the run ran prove it the run's (its pid with its start time recorded
+under the root, or a child started while a read saw its recorded parent
+running); a pid now held by another process is never touched. Those reads
+are taken at the run's start, at its first output and on a bounded
+schedule (eight at most, two at once), so a run that exits within a
+second can still be proved; the process group on POSIX is signalled only
+while a recorded member still runs with its recorded start time (macOS's
+ps now reports start times). The Windows sandbox appears to start Codex's
+own helpers suspended and a helper can be left that way when Codex exits
+at once (an upstream behaviour); no setting in the 0.153.4 binary stops
+Codex collecting git information in exec. Claude Code's analysis keeps no
+transcript (`--no-session-persistence`) and gets the proxy and
+certificate settings of its account's settings file, the transport
+variables the authority manifest keeps (`transport-settings-env.test.ts`).
+The quote check reads past markdown code marks and typographic quotes,
+accepts a whole notes line however short and an elided line whose pieces
+are in order; findings it cannot match are counted, keep the version
+unchecked and are said in the panel. A title or what-breaks line loses
+credential shapes, taken apart or not (a defence in depth), and keeps
+names (UPPER_SNAKE variables, flags, model names, paths); an old finding
+keys by its redacted quote, so a dismissal made before quotes were
+redacted holds; a failure reads as one plain line; the Codex analysis
+also disables code_mode and code_mode_host (both CLIs list them;
+js_repl and apply_patch_freeform are removed, off, in both). Mutation:
+52 mutants, all red, every run bounded. Residuals: a sub-second
+Codex failure on the npm shim route may still leave a helper if no read
+captured it (the VM measures how often); natural-language spellings of a
+secret are not caught by the title filter; Codex still offers apply_patch
+(refused by the read-only sandbox) and request_user_input (inert in exec)
+and loads the account's own `$CODEX_HOME/AGENTS.md`; Windows
+resources-folder ACLs inherit from the drive (#103). Owed: the independent
+spec and code-quality reviews of round 3, the fresh ADR-009 pass, the VM
+re-check (fast failures leave no helper; the Claude run keeps no
+transcript and reaches the API through a proxy set only in the account's
+settings file), a completed real analysis (the owner, a real model) and
+the owner's screenshot review.
 
 **P3.10 Activity, attention, Watchdog and hooks.** Codex `notify` and hook
 events feed the attention dot, waiting-for-input, the busy sweep and the sleep
