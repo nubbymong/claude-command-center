@@ -77,9 +77,11 @@ still owes recorded in 4. "2; 3" means partly built in 2, the rest in 3.
   three models; the agreed source is the live one Claude uses). The checklist
   moves both in the same change as this plan, and moves rows 52, 68 and 69
   from OWNER to MISSING, since parity settles them (section 10).
-- Genuinely unresolved UX decisions: **none**. The one there was (row 53,
-  both providers on) was decided by the owner on 2026-09-27 (option B; OD27
-  M4). Section 10.
+- Genuinely unresolved UX decisions: **one**, row 41 (P3.8 round 1, caef0d42: Codex has
+  no one-line model or effort command), built as a default pending the
+  owner's decision (section 10, question 2). The one before it (row 53, both
+  providers on) was decided by the owner on 2026-09-27 (option B; OD27 M4).
+  Section 10.
 - Nothing in PR 3 waits on the owner. PR 3 can start.
 
 ## 3. Where the draft plan disagreed with the record
@@ -135,7 +137,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 25 | Tokenomics reads managed realms and `~/.codex` | DONE | OD20 D10; OD26 U3 | verification: real rollouts | 2, v4 |
 | 26 | Tokenomics attribution and filters | DONE | Canvas 2026-09-26 (Tokenomics, option A); OD27 M1 | none | 2 |
 | 27 | Subagent collision | DONE | The #307 fix (`7fc96639`) | verification: a real 0.155.1 subagent rollout | 2, v4 |
-| 28 | Codex pricing | DONE (P3.8, 260d4abc): live OpenAI prices from the LiteLLM fetch Claude's prices come from, the static table as the fallback, "no price" for anything neither prices | PLAN usage track MP11; parity: Claude's prices come from the live LiteLLM fetch with a fallback, and the same fetch extends to OpenAI models (resolution recorded 2026-09-26) | verification: a real fetch (which catalogue models the list prices) | 2; 3 |
+| 28 | Codex pricing | DONE (P3.8, 260d4abc; round 1, caef0d42): live OpenAI prices from the LiteLLM fetch Claude's prices come from, the static table as the fallback, "no price" for anything neither prices; Tokenomics prices a Codex turn by its model's exact id, as the strip does. A real fetch on the VM (3ff8c361) priced all six catalogue models | PLAN usage track MP11; parity: Claude's prices come from the live LiteLLM fetch with a fallback, and the same fetch extends to OpenAI models (resolution recorded 2026-09-26) | verification: round 1 on the VM (an unpriced Codex model reads "no price" in Tokenomics too) | 2; 3 |
 | 29 | Plan type | DONE | OD27 M1 | verification: macOS, Linux, packaged | 2, v4 |
 | 30 | Tokenomics totals split by provider | DONE | Canvas 2026-09-26 (Tokenomics, option A) | none | 2 |
 
@@ -151,9 +153,9 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 36 | Statusline segments | PARTIAL: no account chip, lines or duration | Parity (line counts: evidence first; section 19 if Codex reports none) | implementation | 3 |
 | 37 | Statusline settings | PARTIAL: they apply to Codex (P2); row 36's segments missing | Parity | implementation | 2; 3 |
 | 38 | Statusline after resuming an old rollout | PARTIAL: the claim looks only in today's UTC date folder (`src/main/providers/codex/telemetry.ts:341-349`, a documented limitation), so a conversation from an earlier day, or one that crosses midnight UTC, gets no statusline | Parity | implementation (re-read the date folder each poll and find a resumed rollout wherever it is); a known defect until then (section 7) | 3 |
-| 39 | Model catalogue | PARTIAL: the registry's Codex models, the supported CLI's own picker list, and Sentinel's check against that list as shipped (P3.8, 260d4abc); Sentinel's live read of the list is not built | Parity: the model registry plus Sentinel's coverage check. Not app-server `model/list`: OD27 M2 allows usage reads only | implementation (the live read; its source with the owner); verification: 0.155.1's list | 3 |
-| 40 | Effort | DONE (P3.8, 260d4abc): each Codex model's own levels, from the CLI's catalogue | Parity | verification: 0.155.1's levels; a real launch at max and ultra | 3 |
-| 41 | Mid-session model and effort | PARTIAL: the command bar's model pill takes effect at the next Restart, which resumes the conversation (P3.5); nothing is applied live | Parity: applied live, keeping the conversation (evidence first: Codex's own model command on the supported versions) | implementation (evidence first: `/model` with an argument on the VM; how the strip applies it, with the owner) | 3 |
+| 39 | Model catalogue | PARTIAL: the registry's Codex models, the list the supported CLIs (0.153.4 and 0.155.1) offer in their own picker, Sentinel's check against that list as shipped, and the release gate's Codex half (P3.8, 260d4abc; round 1, caef0d42). The live read of the installed CLI's list is P3.9's (`codex debug models`); until then Sentinel's Codex check reports only an overlay's changes and a stale list | Parity: the model registry plus Sentinel's coverage check. Not app-server `model/list`: OD27 M2 allows usage reads only | implementation (P3.9: the live read); owner: whether gpt-5.2 stays (section 10) | 3 |
+| 40 | Effort | DONE (P3.8, 260d4abc; round 1, caef0d42): each Codex model's own levels, from the CLI's catalogue (0.155.1's are the same, VM); a launch drops a saved effort its model cannot run. The CLI accepts max and ultra at launch on both versions (VM) | Parity | verification: whether the server takes max and ultra (a real sign-in; the CLI does not check at launch) | 3 |
+| 41 | Mid-session model and effort | PARTIAL, built as the default pending the owner's decision (P3.8 round 1, caef0d42): on a live session the command bar's model pill types a bare `/model`, only at Codex's ready prompt, which opens Codex's own model-and-effort picker and keeps the conversation; a stopped session keeps the select, applied at its next start | Parity: applied live, keeping the conversation. Codex has no one-line form (VM: `/model <slug>` is sent as a message; there is no `/effort`), so Claude's one-step switch cannot carry over as it is | owner: the default (section 10, question 2); verification: the pill on the VM | 3 |
 | 42 | Sentinel | PARTIAL: Claude runs only (`src/main/sentinel/index.ts`) | Parity: version drift, flags and the rollout format checked, with findings; the analysis runs on whichever provider is on | implementation | 3 |
 | 43 | Watchdog | OPEN: never armed for Codex (`src/main/pty-manager.ts`, the local arm site) | Parity: auto-retry and silence detection; aicc_planning#72 (a CLI without its own patterns reports Watchdog unavailable, never Claude's) | implementation | 3 |
 | 44 | Services (PTY integrity) | PARTIAL: built, unproven (Codex output is fed to the monitor) | Parity | verification | 3 |
@@ -183,7 +185,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 |---|---|---|---|---|---|
 | 59 | PR CI on Linux | OPEN: Windows and macOS only (`.github/workflows/ci.yml`) | OD20 D5 | implementation | 4 |
 | 60 | Real-CLI coverage in CI | OPEN: no workflow installs Codex | OD20 D7; WP1.71 | implementation | 4 |
-| 61 | Compact | DONE (P3.8, 260d4abc): the strip's Compact on a Codex session types Codex's own /compact | Parity: Codex's own compact command (evidence first) | verification: the real TUI submits and compacts, 0.153.4 and 0.155.1 | 3 |
+| 61 | Compact | DONE (P3.8, 260d4abc; round 1, caef0d42): the strip's Compact on a Codex session types Codex's own /compact only at its ready, empty prompt (otherwise it types nothing and says why) and presses Enter only in the same run; the real TUI submits it that way on 0.153.4 and 0.155.1 (VM) | Parity: Codex's own compact command (evidence first) | verification: round 1 on the VM; what a real /compact does to a conversation (a real sign-in) | 3 |
 | 62 | Extra CLI arguments | OPEN: Claude only (`extraArgs`, `src/shared/types.ts:126-130`) | Parity: the same field and IPC character guard, plus a block-list of the flags the app manages and of any setting that changes the account, provider or endpoint | implementation | 3 |
 | 63 | Hooks gateway and notification rules | OPEN: Claude sessions only (`HooksGatewaySection.tsx:84`) | Parity: route Codex `notify` and hook events | implementation | 3 |
 | 64 | Partner terminal wording | DONE | P2 | verification: per OS | 2, v4 |
@@ -191,7 +193,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 66 | Packaged smoke | PARTIAL: Windows only, an unsigned candidate on a used VM | OD20 D8; WP1.63 | verification (release level; owner hosts) | 4 |
 | 67 | E2E mode matrix | PARTIAL | WP1.1, WP1.60 | implementation (restart, enable/disable, real launch cases); verification | 2; 4 |
 | 68 | Insights | OPEN: Claude only; Claude's Insights types Claude Code's own `/insights` in a terminal (`src/main/insights-runner.ts:234-237`) | Parity, recorded 2026-09-26 (the parity reset's "Resolved by parity" list, sessions batch; not one of that day's open questions): a Conductor-native Codex report, run with `codex exec`. A mockup comes before the build (section 10) | implementation | 4 |
-| 69 | Plan mode | OPEN: no Codex option (not built in P3.8: typing `/plan` needs a proven moment when the composer is ready) | Parity: Claude's Plan mode launch option (`src/renderer/lib/claude-cli-options.ts:85`); Codex documents a plan command; evidence first, section 19 if absent | implementation (evidence first: the raw output of a starting session on the VM) | 3 |
+| 69 | Plan mode | DONE (P3.8 round 1, caef0d42): a "Plan mode" permissions choice, as Claude's launch option: the session starts as Standard and Codex's own `/plan` is typed once its composer is ready (never into the folder-trust prompt), within a bounded wait that ends with a note | Parity: Claude's Plan mode launch option (`src/renderer/lib/claude-cli-options.ts:85`); Codex has `/plan` on both supported versions and no launch flag for it (VM), so no section 19 record | verification: Plan mode on the VM | 3 |
 | 70 | Image paste | PARTIAL: built, unproven; the tip still says "Claude's prompt" (`tips-library.ts:370`) | Parity | verification (and the tip) | 3 |
 | 71 | Copy, paste, scrollback, mouse | PARTIAL: built, unproven; the trace is from 0.125 | Parity | verification (re-captured at 0.155.1) | 3 |
 | 72 | Multi Spawn and Quick Start with Codex | PARTIAL: one at a time is done (P2) | Parity: N copies with one lease each; Quick Start | implementation | 2; 3 |
@@ -967,7 +969,8 @@ Enter, because Codex's composer takes a fast burst ending in Enter as a paste
 the run ending or the strip going cancels the Enter
 (`session-status-strip-codex-controls.test.tsx`). SSH radius: `pty-manager.ts`
 changes one type only (its compiled output is byte-identical), as does the
-preload. Not built, with the orchestrator for the owner: row 41 (the evidence
+preload. Not built in round 0 (round 1, below, builds rows 41 and 69 and the
+release gate's Codex half), with the orchestrator for the owner: row 41 (the evidence
 shows no argument form for `/model` and no `/effort` command: effort is
 `/model`'s second step; whether `/model <slug>` is taken inline is unproven,
 so how the strip applies a model and effort live needs a VM probe and a
@@ -976,11 +979,74 @@ notice, where a typed Enter answers it, so `/plan` needs a proven marker that
 the composer is ready: a VM capture of the raw output of a new and a resumed
 session, in a trusted and an untrusted folder, on both versions); Sentinel's
 live read of the Codex list (Claude's half reads the article when online) and
-the release gate's Codex half. Owed: the independent reviews and the ADR-009
+the release gate's Codex half. Owed after round 0 (the VM run was made at
+3ff8c361, evidence addendum 13): the independent reviews and the ADR-009
 pass; the VM run (0.155.1's catalogue read the same way; the Codex fields and
 the command bar pill; Compact on a real 0.153.4 and 0.155.1 TUI; a launch at
 max and ultra; a real price fetch) and the owner's review of its screenshots,
 both themes.
+
+Round 1 (2026-09-29; caef0d42; mocked), after the VM run at 3ff8c361, the reviews and
+the ADR-009 attackers. The VM probe of the real 0.153.4 and 0.155.1 TUIs
+(evidence addendum 13) settled rows 41 and 69 and gave the marker every
+typed command now waits for: Codex's composer is ready when the screen's last
+line is its footer (model, effort and folder) with the composer row above it
+and no blocking prompt on screen; the placeholder is drawn before the trust
+prompt, so it is no marker. One gate types every Codex command the app sends
+(Compact's `/compact`, the model pill's `/model`, Plan mode's `/plan`;
+`src/renderer/lib/codexComposer.ts`, over the terminal's live screen,
+`terminal/screenRegistry.ts`): only into the ready, empty composer; Enter
+300 ms later, only in the same run (the session's start and its PTY) and only
+when the composer holds exactly that command; otherwise nothing is typed and
+the strip or the pill says why for a moment (`codex-composer.test.ts`,
+`screen-registry.test.ts`, `session-status-strip-codex-controls.test.tsx`).
+The one strip App renders drops a press's Enter when it is re-pointed at
+another tab. Row 41, built as the default pending the owner's decision
+(section 10, question 2): Codex has no one-line model or effort command
+(`/model <slug>` is sent as a message; there is no `/effort`), so on a live
+session the model pill types a bare `/model`, which opens Codex's own
+two-step picker and keeps the conversation, and the strip then shows what
+Codex reports; a stopped session keeps the select, applied at its next start
+(`commandbar-codex-toolbar.test.ts`). Row 69: a "Plan mode" permissions
+choice in the dialog and the pill, as Claude's launch option: it launches as
+Standard, then `/plan` is typed once the composer is ready, never into the
+trust prompt, within two minutes, else a note above the terminal says to type
+it (`terminalview-account-launch.test.tsx`, `spawn.test.ts`,
+`codex-effort-allowlist.test.ts`). Row 28: Tokenomics prices a Codex turn by
+its model's exact id, as the strip does (it took the longest price key the
+model started with, so gpt-5.3-codex-spark was priced as gpt-5.3-codex), and
+stored Codex rows are re-keyed once (`tk-parse.test.ts`;
+`tk-db-codex-exact-price.native.test.ts`, CI and VM); a query binds only the
+price keys the stored usage names (`tk-pricing-cte.test.ts`). Both
+providers' prices, fetched and saved, are read through the same checks
+(`src/main/tokenomics/price-checks.ts`; valid Claude data prices exactly as
+before); the list's two halves are read independently; an empty OpenAI result
+is saved, so the day's window holds; a copy dated in the future is stale;
+calls made together share one request; a Codex price never replaces a Claude
+one (`price-checks.test.ts`, `tk-pricing-checks.test.ts`). Row 39: the Codex
+picker offers only ids the launch takes, and an overlay cannot move a shipped
+model to the other provider (`codex-model-registry.test.ts`). The release gate
+has its Codex half (`scripts/release-gate.mjs`, check 3: the registry's
+pickable codex-family models against `resources/codex-model-catalogue.json`;
+a missing model refuses, an extra one warns, an empty list fails closed;
+`model-coverage-parity.test.ts` holds it to Sentinel's verdicts,
+`release-gate.test.ts`). The list names both supported CLIs and keeps gpt-5.2,
+which 0.153.4 lists and 0.155.1 does not (section 10). Sentinel's Codex check
+stays snapshot-only until P3.9's live read (`codex debug models`, which needs
+no sign-in or network): both its inputs ship with the build, so at runtime it
+reports only an overlay's changes and a stale list. Row 40: a launch drops a
+saved effort its model cannot run (a luna config saved at ultra and launched
+from the list started at ultra; `pty-spawn-provider-off.test.ts`). A new
+Codex config starts as a new Claude one does: on the first model of the list,
+at Default effort (it started on gpt-5.5 at Medium). A pill's "Restart
+session to apply" goes with the Restart. Unchanged, by parity: the strip shows
+no cost for an unpriced Codex model, as it shows none when a Claude session
+reports none (`SessionStatusStrip.tsx:436`, the one path); Codex findings
+stay after Codex is turned off, as Claude's do. Owed: the reviews and the
+ADR-009 re-attack of round 1; the VM run of round 1 (the gate on the real
+TUIs, the pill's `/model`, Plan mode, Tokenomics' exact prices, and the
+native test there); with a real sign-in, whether the server takes max and
+ultra and what a real `/compact` does.
 
 **P3.9 Sentinel for Codex.** Codex version drift against the supported range
 raises a finding; flags and the rollout format are checked; the analysis
@@ -1139,9 +1205,11 @@ Notes that bind the build:
 | 53 Ask Conductor | Ask is a real Claude session (`askConductor.ts:255` pins the provider; `help-workspace.ts` stages a `CLAUDE.md`), blocked with Claude Code off (`askConductorGate.ts`). Design section 2: the app works fully in Codex-only mode | **Codex only: settled** (Ask runs on the one provider that is on). **Both on: decided by the owner** on 2026-09-27 (OD27 M4, option B), below. There was no Claude behaviour to copy (OD26 P1, second case). |
 | 58 Web sign-in and artifacts | `src/main/account-web/artifacts.ts` opens claude.ai artifacts as an account; `account-pane.ts` gives the browser pane an account surface on claude.ai; the checklist's limits: nothing assumes a CLI sign-in gives ChatGPT browser cookies or an artifacts equivalent | **Web session: settled by parity** (chatgpt.com in the pane's account surface, signed in per Codex account). **Artifacts: not a UX choice.** No Codex equivalent is known (the checklist assumes none), so this is a section 19 record for the owner to sign, with the command lists of 0.153.4 and 0.155.1 as its evidence (P3.1). Should P3.1 find an equivalent, parity settles it instead. |
 | 68 Insights | `insights-runner.ts:234-237` types Claude Code's own `/insights` into a terminal and reads the report it writes; `InsightsPage.tsx:277-296` tells a Codex-only user that Insights come from Claude sessions. The parity reset of 2026-09-26 resolved it in its "Resolved by parity" list (sessions batch): a Conductor-native Codex report, run with `codex exec`; it was not one of that day's open questions | **Settled by parity (2026-09-26).** A one-line notice to the owner, not a question: Insights gets a Codex report the app makes with `codex exec`, shown in the page's existing layout, figures and run history, on the account's own Codex allowance as Claude's report uses Claude's. A mockup goes on the Agent Canvas before the build (P4.7), made from `src/renderer/components/InsightsPage.tsx`, `src/main/insights-runner.ts` and `src/main/insights-cross-account.ts` (ADR-013). |
-| 69 Plan mode | Claude's launch options include "Plan mode" (`claude-cli-options.ts:85`), a launch option only; the Codex form offers permission presets only (`CodexFormFields.tsx:162-170`); the capability leads say Codex documents a plan command | **Decidable by parity.** Codex gets Plan mode as a launch option, as Claude has it (P3.8), once P3.1 confirms the command on the supported versions. If it is absent, that is a section 19 record, not a UX question. |
+| 69 Plan mode | Claude's launch options include "Plan mode" (`claude-cli-options.ts:85`), a launch option only; the Codex form offers permission presets only (`CodexFormFields.tsx:162-170`); the capability leads say Codex documents a plan command | **Decidable by parity.** Codex gets Plan mode as a launch option, as Claude has it (P3.8), once P3.1 confirms the command on the supported versions. If it is absent, that is a section 19 record, not a UX question. **Settled and built (P3.8 round 1, caef0d42):** the VM probe found `/plan` on both versions and no launch flag, so the choice launches as Standard and types `/plan` once Codex's prompt is ready. |
+| 41 Mid-session model and effort | Claude's pill switches model and effort in one step, live. The VM probe (evidence addendum 13): Codex has no one-line form (`/model <slug>` and `/model <slug> <effort>` are sent as a message; `/effort` is unrecognised); its own route is a two-step picker opened by a bare `/model`, which keeps the conversation | **Parity cannot carry over as it is.** Built as the default pending the owner's decision: question 2 below. |
 
-No unresolved UX decisions remain. Question 1 below was decided by the owner
+One decision is open: question 2 (row 41), built as a default pending the
+owner's decision. Question 1 below was decided by the owner
 on 2026-09-27: option B, approved as drawn (`docs/wp1/owner-decisions-2026-09-27.md`,
 M4; canvas "Ask Conductor provider choice" v1, no notes).
 
@@ -1178,6 +1246,28 @@ Show Ask Conductor switches), `src/renderer/stores/settingsStore.ts:274, 453`
 `src/main/help-workspace.ts` (the help workspace, which Codex would read
 through `AGENTS.md`).
 
+### Question 2 (row 41), open: built as the default, pending the owner's decision. How does a live Codex session change model and effort?
+
+Claude's pill switches model and effort in one step and keeps the
+conversation. Codex offers no one-line form on 0.153.4 or 0.155.1 (evidence
+addendum 13), so the one-step switch cannot carry over as it is.
+
+- **A (built, the default).** On a live session the command bar's model pill
+  types a bare `/model`, only at Codex's ready prompt, which opens Codex's own
+  picker (model, then reasoning level); the choice keeps the conversation and
+  the strip then shows what Codex reports. A stopped session keeps the app's
+  select, applied at its next start.
+- **B.** The app's select on a live session too, applied by a Restart that
+  resumes the conversation (what P3.5 built; one step, but the session
+  restarts).
+- **C.** The app picks the row in Codex's picker by sending keys (one step, no
+  restart, but it depends on the picker's layout in each CLI version).
+
+**Recommendation: A.** It is Codex's own route, it keeps the conversation with
+no restart, and it depends on no picker layout. B is the fallback if the owner
+wants the app's own list on a live session. The owner reviews A in the VM
+gallery of round 1.
+
 ### One-line notices to the owner (not questions)
 
 - Row 52: Codex sessions get the vision and in-app browser tools in PR 4; the
@@ -1185,6 +1275,10 @@ through `AGENTS.md`).
 - Row 68: Insights gets a Codex report the app makes with `codex exec`
   (resolved by parity 2026-09-26); its mockup comes to the Agent Canvas before
   it is built.
+- Row 39: gpt-5.2 stays in the Codex model list while a supported CLI version
+  lists it: 0.153.4 does, 0.155.1 no longer does (it still starts with
+  `-m gpt-5.2`). The owner may judge otherwise. P3.9's live read
+  (`codex debug models`) resolves the list per installed version.
 
 ### Owner actions that are not UX decisions
 
