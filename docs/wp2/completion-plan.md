@@ -1137,9 +1137,30 @@ Plan mode was on), fixed in f1783110; pass 3 at 25616c3f, PASS on both lenses
 (its minors fixed in round 3). VM: the round 2 re-check at 25616c3f (e2e
 81/81; native 11 files, 135 tests; Plan mode read-only launches, 6 of 6 clean
 starts on 0.155.1; `/permissions` on both versions; the 0.153.4 start-up
-finding above). Owed: the reviews of round 3 and the VM re-check of this
-round (0.153.4's fresh Plan mode launches, the pill across a tab switch, the
-context meter); the native tests on CI and the VM.
+finding above). The reviews of round 3 PASS; lens A's re-attack of round 3
+PASS. The VM re-check at c67b1041 PASS: Plan mode on 0.153.4, 5 of 5 fresh
+launches, the erase and the retype included; on 0.155.1, 3 of 3; the context
+meter fixed; the pill across a tab switch; native 136 passed; e2e 81.
+
+Round 4 (2026-09-29; the commit that records it; mocked), the last edges. The erase waits one poll
+and reads again: only when the composer still holds exactly the app's
+command is it erased; otherwise nothing is, and Plan mode gives up with the
+note (the user's keys echoed late are never erased). Codex's start-up row
+counts only in its own place, the status row directly above the composer,
+and only during the run's start-up (until a turn is seen or a command sent
+in that run), so a "Booting MCP server" line printed in the transcript
+never hides a running turn; "before the first ready screen" would undo the
+0.153.4 fix, whose first ready screen comes before its start-up row. The
+Plan mode reading holds Codex's right segment to where Codex draws it: its
+last cell two cells from the right edge (the raw footer bytes: the segment,
+then two spaces), so a folder named with spaces and "Plan mode" does not
+read as it. A Restart clears the launched preset with the other per-run
+fields, and a launch that started nothing records none
+(`codex-composer.test.ts`, `screen-registry.test.ts`,
+`use-restart-session.test.ts`, `terminalview-account-launch.test.tsx`).
+Owed: the reviews of round 4; the attackers' confirmation of round 3's fixes
+(the launched answer on `pty:spawn` and the typed-input erase) and of round
+4's; the native tests on CI and the VM.
 
 **P3.9 Sentinel for Codex.** Codex version drift against the supported range
 raises a finding; flags and the rollout format are checked; row 39's live

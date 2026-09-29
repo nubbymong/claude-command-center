@@ -114,27 +114,32 @@ function composerContent(row: ScreenLine): string {
 }
 
 /** The screen's structure: what it shows, the composer's content, and the
- *  footer row under the composer when that is the last row. */
-function layout(lines: ScreenLine[] | null | undefined, models?: readonly string[] | null): { screen: CodexScreenKind; text: string; footer: string | null } {
+ *  footer row under the composer when that is the last row. `startup`
+ *  (round 4, E3): whether the run is still starting, so that Codex's
+ *  start-up row counts; it counts only in its own place, the status row
+ *  directly above the composer. */
+function layout(lines: ScreenLine[] | null | undefined, models?: readonly string[] | null, startup = true): { screen: CodexScreenKind; text: string; footer: ScreenLine | null } {
   if (!lines || lines.length === 0) return { screen: 'no-prompt', text: '', footer: null }
   if (blocked(lines)) return { screen: 'blocked', text: '', footer: null }
   const shown = lines.filter(nonBlank)
   const i = composerIndex(shown)
   const text = i < 0 ? '' : composerContent(shown[i])
-  if (shown.some((l) => STARTING_RE.test(l.text))) return { screen: 'starting', text, footer: null }
+  if (startup && i > 0 && STARTING_RE.test(shown[i - 1].text)) return { screen: 'starting', text, footer: null }
   if (i < 0) return { screen: 'no-prompt', text: '', footer: null }
   const footer = footerRe(models)
   const below = shown.slice(i + 1)
   if (below.length === 1 && footer.test(below[0].text)) {
-    return { screen: shown.some((l) => BUSY_RE.test(l.text)) ? 'busy' : 'ready', text, footer: below[0].text }
+    return { screen: shown.some((l) => BUSY_RE.test(l.text)) ? 'busy' : 'ready', text, footer: below[0] }
   }
   if (below.some((l) => footer.test(l.text))) return { screen: 'unrecognised', text, footer: null }
   return { screen: 'no-prompt', text, footer: null }
 }
 
-/** What the live screen shows, and the composer's content when there is one. */
-export function readCodexScreen(lines: ScreenLine[] | null | undefined, models?: readonly string[] | null): { screen: CodexScreenKind; text: string } {
-  const { screen, text } = layout(lines, models)
+/** What the live screen shows, and the composer's content when there is one.
+ *  `startup` false: the run has had its first turn (or a command sent), so a
+ *  row that looks like Codex's start-up row reads as what it says. */
+export function readCodexScreen(lines: ScreenLine[] | null | undefined, models?: readonly string[] | null, opts: { startup?: boolean } = {}): { screen: CodexScreenKind; text: string } {
+  const { screen, text } = layout(lines, models, opts.startup ?? true)
   return { screen, text }
 }
 
@@ -165,6 +170,8 @@ export function codexCommandTyped(lines: ScreenLine[] | null | undefined, comman
 
 /** Codex's Plan mode label, right-aligned in its footer after the folder. */
 const PLAN_MODE_SEGMENT_RE = /^Plan mode(?: \(shift\+tab to cycle\))?$/
+/** The cells Codex leaves after its footer's right segment (the raw bytes). */
+const PLAN_MODE_RIGHT_MARGIN = 2
 /** Whether Codex's footer shows its Plan mode (rounds 2 and 3; PM1, T19):
  *  read only from the footer row under the composer (the screen's own
  *  structure, the session's models when given), and only from its
@@ -174,8 +181,13 @@ const PLAN_MODE_SEGMENT_RE = /^Plan mode(?: \(shift\+tab to cycle\))?$/
 export function codexPlanModeOnScreen(lines: ScreenLine[] | null | undefined, models?: readonly string[] | null): boolean | null {
   const { screen, footer } = layout(lines, models)
   if ((screen !== 'ready' && screen !== 'busy') || footer === null) return null
-  const right = / {3,}(\S(?:.*\S)?)\s*$/.exec(footer)
-  return !!right && PLAN_MODE_SEGMENT_RE.test(right[1])
+  const right = / {3,}(\S(?:.*\S)?)\s*$/.exec(footer.text)
+  if (!right || !PLAN_MODE_SEGMENT_RE.test(right[1])) return false
+  // Round 4 (E4): Codex draws the segment right-aligned, ending two cells
+  // from the right edge (the raw footer bytes: the segment, then two
+  // spaces); a screen reader that knows the row's width holds it to that.
+  if (footer.width !== undefined && footer.end !== undefined && footer.end !== footer.width - PLAN_MODE_RIGHT_MARGIN) return false
+  return true
 }
 
 /** The session's Plan mode reading, from its live screen and its models. */
@@ -206,7 +218,13 @@ export interface CodexComposerDeps {
   /** Sessions with a command typed and its Enter pending (round 2, DP); the
    *  app's one set when not given. */
   pending?: Set<string>
+  /** Runs past their start-up (round 4, E3): a turn was seen, or a command
+   *  sent; the app's one set when not given. */
+  startupDone?: Set<string>
 }
+
+/** A run's key: its session, its start and its PTY. */
+const runKey = (sessionId: string, run: CodexRun): string => `${sessionId}|${run.createdAt}|${run.spawnToken}`
 
 /** The session's current run, read from the store (not a component's copy):
  *  null when it has no live PTY. */
@@ -233,6 +251,8 @@ function sessionFooterModels(sessionId: string): readonly string[] | null {
 /** The sessions with a command's Enter pending, app-wide (the strip, the pill
  *  and the Plan mode launch share it). */
 const pendingSessions = new Set<string>()
+/** The runs past their start-up, app-wide. */
+const startupDoneRuns = new Set<string>()
 
 export const defaultCodexComposerDeps: CodexComposerDeps = {
   readScreen: readSessionScreen,
@@ -242,6 +262,7 @@ export const defaultCodexComposerDeps: CodexComposerDeps = {
   clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
   footerModels: sessionFooterModels,
   pending: pendingSessions,
+  startupDone: startupDoneRuns,
 }
 
 const sameRun = (a: CodexRun | null, b: CodexRun | null): boolean =>
@@ -281,8 +302,11 @@ const BACKSPACE = String.fromCharCode(0x7f)
  * the app typed is erased (round 3, V1) so nothing is left behind, but only
  * in the same run, only while the composer holds exactly the command (text
  * the user typed is never touched) and never while a prompt is up (its keys
- * are the prompt's). `onSettled` hears whether the Enter was sent, and why
- * not. A write that throws still settles the typing (round 3, Q1).
+ * are the prompt's). The erase waits one poll and reads again (round 4,
+ * E1): the user's keys echoed late are never erased with it; when the
+ * composer then holds anything but exactly the command, nothing is erased.
+ * `onSettled` hears whether the Enter was sent, and why not. A write that
+ * throws still settles the typing (round 3, Q1).
  */
 export function typeIntoCodexComposer(
   sessionId: string,
@@ -292,10 +316,13 @@ export function typeIntoCodexComposer(
 ): CodexTyping {
   const none = (reason: string): CodexTyping => ({ typed: false, reason, cancel: () => {} })
   const pending = deps.pending ?? pendingSessions
+  const startupDone = deps.startupDone ?? startupDoneRuns
   if (pending.has(sessionId)) return none(SENDING_ALREADY)
   const run = deps.currentRun(sessionId)
   if (!run) return none(NOT_AT_PROMPT)
-  const read = readCodexScreen(deps.readScreen(sessionId), deps.footerModels?.(sessionId) ?? null)
+  const key = runKey(sessionId, run)
+  const read = readCodexScreen(deps.readScreen(sessionId), deps.footerModels?.(sessionId) ?? null, { startup: !startupDone.has(key) })
+  if (read.screen === 'busy') startupDone.add(key)
   if (read.screen === 'starting') return none(STARTING_NOW)
   if (read.screen === 'busy') return none(BUSY_NOW)
   if (read.screen === 'unrecognised') return none(UNREADABLE_PROMPT)
@@ -310,32 +337,59 @@ export function typeIntoCodexComposer(
     pending.delete(sessionId)
     opts.onSettled?.(sent, how)
   }
+  /** Round 4 (E1): the erase, after reading the screen again one poll later:
+   *  only when the composer still holds exactly the command, in the same
+   *  run, with no prompt up. */
+  const eraseAfterSecondRead = (reason: CodexWithheld, models: readonly string[] | null): void => {
+    handle = deps.setTimeout(() => {
+      handle = null
+      let how: CodexSettled = { reason: 'run-changed', erased: false }
+      try {
+        if (!sameRun(run, deps.currentRun(sessionId))) return
+        const again = deps.readScreen(sessionId)
+        const now = readCodexScreen(again, models, { startup: !startupDone.has(key) }).screen
+        if (now !== 'blocked' && codexComposerText(again) === command) {
+          deps.write(sessionId, BACKSPACE.repeat(command.length))
+          how = { reason, erased: true }
+        } else {
+          how = { reason: now === 'blocked' ? 'blocked' : 'text', erased: false }
+        }
+      } finally {
+        settle(false, how)
+      }
+    }, CODEX_READY_POLL_MS)
+  }
   let handle: unknown = deps.setTimeout(() => {
     handle = null
     let sent = false
     let how: CodexSettled = { reason: 'run-changed', erased: false }
+    let erasing = false
     try {
       if (!sameRun(run, deps.currentRun(sessionId))) return
       const models = deps.footerModels?.(sessionId) ?? null
       const screen = deps.readScreen(sessionId)
       if (codexCommandTyped(screen, command, models)) {
         deps.write(sessionId, '\r')
+        startupDone.add(key)
         sent = true
         how = { erased: false }
         return
       }
-      const now = readCodexScreen(screen, models).screen
+      const now = readCodexScreen(screen, models, { startup: !startupDone.has(key) }).screen
+      if (now === 'busy') startupDone.add(key)
       const own = codexComposerText(screen) === command
       const reason: CodexWithheld = now === 'blocked' ? 'blocked'
         : !own ? 'text'
           : now === 'starting' ? 'starting'
             : now === 'busy' ? 'busy'
               : 'unreadable'
-      const erase = own && now !== 'blocked'
-      if (erase) deps.write(sessionId, BACKSPACE.repeat(command.length))
-      how = { reason, erased: erase }
+      how = { reason, erased: false }
+      if (own && now !== 'blocked') {
+        erasing = true
+        eraseAfterSecondRead(reason, models)
+      }
     } finally {
-      settle(sent, how)
+      if (!erasing) settle(sent, how)
     }
   }, CODEX_SUBMIT_DELAY_MS)
   return {
@@ -417,7 +471,10 @@ export function typeWhenCodexComposerReady(
     handle = null
     if (done) return
     if (!sameRun(run, deps.currentRun(sessionId))) { done = true; return }
-    const read = readCodexScreen(deps.readScreen(sessionId), deps.footerModels?.(sessionId) ?? null)
+    const startupDone = deps.startupDone ?? startupDoneRuns
+    const key = runKey(sessionId, run!)
+    const read = readCodexScreen(deps.readScreen(sessionId), deps.footerModels?.(sessionId) ?? null, { startup: !startupDone.has(key) })
+    if (read.screen === 'busy') startupDone.add(key)
     if (read.screen === 'busy' || (read.screen === 'ready' && read.text !== '')) {
       done = true
       giveUp('interrupted')

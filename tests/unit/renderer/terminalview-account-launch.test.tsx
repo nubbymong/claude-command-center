@@ -331,6 +331,11 @@ describe("a Codex session's account reaches pty:spawn", () => {
     await settle()
     expect(H.updates.filter((u) => 'launchedCodexPreset' in u.patch).map((u) => u.patch.launchedCodexPreset)).toEqual(['standard', 'plan'])
     expect(planWait.calls).toHaveLength(1)
+    // Round 4 (L1): a launch that started nothing has no launched preset.
+    await restartTo(codexSession({ codexOptions: { permissionsPreset: 'plan' } }), 'c')
+    await act(async () => { settles[2].resolve({ started: false }) })
+    await settle()
+    expect(H.updates.filter((u) => 'launchedCodexPreset' in u.patch).map((u) => u.patch.launchedCodexPreset)).toEqual(['standard', 'plan', undefined])
   })
 
   it('Plan mode: the view going away cancels the wait', async () => {

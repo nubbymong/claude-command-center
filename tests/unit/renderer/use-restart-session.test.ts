@@ -121,6 +121,17 @@ describe('useRestartSession (P4 Task A)', () => {
 
   // 1. restart() on a local non-shell session ---------------------------------
 
+  // P3.8 round 4 (L1): the preset the last run launched with is that run's;
+  // the remount clears it with the other per-run fields.
+  it("restart() clears the last run's launched Codex preset", () => {
+    const session = makeSession({ sessionType: 'local', shellOnly: false, launchedCodexPreset: 'plan' } as Partial<Session>)
+    useSessionStore.getState().addSession(session)
+    renderHarness(session)
+    act(() => { capturedActions!.restart() })
+    const stored = useSessionStore.getState().sessions.find((s) => s.id === session.id)
+    expect(stored!.launchedCodexPreset).toBeUndefined()
+  })
+
   it('restart() calls markSessionForResumePicker and re-adds session with status idle', () => {
     const session = makeSession({ sessionType: 'local', shellOnly: false })
     useSessionStore.getState().addSession(session)

@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-29T12:39:26.839Z",
-  "head": "e9f2cd518805071be5eb08c68567afd4fadbe45b",
-  "tree": "f105b932859ad8d463df0276a5cee11afc811185",
+  "generatedAt": "2026-09-29T13:12:37.934Z",
+  "head": "c67b10417297f76faa935fd7fea28126deded8bf",
+  "tree": "c2e44d3caef8e91213436691b39c6e863d8f3513",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 535,
-  "pathDigest": "fe446e32c38bd9c1c9d8e17ca2157f303b1c4ff7982206c0213131d08d6498f0",
+  "matchedPathCount": 537,
+  "pathDigest": "0943260e052b869e07477e4b12e76c7f758ede6a756288c3b75ac18601018bf8",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 281
+      "lineCount": 284
     },
     {
       "path": "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
@@ -1410,6 +1410,13 @@
       "lineCount": 34
     },
     {
+      "path": "src/renderer/hooks/useRestartSession.ts",
+      "predicates": [
+        "P11"
+      ],
+      "lineCount": 2
+    },
+    {
       "path": "src/renderer/hooks/useSwitchAccount.ts",
       "predicates": [
         "P05",
@@ -1439,7 +1446,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 95
+      "lineCount": 105
     },
     {
       "path": "src/renderer/lib/command-upgrade.ts",
@@ -3525,7 +3532,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 140
+      "lineCount": 154
     },
     {
       "path": "tests/unit/renderer/codex-mini-icon.test.ts",
@@ -4180,7 +4187,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 133
+      "lineCount": 136
     },
     {
       "path": "tests/unit/renderer/titlebar-provider-status.test.tsx",
@@ -4233,6 +4240,13 @@
         "P13"
       ],
       "lineCount": 8
+    },
+    {
+      "path": "tests/unit/renderer/use-restart-session.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 3
     },
     {
       "path": "tests/unit/renderer/use-switch-account.test.ts",
