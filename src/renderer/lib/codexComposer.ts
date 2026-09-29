@@ -219,8 +219,33 @@ export interface CodexComposerDeps {
    *  app's one set when not given. */
   pending?: Set<string>
   /** Runs past their start-up (round 4, E3): a turn was seen, or a command
-   *  sent; the app's one set when not given. */
-  startupDone?: Set<string>
+   *  sent; the app's one record when not given. */
+  startupDone?: StartupDoneRuns
+}
+
+/** At most this many sessions' runs are kept past their start-up. */
+export const STARTUP_DONE_MAX = 256
+
+/**
+ * The runs past their start-up (round 4, E3; bounded in round 5): one per
+ * session, its latest run (an earlier run of the session has ended once a
+ * later one is recorded); a session seen with no live run is let go; at most
+ * STARTUP_DONE_MAX sessions are held, the oldest let go first.
+ */
+export class StartupDoneRuns {
+  private bySession = new Map<string, string>()
+  get size(): number { return this.bySession.size }
+  has(sessionId: string, key: string): boolean { return this.bySession.get(sessionId) === key }
+  add(sessionId: string, key: string): void {
+    this.bySession.delete(sessionId)
+    this.bySession.set(sessionId, key)
+    while (this.bySession.size > STARTUP_DONE_MAX) {
+      const oldest = this.bySession.keys().next().value
+      if (oldest === undefined) break
+      this.bySession.delete(oldest)
+    }
+  }
+  forget(sessionId: string): void { this.bySession.delete(sessionId) }
 }
 
 /** A run's key: its session, its start and its PTY. */
@@ -252,7 +277,7 @@ function sessionFooterModels(sessionId: string): readonly string[] | null {
  *  and the Plan mode launch share it). */
 const pendingSessions = new Set<string>()
 /** The runs past their start-up, app-wide. */
-const startupDoneRuns = new Set<string>()
+const startupDoneRuns = new StartupDoneRuns()
 
 export const defaultCodexComposerDeps: CodexComposerDeps = {
   readScreen: readSessionScreen,
@@ -319,10 +344,14 @@ export function typeIntoCodexComposer(
   const startupDone = deps.startupDone ?? startupDoneRuns
   if (pending.has(sessionId)) return none(SENDING_ALREADY)
   const run = deps.currentRun(sessionId)
-  if (!run) return none(NOT_AT_PROMPT)
+  if (!run) {
+    // The session's run has ended: its start-up record goes with it.
+    startupDone.forget(sessionId)
+    return none(NOT_AT_PROMPT)
+  }
   const key = runKey(sessionId, run)
-  const read = readCodexScreen(deps.readScreen(sessionId), deps.footerModels?.(sessionId) ?? null, { startup: !startupDone.has(key) })
-  if (read.screen === 'busy') startupDone.add(key)
+  const read = readCodexScreen(deps.readScreen(sessionId), deps.footerModels?.(sessionId) ?? null, { startup: !startupDone.has(sessionId, key) })
+  if (read.screen === 'busy') startupDone.add(sessionId, key)
   if (read.screen === 'starting') return none(STARTING_NOW)
   if (read.screen === 'busy') return none(BUSY_NOW)
   if (read.screen === 'unrecognised') return none(UNREADABLE_PROMPT)
@@ -347,7 +376,7 @@ export function typeIntoCodexComposer(
       try {
         if (!sameRun(run, deps.currentRun(sessionId))) return
         const again = deps.readScreen(sessionId)
-        const now = readCodexScreen(again, models, { startup: !startupDone.has(key) }).screen
+        const now = readCodexScreen(again, models, { startup: !startupDone.has(sessionId, key) }).screen
         if (now !== 'blocked' && codexComposerText(again) === command) {
           deps.write(sessionId, BACKSPACE.repeat(command.length))
           how = { reason, erased: true }
@@ -370,13 +399,13 @@ export function typeIntoCodexComposer(
       const screen = deps.readScreen(sessionId)
       if (codexCommandTyped(screen, command, models)) {
         deps.write(sessionId, '\r')
-        startupDone.add(key)
+        startupDone.add(sessionId, key)
         sent = true
         how = { erased: false }
         return
       }
-      const now = readCodexScreen(screen, models, { startup: !startupDone.has(key) }).screen
-      if (now === 'busy') startupDone.add(key)
+      const now = readCodexScreen(screen, models, { startup: !startupDone.has(sessionId, key) }).screen
+      if (now === 'busy') startupDone.add(sessionId, key)
       const own = codexComposerText(screen) === command
       const reason: CodexWithheld = now === 'blocked' ? 'blocked'
         : !own ? 'text'
@@ -470,11 +499,16 @@ export function typeWhenCodexComposerReady(
   const poll = (): void => {
     handle = null
     if (done) return
-    if (!sameRun(run, deps.currentRun(sessionId))) { done = true; return }
     const startupDone = deps.startupDone ?? startupDoneRuns
+    const now = deps.currentRun(sessionId)
+    if (!sameRun(run, now)) {
+      if (!now) startupDone.forget(sessionId) // the run ended: its record goes with it
+      done = true
+      return
+    }
     const key = runKey(sessionId, run!)
-    const read = readCodexScreen(deps.readScreen(sessionId), deps.footerModels?.(sessionId) ?? null, { startup: !startupDone.has(key) })
-    if (read.screen === 'busy') startupDone.add(key)
+    const read = readCodexScreen(deps.readScreen(sessionId), deps.footerModels?.(sessionId) ?? null, { startup: !startupDone.has(sessionId, key) })
+    if (read.screen === 'busy') startupDone.add(sessionId, key)
     if (read.screen === 'busy' || (read.screen === 'ready' && read.text !== '')) {
       done = true
       giveUp('interrupted')

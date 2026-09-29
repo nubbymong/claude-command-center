@@ -1163,9 +1163,18 @@ read as it. A Restart clears the launched preset with the other per-run
 fields, and a launch that started nothing records none
 (`codex-composer.test.ts`, `screen-registry.test.ts`,
 `use-restart-session.test.ts`, `terminalview-account-launch.test.tsx`).
-Owed: the reviews of round 4; the attackers' confirmation of round 3's fixes
-(the launched answer on `pty:spawn` and the typed-input erase) and of round
-4's; the native tests on CI and the VM.
+The reviews of round 4 PASS; lens A's confirmation of rounds 3 and 4 PASS
+(the launched answer on `pty:spawn` and the typed-input erase included).
+Round 5 (the commit that records it; mocked) bounds the record of runs past
+their start-up: one run per session (its latest), a session seen with no
+live run let go, at most 256 sessions (`codex-composer.test.ts`). Residual
+limits, recorded: a folder name with three or more spaces before "Plan
+mode", reaching the footer's right edge, can still make the pill read
+"plan" (the label only; the read-only launch bounds it); and if Codex's
+status header follows the model's reasoning heading (not verified on the
+VM), a heading that reads like the MCP start-up row can hide a user-sent
+first turn, so `/plan` lands after it (the read-only launch bounds it).
+Owed: the native tests on CI and the VM.
 
 **P3.9 Sentinel for Codex.** Codex version drift against the supported range
 raises a finding; flags and the rollout format are checked; row 39's live
