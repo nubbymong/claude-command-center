@@ -177,4 +177,15 @@ describe('enrichSessionStateWithResumeTargets keeps the uncertain claims (P3.6)'
     enrichSessionStateWithResumeTargets(s, mkDeps({ getUncertainProviderConversations: () => { throw new Error('x') } }))
     expect(s.codexUncertainConversations).toEqual([ON])
   })
+
+  // ADR-009 round 2 (C8): the list is main's own; where the saved sessions
+  // cannot be read, main's whole list is written, never the renderer's.
+  it('saved sessions that cannot be read: main\'s whole list is written, replacing the one the renderer sent', () => {
+    const odd = { id: 's1', provider: 'codex' }
+    Object.defineProperty(odd, 'resumeUuid', { get() { throw new Error('unreadable') }, enumerable: true })
+    const s = state([odd])
+    s.codexUncertainConversations = ['019dd000-0001-7000-8000-0000000000f9']
+    enrichSessionStateWithResumeTargets(s, mkDeps({ getUncertainProviderConversations: () => [ON, GONE] }))
+    expect(s.codexUncertainConversations).toEqual([ON, GONE])
+  })
 })

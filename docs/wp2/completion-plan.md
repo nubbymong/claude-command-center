@@ -709,8 +709,10 @@ session starts without it, in the failed-carry words), the file work in
 `conversation-carry.ts` (P3.5's lookup in the source realm only, bounded at
 256 MiB, whole lines, no link followed below a realm's home; an exclusive
 temporary file in the destination's sessions folder, checked to be there
-before anything is written to it; a new copy takes its name with a hard link,
-which replaces nothing, and is checked after it lands; a temporary file a
+before anything is written to it; a new copy takes its name with a hard link
+from a second name made and checked inside the day folder (ADR-009 round 2),
+which replaces nothing, and is checked after it lands, and taken back from
+where it landed if that is anywhere else; a temporary file or second name a
 stopped carry left is swept by the next one once stale; the same bytes already
 there are present; an earlier copy that is exactly the start of the
 conversation, and still that size, is replaced under its own name only by the
@@ -731,18 +733,27 @@ one shared projects folder (`launch-handoff-pty.test.ts`).
 Guard and its limit, recorded (owner decision on ADR-009 round 1, B1, option
 2): P3.5's claim and its recorded limit are unchanged, but a claim of a new
 conversation is marked not certain when another launch waiting for a new one
-in the same realm and folder could have taken the same rollout, when the
-launch saw more than one it could take, and for every launch such a claim
-competed with (`providers/codex/telemetry.ts`). A Switch account never
+in the same realm and folder could have taken the same rollout (a launch that
+has claimed nothing waits until its process ends, past its no-claim deadline
+too; ADR-009 round 2), when the launch saw more than one it could take, and
+for every launch such a claim competed with (`providers/codex/telemetry.ts`). A Switch account never
 carries or brings up to date a conversation claimed that way: the respawn
 on the new account starts a new conversation and the terminal says, in its
 own words, that the app could not be sure which conversation was this one; a
 Restart on the same account resumes it as P3.5 does. Main keeps these by
 conversation id and saves them with the session state, so a relaunch that
 resumes one keeps it uncertain (`telemetry-claim-anywhere.test.ts`,
-`launch-handoff-pty.test.ts`, `session-resume-enrich.test.ts`). The limit:
-two new sessions of one account started together in one folder cannot take
-their conversation to another account until P3.10's exact claim.
+`launch-handoff-pty.test.ts`, `session-resume-enrich.test.ts`,
+`session-durability.test.ts`). A conversation another open session is on is
+not resumed on the new account either (ADR-009 round 2): a new one starts
+there. The limits, until P3.10's exact claim: two new sessions of one account
+started together in one folder cannot take their conversation to another
+account; and a writer outside the app (the user's own Codex CLI started in
+the same folder on this computer's own sign-in, or a second copy of the app)
+can still make a claim look certain, so a switch could copy the
+conversation that writer is on (owner decision: this computer's sign-in keeps
+carrying, rather than every claim there being marked not certain; PR 3 does
+not leave draft before P3.10).
 Deviation, recorded (fix round 1, accepted in review round 2): the "no link
 followed" rule starts at a realm's home. This computer's own home is taken at
 its real path, as the CLI takes it and as a Claude account's home is
@@ -826,7 +837,10 @@ other's conversation for Restart and relaunch (P3.5's pick protocol already
 keeps a picker session that resumes a conversation from taking another's,
 and a resume by id takes only its own); the exact claim also clears P3.6's
 uncertain case (a claim that could have been another session's is never
-carried by a Switch account), so a Switch then carries every conversation;
+carried by a Switch account), so a Switch then carries every conversation,
+and closes P3.6's other limit (a writer outside the app, such as the user's
+own Codex CLI in the same folder on this computer's own sign-in, making a
+claim look certain);
 and following a
 conversation switched inside the Codex TUI (its own resume or new: the
 SessionStart hook's `source` and `transcript_path`), so the session keeps,

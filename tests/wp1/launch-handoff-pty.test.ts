@@ -178,7 +178,7 @@ vi.mock('../../src/main/provider-accounts', () => ({
   }),
 }))
 
-const { spawnPty, killPty, killAllPty, holdsCodexLaunchLease, countUnleasedAgentSessions, beginSpawnPreparation, CODEX_LEASE_EXIT_GRACE_MS, codexRunEnded, rememberUncertainCodexConversations } = await import('../../src/main/pty-manager')
+const { spawnPty, killPty, killAllPty, holdsCodexLaunchLease, countUnleasedAgentSessions, beginSpawnPreparation, CODEX_LEASE_EXIT_GRACE_MS, codexRunEnded, rememberUncertainCodexConversationsFrom, getKeptCodexConversation } = await import('../../src/main/pty-manager')
 h.watchFn = (await import('../../src/main/providers/codex/telemetry')).watchAndClaimRollout as never
 const { codexDayFolders } = await import('../../src/main/providers/codex/rollout-lookup')
 const { registerPtyHandlers, CODEX_CARRY_EXIT_WAIT_MS, CODEX_CARRY_TIMEOUT_MS } = await import('../../src/main/ipc/pty-handlers')
@@ -772,6 +772,26 @@ describe('a respawn on another account carries this session\'s conversation (P3.
     expect(h.carries).toHaveLength(1)
   })
 
+  // ADR-009 round 2 (C1): nor resumed on the new account, where the other
+  // session may be on it: two sessions would write one rollout there.
+  it('the other open session on that conversation is on the account switched to: the switch neither carries nor resumes it there, and starts a new conversation', async () => {
+    onAccount('acct-a')
+    await spawnIn(request('acct-a'))
+    claim(sid, CID)
+    onAccount('acct-b')
+    await spawnFor(sid2, request('acct-b'))
+    claim(sid2, CID)
+    killIn()
+    exitPty(h.ptys[0], 0)
+    // The copy there is one the launch could resume.
+    h.resumable = true
+    onAccount('acct-b')
+    await expect(spawnIn(request('acct-b'))).resolves.toEqual({ started: true, carry: { code: 'in-use', message: 'Another open session is on this conversation, so it was not carried over.', resumed: false } })
+    expect(h.carries).toEqual([])
+    expect(h.built.at(-1)).toMatchObject({ sessionId: sid })
+    expect(h.built.at(-1)!.resume).toBeUndefined()
+  })
+
   // ADR-009 round 1, B2: a copy already under way is told once its respawn
   // is no longer the session's, so it stops and the newer respawn carries.
   it('a respawn superseded while its copy runs: the copy is told it is no longer wanted', async () => {
@@ -871,6 +891,15 @@ describe('a conversation whose claim was not certain is never carried (P3.6, own
   })
   const nfs = require('node:fs') as typeof import('node:fs')
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+  /** Until `ok` holds, looked at often, bounded (ADR-009 round 2, C7): the
+   *  watcher's poll decides when, never a fixed wait. */
+  const until = async (ok: () => boolean, boundMs = 5_000) => {
+    const end = Date.now() + boundMs
+    while (!ok()) {
+      if (Date.now() > end) throw new Error('not within the bound')
+      await sleep(20)
+    }
+  }
   const spawnFor = (id: string, opts: Record<string, unknown>) => h.handlers.get('pty:spawn')!({}, id, opts)
   const killFor = (id: string) => h.listeners.get('pty:kill')!({}, id)
   const onAccount = (accountId: string, sessionsDir?: string) => {
@@ -906,9 +935,9 @@ describe('a conversation whose claim was not certain is never carried (P3.6, own
     await spawnFor(sid2, { ...codexRequest, cwd: proj, providerAccountId: 'acct-a' })
     const cwdSeen = String((h.telemetry.find((t) => t.sessionId === sid)!.opts as { cwd: string }).cwd)
     rolloutIn(sessA, convY, cwdSeen)
-    await sleep(600)
+    await until(() => !!getKeptCodexConversation(sid) || !!getKeptCodexConversation(sid2))
     rolloutIn(sessA, convX, cwdSeen)
-    await sleep(600)
+    await until(() => !!getKeptCodexConversation(sid) && !!getKeptCodexConversation(sid2))
     const claimedByX = [...h.telemetry].reverse().find((t) => t.sessionId === sid)
     expect(claimedByX).toBeTruthy()
     // A Restart on the same account: P3.5's behaviour, the kept one resumed.
@@ -937,8 +966,11 @@ describe('a conversation whose claim was not certain is never carried (P3.6, own
 
   it('kept across a relaunch: a restored tab on a conversation whose claim was not certain is still never carried', async () => {
     const CID = '019dd000-0036-7000-8000-0000000000cc'
-    // What main read back from the saved session state at load.
-    rememberUncertainCodexConversations([CID, 'not-an-id', 42])
+    // What main read back from the saved session state at load (the
+    // session:load read-back, ADR-009 round 2, C4); anything but a state, or
+    // a list entry that is not a conversation id, is passed over.
+    for (const odd of [null, undefined, 'a state', 7]) rememberUncertainCodexConversationsFrom(odd)
+    rememberUncertainCodexConversationsFrom({ sessions: [], activeSessionId: null, savedAt: 1, codexUncertainConversations: [CID, 'not-an-id', 42] })
     onAccount('acct-a')
     h.resumable = true
     await spawnFor(sid, { ...codexRequest, providerAccountId: 'acct-a', resume: { uuid: CID, cwd: os.tmpdir() } })

@@ -19,12 +19,22 @@ export interface DurabilityDeps {
   enrichDeps: ResumeEnrichDeps
   /** session-state.saveSessionState — returns false when the latch refuses. */
   save: (state: SessionState) => boolean
+  /** session-state.loadSessionState: the `session:load` path. */
+  load?: () => SessionState | null
+  /** P3.6: main's own records read back from the loaded state (the
+   *  conversations whose claim was not certain; pty-manager), before any
+   *  restored session respawns. Handed null when nothing was saved. A throw
+   *  never fails the load. */
+  readBack?: (state: SessionState | null) => void
   log?: (msg: string) => void
 }
 
 export interface SessionDurability {
   /** Enrich (from the binder) + cache + persist. The single `session:save` path. */
   saveEnriched: (state: SessionState) => boolean
+  /** The single `session:load` path: the saved state, and main's own records
+   *  in it read back (P3.6: the uncertain claims). Null when none. */
+  load: () => SessionState | null
   /** Re-enrich the cached state and persist it on an exit path. No-op until a
    *  state has been saved this run; honest about a latch refusal. Never throws. */
   flushOnExit: (reason: string) => void
@@ -68,5 +78,15 @@ export function createSessionDurability(deps: DurabilityDeps): SessionDurability
     last = null
   }
 
-  return { saveEnriched, flushOnExit, noteCleared, peek: () => last }
+  function load(): SessionState | null {
+    const state = deps.load ? deps.load() : null
+    try {
+      deps.readBack?.(state)
+    } catch (err) {
+      log(`[session-state] main's records in the saved state could not be read back: ${(err as Error)?.message ?? err}`)
+    }
+    return state
+  }
+
+  return { saveEnriched, flushOnExit, noteCleared, load, peek: () => last }
 }

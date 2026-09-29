@@ -86,3 +86,41 @@ describe('createSessionDurability', () => {
     expect(log.mock.calls[0][0]).toMatch(/failed/)
   })
 })
+
+// P3.6 (ADR-009 round 2, C4): the session:load path. Main's own records in
+// the saved state (the conversations whose claim was not certain) are read
+// back before any restored session respawns, and a read-back that fails
+// never fails the load. What main takes from the state is pty-manager's
+// (tests/wp1/launch-handoff-pty.test.ts, kept across a relaunch).
+describe('createSessionDurability load', () => {
+  const enrichDeps = {
+    getExactResumeTarget: () => null,
+    getLatestTranscriptPath: () => null,
+    isExactBindSourceActive: () => true,
+    resolveResumeTargetFromTranscript: () => null,
+  }
+
+  it('returns the saved state and hands it to main to read back, once', () => {
+    const s = state()
+    const readBack = vi.fn()
+    const d = createSessionDurability({ enrichDeps, save: () => true, load: () => s, readBack })
+    expect(d.load()).toBe(s)
+    expect(readBack).toHaveBeenCalledTimes(1)
+    expect(readBack).toHaveBeenCalledWith(s)
+  })
+
+  it('a read-back that throws still returns the state, and says so', () => {
+    const s = state()
+    const log = vi.fn()
+    const d = createSessionDurability({ enrichDeps, save: () => true, load: () => s, readBack: () => { throw new Error('bad list') }, log })
+    expect(d.load()).toBe(s)
+    expect(log.mock.calls.map((c) => String(c[0])).join(' ')).toMatch(/could not be read back: bad list/)
+  })
+
+  it('nothing saved: null, and main is handed null; no load source: null', () => {
+    const readBack = vi.fn()
+    expect(createSessionDurability({ enrichDeps, save: () => true, load: () => null, readBack }).load()).toBeNull()
+    expect(readBack).toHaveBeenCalledWith(null)
+    expect(createSessionDurability({ enrichDeps, save: () => true }).load()).toBeNull()
+  })
+})
