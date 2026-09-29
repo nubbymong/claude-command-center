@@ -138,16 +138,16 @@ export function enrichSessionStateWithResumeTargets(
     }
   }
   if (deps.getConversationRunningTimes) {
+    // Main's own list, never what the renderer sent (as C8 for the uncertain
+    // list): when main cannot give one, none is written.
+    let times: unknown = null
     try {
-      const times = deps.getConversationRunningTimes()
-      if (Array.isArray(times)) {
-        // Main's own list, never what the renderer sent.
-        if (times.length) state.conversationRunningTimes = times
-        else delete state.conversationRunningTimes
-      }
+      times = deps.getConversationRunningTimes()
     } catch {
-      // Main cannot say: the list stays as it was.
+      times = null
     }
+    if (Array.isArray(times) && times.length) state.conversationRunningTimes = times
+    else delete state.conversationRunningTimes
   }
   return state
 }

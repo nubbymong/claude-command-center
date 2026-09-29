@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-29T05:41:32.776Z",
-  "head": "9f2bd164248cafa29c0832c023303a72f91dc9b4",
-  "tree": "13a4227db3226e6f180e3899abea80643f4082af",
+  "generatedAt": "2026-09-29T06:05:08.322Z",
+  "head": "4045df81452d601d5764ad03a56376701254f236",
+  "tree": "f845958b905b9179beec2a1bd6eabe74c098055c",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -2925,7 +2925,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 30
+      "lineCount": 31
     },
     {
       "path": "tests/unit/main/ssh-end-remote-password.test.ts",
@@ -3231,7 +3231,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 17
+      "lineCount": 21
     },
     {
       "path": "tests/unit/providers/codex/telemetry-lines.test.ts",
@@ -3241,7 +3241,7 @@
         "P10",
         "P13"
       ],
-      "lineCount": 31
+      "lineCount": 33
     },
     {
       "path": "tests/unit/providers/codex/telemetry.test.ts",
