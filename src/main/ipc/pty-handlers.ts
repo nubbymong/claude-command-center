@@ -146,14 +146,19 @@ interface RespawnCarry { uuid: string; notice?: Omit<ConversationCarryNotice, 'r
  * a conversation, a path or another session. The copy waits for the
  * session's previous process to have ended (bounded), so nothing it wrote
  * after the copy is lost. Undefined when there is nothing to carry (no
- * conversation known, or already on that account).
+ * conversation known, or already on that account), and when this spawn is
+ * no longer the session's (`current`: closed, swept or superseded, before
+ * or during the wait): it starts nothing, and never holds the realms against
+ * the spawn that replaced it, which carries for itself.
  */
-async function carryForRespawn(sessionId: string, accountId: string, service: Pick<AccountsService, 'carryConversation'>): Promise<RespawnCarry | undefined> {
+async function carryForRespawn(sessionId: string, accountId: string, service: Pick<AccountsService, 'carryConversation'>, current: () => boolean): Promise<RespawnCarry | undefined> {
   // Final once the old run was killed: killPty stops its status line, so
   // nothing claims another conversation for it meanwhile.
   const kept = getKeptCodexConversationSource(sessionId)
-  if (!kept || kept.accountId === accountId) return undefined
-  if (!(await codexRunEnded(sessionId, CODEX_CARRY_EXIT_WAIT_MS))) {
+  if (!kept || kept.accountId === accountId || !current()) return undefined
+  const ended = await codexRunEnded(sessionId, CODEX_CARRY_EXIT_WAIT_MS)
+  if (!current()) return undefined
+  if (!ended) {
     logWarn(`[pty] Session ${sessionId}: its previous Codex run had not ended, so its conversation was not carried into the new account`)
     return { uuid: kept.uuid, notice: { code: 'busy', message: "The session's previous run had not ended yet, so its conversation was not carried over." } }
   }
@@ -809,7 +814,7 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
         // launch resumes the kept conversation (pty-manager's rule): one
         // that names its own (a restored tab) or opens the picker has none
         // to carry.
-        if (!options?.resume && !options?.useResumePicker) carry = await carryForRespawn(sessionId, prepared.lease.accountId, service)
+        if (!options?.resume && !options?.useResumePicker) carry = await carryForRespawn(sessionId, prepared.lease.accountId, service, () => !preparation || preparation.current)
       }
 
       // Closed, swept or superseded while it was prepared: start nothing, and

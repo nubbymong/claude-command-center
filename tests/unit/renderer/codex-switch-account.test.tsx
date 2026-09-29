@@ -176,7 +176,7 @@ describe('switching a Codex session\'s account', () => {
     expect(saveMock).not.toHaveBeenCalled()
   })
 
-  it('a second pick while one is under way is ignored', async () => {
+  it('a second pick while the first is still being saved is ignored', async () => {
     let release!: () => void
     saveMock.mockImplementationOnce(() => new Promise((r) => { release = () => r(true) }))
     mount(codexSession())

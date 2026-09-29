@@ -167,7 +167,7 @@ vi.mock('../../src/main/provider-accounts', () => ({
   }),
 }))
 
-const { spawnPty, killPty, killAllPty, holdsCodexLaunchLease, countUnleasedAgentSessions, beginSpawnPreparation } = await import('../../src/main/pty-manager')
+const { spawnPty, killPty, killAllPty, holdsCodexLaunchLease, countUnleasedAgentSessions, beginSpawnPreparation, CODEX_LEASE_EXIT_GRACE_MS } = await import('../../src/main/pty-manager')
 const { registerPtyHandlers, CODEX_CARRY_EXIT_WAIT_MS } = await import('../../src/main/ipc/pty-handlers')
 type Launch = NonNullable<NonNullable<Parameters<typeof spawnPty>[2]>['codexLaunch']>
 
@@ -633,5 +633,75 @@ describe('a respawn on another account carries this session\'s conversation (P3.
     onAccount('acct-b')
     await expect(spawnIn(request('acct-b'))).resolves.toBeUndefined()
     expect(h.carries).toEqual([])
+  })
+
+  // Quality round 2: a spawn that is no longer the session's never carries,
+  // so it never holds the realms against the spawn that replaced it.
+  it('a respawn superseded while it waits for the old process carries nothing; the one that replaced it carries once', async () => {
+    onAccount('acct-a')
+    await spawnIn(request('acct-a'))
+    claim(sid, CID)
+    killIn()
+    onAccount('acct-b')
+    h.resumable = true
+    const first = spawnIn(request('acct-b'))
+    for (let i = 0; i < 5; i++) await flush()
+    const second = spawnIn(request('acct-b'))
+    for (let i = 0; i < 5; i++) await flush()
+    expect(h.carries).toEqual([])
+    exitPty(h.ptys[0], 0)
+    await expect(first).resolves.toEqual({ started: false })
+    await expect(second).resolves.toBeUndefined()
+    expect(h.carries).toHaveLength(1)
+    expect(h.ptys).toHaveLength(2)
+  })
+
+  it('a respawn superseded while its launch is prepared neither waits for the old process nor carries', async () => {
+    onAccount('acct-a')
+    await spawnIn(request('acct-a'))
+    claim(sid, CID)
+    // The old process never reports its end.
+    killIn()
+    const d = deferred<unknown>()
+    h.prepare = () => d.promise
+    const first = spawnIn(request('acct-b'))
+    for (let i = 0; i < 3; i++) await flush()
+    let firstDone = false
+    void first.then(() => { firstDone = true })
+    vi.useFakeTimers()
+    try {
+      onAccount('acct-b')
+      const second = spawnIn(request('acct-b'))
+      await vi.advanceTimersByTimeAsync(0)
+      d.resolve(prepared(on('acct-b', 'acct-b')))
+      await vi.advanceTimersByTimeAsync(10)
+      // Started nothing, at once: no wait for a process it will not follow.
+      expect(firstDone).toBe(true)
+      await expect(first).resolves.toEqual({ started: false })
+      await vi.advanceTimersByTimeAsync(CODEX_CARRY_EXIT_WAIT_MS + 100)
+      await expect(second).resolves.toMatchObject({ started: true, carry: { code: 'busy' } })
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(h.carries).toEqual([])
+  })
+
+  it('an old process that never reports its end counts as ended once its account lease is let go, and its record goes', async () => {
+    onAccount('acct-a')
+    await spawnIn(request('acct-a'))
+    claim(sid, CID)
+    vi.useFakeTimers()
+    try {
+      killIn()
+      vi.advanceTimersByTime(CODEX_LEASE_EXIT_GRACE_MS + 1)
+      onAccount('acct-b')
+      h.resumable = true
+      const req = spawnIn(request('acct-b'))
+      await vi.advanceTimersByTimeAsync(10)
+      expect(h.carries).toHaveLength(1)
+      await expect(req).resolves.toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
