@@ -21,8 +21,9 @@ export function shouldSwitch(
   return (current ?? undefined) !== (next ?? undefined)
 }
 
-/** Sessions whose switch (P3.6: saving the new account, then the restart)
- *  is under way: a second pick meanwhile is ignored. */
+/** Sessions whose new account (P3.6) is still being saved: a second pick
+ *  meanwhile is ignored. The guard ends as the restart begins; a pick after
+ *  that is a switch of its own. */
 const switching = new Set<string>()
 
 /**

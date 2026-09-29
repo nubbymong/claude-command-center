@@ -30,12 +30,16 @@
  *     appears whole or not at all, and one that landed anywhere but the
  *     realm's own folder (a folder on the way swapped for a link after the
  *     checks) is taken back;
- *   - a file already at the final name is never replaced: the same bytes mean
- *     the conversation is already there (`present`); an earlier copy of it
- *     that is exactly the start of this one (the session was on that account
- *     before: A -> B -> A) has the lines said since added to it, in place,
- *     through a handle checked to be that file in the realm's own folder
- *     (`extended`); anything else went its own way there and is refused;
+ *   - a file already at the final name: the same bytes mean the
+ *     conversation is already there (`present`); an earlier copy of it that
+ *     is exactly the start of this one (the session was on that account
+ *     before: A -> B -> A), and still that size, is brought up to date
+ *     (`extended`): in place, through a handle checked to be that file in
+ *     the realm's own folder, when that is its only name; else the whole
+ *     copy is renamed over this one name, so another name of that file (the
+ *     account's kept earlier folder, after a staged sign in again) keeps
+ *     what it had and nothing is written through it. Anything else went its
+ *     own way there and is left as it is;
  *   - the temporary file is removed on every path, and one a carry that
  *     stopped part way left behind is removed by the next carry into that
  *     realm once it is stale (by its own name and age: see sweepStaleTemps).
@@ -300,9 +304,22 @@ export async function carryCodexRollout(input: CodexCarryInput): Promise<CodexCa
     const meta = head && head.kind === 'line' ? parseSessionMetaLine(head.line) : null
     if (!meta || meta.id.toLowerCase() !== id.toLowerCase()) return fail('changed')
 
-    // Something already at the final name is never replaced: the same bytes
-    // are present; an earlier copy that is exactly the start of this one is
-    // brought up to date in place; anything else went its own way there.
+    /** The copy took the final name: it landed where it was meant to (no
+     *  folder on the way was swapped for a link since the checks) and it is
+     *  the file written here. Otherwise the name goes again, but only while
+     *  it is that file. */
+    const tookName = async (): Promise<boolean> => {
+      let landed: fs.BigIntStats | null = null
+      try { landed = fs.lstatSync(finalPath, { bigint: true }) } catch { landed = null }
+      const ours = !!landed && !!tempMade && sameFile(landed, tempMade)
+      if (ours && canonical(finalPath)) return true
+      try { if (ours) await fs.promises.unlink(finalPath) } catch { /* left for the next attempt */ }
+      return false
+    }
+
+    // Something already at the final name: the same bytes are present; an
+    // earlier copy that is exactly the start of this one is brought up to
+    // date; anything else went its own way there and is left as it is.
     const settle = async (): Promise<CodexCarryResult> => {
       let there: fs.BigIntStats
       try { there = fs.lstatSync(finalPath, { bigint: true }) } catch { return fail('changed') }
@@ -315,24 +332,40 @@ export async function carryCodexRollout(input: CodexCarryInput): Promise<CodexCa
         const noFollow = fs.constants.O_NOFOLLOW ?? 0
         a = await fs.promises.open(finalPath, (have === lastLineEnd ? fs.constants.O_RDONLY : fs.constants.O_RDWR) | noFollow)
         b = await fs.promises.open(tempPath, 'r')
-        // The file this handle holds is the one measured (`have`), and it is
-        // the one at the final name, in the realm's own folder: no folder on
-        // the way became a link since the checks. Anything written goes
-        // through this handle, so to nothing else.
+        // The file this handle holds is the one measured, still that size,
+        // and the one at the final name, in the realm's own folder: no
+        // folder on the way became a link since the checks.
         const aStat = await a.stat({ bigint: true })
-        if (!aStat.isFile() || !sameFile(aStat, there)) return fail('changed')
+        if (!aStat.isFile() || !sameFile(aStat, there) || Number(aStat.size) !== have) return fail('changed')
         if (!stillAt(finalPath, aStat)) return fail('changed')
         if (!(await sameBytes(a, b, have))) return fail('exists-different')
         if (have === lastLineEnd) return { ok: true, carried: 'present', bytes: lastLineEnd }
-        // A second name of another file (a history copy links them) is
-        // never added to through this one.
-        if (aStat.nlink !== 1n) return fail('exists-different')
-        if (!(await copyRange(b, a, have, lastLineEnd))) return fail('io-failed')
-        await a.sync()
-        // Nothing else wrote to it meanwhile.
-        const grown = await a.stat({ bigint: true })
-        if (Number(grown.size) !== lastLineEnd) return fail('changed')
-        return { ok: true, carried: 'extended', bytes: lastLineEnd }
+        // Nothing was added to it while it was compared: the CLI may write
+        // to a sign-in's folder at any time (this computer's own sign-in is
+        // not the app's to hold), and what it added is never written over.
+        const measured = await a.stat({ bigint: true })
+        if (Number(measured.size) !== have) return fail('changed')
+        if (aStat.nlink === 1n) {
+          // Its only name: the lines said since are added in place, through
+          // this handle, so to nothing else.
+          if (!(await copyRange(b, a, have, lastLineEnd))) return fail('io-failed')
+          await a.sync()
+          // Nothing else wrote to it meanwhile.
+          const grown = await a.stat({ bigint: true })
+          if (Number(grown.size) !== lastLineEnd) return fail('changed')
+          return { ok: true, carried: 'extended', bytes: lastLineEnd }
+        }
+        // A second name of another file (a staged sign in again's history
+        // shares its files with the account's kept earlier folder): nothing
+        // is written through it. This name alone takes the whole copy, the
+        // temporary file renamed over it; the other keeps what it had.
+        await a.close()
+        a = null
+        await b.close()
+        b = null
+        if (!stillAt(finalPath, aStat)) return fail('changed')
+        await fs.promises.rename(tempPath, finalPath)
+        return (await tookName()) ? { ok: true, carried: 'extended', bytes: lastLineEnd } : fail('changed')
       } catch {
         return fail('io-failed')
       } finally {
@@ -351,17 +384,7 @@ export async function carryCodexRollout(input: CodexCarryInput): Promise<CodexCa
     } catch (e) {
       return errCode(e) === 'EEXIST' ? await settle() : fail('io-failed')
     }
-    // It landed where it was meant to (no folder on the way was swapped for
-    // a link since the checks) and it is the file written here; otherwise
-    // the name goes again, but only while it is that file.
-    let landed: fs.BigIntStats | null = null
-    try { landed = fs.lstatSync(finalPath, { bigint: true }) } catch { landed = null }
-    const ours = !!landed && !!tempMade && sameFile(landed, tempMade)
-    if (!ours || !canonical(finalPath)) {
-      try { if (ours) await fs.promises.unlink(finalPath) } catch { /* left for the next attempt */ }
-      return fail('changed')
-    }
-    return { ok: true, carried: 'copied', bytes: lastLineEnd }
+    return (await tookName()) ? { ok: true, carried: 'copied', bytes: lastLineEnd } : fail('changed')
   } catch {
     return fail('io-failed')
   } finally {

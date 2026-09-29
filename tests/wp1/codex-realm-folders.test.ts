@@ -1553,7 +1553,8 @@ describe('a conversation copied into another account\'s folder (P3.6, row 22)', 
   it('a sign-in, sign-out or removal holding either realm past the short wait: busy, and nothing is left held', async () => {
     const { w, folders, calls, keyOf } = carrying()
     const held = w.locks.hold(keyOf(w.home(RB)))!
-    expect(await folders.copyConversation!(A, B, { id: CID })).toMatchObject({ ok: false, code: 'busy' })
+    // In its own words: another copy may be what holds it, not only a sign-in.
+    expect(await folders.copyConversation!(A, B, { id: CID })).toEqual({ ok: false, code: 'busy', message: 'A sign-in, a sign-out or another conversation copy is using one of these Codex account folders, so the conversation was not carried over.' })
     held()
     const srcAgain = w.locks.hold(keyOf(w.home(RA)))
     expect(srcAgain).not.toBeNull()
@@ -1580,18 +1581,31 @@ describe('a conversation copied into another account\'s folder (P3.6, row 22)', 
   })
 
   it('a lock let go during the wait is taken; the wait is bounded', async () => {
-    const { w, folders, keyOf } = carrying(undefined, 2_000)
-    const held = w.locks.hold(keyOf(w.home(RB)))!
-    setTimeout(held, 40)
-    const t0 = Date.now()
-    expect(await folders.copyConversation!(A, B, { id: CID })).toEqual({ ok: true, carried: 'copied' })
-    expect(Date.now() - t0).toBeLessThan(1_500)
-    const short = carrying(undefined, 50)
-    const stuck = short.w.locks.hold(short.keyOf(short.w.home(RA)))!
-    const t1 = Date.now()
-    expect(await short.folders.copyConversation!(A, B, { id: CID })).toMatchObject({ ok: false, code: 'busy' })
-    expect(Date.now() - t1).toBeLessThan(1_500)
-    stuck()
+    // On a fake clock: the wait's own timers decide, never how busy the host is.
+    vi.useFakeTimers()
+    try {
+      const { w, folders, keyOf } = carrying(undefined, 2_000)
+      const held = w.locks.hold(keyOf(w.home(RB)))!
+      setTimeout(held, 40)
+      let first: unknown
+      void folders.copyConversation!(A, B, { id: CID }).then((r) => { first = r })
+      await vi.advanceTimersByTimeAsync(30)
+      expect(first).toBeUndefined()
+      await vi.advanceTimersByTimeAsync(40)
+      expect(first).toEqual({ ok: true, carried: 'copied' })
+      // Held throughout: busy once the bound has passed, and not before.
+      const short = carrying(undefined, 500)
+      const stuck = short.w.locks.hold(short.keyOf(short.w.home(RA)))!
+      let second: unknown
+      void short.folders.copyConversation!(A, B, { id: CID }).then((r) => { second = r })
+      await vi.advanceTimersByTimeAsync(400)
+      expect(second).toBeUndefined()
+      await vi.advanceTimersByTimeAsync(200)
+      expect(second).toMatchObject({ ok: false, code: 'busy' })
+      stuck()
+    } finally {
+      vi.useRealTimers()
+    }
     // The default wait is a few seconds, never open-ended.
     expect(CODEX_CARRY_LOCK_WAIT_MS).toBeGreaterThan(0)
     expect(CODEX_CARRY_LOCK_WAIT_MS).toBeLessThanOrEqual(10_000)

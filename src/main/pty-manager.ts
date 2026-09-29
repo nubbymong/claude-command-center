@@ -340,7 +340,7 @@ export function codexLaunchLeaseTaken(lease: AccountLease): boolean {
  *  seconds). The account stays leased until it has actually gone -- no
  *  sign-out or folder removal beside a Codex still winding down -- or, if no
  *  exit is ever reported, for a bounded grace. */
-const CODEX_LEASE_EXIT_GRACE_MS = 6_000
+export const CODEX_LEASE_EXIT_GRACE_MS = 6_000
 function releaseCodexLeaseOnExit(proc: pty.IPty, lease: AccountLease): void {
   let done = false
   const release = (): void => {
@@ -431,17 +431,23 @@ export function getKeptCodexConversationSource(sessionId: string): { uuid: strin
 // only once the session's previous Codex process has ended, so nothing it
 // writes after the copy is lost. killPty records the end of each Codex run it
 // kills (its process's exit); the respawn waits for it, bounded. An entry
-// goes when its process has ended; a later kill of the session replaces it.
+// goes when its process has ended, or after the grace its account lease is
+// released after (releaseCodexLeaseOnExit) when no exit is ever reported;
+// a later kill of the session replaces it.
 const endingCodexRuns = new Map<string, Promise<void>>()
 
 function noteCodexRunEnding(sessionId: string, proc: pty.IPty): void {
   let ended!: () => void
   const done = new Promise<void>((resolve) => { ended = resolve })
   endingCodexRuns.set(sessionId, done)
+  let timer: ReturnType<typeof setTimeout> | undefined
   const settle = (): void => {
+    if (timer) clearTimeout(timer)
     ended()
     if (endingCodexRuns.get(sessionId) === done) endingCodexRuns.delete(sessionId)
   }
+  timer = setTimeout(settle, CODEX_LEASE_EXIT_GRACE_MS)
+  ;(timer as unknown as { unref?: () => void }).unref?.()
   try { proc.onExit(() => settle()) } catch { settle() }
 }
 

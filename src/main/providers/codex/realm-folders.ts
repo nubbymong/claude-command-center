@@ -905,6 +905,7 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
    *  conversation not carried over (never a folder's creation or removal). */
   const CARRY_IO_FAILED: Failure = { ok: false, code: 'io-failed', message: "The conversation could not be copied into the other Codex account's folder, so it was not carried over." }
   const CARRY_CHANGED: Failure = { ok: false, code: 'changed', message: "The conversation's file, or a Codex account folder, changed while it was being copied, so it was not carried over." }
+  const CARRY_BUSY: Failure = { ok: false, code: 'busy', message: 'A sign-in, a sign-out or another conversation copy is using one of these Codex account folders, so the conversation was not carried over.' }
   /** The carry port's refusals, as this module's codes. */
   const CARRY_FAILURES: Readonly<Record<string, Failure>> = {
     'not-found': fail('conversation-missing'),
@@ -973,7 +974,7 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
       const dstKey = codexRealmLockKey(d.canonical, d.home.dev, d.home.ino)
       if (srcKey === dstKey) return fail('unsafe-path')
       const release = await holdBoth(srcKey, dstKey)
-      if (!release) return fail('busy')
+      if (!release) return CARRY_BUSY
       try {
         // Under the locks: still the folders that were checked.
         if (!unchanged(src.home, s.home) || !unchanged(dst.home, d.home)) return CARRY_CHANGED

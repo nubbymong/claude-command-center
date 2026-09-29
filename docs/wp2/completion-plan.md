@@ -696,20 +696,31 @@ on; no renderer channel names a conversation, so the first build's
 `providerAccounts:carryConversation` is gone), holding an operation lease on
 both accounts under the registry lock and both realm locks for the copy
 (`realm-folders.ts` copyConversation; a copy the other way at once is waited
-for, briefly), the file work in `conversation-carry.ts` (P3.5's lookup in the
-source realm only, bounded at 256 MiB, whole lines, no link followed, an
+for, briefly; a spawn superseded or closed meanwhile carries nothing), the
+file work in `conversation-carry.ts` (P3.5's lookup in the source realm only,
+bounded at 256 MiB, whole lines, no link followed below a realm's home, an
 exclusive temporary file in the destination's sessions folder then a hard
 link that never replaces anything, checked after it lands; a temporary file a
 stopped carry left is swept by the next one once stale; the same bytes already
-there are present, an earlier copy that is exactly the start of the
-conversation has the rest added in place, anything else is refused); the
-launch then resumes it by id in the new account's folder through P3.5's path
-and checks. Section 5's fallback: when the conversation did not come along
+there are present; an earlier copy that is exactly the start of the
+conversation, and still that size when it is written, has the rest added: in
+place when that is its only name, else (a staged Sign in again leaves the
+history as second names of the kept earlier folder's files) the whole copy is
+renamed over that one name, so the earlier folder keeps what it had and
+nothing is written through it; anything else is refused); the launch then
+resumes it by id in the new account's folder through P3.5's path and checks.
+Deviation, recorded (fix round 1, accepted in review round 2): the "no link
+followed" rule starts at a realm's home. This computer's own home is taken at
+its real path, as the CLI takes it and as a Claude account's home is
+(`account-profiles.ts`), so a `~/.codex` that is a link is followed to where
+it leads; any link below it is refused, and one that leads into the app's own
+account folders makes every Codex realm unavailable (overlaps-external). Section 5's fallback: when the conversation did not come along
 whole, the spawn answers main's reason and whether the launch resumed it from
 a copy already there, and the terminal says so, once, dimmed, in words true
 for that (`utils/launchNote.ts`, with the app's spoofing-character rule).
-No usage read is started for the pick (ADR-022). A second pick while one is
-under way is ignored. What's New's line and the accounts page show with Claude Code off,
+No usage read is started for the pick (ADR-022). A second pick is ignored
+while the first is still being saved; once its restart begins, a pick is a
+switch of its own. What's New's line and the accounts page show with Claude Code off,
 reworded; the claude.ai sign-in the line also named is its own Claude-only
 line; the page's Insights point keeps the flag, per point. SSH radius: yes,
 `pty-manager.ts` changed (the Codex local branch, the kept-conversation

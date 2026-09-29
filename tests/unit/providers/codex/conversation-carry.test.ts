@@ -116,16 +116,24 @@ describe('carryCodexRollout', () => {
     expect(readFileSync(r2.dest, 'utf8')).toBe(meta(ID, '/p') + turn(1) + turn(2))
   })
 
-  it('an earlier copy that is also a second name of another file is never added to through that name', async () => {
+  it('A (signed in again) -> B -> A: an earlier copy that shares its file with the account\'s kept earlier folder is brought up to date under this name alone; the earlier folder keeps what it had', async () => {
     const r = realms()
     mkdirSync(dirname(r.dest), { recursive: true })
     const older = meta(ID, 'C:\\p\\demo') + turn(1)
-    const twin = join(temp('twin'), 'twin.jsonl')
+    // A staged sign in again carried the history over as second names of
+    // the files in the account's kept earlier (retired) folder.
+    const retiredDay = join(temp('retired'), 'sessions', '2026', '09', '20')
+    mkdirSync(retiredDay, { recursive: true })
+    const twin = join(retiredDay, NAME)
     writeFileSync(twin, older)
     linkSync(twin, r.dest)
-    expect(await carryCodexRollout({ fromSessionsDir: join(r.from, 'sessions'), toHome: r.to, id: ID })).toEqual({ ok: false, code: 'exists-different' })
+    expect(statSync(r.dest).nlink).toBe(2)
+    expect(await carryCodexRollout({ fromSessionsDir: join(r.from, 'sessions'), toHome: r.to, id: ID })).toEqual({ ok: true, carried: 'extended', bytes: Buffer.byteLength(r.body) })
+    expect(readFileSync(r.dest, 'utf8')).toBe(r.body)
+    // Nothing written through the other name: the retired copy is as it was.
     expect(readFileSync(twin, 'utf8')).toBe(older)
-    expect(readFileSync(r.dest, 'utf8')).toBe(older)
+    expect(statSync(twin).nlink).toBe(1)
+    expect(statSync(r.dest).nlink).toBe(1)
     expect(leftoversOf(r)).toEqual([])
   })
 
@@ -367,6 +375,125 @@ describe('carryCodexRollout when something is swapped after its checks', () => {
     expect(await carryCodexRollout({ fromSessionsDir: join(r.from, 'sessions'), toHome: r.to, id: ID })).toEqual({ ok: false, code: 'changed' })
     expect(staged).toBe(true)
     expect(leftoversOf(r)).toEqual([])
+  })
+
+  it('A -> B -> A where the CLI adds to that copy just before it is opened: never written over, and not said as carried', async () => {
+    const r = realms()
+    const older = meta(ID, 'C:\\p\\demo') + turn(1)
+    mkdirSync(dirname(r.dest), { recursive: true })
+    writeFileSync(r.dest, older)
+    let staged = false
+    onOpen(async (p, flags, open) => {
+      if (!staged && same(p, r.dest) && typeof flags === 'number' && (flags & constants.O_RDWR) !== 0) {
+        staged = true
+        appendFileSync(r.dest, turn(5))
+      }
+      return open()
+    })
+    expect(await carryCodexRollout({ fromSessionsDir: join(r.from, 'sessions'), toHome: r.to, id: ID })).toEqual({ ok: false, code: 'changed' })
+    expect(staged).toBe(true)
+    expect(readFileSync(r.dest, 'utf8')).toBe(older + turn(5))
+    expect(leftoversOf(r)).toEqual([])
+  })
+
+  it('the same conversation there, but the CLI adds to it just before it is opened: not said as present (it has gone on there)', async () => {
+    const r = realms()
+    mkdirSync(dirname(r.dest), { recursive: true })
+    writeFileSync(r.dest, r.body)
+    let staged = false
+    onOpen(async (p, flags, open) => {
+      if (!staged && same(p, r.dest) && typeof flags === 'number') {
+        staged = true
+        appendFileSync(r.dest, turn(5))
+      }
+      return open()
+    })
+    expect(await carryCodexRollout({ fromSessionsDir: join(r.from, 'sessions'), toHome: r.to, id: ID })).toEqual({ ok: false, code: 'changed' })
+    expect(staged).toBe(true)
+    expect(readFileSync(r.dest, 'utf8')).toBe(r.body + turn(5))
+    expect(leftoversOf(r)).toEqual([])
+  })
+
+  it('A -> B -> A where the CLI adds to that copy while it is compared: never written over, and not said as carried', async () => {
+    const r = realms()
+    const older = meta(ID, 'C:\\p\\demo') + turn(1)
+    mkdirSync(dirname(r.dest), { recursive: true })
+    writeFileSync(r.dest, older)
+    let staged = false
+    onOpen(async (p, flags, open) => {
+      const h = await open()
+      if (!same(p, r.dest) || typeof flags !== 'number' || (flags & constants.O_RDWR) === 0) return h
+      const read = h.read.bind(h) as (...a: unknown[]) => Promise<unknown>
+      ;(h as unknown as { read: (...a: unknown[]) => Promise<unknown> }).read = async (...a: unknown[]) => {
+        const got = await read(...a)
+        if (!staged) { staged = true; appendFileSync(r.dest, turn(5)) }
+        return got
+      }
+      return h
+    })
+    expect(await carryCodexRollout({ fromSessionsDir: join(r.from, 'sessions'), toHome: r.to, id: ID })).toEqual({ ok: false, code: 'changed' })
+    expect(staged).toBe(true)
+    // turn(5) is as long as turn(2): an overwrite would leave the copy the
+    // conversation's length and pass for carried.
+    expect(readFileSync(r.dest, 'utf8')).toBe(older + turn(5))
+    expect(leftoversOf(r)).toEqual([])
+  })
+
+  it('A (signed in again) -> B -> A with the day folder swapped for a junction to a copy outside the realm once the earlier copy is compared: nothing is renamed over that copy', async () => {
+    const r = realms()
+    const older = meta(ID, 'C:\\p\\demo') + turn(1)
+    mkdirSync(dirname(r.dest), { recursive: true })
+    const retiredDay = join(temp('retired'), 'sessions', '2026', '09', '20')
+    mkdirSync(retiredDay, { recursive: true })
+    writeFileSync(join(retiredDay, NAME), older)
+    linkSync(join(retiredDay, NAME), r.dest)
+    const outside = temp('outside')
+    mkdirSync(join(outside, 'day'))
+    writeFileSync(join(outside, 'day', NAME), older)
+    let staged = false
+    onOpen(async (p, flags, open) => {
+      const h = await open()
+      if (!same(p, r.dest) || typeof flags !== 'number' || (flags & constants.O_RDWR) === 0) return h
+      // Staged as the compared copy is let go (Windows renames no folder
+      // while a file in it is open).
+      const close = h.close.bind(h)
+      ;(h as { close: () => Promise<void> }).close = async () => {
+        await close()
+        if (staged) return
+        staged = true
+        renameSync(dirname(r.dest), join(outside, 'realm-day'))
+        symlinkSync(join(outside, 'day'), dirname(r.dest), 'junction')
+      }
+      return h
+    })
+    expect(await carryCodexRollout({ fromSessionsDir: join(r.from, 'sessions'), toHome: r.to, id: ID })).toEqual({ ok: false, code: 'changed' })
+    expect(staged).toBe(true)
+    expect(readFileSync(join(outside, 'day', NAME), 'utf8')).toBe(older)
+    expect(readFileSync(join(outside, 'realm-day', NAME), 'utf8')).toBe(older)
+    expect(leftovers(join(r.to, 'sessions'))).toEqual([])
+  })
+
+  it('A (signed in again) -> B -> A with the day folder swapped for a junction outside the realm the moment the copy is renamed in: nothing is left outside', async () => {
+    const r = realms()
+    const older = meta(ID, 'C:\\p\\demo') + turn(1)
+    mkdirSync(dirname(r.dest), { recursive: true })
+    const retiredDay = join(temp('retired'), 'sessions', '2026', '09', '20')
+    mkdirSync(retiredDay, { recursive: true })
+    writeFileSync(join(retiredDay, NAME), older)
+    linkSync(join(retiredDay, NAME), r.dest)
+    const outside = temp('outside')
+    mkdirSync(join(outside, 'day'))
+    const realRename = fsp.rename.bind(fsp)
+    vi.spyOn(fsp, 'rename').mockImplementation((async (a: string, b: string) => {
+      renameSync(dirname(r.dest), join(outside, 'realm-day'))
+      symlinkSync(join(outside, 'day'), dirname(r.dest), 'junction')
+      return realRename(a, b)
+    }) as never)
+    expect(await carryCodexRollout({ fromSessionsDir: join(r.from, 'sessions'), toHome: r.to, id: ID })).toEqual({ ok: false, code: 'changed' })
+    expect(readdirSync(join(outside, 'day'))).toEqual([])
+    expect(readFileSync(join(outside, 'realm-day', NAME), 'utf8')).toBe(older)
+    expect(readFileSync(join(retiredDay, NAME), 'utf8')).toBe(older)
+    expect(leftovers(join(r.to, 'sessions'))).toEqual([])
   })
 
   it('a copy that fails to take its name: io-failed, and the temporary file goes', async () => {
