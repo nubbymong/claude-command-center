@@ -1412,9 +1412,9 @@ code_mode disables were accepted by both CLIs; findings that could not be
 matched were shown as such; e2e 81, native 136. Round 4 (the last small
 round; mocked): an update whose findings cannot be matched is analysed
 again at most three times, then recorded as checked with a note; the
-scheduled process-table reads stop once a read finds the run's chain
-alone (the reads at its start and first output still happen, eight at
-most); and a leftover kill logs taskkill's exit code and message in one
+scheduled process-table reads stop once two scheduled reads in a row
+find the run's chain alone (round 5: the reads at its start and first
+output never count toward that; eight at most); and a leftover kill logs taskkill's exit code and message in one
 line. The kill is not widened and no privilege is raised: if that log
 shows access denied, the helper is held by Codex's own sandbox, an
 upstream residual (the VM reads the log).

@@ -9,7 +9,7 @@ import {
   CODEX_MIN_SUPPORTED_VERSION, CODEX_PINNED_CLI_VERSION, CODEX_MAX_TESTED_VERSION,
 } from '../../src/main/providers/codex'
 import { EventEmitter } from 'node:events'
-import { codexLeftoverPids, codexChainAlone, codexRecordRunMembers, CODEX_EXEC_EXIT_SETTLE_MS, CODEX_OBSERVE_AT_MS, CODEX_OBSERVE_MAX_READS, CODEX_OBSERVE_MAX_IN_FLIGHT } from '../../src/main/providers/codex'
+import { codexLeftoverPids, codexChainAlone, codexRecordRunMembers, CODEX_EXEC_EXIT_SETTLE_MS, CODEX_OBSERVE_AT_MS, CODEX_OBSERVE_MAX_READS, CODEX_OBSERVE_MAX_IN_FLIGHT, CODEX_OBSERVE_QUIET_READS } from '../../src/main/providers/codex'
 import type { CodexRunMember } from '../../src/main/providers/codex'
 import { codexCommandLine, cliCommandLine, codexShellEnv, runCodexCli, discoverCodex, verifyCodexExecutable, codexCompatibilityAllowsUse, makeCodexKillTree, extractMarkedPath, CODEX_TREE_PRIME_MS, CODEX_PRIME_TABLE_TIMEOUT_MS, codexWrapperLinePids } from '../../src/main/providers/codex'
 import { codexChainPids, parseWindowsProcessTable, parsePosixProcessTable, parseLinuxStat, makeCodexProcessLister, CODEX_KILL_SETTLE_MS, CODEX_PROCESS_TABLE_TIMEOUT_MS, CODEX_TASKKILL_TIMEOUT_MS, CODEX_KILL_WORST_MS, flushPendingCodexKills, WINDOWS_PROCESS_QUERY } from '../../src/main/providers/codex'
@@ -1803,34 +1803,61 @@ describe('an exec run settles after its root exits (P3.9 round 2)', () => {
     } finally { vi.useRealTimers() }
   })
 
-  it('round 4: once a read finds the chain alone, the scheduled reads stop; the reads at start and first output still happen', async () => {
+  it('round 5: a helper codex starts after a chain-alone read at the start is still found by the schedule, and ended', async () => {
+    const FT2 = 11_644_473_600_000
+    const now = Date.now()
+    const calls: Array<readonly string[]> = []
+    const spawn = ((_f: string, args: readonly string[]) => { calls.push(args); const k = new EventEmitter(); queueMicrotask(() => k.emit('exit', 0)); return k }) as never
+    const chain: CodexProcessEntry[] = [
+      { pid: 12, ppid: 1, name: 'cmd.exe', created: now - 50 + FT2 }, { pid: 13, ppid: 12, name: 'node.exe', created: now - 40 + FT2 }, { pid: 14, ppid: 13, name: 'codex.exe', created: now - 30 + FT2 },
+    ]
+    let table = chain
+    const run = Object.assign(new EventEmitter(), { pid: 12, exitCode: null as number | null, signalCode: null, kill: vi.fn() })
+    const win = makeCodexKillTree('win32', spawn, 'C:\\Windows', async () => table, null, undefined, () => {})
+    expect(codexChainAlone(12, chain)).toBe(true)
+    win.observe!(run as never, now - 100, 'start')
+    await new Promise((r) => setTimeout(r, 0))
+    win.observe!(run as never, now - 100, 'output')
+    await new Promise((r) => setTimeout(r, 0))
+    // Codex starts its helper after both of those reads began (so no rule
+    // about when codex was seen covers it); the schedule reads and records it.
+    const later = Date.now() + 1_000
+    const helper: CodexProcessEntry = { pid: 15, ppid: 14, name: 'git.exe', created: later + FT2 }
+    table = [...chain, helper]
+    win.observe!(run as never, now - 100, 'schedule')
+    await new Promise((r) => setTimeout(r, 0))
+    run.exitCode = 1
+    table = [helper]
+    await win.leftovers!(run as never, { since: now - 100, until: later + 1_000 })
+    expect(calls).toEqual([['/F', '/PID', '15']])
+  })
+
+  it('round 5: the schedule stops only after two scheduled reads in a row find the chain alone; a read with a helper starts the count again', async () => {
     const chain: CodexProcessEntry[] = [
       { pid: 12, ppid: 1, name: 'cmd.exe', created: 100 }, { pid: 13, ppid: 12, name: 'node.exe', created: 101 }, { pid: 14, ppid: 13, name: 'codex.exe', created: 102 },
     ]
-    expect(codexChainAlone(12, chain)).toBe(true)
     expect(codexChainAlone(12, chain.slice(0, 2))).toBe(false)                                   // codex not started yet
     expect(codexChainAlone(12, [...chain, { pid: 15, ppid: 14, name: 'git.exe', created: 103 }])).toBe(false)
     expect(codexChainAlone(12, chain.slice(1))).toBe(false)                                       // no root
+    expect(CODEX_OBSERVE_QUIET_READS).toBe(2)
     let reads = 0
+    let table = chain
     const run = Object.assign(new EventEmitter(), { pid: 12, exitCode: null as number | null, signalCode: null, kill: vi.fn() })
-    const win = makeCodexKillTree('win32', (() => { throw new Error('no') }) as never, 'C:\\Windows', async () => { reads++; return chain }, null)
-    win.observe!(run as never, Date.now(), 'start')
-    await new Promise((r) => setTimeout(r, 0))
-    win.observe!(run as never, Date.now(), 'schedule')
-    await new Promise((r) => setTimeout(r, 0))
-    expect(reads).toBe(1)
-    win.observe!(run as never, Date.now(), 'output')
-    await new Promise((r) => setTimeout(r, 0))
-    expect(reads).toBe(2)
-    // A run with a helper beyond its chain is read on the schedule as before.
-    let more = 0
-    const busy = Object.assign(new EventEmitter(), { pid: 12, exitCode: null as number | null, signalCode: null, kill: vi.fn() })
-    const other = makeCodexKillTree('win32', (() => { throw new Error('no') }) as never, 'C:\\Windows', async () => { more++; return [...chain, { pid: 15, ppid: 14, name: 'git.exe', created: 103 }] }, null)
-    other.observe!(busy as never, Date.now(), 'start')
-    await new Promise((r) => setTimeout(r, 0))
-    other.observe!(busy as never, Date.now(), 'schedule')
-    await new Promise((r) => setTimeout(r, 0))
-    expect(more).toBe(2)
+    const win = makeCodexKillTree('win32', (() => { throw new Error('no') }) as never, 'C:\\Windows', async () => { reads++; return table }, null)
+    const read = async (why: 'start' | 'output' | 'schedule') => { win.observe!(run as never, Date.now(), why); await new Promise((r) => setTimeout(r, 0)) }
+    await read('start')
+    await read('output')
+    await read('schedule')                          // chain alone: 1
+    table = [...chain, { pid: 15, ppid: 14, name: 'git.exe', created: 103 }]
+    await read('schedule')                          // a helper: the count starts again
+    table = chain
+    await read('schedule')                          // 1
+    await read('schedule')                          // 2: the schedule stops
+    expect(reads).toBe(6)
+    await read('schedule')
+    expect(reads).toBe(6)
+    await read('output')                            // not on the schedule: still read
+    expect(reads).toBe(7)
   })
 
   it('round 4: a leftover kill says what taskkill answered, in one line', async () => {
