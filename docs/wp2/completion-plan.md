@@ -61,28 +61,34 @@ still owes recorded in 4. "2; 3" means partly built in 2, the rest in 3.
 
 ## 2. Summary
 
-- 75 rows: **25 DONE, 27 PARTIAL, 23 OPEN**.
-- The 50 rows not DONE, by gap: **implementation 42, verification 6, owner 2**
-  (rows 15 and 58). Row 53 moved from owner to implementation when the owner
-  decided it (`docs/wp1/owner-decisions-2026-09-27.md`, M4).
-- By PR: **35 in PR 3, 15 in PR 4**. No row changes package. The Ask Conductor
+- 75 rows: **37 DONE, 21 PARTIAL, 17 OPEN** (recounted after P3.8 round 2,
+  with section 4's P3.2 to P3.8 rows brought current from their phase
+  records; they agree with the parity checklist).
+- The 38 rows not DONE, by gap: **implementation 24, verification 10, owner
+  4** (rows 15 and 58, an owner action and a record to sign; rows 22 and 41,
+  each built as a default pending the owner's decision, section 10). Row 53
+  moved from owner to implementation when the owner decided it
+  (`docs/wp1/owner-decisions-2026-09-27.md`, M4).
+- By PR: **23 in PR 3, 15 in PR 4**. No row changes package. The Ask Conductor
   part of row 14 goes with row 53 into PR 4, because it is the same change.
-- 20 DONE rows still owe real-CLI, per-OS or packaged verification, recorded
-  in PR 4 and closed at release level: rows 1, 2, 3, 4, 6, 9, 12, 13, 18, 21,
-  23, 25, 27, 29, 33, 48, 49, 50, 64 and 74. The other 5 DONE rows (5, 19, 26,
-  30, 75) owe nothing.
-- Two rows the checklist marks VERIFIED are counted PARTIAL here, from the
-  code: row 17 (no Codex credits row yet; `src/shared/app-knowledge.ts` says
-  so as a known issue) and row 28 (Codex prices are still a static table of
-  three models; the agreed source is the live one Claude uses). The checklist
-  moves both in the same change as this plan, and moves rows 52, 68 and 69
-  from OWNER to MISSING, since parity settles them (section 10).
-- Genuinely unresolved UX decisions: **one**, row 41 (P3.8 round 1, caef0d42: Codex has
-  no one-line model or effort command), built as a default pending the
-  owner's decision (section 10, question 2). The one before it (row 53, both
-  providers on) was decided by the owner on 2026-09-27 (option B; OD27 M4).
-  Section 10.
-- Nothing in PR 3 waits on the owner. PR 3 can start.
+- 32 DONE rows still owe real-CLI, per-OS, packaged or VM verification,
+  recorded in PR 4 and closed at release level: rows 1, 2, 3, 4, 6, 7, 8, 9,
+  10, 12, 13, 18, 20, 21, 23, 24, 25, 27, 28, 29, 33, 36, 37, 38, 40, 48, 49,
+  50, 61, 64, 69 and 74. The other 5 DONE rows (5, 19, 26, 30, 75) owe
+  nothing.
+- Row 17 was counted PARTIAL here, from the code, while the checklist marked
+  it VERIFIED; the checklist now marks it PARTIAL too (no Codex credits row
+  yet; `src/shared/app-knowledge.ts` says so as a known issue). The checklist
+  moved rows 52, 68 and 69 from OWNER to MISSING, since parity settles them
+  (section 10); row 69 is now built (P3.8).
+- Genuinely unresolved UX decisions: **two**, each built as a default pending
+  the owner's decision: row 41 (P3.8 round 1, caef0d42: Codex has no one-line
+  model or effort command; section 10, question 2) and row 22 (P3.6 finding
+  V3: a declined confirm after a Switch restores the previous account;
+  question 3). The one before them (row 53, both providers on) was decided by
+  the owner on 2026-09-27 (option B; OD27 M4). Section 10.
+- PR 3 waits on the owner for those two decisions and for the owner actions
+  in section 10; nothing in it is blocked from being built.
 
 ## 3. Where the draft plan disagreed with the record
 
@@ -111,14 +117,14 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 4 | Sign-in (browser, API key) | DONE | PLAN A6, A7; OD26 U2 | verification: real API-key sign-in and sign-out; macOS, Linux | 2, v4 |
 | 5 | Device-code sign-in | DONE (off) | OD26 U3 (stays off, WP1.41) | none | 2 |
 | 6 | Multiple isolated accounts | DONE | PLAN A5 | verification: a real two-account run; keyring scoping (WP1.10, WP1.11) | 2, v4 |
-| 7 | Identity editing after creation (name, colour, link, unlink, group) | PARTIAL: the IPC exists (`updateIdentity`, `linkIdentity`, `unlinkIdentity`, groups in `src/preload/index.ts`); no editor, and the row's chip is decorative (`ManagedAccountsSection.tsx`) | Canvas 2026-09-26, "Accounts: identities across providers", option B: the editor opens from any row's chip, groups stay (WP1.40) | implementation | 3 |
-| 8 | One Accounts surface | PARTIAL: two row components (`AccountsPanel.tsx` for Claude, `ManagedAccountRow` for Codex) | The same canvas; design section 10; WP1.39 | implementation | 3 |
+| 7 | Identity editing after creation (name, colour, link, unlink, group) | DONE (P3.2, 65612489, b4a5b665; the colour migration in P3.6, 57ce396a; mocked): the identity editor opens from every row's chip (name, colour, group, Link, Unlink); the chips read the identity's colour | Canvas 2026-09-26, "Accounts: identities across providers", option B: the editor opens from any row's chip, groups stay (WP1.40) | verification: an owner screenshot check of the chips' colours | 3 |
+| 8 | One Accounts surface | DONE (P3.2, 65612489): one row component for both providers (AccountRow); the VM screenshots approved 2026-09-28 | The same canvas; design section 10; WP1.39 | verification: packaged | 3 |
 | 9 | Launch and resume in the exact account | DONE | PLAN A10, commit 4 | verification: a restored tab keeps its managed account, per OS | 2, v4 |
-| 10 | Lifecycle blockers and archive | PARTIAL: a refusal gives a count only (`providerAccountsStore.ts:427`); archive is one-way (`src/shared/providers/registry.ts:610-625` allows no way out of archived) | The same canvas: blockers name each consumer with Go to; "Archived (N)" with Restore (design 5.3) | implementation | 3 |
-| 11 | Staged re-authentication (WP1.52) | OPEN: "Sign in again" is offered only while signed out | Parity: Claude's "Refresh sign-in" works while signed in; WP1.52; PLAN "Out of this PR" | implementation | 3 |
+| 10 | Lifecycle blockers and archive | DONE (P3.2): a refused inactivate or archive names each session holding the account, with Go to; Archived (N) with Restore | The same canvas: blockers name each consumer with Go to; "Archived (N)" with Restore (design 5.3) | verification: real CLI; packaged | 3 |
+| 11 | Staged re-authentication (WP1.52) | PARTIAL (P3.3): Sign in again is offered while signed in too, staged in a new journalled folder with the conversation history carried over, and the account moves only once the new sign-in is verified | Parity: Claude's "Refresh sign-in" works while signed in; WP1.52; PLAN "Out of this PR" | verification (owner action): a second real sign-in on the VM, file and keyring stores, proving the old folder's sign-out never signs the new one out | 3 |
 | 12 | Upgrade question and the read-only sign-in check | DONE | OD26 U1, U2 | verification: real 0.153.4 and 0.155.1 | 2, v4 |
 | 13 | Hello Codex | DONE | Canvas 2026-09-24 (v1) and the commit 6 canvas; HCS | verification: per OS | 2, v4 |
-| 14 | Codex-only mode, no Claude noise | PARTIAL: with Claude Code off the title bar still draws the Code and Claude.ai pills (`TitleBar.tsx:253-272`); the Accounts Claude card still prompts to sign in; Hello Codex page 1 was seen saying Codex runs beside Claude; Ask (row 53) | Design section 2 (Claude is not a prerequisite); OD27 M1 D5 (a provider that is off shows one muted line or nothing); parity | implementation | 3 (Ask part: 4) |
+| 14 | Codex-only mode, no Claude noise | PARTIAL (P3.2, P3.4; mocked): with Claude Code off no Claude pills, no Claude status reads and no Claude sign-in prompts; the owner approved the P3.4 screens 2026-09-28. Left: Ask (row 53) and the guide cards each later phase unlocks | Design section 2 (Claude is not a prerequisite); OD27 M1 D5 (a provider that is off shows one muted line or nothing); parity | implementation (Ask with row 53; each card with its phase); verification: the cards on the VM | 3 (Ask part: 4) |
 | 15 | Owner-run gates (native keyring, sign-ins with real accounts, packaged smoke) | OPEN | OD20 D8 (blocks merge, not implementation); WP1.11, WP1.64, WP1.72 | owner: hosts, disposable test identities, timing; then verification | 4 |
 | 16 | WP1 traceability | PARTIAL: items still `planned` | OD20 D9; WP1.70, WP1.73 | verification: items move to evidenced as the evidence lands | 4 |
 
@@ -129,11 +135,11 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 17 | All-accounts usage page | PARTIAL: built and its screens approved; no Codex credits row (known issue in `src/shared/app-knowledge.ts`) | OD27 M1, M2; ADR-022; credits: parity, shown once a real read shows their unit (recorded with the usage plan, 2026-09-27) | implementation (evidence first, P3.1); verification: macOS, Linux, packaged | 2; 3, v4 |
 | 18 | Session-strip meters | DONE | OD27 M1 (D2, D3); labels from `window_minutes` (decided by design, 2026-09-26) | verification: a 0.155.1 rollout fixture from a real session; a real-CLI run | 2, v4 |
 | 19 | Strip cost wording | DONE | "API-equivalent estimate" wording (decided by design, 2026-09-26) | none | 2 |
-| 20 | Account chip on the strip and in the sidebar | PARTIAL: on the usage page and the footer; the strip and the sidebar still key the chip by email (`SessionStatusStrip.tsx`, `sidebar/SessionRow.tsx:101-107`); also here, from row 7: the email-keyed Claude colour overrides migrate into the identity's colour (moved at the P3.2 review) | Canvas 2026-09-26, "Switching a running Codex session's account": the strip's Codex account pill and its Switch account menu; the footer's label rule (a Codex identity shows its name); parity for the sidebar | implementation | 2; 3 |
+| 20 | Account chip on the strip and in the sidebar | DONE (P3.6, 57ce396a, 68d00f62, 4439d7e2; mocked): a Codex session's account chip on the strip and its sidebar card, from the identity; Claude's chips read the identity's colour | Canvas 2026-09-26, "Switching a running Codex session's account": the strip's Codex account pill and its Switch account menu; the footer's label rule (a Codex identity shows its name); parity for the sidebar | verification: the VM check of W1; the owner's screenshot review; the SSH live matrix at PR 3's head | 2; 3 |
 | 21 | Multi-account footer | DONE | Canvas 2026-09-26 (footer, option B); OD27 M1 | verification: real CLI, packaged | 2, v4 |
-| 22 | Switch the account of a running session | OPEN: refused for Codex (`hooks/useSwitchAccount.ts:50`) | Canvas 2026-09-26 (as row 20): keep the conversation; copy its rollout into the new account's folder, then `codex resume` there | implementation (evidence first: a copied rollout resumes on the supported versions; if not, section 19) | 3 |
+| 22 | Switch the account of a running session | PARTIAL (P3.6, 8274b3d1, 4439d7e2, bb99d2da; mocked): Switch account lists the Codex accounts, and a pick restarts the session on the new account with its conversation carried over. A declined confirm after a Switch restores the previous account, the default pending the owner's decision (section 10, question 3) | Canvas 2026-09-26 (as row 20): keep the conversation; copy its rollout into the new account's folder, then `codex resume` there | owner (question 3); verification: the real-account resume and the real-CLI walk on 0.153.4 and 0.155.1; the SSH live matrix | 3 |
 | 23 | Choose the account at launch | DONE | Commit 6 canvas, 2026-09-24 | verification: per OS | 2, v4 |
-| 24 | Running sessions per account | PARTIAL: counted only inside a refusal | Canvas 2026-09-26 ("N running" pill on the row) | implementation | 3 |
+| 24 | Running sessions per account | DONE (P3.2, 65612489): "N running" on the account row | Canvas 2026-09-26 ("N running" pill on the row) | verification: real CLI | 3 |
 | 25 | Tokenomics reads managed realms and `~/.codex` | DONE | OD20 D10; OD26 U3 | verification: real rollouts | 2, v4 |
 | 26 | Tokenomics attribution and filters | DONE | Canvas 2026-09-26 (Tokenomics, option A); OD27 M1 | none | 2 |
 | 27 | Subagent collision | DONE | The #307 fix (`7fc96639`) | verification: a real 0.155.1 subagent rollout | 2, v4 |
@@ -146,20 +152,20 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | # | Feature | Status | Settled by | Gap | PR |
 |---|---|---|---|---|---|
 | 31 | Logs history, search and transcript | OPEN: local Claude only (`src/main/logging/should-register-run.ts:50`; `src/renderer/lib/session-capabilities.ts`) | Parity: index each realm's rollouts; realms never cross. The dimmed Logs tool for Codex (ADR-018 D3) ends when this lands | implementation | 3 |
-| 32 | Resume picker | PARTIAL: no worktree conversations, no names | Parity | implementation | 3 |
+| 32 | Resume picker | PARTIAL (P3.5, 44729f29 and its fix rounds; mocked; VM c2c42e22): every git worktree's conversations, named and started in their own worktree | Parity | implementation: the name file Claude's picker prefers, with the exact bind of a new Codex conversation (P3.10, P3.12) | 3 |
 | 33 | Resume in the exact realm | DONE | PLAN A10 | verification: real, realm B never lists realm A | 2, v4 |
-| 34 | Exact resume on app relaunch | OPEN: Codex is skipped (`src/main/session-resume-enrich.ts:68`) | Parity: resume by the claimed session id, `codex resume <id>` in the same realm | implementation | 3 |
-| 35 | Restart and Switch keep the conversation | PARTIAL: Restart starts a new conversation or opens the picker (`SessionHeader.tsx:69-90`) | Parity (Claude's Restart resumes); canvas 2026-09-26 for Switch | implementation | 3 |
-| 36 | Statusline segments | PARTIAL: no account chip, lines or duration | Parity (line counts: evidence first; section 19 if Codex reports none) | implementation | 3 |
-| 37 | Statusline settings | PARTIAL: they apply to Codex (P2); row 36's segments missing | Parity | implementation | 2; 3 |
-| 38 | Statusline after resuming an old rollout | PARTIAL: the claim looks only in today's UTC date folder (`src/main/providers/codex/telemetry.ts:341-349`, a documented limitation), so a conversation from an earlier day, or one that crosses midnight UTC, gets no statusline | Parity | implementation (re-read the date folder each poll and find a resumed rollout wherever it is); a known defect until then (section 7) | 3 |
+| 34 | Exact resume on app relaunch | PARTIAL (P3.5, 90a717df; mocked; VM c2c42e22): a restored session resumes its own conversation in its own realm, bypassing the picker | Parity: resume by the claimed session id, `codex resume <id>` in the same realm | verification: the SSH live matrix; a conversation carried over by a staged Sign in again on the VM (owner action) | 3 |
+| 35 | Restart and Switch keep the conversation | PARTIAL (P3.5, 90a717df, Restart; P3.6, 4439d7e2, Switch; mocked): Restart resumes the conversation the session kept (VM c2c42e22); a Switch carries it into the new account and resumes it | Parity (Claude's Restart resumes); canvas 2026-09-26 for Switch | verification: the Switch half on the VM with a real CLI (row 22) | 3 |
+| 36 | Statusline segments | DONE (the account chip in P3.6, 68d00f62; Lines changed and Duration in P3.7, 5de7a4c4, 9f2bd164; mocked) | Parity (line counts: evidence first; section 19 if Codex reports none) | verification: the VM run and the owner's screenshot review; the real-CLI line count and a TUI resume's Duration on 0.153.4 and 0.155.1 | 3 |
+| 37 | Statusline settings | DONE (P2; P3.7, 5de7a4c4, 9f2bd164; mocked): the settings apply to Codex, and Lines changed and Duration show for a Codex session | Parity | verification: the VM screenshot of the Status Line tab with Codex on, both themes | 2; 3 |
+| 38 | Statusline after resuming an old rollout | DONE (P3.5, 28f42af2, 90a717df; mocked; VM c2c42e22): the claim re-reads its date folders on every poll and finds a resumed conversation wherever it is | Parity | verification: a session crossing midnight UTC on a real CLI | 3 |
 | 39 | Model catalogue | PARTIAL: the registry's Codex models, the list the supported CLIs (0.153.4 and 0.155.1) offer in their own picker, Sentinel's check against that list as shipped, and the release gate's Codex half (P3.8, 260d4abc; round 1, caef0d42). The live read of the installed CLI's list is P3.9's (`codex debug models`); until then Sentinel's Codex check reports only an overlay's changes and a stale list | Parity: the model registry plus Sentinel's coverage check. Not app-server `model/list`: OD27 M2 allows usage reads only | implementation (P3.9: the live read); owner: whether gpt-5.2 stays (section 10) | 3 |
 | 40 | Effort | DONE (P3.8, 260d4abc; round 1, caef0d42): each Codex model's own levels, from the CLI's catalogue (0.155.1's are the same, VM); a launch drops a saved effort its model cannot run. The CLI accepts max and ultra at launch on both versions (VM) | Parity | verification: whether the server takes max and ultra (a real sign-in; the CLI does not check at launch) | 3 |
 | 41 | Mid-session model and effort | PARTIAL, built as the default pending the owner's decision (P3.8 round 1, caef0d42): on a live session the command bar's model pill types a bare `/model`, only at Codex's ready prompt, which opens Codex's own model-and-effort picker and keeps the conversation; a stopped session keeps the select, applied at its next start | Parity: applied live, keeping the conversation. Codex has no one-line form (VM: `/model <slug>` is sent as a message; there is no `/effort`), so Claude's one-step switch cannot carry over as it is | owner: the default (section 10, question 2); verification: the pill on the VM | 3 |
 | 42 | Sentinel | PARTIAL: Claude runs only (`src/main/sentinel/index.ts`) | Parity: version drift, flags and the rollout format checked, with findings; the analysis runs on whichever provider is on | implementation | 3 |
 | 43 | Watchdog | OPEN: never armed for Codex (`src/main/pty-manager.ts`, the local arm site) | Parity: auto-retry and silence detection; aicc_planning#72 (a CLI without its own patterns reports Watchdog unavailable, never Claude's) | implementation | 3 |
 | 44 | Services (PTY integrity) | PARTIAL: built, unproven (Codex output is fed to the monitor) | Parity | verification | 3 |
-| 45 | Provider status pill | OPEN: Anthropic only (`src/main/service-status.ts`) | Parity: an OpenAI status pill beside Anthropic's, each shown only while its provider is on | implementation | 3 |
+| 45 | Provider status pill | PARTIAL (P3.4, aa0411b0, 87ba9c2d; the VM walk PASS at c7f9a34a and f65de184): an OpenAI status pill beside Anthropic's, each read and shown only while its provider is on | Parity: an OpenAI status pill beside Anthropic's, each shown only while its provider is on | verification: the Desktop test gate (owner); macOS and Linux; packaged | 3 |
 | 46 | Busy sweep and sleep moon | OPEN: off for Codex | Parity: fed from output and silence | implementation | 3 |
 | 47 | Waiting-for-input and attention dot | OPEN: nothing feeds it for Codex | Parity: fed by Codex `notify` and hooks | implementation | 3 |
 
@@ -193,7 +199,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 66 | Packaged smoke | PARTIAL: Windows only, an unsigned candidate on a used VM | OD20 D8; WP1.63 | verification (release level; owner hosts) | 4 |
 | 67 | E2E mode matrix | PARTIAL | WP1.1, WP1.60 | implementation (restart, enable/disable, real launch cases); verification | 2; 4 |
 | 68 | Insights | OPEN: Claude only; Claude's Insights types Claude Code's own `/insights` in a terminal (`src/main/insights-runner.ts:234-237`) | Parity, recorded 2026-09-26 (the parity reset's "Resolved by parity" list, sessions batch; not one of that day's open questions): a Conductor-native Codex report, run with `codex exec`. A mockup comes before the build (section 10) | implementation | 4 |
-| 69 | Plan mode | DONE (P3.8 round 1, caef0d42): a "Plan mode" permissions choice, as Claude's launch option: the session starts as Standard and Codex's own `/plan` is typed once its composer is ready (never into the folder-trust prompt), within a bounded wait that ends with a note | Parity: Claude's Plan mode launch option (`src/renderer/lib/claude-cli-options.ts:85`); Codex has `/plan` on both supported versions and no launch flag for it (VM), so no section 19 record | verification: Plan mode on the VM | 3 |
+| 69 | Plan mode | DONE (P3.8 round 1, caef0d42; round 2, f1783110): a "Plan mode" permissions choice, as Claude's launch option: the session starts READ-ONLY and Codex's own `/plan` is typed into its first ready prompt only (never the folder-trust prompt, the user's typing or after a turn), within a bounded wait; otherwise a note says Plan mode is not on and the session is read-only. The pill reads "plan" only while Codex's footer shows its Plan mode | Parity: Claude's Plan mode launch option (`src/renderer/lib/claude-cli-options.ts:85`); Codex has `/plan` on both supported versions and no launch flag for it (VM), so no section 19 record | verification: Plan mode on the VM; the approval flow with a working model (owner-only) | 3 |
 | 70 | Image paste | PARTIAL: built, unproven; the tip still says "Claude's prompt" (`tips-library.ts:370`) | Parity | verification (and the tip) | 3 |
 | 71 | Copy, paste, scrollback, mouse | PARTIAL: built, unproven; the trace is from 0.125 | Parity | verification (re-captured at 0.155.1) | 3 |
 | 72 | Multi Spawn and Quick Start with Codex | PARTIAL: one at a time is done (P2) | Parity: N copies with one lease each; Quick Start | implementation | 2; 3 |
@@ -1048,8 +1054,56 @@ TUIs, the pill's `/model`, Plan mode, Tokenomics' exact prices, and the
 native test there); with a real sign-in, whether the server takes max and
 ultra and what a real `/compact` does.
 
+Round 2 (2026-09-29; f1783110; mocked), the last bounded fix round, after the ADR-009
+pass 2 (lens A PASS with three minor findings, lens B one major), the spec
+and quality reviews and the VM pass. Row 69 (the major): a Plan mode launch
+now starts Codex READ-ONLY (the CLI's own sandbox option; it was Standard),
+so no turn can write before Plan mode is on, and `/plan` is typed into the
+run's first ready prompt only: when that first ready screen already holds
+text, or a turn is seen running first, nothing is typed and a note above the
+terminal says Plan mode is not on, that the session is read-only, and to type
+`/plan` or `/permissions`; the same note when the Enter is withheld or the
+prompt never comes (`codex-composer.test.ts`, `spawn.test.ts`,
+`terminalview-account-launch.test.tsx`). The permissions pill of a live Plan
+mode session reads "plan" only while Codex's own footer shows its Plan mode,
+else "read-only (Plan mode off)" (`commandbar-codex-toolbar.test.ts`); the
+dialog's Plan mode says it starts read-only. Claude's Plan mode starts in plan
+(`--permission-mode plan`) and its accepted plan moves on to the mode the user
+picks; Codex's accepted plan leaves Plan mode, not read-only, and the user
+widens it with Codex's own `/permissions` (section 10). The composer gate:
+the Enter goes only to a screen showing the command typed with nothing in the
+way (no prompt, no turn, only its popup or the footer under it); a second
+command is refused while one's Enter is pending for the session, app-wide (a
+second press, or the pill and Compact, before Codex redraws typed it twice);
+the footer is anchored (a model then one of Codex's levels, or "default", and
+the model one of the session's or the registry's), so Codex's own hint lines
+never read as a ready prompt; only Codex's two dim placeholders read as an
+empty composer (a dim paste marker is content); Codex's approval requests, as
+its binaries word them, block (defence in depth: the modal is not reachable on
+the VM without a working model, so the real check is owner-only); a footer
+that is not the last row is said as "could not be read" rather than "not at its
+prompt" (`codex-composer.test.ts`, `session-status-strip-codex-controls.test.tsx`).
+Row 28: the re-key of stored Codex rows runs on every open (in the Tokenomics
+worker, off the main thread), not once behind a marker, so rows an older
+build stores later are keyed at the next open; the used price keys are read
+again only after a write (a row change, another connection's commit or a
+rollup swap) rather than on every query (`tk-db-codex-exact-price.native.test.ts`,
+CI and VM). The legacy `tk_daily` table (v1, read by no page) keeps its old
+keys. Row 39: the release gate and Sentinel's check refuse a Codex id the
+registry lists twice (Sentinel says so as its own finding), count only an id
+the Codex picker offers, and read a file whose `models` is not a list as empty
+(`model-coverage-parity.test.ts`, `release-gate.test.ts`,
+`sentinel-codex-models.test.ts`). Owed: the ADR-009 re-attack and the reviews
+of round 2; the VM run of round 2 (Plan mode read-only, its note and the
+pill's reading; the composer gate on the real TUIs); the native tests on CI
+and the VM.
+
 **P3.9 Sentinel for Codex.** Codex version drift against the supported range
-raises a finding; flags and the rollout format are checked; the analysis
+raises a finding; flags and the rollout format are checked; row 39's live
+read of the Codex model list: `codex debug models` (no sign-in, no network,
+JSON: slug, levels, visibility and default level; P3.8 evidence addendum 13)
+per installed version, so Sentinel's Codex model check compares the registry
+with the list the installed CLI offers rather than the shipped snapshot; the analysis
 (today `claude -p`, `src/main/sentinel/sentinel-analysis.ts:158`) runs on
 whichever provider is on. With both on it runs on the provider the "Ask
 Conductor runs on" setting names (question 1, decided: OD27 M4).
@@ -1205,11 +1259,12 @@ Notes that bind the build:
 | 53 Ask Conductor | Ask is a real Claude session (`askConductor.ts:255` pins the provider; `help-workspace.ts` stages a `CLAUDE.md`), blocked with Claude Code off (`askConductorGate.ts`). Design section 2: the app works fully in Codex-only mode | **Codex only: settled** (Ask runs on the one provider that is on). **Both on: decided by the owner** on 2026-09-27 (OD27 M4, option B), below. There was no Claude behaviour to copy (OD26 P1, second case). |
 | 58 Web sign-in and artifacts | `src/main/account-web/artifacts.ts` opens claude.ai artifacts as an account; `account-pane.ts` gives the browser pane an account surface on claude.ai; the checklist's limits: nothing assumes a CLI sign-in gives ChatGPT browser cookies or an artifacts equivalent | **Web session: settled by parity** (chatgpt.com in the pane's account surface, signed in per Codex account). **Artifacts: not a UX choice.** No Codex equivalent is known (the checklist assumes none), so this is a section 19 record for the owner to sign, with the command lists of 0.153.4 and 0.155.1 as its evidence (P3.1). Should P3.1 find an equivalent, parity settles it instead. |
 | 68 Insights | `insights-runner.ts:234-237` types Claude Code's own `/insights` into a terminal and reads the report it writes; `InsightsPage.tsx:277-296` tells a Codex-only user that Insights come from Claude sessions. The parity reset of 2026-09-26 resolved it in its "Resolved by parity" list (sessions batch): a Conductor-native Codex report, run with `codex exec`; it was not one of that day's open questions | **Settled by parity (2026-09-26).** A one-line notice to the owner, not a question: Insights gets a Codex report the app makes with `codex exec`, shown in the page's existing layout, figures and run history, on the account's own Codex allowance as Claude's report uses Claude's. A mockup goes on the Agent Canvas before the build (P4.7), made from `src/renderer/components/InsightsPage.tsx`, `src/main/insights-runner.ts` and `src/main/insights-cross-account.ts` (ADR-013). |
-| 69 Plan mode | Claude's launch options include "Plan mode" (`claude-cli-options.ts:85`), a launch option only; the Codex form offers permission presets only (`CodexFormFields.tsx:162-170`); the capability leads say Codex documents a plan command | **Decidable by parity.** Codex gets Plan mode as a launch option, as Claude has it (P3.8), once P3.1 confirms the command on the supported versions. If it is absent, that is a section 19 record, not a UX question. **Settled and built (P3.8 round 1, caef0d42):** the VM probe found `/plan` on both versions and no launch flag, so the choice launches as Standard and types `/plan` once Codex's prompt is ready. |
+| 69 Plan mode | Claude's launch options include "Plan mode" (`claude-cli-options.ts:85`), a launch option only; the Codex form offers permission presets only (`CodexFormFields.tsx:162-170`); the capability leads say Codex documents a plan command | **Decidable by parity.** Codex gets Plan mode as a launch option, as Claude has it (P3.8), once P3.1 confirms the command on the supported versions. If it is absent, that is a section 19 record, not a UX question. **Settled and built (P3.8 round 1, caef0d42; round 2, f1783110):** the VM probe found `/plan` on both versions and no launch flag, so the choice launches READ-ONLY and types `/plan` into Codex's first ready prompt only. Claude's Plan mode starts in plan (`--permission-mode plan`) and its accepted plan moves on to the mode the user picks; Codex's accepted plan leaves Plan mode but not read-only, and the user widens what Codex may do with its own `/permissions` ("choose what Codex is allowed to do": the binaries' command list, and the TUI's own tip on 0.155.1). |
+| 22 Switch account: a declined confirm | P3.6 VM finding V3: Cancel on Codex's confirm-at-launch question after a Switch left the tab on the new account. A Claude switch never asks at launch, so there is no Claude behaviour to copy | **Parity cannot settle it.** Built as the default pending the owner's decision: question 3 below. |
 | 41 Mid-session model and effort | Claude's pill switches model and effort in one step, live. The VM probe (evidence addendum 13): Codex has no one-line form (`/model <slug>` and `/model <slug> <effort>` are sent as a message; `/effort` is unrecognised); its own route is a two-step picker opened by a bare `/model`, which keeps the conversation | **Parity cannot carry over as it is.** Built as the default pending the owner's decision: question 2 below. |
 
-One decision is open: question 2 (row 41), built as a default pending the
-owner's decision. Question 1 below was decided by the owner
+Two decisions are open: question 2 (row 41) and question 3 (row 22), each
+built as a default pending the owner's decision. Question 1 below was decided by the owner
 on 2026-09-27: option B, approved as drawn (`docs/wp1/owner-decisions-2026-09-27.md`,
 M4; canvas "Ask Conductor provider choice" v1, no notes).
 
@@ -1267,6 +1322,23 @@ addendum 13), so the one-step switch cannot carry over as it is.
 no restart, and it depends on no picker layout. B is the fallback if the owner
 wants the app's own list on a live session. The owner reviews A in the VM
 gallery of round 1.
+
+### Question 3 (row 22), open: built as the default, pending the owner's decision. A Switch whose launch asks for confirmation, declined
+
+A Switch restarts a Codex session on the new account. When that launch asks
+Codex's confirm-at-launch question (the account signed in on this computer)
+and the user declines, what should the tab do? A Claude switch never asks at
+launch, so parity cannot settle it (P3.6 VM finding V3).
+
+- **A (built, the default).** The tab goes back to the account it came from
+  (or to the default account when that one can no longer launch), and says
+  which, above its terminal.
+- **B.** The tab stays on the new account, not started, and says so; the user
+  restarts it or switches again.
+
+**Recommendation: A.** A declined confirm reads as "not this account", and A
+leaves the session running where it was. The owner reviews it in the P3.6 VM
+gallery (a declined confirm after a Switch).
 
 ### One-line notices to the owner (not questions)
 
