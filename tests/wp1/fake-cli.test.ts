@@ -84,6 +84,23 @@ if (a === 'exec --json --ephemeral --skip-git-repo-check --sandbox read-only -m 
   })
   return
 }
+if (a.startsWith('exec --json --ephemeral --skip-git-repo-check --ignore-user-config ')) {
+  // P3.9 round 2: Sentinel's text-only analysis. 'early' (FAKE_ANALYSIS):
+  // a request that fails at once, as the VM saw -- the error event, then an
+  // exit -- after starting a helper that inherits the output pipes and
+  // outlives it (on Windows detached, as the real CLI's helper is not in
+  // Node's job). Otherwise the argv it was given, as a reply.
+  if (process.env.FAKE_ANALYSIS === 'early') {
+    const g = require('child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: ['ignore', 'inherit', 'inherit'], detached: process.platform === 'win32' })
+    fs.writeFileSync(path.join(__dirname, 'helper.pid'), String(g.pid))
+    g.unref()
+    process.stdout.write(JSON.stringify({ type: 'turn.failed', error: { message: 'unexpected status 400 Bad Request: fake' } }) + '\\n')
+    setTimeout(() => process.exit(1), Number(process.env.FAKE_EXIT_MS) || 300)
+    return
+  }
+  const events = [{ type: 'item.completed', item: { id: 'i0', type: 'agent_message', text: JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }) } }, { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }]
+  process.stdout.write(events.map((e) => JSON.stringify(e)).join('\\n') + '\\n'); process.exit(0)
+}
 if (a === 'app-server') {
   // Usage track MP7 (ADR-022): the protocol helper. Logs every message it is
   // sent, answers initialize naming its CODEX_HOME (or another folder) and the
@@ -347,6 +364,55 @@ describe('the Codex reviewer against the fake Codex CLI (real processes)', () =>
     expect(seen.conductorVars).toEqual([])
     expect(fs.existsSync(marker)).toBe(false)
   }, 60_000)
+})
+
+// P3.9 round 2 (G1): Sentinel's analysis through the real reviewer, runner
+// and shim. The argv arrives whole (the empty list through cmd.exe); a run
+// whose codex fails at once settles soon after it exits, with the real
+// error, even while a helper it started still holds the output pipes; and
+// that helper is ended.
+describe('the text-only analysis against the fake Codex CLI (real processes; P3.9 round 2)', () => {
+  const env = () => {
+    const e: Record<string, string> = { ...codexCliEnv(poisoned, home('analysis')) }
+    for (const k of Object.keys(e)) if (k.toUpperCase() === 'PATH') delete e[k]
+    e.PATH = withNode
+    return e
+  }
+  it('the analysis argv arrives whole, in the folder given', async () => {
+    const folder = path.join(dir, 'analysis-a')
+    fs.mkdirSync(folder, { recursive: true })
+    const r = await createCodexReviewOperations().run({ executable: exe, env: env(), cwd: folder, prompt: 'notes', timeoutMs: 20_000, purpose: 'analysis' })
+    expect(r, JSON.stringify(r)).toMatchObject({ ok: true })
+    const seen = JSON.parse(r.ok ? r.text : '{}') as { argv: string[]; cwd: string }
+    const want = codexCommandLine('/x/codex', 'analysis', 'linux', {})
+    expect(seen.argv).toEqual('refused' in want ? null : want.args)
+    expect(seen.argv).toContain('project_root_markers=[]')
+    expect(fs.realpathSync.native(seen.cwd)).toBe(fs.realpathSync.native(folder))
+  }, 60_000)
+
+  it('codex failing at once: settled soon after its exit, with the real error (not a timeout), and its helper ended', async () => {
+    const folder = path.join(dir, 'analysis-b')
+    fs.mkdirSync(folder, { recursive: true })
+    const helperPid = path.join(dir, 'helper.pid')
+    try { fs.unlinkSync(helperPid) } catch { /* none yet */ }
+    // On Windows the run lasts past the early read of its chain (the only
+    // table that can name a helper whose parent has gone).
+    const exitMs = IS_WIN ? CODEX_TREE_PRIME_MS + 3000 : 300
+    const started = Date.now()
+    const r = await createCodexReviewOperations().run({ executable: exe, env: { ...env(), FAKE_ANALYSIS: 'early', FAKE_EXIT_MS: String(exitMs) }, cwd: folder, prompt: 'notes', timeoutMs: 120_000, purpose: 'analysis' })
+    const took = Date.now() - started
+    expect(r, JSON.stringify(r)).toMatchObject({ ok: false })
+    expect(r.ok ? '' : r.code).not.toBe('timed-out')
+    expect(r.ok ? '' : r.message).toContain('unexpected status 400')
+    expect(took).toBeLessThan(exitMs + 25_000)
+    const pid = Number(fs.readFileSync(helperPid, 'utf8'))
+    let alive = true
+    for (const until = Date.now() + GONE_MS; alive && Date.now() < until;) {
+      try { process.kill(pid, 0); await new Promise((res) => setTimeout(res, 200)) } catch { alive = false }
+    }
+    if (alive) { try { process.kill(pid, 'SIGKILL') } catch { /* gone */ } }
+    expect(alive).toBe(false)
+  }, 90_000)
 })
 
 // WP1.20, WP1.22, WP1.51, WP1.62 -- slice 3c: the auth operations over the

@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-29T16:47:50.204Z",
-  "head": "e357fe334a94f4631603bd645169a88f48352961",
-  "tree": "847f7032b834ccca8045a0508911b8b2469e8653",
+  "generatedAt": "2026-09-29T18:42:59.487Z",
+  "head": "82c78680a2954f1505f32632fa01b9382e83491f",
+  "tree": "d55e2740acfdb62676240e3f45a47779a7c101d4",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2504,
+  "trackedFileCount": 2507,
   "excludedFileCount": 384,
-  "scannedFileCount": 2120,
+  "scannedFileCount": 2123,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 560,
-  "pathDigest": "c78deb8e9d2776a9d0f38c53ee047c789019850c743126e495e5f751632de03e",
+  "matchedPathCount": 561,
+  "pathDigest": "cfaa526da5fff7efa61de9bacdc1aa7ee85056a0b2cb317e99b522b65ef6308c",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -636,7 +636,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 107
+      "lineCount": 128
     },
     {
       "path": "src/main/providers/codex/conversation-carry.ts",
@@ -768,7 +768,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 22
+      "lineCount": 26
     },
     {
       "path": "src/main/providers/codex/rollout-lookup.ts",
@@ -887,7 +887,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 99
+      "lineCount": 101
     },
     {
       "path": "src/main/sentinel/sentinel-analysis.ts",
@@ -919,6 +919,13 @@
         "P14"
       ],
       "lineCount": 41
+    },
+    {
+      "path": "src/main/sentinel/sentinel-quote.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 1
     },
     {
       "path": "src/main/sentinel/sentinel-state.ts",
@@ -3074,7 +3081,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 115
+      "lineCount": 126
     },
     {
       "path": "tests/unit/main/service-status-providers.test.ts",
@@ -4447,7 +4454,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 27
+      "lineCount": 37
     },
     {
       "path": "tests/unit/sentinel-codex-changelog.test.ts",
@@ -4455,7 +4462,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 43
+      "lineCount": 47
     },
     {
       "path": "tests/unit/sentinel-codex-models.test.ts",
@@ -4485,7 +4492,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 9
+      "lineCount": 11
     },
     {
       "path": "tests/unit/status-ingest.test.ts",

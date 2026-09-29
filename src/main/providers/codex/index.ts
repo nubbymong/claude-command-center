@@ -38,17 +38,17 @@ import { sweepStaleFolders } from '../../stale-folder-sweep'
 // subprocess environment, realm paths, the CLI runner and discovery.
 export {
   codexCommandLine, cliCommandLine, codexShellEnv, runCodexCli, defaultCodexRunDeps, makeCodexKillTree, makeCodexProcessLister,
-  codexChainPids, parseWindowsProcessTable, parsePosixProcessTable, parseLinuxStat, WINDOWS_PROCESS_QUERY,
+  codexChainPids, codexLeftoverPids, parseWindowsProcessTable, parsePosixProcessTable, parseLinuxStat, WINDOWS_PROCESS_QUERY,
   CODEX_KILL_SETTLE_MS, CODEX_PROCESS_TABLE_TIMEOUT_MS, CODEX_TASKKILL_TIMEOUT_MS, CODEX_TREE_PRIME_MS, CODEX_PRIME_TABLE_TIMEOUT_MS, codexWrapperLinePids, CODEX_KILL_WORST_MS, flushPendingCodexKills,
 } from './cli-runner'
-export type { CodexCliOperation, CodexCommand, CodexRunResult, CodexRunOptions, CodexRunDeps, CodexProcessEntry, CodexKillTree, CodexStdinWriter } from './cli-runner'
+export type { CodexCliOperation, CodexCommand, CodexRunResult, CodexRunOptions, CodexRunDeps, CodexProcessEntry, CodexKillTree, CodexKillScope, CodexRunWindow, CodexStdinWriter } from './cli-runner'
 export { discoverCodex, verifyCodexExecutable, codexCompatibilityAllowsUse } from './discovery'
 // P3.9 (row 39): the installed CLI's own model list, for Sentinel.
 export {
   readCodexModelCatalogue, parseCodexModelCatalogue, CODEX_CATALOGUE_TIMEOUT_MS, CODEX_CATALOGUE_MAX_CHARS, CODEX_CATALOGUE_MAX_MODELS, CODEX_CATALOGUE_LABEL_MAX,
 } from './model-catalogue'
 export type { CodexCatalogueDeps } from './model-catalogue'
-export { createCodexReviewOperations, createCodexExecEventReader, parseCodexExecEvents, REVIEW_MAX_TEXT } from './review'
+export { createCodexReviewOperations, createCodexExecEventReader, parseCodexExecEvents, REVIEW_MAX_TEXT, CODEX_EXEC_EXIT_SETTLE_MS } from './review'
 export type { CodexDiscovery, CodexDiscoveryDeps, CodexExecutableIdentity, CodexExecutableCheck, CodexFileStat } from './discovery'
 export { codexLoginShellPath, codexOperationBaseEnv, extractMarkedPath, absolutePathEntries } from './process-env'
 export {

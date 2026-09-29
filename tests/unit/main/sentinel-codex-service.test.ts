@@ -23,6 +23,18 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 
+// P3.9 round 2 (F2): a hook run once just before the next mkdtemp, to move
+// the runs folder between the check and the make.
+const fsHooks = vi.hoisted(() => ({ beforeMkdtemp: null as null | ((prefix: string) => void) }))
+vi.mock('fs', async (orig) => {
+  const real = await orig<typeof import('fs')>()
+  const mkdtempSync = ((prefix: string, opts?: unknown) => {
+    const h = fsHooks.beforeMkdtemp
+    if (h) { fsHooks.beforeMkdtemp = null; h(prefix) }
+    return (real.mkdtempSync as (p: string, o?: unknown) => string)(prefix, opts)
+  }) as typeof real.mkdtempSync
+  return { ...real, mkdtempSync, default: { ...real, mkdtempSync } }
+})
 vi.mock('electron', () => ({
   ipcMain: { handle: vi.fn(), on: vi.fn() },
   BrowserWindow: { fromWebContents: () => null, getAllWindows: () => [] },
@@ -114,8 +126,15 @@ vi.mock('../../../src/main/account-profiles', () => ({
   resolveHeadlessProfileHome: () => ({ home: null, profileId: null }),
   listProfiles: () => [],
 }))
-const spawnClaudeHeadless = vi.fn(async (args: string[], _t?: number, _stdin?: string) => {
-  if (args[0] === '--version') return { code: 0, stdout: '2.1.300 (Claude Code)', stderr: '' }
+/** Round 2: where each Claude analysis ran, as it started. */
+const claudeRuns: Array<{ cwd: string; listing: string[]; env: Record<string, string> | undefined }> = []
+const versionThrows = vi.hoisted(() => ({ on: false }))
+const spawnClaudeHeadless = vi.fn(async (args: string[], _t?: number, _stdin?: string, _home?: string | null, _signal?: AbortSignal, opts?: { cwd?: string; env?: Record<string, string> }) => {
+  if (args[0] === '--version') {
+    if (versionThrows.on) throw new Error('the version check broke')
+    return { code: 0, stdout: '2.1.300 (Claude Code)', stderr: '' }
+  }
+  if (opts?.cwd) claudeRuns.push({ cwd: opts.cwd, listing: fs.readdirSync(opts.cwd), env: opts.env })
   return { code: 0, stdout: JSON.stringify({ type: 'result', result: JSON.stringify({ breakingChanges: [] }) }), stderr: '' }
 })
 vi.mock('../../../src/main/claude-headless', () => ({ spawnClaudeHeadless: (...a: unknown[]) => spawnClaudeHeadless(...(a as [string[], number, string])) }))
@@ -126,7 +145,7 @@ vi.mock('../../../src/main/sentinel/sentinel-changelog', async (orig) => ({
   fetchChangelog: () => fetchChangelog(),
 }))
 type Notes = { text: string; versions: string[]; cut: string | null } | null
-const NOTES_TEXT = '## 0.155.1\n- a change\n\n## 0.154.0\n- older'
+const NOTES_TEXT = '## 0.155.1\n- The rollout file format changed.\n\n## 0.154.0\n- Various older fixes and improvements.'
 const fetchCodexReleaseNotes = vi.fn(async (_last: string | null, _installed: string): Promise<Notes> => ({ text: NOTES_TEXT, versions: ['0.155.1', '0.154.0'], cut: null }))
 vi.mock('../../../src/main/sentinel/sentinel-codex-changelog', async (orig) => ({
   ...(await orig<typeof import('../../../src/main/sentinel/sentinel-codex-changelog')>()),
@@ -155,6 +174,9 @@ beforeEach(() => {
   review.hold = null
   settings.value = null
   spawnClaudeHeadless.mockClear()
+  claudeRuns.length = 0
+  versionThrows.on = false
+  fsHooks.beforeMkdtemp = null
   fetchChangelog.mockClear()
   fetchCodexReleaseNotes.mockClear()
 })
@@ -258,14 +280,42 @@ describe("the analysis of a Codex update, on the provider that is on (row 42; OD
     expect(claudeAnalyses()[0][0]).toContain('--disallowedTools')
     const stdin = claudeAnalyses()[0][2] as unknown as string
     expect(stdin).toContain('OpenAI Codex CLI')
-    expect(stdin).toMatch(/--- BEGIN RELEASE NOTES [0-9a-f]{16} ---\n## 0\.155\.1\n- a change/)
+    expect(stdin).toMatch(/--- BEGIN RELEASE NOTES [0-9a-f]{16} ---\n## 0\.155\.1\n- The rollout file format changed\./)
     expect(svc.prepares).toEqual([])
     expect(s.getSentinelState()!.snapshot()).toMatchObject({ lastSeenCodexVersion: '0.155.1', analyzing: false, lastAnalysisError: null })
   })
 
+  it("round 2: Claude Code's analysis runs in a fresh empty folder of its own in Sentinel's runs folder, with its switches; the folder goes after", async () => {
+    const s = await sentinel({ lastSeenCcVersion: '2.1.300', lastSeenCodexVersion: '0.153.4' })
+    await s.sentinelStartupCheck()
+    expect(claudeRuns).toHaveLength(1)
+    const run = claudeRuns[0]
+    expect(path.dirname(run.cwd)).toBe(path.resolve(runsDir()))
+    expect(path.basename(run.cwd)).toMatch(/^ccc-sentinel-claude-/)
+    expect(run.listing).toEqual([])
+    expect(run.env).toEqual({ CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1', CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1' })
+    expect(fs.existsSync(run.cwd)).toBe(false)
+    // The version check is not an analysis: it runs as before.
+    expect(spawnClaudeHeadless).toHaveBeenCalledWith(['--version'], 15000, undefined, null)
+  })
+
+  it("round 2: a Claude Code check that breaks is said, and the Codex update is still analysed", async () => {
+    versionThrows.on = true
+    svc.pref.claude = 'on'
+    settings.value = { askConductorProvider: 'codex' }
+    review.answer = () => reply('- The rollout file format changed.')
+    const s = await sentinel({ lastSeenCcVersion: '2.1.300', lastSeenCodexVersion: '0.153.4' })
+    await expect(s.sentinelStartupCheck()).resolves.toBeUndefined()
+    expect(review.runs).toHaveLength(1)
+    const snap = s.getSentinelState()!.snapshot()
+    expect(snap.lastSeenCodexVersion).toBe('0.155.1')
+    expect(snap.lastAnalysisError).toContain('the version check broke')
+    expect(snap.findings.some((f) => f.id.startsWith('codex-update:0.155.1:'))).toBe(true)
+  })
+
   it('both on, Ask Conductor on Codex: a text-only run on Codex, in a fresh folder that is its own project root in Sentinel\'s runs folder, removed after; no Claude analysis', async () => {
     settings.value = { askConductorProvider: 'codex' }
-    review.answer = () => reply('- a change')
+    review.answer = () => reply('- The rollout file format changed.')
     const s = await sentinel({ lastSeenCcVersion: '2.1.300', lastSeenCodexVersion: '0.153.4' })
     await s.sentinelStartupCheck()
     expect(claudeAnalyses()).toHaveLength(0)
@@ -279,7 +329,8 @@ describe("the analysis of a Codex update, on the provider that is on (row 42; OD
     const run = review.runs[0]
     expect(run.purpose).toBe('analysis')
     expect(run.executable).toBe('C:\\Tools\\codex.exe')
-    expect(run.env).toEqual({ CODEX_HOME: 'C:\\realms\\realm-1' })
+    // Round 2: any git the CLI runs stops at the runs folder and never prompts.
+    expect(run.env).toEqual({ CODEX_HOME: 'C:\\realms\\realm-1', GIT_CEILING_DIRECTORIES: runsDir(), GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' })
     // Round 1: in the app's own runs folder, never the shared temp folder.
     expect(path.dirname(run.cwd)).toBe(path.resolve(runsDir()))
     expect(path.basename(run.cwd)).toMatch(/^ccc-sentinel-codex-/)
@@ -354,6 +405,18 @@ describe("the analysis of a Codex update, on the provider that is on (row 42; OD
     expect(s.getSentinelState()!.snapshot()).toMatchObject({ analyzing: false, lastAnalysisError: null, lastAnalysisNote: 'Some notes were cut.', lastSeenCodexVersion: '0.155.1' })
   })
 
+  it('round 2: notes read only in part are said even when the analysis does not complete', async () => {
+    svc.pref.claude = 'off'
+    fetchCodexReleaseNotes.mockImplementationOnce(async () => ({ text: NOTES_TEXT, versions: ['0.155.1'], cut: 'Some notes were cut.' }))
+    review.answer = () => ({ ok: false, code: 'failed', message: 'Codex exited with code 1: unexpected status 400 Bad Request.' })
+    const s = await sentinel({ lastSeenCodexVersion: '0.153.4' })
+    await s.sentinelStartupCheck()
+    const snap = s.getSentinelState()!.snapshot()
+    expect(snap.lastAnalysisNote).toBe('Some notes were cut.')
+    expect(snap.lastAnalysisError).toContain('unexpected status 400')
+    expect(snap.lastAnalysisError).not.toMatch(/busy|rate limited/)
+  })
+
   it('Codex switched off while its notes were fetched: not analysed, and the panel says why', async () => {
     fetchCodexReleaseNotes.mockImplementationOnce(async () => { svc.pref.codex = 'off'; return { text: NOTES_TEXT, versions: ['0.155.1'], cut: null } })
     const s = await sentinel({ lastSeenCodexVersion: '0.153.4' })
@@ -377,6 +440,23 @@ describe("the analysis of a Codex update, on the provider that is on (row 42; OD
 })
 
 describe("the analysis folders (round 1)", () => {
+  it('round 2: a runs folder that became a link between the check and the make is refused; nothing runs and nothing is left there', async () => {
+    svc.pref.claude = 'off'
+    const elsewhere = path.join(dir, 'elsewhere')
+    fs.mkdirSync(elsewhere)
+    fsHooks.beforeMkdtemp = () => {
+      fs.renameSync(runsDir(), runsDir() + '-was')
+      fs.symlinkSync(elsewhere, runsDir(), 'junction')
+    }
+    const s = await sentinel({ lastSeenCodexVersion: '0.153.4' })
+    await s.sentinelStartupCheck()
+    expect(fsHooks.beforeMkdtemp).toBeNull()
+    expect(review.runs).toHaveLength(0)
+    expect(fs.readdirSync(elsewhere)).toEqual([])
+    expect(svc.released).toBe(1)
+    expect(s.getSentinelState()!.snapshot().lastAnalysisError).toBe("Sentinel's analysis could not run on Codex: no empty folder could be made for it.")
+  })
+
   it('leftovers of earlier runs (own prefix, an hour old, real folders) are swept; a young one, another name and a link are left', async () => {
     svc.pref.claude = 'off'
     fs.mkdirSync(runsDir(), { recursive: true })

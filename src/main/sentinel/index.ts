@@ -18,7 +18,7 @@ import { makeObserver, type Observation } from './sentinel-observe'
 import { parseClaudeVersion, minVersionFindings, type ManifestEntry } from './sentinel-version'
 import { fetchChangelog, sliceChangelog } from './sentinel-changelog'
 import { fetchCodexReleaseNotes } from './sentinel-codex-changelog'
-import { runAnalysis, type HeadlessRunner } from './sentinel-analysis'
+import { runAnalysis, CLAUDE_ANALYSIS_ENV, type HeadlessRunner } from './sentinel-analysis'
 import { validateProposal } from './sentinel-apply'
 import { modelCoverageFindings, modelCheckFailedFinding, EXPECTED_MODEL_SET, codexModelCoverageFindings, CODEX_EXPECTED_MODEL_SET, type CodexLiveModelList } from './sentinel-models'
 import { codexVersionFindings, type SupportedVersions } from './sentinel-codex'
@@ -305,17 +305,37 @@ interface Update { provider: SentinelProvider; last: string; version: string }
 interface AnalysisRunner { run: HeadlessRunner; accountLabel: string | null; end: () => void }
 
 /** Claude Code as the analysis runner: `claude -p` in the analysis account's
- *  home (unchanged), counted as Claude Code in use while it runs. */
+ *  home, counted as Claude Code in use while it runs. Round 2: in a fresh
+ *  empty folder of its own in Sentinel's runs folder (never the app's own
+ *  folder), with Claude Code's switches for the analysis
+ *  (CLAUDE_ANALYSIS_ENV), the folder removed after. */
 async function claudeAnalysisRunner(signal: AbortSignal): Promise<AnalysisRunner | { refused: string }> {
   const begun = await beginRun('claude', { probe: false })
   if ('refused' in begun) return begun
+  let handedOver = false
   try {
     const { spawnClaudeHeadless } = await headlessRunner()
     const { home, accountLabel } = await analysisHome()
-    return { run: (args, t, stdin) => spawnClaudeHeadless(args, t, stdin, home, signal), accountLabel, end: begun.end }
-  } catch (err) {
-    begun.end()
-    throw err
+    const parent = analysisParent()
+    let cwd: string
+    try {
+      if (!parent) throw new Error('no runs folder')
+      cwd = makeAnalysisFolder(parent, CLAUDE_ANALYSIS_DIR_PREFIX, false)
+    } catch {
+      return { refused: "Sentinel's analysis could not run on Claude Code: no empty folder could be made for it." }
+    }
+    handedOver = true
+    return {
+      run: (args, t, stdin) => spawnClaudeHeadless(args, t, stdin, home, signal, { cwd, env: CLAUDE_ANALYSIS_ENV }),
+      accountLabel,
+      end: () => {
+        // Only the folder this run made: its own prefix, in the runs folder.
+        try { if (isAnalysisFolder(cwd, parent!, CLAUDE_ANALYSIS_DIR_PREFIX)) fs.rmSync(cwd, { recursive: true, force: true }) } catch { /* a leftover is swept by a later run */ }
+        begun.end()
+      },
+    }
+  } finally {
+    if (!handedOver) begun.end()
   }
 }
 
@@ -338,6 +358,8 @@ let sentinelLaunchSeq = 0
 /** The folder a Codex analysis runs in: made fresh for the run, with this
  *  prefix, in Sentinel's own runs folder, and removed after it. */
 export const CODEX_ANALYSIS_DIR_PREFIX = 'ccc-sentinel-codex-'
+/** The folder a Claude Code analysis runs in (round 2), likewise. */
+export const CLAUDE_ANALYSIS_DIR_PREFIX = 'ccc-sentinel-claude-'
 /** Sentinel's runs folder, inside its own folder in the resources folder. */
 export const SENTINEL_RUNS_DIRNAME = 'runs'
 /** An analysis folder older than this is a leftover (a crash or a quit
@@ -366,19 +388,36 @@ function analysisParent(): string | null {
 
 /** A folder this module made for an analysis, and nothing else: its name
  *  carries the prefix and its parent is Sentinel's runs folder. */
-function isAnalysisFolder(dir: string, parent: string): boolean {
-  return path.basename(dir).startsWith(CODEX_ANALYSIS_DIR_PREFIX) && path.basename(dir).length > CODEX_ANALYSIS_DIR_PREFIX.length && path.dirname(dir) === path.resolve(parent)
+function isAnalysisFolder(dir: string, parent: string, prefix: string = CODEX_ANALYSIS_DIR_PREFIX): boolean {
+  return path.basename(dir).startsWith(prefix) && path.basename(dir).length > prefix.length && path.dirname(dir) === path.resolve(parent)
 }
 
-/** A fresh, empty analysis folder, marked as a project root of its own: an
- *  empty `.git` file stops any search of the folders above it for a
- *  project's files (a Codex project root; git's own repository search,
- *  which an empty `.git` file ends with an error). Leftovers of earlier runs
- *  go first. */
-function makeAnalysisFolder(parent: string): string {
-  sweepStaleFolders(parent, CODEX_ANALYSIS_DIR_PREFIX, { maxAgeMs: STALE_ANALYSIS_FOLDER_MS })
-  const dir = fs.mkdtempSync(path.join(parent, CODEX_ANALYSIS_DIR_PREFIX))
-  fs.writeFileSync(path.join(dir, '.git'), '', { flag: 'wx' })
+/** Real paths compared as the platform does (Windows: case-insensitive). */
+function samePath(a: string, b: string): boolean {
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b
+}
+
+/** A fresh, empty analysis folder. Leftovers of earlier runs go first.
+ *  Round 2: once made, its real path must be `<resources>/sentinel/runs/<it>`
+ *  under the resources folder's own real path, so neither `sentinel` nor
+ *  `runs` became a link between the check and the make; one that did is
+ *  removed (it is empty) and refused. `marker` (Codex): an empty `.git`
+ *  file makes the folder a project root of its own (a Codex project root;
+ *  git's own search, which an empty `.git` file ends at once with an
+ *  error). */
+function makeAnalysisFolder(parent: string, prefix: string = CODEX_ANALYSIS_DIR_PREFIX, marker = true): string {
+  sweepStaleFolders(parent, prefix, { maxAgeMs: STALE_ANALYSIS_FOLDER_MS })
+  const dir = fs.mkdtempSync(path.join(parent, prefix))
+  let where: string | null = null
+  try {
+    const expected = path.join(fs.realpathSync.native(path.dirname(sentinelDir!)), path.basename(sentinelDir!), SENTINEL_RUNS_DIRNAME, path.basename(dir))
+    where = samePath(fs.realpathSync.native(dir), expected) ? dir : null
+  } catch { where = null }
+  if (!where) {
+    try { fs.rmdirSync(dir) } catch { /* not empty, or gone: leave it */ }
+    throw new Error('the runs folder is not where it was')
+  }
+  if (marker) fs.writeFileSync(path.join(dir, '.git'), '', { flag: 'wx' })
   return dir
 }
 
@@ -440,7 +479,10 @@ async function codexAnalysisRunner(signal: AbortSignal): Promise<AnalysisRunner 
       accountLabel,
       run: async (_args, timeoutMs, stdin) => {
         // A text-only run (round 1): no tools, no instructions from any folder.
-        const out = await review.run({ executable: launch.executable, env: launch.env, cwd, prompt: stdin ?? '', timeoutMs, signal, purpose: 'analysis' })
+        // Round 2: any git the CLI runs there stops at the runs folder, never
+        // prompts, and takes no optional lock.
+        const env = { ...launch.env, GIT_CEILING_DIRECTORIES: parent!, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' }
+        const out = await review.run({ executable: launch.executable, env, cwd, prompt: stdin ?? '', timeoutMs, signal, purpose: 'analysis' })
         if (!out.ok && out.killSettled instanceof Promise) kills.push(out.killSettled)
         if (out.ok) return { code: 0, stdout: out.text, stderr: '' }
         if (out.code === 'timed-out') return { code: 1, stdout: '', stderr: `Timed out after ${Math.round(timeoutMs / 1000)}s` }
@@ -516,7 +558,7 @@ const SUBJECTS: Record<SentinelProvider, UpdateSubject> = { claude: CLAUDE_UPDAT
 /** One update's analysis: its changelog (Claude Code's) or release notes
  *  (Codex's) between the last version and this one, checked against that
  *  provider's surfaces on the runner that is on. */
-async function analyzeOne(u: Update, signal: AbortSignal): Promise<{ ok: true; findings: SentinelFinding[]; note: string | null } | { ok: false; error: string }> {
+async function analyzeOne(u: Update, signal: AbortSignal): Promise<{ ok: true; findings: SentinelFinding[]; note: string | null } | { ok: false; error: string; note?: string | null }> {
   const subject = SUBJECTS[u.provider]
   const notes = await subject.notes(u)
   // Analysis-unavailable is the degraded state, shown as a calm note -- not a
@@ -535,7 +577,8 @@ async function analyzeOne(u: Update, signal: AbortSignal): Promise<{ ok: true; f
       changelog: notes.text,
       from: u.last, to: u.version, accountLabel: runner.accountLabel, subject: u.provider,
     })
-    return r.ok ? { ...r, note: notes.cut } : r
+    // Round 2: what was cut is said whether or not the analysis completed.
+    return { ...r, note: notes.cut }
   } finally {
     runner.end()
   }
@@ -557,10 +600,10 @@ async function analyzeUpdates(updates: Update[], carried: string[] = []): Promis
     state.setAnalyzing(true, null, u.provider)
     const r = await analyzeOne(u, ac.signal)
     if (ac.signal.aborted) break                      // superseded / cancelled: drop the result
+    if (r.note) notes.push(r.note)
     if (r.ok) {
       for (const f of r.findings) state.upsertFinding(f)
       SUBJECTS[u.provider].recordSeen(state, u.version)
-      if (r.note) notes.push(r.note)
     } else if (r.error) {
       errors.push(r.error)
     }
@@ -580,13 +623,23 @@ export async function sentinelStartupCheck(): Promise<void> {
   await runModelCoverageCheck()
   let run: { end: () => void } | null = null
   try {
-    // P3.9 round 1: the two providers' checks run side by side, and nothing
-    // the Codex half meets stops Claude Code's (its own failures end in the
-    // log, fail-open).
-    const [codexUpdate, claude] = await Promise.all([codexUpdateAtStart(), claudeUpdateAtStart()])
-    run = claude.run
-    const updates = [claude.update, codexUpdate].filter((u): u is Update => u !== null)
-    await analyzeUpdates(updates)
+    // P3.9: the two providers' checks run side by side. Nothing the Codex
+    // half meets stops Claude Code's (its own failures end in the log,
+    // fail-open), and (round 2) a Claude Code check that fails is said
+    // while a Codex update is still analysed.
+    const [codexSettled, claudeSettled] = await Promise.allSettled([codexUpdateAtStart(), claudeUpdateAtStart()])
+    const codexUpdate = codexSettled.status === 'fulfilled' ? codexSettled.value : null
+    const carried: string[] = []
+    let claudeUpdate: Update | null = null
+    if (claudeSettled.status === 'fulfilled') {
+      run = claudeSettled.value.run
+      claudeUpdate = claudeSettled.value.update
+    } else {
+      carried.push(String((claudeSettled.reason as Error)?.message ?? claudeSettled.reason))
+    }
+    const updates = [claudeUpdate, codexUpdate].filter((u): u is Update => u !== null)
+    if (updates.length) await analyzeUpdates(updates, carried)
+    else if (carried.length) state.setAnalyzing(false, carried.join(' '))
   } catch (err) {
     state?.setAnalyzing(false, (err as Error).message)         // fail-open, always
   } finally {
