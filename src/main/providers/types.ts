@@ -69,6 +69,11 @@ export interface SpawnOptions {
    *  sessions folder, and checks the id again before it reaches argv. Set by
    *  main only. */
   resume?: { uuid: string; cwd: string }
+  /** Codex (P3.10): the session's hook file (its gateway port and token),
+   *  when the Hooks gateway is on and listening. The builder gives the launch
+   *  the app's hooks only with it, and only when their command can be given
+   *  safely (`hooksInstalled`). Set by main only. */
+  codexHooks?: { hookFile: string }
 }
 
 /** What a provider's builder hands the PTY. `commandLine` (Windows only): the
@@ -93,6 +98,9 @@ export interface ProviderSpawnCommand {
   pickFile?: string
   /** The folder made for the pick file, as it was when made (fix round 3). */
   pickFolder?: PickFolderIdentity
+  /** Codex (P3.10): the launch carries the app's hooks (see
+   *  SpawnOptions.codexHooks). */
+  hooksInstalled?: boolean
 }
 
 /** A folder as it was when made: what it is (its device and file id, exact)
@@ -125,20 +133,35 @@ export interface TelemetryOptions {
    *  there removed, unless it is still that folder. */
   pickFolder?: PickFolderIdentity
   /** `certain` (P3.6): false when the rollout could have been another
-   *  launch's (two new sessions in one folder, P3.5's recorded limit). */
-  onClaim?: (claim: { id: string; cwd: string; certain: boolean }) => void
+   *  launch's (two new sessions in one folder, P3.5's recorded limit).
+   *  `exact` (P3.10): the conversation is known, not inferred: a resume by
+   *  id, the one a picker named, or the one the session's own hook reported
+   *  (`fromHook`). */
+  onClaim?: (claim: { id: string; cwd: string; certain: boolean; exact?: boolean; fromHook?: boolean }) => void
   /** Told when a claim is let go (the picker decided again after it). */
   onRelease?: () => void
   /** P3.6 (VM finding V2): the conversation the session is on when another
-   *  session holds its rollout (a resume by id, or the one a picker named):
-   *  the session's all the same, though its rollout is not claimed or read
-   *  here. onRelease is told when a later decision takes it back. */
-  onShared?: (conversation: { id: string; cwd: string }) => void
+   *  session holds its rollout (a resume by id, the one a picker named, or
+   *  since P3.10 the one its own hook reported): the session's all the
+   *  same. Since P3.10 its rollout is read here too, as the holder reads it,
+   *  so both tabs show its figures. onRelease is told when a later decision
+   *  takes it back. */
+  onShared?: (conversation: { id: string; cwd: string; exact?: boolean; fromHook?: boolean }) => void
 }
 
 export interface TelemetrySource {
   /** Stop the underlying watcher / tail when the session ends. */
   stop(): void
+  /** Codex (P3.10): the session's own hook reported `rolloutPath` as the
+   *  conversation it is on. The watcher claims it exactly (it checks the
+   *  path is a rollout inside its realm whose session_meta names the id in
+   *  its name), or confirms the claim it has. Returns what it claimed, or
+   *  null when the path is refused. */
+  noteExactRollout?(rolloutPath: string): { id: string; cwd: string } | null
+  /** Codex (P3.10): another session's hook proved `rolloutPath` is that
+   *  session's conversation: a claim of it here that was only inferred is
+   *  let go, and claiming goes on. True when a claim was let go. */
+  refuteInferredClaim?(rolloutPath: string): boolean
 }
 
 export interface HistorySession {
@@ -168,6 +191,12 @@ export interface SessionProvider {
    * copies `scripts/codex-resume-picker.js`.
    */
   deployResumePickerScript?(resourcesDir: string): Promise<void>
+  /** Optional -- Codex (P3.10): write the session's hook file (the Hooks
+   *  gateway's port, the session id and its token, owner-only, in a folder
+   *  made for the launch) for `buildSpawnCommand`'s `codexHooks`, with the
+   *  way to remove it when the session's resources go. Null when it cannot
+   *  be written. */
+  prepareSessionHooks?(sessionId: string, port: number, secret: string): { hookFile: string; dispose(): void } | null
   /** Subscribe to live telemetry for a spawned session (see TelemetryOptions). */
   ingestSessionTelemetry(
     sessionId: string,

@@ -10,6 +10,7 @@ import { readConfig, getConfigDir } from '../../config-manager'
 import { colorFgBgValue } from '../host-color-scheme'
 import { codexShellEnv } from './cli-runner'
 import { CODEX_CONVERSATION_ID_RE, codexFolderIdentity, resolveCodexResume } from './rollout-lookup'
+import { codexHookCommand, codexHookConfigArgs, CODEX_HOOK_FILE_ENV, CODEX_HOOK_SCRIPT, CODEX_HOOK_WRAPPER } from './hooks'
 
 export function resolveCodexBinary(): { cmd: string; args: string[] } | null {
   if (os.platform() !== 'win32') {
@@ -258,6 +259,33 @@ export function buildCodexSpawn(opts: SpawnOptions): ProviderSpawnCommand {
   if (win32) setOwned(env, 'NoDefaultCurrentDirectoryInExePath', '1', win32)
   const viaCmdExe = win32 && /\.(cmd|bat)$/i.test(executable)
 
+  // P3.10 (rows 43, 46, 47, 63): the app's hooks, as a Claude session gets
+  // its http hooks through its settings file: the same command for every
+  // session (Codex asks the user to review a hook once, and keeps the trust
+  // while it is unchanged), the session named by the environment the hook
+  // inherits (its id above, and the file holding the gateway's port and
+  // token). None when the Hooks gateway is off or not listening (no hook
+  // file), the forwarder is not deployed yet, or its path cannot be given
+  // safely on this launch's route (codexHookCommand).
+  let hooksInstalled = false
+  const hookFile = opts.codexHooks?.hookFile
+  if (typeof hookFile === 'string' && hookFile && path.isAbsolute(hookFile) && !hasControl(hookFile)) {
+    let scriptsDir: string | null = null
+    try {
+      const resDir = getResourcesDirectory()
+      if (resDir) scriptsDir = path.join(resDir, 'scripts')
+    } catch { scriptsDir = null }
+    const command = scriptsDir ? codexHookCommand(scriptsDir, process.platform, viaCmdExe) : null
+    const target = scriptsDir ? path.join(scriptsDir, win32 ? CODEX_HOOK_WRAPPER : CODEX_HOOK_SCRIPT) : null
+    let deployed = false
+    try { deployed = !!target && fs.statSync(target).isFile() } catch { deployed = false }
+    if (command && deployed) {
+      flags.push(...codexHookConfigArgs(command))
+      setOwned(env, CODEX_HOOK_FILE_ENV, hookFile, win32)
+      hooksInstalled = true
+    }
+  }
+
   // P3.5 (rows 34, 35): an exact resume, as Claude's `claude --resume <uuid>`
   // (resolveResumeLaunch): the conversation's rollout must be in THIS realm's
   // sessions folder, and the CLI starts in the directory the conversation ran
@@ -278,9 +306,9 @@ export function buildCodexSpawn(opts: SpawnOptions): ProviderSpawnCommand {
     const resumePath = resumed.path
     if (viaCmdExe) {
       const target = codexCmdExeTarget(executable, args, env)
-      return { cmd: target.cmd, args: [], commandLine: target.commandLine, env, resumeId: resumed.resumeId, cwd, resumeCwdMismatch, resumePath }
+      return { cmd: target.cmd, args: [], commandLine: target.commandLine, env, resumeId: resumed.resumeId, cwd, resumeCwdMismatch, resumePath, hooksInstalled }
     }
-    return { cmd: executable, args, env, resumeId: resumed.resumeId, cwd, resumeCwdMismatch, resumePath }
+    return { cmd: executable, args, env, resumeId: resumed.resumeId, cwd, resumeCwdMismatch, resumePath, hooksInstalled }
   }
 
   // Picker swap: when useResumePicker is true and the picker script is
@@ -326,7 +354,7 @@ export function buildCodexSpawn(opts: SpawnOptions): ProviderSpawnCommand {
       try { setOwned(pickerEnv, 'CCC_CONFIG_DIR', getConfigDir(), win32) } catch { /* no names */ }
       // Bare 'node' fails under node-pty/ConPTY on Windows (no PATH lookup).
       // Resolve to the full node.exe path via `where node`. See resolveNodeExe.
-      return { cmd: resolveNodeExe(), args: [pickerScript, ...flags], env: pickerEnv, ...(pickFile && pickFolder ? { pickFile, pickFolder } : {}) }
+      return { cmd: resolveNodeExe(), args: [pickerScript, ...flags], env: pickerEnv, ...(pickFile && pickFolder ? { pickFile, pickFolder } : {}), hooksInstalled }
     }
     // Fallthrough: picker missing, spawn codex directly.
   }
@@ -334,7 +362,7 @@ export function buildCodexSpawn(opts: SpawnOptions): ProviderSpawnCommand {
   if (viaCmdExe) {
     // node-pty / ConPTY cannot directly invoke .cmd shims; route through cmd.exe.
     const target = codexCmdExeTarget(executable, flags, env)
-    return { cmd: target.cmd, args: [], commandLine: target.commandLine, env }
+    return { cmd: target.cmd, args: [], commandLine: target.commandLine, env, hooksInstalled }
   }
-  return { cmd: executable, args: flags, env }
+  return { cmd: executable, args: flags, env, hooksInstalled }
 }

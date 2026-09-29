@@ -102,6 +102,9 @@ export interface WatchdogPublicState {
   armed: boolean
   /** #605: which auto-retry checks are live for this session right now. */
   checks: WatchdogChecks
+  /** P3.10: checks this session's CLI has no patterns for (Codex: the
+   *  safeguard), off and not switchable; absent when there are none. */
+  unavailable?: Array<keyof WatchdogChecks>
   attempts: number
   overloadAttempts: number
   safeguardAttempts: number

@@ -7,7 +7,7 @@ import { createSplashWindow, closeSplashWindow, SPLASH_MIN_MS, SPLASH_POST_READY
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerAccountWebHandlers } from './ipc/account-web-handlers'
 import { sweepAbandonedProfiles } from './account-web/sign-in'
-import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine } from './pty-manager'
+import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine, noteCodexHookTranscript, isCodexPtySession } from './pty-manager'
 import { registerResumeHandlers } from './ipc/resume-handlers'
 import { registerCliHandlers } from './ipc/cli-handlers'
 import { registerClipboardHandlers } from './ipc/clipboard-handlers'
@@ -815,6 +815,9 @@ if (!gotTheLock) {
     // POSTs into the binder. Resolved lazily — the binder is created later by
     // initLogging(), and is null when logging is disabled (then this is a no-op).
     const routeTranscriptPath = (sessionId: string, path: string) => {
+      // P3.10: a Codex session's hook names the rollout it is on -- the exact
+      // claim of its conversation -- and never reaches a Claude sink.
+      if (noteCodexHookTranscript(sessionId, path)) return
       attributeTranscript(sessionId, path)
       getTranscriptBinder()?.notifyTranscriptPath(sessionId, path)
     }
@@ -873,7 +876,8 @@ if (!gotTheLock) {
         gw.subscribe((e) => { if (e.sessionId) cb(e.sessionId, e.event) })
       },
     })
-    startAttentionSource()
+    // P3.10 (row 47): Codex sessions' own hook events map to attention too.
+    startAttentionSource({ isCodexSession: isCodexPtySession })
     startJankDetector()
     // Main-process event-loop jank monitor: feeds the "Jank m/c" main half on the
     // Conductor services pill (getMergedDiagnostics stamps stallsLastMin() onto
@@ -895,6 +899,9 @@ if (!gotTheLock) {
       send: (sessionId, text) => {
         writeSubmittedLine(sessionId, text)
       },
+      // P3.10: a Codex session's retry is typed, then submitted once the
+      // screen shows it (watchdog-manager submitCodex).
+      write: (sessionId, data) => writePty(sessionId, data),
       // Refresh the services view live when a watchdog state changes; routed
       // through the same merge so the push carries every source (#235).
       onHealthChange: () => pushDiagnostics(),

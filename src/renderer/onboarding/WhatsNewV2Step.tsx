@@ -31,9 +31,9 @@ export interface WhatsNewItem {
    *  this release, so it is hidden while Claude Code is off (as upgradeOnly
    *  hides a line from a fresh install). The phase that brings the feature
    *  to Codex lifts it (named in that phase's entry of
-   *  docs/wp2/completion-plan.md: Session Watchdog P3.10, Agent Canvas
-   *  P4.1, Ask Conductor and the guide line P4.3, Insights P4.7; P3.6 lifted
-   *  it from Switch mid-session). SSH Persistent and Remote Resumable keep it, as the
+   *  docs/wp2/completion-plan.md: Agent Canvas P4.1, Ask Conductor and the
+   *  guide line P4.3, Insights P4.7; P3.6 lifted it from Switch mid-session,
+   *  P3.10 from Session Watchdog). SSH Persistent and Remote Resumable keep it, as the
    *  remote resume page does: the persistent remote session wraps the
    *  remote claude command, and the only agent an SSH session runs in
    *  this release is Claude Code. */
@@ -42,6 +42,9 @@ export interface WhatsNewItem {
 
 export interface WhatsNewSection {
   heading: string
+  /** P3.10: the heading while Claude Code is off, for a section that names
+   *  Claude and keeps a line that works with Codex (the Watchdog's). */
+  headingWithoutClaude?: string
   items: WhatsNewItem[]
 }
 
@@ -101,9 +104,10 @@ const SECTIONS_21: WhatsNewSection[] = [
   },
   {
     heading: 'Working with Claude',
+    headingWithoutClaude: 'Working with Codex',
     items: [
       { title: 'Agent Canvas.', desc: "Claude draws a mockup in the app. Mark up what's wrong; it picks the notes up.", seeIt: 'canvas', needsClaude: true },
-      { title: 'Session Watchdog.', desc: 'Waits out a rate limit and types the retry itself. Off by default.', seeIt: 'watchdog', needsClaude: true },
+      { title: 'Session Watchdog.', desc: 'Waits out a rate limit and types the retry itself. Off by default.', seeIt: 'watchdog' },
       { title: 'Ask Conductor.', desc: 'A session that has read the docs — and can install a helper skill for the rest.', seeIt: 'askConductor', needsClaude: true },
     ],
   },
@@ -240,7 +244,7 @@ export function WhatsNewV2Step({
   // page about something that needs Claude Code is not shown.
   const withClaude = useSettingsStore((s) => usesClaude(s.settings)) && !claudeWasMissingAtSetup()
   const sections = sectionsFor(lastSeen, LINE_SOURCE)
-    .map((s) => ({ ...s, items: s.items.filter((it) => !(fresh && it.upgradeOnly) && (withClaude || !it.needsClaude)) }))
+    .map((s) => ({ ...s, heading: !withClaude && s.headingWithoutClaude ? s.headingWithoutClaude : s.heading, items: s.items.filter((it) => !(fresh && it.upgradeOnly) && (withClaude || !it.needsClaude)) }))
     .filter((s) => s.items.length > 0)
   const count = sections.reduce((n, s) => n + s.items.length, 0)
   // The showcase (owner design 2026-08-24): the summary is page 0; each

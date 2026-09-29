@@ -3,7 +3,7 @@ import { Session } from '../../stores/sessionStore'
 import { useClickOutside } from '../../hooks/useClickOutside'
 import { placeMenu, type MenuPlacement } from '../../utils/menuPlacement'
 import type { SwitchAccountItem } from '../../utils/switchAccountItems'
-import { pinMenuLabel, PIN_WHILE_RUNNING_HINT, WATCHDOG_CHECK_ITEMS, WATCHDOG_RUNTIME_HINT } from './sessionsPanelState'
+import { pinMenuLabel, PIN_WHILE_RUNNING_HINT, WATCHDOG_CHECK_ITEMS, WATCHDOG_RUNTIME_HINT, WATCHDOG_UNAVAILABLE_HINT } from './sessionsPanelState'
 
 export type WatchdogCheckKey = 'rateLimit' | 'overload' | 'safeguard'
 
@@ -54,6 +54,8 @@ interface SessionContextMenuProps {
   watchdogChecks?: Record<WatchdogCheckKey, boolean>
   /** #605: flip one check for THIS running session. Runtime only. */
   onToggleWatchdogCheck?: (key: WatchdogCheckKey) => void
+  /** P3.10: checks this session's CLI has no patterns for: shown off, not switchable. */
+  watchdogUnavailable?: WatchdogCheckKey[]
 }
 
 export default function SessionContextMenu({
@@ -61,7 +63,7 @@ export default function SessionContextMenu({
   configPinned, onPinConfig,
   canSwitchAccount, switchItems, onSwitchAccount,
   onOpenArtifacts, onAuthenticateWeb, onSignInCode, hasWebSession, codeSignedIn, codeNotChecked,
-  watchdogChecks, onToggleWatchdogCheck,
+  watchdogChecks, onToggleWatchdogCheck, watchdogUnavailable,
 }: SessionContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
   useClickOutside(menuRef, onDismiss)
@@ -167,14 +169,19 @@ export default function SessionContextMenu({
           <div className="px-3 py-1 text-[10px] font-medium uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>
             Watchdog auto-retry
           </div>
-          {WATCHDOG_CHECK_ITEMS.map(({ key, label }) => (
+          {WATCHDOG_CHECK_ITEMS.map(({ key, label }) => {
+            const unavailable = watchdogUnavailable?.includes(key) === true
+            return (
             <button
               key={key}
               onClick={() => onToggleWatchdogCheck(key)}
               role="menuitemcheckbox"
               aria-checked={watchdogChecks[key]}
-              className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
-              style={{ color: 'var(--text-primary)' }}
+              aria-disabled={unavailable || undefined}
+              disabled={unavailable}
+              title={unavailable ? WATCHDOG_UNAVAILABLE_HINT : undefined}
+              className={`w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2${unavailable ? ' cursor-default' : ' hover:bg-[var(--surface-overlay)]'}`}
+              style={{ color: unavailable ? 'var(--text-muted)' : 'var(--text-primary)' }}
               data-testid={`session-ctx-watchdog-${key}`}
             >
               <span
@@ -191,9 +198,10 @@ export default function SessionContextMenu({
                   </svg>
                 )}
               </span>
-              {label}
+              {unavailable ? `${label} (not available)` : label}
             </button>
-          ))}
+            )
+          })}
           <div className="px-3 pb-1 pl-8 text-[10px] leading-snug" style={{ color: 'var(--text-muted)' }}>
             {WATCHDOG_RUNTIME_HINT}
           </div>

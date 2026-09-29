@@ -10,17 +10,11 @@
  * told apart from what the user typed.
  */
 
-export interface ScreenLine {
-  /** The row's text, trailing spaces trimmed. */
-  text: string
-  /** The same row with every dim cell (a placeholder) as a space, trimmed. */
-  typed: string
-  /** The row's width in cells, and the cell just past its last non-blank one
-   *  (P3.8 round 4: where a right-aligned segment ends). Absent when the
-   *  reader does not know them. */
-  width?: number
-  end?: number
-}
+// P3.10: the row shape and the xterm reader live in src/shared/codex-screen.ts
+// (the Watchdog reads its headless pane the same way); re-exported here.
+import type { ScreenLine } from '../../../shared/codex-screen'
+export type { ScreenLine, XtermLike } from '../../../shared/codex-screen'
+export { readXtermScreen } from '../../../shared/codex-screen'
 
 export type ScreenReader = () => ScreenLine[] | null
 
@@ -40,40 +34,4 @@ export function readSessionScreen(sessionId: string): ScreenLine[] | null {
   const reader = readers.get(sessionId)
   if (!reader) return null
   try { return reader() } catch { return null }
-}
-
-/** The subset of xterm's API a reader needs (typed loosely: the buffer's
- *  line and cell shapes, not the whole Terminal). */
-export interface XtermLike {
-  rows: number
-  cols: number
-  buffer: { active: {
-    baseY: number
-    getLine(y: number): { getCell(x: number): { getChars(): string; getWidth(): number; isDim(): number | boolean } | undefined } | undefined
-  } }
-}
-
-/** The live screen of an xterm terminal: the `rows` rows from the top of the
- *  active screen (below any scrollback), whichever buffer is active. */
-export function readXtermScreen(term: XtermLike): ScreenLine[] {
-  const buf = term.buffer.active
-  const out: ScreenLine[] = []
-  for (let y = buf.baseY; y < buf.baseY + term.rows; y++) {
-    const line = buf.getLine(y)
-    if (!line) { out.push({ text: '', typed: '', width: term.cols, end: 0 }); continue }
-    let text = ''
-    let typed = ''
-    let end = 0
-    for (let x = 0; x < term.cols; x++) {
-      const cell = line.getCell(x)
-      if (!cell) break
-      if (cell.getWidth() === 0) continue // the second half of a wide character
-      const ch = cell.getChars() || ' '
-      text += ch
-      typed += cell.isDim() ? ' '.repeat(ch.length) : ch
-      if (ch.trim() !== '') end = x + Math.max(1, cell.getWidth())
-    }
-    out.push({ text: text.replace(/\s+$/, ''), typed: typed.replace(/\s+$/, ''), width: term.cols, end })
-  }
-  return out
 }

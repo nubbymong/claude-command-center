@@ -40,14 +40,88 @@ export function attentionForEvent(e: HookEvent): boolean | null {
   return null
 }
 
+/**
+ * P3.10 (row 47): how long after a Codex turn ends, with nothing new sent,
+ * the session is marked as waiting for the user -- the wait Claude Code's
+ * own idle_prompt notification makes ("Claude finished ~60s ago; awaiting
+ * the next prompt"). Codex has no such notification; its Stop hook marks
+ * the turn's end, so the app keeps the same wait.
+ */
+export const CODEX_IDLE_ATTENTION_MS = 60_000
+
+/**
+ * P3.10 (row 47): Codex's own hook events (P3.1 evidence, answer 4), mapped as
+ * Claude Code's are:
+ *  - PermissionRequest: Codex asks the user to approve something (Claude's
+ *    permission_prompt): raise;
+ *  - Stop: the turn ended; the session waits for the next prompt, marked
+ *    after CODEX_IDLE_ATTENTION_MS as Claude's idle_prompt is ('idle');
+ *  - UserPromptSubmit, PreToolUse, PostToolUse: the user or the agent is
+ *    acting: clear, as for Claude;
+ *  - anything else: ignored.
+ */
+export function codexAttentionForEvent(e: HookEvent): boolean | 'idle' | null {
+  if (e.event === 'PermissionRequest') return true
+  if (e.event === 'Stop') return 'idle'
+  if (e.event === 'UserPromptSubmit' || e.event === 'PreToolUse' || e.event === 'PostToolUse') return false
+  return null
+}
+
+export interface AttentionSourceOptions {
+  /** Whether a session runs Codex (its events are Codex's, mapped by
+   *  codexAttentionForEvent). Absent: every event maps as Claude's. */
+  isCodexSession?: (sessionId: string) => boolean
+  /** Test seams. */
+  push?: (sessionId: string, needsAttention: boolean) => void
+  setTimer?: (cb: () => void, ms: number) => ReturnType<typeof setTimeout>
+  clearTimer?: (h: ReturnType<typeof setTimeout>) => void
+}
+
+/** One pending idle mark per Codex session (a later event drops it). */
+const codexIdleTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+/** Route one hook event to the attention flasher. Exported for tests. */
+export function routeAttentionEvent(e: HookEvent, opts: AttentionSourceOptions = {}): void {
+  const push = opts.push ?? pushAttention
+  const isCodex = opts.isCodexSession?.(e.sessionId) === true
+  if (!isCodex) {
+    const v = attentionForEvent(e)
+    if (v !== null) push(e.sessionId, v)
+    return
+  }
+  const v = codexAttentionForEvent(e)
+  if (v === null) return
+  const clearTimer = opts.clearTimer ?? ((h: ReturnType<typeof setTimeout>) => clearTimeout(h))
+  const pending = codexIdleTimers.get(e.sessionId)
+  if (pending) { clearTimer(pending); codexIdleTimers.delete(e.sessionId) }
+  if (v === 'idle') {
+    const setTimer = opts.setTimer ?? ((cb: () => void, ms: number) => setTimeout(cb, ms))
+    const sid = e.sessionId
+    const h = setTimer(() => {
+      if (codexIdleTimers.get(sid) !== h) return
+      codexIdleTimers.delete(sid)
+      // Still a Codex session: a closed tab, or one respawned as another kind, is not marked.
+      if (opts.isCodexSession?.(sid) === true) push(sid, true)
+    }, CODEX_IDLE_ATTENTION_MS)
+    ;(h as { unref?: () => void }).unref?.()
+    codexIdleTimers.set(sid, h)
+    return
+  }
+  push(e.sessionId, v)
+}
+
+/** Test seam: drop every pending idle mark, and allow a fresh start. */
+export function _resetAttentionSourceForTest(): void {
+  for (const h of codexIdleTimers.values()) clearTimeout(h)
+  codexIdleTimers.clear()
+  started = false
+}
+
 let started = false
-export function startAttentionSource(): void {
+export function startAttentionSource(opts: AttentionSourceOptions = {}): void {
   if (started) return
   started = true
   const gw = getGateway()
   if (!gw) return
-  gw.subscribe((e) => {
-    const v = attentionForEvent(e)
-    if (v !== null) pushAttention(e.sessionId, v)
-  })
+  gw.subscribe((e) => routeAttentionEvent(e, opts))
 }

@@ -14,7 +14,9 @@
 import type { BrowserWindow } from 'electron'
 import { Terminal } from '@xterm/headless'
 import { SessionWatchdog } from './session-watchdog'
+import { CLAUDE_DETECTORS, CODEX_DETECTORS } from './detectors'
 import type { WatchdogAdapter, WatchdogChecks, WatchdogPublicState } from './session-watchdog'
+import { readXtermScreen, readCodexScreen, codexCommandTyped, codexComposerText } from '../../shared/codex-screen'
 import { hasActiveMonitors } from './patterns'
 import { getGateway } from '../hooks/index'
 import { readConfig } from '../config-manager'
@@ -152,6 +154,13 @@ export function clampAnsiChunk(data: string, state: AnsiClampState): string {
 // every chunk — only once, ~250ms after the last chunk in a burst.
 const FEED_DEBOUNCE_MS = 250
 
+// P3.10: a Codex retry's Enter follows its typing by this long (Codex's
+// composer takes a faster burst ending in Enter as a paste; P3.8's evidence).
+export const CODEX_SUBMIT_DELAY_MS = 300
+/** One Backspace (DEL) and the Enter key, as a terminal sends them. */
+const CODEX_BACKSPACE = String.fromCharCode(0x7f)
+const CODEX_ENTER = String.fromCharCode(13)
+
 // One shared interval drives every active watchdog's tick(); it exists only
 // while at least one watchdog is running (see ensureTickTimer/maybeStopTimer).
 // This is the BASE cadence when the main loop is calm; the throttle (#311-style
@@ -253,6 +262,13 @@ export interface WatchdogHostOptions {
    *  sanitized to a single control-char-free line (config.ts), so the lone
    *  appended '\r' is the only submit and cannot be broken out of. */
   send: (sessionId: string, text: string) => void
+  /** P3.10: a raw write into the session's PTY, for a Codex session's retry:
+   *  Codex's composer takes a burst of typed characters ending in Enter as a
+   *  paste (the Enter a newline), so its retry is typed, then submitted
+   *  CODEX_SUBMIT_DELAY_MS later, only when the screen shows exactly it
+   *  typed (as the app's own Codex commands are, P3.8). Without it a Codex
+   *  session's watchdog never types. */
+  write?: (sessionId: string, data: string) => void
   /** Main-loop stall count in the last minute — drives the tick throttle.
    *  Injectable for tests; defaults to the loop-stall-monitor singleton. */
   getStalls?: () => number
@@ -267,6 +283,8 @@ export interface WatchdogHostOptions {
 
 interface Entry {
   wd: SessionWatchdog
+  /** P3.10: the session's CLI (Codex reads its own patterns and screen). */
+  provider: 'claude' | 'codex'
   /** The rendered pane (#266 BLOCKER-1): a headless terminal fed the raw PTY
    *  bytes, so getTail() reads the SCREEN, not an append-only strip log. */
   term: Terminal
@@ -367,11 +385,16 @@ function readWatchdogSettings(): WatchdogSettings {
 // output to detect), Codex, or an Ask one-shot (#266 MAJOR-5: an ephemeral ask
 // surface must not grow a retry badge). The whole feature is default-OFF
 // (settings.enabled), so enabling SSH only widens an already-opted-in watchdog.
-function isWatchableClaudeSession(info?: WatchdogSessionInfo): boolean {
-  if (!info) return true
-  if (info.shellOnly) return false
-  if (info.ask) return false
-  return (info.provider ?? 'claude') === 'claude'
+function watchableProvider(info?: WatchdogSessionInfo): 'claude' | 'codex' | null {
+  if (!info) return 'claude'
+  if (info.shellOnly) return null
+  if (info.ask) return null
+  const provider = info.provider ?? 'claude'
+  if (provider === 'claude') return 'claude'
+  // P3.10 (row 43): a local Codex session, with Codex's own patterns. Codex
+  // runs on this computer only in this release; an SSH one is never watched.
+  if (provider === 'codex' && info.ssh !== true) return 'codex'
+  return null
 }
 
 // Best-effort mapping from a StopFailure hook payload to the two retryable
@@ -514,7 +537,8 @@ export class WatchdogManager {
     // stale watcher in place.
     if (this.entries.has(sessionId)) this.stopWatchdog(sessionId)
 
-    if (!isWatchableClaudeSession(info)) return
+    const provider = watchableProvider(info)
+    if (!provider) return
     const settings = readWatchdogSettings()
     if (settings.enabled !== true) return // default OFF — feature is inert unless explicitly opted in
 
@@ -533,8 +557,17 @@ export class WatchdogManager {
       isSessionAlive: () => this.host.isSessionAlive(sessionId),
       // SSH panes are remote-drawn — harden the send gate (positive Claude
       // chrome required; dim companion dropped). See WatchdogAdapter.
-      requireClaudeChrome: info?.ssh === true,
-      send: (text: string) => this.host.send(sessionId, text),
+      requireClaudeChrome: provider === 'claude' && info?.ssh === true,
+      // P3.10: each CLI's own detectors, and for Codex its screen's structure.
+      detectors: provider === 'codex' ? CODEX_DETECTORS : CLAUDE_DETECTORS,
+      getScreen: () => {
+        const e = this.entries.get(sessionId)
+        try { return e ? readXtermScreen(e.term) : null } catch { return null }
+      },
+      send: (text: string) => {
+        if (provider === 'codex') this.submitCodex(sessionId, text)
+        else this.host.send(sessionId, text)
+      },
       now: () => this.now(),
       log: (level, msg) => {
         const line = `[watchdog:${sessionId}] ${msg}`
@@ -552,7 +585,7 @@ export class WatchdogManager {
       scrollback: HEADLESS_SCROLLBACK,
       allowProposedApi: true,
     })
-    this.entries.set(sessionId, { wd, term, ansiClamp: { residual: '' }, feedTimer: null, lastDataAt: this.now(), silent: false, graceUntil: 0 })
+    this.entries.set(sessionId, { wd, provider, term, ansiClamp: { residual: '' }, feedTimer: null, lastDataAt: this.now(), silent: false, graceUntil: 0 })
     if (this.startedAt === null) this.startedAt = this.now()
     this.ensureTickTimer()
     this.ensureHookSubscription()
@@ -561,6 +594,42 @@ export class WatchdogManager {
     // PREVIOUS run's give-up badge until the new run's first state change.
     adapter.onStateChange(wd.getState())
     logInfo(`[watchdog] started for session ${sessionId}`)
+  }
+
+  /**
+   * P3.10: type a Codex session's retry, then submit it the way the app's own
+   * Codex commands are (P3.8): the Enter only after CODEX_SUBMIT_DELAY_MS, and
+   * only when the pane then shows exactly the retry typed at Codex's composer
+   * with nothing in the way; when the composer holds exactly it but something
+   * else changed (a turn started), it is erased again, only its own
+   * characters; anything else (the user typed too, a prompt came up) is left
+   * as it is and said in the log. Only in the same watcher: a respawn or a
+   * teardown in between types nothing more.
+   */
+  private submitCodex(sessionId: string, text: string): void {
+    const write = this.host.write
+    const entry = this.entries.get(sessionId)
+    if (!write || !entry) {
+      logWarn(`[watchdog:${sessionId}] Codex retry not typed: no raw writer`)
+      return
+    }
+    write(sessionId, text)
+    const timer = this.setTimer(() => {
+      if (this.entries.get(sessionId) !== entry || !this.host.isSessionAlive(sessionId)) return
+      let screen: ReturnType<typeof readXtermScreen> | null = null
+      try { screen = readXtermScreen(entry.term) } catch { screen = null }
+      if (screen && codexCommandTyped(screen, text)) {
+        write(sessionId, CODEX_ENTER)
+        return
+      }
+      if (screen && readCodexScreen(screen).screen !== 'blocked' && codexComposerText(screen) === text) {
+        write(sessionId, CODEX_BACKSPACE.repeat([...text].length))
+        logInfo(`[watchdog:${sessionId}] Codex retry erased again: the screen changed before its Enter`)
+        return
+      }
+      logWarn(`[watchdog:${sessionId}] Codex retry typed but not submitted: the screen changed before its Enter`)
+    }, CODEX_SUBMIT_DELAY_MS)
+    ;(timer as { unref?: () => void }).unref?.()
   }
 
   /** Keep the headless pane's viewport matched to the real session's, so line
@@ -736,6 +805,8 @@ export class WatchdogManager {
    *  scan to the last 15 rendered lines, so the anchor stays tight. Guarded:
    *  a pane-read throw must not kill a health push. */
   private paneHasMonitors(e: Entry): boolean {
+    // Claude Code's mode footer; Codex draws no such count.
+    if (e.provider !== 'claude') return false
     try {
       return hasActiveMonitors(readPanePair(e.term, TAIL_MAX_LINES, false).text)
     } catch {

@@ -431,7 +431,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                       {([
                         { key: 'rateLimit', label: 'Rate-limit resume', hint: 'Waits out a usage-limit reset, then continues.' },
                         { key: 'overload', label: 'API overload', hint: 'Backs off and retries on 429/5xx and overloaded_error.' },
-                        { key: 'safeguard', label: 'Safeguard', hint: 'Retries after a flagged-safeguard message clears.' },
+                        { key: 'safeguard', label: 'Safeguard', hint: 'Retries after a flagged-safeguard message clears. Claude Code sessions only: Codex has no such message.' },
                       ] as const).map(({ key, label, hint }) => {
                         const wd = settings.watchdog || {}
                         const checked = key === 'rateLimit'

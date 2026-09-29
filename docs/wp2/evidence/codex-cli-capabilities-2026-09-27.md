@@ -308,6 +308,41 @@ timings. No real account was used; what needs one is listed at the end.
 - [run] With a message waiting, the composer's hint row reads "tab to queue message" and, right-aligned, "100% context
   left": the share of context LEFT, not used.
 
+### 14. Addendum (P3.10, 2026-09-29): hooks in the TUI (rows 43, 46, 47, 63; P3.5 and P3.6 limits)
+
+Run on the Windows test VM against both versions, in throwaway `CODEX_HOME` folders signed in with a fake API key
+behind a dead proxy, through the pseudo-terminal driver, with a hook logger and then the app's own forwarder
+(`scripts/ccc-codex-hook.js` and its `.cmd` wrapper) posting to a listener on 127.0.0.1 standing in for the Hooks
+gateway. No real account was used and no request left the VM.
+
+- [run] Hooks given by `-c hooks.<Event>=...` are "Session flags" hooks and need review: a new launch shows "Hooks need
+  review / N hooks are new or changed / Hooks can run outside the sandbox after you trust them" with "1. Review hooks",
+  "2. Trust all and continue" and "3. Continue without trusting (hooks won't run)" (both versions). Trusting records
+  `trusted_hash` under `[hooks.state.'<session-flags>:<event>:<group>:<handler>']` in the realm's `config.toml`; the
+  same hook in a later launch runs without review, a changed one asks again. `--dangerously-bypass-hook-trust` skips the
+  review and prints a warning in every launch ("Enabled hooks may run without review for this invocation").
+- [run] On Windows the hook command runs through PowerShell (`$env:X` is expanded, `%X%` is not); a bare path to a
+  `.cmd` file runs, and so does PowerShell's call of a quoted path holding a space. The hook inherits Codex's whole
+  environment. `async = true` and `timeout` are accepted; an async hook is not waited for.
+- [run] The app's exact overrides (six events, TOML literal strings, `timeout=10,async=true`) are accepted by both
+  versions and, once trusted, each event reaches the listener with the session's token and the Codex marker header.
+- [run] SessionStart comes with a conversation's first turn, not at start-up: source `startup` for a new one,
+  `resume` for one picked with the TUI's `/resume`; `/new` with no turn sends none. Every event carries
+  `transcript_path`, the conversation's rollout (a file that already exists then); with async hooks SessionStart and
+  UserPromptSubmit may arrive in either order. The path spells the user folder as Windows stores it
+  (`C:\Users\User\...` for a `CODEX_HOME` of `C:\Users\user\...`).
+- [run] Stop does not fire for a turn interrupted with Esc or failed on the dead proxy; SessionEnd fires at exit for
+  each conversation the run had.
+- [run] While Codex retries a failed request it shows "Reconnecting... 2/5 (4s . esc to interrupt)" with the failure
+  as a child line; errors are their own cell starting with a black square at column 0 ("Conversation interrupted -
+  ..."). [strings] The usage-limit and server-error messages both binaries carry: "You've hit your usage limit. ... or
+  try again at <time>" (a later day as "Oct 1st, 2026 3:05 PM", or "or try again later"), "You've hit your usage limit
+  for <model>. Switch to another model now, or try again at ...", "We're currently experiencing high demand, which may
+  cause temporary errors.", "Selected model is at capacity. Please try a different model.", "exceeded retry limit,
+  last status: ...".
+- Not established (they need a working model): the PermissionRequest hook under a real approval; the usage-limit and
+  overload cells as drawn; how a POSIX CLI runs the command (macOS and Linux).
+
 ## Rows this affects
 
 | Row | Result |
@@ -320,7 +355,7 @@ timings. No real account was used; what needs one is listed at the end.
 | 38 | Unblocked: a resume appends to the original file; find it by id or take `transcript_path` from a hook. |
 | 41, 61, 69 | `/model`, `/compact`, `/plan` exist on both versions; plan mode has no launch flag. Addendum 12: no `/effort`; `/model` shows no argument form. Addendum 13: `/model <slug>` is sent as a message; the footer marks a ready composer; `/plan` and a delayed-Enter `/compact` work on both versions. |
 | 39, 40 | Addendum 12: the catalogue's picker models and their effort levels (0.153.4). Addendum 13: 0.155.1's list (no gpt-5.2) and levels; `codex debug models` needs no sign-in. |
-| 43, 46, 47, 63 | Hook and notify payloads recorded, including PreToolUse and PostToolUse; PermissionRequest exists but was not observed. |
+| 43, 46, 47, 63 | Hook and notify payloads recorded, including PreToolUse and PostToolUse; PermissionRequest exists but was not observed. Addendum 14: `-c` hooks need the user's review once per account folder; the app's overrides and forwarder work on both versions; SessionStart and every event carry the rollout's path with the first turn. |
 | 51 | Instructions via `developer_instructions` or a skill; no MCP roots; MCP tools via tool search. |
 | 55, 56 | Memory files and log folders located; memories off by default. |
 | 57, 68 | `codex exec --json` event stream recorded; resume usage differs by version. |

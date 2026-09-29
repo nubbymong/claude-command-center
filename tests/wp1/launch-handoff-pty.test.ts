@@ -47,6 +47,8 @@ const h = vi.hoisted(() => ({
   legacyInstalled: true,
   claudeReview: [] as Array<{ sid: string; cwd: string }>,
   ptyCwds: [] as string[],
+  /** P3.10: a Hooks gateway listening (none: the gateway is off). */
+  gateway: null as null | Record<string, unknown>,
 }))
 
 vi.mock('node-pty', () => ({
@@ -104,8 +106,11 @@ vi.mock('../../src/main/providers', () => ({
       // P3.6: the realm holds the conversation asked for (the resume finds it).
       const resume = opts.resume as { uuid: string } | undefined
       const found = h.resumable && resume ? { resumeId: resume.uuid } : opts.useResumePicker && h.pickFile ? { pickFile: h.pickFile, pickFolder: h.pickFolder } : {}
-      return h.commandLine ? { cmd: 'C:/Windows/System32/cmd.exe', args: [], env, commandLine: h.commandLine, ...found } : { cmd: launch.executable, args: ['--sandbox', 'read-only'], env, ...found }
+      // P3.10: a launch handed a hook file carries the app's hooks.
+      const hooks = opts.codexHooks ? { hooksInstalled: true } : {}
+      return h.commandLine ? { cmd: 'C:/Windows/System32/cmd.exe', args: [], env, commandLine: h.commandLine, ...found, ...hooks } : { cmd: launch.executable, args: ['--sandbox', 'read-only'], env, ...found, ...hooks }
     },
+    prepareSessionHooks: (sid: string) => (h.gateway ? { hookFile: `/tmp/ccc-codex-hook-t/${sid}/hook.json`, dispose: () => {} } : null),
     ingestSessionTelemetry: (sessionId: string, opts: Record<string, unknown>) => {
       if (h.failTelemetry) throw new Error('telemetry failed')
       h.telemetry.push({ sessionId, opts })
@@ -127,7 +132,7 @@ vi.mock('../../src/main/providers/claude/spawn', () => ({
 }))
 vi.mock('../../src/main/vision-manager', () => ({ isGlobalVisionRunning: () => false, getGlobalVisionConfig: () => null, teardownVisionSession: () => {} }))
 vi.mock('../../src/main/canvas/canvas-plugin', () => ({ ensureCanvasPlugin: () => null }))
-vi.mock('../../src/main/hooks', () => ({ getGateway: () => null, isExactBindSourceActive: () => true }))
+vi.mock('../../src/main/hooks', () => ({ getGateway: () => h.gateway, isExactBindSourceActive: () => true }))
 vi.mock('../../src/main/hooks/session-hooks-writer', () => ({ injectHooks: () => {} }))
 vi.mock('../../src/main/hooks/per-session-settings', () => ({
   writeLocalSessionSettings: () => null,
@@ -181,7 +186,7 @@ vi.mock('../../src/main/provider-accounts', () => ({
   }),
 }))
 
-const { spawnPty, killPty, killAllPty, holdsCodexLaunchLease, countUnleasedAgentSessions, beginSpawnPreparation, CODEX_LEASE_EXIT_GRACE_MS, codexRunEnded, rememberUncertainCodexConversationsFrom, getKeptCodexConversation } = await import('../../src/main/pty-manager')
+const { spawnPty, killPty, killAllPty, holdsCodexLaunchLease, countUnleasedAgentSessions, beginSpawnPreparation, CODEX_LEASE_EXIT_GRACE_MS, codexRunEnded, rememberUncertainCodexConversationsFrom, getKeptCodexConversation, noteCodexHookTranscript } = await import('../../src/main/pty-manager')
 h.watchFn = (await import('../../src/main/providers/codex/telemetry')).watchAndClaimRollout as never
 const { codexDayFolders, codexFolderIdentity } = await import('../../src/main/providers/codex/rollout-lookup')
 const { registerPtyHandlers, CODEX_CARRY_EXIT_WAIT_MS, CODEX_CARRY_TIMEOUT_MS } = await import('../../src/main/ipc/pty-handlers')
@@ -889,6 +894,7 @@ describe('a conversation whose claim was not certain is never carried (P3.6, own
   beforeEach(() => { seq++; sid = `lh-p36u-${seq}-a`; sid2 = `lh-p36u-${seq}-b` })
   afterEach(() => {
     h.realWatch = false
+    h.gateway = null
     h.pickFile = null
     h.pickFolder = null
     for (const w of h.watchers.splice(0)) { try { w.stop() } catch { /* stopped */ } }
@@ -919,11 +925,13 @@ describe('a conversation whose claim was not certain is never carried (P3.6, own
     }
   }
   const metaOf = (id: string, cwd: string, iso: string) => JSON.stringify({ timestamp: iso, type: 'session_meta', payload: { id, timestamp: iso, cwd, cli_version: '0.155.1' } })
-  function rolloutIn(sessions: string, id: string, cwd: string) {
+  function rolloutIn(sessions: string, id: string, cwd: string): string {
     const dir = codexDayFolders(sessions, [Date.now()])[0]
     nfs.mkdirSync(dir, { recursive: true })
     const iso = new Date().toISOString()
-    nfs.writeFileSync(path.join(dir, `rollout-${iso.slice(0, 19).replace(/:/g, '-')}-${id}.jsonl`), metaOf(id, cwd, iso) + '\n', 'utf-8')
+    const file = path.join(dir, `rollout-${iso.slice(0, 19).replace(/:/g, '-')}-${id}.jsonl`)
+    nfs.writeFileSync(file, metaOf(id, cwd, iso) + '\n', 'utf-8')
+    return file
   }
   const UNCERTAIN = 'Another session started in the same folder at about the same time, so the app could not be sure which conversation was this one, and did not carry it over.'
 
@@ -1008,6 +1016,57 @@ describe('a conversation whose claim was not certain is never carried (P3.6, own
     expect(h.carries).toEqual([])
     expect(h.built.at(-1)).toMatchObject({ sessionId: sid2 })
     expect(h.built.at(-1)!.resume).toBeUndefined()
+  })
+
+  // P3.10: the exact claim from the session's own hook. Where Codex's hooks
+  // are heard from (the user trusted them for the account), a conversation
+  // that is still only inferred was never named by the session's Codex (it
+  // names it with the first message sent), and may be another writer's (a
+  // CLI outside the app in the same folder): never carried. Once the
+  // session's own hook names it, a Switch carries it.
+  it('P3.10: where the account\'s hooks are heard from, a conversation only inferred is not carried; one the session\'s own hook named is', async () => {
+    const base = nfs.mkdtempSync(path.join(os.tmpdir(), PREFIX))
+    bases.push(base)
+    const sessA = path.join(base, 'A', 'sessions')
+    nfs.mkdirSync(sessA, { recursive: true })
+    const proj = path.join(base, 'proj')
+    const proj2 = path.join(base, 'proj2')
+    nfs.mkdirSync(proj)
+    nfs.mkdirSync(proj2)
+    const convX = '019dd000-0310-7000-8000-0000000000aa'
+    const convY = '019dd000-0310-7000-8000-0000000000bb'
+    h.realWatch = true
+    h.gateway = { status: () => ({ enabled: true, listening: true, port: 51234 }), registerSession: () => '0f8b6a2c-1d3e-4f50-9a61-7b2c3d4e5f60', unregisterSession: () => {} }
+    onAccount('acct-a', sessA)
+    await spawnFor(sid, { ...codexRequest, cwd: proj, providerAccountId: 'acct-a' })
+    const cwdSeen = String((h.telemetry.find((t) => t.sessionId === sid)!.opts as { cwd: string }).cwd)
+    const x = rolloutIn(sessA, convX, cwdSeen)
+    await until(() => getKeptCodexConversation(sid)?.uuid === convX)
+    // Another session of the account is heard from: its hooks run there.
+    onAccount('acct-a', sessA)
+    await spawnFor(sid2, { ...codexRequest, cwd: proj2, providerAccountId: 'acct-a' })
+    const cwd2Seen = String((h.telemetry.find((t) => t.sessionId === sid2)!.opts as { cwd: string }).cwd)
+    const y = rolloutIn(sessA, convY, cwd2Seen)
+    expect(noteCodexHookTranscript(sid2, y)).toBe(true)
+    await until(() => getKeptCodexConversation(sid2)?.uuid === convY)
+    // The first tab's conversation is only inferred: a Switch carries nothing.
+    const sidPty = h.ptys[0]
+    killFor(sid)
+    exitPty(sidPty, 0)
+    onAccount('acct-b')
+    await expect(spawnFor(sid, { ...codexRequest, cwd: proj, providerAccountId: 'acct-b' })).resolves.toEqual({ ...STARTED, carry: { code: 'conversation-uncertain', message: 'Codex had not yet said which conversation this session is on (it does with the first message you send), so the app did not carry it over.', resumed: false } })
+    expect(h.carries).toEqual([])
+    expect(h.built.at(-1)!.resume).toBeUndefined()
+    // The second tab's own hook named its conversation: a Switch carries it.
+    const sid2Pty = h.ptys[1]
+    killFor(sid2)
+    exitPty(sid2Pty, 0)
+    onAccount('acct-c')
+    h.resumable = true
+    await expect(spawnFor(sid2, { ...codexRequest, cwd: proj2, providerAccountId: 'acct-c' })).resolves.toEqual(STARTED)
+    expect(h.carries.length).toBe(1)
+    expect((h.carries[0] as unknown[])[1]).toMatchObject({ uuid: convY, accountId: 'acct-a' })
+    void x
   })
 
   it('kept across a relaunch: a restored tab on a conversation whose claim was not certain is still never carried', async () => {

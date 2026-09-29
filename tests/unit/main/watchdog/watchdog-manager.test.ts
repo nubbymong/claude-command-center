@@ -70,6 +70,7 @@ vi.mock('../../../../src/main/hooks/index', () => ({
 }))
 
 const { WatchdogManager, clampAnsiChunk } = await import('../../../../src/main/watchdog/watchdog-manager')
+const { CLAUDE_DETECTORS, CODEX_DETECTORS } = await import('../../../../src/main/watchdog/detectors')
 const { IPC } = await import('../../../../src/shared/ipc-channels')
 
 function makeHost() {
@@ -105,19 +106,27 @@ describe('WatchdogManager — default-off / gating', () => {
     expect(mgr.getStates()).toEqual([])
   })
 
-  it('gates on session type: shellOnly and non-claude never start; an SSH Claude session DOES (2026-08-31 — it observes the PTY like local)', () => {
+  it('gates on session type: shellOnly and an SSH Codex session never start; an SSH Claude session DOES (2026-08-31: it observes the PTY like local); a local Codex session DOES, with its own detectors (P3.10, row 43)', () => {
     const { host } = makeHost()
     const mgr = new WatchdogManager(host)
     mgr.startWatchdog('shell1', { provider: 'claude', ssh: false, shellOnly: true })
-    mgr.startWatchdog('codex1', { provider: 'codex', ssh: false, shellOnly: false })
+    mgr.startWatchdog('codexssh', { provider: 'codex', ssh: true, shellOnly: false })
+    mgr.startWatchdog('other1', { provider: 'gemini', ssh: false, shellOnly: false })
     expect(instances).toHaveLength(0)
     // SSH Claude now arms, exactly like local — same PTY signal, headless-xterm
     // rendering, retry send() to the remote claude.
     mgr.startWatchdog('ssh1', { provider: 'claude', ssh: true, shellOnly: false })
     expect(instances).toHaveLength(1)
     expect(mgr.isActive('ssh1')).toBe(true)
+    expect(instances[0].adapter.detectors).toBe(CLAUDE_DETECTORS)
+    expect(instances[0].adapter.requireClaudeChrome).toBe(true)
     mgr.startWatchdog('local1', { provider: 'claude', ssh: false, shellOnly: false })
     expect(instances).toHaveLength(2)
+    // P3.10: a local Codex session, with Codex's own detectors (never Claude's).
+    mgr.startWatchdog('codex1', { provider: 'codex', ssh: false, shellOnly: false })
+    expect(instances).toHaveLength(3)
+    expect(instances[2].adapter.detectors).toBe(CODEX_DETECTORS)
+    expect(instances[2].adapter.requireClaudeChrome).toBe(false)
   })
 
   it('never arms on an Ask Conductor one-shot (#266 MAJOR-5), by the kind flag not askPrompt', () => {

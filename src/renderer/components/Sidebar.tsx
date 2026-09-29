@@ -1622,6 +1622,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
             // toggle that would be a no-op. The menu stays open: these are
             // three independent switches and users flip more than one.
             watchdogChecks={s.watchdog?.checks}
+            watchdogUnavailable={s.watchdog?.unavailable}
             onToggleWatchdogCheck={(key) => {
               const current = s.watchdog?.checks
               if (!current) return

@@ -76,6 +76,8 @@ export interface Session {
     /** #605: which auto-retry checks are live for this session right now.
      *  Absent on states pushed by older main builds; treat as all-on. */
     checks?: { rateLimit: boolean; overload: boolean; safeguard: boolean }
+    /** P3.10: checks this session's CLI has no patterns for (off, not switchable). */
+    unavailable?: Array<'rateLimit' | 'overload' | 'safeguard'>
   }
   costUsd?: number
   modelName?: string
