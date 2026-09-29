@@ -101,7 +101,10 @@ describe('the session strip shows a Codex session\'s account (P3.6, row 20)', ()
     expect(chip()).toBeNull()
   })
 
-  it('with the status line master switch off the account item stays, as Claude\'s does, and the band goes when nothing is left', async () => {
+  // P3.8 (row 61): a Codex session's strip now has the controls cluster
+  // (Compact, Restart), which stays with the master off, as Claude's does; with
+  // the account hidden too, the controls are what is left.
+  it('with the status line master switch off the account item stays, as Claude\'s does, and the controls stay when nothing else is left', async () => {
     useProviderAccountsStore.setState({ snapshot: only(work), loaded: true })
     settingsState.settings = { ...settingsState.settings, statusLineEnabled: false }
     await strip({ id: 'x4b', provider: 'codex', status: 'idle', providerAccountId: work.id, costUsd: 0.5 })
@@ -109,7 +112,8 @@ describe('the session strip shows a Codex session\'s account (P3.6, row 20)', ()
     expect(container.textContent).not.toContain('API eq')
     settingsState.settings = { ...settingsState.settings, statusLine: { ...STATUS_LINE, showAccount: false } }
     await strip({ id: 'x4c', provider: 'codex', status: 'idle', providerAccountId: work.id })
-    expect(container.innerHTML).toBe('')
+    expect(chip()).toBeNull()
+    expect(container.textContent).toBe('CompactRestart')
   })
 
   it('P3.6 (row 22): with two or more Codex accounts it is the Switch account pill, and it stays with the master switch off', async () => {

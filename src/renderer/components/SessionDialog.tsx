@@ -6,6 +6,7 @@ import { useResolvedTheme } from '../hooks/useThemeController'
 import { useRegistryStore } from '../stores/registryStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { modelGroupsFromRegistry, effortsForModel, PERMISSION_MODES } from '../lib/claude-cli-options'
+import { codexEffortSupported } from '../codex-models'
 import { trackUsage } from '../stores/tipsStore'
 import { generateId } from '../utils/id'
 import { resolveAllowMultiSpawnOnSave } from '../utils/multiSpawn'
@@ -235,8 +236,15 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
   const [storedSecret, setStoredSecret] = useState(initial?.terminalOptions?.hasSecretArg ?? false)
 
   // ── Session startup (Codex)
-  const [codexModel, setCodexModel] = useState(initial?.codexOptions?.model ?? 'gpt-5.5')
-  const [codexEffort, setCodexEffort] = useState<NonNullable<CodexOptions['reasoningEffort']>>(initial?.codexOptions?.reasoningEffort ?? 'medium')
+  // P3.8 (rows 39, 40), as Claude's above: an edit reopens what is stored ('' =
+  // Default, no flag) rather than rewriting it to the new-config values, and a
+  // saved effort its model cannot run is dropped on load (and again on save).
+  const initialCodexModel = initial ? (initial.codexOptions?.model ?? '') : 'gpt-5.5'
+  const [codexModel, setCodexModel] = useState(initialCodexModel)
+  const [codexEffort, setCodexEffort] = useState<NonNullable<CodexOptions['reasoningEffort']> | ''>(() => {
+    const saved = initial ? (initial.codexOptions?.reasoningEffort ?? '') : 'medium'
+    return codexEffortSupported(registry, initialCodexModel, saved) ? saved : ''
+  })
   const [codexPreset, setCodexPreset] = useState<CodexOptions['permissionsPreset']>(initial?.codexOptions?.permissionsPreset ?? 'standard')
   // The Codex account (WP2 commit 6). `null` = not touched: the field shows
   // the saved binding, else the provider default, and follows the snapshot
@@ -461,6 +469,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
     // user never touches the model select (ADR-009 MINOR on #404).
     const effectiveEffort: EffortValue | '' =
       effortSupportedFor(registry, model, effortLevel) ? effortLevel : ''
+    const effectiveCodexEffort = codexEffortSupported(registry, codexModel, codexEffort) ? codexEffort : ''
 
     // Both of these gate a tip's "you have already found this" variant, and
     // neither was ever recorded — so the tips kept explaining effort levels and
@@ -504,9 +513,10 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
           : undefined)
       : initial?.terminalOptions
 
+    // '' (Default) is saved as nothing, as Claude's model and effort are.
     const codexOptions: CodexOptions | undefined = uiProvider === 'codex' ? {
-      model: codexModel,
-      reasoningEffort: codexEffort,
+      model: codexModel || undefined,
+      reasoningEffort: effectiveCodexEffort || undefined,
       permissionsPreset: codexPreset,
     } : undefined
 
@@ -1295,10 +1305,12 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
                   </Hint>
                   <div className="mt-1">
                     <CodexFormFields
-                      value={{ model: codexModel, reasoningEffort: codexEffort, permissionsPreset: codexPreset }}
+                      value={{ model: codexModel, reasoningEffort: codexEffort || undefined, permissionsPreset: codexPreset }}
                       onChange={(next) => {
-                        if (next.model !== undefined) setCodexModel(next.model)
-                        if (next.reasoningEffort !== undefined) setCodexEffort(next.reasoningEffort)
+                        // The fields always hand back the whole value; an absent
+                        // model or effort is Default ('').
+                        setCodexModel(next.model ?? '')
+                        setCodexEffort(next.reasoningEffort ?? '')
                         if (next.permissionsPreset !== undefined) setCodexPreset(next.permissionsPreset)
                       }}
                       onOpenAccounts={() => {

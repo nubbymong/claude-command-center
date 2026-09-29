@@ -6,7 +6,7 @@ import { parseClaudeVersion, minVersionFindings, type ManifestEntry } from './se
 import { fetchChangelog, sliceChangelog } from './sentinel-changelog'
 import { runAnalysis } from './sentinel-analysis'
 import { validateProposal } from './sentinel-apply'
-import { modelCoverageFindings, modelCheckFailedFinding, EXPECTED_MODEL_SET } from './sentinel-models'
+import { modelCoverageFindings, modelCheckFailedFinding, EXPECTED_MODEL_SET, codexModelCoverageFindings, CODEX_EXPECTED_MODEL_SET } from './sentinel-models'
 import { fetchArticleModelIds } from './sentinel-model-article'
 import { getRegistry, getBaseline, applyOverlayEntry, removeOverlayEntry, loadOverlay, setOverlay } from '../model-registry-service'
 import { reconcileOverlay } from '../../shared/model-registry'
@@ -133,6 +133,38 @@ async function runModelCoverageCheck(): Promise<void> {
     const msg = (err as Error).message
     logInfo(`[sentinel] model coverage check failed: ${msg}`)
     state.upsertFinding(modelCheckFailedFinding(msg))
+  }
+  await runCodexModelCoverageCheck()
+}
+
+/**
+ * The Codex half (P3.8, row 39): the registry's Codex models against the list
+ * the supported Codex CLI offers, shipped with this build. Only while Codex is
+ * on (answered and switched on: the launch rule's silent form), so a user who
+ * does not use Codex never sees a finding about its models. Runs no CLI and
+ * makes no request. A throw is a finding of its own, as Claude's half's is.
+ */
+async function runCodexModelCoverageCheck(): Promise<void> {
+  if (!state) return
+  try {
+    const { providerProbeRefusal } = await import('../provider-launch-gate')
+    if (providerProbeRefusal('codex')) return
+    for (const f of codexModelCoverageFindings(getRegistry(), CODEX_EXPECTED_MODEL_SET, Date.now())) {
+      state.upsertFinding(f)
+    }
+  } catch (err) {
+    const msg = (err as Error).message
+    logInfo(`[sentinel] Codex model coverage check failed: ${msg}`)
+    state.upsertFinding({
+      id: 'models:codex-check-failed',
+      kind: 'compat',
+      severity: 'warn',
+      title: 'The Codex model list could not be verified',
+      evidence: `The Codex model-registry check did not complete: ${msg}`,
+      badgeText: 'Codex model list unverified',
+      status: 'open',
+      createdAt: Date.now(),
+    })
   }
 }
 

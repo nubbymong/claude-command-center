@@ -242,6 +242,27 @@ Fixtures, anonymised (last section): `tests/fixtures/codex/cli/<version>/`.
   (the conversation as markdown) and `/copy`. `codex cloud` is experimental (WP1.41 keeps it off).
 - Row 58's artifacts part: no Codex equivalent on the supported versions; the section 19 record stands as planned.
 
+### 12. Addendum (P3.8, 2026-09-29): the model catalogue and its effort levels (rows 39, 40, 41, 61)
+
+Read from the 0.153.4 binary of the development machine's npm install, as bytes (never run): its strings, and the
+model catalogue JSON bundled in it (the `models.json` `codex debug models` renders; parsed from the binary's bytes).
+0.155.1 is not on that machine: the same read of its binary is owed on the VM.
+
+- [strings] Eleven catalogue models. Offered in the model picker (`"visibility": "list"`), in priority order, with
+  their `supported_reasoning_levels`: `gpt-6-astra` (priority 1; the default the TUI banner showed in answer 3), low to
+  ultra; `gpt-5.6-sol`, low to ultra; `gpt-5.6-terra`, low to ultra; `gpt-5.6-luna`, low to max; `gpt-5.5`, low to
+  xhigh; `gpt-5.2`, low to xhigh (low, medium, high, xhigh, max, ultra, in that order). Hidden: two `gpt-daybreak-*`
+  models, `gpt-5.4` and `gpt-5.4-mini` (each with an `upgrade` naming gpt-5.6-terra and gpt-5.6-luna), and
+  `codex-auto-review`. `gpt-5.3-codex` and `gpt-5.3-codex-spark` are not in the catalogue.
+- [strings] The reasoning effort values: none, minimal, low, medium, high, xhigh, max, ultra. No listed model offers
+  none or minimal.
+- [strings] No `/effort` command: effort is the second step of `/model` ("choose what model and reasoning effort to
+  use"). The slash commands that print a `Usage: /<name> ...` argument form are `/goal`, `/ide`, `/keymap`, `/raw`,
+  `/usage`, `/mcp` and `/sandbox-add-read-dir`; `/model` has none. Whether `/model <slug>` is taken inline, ignored or
+  sent as a message is not established.
+- [strings] The TUI config has `disable_paste_burst`: the composer treats a fast burst of typed characters as a
+  paste. There is `plan_mode_reasoning_effort` but no key that starts a session in Plan mode.
+
 ## Rows this affects
 
 | Row | Result |
@@ -252,7 +273,8 @@ Fixtures, anonymised (last section): `tests/fixtures/codex/cli/<version>/`.
 | 34 | Unblocked: `codex exec resume <id>` / `codex resume <id>` in the same realm. |
 | 36 | Unblocked by derivation: count `+`/`-` lines of each `FileChange.unified_diff` in the rollout. No section 19 record needed. |
 | 38 | Unblocked: a resume appends to the original file; find it by id or take `transcript_path` from a hook. |
-| 41, 61, 69 | `/model`, `/compact`, `/plan` exist on both versions; plan mode has no launch flag. |
+| 41, 61, 69 | `/model`, `/compact`, `/plan` exist on both versions; plan mode has no launch flag. Addendum 12: no `/effort`; `/model` shows no argument form. |
+| 39, 40 | Addendum 12: the catalogue's picker models and their effort levels (0.153.4; 0.155.1 owed). |
 | 43, 46, 47, 63 | Hook and notify payloads recorded, including PreToolUse and PostToolUse; PermissionRequest exists but was not observed. |
 | 51 | Instructions via `developer_instructions` or a skill; no MCP roots; MCP tools via tool search. |
 | 55, 56 | Memory files and log folders located; memories off by default. |

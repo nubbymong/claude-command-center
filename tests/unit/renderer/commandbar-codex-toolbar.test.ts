@@ -148,13 +148,71 @@ describe('CommandBar Codex toolbar (P5.5)', () => {
     expect(container.textContent ?? '').not.toContain('Mode')
   })
 
-  it('Codex sessions: model dropdown shows GPT-5.x options', () => {
+  // P3.8 (row 39): the pill's list is the registry's Codex catalogue, as the
+  // session dialog's is (src/renderer/codex-models.ts).
+  const modelSelect = () => Array.from(container.querySelectorAll('select')).find((s) =>
+    Array.from(s.options).some((o) => o.value === 'gpt-5.2')) as HTMLSelectElement | undefined
+
+  it("Codex sessions: model dropdown offers the registry's Codex models, the session's selected", () => {
     mockSessions = [mkCodex()]
     mockActiveSessionId = 's-1'
     act(() => {
       root.render(React.createElement(CommandBar, { sessionId: 's-1', parentSessionId: 's-1' }))
     })
-    expect(container.textContent ?? '').toContain('gpt-5.5')
+    const sel = modelSelect()!
+    expect(Array.from(sel.options).map((o) => o.value)).toEqual(['', 'gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.2'])
+    expect(sel.value).toBe('gpt-5.5')
+    expect(Array.from(sel.options).map((o) => o.value)).not.toContain('gpt-5.3-codex')
+  })
+
+  it("Codex sessions: a session on a model the list no longer offers shows it; one with none shows Default", () => {
+    mockSessions = [{ ...mkCodex(), codexOptions: { model: 'gpt-5.3-codex-spark', permissionsPreset: 'standard' as const } }]
+    mockActiveSessionId = 's-1'
+    act(() => {
+      root.render(React.createElement(CommandBar, { sessionId: 's-1', parentSessionId: 's-1' }))
+    })
+    expect(modelSelect()!.value).toBe('gpt-5.3-codex-spark')
+    act(() => { root.unmount() })
+    root = createRoot(container)
+    mockSessions = [{ ...mkCodex(), codexOptions: { permissionsPreset: 'standard' as const } }]
+    act(() => {
+      root.render(React.createElement(CommandBar, { sessionId: 's-1', parentSessionId: 's-1' }))
+    })
+    expect(modelSelect()!.value).toBe('')
+  })
+
+  it('Codex sessions: choosing Default clears the model (no flag at the next start), and a model sets it', () => {
+    mockSessions = [mkCodex()]
+    mockActiveSessionId = 's-1'
+    act(() => {
+      root.render(React.createElement(CommandBar, { sessionId: 's-1', parentSessionId: 's-1' }))
+    })
+    const choose = (v: string) => {
+      const sel = modelSelect()!
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!
+      act(() => { setter.call(sel, v); sel.dispatchEvent(new Event('change', { bubbles: true })) })
+    }
+    choose('')
+    expect(mockUpdate).toHaveBeenLastCalledWith('s-1', { codexOptions: { model: undefined, permissionsPreset: 'standard' } })
+    choose('gpt-6-astra')
+    expect(mockUpdate).toHaveBeenLastCalledWith('s-1', { codexOptions: { model: 'gpt-6-astra', permissionsPreset: 'standard' } })
+  })
+
+  it('Codex sessions: a model the session effort does not run drops that effort to Default; one it runs keeps it', () => {
+    mockSessions = [{ ...mkCodex(), codexOptions: { model: 'gpt-6-astra', reasoningEffort: 'ultra' as const, permissionsPreset: 'standard' as const } }]
+    mockActiveSessionId = 's-1'
+    act(() => {
+      root.render(React.createElement(CommandBar, { sessionId: 's-1', parentSessionId: 's-1' }))
+    })
+    const choose = (v: string) => {
+      const sel = modelSelect()!
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!
+      act(() => { setter.call(sel, v); sel.dispatchEvent(new Event('change', { bubbles: true })) })
+    }
+    choose('gpt-5.6-terra')
+    expect(mockUpdate).toHaveBeenLastCalledWith('s-1', { codexOptions: { model: 'gpt-5.6-terra', reasoningEffort: 'ultra', permissionsPreset: 'standard' } })
+    choose('gpt-5.5')
+    expect(mockUpdate).toHaveBeenLastCalledWith('s-1', { codexOptions: { model: 'gpt-5.5', reasoningEffort: undefined, permissionsPreset: 'standard' } })
   })
 
   it('Codex sessions: permissions-preset selector visible', () => {

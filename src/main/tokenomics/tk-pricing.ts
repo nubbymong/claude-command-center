@@ -14,7 +14,10 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { getConfigDir, ensureConfigDir } from '../config-manager'
 import { logInfo } from '../debug-logger'
-import { codexPricingKeys, priceForModel, codexCachedInputPer1M } from '../providers/codex/pricing'
+import {
+  codexPricingKeys, priceForModel, codexCachedInputPer1M,
+  parseLiteLlmOpenAiPricing, parseCachedCodexPricing, serializeCodexPricing, setLiveCodexPricing,
+} from '../providers/codex/pricing'
 import { getRegistry } from '../model-registry-service'
 import type { TkPricing } from './tk-types'
 
@@ -47,20 +50,43 @@ export function registryFallbackPricing(): Record<string, ModelPricing> {
 
 let livePricing: Record<string, ModelPricing> | null = null
 
-/** Fetch Claude model pricing from LiteLLM's open pricing dataset (static JSON only). */
+/** P3.8 (row 28): where the OpenAI part of the same list is saved, for Codex
+ *  (providers/codex/pricing.ts), beside Claude's model-pricing.json. */
+const OPENAI_CACHE_FILE = 'openai-model-pricing.json'
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000
+
+/** The saved OpenAI prices, when saved within the TTL: handed to the Codex
+ *  pricing, checked entry by entry. True when they were fresh. */
+function loadFreshOpenAiCache(): boolean {
+  try {
+    const cachePath = path.join(getConfigDir(), OPENAI_CACHE_FILE)
+    if (!fs.existsSync(cachePath) || Date.now() - fs.statSync(cachePath).mtimeMs >= CACHE_TTL_MS) return false
+    const saved = parseCachedCodexPricing(JSON.parse(fs.readFileSync(cachePath, 'utf-8')))
+    setLiveCodexPricing(saved)
+    logInfo(`[tokenomics] Loaded cached OpenAI model pricing (${saved.size} models)`)
+    return true
+  } catch { return false /* cache miss */ }
+}
+
+/** Fetch Claude and OpenAI (Codex) model pricing from LiteLLM's open pricing
+ *  dataset (static JSON only). One request prices both (P3.8, row 28). */
 export async function fetchModelPricing(): Promise<void> {
-  // Check disk cache first (24h TTL)
+  // Check disk caches first (24h TTL). Both fresh: no request. Claude's alone
+  // (a build before P3.8 wrote it): fetch, so Codex gets live prices too.
+  let claudeFresh = false
   try {
     const cachePath = path.join(getConfigDir(), 'model-pricing.json')
     if (fs.existsSync(cachePath)) {
       const stat = fs.statSync(cachePath)
-      if (Date.now() - stat.mtimeMs < 24 * 60 * 60 * 1000) {
+      if (Date.now() - stat.mtimeMs < CACHE_TTL_MS) {
         livePricing = JSON.parse(fs.readFileSync(cachePath, 'utf-8'))
         logInfo(`[tokenomics] Loaded cached model pricing (${Object.keys(livePricing!).length} models)`)
-        return
+        claudeFresh = true
       }
     }
   } catch { /* cache miss */ }
+  const openAiFresh = loadFreshOpenAiCache()
+  if (claudeFresh && openAiFresh) return
 
   try {
     const https = await import('https')
@@ -109,6 +135,17 @@ export async function fetchModelPricing(): Promise<void> {
         fs.writeFileSync(path.join(getConfigDir(), 'model-pricing.json'), JSON.stringify(pricing, null, 2))
       } catch { /* ignore */ }
       logInfo(`[tokenomics] Fetched pricing for ${Object.keys(pricing).length} Claude models`)
+    }
+
+    // P3.8 (row 28): the OpenAI part, for Codex, taken only as checked prices.
+    const openAi = parseLiteLlmOpenAiPricing(allModels)
+    if (openAi.size > 0) {
+      setLiveCodexPricing(openAi)
+      try {
+        ensureConfigDir()
+        fs.writeFileSync(path.join(getConfigDir(), OPENAI_CACHE_FILE), JSON.stringify(serializeCodexPricing(openAi), null, 2))
+      } catch { /* ignore */ }
+      logInfo(`[tokenomics] Fetched pricing for ${openAi.size} OpenAI models`)
     }
   } catch (err: any) {
     logInfo(`[tokenomics] Pricing fetch failed (using hardcoded): ${err?.message}`)
@@ -174,7 +211,8 @@ export function normalizeModelForPricing(model: string, keys: string[]): string 
 /**
  * Returns a complete Record<priceModelKey, TkPricing> merging:
  *  - Claude: registryFallbackPricing() overridden by livePricing (if fetched)
- *  - Codex: all static codex pricing entries mapped to TkPricing (cacheWrite=0)
+ *  - Codex: every priced Codex model, its live price over the static table
+ *    (P3.8), mapped to TkPricing (cacheWrite=0)
  *
  * Used by the indexer worker to build a pricing CTE for query-time cost
  * computation without shipping the full session corpus to the renderer.
@@ -188,7 +226,8 @@ export function getAllPricing(): Record<string, TkPricing> {
     out[k] = { input: v.input, output: v.output, cacheRead: v.cacheRead, cacheWrite: v.cacheWrite }
   }
 
-  // Codex entries: enumerate static table, map to TkPricing (cacheWrite always 0)
+  // Codex entries: the live list's and the table's, each at the price the
+  // session strip uses (priceForModel), mapped to TkPricing (cacheWrite always 0)
   for (const key of codexPricingKeys()) {
     const p = priceForModel(key)
     if (!p) continue

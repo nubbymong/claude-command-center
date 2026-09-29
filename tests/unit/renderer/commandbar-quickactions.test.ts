@@ -193,8 +193,10 @@ describe('CommandBar session controls and chip look', () => {
     mockActiveSessionId = 's-1'
     renderBar(root)
     const text = container.textContent ?? ''
-    // CodexModelDropdown exposes the gpt-5.x option list.
-    expect(text).toContain('gpt-5.5')
+    // CodexModelDropdown exposes the registry's Codex models (P3.8, row 39).
+    const values = Array.from(container.querySelectorAll('option')).map((o) => o.value)
+    expect(values).toContain('gpt-5.5')
+    expect(text).toContain('GPT-5.5')
     // PermissionsPresetDropdown exposes the preset list.
     const hasPreset = ['read-only', 'standard', 'auto', 'unrestricted'].some((p) => text.includes(p))
     expect(hasPreset).toBe(true)

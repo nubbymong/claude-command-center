@@ -18,6 +18,8 @@
  *     least-privilege 'read-only' so the codex session still launches.
  *   - codex `model`: an invalid one is DROPPED; the session launches on the
  *     CLI's default model.
+ *   - codex `reasoningEffort`: one off CODEX_EFFORTS is DROPPED; the session
+ *     launches on its model's default effort (P3.8).
  *
  * Every other field is left untouched and still strict-parses downstream. Pure and
  * dependency-injected for logging so it unit-tests without the Electron ABI (and
@@ -42,6 +44,11 @@ export const PERMISSION_MODES = ['default', 'acceptEdits', 'auto', 'plan', 'dont
  *  '' means "no override", as for Claude. */
 export const CODEX_MODEL_MAX = 64
 export const CODEX_MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:\/-]*$/
+
+/** The Codex CLI's reasoning efforts (its ReasoningEffort values, 0.153.4),
+ *  the only values `-c model_reasoning_effort=<value>` is built from (P3.8,
+ *  row 40). 'none' means "no override" to the spawn, as it always has. */
+export const CODEX_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const
 
 export const EXTRA_ARGS_MAX = 512
 export const EXTRA_ARGS_CHARSET_RE = /^[A-Za-z0-9 _\-=.\/\\:@,+]*$/
@@ -99,6 +106,13 @@ export function sanitizeRestoredSpawnOptions<T>(
     if (model !== undefined && model !== '' && !(typeof model === 'string' && model.length <= CODEX_MODEL_MAX && CODEX_MODEL_RE.test(model))) {
       log('[pty] #397: dropping an invalid persisted Codex model; the session launches with the default model')
       out.codexOptions = { ...out.codexOptions, model: undefined }
+    }
+    // P3.8: the same for the effort, which the strict parse holds to
+    // CODEX_EFFORTS; dropped, the session starts on its model's own default.
+    const effort = out.codexOptions.reasoningEffort
+    if (effort !== undefined && !(CODEX_EFFORTS as readonly unknown[]).includes(effort)) {
+      log('[pty] dropping an invalid persisted Codex reasoning effort; the session launches with the model default')
+      out.codexOptions = { ...out.codexOptions, reasoningEffort: undefined }
     }
   }
 

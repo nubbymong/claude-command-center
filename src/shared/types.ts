@@ -168,9 +168,12 @@ export interface TerminalOptions {
 }
 
 export interface CodexOptions {
-  /** gpt-5.5 / gpt-5.4 / gpt-5.4-mini / gpt-5.3-codex / gpt-5.3-codex-spark / gpt-5.2 */
+  /** A Codex model id: the registry's Codex models (resources/model-registry.json,
+   *  family codex), or one saved before them. Absent or '' = Codex's own default. */
   model?: string
-  reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+  /** Absent (or 'none') = the model's own default; the spawn allowlist is
+   *  CODEX_EFFORTS (sanitize-restored-spawn-options.ts). */
+  reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
   permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
 }
 
