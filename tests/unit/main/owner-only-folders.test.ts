@@ -73,6 +73,46 @@ describe('ownerOnlyVerdict: exactly the user and SYSTEM (Administrators accepted
   })
 })
 
+// The read is compared by full SID, whatever account the user is: the
+// built-in Administrator (RID 500, which SDDL writes as LA; CI's runner
+// account) passes as any user does, and an SDDL abbreviation or an account
+// name in place of a SID is never taken for the user, SYSTEM or the
+// Administrators group.
+describe('owner-only reads compare full SIDs, never names or SDDL abbreviations', () => {
+  const ADMIN_500 = 'S-1-5-21-1111111111-2222222222-3333333333-500'
+  const asRead = (owner: string, sids: string[]) => ({ dir: 'C:\\a', error: null, owner, protected: true, rules: sids.map((s) => rule(s)) })
+
+  it('the built-in Administrator passes as any user', async () => {
+    const out = await secureFoldersWindows(['C:\\Data\\hooks'], async () => JSON.stringify({ user: ADMIN_500, folders: [asRead(ADMIN_500, [ADMIN_500, OWNER_ONLY_SYSTEM_SID])] }))
+    expect(out.map((r) => [r.ok, r.detail])).toEqual([[true, 'owner-only']])
+  })
+
+  it('an abbreviation or a name where a SID belongs is refused', () => {
+    const cases: Array<[string, string, ReturnType<typeof asRead>]> = [
+      ['the user as LA', 'LA', asRead('LA', ['LA', OWNER_ONLY_SYSTEM_SID])],
+      ['the owner as LA', ADMIN_500, asRead('LA', [ADMIN_500, OWNER_ONLY_SYSTEM_SID])],
+      ['the user\'s entry as LA', ADMIN_500, asRead(ADMIN_500, ['LA', OWNER_ONLY_SYSTEM_SID])],
+      ['SYSTEM as SY', ADMIN_500, asRead(ADMIN_500, [ADMIN_500, 'SY'])],
+      ['an extra SY entry', ADMIN_500, asRead(ADMIN_500, [ADMIN_500, OWNER_ONLY_SYSTEM_SID, 'SY'])],
+      ['Administrators as BA', ADMIN_500, asRead(ADMIN_500, [ADMIN_500, OWNER_ONLY_SYSTEM_SID, 'BA'])],
+      ['SYSTEM by name', ADMIN_500, asRead(ADMIN_500, [ADMIN_500, 'NT AUTHORITY\\SYSTEM'])],
+      ['the user by name', 'WINBOX\\Administrator', asRead('WINBOX\\Administrator', ['WINBOX\\Administrator', OWNER_ONLY_SYSTEM_SID])],
+    ]
+    for (const [name, user, read] of cases) expect(ownerOnlyVerdict(read, user).ok, name).toBe(false)
+  })
+
+  it('the script reads the user, the owner and every entry as SecurityIdentifier values, never names or SDDL', async () => {
+    let script = ''
+    await secureFoldersWindows(['C:\\x'], async (s) => { script = s; return '' })
+    expect(script).toMatch(/\$user = \[Security\.Principal\.WindowsIdentity\]::GetCurrent\(\)\.User\n/)
+    expect(script).toMatch(/\$r\.owner = \$a\.GetOwner\(\[Security\.Principal\.SecurityIdentifier\]\)\.Value/)
+    expect(script).toMatch(/\$a\.GetAccessRules\(\$true, \$true, \[Security\.Principal\.SecurityIdentifier\]\)/)
+    expect(script).toMatch(/sid = \$x\.IdentityReference\.Value/)
+    expect(script).toMatch(/user = \$user\.Value/)
+    expect(script).not.toMatch(/NTAccount|Sddl|Translate/i)
+  })
+})
+
 describe('secureFoldersWindows: one PowerShell call for every folder, in order', () => {
   it('hands the folders to one call through the environment, never inside the script, and reads each verdict', async () => {
     const dirs = ['C:\\Data\\hooks', 'C:\\Lad\\app-folder', 'C:\\Lad\\app-folder\\copy-abc']

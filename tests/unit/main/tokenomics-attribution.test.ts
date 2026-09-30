@@ -15,6 +15,7 @@ import { FakeTkWorkerTransport } from '../../../src/main/tokenomics/tk-worker-tr
 import type { ToTkWorker } from '../../../src/main/tokenomics/tk-worker-transport'
 import { harness, claudeSnapshot } from '../../wp1/accounts-harness'
 import indexSource from '../../../src/main/index.ts?raw'
+import ptyManagerSource from '../../../src/main/pty-manager.ts?raw'
 import { isValidProfileId } from '../../../src/shared/profile-id'
 
 const U1 = '0b6f3c2e-9d41-4f8a-a1c2-3e4d5f607182'
@@ -350,12 +351,14 @@ describe('the account a Claude launch profile is linked to (MP10)', () => {
   })
 })
 
-/** main's source with its comments removed, so a commented-out line fails. */
-const code = indexSource
+/** A source with its comments removed, so a commented-out line fails. */
+const uncommented = (source: string) => source
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .split(/\r?\n/)
   .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1'))
   .join('\n')
+const code = uncommented(indexSource)
+const ptyCode = uncommented(ptyManagerSource)
 
 describe('main composes the attribution beside the transcript binder (MP10)', () => {
   it('both transcript-path sources reach the attribution, whether logging is on or off', () => {
@@ -365,9 +368,14 @@ describe('main composes the attribution beside the transcript binder (MP10)', ()
     expect(code).toMatch(/import \{[^}]*\bgetClaudeProfileId\b[^}]*\} from '\.\/claude-account-identity'/)
     expect(code).toMatch(/getProfilesRoot, getProfileConfigDir, isValidProfileId \} from '\.\/account-profiles'/)
     // The route calls the attribution first, then the binder (which is null
-    // with logging off, so it cannot gate the attribution).
-    const route = /const routeTranscriptPath = \(sessionId: string, path: string\) => \{\s*attributeTranscript\(sessionId, path\)\s*getTranscriptBinder\(\)\?\.notifyTranscriptPath\(sessionId, path\)\s*\}/
+    // with logging off, so it cannot gate the attribution). P3.10: through
+    // pty-manager's routeHookTranscriptPath, which keeps a Codex session's
+    // path (its rollout) to that session and hands every other one to the
+    // attribution, then the binder (behaviour: pty-codex-hooks.test.ts).
+    expect(code).toMatch(/import \{[^}]*\brouteHookTranscriptPath\b[^}]*\} from '\.\/pty-manager'/)
+    const route = /const routeTranscriptPath = \(sessionId: string, path: string\) => \{\s*routeHookTranscriptPath\(sessionId, path, \{\s*attribute: attributeTranscript,\s*bind: \(sid, p\) => \{ getTranscriptBinder\(\)\?\.notifyTranscriptPath\(sid, p\) \},\s*\}\)\s*\}/
     expect(code).toMatch(route)
+    expect(ptyCode).toMatch(/export function routeHookTranscriptPath\([\s\S]*?\): void \{\s*if \(noteCodexHookTranscript\(sessionId, transcriptPath\)\) return\s*claude\.attribute\(sessionId, transcriptPath\)\s*claude\.bind\(sessionId, transcriptPath\)\s*\}/)
     // The hooks gateway and the statusline both feed the route.
     expect(code).toMatch(/onTranscriptPath: routeTranscriptPath/)
     expect(code).toMatch(/setTranscriptPathSink\(routeTranscriptPath\)/)
