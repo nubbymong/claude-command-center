@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "b68a97d884f60ddff07d29e4a02658f157fe4e82875936aad50ad142b083a1e3",
-  "manifestHead": "d86fd80f5b00e98e921fbf6d12126a73b8969ee1",
+  "manifestPathDigest": "b03b73c6daab77c834a7d21073b50a03492ccf4ddf54c91beb1c3dfdfa17b888",
+  "manifestHead": "a840bd99ee5844ce786a21ec858469d36216ba12",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -330,7 +330,7 @@
       ],
       "category": "RESUME-PICKER",
       "disposition": "replace",
-      "evidence": "WP2 commit 4: launchTarget (the cmd.exe /s route, as spawn.ts codexCmdExeTarget) and isResumeId added; buildResumeArgs resumes only a UUID; parsing unchanged; tests/unit/scripts/codex-resume-picker.test.ts (WP1.68, WP1.38); WP2 PR 3 P3.5 (row 32, parity): walkRollouts takes the project's git worktrees (listWorktrees, parseWorktrees, worktreeLabelFor, as the Claude picker) and the local date folders too; loadWorkNames, displayText and buildPickerRows build every shown row as plain text; writePick, childEnv and resolveRetargetCwd (WP1.68); tests/unit/scripts/codex-resume-picker-worktrees.test.ts; WP2 PR 3 P3.5 fix round 1: every decision is recorded whole (a new owner-only file renamed over the pick file), and the walk follows no link at any level (WP1.68); tests/unit/scripts/codex-resume-picker-worktrees.test.ts; WP2 PR 3 P3.5 fix round 1 (thesis 19): listWorktrees runs git by an absolute path from PATH's absolute entries (findGit, as the reviewer), never by bare name or through a shell, with NoDefaultCurrentDirectoryInExePath=1 on Windows and a hardened command line, keeps only absolute worktree paths with no control character, and fails safe to the configured folder (WP1.68); tests/unit/scripts/codex-resume-picker-worktrees.test.ts; WP2 PR 3 P3.10 round 1 (ADR-009 pass 1, spec, quality and VM findings) (WP1.68): a conversation another open tab is on is marked, and a refused resume of one is said to be open in another tab (V2); tests/unit/scripts/codex-resume-picker-open-elsewhere.test.ts; WP2 PR 3 P3.12 (rows 31, 32, 65; logs and GitHub context; parity) (WP1.68): reads the name file next to a listed rollout and leads a row with it before the session-state name; tests/unit/scripts/codex-resume-picker-names.test.ts",
+      "evidence": "WP2 commit 4: launchTarget (the cmd.exe /s route, as spawn.ts codexCmdExeTarget) and isResumeId added; buildResumeArgs resumes only a UUID; parsing unchanged; tests/unit/scripts/codex-resume-picker.test.ts (WP1.68, WP1.38); WP2 PR 3 P3.5 (row 32, parity): walkRollouts takes the project's git worktrees (listWorktrees, parseWorktrees, worktreeLabelFor, as the Claude picker) and the local date folders too; loadWorkNames, displayText and buildPickerRows build every shown row as plain text; writePick, childEnv and resolveRetargetCwd (WP1.68); tests/unit/scripts/codex-resume-picker-worktrees.test.ts; WP2 PR 3 P3.5 fix round 1: every decision is recorded whole (a new owner-only file renamed over the pick file), and the walk follows no link at any level (WP1.68); tests/unit/scripts/codex-resume-picker-worktrees.test.ts; WP2 PR 3 P3.5 fix round 1 (thesis 19): listWorktrees runs git by an absolute path from PATH's absolute entries (findGit, as the reviewer), never by bare name or through a shell, with NoDefaultCurrentDirectoryInExePath=1 on Windows and a hardened command line, keeps only absolute worktree paths with no control character, and fails safe to the configured folder (WP1.68); tests/unit/scripts/codex-resume-picker-worktrees.test.ts; WP2 PR 3 P3.10 round 1 (ADR-009 pass 1, spec, quality and VM findings) (WP1.68): a conversation another open tab is on is marked, and a refused resume of one is said to be open in another tab (V2); tests/unit/scripts/codex-resume-picker-open-elsewhere.test.ts; WP2 PR 3 P3.12 (rows 31, 32, 65; logs and GitHub context; parity) (WP1.68): reads the name file next to a listed rollout and leads a row with it before the session-state name; tests/unit/scripts/codex-resume-picker-names.test.ts; WP2 PR 3 P3.12 round 1 (rows 31, 32, 65; ADR-009 pass 1, spec, quality and VM findings) (WP1.68): a conversation's title is its first user message as the conversation index reads it, never the context Codex injects (AGENTS.md, the environment); tests/unit/scripts/codex-resume-picker.test.ts, tests/unit/scripts/codex-resume-picker-names.test.ts",
       "note": "re-dispositioned in WP2 commit 4 (was retain)"
     },
     {
@@ -737,11 +737,12 @@
     {
       "path": "src/main/ipc/github-handlers.ts",
       "predicates": [
+        "P05",
         "P14"
       ],
       "category": "TELEMETRY",
       "disposition": "replace",
-      "evidence": "WP2 PR 3 P3.12 (rows 31, 32, 65; logs and GitHub context; parity) (WP1.68): the Session Context handler reads a Codex session's own rollout (loadSessionTranscriptEvents), Claude's folder as before; tests/unit/github/codex-rollout-loader.test.ts",
+      "evidence": "WP2 PR 3 P3.12 (rows 31, 32, 65; logs and GitHub context; parity) (WP1.68): the Session Context handler reads a Codex session's own rollout (loadSessionTranscriptEvents), Claude's folder as before; tests/unit/github/codex-rollout-loader.test.ts; WP2 PR 3 P3.12 round 1 (rows 31, 32, 65; ADR-009 pass 1, spec, quality and VM findings) (WP1.68): the Session Context reports the session's assistant (a provider conditional) and reads the recent files relative to the session's folder, both assistants; tests/unit/renderer/session-context-heading.test.ts, tests/unit/github/tool-call-inspector.test.ts",
       "note": "newly names Codex in WP2 PR 3 P3.12"
     },
     {
@@ -797,6 +798,16 @@
       "disposition": "added",
       "evidence": "new WP2 PR 3 P3.12 module (src/main/logging/codex-rollout-normalizer.ts): the Codex rollout normalizer beside Claude's, the conversation as Codex shows it (legacy and paginated history), a tool_call row per call with Claude's bounded preview, injected context, reasoning and tool output skipped, an unknown record kept capped; its line reader is shared with the GitHub Session Context (WP1.68); tests/unit/logging/codex-rollout-normalizer.test.ts",
       "note": "created by WP2 PR 3 P3.12; pure"
+    },
+    {
+      "path": "src/main/logging/indexing-gaps.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "TELEMETRY",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.12 (rows 31, 32, 65; the fixes from the reviews and the VM checks) module (src/main/logging/indexing-gaps.ts): the Codex conversations written while not indexed, by rollout id, kept in the app data folder (coalesced, atomic, flushed at quit), cleared once a run binds one; a damaged or full record fails toward not indexing; no later run indexes what was written then (WP1.68); tests/unit/logging/indexing-gaps.test.ts, tests/unit/main/pty-codex-logs.test.ts",
+      "note": "created by WP2 PR 3 P3.12 (fixes)"
     },
     {
       "path": "src/main/logging/log-supervisor.ts",
@@ -2102,6 +2113,16 @@
       "note": "copy only"
     },
     {
+      "path": "src/renderer/components/github/sections/recent-files-heading.ts",
+      "predicates": [
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.12 round 1 (rows 31, 32, 65; ADR-009 pass 1, spec, quality and VM findings) module (src/renderer/components/github/sections/recent-files-heading.ts): the GitHub Session Context's recent-files heading names the session's own assistant (WP1.68); tests/unit/renderer/session-context-heading.test.ts",
+      "note": "created by WP2 PR 3 P3.12 round 1; pure"
+    },
+    {
       "path": "src/renderer/components/logs/ChatTranscriptView.tsx",
       "predicates": [
         "P05",
@@ -2954,6 +2975,16 @@
       "note": "picker options, launch plan, refusal wording, the restart default per provider"
     },
     {
+      "path": "src/renderer/utils/logging-consent.ts",
+      "predicates": [
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.12 round 1 (rows 31, 32, 65; ADR-009 pass 1, spec, quality and VM findings) module (src/renderer/utils/logging-consent.ts): when the conversation indexing notice is due: never seen, or once more for a Codex user whose seen notice predates Codex's indexing (a notice version) (WP1.35); tests/unit/renderer/logging-consent.test.tsx",
+      "note": "created by WP2 PR 3 P3.12 round 1; pure"
+    },
+    {
       "path": "src/renderer/utils/sessionLaunch.ts",
       "predicates": [
         "P05",
@@ -3050,6 +3081,16 @@
       "note": "created by WP2 PR 3 P3.11 round 1; moved out of sanitize-restored-spawn-options.ts, which re-exports it"
     },
     {
+      "path": "src/shared/github-types.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "TELEMETRY",
+      "disposition": "replace",
+      "evidence": "WP2 PR 3 P3.12 round 1 (rows 31, 32, 65; ADR-009 pass 1, spec, quality and VM findings) (WP1.68): the Session Context result carries the session's assistant, which the recent-files heading names; Claude's context unchanged otherwise; tests/unit/renderer/session-context-heading.test.ts",
+      "note": "newly names Codex in WP2 PR 3 P3.12 round 1"
+    },
+    {
       "path": "src/shared/ipc-channels.ts",
       "predicates": [
         "P02",
@@ -3059,6 +3100,16 @@
       "disposition": "replace",
       "evidence": "tests/wp1/legacy-codex-retired.test.ts (WP1.57): no identifier or key is CODEX_STATUS/LOGIN/LOGOUT/TEST_CONNECTION and no string (folded where constant) is one of the four codex:* channels anywhere in the app source (removed in WP2 commit 6g); the tree gate is tests/wp1/legacy-codex-gate.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): provider-neutral PROVIDER_ACCOUNTS_USAGE_STREAM and PROVIDER_ACCOUNTS_USAGE_ONE, and ACCOUNT_USAGE_KNOWN_LABELS (WP1.57); tests/wp1/provider-ipc.test.ts; WP2 P3 usage track MP8 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): PROVIDER_ACCOUNTS_USAGE_STREAM_STOP, provider-neutral (WP1.57); tests/wp1/provider-ipc.test.ts; WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): TOKENOMICS2_ACCOUNTS (WP1.57); tests/unit/tokenomics/tokenomics2-handlers.test.ts",
       "note": "Codex auth channels retired; provider-neutral channels added; codex-review channels retained"
+    },
+    {
+      "path": "src/shared/logging-consent-version.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.12 (rows 31, 32, 65; the fixes from the reviews and the VM checks) module (src/shared/logging-consent-version.ts): the conversation indexing notice version, shared by the renderer notice and the run gate that records a Codex run only once it was seen (WP1.35); tests/unit/logging/should-register-run.test.ts, tests/unit/renderer/logging-consent.test.tsx",
+      "note": "created by WP2 PR 3 P3.12 (fixes); a constant"
     },
     {
       "path": "src/shared/model-registry.ts",
@@ -4244,6 +4295,17 @@
       "note": ""
     },
     {
+      "path": "tests/unit/github/codex-rollout-loader-swap.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.12 round 1 (rows 31, 32, 65; ADR-009 pass 1, spec, quality and VM findings) test (tests/unit/github/codex-rollout-loader-swap.test.ts): the Codex GitHub loader reads only the rollout it checked: a day folder swapped for a junction, and the rollout replaced between lstat and open, read nothing (WP1.68)",
+      "note": "created by WP2 PR 3 P3.12 round 1"
+    },
+    {
       "path": "tests/unit/github/codex-rollout-loader.test.ts",
       "predicates": [
         "P01",
@@ -4307,6 +4369,16 @@
       "disposition": "added",
       "evidence": "new WP2 PR 3 P3.12 test (tests/unit/logging/codex-rollout-normalizer.test.ts): the Codex rollout normalizer on real 0.153.4 and 0.155.1 rollouts and the legacy sample: the conversation, the tool calls, what is skipped, the bounds (WP1.68)",
       "note": "created by WP2 PR 3 P3.12"
+    },
+    {
+      "path": "tests/unit/logging/indexing-gaps.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.12 (rows 31, 32, 65; the fixes from the reviews and the VM checks) test (tests/unit/logging/indexing-gaps.test.ts): the Codex conversations written while not indexed, by rollout id, cleared once bound; a damaged or full record fails toward not indexing; written coalesced and at quit (WP1.68)",
+      "note": "created by WP2 PR 3 P3.12 (fixes)"
     },
     {
       "path": "tests/unit/logging/should-register-run.test.ts",
@@ -4693,6 +4765,16 @@
       "disposition": "added",
       "evidence": "WP2 the transient Install/Update Codex tab's shell gets none of the command-button secrets while an ordinary shell still does (WP1.2); tests/unit/main/install-tab-command-secrets.test.ts; WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the comment on what the isolation is (not a boundary against a script running as the same user) is pinned by the same tests; tests/unit/main/install-tab-command-secrets.test.ts",
       "note": "created by WP2 (main refuses every launch of a provider that is off)"
+    },
+    {
+      "path": "tests/unit/main/logging-switch-wiring.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.12 round 1 (rows 31, 32, 65; ADR-009 pass 1, spec, quality and VM findings) test (tests/unit/main/logging-switch-wiring.test.ts): saved settings and saved configs reach applyLoggingSwitches, which stops indexing running sessions of both assistants (WP1.68)",
+      "note": "created by WP2 PR 3 P3.12 round 1"
     },
     {
       "path": "tests/unit/main/logs2-ipc-handlers.test.ts",
@@ -6150,11 +6232,12 @@
     {
       "path": "tests/unit/renderer/logging-consent.test.tsx",
       "predicates": [
+        "P05",
         "P13"
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP2 PR 3 P3.12 (rows 31, 32, 65; logs and GitHub context; parity) (WP1.68): the consent text names Codex's transcripts; tests/unit/renderer/logging-consent.test.tsx",
+      "evidence": "WP2 PR 3 P3.12 (rows 31, 32, 65; logs and GitHub context; parity) (WP1.68): the consent text names Codex's transcripts; tests/unit/renderer/logging-consent.test.tsx; WP2 PR 3 P3.12 round 1 (rows 31, 32, 65; ADR-009 pass 1, spec, quality and VM findings) (WP1.35): the notice once more for a Codex user (codexEnabled) whose seen notice predates Codex's indexing, never for a Claude-only user; tests/unit/renderer/logging-consent.test.tsx",
       "note": "newly names Codex in WP2 PR 3 P3.12"
     },
     {
@@ -6522,6 +6605,17 @@
       "disposition": "replace",
       "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json; WP2 PR 3 P3.12 (rows 31, 32, 65; logs and GitHub context; parity) (WP1.68): a local Codex session's logs are indexed; tests/unit/renderer/session-capabilities.test.ts",
       "note": "re-dispositioned in WP2 PR 3 P3.12 (was retain)"
+    },
+    {
+      "path": "tests/unit/renderer/session-context-heading.test.ts",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.12 round 1 (rows 31, 32, 65; ADR-009 pass 1, spec, quality and VM findings) test (tests/unit/renderer/session-context-heading.test.ts): the recent-files heading names the session's assistant, and the handler reads the list relative to the session's folder (WP1.68)",
+      "note": "created by WP2 PR 3 P3.12 round 1"
     },
     {
       "path": "tests/unit/renderer/session-dialog-codex-account.test.tsx",

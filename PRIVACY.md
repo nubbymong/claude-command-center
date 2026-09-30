@@ -67,8 +67,10 @@ credentials are used only to talk to Anthropic (below) and are never sent
 anywhere else. The app does not read Codex's credential files.
 
 Indexing your transcripts for the Logs page can be switched off in **Settings →
-General** (Index conversation logs). The Tokenomics cost index is separate and
-is not affected by that switch.
+General** (Index conversation logs), or for one saved config in its own
+settings; switching it off stops indexing at once, sessions already running
+too, and switching it on applies to sessions started after.
+The Tokenomics cost index is separate and is not affected by that switch.
 
 ## Codex accounts and sign-ins
 

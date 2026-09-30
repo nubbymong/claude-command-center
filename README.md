@@ -65,7 +65,7 @@ A background indexer reads all of your transcripts — subagent and sidechain fi
   <img src="docs/screenshots/shot-logs.png" alt="The Logs viewer with its timeline rail" width="88%">
 </p>
 
-The Conductor indexes Claude's own transcripts, and a local Codex session's own conversation, and renders them back as a readable chat — messages, tool calls, thinking. A **timeline rail** beside the transcript scrubs the whole conversation; click to jump. **Full-text search** spans every conversation and lands you on the matching turn. A per-session **Conversation** tab live-follows the running session. Deleting the index never touches your conversations, which stay in `~/.claude/projects` (and, for Codex, in each Codex account's sessions folder).
+The Conductor indexes Claude's own transcripts, and a local Codex session's own conversation, and renders them back as a readable chat — messages and tool calls. A **timeline rail** beside the transcript scrubs the whole conversation; click to jump. **Full-text search** spans every conversation and lands you on the matching turn. A per-session **Conversation** tab live-follows the running session. Deleting the index never touches your conversations, which stay in `~/.claude/projects` (and, for Codex, in each Codex account's sessions folder).
 
 ## Memory — catch the drift before it costs you context
 

@@ -146,8 +146,8 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 
 | # | Feature | Status | Settled by | Gap | PR |
 |---|---|---|---|---|---|
-| 31 | Logs history, search and transcript | DONE (P3.12, d86fd80f; mocked): a local Codex session's run is recorded under the gates a Claude run has; its transcript is the rollout its own watcher claims in its own realm (the Codex log binder: held until the run is recorded, exact or heuristic, let go when the claim is, never a conversation another tab holds), tailed with the Codex normalizer by the binding's stored format; the Logs page, search, the per-session pane and the Logs button (live on a Codex tab: ADR-018 D3's dimmed Codex tool ends); a Codex config's Index conversation logs field | Parity: index each realm's rollouts; realms never cross | verification: the VM check (PR 3 gate 6) | 3 |
-| 32 | Resume picker | DONE (P3.5, 44729f29 and its fix rounds; mocked; VM c2c42e22; the name file P3.12, d86fd80f; mocked): every git worktree's conversations, named and started in their own worktree; a name given to a Codex session is written next to the rollout it is exactly on (a rename, or a remembered name at the exact claim), inside its realm and never through a link, and Codex's picker leads with it, as Claude's does | Parity | verification: the name file in the picker after the tab closes, on the VM (PR 3 gate 6) | 3 |
+| 31 | Logs history, search and transcript | DONE (P3.12, d86fd80f and its fixes; mocked; VM at ff7be273 (WINDOWS_1, real Codex 0.155.1 and 0.153.4), and its re-check with the fixes: indexing, search, the switches for new sessions and a Claude session unchanged PASS): a local Codex session's run is recorded under the gates a Claude run has; its transcript is the rollout its own watcher claims in its own realm (the Codex log binder: held until the run is recorded, exact or heuristic, let go when the claim is, never a conversation another tab holds), tailed with the Codex normalizer by the binding's stored format; the Logs page, search, the per-session pane and the Logs button (live on a Codex tab: ADR-018 D3's dimmed Codex tool ends); a Codex config's Index conversation logs field; a logging switch turned off stops indexing the running sessions it covers, both assistants, every launch reads the switches as saved, and turning one on applies to sessions started after it; what a Codex session writes while it is not indexed is never indexed, whichever tab later resumes the conversation; a new run continues a conversation the same session indexed before, from where it was read (Codex; Claude's resume indexes its transcript again, recorded for P3.16); a Codex tail reads only the file its watcher claimed; a user_message of another kind than plain is not the user's words; a Codex run is recorded once the indexing notice naming Codex was seen, which a Codex user who saw only the earlier notice is shown once more | Parity: index each realm's rollouts; realms never cross | verification: the VM re-check of the fixes (PR 3 gate 6); the owner's screenshot review; the fresh PR-level ADR-009 pass (P3.12 is quarantined under ADR-009: its bounded rounds are exhausted); the SSH live matrix at PR 3's head (no Codex case: a Codex session over SSH is refused); the native SQL tests in CI (the identity column, and the prior bindings a continuation reads) | 3 |
+| 32 | Resume picker | DONE (P3.5, 44729f29 and its fix rounds; mocked; VM c2c42e22; the name file P3.12, d86fd80f and its fixes; mocked; VM at ff7be273 (WINDOWS_1, real Codex 0.155.1 and 0.153.4), and its re-check with the fixes: the name file only at an exact claim, and in the picker after the tab closed, PASS): every git worktree's conversations, named and started in their own worktree; a name given to a Codex session is written next to the rollout it is exactly on (a rename, or a remembered name at the exact claim), inside its realm and never through a link, and Codex's picker leads with it, as Claude's does; the picker titles a conversation by its first user message as the index reads it, never the context Codex injects (AGENTS.md, the environment); the name file is written only into the realm's real day folder (the realm's real path taken before its folders are walked), a new file elsewhere, or one whose write fails, taken back (a path check: see P3.12's limits) | Parity | verification: the VM re-check of the fixes (PR 3 gate 6); the owner's screenshot review; the fresh PR-level ADR-009 pass (P3.12 is quarantined under ADR-009: its bounded rounds are exhausted); the SSH live matrix at PR 3's head (no Codex case: a Codex session over SSH is refused) | 3 |
 | 33 | Resume in the exact realm | DONE | PLAN A10 | verification: real, realm B never lists realm A | 2, v4 |
 | 34 | Exact resume on app relaunch | PARTIAL (P3.5, 90a717df; mocked; VM c2c42e22): a restored session resumes its own conversation in its own realm, bypassing the picker | Parity: resume by the claimed session id, `codex resume <id>` in the same realm | verification: the SSH live matrix; a conversation carried over by a staged Sign in again on the VM (owner action) | 3 |
 | 35 | Restart and Switch keep the conversation | PARTIAL (P3.5, 90a717df, Restart; P3.6, 4439d7e2, Switch; mocked): Restart resumes the conversation the session kept (VM c2c42e22); a Switch carries it into the new account and resumes it | Parity (Claude's Restart resumes); canvas 2026-09-26 for Switch | verification: the Switch half on the VM with a real CLI (row 22) | 3 |
@@ -190,7 +190,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 62 | Extra CLI arguments | DONE (P3.11, 28739b19; round 1, 057fa776; mocked): a Codex config has the Extra CLI arguments field (the one field, in the Codex section), saved as `codexOptions.extraArgs`; each word is one launch argument after every flag the app sets; one rule refuses, in any spelling and under every alias the supported CLIs give them, the flags the app sets (the working folder and `--worktree` included), the account, provider and endpoint settings, and a word Codex reads as one of its commands; the dialog says why under the field and Save waits; a saved value that is refused is dropped at launch (logged) and the session starts without it; done: the VM run at 919385af (WINDOWS_1, real Codex 0.153.4 and 0.155.1): all five checks PASS on both versions (extra arguments on the direct and npm `.cmd` routes, through the picker and on a resume by id; a refused value said in the dialog, Save waiting; refused saved values dropped at launch with a log line, the session starting without them; the Claude Code field with the same dialog check and its launch unchanged), e2e 81; the round-1 re-review (spec, code quality) and ADR-009 pass 2 at 919385af PASS, the P3.11 verdict PASS | Parity: the same field and IPC character guard, plus a block-list of the flags the app manages and of any setting that changes the account, provider or endpoint | verification: the owner's screenshot review of the field and its message, both assistants, both themes (gallery `.ccc-canvas/screens/p3.11-919385af/`); the SSH live matrix at PR 3's head (no Codex case: a Codex session over SSH is refused); the PR-level ADR-009 pass on PR 3's final head | 3 |
 | 63 | Hooks gateway and notification rules | PARTIAL, built as the default pending the owner's decision (P3.10, d8f538b1; mocked): each local Codex launch gets six command hooks running the app's forwarder, which posts each event to the Hooks gateway as a Claude http hook does (loopback, the session's token, the size cap, redaction); Codex asks the user to review them once per account. Notification rules: the one rule on a hook event (Attention Pulse, Claude's idle Notification, filter-only) gets from a Codex idle mark what Claude's idle_prompt gives it (round 1). Round 1 (afae03f7) fixes ADR-009 pass 1 (the forwarder never through an environment proxy; no PowerShell call of a path it reads as a wildcard or cmd.exe expands; the hook folders in the app's own data folder, owner-only, read only at their real path) and gives an npm-installed Codex its hooks from a resources folder with a space (a checked plain-path copy). VM at 6d576634: all six events at the gateway on both versions and routes, the review once per account; the round 1 re-check passed V3 (the plain-path copy through the npm shim from the default resources folder, reused across starts) and S6 (a user's own hooks still run). Round 2 (5b178c7a): both plain-copy folders owner-only, bigint file ids, the root hardened once a run; VM at 6b465aef: both plain-copy folders and the root owner-only (R4), the picker told only of tabs on the same account (R10). Round 3 (18029bb0): a hook folder the app did not make this run is used only once it belongs to the user, and the root is hardened again when made again in the run. VM at the round-3b build: a hook folder from an earlier run used once it is the user's (an admin account). Rounds 3b and 4: the hook wrapper and the picker resolve their helpers from fixed locations; the hook folders are prepared asynchronously and only while Codex is on, by one call of the owner-only rule (on Windows one PowerShell call), used only when read back as this user's alone, and checked again before first use; VM at the round-4 build: the wrapper, the folders' real rights, the app's start with Codex on and off, an early launch that waited and got its hooks. Round 5: any folder name makes the round trip exactly, a name ending in a dot or a space is refused, a failed preparation waits five minutes before the same folders are tried again, and a launch waits only while the Hooks gateway listens (and for the wiring) | Parity: route Codex `notify` and hook events. Codex reviews hooks given at launch, which Claude does not, so the trust step cannot carry over as it is | owner: the default (section 10, question 4); verification: the VM re-run of the rule's real round trip at the final build; a hook folder from an earlier run on a standard account (VM); ADR-009 on rounds 4 and 5 and the PR-level pass on the final head; the POSIX hook runner; the SSH live matrix | 3 |
 | 64 | Partner terminal wording | DONE | P2 | verification: per OS | 2, v4 |
-| 65 | GitHub session context | DONE (P3.12, d86fd80f; mocked): a Codex session reads the rollout its watcher holds, checked again inside its realm, with Claude's bounded tail, for the unchanged reference scanner and file-signal inspector (`src/main/github/session/codex-rollout-loader.ts`) | Parity: read the session's realm rollouts | verification: the VM check (PR 3 gate 6) | 3 |
+| 65 | GitHub session context | DONE (P3.12, d86fd80f and its fixes; mocked; VM at ff7be273 (WINDOWS_1, real Codex 0.155.1 and 0.153.4), and its re-check with the fixes: a Codex session's commands and edited files, nothing before its first turn, the heading naming Codex, PASS): a Codex session reads the rollout its watcher holds, checked again inside its realm, with Claude's bounded tail, for the unchanged reference scanner and file-signal inspector (`src/main/github/session/codex-rollout-loader.ts`), read only from the realm's real day folder (a path check: see P3.12's limits); both assistants: a recent file shown as plain text, relative to the session's folder when inside it, once per file, under a heading that names the session's assistant; after Switch Account the earlier account's rollout is not read | Parity: read the session's realm rollouts | verification: the VM re-check of the fixes (PR 3 gate 6); the owner's screenshot review; the fresh PR-level ADR-009 pass (P3.12 is quarantined under ADR-009: its bounded rounds are exhausted); the SSH live matrix at PR 3's head (no Codex case: a Codex session over SSH is refused) | 3 |
 | 66 | Packaged smoke | PARTIAL: Windows only, an unsigned candidate on a used VM | OD20 D8; WP1.63 | verification (release level; owner hosts) | 4 |
 | 67 | E2E mode matrix | PARTIAL | WP1.1, WP1.60 | implementation (restart, enable/disable, real launch cases); verification | 2; 4 |
 | 68 | Insights | OPEN: Claude only; Claude's Insights types Claude Code's own `/insights` in a terminal (`src/main/insights-runner.ts:234-237`) | Parity, recorded 2026-09-26 (the parity reset's "Resolved by parity" list, sessions batch; not one of that day's open questions): a Conductor-native Codex report, run with `codex exec`. A mockup comes before the build (section 10) | implementation | 4 |
@@ -354,7 +354,7 @@ from P3.1, and then only that row.
 | P3.9 Sentinel for Codex | 42, 39 (live read) | Y | N | APPROVED |
 | P3.10 Activity, attention, Watchdog and hooks | 43, 46, 47, 63 | Y | Y | APPROVED |
 | P3.11 Extra CLI arguments | 62 | Y | Y | APPROVED |
-| P3.12 Logs and GitHub context | 31, 65 | Y | Y | APPROVED |
+| P3.12 Logs and GitHub context | 31, 32 (the name file), 65 | Y | Y | APPROVED |
 | P3.13 Multi Spawn and Quick Start | 72 | Y | N | APPROVED |
 | P3.14 Usage follow-up: Codex credits | 17 | N (Y if the read changes) | N | APPROVED |
 | P3.15 Terminal verification | 44, 70, 71, 73 | N | N | APPROVED |
@@ -588,9 +588,11 @@ reports; at stop a pick file a picker left half-written is removed before
 the folder, never recursively. The tests remove recursively only folders
 they made themselves.
 Limits and deviations, recorded, none a UX decision: the name file Claude's
-picker prefers (written by the logs binder against an exact bind) is not
-written for Codex, so a Codex name comes from the session state while the
-session is open or saved; it rides with Codex runs in the logs (P3.12).
+picker prefers (written by the logs binder against an exact bind) is written
+for Codex too (P3.12), next to the rollout a session is exactly on, so a
+renamed Codex conversation keeps its name after its tab closes; before an
+exact claim a Codex name comes from the session state while the session is
+open or saved (P3.12's limits).
 Two NEW sessions of one account in one folder, launched directly or choosing
 New conversation in the picker, started within seconds of each other, can
 still take each other's rollout until the exact claim from the SessionStart
@@ -2025,15 +2027,28 @@ folder started within seconds (P3.5's limit, until the session's own hook
 claims exactly) may index each other's conversation until the claim is
 corrected, which retires that tail (what was indexed stays, as a Claude
 heuristic bind's does); a tab on a conversation another tab holds does not
-index it, and nothing offers it again when the holder closes (that tab
-indexes its next claim); the name file is written against an exact claim
+index it while the holder runs, and indexes it once the holder stops; the
+name file is written against an exact claim
 only, so a new conversation in a session whose hooks were declined is named
 in the picker only while its tab is open or saved, and after Switch Account
 the copy in the other account's folder has no name file until the session is
-renamed again (known issue, with that workaround); a resumed conversation's
-whole rollout is indexed again under the new run, as a resumed Claude
-transcript is; a Codex tab that has claimed nothing yet reads no Session
-Context.
+renamed again (known issue, with that workaround); a Codex tab that has
+claimed nothing yet reads no Session Context; a Codex conversation written
+while it was not indexed is indexed, when a run next binds it, from its end as
+it is then, so what it held before is not indexed either unless the index
+already holds it; a record of those conversations found damaged at start, or
+full, makes every conversation begun before then count as so written until a
+run binds it; the name file and the GitHub loader check paths (the realm's
+real path and its real day folder, the file opened the one looked at), so
+repeated swaps of a day folder between a junction and the real folder, which
+need write access to the account's sessions folder, can still let a name file
+be written, or a stray temporary file be left, outside the realm, or another
+file be read: inherent to a path check on a folder the user's own processes
+can change (Node has no directory-handle-relative open or handle-to-path call
+on Windows to do better without a native module); a resumed
+Claude transcript is indexed again under the new run (Claude's path,
+recorded for P3.16), while a resumed Codex conversation continues from what
+was indexed.
 Deviations: a separate `onRollout` listener rather than a path on
 `onClaim`/`onShared` (whose payloads stay as they are); a worker message
 of its own for a claim let go (Claude has no release); the Memory rail kept
@@ -2044,17 +2059,126 @@ false).
 ADR-009: yes (the path the worker tails, the name file written into a
 realm's folder, the picker's and the Session Context's reads of a realm's
 files; no new IPC channel, and the rename channel routes a Codex session to
-its exact claim). SSH radius: yes; `pty-manager.ts` changes the Codex
+its exact claim; every logs2 channel answers only the app's own window, its
+main frame, by the account handlers' check, `trusted-sender.ts`).
+SSH radius: yes; `pty-manager.ts` changes the Codex
 branch (the binder told of each launch and claim), the shared run block (the
 Codex run recorded, Claude's discovery kept to Claude runs), the exit (the
 binder told) and a bounded record for the Session Context; no SSH path
 changes (a Codex session over SSH is refused before anything is built, and
-the gate still refuses SSH runs). Owed: the VM check on WINDOWS_1 with real
-Codex 0.153.4 and 0.155.1 (the Logs page, search, the Logs button and pane on
-a Codex tab, a resume and a conversation switched inside the TUI, hooks
-trusted and declined; the name file in the picker after the tab closes; a
-Codex tab's Session Context); the native SQL tests in CI; the owner's
-screenshot review; the ADR-009 pass; the SSH live matrix at PR 3's head.
+the gate still refuses SSH runs; the shared spawn block reads the config's
+switch as saved, marks the conversations a local Codex session not indexed is
+on, and ends the
+open run of a spawn that is not indexed, which an SSH spawn never has; the
+session cleanup clears the Codex log binder's state and re-checks the other
+Codex sessions).
+Reviews of the build (d86fd80f, docs ff7be273): the ADR-009 pass 1, lens A
+PASS (three minor findings and a test gap) and lens B PASS (two minor
+behaviour findings, two coverage findings and one on the consent notice); the
+spec and code-quality reviews PASS with fixes. Reviews of the first fixes:
+code quality PASS (three nits); spec, wording findings; the ADR-009 pass 2,
+lens A and lens B one major finding each, with minor ones. Reviews of the
+second fixes: the ADR-009 pass 3, the last bounded one, lens A PASS (two minor
+findings) and lens B one major finding; spec, one blocker (a changelog
+sentence); code quality PASS with fixes (two minor). P3.12 is QUARANTINED under
+ADR-009: its bounded rounds are exhausted, the third fix list landed without a
+further re-attack, and the fresh PR-level ADR-009 pass covers it. All three fix
+lists are done, below.
+The VM check at ff7be273 (WINDOWS_1, real Codex 0.155.1 direct and 0.153.4
+through the npm shim): (1) a Codex session's turns and tool calls indexed and
+searchable, injected context, reasoning and tool output not: PASS; (2) a
+session started with logging off, per config or globally, records nothing,
+and the consent notice and the onboarding card name Codex: PASS, with
+finding V1 (the switch and running sessions); (3) two tabs, a Switch, Codex's
+/new and /resume: each tab's index only its own conversation, the binding
+following: PASS, with finding V2 (a resumed conversation in search); (4) the
+name file only at an exact claim, and the picker's name after the tab closed:
+PASS, with finding V3 (the picker's titles and injected AGENTS.md text); (5)
+a Codex session's Session Context, its commands and edited files, nothing
+before its first turn: PASS, with two points (its heading, and one file named
+two ways); (6) a Claude session's logs and Session Context unchanged: PASS;
+(7) e2e 81 passed; the VM-only, P3.10, P3.11 and P3.12 files and the native
+files (transcripts-db 46, transcripts-worker 29) exit 0. Its re-check with
+the first fixes (the same versions): V1, V2, V3, the notice once more (B5),
+the Session Context heading and list (A4) and Switch Account's Session
+Context (B2, on 0.153.4) PASS; one finding (turns written while indexing was
+off), fixed in the second list (W4); e2e 81 passed; the vitest and native
+files exit 0 (transcripts-db 49, transcripts-worker 29). Its re-check with the
+second fixes (the same versions): W4, W3, W9, W2 and W7, and the regressions,
+PASS on both; Switch Account's not-carried case (B2) last seen at the re-check
+before.
+The fixes (mocked). The logging switches, both assistants (V1, W3): turning
+Index conversation logs off, in Settings or in a config, stops indexing the
+running sessions it covers at once (their runs end as stopped, their tails
+drain and retire, a Codex session's later claims bind nothing); every launch
+(a new one, a Restart, a Switch Account, a restore) reads the Settings switch
+and the config's own field as saved, so a relaunch while it is off records
+nothing and ends any run the session still had open; turning it on applies to
+sessions started after it, and every text about the switch says so. What a
+Codex session writes while it is not indexed is never indexed (W4, X1-X3):
+every conversation a local Codex session is on while not indexed (logging off
+in Settings or in its config, or before the notice naming Codex was seen) is
+marked by conversation, its rollout id, in a record main keeps in the app's
+data folder whether or not logging is on (written coalesced from a timer,
+atomically, and at quit); any later run that binds a marked conversation, from
+any tab or session, starts at the file's end as it is then, after a divider
+saying the turns while logging was off are not indexed, unless the index
+already holds that file and nothing was written since; once a run has bound
+it, the mark goes. A record found damaged at start is kept aside, and a full
+one keeps every mark until it takes the same rule: every conversation begun
+before then counts as marked until a run binds it. A conversation never so
+written is read as usual. Otherwise a new run continues a conversation (V2,
+W5, W8, X4, Codex) from what the same session's earlier run read of it: the
+same file (by its identity), or after a Switch the conversation's copy in the
+other account where its own first bytes have the digest of the bytes that
+earlier binding read (kept while the worker runs), whatever the earlier file
+holds now; another file at a path is read from its start, and a copy that
+went its own way whole. Claude's resume binds the resumed transcript as
+a new transcript of the new run and indexes it from its start, so its earlier
+turns are listed twice; recorded for P3.16. A Codex tail reads only the file
+its watcher claimed (A1, W6): the file's device and file id ride on the bind
+and are kept across a worker restart, another file at the path is not read
+(its tail retires), and a bind without that identity binds nothing. The
+picker (V3, B6, Q2): a conversation's title is its first user message as the
+index reads it (the plain user_message and the item_completed UserMessage
+events, never the response items, which carry AGENTS.md and the environment;
+a head with no such event falls back to the response items, skipping that
+context), and a user_message of another kind than plain (user_instructions,
+environment_context) is not the user's words, in the index or the picker; a
+test feeds both the same records. The Session Context (A4, W7, B2, both
+assistants): a recent file is shown as plain text, relative to the session's
+folder when inside it, and once per file (by its path, case-folded for a
+Windows folder, and the list keys its rows on that path); the heading names
+the session's assistant; after Switch
+Account the earlier account's rollout is not read until the new launch
+claims one. The name file and the GitHub loader (A2, W2, Q3, A3): the file
+written or read must sit in the realm's real day folder (the realm's real
+path taken before its folders are walked, compared case-folded on Windows); a
+new file elsewhere is taken back, as is one whose write fails (the limits
+above say where a path check stops); the picker's and the loader's same-file
+checks are tested by a swap. The logs2 channels
+answer only the app's own window, its main frame, by the account handlers'
+check; a rename takes the Codex binder's path only while the session runs as
+Codex, and the binder's state goes with the session's resources (Q1). A
+session whose own hook named the conversation is indexed once another tab's
+inferred claim on it is refuted, and a session reading a conversation beside
+a holder that stops holds it then (B1, Q3). A run that goes back to a
+transcript it held (A, B, A) marks it with a divider (Q2). The indexing
+notice (B5, W9): shown once more to a Codex user whose seen notice predates
+Codex's indexing (a notice version), and before the first-config dialog when
+due; a Claude-only user, or one who turned indexing off, sees nothing new;
+main records a Codex run only once that notice was seen. Tests only: an
+unbind stays within the sending session (B3); the rename asks about the
+caller's own session (B4). Mutation: every guard broken alone turns a test red (130 mutants; the one equivalent is recorded).
+Owed: the VM re-check of the third fix list on WINDOWS_1 with real Codex
+0.153.4 and 0.155.1 (a new tab resuming a conversation written while not
+indexed; a conversation begun elsewhere afterwards read whole; the record kept
+aside when damaged; the changelog line); the native SQL tests in CI (the
+identity column and its migration, the prior bindings by session, the latest
+binding at a path); the owner's screenshot review (the VM checks' galleries);
+the fresh PR-level ADR-009 pass (P3.12 is quarantined under ADR-009: its
+bounded rounds are exhausted); the SSH live matrix at PR 3's head (no Codex
+case: a Codex session over SSH is refused).
 
 **P3.13 Multi Spawn and Quick Start.** N copies of a Multi Spawn Codex config,
 one lease each; Quick Start with Codex; a test on the Codex path. Enforcing the
@@ -2089,7 +2213,10 @@ issues), tips, tour and Feature Guide, the changelog entry, the user guide,
 PR body, the ADR-009 verdict and the SSH matrix. Left to this sweep by
 P3.4: the Feature Guide catalogue cards that name both providers,
 `training-steps.ts` lines 90 (the Usage page), 132 (the Accounts section)
-and 748 (the usage meter).
+and 748 (the usage meter). From P3.12: a resumed Claude transcript is
+indexed again under the new run (search lists its earlier turns twice), where
+a resumed Codex conversation continues from what was indexed; Claude's resume
+to be settled the same way, or recorded as a limit.
 
 ## 9. PR 4 outline
 
