@@ -34,6 +34,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { sweepStaleFolders } from '../../stale-folder-sweep'
+import { logWarn } from '../../debug-logger'
 
 // WP2 Codex adapter: the CLI contract, install recipes, the allowlisted
 // subprocess environment, realm paths, the CLI runner and discovery.
@@ -183,9 +184,13 @@ export class CodexProvider implements SessionProvider {
         const scriptsDir = path.join(resourcesDir, 'scripts')
         if (!codexHookCommand(scriptsDir, 'win32', true)) {
           const plainDir = codexPlainWrapperDir(codexLocalAppData(), resourcesDir)
-          if (plainDir) stagePlainCodexHookWrapper(scriptsDir, plainDir, opts?.hardenDir)
+          // Round 2 (R7): said, never silent, when the shim route will have no hooks.
+          if (!plainDir) logWarn('[codex] hooks: the path of the local app data folder is not a plain word, so a Codex installed with npm gets no hooks here')
+          else if (!stagePlainCodexHookWrapper(scriptsDir, plainDir, opts?.hardenDir)) logWarn('[codex] hooks: the plain-path copy of the hook wrapper could not be made (or made owner-only), so a Codex installed with npm gets no hooks until the app starts again')
         }
-      } catch { /* the shim route then has no hooks, as before */ }
+      } catch (err) {
+        logWarn(`[codex] hooks: the plain-path copy of the hook wrapper failed (${(err as Error)?.message ?? err}); a Codex installed with npm gets no hooks until the app starts again`)
+      }
     }
   }
 

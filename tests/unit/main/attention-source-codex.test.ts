@@ -108,6 +108,8 @@ describe('Codex attention: an approval and its own PreToolUse, in either order (
   const TURN = '01a0ef84-4e89-7613-a2b3-d39e98c11bb2'
   const perm = (turn = TURN, tool = 'Bash') => ({ ...ev('c', 'PermissionRequest', { turn_id: turn, tool_name: tool, tool_input: { command: 'x' } }), toolName: tool })
   const pre = (turn = TURN, tool = 'Bash') => ({ ...ev('c', 'PreToolUse', { turn_id: turn, tool_name: tool, tool_input: { command: 'x' }, tool_use_id: 'call_1' }), toolName: tool })
+  const preId = (id: string) => ({ ...ev('c', 'PreToolUse', { turn_id: TURN, tool_name: 'Bash', tool_input: { command: id }, tool_use_id: id }), toolName: 'Bash' })
+  const postId = (id: string) => ({ ...ev('c', 'PostToolUse', { turn_id: TURN, tool_name: 'Bash', tool_use_id: id }), toolName: 'Bash' })
 
   it('PreToolUse first, then the approval: the dot is up while the approval waits', () => {
     const h = harness(new Set(['c']))
@@ -126,22 +128,52 @@ describe('Codex attention: an approval and its own PreToolUse, in either order (
     expect(h.pushed).toEqual([['c', true], ['c', false]])
   })
 
-  it('the hold is used up by that one PreToolUse: the next tool clears', () => {
+  it('round 2 (R3): once its own PreToolUse is taken, only that call\'s PostToolUse ends the approval: another call of the turn clears nothing (lens B\'s parallel-call shape)', () => {
     const h = harness(new Set(['c']))
     routeAttentionEvent(perm(), h.opts)
-    routeAttentionEvent(pre(), h.opts)
-    routeAttentionEvent(pre(), h.opts)
+    routeAttentionEvent(postId('call_0'), h.opts) // an earlier call of the turn finishing before its own starts
+    routeAttentionEvent(preId('call_1'), h.opts) // its own, taken
+    routeAttentionEvent(preId('call_2'), h.opts) // a call running beside it
+    routeAttentionEvent(postId('call_2'), h.opts) // that call done
+    expect(h.pushed).toEqual([['c', true]])
+    routeAttentionEvent(postId('call_1'), h.opts) // the approved call ran
     expect(h.pushed).toEqual([['c', true], ['c', false]])
   })
 
-  it('a PreToolUse of another turn or another tool is not the approved call: it clears', () => {
-    for (const other of [pre('01a0ef84-ffff-7613-a2b3-d39e98c11bb2', 'Bash'), pre(TURN, 'apply_patch')]) {
-      _resetAttentionSourceForTest()
-      const h = harness(new Set(['c']))
-      routeAttentionEvent(perm(), h.opts)
-      routeAttentionEvent(other, h.opts)
-      expect(h.pushed).toEqual([['c', true], ['c', false]])
-    }
+  it('a PreToolUse of another turn ends the approval and clears; one of another tool in the same turn, while the approval waits, does not', () => {
+    const h = harness(new Set(['c']))
+    routeAttentionEvent(perm(), h.opts)
+    routeAttentionEvent(pre('01a0ef84-ffff-7613-a2b3-d39e98c11bb2', 'Bash'), h.opts)
+    expect(h.pushed).toEqual([['c', true], ['c', false]])
+    _resetAttentionSourceForTest()
+    const h2 = harness(new Set(['c']))
+    routeAttentionEvent(perm(), h2.opts)
+    routeAttentionEvent(pre(TURN, 'apply_patch'), h2.opts)
+    expect(h2.pushed).toEqual([['c', true]])
+  })
+
+  it('round 2 (R3): the approval after its own PreToolUse takes nothing: the next call\'s PreToolUse clears (the model moving on after the user declined), in either arrival order of the first pair', () => {
+    const h = harness(new Set(['c']))
+    routeAttentionEvent(preId('call_1'), h.opts)
+    routeAttentionEvent(perm(), h.opts)
+    // The user declines; the model's next call of the same turn and tool.
+    routeAttentionEvent(preId('call_2'), h.opts)
+    expect(h.pushed).toEqual([['c', false], ['c', true], ['c', false]])
+    // And in the other order the approved call's own PostToolUse clears.
+    _resetAttentionSourceForTest()
+    const h2 = harness(new Set(['c']))
+    routeAttentionEvent(perm(), h2.opts)
+    routeAttentionEvent(preId('call_1'), h2.opts)
+    routeAttentionEvent(postId('call_1'), h2.opts)
+    expect(h2.pushed).toEqual([['c', true], ['c', false]])
+  })
+
+  it('round 2 (R3): a PostToolUse of a call that finished before the approval came clears, as any tool event does', () => {
+    const h = harness(new Set(['c']))
+    routeAttentionEvent(preId('call_1'), h.opts)
+    routeAttentionEvent(perm(), h.opts)
+    routeAttentionEvent(postId('call_1'), h.opts)
+    expect(h.pushed).toEqual([['c', false], ['c', true], ['c', false]])
   })
 
   it('a PreToolUse whose payload was cut down for the feed (no turn, no tool) keeps the dot: it may be the approved call', () => {

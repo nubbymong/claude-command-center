@@ -173,3 +173,75 @@ describe('SessionWatchdog with Codex\'s detectors', () => {
     expect(c.getState().unavailable).toBeUndefined()
   })
 })
+
+// P3.10 round 2 (R2): Codex leaves an error cell on screen after the turn that
+// follows it succeeds. An error cell above a newer user message (the retry the
+// Watchdog typed, or the user's own) is an earlier turn's, not the current
+// state: one overload is retried once (the VM run saw a second retry a minute
+// after the first had succeeded), and a new error after that is a new incident.
+describe('a stale error cell above a newer turn (round 2, R2)', () => {
+  const ERR = `${SQ} We're currently experiencing high demand, which may cause temporary errors.`
+  it('the patterns: an overload or a limit cell above a newer user message is not live; the limit one still reads as moved on', () => {
+    expect(codexDetectOverload(pane([`${P} P310-ERR-32`, '', ERR]).text)).toBe(true)
+    expect(codexDetectOverload(pane([`${P} P310-ERR-32`, '', ERR, '', `${P} continue`, '', '\u2022 ok']).text)).toBe(false)
+    const staleLimit = pane([...LIMIT, '', `${P} continue`, '', '\u2022 ok']).text
+    expect(codexIsRateLimited(staleLimit)).toBe(false)
+    expect(codexResumedAfterLimit(staleLimit)).toBe(true)
+    // A new error below the newer message is live again.
+    expect(codexDetectOverload(pane([ERR, '', `${P} continue`, '', '\u2022 ok', '', `${P} next`, '', ERR]).text)).toBe(true)
+  })
+
+  function run() {
+    const clock = { now: new Date(2026, 8, 30, 2, 23, 0).getTime() }
+    const holder: { set?: (p: { text: string; lines: ScreenLine[] }) => void } = {}
+    const sent: string[] = []
+    let current = pane([`${P} P310-ERR-32`, '', ERR])
+    const adapter: WatchdogAdapter = {
+      getTail: () => current.text,
+      getScreen: () => current.lines,
+      isSessionAlive: () => true,
+      send: (t) => { sent.push(t) },
+      now: () => clock.now,
+      log: () => {},
+      onStateChange: () => {},
+      detectors: CODEX_DETECTORS,
+    }
+    holder.set = (p) => { current = p }
+    const wd = new SessionWatchdog('cx', adapter, { overload: { enabled: true, retryMessage: 'continue' } } as never, () => 0.5)
+    return { wd, sent, clock, set: holder.set }
+  }
+
+  it('one overload, a retry that succeeds, the old cell still on screen: one retry only', () => {
+    const r = run()
+    r.wd.feed()
+    expect(r.wd.getState().status).toBe('overload')
+    r.clock.now = r.wd.getState().waitUntil! + 1
+    r.wd.tick()
+    expect(r.sent).toEqual(['continue'])
+    // Codex answered the retry; the old error cell is still above it.
+    r.set(pane([`${P} P310-ERR-32`, '', ERR, '', `${P} continue`, '', '\u2022 ok (p310 fake model)']))
+    r.wd.feed()
+    expect(r.wd.getState().status).toBe('monitoring')
+    for (let i = 0; i < 10; i++) {
+      r.clock.now += 60_000
+      r.wd.feed()
+      r.wd.tick()
+    }
+    expect(r.sent).toEqual(['continue'])
+  })
+
+  it('a new error after that success is a new incident: retried again', () => {
+    const r = run()
+    r.wd.feed()
+    r.clock.now = r.wd.getState().waitUntil! + 1
+    r.wd.tick()
+    r.set(pane([`${P} P310-ERR-32`, '', ERR, '', `${P} continue`, '', '\u2022 ok (p310 fake model)']))
+    r.wd.feed()
+    r.set(pane([ERR, '', `${P} continue`, '', '\u2022 ok (p310 fake model)', '', `${P} next`, '', ERR]))
+    r.wd.feed()
+    expect(r.wd.getState().status).toBe('overload')
+    r.clock.now = r.wd.getState().waitUntil! + 1
+    r.wd.tick()
+    expect(r.sent).toEqual(['continue', 'continue'])
+  })
+})
