@@ -316,8 +316,9 @@ Linux may ask for administrator rights; CCC never elevates on its own.
 
 ## Logs & transcript viewer
 
-Every Claude session's conversation is indexed locally (never leaves your
-machine); Codex conversations are not indexed yet. The **Logs** tab is a
+Every local Claude and Codex session's conversation is indexed locally (never
+leaves your machine); a Codex session's is read from its own Codex account's
+folder. The **Logs** tab is a
 chat-style transcript viewer with search and a timeline. Slots are labeled by
 the session's work name (or config label), so a renamed session is easy to
 find later.

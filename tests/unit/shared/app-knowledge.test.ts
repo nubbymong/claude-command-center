@@ -156,3 +156,30 @@ describe('app knowledge after P3.11', () => {
     expect(s).not.toMatch(/as the app.s own flags are for Claude Code/)
   })
 })
+
+// P3.12 (rows 31, 32, 65): the Logs page indexes a local Codex session's
+// conversation (from its own account folder); a Codex session's name is kept
+// next to a conversation the app knows for certain, with the rename
+// workaround in Known issues; the GitHub Session Context reads its own
+// conversation. Nothing still says Codex conversations are not indexed.
+describe('app knowledge after P3.12', () => {
+  const body = (id: string) => APP_KNOWLEDGE_SECTIONS.find((x) => x.id === id)!.body
+  it('says the Logs page indexes Codex conversations, each from its own account folder, with the per-config switch', () => {
+    expect(body('codex')).toMatch(/The Logs page indexes a local Codex session's conversation as it does a Claude session's/)
+    expect(body('codex')).toMatch(/read from that session's own Codex account folder, never another account's/)
+    expect(body('codex')).toMatch(/the Index conversation logs switch in a Codex config turns it off for that config/)
+    expect(body('codex')).toMatch(/A Codex session's GitHub Session Context reads its own conversation too/)
+    expect(body('pages')).toMatch(/Logs is a full chat-transcript viewer over your Claude and Codex sessions/)
+    expect(body('privacy')).toMatch(/reads Claude's and Codex's own transcript files locally/)
+  })
+  it('says a Codex session\'s name is kept with a conversation the app knows for certain, and the rename workaround', () => {
+    expect(body('codex')).toMatch(/is kept next to that conversation, so the list still shows it after the tab is closed/)
+    expect(body('known-issues')).toMatch(/A Codex conversation's name can drop out of Restart and pick a conversation after its tab is closed/)
+    expect(body('known-issues')).toMatch(/Rename the session again once it has settled on its conversation/)
+  })
+  it('no longer says Codex conversations are not indexed', () => {
+    for (const s of APP_KNOWLEDGE_SECTIONS) {
+      expect(s.body, s.id).not.toMatch(/does not index Codex|Codex conversations are not indexed/)
+    }
+  })
+})

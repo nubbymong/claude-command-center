@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-30T12:53:16.504Z",
-  "head": "057fa7762ccf93fba1b2eff053f64ca0bb655496",
-  "tree": "dc2c697dbd1d526e3af42597299929e62c6e6113",
+  "generatedAt": "2026-09-30T15:15:42.067Z",
+  "head": "d86fd80f5b00e98e921fbf6d12126a73b8969ee1",
+  "tree": "d5ed5a2320e205ca5bc8645b88e030ecc79e3415",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2541,
+  "trackedFileCount": 2555,
   "excludedFileCount": 384,
-  "scannedFileCount": 2157,
+  "scannedFileCount": 2171,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 599,
-  "pathDigest": "3481e573ceddb7dc9f9994e3433e26d4993689df927ed38ff3fd89bb332c866a",
+  "matchedPathCount": 632,
+  "pathDigest": "b68a97d884f60ddff07d29e4a02658f157fe4e82875936aad50ad142b083a1e3",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -161,14 +161,14 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 45
+      "lineCount": 47
     },
     {
       "path": "README.md",
       "predicates": [
         "P12"
       ],
-      "lineCount": 17
+      "lineCount": 18
     },
     {
       "path": "SECURITY.md",
@@ -182,14 +182,14 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 100
+      "lineCount": 101
     },
     {
       "path": "docs/wp2/completion-plan.md",
       "predicates": [
         "P12"
       ],
-      "lineCount": 476,
+      "lineCount": 498,
       "truncated": true
     },
     {
@@ -211,7 +211,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 92
+      "lineCount": 93
     },
     {
       "path": "docs/wp2/plan.md",
@@ -485,6 +485,22 @@
       "lineCount": 2
     },
     {
+      "path": "src/main/github/session/codex-rollout-loader.ts",
+      "predicates": [
+        "P01",
+        "P05",
+        "P14"
+      ],
+      "lineCount": 11
+    },
+    {
+      "path": "src/main/github/session/transcript-loader.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 2
+    },
+    {
       "path": "src/main/hooks/hooks-gateway.ts",
       "predicates": [
         "P05",
@@ -504,7 +520,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 22
+      "lineCount": 24
     },
     {
       "path": "src/main/install-secret.ts",
@@ -530,6 +546,20 @@
       "lineCount": 6
     },
     {
+      "path": "src/main/ipc/github-handlers.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 5
+    },
+    {
+      "path": "src/main/ipc/logs2-handlers.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 5
+    },
+    {
       "path": "src/main/ipc/pty-handlers.ts",
       "predicates": [
         "P05",
@@ -546,12 +576,78 @@
       "lineCount": 1
     },
     {
+      "path": "src/main/logging/codex-log-binder.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "lineCount": 15
+    },
+    {
+      "path": "src/main/logging/codex-rollout-normalizer.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "lineCount": 27
+    },
+    {
+      "path": "src/main/logging/log-supervisor.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 4
+    },
+    {
+      "path": "src/main/logging/log-worker-transport.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 4
+    },
+    {
+      "path": "src/main/logging/logging-service.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 5
+    },
+    {
+      "path": "src/main/logging/session-name-sidecar.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 6
+    },
+    {
       "path": "src/main/logging/should-register-run.ts",
       "predicates": [
         "P05",
         "P14"
       ],
       "lineCount": 6
+    },
+    {
+      "path": "src/main/logging/transcript-normalizer.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 2
+    },
+    {
+      "path": "src/main/logging/transcripts-db.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 2
+    },
+    {
+      "path": "src/main/logging/transcripts-worker.ts",
+      "predicates": [
+        "P05",
+        "P14"
+      ],
+      "lineCount": 9
     },
     {
       "path": "src/main/model-registry-service.ts",
@@ -921,7 +1017,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 279
+      "lineCount": 305
     },
     {
       "path": "src/main/sanitize-restored-spawn-options.ts",
@@ -1182,6 +1278,13 @@
       "lineCount": 11
     },
     {
+      "path": "src/renderer/components/GlobalLogsView.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "lineCount": 4
+    },
+    {
       "path": "src/renderer/components/GuidedTour.tsx",
       "predicates": [
         "P11"
@@ -1204,9 +1307,8 @@
       "lineCount": 2
     },
     {
-      "path": "src/renderer/components/LogsButton.tsx",
+      "path": "src/renderer/components/LoggingConsentPrompt.tsx",
       "predicates": [
-        "P05",
         "P11"
       ],
       "lineCount": 2
@@ -1215,9 +1317,10 @@
       "path": "src/renderer/components/LogsPane.tsx",
       "predicates": [
         "P05",
+        "P07",
         "P11"
       ],
-      "lineCount": 5
+      "lineCount": 9
     },
     {
       "path": "src/renderer/components/MemoryPage.tsx",
@@ -1257,7 +1360,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 108
+      "lineCount": 115
     },
     {
       "path": "src/renderer/components/SessionDialog/CodexFormFields.tsx",
@@ -1297,7 +1400,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 51
+      "lineCount": 55
     },
     {
       "path": "src/renderer/components/SetupDialog.tsx",
@@ -1378,12 +1481,19 @@
       "lineCount": 3
     },
     {
-      "path": "src/renderer/components/logs/LogEmptyState.tsx",
+      "path": "src/renderer/components/logs/ChatTranscriptView.tsx",
       "predicates": [
         "P05",
         "P11"
       ],
-      "lineCount": 6
+      "lineCount": 5
+    },
+    {
+      "path": "src/renderer/components/logs/LogEmptyState.tsx",
+      "predicates": [
+        "P11"
+      ],
+      "lineCount": 1
     },
     {
       "path": "src/renderer/components/sentinel/SentinelDot.tsx",
@@ -1574,7 +1684,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 34
+      "lineCount": 39
     },
     {
       "path": "src/renderer/hooks/useRestartSession.ts",
@@ -1623,12 +1733,20 @@
       "lineCount": 1
     },
     {
+      "path": "src/renderer/lib/log-index-text.ts",
+      "predicates": [
+        "P04",
+        "P11"
+      ],
+      "lineCount": 8
+    },
+    {
       "path": "src/renderer/lib/session-capabilities.ts",
       "predicates": [
         "P05",
         "P11"
       ],
-      "lineCount": 10
+      "lineCount": 7
     },
     {
       "path": "src/renderer/onboarding/AssistantsStep.tsx",
@@ -1700,7 +1818,7 @@
       "predicates": [
         "P11"
       ],
-      "lineCount": 9
+      "lineCount": 10
     },
     {
       "path": "src/renderer/onboarding/WelcomeStep.tsx",
@@ -1832,7 +1950,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 23
+      "lineCount": 28
     },
     {
       "path": "src/renderer/stores/appMetaStore.ts",
@@ -1896,7 +2014,7 @@
         "P11",
         "P12"
       ],
-      "lineCount": 101
+      "lineCount": 105
     },
     {
       "path": "src/renderer/training-steps.ts",
@@ -1960,7 +2078,7 @@
         "P12",
         "P14"
       ],
-      "lineCount": 73
+      "lineCount": 75
     },
     {
       "path": "src/shared/ask-conductor-provider.ts",
@@ -2079,7 +2197,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 33
+      "lineCount": 35
     },
     {
       "path": "tests/e2e/codex-reconfirm-upgrade.spec.ts",
@@ -2866,6 +2984,14 @@
       "lineCount": 1
     },
     {
+      "path": "tests/unit/github/codex-rollout-loader.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 23
+    },
+    {
       "path": "tests/unit/hooks/hooks-gateway-codex.test.ts",
       "predicates": [
         "P01",
@@ -2881,12 +3007,49 @@
       "lineCount": 3
     },
     {
-      "path": "tests/unit/logging/should-register-run.test.ts",
+      "path": "tests/unit/logging/codex-log-binder.test.ts",
       "predicates": [
-        "P05",
+        "P01",
         "P13"
       ],
-      "lineCount": 6
+      "lineCount": 14
+    },
+    {
+      "path": "tests/unit/logging/codex-logs-worker.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 16
+    },
+    {
+      "path": "tests/unit/logging/codex-rollout-normalizer.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 21
+    },
+    {
+      "path": "tests/unit/logging/should-register-run.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 10
+    },
+    {
+      "path": "tests/unit/logging/transcripts-db.native.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 15
+    },
+    {
+      "path": "tests/unit/logging/transcripts-worker.native.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 10
     },
     {
       "path": "tests/unit/main/account-registry-load-settled.test.ts",
@@ -2995,6 +3158,23 @@
         "P13"
       ],
       "lineCount": 40
+    },
+    {
+      "path": "tests/unit/main/codex-logging-optout-spawn.test.ts",
+      "predicates": [
+        "P01",
+        "P07",
+        "P13"
+      ],
+      "lineCount": 12
+    },
+    {
+      "path": "tests/unit/main/codex-name-sidecar.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 3
     },
     {
       "path": "tests/unit/main/codex-resume-launch.test.ts",
@@ -3112,6 +3292,13 @@
       "lineCount": 6
     },
     {
+      "path": "tests/unit/main/logs2-ipc-handlers.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 14
+    },
+    {
       "path": "tests/unit/main/path-utils-home.test.ts",
       "predicates": [
         "P13"
@@ -3173,6 +3360,17 @@
         "P13"
       ],
       "lineCount": 88
+    },
+    {
+      "path": "tests/unit/main/pty-codex-logs.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P05",
+        "P07",
+        "P13"
+      ],
+      "lineCount": 36
     },
     {
       "path": "tests/unit/main/pty-handlers-codex-review.test.ts",
@@ -3642,7 +3840,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 90
+      "lineCount": 93
     },
     {
       "path": "tests/unit/providers/codex/spawn.test.ts",
@@ -3708,6 +3906,15 @@
         "P13"
       ],
       "lineCount": 39
+    },
+    {
+      "path": "tests/unit/providers/codex/telemetry-rollout-report.test.ts",
+      "predicates": [
+        "P01",
+        "P07",
+        "P13"
+      ],
+      "lineCount": 6
     },
     {
       "path": "tests/unit/providers/codex/telemetry-settle-reject.test.ts",
@@ -4060,6 +4267,13 @@
       "lineCount": 87
     },
     {
+      "path": "tests/unit/renderer/global-logs-view.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 2
+    },
+    {
       "path": "tests/unit/renderer/guided-tour-provider-copy.test.tsx",
       "predicates": [
         "P05",
@@ -4118,18 +4332,40 @@
       "lineCount": 1
     },
     {
-      "path": "tests/unit/renderer/logs-pane.test.tsx",
+      "path": "tests/unit/renderer/logging-consent.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
+      "path": "tests/unit/renderer/logs-button.test.tsx",
       "predicates": [
         "P13"
       ],
       "lineCount": 3
     },
     {
+      "path": "tests/unit/renderer/logs-pane.test.tsx",
+      "predicates": [
+        "P07",
+        "P13"
+      ],
+      "lineCount": 15
+    },
+    {
+      "path": "tests/unit/renderer/logs/chat-transcript.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 4
+    },
+    {
       "path": "tests/unit/renderer/logs/log-empty-state.test.tsx",
       "predicates": [
         "P13"
       ],
-      "lineCount": 1
+      "lineCount": 2
     },
     {
       "path": "tests/unit/renderer/memory-codex-coverage-banner.test.ts",
@@ -4265,7 +4501,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 22
+      "lineCount": 31
     },
     {
       "path": "tests/unit/renderer/onboarding-welcome-copy.test.tsx",
@@ -4364,7 +4600,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 9
+      "lineCount": 8
     },
     {
       "path": "tests/unit/renderer/session-dialog-codex-account.test.tsx",
@@ -4387,6 +4623,17 @@
         "P13"
       ],
       "lineCount": 40
+    },
+    {
+      "path": "tests/unit/renderer/session-dialog-codex-logging.test.tsx",
+      "predicates": [
+        "P01",
+        "P04",
+        "P05",
+        "P07",
+        "P13"
+      ],
+      "lineCount": 25
     },
     {
       "path": "tests/unit/renderer/session-dialog-codex-model.test.tsx",
@@ -4479,7 +4726,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 17
+      "lineCount": 23
     },
     {
       "path": "tests/unit/renderer/session-persistence-resume.test.ts",
@@ -4676,10 +4923,12 @@
     {
       "path": "tests/unit/renderer/use-launch-config.test.tsx",
       "predicates": [
+        "P04",
         "P05",
+        "P07",
         "P13"
       ],
-      "lineCount": 8
+      "lineCount": 17
     },
     {
       "path": "tests/unit/renderer/use-restart-session.test.ts",
@@ -4717,6 +4966,14 @@
         "P13"
       ],
       "lineCount": 37
+    },
+    {
+      "path": "tests/unit/scripts/codex-resume-picker-names.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 3
     },
     {
       "path": "tests/unit/scripts/codex-resume-picker-open-elsewhere.test.ts",
@@ -4801,7 +5058,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 12
+      "lineCount": 27
     },
     {
       "path": "tests/unit/status-ingest.test.ts",
