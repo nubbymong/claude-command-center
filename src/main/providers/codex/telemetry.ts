@@ -669,6 +669,13 @@ export interface CodexClaimOptions {
    *  so it is the session's all the same. P3.10: its rollout is read here
    *  too, so this tab shows the conversation's figures as the holder does. */
   onShared?: (conversation: { id: string; cwd: string; exact: boolean; fromHook: boolean }) => void
+  /** P3.12 (rows 31, 32, 65): told the rollout claimed, each time onClaim or
+   *  onShared is told (its path as this watcher's own checks found it inside
+   *  the realm, the realm's sessions folder, whether the conversation is known
+   *  exactly, whether another session holds it), and null each time a claim is
+   *  let go. The session's logs, its name file and its GitHub Session Context
+   *  read its conversation from this. */
+  onRollout?: (rollout: { path: string; sessionsDir: string; exact: boolean; shared: boolean } | null) => void
 }
 
 /** How often a claim by id walks the realm's sessions folder while unclaimed:
@@ -869,6 +876,9 @@ export function watchAndClaimRollout(
       if (claimShared && claimOpts?.onShared) claimOpts.onShared({ id: found.id, cwd: found.cwd, exact: claimExact, fromHook: claimFromHook })
       else if (!claimShared && claimOpts?.onClaim) claimOpts.onClaim({ id: found.id, cwd: found.cwd, certain, exact: claimExact, fromHook: claimFromHook })
     } catch { /* a listener never stops the watch */ }
+    if (claimedPath && claimOpts?.onRollout) {
+      try { claimOpts.onRollout({ path: claimedPath, sessionsDir, exact: claimExact, shared: claimShared }) } catch { /* a listener never stops the watch */ }
+    }
   }
 
   /** Claim `fullPath` and read it. `how.exact`: the conversation is known
@@ -1005,6 +1015,9 @@ export function watchAndClaimRollout(
     try { onUpdate({ sessionId, inputTokens: 0, outputTokens: 0, costUsd: 0, contextUsedPercent: 0, linesAdded: 0, linesRemoved: 0, totalDurationMs: 0 }) } catch { /* a sink that throws never stops the watch */ }
     if (claimOpts?.onRelease) {
       try { claimOpts.onRelease() } catch { /* a listener never stops the watch */ }
+    }
+    if (claimOpts?.onRollout) {
+      try { claimOpts.onRollout(null) } catch { /* a listener never stops the watch */ }
     }
   }
 

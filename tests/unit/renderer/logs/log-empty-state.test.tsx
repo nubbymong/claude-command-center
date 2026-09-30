@@ -18,7 +18,6 @@ const render = async (el: React.ReactElement) => {
 const cases: { reason: LogEmptyReason; match: RegExp }[] = [
   { reason: 'shell-only', match: /shell/i },
   { reason: 'ssh', match: /remote/i },
-  { reason: 'codex', match: /codex/i },
   { reason: 'logging-off', match: /indexing is off/i },
   { reason: 'no-transcript', match: /no conversation detected/i },
   { reason: 'select', match: /select a slot/i },
@@ -46,5 +45,15 @@ describe('LogEmptyState', () => {
     const { container, cleanup } = await render(<LogEmptyState reason="ssh" />)
     expect(container.textContent).toMatch(/SSH/)
     cleanup()
+  })
+
+  it('P3.12: no-transcript names the assistant whose transcript is watched for (Claude by default)', async () => {
+    const a = await render(<LogEmptyState reason="no-transcript" watchedCwd="C:/proj/app" agentName="Codex" />)
+    expect(a.container.textContent).toMatch(/Codex's transcript/)
+    expect(a.container.textContent).not.toMatch(/Claude/)
+    a.cleanup()
+    const b = await render(<LogEmptyState reason="no-transcript" />)
+    expect(b.container.textContent).toMatch(/Claude's transcript/)
+    b.cleanup()
   })
 })

@@ -238,7 +238,8 @@ export function buildLaunchSession(config: TerminalConfig, opts?: LaunchSessionO
     // (pre-2.1.0-beta.5 bug: this path dropped it, so the toggle was inert
     // for sidebar launches). enableCodexReview is retired: there is no
     // per-config opt-in (see ClaudeOptions.enableCodexReview).
-    loggingEnabled: config.claudeOptions?.loggingEnabled,
+    // P3.12: a Codex config carries its own opt-out (codexOptions).
+    loggingEnabled: config.provider === 'codex' ? config.codexOptions?.loggingEnabled : config.claudeOptions?.loggingEnabled,
     provider: config.provider,
     profileId: config.profileId,
     codexOptions: config.codexOptions,

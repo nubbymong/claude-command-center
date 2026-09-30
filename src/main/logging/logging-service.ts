@@ -25,7 +25,8 @@ import { makeTranscriptBinder } from './transcript-binder'
 import type { TranscriptBinder } from './transcript-binder'
 import { readConfig } from '../config-manager'
 import { logInfo } from '../debug-logger'
-import { getRememberedName, forgetSessionName, writeNameSidecar, nodeNameSidecarDeps } from './session-name-sidecar'
+import { getRememberedName, forgetSessionName, writeNameSidecar, nodeNameSidecarDeps, writeRealmNameSidecar, nodeRealmNameFs } from './session-name-sidecar'
+import { makeCodexLogBinder, setCodexLogBinder } from './codex-log-binder'
 
 // Module-level singleton. Null until initLogging() runs, and stays null when
 // logging is disabled (no fork, no worker, no native dep loaded).
@@ -80,6 +81,17 @@ export function initLogging(opts: {
       forgetSessionName(sessionId)
     },
   })
+  // P3.12 (rows 31, 32): a Codex session's rollout claims become its run's
+  // binds, and its exact claim carries the name file, as Claude's binder does
+  // for Claude's exact sources. Never through Claude's binder (its
+  // canonicalise, heuristic scan and resume record are Claude's).
+  setCodexLogBinder(makeCodexLogBinder({
+    supervisor: sup,
+    writeName: (rolloutPath, sessionsDir, name) => { writeRealmNameSidecar(rolloutPath, sessionsDir, name, nodeRealmNameFs) },
+    rememberedName: getRememberedName,
+    forgetName: forgetSessionName,
+    log: logInfo,
+  }))
 }
 
 /** The supervisor, for run lifecycle + diagnostics + the read path. Null when disabled. */
@@ -101,10 +113,12 @@ export function shutdownLogging(): void {
   _supervisor?.shutdown()
   _supervisor = null
   _binder = null
+  setCodexLogBinder(null)
 }
 
 /** Test seam: reset module state so each test starts clean. Not used in production. */
 export function _resetLoggingForTest(): void {
   _supervisor = null
   _binder = null
+  setCodexLogBinder(null)
 }

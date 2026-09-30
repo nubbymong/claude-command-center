@@ -4,6 +4,7 @@ import { codexPreference, usesClaude, usesCodex } from './provider-choice'
 import { sentinelAnalysisProvider } from '../../shared/ask-conductor-provider'
 import { sentinelTransparencyText } from '../components/sentinel/sentinel-report-text'
 import { CLAUDE_OFF_ACCOUNTS_LINE } from '../lib/claudeOff'
+import { logIndexTransparencyText } from '../lib/log-index-text'
 import { useGitHubStore } from '../stores/githubStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { defaultUpdateChannelForVersion } from '../utils/versionLabel'
@@ -203,11 +204,7 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
             <div className="tc-ic">{CHART}</div>
             <div className="tc-body">
               <div className="tc-t">Index conversation logs</div>
-              <div className="tc-d">
-                Powers the Logs, Memory and Tokenomics pages by indexing Claude's own transcripts
-                (~/.claude/projects). Indexing is local; turning it off only stops the index. Your conversations
-                stay in Claude's files either way.
-              </div>
+              <div className="tc-d">{logIndexTransparencyText({ claude: claudeOn, codex: codex === 'on' })}</div>
             </div>
             <button
               className={loggingOn ? 'tc-sw on' : 'tc-sw'}

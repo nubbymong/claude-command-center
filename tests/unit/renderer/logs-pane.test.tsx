@@ -86,10 +86,36 @@ describe('LogsPane (logs2)', () => {
     cleanup()
   })
 
-  it('codex session shows the codex empty state', async () => {
+  it('P3.12: a local Codex session shows its transcript, as a Claude one does', async () => {
     session = { ...session, provider: 'codex' }
+    config = { ...config, provider: 'codex', claudeOptions: undefined, codexOptions: { permissionsPreset: 'read-only' } }
     const { container, cleanup } = await mount(<LogsPane sessionId="s1" />)
-    expect(emptyReason(container)).toBe('codex')
+    expect(ingestStatus).toHaveBeenCalledWith({ sessionId: 's1' })
+    expect(container.querySelector('[data-testid="chat-transcript"]')).toBeTruthy()
+    expect(emptyReason(container)).toBeUndefined()
+    cleanup()
+  })
+
+  it('P3.12: a Codex config\'s own logging opt-out shows the logging-off state (its Claude field is not read)', async () => {
+    session = { ...session, provider: 'codex' }
+    config = { ...config, provider: 'codex', claudeOptions: { loggingEnabled: true }, codexOptions: { permissionsPreset: 'read-only', loggingEnabled: false } }
+    const { container, cleanup } = await mount(<LogsPane sessionId="s1" />)
+    expect(emptyReason(container)).toBe('logging-off')
+    cleanup()
+    config = { ...config, provider: 'codex', claudeOptions: { loggingEnabled: false }, codexOptions: { permissionsPreset: 'read-only' } }
+    const again = await mount(<LogsPane sessionId="s1" />)
+    expect(emptyReason(again.container)).toBeUndefined()
+    again.cleanup()
+  })
+
+  it('P3.12: a Codex session with no conversation yet says it is watching for Codex\'s transcript', async () => {
+    session = { ...session, provider: 'codex' }
+    config = { ...config, provider: 'codex', codexOptions: { permissionsPreset: 'read-only' } }
+    ingestStatus = vi.fn().mockResolvedValue({ transcripts: [], messageCount: 0 })
+    ;(globalThis as any).window.electronAPI = { logs2: { ingestStatus } }
+    const { container, cleanup } = await mount(<LogsPane sessionId="s1" />)
+    expect(emptyReason(container)).toBe('no-transcript')
+    expect(container.textContent).toMatch(/Codex's transcript/)
     cleanup()
   })
 

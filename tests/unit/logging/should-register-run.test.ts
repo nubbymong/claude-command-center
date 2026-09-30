@@ -7,7 +7,7 @@ import { shouldRegisterRun } from '../../../src/main/logging/should-register-run
 // and the matching runEnd/endRun on exit).
 //
 // Register a run iff ALL hold:
-//   - provider === 'claude'              (local Claude only; NOT codex / other)
+//   - provider claude or codex           (P3.12: a local Codex session too; NOT other)
 //   - NOT shellOnly                      (plain shells + add-account /login)
 //   - NOT the SSH spawn path             (no local transcript to tail)
 //   - per-config loggingEnabled !== false  (DEFAULT-TRUE)
@@ -38,8 +38,13 @@ describe('shouldRegisterRun', () => {
     ).toBe(false)
   })
 
-  it('does NOT register the codex provider', () => {
-    expect(shouldRegisterRun({ provider: 'codex' }, {})).toBe(false)
+  it('P3.12: registers a local Codex session on defaults, under the same gates as Claude', () => {
+    expect(shouldRegisterRun({ provider: 'codex' }, {})).toBe(true)
+    expect(shouldRegisterRun({ provider: 'codex', loggingEnabled: false }, {})).toBe(false)
+    expect(shouldRegisterRun({ provider: 'codex' }, { loggingEnabled: false })).toBe(false)
+    expect(shouldRegisterRun({ provider: 'codex', shellOnly: true }, {})).toBe(false)
+    expect(shouldRegisterRun({ provider: 'codex', isAsk: true }, {})).toBe(false)
+    expect(shouldRegisterRun({ provider: 'codex', ssh: { host: 'h' } }, {})).toBe(false)
   })
 
   it('does NOT register a non-claude / unknown provider', () => {

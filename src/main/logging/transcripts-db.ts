@@ -44,7 +44,14 @@ export interface StitchedMessage {
   content: string
   toolName: string | null
   toolMeta: string | null
+  /** The run's provider ('claude' | 'codex'), so a view names the assistant
+   *  of each turn (P3.12). A synthesized divider carries its run's. */
+  provider: string
 }
+
+/** The transcript format a binding is tailed with (P3.12). Stored in the
+ *  existing transcripts.sourceFormat column (default 'claude-jsonl'). */
+export type TranscriptSourceFormat = 'claude-jsonl' | 'codex-rollout'
 
 /** Shape returned by listResumableTranscripts(). */
 export interface ResumableTranscript {
@@ -53,6 +60,8 @@ export interface ResumableTranscript {
   path: string
   ingestCursor: number
   parserVersion: number
+  /** The format it is tailed with (a worker restart resumes with it). */
+  sourceFormat: string
 }
 
 /** Shape returned by listSlots(). */
@@ -158,8 +167,12 @@ export interface TranscriptsDb {
   bindTranscript(
     runId: number,
     path: string,
-    opts: { confidence: 'exact' | 'heuristic'; sourceVersion?: string; parserVersion: number },
-  ): { transcriptId: number; ord: number; isNew: boolean; cursor: number }
+    opts: { confidence: 'exact' | 'heuristic'; sourceVersion?: string; parserVersion: number; sourceFormat?: TranscriptSourceFormat },
+  ): { transcriptId: number; ord: number; isNew: boolean; cursor: number; sourceFormat: string }
+
+  /** P3.12: the binding of `path` to `runId`, or null. A re-bind keeps the
+   *  format the binding was made with. */
+  findTranscript(runId: number, path: string): { transcriptId: number } | null
 
   setTranscriptStatus(transcriptId: number, status: 'pending' | 'tailing' | 'complete' | 'failed'): void
 
@@ -259,7 +272,7 @@ export interface TranscriptsDb {
    * (same no-bare-column-with-MAX discipline as listSlots). Ordered by lastActive
    * DESC. Used by the Memory page to show recent sessions for a project.
    */
-  sessionActivity(): Array<{ sessionId: string; lastActive: number; projectCwd: string | null }>
+  sessionActivity(): Array<{ sessionId: string; lastActive: number; projectCwd: string | null; provider: string }>
 
   /**
    * Returns the configId of the latest run for sessionId, or null when the
@@ -390,6 +403,7 @@ interface PageRow {
   toolName: string | null
   toolMeta: string | null
   runStartedAt: number
+  provider: string
 }
 
 interface StitchOptions {
@@ -398,13 +412,13 @@ interface StitchOptions {
    * provided ts value. Used when a page boundary coincides with a run boundary
    * (the first returned row belongs to a different run than the anchor).
    */
-  leadingDivider?: { runId: number; ts: number }
+  leadingDivider?: { runId: number; ts: number; provider: string }
   /**
    * If set, a relaunch divider is appended AFTER the last row, using the
    * provided runId and ts. Used when the last returned row belongs to a
    * different run than the anchor (i.e. the anchor's run starts after the page).
    */
-  trailingDivider?: { runId: number; ts: number }
+  trailingDivider?: { runId: number; ts: number; provider: string }
 }
 
 /** Insert synthesized relaunch rows at run boundaries inside an ASC page. */
@@ -421,6 +435,7 @@ function stitchRows(rows: PageRow[], opts: StitchOptions = {}): StitchedMessage[
       content: '',
       toolName: null,
       toolMeta: null,
+      provider: opts.leadingDivider.provider,
     })
   }
 
@@ -436,6 +451,7 @@ function stitchRows(rows: PageRow[], opts: StitchOptions = {}): StitchedMessage[
         content: '',
         toolName: null,
         toolMeta: null,
+        provider: row.provider,
       })
     }
     out.push({
@@ -447,6 +463,7 @@ function stitchRows(rows: PageRow[], opts: StitchOptions = {}): StitchedMessage[
       content: row.content,
       toolName: row.toolName,
       toolMeta: row.toolMeta,
+      provider: row.provider,
     })
   }
 
@@ -460,6 +477,7 @@ function stitchRows(rows: PageRow[], opts: StitchOptions = {}): StitchedMessage[
       content: '',
       toolName: null,
       toolMeta: null,
+      provider: opts.trailingDivider.provider,
     })
   }
 
@@ -527,7 +545,7 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
     WHERE runId = ${latestOpenRunSubquery}
   `)
 
-  const stmtGetRunStartedAt: Statement = sqlite.prepare(`SELECT startedAt FROM runs WHERE runId = ?`)
+  const stmtGetRunStartedAt: Statement = sqlite.prepare(`SELECT startedAt, provider FROM runs WHERE runId = ?`)
 
   // Single-statement dangling-run closure: endedAt = last message ts, falling
   // back to startedAt for runs that never produced a message.
@@ -560,7 +578,7 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
 
   // ---- transcripts ----
   const stmtGetTranscriptByRunPath: Statement = sqlite.prepare(
-    `SELECT id, ord FROM transcripts WHERE runId = ? AND path = ?`,
+    `SELECT id, ord, sourceFormat FROM transcripts WHERE runId = ? AND path = ?`,
   )
   const stmtRebindTranscript: Statement = sqlite.prepare(`
     UPDATE transcripts
@@ -571,8 +589,8 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
     `SELECT COALESCE(MAX(ord) + 1, 0) AS nextOrd FROM transcripts WHERE runId = ?`,
   )
   const stmtInsertTranscript: Statement = sqlite.prepare(`
-    INSERT INTO transcripts (runId, path, ord, sourceVersion, parserVersion, confidence)
-    VALUES (@runId, @path, @ord, @sourceVersion, @parserVersion, @confidence)
+    INSERT INTO transcripts (runId, path, ord, sourceFormat, sourceVersion, parserVersion, confidence)
+    VALUES (@runId, @path, @ord, @sourceFormat, @sourceVersion, @parserVersion, @confidence)
   `)
   const stmtSetTranscriptStatus: Statement = sqlite.prepare(
     `UPDATE transcripts SET status = @status WHERE id = @id`,
@@ -581,7 +599,7 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
     `UPDATE transcripts SET ingestCursor = @cursor WHERE id = @id`,
   )
   const stmtListResumable: Statement = sqlite.prepare(`
-    SELECT id AS transcriptId, runId, path, ingestCursor, parserVersion
+    SELECT id AS transcriptId, runId, path, ingestCursor, parserVersion, sourceFormat
     FROM transcripts WHERE status = 'tailing' ORDER BY id
   `)
 
@@ -591,9 +609,9 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
     (
       runId: number,
       path: string,
-      opts: { confidence: 'exact' | 'heuristic'; sourceVersion?: string; parserVersion: number },
-    ): { transcriptId: number; ord: number; isNew: boolean; cursor: number } => {
-      const existing = stmtGetTranscriptByRunPath.get(runId, path) as { id: number; ord: number } | undefined
+      opts: { confidence: 'exact' | 'heuristic'; sourceVersion?: string; parserVersion: number; sourceFormat?: TranscriptSourceFormat },
+    ): { transcriptId: number; ord: number; isNew: boolean; cursor: number; sourceFormat: string } => {
+      const existing = stmtGetTranscriptByRunPath.get(runId, path) as { id: number; ord: number; sourceFormat: string } | undefined
       if (existing) {
         stmtRebindTranscript.run({
           id: existing.id,
@@ -602,18 +620,20 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
           parserVersion: opts.parserVersion,
         })
         const { ingestCursor } = stmtGetCursor.get(existing.id) as { ingestCursor: number }
-        return { transcriptId: existing.id, ord: existing.ord, isNew: false, cursor: ingestCursor }
+        return { transcriptId: existing.id, ord: existing.ord, isNew: false, cursor: ingestCursor, sourceFormat: existing.sourceFormat }
       }
       const { nextOrd } = stmtNextOrd.get(runId) as { nextOrd: number }
+      const sourceFormat: TranscriptSourceFormat = opts.sourceFormat ?? 'claude-jsonl'
       const info = stmtInsertTranscript.run({
         runId,
         path,
         ord: nextOrd,
+        sourceFormat,
         sourceVersion: opts.sourceVersion ?? null,
         parserVersion: opts.parserVersion,
         confidence: opts.confidence,
       })
-      return { transcriptId: Number(info.lastInsertRowid), ord: nextOrd, isNew: true, cursor: 0 }
+      return { transcriptId: Number(info.lastInsertRowid), ord: nextOrd, isNew: true, cursor: 0, sourceFormat }
     },
   )
 
@@ -658,7 +678,7 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
   const pageSelect = `
     SELECT m.runId AS runId, m.idx AS idx, m.ts AS ts, m.role AS role, m.kind AS kind,
            m.content AS content, m.toolName AS toolName, m.toolMeta AS toolMeta,
-           r.startedAt AS runStartedAt
+           r.startedAt AS runStartedAt, r.provider AS provider
     FROM messages m JOIN runs r ON r.runId = m.runId
   `
   const orderAsc = `ORDER BY r.startedAt ASC, r.runId ASC, m.idx ASC`
@@ -750,7 +770,7 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
       SELECT sessionId, MAX(COALESCE(endedAt, startedAt)) AS lastActive
       FROM runs GROUP BY sessionId
     )
-    SELECT g.sessionId AS sessionId, g.lastActive AS lastActive, lr.projectCwd AS projectCwd
+    SELECT g.sessionId AS sessionId, g.lastActive AS lastActive, lr.projectCwd AS projectCwd, lr.provider AS provider
     FROM grouped g
     JOIN runs lr ON lr.runId = (
       SELECT runId FROM runs WHERE sessionId = g.sessionId ORDER BY startedAt DESC, runId DESC LIMIT 1
@@ -902,6 +922,11 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
       return runBindTranscript(runId, path, opts)
     },
 
+    findTranscript(runId, path) {
+      const row = stmtGetTranscriptByRunPath.get(runId, path) as { id: number } | undefined
+      return row ? { transcriptId: row.id } : null
+    },
+
     setTranscriptStatus(transcriptId, status) {
       stmtSetTranscriptStatus.run({ id: transcriptId, status })
     },
@@ -943,7 +968,7 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
         return stitchRows(rows)
       }
 
-      const anchorRun = stmtGetRunStartedAt.get(page.anchor.runId) as { startedAt: number } | undefined
+      const anchorRun = stmtGetRunStartedAt.get(page.anchor.runId) as { startedAt: number; provider: string } | undefined
       if (!anchorRun) return []
       const params = {
         scope: scopeValue,
@@ -962,14 +987,14 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
         // and the anchor is not itself a divider (idx === -1), synthesize a
         // trailing divider so consumers concatenating pages see the boundary.
         if (rows.length > 0 && rows[rows.length - 1].runId !== page.anchor.runId && page.anchor.idx !== -1) {
-          stitchOpts.trailingDivider = { runId: page.anchor.runId, ts: anchorRun.startedAt }
+          stitchOpts.trailingDivider = { runId: page.anchor.runId, ts: anchorRun.startedAt, provider: anchorRun.provider }
         }
       } else {
         rows = stmts.newer.all(params) as PageRow[]
         // Page-seam: if the first row belongs to a DIFFERENT run than the anchor,
         // synthesize a leading divider before the first row.
         if (rows.length > 0 && rows[0].runId !== page.anchor.runId) {
-          stitchOpts.leadingDivider = { runId: rows[0].runId, ts: rows[0].runStartedAt }
+          stitchOpts.leadingDivider = { runId: rows[0].runId, ts: rows[0].runStartedAt, provider: rows[0].provider }
         }
       }
 
@@ -1030,7 +1055,7 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
     },
 
     sessionActivity() {
-      return stmtSessionActivity.all() as Array<{ sessionId: string; lastActive: number; projectCwd: string | null }>
+      return stmtSessionActivity.all() as Array<{ sessionId: string; lastActive: number; projectCwd: string | null; provider: string }>
     },
 
     sessionConfig(sessionId: string) {

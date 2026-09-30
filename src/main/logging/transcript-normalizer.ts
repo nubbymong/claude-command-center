@@ -300,8 +300,9 @@ const RAW_CAP = 32 * 1024
 const TRUNCATION_SUFFIX = '…[truncated]'
 
 /** Cap a raw string at RAW_CAP UTF-16 code units with a truncation suffix.
- *  Guards against a lone high surrogate at the cut boundary. */
-function capRaw(s: string): string {
+ *  Guards against a lone high surrogate at the cut boundary. The Codex rollout
+ *  normalizer (P3.12) keeps an unknown line with the same cap. */
+export function capRaw(s: string): string {
   if (s.length <= RAW_CAP) return s
   let cut = RAW_CAP
   // If the last char of the slice is a lone high surrogate, drop it
@@ -342,8 +343,9 @@ function capMetaValue(s: string): string {
  * - If the serialized JSON exceeds 2048 chars, drops trailing keys in reverse
  *   TOOL_META_KEYS order until it fits. Falls back to '{"_truncated":true}'
  *   only if even {file_path} alone would exceed the cap.
+ * - The Codex rollout normalizer (P3.12) builds its preview with this too.
  */
-function buildToolMeta(input: unknown): string {
+export function buildToolMeta(input: unknown): string {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) return '{}'
 
   const inp = input as Record<string, unknown>

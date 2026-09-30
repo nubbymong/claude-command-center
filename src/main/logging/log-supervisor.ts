@@ -64,6 +64,7 @@ type BufferedMessage =
   | Extract<ToTranscriptsWorker, { type: 'run-account' }>
   | Extract<ToTranscriptsWorker, { type: 'run-rename' }>
   | Extract<ToTranscriptsWorker, { type: 'transcript-bind' }>
+  | Extract<ToTranscriptsWorker, { type: 'transcript-unbind' }>
   | Extract<ToTranscriptsWorker, { type: 'session-conversation-upsert' }>
 
 interface QueuedItem {
@@ -277,9 +278,19 @@ export class LogSupervisor {
   }
 
   /** Bind a discovered transcript file to the session's current run; the worker
-   *  starts tailing it immediately. */
-  bindTranscript(sessionId: string, path: string, confidence: 'exact' | 'heuristic', sourceVersion?: string): void {
-    this.enqueueOrSend({ type: 'transcript-bind', sessionId, path, confidence, sourceVersion })
+   *  starts tailing it immediately. `sourceFormat` (P3.12): a Codex rollout is
+   *  tailed with the Codex normalizer; absent = Claude's JSONL, as before. */
+  bindTranscript(sessionId: string, path: string, confidence: 'exact' | 'heuristic', sourceVersion?: string, sourceFormat?: 'claude-jsonl' | 'codex-rollout'): void {
+    this.enqueueOrSend(sourceFormat
+      ? { type: 'transcript-bind', sessionId, path, confidence, sourceVersion, sourceFormat }
+      : { type: 'transcript-bind', sessionId, path, confidence, sourceVersion })
+  }
+
+  /** P3.12: the session is no longer on this transcript (a Codex claim let
+   *  go): the worker drains and retires its tail; what it gave stays. Buffered
+   *  and ordered like every other lifecycle message. */
+  unbindTranscript(sessionId: string, path: string): void {
+    this.enqueueOrSend({ type: 'transcript-unbind', sessionId, path })
   }
 
   /** #480: durably record the EXACT conversation a session is on (keyed by AICC

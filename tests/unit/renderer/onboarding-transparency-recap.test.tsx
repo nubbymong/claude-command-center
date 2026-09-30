@@ -213,3 +213,49 @@ describe('Transparency, the Sentinel card (P3.9)', () => {
     expect(cardText()).toContain('its analysis spends Codex usage when either updates.')
   })
 })
+
+// P3.12 (row 31; left by P3.4): the "Index conversation logs" card names what
+// is indexed: Claude's transcripts, Codex's, or both, by the assistants in use.
+describe('Transparency, the log indexing card (P3.12)', () => {
+  let container: HTMLDivElement
+  let root: Root
+  beforeEach(() => {
+    ;(window as any).electronAPI.accountProfiles = { globalEmail: vi.fn(() => Promise.resolve(null)) }
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+  })
+  afterEach(() => {
+    act(() => { root.unmount() })
+    container.remove()
+  })
+  const cardText = (): string => {
+    const title = [...container.querySelectorAll('.tc-t')].find((e) => e.textContent === 'Index conversation logs')
+    expect(title, 'the log indexing card').toBeTruthy()
+    return title!.parentElement!.querySelector('.tc-d')!.textContent ?? ''
+  }
+  const renderWith = (over: Partial<Settings>) => {
+    setSettings(over)
+    act(() => { root.render(React.createElement(TransparencyStep, { onNext: () => {}, onBack: () => {} })) })
+  }
+
+  it('Claude Code alone: as before', () => {
+    renderWith({})
+    expect(cardText().replace(/\s+/g, ' ')).toBe("Powers the Logs, Memory and Tokenomics pages by indexing Claude's own transcripts (~/.claude/projects). Indexing is local; turning it off only stops the index. Your conversations stay in Claude's files either way.")
+  })
+
+  it('Codex alone: Codex\'s transcripts, in each account\'s sessions folder, nothing about Claude', () => {
+    renderWith({ claudeEnabled: false, codexEnabled: true, codexAnswered: true })
+    const t = cardText()
+    expect(t).toContain("Codex's own transcripts (each Codex account's sessions folder)")
+    expect(t).toContain("Your conversations stay in Codex's files either way.")
+    expect(t).not.toMatch(/Claude|\.claude/)
+  })
+
+  it('both on: both are named', () => {
+    renderWith({ claudeEnabled: true, codexEnabled: true, codexAnswered: true })
+    const t = cardText()
+    expect(t).toContain("Claude's own transcripts (~/.claude/projects) and Codex's (each Codex account's sessions folder)")
+    expect(t).toContain('Your conversations stay in their own files either way.')
+  })
+})

@@ -449,7 +449,8 @@ export async function restoreSavedSessions(
         effortLevel: claude?.effortLevel ?? saved.effortLevel,
         disableAutoMemory: claude?.disableAutoMemory ?? saved.disableAutoMemory,
         enableCodexReview: claude?.enableCodexReview,
-        loggingEnabled: claude?.loggingEnabled,
+        // P3.12: a Codex session's opt-out rides in its codexOptions.
+        loggingEnabled: saved.provider === 'codex' ? saved.codexOptions?.loggingEnabled : claude?.loggingEnabled,
         // #397 Group 4: these were dropped on save+restore, so a restored session
         // came back with the wrong permission mode / without its extra CLI args.
         permissionMode: claude?.permissionMode,

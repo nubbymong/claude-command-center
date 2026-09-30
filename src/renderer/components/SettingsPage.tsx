@@ -177,10 +177,10 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
   }
 
   const handleClearAllLogs = async () => {
-    if (!window.confirm('Permanently delete the app\'s conversation index? This cannot be undone. Active sessions are kept. Your conversations remain in Claude\'s own files (~/.claude/projects).')) return
+    if (!window.confirm('Permanently delete the app\'s conversation index? This cannot be undone. Active sessions are kept. Your conversations remain in Claude Code\'s and Codex\'s own files (~/.claude/projects, and each Codex account\'s sessions folder).')) return
     try {
       const res = await window.electronAPI.logs2.clearAll()
-      window.alert(`Index cleared: ${res.deletedRuns} run(s), ${res.deletedMessages} message(s) removed. Active sessions are kept. Your conversations remain in Claude's own files.`)
+      window.alert(`Index cleared: ${res.deletedRuns} run(s), ${res.deletedMessages} message(s) removed. Active sessions are kept. Your conversations remain in Claude Code's and Codex's own files.`)
     } catch {
       window.alert('Could not clear the index — the logging service may be unavailable.')
     }
@@ -319,7 +319,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   />
                   <span>
                     Index conversation logs
-                    <span className="block text-[10px] text-[var(--text-muted)]">The Conductor indexes Claude's own transcripts (~/.claude/projects) for browsing here. Turning this off only stops indexing — your conversations remain in Claude's own files and are not affected.</span>
+                    <span className="block text-[10px] text-[var(--text-muted)]">The Conductor indexes Claude Code's and Codex's own transcripts (~/.claude/projects, and each Codex account's sessions folder) for browsing here. Turning this off only stops indexing; your conversations remain in their own files and are not affected.</span>
                   </span>
                 </label>
                 <div className="flex items-center gap-2 mt-1">
@@ -329,7 +329,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   >
                     Clear index
                   </button>
-                  <span className="text-[10px] text-[var(--text-muted)]">(removes the app's index only; conversations remain in Claude's own files at ~/.claude/projects)</span>
+                  <span className="text-[10px] text-[var(--text-muted)]">(removes the app's index only; conversations remain in Claude Code's and Codex's own files)</span>
                 </div>
               </Section>
 

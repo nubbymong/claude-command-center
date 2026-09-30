@@ -151,6 +151,10 @@ export interface TelemetryOptions {
    *  so both tabs show its figures. onRelease is told when a later decision
    *  takes it back. */
   onShared?: (conversation: { id: string; cwd: string; exact?: boolean; fromHook?: boolean }) => void
+  /** P3.12: the rollout claimed (path, the realm's sessions folder, exact,
+   *  shared), told with each onClaim or onShared, and null when a claim is
+   *  let go. Checked by the watcher; nothing else supplies it. */
+  onRollout?: (rollout: { path: string; sessionsDir: string; exact: boolean; shared: boolean } | null) => void
 }
 
 export interface TelemetrySource {

@@ -44,11 +44,11 @@ export default function LogsPane({ sessionId }: Props) {
   const isShell = !!session?.shellOnly
   const isSSH = session?.sessionType === 'ssh'
   const isCodex = provider === 'codex'
-  // Per-config opt-out. The toggle's persistence on claudeOptions lands with
-  // T16 (SessionDialog "Index conversation logs"); read it defensively so this
-  // already honours it once T16 adds the field — DEFAULT-TRUE (only false off).
-  const perConfigOff =
-    (config?.claudeOptions as { loggingEnabled?: boolean } | undefined)?.loggingEnabled === false
+  // Per-config opt-out (SessionDialog "Index conversation logs"): Claude's on
+  // claudeOptions, Codex's on codexOptions (P3.12); DEFAULT-TRUE (only false off).
+  const perConfigOff = isCodex
+    ? config?.codexOptions?.loggingEnabled === false
+    : (config?.claudeOptions as { loggingEnabled?: boolean } | undefined)?.loggingEnabled === false
   const loggingOff = globalLogging === false || perConfigOff
 
   // Precedence: structural reasons (can never index) before logging-off before
@@ -56,8 +56,9 @@ export default function LogsPane({ sessionId }: Props) {
   // ONE source of truth for "can this session have a transcript": the command
   // bar and the Logs button read the same function (lib/session-capabilities),
   // so the pane and the bar cannot drift. (ADR-018 D2)
-  const structuralReason: LogEmptyReason | null = sessionCapabilities(session).logsEmptyReason
-  void isShell; void isSSH; void isCodex
+  const caps = sessionCapabilities(session)
+  const structuralReason: LogEmptyReason | null = caps.logsEmptyReason
+  void isShell; void isSSH
 
   // ---- no-transcript-yet detection via ingestStatus -------------------------
   // Only relevant when the session COULD index (no structural reason, logging on).
@@ -119,7 +120,7 @@ export default function LogsPane({ sessionId }: Props) {
         </button>
       </div>
       {emptyReason !== null ? (
-        <LogEmptyState reason={emptyReason} watchedCwd={emptyReason === 'no-transcript' ? watchedCwd : null} />
+        <LogEmptyState reason={emptyReason} watchedCwd={emptyReason === 'no-transcript' ? watchedCwd : null} agentName={caps.agentName || undefined} />
       ) : (
         <SessionTranscript scope={scope} />
       )}
