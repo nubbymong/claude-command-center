@@ -829,7 +829,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
               data-testid="edit-while-running-note"
             >
               {liveSessionCount === 1 ? 'A session launched from this config is running.' : `${liveSessionCount} sessions launched from this config are running.`}{' '}
-              They keep the settings they launched with; your edits apply to sessions started from now on. Restarting a live SSH session after changing its connection details will be refused, and a restarted shell whose command line changed will run without its secret argument.
+              They keep the settings they launched with (but turning Index conversation logs off stops indexing them at once); your edits apply to sessions started from now on. Restarting a live SSH session after changing its connection details will be refused, and a restarted shell whose command line changed will run without its secret argument.
             </div>
           )}
 
@@ -1345,7 +1345,8 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
                         <>
                           Lets you browse this session's transcript inside the Conductor. Your conversation is always
                           saved by Claude Code either way (~/.claude/projects) — this only controls whether
-                          the app indexes it.
+                          the app indexes it. Turned off, indexing stops at once, a running session too; turned on,
+                          it applies to sessions started after.
                         </>
                       ),
                     })}
@@ -1423,7 +1424,8 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
                           <>
                             Lets you browse this session's transcript inside the Conductor. Codex saves your
                             conversation either way, in its account's sessions folder; this only controls whether the
-                            app indexes it.
+                            app indexes it. Turned off, indexing stops at once, a running session too; turned on, it
+                            applies to sessions started after.
                           </>
                         ),
                       })}

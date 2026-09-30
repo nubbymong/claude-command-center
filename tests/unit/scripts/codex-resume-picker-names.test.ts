@@ -6,7 +6,7 @@
 // plain file (never through a link), small, and valid; the name is shown as
 // plain text like every other string in the picker.
 import { describe, it, expect, afterEach } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, unlinkSync, linkSync } from 'fs'
 import { join, dirname, basename } from 'path'
 import { tmpdir } from 'os'
 
@@ -16,6 +16,9 @@ const lib = require('../../../scripts/lib/codex-resume-picker-lib.js') as {
   buildPickerRows: (conversations: Array<Record<string, unknown>>, names: Map<string, string>, width: number, now?: number) => Array<{ title: string; named: boolean; sub: string | null }>
   readRolloutName: (rolloutPath: string) => string | null
 }
+// The same fs object the picker lib uses, for the swap below.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const libFs = require('fs') as { openSync: (...a: unknown[]) => number }
 
 const ID1 = '019dd000-0001-7000-8000-000000000201'
 const ID2 = '019dd000-0001-7000-8000-000000000202'
@@ -96,5 +99,26 @@ describe('the Codex picker names a conversation by its name file (P3.12, row 32)
     expect(rows[0].title).not.toContain('\u001b')
     expect(rows[0].title).not.toContain('State name')
     expect(rows[1].title).toBe('State name 2')
+  })
+
+  it('P3.12 round 1 (A3): a name file replaced by another between lstat and open is not read', () => {
+    const { home: h, day } = home()
+    const a = rollout(day, ID1, 'p')
+    writeFileSync(nameFileOf(a), JSON.stringify({ name: 'GOOD' }))
+    expect(lib.readRolloutName(a)).toBe('GOOD')
+    const other = join(h, 'other.json')
+    writeFileSync(other, JSON.stringify({ name: 'SWAPPED-IN' }))
+    const openSync = libFs.openSync
+    let swapped = false
+    libFs.openSync = (p: unknown, ...rest: unknown[]) => {
+      if (!swapped && String(p) === nameFileOf(a)) { swapped = true; unlinkSync(nameFileOf(a)); linkSync(other, nameFileOf(a)) }
+      return openSync(p, ...rest)
+    }
+    try {
+      expect(lib.readRolloutName(a)).toBeNull()
+      expect(swapped).toBe(true)
+    } finally {
+      libFs.openSync = openSync
+    }
   })
 })

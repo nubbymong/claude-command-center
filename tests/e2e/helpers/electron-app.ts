@@ -107,7 +107,7 @@ function seedCleanConfig(dataDir: string): void {
   // own on/off over this file.
   fs.writeFileSync(
     path.join(config, 'settings.json'),
-    JSON.stringify({ loggingConsentSeen: true, localMachineName: 'e2e-host', codexAnswered: true }, null, 2),
+    JSON.stringify({ loggingConsentSeen: true, loggingConsentVersion: 2, localMachineName: 'e2e-host', codexAnswered: true }, null, 2),
   )
   // setupVersion MUST exactly equal the build's __APP_VERSION__ (= package
   // version): App.tsx gates the Claude CLI-setup wizard on

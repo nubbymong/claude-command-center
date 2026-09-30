@@ -154,7 +154,7 @@ export interface TelemetryOptions {
   /** P3.12: the rollout claimed (path, the realm's sessions folder, exact,
    *  shared), told with each onClaim or onShared, and null when a claim is
    *  let go. Checked by the watcher; nothing else supplies it. */
-  onRollout?: (rollout: { path: string; sessionsDir: string; exact: boolean; shared: boolean } | null) => void
+  onRollout?: (rollout: { path: string; sessionsDir: string; exact: boolean; shared: boolean; identity?: string } | null) => void
 }
 
 export interface TelemetrySource {
@@ -170,6 +170,9 @@ export interface TelemetrySource {
    *  session's conversation: a claim of it here that was only inferred is
    *  let go, and claiming goes on. True when a claim was let go. */
   refuteInferredClaim?(rolloutPath: string): boolean
+  /** Codex (P3.12 round 1): a claim made beside another session's whose
+   *  holder has let it go is this session's now: reported again. */
+  recheckShared?(): boolean
 }
 
 export interface HistorySession {

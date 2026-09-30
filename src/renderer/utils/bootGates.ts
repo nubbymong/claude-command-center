@@ -22,6 +22,8 @@
  *                          finishing with startTour.
  *   5. guidedConfig      — the first-config SessionDialog, opened from the
  *                          tour, the sidebar FirstRunCard or the empty state.
+ *                          It launches a session, so a due loggingConsent
+ *                          notice (8) is shown before it.
  *   6. githubOnboarding  — opened by its own effect 120ms after the gates
  *                          above clear.
  *   7. codexReconfirm    — "Do you use Codex?", asked once of everyone who
@@ -136,7 +138,9 @@ export function pickBootGate(s: BootGateState): BootGate | null {
   // Above the *Due short-circuit below: both are opened by a user action that
   // has already happened, so they must never be starved by a pending timer.
   if (s.tourActive) return 'guidedTour'
-  if (s.showGuidedConfig) return 'guidedConfig'
+  // P3.12 round 2 (W9): the first-config dialog launches a session, so a
+  // conversation indexing notice that is due comes first.
+  if (s.showGuidedConfig) return s.loggingConsentSeen ? 'guidedConfig' : 'loggingConsent'
   if (s.showGitHubOnboarding) return 'githubOnboarding'
   if (s.whatsNewDue || s.trainingDue || s.githubOnboardingDue) return null
   if (s.codexReconfirmDue) return 'codexReconfirm'

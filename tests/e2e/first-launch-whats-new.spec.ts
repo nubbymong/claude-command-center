@@ -94,6 +94,8 @@ test.beforeAll(async () => {
     path.join(config, 'settings.json'),
     JSON.stringify({
       loggingConsentSeen: true,
+      // P3.12 round 1: the current indexing notice, so it is not shown again here.
+      loggingConsentVersion: 2,
       localMachineName: 'e2e-host',
       updateChannel: 'stable',
       updateChannelChosen: true,

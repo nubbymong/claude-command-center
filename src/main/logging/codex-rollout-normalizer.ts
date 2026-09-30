@@ -10,7 +10,10 @@
  *    0.153.4 and 0.155.1): legacy history as `event_msg` user_message /
  *    agent_message, paginated history as `event_msg` item_completed with a
  *    UserMessage / AgentMessage item. A rollout persists only one of the two,
- *    so both are read. The `response_item` messages are NOT read: they repeat
+ *    so both are read. A user_message that carries a kind other than
+ *    `plain` (`user_instructions`, `environment_context`: injected context,
+ *    in builds that record it as an event) is not the user's words (P3.12
+ *    round 1). The `response_item` messages are NOT read: they repeat
  *    those words and carry the context Codex injects (developer instructions,
  *    the environment, AGENTS.md), which is not the conversation;
  *  - a tool_call row per tool call, from the response items both histories
@@ -205,6 +208,9 @@ function responseItemEntries(p: Record<string, unknown>): CodexRolloutEntry[] {
 function eventEntries(p: Record<string, unknown>): CodexRolloutEntry[] {
   switch (p.type) {
     case 'user_message': {
+      // Round 1 (B6): only a plain user_message (or one with no kind) is the
+      // user's words; another kind is context Codex injected.
+      if (typeof p.kind === 'string' && p.kind !== 'plain') return []
       const parts: string[] = []
       if (typeof p.message === 'string' && p.message.length > 0) parts.push(p.message)
       for (const list of [p.images, p.local_images]) if (Array.isArray(list)) for (let i = 0; i < list.length; i++) parts.push('[image]')

@@ -27,6 +27,7 @@ import * as os from 'os'
 import { execSync, execFile } from 'child_process'
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { shouldRegisterRun } from './logging/should-register-run'
+import { markNotIndexed } from './logging/indexing-gaps'
 import { getLogSupervisor, getTranscriptBinder } from './logging/logging-service'
 import { getCodexLogBinder } from './logging/codex-log-binder'
 import { resolveResumeTargetFromTranscript, mangleCwdToProjectDir, UUID_RE } from './logging/transcript-discovery'
@@ -434,6 +435,75 @@ function noteCodexContextRollout(sessionId: string, rollout: { path: string; ses
   }
 }
 
+/**
+ * P3.12 round 1 (V1): the sessions whose run is indexed now, with the config
+ * and assistant each launched under, so a logging switch turned off stops
+ * indexing them at once (applyLoggingSwitches), for both assistants.
+ */
+const indexedRuns = new Map<string, { configId?: string; provider: 'claude' | 'codex' }>()
+
+/** P3.12 round 1 (V1): the run of `sessionId` stops being indexed: the worker
+ *  drains and retires its transcripts and closes the run ('stopped'); a Codex
+ *  session's later claims bind nothing (Claude's are dropped by the worker, as
+ *  for a run that ended). The session itself runs on. */
+function stopIndexingRun(sessionId: string): void {
+  const run = indexedRuns.get(sessionId)
+  indexedRuns.delete(sessionId)
+  const now = Date.now()
+  // P3.12 (X1): a Codex session goes on not indexed: the conversation it is
+  // on, and each it claims from now, are marked written while not indexed.
+  if (run?.provider === 'codex') markCodexSessionNotIndexed(sessionId, now)
+  try { getLogSupervisor()?.runEnd(sessionId, now, 'stopped') } catch { /* best-effort */ }
+  try { getCodexLogBinder()?.stopIndexing(sessionId) } catch { /* best-effort */ }
+  logInfo(`[pty] indexing stopped for ${sessionId}: a logging switch was turned off`)
+}
+
+/**
+ * P3.12 round 1 (V1): after Settings or the saved configs change. Every
+ * indexed run whose indexing is now off (the Settings switch, or its config's
+ * own Index conversation logs field: claudeOptions for a Claude run,
+ * codexOptions for a Codex one) stops being indexed. A switch turned on
+ * applies to sessions started after it (for both assistants: a running
+ * session is not indexed again until it is started again).
+ */
+export function applyLoggingSwitches(): void {
+  if (indexedRuns.size === 0) return
+  const settings = readConfig<{ loggingEnabled?: boolean }>('settings') ?? {}
+  const configs = readConfig<unknown>('configs')
+  for (const [sessionId, run] of [...indexedRuns]) {
+    const off = settings.loggingEnabled === false || savedConfigLoggingOff(configs, run.configId, run.provider) === true
+    if (off) stopIndexingRun(sessionId)
+  }
+}
+
+/** P3.12 round 1 (V1) and round 2 (W3): a saved config's own Index
+ *  conversation logs field for an assistant (claudeOptions for Claude,
+ *  codexOptions for Codex), read from the configs as saved now: true when it
+ *  is off, false when on, undefined when the config is not saved. */
+function savedConfigLoggingOff(configs: unknown, configId: string | undefined, provider: 'claude' | 'codex'): boolean | undefined {
+  if (!configId || !Array.isArray(configs)) return undefined
+  const config = (configs as Array<{ id?: unknown; claudeOptions?: { loggingEnabled?: unknown }; codexOptions?: { loggingEnabled?: unknown } } | null>)
+    .find((c) => !!c && c.id === configId)
+  if (!config) return undefined
+  const own = provider === 'codex' ? config.codexOptions : config.claudeOptions
+  return own?.loggingEnabled === false
+}
+
+/**
+ * P3.12 (X1): the local Codex sessions running while not indexed (logging off
+ * in Settings or in their config, or before the notice naming Codex was
+ * seen). Every conversation such a session is on is marked written while not
+ * indexed (indexing-gaps.ts), so no later run, from any tab, indexes what was
+ * written then. Cleared when a launch of the session begins.
+ */
+const notIndexedCodexSessions = new Set<string>()
+
+function markCodexSessionNotIndexed(sessionId: string, now: number): void {
+  notIndexedCodexSessions.add(sessionId)
+  const held = codexContextRollouts.get(sessionId)
+  if (held) { try { markNotIndexed(held.path, now) } catch { /* best-effort */ } }
+}
+
 /** P3.12 (row 65): the rollout a Codex session's watcher holds (and its
  *  realm's sessions folder), for the GitHub Session Context; null when none. */
 export function codexRolloutForSessionContext(sessionId: string): { path: string; sessionsDir: string } | null {
@@ -568,11 +638,20 @@ export function noteCodexHookEvent(e: { sessionId?: unknown; event?: unknown; pa
   if (!p || typeof p !== 'object' || p.source !== 'startup') return
   const named = lastCodexHookRollout.get(sessionId)
   if (!named || p.transcript_path !== named) return
+  let refuted = false
   for (const [other, source] of codexTelemetrySources) {
     if (other === sessionId) continue
     try {
-      if (source.refuteInferredClaim?.(named)) logInfo(`[pty] Codex session ${other}: its inferred conversation is one ${sessionId}'s Codex started (its hook said so); it claims again`)
+      if (source.refuteInferredClaim?.(named)) {
+        refuted = true
+        logInfo(`[pty] Codex session ${other}: its inferred conversation is one ${sessionId}'s Codex started (its hook said so); it claims again`)
+      }
     } catch { /* one session's watch never breaks another's */ }
+  }
+  // P3.12 round 1 (B1): this session read that conversation beside the one
+  // refuted; it holds it now, and its watcher says so again (its logs bind it).
+  if (refuted) {
+    try { codexTelemetrySources.get(sessionId)?.recheckShared?.() } catch { /* best-effort */ }
   }
 }
 
@@ -4652,6 +4731,14 @@ function spawnPtyResolved(
       // not this run's; this launch's claims are held until its run is
       // recorded (a resume claims at once, inside ingestSessionTelemetry).
       getCodexLogBinder()?.beginLaunch(sessionId)
+      // P3.12 (X1): this launch is not yet known as not indexed (its own run
+      // block says, below); a claim it makes before that is not marked.
+      notIndexedCodexSessions.delete(sessionId)
+      // P3.12 round 1 (B2): a launch on another account (Switch Account) is on
+      // another account's folder: the rollout recorded for the Session
+      // Context goes until this launch claims one.
+      const contextBefore = codexContextRollouts.get(sessionId)
+      if (contextBefore && contextBefore.sessionsDir !== launch.sessionsDir) codexContextRollouts.delete(sessionId)
       // Start rollout watch-and-claim telemetry. Updates are dispatched to the
       // renderer (statusline:update) identically to how Claude statusline
       // updates flow through statusline-watcher.ts. (Tokenomics is no longer fed
@@ -4697,6 +4784,8 @@ function spawnPtyResolved(
           // its GitHub Session Context read the conversation from this alone.
           onRollout: (rollout) => {
             noteCodexContextRollout(sessionId, rollout)
+            // P3.12 (X1): a conversation a session not indexed is on.
+            if (rollout && notIndexedCodexSessions.has(sessionId)) { try { markNotIndexed(rollout.path, Date.now()) } catch { /* best-effort */ } }
             getCodexLogBinder()?.noteRollout(sessionId, rollout)
           },
         },
@@ -5493,13 +5582,32 @@ function spawnPtyResolved(
   // runs are skipped immediately — the worker keeps running idle. Asymmetry: if
   // logging was DISABLED at boot there is no supervisor, so a mid-run enable
   // needs a restart.
-  const settings = readConfig<{ loggingEnabled?: boolean }>('settings') ?? {}
+  const settings = readConfig<{ loggingEnabled?: boolean; loggingConsentSeen?: boolean; loggingConsentVersion?: number }>('settings') ?? {}
+  // P3.12 round 2 (W3): the config's own switch as saved now (a Restart, a
+  // Switch Account or a restore carries the value it was launched with).
+  const runProvider = (options?.provider ?? 'claude') === 'codex' ? 'codex' : 'claude'
+  const savedOff = savedConfigLoggingOff(readConfig<unknown>('configs'), options?.configId, runProvider)
+  const registerOptions = savedOff === undefined ? (options ?? {}) : { ...(options ?? {}), loggingEnabled: !savedOff }
   // Single source of truth for the run-registration decision (Task 9):
   // local Claude or (P3.12) local Codex, not shell-only, not SSH, per-config
   // loggingEnabled !== false, global loggingEnabled !== false. The matching
   // runEnd/endRun on exit are gated on this same `logSup` being non-null, so a
   // run is only ended if it was registered.
-  const logSup = shouldRegisterRun(options ?? {}, settings) ? getLogSupervisor() : null
+  const logSup = shouldRegisterRun(registerOptions, settings) ? getLogSupervisor() : null
+  // P3.12 round 1 (V1): a spawn that is not indexed (logging off, a shell, SSH)
+  // ends whatever run this session id still had open (a Restart's old process
+  // exits after this spawn, so its own exit does not), so nothing is added to
+  // it; one that is indexed is recorded for the logging switches.
+  const codexRunProvider = !options?.ssh && !options?.shellOnly && (options?.provider ?? 'claude') === 'codex'
+  if (logSup) {
+    indexedRuns.set(sessionId, { ...(options?.configId ? { configId: options.configId } : {}), provider: codexRunProvider ? 'codex' : 'claude' })
+  } else {
+    indexedRuns.delete(sessionId)
+    try { getLogSupervisor()?.runEnd(sessionId, Date.now(), 'exited') } catch { /* best-effort */ }
+    // P3.12 (X1, X3): a local Codex session running not indexed marks the
+    // conversations it is on.
+    if (codexRunProvider) markCodexSessionNotIndexed(sessionId, Date.now())
+  }
   logSup?.runStart({
     sessionId,
     configId: options?.configId,
@@ -5626,6 +5734,7 @@ function spawnPtyResolved(
       // just-respawned session's run. No-op when logging is disabled / this
       // session was never recorded (logSup null).
       logSup?.runEnd(sessionId, Date.now(), exitCode === 0 ? 'exited' : 'crashed')
+      indexedRuns.delete(sessionId)
       // Logs v2 (Task 8): cancel any pending heuristic timer + clear the binder's
       // per-session bind state so a reused sessionId (restart) binds fresh.
       getTranscriptBinder()?.endRun(sessionId)
@@ -5955,7 +6064,18 @@ function cleanupSessionResources(sessionId: string): void {
   if (codexTel) {
     try { codexTel.stop() } catch { /* noop */ }
     codexTelemetrySources.delete(sessionId)
+    // P3.12 round 2 (Q3): a session reading this one's conversation beside
+    // it holds it now (its watcher says so, and its logs bind it).
+    for (const [other, source] of codexTelemetrySources) {
+      if (other === sessionId) continue
+      try { source.recheckShared?.() } catch { /* one session's watch never breaks another's */ }
+    }
   }
+  // P3.12 round 1 (Q1): the Codex log binder's claim goes with the session's
+  // resources (killPty runs this before every spawn, a Claude one too), so a
+  // tab respawned as another assistant keeps nothing of it; a Codex launch
+  // begins its own afterwards.
+  try { getCodexLogBinder()?.endRun(sessionId) } catch { /* best-effort */ }
   // P3.10: the launch's hook file (its token) and its hooked mark go with
   // the session's resources; the gateway's token for it goes on exit, as a
   // Claude session's does, and a respawn mints a new one.

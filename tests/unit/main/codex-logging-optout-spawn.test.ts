@@ -34,9 +34,10 @@ describe('a Codex spawn and its indexing opt-out (P3.12)', () => {
 
   it('the gate: a Codex run is recorded by default and not when its config opted out', () => {
     const parsed = (v: boolean | undefined) => spawnOptionsSchema.parse(spawn(v)) as { provider?: 'claude' | 'codex'; loggingEnabled?: boolean }
-    expect(shouldRegisterRun(parsed(undefined), {})).toBe(true)
-    expect(shouldRegisterRun(parsed(true), {})).toBe(true)
-    expect(shouldRegisterRun(parsed(false), {})).toBe(false)
-    expect(shouldRegisterRun(parsed(undefined), { loggingEnabled: false })).toBe(false)
+    const seen = { loggingConsentSeen: true, loggingConsentVersion: 2 }
+    expect(shouldRegisterRun(parsed(undefined), seen)).toBe(true)
+    expect(shouldRegisterRun(parsed(true), seen)).toBe(true)
+    expect(shouldRegisterRun(parsed(false), seen)).toBe(false)
+    expect(shouldRegisterRun(parsed(undefined), { ...seen, loggingEnabled: false })).toBe(false)
   })
 })

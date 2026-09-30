@@ -675,7 +675,7 @@ export interface CodexClaimOptions {
    *  exactly, whether another session holds it), and null each time a claim is
    *  let go. The session's logs, its name file and its GitHub Session Context
    *  read its conversation from this. */
-  onRollout?: (rollout: { path: string; sessionsDir: string; exact: boolean; shared: boolean } | null) => void
+  onRollout?: (rollout: { path: string; sessionsDir: string; exact: boolean; shared: boolean; identity?: string } | null) => void
 }
 
 /** How often a claim by id walks the realm's sessions folder while unclaimed:
@@ -838,6 +838,8 @@ export function watchAndClaimRollout(
   let claimedIdentity: string | null = null
   /** Set by a read that opened another file at the claimed path. */
   let claimedFileChanged = false
+  /** P3.12 round 1 (B1): the claimed rollout's session_meta, to report again. */
+  let claimedMeta: RolloutSessionMeta | null = null
   /** The picker's latest decision (none yet: nothing is claimed). */
   let decision: PickDecision | null = null
   /** A pick entry already dealt with (read, or refused), by its identity: never read again. */
@@ -877,7 +879,9 @@ export function watchAndClaimRollout(
       else if (!claimShared && claimOpts?.onClaim) claimOpts.onClaim({ id: found.id, cwd: found.cwd, certain, exact: claimExact, fromHook: claimFromHook })
     } catch { /* a listener never stops the watch */ }
     if (claimedPath && claimOpts?.onRollout) {
-      try { claimOpts.onRollout({ path: claimedPath, sessionsDir, exact: claimExact, shared: claimShared }) } catch { /* a listener never stops the watch */ }
+      // Round 1 (A1): with the claimed file's identity, so the index reads
+      // only that file at the path.
+      try { claimOpts.onRollout({ path: claimedPath, sessionsDir, exact: claimExact, shared: claimShared, ...(claimedIdentity ? { identity: claimedIdentity } : {}) }) } catch { /* a listener never stops the watch */ }
     }
   }
 
@@ -893,6 +897,7 @@ export function watchAndClaimRollout(
     claimed.add(fullPath)
     claimedIdentity = fileIdentity(fullPath)
     claimedFileChanged = false
+    claimedMeta = found
     report(found, certain)
 
     // Its running time (P3.7, row 36), as Claude Code's Duration: what main
@@ -1005,6 +1010,7 @@ export function watchAndClaimRollout(
     claimedPath = null
     claimedIdentity = null
     claimedFileChanged = false
+    claimedMeta = null
     claimExact = false
     claimFromHook = false
     claimShared = false
@@ -1486,6 +1492,18 @@ export function watchAndClaimRollout(
       if (intervalHandle) { clearInterval(intervalHandle); intervalHandle = null }
       claim(exact.path, exact.meta, true, { exact: true, fromHook: true, shared: claimed.has(exact.path) })
       return { id: exact.meta.id, cwd: exact.meta.cwd }
+    },
+    /** P3.12 round 1 (B1) and round 2 (Q3): a claim made beside another
+     *  session's (shared) whose holder has since let it go (its inferred
+     *  claim refuted, or its session stopped): this watcher holds it now,
+     *  and says so again. True when it did. */
+    recheckShared(): boolean {
+      if (stopped || !claimedPath || !claimShared || !claimedMeta) return false
+      // Another watcher still reads it (this one is counted too): still shared.
+      if ((readers.get(claimedPath) ?? 0) > 1) return false
+      claimShared = false
+      report(claimedMeta, true)
+      return true
     },
     /** P3.10: another session's own hook proved `rolloutPath` is that
      *  session's conversation. An inferred claim of it here (a new

@@ -241,7 +241,7 @@ describe('Transparency, the log indexing card (P3.12)', () => {
 
   it('Claude Code alone: as before', () => {
     renderWith({})
-    expect(cardText().replace(/\s+/g, ' ')).toBe("Powers the Logs, Memory and Tokenomics pages by indexing Claude's own transcripts (~/.claude/projects). Indexing is local; turning it off only stops the index. Your conversations stay in Claude's files either way.")
+    expect(cardText().replace(/\s+/g, ' ')).toBe("Powers the Logs, Memory and Tokenomics pages by indexing Claude's own transcripts (~/.claude/projects). Indexing is local; turning it off stops it at once, and turning it on applies to sessions started after. Your conversations stay in Claude's files either way.")
   })
 
   it('Codex alone: Codex\'s transcripts, in each account\'s sessions folder, nothing about Claude', () => {

@@ -47,6 +47,15 @@ export type ToTranscriptsWorker =
       /** P3.12: the transcript's format; absent = Claude's JSONL. A Codex
        *  rollout is tailed with the Codex normalizer. */
       sourceFormat?: 'claude-jsonl' | 'codex-rollout'
+      /** P3.12 round 1: a Codex rollout's file identity (dev:ino) as its
+       *  watcher claimed it; the tail reads only that file. */
+      sourceIdentity?: string
+      /** P3.12 (W4, X1, X2): this conversation was written while it was not
+       *  indexed (`since`: when that was noted), or it may have been
+       *  (`ifBegunBefore`: the not-indexed record cannot vouch for a
+       *  conversation begun before that time); what was written then is
+       *  never indexed. */
+      notIndexed?: { since?: number; ifBegunBefore?: number }
     }
   /** P3.12: the session is no longer on this transcript (a Codex claim let
    *  go): its tail is drained and retired; what it gave stays. */

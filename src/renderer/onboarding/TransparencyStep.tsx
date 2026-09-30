@@ -8,6 +8,7 @@ import { logIndexTransparencyText } from '../lib/log-index-text'
 import { useGitHubStore } from '../stores/githubStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { defaultUpdateChannelForVersion } from '../utils/versionLabel'
+import { LOGGING_CONSENT_VERSION } from '../utils/logging-consent'
 
 declare const __APP_VERSION__: string
 
@@ -176,7 +177,7 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
 
   const finish = () => {
     // The consent is the page itself: reaching Next means it was seen.
-    save({ loggingConsentSeen: true })
+    save({ loggingConsentSeen: true, loggingConsentVersion: LOGGING_CONSENT_VERSION })
     onNext()
   }
 

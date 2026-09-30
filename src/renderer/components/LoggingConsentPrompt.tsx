@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useSettingsStore } from '../stores/settingsStore'
+import { loggingConsentDue, LOGGING_CONSENT_VERSION } from '../utils/logging-consent'
 import {
   DialogOverlay,
   DialogPanel,
@@ -15,7 +16,9 @@ const CLOSE_ANIM_MS = 200
 /**
  * One-time first-run notice for session logging.
  *
- * Rendered when `settings.loggingConsentSeen` is falsy. The user can:
+ * Rendered when `settings.loggingConsentSeen` is falsy, or once more for a
+ * Codex user whose seen notice predates the one that names Codex (P3.12
+ * round 1, loggingConsentDue). The user can:
  *   - "Keep on"  -- logs stay enabled; marks consent seen.
  *   - "Turn off" -- disables logging and marks consent seen.
  *
@@ -46,8 +49,8 @@ export default function LoggingConsentPrompt() {
     closeTimer.current = setTimeout(() => updateSettings(updates), CLOSE_ANIM_MS)
   }
 
-  const handleKeepOn = () => save({ loggingConsentSeen: true })
-  const handleTurnOff = () => save({ loggingEnabled: false, loggingConsentSeen: true })
+  const handleKeepOn = () => save({ loggingConsentSeen: true, loggingConsentVersion: LOGGING_CONSENT_VERSION })
+  const handleTurnOff = () => save({ loggingEnabled: false, loggingConsentSeen: true, loggingConsentVersion: LOGGING_CONSENT_VERSION })
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape') handleKeepOn()
@@ -55,8 +58,8 @@ export default function LoggingConsentPrompt() {
 
   const visible = entering && !closing
 
-  // Don't render at all when consent has already been seen (guard for hot-reload).
-  if (settings.loggingConsentSeen) return null
+  // Don't render at all when the notice is not due (guard for hot-reload).
+  if (!loggingConsentDue(settings)) return null
 
   return (
     <DialogOverlay
@@ -112,7 +115,8 @@ export default function LoggingConsentPrompt() {
             <span className="font-medium" style={{ color: 'var(--text-secondary)' }}>
               Settings &rarr; Security
             </span>
-            . Turning it off only stops the app from indexing; it does not delete or move your conversations.
+            . Turning it off only stops the app from indexing (at once, sessions already running too); it does not
+            delete or move your conversations. Turning it on again applies to sessions started after.
           </p>
         </DialogBody>
 

@@ -365,6 +365,9 @@ export interface AppSettings {
    *  written. Set true (with or without disabling logging) to suppress the
    *  prompt permanently. */
   loggingConsentSeen?: boolean
+  /** P3.12 round 1 (B5): the version of the notice seen (LOGGING_CONSENT_VERSION
+   *  in utils/logging-consent.ts); absent = the earlier notice (1). */
+  loggingConsentVersion?: number
   /** True once the legacy file logs have been imported into SQLite (Phase 2b). */
   legacyLogsMigrated?: boolean
   /** True once the one-time "legacy logs detected" surfacing has been shown. */

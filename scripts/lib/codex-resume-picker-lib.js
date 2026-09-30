@@ -10,6 +10,49 @@ const path = require('path')
 const { spawnSync } = require('child_process')
 const crypto = require('crypto')
 
+// -- the first user message ----------------------------------------
+// P3.12 round 1 (V3): the user's words in one event_msg payload, by the
+// conversation index's rule (codex-rollout-normalizer.ts eventEntries and
+// contentText): null when the event is not a user message, or is blank.
+function eventUserText(p) {
+  if (p.type === 'user_message') {
+    // Only a plain user_message (or one with no kind) is the user's words.
+    if (typeof p.kind === 'string' && p.kind !== 'plain') return null
+    const parts = []
+    if (typeof p.message === 'string' && p.message.length > 0) parts.push(p.message)
+    for (const list of [p.images, p.local_images]) if (Array.isArray(list)) for (let i = 0; i < list.length; i++) parts.push('[image]')
+    const text = parts.join('\n\n')
+    return text.trim() ? text : null
+  }
+  if (p.type === 'item_completed' && p.item && typeof p.item === 'object' && p.item.type === 'UserMessage') {
+    const text = contentText(p.item.content)
+    return text.trim() ? text : null
+  }
+  return null
+}
+
+// The text parts of a turn's content, [image] for each image (the index's contentText).
+function contentText(content) {
+  if (!Array.isArray(content)) return ''
+  const parts = []
+  for (const part of content) {
+    if (!part || typeof part !== 'object' || Array.isArray(part)) continue
+    const type = part.type
+    if ((type === 'text' || type === 'Text' || type === 'input_text' || type === 'output_text') && typeof part.text === 'string') {
+      if (part.text.length > 0) parts.push(part.text)
+    } else if (type === 'image' || type === 'local_image' || type === 'input_image') {
+      parts.push('[image]')
+    }
+  }
+  return parts.join('\n\n')
+}
+
+// Context Codex injects as a user response item: an XML-style wrapper, or
+// its AGENTS.md instructions.
+function isInjectedContext(trimmed) {
+  return /^<[A-Za-z]/.test(trimmed) || /^# AGENTS\.md instructions\b/.test(trimmed)
+}
+
 // -- parseRollout ---------------------------------------------------
 // Reads the first ~32KB head of a rollout buffer and extracts:
 //   { id, cwd, model, effort?, label, mtime? }
@@ -35,24 +78,29 @@ function parseRollout(text) {
   }
   if (!meta) return null
 
-  // Walk subsequent lines for turn_context (any position) and first user_message.
+  // Walk subsequent lines for turn_context (any position) and the first user
+  // message.
   //
-  // Two rollout formats supported (codex CLI changed the shape between
-  // 0.128 and 0.133):
-  //   - Legacy:  { type: 'event_msg',     payload: { type: 'user_message', message: '...' } }
-  //   - Current: { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '...' }] } }
+  // P3.12 round 1 (V3): the first user message as the conversation index
+  // reads it (src/main/logging/codex-rollout-normalizer.ts, the same rule):
+  // the user's words from the events, never the response items, which also
+  // carry the context Codex injects (AGENTS.md, the environment):
+  //   - legacy history: { type: 'event_msg', payload: { type: 'user_message', message } },
+  //     a plain one (no kind, or kind 'plain'), with [image] per image;
+  //   - paginated history: { type: 'event_msg', payload: { type: 'item_completed',
+  //     item: { type: 'UserMessage', content: [{ type: 'text', text }] } } }.
   //
-  // In the current format Codex injects synthetic wrapper messages at the
-  // top of every session (<environment_context>, <collaboration_mode>,
-  // <permissions instructions>, etc.). These start with an XML-style
-  // opening tag and should NOT be displayed as the conversation label.
-  // The heuristic: skip any input_text that begins with `<` followed by
-  // a letter (i.e. looks like a wrapper tag). The first real user input
-  // wins.
+  // Only a head with no such event (one cut before it) falls back to the
+  // response items: { type: 'response_item', payload: { type: 'message',
+  // role: 'user', content: [{ type: 'input_text', text }] } }, skipping the
+  // injected context there: text that opens with an XML-style tag
+  // (<environment_context>, <collaboration_mode>, ...) or is Codex's
+  // AGENTS.md instructions.
   let model = meta.model
   let effort
   let label = '(continued session)'
   let foundLabel = false
+  let fallback = null
 
   for (let i = 1; i < lines.length; i++) {
     let evt
@@ -67,18 +115,18 @@ function parseRollout(text) {
 
     if (foundLabel) continue
 
-    // Legacy format
-    if (evt.type === 'event_msg' && evt.payload && evt.payload.type === 'user_message') {
-      const m = evt.payload.message
-      if (typeof m === 'string' && m.trim()) {
-        label = m.replace(/[\r\n]+/g, ' ').trim()
+    // The user's words from the events (the index's rule).
+    if (evt.type === 'event_msg' && evt.payload && typeof evt.payload === 'object') {
+      const text = eventUserText(evt.payload)
+      if (text !== null) {
+        label = text.replace(/[\r\n]+/g, ' ').trim()
         foundLabel = true
-        continue
       }
+      continue
     }
 
-    // Current format -- response_item / message / role=user / content[].input_text
-    if (evt.type === 'response_item' && evt.payload && evt.payload.type === 'message' && evt.payload.role === 'user' && Array.isArray(evt.payload.content)) {
+    // The fallback: the first response-item user text that is not injected context.
+    if (fallback === null && evt.type === 'response_item' && evt.payload && evt.payload.type === 'message' && evt.payload.role === 'user' && Array.isArray(evt.payload.content)) {
       for (const part of evt.payload.content) {
         if (!part || typeof part !== 'object') continue
         if (part.type !== 'input_text') continue
@@ -86,14 +134,13 @@ function parseRollout(text) {
         if (typeof text !== 'string') continue
         const trimmed = text.trim()
         if (!trimmed) continue
-        // Skip Codex-injected wrappers like <environment_context>, <collaboration_mode>, etc.
-        if (/^<[A-Za-z]/.test(trimmed)) continue
-        label = trimmed.replace(/[\r\n]+/g, ' ').slice(0, 200)
-        foundLabel = true
+        if (isInjectedContext(trimmed)) continue
+        fallback = trimmed.replace(/[\r\n]+/g, ' ').slice(0, 200)
         break
       }
     }
   }
+  if (!foundLabel && fallback !== null) label = fallback
 
   return { id: meta.id, cwd: meta.cwd, model, effort, label }
 }

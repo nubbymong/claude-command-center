@@ -55,6 +55,11 @@ describe('pickBootGate — the tour and the first-config dialog own turns (#609)
     expect(pickBootGate(makeState({ showGuidedConfig: true, resumePending: true }))).toBe('guidedConfig')
   })
 
+  it('P3.12 round 2 (W9): a due conversation indexing notice comes before the first-config dialog, which launches a session', () => {
+    expect(pickBootGate(makeState({ showGuidedConfig: true, loggingConsentSeen: false }))).toBe('loggingConsent')
+    expect(pickBootGate(makeState({ showGuidedConfig: true, loggingConsentSeen: true }))).toBe('guidedConfig')
+  })
+
   it('the tour outranks the dialog it can open', () => {
     expect(pickBootGate(makeState({ tourActive: true, showGuidedConfig: true }))).toBe('guidedTour')
   })
