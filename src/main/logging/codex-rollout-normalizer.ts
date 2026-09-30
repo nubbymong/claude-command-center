@@ -285,18 +285,37 @@ function toolMeta(e: Extract<CodexRolloutEntry, { kind: 'tool' }>): string {
 
 /** A normalizer for one Codex rollout, carrying idx and ts on from where its
  *  run already is (the worker seeds them), as Claude's does. */
-export function makeCodexRolloutNormalizer(opts?: { startIdx?: number; startTs?: number }): Normalizer {
+/**
+ * P3.12 (Y1): `skip` says whether a record written at a time (its own
+ * `timestamp`, else the one of the record before it in this read; null
+ * when there is none) is left out: nothing of it is indexed, and one
+ * divider (`skippedLabel`) goes where a skipped run of records was, before
+ * the next rows kept.
+ */
+export function makeCodexRolloutNormalizer(opts?: { startIdx?: number; startTs?: number; skip?: (recordTs: number | null) => boolean; skippedLabel?: string }): Normalizer {
   let nextIdx = opts?.startIdx ?? 0
   let lastTs = opts?.startTs ?? 0
+  /** The last record time this read has seen (its own records only). */
+  let lastOwnTs: number | null = null
+  let skipped = false
   const stats: NormalizerStats = { malformed: 0, skippedMeta: 0, unknown: 0, unknownParts: 0 }
 
   function push(line: string): NewMessage[] {
     if (typeof line !== 'string' || !line.trim()) return []
     const read = readCodexRolloutLine(line)
     if (read === null) { stats.malformed++; return [] }
+    if (read.ts !== null) lastOwnTs = read.ts
+    if (opts?.skip && opts.skip(read.ts ?? lastOwnTs)) {
+      if (read.entries.some((e) => e.kind !== 'files')) skipped = true
+      return []
+    }
     if (read.ts !== null) lastTs = read.ts
     const ts = lastTs
     const out: NewMessage[] = []
+    if (skipped && read.entries.some((e) => e.kind !== 'files')) {
+      out.push({ idx: nextIdx++, ts, role: 'system', kind: 'clear', content: opts?.skippedLabel ?? '' })
+      skipped = false
+    }
     for (const e of read.entries) {
       if (e.kind === 'message') {
         out.push({ idx: nextIdx++, ts, role: e.role, kind: 'message', content: e.text })

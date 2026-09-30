@@ -41,6 +41,7 @@ import type { TranscriptsDb, NewMessage, TranscriptScope } from './transcripts-d
 import { makeNormalizer, PARSER_VERSION } from './transcript-normalizer'
 import { makeCodexRolloutNormalizer, CODEX_PARSER_VERSION } from './codex-rollout-normalizer'
 import { mangleCwdToProjectDir } from '../../shared/project-key'
+import { codexConversationKey } from '../../shared/codex-conversation-key'
 import type { Normalizer } from './transcript-normalizer'
 import type {
   ToTranscriptsWorker,
@@ -85,8 +86,6 @@ const CONTINUE_COMPARE_MAX_BYTES = 64 * 1024 * 1024
 export const NOT_INDEXED_DIVIDER = 'Not indexed while logging was off'
 
 
-/** P3.12 round 2 (W4): the most of a rollout's first line read for its time. */
-const FIRST_LINE_MAX_BYTES = 1024 * 1024
 
 // ---------------------------------------------------------------------------
 // Worker factory
@@ -107,6 +106,9 @@ interface TailState {
   /** P3.12 (X4): a Codex tail's running SHA-256 of every byte it consumed
    *  from the file's start (absent when it did not read from there). */
   digest?: Hash
+  /** P3.12 (Y3): the stored digest of what was read up to `cursor`, checked
+   *  (and the running digest built) only when the tail next reads. */
+  digestStored?: string
 }
 
 export interface TranscriptsWorker {
@@ -134,6 +136,22 @@ export function createTranscriptsWorker(
   const tails = new Map<number, TailState>()
   /** transcriptIds that have already emitted the "shrank below cursor" warn (once each). */
   const shrinkWarned = new Set<number>()
+  /** P3.12 (Y1): when each Codex conversation (its rollout id) was written
+   *  while not indexed, from main: windows [start, end), end null while
+   *  open; and `before`, every record stamped earlier. */
+  const notIndexedWindows = new Map<string, Array<[number, number | null]>>()
+  let notIndexedBefore: number | null = null
+  /** Whether a record of the conversation `key` written at `ts` is left
+   *  out. A record with no time (none of its own, none before it in the read)
+   *  is left out whenever the conversation has any such rule. A record at a
+   *  window's start is inside it; one at its end is not. */
+  function notIndexedAt(key: string, ts: number | null): boolean {
+    const list = notIndexedWindows.get(key)
+    if ((!list || list.length === 0) && notIndexedBefore === null) return false
+    if (ts === null) return true
+    if (notIndexedBefore !== null && ts < notIndexedBefore) return true
+    return !!list && list.some(([start, end]) => ts >= start && (end === null || ts < end))
+  }
   /** P3.12 (X4): the running digest of the first `cursor` bytes of `path`,
    *  when they are what a tail read (their SHA-256 is `stored`, the digest
    *  kept with that cursor); else none. A carried copy continues only where
@@ -204,6 +222,12 @@ export function createTranscriptsWorker(
       return 'shrank'
     }
     if (size === tail.cursor) return 'ok' // normal no-op: nothing new appended
+    // P3.12 (Y3): the running digest of what was read, built when the tail
+    // next reads (never at the worker's start).
+    if (tail.digestStored !== undefined) {
+      tail.digest = digestIfRead(tail.path, tail.cursor, tail.digestStored)
+      tail.digestStored = undefined
+    }
 
     const end = Math.min(size, tail.cursor + MAX_TICK_BYTES)
     const fd = fsi.openSync(tail.path, 'r')
@@ -315,96 +339,37 @@ export function createTranscriptsWorker(
     }
   }
 
-  /** P3.12 (X2): whether a rollout began before `before` (its first
-   *  record's time); a rollout that cannot say began before. */
-  function begunBefore(path: string, before: number): boolean {
-    let fd: number | null = null
-    try {
-      fd = fsi.openSync(path, 'r')
-      const buf = Buffer.alloc(Math.min(READ_BUF_SIZE, FIRST_LINE_MAX_BYTES))
-      let text = ''
-      for (let pos = 0; pos < FIRST_LINE_MAX_BYTES; ) {
-        const n = fsi.readSync(fd, buf, 0, buf.length, pos)
-        if (n <= 0) break
-        pos += n
-        const chunk = buf.subarray(0, n)
-        const nl = chunk.indexOf(0x0a)
-        text += chunk.subarray(0, nl === -1 ? n : nl).toString('utf8')
-        if (nl !== -1) break
-      }
-      const first = JSON.parse(text) as { timestamp?: unknown }
-      const ts = typeof first?.timestamp === 'string' ? Date.parse(first.timestamp) : NaN
-      return !Number.isFinite(ts) || ts < before
-    } catch {
-      return true
-    } finally {
-      if (fd !== null) { try { fsi.closeSync(fd) } catch { /* best-effort */ } }
-    }
-  }
-
   /**
    * P3.12: where a new run's binding of a Codex rollout starts (and the read
-   * digest its tail goes on with).
-   * - The conversation was written while it was not indexed (`notIndexed`,
-   *   noted by main for the conversation, whichever session wrote it, or a
-   *   conversation begun before a time the record cannot vouch for): only
-   *   what is written from now on is indexed (the file's end as it is now),
-   *   after a divider saying so; what was written then, never. Unless the
-   *   index already holds this file and nothing was written since (the latest
-   *   earlier binding of this path, any session, read it to its end).
-   * - Else, from the same session's earlier runs of this file name (the
-   *   latest first): the same file at the same path (the same identity: a
-   *   Restart, a relaunch) continues from what was read, and another file at
-   *   that path is read from its start; the copy Switch Account made in
-   *   another account's folder continues where its own first bytes have the
-   *   digest of what the earlier binding read.
-   * Anything else starts at 0. Nothing is indexed twice.
+   * digest its tail goes on with), from the same session's earlier runs of
+   * this file name (the latest first): the same file at the same path (the
+   * same identity: a Restart, a relaunch) continues from what was read, and
+   * another file at that path is read from its start; the copy Switch
+   * Account made in another account's folder continues where its own first
+   * bytes have the digest of what the earlier binding read. Anything else
+   * starts at 0. Nothing is indexed twice. (What was written while the
+   * conversation was not indexed is left out by record time on every read,
+   * wherever it starts: notIndexedAt.)
    */
-  function continuationStart(runId: number, sessionId: string, path: string, identity: string, notIndexed: { since?: number; ifBegunBefore?: number } | undefined): { cursor: number; gap: boolean; digest?: Hash } {
+  function continuationStart(runId: number, sessionId: string, path: string, identity: string): { cursor: number; digest?: Hash } {
     let size: number
     try {
       size = fsi.statSync(path).size
     } catch {
-      return { cursor: 0, gap: false }
-    }
-    if (notIndexed) {
-      const marked = typeof notIndexed.since === 'number' || (typeof notIndexed.ifBegunBefore === 'number' && begunBefore(path, notIndexed.ifBegunBefore))
-      if (marked) {
-        const held = db!.latestCodexBindingAtPath(runId, path)
-        const nothingSince = !!held && held.sourceIdentity === identity && held.ingestCursor === size
-        if (!nothingSince) return { cursor: size, gap: size > 0 }
-      }
+      return { cursor: 0 }
     }
     for (const prior of db!.priorCodexBindings(runId, pathBasename(path), sessionId)) {
       const at = prior.ingestCursor
       if (prior.path === path) {
-        if (prior.sourceIdentity === identity && at > 0 && at <= size) return { cursor: at, gap: false, digest: digestIfRead(path, at, prior.readDigest) }
-        return { cursor: 0, gap: false }
+        if (prior.sourceIdentity === identity && at > 0 && at <= size) return { cursor: at, digest: digestIfRead(path, at, prior.readDigest) }
+        return { cursor: 0 }
       }
       if (at > 0 && at <= size && at <= CONTINUE_COMPARE_MAX_BYTES) {
         const read = digestIfRead(path, at, prior.readDigest)
-        if (read) return { cursor: at, gap: false, digest: read }
+        if (read) return { cursor: at, digest: read }
       }
     }
-    return { cursor: 0, gap: false }
-  }
-
-  /** P3.12: where a re-bind of a Codex rollout this run held starts: at the
-   *  file's end as it is now (a divider) when the conversation was written
-   *  while not indexed and the file holds more than was read of it (or is
-   *  another file); else at `cursor`. */
-  function rebindStart(path: string, cursor: number, sameFile: boolean, notIndexed: { since?: number; ifBegunBefore?: number } | undefined): { cursor: number; gap: boolean } {
-    if (!notIndexed) return { cursor, gap: false }
-    const marked = typeof notIndexed.since === 'number' || (typeof notIndexed.ifBegunBefore === 'number' && begunBefore(path, notIndexed.ifBegunBefore))
-    if (!marked) return { cursor, gap: false }
-    let size: number
-    try {
-      size = fsi.statSync(path).size
-    } catch {
-      return { cursor, gap: false }
-    }
-    if (sameFile && size === cursor) return { cursor, gap: false }
-    return { cursor: size, gap: size > 0 }
+    return { cursor: 0 }
   }
 
   /** One pass over every tailed transcript. Re-entrancy-guarded. */
@@ -474,8 +439,10 @@ export function createTranscriptsWorker(
     identity?: string | null
     /** P3.12 (X4): the read digest a Codex tail goes on with. */
     digest?: Hash
+    /** P3.12 (Y3): or the stored one, checked when the tail next reads. */
+    digestStored?: string | null
   }): void {
-    const { sourceFormat, identity, digest, ...state } = meta
+    const { sourceFormat, identity, digest, digestStored, ...state } = meta
     // Seed idx/ts continuity from what the run already stored.
     const seed = {
       startIdx: db!.nextIdx(meta.runId),
@@ -484,12 +451,17 @@ export function createTranscriptsWorker(
     const codex = sourceFormat === 'codex-rollout'
     tails.set(meta.transcriptId, {
       ...state,
-      normalizer: codex ? makeCodexRolloutNormalizer(seed) : makeNormalizer(seed),
+      // P3.12 (Y1): a Codex tail leaves out the records written while its
+      // conversation was not indexed, by record time, whatever its offset.
+      normalizer: codex
+        ? makeCodexRolloutNormalizer({ ...seed, skip: (ts) => notIndexedAt(codexConversationKey(meta.path), ts), skippedLabel: NOT_INDEXED_DIVIDER })
+        : makeNormalizer(seed),
       ...(codex && identity ? { identity } : {}),
       // P3.12 (X4): a Codex tail from the file's start reads it all; one that
       // goes on from a cursor vouches for its bytes only with the digest of
       // what was read before it.
       ...(codex && identity && (digest || meta.cursor === 0) ? { digest: digest ?? createHash('sha256') } : {}),
+      ...(codex && identity && !digest && meta.cursor > 0 && digestStored ? { digestStored } : {}),
     })
   }
 
@@ -540,8 +512,7 @@ export function createTranscriptsWorker(
         db.setTranscriptStatus(r.transcriptId, 'complete')
         continue
       }
-      // P3.12: a resumed Codex tail goes on vouching for what it read.
-      const resumedDigest = r.sourceFormat === 'codex-rollout' ? digestIfRead(r.path, r.ingestCursor, r.readDigest) : undefined
+
       const scope = db.getRunScope(r.runId)
       if (!scope) continue
       db.reopenRun(r.runId)
@@ -554,7 +525,9 @@ export function createTranscriptsWorker(
         cursor: r.ingestCursor,
         sourceFormat: r.sourceFormat,
         identity: r.sourceIdentity,
-        ...(resumedDigest ? { digest: resumedDigest } : {}),
+        // P3.12 (Y3): a resumed Codex tail goes on vouching for what it read,
+        // its stored digest checked when it next reads.
+        digestStored: r.sourceFormat === 'codex-rollout' ? r.readDigest : null,
       })
     }
 
@@ -803,17 +776,10 @@ export function createTranscriptsWorker(
           ...(identity ? { sourceIdentity: identity } : {}),
         })
         let cursor = bound.cursor
-        // P3.12 round 1 (V2) and round 2 (W4): where a new binding of a Codex
-        // rollout starts (Claude's are read as before).
-        let gap = false
+        // P3.12 round 1 (V2): where a new binding of a Codex rollout starts
+        // (Claude's are read as before).
         let digest: Hash | undefined
-        const ni = msg.notIndexed
-        const notIndexed = codex && ni && typeof ni === 'object'
-          ? {
-              ...(typeof ni.since === 'number' && Number.isFinite(ni.since) ? { since: ni.since } : {}),
-              ...(typeof ni.ifBegunBefore === 'number' && Number.isFinite(ni.ifBegunBefore) ? { ifBegunBefore: ni.ifBegunBefore } : {}),
-            }
-          : undefined
+        let digestStored: string | null = null
         // A rotation within a run: a new transcript (e.g. /clear), or (round 1,
         // Q2) going back to one the run held before (A, B, A), or another file
         // now at a Codex rollout's path. Retire the other tails FIRST (final
@@ -822,35 +788,25 @@ export function createTranscriptsWorker(
         // would otherwise collide on idx.
         const backToEarlier = !bound.isNew && (bound.status === 'complete' || bound.status === 'failed' || bound.identityChanged)
         if (codex && identity && bound.isNew) {
-          const start = continuationStart(runId, msg.sessionId, msg.path, identity, notIndexed)
+          const start = continuationStart(runId, msg.sessionId, msg.path, identity)
           if (start.cursor > 0) {
             db.advanceCursor(bound.transcriptId, start.cursor, start.digest ? start.digest.copy().digest('hex') : null)
             cursor = start.cursor
           }
-          gap = start.gap
           digest = start.digest
-        } else if (codex && identity && (backToEarlier || !tails.has(bound.transcriptId))) {
-          // P3.12: a re-bind that (re)starts the tail (going back to it, or its
-          // tail gone): what was written while the conversation was not
-          // indexed is never indexed here either; else on from its cursor,
-          // vouching for what it read.
-          const again = rebindStart(msg.path, cursor, !bound.identityChanged, notIndexed)
-          if (again.gap) {
-            db.advanceCursor(bound.transcriptId, again.cursor, null)
-            cursor = again.cursor
-            gap = true
-          } else {
-            digest = digestIfRead(msg.path, cursor, bound.readDigest)
-          }
+        } else if (codex && identity) {
+          // A re-bind that (re)starts the tail goes on from its cursor,
+          // vouching for what it read (checked when it next reads).
+          digestStored = bound.readDigest
         }
         const rotation = (bound.isNew && bound.ord > 0) || backToEarlier
         if (rotation) {
           stopTailsForRun(runId, 'complete', bound.transcriptId)
           if (backToEarlier) tails.delete(bound.transcriptId)
         }
-        if (rotation || gap) {
+        if (rotation) {
           db.appendMessages(runId, [
-            { idx: db.nextIdx(runId), ts: Date.now(), role: 'system', kind: 'clear', content: gap ? NOT_INDEXED_DIVIDER : '' },
+            { idx: db.nextIdx(runId), ts: Date.now(), role: 'system', kind: 'clear', content: '' },
           ])
         }
         db.setTranscriptStatus(bound.transcriptId, 'tailing')
@@ -866,8 +822,22 @@ export function createTranscriptsWorker(
             sourceFormat: bound.sourceFormat,
             identity: identity ?? null,
             ...(digest ? { digest } : {}),
+            digestStored,
           })
         }
+        return
+      }
+
+      case 'not-indexed-windows': {
+        // P3.12 (Y1): from main; each listed conversation's windows, whole.
+        if (msg.replace === true) notIndexedWindows.clear()
+        const conversations = msg.conversations && typeof msg.conversations === 'object' ? msg.conversations : {}
+        for (const [key, list] of Object.entries(conversations)) {
+          if (!Array.isArray(list)) continue
+          const kept = list.filter((w): w is [number, number | null] => Array.isArray(w) && typeof w[0] === 'number' && Number.isFinite(w[0]) && (w[1] === null || (typeof w[1] === 'number' && Number.isFinite(w[1]))))
+          notIndexedWindows.set(key, kept.map((w) => [w[0], w[1]]))
+        }
+        if (typeof msg.before === 'number' && Number.isFinite(msg.before)) notIndexedBefore = notIndexedBefore === null ? msg.before : Math.max(notIndexedBefore, msg.before)
         return
       }
 

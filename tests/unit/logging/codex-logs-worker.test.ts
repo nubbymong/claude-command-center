@@ -60,11 +60,6 @@ vi.mock('../../../src/main/logging/transcripts-db', () => ({
         .filter((t) => t.runId < runId && t.sourceFormat === 'codex-rollout' && t.path.endsWith(name) && (sessionId === undefined || fake.runs.find((r) => r.runId === t.runId)?.sessionId === sessionId))
         .sort((x, y) => y.runId - x.runId || y.cursor - x.cursor)
         .map((t) => ({ transcriptId: t.id, path: t.path, ingestCursor: t.cursor, sourceIdentity: t.identity, runStartedAt: fake.runs.find((r) => r.runId === t.runId)!.startedAt, readDigest: t.digest ?? null })),
-      // Round 3 (X1): the latest earlier binding of this exact path, any session.
-      latestCodexBindingAtPath: (runId: number, path: string) => {
-        const t = fake.trs.filter((x) => x.runId < runId && x.sourceFormat === 'codex-rollout' && x.path === path).sort((x, y) => y.runId - x.runId)[0]
-        return t ? { ingestCursor: t.cursor, sourceIdentity: t.identity } : null
-      },
       advanceCursor: (id: number, cursor: number, digest?: string | null) => { const t = fake.trs.find((x) => x.id === id); if (t) { t.cursor = cursor; if (digest !== undefined) t.digest = digest } },
       findTranscript: (runId: number, path: string) => { const t = fake.trs.find((x) => x.runId === runId && x.path === path); return t ? { transcriptId: t.id } : null },
       setTranscriptStatus: (id: number, status: string) => { const t = fake.trs.find((x) => x.id === id); if (t) t.status = status },
@@ -453,67 +448,6 @@ describe('the transcripts worker and a Codex rollout (P3.12, row 31)', () => {
     ({ type: 'transcript-bind', sessionId: sid, path: f, confidence: 'exact', sourceFormat: 'codex-rollout', sourceIdentity: idOf(f), ...(notIndexed ? { notIndexed } : {}) } as In)
   const runStart = (sid: string, startedAt: number): In => ({ type: 'run-start', meta: { sessionId: sid, configLabel: 'Codex', provider: 'codex', startedAt } } as In)
 
-  it('X1: the same tab after indexing was off: from the file\'s end as it is now, after a divider; what was written meanwhile, never', () => {
-    const { w, send } = boot()
-    const f = join(dir, 'rollout-2026-09-30T10-00-00-019dd000-0001-7000-8000-000000000041.jsonl')
-    writeFileSync(f, cx.meta + cx.user('ON-1'))
-    send(runStart('s1', 1)); send(bindNI('s1', f)); w.tickNow()
-    send({ type: 'run-end', sessionId: 's1', ts: 2, status: 'stopped' })
-    appendFileSync(f, cx.user('TYPED-WHILE-OFF'))
-    send(runStart('s1', 3)); send(bindNI('s1', f, { since: 2 })); w.tickNow()
-    appendFileSync(f, cx.user('ON-2')); w.tickNow()
-    expect(shown()).toEqual(['ON-1', `-- ${GAP} --`, 'ON-2'])
-  })
-
-  it('X1: a new tab resuming a conversation written while not indexed: from its end, after a divider, never the turns written then', () => {
-    const { w, send } = boot()
-    const f = join(dir, 'rollout-2026-09-30T10-00-00-019dd000-0001-7000-8000-000000000042.jsonl')
-    writeFileSync(f, cx.meta + cx.user('ON-1'))
-    send(runStart('S', 1)); send(bindNI('S', f)); w.tickNow()
-    send({ type: 'run-end', sessionId: 'S', ts: 2, status: 'stopped' })
-    appendFileSync(f, cx.user('TYPED-WHILE-OFF'))
-    send(runStart('T', 3)); send(bindNI('T', f, { since: 2 })); w.tickNow()
-    appendFileSync(f, cx.user('ON-IN-T')); w.tickNow()
-    const t = fake.runs.find((r) => r.sessionId === 'T')!.runId
-    expect(fake.msgs.filter((m) => m.runId === t).map((m) => m.kind === 'clear' ? m.content : m.content)).toEqual([GAP, 'ON-IN-T'])
-    expect(fake.msgs.map((m) => m.content)).not.toContain('TYPED-WHILE-OFF')
-  })
-
-  it('X1: marked, but the index holds the conversation and nothing was written since: read as usual, no divider', () => {
-    const { w, send } = boot()
-    const f = join(dir, 'rollout-2026-09-30T10-00-00-019dd000-0001-7000-8000-000000000043.jsonl')
-    writeFileSync(f, cx.meta + cx.user('ON-1'))
-    send(runStart('s1', 1)); send(bindNI('s1', f)); w.tickNow()
-    send({ type: 'run-end', sessionId: 's1', ts: 2, status: 'stopped' })
-    send(runStart('s1', 3)); send(bindNI('s1', f, { since: 2 }))
-    appendFileSync(f, cx.user('ON-2')); w.tickNow()
-    expect(shown()).toEqual(['ON-1', 'ON-2'])
-  })
-
-  it('X1: a conversation never written while not indexed is read as usual (another tab: from its start)', () => {
-    const { w, send } = boot()
-    const f = join(dir, 'rollout-2026-09-30T10-00-00-019dd000-0001-7000-8000-000000000044.jsonl')
-    writeFileSync(f, cx.meta + cx.user('ON-1'))
-    send(runStart('S', 1)); send(bindNI('S', f)); w.tickNow()
-    appendFileSync(f, cx.user('ON-2'))
-    send(runStart('T', 2)); send(bindNI('T', f)); w.tickNow()
-    expect(texts(fake.runs.find((r) => r.sessionId === 'T')!.runId)).toEqual(['ON-1', 'ON-2'])
-  })
-
-  it('X2: a conversation begun before a time the not-indexed record cannot vouch for starts at its end (divider); one begun after is read whole', () => {
-    const { w, send } = boot()
-    const t0 = Date.now() - 60_000
-    const old = join(dir, 'rollout-2026-09-30T10-00-00-019dd000-0001-7000-8000-000000000045.jsonl')
-    writeFileSync(old, metaAt(t0 - 10_000) + cx.user('WRITTEN-BEFORE'))
-    const fresh = join(dir, 'rollout-2026-09-30T10-01-00-019dd000-0001-7000-8000-000000000046.jsonl')
-    writeFileSync(fresh, metaAt(t0 + 5000) + cx.user('BEGUN-AFTER'))
-    send(runStart('s1', t0 + 6000))
-    send(bindNI('s1', old, { ifBegunBefore: t0 })); w.tickNow()
-    appendFileSync(old, cx.user('ON-1')); w.tickNow()
-    send(bindNI('s1', fresh, { ifBegunBefore: t0 })); w.tickNow()
-    expect(shown()).toEqual([`-- ${GAP} --`, 'ON-1', '--', 'BEGUN-AFTER'])
-  })
-
   it('X4: an earlier account\'s file rewritten in place after it was read (the same size, a tick between): the copy is read whole', () => {
     const { w, send } = boot()
     const name = 'rollout-2026-09-30T10-00-00-019dd000-0001-7000-8000-000000000047.jsonl'
@@ -559,34 +493,6 @@ describe('the transcripts worker and a Codex rollout (P3.12, row 31)', () => {
   })
 
   // ---- round 4 ----
-
-  it('(1) a run going back to a conversation it held (A, B, A), written meanwhile while not indexed: from its end, after a divider', () => {
-    const { w, send } = boot()
-    const a = join(dir, 'rollout-2026-09-30T10-00-00-019dd000-0001-7000-8000-000000000051.jsonl')
-    const b = join(dir, 'rollout-2026-09-30T10-00-00-019dd000-0001-7000-8000-000000000052.jsonl')
-    writeFileSync(a, cx.meta + cx.user('A-1'))
-    writeFileSync(b, cx.meta + cx.user('B-1'))
-    send(runStart('s1', 1)); send(bindNI('s1', a)); w.tickNow()
-    send(bindNI('s1', b)); w.tickNow()
-    appendFileSync(a, cx.user('A-WRITTEN-WHILE-NOT-INDEXED'))
-    send(bindNI('s1', a, { since: 5 })); w.tickNow()
-    appendFileSync(a, cx.user('A-2')); w.tickNow()
-    expect(fake.msgs.map((m) => m.content)).not.toContain('A-WRITTEN-WHILE-NOT-INDEXED')
-    expect(shown().slice(-2)).toEqual([`-- ${GAP} --`, 'A-2'])
-  })
-
-  it('(1) the same, nothing written meanwhile: back to it at its cursor with the usual divider', () => {
-    const { w, send } = boot()
-    const a = join(dir, 'rollout-2026-09-30T10-00-00-019dd000-0001-7000-8000-000000000053.jsonl')
-    const b = join(dir, 'rollout-2026-09-30T10-00-00-019dd000-0001-7000-8000-000000000054.jsonl')
-    writeFileSync(a, cx.meta + cx.user('A-1'))
-    writeFileSync(b, cx.meta + cx.user('B-1'))
-    send(runStart('s1', 1)); send(bindNI('s1', a)); w.tickNow()
-    send(bindNI('s1', b)); w.tickNow()
-    send(bindNI('s1', a, { since: 5 })); w.tickNow()
-    appendFileSync(a, cx.user('A-2')); w.tickNow()
-    expect(shown()).toEqual(['A-1', '--', 'B-1', '--', 'A-2'])
-  })
 
   it('(2) the digest of what was read is stored with the cursor: after a worker restart, a copy after a Switch still continues', () => {
     const name = 'rollout-2026-09-30T10-00-00-019dd000-0001-7000-8000-000000000055.jsonl'
@@ -635,5 +541,141 @@ describe('the transcripts worker and a Codex rollout (P3.12, row 31)', () => {
     writeFileSync(b, cx.meta + cx.user('one') + cx.user('two') + cx.user('three'))
     second.send(runStart('s1', 3)); second.send(bindNI('s1', b)); second.w.tickNow()
     expect(fake.runs.map((r) => texts(r.runId))).toEqual([['one', 'two'], ['three']])
+  })
+
+  // ---- round 5: the not-indexed rule by record time (Y1) ----
+
+  const BASE = Date.now() - 600_000
+  const at5 = (ms: number) => new Date(BASE + ms).toISOString()
+  const meta5 = (id: string) => JSON.stringify({ timestamp: at5(0), type: 'session_meta', payload: { id, cwd: '/w' } }) + '\n'
+  const said = (text: string, ms: number | null) => JSON.stringify({ ...(ms === null ? {} : { timestamp: at5(ms) }), type: 'event_msg', payload: { type: 'item_completed', item: { type: 'UserMessage', id: 'u', content: [{ type: 'text', text }] } } }) + '\n'
+  const conv = (n: number) => `019dd000-0001-7000-8000-0000000001${String(n).padStart(2, '0')}`
+  const file = (n: number, sub = '') => { const d = sub ? join(dir, sub) : dir; mkdirSync(d, { recursive: true }); return join(d, `rollout-2026-09-30T10-00-00-${conv(n)}.jsonl`) }
+  const windowsFor = (n: number, list: Array<[number, number | null]>, before: number | null = null): In =>
+    ({ type: 'not-indexed-windows', conversations: { [conv(n)]: list.map(([s0, e0]) => [BASE + s0, e0 === null ? null : BASE + e0]) }, before } as unknown as In)
+  const words5 = (runId: number) => fake.msgs.filter((m) => m.runId === runId && m.kind === 'message').map((m) => m.content)
+  const shown5 = (runId?: number) => fake.msgs.filter((m) => runId === undefined || m.runId === runId).map((m) => m.kind === 'clear' ? (m.content ? '-- off --' : '--') : m.content)
+
+  it('F1: back after indexing was off (a Restart), the turn that came with the resume is kept; the ones written while off are not', () => {
+    const { w, send } = boot()
+    const f = file(1)
+    writeFileSync(f, meta5(conv(1)) + said('ON-1', 1000))
+    send(runStart('s1', BASE + 500)); send(bindNI('s1', f)); w.tickNow()
+    send({ type: 'run-end', sessionId: 's1', ts: BASE + 2000, status: 'stopped' } as In)
+    appendFileSync(f, said('OFF-1', 3000))
+    send(windowsFor(1, [[2000, 4000]]))
+    appendFileSync(f, said('RESUME-TURN', 4500))
+    send(runStart('s1', BASE + 4000)); send(bindNI('s1', f, { since: BASE + 2000 })); w.tickNow()
+    expect(shown5()).toEqual(['ON-1', '-- off --', 'RESUME-TURN'])
+  })
+
+  it('F2a: a Switch after a stretch not indexed (its copy continuing from what was read): the turns written while off are not indexed', () => {
+    const { w, send } = boot()
+    const a = file(2, 'realm-a')
+    const b = file(2, 'realm-b')
+    writeFileSync(a, meta5(conv(2)) + said('ON-1', 1000))
+    send(runStart('s1', BASE + 500)); send(bindNI('s1', a)); w.tickNow()
+    send({ type: 'run-end', sessionId: 's1', ts: BASE + 2000, status: 'stopped' } as In)
+    appendFileSync(a, said('OFF-1', 3000))
+    send(windowsFor(2, [[2000, 4000]]))
+    send(runStart('s1', BASE + 4000)); send(bindNI('s1', a, { since: BASE + 2000 }))
+    appendFileSync(a, said('ON-2', 5000)); w.tickNow()
+    writeFileSync(b, readFileSync(a, 'utf8') + said('ON-3', 7000))
+    send(runStart('s1', BASE + 6000)); send(bindNI('s1', b)); w.tickNow()
+    expect(fake.msgs.map((m) => m.content)).not.toContain('OFF-1')
+    expect(texts(fake.runs[2].runId)).toEqual(['ON-3'])
+  })
+
+  it('F2a: the same with no digest to go on (the copy read from its start): the turns written while off are not indexed', () => {
+    const { w, send } = boot()
+    const a = file(3, 'realm-a')
+    const b = file(3, 'realm-b')
+    writeFileSync(a, meta5(conv(3)) + said('ON-1', 1000))
+    send(runStart('s1', BASE + 500)); send(bindNI('s1', a)); w.tickNow()
+    send({ type: 'run-end', sessionId: 's1', ts: BASE + 2000, status: 'stopped' } as In)
+    appendFileSync(a, said('OFF-1', 3000))
+    send(windowsFor(3, [[2000, 4000]]))
+    // The copy begins with other bytes than were read (no digest to go on): read from its start.
+    writeFileSync(b, meta5(conv(3)).replace('"/w"', '"/w2"') + said('ON-1', 1000) + said('OFF-1', 3000) + said('ON-2', 5000))
+    send(runStart('s1', BASE + 4000)); send(bindNI('s1', b)); w.tickNow()
+    expect(shown5(fake.runs[1].runId)).toEqual(['ON-1', '-- off --', 'ON-2'])
+  })
+
+  it('F2b: a new tab later reading the conversation from its start: the turns written while off are not indexed, a divider where they were', () => {
+    const { w, send } = boot()
+    const f = file(4)
+    writeFileSync(f, meta5(conv(4)) + said('ON-1', 1000))
+    send(runStart('S', BASE + 500)); send(bindNI('S', f)); w.tickNow()
+    send({ type: 'run-end', sessionId: 'S', ts: BASE + 2000, status: 'stopped' } as In)
+    appendFileSync(f, said('OFF-1', 3000) + said('OFF-2', 3500))
+    send(windowsFor(4, [[2000, 4000]]))
+    appendFileSync(f, said('ON-2', 5000))
+    send(runStart('T', BASE + 6000)); send(bindNI('T', f)); w.tickNow()
+    expect(shown5(fake.runs.find((r) => r.sessionId === 'T')!.runId)).toEqual(['ON-1', '-- off --', 'ON-2'])
+  })
+
+  it('A, B, A: back to a conversation, the turns written while off are not indexed', () => {
+    const { w, send } = boot()
+    const a = file(5)
+    const b = file(6)
+    writeFileSync(a, meta5(conv(5)) + said('A-1', 1000))
+    writeFileSync(b, meta5(conv(6)) + said('B-1', 1000))
+    send(runStart('s1', BASE + 500)); send(bindNI('s1', a)); w.tickNow()
+    send(bindNI('s1', b)); w.tickNow()
+    appendFileSync(a, said('A-OFF', 3000))
+    send(windowsFor(5, [[2000, 4000]]))
+    appendFileSync(a, said('A-2', 5000))
+    send(bindNI('s1', a, { since: BASE + 2000 })); w.tickNow()
+    expect(shown5()).toEqual(['A-1', '--', 'B-1', '--', '-- off --', 'A-2'])
+  })
+
+  it('a window still open: every record from its start is left out, as it comes; once it closes, records after are read', () => {
+    const { w, send } = boot()
+    const f = file(7)
+    writeFileSync(f, meta5(conv(7)) + said('ON-1', 1000))
+    send(windowsFor(7, [[2000, null]]))
+    send(runStart('s1', BASE + 500)); send(bindNI('s1', f)); w.tickNow()
+    appendFileSync(f, said('OFF-1', 3000)); w.tickNow()
+    send(windowsFor(7, [[2000, 4000]]))
+    appendFileSync(f, said('ON-2', 5000)); w.tickNow()
+    expect(shown5()).toEqual(['ON-1', '-- off --', 'ON-2'])
+  })
+
+  it('the edges: a record stamped at a window\'s start is left out; one at its end is read', () => {
+    const { w, send } = boot()
+    const f = file(8)
+    writeFileSync(f, meta5(conv(8)) + said('BEFORE', 1999) + said('AT-START', 2000) + said('AT-END', 4000))
+    send(windowsFor(8, [[2000, 4000]]))
+    send(runStart('s1', BASE + 500)); send(bindNI('s1', f)); w.tickNow()
+    expect(words5(fake.runs[0].runId)).toEqual(['BEFORE', 'AT-END'])
+  })
+
+  it('a record with no time of its own takes the one before it in the read; with none before, it is left out when the conversation has a window', () => {
+    const { w, send } = boot()
+    const f = file(9)
+    writeFileSync(f, meta5(conv(9)) + said('ON-1', 1000) + said('OFF-1', 3000) + said('NO-TIME-AFTER-OFF', null) + said('ON-2', 5000) + said('NO-TIME-AFTER-ON', null))
+    send(windowsFor(9, [[2000, 4000]]))
+    send(runStart('s1', BASE + 500)); send(bindNI('s1', f)); w.tickNow()
+    expect(words5(fake.runs[0].runId)).toEqual(['ON-1', 'ON-2', 'NO-TIME-AFTER-ON'])
+    const g = file(10)
+    writeFileSync(g, said('NO-TIME-FIRST', null) + said('ON-X', 5000))
+    send(windowsFor(10, [[2000, 4000]]))
+    send(bindNI('s1', g)); w.tickNow()
+    expect(words5(fake.runs[0].runId)).not.toContain('NO-TIME-FIRST')
+    expect(words5(fake.runs[0].runId).slice(-1)).toEqual(['ON-X'])
+  })
+
+  it('a record the not-indexed record cannot vouch for (stamped before its before-time) is left out; a replace drops earlier windows', () => {
+    const { w, send } = boot()
+    const f = file(11)
+    writeFileSync(f, meta5(conv(11)) + said('OLD', 1000) + said('NEW', 5000))
+    send({ type: 'not-indexed-windows', conversations: { [conv(12)]: [[BASE, BASE + 9000]] }, before: BASE + 2000 } as unknown as In)
+    send(runStart('s1', BASE + 500)); send(bindNI('s1', f)); w.tickNow()
+    expect(words5(fake.runs[0].runId)).toEqual(['NEW'])
+    const g = file(12)
+    writeFileSync(g, meta5(conv(12)) + said('IN-DROPPED-WINDOW', 3000))
+    send({ type: 'not-indexed-windows', conversations: {}, before: null, replace: true } as unknown as In)
+    send(bindNI('s1', g)); w.tickNow()
+    expect(words5(fake.runs[0].runId)).toContain('IN-DROPPED-WINDOW')
   })
 })

@@ -241,3 +241,21 @@ describe('the Codex rollout normalizer: user_message kinds (P3.12 round 1, B6)',
     expect(read?.entries).toEqual([])
   })
 })
+
+describe('the Codex rollout normalizer: records left out by time (P3.12, Y1)', () => {
+  it('skips each record the rule says; one divider goes before the next rows kept; a record with no time takes the one before it', () => {
+    const at = (ms: number) => new Date(ms).toISOString()
+    const n = makeCodexRolloutNormalizer({ skip: (ts) => ts !== null && ts >= 2000 && ts < 4000, skippedLabel: 'OFF' })
+    const lines = [
+      event({ type: 'user_message', message: 'kept-1' }, at(1000)),
+      event({ type: 'user_message', message: 'skipped-1' }, at(2000)),
+      L({ type: 'event_msg', payload: { type: 'user_message', message: 'skipped-no-time' } }),
+      event({ type: 'user_message', message: 'kept-2' }, at(4000)),
+      event({ type: 'user_message', message: 'kept-3' }, at(4100)),
+      L({ type: 'event_msg', payload: { type: 'user_message', message: 'kept-no-time' } }),
+    ]
+    const rows = lines.flatMap((l) => n.push(l))
+    expect(rows.map((r) => [r.kind, r.content])).toEqual([['message', 'kept-1'], ['clear', 'OFF'], ['message', 'kept-2'], ['message', 'kept-3'], ['message', 'kept-no-time']])
+    expect(rows.map((r) => r.idx)).toEqual([0, 1, 2, 3, 4])
+  })
+})

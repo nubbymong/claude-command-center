@@ -189,10 +189,6 @@ export interface TranscriptsDb {
    *  how far each was read. */
   priorCodexBindings(runId: number, name: string, sessionId: string): Array<{ transcriptId: number; path: string; ingestCursor: number; sourceIdentity: string | null; runStartedAt: number; readDigest: string | null }>
 
-  /** P3.12 (X1): the latest earlier run's Codex binding of exactly `path`
-   *  (any session): what the index holds of that file. */
-  latestCodexBindingAtPath(runId: number, path: string): { ingestCursor: number; sourceIdentity: string | null } | null
-
   setTranscriptStatus(transcriptId: number, status: 'pending' | 'tailing' | 'complete' | 'failed'): void
 
   /** `readDigest` (P3.12, a Codex transcript): the digest of the bytes up to
@@ -623,12 +619,6 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
       AND length(t.path) > @n AND substr(t.path, -@n) = @name
     ORDER BY t.runId DESC, t.ingestCursor DESC
   `)
-  // P3.12 (X1): the latest earlier run's Codex binding of exactly this path.
-  const stmtLatestCodexAtPath: Statement = sqlite.prepare(`
-    SELECT ingestCursor, sourceIdentity FROM transcripts
-    WHERE sourceFormat = 'codex-rollout' AND path = @path AND runId < @runId
-    ORDER BY runId DESC LIMIT 1
-  `)
   const stmtNextOrd: Statement = sqlite.prepare(
     `SELECT COALESCE(MAX(ord) + 1, 0) AS nextOrd FROM transcripts WHERE runId = ?`,
   )
@@ -779,7 +769,8 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
   const stmtSearchMessages: Statement = sqlite.prepare(`
     SELECT m.runId AS runId, m.idx AS idx, r.configId AS configId, r.sessionId AS sessionId,
            snippet(messages_fts, 0, '[', ']', '...', 16) AS snippet,
-           r.provider AS provider, m.role AS role, m.ts AS ts, m.content AS content
+           r.provider AS provider, m.role AS role, m.ts AS ts, m.content AS content,
+           (SELECT group_concat(t.path, char(10)) FROM transcripts t WHERE t.runId = m.runId AND t.sourceFormat = 'codex-rollout') AS codexPaths
     FROM messages_fts
     JOIN messages m ON m.id = messages_fts.rowid
     JOIN runs r ON r.runId = m.runId
@@ -991,11 +982,6 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
       const rows = stmtPriorCodex.all({ runId, sessionId, n: name.length, name }) as Array<{ transcriptId: number; path: string; ingestCursor: number; sourceIdentity: string | null; runStartedAt: number; readDigest: string | null }>
       // The whole file name only: the character before it is a separator.
       return rows.filter((r) => /[\\/]/.test(r.path.charAt(r.path.length - name.length - 1)))
-    },
-
-    latestCodexBindingAtPath(runId, path) {
-      const row = stmtLatestCodexAtPath.get({ runId, path }) as { ingestCursor: number; sourceIdentity: string | null } | undefined
-      return row ? { ingestCursor: row.ingestCursor, sourceIdentity: row.sourceIdentity } : null
     },
 
     setTranscriptStatus(transcriptId, status) {

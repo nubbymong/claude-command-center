@@ -9,8 +9,9 @@
 import { describe, it, expect } from 'vitest'
 import { dedupeSearchHits } from '../../../src/main/logging/search-dedupe'
 
-const hit = (runId: number, idx: number, provider: string, role: string, ts: number, content: string, sessionId = `s${runId}`) =>
-  ({ runId, idx, configId: null, sessionId, snippet: `[${content}]`, provider, role, ts, content })
+const ROLLOUT = (id: string) => `/r/a/sessions/2026/09/30/rollout-2026-09-30T10-00-00-019dd000-0001-7000-8000-${id}.jsonl`
+const hit = (runId: number, idx: number, provider: string, role: string, ts: number, content: string, sessionId = `s${runId}`, codexPaths: string | null = ({ codex: ROLLOUT('000000000001') } as Record<string, string>)[provider] ?? null) =>
+  ({ runId, idx, configId: null, sessionId, snippet: `[${content}]`, provider, role, ts, content, codexPaths })
 
 describe('search lists a Codex turn once (P3.12)', () => {
   it('the same Codex turn indexed in two sessions is listed once, the best-ranked first; the hits keep their own shape', () => {
@@ -40,5 +41,15 @@ describe('search lists a Codex turn once (P3.12)', () => {
   it('at most the limit, counted after the repeats are gone', () => {
     const rows = [hit(1, 0, 'codex', 'user', 1, 'x'), hit(2, 0, 'codex', 'user', 1, 'x'), hit(1, 1, 'codex', 'user', 2, 'y'), hit(1, 2, 'codex', 'user', 3, 'z')]
     expect(dedupeSearchHits(rows, 2).map((h) => h.idx)).toEqual([0, 1])
+  })
+
+  it('Y2: the same words at the same time in two different conversations are two', () => {
+    const out = dedupeSearchHits([
+      hit(1, 0, 'codex', 'user', 100, 'hello', 's1', ROLLOUT('000000000001')),
+      hit(2, 0, 'codex', 'user', 100, 'hello', 's2', ROLLOUT('000000000002')),
+      hit(3, 0, 'codex', 'user', 100, 'hello', 's3', ROLLOUT('000000000001').replace('/r/a/', '/r/b/')),
+      hit(4, 0, 'codex', 'user', 100, 'other words', 's4', ROLLOUT('000000000001')),
+    ], 50)
+    expect(out.map((h) => h.runId)).toEqual([1, 2, 4])
   })
 })

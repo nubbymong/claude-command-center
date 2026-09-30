@@ -1014,6 +1014,9 @@ describe('transcripts-db', () => {
     it('P3.12: search lists a turn of a Codex conversation indexed by two sessions once', () => {
       const r1 = db.insertRun(runMeta({ provider: 'codex', startedAt: 1 }))
       const r2 = db.insertRun(runMeta({ sessionId: 's2', provider: 'codex', startedAt: 2 }))
+      // Both runs read the same conversation (the same rollout id, one in another account's folder).
+      db.bindTranscript(r1, 'C:/a/sessions/2026/09/29/rollout-2026-09-29T10-00-00-019dd000-0001-7000-8000-0000000000c1.jsonl', { confidence: 'exact', parserVersion: 1, sourceFormat: 'codex-rollout', sourceIdentity: '1:1' })
+      db.bindTranscript(r2, 'C:/b/sessions/2026/09/29/rollout-2026-09-29T10-00-00-019dd000-0001-7000-8000-0000000000c1.jsonl', { confidence: 'exact', parserVersion: 1, sourceFormat: 'codex-rollout', sourceIdentity: '2:2' })
       for (const r of [r1, r2]) db.appendMessages(r, [{ idx: 0, ts: 500, role: 'user', kind: 'message', content: 'twicefoundneedle here' }])
       db.appendMessages(r2, [{ idx: 1, ts: 600, role: 'user', kind: 'message', content: 'twicefoundneedle again' }])
       expect(db.searchMessages('twicefoundneedle').map((h) => [h.runId, h.idx]).sort()).toEqual([[r1, 0], [r2, 1]].sort())
@@ -1037,23 +1040,6 @@ describe('transcripts-db', () => {
       db.advanceCursor(x.transcriptId, 40, null)
       expect(db.priorCodexBindings(r2, 'rollout-1_z.jsonl', 's1')[0]).toMatchObject({ ingestCursor: 40, readDigest: null })
       expect(db.bindTranscript(r1, p, { confidence: 'exact', parserVersion: 1, sourceIdentity: '9:9' })).toMatchObject({ cursor: 0, identityChanged: true, readDigest: null })
-    })
-
-    it('P3.12 (X1): the latest earlier run\'s Codex binding of exactly a path, any session', () => {
-      const r1 = db.insertRun(runMeta({ provider: 'codex', startedAt: 1 }))
-      const r2 = db.insertRun(runMeta({ sessionId: 's2', provider: 'codex', startedAt: 2 }))
-      const r3 = db.insertRun(runMeta({ provider: 'codex', startedAt: 3 }))
-      const p = 'C:/a/sessions/2026/09/29/rollout-1_y.jsonl'
-      const x = db.bindTranscript(r1, p, { confidence: 'exact', parserVersion: 1, sourceFormat: 'codex-rollout', sourceIdentity: '1:1' })
-      db.advanceCursor(x.transcriptId, 40)
-      const y = db.bindTranscript(r2, p, { confidence: 'exact', parserVersion: 1, sourceFormat: 'codex-rollout', sourceIdentity: '1:2' })
-      db.advanceCursor(y.transcriptId, 90)
-      db.bindTranscript(r3, p, { confidence: 'exact', parserVersion: 1, sourceFormat: 'codex-rollout', sourceIdentity: '1:3' })
-      db.bindTranscript(r2, 'C:/a/sessions/2026/09/29/Xrollout-1_y.jsonl', { confidence: 'exact', parserVersion: 1, sourceFormat: 'codex-rollout', sourceIdentity: '9:9' })
-      expect(db.latestCodexBindingAtPath(r3, p)).toEqual({ ingestCursor: 90, sourceIdentity: '1:2' })
-      expect(db.latestCodexBindingAtPath(r2, p)).toEqual({ ingestCursor: 40, sourceIdentity: '1:1' })
-      expect(db.latestCodexBindingAtPath(r1, p)).toBeNull()
-      expect(db.latestCodexBindingAtPath(r3, 'C:/nowhere/rollout-1_y.jsonl')).toBeNull()
     })
 
     it('lists the same session\'s earlier runs\' Codex bindings of the same file name only (whole name, Codex format, the latest run first)', () => {

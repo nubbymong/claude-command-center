@@ -27,7 +27,7 @@ import * as os from 'os'
 import { execSync, execFile } from 'child_process'
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { shouldRegisterRun } from './logging/should-register-run'
-import { markNotIndexed } from './logging/indexing-gaps'
+import { openNotIndexedWindow, closeNotIndexedWindow } from './logging/indexing-gaps'
 import { getLogSupervisor, getTranscriptBinder } from './logging/logging-service'
 import { getCodexLogBinder } from './logging/codex-log-binder'
 import { resolveResumeTargetFromTranscript, mangleCwdToProjectDir, UUID_RE } from './logging/transcript-discovery'
@@ -501,7 +501,13 @@ const notIndexedCodexSessions = new Set<string>()
 function markCodexSessionNotIndexed(sessionId: string, now: number): void {
   notIndexedCodexSessions.add(sessionId)
   const held = codexContextRollouts.get(sessionId)
-  if (held) { try { markNotIndexed(held.path, now) } catch { /* best-effort */ } }
+  if (held) { try { openNotIndexedWindow(sessionId, held.path, now) } catch { /* best-effort */ } }
+}
+
+/** P3.12 (Y1): the session no longer holds a conversation while not indexed
+ *  (it ends, relaunches or lets the claim go): its window closes. */
+function endCodexSessionNotIndexed(sessionId: string, now: number): void {
+  try { closeNotIndexedWindow(sessionId, now) } catch { /* best-effort */ }
 }
 
 /** P3.12 (row 65): the rollout a Codex session's watcher holds (and its
@@ -4785,7 +4791,10 @@ function spawnPtyResolved(
           onRollout: (rollout) => {
             noteCodexContextRollout(sessionId, rollout)
             // P3.12 (X1): a conversation a session not indexed is on.
-            if (rollout && notIndexedCodexSessions.has(sessionId)) { try { markNotIndexed(rollout.path, Date.now()) } catch { /* best-effort */ } }
+            if (notIndexedCodexSessions.has(sessionId)) {
+              if (rollout) { try { openNotIndexedWindow(sessionId, rollout.path, Date.now()) } catch { /* best-effort */ } }
+              else endCodexSessionNotIndexed(sessionId, Date.now())
+            }
             getCodexLogBinder()?.noteRollout(sessionId, rollout)
           },
         },
@@ -6061,6 +6070,9 @@ function cleanupSessionResources(sessionId: string): void {
   // place that stops the 500ms full-file-read tail poller — killPty isn't hit
   // until the tab is closed, so without this the poller ran for the dead tab.
   const codexTel = codexTelemetrySources.get(sessionId)
+  // P3.12 (Y1): a session ending holds no conversation while not indexed.
+  notIndexedCodexSessions.delete(sessionId)
+  endCodexSessionNotIndexed(sessionId, Date.now())
   if (codexTel) {
     try { codexTel.stop() } catch { /* noop */ }
     codexTelemetrySources.delete(sessionId)
