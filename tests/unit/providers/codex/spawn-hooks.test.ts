@@ -234,3 +234,20 @@ describe('round 2 (R7): a plain-path copy that could not be made is said at boot
     expect(warns.some((w) => /is not a plain word/.test(w))).toBe(true)
   })
 })
+
+describe('round 3 (F3): a hook folder already there that cannot be made the user\'s gives no hooks, and says so', () => {
+  it('at boot and at a launch', async () => {
+    const res = resources(true)
+    mkdirSync(join(res, 'codex-hooks'))
+    const notTheUsers = (_d: string, o?: { takeOwnership?: boolean }): boolean => !o?.takeOwnership
+    await new CodexProvider().deployResumePickerScript(res, { hardenDir: notTheUsers })
+    expect(warns.some((w) => /the hook folder in the data folder is not a real folder that this user alone owns/.test(w))).toBe(true)
+    warns.length = 0
+    expect(new CodexProvider().prepareSessionHooks('sess-1', 51234, '0f8b6a2c-1d3e-4f50-9a61-7b2c3d4e5f60', { hardenDir: notTheUsers })).toBeNull()
+    expect(warns.some((w) => /no hook folder for sess-1/.test(w))).toBe(true)
+    // Made the user's: hooks, and nothing said.
+    warns.length = 0
+    expect(new CodexProvider().prepareSessionHooks('sess-1', 51234, '0f8b6a2c-1d3e-4f50-9a61-7b2c3d4e5f60', { hardenDir: () => true })).not.toBeNull()
+    expect(warns).toEqual([])
+  })
+})

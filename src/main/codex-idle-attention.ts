@@ -26,11 +26,13 @@ export interface CodexPendingApproval {
 export const codexPendingApprovals = new Map<string, CodexPendingApproval>()
 
 /** Round 2 (R3): each Codex session's latest PreToolUse whose PostToolUse
- *  has not come yet: its turn, tool and tool_use_id. */
+ *  has not come yet: its turn, tool and tool_use_id. Round 3 (F1): and when
+ *  the gateway received it (the event's ts). */
 export interface CodexOpenCall {
   turn?: string
   tool?: string
   callId?: string
+  at: number
 }
 export const codexOpenCalls = new Map<string, CodexOpenCall>()
 

@@ -12,6 +12,7 @@ import { detectCodexUi } from './ui-detection'
 import { watchAndClaimRollout } from './telemetry'
 import { deployCodexResumePickerScript } from './resume-picker'
 import { deployCodexHookScripts, sweepStaleCodexHookFolders, writeCodexHookFile, removeCodexHookFile, ensureCodexHookRoot, codexPlainWrapperDir, codexLocalAppData, stagePlainCodexHookWrapper, codexHookCommand } from './hooks'
+import type { HardenDir } from './hooks'
 import { CODEX_PINNED_CLI_VERSION, CODEX_MIN_SUPPORTED_VERSION, CODEX_MAX_TESTED_VERSION } from './cli-contract'
 import { codexInstallRecipes } from './install-recipes'
 import { codexOperationBaseEnv } from './process-env'
@@ -83,7 +84,7 @@ export {
   ensureCodexHookRoot, codexPlainWrapperDir, stagePlainCodexHookWrapper, verifyPlainCodexHookWrapper,
   CODEX_HOOK_EVENTS, CODEX_HOOK_CLIENT_HEADER, CODEX_HOOK_CLIENT, CODEX_HOOK_FILE_ENV, CODEX_HOOK_DIR_PREFIX, CODEX_HOOK_STALE_MS, CODEX_HOOK_ROOT_NAME, CODEX_HOOK_PLAIN_BASE,
 } from './hooks'
-export type { CodexHookFile, CodexHookEvent } from './hooks'
+export type { CodexHookFile, CodexHookEvent, HardenDir } from './hooks'
 // P3.6: a switched session's conversation carried into the new account's folder.
 export { carryCodexRollout, CODEX_CARRY_MAX_BYTES, CODEX_CARRY_STALE_TEMP_MS } from './conversation-carry'
 export type { CodexConversationCarry, CodexCarryInput, CodexCarryResult, CodexCarryCode } from './conversation-carry'
@@ -165,7 +166,7 @@ export class CodexProvider implements SessionProvider {
     // (buildCodexSpawn), never through a config file.
   }
 
-  async deployResumePickerScript(resourcesDir: string, opts?: { hardenDir?: (dir: string) => boolean }): Promise<void> {
+  async deployResumePickerScript(resourcesDir: string, opts?: { hardenDir?: HardenDir }): Promise<void> {
     // P3.10: hook folders a crash or a quit left behind (a day old), first,
     // so a failed deploy never skips it. Round 1 (A5): only in this install's
     // own hook root, in its data folder.
@@ -173,6 +174,8 @@ export class CodexProvider implements SessionProvider {
       const dataDir = codexHookDataDir()
       const root = dataDir ? ensureCodexHookRoot(dataDir, opts?.hardenDir) : null
       if (root) sweepStaleCodexHookFolders(root)
+      // Round 3 (F3): said, never silent, when Codex sessions will have no hooks.
+      else if (dataDir) logWarn('[codex] hooks: the hook folder in the data folder is not a real folder that this user alone owns, and could not be made one, so Codex sessions get no hooks')
     } catch { /* best-effort */ }
     await deployCodexResumePickerScript(resourcesDir)
     // P3.10: the hook forwarder (and its Windows wrapper) beside the picker.
@@ -186,7 +189,7 @@ export class CodexProvider implements SessionProvider {
           const plainDir = codexPlainWrapperDir(codexLocalAppData(), resourcesDir)
           // Round 2 (R7): said, never silent, when the shim route will have no hooks.
           if (!plainDir) logWarn('[codex] hooks: the path of the local app data folder is not a plain word, so a Codex installed with npm gets no hooks here')
-          else if (!stagePlainCodexHookWrapper(scriptsDir, plainDir, opts?.hardenDir)) logWarn('[codex] hooks: the plain-path copy of the hook wrapper could not be made (or made owner-only), so a Codex installed with npm gets no hooks until the app starts again')
+          else if (!stagePlainCodexHookWrapper(scriptsDir, plainDir, opts?.hardenDir)) logWarn('[codex] hooks: the plain-path copy of the hook wrapper could not be made (or its folders made this user\'s and owner-only), so a Codex installed with npm gets no hooks until the app starts again')
         }
       } catch (err) {
         logWarn(`[codex] hooks: the plain-path copy of the hook wrapper failed (${(err as Error)?.message ?? err}); a Codex installed with npm gets no hooks until the app starts again`)
@@ -196,13 +199,17 @@ export class CodexProvider implements SessionProvider {
 
   /** P3.10: the session's hook file, for its launch's hooks; round 1 (A5):
    *  in this install's own hook root, in its data folder. */
-  prepareSessionHooks(sessionId: string, port: number, secret: string, opts?: { hardenDir?: (dir: string) => boolean }): { hookFile: string; dispose(): void } | null {
+  prepareSessionHooks(sessionId: string, port: number, secret: string, opts?: { hardenDir?: HardenDir }): { hookFile: string; dispose(): void } | null {
     let root: string | null = null
     try {
       const dataDir = codexHookDataDir()
       root = dataDir ? ensureCodexHookRoot(dataDir, opts?.hardenDir) : null
     } catch { root = null }
-    if (!root) return null
+    if (!root) {
+      // Round 3 (F3): said, never silent.
+      logWarn(`[codex] hooks: no hook folder for ${sessionId} (the data folder's codex-hooks is not a real folder that this user alone owns, and could not be made one); the session gets no hooks`)
+      return null
+    }
     const written = writeCodexHookFile(sessionId, port, secret, root)
     if (!written) return null
     let disposed = false

@@ -686,12 +686,34 @@ export function hardenDirAclWindows(dir: string): boolean {
   return false
 }
 
+/** P3.10 round 3 (F3): make the current user `dir`'s owner, trying each
+ *  spelling of the user as hardenDirAclWindows does. icacls /setowner to the
+ *  user succeeds only where the user may take ownership of the folder. */
+export function takeDirOwnershipWindows(dir: string): boolean {
+  if (!IS_WINDOWS) return false
+  for (const principal of windowsAclPrincipals()) {
+    if (icacls([dir, '/setowner', principal])) return true
+  }
+  return false
+}
+
 /** Restrict a credential-containing dir (a `.claude/`) to its owner: 0700 on
  *  POSIX, an explicit user+SYSTEM DACL on Windows. Returns whether it took, so
  *  a caller that can report the failure may; the rest ignore it exactly as
- *  before and stay best-effort. */
-export function hardenCredentialDir(dir: string): boolean {
-  if (!IS_POSIX) return hardenDirAclWindows(dir)
+ *  before and stay best-effort. P3.10 round 3 (F3): `takeOwnership`, for a
+ *  folder the caller did not make this run, makes the user its owner first
+ *  (Windows; on POSIX it must already be the user's), and fails when that
+ *  cannot be done. */
+export function hardenCredentialDir(dir: string, opts: { takeOwnership?: boolean } = {}): boolean {
+  if (!IS_POSIX) {
+    if (opts.takeOwnership && !takeDirOwnershipWindows(dir)) return false
+    return hardenDirAclWindows(dir)
+  }
+  if (opts.takeOwnership) {
+    try {
+      if (typeof process.getuid === 'function' && fs.lstatSync(dir).uid !== process.getuid()) return false
+    } catch { return false }
+  }
   try { fs.chmodSync(dir, CRED_DIR_MODE) } catch { /* best-effort */ return false }
   return true
 }
