@@ -764,7 +764,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
         className={inputCls + ' font-mono text-xs'}
       />
       {f.problem && (
-        <p role="alert" data-testid="extra-args-problem" className="text-[11px] mt-1 leading-snug text-[var(--status-warning)]">{f.problem}</p>
+        <p aria-live="polite" data-testid="extra-args-problem" className="text-[11px] mt-1 leading-snug text-[var(--status-warning)]">{f.problem}</p>
       )}
       <Hint k={f.helpKey}>{f.hint}</Hint>
     </div>
