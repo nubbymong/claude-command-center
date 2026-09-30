@@ -34,6 +34,7 @@ import {
   EXTRA_ARGS_MAX,
   EXTRA_ARGS_CHARSET_RE,
   extraArgsRefineOk,
+  codexExtraArgsProblem,
   CODEX_MODEL_MAX,
   CODEX_MODEL_RE,
   CODEX_EFFORTS,
@@ -436,6 +437,15 @@ export const spawnOptionsSchema = z.object({
     // then Codex's own /plan is typed into its first ready prompt (renderer,
     // lib/codexComposer.ts).
     permissionsPreset: z.enum(CODEX_PRESETS),
+    // P3.11 (row 62): Claude's extraArgs field for Codex -- the same cap and
+    // charset, plus Codex's own refusals (the flags the app sets, the account,
+    // provider and endpoint settings, and a word Codex reads as a command);
+    // the rule lives with the sanitizer, which drops exactly what this rejects,
+    // and the launch builder checks it again. Each word becomes one argument.
+    extraArgs: z.string().max(EXTRA_ARGS_MAX).regex(EXTRA_ARGS_CHARSET_RE).superRefine((v, ctx) => {
+      const problem = codexExtraArgsProblem(v)
+      if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `the Codex extra CLI arguments are refused: ${problem}` })
+    }).optional(),
   }).optional(),
   // WP2 (plan A10): the Codex account the session runs under -- an opaque
   // registry id, validated by the accounts service. Absent = the provider
@@ -694,6 +704,8 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
       model?: string
       reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
       permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted' | 'plan'
+      /** P3.11 (row 62): checked by the schema (codexExtraArgsProblem). */
+      extraArgs?: string
     }
     providerAccountId?: string
     acknowledgeRealmOnly?: boolean

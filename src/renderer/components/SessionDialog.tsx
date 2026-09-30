@@ -249,6 +249,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
     return codexEffortSupported(registry, initialCodexModel, saved) ? saved : ''
   })
   const [codexPreset, setCodexPreset] = useState<CodexOptions['permissionsPreset']>(initial?.codexOptions?.permissionsPreset ?? 'standard')
+  // P3.11 (row 62): Claude's Extra CLI arguments, kept apart from Claude's
+  // value (each assistant has its own flags).
+  const [codexExtraArgs, setCodexExtraArgs] = useState(initial?.codexOptions?.extraArgs ?? '')
   // The Codex account (WP2 commit 6). `null` = not touched: the field shows
   // the saved binding, else the provider default, and follows the snapshot
   // until the user picks. Editing a config the user did not re-point keeps
@@ -521,6 +524,8 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
       model: codexModel || undefined,
       reasoningEffort: effectiveCodexEffort || undefined,
       permissionsPreset: codexPreset,
+      // As Claude's: trimmed, and nothing for a blank field.
+      extraArgs: codexExtraArgs.trim() || undefined,
     } : undefined
 
     // SECURITY (adversarial review, #188): every credential decision is gated on
@@ -727,6 +732,28 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
   )
 
   const inputCls = 'w-full bg-[var(--surface-base)] border border-[var(--border-strong)] rounded-lg px-2.5 py-1.5 text-[12.5px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] outline-none focus-ring'
+
+  // P3.11 (row 62): the one Extra CLI arguments field, in Claude's section and
+  // in Codex's: the same label, help button, input and hint. Nothing is
+  // checked here, as for Claude always: main refuses at launch what the
+  // assistant's own rule refuses.
+  const extraArgsField = (f: { value: string; onChange: (v: string) => void; helpKey: string; placeholder: string; hint: React.ReactNode }) => (
+    <div>
+      <div className="flex items-center gap-1.5 mb-1">
+        <label className="text-xs text-[var(--text-secondary)]">Extra CLI arguments</label>
+        <HelpBtn k={f.helpKey} label="About extra CLI arguments" />
+      </div>
+      <input
+        type="text"
+        value={f.value}
+        onChange={(e) => f.onChange(e.target.value)}
+        placeholder={f.placeholder}
+        spellCheck={false}
+        className={inputCls + ' font-mono text-xs'}
+      />
+      <Hint k={f.helpKey}>{f.hint}</Hint>
+    </div>
+  )
 
   const permHint = DANGEROUS_MODE_COPY[permissionMode]
     ?? PERMISSION_MODES.find((m) => m.value === permissionMode)?.hint
@@ -1256,25 +1283,19 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
                         <p className={`text-[11px] mt-1 ${permDangerous ? 'text-[var(--status-danger)]' : 'text-[var(--text-muted)]'}`}>{permHint}</p>
                       )}
                     </div>
-                    <div>
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <label className="text-xs text-[var(--text-secondary)]">Extra CLI arguments</label>
-                        <HelpBtn k="xargs" label="About extra CLI arguments" />
-                      </div>
-                      <input
-                        type="text"
-                        value={extraArgs}
-                        onChange={(e) => setExtraArgs(e.target.value)}
-                        placeholder={sessionType === 'ssh' ? '--add-dir /srv/shared' : '--verbose --add-dir F:\\shared_libs'}
-                        spellCheck={false}
-                        className={inputCls + ' font-mono text-xs'}
-                      />
-                      <Hint k="xargs">
-                        Advanced. Appended to the claude command exactly as typed. Shell characters are blocked
-                        and the app's own flags (--model, --effort, --permission-mode, --settings, --mcp-config,
-                        --agents, --resume) can't be overridden here.
-                      </Hint>
-                    </div>
+                    {extraArgsField({
+                      value: extraArgs,
+                      onChange: setExtraArgs,
+                      helpKey: 'xargs',
+                      placeholder: sessionType === 'ssh' ? '--add-dir /srv/shared' : '--verbose --add-dir F:\\shared_libs',
+                      hint: (
+                        <>
+                          Advanced. Appended to the claude command exactly as typed. Shell characters are blocked
+                          and the app's own flags (--model, --effort, --permission-mode, --settings, --mcp-config,
+                          --agents, --resume) can't be overridden here.
+                        </>
+                      ),
+                    })}
                     {sessionType === 'local' && (
                       <div>
                         <div className="flex items-center gap-1.5">
@@ -1337,6 +1358,27 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
                         onAckChange: (checked) => setRealmAckFor(checked ? codexAccountId : null),
                       }}
                     />
+                    {/* P3.11 (row 62): Claude's field, after the Permissions
+                        (mt-4 keeps the Codex fields' spacing). */}
+                    <div className="mt-4 mb-2">
+                      {extraArgsField({
+                        value: codexExtraArgs,
+                        onChange: setCodexExtraArgs,
+                        helpKey: 'xargs-cx',
+                        placeholder: '--search --add-dir F:\\shared_libs',
+                        hint: (
+                          <>
+                            Advanced. Added to the codex command, each word as one argument. Shell characters are
+                            blocked, and so is anything the app sets or that changes the account, provider or
+                            endpoint: --model, -c (--config), --enable, --disable, --sandbox, --ask-for-approval and
+                            the other permission flags, --cd, --last, --profile, --oss, --local-provider and
+                            --remote. A plain word such as login, or one such as /logout, is refused too, since Codex
+                            reads it as one of its commands: give a folder with = (--add-dir=docs) or as a path
+                            (./docs, /srv/).
+                          </>
+                        ),
+                      })}
+                    </div>
                   </div>
                 </>
               )}

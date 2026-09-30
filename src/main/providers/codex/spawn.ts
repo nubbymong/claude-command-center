@@ -11,6 +11,7 @@ import { colorFgBgValue } from '../host-color-scheme'
 import { codexShellEnv, CMD_UNSAFE_PATH_RE } from './cli-runner'
 import { CODEX_CONVERSATION_ID_RE, codexFolderIdentity, resolveCodexResume } from './rollout-lookup'
 import { codexHookCommand, codexHookConfigArgs, codexPlainWrapperDir, codexLocalAppData, verifyPlainCodexHookWrapper, CODEX_HOOK_FILE_ENV, CODEX_HOOK_SCRIPT, CODEX_HOOK_WRAPPER } from './hooks'
+import { codexExtraArgsProblem, codexExtraArgWords } from '../../sanitize-restored-spawn-options'
 
 export function resolveCodexBinary(): { cmd: string; args: string[] } | null {
   if (os.platform() !== 'win32') {
@@ -307,6 +308,18 @@ export function buildCodexSpawn(opts: SpawnOptions): ProviderSpawnCommand {
       setOwned(env, CODEX_HOOK_FILE_ENV, hookFile, win32)
       hooksInstalled = true
     }
+  }
+
+  // P3.11 (row 62): the user's extra CLI arguments, as a Claude session's:
+  // after every flag the app sets (so none of the app's arguments can become
+  // the value of one of them), each word one argument, on every route below
+  // (the picker forwards them). No shell reads them. The pty:spawn schema has
+  // refused what codexExtraArgsProblem refuses; checked again here, a refusal
+  // ends the launch as the schema's does.
+  if (co.extraArgs !== undefined) {
+    const problem = codexExtraArgsProblem(co.extraArgs)
+    if (problem) throw new Error(`Cannot start Codex: its extra CLI arguments are refused: ${problem}.`)
+    flags.push(...codexExtraArgWords(co.extraArgs))
   }
 
   // P3.5 (rows 34, 35): an exact resume, as Claude's `claude --resume <uuid>`

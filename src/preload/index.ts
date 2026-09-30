@@ -233,6 +233,8 @@ export interface ElectronAPI {
         model?: string
         reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
         permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted' | 'plan'
+        /** P3.11 (row 62): extra CLI arguments; main checks them. */
+        extraArgs?: string
       }
       /** WP2: the Codex account the session runs under (an opaque registry
        *  id). Absent = the provider default. */
