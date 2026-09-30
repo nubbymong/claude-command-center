@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemoteDetailed, probeTmuxLive, holdsCodexLaunchLease, codexLaunchLeaseTaken, beginSpawnPreparation, isSessionWritable, SSHOptions, SshEndTarget, getKeptCodexConversation, getKeptCodexConversationSource, codexRunEnded, codexConversationHeldElsewhere } from '../pty-manager'
 import type { CodexLaunch } from '../pty-manager'
 import { getAccountsService } from '../provider-accounts'
+import { awaitCodexHookFolders } from '../codex-hook-folders'
+import { getGateway } from '../hooks'
 import { providerLaunchRefusal } from '../provider-launch-gate'
 import type { AccountLease, AccountsService } from '../providers/core'
 import type { ConversationCarryNotice } from '../../shared/providers'
@@ -895,6 +897,12 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
         // to carry.
         if (!options?.resume && !options?.useResumePicker) carry = await carryForRespawn(sessionId, prepared.lease.accountId, service, () => !preparation || preparation.current)
         if (carry?.fresh) resolvedOptions = { ...resolvedOptions, codexLaunch: { ...resolvedOptions!.codexLaunch!, freshConversation: true } }
+        // P3.10 round 4 (P1): a local launch waits, bounded, for the hook
+        // folders (prepared asynchronously; a no-op while ready), so a tab
+        // restored at start has its hooks; past the bound it starts without.
+        // Round 5 (G4): only while the Hooks gateway listens (otherwise the
+        // launch gets no hooks whatever the folders).
+        if (!options?.ssh && getGateway()?.status()?.listening === true) await awaitCodexHookFolders()
       }
 
       // Closed, swept or superseded while it was prepared: start nothing, and

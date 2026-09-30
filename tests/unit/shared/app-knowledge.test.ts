@@ -113,6 +113,10 @@ describe('app knowledge after P3.10 (round 1, S2)', () => {
     expect(w).toMatch(/for Codex sessions/)
     expect(w).toMatch(/one Session Watchdog switch in Settings covers both assistants/)
     expect(w).toMatch(/safeguard check does not apply to Codex/)
+    // Round 4 (P6): the overload backoff as the defaults and What's New give it.
+    expect(w).toMatch(/from 30 seconds up to 5 minutes/)
+    expect(w).toMatch(/gives up after two hours of waiting in all/)
+    expect(w).not.toMatch(/capped number of attempts/)
   })
 
   it('Codex\'s hooks review is explained: what to choose, what declining costs, how to trust later', () => {

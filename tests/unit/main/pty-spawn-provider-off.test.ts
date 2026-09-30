@@ -14,7 +14,7 @@
  * account lease -- while the provider is off, and goes ahead while it is on.
  * A terminal-only session runs no provider and always goes ahead.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 const handlers = new Map<string, (...a: unknown[]) => unknown>()
 vi.mock('electron', () => ({
@@ -45,6 +45,12 @@ let configsOnDisk: unknown = null
 vi.mock('../../../src/main/config-manager', () => ({ readConfig: (key: string) => (key === 'configs' ? configsOnDisk : null) }))
 const loadCredential = vi.fn((_k: string) => 'pw')
 vi.mock('../../../src/main/credential-store', () => ({ loadCredential: (k: string) => loadCredential(k) }))
+// P3.10 round 5 (G4): whether the Hooks gateway listens (off unless a case turns it on).
+const gw = vi.hoisted(() => ({ listening: false }))
+vi.mock('../../../src/main/hooks', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/main/hooks')>()),
+  getGateway: () => (gw.listening ? { status: () => ({ listening: true, port: 51234 }) } : null),
+}))
 
 // The accounts service's answer, per provider: on, off, or a saved setting
 // that could not be read. `null` = no service at all.
@@ -65,6 +71,7 @@ vi.mock('../../../src/main/provider-accounts', () => ({
 }))
 
 const { registerPtyHandlers, countSshClaudeLaunches } = await import('../../../src/main/ipc/pty-handlers')
+const { startCodexHookFolders, stopCodexHookFolders } = await import('../../../src/main/codex-hook-folders')
 registerPtyHandlers(() => ({} as never))
 const spawn = handlers.get('pty:spawn')!
 const launchClaude = handlers.get('ssh:flow:launchClaude')!
@@ -279,5 +286,38 @@ describe('the legacy Claude Code CLI install is for a Claude launch only', () =>
   it('for a Claude session while Claude Code is on (the control)', async () => {
     await spawn({}, SID, { cwd: 'C:/w', ...pinned })
     expect(installVersion).toHaveBeenCalledTimes(1)
+  })
+})
+
+// P3.10 round 4 (P1): a local Codex launch waits, bounded, for the hook
+// folders (prepared asynchronously, a no-op while ready); a Claude launch does
+// not ask for them.
+describe('P3.10 round 4: a local Codex launch waits for its hook folders', () => {
+  afterEach(() => { stopCodexHookFolders(); gw.listening = false })
+
+  it('the spawn waits for the preparation, then starts; a Claude launch does not ask for it', async () => {
+    set('on', 'on')
+    gw.listening = true
+    let release: (ok: boolean) => void = () => {}
+    let asked = 0
+    startCodexHookFolders({ providerOn: () => true, prepare: () => { asked++; return new Promise<boolean>((r) => { release = r }) } })
+    const p = spawn({}, SID, { cwd: 'C:/w', provider: 'codex', codexOptions: { permissionsPreset: 'standard' } })
+    await new Promise((r) => setTimeout(r, 30))
+    expect(asked).toBe(1)
+    expect(spawnPty).not.toHaveBeenCalled()
+    release(true)
+    await p
+    expect(spawnPty).toHaveBeenCalledTimes(1)
+    await spawn({}, 'b2c3d4e5f6a1b2c3d4e5f6a1', { cwd: 'C:/w' })
+    expect(asked).toBe(1)
+  })
+
+  it('round 5 (G4): with the Hooks gateway not listening, the launch does not wait for the hook folders', async () => {
+    set('on', 'on')
+    let asked = 0
+    startCodexHookFolders({ providerOn: () => true, prepare: () => { asked++; return new Promise<boolean>(() => {}) } })
+    await spawn({}, SID, { cwd: 'C:/w', provider: 'codex', codexOptions: { permissionsPreset: 'standard' } })
+    expect(asked).toBe(0)
+    expect(spawnPty).toHaveBeenCalledTimes(1)
   })
 })

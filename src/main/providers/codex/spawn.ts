@@ -126,7 +126,7 @@ export function getCodexResumePickerPath(): string | null {
 
 /** P3.10 round 1 (A5): the app's own data folder -- this install's (a dev
  *  build, the installed app and a test run each have their own) -- where the
- *  hook folders live (hooks.ts ensureCodexHookRoot); null when unknown. */
+ *  hook folders live (hooks.ts preparedCodexHookRoot); null when unknown. */
 export function codexHookDataDir(): string | null {
   try { return getDataDirectory() || null } catch { return null }
 }

@@ -166,3 +166,76 @@ for (const cli of [CODEX, CLAUDE]) {
     })
   })
 }
+
+/** Step by step, for orders the 5 s simulation does not make: the screen is
+ *  set, then read (feed) or the timer ticked, only when the case says so. */
+function manual(cli: Cli, rand: () => number = () => 0.5) {
+  const clock = { now: Date.UTC(2026, 8, 30, 3, 0, 0) }
+  let body: string[] = []
+  const states: WatchdogPublicState[] = []
+  const logs: string[] = []
+  const adapter: WatchdogAdapter = {
+    getTail: () => cli.render(body).text,
+    getScreen: () => cli.render(body).lines,
+    isSessionAlive: () => true,
+    send: (t) => { body = [...body, ...cli.user(t.trim()), ...cli.working] },
+    now: () => clock.now,
+    log: (_level, m) => { logs.push(m) },
+    onStateChange: (s) => { states.push({ ...s }) },
+    detectors: cli.detectors,
+  }
+  const wd = new SessionWatchdog('s', adapter, { overload: { enabled: true, retryMessage: 'continue' } } as never, rand)
+  return {
+    wd, clock, states, logs,
+    set: (b: string[]) => { body = b },
+    /** The screen without the working row the last send added. */
+    settled: () => body.filter((l) => l === '' || !cli.working.includes(l)),
+    /** The wait the last state scheduled, in seconds. */
+    wait: () => Math.round(((states.at(-1)?.waitUntil ?? clock.now) - clock.now) / 1000),
+  }
+}
+
+for (const cli of [CODEX, CLAUDE]) {
+  describe(`${cli.name}: the overload episode, step by step (P3.10 round 4)`, () => {
+    it('P4: the recovering frame is the last output for hours: the next error starts a fresh episode', () => {
+      const m = manual(cli)
+      m.set([...cli.user('task'), ...cli.error])
+      m.wd.feed()
+      expect(m.wait()).toBe(30)
+      m.clock.now += 31_000
+      m.wd.tick()
+      expect(m.wd.getState().overloadAttempts).toBe(1)
+      // The retry works, and that frame is the last output.
+      m.wd.feed()
+      expect(m.wd.getState().status).toBe('monitoring')
+      m.clock.now += 3 * 3600_000
+      m.set([...m.settled(), ...cli.answer(1), ...cli.user('next step'), ...cli.error])
+      m.wd.feed()
+      const s = m.states.at(-1)!
+      expect(s.status).toBe('overload')
+      expect(s.lastAction).toBe('overload detected; backing off')
+      expect(m.wait()).toBe(30)
+    })
+
+    it('P7: the backoff logged with a retry is the wait used when its error comes back', () => {
+      // Jitter draws that differ each time: 0.85x, 1.15x, 0.85x ...
+      let n = 0
+      const m = manual(cli, () => (n++ % 2 === 0 ? 0 : 1))
+      m.set([...cli.user('task'), ...cli.error])
+      m.wd.feed()
+      m.clock.now = m.states.at(-1)!.waitUntil! + 1000
+      m.wd.tick()
+      const sent = m.logs.find((l) => /^Sending overload retry/.test(l))!
+      const logged = Number(/Next backoff (\d+)s/.exec(sent)![1])
+      // The retry's turn works a few seconds, then fails again.
+      m.wd.feed()
+      m.clock.now += 8000
+      m.set([...m.settled(), ...cli.error])
+      m.wd.feed()
+      expect(m.states.at(-1)!.lastAction).toBe('overload detected again; backing off')
+      expect(m.wait()).toBe(logged)
+      const again = m.logs.find((l) => /again before the last one settled/.test(l))!
+      expect(Number(/Backing off (\d+)s/.exec(again)![1])).toBe(logged)
+    })
+  })
+}

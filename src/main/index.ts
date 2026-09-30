@@ -52,7 +52,9 @@ import { registerNotesHandlers } from './ipc/notes-handlers'
 import { registerVisionHandlers } from './ipc/vision-handlers'
 import { registerConfigHandlers } from './ipc/config-handlers'
 import { registerAccountProfilesHandlers } from './ipc/account-profiles-handlers'
-import { migrateProfilesToHomeLayout, cleanupSessionHomes, syncPrimaryCredentialsWithGlobal, repairSharedProjectJunctions, getProfilesRoot, getProfileConfigDir, isValidProfileId, hardenCredentialDir } from './account-profiles'
+import { migrateProfilesToHomeLayout, cleanupSessionHomes, syncPrimaryCredentialsWithGlobal, repairSharedProjectJunctions, getProfilesRoot, getProfileConfigDir, isValidProfileId } from './account-profiles'
+import { secureOwnerOnlyFolders } from './owner-only-folders'
+import { startCodexHookFolders, codexHookFoldersSettingsChanged } from './codex-hook-folders'
 import { runFirstRunCapture } from './first-run-accounts'
 import { backupRealClaudeOnce } from './claude-backup'
 import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
@@ -108,7 +110,7 @@ import { safeExternalHttpsHref } from '../shared/safe-url'
 import { CSP_POLICY } from '../shared/csp-policy'
 
 import { migrateRegistryKeys } from './registry'
-import { installGlobalErrorHandlers, logInfo, logError, closeDebugLogger, setVerboseBaseline } from './debug-logger'
+import { installGlobalErrorHandlers, logInfo, logWarn, logError, closeDebugLogger, setVerboseBaseline } from './debug-logger'
 import { createCloseCoordinator, onAllWindowsClosed } from './window-close-coordinator'
 
 // Install global error handlers that log to file
@@ -564,10 +566,20 @@ if (!gotTheLock) {
     Promise.resolve()
       .then(() => getProvider('claude').deployStatuslineScript?.(getResourcesDirectory()))
       .then(() => getProvider('claude').deployResumePickerScript?.(getResourcesDirectory()))
-      // P3.10 round 1 (A5, V3): the folders the Codex hooks use are made
-      // owner-only by the app's own folder rule.
-      .then(() => getProvider('codex').deployResumePickerScript?.(getResourcesDirectory(), { hardenDir: hardenCredentialDir }))
+      .then(() => getProvider('codex').deployResumePickerScript?.(getResourcesDirectory()))
       .catch((err) => console.warn('[main] Failed to deploy provider scripts:', err))
+      // P3.10 round 4 (P1): the folders the Codex hooks use, made this user's
+      // alone by the owner-only rule (one asynchronous call), only while Codex
+      // is on: after first paint, again when it is switched on, and before a
+      // local Codex launch (codex-hook-folders.ts).
+      .then(() => {
+        startCodexHookFolders({
+          providerOn: () => providerOnNow('codex'),
+          prepare: () => getProvider('codex').prepareHookFolders?.(getResourcesDirectory(), secureOwnerOnlyFolders) ?? Promise.resolve(false),
+          subscribe: (listener) => getAccountsService()?.subscribe(listener) ?? (() => {}),
+          log: (level, message) => (level === 'warn' ? logWarn(message) : logInfo(message)),
+        })
+      })
       // Resume-picker bug fix: backfill companion dirs so DIRECT-WORK
       // conversations (no subagent/workflow → no companion dir from the CLI) are
       // visible in the picker AND resumable via `claude --resume`. Idempotent,
@@ -685,6 +697,8 @@ if (!gotTheLock) {
         // P3.4: a provider switched on has its status page read at once; one
         // switched off leaves the title bar and is not read again.
         void refreshServiceStatus().catch((err) => logError('[main] service status refresh failed:', err))
+        // P3.10 round 4 (P1): Codex switched on has its hook folders prepared.
+        try { codexHookFoldersSettingsChanged() } catch (err) { logError('[main] codex hook folders failed:', err) }
       },
     })
     // Beta builds default to verbose logging (lightweight async DEBUG lines ->

@@ -16,7 +16,8 @@ export const codexIdleMarks = new Map<string, CodexIdleMark>()
  *  tool, as the PermissionRequest named them (Codex's carries no tool call
  *  id), when it did. Round 2 (R3): `awaitingOwnPre` while the request came
  *  before its own call's PreToolUse (which is then taken as its own, once);
- *  `callId`, that PreToolUse's tool_use_id once taken. */
+ *  `callId`, that PreToolUse's tool_use_id once taken, or (round 4, P3) the
+ *  open call's when the request came after its PreToolUse. */
 export interface CodexPendingApproval {
   turn?: string
   tool?: string

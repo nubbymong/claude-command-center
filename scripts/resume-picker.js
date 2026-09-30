@@ -643,9 +643,46 @@ async function main() {
  * only the shim path changes. A shim path carrying one of `" % & ^` or a
  * control character is refused (null), as the version probe refuses it:
  * cmd.exe or the shim itself would re-read it.
+ *
+ * P3.10 round 3b: the picker resolves its helpers from fixed locations: the
+ * cmd.exe that runs a shim is the system's own, by its full path
+ * (systemCmdExe).
  */
 // eslint-disable-next-line no-control-regex
 const SHIM_PATH_UNSAFE_RE = /["%&^\x00-\x1f\x7f]/
+/** A variable's one value in `env`, matched as Windows matches names (either
+ *  case, ASCII names only): undefined when unset, null when two spellings
+ *  disagree. */
+function envOne(env, name) {
+  const values = new Set()
+  for (const k of Object.keys(env || {})) {
+    const v = env[k]
+    if (typeof v === 'string' && v !== '' && /^[A-Za-z]+$/.test(k) && k.toUpperCase() === name.toUpperCase()) values.add(v)
+  }
+  if (values.size > 1) return null
+  return values.size === 1 ? [...values][0] : undefined
+}
+/** A folder name that cmd.exe or the file system would read as more than a name. */
+const ROOT_PART_UNSAFE_RE = /[<>|*?:]/
+/**
+ * P3.10 round 3b: the cmd.exe that runs a shim, by its full path:
+ * `<SystemRoot>\System32\cmd.exe`, written as ComSpec spells it only when
+ * ComSpec names exactly that file (in any case). SystemRoot is read from `env`
+ * and is C:\Windows only when it is not set; one that is not a plain absolute
+ * folder (a drive, then names, none of them `.` or `..`), or two spellings that
+ * disagree, give null (no start).
+ */
+function systemCmdExe(env) {
+  const root = envOne(env, 'SystemRoot')
+  if (root === null) return null
+  const base = (root === undefined ? 'C:\\Windows' : root).replace(/\\+$/, '')
+  const parts = base.split(/[\\/]/)
+  if (!/^[A-Za-z]:$/.test(parts[0]) || SHIM_PATH_UNSAFE_RE.test(base)) return null
+  if (parts.slice(1).some((p) => p === '' || p === '.' || p === '..' || ROOT_PART_UNSAFE_RE.test(p))) return null
+  const system = `${base}\\System32\\cmd.exe`
+  const comSpec = envOne(env, 'ComSpec')
+  return typeof comSpec === 'string' && comSpec.toLowerCase() === system.toLowerCase() ? comSpec : system
+}
 function quoteArgLikeNode(arg) {
   // libuv's quote_cmd_arg, the rule Node applies to each argv element.
   if (arg === '') return '""'
@@ -661,11 +698,13 @@ function quoteArgLikeNode(arg) {
   }
   return `"${out}${'\\'.repeat(slashes * 2)}"`
 }
-function buildSpawnTarget(cmd, args, platform = os.platform()) {
+function buildSpawnTarget(cmd, args, platform = os.platform(), env = process.env) {
   if (platform === 'win32' && /\.(cmd|bat)$/i.test(cmd)) {
     if (SHIM_PATH_UNSAFE_RE.test(cmd)) return null
+    const shell = systemCmdExe(env)
+    if (!shell) return null
     const line = [`"${cmd}"`, ...args.map(quoteArgLikeNode)].join(' ')
-    return { file: 'cmd.exe', argv: ['/d', '/v:off', '/s', '/c', `"${line}"`], verbatim: true }
+    return { file: shell, argv: ['/d', '/v:off', '/s', '/c', `"${line}"`], verbatim: true }
   }
   return { file: cmd, argv: args, verbatim: false }
 }
@@ -741,7 +780,9 @@ function launchClaude(resumeId, sourceCwd) {
 
   const target = buildSpawnTarget(cmd, args)
   if (!target) {
-    console.error(`\n  Not starting Claude Code from ${displayPath(cmd)}: cmd.exe would re-read a character in that path. Install it in a folder without " % & or ^.\n`)
+    console.error(SHIM_PATH_UNSAFE_RE.test(cmd)
+      ? `\n  Not starting Claude Code from ${displayPath(cmd)}: cmd.exe would re-read a character in that path. Install it in a folder without " % & or ^.\n`
+      : '\n  Not starting Claude Code: the Windows folder (SystemRoot) is not a plain absolute folder, so the system cmd.exe cannot be named.\n')
     process.exit(1)
   }
   const result = spawnSync(target.file, target.argv, { ...spawnOpts, windowsVerbatimArguments: target.verbatim })

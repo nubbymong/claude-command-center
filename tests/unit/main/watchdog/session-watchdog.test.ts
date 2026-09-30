@@ -341,13 +341,15 @@ describe('SessionWatchdog: an overload episode lasts until two minutes of quiet 
 
   it('an error 119 s into the quiet continues the episode; one at 120 s starts afresh', () => {
     for (const [quietMs, again] of [[119_999, true], [120_000, false]] as const) {
+      // Round 4 (P4): the quiet begins with the recovering frame itself (the
+      // retry working, at 30 001 ms), not with the next read.
       const { t, wd } = retriedAndWorking()
       detectOverload.mockReturnValue(false)
       t.setNow(31_000)
       t.setTail('> continue\nDone.')
-      wd.feed() // quiet from here
+      wd.feed() // still quiet
       detectOverload.mockReturnValue(true)
-      t.setNow(31_000 + quietMs)
+      t.setNow(30_001 + quietMs)
       t.setTail('> continue\nAPI Error: 529 Overloaded')
       wd.feed()
       expect(wd.getState().status).toBe('overload')
@@ -401,6 +403,53 @@ describe('SessionWatchdog: an overload episode lasts until two minutes of quiet 
     t.setTail('> continue\nDone.')
     wd.feed() // quiet from here
     t.setNow(31_000 + 120_000)
+    wd.handleHookEvent({ event: 'StopFailure', error: 'overloaded' })
+    expect(wd.getState().overloadAttempts).toBe(0)
+    expect(scheduled(t, wd)).toBe(30_000)
+  })
+
+  it('round 4 (P7): a StopFailure that continues the episode waits the backoff its retry logged', () => {
+    const t = makeAdapter()
+    let n = 0
+    const wd = new SessionWatchdog('s1', t.adapter, undefined, () => (n++ % 2 === 0 ? 0 : 1))
+    t.setTail('turn 1')
+    wd.handleHookEvent({ event: 'StopFailure', error: 'overloaded' })
+    t.setNow((wd.getState().waitUntil as number) + 1)
+    wd.tick()
+    expect(t.sent).toHaveLength(1)
+    const logged = Number(/Next backoff (\d+)s/.exec(t.logs.find((l) => /^Sending overload retry/.test(l.msg))!.msg)![1])
+    isWorking.mockReturnValue(true)
+    t.setTail('> continue\n* Working (esc to interrupt)')
+    wd.feed()
+    isWorking.mockReturnValue(false)
+    t.advance(8000)
+    t.setTail('> continue\nturn 2 failed')
+    wd.handleHookEvent({ event: 'StopFailure', error: 'overloaded' })
+    expect(wd.getState().overloadAttempts).toBe(1)
+    expect(Math.round(scheduled(t, wd) / 1000)).toBe(logged)
+  })
+
+  it('round 4 (P7): past the incident gap a StopFailure starts afresh, though the episode is still kept', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s1', t.adapter, undefined, noJitterRand)
+    t.setTail('turn 1')
+    wd.handleHookEvent({ event: 'StopFailure', error: 'overloaded' })
+    t.setNow(30_001)
+    wd.tick()
+    expect(t.sent).toHaveLength(1)
+    isWorking.mockReturnValue(true)
+    t.setTail('> continue\n* Working (esc to interrupt)')
+    wd.feed()
+    // The CLI's own retries for 16 minutes: not quiet, so the episode is kept.
+    isInternalRetry.mockReturnValue(true)
+    for (let s = 1; s <= 192; s++) {
+      t.setNow(30_001 + s * 5000)
+      t.setTail(`Retrying in 5s (attempt ${s})`)
+      wd.feed()
+    }
+    isWorking.mockReturnValue(false)
+    isInternalRetry.mockReturnValue(false)
+    t.setTail('> continue\nturn 2 failed')
     wd.handleHookEvent({ event: 'StopFailure', error: 'overloaded' })
     expect(wd.getState().overloadAttempts).toBe(0)
     expect(scheduled(t, wd)).toBe(30_000)

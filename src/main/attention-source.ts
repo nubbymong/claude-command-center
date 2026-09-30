@@ -145,15 +145,15 @@ function followsItsOwnPre(open: CodexOpenCall | undefined, approval: { turn?: st
  *  from then on, while the approval waits, only that call's PostToolUse, a
  *  prompt or the turn's end ends it (another call of the turn, running
  *  beside it, clears nothing), and an event of a newer turn ends it too.
- *  When the request came after its own call's PreToolUse there is nothing to
- *  take: the dot is raised and the next tool event clears it, as for any
- *  raise (a PermissionRequest carries no call id, so a call running beside
- *  the one waiting cannot be told from the model's next call after the user
- *  declined). Round 3 (F1): "its own call's PreToolUse" is one that began
- *  within CODEX_OWN_PRE_WINDOW_MS before the request; an older open call is a
- *  previous call's, and the request then waits for its own PreToolUse as when
- *  it came first. A turn's end does not clear the dot, as Claude's does not;
- *  it arms the idle mark. */
+ *  Round 4 (P3): when the request came after its own call's PreToolUse, the
+ *  approval keeps that call (the open one) in the same way, so only that
+ *  call's PostToolUse, a prompt, the turn's end or a newer turn ends it (a
+ *  decline ends Codex's turn with no further event: the dot then stays until
+ *  the next prompt). Round 3 (F1): "its own call's PreToolUse" is one that
+ *  began within CODEX_OWN_PRE_WINDOW_MS before the request; an older open
+ *  call is a previous call's, and the request then waits for its own
+ *  PreToolUse as when it came first. A turn's end does not clear the dot, as
+ *  Claude's does not; it arms the idle mark. */
 export function routeAttentionEvent(e: HookEvent, opts: AttentionSourceOptions = {}): void {
   const push = opts.push ?? pushAttention
   const isCodex = opts.isCodexSession?.(e.sessionId) === true
@@ -171,7 +171,8 @@ export function routeAttentionEvent(e: HookEvent, opts: AttentionSourceOptions =
   const callId = payloadString(e, 'tool_use_id')
   if (e.event === 'PermissionRequest') {
     const approval = approvalOf(e)
-    if (followsItsOwnPre(codexOpenCalls.get(sid), approval, e.ts)) codexPendingApprovals.delete(sid)
+    const open = codexOpenCalls.get(sid)
+    if (followsItsOwnPre(open, approval, e.ts)) codexPendingApprovals.set(sid, { ...approval, awaitingOwnPre: false, ...(open?.callId ? { callId: open.callId } : {}) })
     else codexPendingApprovals.set(sid, { ...approval, awaitingOwnPre: true })
     push(sid, true)
     return

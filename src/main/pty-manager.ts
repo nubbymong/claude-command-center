@@ -67,7 +67,7 @@ import { designatedWorktreeDir } from './canvas/canvas-worktree'
 import { forgetSessionForCanvas } from './canvas/canvas-session-link'
 import { forgetCanvasMarkers } from './canvas/canvas-marker-delivery'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
-import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal, withProfileHome, MANAGED_LAUNCH_REFUSAL, hardenCredentialDir } from './account-profiles'
+import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal, withProfileHome, MANAGED_LAUNCH_REFUSAL } from './account-profiles'
 export { withProfileHome } from './account-profiles'
 import { gateManagedLaunchDirs, recordManagedLaunchPreflight, displayPath } from './managed-launch-diagnostics'
 import { stripSpoofableText } from '../shared/safe-text'
@@ -4520,9 +4520,10 @@ function spawnPtyResolved(
           const secret = gw.registerSession(sessionId)
           tokenMinted = true
           noteGatewayToken(sessionId, true)
-          // Round 1 (A5): in the app's own data folder, owner-only by the
-          // app's folder rule.
-          hookFile = provider.prepareSessionHooks(sessionId, gwStatus.port, secret, { hardenDir: hardenCredentialDir })
+          // Round 1 (A5): in the app's own data folder; round 4 (P1): in the
+          // hook folder prepared beforehand (owner-only, checked here without
+          // starting anything), else no hooks.
+          hookFile = provider.prepareSessionHooks(sessionId, gwStatus.port, secret)
         } catch (err) {
           logError(`[pty] Failed to prepare Codex hooks for ${sessionId}: ${(err as Error)?.message ?? err}`)
           hookFile = null

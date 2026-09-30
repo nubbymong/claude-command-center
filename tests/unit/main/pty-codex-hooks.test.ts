@@ -33,7 +33,7 @@ const h = vi.hoisted(() => ({
   gatewayListening: true,
   registered: [] as string[],
   unregistered: [] as string[],
-  prepared: [] as Array<{ sid: string; port: number; secret: string; hardenDir: unknown }>,
+  prepared: [] as Array<{ sid: string; port: number; secret: string; extra: number }>,
   prepareNull: false,
   disposed: [] as string[],
   hooksInstalled: true,
@@ -99,8 +99,8 @@ vi.mock('../../../src/main/providers', () => ({
       return { cmd: opts.realmLaunch.executable, args: [], env, hooksInstalled: !!opts.codexHooks && h.hooksInstalled, ...(opts.resume ? { resumeId: opts.resume.uuid } : {}) }
     },
     ...(id === 'codex' ? {
-      prepareSessionHooks: (sid: string, port: number, secret: string, o?: { hardenDir?: unknown }) => {
-        h.prepared.push({ sid, port, secret, hardenDir: o?.hardenDir })
+      prepareSessionHooks: (sid: string, port: number, secret: string, ...extra: unknown[]) => {
+        h.prepared.push({ sid, port, secret, extra: extra.length })
         if (h.prepareNull) return null
         return { hookFile: `/tmp/codex-hooks/ccc-codex-hook-x/${sid}/hook.json`, dispose: () => { h.disposed.push(sid) } }
       },
@@ -172,7 +172,6 @@ vi.mock('../../../src/main/provider-accounts', () => ({ getAccountsService: () =
 
 const pm = await import('../../../src/main/pty-manager')
 const { spawnPty, killPty, noteCodexHookTranscript, noteCodexHookEvent, routeHookTranscriptPath, getKeptCodexConversationSource, rememberUncertainCodexConversationsFrom, isCodexPtySession } = pm
-const { hardenCredentialDir } = await import('../../../src/main/account-profiles')
 const { codexIdleMarks } = await import('../../../src/main/codex-idle-attention')
 
 const SID = 'cx0000000000000000000001'
@@ -208,7 +207,8 @@ describe('a Codex launch and its hooks (rows 43, 46, 47, 63)', () => {
   it('with the Hooks gateway listening: a token minted for the session, its hook file handed to the builder, kept with the session and gone with its resources', () => {
     start(SID)
     expect(h.registered).toEqual([SID])
-    expect(h.prepared).toEqual([{ sid: SID, port: 51234, secret: TOKEN, hardenDir: hardenCredentialDir }])
+    // Round 4 (P1): no folder rule at the launch; the hook folders were prepared beforehand, off the main thread.
+    expect(h.prepared).toEqual([{ sid: SID, port: 51234, secret: TOKEN, extra: 0 }])
     expect(h.built[0].codexHooks).toEqual({ hookFile: `/tmp/codex-hooks/ccc-codex-hook-x/${SID}/hook.json` })
     // The token itself never reaches the builder.
     expect(JSON.stringify(h.built[0])).not.toContain(TOKEN)
