@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-30T10:42:24.714Z",
-  "head": "37a1a62f5d979c79e74312938b38e9068a1e0e6d",
-  "tree": "cc4e1bb10c55951a46c637cc882b15e96a3e9954",
+  "generatedAt": "2026-09-30T11:35:08.137Z",
+  "head": "4ba85a3a47470394414d758685a2dcbf0f17d64d",
+  "tree": "5a65cfaaa0eedd005ae9925aa65d00d02a0ec867",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2536,
+  "trackedFileCount": 2539,
   "excludedFileCount": 384,
-  "scannedFileCount": 2152,
+  "scannedFileCount": 2155,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 594,
-  "pathDigest": "e8eec13a133801508de021f005ee8307b0c897c14d98bd2ce2ceba053fdd93f4",
+  "matchedPathCount": 597,
+  "pathDigest": "0b0cf4349f12e5abcc3da20c036aebdad4afde15e8f02ab827d67ec9e255c476",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -536,7 +536,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 99
+      "lineCount": 106
     },
     {
       "path": "src/main/ipc/tokenomics2-handlers.ts",
@@ -837,7 +837,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 89
+      "lineCount": 94
     },
     {
       "path": "src/main/providers/codex/telemetry.ts",
@@ -921,7 +921,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 277
+      "lineCount": 279
     },
     {
       "path": "src/main/sanitize-restored-spawn-options.ts",
@@ -930,7 +930,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 54
+      "lineCount": 79
     },
     {
       "path": "src/main/sentinel/index.ts",
@@ -1257,7 +1257,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 95
+      "lineCount": 104
     },
     {
       "path": "src/renderer/components/SessionDialog/CodexFormFields.tsx",
@@ -2071,7 +2071,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 30
+      "lineCount": 33
     },
     {
       "path": "tests/e2e/codex-reconfirm-upgrade.spec.ts",
@@ -2963,6 +2963,15 @@
       "lineCount": 37
     },
     {
+      "path": "tests/unit/main/codex-extra-args-guard.test.ts",
+      "predicates": [
+        "P01",
+        "P07",
+        "P13"
+      ],
+      "lineCount": 45
+    },
+    {
       "path": "tests/unit/main/codex-hook-folders.test.ts",
       "predicates": [
         "P01",
@@ -3587,6 +3596,16 @@
         "P13"
       ],
       "lineCount": 55
+    },
+    {
+      "path": "tests/unit/providers/codex/spawn-extra-args.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P07",
+        "P13"
+      ],
+      "lineCount": 47
     },
     {
       "path": "tests/unit/providers/codex/spawn-hooks.test.ts",
@@ -4340,6 +4359,17 @@
         "P13"
       ],
       "lineCount": 90
+    },
+    {
+      "path": "tests/unit/renderer/session-dialog-codex-extra-args.test.tsx",
+      "predicates": [
+        "P01",
+        "P04",
+        "P05",
+        "P07",
+        "P13"
+      ],
+      "lineCount": 31
     },
     {
       "path": "tests/unit/renderer/session-dialog-codex-model.test.tsx",

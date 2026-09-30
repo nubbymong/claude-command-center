@@ -1724,6 +1724,8 @@ function spawnPtyResolved(
       model?: string
       reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
       permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted' | 'plan'
+      /** P3.11 (row 62): the IPC schema checks it; buildCodexSpawn again. */
+      extraArgs?: string
     }
     /** MAIN-INTERNAL (WP2, plan A10): the Codex session's prepared launch --
      *  its account lease, executable and realm environment. Set only by
