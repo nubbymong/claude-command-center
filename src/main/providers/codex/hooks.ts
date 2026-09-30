@@ -174,13 +174,37 @@ export function realFolderChainBelow(top: string, dir: string): boolean {
   return true
 }
 
-/** Make a folder the app owns, when it is not there yet. */
-function makeOwnFolder(dir: string): boolean {
+/** Make a folder the app owns, when it is not there yet. Round 3 (F3, F4):
+ *  says whether it was made now ('made') or was there already ('found');
+ *  null when it could not be made. */
+function makeOwnFolder(dir: string): 'made' | 'found' | null {
   try {
     fs.mkdirSync(dir, { mode: 0o700 })
-    return true
+    return 'made'
   } catch (err) {
-    return (err as NodeJS.ErrnoException)?.code === 'EEXIST'
+    return (err as NodeJS.ErrnoException)?.code === 'EEXIST' ? 'found' : null
+  }
+}
+
+/** The app's owner-only folder rule (injected). Round 3 (F3): a folder the
+ *  app did not make this run is used only once it belongs to the user, so
+ *  for one found already there the rule is asked to make the user its owner
+ *  first (`takeOwnership`), and it fails when that cannot be done. */
+export type HardenDir = (dir: string, opts?: { takeOwnership?: boolean }) => boolean
+
+/** The rule's options for a folder makeOwnFolder made, or found. */
+function hardenOpts(made: 'made' | 'found'): { takeOwnership: true } | undefined {
+  return made === 'found' ? { takeOwnership: true } : undefined
+}
+
+/** Round 3 (F4): a folder's identity (its volume and file index), or null
+ *  when the file system gives none. */
+function folderIdentity(dir: string): string | null {
+  try {
+    const st = fs.lstatSync(dir, { bigint: true })
+    return st.ino ? `${st.dev}:${st.ino}` : null
+  } catch {
+    return null
   }
 }
 
@@ -200,8 +224,11 @@ function ownerOnlyPosix(dir: string): boolean {
 /** Round 2 (R6): the hook roots hardened by the app's owner-only folder rule
  *  in this run. That rule is a synchronous ACL call on Windows, so it runs
  *  once a run per root (at boot, or the first launch), not on every launch;
- *  every launch still checks the folder chain. */
-const hardenedHookRoots = new Set<string>()
+ *  every launch still checks the folder chain. Round 3 (F4): once a run per
+ *  FOLDER: each root with the identity of the folder that was hardened, so a
+ *  root made again in the run, or replaced by another folder, is hardened
+ *  again (and one the app did not make is made the user's first, F3). */
+const hardenedHookRoots = new Map<string, string>()
 /** Test seam: forget which hook roots were hardened, and which plain copies staged. */
 export function __resetCodexHookFoldersForTests(): void {
   hardenedHookRoots.clear()
@@ -213,18 +240,25 @@ export function __resetCodexHookFoldersForTests(): void {
  * `<dataDir>/codex-hooks`, made when missing: a real folder inside the app's
  * own data folder (never a link or a junction), this user's only (0700 on
  * POSIX; `hardenDir`, the app's owner-only folder rule, on Windows, where it
- * removes every inherited grant; once a run, round 2). Null when it is not
- * that, or cannot be made so: the launch then gets no hooks.
+ * removes every inherited grant; once a run, round 2). Round 3 (F3): one
+ * already there is used only once it belongs to the user (see HardenDir).
+ * Null when it is not that, or cannot be made so: the launch then gets no
+ * hooks.
  */
-export function ensureCodexHookRoot(dataDir: string, hardenDir?: (dir: string) => boolean): string | null {
+export function ensureCodexHookRoot(dataDir: string, hardenDir?: HardenDir): string | null {
   if (typeof dataDir !== 'string' || !dataDir || !path.isAbsolute(dataDir) || CONTROL_RE.test(dataDir)) return null
   const root = path.join(dataDir, CODEX_HOOK_ROOT_NAME)
-  if (!makeOwnFolder(root)) return null
+  const made = makeOwnFolder(root)
+  if (!made) return null
   if (!realFolderChainBelow(dataDir, root)) return null
   if (!ownerOnlyPosix(root)) return null
-  if (hardenDir && !hardenedHookRoots.has(root)) {
-    try { if (!hardenDir(root)) return null } catch { return null }
-    hardenedHookRoots.add(root)
+  if (hardenDir) {
+    const id = folderIdentity(root)
+    if (made === 'made' || id === null || hardenedHookRoots.get(root) !== id) {
+      hardenedHookRoots.delete(root)
+      try { if (!hardenDir(root, hardenOpts(made))) return null } catch { return null }
+      if (id !== null) hardenedHookRoots.set(root, id)
+    }
   }
   return root
 }
@@ -412,16 +446,20 @@ export function verifyPlainCodexHookWrapper(scriptsDir: string, plainDir: string
 
 /** Copy the forwarder and its wrapper from `scriptsDir` into `plainDir` (see
  *  above), making its folders when missing, both made owner-only first (the
- *  base folder too, round 2); each copy is written whole and replaces the
- *  last. True when the copies then pass verifyPlainCodexHookWrapper. */
-export function stagePlainCodexHookWrapper(scriptsDir: string, plainDir: string, hardenDir?: (dir: string) => boolean): boolean {
+ *  base folder too, round 2; one already there made the user's first, round
+ *  3, F3); each copy is written whole and replaces the last. True when the
+ *  copies then pass verifyPlainCodexHookWrapper. */
+export function stagePlainCodexHookWrapper(scriptsDir: string, plainDir: string, hardenDir?: HardenDir): boolean {
   stagedPlainDirs.delete(plainDir)
   const base = path.dirname(plainDir)
-  if (!makeOwnFolder(base) || !makeOwnFolder(plainDir)) return false
+  const baseMade = makeOwnFolder(base)
+  if (!baseMade) return false
+  const plainMade = makeOwnFolder(plainDir)
+  if (!plainMade) return false
   if (!realFolderChainBelow(path.dirname(base), plainDir)) return false
   if (hardenDir) {
     try {
-      if (!hardenDir(base) || !hardenDir(plainDir)) return false
+      if (!hardenDir(base, hardenOpts(baseMade)) || !hardenDir(plainDir, hardenOpts(plainMade))) return false
     } catch {
       return false
     }

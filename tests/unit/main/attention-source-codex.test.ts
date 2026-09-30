@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 vi.mock('../../../src/main/ipc/channel-handlers', () => ({ pushAttention: vi.fn() }))
 vi.mock('../../../src/main/hooks/index', () => ({ getGateway: () => null }))
 
-import { routeAttentionEvent, codexAttentionForEvent, CODEX_IDLE_ATTENTION_MS, _resetAttentionSourceForTest, clearCodexIdleAttention } from '../../../src/main/attention-source'
+import { routeAttentionEvent, codexAttentionForEvent, CODEX_IDLE_ATTENTION_MS, CODEX_OWN_PRE_WINDOW_MS, _resetAttentionSourceForTest, clearCodexIdleAttention } from '../../../src/main/attention-source'
 import { onInternal } from '../../../src/main/internal-events'
 import type { HookEvent } from '../../../src/shared/hook-types'
 
@@ -201,6 +201,81 @@ describe('Codex attention: an approval and its own PreToolUse, in either order (
     routeAttentionEvent({ ...ev('k', 'Notification', { notification_type: 'permission_prompt' }) }, h.opts)
     routeAttentionEvent(ev('k', 'PreToolUse', { tool_name: 'Bash' }), h.opts)
     expect(h.pushed).toEqual([['k', true], ['k', false]])
+  })
+})
+
+// Round 3 (F1): an open call is the approval's own only when its PreToolUse
+// came within CODEX_OWN_PRE_WINDOW_MS of the approval request (VM: a shell
+// command's pair within 13 ms, an apply_patch's PreToolUse up to 2156 ms
+// before; the model's next call about 7 s after). An older open call is a
+// previous call's: the approval waits for its own PreToolUse.
+describe('Codex attention: an approval pairs only with a PreToolUse close to it (round 3, F1)', () => {
+  beforeEach(() => _resetAttentionSourceForTest())
+  const TURN = '01a0ef84-4e89-7613-a2b3-d39e98c11bb2'
+  const at = (e: HookEvent, ts: number): HookEvent => ({ ...e, ts })
+  const perm = (ts: number, tool = 'Bash') => at({ ...ev('c', 'PermissionRequest', { turn_id: TURN, tool_name: tool }), toolName: tool }, ts)
+  const preId = (id: string, ts: number, tool = 'Bash') => at({ ...ev('c', 'PreToolUse', { turn_id: TURN, tool_name: tool, tool_use_id: id }), toolName: tool }, ts)
+  const postId = (id: string, ts: number, tool = 'Bash') => at({ ...ev('c', 'PostToolUse', { turn_id: TURN, tool_name: tool, tool_use_id: id }), toolName: tool }, ts)
+
+  it('the window is 3 s', () => {
+    expect(CODEX_OWN_PRE_WINDOW_MS).toBe(3000)
+  })
+
+  it('the previous call\'s PostToolUse landing after the next approval request keeps the dot up (a)', () => {
+    const h = harness(new Set(['c']))
+    routeAttentionEvent(preId('y', 0), h.opts)
+    routeAttentionEvent(perm(7000), h.opts)
+    routeAttentionEvent(postId('y', 7010), h.opts)
+    routeAttentionEvent(preId('z', 7012), h.opts)
+    expect(h.pushed).toEqual([['c', false], ['c', true]])
+    routeAttentionEvent(postId('z', 9000), h.opts)
+    expect(h.pushed).toEqual([['c', false], ['c', true], ['c', false]])
+  })
+
+  it('a stale open call (its PostToolUse never came) does not make the next approval its own: that approval\'s PreToolUse keeps the dot up (b)', () => {
+    const h = harness(new Set(['c']))
+    routeAttentionEvent(preId('y', 0), h.opts)
+    routeAttentionEvent(perm(9000), h.opts)
+    routeAttentionEvent(preId('z', 9004), h.opts)
+    expect(h.pushed).toEqual([['c', false], ['c', true]])
+    routeAttentionEvent(postId('z', 12000), h.opts)
+    expect(h.pushed.at(-1)).toEqual(['c', false])
+  })
+
+  it('the VM orders still pair: a shell command\'s PreToolUse 13 ms before, an apply_patch\'s 2156 ms before, and the next call clears', () => {
+    const h = harness(new Set(['c']))
+    routeAttentionEvent(preId('b1', 1000), h.opts)
+    routeAttentionEvent(perm(1013), h.opts)
+    routeAttentionEvent(preId('b2', 8000), h.opts)
+    expect(h.pushed).toEqual([['c', false], ['c', true], ['c', false]])
+    _resetAttentionSourceForTest()
+    const h2 = harness(new Set(['c']))
+    routeAttentionEvent(preId('p1', 1000, 'apply_patch'), h2.opts)
+    routeAttentionEvent(perm(3156, 'apply_patch'), h2.opts)
+    routeAttentionEvent(preId('p2', 10000, 'apply_patch'), h2.opts)
+    expect(h2.pushed).toEqual([['c', false], ['c', true], ['c', false]])
+    _resetAttentionSourceForTest()
+    const h3 = harness(new Set(['c']))
+    routeAttentionEvent(perm(1000), h3.opts)
+    routeAttentionEvent(preId('b1', 1004), h3.opts)
+    routeAttentionEvent(preId('b2', 1100), h3.opts)
+    expect(h3.pushed).toEqual([['c', true]])
+    routeAttentionEvent(postId('b1', 5000), h3.opts)
+    expect(h3.pushed).toEqual([['c', true], ['c', false]])
+  })
+
+  it('the edge: a PreToolUse exactly 3 s before pairs, one 3001 ms before does not', () => {
+    const h = harness(new Set(['c']))
+    routeAttentionEvent(preId('y', 0), h.opts)
+    routeAttentionEvent(perm(3000), h.opts)
+    routeAttentionEvent(preId('z', 3005), h.opts)
+    expect(h.pushed.at(-1)).toEqual(['c', false])
+    _resetAttentionSourceForTest()
+    const h2 = harness(new Set(['c']))
+    routeAttentionEvent(preId('y', 0), h2.opts)
+    routeAttentionEvent(perm(3001), h2.opts)
+    routeAttentionEvent(preId('z', 3005), h2.opts)
+    expect(h2.pushed.at(-1)).toEqual(['c', true])
   })
 })
 

@@ -625,16 +625,49 @@ async function main() {
  *
  * `shell: false` fixes both: Node passes argv to CreateProcess directly and
  * quotes each element itself. The only thing shell:true was buying is the
- * ability to invoke a `.cmd` shim, so do that explicitly through cmd.exe with
- * an ARGS ARRAY -- the same shape src/main/providers/codex/spawn.ts already
- * uses. cmd.exe still parses the shim path, but the arguments are passed as
- * separate argv elements rather than concatenated into one command line.
+ * ability to invoke a `.cmd` shim, so that runs through cmd.exe explicitly.
+ *
+ * cmd.exe reads what follows `/c` itself: without /s it keeps the quotes only
+ * when the line holds exactly two of them around a program name, with none of
+ * `& < > ( ) @ ^ |` between them, and otherwise drops the first quote and the
+ * last one. A shim in a folder with a space or parentheses (npm's folder under
+ * a Windows user name with a space) therefore lost its quotes as soon as one
+ * argument needed quotes too (a `--settings` path with a space, the `--agents`
+ * JSON), and cmd.exe tried to run the first word of the path. So the shim
+ * runs the way Node runs a `shell: true` command, and the way the Claude
+ * version probe and the Codex picker run one: `/d /v:off /s /c "<line>"`,
+ * passed VERBATIM (AutoRun skipped, delayed expansion off). With /s cmd.exe
+ * drops exactly that outer pair; inside it the shim path is quoted and each
+ * argument is written exactly as Node writes an argv element
+ * (quoteArgLikeNode), so the arguments reach cmd.exe as they did before and
+ * only the shim path changes. A shim path carrying one of `" % & ^` or a
+ * control character is refused (null), as the version probe refuses it:
+ * cmd.exe or the shim itself would re-read it.
  */
-function buildSpawnTarget(cmd, args) {
-  if (os.platform() === 'win32' && /\.(cmd|bat)$/i.test(cmd)) {
-    return { file: 'cmd.exe', argv: ['/c', cmd, ...args] }
+// eslint-disable-next-line no-control-regex
+const SHIM_PATH_UNSAFE_RE = /["%&^\x00-\x1f\x7f]/
+function quoteArgLikeNode(arg) {
+  // libuv's quote_cmd_arg, the rule Node applies to each argv element.
+  if (arg === '') return '""'
+  if (!/[ \t"]/.test(arg)) return arg
+  if (!/["\\]/.test(arg)) return `"${arg}"`
+  let out = ''
+  let slashes = 0
+  for (const ch of arg) {
+    if (ch === '\\') { slashes++; continue }
+    if (ch === '"') { out += '\\'.repeat(slashes * 2 + 1) + '"'; slashes = 0; continue }
+    out += '\\'.repeat(slashes) + ch
+    slashes = 0
   }
-  return { file: cmd, argv: args }
+  return `"${out}${'\\'.repeat(slashes * 2)}"`
+}
+function buildSpawnTarget(cmd, args, platform = os.platform()) {
+  if (platform === 'win32' && /\.(cmd|bat)$/i.test(cmd)) {
+    if (SHIM_PATH_UNSAFE_RE.test(cmd)) return null
+    const line = [`"${cmd}"`, ...args.map(quoteArgLikeNode)].join(' ')
+    return { file: 'cmd.exe', argv: ['/d', '/v:off', '/s', '/c', `"${line}"`], verbatim: true }
+  }
+  return { file: cmd, argv: args, verbatim: false }
 }
 
 function getForwardedArgs() {
@@ -707,7 +740,11 @@ function launchClaude(resumeId, sourceCwd) {
   if (retarget.cwd) spawnOpts.cwd = retarget.cwd
 
   const target = buildSpawnTarget(cmd, args)
-  const result = spawnSync(target.file, target.argv, spawnOpts)
+  if (!target) {
+    console.error(`\n  Not starting Claude Code from ${displayPath(cmd)}: cmd.exe would re-read a character in that path. Install it in a folder without " % & or ^.\n`)
+    process.exit(1)
+  }
+  const result = spawnSync(target.file, target.argv, { ...spawnOpts, windowsVerbatimArguments: target.verbatim })
 
   // If resume failed (conversation no longer exists), fall back to fresh session.
   // The fresh fallback runs in the SAME (worktree) cwd so it lands where the
@@ -721,7 +758,7 @@ function launchClaude(resumeId, sourceCwd) {
     }
     if (spawnOpts.cwd) freshOpts.cwd = spawnOpts.cwd
     const freshTarget = buildSpawnTarget(cmd, forwarded)
-    const fresh = spawnSync(freshTarget.file, freshTarget.argv, freshOpts)
+    const fresh = spawnSync(freshTarget.file, freshTarget.argv, { ...freshOpts, windowsVerbatimArguments: freshTarget.verbatim })
     process.exit(fresh.status || 0)
   }
 

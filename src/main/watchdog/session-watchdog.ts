@@ -109,6 +109,18 @@ const USAGE_TAIL_LINES = 12
 // an escalation of the old one.
 const OVERLOAD_INCIDENT_GAP_MS = 15 * 60_000
 
+// P3.10 round 3 (F2): how long a session must stay quiet after an overload
+// retry before its episode is over. On a persistent outage the error comes
+// back within seconds of each retry (the retry's own turn fails), and the
+// CLI's own retries in between show as internal-retry frames, which are not
+// quiet. The retry's working frames (Claude Code), or its new turn (Codex),
+// used to end the episode at once, so every retry opened a fresh one: attempt
+// 1 each time, the backoff never grew and the cap never tripped. Two minutes
+// with no new error, the turn working or finished, means the retry got
+// through; a later error is a new episode with a full budget. An error inside
+// those two minutes continues the episode.
+const OVERLOAD_SETTLE_MS = 120_000
+
 // Fixed cooldown after sending a rate-limit retry before we'd re-check/re-fire.
 const WAITING_RESEND_COOLDOWN_MS = 30_000
 
@@ -136,6 +148,15 @@ export class SessionWatchdog {
   private overloadTotalWaitMs = 0
   private overloadGaveUpLogged = false
   private lastEventRetryAt: number | null = null
+  /** P3.10 round 3 (F2): the wait the current schedule counted into
+   *  overloadTotalWaitMs, not yet spent. */
+  private overloadScheduledWaitMs = 0
+  /** P3.10 round 3 (F2): an overload episode that ended with the session
+   *  moving on after a retry, kept until the session has been quiet for
+   *  OVERLOAD_SETTLE_MS: its attempts, the wait it had spent, and when the
+   *  current quiet stretch began (null: not quiet now). A new error before
+   *  then continues it (enterOverload, handleHookEvent). */
+  private overloadSettle: { attempts: number; spentMs: number; quietSince: number | null } | null = null
   // Memoizes the exact tail text a send already handled, so a still-visible
   // render doesn't double-fire a second backoff (upstream's _eventHandledBanner).
   private lastHandledOverloadTail: string | null = null
@@ -313,12 +334,58 @@ export class SessionWatchdog {
   private resetOverload(): void {
     this.overloadAttempts = 0
     this.overloadTotalWaitMs = 0
+    this.overloadScheduledWaitMs = 0
     this.overloadGaveUpLogged = false
     this.viaEvent = false
     this.eventTailSnapshot = null
     // lastHandledOverloadTail is intentionally NOT cleared here: the banner it
     // suppresses can still be on screen right after recovery. It has its own
     // lifecycle, cleared once the banner actually leaves the tail.
+  }
+
+  /** P3.10 round 3 (F2): the overload incident ended because the session
+   *  moved on (working, advanced past the event, or the error left the
+   *  screen). When a retry had been sent, the episode is kept (see
+   *  overloadSettle); the wait scheduled after that retry was never spent, so
+   *  it is not kept. A screen that moved on from the render the last retry
+   *  handled also ends that render's memo: the same render drawn again after
+   *  it (a repeated error in a scrolled pane) is a new error. */
+  private overloadRecovered(action: string, tail: string): void {
+    this.overloadSettle = this.overloadAttempts > 0
+      ? { attempts: this.overloadAttempts, spentMs: Math.max(0, this.overloadTotalWaitMs - this.overloadScheduledWaitMs), quietSince: null }
+      : null
+    if (tail !== this.lastHandledOverloadTail) this.lastHandledOverloadTail = null
+    this.resetOverload()
+    this.toMonitoring(action)
+  }
+
+  /** P3.10 round 3 (F2): follow the kept episode on a monitoring read. A
+   *  frame is quiet when it is not the CLI's own retry and the session works
+   *  on or shows no overload error; OVERLOAD_SETTLE_MS of quiet ends the
+   *  episode. Runs before any branch can return and whatever the checks, as
+   *  discardStaleParks does. */
+  private settleOverload(tail: string): void {
+    const s = this.overloadSettle
+    if (!s) return
+    const now = this.adapter.now()
+    if (s.quietSince !== null && now - s.quietSince >= OVERLOAD_SETTLE_MS) {
+      this.overloadSettle = null
+      return
+    }
+    const quiet = !this.d.isInternalRetry(tail)
+      && (this.d.isWorking(tail) || !this.d.detectOverload(tail, this.config.overload.patterns))
+    if (!quiet) s.quietSince = null
+    else if (s.quietSince === null) s.quietSince = now
+  }
+
+  /** P3.10 round 3 (F2): the kept episode a new error continues, or null
+   *  (none, or quiet long enough to be over). Consumed either way. */
+  private takeOverloadSettle(): { attempts: number; spentMs: number } | null {
+    const s = this.overloadSettle
+    this.overloadSettle = null
+    if (!s) return null
+    if (s.quietSince !== null && this.adapter.now() - s.quietSince >= OVERLOAD_SETTLE_MS) return null
+    return s
   }
 
   private resetSafeguard(): void {
@@ -382,8 +449,8 @@ export class SessionWatchdog {
     if (this.d.isWorking(tail) && !this.d.isInternalRetry(tail)) {
       // Self-recovered between the failing turn and this event landing.
       this.parkedBudget.overload = null // #605: the incident is over, so is its park
-      this.resetOverload()
-      if (this.status === 'overload') this.toMonitoring('overload cleared (self-recovered before hook event processed)')
+      if (this.status === 'overload') this.overloadRecovered('overload cleared (self-recovered before hook event processed)', tail)
+      else this.resetOverload()
       return
     }
 
@@ -397,6 +464,12 @@ export class SessionWatchdog {
     if (parked) {
       this.overloadAttempts = parked.attempts
       this.overloadTotalWaitMs = parked.totalWaitMs
+    }
+    // P3.10 round 3 (F2): an error before the last episode settled continues it.
+    const settled = this.takeOverloadSettle()
+    if (!parked && settled) {
+      this.overloadAttempts = settled.attempts
+      this.overloadTotalWaitMs = settled.spentMs
     }
 
     // A gap this long means the retry turn in between succeeded: a NEW incident,
@@ -419,6 +492,7 @@ export class SessionWatchdog {
 
     const w = this.nextOverloadWaitMs(this.overloadAttempts)
     this.overloadTotalWaitMs += w
+    this.overloadScheduledWaitMs = w
     this.waitUntil = this.adapter.now() + w
     this.status = 'overload'
     this.gaveUp = false
@@ -450,6 +524,7 @@ export class SessionWatchdog {
 
   private feedMonitoring(tail: string): void {
     this.discardStaleParks(tail)
+    this.settleOverload(tail)
 
     // Usage-limit (hours-scale reset) takes precedence over overload/safeguard.
     if (this.checks.rateLimit) {
@@ -463,7 +538,11 @@ export class SessionWatchdog {
     if (this.checks.overload) {
       const present = this.d.detectOverload(tail, this.config.overload.patterns)
       if (!present) this.lastHandledOverloadTail = null // banner gone -> a future match is a fresh incident
-      if (present && !this.d.isInternalRetry(tail)) {
+      // P3.10 round 3 (F2): not while the session works on. The error on
+      // screen is not its state then, and the next read in 'overload' would
+      // clear it as recovered: an incident opened and closed on every frame
+      // of a working turn (handleHookEvent already declines to open then).
+      if (present && !this.d.isInternalRetry(tail) && !this.d.isWorking(tail)) {
         // #605: a PARKED incident resumes even on the exact render its last
         // retry handled -- the toggle is the user asking for it, and it is the
         // restored spend (not the render memo) that bounds the retries.
@@ -551,6 +630,7 @@ export class SessionWatchdog {
       now: new Date(this.adapter.now()),
     })
     this.status = 'waiting'
+    this.overloadSettle = null // P3.10 round 3 (F2): another incident took over
     this.attempts = parked ? parked.attempts : 0
     this.waitUntil = this.adapter.now() + waitMs
     // #605: a resumed incident that is already spent must READ as given up now,
@@ -569,11 +649,18 @@ export class SessionWatchdog {
     // spend the maxTotalWaitMinutes cap is measured against.
     const parked = this.parkedBudget.overload
     this.parkedBudget.overload = null
+    // P3.10 round 3 (F2): an error before the last episode settled continues
+    // it, with its attempts and spent wait: the backoff grows, the cap trips.
+    const settled = this.takeOverloadSettle()
+    const again = !parked && settled !== null
     this.resetOverload()
     this.status = 'overload'
     if (parked) {
       this.overloadAttempts = parked.attempts
       this.overloadTotalWaitMs = parked.totalWaitMs
+    } else if (settled) {
+      this.overloadAttempts = settled.attempts
+      this.overloadTotalWaitMs = settled.spentMs
     }
     const capMs = this.config.overload.maxTotalWaitMinutes * 60_000
     // #605: see enterWaiting -- a resumed incident past its cap reads as given
@@ -586,11 +673,17 @@ export class SessionWatchdog {
       // real retry loop.
       this.overloadTotalWaitMs = capMs
       this.waitUntil = this.adapter.now()
-      this.emit('overload detected (degenerate backoff config exceeds cap)')
+      this.emit(again ? 'overload detected again (backoff cap reached)' : 'overload detected (degenerate backoff config exceeds cap)')
       return
     }
     this.overloadTotalWaitMs += w
+    this.overloadScheduledWaitMs = w
     this.waitUntil = this.adapter.now() + w
+    if (again) {
+      this.adapter.log('warn', `Overload/transient API error again before the last one settled (next retry is attempt ${this.overloadAttempts + 1}). Backing off ${Math.round(w / 1000)}s before retry.`)
+      this.emit('overload detected again; backing off')
+      return
+    }
     this.adapter.log('warn', `Overload/transient API error detected. Backing off ${Math.round(w / 1000)}s before retry.`)
     this.emit('overload detected; backing off')
   }
@@ -602,6 +695,7 @@ export class SessionWatchdog {
     const parked = this.parkedBudget.safeguard
     this.parkedBudget.safeguard = null
     this.resetSafeguard()
+    this.overloadSettle = null // P3.10 round 3 (F2): another incident took over
     this.status = 'safeguard'
     if (parked) this.safeguardAttempts = parked.attempts
     // #605: see enterWaiting -- a resumed incident past its cap reads as given
@@ -721,8 +815,7 @@ export class SessionWatchdog {
       return
     }
     if (this.d.isWorking(tail) && !this.d.isInternalRetry(tail)) {
-      this.resetOverload()
-      this.toMonitoring('overload cleared (session recovered)')
+      this.overloadRecovered('overload cleared (session recovered)', tail)
       return
     }
     // Edge-triggered event incidents may carry no scraped banner at all — the
@@ -733,12 +826,10 @@ export class SessionWatchdog {
     // absent overload text.
     if (this.viaEvent) {
       if (this.eventTailSnapshot !== null && tail !== this.eventTailSnapshot) {
-        this.resetOverload()
-        this.toMonitoring('overload cleared (session advanced since the hook event)')
+        this.overloadRecovered('overload cleared (session advanced since the hook event)', tail)
       }
     } else if (!this.d.detectOverload(tail, this.config.overload.patterns)) {
-      this.resetOverload()
-      this.toMonitoring('overload text no longer present')
+      this.overloadRecovered('overload text no longer present', tail)
     }
   }
 
@@ -755,8 +846,7 @@ export class SessionWatchdog {
       return
     }
     if (this.d.isWorking(tail) && !this.d.isInternalRetry(tail)) {
-      this.resetOverload()
-      this.toMonitoring('overload cleared (session recovered)')
+      this.overloadRecovered('overload cleared (session recovered)', tail)
       return
     }
     // Fire-time re-verify (FINDING 3): an event-opened incident does not require
@@ -765,13 +855,11 @@ export class SessionWatchdog {
     // than send a spurious retry. The scraper path still clears on absent text.
     if (this.viaEvent) {
       if (this.eventTailSnapshot !== null && tail !== this.eventTailSnapshot) {
-        this.resetOverload()
-        this.toMonitoring('overload cleared (session advanced since the hook event)')
+        this.overloadRecovered('overload cleared (session advanced since the hook event)', tail)
         return
       }
     } else if (!this.d.detectOverload(tail, this.config.overload.patterns)) {
-      this.resetOverload()
-      this.toMonitoring('overload text no longer present')
+      this.overloadRecovered('overload text no longer present', tail)
       return
     }
     if (this.d.isInternalRetry(tail)) {
@@ -801,6 +889,7 @@ export class SessionWatchdog {
     this.overloadAttempts++
     const w = this.nextOverloadWaitMs(this.overloadAttempts)
     this.overloadTotalWaitMs += w
+    this.overloadScheduledWaitMs = w
     this.waitUntil = now + w
     if (this.viaEvent) this.lastEventRetryAt = now
     this.viaEvent = false

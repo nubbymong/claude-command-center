@@ -349,3 +349,107 @@ describe('round 2: the owner-only rule once a run, and on both plain-copy levels
     expect(verifyPlainCodexHookWrapper(src, plain)).toBe(false)
   })
 })
+
+// Round 3 (F3): a folder the app did not make this run is used only once it
+// belongs to the user: the owner-only rule is asked to make the user its owner
+// first (takeOwnership), and a refusal means no hooks. A folder the app makes
+// is hardened as before. (F4): the hook root is hardened once a run per
+// folder, so a root made again in the run, or replaced, is hardened again.
+describe('round 3: a folder already there is used only once it is the user\'s (F3, F4)', () => {
+  type Call = { dir: string; takeOwnership: boolean }
+  function recorder(ok: (c: Call) => boolean = () => true) {
+    const calls: Call[] = []
+    const harden = (dir: string, opts?: { takeOwnership?: boolean }): boolean => {
+      const c = { dir, takeOwnership: opts?.takeOwnership === true }
+      calls.push(c)
+      return ok(c)
+    }
+    return { calls, harden }
+  }
+  function scriptsDir(): string {
+    const res = tmp()
+    fs.mkdirSync(path.join(res, 'scripts'))
+    fs.writeFileSync(path.join(res, 'scripts', 'ccc-codex-hook.js'), '// forwarder')
+    fs.writeFileSync(path.join(res, 'scripts', 'ccc-codex-hook.cmd'), 'rem wrapper')
+    return path.join(res, 'scripts')
+  }
+
+  it('a hook root the app makes is hardened as made; one already there is made the user\'s first, and refused when it cannot be', () => {
+    const fresh = recorder()
+    const data = tmp()
+    const root = ensureCodexHookRoot(data, fresh.harden)
+    expect(root).toBe(path.join(data, CODEX_HOOK_ROOT_NAME))
+    expect(fresh.calls).toEqual([{ dir: root, takeOwnership: false }])
+    __resetCodexHookFoldersForTests()
+    // The next run: the folder is there from before.
+    const next = recorder()
+    expect(ensureCodexHookRoot(data, next.harden)).toBe(root)
+    expect(next.calls).toEqual([{ dir: root, takeOwnership: true }])
+    __resetCodexHookFoldersForTests()
+    const refused = recorder((c) => !c.takeOwnership)
+    expect(ensureCodexHookRoot(data, refused.harden)).toBeNull()
+    expect(refused.calls).toEqual([{ dir: root, takeOwnership: true }])
+  })
+
+  it('F4: a hook root removed in the run and made again is hardened again; one replaced by another folder is made the user\'s again', () => {
+    const data = tmp()
+    const r = recorder()
+    const root = ensureCodexHookRoot(data, r.harden)!
+    expect(ensureCodexHookRoot(data, r.harden)).toBe(root)
+    expect(r.calls).toHaveLength(1)
+    fs.rmdirSync(root)
+    expect(ensureCodexHookRoot(data, r.harden)).toBe(root)
+    expect(r.calls).toEqual([{ dir: root, takeOwnership: false }, { dir: root, takeOwnership: false }])
+    // Replaced by a folder the app did not make (another one under the same name).
+    fs.rmdirSync(root)
+    const other = path.join(data, 'other')
+    fs.mkdirSync(other)
+    fs.renameSync(other, root)
+    expect(ensureCodexHookRoot(data, r.harden)).toBe(root)
+    expect(r.calls.at(-1)).toEqual({ dir: root, takeOwnership: true })
+    expect(r.calls).toHaveLength(3)
+  })
+
+  it('the plain copy: folders already there are made the user\'s first, and either refusal means no copy', () => {
+    const src = scriptsDir()
+    const lad = tmp()
+    const plain = path.join(lad, CODEX_HOOK_PLAIN_BASE, 'codex-hooks-abcdef012345')
+    const first = recorder()
+    expect(stagePlainCodexHookWrapper(src, plain, first.harden)).toBe(true)
+    expect(first.calls).toEqual([{ dir: path.dirname(plain), takeOwnership: false }, { dir: plain, takeOwnership: false }])
+    __resetCodexHookFoldersForTests()
+    const again = recorder()
+    expect(stagePlainCodexHookWrapper(src, plain, again.harden)).toBe(true)
+    expect(again.calls).toEqual([{ dir: path.dirname(plain), takeOwnership: true }, { dir: plain, takeOwnership: true }])
+    for (const refuse of [path.dirname(plain), plain]) {
+      __resetCodexHookFoldersForTests()
+      const r = recorder((c) => !(c.dir === refuse && c.takeOwnership))
+      expect(stagePlainCodexHookWrapper(src, plain, r.harden), refuse).toBe(false)
+      expect(verifyPlainCodexHookWrapper(src, plain), refuse).toBe(false)
+    }
+    // Only the tag folder there from before (its base made now).
+    const lad2 = tmp()
+    fs.mkdirSync(path.join(lad2, CODEX_HOOK_PLAIN_BASE))
+    const plain2 = path.join(lad2, CODEX_HOOK_PLAIN_BASE, 'codex-hooks-abcdef012345')
+    fs.mkdirSync(plain2)
+    const mixed = recorder()
+    expect(stagePlainCodexHookWrapper(src, plain2, mixed.harden)).toBe(true)
+    expect(mixed.calls.map((c) => c.takeOwnership)).toEqual([true, true])
+  })
+
+  it('a launch only ever runs the two verified names: other files in the copy folder change nothing', () => {
+    const src = scriptsDir()
+    const lad = tmp()
+    const plain = path.join(lad, CODEX_HOOK_PLAIN_BASE, 'codex-hooks-abcdef012345')
+    expect(stagePlainCodexHookWrapper(src, plain, () => true)).toBe(true)
+    for (const extra of ['node.cmd', 'node.exe', 'ccc-codex-hook.bat', 'ccc-codex-hook.ps1', 'hook.json']) fs.writeFileSync(path.join(plain, extra), 'x')
+    expect(verifyPlainCodexHookWrapper(src, plain)).toBe(true)
+    // The command a launch gets is the wrapper by its own path, nothing else there.
+    const plainWin = 'C:\\Users\\riley\\AppData\\Local\\ai-code-conductor\\codex-hooks-abcdef012345'
+    expect(codexHookCommand(plainWin, 'win32', true)).toBe(plainWin + '\\ccc-codex-hook.cmd')
+    // And the wrapper the app ships runs only the forwarder beside it.
+    const wrapper = fs.readFileSync(path.join(__dirname, '..', '..', '..', '..', 'scripts', 'ccc-codex-hook.cmd'), 'utf8')
+    const beside = wrapper.split(/\r?\n/).filter((l) => !/^\s*rem\b/i.test(l)).join('\n').match(/%~dp0[^"\s]*/g) ?? []
+    expect(beside).toEqual(['%~dp0ccc-codex-hook.js'])
+  })
+})

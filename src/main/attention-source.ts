@@ -7,7 +7,7 @@ import { getGateway } from './hooks/index'
 import { pushAttention } from './ipc/channel-handlers'
 import { emitInternal } from './internal-events'
 import { codexIdleMarks, codexPendingApprovals, codexOpenCalls, clearCodexIdleAttention, _clearAllCodexIdleAttentionForTest } from './codex-idle-attention'
-import type { CodexPendingApproval } from './codex-idle-attention'
+import type { CodexPendingApproval, CodexOpenCall } from './codex-idle-attention'
 import type { HookEvent } from '../shared/hook-types'
 
 // P3.10 round 1 (Q1): pty-manager drops a session's pending idle mark with
@@ -116,10 +116,22 @@ function ofAnotherTurn(pending: CodexPendingApproval, e: HookEvent): boolean {
   return !!pending.turn && !!turn && pending.turn !== turn
 }
 
+/** Round 3 (F1): how close before a PermissionRequest its own call's
+ *  PreToolUse lands. VM timings: a shell command's pair within 13 ms (either
+ *  order), an apply_patch's PreToolUse 131 to 2156 ms before; the model's next
+ *  call came about 7 s after the previous one. 3 s holds the slowest pair seen
+ *  with room, and stays well under the gap between calls. */
+export const CODEX_OWN_PRE_WINDOW_MS = 3000
+
 /** Round 2 (R3): the PermissionRequest came after its own call's PreToolUse:
- *  the session's open call is of the same turn and tool (both known). */
-function followsItsOwnPre(open: { turn?: string; tool?: string } | undefined, approval: { turn?: string; tool?: string }): boolean {
-  return !!open && !!open.turn && !!open.tool && open.turn === approval.turn && open.tool === approval.tool
+ *  the session's open call is of the same turn and tool (both known).
+ *  Round 3 (F1): and it began within CODEX_OWN_PRE_WINDOW_MS before the
+ *  request. An older open call is a previous call's, one whose PostToolUse is
+ *  late or never came: the approval then waits for its own PreToolUse. */
+function followsItsOwnPre(open: CodexOpenCall | undefined, approval: { turn?: string; tool?: string }, requestAt: number): boolean {
+  if (!open || !open.turn || !open.tool || open.turn !== approval.turn || open.tool !== approval.tool) return false
+  const gap = requestAt - open.at
+  return Number.isFinite(gap) && gap >= 0 && gap <= CODEX_OWN_PRE_WINDOW_MS
 }
 
 /** Route one hook event to the attention flasher. Exported for tests.
@@ -137,8 +149,11 @@ function followsItsOwnPre(open: { turn?: string; tool?: string } | undefined, ap
  *  take: the dot is raised and the next tool event clears it, as for any
  *  raise (a PermissionRequest carries no call id, so a call running beside
  *  the one waiting cannot be told from the model's next call after the user
- *  declined). A turn's end does not clear the dot, as Claude's does not; it
- *  arms the idle mark. */
+ *  declined). Round 3 (F1): "its own call's PreToolUse" is one that began
+ *  within CODEX_OWN_PRE_WINDOW_MS before the request; an older open call is a
+ *  previous call's, and the request then waits for its own PreToolUse as when
+ *  it came first. A turn's end does not clear the dot, as Claude's does not;
+ *  it arms the idle mark. */
 export function routeAttentionEvent(e: HookEvent, opts: AttentionSourceOptions = {}): void {
   const push = opts.push ?? pushAttention
   const isCodex = opts.isCodexSession?.(e.sessionId) === true
@@ -156,13 +171,13 @@ export function routeAttentionEvent(e: HookEvent, opts: AttentionSourceOptions =
   const callId = payloadString(e, 'tool_use_id')
   if (e.event === 'PermissionRequest') {
     const approval = approvalOf(e)
-    if (followsItsOwnPre(codexOpenCalls.get(sid), approval)) codexPendingApprovals.delete(sid)
+    if (followsItsOwnPre(codexOpenCalls.get(sid), approval, e.ts)) codexPendingApprovals.delete(sid)
     else codexPendingApprovals.set(sid, { ...approval, awaitingOwnPre: true })
     push(sid, true)
     return
   }
   if (e.event === 'PreToolUse') {
-    codexOpenCalls.set(sid, { ...approvalOf(e), ...(callId ? { callId } : {}) })
+    codexOpenCalls.set(sid, { ...approvalOf(e), ...(callId ? { callId } : {}), at: e.ts })
     const approval = codexPendingApprovals.get(sid)
     if (approval && !ofAnotherTurn(approval, e)) {
       if (approval.awaitingOwnPre && mayBeTheApprovedCall(approval, e)) {

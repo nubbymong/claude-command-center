@@ -302,6 +302,169 @@ describe('SessionWatchdog — overload path', () => {
   })
 })
 
+// P3.10 round 3 (F2): an overload episode that ended with the session moving
+// on after a retry is kept until the session has been quiet for two minutes;
+// a new error before then continues it (the backoff grows, the cap trips).
+// The provider-level runs are in overload-episode.test.ts; these pin the
+// machine's own rules.
+describe('SessionWatchdog: an overload episode lasts until two minutes of quiet (round 3, F2)', () => {
+  /** An overload, its first retry sent, and the retry's turn working: back in
+   *  monitoring with the episode kept. Returns the adapter at that point. */
+  function retriedAndWorking() {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s1', t.adapter, undefined, noJitterRand)
+    detectOverload.mockReturnValue(true)
+    t.setTail('API Error: 529 Overloaded')
+    wd.feed()
+    t.setNow(30_001)
+    wd.tick()
+    expect(t.sent).toHaveLength(1)
+    isWorking.mockReturnValue(true)
+    t.setTail('> continue\n* Working (esc to interrupt)')
+    wd.feed()
+    expect(wd.getState().status).toBe('monitoring')
+    isWorking.mockReturnValue(false)
+    return { t, wd }
+  }
+  const scheduled = (t: ReturnType<typeof makeAdapter>, wd: SessionWatchdog): number => (wd.getState().waitUntil as number) - t.adapter.now()
+
+  it('no incident opens while the session works on, an old error still on screen', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s1', t.adapter, undefined, noJitterRand)
+    detectOverload.mockReturnValue(true)
+    isWorking.mockReturnValue(true)
+    t.setTail('API Error: 529 Overloaded\n* Working (esc to interrupt)')
+    wd.feed()
+    expect(wd.getState().status).toBe('monitoring')
+    expect(t.stateChanges).toHaveLength(0)
+  })
+
+  it('an error 119 s into the quiet continues the episode; one at 120 s starts afresh', () => {
+    for (const [quietMs, again] of [[119_999, true], [120_000, false]] as const) {
+      const { t, wd } = retriedAndWorking()
+      detectOverload.mockReturnValue(false)
+      t.setNow(31_000)
+      t.setTail('> continue\nDone.')
+      wd.feed() // quiet from here
+      detectOverload.mockReturnValue(true)
+      t.setNow(31_000 + quietMs)
+      t.setTail('> continue\nAPI Error: 529 Overloaded')
+      wd.feed()
+      expect(wd.getState().status).toBe('overload')
+      expect(wd.getState().lastAction).toBe(again ? 'overload detected again; backing off' : 'overload detected; backing off')
+      expect(wd.getState().overloadAttempts).toBe(again ? 1 : 0)
+      expect(scheduled(t, wd)).toBe(again ? 60_000 : 30_000)
+    }
+  })
+
+  it('the CLI\'s own retry is not quiet: minutes of it keep the episode', () => {
+    const { t, wd } = retriedAndWorking()
+    isWorking.mockReturnValue(true)
+    isInternalRetry.mockReturnValue(true)
+    for (let s = 1; s <= 60; s++) {
+      t.setNow(30_001 + s * 5000)
+      t.setTail(`Retrying in 5s (attempt ${s})`)
+      wd.feed()
+    }
+    isWorking.mockReturnValue(false)
+    isInternalRetry.mockReturnValue(false)
+    t.setTail('> continue\nAPI Error: 529 Overloaded')
+    wd.feed()
+    expect(wd.getState().lastAction).toBe('overload detected again; backing off')
+  })
+
+  it('a StopFailure before the episode settled continues it too', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s1', t.adapter, undefined, noJitterRand)
+    t.setTail('turn 1')
+    wd.handleHookEvent({ event: 'StopFailure', error: 'overloaded' })
+    expect(scheduled(t, wd)).toBe(30_000)
+    t.setNow(30_001)
+    wd.tick()
+    expect(t.sent).toHaveLength(1)
+    isWorking.mockReturnValue(true)
+    t.setTail('> continue\n* Working (esc to interrupt)')
+    wd.feed()
+    expect(wd.getState().status).toBe('monitoring')
+    isWorking.mockReturnValue(false)
+    t.setNow(40_000)
+    t.setTail('> continue\nturn 2 failed')
+    wd.handleHookEvent({ event: 'StopFailure', error: 'overloaded' })
+    expect(wd.getState().overloadAttempts).toBe(1)
+    expect(scheduled(t, wd)).toBe(60_000)
+  })
+
+  it('a StopFailure after two minutes of quiet starts afresh', () => {
+    const { t, wd } = retriedAndWorking()
+    detectOverload.mockReturnValue(false)
+    t.setNow(31_000)
+    t.setTail('> continue\nDone.')
+    wd.feed() // quiet from here
+    t.setNow(31_000 + 120_000)
+    wd.handleHookEvent({ event: 'StopFailure', error: 'overloaded' })
+    expect(wd.getState().overloadAttempts).toBe(0)
+    expect(scheduled(t, wd)).toBe(30_000)
+  })
+
+  it('with the overload check off, an error left on screen is not quiet: switched back on, the episode continues', () => {
+    const { t, wd } = retriedAndWorking()
+    wd.setChecks({ overload: false })
+    t.setTail('> continue\nAPI Error: 529 Overloaded')
+    for (let s = 1; s <= 60; s++) {
+      t.setNow(30_001 + s * 5000)
+      wd.feed()
+    }
+    expect(wd.getState().status).toBe('monitoring')
+    wd.setChecks({ overload: true })
+    wd.feed()
+    expect(wd.getState().lastAction).toBe('overload detected again; backing off')
+    expect(scheduled(t, wd)).toBe(60_000)
+  })
+
+  it('the same render drawn again after the screen moved on is a new error (the memo ends)', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s1', t.adapter, undefined, noJitterRand)
+    detectOverload.mockReturnValue(true)
+    const banner = 'API Error: 529 Overloaded'
+    t.setTail(banner)
+    wd.feed()
+    t.setNow(30_001)
+    wd.tick()
+    isWorking.mockReturnValue(true)
+    t.setTail('> continue\n* Working (esc to interrupt)')
+    wd.feed()
+    isWorking.mockReturnValue(false)
+    t.setTail(banner) // a scrolled pane repeats the same error render
+    wd.feed()
+    expect(wd.getState().status).toBe('overload')
+    expect(wd.getState().lastAction).toBe('overload detected again; backing off')
+  })
+
+  it('a usage-limit wait, or a safeguard flag, in between ends the kept episode: the next overload starts afresh', () => {
+    for (const other of ['rateLimit', 'safeguard'] as const) {
+      const { t, wd } = retriedAndWorking()
+      detectOverload.mockReturnValue(false)
+      if (other === 'rateLimit') isRateLimited.mockReturnValue(true)
+      else detectSafeguard.mockReturnValue(true)
+      t.setNow(35_000)
+      t.setTail('another condition')
+      wd.feed()
+      expect(wd.getState().status).toBe(other === 'rateLimit' ? 'waiting' : 'safeguard')
+      isRateLimited.mockReturnValue(false)
+      detectSafeguard.mockReturnValue(false)
+      t.setTail('condition gone')
+      wd.feed()
+      expect(wd.getState().status).toBe('monitoring')
+      detectOverload.mockReturnValue(true)
+      t.setNow(40_000)
+      t.setTail('API Error: 529 Overloaded, again')
+      wd.feed()
+      expect(wd.getState().lastAction, other).toBe('overload detected; backing off')
+      expect(scheduled(t, wd), other).toBe(30_000)
+    }
+  })
+})
+
 describe('SessionWatchdog — safeguard path', () => {
   it('retries up to maxRetries at the fixed delay, then latches give-up (logged once)', () => {
     const t = makeAdapter()
