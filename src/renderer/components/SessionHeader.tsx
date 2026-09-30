@@ -358,25 +358,32 @@ function SshConnectionPill({ session }: { session: Session }) {
  *
  * Renders NOTHING when no watcher is armed for this session -- the master
  * switch is off, or it is a session type that never arms one (shell-only,
- * Codex, Ask). An absent pill is the honest reading of "no watchdog here",
- * and beats an "off" pill on every session in a workspace with the feature
- * turned off. `checks` absent on an armed session (a state pushed by an older
- * main) reads as all-on, matching that build's behaviour.
+ * an SSH Codex session, Ask). An absent pill is the honest reading of "no
+ * watchdog here", and beats an "off" pill on every session in a workspace
+ * with the feature turned off. `checks` absent on an armed session (a state
+ * pushed by an older main) reads as all-on, matching that build's behaviour.
+ * P3.10 round 1 (S1): only the checks the session's CLI has count
+ * (`unavailable` lists the others: Codex has no safeguard message), so a
+ * Codex session with every check it has on reads green, as a Claude one does.
  */
+const WATCHDOG_CHECK_WORDS = { rateLimit: 'rate-limit resume', overload: 'API overload', safeguard: 'safeguard' } as const
 function WatchdogPill({ watchdog }: { watchdog?: Session['watchdog'] }) {
   // Presence of the state IS the armed signal: main pushes one only for a
   // session it actually watches, and clears it on teardown.
   if (!watchdog) return null
   const checks = watchdog.checks
-  const values = checks ? [checks.rateLimit, checks.overload, checks.safeguard] : [true, true, true]
-  const on = values.filter(Boolean).length
-  const tone = on === 3 ? 'var(--status-success)' : on === 0 ? 'var(--text-muted)' : 'var(--status-warning)'
-  const word = on === 3 ? undefined : on === 0 ? 'off' : 'partial'
-  const title = on === 3
-    ? 'Watchdog auto-retry is on for this session (rate-limit resume, API overload, safeguard). Right-click the session to change it.'
+  const unavailable = new Set(watchdog.unavailable ?? [])
+  const has = (['rateLimit', 'overload', 'safeguard'] as const).filter((k) => !unavailable.has(k))
+  const total = has.length
+  const on = has.filter((k) => (checks ? checks[k] : true)).length
+  const all = total > 0 && on === total
+  const tone = all ? 'var(--status-success)' : on === 0 ? 'var(--text-muted)' : 'var(--status-warning)'
+  const word = all ? undefined : on === 0 ? 'off' : 'partial'
+  const title = all
+    ? `Watchdog auto-retry is on for this session (${has.map((k) => WATCHDOG_CHECK_WORDS[k]).join(', ')}). Right-click the session to change it.`
     : on === 0
       ? 'Watchdog auto-retry is off for this session — it still reports a sleeping session, but never types. Right-click the session to change it.'
-      : `Watchdog auto-retry is partly on for this session (${on} of 3 checks). Right-click the session to change it.`
+      : `Watchdog auto-retry is partly on for this session (${on} of ${total} checks). Right-click the session to change it.`
   return <HeaderPill label="Watchdog" tone={tone} word={word} title={title} testId="session-pill-watchdog" />
 }
 
@@ -623,10 +630,16 @@ function SessionAuthPills({ session }: { session: Session }) {
 
   if (!applies || !profileId) {
     // Non-Claude sessions still show the GitHub pill (with its own leading
-    // separator) so the right cluster stays consistent.
-    return !isAsk && session.githubIntegration?.repoSlug
+    // separator) so the right cluster stays consistent. P3.10 round 1 (S1): a
+    // Codex session shows its Watchdog pill as a Claude one does (nothing
+    // when no watcher is armed for it).
+    const codexWatchdog = (session.provider ?? 'claude') === 'codex' && !session.shellOnly
+      ? <WatchdogPill watchdog={session.watchdog} />
+      : null
+    const gitHubPart = !isAsk && session.githubIntegration?.repoSlug
       ? (<><div className="w-px h-4 bg-surface1 shrink-0" />{gitHub}</>)
       : null
+    return codexWatchdog || gitHubPart ? <>{codexWatchdog}{gitHubPart}</> : null
   }
 
   // Account pill: the Claude account this session ACTUALLY runs as. The LIVE

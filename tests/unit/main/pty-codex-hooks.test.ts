@@ -4,13 +4,21 @@
 // minted for the session, handed to the hook through a file, never a command
 // line); the file goes with the session's resources. A hook's transcript path
 // is the exact claim of the session's conversation (as Claude's #480 bind):
-// handed to that session's watch only, never to a Claude sink, and proving any
-// other session's inferred claim of it wrong. It clears P3.6's doubt about a
-// conversation the session's own Codex named (never one the launch resumed by
-// id from a record already in doubt), and once a realm's hooks are heard from,
-// a conversation that is still only inferred there is not carried by a Switch.
-// A local Codex session arms the Watchdog (off by default). And the C item: a
-// local Claude spawn that throws after its process started ends that process.
+// handed to that session's watch only, never to a Claude sink. It clears P3.6's
+// doubt about a conversation the session's own Codex named (never one a live
+// launch resumed by id from a record already in doubt), and once the session's
+// own hooks are heard, a conversation still only inferred is not carried by a
+// Switch. A local Codex session arms the Watchdog (off by default). And the C
+// item: a local Claude spawn that throws after its process started ends that
+// process.
+// P3.10 round 1: the record that a hook's path is a Codex one lives as long as
+// the gateway token (B1); a token nothing will use goes (B2); only a
+// conversation a session's Codex STARTED proves another's inferred claim wrong
+// (B4); a live Claude session's path still reaches Claude's sinks (B5); the
+// idle mark ends with its run (Q1); a released claim's path is taken again
+// (Q3); "unconfirmed" and the doubt are keyed to the session (S4); a refused
+// path is logged once a launch (N1); the picker is told which conversations
+// other tabs are on (V2).
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import * as os from 'os'
 import * as path from 'path'
@@ -25,17 +33,25 @@ const h = vi.hoisted(() => ({
   gatewayListening: true,
   registered: [] as string[],
   unregistered: [] as string[],
-  prepared: [] as Array<{ sid: string; port: number; secret: string }>,
+  prepared: [] as Array<{ sid: string; port: number; secret: string; hardenDir: unknown }>,
+  prepareNull: false,
   disposed: [] as string[],
   hooksInstalled: true,
   exactResult: null as null | { id: string; cwd: string },
   wdStarts: [] as Array<{ sid: string; info: Record<string, unknown> }>,
   wdFeeds: [] as string[],
   failCapture: false,
+  failBuild: false,
+  failTelemetry: false,
+  failSpawn: false,
+  warns: [] as string[],
+  removedFiles: [] as string[],
+  clearedAccounts: [] as string[],
 }))
 
 vi.mock('node-pty', () => ({
   spawn: (cmd: string) => {
+    if (h.failSpawn) throw new Error('File not found: ' + cmd)
     const p: FakePty = { cmd, exit: [], kill: vi.fn() }
     h.ptys.push(p)
     const dataCbs: Array<(d: string) => void> = []
@@ -60,6 +76,10 @@ vi.mock('electron', () => ({
   protocol: { registerSchemesAsPrivileged: () => {}, handle: () => {} },
   safeStorage: { isEncryptionAvailable: () => false },
 }))
+vi.mock('../../../src/main/debug-logger', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/main/debug-logger')>()),
+  logWarn: (...a: unknown[]) => { h.warns.push(a.map(String).join(' ')) },
+}))
 vi.mock('../../../src/main/logging/logging-service', () => ({ getLogSupervisor: () => null, getTranscriptBinder: () => null }))
 vi.mock('../../../src/main/conductor-mcp-server', () => ({
   getConductorMcpPort: () => 0,
@@ -74,16 +94,19 @@ vi.mock('../../../src/main/providers', () => ({
     buildSpawnCommand: (opts: Record<string, any>) => {
       if (opts.provider !== 'codex') return { cmd: 'pwsh', args: [], env: {} }
       h.built.push(opts)
+      if (h.failBuild) throw new Error('build failed')
       const env = { ...opts.realmLaunch.env, CLAUDE_MULTI_SESSION_ID: String(opts.sessionId) }
       return { cmd: opts.realmLaunch.executable, args: [], env, hooksInstalled: !!opts.codexHooks && h.hooksInstalled, ...(opts.resume ? { resumeId: opts.resume.uuid } : {}) }
     },
     ...(id === 'codex' ? {
-      prepareSessionHooks: (sid: string, port: number, secret: string) => {
-        h.prepared.push({ sid, port, secret })
-        return { hookFile: `/tmp/ccc-codex-hook-x/${sid}/hook.json`, dispose: () => { h.disposed.push(sid) } }
+      prepareSessionHooks: (sid: string, port: number, secret: string, o?: { hardenDir?: unknown }) => {
+        h.prepared.push({ sid, port, secret, hardenDir: o?.hardenDir })
+        if (h.prepareNull) return null
+        return { hookFile: `/tmp/codex-hooks/ccc-codex-hook-x/${sid}/hook.json`, dispose: () => { h.disposed.push(sid) } }
       },
     } : {}),
     ingestSessionTelemetry: (sid: string, opts: Record<string, any>) => {
+      if (h.failTelemetry) throw new Error('telemetry failed')
       const src: FakeSource = { sid, opts, stop: vi.fn(), noteExactRollout: vi.fn(() => h.exactResult), refuteInferredClaim: vi.fn(() => false) }
       h.sources.push(src)
       return src
@@ -104,14 +127,14 @@ vi.mock('../../../src/main/hooks', () => ({
 vi.mock('../../../src/main/hooks/session-hooks-writer', () => ({ injectHooks: () => {} }))
 vi.mock('../../../src/main/hooks/per-session-settings', () => ({
   writeLocalSessionSettings: () => '/nonexistent/settings.json',
-  removeLocalSessionSettings: () => {},
+  removeLocalSessionSettings: (sid: string) => { h.removedFiles.push(`settings:${sid}`) },
   writeLocalSessionMcpConfig: () => '/nonexistent/mcp.json',
-  removeLocalSessionMcpConfig: () => {},
-  removeLocalSessionStatusUrl: () => {},
+  removeLocalSessionMcpConfig: (sid: string) => { h.removedFiles.push(`mcp:${sid}`) },
+  removeLocalSessionStatusUrl: (sid: string) => { h.removedFiles.push(`status-url:${sid}`) },
 }))
 vi.mock('../../../src/main/claude-account-identity', () => ({
   captureClaudeAccount: () => { if (h.failCapture) throw new Error('capture failed') },
-  clearClaudeAccount: () => {},
+  clearClaudeAccount: (sid: string) => { h.clearedAccounts.push(sid) },
   getAccountIdentity: () => null,
   pushAccountIdentity: () => {},
   startWatchingAccountIdentity: () => {},
@@ -148,7 +171,9 @@ vi.mock('../../../src/main/credential-store', () => ({ loadCredential: () => nul
 vi.mock('../../../src/main/provider-accounts', () => ({ getAccountsService: () => null }))
 
 const pm = await import('../../../src/main/pty-manager')
-const { spawnPty, killPty, noteCodexHookTranscript, getKeptCodexConversationSource, rememberUncertainCodexConversationsFrom, isCodexPtySession } = pm
+const { spawnPty, killPty, noteCodexHookTranscript, noteCodexHookEvent, routeHookTranscriptPath, getKeptCodexConversationSource, rememberUncertainCodexConversationsFrom, isCodexPtySession } = pm
+const { hardenCredentialDir } = await import('../../../src/main/account-profiles')
+const { codexIdleMarks } = await import('../../../src/main/codex-idle-attention')
 
 const SID = 'cx0000000000000000000001'
 const SID2 = 'cx0000000000000000000002'
@@ -168,20 +193,23 @@ const start = (sid: string, tag = 'a', extra: Record<string, unknown> = {}) =>
   spawnPty(fakeWin, sid, { cwd: os.tmpdir(), provider: 'codex', codexOptions: { permissionsPreset: 'read-only' }, codexLaunch: launch(tag), ...extra } as never)
 const source = (sid: string): FakeSource => [...h.sources].reverse().find((s) => s.sid === sid)!
 const exitAll = () => { for (const p of h.ptys) for (const cb of [...p.exit]) cb({ exitCode: 0 }) }
+const rollout = (tag: string, id: string) => `/res/codex-realms/${tag}/sessions/2026/09/29/rollout-2026-09-29T10-00-00-${id}.jsonl`
+const sessionStart = (sid: string, source: string, transcriptPath: string) => ({ sessionId: sid, event: 'SessionStart', payload: { hook_event_name: 'SessionStart', source, transcript_path: transcriptPath }, ts: 0 })
 
 beforeEach(() => {
   for (const sid of [SID, SID2, CLAUDE_SID]) { try { killPty(sid) } catch { /* none */ } }
   exitAll()
   h.ptys = []; h.built = []; h.sources = []; h.registered = []; h.unregistered = []; h.prepared = []; h.disposed = []
   h.gatewayListening = true; h.hooksInstalled = true; h.exactResult = null; h.wdStarts = []; h.wdFeeds = []; h.failCapture = false
+  h.failBuild = false; h.failTelemetry = false; h.failSpawn = false; h.prepareNull = false; h.warns = []; h.removedFiles = []; h.clearedAccounts = []
 })
 
 describe('a Codex launch and its hooks (rows 43, 46, 47, 63)', () => {
   it('with the Hooks gateway listening: a token minted for the session, its hook file handed to the builder, kept with the session and gone with its resources', () => {
     start(SID)
     expect(h.registered).toEqual([SID])
-    expect(h.prepared).toEqual([{ sid: SID, port: 51234, secret: TOKEN }])
-    expect(h.built[0].codexHooks).toEqual({ hookFile: `/tmp/ccc-codex-hook-x/${SID}/hook.json` })
+    expect(h.prepared).toEqual([{ sid: SID, port: 51234, secret: TOKEN, hardenDir: hardenCredentialDir }])
+    expect(h.built[0].codexHooks).toEqual({ hookFile: `/tmp/codex-hooks/ccc-codex-hook-x/${SID}/hook.json` })
     // The token itself never reaches the builder.
     expect(JSON.stringify(h.built[0])).not.toContain(TOKEN)
     expect(h.disposed).toEqual([])
@@ -197,10 +225,31 @@ describe('a Codex launch and its hooks (rows 43, 46, 47, 63)', () => {
     expect(h.built[0].codexHooks).toBeUndefined()
   })
 
-  it('a hook file the launch could not use (its command not safe on the route) goes at once', () => {
+  it('a hook file the launch could not use (its command not safe on the route) goes at once, and so does its token (round 1, B2)', () => {
     h.hooksInstalled = false
     start(SID)
     expect(h.disposed).toEqual([SID])
+    expect(h.unregistered).toEqual([SID])
+  })
+
+  it('round 1 (B2): no hook file could be written: the token minted for it goes at once', () => {
+    h.prepareNull = true
+    start(SID)
+    expect(h.registered).toEqual([SID])
+    expect(h.built[0].codexHooks).toBeUndefined()
+    expect(h.unregistered).toEqual([SID])
+  })
+
+  it('round 1 (B2): a Codex spawn that throws gives back the token it minted (before its process started, and after)', () => {
+    h.failBuild = true
+    expect(() => start(SID)).toThrow(/build failed/)
+    expect(h.unregistered).toEqual([SID])
+    expect(h.disposed).toEqual([SID])
+    h.failBuild = false
+    h.failTelemetry = true
+    expect(() => start(SID2)).toThrow(/telemetry failed/)
+    expect(h.ptys.at(-1)!.kill).toHaveBeenCalled()
+    expect(h.unregistered).toEqual([SID, SID2])
   })
 
   it('a respawn of the session gets a new hook file; the old one went with the old run\'s resources', () => {
@@ -216,11 +265,68 @@ describe('a Codex launch and its hooks (rows 43, 46, 47, 63)', () => {
     ;(h.ptys[0] as any).emitData('hello')
     expect(h.wdFeeds).toContain(SID)
   })
+
+  it('round 1 (V2): a picker launch is told which conversations the other open Codex tabs are on (ids only), and nothing of its own', () => {
+    start(SID, 'a', { resume: { uuid: ID_A, cwd: os.tmpdir() } })
+    start(SID2, 'a', { useResumePicker: true })
+    expect(h.built[1].codexOpenElsewhere).toEqual([ID_A])
+    // A launch that is not the picker is told nothing.
+    expect(h.built[0].codexOpenElsewhere).toBeUndefined()
+    // A tab that has closed (its process ended, its account let go) is not open anywhere.
+    killPty(SID)
+    exitAll()
+    start(SID2, 'a', { useResumePicker: true })
+    expect(h.built.at(-1)!.codexOpenElsewhere).toEqual([])
+  })
+
+  it('round 1 (Q1): a turn\'s pending idle mark goes with the run it was for (a kill, a Restart)', () => {
+    start(SID)
+    const clear = vi.fn()
+    codexIdleMarks.set(SID, { handle: 1 as unknown as ReturnType<typeof setTimeout>, clear })
+    start(SID)
+    expect(clear).toHaveBeenCalledTimes(1)
+    expect(codexIdleMarks.has(SID)).toBe(false)
+    codexIdleMarks.set(SID, { handle: 2 as unknown as ReturnType<typeof setTimeout>, clear })
+    killPty(SID)
+    expect(clear).toHaveBeenCalledTimes(2)
+    expect(codexIdleMarks.has(SID)).toBe(false)
+  })
 })
 
 describe('a hook\'s transcript path: the exact claim (P3.5, P3.6 limits)', () => {
   it('is Codex\'s only: false for a session that is not a Codex one (so the Claude sinks keep it)', () => {
     expect(noteCodexHookTranscript('no-such-session', '/x')).toBe(false)
+  })
+
+  it('round 1 (B5): a live Claude session\'s path reaches Claude\'s sinks, the account attribution and the binder; a Codex session\'s reaches neither', () => {
+    spawnPty(fakeWin, CLAUDE_SID, { cwd: os.tmpdir() } as never)
+    start(SID)
+    const attribute = vi.fn()
+    const bind = vi.fn()
+    routeHookTranscriptPath(CLAUDE_SID, '/claude/projects/x/abc.jsonl', { attribute, bind })
+    expect(attribute).toHaveBeenCalledWith(CLAUDE_SID, '/claude/projects/x/abc.jsonl')
+    expect(bind).toHaveBeenCalledWith(CLAUDE_SID, '/claude/projects/x/abc.jsonl')
+    routeHookTranscriptPath(SID, rollout('a', ID_A), { attribute, bind })
+    expect(attribute).toHaveBeenCalledTimes(1)
+    expect(bind).toHaveBeenCalledTimes(1)
+  })
+
+  it('round 1 (B1): a killed Codex session whose token is still registered (until its exit) is still Codex\'s: never a Claude sink; after its exit, not', () => {
+    start(SID)
+    killPty(SID)
+    expect(h.unregistered).not.toContain(SID)
+    expect(noteCodexHookTranscript(SID, rollout('a', ID_A))).toBe(true)
+    expect(source(SID).noteExactRollout).not.toHaveBeenCalled()
+    exitAll()
+    expect(h.unregistered).toContain(SID)
+    expect(noteCodexHookTranscript(SID, rollout('a', ID_A))).toBe(false)
+  })
+
+  it('round 1 (B1): a session respawned as Claude with a token of its own is Claude\'s again', () => {
+    start(CLAUDE_SID)
+    killPty(CLAUDE_SID)
+    spawnPty(fakeWin, CLAUDE_SID, { cwd: os.tmpdir() } as never)
+    expect(noteCodexHookTranscript(CLAUDE_SID, '/claude/projects/x/abc.jsonl')).toBe(false)
   })
 
   it('a Codex session given no hooks: true (no Claude sink), and nothing it says is taken', () => {
@@ -231,25 +337,75 @@ describe('a hook\'s transcript path: the exact claim (P3.5, P3.6 limits)', () =>
     expect(source(SID).noteExactRollout).not.toHaveBeenCalled()
   })
 
-  it('handed to the session\'s own watch; the same path again costs a comparison only; other sessions\' inferred claims of it are proved wrong', () => {
+  it('handed to the session\'s own watch; the same path again costs a comparison only; it proves nothing about the others by itself', () => {
     start(SID, 'a')
     start(SID2, 'a')
-    const p = '/res/codex-realms/a/sessions/2026/09/29/rollout-2026-09-29T10-00-00-' + ID_A + '.jsonl'
+    const p = rollout('a', ID_A)
     h.exactResult = { id: ID_A, cwd: '/p' }
     expect(noteCodexHookTranscript(SID, p)).toBe(true)
     expect(source(SID).noteExactRollout).toHaveBeenCalledWith(p)
-    expect(source(SID2).refuteInferredClaim).toHaveBeenCalledWith(p)
-    expect(source(SID).refuteInferredClaim).not.toHaveBeenCalled()
+    expect(source(SID2).refuteInferredClaim).not.toHaveBeenCalled()
     noteCodexHookTranscript(SID, p)
     expect(source(SID).noteExactRollout).toHaveBeenCalledTimes(1)
   })
 
-  it('a path the watch refuses changes nothing and proves nothing', () => {
+  it('round 1 (B4): a conversation the session\'s own Codex STARTED proves another session\'s inferred claim of it wrong', () => {
+    start(SID, 'a')
+    start(SID2, 'a')
+    const p = rollout('a', ID_A)
+    h.exactResult = { id: ID_A, cwd: '/p' }
+    noteCodexHookTranscript(SID, p)
+    noteCodexHookEvent(sessionStart(SID, 'startup', p))
+    expect(source(SID2).refuteInferredClaim).toHaveBeenCalledWith(p)
+    expect(source(SID).refuteInferredClaim).not.toHaveBeenCalled()
+  })
+
+  it('round 1 (B4): one it RESUMED proves nothing (another tab may have made it and still be writing it); nor a path its watch did not take, nor a session without hooks', () => {
+    start(SID2, 'a')
+    start(SID, 'a', { resume: { uuid: ID_A, cwd: os.tmpdir() } })
+    const p = rollout('a', ID_A)
+    h.exactResult = { id: ID_A, cwd: '/p' }
+    noteCodexHookTranscript(SID, p)
+    noteCodexHookEvent(sessionStart(SID, 'resume', p))
+    expect(source(SID2).refuteInferredClaim).not.toHaveBeenCalled()
+    // A startup naming a path this session's watch did not take.
+    noteCodexHookEvent(sessionStart(SID, 'startup', rollout('a', ID_B)))
+    expect(source(SID2).refuteInferredClaim).not.toHaveBeenCalled()
+    // Not a SessionStart, or no payload.
+    noteCodexHookEvent({ sessionId: SID, event: 'UserPromptSubmit', payload: { source: 'startup', transcript_path: p } })
+    noteCodexHookEvent({ sessionId: SID, event: 'SessionStart' })
+    expect(source(SID2).refuteInferredClaim).not.toHaveBeenCalled()
+    // A session this launch gave no hooks.
+    h.gatewayListening = false
+    start(SID, 'a')
+    noteCodexHookEvent(sessionStart(SID, 'startup', p))
+    expect(source(SID2).refuteInferredClaim).not.toHaveBeenCalled()
+  })
+
+  it('a path the watch refuses changes nothing and proves nothing, and is logged once a launch (round 1, N1)', () => {
     start(SID, 'a')
     start(SID2, 'a')
     h.exactResult = null
     expect(noteCodexHookTranscript(SID, '/elsewhere/rollout.jsonl')).toBe(true)
+    noteCodexHookEvent(sessionStart(SID, 'startup', '/elsewhere/rollout.jsonl'))
     expect(source(SID2).refuteInferredClaim).not.toHaveBeenCalled()
+    noteCodexHookTranscript(SID, '/elsewhere/other.jsonl')
+    noteCodexHookTranscript(SID, '/elsewhere/third.jsonl')
+    expect(h.warns.filter((w) => w.includes(`Codex session ${SID}: a hook named a transcript`)).length).toBe(1)
+    // A new launch of the session says it again, once.
+    start(SID, 'a')
+    noteCodexHookTranscript(SID, '/elsewhere/rollout.jsonl')
+    expect(h.warns.filter((w) => w.includes(`Codex session ${SID}: a hook named a transcript`)).length).toBe(2)
+  })
+
+  it('round 1 (Q3): a released claim\'s path is handed to the watch again when a hook names it again', () => {
+    start(SID, 'a')
+    const p = rollout('a', ID_A)
+    h.exactResult = { id: ID_A, cwd: '/p' }
+    noteCodexHookTranscript(SID, p)
+    source(SID).opts.onRelease()
+    noteCodexHookTranscript(SID, p)
+    expect(source(SID).noteExactRollout).toHaveBeenCalledTimes(2)
   })
 
   it('clears P3.6\'s doubt about a conversation the session\'s own Codex named', () => {
@@ -266,26 +422,50 @@ describe('a hook\'s transcript path: the exact claim (P3.5, P3.6 limits)', () =>
     expect(getKeptCodexConversationSource(SID)?.uncertain).toBe(true)
   })
 
-  it('an inferred claim in a realm whose hooks are heard from is unconfirmed (never carried); exact, it is', () => {
+  it('round 1 (S4, lens B N8): keeps it too when the launch resumed it by id while another tab holds it (its hook reports it shared)', () => {
+    rememberUncertainCodexConversationsFrom({ codexUncertainConversations: [ID_B] })
+    start(SID, 'a', { resume: { uuid: ID_B, cwd: os.tmpdir() } })
+    source(SID).opts.onShared({ id: ID_B, cwd: '/p', exact: true, fromHook: true })
+    expect(getKeptCodexConversationSource(SID)?.uncertain).toBe(true)
+  })
+
+  it('round 1 (S4, lens B B2b): another tab\'s hook naming it does not clear the doubt a live resume by id keeps; once that tab is gone, it does', () => {
+    rememberUncertainCodexConversationsFrom({ codexUncertainConversations: [ID_B] })
+    start(SID, 'a', { resume: { uuid: ID_B, cwd: os.tmpdir() } })
+    start(SID2, 'a')
+    source(SID2).opts.onShared({ id: ID_B, cwd: '/p', exact: true, fromHook: true })
+    expect(getKeptCodexConversationSource(SID)?.uncertain).toBe(true)
+    killPty(SID)
+    source(SID2).opts.onClaim({ id: ID_B, cwd: '/p', certain: true, exact: true, fromHook: true })
+    expect(getKeptCodexConversationSource(SID2)?.uncertain).toBe(false)
+  })
+
+  it('round 1 (S4): "unconfirmed" is keyed to the session\'s own hooks: another tab of the account heard from changes nothing; this one\'s heard, an inferred claim is unconfirmed; exact, it is not', () => {
     start(SID, 'c')
     const onClaim = source(SID).opts.onClaim
     onClaim({ id: ID_A, cwd: '/p', certain: true, exact: false, fromHook: false })
-    // No hook heard from the realm yet: P3.6's rules (a certain inferred claim carries).
     expect(getKeptCodexConversationSource(SID)).toMatchObject({ uuid: ID_A, uncertain: false, unconfirmed: false })
-    // Another session of the same realm is heard from: the realm's hooks run.
+    // Another session of the same account is heard from (it trusted the hooks): this tab keeps P3.6's rules.
     start(SID2, 'c')
     h.exactResult = { id: ID_B, cwd: '/p' }
-    noteCodexHookTranscript(SID2, '/res/codex-realms/c/sessions/2026/09/29/rollout-2026-09-29T10-00-00-' + ID_B + '.jsonl')
+    noteCodexHookTranscript(SID2, rollout('c', ID_B))
+    expect(getKeptCodexConversationSource(SID)?.unconfirmed).toBe(false)
+    // This session's own hook is heard, yet names no rollout its watch takes: its inferred claim is unconfirmed.
+    h.exactResult = null
+    noteCodexHookTranscript(SID, '/elsewhere/rollout.jsonl')
     expect(getKeptCodexConversationSource(SID)?.unconfirmed).toBe(true)
     // Its own hook names it: exact.
     onClaim({ id: ID_A, cwd: '/p', certain: true, exact: true, fromHook: true })
     expect(getKeptCodexConversationSource(SID)?.unconfirmed).toBe(false)
+    // A claim taken by inference later in the same launch (its hooks already heard) is unconfirmed from the start.
+    onClaim({ id: ID_B, cwd: '/p', certain: true, exact: false, fromHook: false })
+    expect(getKeptCodexConversationSource(SID)).toMatchObject({ uuid: ID_B, unconfirmed: true })
   })
 
-  it('a launch without hooks keeps P3.6\'s rules even in a realm whose hooks are heard from', () => {
+  it('a launch without hooks keeps P3.6\'s rules even where another session\'s hooks are heard from', () => {
     start(SID2, 'd')
     h.exactResult = { id: ID_B, cwd: '/p' }
-    noteCodexHookTranscript(SID2, '/res/codex-realms/d/sessions/2026/09/29/rollout-2026-09-29T10-00-00-' + ID_B + '.jsonl')
+    noteCodexHookTranscript(SID2, rollout('d', ID_B))
     h.gatewayListening = false
     start(SID, 'd')
     source(SID).opts.onClaim({ id: ID_A, cwd: '/p', certain: true, exact: false, fromHook: false })
@@ -294,17 +474,19 @@ describe('a hook\'s transcript path: the exact claim (P3.5, P3.6 limits)', () =>
 })
 
 describe('the C item: a local spawn that throws after its process started', () => {
-  it('ends that process, and the throw reaches the caller as before', () => {
+  it('ends that process, gives back its token, removes its session files and clears its account capture; the throw reaches the caller as before', () => {
     h.failCapture = true
     expect(() => spawnPty(fakeWin, CLAUDE_SID, { cwd: os.tmpdir() } as never)).toThrow(/capture failed/)
     expect(h.ptys.length).toBe(1)
     expect(h.ptys[0].kill).toHaveBeenCalled()
     expect(h.unregistered).toContain(CLAUDE_SID)
+    expect(h.removedFiles).toEqual(expect.arrayContaining([`settings:${CLAUDE_SID}`, `mcp:${CLAUDE_SID}`, `status-url:${CLAUDE_SID}`]))
+    expect(h.clearedAccounts).toContain(CLAUDE_SID)
   })
 
-  it('a spawn that throws before any process started kills nothing', () => {
-    h.failCapture = false
-    spawnPty(fakeWin, CLAUDE_SID, { cwd: os.tmpdir() } as never)
-    expect(h.ptys[0].kill).not.toHaveBeenCalled()
+  it('a spawn that throws before any process started (the terminal itself failed to start) kills nothing, and the throw reaches the caller', () => {
+    h.failSpawn = true
+    expect(() => spawnPty(fakeWin, CLAUDE_SID, { cwd: os.tmpdir() } as never)).toThrow(/File not found/)
+    expect(h.ptys.length).toBe(0)
   })
 })

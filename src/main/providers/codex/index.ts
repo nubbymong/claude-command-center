@@ -7,11 +7,11 @@ import type { AllowanceReading } from '../../../shared/usage-types'
 import type { ProviderCapabilities, AuthRealm, RealmUse } from '../../../shared/providers'
 import type { ProviderPackage, RealmRef } from '../core'
 import { CODEX_ENABLEMENT } from './enablement'
-import { resolveCodexBinary, buildCodexSpawn } from './spawn'
+import { resolveCodexBinary, buildCodexSpawn, codexHookDataDir } from './spawn'
 import { detectCodexUi } from './ui-detection'
 import { watchAndClaimRollout } from './telemetry'
 import { deployCodexResumePickerScript } from './resume-picker'
-import { deployCodexHookScripts, sweepStaleCodexHookFolders, writeCodexHookFile, removeCodexHookFile } from './hooks'
+import { deployCodexHookScripts, sweepStaleCodexHookFolders, writeCodexHookFile, removeCodexHookFile, ensureCodexHookRoot, codexPlainWrapperDir, codexLocalAppData, stagePlainCodexHookWrapper, codexHookCommand } from './hooks'
 import { CODEX_PINNED_CLI_VERSION, CODEX_MIN_SUPPORTED_VERSION, CODEX_MAX_TESTED_VERSION } from './cli-contract'
 import { codexInstallRecipes } from './install-recipes'
 import { codexOperationBaseEnv } from './process-env'
@@ -79,7 +79,8 @@ export type { CodexRealmFsPort, CodexRealmFsAsync, CodexFsEntry, CodexRealmLocks
 // P3.10: Codex's hooks, delivered to the Hooks gateway.
 export {
   writeCodexHookFile, removeCodexHookFile, sweepStaleCodexHookFolders, codexHookCommand, codexHookConfigArgs, deployCodexHookScripts,
-  CODEX_HOOK_EVENTS, CODEX_HOOK_CLIENT_HEADER, CODEX_HOOK_CLIENT, CODEX_HOOK_FILE_ENV, CODEX_HOOK_DIR_PREFIX, CODEX_HOOK_STALE_MS,
+  ensureCodexHookRoot, codexPlainWrapperDir, stagePlainCodexHookWrapper, verifyPlainCodexHookWrapper,
+  CODEX_HOOK_EVENTS, CODEX_HOOK_CLIENT_HEADER, CODEX_HOOK_CLIENT, CODEX_HOOK_FILE_ENV, CODEX_HOOK_DIR_PREFIX, CODEX_HOOK_STALE_MS, CODEX_HOOK_ROOT_NAME, CODEX_HOOK_PLAIN_BASE,
 } from './hooks'
 export type { CodexHookFile, CodexHookEvent } from './hooks'
 // P3.6: a switched session's conversation carried into the new account's folder.
@@ -163,18 +164,41 @@ export class CodexProvider implements SessionProvider {
     // (buildCodexSpawn), never through a config file.
   }
 
-  async deployResumePickerScript(resourcesDir: string): Promise<void> {
+  async deployResumePickerScript(resourcesDir: string, opts?: { hardenDir?: (dir: string) => boolean }): Promise<void> {
     // P3.10: hook folders a crash or a quit left behind (a day old), first,
-    // so a failed deploy never skips it.
-    try { sweepStaleCodexHookFolders() } catch { /* best-effort */ }
+    // so a failed deploy never skips it. Round 1 (A5): only in this install's
+    // own hook root, in its data folder.
+    try {
+      const dataDir = codexHookDataDir()
+      const root = dataDir ? ensureCodexHookRoot(dataDir, opts?.hardenDir) : null
+      if (root) sweepStaleCodexHookFolders(root)
+    } catch { /* best-effort */ }
     await deployCodexResumePickerScript(resourcesDir)
     // P3.10: the hook forwarder (and its Windows wrapper) beside the picker.
     await deployCodexHookScripts(resourcesDir)
+    // Round 1 (V3): on Windows, when the wrapper's path there is not a plain
+    // word, its plain-path copy for the npm shim route (hooks.ts).
+    if (process.platform === 'win32') {
+      try {
+        const scriptsDir = path.join(resourcesDir, 'scripts')
+        if (!codexHookCommand(scriptsDir, 'win32', true)) {
+          const plainDir = codexPlainWrapperDir(codexLocalAppData(), resourcesDir)
+          if (plainDir) stagePlainCodexHookWrapper(scriptsDir, plainDir, opts?.hardenDir)
+        }
+      } catch { /* the shim route then has no hooks, as before */ }
+    }
   }
 
-  /** P3.10: the session's hook file, for its launch's hooks. */
-  prepareSessionHooks(sessionId: string, port: number, secret: string): { hookFile: string; dispose(): void } | null {
-    const written = writeCodexHookFile(sessionId, port, secret)
+  /** P3.10: the session's hook file, for its launch's hooks; round 1 (A5):
+   *  in this install's own hook root, in its data folder. */
+  prepareSessionHooks(sessionId: string, port: number, secret: string, opts?: { hardenDir?: (dir: string) => boolean }): { hookFile: string; dispose(): void } | null {
+    let root: string | null = null
+    try {
+      const dataDir = codexHookDataDir()
+      root = dataDir ? ensureCodexHookRoot(dataDir, opts?.hardenDir) : null
+    } catch { root = null }
+    if (!root) return null
+    const written = writeCodexHookFile(sessionId, port, secret, root)
     if (!written) return null
     let disposed = false
     return {

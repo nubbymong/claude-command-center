@@ -7,7 +7,7 @@ import { createSplashWindow, closeSplashWindow, SPLASH_MIN_MS, SPLASH_POST_READY
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerAccountWebHandlers } from './ipc/account-web-handlers'
 import { sweepAbandonedProfiles } from './account-web/sign-in'
-import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine, noteCodexHookTranscript, isCodexPtySession } from './pty-manager'
+import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine, routeHookTranscriptPath, noteCodexHookEvent, isCodexPtySession } from './pty-manager'
 import { registerResumeHandlers } from './ipc/resume-handlers'
 import { registerCliHandlers } from './ipc/cli-handlers'
 import { registerClipboardHandlers } from './ipc/clipboard-handlers'
@@ -52,7 +52,7 @@ import { registerNotesHandlers } from './ipc/notes-handlers'
 import { registerVisionHandlers } from './ipc/vision-handlers'
 import { registerConfigHandlers } from './ipc/config-handlers'
 import { registerAccountProfilesHandlers } from './ipc/account-profiles-handlers'
-import { migrateProfilesToHomeLayout, cleanupSessionHomes, syncPrimaryCredentialsWithGlobal, repairSharedProjectJunctions, getProfilesRoot, getProfileConfigDir, isValidProfileId } from './account-profiles'
+import { migrateProfilesToHomeLayout, cleanupSessionHomes, syncPrimaryCredentialsWithGlobal, repairSharedProjectJunctions, getProfilesRoot, getProfileConfigDir, isValidProfileId, hardenCredentialDir } from './account-profiles'
 import { runFirstRunCapture } from './first-run-accounts'
 import { backupRealClaudeOnce } from './claude-backup'
 import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
@@ -564,7 +564,9 @@ if (!gotTheLock) {
     Promise.resolve()
       .then(() => getProvider('claude').deployStatuslineScript?.(getResourcesDirectory()))
       .then(() => getProvider('claude').deployResumePickerScript?.(getResourcesDirectory()))
-      .then(() => getProvider('codex').deployResumePickerScript?.(getResourcesDirectory()))
+      // P3.10 round 1 (A5, V3): the folders the Codex hooks use are made
+      // owner-only by the app's own folder rule.
+      .then(() => getProvider('codex').deployResumePickerScript?.(getResourcesDirectory(), { hardenDir: hardenCredentialDir }))
       .catch((err) => console.warn('[main] Failed to deploy provider scripts:', err))
       // Resume-picker bug fix: backfill companion dirs so DIRECT-WORK
       // conversations (no subagent/workflow → no companion dir from the CLI) are
@@ -816,10 +818,12 @@ if (!gotTheLock) {
     // initLogging(), and is null when logging is disabled (then this is a no-op).
     const routeTranscriptPath = (sessionId: string, path: string) => {
       // P3.10: a Codex session's hook names the rollout it is on -- the exact
-      // claim of its conversation -- and never reaches a Claude sink.
-      if (noteCodexHookTranscript(sessionId, path)) return
-      attributeTranscript(sessionId, path)
-      getTranscriptBinder()?.notifyTranscriptPath(sessionId, path)
+      // claim of its conversation -- and never reaches a Claude sink
+      // (pty-manager routeHookTranscriptPath, tested there; round 1, B5).
+      routeHookTranscriptPath(sessionId, path, {
+        attribute: attributeTranscript,
+        bind: (sid, p) => { getTranscriptBinder()?.notifyTranscriptPath(sid, p) },
+      })
     }
     if (hooksEnabled) {
       // Supervised out-of-process gateway: a utilityProcess child runs the HooksGateway,
@@ -878,6 +882,10 @@ if (!gotTheLock) {
     })
     // P3.10 (row 47): Codex sessions' own hook events map to attention too.
     startAttentionSource({ isCodexSession: isCodexPtySession })
+    // P3.10 round 1 (B4): a conversation a Codex session's own Codex started
+    // (its SessionStart hook) proves another session's inferred claim of it
+    // wrong; the gateway hands the transcript path over before the event.
+    getGateway()?.subscribe((e) => { try { noteCodexHookEvent(e) } catch { /* a claim never breaks the feed */ } })
     startJankDetector()
     // Main-process event-loop jank monitor: feeds the "Jank m/c" main half on the
     // Conductor services pill (getMergedDiagnostics stamps stallsLastMin() onto

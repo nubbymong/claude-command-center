@@ -74,6 +74,10 @@ export interface SpawnOptions {
    *  the app's hooks only with it, and only when their command can be given
    *  safely (`hooksInstalled`). Set by main only. */
   codexHooks?: { hookFile: string }
+  /** Codex (P3.10 round 1, V2): the conversations other open tabs of this
+   *  app are on (ids), for the resume picker to say one is open in another
+   *  tab. Set by main only. */
+  codexOpenElsewhere?: string[]
 }
 
 /** What a provider's builder hands the PTY. `commandLine` (Windows only): the
@@ -188,15 +192,18 @@ export interface SessionProvider {
    * Optional -- copy the provider's resume-picker script into
    * `<resourcesDir>/scripts/`. Both providers implement this in P4. The
    * Claude version copies `scripts/resume-picker.js`; the Codex version
-   * copies `scripts/codex-resume-picker.js`.
+   * copies `scripts/codex-resume-picker.js`. `opts.hardenDir` (Codex, P3.10
+   * round 1): the app's owner-only folder rule, for the folders the provider
+   * makes for its hooks.
    */
-  deployResumePickerScript?(resourcesDir: string): Promise<void>
+  deployResumePickerScript?(resourcesDir: string, opts?: { hardenDir?: (dir: string) => boolean }): Promise<void>
   /** Optional -- Codex (P3.10): write the session's hook file (the Hooks
    *  gateway's port, the session id and its token, owner-only, in a folder
-   *  made for the launch) for `buildSpawnCommand`'s `codexHooks`, with the
-   *  way to remove it when the session's resources go. Null when it cannot
-   *  be written. */
-  prepareSessionHooks?(sessionId: string, port: number, secret: string): { hookFile: string; dispose(): void } | null
+   *  made for the launch inside the app's own data folder, P3.10 round 1)
+   *  for `buildSpawnCommand`'s `codexHooks`, with the way to remove it when
+   *  the session's resources go. Null when it cannot be written.
+   *  `opts.hardenDir`: the app's owner-only folder rule. */
+  prepareSessionHooks?(sessionId: string, port: number, secret: string, opts?: { hardenDir?: (dir: string) => boolean }): { hookFile: string; dispose(): void } | null
   /** Subscribe to live telemetry for a spawned session (see TelemetryOptions). */
   ingestSessionTelemetry(
     sessionId: string,

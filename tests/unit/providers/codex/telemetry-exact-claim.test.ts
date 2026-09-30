@@ -283,3 +283,81 @@ describe('another session\'s hook proves an inferred claim here wrong (P3.10)', 
     resumed.src.stop(); fresh.src.stop()
   })
 })
+
+// P3.10 round 1 (A4): a hook's path naming an alternate data stream (a `:` after
+// the drive: `rollout-x:y-<id>.jsonl` is a stream of the file `rollout-x` on
+// Windows, not a file of the day folder) is refused; a name spelled in another
+// case (the id in capitals) is the day folder's own entry where the file system
+// ignores case, read and counted under that one key, and nothing where it does
+// not.
+describe('the exact claim refuses a stream name and keys one rollout once (P3.10 round 1, A4)', () => {
+  it('a `:` in the file name is never a rollout: nothing claimed, nothing read', async () => {
+    vi.useFakeTimers()
+    const sessions = realm()
+    const day = today(sessions)
+    const w = watch(sessions, '/p/other')
+    writeFileSync(join(day, 'rollout-x'), '')
+    const stream = join(day, `rollout-x:y-${ID_B}.jsonl`)
+    writeFileSync(stream, metaLine(ID_B, '/p/x', new Date(Date.now() - 3600_000).toISOString()) + '\n')
+    expect(w.src.noteExactRollout!(stream)).toBeNull()
+    expect(w.claims).toEqual([])
+    expect(__codexRolloutReadersForTests(stream)).toBe(0)
+    w.src.stop()
+  })
+
+  it('an id in capitals is the same rollout where case is ignored (one key, the folder\'s own spelling); nothing where it is not', async () => {
+    vi.useFakeTimers()
+    const sessions = realm()
+    const day = today(sessions)
+    const w = watch(sessions, '/p/other')
+    const good = rollout(day, ID_A, '/p/x', new Date(Date.now() - 3600_000).toISOString(), 3)
+    const upper = join(day, basename(good).replace(ID_A, ID_A.toUpperCase()))
+    const caseBlind = (() => { try { lstatSync(upper); return true } catch { return false } })()
+    const took = w.src.noteExactRollout!(upper)
+    expect(__codexRolloutReadersForTests(upper)).toBe(0)
+    if (caseBlind) {
+      expect(took).toEqual({ id: ID_A, cwd: '/p/x' })
+      expect(__codexRolloutReadersForTests(good)).toBe(1)
+      // The same rollout by its own spelling is the claim already held.
+      expect(w.src.noteExactRollout!(good)).toEqual({ id: ID_A, cwd: '/p/x' })
+      expect(__codexRolloutReadersForTests(good)).toBe(1)
+    } else {
+      expect(took).toBeNull()
+    }
+    w.src.stop()
+    expect(__codexRolloutReadersForTests(good)).toBe(0)
+  })
+})
+
+// P3.10 round 1 (Q4): claiming by inference starts again after a refuted claim
+// (another session's hook proved it wrong), and stops again at the same 30 s
+// no-claim deadline a launch has, as it would have at the launch.
+describe('a refuted claim claims again, until the no-claim deadline (P3.10 round 1, Q4)', () => {
+  it('after 30 s with nothing claimed, the watch stops looking and says there is no reading; the session\'s own hook can still claim', async () => {
+    vi.useFakeTimers()
+    const sessions = realm()
+    const taker = watch(sessions, '/p/demo')
+    const xa = rollout(today(sessions), ID_A, '/p/demo', new Date(Date.now() + 10).toISOString(), 1)
+    await vi.advanceTimersByTimeAsync(300)
+    expect(taker.claims.map((c) => c.id)).toEqual([ID_A])
+    // Long after the launch's own deadline (it passed while the claim held).
+    await vi.advanceTimersByTimeAsync(40_000)
+    const noReading = () => taker.updates.filter((u) => (u as { usageUnavailable?: string }).usageUnavailable === 'no-reading').length
+    expect(noReading()).toBe(0)
+    const owner = watch(sessions, '/p/other')
+    expect(owner.src.noteExactRollout!(xa)?.id).toBe(ID_A)
+    expect(taker.src.refuteInferredClaim!(xa)).toBe(true)
+    await vi.advanceTimersByTimeAsync(29_000)
+    expect(noReading()).toBe(0)
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(noReading()).toBe(1)
+    // A new conversation in the folder now is not taken by inference.
+    const later = rollout(today(sessions), ID_C, '/p/demo', new Date(Date.now() + 10).toISOString(), 4)
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(taker.claims.map((c) => c.id)).toEqual([ID_A])
+    // Its own hook still claims exactly.
+    expect(taker.src.noteExactRollout!(later)?.id).toBe(ID_C)
+    expect(taker.claims.map((c) => c.id)).toEqual([ID_A, ID_C])
+    taker.src.stop(); owner.src.stop()
+  })
+})

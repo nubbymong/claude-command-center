@@ -1,38 +1,68 @@
 // P3.10 (rows 43, 46, 47, 63): the Codex hook forwarder (scripts/ccc-codex-hook.js)
 // trusts nothing it is given. The session is named by the environment Codex
-// passes down and the hook file the app wrote for that launch: a small plain
-// file, never a link, in a folder of the app's naming, whose session id must be
-// the same; its port and token are checked for shape. It posts the event, as
-// read, only to 127.0.0.1, with the session's token and the Codex marker, and
-// is done once whatever happens. Nothing is started and nothing leaves the
-// process: the request function is a fake.
-import { describe, it, expect, afterEach } from 'vitest'
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync, symlinkSync, realpathSync } from 'fs'
+// passes down and the hook file the app wrote for that launch, laid out as the
+// app makes it (`<app data folder>/codex-hooks/ccc-codex-hook-*/hook.json`,
+// P3.10 round 1): its real path must be that very path below the app data
+// folder's real path (no link or junction at any level the app made), and it
+// must be a small plain file with one name, still the file looked at when
+// opened; its session id must be the same, its port and token the right
+// shape. It posts the event, as read, only to 127.0.0.1, with the session's
+// token and the Codex marker, never through a proxy the environment names,
+// and is done once whatever happens. Nothing is started: the request function
+// is a fake, or (the proxy case) a real loopback request to listeners in this
+// process.
+import { describe, it, expect, afterEach, vi } from 'vitest'
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync, symlinkSync, realpathSync, linkSync, unlinkSync, rmdirSync, lstatSync } from 'fs'
 import { join, basename, dirname } from 'path'
 import { tmpdir } from 'os'
 import { EventEmitter } from 'events'
 import { Readable } from 'stream'
+import type * as http from 'http'
+import type { AddressInfo } from 'net'
+import { CODEX_HOOK_ROOT_NAME } from '../../../src/main/providers/codex/hooks'
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const fwd = require('../../../scripts/ccc-codex-hook.js') as {
   readHookFile: (env: Record<string, string | undefined>) => { port: number; sid: string; token: string } | null
   forward: (cfg: { port: number; sid: string; token: string }, body: Buffer, done: () => void, request?: unknown) => void
   readBody: (stream: NodeJS.ReadableStream, onBody: (b: Buffer | null) => void) => void
+  requestOptions: (cfg: { port: number; sid: string; token: string }, body: Buffer) => Record<string, any>
   MAX_BODY_BYTES: number
   MAX_FILE_BYTES: number
+  ROOT_NAME: string
 }
+// The CommonJS module object itself (the forwarder's own require('http')), whose
+// shared agent the proxy case replaces for a moment.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const httpMod = require('http') as typeof http
 
 const TOKEN = '0f8b6a2c-1d3e-4f50-9a61-7b2c3d4e5f60'
 const TEST_PREFIX = 'p310-fwd-test-'
 const made: string[] = []
-function hookDir(): string {
-  const root = realpathSync.native(mkdtempSync(join(tmpdir(), TEST_PREFIX)))
-  made.push(root)
-  const dir = join(root, 'ccc-codex-hook-abc123')
-  mkdirSync(dir)
+const links: string[] = []
+/** A fresh app data folder of this test's own. */
+function appDir(): string {
+  const d = realpathSync.native(mkdtempSync(join(tmpdir(), TEST_PREFIX)))
+  made.push(d)
+  return d
+}
+/** A hook folder laid out as the app makes it, in a fresh app data folder. */
+function hookDir(app = appDir()): string {
+  const dir = join(app, 'codex-hooks', 'ccc-codex-hook-abc123')
+  mkdirSync(dir, { recursive: true })
   return dir
 }
+/** A folder link: a junction on Windows (no special right needed), a symlink elsewhere. */
+function folderLink(target: string, at: string): void {
+  symlinkSync(target, at, process.platform === 'win32' ? 'junction' : 'dir')
+  links.push(at)
+}
 afterEach(() => {
+  // Links first, removed as links (never followed), then only the folders this
+  // test made, by their own prefix, directly under the temp folder.
+  for (const l of links.splice(0)) {
+    try { if (lstatSync(l).isSymbolicLink()) { try { unlinkSync(l) } catch { rmdirSync(l) } } } catch { /* gone */ }
+  }
   // TEST CLEANUP GUARD: only the folders this test made, by their own prefix, under the temp folder.
   for (const d of made.splice(0)) {
     if (!basename(d).startsWith(TEST_PREFIX) || dirname(d) !== realpathSync.native(tmpdir())) continue
@@ -47,9 +77,11 @@ function goodFile(dir: string, over: Record<string, unknown> = {}): string {
 }
 
 describe('readHookFile', () => {
-  it('reads a good hook file for its own session', () => {
+  it('reads a good hook file for its own session, laid out as the app makes it', () => {
     const file = goodFile(hookDir())
     expect(fwd.readHookFile({ CCC_CODEX_HOOK_FILE: file, CLAUDE_MULTI_SESSION_ID: 'sess-1' })).toEqual({ port: 51234, sid: 'sess-1', token: TOKEN })
+    // The layout's folder name is the app's own (hooks.ts).
+    expect(fwd.ROOT_NAME).toBe(CODEX_HOOK_ROOT_NAME)
   })
 
   it('does nothing without its environment (Codex run outside the app)', () => {
@@ -59,16 +91,20 @@ describe('readHookFile', () => {
     expect(fwd.readHookFile({ CLAUDE_MULTI_SESSION_ID: 'sess-1' })).toBeNull()
   })
 
-  it('refuses a file of another session, of another name, or outside a folder of the app\'s naming', () => {
+  it('refuses a file of another session, of another name, or outside the app\'s layout', () => {
     const dir = hookDir()
     const file = goodFile(dir)
     expect(fwd.readHookFile({ CCC_CODEX_HOOK_FILE: file, CLAUDE_MULTI_SESSION_ID: 'sess-2' })).toBeNull()
     const other = join(dir, 'other.json')
     writeFileSync(other, JSON.stringify({ v: 1, port: 51234, sid: 'sess-1', token: TOKEN }))
     expect(fwd.readHookFile({ CCC_CODEX_HOOK_FILE: other, CLAUDE_MULTI_SESSION_ID: 'sess-1' })).toBeNull()
+    // Directly in codex-hooks (no hook folder), and a hook folder not in codex-hooks.
     const plain = join(dirname(dir), 'hook.json')
     writeFileSync(plain, JSON.stringify({ v: 1, port: 51234, sid: 'sess-1', token: TOKEN }))
     expect(fwd.readHookFile({ CCC_CODEX_HOOK_FILE: plain, CLAUDE_MULTI_SESSION_ID: 'sess-1' })).toBeNull()
+    const stray = join(appDir(), 'elsewhere', 'ccc-codex-hook-abc123')
+    mkdirSync(stray, { recursive: true })
+    expect(fwd.readHookFile({ CCC_CODEX_HOOK_FILE: goodFile(stray), CLAUDE_MULTI_SESSION_ID: 'sess-1' })).toBeNull()
     expect(fwd.readHookFile({ CCC_CODEX_HOOK_FILE: 'hook.json', CLAUDE_MULTI_SESSION_ID: 'sess-1' })).toBeNull()
   })
 
@@ -85,13 +121,68 @@ describe('readHookFile', () => {
     expect(fwd.readHookFile({ CCC_CODEX_HOOK_FILE: big, CLAUDE_MULTI_SESSION_ID: 'sess-1' })).toBeNull()
   })
 
-  it('never reads through a link', (ctx) => {
+  it('refuses a hook folder, or the codex-hooks folder, that is a link or junction to a folder elsewhere (round 1)', () => {
+    // Elsewhere: a good file in the same layout.
+    const elsewhere = hookDir()
+    goodFile(elsewhere)
+    // The hook folder itself is a link.
+    const app = appDir()
+    mkdirSync(join(app, 'codex-hooks'))
+    const viaHookDir = join(app, 'codex-hooks', 'ccc-codex-hook-link01')
+    folderLink(elsewhere, viaHookDir)
+    expect(fwd.readHookFile({ CCC_CODEX_HOOK_FILE: join(viaHookDir, 'hook.json'), CLAUDE_MULTI_SESSION_ID: 'sess-1' })).toBeNull()
+    // The codex-hooks folder is a link.
+    const app2 = appDir()
+    folderLink(dirname(elsewhere), join(app2, 'codex-hooks'))
+    expect(fwd.readHookFile({ CCC_CODEX_HOOK_FILE: join(app2, 'codex-hooks', basename(elsewhere), 'hook.json'), CLAUDE_MULTI_SESSION_ID: 'sess-1' })).toBeNull()
+    // The same file by its own path is read.
+    expect(fwd.readHookFile({ CCC_CODEX_HOOK_FILE: join(elsewhere, 'hook.json'), CLAUDE_MULTI_SESSION_ID: 'sess-1' })).not.toBeNull()
+  })
+
+  it('an app data folder reached through a link is the app\'s own choice: read', () => {
+    const real = appDir()
+    const dir = hookDir(real)
+    goodFile(dir)
+    const viaLink = join(appDir(), 'app-link')
+    folderLink(real, viaLink)
+    expect(fwd.readHookFile({ CCC_CODEX_HOOK_FILE: join(viaLink, 'codex-hooks', basename(dir), 'hook.json'), CLAUDE_MULTI_SESSION_ID: 'sess-1' })).not.toBeNull()
+  })
+
+  it('refuses a hook file with a second name (a hard link) (round 1)', () => {
+    const dir = hookDir()
+    const target = join(dirname(dirname(dir)), 'target.json')
+    writeFileSync(target, JSON.stringify({ v: 1, port: 51234, sid: 'sess-1', token: TOKEN }))
+    linkSync(target, join(dir, 'hook.json'))
+    expect(fwd.readHookFile({ CCC_CODEX_HOOK_FILE: join(dir, 'hook.json'), CLAUDE_MULTI_SESSION_ID: 'sess-1' })).toBeNull()
+  })
+
+  it('a file put in the hook file\'s place between its look and its open is not read (round 1: the opened file is the one looked at)', () => {
+    const dir = hookDir()
+    const file = goodFile(dir)
+    const other = join(dir, 'swap.json')
+    writeFileSync(other, JSON.stringify({ v: 1, port: 40404, sid: 'sess-1', token: TOKEN }))
+    // The forwarder's own fs (CommonJS): its open is where the swap lands.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fsCjs = require('fs') as typeof import('fs')
+    const realOpen = fsCjs.openSync
+    const spy = vi.spyOn(fsCjs, 'openSync').mockImplementation(((p: string, ...rest: unknown[]) => {
+      if (p === file) fsCjs.renameSync(other, file)
+      return (realOpen as (...a: unknown[]) => number)(p, ...rest)
+    }) as typeof fsCjs.openSync)
+    try {
+      expect(fwd.readHookFile({ CCC_CODEX_HOOK_FILE: file, CLAUDE_MULTI_SESSION_ID: 'sess-1' })).toBeNull()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('never reads through a file link', (ctx) => {
     const dir = hookDir()
     const target = join(dirname(dir), 'real.json')
     writeFileSync(target, JSON.stringify({ v: 1, port: 51234, sid: 'sess-1', token: TOKEN }))
     const link = join(dir, 'hook.json')
     // Skipped, visibly, where the host gives no right to make a file link (Windows without it).
-    try { symlinkSync(target, link) } catch { ctx.skip(); return }
+    try { symlinkSync(target, link); links.push(link) } catch { ctx.skip(); return }
     expect(fwd.readHookFile({ CCC_CODEX_HOOK_FILE: link, CLAUDE_MULTI_SESSION_ID: 'sess-1' })).toBeNull()
   })
 })
@@ -122,7 +213,7 @@ function fakeRequest(behaviour: 'ok' | 'error' | 'timeout', captured: Captured[]
 describe('forward', () => {
   const cfg = { port: 51234, sid: 'sess-1', token: TOKEN }
 
-  it('posts the body as read to 127.0.0.1 only, with the token and the Codex marker', async () => {
+  it('posts the body as read to 127.0.0.1 only, with the token and the Codex marker, and no shared agent', async () => {
     const captured: Captured[] = []
     let done = 0
     const body = Buffer.from('{"hook_event_name":"SessionStart"}')
@@ -133,6 +224,7 @@ describe('forward', () => {
     expect(o.port).toBe(51234)
     expect(o.path).toBe('/hook/sess-1')
     expect(o.method).toBe('POST')
+    expect(o.agent).toBe(false)
     expect(o.headers['x-ccc-hook-token']).toBe(TOKEN)
     expect(o.headers['x-ccc-hook-client']).toBe('codex')
     expect(o.headers['content-length']).toBe(body.length)
@@ -140,6 +232,45 @@ describe('forward', () => {
     expect(o.timeout).toBeLessThanOrEqual(2000)
     expect(captured[0].body?.equals(body)).toBe(true)
     expect(done).toBe(1)
+  })
+
+  it('never goes through a proxy the environment names: a stand-in proxy sees nothing, the gateway gets the event (round 1)', async (ctx) => {
+    const hits: Array<{ who: string; url: string; token?: string }> = []
+    const listen = (who: string) => new Promise<http.Server>((resolve) => {
+      const s = httpMod.createServer((req, res) => {
+        hits.push({ who, url: req.url ?? '', token: req.headers['x-ccc-hook-token'] as string | undefined })
+        req.resume()
+        req.on('end', () => res.end('{}'))
+      })
+      s.listen(0, '127.0.0.1', () => resolve(s))
+    })
+    const gw = await listen('gateway')
+    const proxy = await listen('proxy')
+    const saved = httpMod.globalAgent
+    try {
+      // What NODE_USE_ENV_PROXY with HTTP_PROXY set gives every request that
+      // takes the shared agent (Node 24; no loopback exception).
+      ;(httpMod as { globalAgent: http.Agent }).globalAgent = new httpMod.Agent({ proxyEnv: { HTTP_PROXY: `http://127.0.0.1:${(proxy.address() as AddressInfo).port}` } } as http.AgentOptions)
+      const port = (gw.address() as AddressInfo).port
+      // Canary: a request on the shared agent does reach the proxy here; where
+      // it does not (a Node without environment proxies), there is nothing to
+      // show and the case is skipped, visibly.
+      await new Promise<void>((resolve) => {
+        const r = httpMod.request({ host: '127.0.0.1', port, path: '/canary', method: 'POST' }, (res) => { res.resume(); res.on('end', resolve) })
+        r.on('error', () => resolve())
+        r.end('{}')
+      })
+      const proxied = hits.some((h) => h.who === 'proxy')
+      hits.length = 0
+      if (!proxied) { ctx.skip(); return }
+      await new Promise<void>((resolve) => fwd.forward({ port, sid: 'sess-1', token: TOKEN }, Buffer.from('{"hook_event_name":"UserPromptSubmit","prompt":"secret prompt"}'), resolve))
+      expect(hits.filter((h) => h.who === 'proxy')).toEqual([])
+      expect(hits).toEqual([{ who: 'gateway', url: '/hook/sess-1', token: TOKEN }])
+    } finally {
+      ;(httpMod as { globalAgent: http.Agent }).globalAgent = saved
+      gw.close()
+      proxy.close()
+    }
   })
 
   it('is done exactly once on an error and on a timeout', async () => {

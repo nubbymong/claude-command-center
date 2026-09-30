@@ -1018,13 +1018,14 @@ describe('a conversation whose claim was not certain is never carried (P3.6, own
     expect(h.built.at(-1)!.resume).toBeUndefined()
   })
 
-  // P3.10: the exact claim from the session's own hook. Where Codex's hooks
-  // are heard from (the user trusted them for the account), a conversation
-  // that is still only inferred was never named by the session's Codex (it
-  // names it with the first message sent), and may be another writer's (a
-  // CLI outside the app in the same folder): never carried. Once the
-  // session's own hook names it, a Switch carries it.
-  it('P3.10: where the account\'s hooks are heard from, a conversation only inferred is not carried; one the session\'s own hook named is', async () => {
+  // P3.10: the exact claim from the session's own hook. Where the session's
+  // own Codex hooks are heard from (round 1, S4: this session's, not merely
+  // another tab's of the account), a conversation that is still only inferred
+  // was never named by the session's Codex, which names the one it is on with
+  // every event, and may be another writer's (a CLI outside the app in the
+  // same folder): never carried. Once the session's own hook names it, a
+  // Switch carries it.
+  it('P3.10: where the session\'s own hooks are heard from, a conversation only inferred is not carried; one the session\'s own hook named is', async () => {
     const base = nfs.mkdtempSync(path.join(os.tmpdir(), PREFIX))
     bases.push(base)
     const sessA = path.join(base, 'A', 'sessions')
@@ -1049,12 +1050,14 @@ describe('a conversation whose claim was not certain is never carried (P3.6, own
     const y = rolloutIn(sessA, convY, cwd2Seen)
     expect(noteCodexHookTranscript(sid2, y)).toBe(true)
     await until(() => getKeptCodexConversation(sid2)?.uuid === convY)
-    // The first tab's conversation is only inferred: a Switch carries nothing.
+    // The first tab's own hook is heard, naming nothing its watch takes: its
+    // conversation stays only inferred, and a Switch carries nothing.
+    expect(noteCodexHookTranscript(sid, path.join(base, 'elsewhere', 'rollout-x.jsonl'))).toBe(true)
     const sidPty = h.ptys[0]
     killFor(sid)
     exitPty(sidPty, 0)
     onAccount('acct-b')
-    await expect(spawnFor(sid, { ...codexRequest, cwd: proj, providerAccountId: 'acct-b' })).resolves.toEqual({ ...STARTED, carry: { code: 'conversation-uncertain', message: 'Codex had not yet said which conversation this session is on (it does with the first message you send), so the app did not carry it over.', resumed: false } })
+    await expect(spawnFor(sid, { ...codexRequest, cwd: proj, providerAccountId: 'acct-b' })).resolves.toEqual({ ...STARTED, carry: { code: 'conversation-uncertain', message: 'Codex did not confirm that this session is on this conversation, so the app could not be sure it was this session\'s, and did not carry it over.', resumed: false } })
     expect(h.carries).toEqual([])
     expect(h.built.at(-1)!.resume).toBeUndefined()
     // The second tab's own hook named its conversation: a Switch carries it.

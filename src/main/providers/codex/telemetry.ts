@@ -1348,25 +1348,47 @@ export function watchAndClaimRollout(
 
   /** `rolloutPath` as this realm's rollout it names, spelled as the walk
    *  spells it (the realm's sessions folder, then its year, month and day
-   *  folders and the file's own name), or null: it must lie in a day folder
-   *  of this realm (real folders at every level, never a link), be a plain
-   *  file named `rollout-...-<id>.jsonl`, and its session_meta must name that
-   *  id. Untrusted input (a hook's payload): refused on any doubt. */
+   *  folders and the file's own name, as its day folder lists it), or null:
+   *  it must lie in a day folder of this realm (real folders at every level,
+   *  never a link), be a plain file named `rollout-...-<id>.jsonl`, and its
+   *  session_meta must name that id. Untrusted input (a hook's payload):
+   *  refused on any doubt. P3.10 round 1 (A4): no `:` after the drive (a
+   *  Windows alternate data stream, `rollout-x:y-<id>.jsonl`, is not a
+   *  file of the folder); and the name is the day folder's own spelling of
+   *  it, so a name spelled in another case (the id in capitals, on a file
+   *  system that ignores case) is the same rollout, read and counted under
+   *  one key, never a second. */
   function exactRollout(rolloutPath: string): { path: string; meta: RolloutSessionMeta } | null {
     if (typeof rolloutPath !== 'string' || !rolloutPath || rolloutPath.length > 4096 || /[\x00-\x1f\x7f]/.test(rolloutPath)) return null
     if (!isAbsolute(rolloutPath)) return null
+    if ((/^[A-Za-z]:/.test(rolloutPath) ? rolloutPath.slice(2) : rolloutPath).includes(':')) return null
     const rel = relative(sessionsDir, rolloutPath)
     if (!rel || rel.startsWith('..') || isAbsolute(rel)) return null
     const parts = rel.split(sep)
     if (parts.length !== 4) return null
-    const [year, month, day, name] = parts
+    const [year, month, day, given] = parts
     if (!/^\d{4}$/.test(year) || !/^\d{2}$/.test(month) || !/^\d{2}$/.test(day)) return null
+    const dayDir = join(sessionsDir, year, month, day)
+    if (!realFolderChain(sessionsDir, dayDir)) return null
+    const name = dayFolderSpelling(dayDir, given)
+    if (!name) return null
     const m = /^rollout-.+-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\.jsonl$/.exec(name)
     if (!m) return null
-    const file = join(sessionsDir, year, month, day, name)
-    if (!realFolderChain(sessionsDir, dirname(file))) return null
-    const found = stillTheConversation(file, m[1])
+    const found = stillTheConversation(join(dayDir, name), m[1].toLowerCase())
     return found ? { path: found.path, meta: found.meta } : null
+  }
+
+  /** The day folder's own spelling of `given`: the entry of that name, or,
+   *  where the file system ignores case (Windows, macOS), the one entry that
+   *  differs from it in case only; null when there is none (or two). */
+  function dayFolderSpelling(dayDir: string, given: string): string | null {
+    let names: string[]
+    try { names = readdirSync(dayDir) } catch { return null }
+    if (names.includes(given)) return given
+    if (process.platform !== 'win32' && process.platform !== 'darwin') return null
+    const want = given.toLowerCase()
+    const same = names.filter((n) => n.toLowerCase() === want)
+    return same.length === 1 ? same[0] : null
   }
 
   // Set up the 250ms polling interval before the initial tryClaim() call so
@@ -1395,27 +1417,36 @@ export function watchAndClaimRollout(
   // can run longer. We warn at 10s (so the user sees something is slow) but keep
   // polling until 30s before giving up. Hitting 30s genuinely indicates --ephemeral
   // or a launch failure. A picker launch has no deadline: it waits for the user.
-  const warnHandle = waitsForUser ? null : setTimeout(() => {
-    if (!claimedPath && !stopped) {
-      console.warn(
-        `[codex/telemetry] no rollout claimed for session ${sessionId} after 10s -- still polling, will give up at 30s`,
-      )
-    }
-  }, 10_000)
-
-  const timeoutHandle = waitsForUser ? null : setTimeout(() => {
-    if (!claimedPath && !stopped) {
-      console.warn(
-        `[codex/telemetry] no rollout claimed for session ${sessionId} after 30s -- assuming --ephemeral`,
-      )
-      if (intervalHandle) {
-        clearInterval(intervalHandle)
-        intervalHandle = null
+  // P3.10 round 1 (Q4): the same deadline is armed again whenever claiming
+  // starts again after a refuted claim (refuteInferredClaim), so that polling
+  // stops too; the session's own hook still claims exactly at any time.
+  let warnHandle: ReturnType<typeof setTimeout> | null = null
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null
+  function armClaimDeadline(): void {
+    if (warnHandle) clearTimeout(warnHandle)
+    if (timeoutHandle) clearTimeout(timeoutHandle)
+    warnHandle = setTimeout(() => {
+      if (!claimedPath && !stopped) {
+        console.warn(
+          `[codex/telemetry] no rollout claimed for session ${sessionId} after 10s -- still polling, will give up at 30s`,
+        )
       }
-      // Nothing will report this session's allowance (D3: "no reading").
-      try { onUpdate({ sessionId, usageUnavailable: 'no-reading' }) } catch { /* the sink must not break the watcher */ }
-    }
-  }, 30_000)
+    }, 10_000)
+    timeoutHandle = setTimeout(() => {
+      if (!claimedPath && !stopped) {
+        console.warn(
+          `[codex/telemetry] no rollout claimed for session ${sessionId} after 30s -- assuming --ephemeral`,
+        )
+        if (intervalHandle) {
+          clearInterval(intervalHandle)
+          intervalHandle = null
+        }
+        // Nothing will report this session's allowance (D3: "no reading").
+        try { onUpdate({ sessionId, usageUnavailable: 'no-reading' }) } catch { /* the sink must not break the watcher */ }
+      }
+    }, 30_000)
+  }
+  if (!waitsForUser) armClaimDeadline()
 
   return {
     /** P3.10: the session's own hook (authenticated by its gateway token)
@@ -1456,6 +1487,8 @@ export function watchAndClaimRollout(
       settled.add(exact.path)
       release()
       startClaimPolling()
+      // Round 1 (Q4): claiming by inference stops again at the deadline.
+      if (!stopped && !claimedPath) armClaimDeadline()
       return true
     },
     stop(): void {

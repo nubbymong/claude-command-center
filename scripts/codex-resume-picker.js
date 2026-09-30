@@ -81,8 +81,9 @@ async function main() {
   const dirDisplay = truncate(lib.displayText(cwd), innerWidth)
   // Each session's own name for the conversation it is on, from the app.
   const names = lib.loadWorkNames(process.env.CCC_CONFIG_DIR)
-  // The one place every shown string is built, as plain text (lib).
-  const rows = lib.buildPickerRows(conversations, names, innerWidth - 6)
+  // The one place every shown string is built, as plain text (lib). A
+  // conversation another open tab is on says so (P3.10 round 1).
+  const rows = lib.buildPickerRows(conversations, names, innerWidth - 6, undefined, lib.openElsewhereIds(process.env))
 
   console.log('')
   console.log(`  ${C.surface}╭─${C.peach} Resume Codex Conversation ${C.surface}─ ${C.subtext}${dirDisplay} ${C.surface}${'─'.repeat(Math.max(0, maxWidth - 32 - dirDisplay.length))}╮${C.reset}`)
@@ -176,7 +177,9 @@ function launchCodex(resumeUuid, sourceCwd) {
 
   // If resume exited non-zero with a real status, fall back to fresh codex.
   if (lib.shouldFallback(resumeUuid, result.status)) {
-    console.log('\n  Conversation no longer available -- starting fresh session...\n')
+    // Said as it is (P3.10 round 1): one another open tab is on (Codex lets
+    // one tab at a time write a conversation), or one that was not resumed.
+    console.log(`\n  ${lib.fallbackNotice(resumeUuid, lib.openElsewhereIds(process.env))}\n`)
     // The session now runs a new conversation: the app follows that one.
     noteUnrecorded(lib.recordPick(process.env.CCC_CODEX_PICK_FILE, null, process.env.CCC_CODEX_PICK_DIR_ID))
     const fresh = run(forwarded)

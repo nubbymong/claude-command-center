@@ -5,7 +5,13 @@
 // nothing on its own.
 import { getGateway } from './hooks/index'
 import { pushAttention } from './ipc/channel-handlers'
+import { emitInternal } from './internal-events'
+import { codexIdleMarks, codexPendingApprovals, clearCodexIdleAttention, _clearAllCodexIdleAttentionForTest } from './codex-idle-attention'
 import type { HookEvent } from '../shared/hook-types'
+
+// P3.10 round 1 (Q1): pty-manager drops a session's pending idle mark with
+// its resources (an exit, a Restart, a Switch).
+export { clearCodexIdleAttention }
 
 // Notification types that mean "Claude is blocked waiting on the USER" — each
 // should raise the sidebar attention pulse (#274). The original set was just the
@@ -77,10 +83,39 @@ export interface AttentionSourceOptions {
   clearTimer?: (h: ReturnType<typeof setTimeout>) => void
 }
 
-/** One pending idle mark per Codex session (a later event drops it). */
-const codexIdleTimers = new Map<string, ReturnType<typeof setTimeout>>()
+/** A string field of a hook event's payload, or undefined. */
+function payloadString(e: HookEvent, key: string): string | undefined {
+  const v = (e.payload as Record<string, unknown> | undefined)?.[key]
+  return typeof v === 'string' && v ? v : undefined
+}
 
-/** Route one hook event to the attention flasher. Exported for tests. */
+/** P3.10 round 1 (V1): the approval request a Codex session's dot is raised
+ *  for, from its PermissionRequest: its turn and tool (Codex's carries no
+ *  tool call id; VM payloads of 0.153.4 and 0.155.1). */
+function approvalOf(e: HookEvent): { turn?: string; tool?: string } {
+  const turn = payloadString(e, 'turn_id')
+  const tool = typeof e.toolName === 'string' && e.toolName ? e.toolName : payloadString(e, 'tool_name')
+  return { ...(turn ? { turn } : {}), ...(tool ? { tool } : {}) }
+}
+
+/** P3.10 round 1 (V1): a PreToolUse may be the call the pending approval is
+ *  for: nothing it names says otherwise (the same turn and tool, or a field
+ *  either event lacks, as a payload cut down for the feed does). */
+function mayBeTheApprovedCall(pending: { turn?: string; tool?: string }, e: HookEvent): boolean {
+  const call = approvalOf(e)
+  if (pending.turn && call.turn && pending.turn !== call.turn) return false
+  if (pending.tool && call.tool && pending.tool !== call.tool) return false
+  return true
+}
+
+/** Route one hook event to the attention flasher. Exported for tests.
+ *  P3.10 round 1 (V1): Codex runs the app's hooks asynchronously, and fires
+ *  PreToolUse and PermissionRequest for one shell command at the same moment,
+ *  so the gateway gets them in either order (VM: 3 of 6 rounds on 0.153.4
+ *  had PreToolUse second). A PreToolUse never clears the raise for the
+ *  approval of its own call: the dot stays up while the approval waits. The
+ *  approval's hold is used up by that one PreToolUse; a PostToolUse, a prompt
+ *  or a turn's end ends it. */
 export function routeAttentionEvent(e: HookEvent, opts: AttentionSourceOptions = {}): void {
   const push = opts.push ?? pushAttention
   const isCodex = opts.isCodexSession?.(e.sessionId) === true
@@ -91,29 +126,51 @@ export function routeAttentionEvent(e: HookEvent, opts: AttentionSourceOptions =
   }
   const v = codexAttentionForEvent(e)
   if (v === null) return
+  const sid = e.sessionId
   const clearTimer = opts.clearTimer ?? ((h: ReturnType<typeof setTimeout>) => clearTimeout(h))
-  const pending = codexIdleTimers.get(e.sessionId)
-  if (pending) { clearTimer(pending); codexIdleTimers.delete(e.sessionId) }
-  if (v === 'idle') {
-    const setTimer = opts.setTimer ?? ((cb: () => void, ms: number) => setTimeout(cb, ms))
-    const sid = e.sessionId
-    const h = setTimer(() => {
-      if (codexIdleTimers.get(sid) !== h) return
-      codexIdleTimers.delete(sid)
-      // Still a Codex session: a closed tab, or one respawned as another kind, is not marked.
-      if (opts.isCodexSession?.(sid) === true) push(sid, true)
-    }, CODEX_IDLE_ATTENTION_MS)
-    ;(h as { unref?: () => void }).unref?.()
-    codexIdleTimers.set(sid, h)
+  const pending = codexIdleMarks.get(sid)
+  if (pending) { codexIdleMarks.delete(sid); pending.clear(pending.handle) }
+  if (e.event === 'PermissionRequest') {
+    codexPendingApprovals.set(sid, approvalOf(e))
+    push(sid, true)
     return
   }
-  push(e.sessionId, v)
+  if (e.event === 'PreToolUse') {
+    const approval = codexPendingApprovals.get(sid)
+    if (approval && mayBeTheApprovedCall(approval, e)) {
+      // Its own call's PreToolUse, landing after the approval request: the
+      // approval still waits, so the dot stays.
+      codexPendingApprovals.delete(sid)
+      return
+    }
+    push(sid, false)
+    return
+  }
+  // A tool that ran, a prompt, a turn's end: the approval is over.
+  codexPendingApprovals.delete(sid)
+  if (v === 'idle') {
+    const setTimer = opts.setTimer ?? ((cb: () => void, ms: number) => setTimeout(cb, ms))
+    const h = setTimer(() => {
+      if (codexIdleMarks.get(sid)?.handle !== h) return
+      codexIdleMarks.delete(sid)
+      // Still a Codex session: a closed tab, or one respawned as another kind, is not marked.
+      if (opts.isCodexSession?.(sid) !== true) return
+      push(sid, true)
+      // P3.10 round 1 (S5): the notification rules get what Claude's own
+      // idle_prompt gives them (channel-rules idlePromptRuleContext), so the
+      // Attention Pulse rule treats both assistants alike.
+      try { emitInternal('attention:idle-prompt', { sessionId: sid }) } catch { /* a rule never stops the mark */ }
+    }, CODEX_IDLE_ATTENTION_MS)
+    ;(h as { unref?: () => void }).unref?.()
+    codexIdleMarks.set(sid, { handle: h, clear: clearTimer })
+    return
+  }
+  push(sid, v)
 }
 
-/** Test seam: drop every pending idle mark, and allow a fresh start. */
+/** Test seam: drop every pending idle mark and approval, and allow a fresh start. */
 export function _resetAttentionSourceForTest(): void {
-  for (const h of codexIdleTimers.values()) clearTimeout(h)
-  codexIdleTimers.clear()
+  _clearAllCodexIdleAttentionForTest()
   started = false
 }
 

@@ -92,13 +92,22 @@ export function startRulesEngine(): void {
   if (gw) {
     gw.subscribe((e) => {
       if (e.event === 'Notification') {
-        const matcher = (e.payload as { notification_type?: string }).notification_type
-        fireMatching({
-          event: 'Notification',
-          matcher,
-          durationMs: Number((e.payload as { duration_ms?: number }).duration_ms ?? 0),
-        })
+        const p = e.payload as { notification_type?: unknown; duration_ms?: unknown }
+        fireMatching(notificationRuleContext(p.notification_type, p.duration_ms))
       }
     })
   }
+
+  // P3.10 round 1 (S5): a Codex session has no Notification hook; its 60 s
+  // idle mark (attention-source) feeds the rules exactly what Claude Code's
+  // Notification idle_prompt feeds them, so a rule on it treats both alike.
+  onInternal('attention:idle-prompt', () => fireMatching(notificationRuleContext('idle_prompt', undefined)))
+}
+
+/** The rule engine's input for a session waiting on the user: the
+ *  notification's type and the wait it reports, as Claude Code's
+ *  Notification hook gives them (its payload carries no duration_ms, so
+ *  0). One builder for both assistants (P3.10 round 1, S5). */
+export function notificationRuleContext(matcher: unknown, durationMs: unknown): RuleEventContext {
+  return { event: 'Notification', matcher: typeof matcher === 'string' ? matcher : undefined, durationMs: Number(durationMs ?? 0) }
 }
