@@ -50,9 +50,9 @@ during installation (and can change later in Settings):
   them, and which account is the default and which the reviewer
 - one sign-in folder for each Codex account you add (see "Codex accounts and
   sign-ins" below)
-- an index of your Claude Code session transcripts, used to power the Logs
-  and Tokenomics views, and of your Codex session transcripts, used for
-  Tokenomics
+- an index of your Claude Code and Codex session transcripts, used to power
+  the Logs and Tokenomics views (the Logs index reads a Codex session's
+  transcript from that session's own Codex account folder)
 - cost and usage figures calculated locally from those transcripts, with the
   account each Claude and Codex session ran under
 - application logs

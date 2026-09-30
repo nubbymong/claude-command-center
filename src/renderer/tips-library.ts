@@ -559,7 +559,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Your session output is logged locally',
         title: 'Session Activity Logging',
-        body: 'The Logs, Memory and Tokenomics pages are powered by an index of **Claude\'s own conversation transcripts** (the files Claude Code already writes under `~/.claude/projects`). The Conductor does not record terminal output itself.\n\n• The index is a local SQLite database in the app\'s data folder\n• It stays **100% local** -- never uploaded or transmitted\n• Turning off "Index conversation logs" in Settings only stops the index; your conversations stay in Claude\'s own files either way\n\nTo clean up: Settings → General → Clear index (removes the app\'s index only, never your conversations).',
+        body: 'The Logs, Memory and Tokenomics pages are powered by an index of **Claude\'s own conversation transcripts** (the files Claude Code already writes under `~/.claude/projects`), and the Logs page by **Codex\'s** too (the files Codex writes in each Codex account\'s sessions folder). The Conductor does not record terminal output itself.\n\n• The index is a local SQLite database in the app\'s data folder\n• It stays **100% local** -- never uploaded or transmitted\n• Turning off "Index conversation logs" in Settings only stops the index; your conversations stay in Claude\'s own files either way\n\nTo clean up: Settings → General → Clear index (removes the app\'s index only, never your conversations).',
       },
     },
   },
@@ -695,7 +695,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'The panel figures out which issue you are on',
         title: 'Session Context',
-        body: 'The **Session Context** section infers which issue your current session is actually working on.\n\nIt checks (in priority order): issue numbers in your current **branch name**, most-recent issue referenced in your **Claude transcript**, first issue referenced in the active **PR body**. Recent file edits show alongside as additional signal.\n\nYou can opt in to transcript scanning under **Settings > GitHub > Privacy** -- it stays entirely local; the transcript never leaves your machine.',
+        body: 'The **Session Context** section infers which issue your current session is actually working on.\n\nIt checks (in priority order): issue numbers in your current **branch name**, most-recent issue referenced in your **session\'s transcript** (a Codex session\'s own conversation, for a Codex session), first issue referenced in the active **PR body**. Recent file edits show alongside as additional signal.\n\nYou can opt in to transcript scanning under **Settings > GitHub > Privacy** -- it stays entirely local; the transcript never leaves your machine.',
       },
     },
   },
@@ -944,7 +944,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Run OpenAI Codex sessions beside Claude',
         title: 'Codex Sessions',
-        body: 'A saved config does not have to run Claude Code. Turn Codex on and add a Codex account in **Settings, Accounts**, and the session dialog lets a config pick **Codex** instead of **Claude Code**, with the Codex account it runs under and that account\'s own sign-in.\n\nA Codex session opens as a tab and sits in the sidebar next to a Claude one, with the same notes and command buttons. **Tokenomics counts Codex too**, so the spend comparison is in one place rather than two; the Logs page does not index Codex conversations yet. Local sessions only for now: SSH configs stay on Claude.',
+        body: 'A saved config does not have to run Claude Code. Turn Codex on and add a Codex account in **Settings, Accounts**, and the session dialog lets a config pick **Codex** instead of **Claude Code**, with the Codex account it runs under and that account\'s own sign-in.\n\nA Codex session opens as a tab and sits in the sidebar next to a Claude one, with the same notes and command buttons. **Tokenomics counts Codex too**, so the spend comparison is in one place rather than two, and the Logs page indexes Codex conversations as it does Claude\'s. Local sessions only for now: SSH configs stay on Claude.',
         actionLabel: 'Open Settings',
         actionTarget: 'settings',
       },
