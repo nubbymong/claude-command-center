@@ -10,8 +10,9 @@
 // folder, and only that folder is swept (A5); a launch through the npm shim
 // from a resources folder with a space runs a plain-path copy of the wrapper
 // the app keeps under the user's local app data folder, checked before each
-// use (V3).
-import { describe, it, expect, afterEach } from 'vitest'
+// use (V3). Round 4: the hook folders are prepared asynchronously, once, by one
+// call of the owner-only rule, before anything is written in them.
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -22,10 +23,10 @@ import {
   removeCodexHookFile,
   sweepStaleCodexHookFolders,
   deployCodexHookScripts,
-  ensureCodexHookRoot,
   realFolderChainBelow,
   codexPlainWrapperDir,
-  stagePlainCodexHookWrapper,
+  prepareCodexHookFolders,
+  preparedCodexHookRoot,
   __resetCodexHookFoldersForTests,
   verifyPlainCodexHookWrapper,
   CODEX_HOOK_EVENTS,
@@ -34,6 +35,7 @@ import {
   CODEX_HOOK_ROOT_NAME,
   CODEX_HOOK_STALE_MS,
   CODEX_HOOK_PLAIN_BASE,
+  CODEX_HOOK_FOLDERS_RETRY_MS,
 } from '../../../../src/main/providers/codex/hooks'
 
 const TOKEN = '0f8b6a2c-1d3e-4f50-9a61-7b2c3d4e5f60'
@@ -65,6 +67,46 @@ afterEach(() => {
 
 /** cmd.exe's refusal set for an argument (spawn.ts CMD_UNSAFE_ARG_RE). */
 const CMD_UNSAFE_ARG_RE = /["%&^|<>!()\s]/
+
+/** A hook root for the hook-file cases (preparing it is tested below). */
+function makeRoot(): string {
+  const root = path.join(tmp(), CODEX_HOOK_ROOT_NAME)
+  fs.mkdirSync(root)
+  return root
+}
+
+/** The owner-only rule as the real one behaves for the folder order
+ *  (src/main/owner-only-folders.ts): each folder in turn; a link is refused,
+ *  and so is a folder below a refused one, or below an earlier folder of the
+ *  call that is a link by now (a parent outside the call is the caller's
+ *  choice, never inspected); a missing folder is made inside its parent;
+ *  `ok` decides each verdict. `onEach` runs once a folder is there, before
+ *  its verdict. Records every call. */
+type Verdict = { dir: string; ok: boolean; detail: string }
+function rule(ok: (dir: string) => boolean = () => true, onEach?: (dir: string) => void) {
+  const calls: string[][] = []
+  const secure = async (dirs: readonly string[]): Promise<Verdict[]> => {
+    calls.push([...dirs])
+    const refused = new Set<string>()
+    const done = new Set<string>()
+    const out: Verdict[] = []
+    for (const dir of dirs) {
+      const refuse = (detail: string): void => { refused.add(dir); out.push({ dir, ok: false, detail }) }
+      const parent = path.dirname(dir)
+      if (refused.has(parent)) { refuse('its parent was refused'); continue }
+      if (done.has(parent) && fs.lstatSync(parent).isSymbolicLink()) { refuse('its parent is a link'); continue }
+      let st: fs.Stats | null = null
+      try { st = fs.lstatSync(dir) } catch { st = null }
+      if (st && (st.isSymbolicLink() || !st.isDirectory())) { refuse('a link'); continue }
+      if (!st) fs.mkdirSync(dir)
+      onEach?.(dir)
+      if (ok(dir)) { done.add(dir); out.push({ dir, ok: true, detail: 'owner-only' }) }
+      else refuse('not this user\'s alone')
+    }
+    return out
+  }
+  return { calls, secure }
+}
 
 describe('codexHookCommand', () => {
   it('Windows: the wrapper by its bare path when that is a plain word (either launch route)', () => {
@@ -133,44 +175,9 @@ describe('codexHookConfigArgs', () => {
   })
 })
 
-describe('ensureCodexHookRoot (round 1, A5)', () => {
-  it('makes <data>/codex-hooks, a real folder, owner-only, hardened by the app\'s rule, and reuses it', () => {
-    const data = tmp()
-    const hardened: string[] = []
-    const root = ensureCodexHookRoot(data, (d) => { hardened.push(d); return true })
-    expect(root).toBe(path.join(data, CODEX_HOOK_ROOT_NAME))
-    expect(fs.lstatSync(root!).isDirectory()).toBe(true)
-    expect(hardened).toEqual([root])
-    if (process.platform !== 'win32') expect(fs.statSync(root!).mode & 0o777).toBe(0o700)
-    expect(ensureCodexHookRoot(data)).toBe(root)
-  })
-
-  it('refuses a codex-hooks that is a link or junction, or a file; a relative or missing data folder; and a hardening that did not take', () => {
-    const data = tmp()
-    const elsewhere = tmp()
-    folderLink(elsewhere, path.join(data, CODEX_HOOK_ROOT_NAME))
-    expect(ensureCodexHookRoot(data)).toBeNull()
-    const data2 = tmp()
-    fs.writeFileSync(path.join(data2, CODEX_HOOK_ROOT_NAME), 'x')
-    expect(ensureCodexHookRoot(data2)).toBeNull()
-    expect(ensureCodexHookRoot('relative/data')).toBeNull()
-    expect(ensureCodexHookRoot(path.join(tmp(), 'missing'))).toBeNull()
-    expect(ensureCodexHookRoot(tmp(), () => false)).toBeNull()
-    expect(ensureCodexHookRoot(tmp(), () => { throw new Error('icacls') })).toBeNull()
-  })
-
-  it('a data folder reached through a link is the user\'s choice: its own real codex-hooks is used', () => {
-    const real = tmp()
-    const viaLink = path.join(tmp(), 'data-link')
-    folderLink(real, viaLink)
-    expect(ensureCodexHookRoot(viaLink)).toBe(path.join(viaLink, CODEX_HOOK_ROOT_NAME))
-    expect(realFolderChainBelow(viaLink, path.join(viaLink, CODEX_HOOK_ROOT_NAME))).toBe(true)
-  })
-})
-
 describe('writeCodexHookFile / removeCodexHookFile', () => {
   it('writes the port, session id and token, owner-only, in a folder made for the launch inside the hook root', () => {
-    const root = ensureCodexHookRoot(tmp())!
+    const root = makeRoot()
     const h = writeCodexHookFile('sess-1', 51234, TOKEN, root)!
     expect(h).not.toBeNull()
     expect(path.dirname(h.dir)).toBe(root)
@@ -183,7 +190,7 @@ describe('writeCodexHookFile / removeCodexHookFile', () => {
   })
 
   it('refuses what the gateway would not route: a bad session id, port or token; and a relative root', () => {
-    const root = ensureCodexHookRoot(tmp())!
+    const root = makeRoot()
     expect(writeCodexHookFile('../x', 51234, TOKEN, root)).toBeNull()
     expect(writeCodexHookFile('a b', 51234, TOKEN, root)).toBeNull()
     expect(writeCodexHookFile('s', 0, TOKEN, root)).toBeNull()
@@ -196,7 +203,7 @@ describe('writeCodexHookFile / removeCodexHookFile', () => {
   })
 
   it('removes only what it put there, never recursively: a foreign file keeps the folder', () => {
-    const root = ensureCodexHookRoot(tmp())!
+    const root = makeRoot()
     const h = writeCodexHookFile('sess-2', 51234, TOKEN, root)!
     fs.writeFileSync(path.join(h.dir, 'other.txt'), 'x')
     fs.writeFileSync(path.join(h.dir, `${CODEX_HOOK_FILE_NAME}.0f8b6a2c-1d3e-4f50-9a61-7b2c3d4e5f60.tmp`), 'x')
@@ -206,7 +213,7 @@ describe('writeCodexHookFile / removeCodexHookFile', () => {
   })
 
   it('touches nothing once the folder is not the one made (replaced)', () => {
-    const root = ensureCodexHookRoot(tmp())!
+    const root = makeRoot()
     const h = writeCodexHookFile('sess-3', 51234, TOKEN, root)!
     fs.unlinkSync(h.file)
     fs.rmdirSync(h.dir)
@@ -219,7 +226,7 @@ describe('writeCodexHookFile / removeCodexHookFile', () => {
 
 describe('sweepStaleCodexHookFolders', () => {
   it('removes only its own real folders older than the bound, emptied, never recursively', () => {
-    const root = ensureCodexHookRoot(tmp())!
+    const root = makeRoot()
     const old = writeCodexHookFile('sess-old', 51234, TOKEN, root)!
     const fresh = writeCodexHookFile('sess-new', 51234, TOKEN, root)!
     const foreign = fs.mkdtempSync(path.join(root, 'someone-else-'))
@@ -276,96 +283,107 @@ describe('round 1 (V3): the plain-path copy for the npm shim route', () => {
     return path.join(res, 'scripts')
   }
 
-  it('stages both files into real folders, hardened, and they verify; a changed, replaced or extra-named copy does not', () => {
+  it('stages both files into real folders made the user\'s first, and they verify; a changed, replaced or extra-named copy does not', async () => {
     const src = scripts()
     const lad = tmp()
+    const data = tmp()
     const plain = path.join(lad, CODEX_HOOK_PLAIN_BASE, 'codex-hooks-abcdef012345')
-    const hardened: string[] = []
-    expect(stagePlainCodexHookWrapper(src, plain, (d) => { hardened.push(d); return true })).toBe(true)
-    // Both levels are made owner-only, the base folder first (round 2, R4).
-    expect(hardened).toEqual([path.dirname(plain), plain])
+    const r = rule()
+    expect((await prepareCodexHookFolders({ dataDir: data, scriptsDir: src, plainDir: plain }, r.secure)).plain).toBe(true)
     expect(fs.readFileSync(path.join(plain, 'ccc-codex-hook.cmd'), 'utf8')).toBe('rem wrapper')
     expect(verifyPlainCodexHookWrapper(src, plain)).toBe(true)
     // Changed since it was staged.
     fs.writeFileSync(path.join(plain, 'ccc-codex-hook.js'), '// someone else')
     expect(verifyPlainCodexHookWrapper(src, plain)).toBe(false)
-    // Staged again (the next boot): whole again.
-    expect(stagePlainCodexHookWrapper(src, plain)).toBe(true)
+    // Prepared again (the next launch): whole again.
+    expect((await prepareCodexHookFolders({ dataDir: data, scriptsDir: src, plainDir: plain }, r.secure)).plain).toBe(true)
+    expect(verifyPlainCodexHookWrapper(src, plain)).toBe(true)
+    expect(r.calls).toHaveLength(2)
     // A copy with a second name.
     fs.linkSync(path.join(plain, 'ccc-codex-hook.cmd'), path.join(lad, 'second-name.cmd'))
     expect(verifyPlainCodexHookWrapper(src, plain)).toBe(false)
   })
 
-  it('refuses a copy folder, or its base, that is a link or junction, and a hardening that did not take', () => {
+  it('refuses a copy folder, or its base, that is a link or junction (never handed to the rule), and a rule that does not take', async () => {
     const src = scripts()
     const lad = tmp()
     const elsewhere = tmp()
     fs.mkdirSync(path.join(lad, CODEX_HOOK_PLAIN_BASE))
     const plain = path.join(lad, CODEX_HOOK_PLAIN_BASE, 'codex-hooks-abcdef012345')
     folderLink(elsewhere, plain)
-    expect(stagePlainCodexHookWrapper(src, plain)).toBe(false)
+    const r = rule()
+    expect((await prepareCodexHookFolders({ dataDir: tmp(), scriptsDir: src, plainDir: plain }, r.secure)).plain).toBe(false)
+    expect(r.calls.flat()).not.toContain(plain)
+    expect(fs.readdirSync(elsewhere)).toEqual([])
     fs.copyFileSync(path.join(src, 'ccc-codex-hook.js'), path.join(elsewhere, 'ccc-codex-hook.js'))
     fs.copyFileSync(path.join(src, 'ccc-codex-hook.cmd'), path.join(elsewhere, 'ccc-codex-hook.cmd'))
     expect(verifyPlainCodexHookWrapper(src, plain)).toBe(false)
     const lad2 = tmp()
     const base2 = tmp()
     folderLink(base2, path.join(lad2, CODEX_HOOK_PLAIN_BASE))
-    expect(stagePlainCodexHookWrapper(src, path.join(lad2, CODEX_HOOK_PLAIN_BASE, 'codex-hooks-abcdef012345'))).toBe(false)
+    const r2 = rule()
+    expect((await prepareCodexHookFolders({ dataDir: tmp(), scriptsDir: src, plainDir: path.join(lad2, CODEX_HOOK_PLAIN_BASE, 'codex-hooks-abcdef012345') }, r2.secure)).plain).toBe(false)
+    expect(r2.calls.flat()).not.toContain(path.join(lad2, CODEX_HOOK_PLAIN_BASE))
+    expect(fs.readdirSync(base2)).toEqual([])
     const lad3 = tmp()
-    expect(stagePlainCodexHookWrapper(src, path.join(lad3, CODEX_HOOK_PLAIN_BASE, 'codex-hooks-abcdef012345'), () => false)).toBe(false)
-  })
-})
-
-describe('round 2: the owner-only rule once a run, and on both plain-copy levels (R4, R6)', () => {
-  it('R6: a second launch does not harden the hook root again (the folder chain is still checked each time)', () => {
-    const data = tmp()
-    let calls = 0
-    const harden = () => { calls++; return true }
-    expect(ensureCodexHookRoot(data, harden)).not.toBeNull()
-    expect(ensureCodexHookRoot(data, harden)).not.toBeNull()
-    expect(calls).toBe(1)
-    // Replaced by a junction meanwhile: refused, hardened or not.
-    const root = path.join(data, CODEX_HOOK_ROOT_NAME)
-    fs.rmdirSync(root)
-    folderLink(tmp(), root)
-    expect(ensureCodexHookRoot(data, harden)).toBeNull()
-    expect(calls).toBe(1)
+    const plain3 = path.join(lad3, CODEX_HOOK_PLAIN_BASE, 'codex-hooks-abcdef012345')
+    expect((await prepareCodexHookFolders({ dataDir: tmp(), scriptsDir: src, plainDir: plain3 }, rule((d) => d !== plain3).secure)).plain).toBe(false)
+    expect(verifyPlainCodexHookWrapper(src, plain3)).toBe(false)
   })
 
-  it('R4: the plain copy is used only when both levels took the owner-only rule this run; a copy left from before is not', () => {
-    const res = tmp()
-    fs.mkdirSync(path.join(res, 'scripts'))
-    fs.writeFileSync(path.join(res, 'scripts', 'ccc-codex-hook.js'), '// forwarder')
-    fs.writeFileSync(path.join(res, 'scripts', 'ccc-codex-hook.cmd'), 'rem wrapper')
-    const src = path.join(res, 'scripts')
+  it('round 4: the check covers both levels: a base folder replaced by a link to where it went is refused, though the copy folder below it is real', async () => {
+    const src = scripts()
     const plain = path.join(tmp(), CODEX_HOOK_PLAIN_BASE, 'codex-hooks-abcdef012345')
-    expect(stagePlainCodexHookWrapper(src, plain, () => true)).toBe(true)
+    expect((await prepareCodexHookFolders({ dataDir: tmp(), scriptsDir: src, plainDir: plain }, rule().secure)).plain).toBe(true)
     expect(verifyPlainCodexHookWrapper(src, plain)).toBe(true)
-    // The next start cannot make the base folder owner-only: the copy is not used, though its bytes are right.
-    expect(stagePlainCodexHookWrapper(src, plain, (d) => d !== path.dirname(plain))).toBe(false)
-    expect(verifyPlainCodexHookWrapper(src, plain)).toBe(false)
-    // Nor one that was never staged in this run.
-    __resetCodexHookFoldersForTests()
+    const base = path.dirname(plain)
+    fs.renameSync(base, `${base}-moved`)
+    folderLink(`${base}-moved`, base)
     expect(verifyPlainCodexHookWrapper(src, plain)).toBe(false)
   })
 })
 
-// Round 3 (F3): a folder the app did not make this run is used only once it
-// belongs to the user: the owner-only rule is asked to make the user its owner
-// first (takeOwnership), and a refusal means no hooks. A folder the app makes
-// is hardened as before. (F4): the hook root is hardened once a run per
-// folder, so a root made again in the run, or replaced, is hardened again.
-describe('round 3: a folder already there is used only once it is the user\'s (F3, F4)', () => {
-  type Call = { dir: string; takeOwnership: boolean }
-  function recorder(ok: (c: Call) => boolean = () => true) {
-    const calls: Call[] = []
-    const harden = (dir: string, opts?: { takeOwnership?: boolean }): boolean => {
-      const c = { dir, takeOwnership: opts?.takeOwnership === true }
-      calls.push(c)
-      return ok(c)
-    }
-    return { calls, harden }
+// Round 3b: the hook wrapper resolves its helpers from fixed locations: it
+// sets NoDefaultCurrentDirectoryInExePath=1 itself before the first line that
+// names a program (where, node), as the Codex launch environment does
+// (spawn.ts), and asks where for node on the PATH, so node resolves the same
+// way from any start folder. The forwarder stays the file beside the wrapper.
+// The same order, run: tests/unit/providers/codex/hook-wrapper-start-folder.test.ts
+// (CI and the VM).
+describe('round 3b: the wrapper resolves node the same way from any start folder', () => {
+  function wrapperLines(): string[] {
+    return fs.readFileSync(path.join(__dirname, '..', '..', '..', '..', 'scripts', 'ccc-codex-hook.cmd'), 'utf8')
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l !== '' && !/^@?echo off$/i.test(l) && !/^rem\b/i.test(l))
   }
+
+  it('sets NoDefaultCurrentDirectoryInExePath=1 before any line that names a program', () => {
+    const lines = wrapperLines()
+    const set = lines.findIndex((l) => /^set\s+"?NoDefaultCurrentDirectoryInExePath=1"?$/i.test(l))
+    expect(set).toBeGreaterThanOrEqual(0)
+    const firstProgram = lines.findIndex((l) => /^(where|node)\b/i.test(l))
+    expect(firstProgram).toBeGreaterThan(set)
+    // Before it, only the wrapper's own environment is set up.
+    for (const l of lines.slice(0, set)) expect(l).toMatch(/^setlocal$/i)
+  })
+
+  it('asks for node on the PATH only, and runs the forwarder beside the wrapper', () => {
+    const lines = wrapperLines()
+    expect(lines.filter((l) => /^where\b/i.test(l))).toEqual(['where /q $PATH:node >nul 2>nul || exit /b 0'])
+    expect(lines.filter((l) => /^node\b/i.test(l))).toEqual(['node "%~dp0ccc-codex-hook.js"'])
+    expect(lines.at(-1)).toBe('exit /b 0')
+  })
+})
+
+// Round 4 (P1, P2): the hook folders are prepared asynchronously, only while
+// Codex is on (src/main/codex-hook-folders.ts decides when). One call of the
+// owner-only rule (on Windows one PowerShell call, src/main/owner-only-folders.ts)
+// makes each folder the user's and owner-only, a parent before a folder is made
+// inside it, and reads each back; the two files are written only after it, and
+// each folder is checked again before first use. A launch uses only a root this
+// run prepared that is still the same folder.
+describe('round 4: preparing the hook folders', () => {
   function scriptsDir(): string {
     const res = tmp()
     fs.mkdirSync(path.join(res, 'scripts'))
@@ -374,82 +392,182 @@ describe('round 3: a folder already there is used only once it is the user\'s (F
     return path.join(res, 'scripts')
   }
 
-  it('a hook root the app makes is hardened as made; one already there is made the user\'s first, and refused when it cannot be', () => {
-    const fresh = recorder()
+  it('one rule call for the root, the base and the copy folder, in that order; the files only after it', async () => {
+    const src = scriptsDir()
     const data = tmp()
-    const root = ensureCodexHookRoot(data, fresh.harden)
-    expect(root).toBe(path.join(data, CODEX_HOOK_ROOT_NAME))
-    expect(fresh.calls).toEqual([{ dir: root, takeOwnership: false }])
-    __resetCodexHookFoldersForTests()
-    // The next run: the folder is there from before.
-    const next = recorder()
-    expect(ensureCodexHookRoot(data, next.harden)).toBe(root)
-    expect(next.calls).toEqual([{ dir: root, takeOwnership: true }])
-    __resetCodexHookFoldersForTests()
-    const refused = recorder((c) => !c.takeOwnership)
-    expect(ensureCodexHookRoot(data, refused.harden)).toBeNull()
-    expect(refused.calls).toEqual([{ dir: root, takeOwnership: true }])
+    const plain = path.join(tmp(), CODEX_HOOK_PLAIN_BASE, 'codex-hooks-abcdef012345')
+    const root = path.join(data, CODEX_HOOK_ROOT_NAME)
+    const seen: Array<[string, string[]]> = []
+    const r = rule(() => true, (dir) => { seen.push([dir, fs.existsSync(plain) ? fs.readdirSync(plain) : []]) })
+    const out = await prepareCodexHookFolders({ dataDir: data, scriptsDir: src, plainDir: plain }, r.secure)
+    expect(out).toMatchObject({ root: true, plain: true })
+    expect(r.calls).toEqual([[root, path.dirname(plain), plain]])
+    expect(seen.map(([d]) => d)).toEqual([root, path.dirname(plain), plain])
+    expect(seen.every(([, files]) => files.length === 0)).toBe(true)
+    expect(fs.readdirSync(plain).sort()).toEqual(['ccc-codex-hook.cmd', 'ccc-codex-hook.js'])
+    expect(preparedCodexHookRoot(data)).toBe(root)
   })
 
-  it('F4: a hook root removed in the run and made again is hardened again; one replaced by another folder is made the user\'s again', () => {
+  it('without a plain copy to make: the root alone', async () => {
     const data = tmp()
-    const r = recorder()
-    const root = ensureCodexHookRoot(data, r.harden)!
-    expect(ensureCodexHookRoot(data, r.harden)).toBe(root)
+    const r = rule()
+    const out = await prepareCodexHookFolders({ dataDir: data, scriptsDir: scriptsDir(), plainDir: null }, r.secure)
+    expect(out).toMatchObject({ root: true, plain: null })
+    expect(r.calls).toEqual([[path.join(data, CODEX_HOOK_ROOT_NAME)]])
+  })
+
+  it('a launch sees no root until the preparation has finished, and none when the rule refused it or failed', async () => {
+    const data = tmp()
+    const root = path.join(data, CODEX_HOOK_ROOT_NAME)
+    let release: () => void = () => {}
+    const gate = new Promise<void>((res) => { release = res })
+    const r = rule()
+    const p = prepareCodexHookFolders({ dataDir: data, scriptsDir: scriptsDir(), plainDir: null }, async (dirs) => { await gate; return r.secure(dirs) })
+    expect(preparedCodexHookRoot(data)).toBeNull()
+    release()
+    await p
+    expect(preparedCodexHookRoot(data)).toBe(root)
+    __resetCodexHookFoldersForTests()
+    expect((await prepareCodexHookFolders({ dataDir: data, scriptsDir: scriptsDir(), plainDir: null }, rule(() => false).secure)).root).toBe(false)
+    expect(preparedCodexHookRoot(data)).toBeNull()
+    expect((await prepareCodexHookFolders({ dataDir: data, scriptsDir: scriptsDir(), plainDir: null }, async () => { throw new Error('the rule failed') })).root).toBe(false)
+    expect(preparedCodexHookRoot(data)).toBeNull()
+    expect((await prepareCodexHookFolders({ dataDir: 'relative', scriptsDir: scriptsDir(), plainDir: null }, rule().secure)).root).toBe(false)
+  })
+
+  it('one preparation at a time; once ready a further one asks the rule nothing; a root made again in the run is prepared again', async () => {
+    const data = tmp()
+    const root = path.join(data, CODEX_HOOK_ROOT_NAME)
+    const src = scriptsDir()
+    const plan = { dataDir: data, scriptsDir: src, plainDir: null }
+    // Launches at the same moment share one attempt, refused or not.
+    const no = rule(() => false)
+    const refused = await Promise.all([prepareCodexHookFolders(plan, no.secure), prepareCodexHookFolders(plan, no.secure)])
+    expect(refused.map((o) => o.root)).toEqual([false, false])
+    expect(no.calls).toHaveLength(1)
+    // Round 5 (G3): that failure would be remembered for a while; start afresh.
+    __resetCodexHookFoldersForTests()
+    const r = rule()
+    const [a, b] = await Promise.all([prepareCodexHookFolders(plan, r.secure), prepareCodexHookFolders(plan, r.secure)])
+    expect(a.root && b.root).toBe(true)
     expect(r.calls).toHaveLength(1)
+    expect((await prepareCodexHookFolders(plan, r.secure)).root).toBe(true)
+    expect(r.calls).toHaveLength(1)
+    // Removed and made again: another folder, not ready until prepared again.
     fs.rmdirSync(root)
-    expect(ensureCodexHookRoot(data, r.harden)).toBe(root)
-    expect(r.calls).toEqual([{ dir: root, takeOwnership: false }, { dir: root, takeOwnership: false }])
-    // Replaced by a folder the app did not make (another one under the same name).
+    fs.mkdirSync(root)
+    expect(preparedCodexHookRoot(data)).toBeNull()
+    expect((await prepareCodexHookFolders(plan, r.secure)).root).toBe(true)
+    expect(r.calls).toHaveLength(2)
+    expect(preparedCodexHookRoot(data)).toBe(root)
+    // Replaced by a link: not used, and never handed to the rule.
     fs.rmdirSync(root)
-    const other = path.join(data, 'other')
-    fs.mkdirSync(other)
-    fs.renameSync(other, root)
-    expect(ensureCodexHookRoot(data, r.harden)).toBe(root)
-    expect(r.calls.at(-1)).toEqual({ dir: root, takeOwnership: true })
-    expect(r.calls).toHaveLength(3)
+    folderLink(tmp(), root)
+    expect(preparedCodexHookRoot(data)).toBeNull()
+    expect((await prepareCodexHookFolders(plan, r.secure)).root).toBe(false)
+    expect(r.calls).toHaveLength(2)
   })
 
-  it('the plain copy: folders already there are made the user\'s first, and either refusal means no copy', () => {
+  it('a folder replaced by a link while the rule runs is refused, and nothing is made or written through it', async () => {
     const src = scriptsDir()
-    const lad = tmp()
-    const plain = path.join(lad, CODEX_HOOK_PLAIN_BASE, 'codex-hooks-abcdef012345')
-    const first = recorder()
-    expect(stagePlainCodexHookWrapper(src, plain, first.harden)).toBe(true)
-    expect(first.calls).toEqual([{ dir: path.dirname(plain), takeOwnership: false }, { dir: plain, takeOwnership: false }])
-    __resetCodexHookFoldersForTests()
-    const again = recorder()
-    expect(stagePlainCodexHookWrapper(src, plain, again.harden)).toBe(true)
-    expect(again.calls).toEqual([{ dir: path.dirname(plain), takeOwnership: true }, { dir: plain, takeOwnership: true }])
-    for (const refuse of [path.dirname(plain), plain]) {
+    for (const level of ['root', 'base', 'copy'] as const) {
       __resetCodexHookFoldersForTests()
-      const r = recorder((c) => !(c.dir === refuse && c.takeOwnership))
-      expect(stagePlainCodexHookWrapper(src, plain, r.harden), refuse).toBe(false)
-      expect(verifyPlainCodexHookWrapper(src, plain), refuse).toBe(false)
+      const data = tmp()
+      const elsewhere = tmp()
+      const plain = path.join(tmp(), CODEX_HOOK_PLAIN_BASE, 'codex-hooks-abcdef012345')
+      const target = level === 'root' ? path.join(data, CODEX_HOOK_ROOT_NAME) : level === 'base' ? path.dirname(plain) : plain
+      const r = rule(() => true, (dir) => {
+        if (dir !== target) return
+        fs.renameSync(target, `${target}-moved`)
+        folderLink(elsewhere, target)
+      })
+      const out = await prepareCodexHookFolders({ dataDir: data, scriptsDir: src, plainDir: plain }, r.secure)
+      if (level === 'root') expect(out.root, level).toBe(false)
+      else expect(out.plain, level).toBe(false)
+      expect(fs.readdirSync(elsewhere), level).toEqual([])
     }
-    // Only the tag folder there from before (its base made now).
-    const lad2 = tmp()
-    fs.mkdirSync(path.join(lad2, CODEX_HOOK_PLAIN_BASE))
-    const plain2 = path.join(lad2, CODEX_HOOK_PLAIN_BASE, 'codex-hooks-abcdef012345')
-    fs.mkdirSync(plain2)
-    const mixed = recorder()
-    expect(stagePlainCodexHookWrapper(src, plain2, mixed.harden)).toBe(true)
-    expect(mixed.calls.map((c) => c.takeOwnership)).toEqual([true, true])
   })
 
-  it('a launch only ever runs the two verified names: other files in the copy folder change nothing', () => {
+  it('a base or copy folder that is not the user\'s alone gives no plain copy, the root still ready; not retried in the run', async () => {
     const src = scriptsDir()
-    const lad = tmp()
-    const plain = path.join(lad, CODEX_HOOK_PLAIN_BASE, 'codex-hooks-abcdef012345')
-    expect(stagePlainCodexHookWrapper(src, plain, () => true)).toBe(true)
-    for (const extra of ['node.cmd', 'node.exe', 'ccc-codex-hook.bat', 'ccc-codex-hook.ps1', 'hook.json']) fs.writeFileSync(path.join(plain, extra), 'x')
-    expect(verifyPlainCodexHookWrapper(src, plain)).toBe(true)
-    // The command a launch gets is the wrapper by its own path, nothing else there.
-    const plainWin = 'C:\\Users\\riley\\AppData\\Local\\ai-code-conductor\\codex-hooks-abcdef012345'
-    expect(codexHookCommand(plainWin, 'win32', true)).toBe(plainWin + '\\ccc-codex-hook.cmd')
-    // And the wrapper the app ships runs only the forwarder beside it.
-    const wrapper = fs.readFileSync(path.join(__dirname, '..', '..', '..', '..', 'scripts', 'ccc-codex-hook.cmd'), 'utf8')
-    const beside = wrapper.split(/\r?\n/).filter((l) => !/^\s*rem\b/i.test(l)).join('\n').match(/%~dp0[^"\s]*/g) ?? []
-    expect(beside).toEqual(['%~dp0ccc-codex-hook.js'])
+    for (const refuse of ['base', 'copy'] as const) {
+      __resetCodexHookFoldersForTests()
+      const data = tmp()
+      const plain = path.join(tmp(), CODEX_HOOK_PLAIN_BASE, 'codex-hooks-abcdef012345')
+      const no = refuse === 'base' ? path.dirname(plain) : plain
+      const r = rule((d) => d !== no)
+      const out = await prepareCodexHookFolders({ dataDir: data, scriptsDir: src, plainDir: plain }, r.secure)
+      expect(out, refuse).toMatchObject({ root: true, plain: false })
+      expect(verifyPlainCodexHookWrapper(src, plain), refuse).toBe(false)
+      expect(fs.existsSync(path.join(plain, 'ccc-codex-hook.cmd')), refuse).toBe(false)
+      await prepareCodexHookFolders({ dataDir: data, scriptsDir: src, plainDir: plain }, r.secure)
+      expect(r.calls, refuse).toHaveLength(1)
+    }
+  })
+
+  it('a data folder reached through a link is the user\'s choice: its own real codex-hooks is used', async () => {
+    const real = tmp()
+    const viaLink = path.join(tmp(), 'data-link')
+    folderLink(real, viaLink)
+    expect((await prepareCodexHookFolders({ dataDir: viaLink, scriptsDir: scriptsDir(), plainDir: null }, rule().secure)).root).toBe(true)
+    expect(preparedCodexHookRoot(viaLink)).toBe(path.join(viaLink, CODEX_HOOK_ROOT_NAME))
+    expect(realFolderChainBelow(viaLink, path.join(viaLink, CODEX_HOOK_ROOT_NAME))).toBe(true)
+  })
+
+  it('left-behind hook folders are swept once the root is ready', async () => {
+    const data = tmp()
+    const root = path.join(data, CODEX_HOOK_ROOT_NAME)
+    fs.mkdirSync(root)
+    const old = fs.mkdtempSync(path.join(root, CODEX_HOOK_DIR_PREFIX))
+    const past = new Date(Date.now() - CODEX_HOOK_STALE_MS - 60_000)
+    fs.utimesSync(old, past, past)
+    expect((await prepareCodexHookFolders({ dataDir: data, scriptsDir: scriptsDir(), plainDir: null }, rule().secure)).root).toBe(true)
+    expect(fs.existsSync(old)).toBe(false)
+  })
+
+  it.runIf(process.platform !== 'win32')('POSIX: a launch applies 0700 again to the prepared root', async () => {
+    const data = tmp()
+    const root = path.join(data, CODEX_HOOK_ROOT_NAME)
+    await prepareCodexHookFolders({ dataDir: data, scriptsDir: scriptsDir(), plainDir: null }, rule().secure)
+    fs.chmodSync(root, 0o755)
+    expect(preparedCodexHookRoot(data)).toBe(root)
+    expect(fs.statSync(root).mode & 0o777).toBe(0o700)
+  })
+})
+
+// Round 5 (G3): a preparation that failed is not asked again for
+// CODEX_HOOK_FOLDERS_RETRY_MS unless the folders asked for change, so a launch
+// (and every change the accounts service announces) meanwhile gets the answer
+// at once instead of another call of the rule.
+describe('round 5: a failed preparation waits before it is tried again', () => {
+  afterEach(() => { vi.useRealTimers() })
+
+  function scriptsDir(): string {
+    const res = tmp()
+    fs.mkdirSync(path.join(res, 'scripts'))
+    fs.writeFileSync(path.join(res, 'scripts', 'ccc-codex-hook.js'), '// forwarder')
+    fs.writeFileSync(path.join(res, 'scripts', 'ccc-codex-hook.cmd'), 'rem wrapper')
+    return path.join(res, 'scripts')
+  }
+
+  it('the same folders: answered at once until the wait is over; other folders: asked at once', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(Date.UTC(2026, 8, 30, 12, 0, 0))
+    const plan = { dataDir: tmp(), scriptsDir: scriptsDir(), plainDir: null }
+    const no = rule(() => false)
+    expect((await prepareCodexHookFolders(plan, no.secure)).root).toBe(false)
+    expect(await prepareCodexHookFolders(plan, no.secure)).toMatchObject({ root: false, ran: false })
+    vi.setSystemTime(Date.now() + CODEX_HOOK_FOLDERS_RETRY_MS - 1)
+    expect((await prepareCodexHookFolders(plan, no.secure)).ran).toBe(false)
+    expect(no.calls).toHaveLength(1)
+    // Other folders asked for: the rule is asked at once.
+    expect((await prepareCodexHookFolders({ ...plan, dataDir: tmp() }, no.secure)).ran).toBe(true)
+    expect(no.calls).toHaveLength(2)
+    // Past the wait: asked again, and a rule that takes now gives the root.
+    vi.setSystemTime(Date.now() + CODEX_HOOK_FOLDERS_RETRY_MS)
+    const ok = rule()
+    expect((await prepareCodexHookFolders(plan, ok.secure)).root).toBe(true)
+    expect(ok.calls).toHaveLength(1)
+    expect(CODEX_HOOK_FOLDERS_RETRY_MS).toBeGreaterThanOrEqual(60_000)
   })
 })

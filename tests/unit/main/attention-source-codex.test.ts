@@ -152,12 +152,16 @@ describe('Codex attention: an approval and its own PreToolUse, in either order (
     expect(h2.pushed).toEqual([['c', true]])
   })
 
-  it('round 2 (R3): the approval after its own PreToolUse takes nothing: the next call\'s PreToolUse clears (the model moving on after the user declined), in either arrival order of the first pair', () => {
+  it('round 4 (P3): the approval after its own PreToolUse keeps that call: another call of the turn clears nothing, the approved call\'s PostToolUse clears, in either arrival order of the first pair', () => {
     const h = harness(new Set(['c']))
     routeAttentionEvent(preId('call_1'), h.opts)
     routeAttentionEvent(perm(), h.opts)
-    // The user declines; the model's next call of the same turn and tool.
+    // Another call of the same turn and tool, and its end: the approval still waits.
     routeAttentionEvent(preId('call_2'), h.opts)
+    routeAttentionEvent(postId('call_2'), h.opts)
+    expect(h.pushed).toEqual([['c', false], ['c', true]])
+    // The approved call ran.
+    routeAttentionEvent(postId('call_1'), h.opts)
     expect(h.pushed).toEqual([['c', false], ['c', true], ['c', false]])
     // And in the other order the approved call's own PostToolUse clears.
     _resetAttentionSourceForTest()
@@ -242,17 +246,17 @@ describe('Codex attention: an approval pairs only with a PreToolUse close to it 
     expect(h.pushed.at(-1)).toEqual(['c', false])
   })
 
-  it('the VM orders still pair: a shell command\'s PreToolUse 13 ms before, an apply_patch\'s 2156 ms before, and the next call clears', () => {
+  it('the VM orders still pair: a shell command\'s PreToolUse 13 ms before, an apply_patch\'s 2156 ms before, and the approved call\'s PostToolUse clears', () => {
     const h = harness(new Set(['c']))
     routeAttentionEvent(preId('b1', 1000), h.opts)
     routeAttentionEvent(perm(1013), h.opts)
-    routeAttentionEvent(preId('b2', 8000), h.opts)
+    routeAttentionEvent(postId('b1', 5000), h.opts)
     expect(h.pushed).toEqual([['c', false], ['c', true], ['c', false]])
     _resetAttentionSourceForTest()
     const h2 = harness(new Set(['c']))
     routeAttentionEvent(preId('p1', 1000, 'apply_patch'), h2.opts)
     routeAttentionEvent(perm(3156, 'apply_patch'), h2.opts)
-    routeAttentionEvent(preId('p2', 10000, 'apply_patch'), h2.opts)
+    routeAttentionEvent(postId('p1', 6000, 'apply_patch'), h2.opts)
     expect(h2.pushed).toEqual([['c', false], ['c', true], ['c', false]])
     _resetAttentionSourceForTest()
     const h3 = harness(new Set(['c']))
@@ -264,18 +268,32 @@ describe('Codex attention: an approval pairs only with a PreToolUse close to it 
     expect(h3.pushed).toEqual([['c', true], ['c', false]])
   })
 
-  it('the edge: a PreToolUse exactly 3 s before pairs, one 3001 ms before does not', () => {
+  it('the edge: a PreToolUse exactly 3 s before pairs (its PostToolUse clears), one 3001 ms before does not (the approval waits for its own)', () => {
     const h = harness(new Set(['c']))
     routeAttentionEvent(preId('y', 0), h.opts)
     routeAttentionEvent(perm(3000), h.opts)
-    routeAttentionEvent(preId('z', 3005), h.opts)
+    routeAttentionEvent(postId('y', 3005), h.opts)
     expect(h.pushed.at(-1)).toEqual(['c', false])
     _resetAttentionSourceForTest()
     const h2 = harness(new Set(['c']))
     routeAttentionEvent(preId('y', 0), h2.opts)
     routeAttentionEvent(perm(3001), h2.opts)
-    routeAttentionEvent(preId('z', 3005), h2.opts)
+    routeAttentionEvent(postId('y', 3006), h2.opts)
     expect(h2.pushed.at(-1)).toEqual(['c', true])
+  })
+
+  it('round 4 (P3): the shell order, a PreToolUse 13 ms before its approval: the previous call\'s late PostToolUse keeps the dot up', () => {
+    const h = harness(new Set(['c']))
+    routeAttentionEvent(preId('y', 0), h.opts)
+    routeAttentionEvent(preId('z', 7000), h.opts)
+    routeAttentionEvent(perm(7013), h.opts)
+    routeAttentionEvent(postId('y', 7020), h.opts)
+    expect(h.pushed).toEqual([['c', false], ['c', false], ['c', true]])
+    // Another call's PreToolUse in the turn clears nothing either; the approved call's PostToolUse clears.
+    routeAttentionEvent(preId('w', 7030), h.opts)
+    expect(h.pushed).toEqual([['c', false], ['c', false], ['c', true]])
+    routeAttentionEvent(postId('z', 9000), h.opts)
+    expect(h.pushed.at(-1)).toEqual(['c', false])
   })
 })
 

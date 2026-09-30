@@ -12,7 +12,7 @@
 // (V3); the picker is told which conversations other tabs are on, and Codex
 // is not (V2). Nothing is started: the node lookup is a fake.
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, existsSync } from 'fs'
 import { join, basename, dirname } from 'path'
 import { tmpdir } from 'os'
 
@@ -41,7 +41,7 @@ vi.mock('../../../../src/main/config-manager', async (importOriginal) => ({
 }))
 
 import { CodexProvider } from '../../../../src/main/providers/codex'
-import { codexHookCommand, codexHookConfigArgs, codexPlainWrapperDir, stagePlainCodexHookWrapper, __setCodexLocalAppDataForTests, __resetCodexHookFoldersForTests, CODEX_HOOK_FILE_ENV } from '../../../../src/main/providers/codex/hooks'
+import { codexHookCommand, codexHookConfigArgs, codexPlainWrapperDir, __setCodexLocalAppDataForTests, __resetCodexHookFoldersForTests, CODEX_HOOK_FILE_ENV, CODEX_HOOK_FOLDERS_RETRY_MS } from '../../../../src/main/providers/codex/hooks'
 import { codexCmdExeTarget, CODEX_OPEN_ELSEWHERE_ENV } from '../../../../src/main/providers/codex/spawn'
 
 const TEST_PREFIX = 'p310-spawn-hooks-'
@@ -63,6 +63,7 @@ function resources(deploy = true, sub?: string): string {
   return d
 }
 afterEach(() => {
+  vi.useRealTimers()
   ;(globalThis as any).__mockResourcesDir = undefined
   __setCodexLocalAppDataForTests(null)
   __resetCodexHookFoldersForTests()
@@ -80,6 +81,15 @@ const hookFile = join(tmpdir(), 'codex-hooks', 'ccc-codex-hook-abc', 'hook.json'
 const opts = { sessionId: 'sess-1', realmLaunch: launch, codexOptions: { permissionsPreset: 'standard' as const } }
 const ID = '019dd000-0001-7000-8000-0000000000c1'
 const ID_B = '019dd000-0001-7000-8000-0000000000c2'
+
+/** Round 4: the owner-only rule, answered here: each folder made when missing,
+ *  `ok` its verdict. */
+function secureWith(ok: boolean) {
+  return async (dirs: readonly string[]) => dirs.map((dir) => {
+    try { mkdirSync(dir) } catch { /* there already */ }
+    return { dir, ok, detail: ok ? 'owner-only' : 'not this user\'s alone' }
+  })
+}
 
 function hookArgs(args: string[]): string[] {
   const out: string[] = []
@@ -183,7 +193,7 @@ describe('buildCodexSpawn: the app\'s hooks', () => {
 })
 
 describe('round 1 (V3): the npm shim route from a resources folder with a space', () => {
-  it.runIf(process.platform === 'win32')('runs the plain-path copy under the local app data folder once staged and checked; a changed copy, none staged, or a spaced local app data folder gives no hooks; a direct launch keeps PowerShell\'s call', (ctx) => {
+  it.runIf(process.platform === 'win32')('runs the plain-path copy under the local app data folder once staged and checked; a changed copy, none staged, or a spaced local app data folder gives no hooks; a direct launch keeps PowerShell\'s call', async (ctx) => {
     const res = resources(true, 'AI Code Conductor')
     const lad = tempDir()
     __setCodexLocalAppDataForTests(lad)
@@ -196,7 +206,7 @@ describe('round 1 (V3): the npm shim route from a resources folder with a space'
     const before = viaShim()
     expect(before.hooksInstalled).toBe(false)
     expect(before.commandLine).toBeTruthy()
-    expect(stagePlainCodexHookWrapper(join(res, 'scripts'), plainDir)).toBe(true)
+    expect(await new CodexProvider().prepareHookFolders(res, secureWith(true))).toBe(true)
     const out = viaShim()
     expect(out.hooksInstalled).toBe(true)
     const command = join(plainDir, 'ccc-codex-hook.cmd')
@@ -216,38 +226,63 @@ describe('round 1 (V3): the npm shim route from a resources folder with a space'
   })
 })
 
-describe('round 2 (R7): a plain-path copy that could not be made is said at boot', () => {
-  it.runIf(process.platform === 'win32')('the deploy logs it, and the shim route then has no hooks', async (ctx) => {
+describe('round 2 (R7): a plain-path copy that could not be made is said', () => {
+  it.runIf(process.platform === 'win32')('the preparation logs it, and the shim route then has no hooks', async (ctx) => {
     const res = resources(true, 'AI Code Conductor')
     const lad = tempDir()
     __setCodexLocalAppDataForTests(lad)
     if (!codexPlainWrapperDir(lad, res)) { ctx.skip(); return }
     // The owner-only rule does not take: nothing staged, and it says so.
-    await new CodexProvider().deployResumePickerScript(res, { hardenDir: () => false })
+    await new CodexProvider().prepareHookFolders(res, secureWith(false))
     expect(warns.some((w) => /plain-path copy of the hook wrapper could not be made/.test(w))).toBe(true)
     const out = new CodexProvider().buildSpawnCommand({ ...opts, realmLaunch: { ...launch, executable: 'C:\\npm\\codex.cmd' }, codexHooks: { hookFile } })
     expect(out.hooksInstalled).toBe(false)
     // A local app data folder whose path is not a plain word: said too.
     warns.length = 0
+    __resetCodexHookFoldersForTests()
     __setCodexLocalAppDataForTests(join(lad, 'Riley Smith'))
-    await new CodexProvider().deployResumePickerScript(res, { hardenDir: () => true })
+    await new CodexProvider().prepareHookFolders(res, secureWith(true))
     expect(warns.some((w) => /is not a plain word/.test(w))).toBe(true)
   })
 })
 
-describe('round 3 (F3): a hook folder already there that cannot be made the user\'s gives no hooks, and says so', () => {
-  it('at boot and at a launch', async () => {
+// Round 4 (P1, P2): the hook folders are prepared asynchronously (only while
+// Codex is on, src/main/codex-hook-folders.ts); a launch uses them only once
+// prepared, and a folder the rule cannot make this user's alone means no hooks.
+describe('round 4: hook folders that are not ready, or not this user\'s alone, give no hooks, and say so', () => {
+  it('a launch before any preparation starts without hooks, said', () => {
+    resources(true)
+    expect(new CodexProvider().prepareSessionHooks('sess-1', 51234, '0f8b6a2c-1d3e-4f50-9a61-7b2c3d4e5f60')).toBeNull()
+    expect(warns.some((w) => /no hook folder for sess-1/.test(w))).toBe(true)
+  })
+
+  it('at the preparation and at a launch; once prepared, hooks and nothing said', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
     const res = resources(true)
     mkdirSync(join(res, 'codex-hooks'))
-    const notTheUsers = (_d: string, o?: { takeOwnership?: boolean }): boolean => !o?.takeOwnership
-    await new CodexProvider().deployResumePickerScript(res, { hardenDir: notTheUsers })
+    expect(await new CodexProvider().prepareHookFolders(res, secureWith(false))).toBe(false)
     expect(warns.some((w) => /the hook folder in the data folder is not a real folder that this user alone owns/.test(w))).toBe(true)
     warns.length = 0
-    expect(new CodexProvider().prepareSessionHooks('sess-1', 51234, '0f8b6a2c-1d3e-4f50-9a61-7b2c3d4e5f60', { hardenDir: notTheUsers })).toBeNull()
+    expect(new CodexProvider().prepareSessionHooks('sess-1', 51234, '0f8b6a2c-1d3e-4f50-9a61-7b2c3d4e5f60')).toBeNull()
     expect(warns.some((w) => /no hook folder for sess-1/.test(w))).toBe(true)
-    // Made the user's: hooks, and nothing said.
+    // Round 5 (G3): within the retry wait the failure is the answer, and nothing more is said.
     warns.length = 0
-    expect(new CodexProvider().prepareSessionHooks('sess-1', 51234, '0f8b6a2c-1d3e-4f50-9a61-7b2c3d4e5f60', { hardenDir: () => true })).not.toBeNull()
+    expect(await new CodexProvider().prepareHookFolders(res, secureWith(true))).toBe(false)
     expect(warns).toEqual([])
+    // Past it, made the user's: hooks, and nothing said.
+    vi.setSystemTime(Date.now() + CODEX_HOOK_FOLDERS_RETRY_MS)
+    expect(await new CodexProvider().prepareHookFolders(res, secureWith(true))).toBe(true)
+    vi.useRealTimers()
+    const h = new CodexProvider().prepareSessionHooks('sess-1', 51234, '0f8b6a2c-1d3e-4f50-9a61-7b2c3d4e5f60')
+    expect(h).not.toBeNull()
+    h?.dispose()
+    expect(warns).toEqual([])
+  })
+
+  it('the deploy copies the scripts only: it makes no hook folder and prepares nothing', async () => {
+    const res = resources(false)
+    await new CodexProvider().deployResumePickerScript(res)
+    expect(existsSync(join(res, 'codex-hooks'))).toBe(false)
+    expect(new CodexProvider().prepareSessionHooks('sess-1', 51234, '0f8b6a2c-1d3e-4f50-9a61-7b2c3d4e5f60')).toBeNull()
   })
 })

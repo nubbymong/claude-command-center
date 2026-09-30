@@ -174,31 +174,37 @@ export function realFolderChainBelow(top: string, dir: string): boolean {
   return true
 }
 
-/** Make a folder the app owns, when it is not there yet. Round 3 (F3, F4):
- *  says whether it was made now ('made') or was there already ('found');
- *  null when it could not be made. */
-function makeOwnFolder(dir: string): 'made' | 'found' | null {
-  try {
-    fs.mkdirSync(dir, { mode: 0o700 })
-    return 'made'
-  } catch (err) {
-    return (err as NodeJS.ErrnoException)?.code === 'EEXIST' ? 'found' : null
-  }
+/** Round 4 (P1, P2): the app's owner-only rule for the hook folders
+ *  (injected; src/main/owner-only-folders.ts secureOwnerOnlyFolders). Given
+ *  folders in order it makes each missing one inside its parent, makes each
+ *  this user's and owner-only, reads each back, and says per folder whether
+ *  it now is exactly that (the user and SYSTEM, the Administrators group
+ *  accepted; owned by the user; nothing inherited from above). Asynchronous:
+ *  on Windows one Windows PowerShell call for every folder, never on the main
+ *  thread's path; never at a launch (see preparedCodexHookRoot). */
+export type SecureHookFolders = (dirs: readonly string[]) => Promise<ReadonlyArray<{ dir: string; ok: boolean; detail?: string }>>
+
+/** What a preparation works on: the app's data folder (for `codex-hooks`),
+ *  the resources folder's scripts (the source of the plain copies) and, when
+ *  this install's launch route needs one, the plain-copy folder. */
+export interface CodexHookFolderPlan {
+  dataDir: string
+  scriptsDir: string
+  plainDir: string | null
 }
 
-/** The app's owner-only folder rule (injected). Round 3 (F3): a folder the
- *  app did not make this run is used only once it belongs to the user, so
- *  for one found already there the rule is asked to make the user its owner
- *  first (`takeOwnership`), and it fails when that cannot be done. */
-export type HardenDir = (dir: string, opts?: { takeOwnership?: boolean }) => boolean
-
-/** The rule's options for a folder makeOwnFolder made, or found. */
-function hardenOpts(made: 'made' | 'found'): { takeOwnership: true } | undefined {
-  return made === 'found' ? { takeOwnership: true } : undefined
+/** A preparation's outcome: the hook root ready or not; the plain copy
+ *  staged, not, or not asked for (null); `ran`, whether the rule was asked
+ *  (false: still ready from before); `detail`, the rule's reasons. */
+export interface CodexHookFolderOutcome {
+  root: boolean
+  plain: boolean | null
+  ran: boolean
+  detail: string[]
 }
 
-/** Round 3 (F4): a folder's identity (its volume and file index), or null
- *  when the file system gives none. */
+/** A folder's identity (its volume and file index), or null when the file
+ *  system gives none (round 3, F4). */
 function folderIdentity(dir: string): string | null {
   try {
     const st = fs.lstatSync(dir, { bigint: true })
@@ -221,46 +227,161 @@ function ownerOnlyPosix(dir: string): boolean {
   }
 }
 
-/** Round 2 (R6): the hook roots hardened by the app's owner-only folder rule
- *  in this run. That rule is a synchronous ACL call on Windows, so it runs
- *  once a run per root (at boot, or the first launch), not on every launch;
- *  every launch still checks the folder chain. Round 3 (F4): once a run per
- *  FOLDER: each root with the identity of the folder that was hardened, so a
- *  root made again in the run, or replaced by another folder, is hardened
- *  again (and one the app did not make is made the user's first, F3). */
-const hardenedHookRoots = new Map<string, string>()
-/** Test seam: forget which hook roots were hardened, and which plain copies staged. */
+/** Whether something is at `p` (a link counts, and is not followed). */
+function presentNoFollow(p: string): boolean {
+  try { fs.lstatSync(p); return true } catch { return false }
+}
+
+/** Round 5 (G3): how long a preparation that left no hook root is the answer
+ *  for the same folders before the rule is asked again (other folders asked
+ *  for are prepared at once). Every launch and every change the accounts
+ *  service announces asks; meanwhile they get the answer at once. */
+export const CODEX_HOOK_FOLDERS_RETRY_MS = 5 * 60_000
+
+/** Round 4: what this run prepared: the plan's key, the hook root with the
+ *  identity of the folder the rule secured, and the plain copy's outcome;
+ *  round 5 (G3): when a preparation left no root, when it ended. */
+interface Prepared { key: string; root: string | null; rootId: string | null; plainDir: string | null; plainOk: boolean | null; failedAt: number | null }
+let prepared: Prepared | null = null
+/** The preparation running now (one at a time). */
+let inFlight: { key: string; promise: Promise<CodexHookFolderOutcome> } | null = null
+
+/** Test seam: forget what was prepared, and which plain copies staged. */
 export function __resetCodexHookFoldersForTests(): void {
-  hardenedHookRoots.clear()
+  prepared = null
+  inFlight = null
   stagedPlainDirs.clear()
+}
+
+function planKey(plan: CodexHookFolderPlan): string {
+  return JSON.stringify([plan.dataDir, plan.scriptsDir, plan.plainDir])
 }
 
 /**
  * P3.10 round 1 (A5): the folder holding the per-launch hook folders,
- * `<dataDir>/codex-hooks`, made when missing: a real folder inside the app's
- * own data folder (never a link or a junction), this user's only (0700 on
- * POSIX; `hardenDir`, the app's owner-only folder rule, on Windows, where it
- * removes every inherited grant; once a run, round 2). Round 3 (F3): one
- * already there is used only once it belongs to the user (see HardenDir).
- * Null when it is not that, or cannot be made so: the launch then gets no
- * hooks.
+ * `<dataDir>/codex-hooks`: a real folder inside the app's own data folder
+ * (never a link or a junction; the data folder itself is the user's choice
+ * and is not inspected), this user's alone. Round 4 (P1): only one this run
+ * prepared (prepareCodexHookFolders) and still the same folder (its identity,
+ * so one removed and made again, or replaced, is not used until prepared
+ * again, round 3 F4); the chain is checked, and on POSIX 0700 applied again.
+ * Cheap and synchronous (no process), for a launch; null means the launch
+ * gets no hooks.
  */
-export function ensureCodexHookRoot(dataDir: string, hardenDir?: HardenDir): string | null {
-  if (typeof dataDir !== 'string' || !dataDir || !path.isAbsolute(dataDir) || CONTROL_RE.test(dataDir)) return null
+export function preparedCodexHookRoot(dataDir: string): string | null {
+  const p = prepared
+  if (!p || !p.root || p.rootId === null || typeof dataDir !== 'string' || !dataDir) return null
   const root = path.join(dataDir, CODEX_HOOK_ROOT_NAME)
-  const made = makeOwnFolder(root)
-  if (!made) return null
-  if (!realFolderChainBelow(dataDir, root)) return null
-  if (!ownerOnlyPosix(root)) return null
-  if (hardenDir) {
-    const id = folderIdentity(root)
-    if (made === 'made' || id === null || hardenedHookRoots.get(root) !== id) {
-      hardenedHookRoots.delete(root)
-      try { if (!hardenDir(root, hardenOpts(made))) return null } catch { return null }
-      if (id !== null) hardenedHookRoots.set(root, id)
+  if (root !== p.root) return null
+  if (!realFolderChainBelow(dataDir, root) || !ownerOnlyPosix(root)) return null
+  return folderIdentity(root) === p.rootId ? root : null
+}
+
+/** Still ready for this plan: the root as prepared, and the plain copy either
+ *  not asked for, refused this run (not asked again until the next start),
+ *  or still whole (one changed since is prepared again). */
+function stillPrepared(plan: CodexHookFolderPlan, key: string): boolean {
+  const p = prepared
+  if (!p || p.key !== key || preparedCodexHookRoot(plan.dataDir) === null) return false
+  if (plan.plainDir === null || p.plainOk === false) return true
+  return verifyPlainCodexHookWrapper(plan.scriptsDir, plan.plainDir)
+}
+
+/** The answer without asking the rule: still ready, or (round 5, G3) the
+ *  same folders' preparation left no root less than CODEX_HOOK_FOLDERS_RETRY_MS
+ *  ago; null when the rule is to be asked. */
+function quickAnswer(plan: CodexHookFolderPlan, key: string): CodexHookFolderOutcome | null {
+  if (stillPrepared(plan, key)) return { root: true, plain: plan.plainDir === null ? null : prepared?.plainOk ?? null, ran: false, detail: [] }
+  const p = prepared
+  if (!p || p.key !== key || p.root !== null || p.failedAt === null) return null
+  const since = Date.now() - p.failedAt
+  if (since < 0 || since >= CODEX_HOOK_FOLDERS_RETRY_MS) return null
+  return { root: false, plain: plan.plainDir === null ? null : p.plainOk ?? false, ran: false, detail: [] }
+}
+
+/**
+ * Round 4 (P1, P2): prepare this run's hook folders, asynchronously and one
+ * preparation at a time; a no-op while they are still ready. The hook root
+ * and, when the plan names one, the plain-copy folder and its base go to the
+ * owner-only rule in ONE call, in that order (the rule makes a missing folder
+ * inside its parent only once that parent passed); a folder already there is
+ * handed to it only while it is a real folder in its chain. After the rule:
+ * each folder it passed is checked again (still a real folder in its chain,
+ * so nothing is made or written through a link), and only then are the two
+ * files written into the plain-copy folder; verifyPlainCodexHookWrapper
+ * checks them before each use. Left-behind hook folders are swept once the
+ * root is ready. Never throws.
+ */
+export function prepareCodexHookFolders(plan: CodexHookFolderPlan, secure: SecureHookFolders): Promise<CodexHookFolderOutcome> {
+  const key = planKey(plan)
+  if (inFlight && inFlight.key === key) return inFlight.promise
+  const quick = inFlight ? null : quickAnswer(plan, key)
+  if (quick) return Promise.resolve(quick)
+  const before = inFlight?.promise
+  const promise = (async (): Promise<CodexHookFolderOutcome> => {
+    if (before) await before
+    const answer = quickAnswer(plan, key)
+    if (answer) return answer
+    try {
+      return await runPreparation(plan, secure, key)
+    } catch (err) {
+      prepared = { key, root: null, rootId: null, plainDir: plan.plainDir, plainOk: plan.plainDir === null ? null : false, failedAt: Date.now() }
+      return { root: false, plain: plan.plainDir === null ? null : false, ran: true, detail: [String((err as Error)?.message ?? err)] }
+    }
+  })()
+  const entry = { key, promise }
+  inFlight = entry
+  void promise.then(() => { if (inFlight === entry) inFlight = null })
+  return promise
+}
+
+async function runPreparation(plan: CodexHookFolderPlan, secure: SecureHookFolders, key: string): Promise<CodexHookFolderOutcome> {
+  const { dataDir, scriptsDir, plainDir } = plan
+  prepared = null
+  if (plainDir) stagedPlainDirs.delete(plainDir)
+  const detail: string[] = []
+  if (typeof dataDir !== 'string' || !dataDir || !path.isAbsolute(dataDir) || CONTROL_RE.test(dataDir)) {
+    prepared = { key, root: null, rootId: null, plainDir, plainOk: plainDir === null ? null : false, failedAt: Date.now() }
+    return { root: false, plain: plainDir === null ? null : false, ran: false, detail: ['the data folder is not an absolute path'] }
+  }
+  const root = path.join(dataDir, CODEX_HOOK_ROOT_NAME)
+  const dirs: string[] = []
+  // A folder already there goes to the rule only while it is a real folder in its chain.
+  if (presentNoFollow(root) && !realFolderChainBelow(dataDir, root)) detail.push(`${root}: not a real folder`)
+  else dirs.push(root)
+  let base: string | null = null
+  let top: string | null = null
+  if (plainDir) {
+    base = path.dirname(plainDir)
+    top = path.dirname(base)
+    const real = (d: string): boolean => !presentNoFollow(d) || realFolderChainBelow(top as string, d)
+    if (real(base) && real(plainDir)) dirs.push(base, plainDir)
+    else detail.push(`${plainDir}: not a real folder`)
+  }
+  let results: ReadonlyArray<{ dir: string; ok: boolean; detail?: string }> = []
+  if (dirs.length > 0) {
+    try {
+      const r = await secure(dirs)
+      results = Array.isArray(r) ? r : []
+    } catch (err) {
+      detail.push(`the owner-only rule failed: ${(err as Error)?.message ?? err}`)
+      results = []
     }
   }
-  return root
+  const passed = (d: string): boolean => dirs.includes(d) && results.some((r) => r && r.dir === d && r.ok === true)
+  for (const r of results) if (r && r.ok !== true) detail.push(`${r.dir}: ${r.detail ?? 'refused'}`)
+  // The root: passed, and after the rule still a real folder in its chain.
+  const rootOk = passed(root) && realFolderChainBelow(dataDir, root) && ownerOnlyPosix(root)
+  // The plain copy: both levels passed and are still real folders; only then the files.
+  let plainOk: boolean | null = null
+  if (plainDir && base && top) {
+    plainOk = passed(base) && passed(plainDir) && realFolderChainBelow(top, plainDir) && writePlainCopies(scriptsDir, plainDir)
+  }
+  prepared = { key, root: rootOk ? root : null, rootId: rootOk ? folderIdentity(root) : null, plainDir, plainOk, failedAt: rootOk ? null : Date.now() }
+  if (rootOk) {
+    try { sweepStaleCodexHookFolders(root) } catch { /* best-effort */ }
+  }
+  return { root: rootOk, plain: plainOk, ran: true, detail }
 }
 
 /** A launch's hook file: where it is, and its folder as made. */
@@ -272,7 +393,7 @@ export interface CodexHookFile {
 
 /**
  * Write the session's hook file: a folder of its own inside `root` (see
- * ensureCodexHookRoot), made for this launch with an unguessable name,
+ * preparedCodexHookRoot), made for this launch with an unguessable name,
  * holding `hook.json` written whole and owner-only: the gateway's port, the
  * session id and its token. Null when any part is not what the gateway would
  * route, or the write fails.
@@ -333,7 +454,7 @@ function emptyHookFolder(dir: string): void {
 export const CODEX_HOOK_STALE_MS = 24 * 3600 * 1000
 
 /** Remove hook folders a crash or a quit left behind in `root` (this install's
- *  own hook root, ensureCodexHookRoot, and nowhere else): its own prefix,
+ *  own hook root, preparedCodexHookRoot, and nowhere else): its own prefix,
  *  real folders only (never a link or junction), older than
  *  CODEX_HOOK_STALE_MS, emptied as removeCodexHookFile does. Returns how
  *  many were removed. */
@@ -380,10 +501,11 @@ export async function deployCodexHookScripts(resourcesDir: string, sourceRoot?: 
 //    the same path, and so the same command, which Codex keeps trusted;
 //  - made by the app, a real folder at both levels (never a link or a
 //    junction), and both levels this user's only (the app's owner-only folder
-//    rule, which removes every inherited grant; round 2, R4: the base folder
+//    rule, which replaces every other grant; round 2, R4: the base folder
 //    too, since Codex runs the wrapper from there during the session, so the
 //    folders' own rights, not only the check before a launch, keep it);
-//  - staged this run (both levels hardened) and checked again before each
+//  - staged this run (round 4: by prepareCodexHookFolders, the files written
+//    only after both levels passed the rule) and checked again before each
 //    launch uses it: still real folders, and each file a plain file whose
 //    bytes are the resources folder's copy.
 // When that path is not a plain word either (a user name with a space), the
@@ -416,11 +538,11 @@ export function codexPlainWrapperDir(localAppData: string | undefined, resources
 }
 
 /** Round 2 (R4): the plain-copy folders staged this run, both levels made
- *  owner-only (stagePlainCodexHookWrapper). */
+ *  owner-only (round 4: prepareCodexHookFolders). */
 const stagedPlainDirs = new Set<string>()
 
 /** The plain copies are what a launch may run: staged this run (both folders
- *  hardened, round 2), both folders real (below the local app data folder),
+ *  owner-only, round 2), both folders real (below the local app data folder),
  *  and each file a plain file (not a link, one name only) whose bytes are the
  *  resources folder's copy. */
 export function verifyPlainCodexHookWrapper(scriptsDir: string, plainDir: string): boolean {
@@ -444,28 +566,12 @@ export function verifyPlainCodexHookWrapper(scriptsDir: string, plainDir: string
   return true
 }
 
-/** Copy the forwarder and its wrapper from `scriptsDir` into `plainDir` (see
- *  above), making its folders when missing, both made owner-only first (the
- *  base folder too, round 2; one already there made the user's first, round
- *  3, F3); each copy is written whole and replaces the last. True when the
- *  copies then pass verifyPlainCodexHookWrapper. */
-export function stagePlainCodexHookWrapper(scriptsDir: string, plainDir: string, hardenDir?: HardenDir): boolean {
-  stagedPlainDirs.delete(plainDir)
-  const base = path.dirname(plainDir)
-  const baseMade = makeOwnFolder(base)
-  if (!baseMade) return false
-  const plainMade = makeOwnFolder(plainDir)
-  if (!plainMade) return false
-  if (!realFolderChainBelow(path.dirname(base), plainDir)) return false
-  if (hardenDir) {
-    try {
-      if (!hardenDir(base, hardenOpts(baseMade)) || !hardenDir(plainDir, hardenOpts(plainMade))) return false
-    } catch {
-      return false
-    }
-    // Hardening changes rights, never what a folder is: still real folders.
-    if (!realFolderChainBelow(path.dirname(base), plainDir)) return false
-  }
+/** Round 4: write the forwarder and its wrapper from `scriptsDir` into the
+ *  plain-copy folder a preparation has just made owner-only and checked (see
+ *  prepareCodexHookFolders); each copy is written whole and replaces the last
+ *  (never through a link). True when the copies then pass
+ *  verifyPlainCodexHookWrapper. */
+function writePlainCopies(scriptsDir: string, plainDir: string): boolean {
   for (const name of [CODEX_HOOK_SCRIPT, CODEX_HOOK_WRAPPER]) {
     let bytes: Buffer
     try { bytes = fs.readFileSync(path.join(scriptsDir, name)) } catch { return false }

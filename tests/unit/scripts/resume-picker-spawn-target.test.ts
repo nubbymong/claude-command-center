@@ -20,8 +20,10 @@ import { describe, it, expect } from 'vitest'
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const picker = require('../../../scripts/resume-picker.js')
 const { buildSpawnTarget } = picker as {
-  buildSpawnTarget: (cmd: string, args: string[], platform?: string) => { file: string; argv: string[]; verbatim: boolean } | null
+  buildSpawnTarget: (cmd: string, args: string[], platform?: string, env?: Record<string, string | undefined>) => { file: string; argv: string[]; verbatim: boolean } | null
 }
+/** Round 3b: the system cmd.exe, by its full path. */
+const SYSTEM_CMD_RE = /^[A-Za-z]:\\(?:[^\\]+\\)*System32\\cmd\.exe$/i
 
 describe('buildSpawnTarget keeps arguments as argv elements', () => {
   it('passes a plain executable straight through', () => {
@@ -47,8 +49,8 @@ describe('buildSpawnTarget keeps arguments as argv elements', () => {
   })
 
   it('routes a .cmd shim through cmd.exe, the shim path quoted inside the /s /c line', () => {
-    const t = buildSpawnTarget('C:\\npm\\claude.cmd', ['--model', 'opus[1m]'], 'win32')!
-    expect(t.file).toBe('cmd.exe')
+    const t = buildSpawnTarget('C:\\npm\\claude.cmd', ['--model', 'opus[1m]'], 'win32', { SystemRoot: 'C:\\Windows' })!
+    expect(t.file).toBe('C:\\Windows\\System32\\cmd.exe')
     expect(t.argv).toEqual(['/d', '/v:off', '/s', '/c', '""C:\\npm\\claude.cmd" --model opus[1m]"'])
     expect(t.verbatim).toBe(true)
   })
@@ -83,7 +85,7 @@ function quoteLikeNode(a: string): string {
   return `"${out}${'\\'.repeat(slashes * 2)}"`
 }
 function whatCmdRuns(t: { file: string; argv: string[]; verbatim?: boolean }): { program: string; rest: string } {
-  expect(t.file).toBe('cmd.exe')
+  expect(t.file).toMatch(SYSTEM_CMD_RE)
   const line = t.verbatim ? t.argv.join(' ') : t.argv.map(quoteLikeNode).join(' ')
   const m = /^((?:\/(?!c\s)\S+\s+)*)\/c\s+([\s\S]*)$/i.exec(line)
   expect(m, `no /c in ${line}`).not.toBeNull()
@@ -152,6 +154,65 @@ describe('a .cmd shim under a folder with a space still starts (P3.10 round 3, F
     expect(body.match(/windowsVerbatimArguments: target\.verbatim/g) ?? []).toHaveLength(1)
     expect(body.match(/windowsVerbatimArguments: freshTarget\.verbatim/g) ?? []).toHaveLength(1)
     expect(body).toMatch(/if \(!target\)/)
+  })
+})
+
+// Round 3b: the hook wrapper and the picker resolve their helpers from fixed
+// locations. A .cmd shim runs through the system's own cmd.exe,
+// <SystemRoot>\System32\cmd.exe (ComSpec only when it names exactly that file,
+// in any case); SystemRoot falls back to
+// C:\Windows only when it is not set, and one that is not a plain absolute
+// folder refuses the start. The line cmd.exe runs is unchanged.
+describe('the shim runs through the system cmd.exe, by its full path (P3.10 round 3b)', () => {
+  const shim = 'C:\\npm\\claude.cmd'
+  const run = (env: Record<string, string | undefined>) => buildSpawnTarget(shim, ['--model', 'opus'], 'win32', env)
+
+  it('is <SystemRoot>\\System32\\cmd.exe, SystemRoot in any spelling', () => {
+    expect(run({ SystemRoot: 'C:\\Windows' })!.file).toBe('C:\\Windows\\System32\\cmd.exe')
+    expect(run({ SYSTEMROOT: 'D:\\WINNT\\' })!.file).toBe('D:\\WINNT\\System32\\cmd.exe')
+  })
+
+  it('uses ComSpec only when it names that same file', () => {
+    expect(run({ SystemRoot: 'C:\\Windows', ComSpec: 'c:\\windows\\system32\\CMD.EXE' })!.file).toBe('c:\\windows\\system32\\CMD.EXE')
+    expect(run({ SystemRoot: 'C:\\Windows', COMSPEC: 'C:\\Windows\\System32\\cmd.exe' })!.file).toBe('C:\\Windows\\System32\\cmd.exe')
+    for (const comSpec of ['cmd.exe', '.\\cmd.exe', 'C:\\tools\\cmd.exe', 'C:\\Windows\\SysWOW64\\cmd.exe', 'C:\\Windows\\System32\\..\\..\\tools\\cmd.exe', 'C:\\Windows\\System32\\cmd.exe.bat']) {
+      expect(run({ SystemRoot: 'C:\\Windows', ComSpec: comSpec })!.file, comSpec).toBe('C:\\Windows\\System32\\cmd.exe')
+    }
+  })
+
+  it('falls back to C:\\Windows only when SystemRoot is not set', () => {
+    expect(run({})!.file).toBe('C:\\Windows\\System32\\cmd.exe')
+    expect(run({ SystemRoot: '' })!.file).toBe('C:\\Windows\\System32\\cmd.exe')
+    expect(run({ ComSpec: 'D:\\x\\cmd.exe' })!.file).toBe('C:\\Windows\\System32\\cmd.exe')
+    expect(run({ ComSpec: 'c:\\windows\\System32\\cmd.exe' })!.file).toBe('c:\\windows\\System32\\cmd.exe')
+  })
+
+  it('refuses a SystemRoot that is not a plain absolute folder, and two spellings that disagree', () => {
+    for (const root of ['Windows', '.\\Windows', '\\Windows', 'C:Windows', '\\\\server\\share\\Windows', 'C:\\Win%x%', 'C:\\Win"x', 'C:\\Win&x', 'C:\\Win' + String.fromCharCode(10), 'C:\\Windows\\..\\Users\\me', 'C:\\.\\Windows']) {
+      expect(run({ SystemRoot: root }), JSON.stringify(root)).toBeNull()
+    }
+    expect(run({ SystemRoot: 'C:\\Windows', SYSTEMROOT: 'D:\\Other' })).toBeNull()
+    // The same value in two spellings is one value.
+    expect(run({ SystemRoot: 'C:\\Windows', SYSTEMROOT: 'C:\\Windows' })!.file).toBe('C:\\Windows\\System32\\cmd.exe')
+  })
+
+  it('starts cmd.exe from the system folder; the line it runs is as before', () => {
+    const t = run({ SystemRoot: 'C:\\Windows' })!
+    expect(t.file).toMatch(SYSTEM_CMD_RE)
+    expect(t.argv).toEqual(['/d', '/v:off', '/s', '/c', '""C:\\npm\\claude.cmd" --model opus"'])
+    expect(t.verbatim).toBe(true)
+    // A plain executable starts as it is, whatever the environment says.
+    expect(buildSpawnTarget('C:\\bin\\claude.exe', ['x'], 'win32', { SystemRoot: 'relative' })!.file).toBe('C:\\bin\\claude.exe')
+  })
+
+  it('the picker source starts cmd.exe only through systemCmdExe', () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const fs = require('fs') as typeof import('fs')
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const path = require('path') as typeof import('path')
+    const src = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'scripts', 'resume-picker.js'), 'utf-8')
+    expect(src).not.toMatch(/file:\s*['"`]cmd\.exe['"`]/i)
+    expect(src).not.toMatch(/spawnSync\(\s*['"`]cmd(\.exe)?['"`]/i)
   })
 })
 

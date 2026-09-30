@@ -155,8 +155,10 @@ export class SessionWatchdog {
    *  moving on after a retry, kept until the session has been quiet for
    *  OVERLOAD_SETTLE_MS: its attempts, the wait it had spent, and when the
    *  current quiet stretch began (null: not quiet now). A new error before
-   *  then continues it (enterOverload, handleHookEvent). */
-  private overloadSettle: { attempts: number; spentMs: number; quietSince: number | null } | null = null
+   *  then continues it (enterOverload, handleHookEvent). Round 4 (P7):
+   *  `nextWaitMs`, the wait drawn (and logged) with the last retry, which the
+   *  continued episode waits. */
+  private overloadSettle: { attempts: number; spentMs: number; nextWaitMs: number; quietSince: number | null } | null = null
   // Memoizes the exact tail text a send already handled, so a still-visible
   // render doesn't double-fire a second backoff (upstream's _eventHandledBanner).
   private lastHandledOverloadTail: string | null = null
@@ -349,10 +351,17 @@ export class SessionWatchdog {
    *  overloadSettle); the wait scheduled after that retry was never spent, so
    *  it is not kept. A screen that moved on from the render the last retry
    *  handled also ends that render's memo: the same render drawn again after
-   *  it (a repeated error in a scrolled pane) is a new error. */
+   *  it (a repeated error in a scrolled pane) is a new error. Round 4 (P4):
+   *  a recovering frame that is itself quiet starts the quiet stretch, so an
+   *  episode whose recovery was the session's last output still settles. */
   private overloadRecovered(action: string, tail: string): void {
     this.overloadSettle = this.overloadAttempts > 0
-      ? { attempts: this.overloadAttempts, spentMs: Math.max(0, this.overloadTotalWaitMs - this.overloadScheduledWaitMs), quietSince: null }
+      ? {
+          attempts: this.overloadAttempts,
+          spentMs: Math.max(0, this.overloadTotalWaitMs - this.overloadScheduledWaitMs),
+          nextWaitMs: this.overloadScheduledWaitMs,
+          quietSince: this.isQuietFrame(tail) ? this.adapter.now() : null,
+        }
       : null
     if (tail !== this.lastHandledOverloadTail) this.lastHandledOverloadTail = null
     this.resetOverload()
@@ -372,15 +381,20 @@ export class SessionWatchdog {
       this.overloadSettle = null
       return
     }
-    const quiet = !this.d.isInternalRetry(tail)
-      && (this.d.isWorking(tail) || !this.d.detectOverload(tail, this.config.overload.patterns))
-    if (!quiet) s.quietSince = null
+    if (!this.isQuietFrame(tail)) s.quietSince = null
     else if (s.quietSince === null) s.quietSince = now
+  }
+
+  /** P3.10 round 3 (F2): a frame is quiet when it is not the CLI's own retry
+   *  and the session works on or shows no overload error. */
+  private isQuietFrame(tail: string): boolean {
+    return !this.d.isInternalRetry(tail)
+      && (this.d.isWorking(tail) || !this.d.detectOverload(tail, this.config.overload.patterns))
   }
 
   /** P3.10 round 3 (F2): the kept episode a new error continues, or null
    *  (none, or quiet long enough to be over). Consumed either way. */
-  private takeOverloadSettle(): { attempts: number; spentMs: number } | null {
+  private takeOverloadSettle(): { attempts: number; spentMs: number; nextWaitMs: number } | null {
     const s = this.overloadSettle
     this.overloadSettle = null
     if (!s) return null
@@ -467,15 +481,19 @@ export class SessionWatchdog {
     }
     // P3.10 round 3 (F2): an error before the last episode settled continues it.
     const settled = this.takeOverloadSettle()
+    // Round 4 (P7): a continued episode waits the backoff its last retry drew and logged.
+    let continuedWaitMs = 0
     if (!parked && settled) {
       this.overloadAttempts = settled.attempts
       this.overloadTotalWaitMs = settled.spentMs
+      continuedWaitMs = settled.nextWaitMs
     }
 
     // A gap this long means the retry turn in between succeeded: a NEW incident,
     // so the resumed spend above is correctly discarded with the live counters.
     if (this.lastEventRetryAt !== null && this.adapter.now() - this.lastEventRetryAt > OVERLOAD_INCIDENT_GAP_MS) {
       this.resetOverload()
+      continuedWaitMs = 0
     }
 
     const capMs = this.config.overload.maxTotalWaitMinutes * 60_000
@@ -490,7 +508,7 @@ export class SessionWatchdog {
       return
     }
 
-    const w = this.nextOverloadWaitMs(this.overloadAttempts)
+    const w = continuedWaitMs > 0 ? continuedWaitMs : this.nextOverloadWaitMs(this.overloadAttempts)
     this.overloadTotalWaitMs += w
     this.overloadScheduledWaitMs = w
     this.waitUntil = this.adapter.now() + w
@@ -666,7 +684,8 @@ export class SessionWatchdog {
     // #605: see enterWaiting -- a resumed incident past its cap reads as given
     // up immediately. A fresh incident is unchanged (parked is null).
     this.gaveUp = parked ? this.overloadTotalWaitMs >= capMs : false
-    const w = this.nextOverloadWaitMs(this.overloadAttempts)
+    // Round 4 (P7): a continued episode waits the backoff its last retry drew and logged.
+    const w = again && settled.nextWaitMs > 0 ? settled.nextWaitMs : this.nextOverloadWaitMs(this.overloadAttempts)
     if (this.overloadTotalWaitMs + w > capMs) {
       // Degenerate config (or a resumed incident that has already spent the
       // cap): force the cap to trip on the next tick rather than entering a

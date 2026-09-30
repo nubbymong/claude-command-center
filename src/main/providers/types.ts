@@ -192,19 +192,24 @@ export interface SessionProvider {
    * Optional -- copy the provider's resume-picker script into
    * `<resourcesDir>/scripts/`. Both providers implement this in P4. The
    * Claude version copies `scripts/resume-picker.js`; the Codex version
-   * copies `scripts/codex-resume-picker.js`. `opts.hardenDir` (Codex, P3.10
-   * round 1): the app's owner-only folder rule, for the folders the provider
-   * makes for its hooks; `takeOwnership` (round 3) for a folder found already
-   * there, which the rule then makes the user's first or fails.
+   * copies `scripts/codex-resume-picker.js`.
    */
-  deployResumePickerScript?(resourcesDir: string, opts?: { hardenDir?: (dir: string, o?: { takeOwnership?: boolean }) => boolean }): Promise<void>
+  deployResumePickerScript?(resourcesDir: string): Promise<void>
+  /** Optional -- Codex (P3.10 round 4): prepare the folders the provider's
+   *  hooks use, asynchronously and only while the provider is on, with
+   *  `secureFolders`, the app's owner-only folder rule (given folders in
+   *  order, it makes each this user's alone and reads it back; on Windows in
+   *  one PowerShell call). A no-op while they are still ready. Resolves
+   *  whether the launch's hook folder is ready. Never throws. */
+  prepareHookFolders?(resourcesDir: string, secureFolders: (dirs: readonly string[]) => Promise<ReadonlyArray<{ dir: string; ok: boolean; detail?: string }>>): Promise<boolean>
   /** Optional -- Codex (P3.10): write the session's hook file (the Hooks
    *  gateway's port, the session id and its token, owner-only, in a folder
    *  made for the launch inside the app's own data folder, P3.10 round 1)
    *  for `buildSpawnCommand`'s `codexHooks`, with the way to remove it when
-   *  the session's resources go. Null when it cannot be written.
-   *  `opts.hardenDir`: the app's owner-only folder rule. */
-  prepareSessionHooks?(sessionId: string, port: number, secret: string, opts?: { hardenDir?: (dir: string, o?: { takeOwnership?: boolean }) => boolean }): { hookFile: string; dispose(): void } | null
+   *  the session's resources go. Null when it cannot be written, or when the
+   *  hook folders were not prepared (round 4, prepareHookFolders): nothing is
+   *  started here. */
+  prepareSessionHooks?(sessionId: string, port: number, secret: string): { hookFile: string; dispose(): void } | null
   /** Subscribe to live telemetry for a spawned session (see TelemetryOptions). */
   ingestSessionTelemetry(
     sessionId: string,
