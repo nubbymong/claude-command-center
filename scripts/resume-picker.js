@@ -633,7 +633,7 @@ async function main() {
  * last one. A shim in a folder with a space or parentheses (npm's folder under
  * a Windows user name with a space) therefore lost its quotes as soon as one
  * argument needed quotes too (a `--settings` path with a space, the `--agents`
- * JSON), and cmd.exe tried to run the first word of the path. So the shim
+ * JSON), and the launch did not start. So the shim
  * runs the way Node runs a `shell: true` command, and the way the Claude
  * version probe and the Codex picker run one: `/d /v:off /s /c "<line>"`,
  * passed VERBATIM (AutoRun skipped, delayed expansion off). With /s cmd.exe
