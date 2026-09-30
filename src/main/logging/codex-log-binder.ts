@@ -47,11 +47,14 @@ export interface CodexRolloutReport {
   exact: boolean
   /** Another session holds this rollout; this one reads it beside it. */
   shared: boolean
+  /** P3.12 round 1 (A1): the claimed file's identity (dev:ino), when the
+   *  watcher recorded one; the worker reads only that file at the path. */
+  identity?: string
 }
 
 export interface CodexLogBinderDeps {
   supervisor: {
-    bindTranscript(sessionId: string, path: string, confidence: 'exact' | 'heuristic', sourceVersion?: string, sourceFormat?: 'claude-jsonl' | 'codex-rollout'): void
+    bindTranscript(sessionId: string, path: string, confidence: 'exact' | 'heuristic', sourceVersion?: string, sourceFormat?: 'claude-jsonl' | 'codex-rollout', sourceIdentity?: string, notIndexed?: { since?: number; ifBegunBefore?: number }): void
     unbindTranscript(sessionId: string, path: string): void
   }
   /** Write (or, for a blank name, clear) the name file next to a rollout of
@@ -62,6 +65,13 @@ export interface CodexLogBinderDeps {
   forgetName: (sessionId: string) => void
   /** Paths-only diagnostics. */
   log?: (msg: string) => void
+  /** P3.12 (X1): what is known of a conversation written while not indexed
+   *  (indexing-gaps.ts), carried on its bind (the worker never indexes what
+   *  was written then), and cleared once it is bound. */
+  notIndexed?: {
+    lookup: (rolloutPath: string) => { since?: number; ifBegunBefore?: number } | null
+    bound: (rolloutPath: string) => void
+  }
 }
 
 export interface CodexLogBinder {
@@ -75,6 +85,10 @@ export interface CodexLogBinder {
   noteRollout(sessionId: string, rollout: CodexRolloutReport | null): void
   /** The session's process ended. */
   endRun(sessionId: string): void
+  /** P3.12 round 1 (V1): the logging switch was turned off for a running
+   *  session: nothing it claims from now on is bound (its run was ended);
+   *  its claims still carry the name file. */
+  stopIndexing(sessionId: string): void
   /** The rollout the session is exactly on (and its realm's sessions
    *  folder), for the name file; else null. */
   exactRollout(sessionId: string): { path: string; sessionsDir: string } | null
@@ -88,8 +102,8 @@ const MAX_SESSIONS = 512
 interface SessionState {
   running: boolean
   registered: boolean
-  claim: { path: string; sessionsDir: string; exact: boolean } | null
-  bound: { path: string; exact: boolean } | null
+  claim: { path: string; sessionsDir: string; exact: boolean; identity?: string } | null
+  bound: { path: string; exact: boolean; identity?: string } | null
 }
 
 export function makeCodexLogBinder(deps: CodexLogBinderDeps): CodexLogBinder {
@@ -120,11 +134,18 @@ export function makeCodexLogBinder(deps: CodexLogBinderDeps): CodexLogBinder {
   function sync(sessionId: string, s: SessionState): void {
     if (!s.running || !s.registered || !s.claim) return
     const claim = s.claim
-    // Nothing new: the same rollout, known no better than it was bound.
-    if (s.bound && s.bound.path === claim.path && (s.bound.exact || !claim.exact)) return
-    s.bound = { path: claim.path, exact: claim.exact }
+    // Nothing new: the same file at the same rollout path, known no better
+    // than it was bound.
+    if (s.bound && s.bound.path === claim.path && s.bound.identity === claim.identity && (s.bound.exact || !claim.exact)) return
+    s.bound = { path: claim.path, exact: claim.exact, ...(claim.identity ? { identity: claim.identity } : {}) }
+    const confidence = claim.exact ? 'exact' : 'heuristic'
     try {
-      deps.supervisor.bindTranscript(sessionId, claim.path, claim.exact ? 'exact' : 'heuristic', undefined, 'codex-rollout')
+      const known = claim.identity ? deps.notIndexed?.lookup(claim.path) ?? null : null
+      if (claim.identity && known) deps.supervisor.bindTranscript(sessionId, claim.path, confidence, undefined, 'codex-rollout', claim.identity, known)
+      else if (claim.identity) deps.supervisor.bindTranscript(sessionId, claim.path, confidence, undefined, 'codex-rollout', claim.identity)
+      else deps.supervisor.bindTranscript(sessionId, claim.path, confidence, undefined, 'codex-rollout')
+      // Bound with its identity, the worker applied what was known: it goes.
+      if (claim.identity) deps.notIndexed?.bound(claim.path)
     } catch { /* the index is best-effort */ }
   }
 
@@ -148,7 +169,12 @@ export function makeCodexLogBinder(deps: CodexLogBinderDeps): CodexLogBinder {
         unbind(sessionId, s)
         return
       }
-      s.claim = { path: rollout.path, sessionsDir: rollout.sessionsDir, exact: rollout.exact === true }
+      s.claim = {
+        path: rollout.path,
+        sessionsDir: rollout.sessionsDir,
+        exact: rollout.exact === true,
+        ...(typeof rollout.identity === 'string' && rollout.identity ? { identity: rollout.identity } : {}),
+      }
       if (s.claim.exact) {
         // #536 for Codex: a name set before the conversation was known.
         try {
@@ -162,6 +188,14 @@ export function makeCodexLogBinder(deps: CodexLogBinderDeps): CodexLogBinder {
 
     endRun(sessionId) {
       sessions.delete(sessionId)
+    },
+
+    stopIndexing(sessionId) {
+      const s = sessions.get(sessionId)
+      if (!s) return
+      // The run was ended (the worker drained and retired its tails).
+      s.registered = false
+      s.bound = null
     },
 
     exactRollout(sessionId) {

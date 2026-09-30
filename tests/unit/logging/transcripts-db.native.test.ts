@@ -240,7 +240,7 @@ describe('transcripts-db', () => {
     db.setTranscriptStatus(b.transcriptId, 'failed')
 
     expect(db.listResumableTranscripts()).toEqual([
-      { transcriptId: a.transcriptId, runId: r1, path: 'C:/t/a.jsonl', ingestCursor: 4096, parserVersion: 3, sourceFormat: 'claude-jsonl' },
+      { transcriptId: a.transcriptId, runId: r1, path: 'C:/t/a.jsonl', ingestCursor: 4096, parserVersion: 3, sourceFormat: 'claude-jsonl', sourceIdentity: null },
     ])
 
     db.setTranscriptStatus(a.transcriptId, 'complete')
@@ -969,7 +969,7 @@ describe('transcripts-db', () => {
       expect(c.sourceFormat).toBe('claude-jsonl')
       db.setTranscriptStatus(a.transcriptId, 'tailing')
       expect(db.listResumableTranscripts()).toEqual([
-        { transcriptId: a.transcriptId, runId: r1, path: 'C:/r/rollout-a.jsonl', ingestCursor: 0, parserVersion: 1, sourceFormat: 'codex-rollout' },
+        { transcriptId: a.transcriptId, runId: r1, path: 'C:/r/rollout-a.jsonl', ingestCursor: 0, parserVersion: 1, sourceFormat: 'codex-rollout', sourceIdentity: null },
       ])
       expect(inspect((raw) => raw.prepare('SELECT sourceFormat, confidence FROM transcripts WHERE id = ?').get(a.transcriptId))).toEqual({ sourceFormat: 'codex-rollout', confidence: 'exact' })
       expect(db.findTranscript(r1, 'C:/r/rollout-a.jsonl')).toEqual({ transcriptId: a.transcriptId })
@@ -993,6 +993,74 @@ describe('transcripts-db', () => {
       db.insertRun(runMeta({ sessionId: 'a', provider: 'claude', startedAt: 1, projectCwd: '/p' }))
       db.insertRun(runMeta({ sessionId: 'b', provider: 'codex', startedAt: 2, projectCwd: '/p' }))
       expect(db.sessionActivity().map((r) => [r.sessionId, r.provider])).toEqual([['b', 'codex'], ['a', 'claude']])
+    })
+  })
+
+  describe('P3.12 round 1: a Codex rollout\'s identity and the bindings earlier runs made', () => {
+    it('stores the identity, returns the status and says when another file is at the path (read from its start)', () => {
+      const r1 = db.insertRun(runMeta({ provider: 'codex' }))
+      const a = db.bindTranscript(r1, 'C:/r/2026/09/29/rollout-x.jsonl', { confidence: 'exact', parserVersion: 1, sourceFormat: 'codex-rollout', sourceIdentity: '1:10' })
+      expect(a).toMatchObject({ isNew: true, status: 'pending', identityChanged: false })
+      db.advanceCursor(a.transcriptId, 500)
+      db.setTranscriptStatus(a.transcriptId, 'complete')
+      const same = db.bindTranscript(r1, 'C:/r/2026/09/29/rollout-x.jsonl', { confidence: 'exact', parserVersion: 1, sourceIdentity: '1:10' })
+      expect(same).toMatchObject({ isNew: false, status: 'complete', identityChanged: false, cursor: 500 })
+      const other = db.bindTranscript(r1, 'C:/r/2026/09/29/rollout-x.jsonl', { confidence: 'exact', parserVersion: 1, sourceIdentity: '1:11' })
+      expect(other).toMatchObject({ isNew: false, identityChanged: true, cursor: 0 })
+      db.setTranscriptStatus(a.transcriptId, 'tailing')
+      expect(db.listResumableTranscripts()[0]).toMatchObject({ sourceIdentity: '1:11' })
+    })
+
+    it('P3.12 (X1): the latest earlier run\'s Codex binding of exactly a path, any session', () => {
+      const r1 = db.insertRun(runMeta({ provider: 'codex', startedAt: 1 }))
+      const r2 = db.insertRun(runMeta({ sessionId: 's2', provider: 'codex', startedAt: 2 }))
+      const r3 = db.insertRun(runMeta({ provider: 'codex', startedAt: 3 }))
+      const p = 'C:/a/sessions/2026/09/29/rollout-1_y.jsonl'
+      const x = db.bindTranscript(r1, p, { confidence: 'exact', parserVersion: 1, sourceFormat: 'codex-rollout', sourceIdentity: '1:1' })
+      db.advanceCursor(x.transcriptId, 40)
+      const y = db.bindTranscript(r2, p, { confidence: 'exact', parserVersion: 1, sourceFormat: 'codex-rollout', sourceIdentity: '1:2' })
+      db.advanceCursor(y.transcriptId, 90)
+      db.bindTranscript(r3, p, { confidence: 'exact', parserVersion: 1, sourceFormat: 'codex-rollout', sourceIdentity: '1:3' })
+      db.bindTranscript(r2, 'C:/a/sessions/2026/09/29/Xrollout-1_y.jsonl', { confidence: 'exact', parserVersion: 1, sourceFormat: 'codex-rollout', sourceIdentity: '9:9' })
+      expect(db.latestCodexBindingAtPath(r3, p)).toEqual({ ingestCursor: 90, sourceIdentity: '1:2' })
+      expect(db.latestCodexBindingAtPath(r2, p)).toEqual({ ingestCursor: 40, sourceIdentity: '1:1' })
+      expect(db.latestCodexBindingAtPath(r1, p)).toBeNull()
+      expect(db.latestCodexBindingAtPath(r3, 'C:/nowhere/rollout-1_y.jsonl')).toBeNull()
+    })
+
+    it('lists the same session\'s earlier runs\' Codex bindings of the same file name only (whole name, Codex format, the latest run first)', () => {
+      const r1 = db.insertRun(runMeta({ provider: 'codex', startedAt: 1 }))
+      const other = db.insertRun(runMeta({ sessionId: 's2', provider: 'codex', startedAt: 2 }))
+      const r2 = db.insertRun(runMeta({ provider: 'codex', startedAt: 3 }))
+      const r3 = db.insertRun(runMeta({ provider: 'codex', startedAt: 4 }))
+      const x = db.bindTranscript(r1, 'C:/a/sessions/2026/09/29/rollout-1_x.jsonl', { confidence: 'exact', parserVersion: 1, sourceFormat: 'codex-rollout', sourceIdentity: '1:1' })
+      db.advanceCursor(x.transcriptId, 70)
+      db.bindTranscript(r1, 'C:/a/sessions/2026/09/29/Xrollout-1_x.jsonl', { confidence: 'exact', parserVersion: 1, sourceFormat: 'codex-rollout' })
+      db.bindTranscript(r1, 'C:/c/rollout-1_x.jsonl', { confidence: 'exact', parserVersion: 1 })
+      db.bindTranscript(other, 'C:/d/sessions/2026/09/29/rollout-1_x.jsonl', { confidence: 'exact', parserVersion: 1, sourceFormat: 'codex-rollout', sourceIdentity: '4:4' })
+      const y = db.bindTranscript(r2, 'C:/b/sessions/2026/09/29/rollout-1_x.jsonl', { confidence: 'exact', parserVersion: 1, sourceFormat: 'codex-rollout', sourceIdentity: '2:2' })
+      db.bindTranscript(r3, 'C:/e/sessions/2026/09/29/rollout-1_x.jsonl', { confidence: 'exact', parserVersion: 1, sourceFormat: 'codex-rollout', sourceIdentity: '3:3' })
+      expect(db.priorCodexBindings(r3, 'rollout-1_x.jsonl', 's1')).toEqual([
+        { transcriptId: y.transcriptId, path: 'C:/b/sessions/2026/09/29/rollout-1_x.jsonl', ingestCursor: 0, sourceIdentity: '2:2', runStartedAt: 3 },
+        { transcriptId: x.transcriptId, path: 'C:/a/sessions/2026/09/29/rollout-1_x.jsonl', ingestCursor: 70, sourceIdentity: '1:1', runStartedAt: 1 },
+      ])
+      expect(db.priorCodexBindings(r2, 'rollout-1_x.jsonl', 's1').map((r) => r.transcriptId)).toEqual([x.transcriptId])
+      expect(db.priorCodexBindings(r3, 'rollout-1_x.jsonl', 's2').map((r) => r.path)).toEqual(['C:/d/sessions/2026/09/29/rollout-1_x.jsonl'])
+      expect(db.priorCodexBindings(r3, 'rollout-1_x.jsonl', '')).toEqual([])
+    })
+
+    it('adds the identity column to a database made before it', () => {
+      db.close()
+      const raw = new Database(dbPath)
+      raw.exec('ALTER TABLE transcripts DROP COLUMN sourceIdentity')
+      raw.close()
+      const db2 = openTranscriptsDb(dbPath)
+      try {
+        const r = db2.insertRun(runMeta({ provider: 'codex' }))
+        expect(db2.bindTranscript(r, 'C:/r/rollout-y.jsonl', { confidence: 'exact', parserVersion: 1, sourceFormat: 'codex-rollout', sourceIdentity: '2:2' }).isNew).toBe(true)
+      } finally {
+        db2.close()
+      }
     })
   })
 })

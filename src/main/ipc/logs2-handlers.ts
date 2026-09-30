@@ -18,7 +18,7 @@
  *
  * No default export (project convention).
  */
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain, BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { z } from 'zod'
 import { IPC } from '../../shared/ipc-channels'
 import { getLogSupervisor, getTranscriptBinder } from '../logging/logging-service'
@@ -26,6 +26,7 @@ import { rememberSessionName, forgetSessionName, writeNameSidecar, nodeNameSidec
 import { getCodexLogBinder } from '../logging/codex-log-binder'
 import { detectOldLogArtifacts, executeWipe } from '../logging/logs-wipe'
 import { logInfo, logError } from '../debug-logger'
+import { appWindowSender } from './trusted-sender'
 
 // ---------------------------------------------------------------------------
 // Bounds + Zod schemas
@@ -93,16 +94,38 @@ async function q(kind: string, args: Record<string, unknown>): Promise<unknown[]
   return sup.query(kind, args)
 }
 
+/**
+ * P3.12 round 1: every logs2 channel answers only the app's own window, its
+ * main frame, by the same check as the account handlers (trusted-sender.ts).
+ * A request from anywhere else is refused (the promise rejects) before any
+ * argument is read.
+ */
+function handleFromApp(
+  getWindow: () => BrowserWindow | null,
+): (channel: string, fn: (e: IpcMainInvokeEvent, ...args: unknown[]) => unknown) => void {
+  const trusted = appWindowSender(getWindow)
+  return (channel, fn) => {
+    ipcMain.handle(channel, async (e, ...args) => {
+      if (!trusted(e)) throw new Error('That request was not accepted.')
+      return fn(e, ...args)
+    })
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
 
-export function registerLogs2Handlers(getWindow: () => BrowserWindow | null): void {
-  ipcMain.handle(IPC.LOGS2_LIST_SLOTS, async () => {
+/** `isCodexSession`: whether the pty manager runs `sessionId` as a Codex
+ *  session now (P3.12 round 1, Q1: only such a session's rename takes the
+ *  Codex binder's path). */
+export function registerLogs2Handlers(getWindow: () => BrowserWindow | null, isCodexSession: (sessionId: string) => boolean): void {
+  const handle = handleFromApp(getWindow)
+  handle(IPC.LOGS2_LIST_SLOTS, async () => {
     return q('list-slots', {})
   })
 
-  ipcMain.handle(IPC.LOGS2_READ_MESSAGES, async (_e, args: unknown) => {
+  handle(IPC.LOGS2_READ_MESSAGES, async (_e, args: unknown) => {
     const { scope, anchor, dir, limit } = readMessagesSchema.parse(args)
     return q('read-messages', {
       ...scope,
@@ -112,23 +135,23 @@ export function registerLogs2Handlers(getWindow: () => BrowserWindow | null): vo
     })
   })
 
-  ipcMain.handle(IPC.LOGS2_TURN_SUMMARY, async (_e, args: unknown) => {
+  handle(IPC.LOGS2_TURN_SUMMARY, async (_e, args: unknown) => {
     const { scope } = turnSummarySchema.parse(args)
     return q('turn-summary', { ...scope })
   })
 
-  ipcMain.handle(IPC.LOGS2_SEARCH, async (_e, args: unknown) => {
+  handle(IPC.LOGS2_SEARCH, async (_e, args: unknown) => {
     const { query, limit } = searchSchema.parse(args)
     return q('search', { query, limit: limit ?? 50 })
   })
 
-  ipcMain.handle(IPC.LOGS2_DELETE_SLOT, async (_e, args: unknown) => {
+  handle(IPC.LOGS2_DELETE_SLOT, async (_e, args: unknown) => {
     const { scope } = deleteSlotSchema.parse(args)
     const rows = await q('delete-slot', { ...scope })
     return rows[0] ?? { deletedRuns: 0, deletedMessages: 0 }
   })
 
-  ipcMain.handle(IPC.LOGS2_CLEAR_ALL, async () => {
+  handle(IPC.LOGS2_CLEAR_ALL, async () => {
     const rows = await q('clear-all', {})
     return rows[0] ?? { deletedRuns: 0, deletedMessages: 0 }
   })
@@ -136,7 +159,7 @@ export function registerLogs2Handlers(getWindow: () => BrowserWindow | null): vo
   // Session rename: update the display label on the session's latest run so the
   // logs/history tab reflects the custom work name durably. Fire-and-forget post
   // (buffered in the supervisor); no-op when logging is disabled.
-  ipcMain.handle(IPC.LOGS2_RENAME_SESSION, async (_e, args: unknown) => {
+  handle(IPC.LOGS2_RENAME_SESSION, async (_e, args: unknown) => {
     const { sessionId, configLabel, customName } = renameSessionSchema.parse(args)
     getLogSupervisor()?.renameRun(sessionId, configLabel)
     // #536: carry the user's OWN work name (customName, NOT the generic config
@@ -150,7 +173,9 @@ export function registerLogs2Handlers(getWindow: () => BrowserWindow | null): vo
     // P3.12 (row 32): a Codex session's name file goes next to the rollout its
     // watcher claimed exactly (never an inferred or shared claim), inside its
     // realm and never through a link; else it is remembered for that claim.
-    const codex = getCodexLogBinder()
+    // Round 1 (Q1): only while the session runs as Codex (a tab respawned as
+    // Claude takes Claude's path below).
+    const codex = isCodexSession(sessionId) ? getCodexLogBinder() : null
     if (codex?.knows(sessionId)) {
       const exact = codex.exactRollout(sessionId)
       if (exact) {
@@ -176,13 +201,13 @@ export function registerLogs2Handlers(getWindow: () => BrowserWindow | null): vo
     return { ok: true }
   })
 
-  ipcMain.handle(IPC.LOGS2_INGEST_STATUS, async (_e, args: unknown) => {
+  handle(IPC.LOGS2_INGEST_STATUS, async (_e, args: unknown) => {
     const { sessionId } = ingestStatusSchema.parse(args)
     const rows = await q('ingest-stats', { sessionId })
     return rows[0] ?? null
   })
 
-  ipcMain.handle(IPC.LOGS2_SESSION_CONFIG, async (_e, args: unknown) => {
+  handle(IPC.LOGS2_SESSION_CONFIG, async (_e, args: unknown) => {
     const { sessionId } = sessionConfigSchema.parse(args)
     const rows = await q('session-config', { sessionId })
     return rows[0] ?? null     // { configId: string | null } | null
@@ -205,12 +230,13 @@ export function registerLogs2Handlers(getWindow: () => BrowserWindow | null): vo
  * runs after initLogging, and the wipe prompt must be registered before any
  * boot step ahead of it can throw and skip it.
  */
-export function registerLogsWipeHandlers(): void {
+export function registerLogsWipeHandlers(getWindow: () => BrowserWindow | null): void {
+  const handle = handleFromApp(getWindow)
   // The renderer drives a blocking confirm modal: it DETECTs at startup, and
   // only on the user's confirm does CONFIRM actually delete. Detection-driven +
   // idempotent (no marker file — once deleted nothing is detected). executeWipe
   // NEVER touches ~/.claude / the safety backup / the logging settings.
-  ipcMain.handle(IPC.LOGS2_WIPE_DETECT, async () => {
+  handle(IPC.LOGS2_WIPE_DETECT, async () => {
     try {
       return detectOldLogArtifacts()
     } catch (err) {
@@ -218,7 +244,7 @@ export function registerLogsWipeHandlers(): void {
       return { present: false, totalBytes: 0, paths: [], settingsKeys: [] }
     }
   })
-  ipcMain.handle(IPC.LOGS2_WIPE_CONFIRM, async () => {
+  handle(IPC.LOGS2_WIPE_CONFIRM, async () => {
     const res = executeWipe()
     logInfo(`[logs2] wiped ${res.deletedPaths.length} old log artifact(s), freed ${res.freedBytes} bytes, cleared keys: ${res.clearedKeys.join(', ') || '(none)'}`)
     return res

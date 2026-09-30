@@ -103,6 +103,7 @@ import type { SessionState } from './types/electron'
 import { buildSessionState, buildSessionStateWithResumeTargets, persistDetachedOnlyOrClear, hydrateDetachedFromSavedState, loadSavedStateAtStartup, closeWithNoSessions, discardAndClose, restoreSavedSessions, refreshRestoreOffer, setUnansweredRestore } from './session-persistence'
 import { useSessionAutosave, cancelSessionAutosave } from './hooks/useSessionAutosave'
 import { listenGoToSession } from './lib/goToSession'
+import { loggingConsentDue } from './utils/logging-consent'
 
 import type { ViewType } from './types/views'
 
@@ -299,7 +300,9 @@ export default function App() {
   // Sidebar receives onShowFirstRun={() => setShowGuidedConfig(true)}, so we use the
   // same setter here to open the real create dialog from the stage empty state.
   const onCreateConfigFromStage = () => setShowGuidedConfig(true)
-  const loggingConsentSeen = useSettingsStore((s) => s.settings.loggingConsentSeen)
+  // P3.12 round 1 (B5): the conversation-indexing notice is due (never seen,
+  // or once more for a Codex user who saw only the earlier notice).
+  const loggingConsentDueNow = useSettingsStore((s) => loggingConsentDue(s.settings))
   // Whether "do you use Codex?" has been answered, live: an answer given
   // before the one-time page's turn (a setup screen's "Use Codex only") means
   // it never shows.
@@ -1311,7 +1314,7 @@ export default function App() {
     tourActive,
     showGuidedConfig,
     showGitHubOnboarding,
-    loggingConsentSeen: Boolean(loggingConsentSeen),
+    loggingConsentSeen: !loggingConsentDueNow,
     codexReconfirmDue: codexReconfirmDue({ armed: codexReconfirmArmed, shown: codexReconfirmShown, answered: codexAnsweredNow }),
     resumePending: pendingRestore !== null,
     multiSpawnIntroDue,

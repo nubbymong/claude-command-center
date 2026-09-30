@@ -319,7 +319,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   />
                   <span>
                     Index conversation logs
-                    <span className="block text-[10px] text-[var(--text-muted)]">The Conductor indexes Claude Code's and Codex's own transcripts (~/.claude/projects, and each Codex account's sessions folder) for browsing here. Turning this off only stops indexing; your conversations remain in their own files and are not affected.</span>
+                    <span className="block text-[10px] text-[var(--text-muted)]">The Conductor indexes Claude Code's and Codex's own transcripts (~/.claude/projects, and each Codex account's sessions folder) for browsing here. Turning this off stops indexing at once, sessions already running too; turning it on applies to sessions started after it. Either way your conversations remain in their own files and are not affected.</span>
                   </span>
                 </label>
                 <div className="flex items-center gap-2 mt-1">

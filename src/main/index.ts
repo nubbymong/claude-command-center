@@ -7,12 +7,13 @@ import { createSplashWindow, closeSplashWindow, SPLASH_MIN_MS, SPLASH_POST_READY
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerAccountWebHandlers } from './ipc/account-web-handlers'
 import { sweepAbandonedProfiles } from './account-web/sign-in'
-import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine, routeHookTranscriptPath, noteCodexHookEvent, isCodexPtySession, codexRolloutForSessionContext } from './pty-manager'
+import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine, routeHookTranscriptPath, noteCodexHookEvent, isCodexPtySession, codexRolloutForSessionContext, applyLoggingSwitches } from './pty-manager'
 import { registerResumeHandlers } from './ipc/resume-handlers'
 import { registerCliHandlers } from './ipc/cli-handlers'
 import { registerClipboardHandlers } from './ipc/clipboard-handlers'
 import { buildAndSetAppMenu } from './app-menu'
 import { registerLogs2Handlers, registerLogsWipeHandlers } from './ipc/logs2-handlers'
+import { initIndexingGaps, flushIndexingGaps } from './logging/indexing-gaps'
 import { registerCanvasHandlers } from './ipc/canvas-handlers'
 import {
   registerCccUxSchemePrivileges,
@@ -465,7 +466,10 @@ if (!gotTheLock) {
     // #397 Group 2: exit paths that skip app 'before-quit'. An OS shutdown/logoff
     // (powerMonitor; macOS/Linux) and SIGTERM (task-manager terminate / OS teardown)
     // can end the app without the window-close flow running. Persist sessions first.
-    powerMonitor.on('shutdown', () => sessionDurability.flushOnExit('powerMonitor shutdown'))
+    powerMonitor.on('shutdown', () => {
+      sessionDurability.flushOnExit('powerMonitor shutdown')
+      try { flushIndexingGaps() } catch { /* best-effort */ }
+    })
     powerMonitor.on('suspend', () => sessionDurability.flushOnExit('powerMonitor suspend'))
     // Only SIGTERM. SIGINT is intentionally LEFT to Node's default so a console
     // Ctrl+C on a dev run still terminates in one press — a SIGINT handler here
@@ -474,6 +478,7 @@ if (!gotTheLock) {
     // vetoed by that same dialog, so a signal must not route through it.
     process.on('SIGTERM', () => {
       sessionDurability.flushOnExit('SIGTERM')
+      try { flushIndexingGaps() } catch { /* best-effort */ }
       app.exit(0)
     })
 
@@ -665,7 +670,7 @@ if (!gotTheLock) {
     registerResumeHandlers()
     // Ahead of initLogging + the register*() run below on purpose: nothing
     // between here and there may throw and skip the first-run wipe prompt.
-    registerLogsWipeHandlers()
+    registerLogsWipeHandlers(getWindow)
     registerDebugHandlers()
     registerUpdateHandlers()
     // Pre-emptive repo-rename handling: if the app has been renamed on GitHub
@@ -699,6 +704,14 @@ if (!gotTheLock) {
         void refreshServiceStatus().catch((err) => logError('[main] service status refresh failed:', err))
         // P3.10 round 4 (P1): Codex switched on has its hook folders prepared.
         try { codexHookFoldersSettingsChanged() } catch (err) { logError('[main] codex hook folders failed:', err) }
+        // P3.12 round 1 (V1): the logging switch turned off stops indexing the
+        // sessions already running, both assistants.
+        try { applyLoggingSwitches() } catch (err) { logError('[main] logging switches failed:', err) }
+      },
+      // P3.12 round 1 (V1): a config's own logging switch turned off stops
+      // indexing its running session.
+      onConfigsSaved: () => {
+        try { applyLoggingSwitches() } catch (err) { logError('[main] logging switches failed:', err) }
       },
     })
     // Beta builds default to verbose logging (lightweight async DEBUG lines ->
@@ -861,6 +874,9 @@ if (!gotTheLock) {
     // TODO(logs2 Phase 5): wipe the orphaned old byte-capture DB
     // (<dataDir>/logs.db) when the old stack is deleted — it is no longer
     // written or read by the live app.
+    // P3.12 (W4, X1): the Codex conversations written while not indexed,
+    // kept whether or not logging is on this run.
+    try { initIndexingGaps(join(getDataDirectory(), 'logging-gaps.json')) } catch (err) { logError('[logs] indexing gaps failed:', err) }
     try {
       initLogging({ emit: emitWithMerge, dbPath: join(getDataDirectory(), 'transcripts.db') })
     } catch (err) {
@@ -870,7 +886,7 @@ if (!gotTheLock) {
     // initLogging so the new-messages push can subscribe to the live supervisor;
     // the request/response handlers resolve the supervisor lazily per call and
     // reject cleanly when logging is disabled.
-    registerLogs2Handlers(getWindow)
+    registerLogs2Handlers(getWindow, isCodexPtySession)
     // Agent Canvas (2.2): renderer read surface + change push over the canvas
     // store. Serving itself is the ccc-ux:// protocol registered above.
     registerCanvasHandlers(getWindow)
@@ -1053,6 +1069,8 @@ if (!gotTheLock) {
     // #397 Group 2: persist sessions BEFORE the logging teardown below tears the
     // transcript binder down — flushing after that would lose the resume targets.
     sessionDurability.flushOnExit('before-quit')
+    // P3.12 (X3): the conversations written while not indexed, written now.
+    try { flushIndexingGaps() } catch { /* best-effort */ }
     // S5: mark the supervisor shutting-down BEFORE killAllPty() so a hooks-child
     // exit during teardown does NOT trigger a restart (race-free shutdown).
     try { _hooksSupervisor?.shutdown() } catch { /* never started / hooks disabled */ }

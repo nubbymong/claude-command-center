@@ -15,7 +15,9 @@ import { readCodexRolloutLine, type CodexFileTouch } from '../../logging/codex-r
  * is read: inside that realm's sessions folder, in a YYYY/MM/DD day folder with
  * every folder from the sessions folder down a real folder (not a link or
  * junction to one), a plain `rollout-*.jsonl`, opened without following a link
- * and the same file lstat saw.
+ * and the same file lstat saw. The path read is the one the check built, and
+ * the opened file must sit in the real folder the check found (P3.12 round 1,
+ * A2): a day folder put in place of the checked one meanwhile reads nothing.
  *
  * Read with Claude's bounds (the last 1 MB, whole lines, the last 500 lines),
  * through the Codex normalizer's own line reader, into the same shape
@@ -44,14 +46,22 @@ async function isRealFolder(dir: string): Promise<boolean> {
   }
 }
 
-/** `file` when it is a rollout of `sessionsDir`'s own real day folders.
- *  The day-folder rule is the containment too: a folder outside the sessions
- *  folder is reached through `..` (or, on Windows, is on another drive),
- *  never through three names of four, two and two digits. */
-async function checkedRollout(target: { path: string; sessionsDir: string }): Promise<string | null> {
+/** The rollout at the path built from the checked folders, and the real
+ *  path its day folder must have (the realm's real path, taken before its
+ *  folders are walked, and the day's parts), when it is a rollout of
+ *  `sessionsDir`'s own real day folders. The day-folder rule is the containment too: a folder outside the
+ *  sessions folder is reached through `..` (or, on Windows, is on another
+ *  drive), never through three names of four, two and two digits. */
+async function checkedRollout(target: { path: string; sessionsDir: string }): Promise<{ file: string; realDay: string } | null> {
   if (typeof target.path !== 'string' || typeof target.sessionsDir !== 'string') return null
   const sessionsDir = path.resolve(target.sessionsDir)
   const file = path.resolve(target.path)
+  let realSessions: string
+  try {
+    realSessions = await fs.realpath(sessionsDir)
+  } catch {
+    return null
+  }
   if (!ROLLOUT_NAME_RE.test(path.basename(file))) return null
   const parts = path.relative(sessionsDir, path.dirname(file)).split(path.sep)
   if (parts.length !== 3 || !/^\d{4}$/.test(parts[0]) || !/^\d{2}$/.test(parts[1]) || !/^\d{2}$/.test(parts[2])) return null
@@ -61,11 +71,17 @@ async function checkedRollout(target: { path: string; sessionsDir: string }): Pr
     at = path.join(at, part)
     if (!(await isRealFolder(at))) return null
   }
-  return file
+  return { file: path.join(at, path.basename(file)), realDay: path.join(realSessions, ...parts) }
 }
 
-/** The last `maxBytes` of a plain file, whole lines only; null on any doubt. */
-async function readTail(file: string): Promise<string | null> {
+/** The same folder: case-folded on Windows, where the file system is. */
+function sameFolder(a: string, b: string): boolean {
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b
+}
+
+/** The last `maxBytes` of a plain file in the real folder `realDay`, whole
+ *  lines only; null on any doubt. */
+async function readTail(file: string, realDay: string): Promise<string | null> {
   let fh: Awaited<ReturnType<typeof fs.open>> | null = null
   try {
     const seen = await fs.lstat(file, { bigint: true })
@@ -73,6 +89,11 @@ async function readTail(file: string): Promise<string | null> {
     fh = await fs.open(file, READ_NO_FOLLOW)
     const st = await fh.stat({ bigint: true })
     if (!st.isFile() || st.dev !== seen.dev || st.ino !== seen.ino) return null
+    // Round 1 (A2): the file opened is in the day folder that was checked,
+    // not in one put in its place after the check.
+    if (!sameFolder(path.dirname(await fs.realpath(file)), realDay)) return null
+    const after = await fs.lstat(file, { bigint: true })
+    if (after.dev !== st.dev || after.ino !== st.ino) return null
     const size = Number(st.size)
     const len = Math.min(size, TRANSCRIPT_TAIL.maxBytes)
     const start = size - len
@@ -97,9 +118,9 @@ function fileCall(f: CodexFileTouch, ts: number): TranscriptToolCall {
 /** The GitHub Session Context events of a Codex session's rollout. */
 export async function loadCodexRolloutEvents(target: { path: string; sessionsDir: string } | null): Promise<TranscriptEvents> {
   if (!target) return empty()
-  const file = await checkedRollout(target)
-  if (!file) return empty()
-  const raw = await readTail(file)
+  const checked = await checkedRollout(target)
+  if (!checked) return empty()
+  const raw = await readTail(checked.file, checked.realDay)
   if (raw === null) return empty()
   const lines = raw.split('\n').filter((l) => l.trim()).slice(-TRANSCRIPT_TAIL.maxLines)
   const messages: TranscriptMessage[] = []

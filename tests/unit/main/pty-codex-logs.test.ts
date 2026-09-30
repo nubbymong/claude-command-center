@@ -20,8 +20,9 @@ const h = vi.hoisted(() => ({
   sources: [] as Array<{ sid: string; opts: Record<string, any>; stop: (...a: unknown[]) => unknown; noteExactRollout: (...a: unknown[]) => unknown; refuteInferredClaim: (...a: unknown[]) => unknown }>,
   // The watcher's report made at once, inside ingestSessionTelemetry (a resume
   // claims synchronously), before pty-manager records the run.
-  claimAtStart: null as null | { path: string; sessionsDir: string; exact: boolean; shared: boolean },
-  settings: {} as { loggingEnabled?: boolean },
+  claimAtStart: null as null | { path: string; sessionsDir: string; exact: boolean; shared: boolean; identity?: string },
+  settings: {} as { loggingEnabled?: boolean; loggingConsentSeen?: boolean; loggingConsentVersion?: number },
+  configs: [] as unknown[],
   // What reached the log supervisor and Claude's binder, in order.
   sup: [] as unknown[][],
   claudeBinder: [] as unknown[][],
@@ -122,7 +123,7 @@ vi.mock('../../../src/main/watchdog/watchdog-manager', () => ({
 }))
 vi.mock('../../../src/main/config-manager', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/main/config-manager')>()),
-  readConfig: (name: string) => (name === 'settings' ? h.settings : {}),
+  readConfig: (name: string) => (name === 'settings' ? h.settings : name === 'configs' ? h.configs : {}),
   getConfigDir: () => os.tmpdir(),
 }))
 vi.mock('../../../src/main/account-profiles', async (importOriginal) => ({
@@ -138,7 +139,11 @@ vi.mock('../../../src/main/legacy-version-manager', () => ({ isVersionInstalled:
 vi.mock('../../../src/main/credential-store', () => ({ loadCredential: () => null }))
 vi.mock('../../../src/main/provider-accounts', () => ({ getAccountsService: () => null }))
 
-const { spawnPty, killPty, codexRolloutForSessionContext, CODEX_CONTEXT_ROLLOUTS_MAX } = await import('../../../src/main/pty-manager')
+const { spawnPty, killPty, codexRolloutForSessionContext, CODEX_CONTEXT_ROLLOUTS_MAX, applyLoggingSwitches } = await import('../../../src/main/pty-manager')
+const { getCodexLogBinder } = await import('../../../src/main/logging/codex-log-binder')
+const { notIndexedFor, noteNotIndexedBound, resetIndexingGapsForTests } = await import('../../../src/main/logging/indexing-gaps')
+// P3.12 round 2 (W9): a Codex run is recorded once the notice naming Codex's indexing was seen.
+const CONSENT = { loggingConsentSeen: true, loggingConsentVersion: 2 }
 const { makeCodexLogBinder, setCodexLogBinder } = await import('../../../src/main/logging/codex-log-binder')
 
 const SID = 'cx0000000000000000000011'
@@ -149,12 +154,12 @@ const ID_A = '019dd000-0001-7000-8000-00000000000a'
 const ID_B = '019dd000-0001-7000-8000-00000000000b'
 const fakeWin = { isDestroyed: () => false, webContents: { send: () => {} } } as unknown as Parameters<typeof spawnPty>[0]
 const SESSIONS = '/res/codex-realms/a/sessions'
-function launch() {
+function launch(realm = 'a') {
   return {
-    lease: { release: vi.fn(), accountId: 'acct-a' },
-    executable: '/proven/a/codex',
-    env: { PATH: '/usr/bin', CODEX_HOME: '/res/codex-realms/a' },
-    sessionsDir: SESSIONS,
+    lease: { release: vi.fn(), accountId: `acct-${realm}` },
+    executable: `/proven/${realm}/codex`,
+    env: { PATH: '/usr/bin', CODEX_HOME: `/res/codex-realms/${realm}` },
+    sessionsDir: `/res/codex-realms/${realm}/sessions`,
   } as never
 }
 const start = (sid: string, extra: Record<string, unknown> = {}) =>
@@ -169,8 +174,9 @@ const written: string[][] = []
 beforeEach(() => {
   for (const sid of [SID, CLAUDE_SID, CTX]) { try { killPty(sid) } catch { /* none */ } }
   exitAll()
-  h.ptys = []; h.built = []; h.sources = []; h.claimAtStart = null; h.settings = {}; h.sup = []; h.claudeBinder = []
+  h.ptys = []; h.built = []; h.sources = []; h.claimAtStart = null; h.settings = { ...CONSENT }; h.configs = []; h.sup = []; h.claudeBinder = []
   names.clear(); written.length = 0
+  resetIndexingGapsForTests()
   setCodexLogBinder(makeCodexLogBinder({
     supervisor: {
       bindTranscript: (...a: unknown[]) => { h.sup.push(['bind', ...a]) },
@@ -179,6 +185,8 @@ beforeEach(() => {
     writeName: (p, d, n) => { written.push([p, d, n]) },
     rememberedName: (sid) => names.get(sid) ?? null,
     forgetName: (sid) => { names.delete(sid) },
+    // As main's logging service wires it (logging-switch-wiring.test.ts).
+    notIndexed: { lookup: notIndexedFor, bound: noteNotIndexedBound },
   }))
 })
 
@@ -231,13 +239,13 @@ describe('a local Codex session\'s logs (P3.12, row 31)', () => {
     expect(kinds()).toEqual(['runStart', 'bind', 'runStart', 'bind'])
   })
 
-  it('logging off for the config, or in Settings: no run, nothing bound', () => {
+  it('logging off for the config, or in Settings: no run, nothing bound (round 1: only the end of any run the session id had)', () => {
     h.claimAtStart = report(ID_A, true)
     start(SID, { loggingEnabled: false })
-    expect(h.sup).toEqual([])
+    expect(kinds()).toEqual(['runEnd'])
     h.settings = { loggingEnabled: false }
     start(SID)
-    expect(h.sup).toEqual([])
+    expect(kinds()).toEqual(['runEnd', 'runEnd'])
   })
 
   it('the name file (row 32): a name remembered for the session is written at its exact claim, even with logging off for it', () => {
@@ -282,5 +290,148 @@ describe('the GitHub Session Context record stays bounded (P3.12)', () => {
     expect(codexRolloutForSessionContext(ids[0])).toBeNull()
     expect(codexRolloutForSessionContext(ids.at(-1)!)).toEqual({ path: rolloutOf(ID_A), sessionsDir: SESSIONS })
     for (const sid of ids) { try { killPty(sid) } catch { /* gone */ } }
+  })
+})
+
+describe('P3.12 round 1: the logging switches stop indexing running sessions (V1), both assistants', () => {
+  const ends = () => h.sup.filter((c) => c[0] === 'runEnd').map((c) => [c[1], c[3]])
+
+  it('the Settings switch turned off: every indexed running session\'s run ends (Codex and Claude); a later Codex claim binds nothing', () => {
+    start(SID)
+    spawnPty(fakeWin, CLAUDE_SID, { cwd: os.tmpdir(), provider: 'claude' } as never)
+    h.settings = { loggingEnabled: false }
+    applyLoggingSwitches()
+    expect(ends()).toEqual([[SID, 'stopped'], [CLAUDE_SID, 'stopped']])
+    ;(source(SID).opts.onRollout as (r: unknown) => void)(report(ID_A, true))
+    expect(kinds().filter((k) => k === 'bind')).toEqual([])
+    // Nothing more to stop.
+    applyLoggingSwitches()
+    expect(ends()).toHaveLength(2)
+  })
+
+  it('a config\'s own switch turned off: only that config\'s running session stops, by its provider\'s field', () => {
+    start(SID)
+    spawnPty(fakeWin, CLAUDE_SID, { cwd: os.tmpdir(), provider: 'claude', configId: 'cfg-cl' } as never)
+    // The Claude field on the Codex config is not the Codex switch; the Claude config is untouched.
+    h.configs = [{ id: 'cfg-cx', provider: 'codex', claudeOptions: { loggingEnabled: true }, codexOptions: { permissionsPreset: 'read-only', loggingEnabled: false } }, { id: 'cfg-cl', provider: 'claude', codexOptions: { loggingEnabled: false } }]
+    applyLoggingSwitches()
+    expect(ends()).toEqual([[SID, 'stopped']])
+  })
+
+  it('a session relaunched while logging is off records nothing, and its earlier run is ended (no longer added to)', () => {
+    start(SID)
+    h.settings = { loggingEnabled: false }
+    start(SID)
+    expect(kinds()).toEqual(['runStart', 'runEnd'])
+    expect(h.sup.at(-1)).toEqual(['runEnd', SID, expect.any(Number), 'exited'])
+  })
+})
+
+describe('P3.12 round 1: Switch Account and the Session Context (B2); a tab moved to Claude (Q1)', () => {
+  it('a launch on another account drops the rollout recorded for the Session Context; one on the same account keeps it until its claim', () => {
+    start(CTX)
+    ;(source(CTX).opts.onRollout as (r: unknown) => void)(report(ID_A, true))
+    start(CTX, { codexLaunch: launch('a') })
+    expect(codexRolloutForSessionContext(CTX)).toEqual({ path: rolloutOf(ID_A), sessionsDir: SESSIONS })
+    start(CTX, { codexLaunch: launch('b') })
+    expect(codexRolloutForSessionContext(CTX)).toBeNull()
+  })
+
+  it('a Codex tab respawned as a Claude one leaves nothing of its Codex claim behind (a rename cannot reach the old rollout)', () => {
+    start(SID)
+    ;(source(SID).opts.onRollout as (r: unknown) => void)(report(ID_A, true))
+    expect(getCodexLogBinder()!.exactRollout(SID)).not.toBeNull()
+    spawnPty(fakeWin, SID, { cwd: os.tmpdir(), provider: 'claude' } as never)
+    expect(getCodexLogBinder()!.knows(SID)).toBe(false)
+    expect(getCodexLogBinder()!.exactRollout(SID)).toBeNull()
+  })
+})
+
+describe('P3.12 round 2: the switches at every launch (W3), the stretches not indexed (W4), the notice (W9)', () => {
+  const kindsOf = (sid: string) => h.sup
+    .filter((c) => c[1] === sid || (c[0] === 'runStart' && (c[1] as { sessionId?: string })?.sessionId === sid))
+    .map((c) => c[0] === 'runEnd' ? `runEnd:${c[3]}` : c[0])
+
+  it('W3 (Codex): a config switched off stays off when its tab is launched again with the value it was launched with; switched on again, the next launch is indexed', () => {
+    start(SID)
+    h.configs = [{ id: 'cfg-cx', provider: 'codex', codexOptions: { permissionsPreset: 'read-only', loggingEnabled: false } }]
+    applyLoggingSwitches()
+    h.claimAtStart = report(ID_A, true)
+    start(SID)
+    expect(kindsOf(SID)).toEqual(['runStart', 'runEnd:stopped', 'runEnd:exited'])
+    h.configs = [{ id: 'cfg-cx', provider: 'codex', codexOptions: { permissionsPreset: 'read-only', loggingEnabled: true } }]
+    start(SID, { loggingEnabled: false })
+    expect(kindsOf(SID).slice(3)).toEqual(['runStart', 'bind'])
+  })
+
+  it('W3 (Claude): the same', () => {
+    spawnPty(fakeWin, CLAUDE_SID, { cwd: os.tmpdir(), provider: 'claude', configId: 'cfg-cl' } as never)
+    h.configs = [{ id: 'cfg-cl', provider: 'claude', claudeOptions: { loggingEnabled: false } }]
+    applyLoggingSwitches()
+    spawnPty(fakeWin, CLAUDE_SID, { cwd: os.tmpdir(), provider: 'claude', configId: 'cfg-cl' } as never)
+    expect(kindsOf(CLAUDE_SID)).toEqual(['runStart', 'runEnd:stopped', 'runEnd:exited'])
+  })
+
+  it('X1: a Codex session not indexed marks the conversations it is on (a claim, and the one it holds when stopped); an indexed one marks nothing', () => {
+    const before = Date.now()
+    start(SID)
+    ;(source(SID).opts.onRollout as (r: unknown) => void)({ ...report(ID_A, true), identity: '7:1' })
+    expect(notIndexedFor(rolloutOf(ID_A))).toBeNull()
+    h.settings = { ...CONSENT, loggingEnabled: false }
+    applyLoggingSwitches()
+    expect(notIndexedFor(rolloutOf(ID_A))!.since).toBeGreaterThanOrEqual(before)
+    ;(source(SID).opts.onRollout as (r: unknown) => void)({ ...report(ID_B, true), identity: '7:2' })
+    expect(notIndexedFor(rolloutOf(ID_B))!.since).toBeGreaterThanOrEqual(before)
+  })
+
+  it('X1: another tab resuming a conversation written while not indexed binds it with the mark, which then goes; one never so written binds without', () => {
+    h.settings = { ...CONSENT, loggingEnabled: false }
+    start(CTX)
+    ;(source(CTX).opts.onRollout as (r: unknown) => void)({ ...report(ID_A, true), identity: '7:1' })
+    const since = notIndexedFor(rolloutOf(ID_A))!.since
+    exitAll()
+    h.settings = { ...CONSENT }
+    start(SID)
+    ;(source(SID).opts.onRollout as (r: unknown) => void)({ ...report(ID_A, true), identity: '7:1' })
+    ;(source(SID).opts.onRollout as (r: unknown) => void)({ ...report(ID_B, true), identity: '7:2' })
+    const binds = h.sup.filter((c) => c[0] === 'bind')
+    expect(binds[0]).toEqual(['bind', SID, rolloutOf(ID_A), 'exact', undefined, 'codex-rollout', '7:1', { since }])
+    expect(binds[1]).toEqual(['bind', SID, rolloutOf(ID_B), 'exact', undefined, 'codex-rollout', '7:2'])
+    expect(notIndexedFor(rolloutOf(ID_A))).toBeNull()
+  })
+
+  it('X1: a launch indexed after one that was not: its claim at the start is not taken as written while not indexed', () => {
+    // A session id of its own: no conversation of an earlier test is its own.
+    const FRESH = 'cx0000000000000000000013'
+    h.settings = { ...CONSENT, loggingEnabled: false }
+    start(FRESH)
+    h.settings = { ...CONSENT }
+    h.claimAtStart = { ...report(ID_B, true), identity: '7:2' }
+    start(FRESH)
+    expect(h.sup.filter((c) => c[0] === 'bind').at(-1)).toEqual(['bind', FRESH, rolloutOf(ID_B), 'exact', undefined, 'codex-rollout', '7:2'])
+    try { killPty(FRESH) } catch { /* gone */ }
+  })
+
+  it('X3: a Codex tab relaunched as a Claude one with logging off does not mark the Codex conversation it was on', () => {
+    start(SID)
+    ;(source(SID).opts.onRollout as (r: unknown) => void)({ ...report(ID_A, true), identity: '7:1' })
+    h.settings = { ...CONSENT, loggingEnabled: false }
+    spawnPty(fakeWin, SID, { cwd: os.tmpdir(), provider: 'claude' } as never)
+    expect(notIndexedFor(rolloutOf(ID_A))).toBeNull()
+  })
+
+  it('X3: a Claude session not indexed, and a shell, mark nothing', () => {
+    h.settings = { ...CONSENT, loggingEnabled: false }
+    spawnPty(fakeWin, CLAUDE_SID, { cwd: os.tmpdir(), provider: 'claude' } as never)
+    spawnPty(fakeWin, 'shell-only-1', { cwd: os.tmpdir(), shellOnly: true } as never)
+    expect(notIndexedFor(rolloutOf(ID_A))).toBeNull()
+  })
+
+  it('W9: a Codex session is indexed only once the notice naming Codex\'s indexing was seen; a Claude session keeps its rule', () => {
+    h.settings = { loggingConsentSeen: true }
+    start(SID)
+    spawnPty(fakeWin, CLAUDE_SID, { cwd: os.tmpdir(), provider: 'claude' } as never)
+    expect(kindsOf(SID).filter((k) => k === 'runStart')).toEqual([])
+    expect(kindsOf(CLAUDE_SID).filter((k) => k === 'runStart')).toEqual(['runStart'])
   })
 })

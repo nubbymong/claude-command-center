@@ -27,6 +27,7 @@ import { readConfig } from '../config-manager'
 import { logInfo } from '../debug-logger'
 import { getRememberedName, forgetSessionName, writeNameSidecar, nodeNameSidecarDeps, writeRealmNameSidecar, nodeRealmNameFs } from './session-name-sidecar'
 import { makeCodexLogBinder, setCodexLogBinder } from './codex-log-binder'
+import { notIndexedFor, noteNotIndexedBound } from './indexing-gaps'
 
 // Module-level singleton. Null until initLogging() runs, and stays null when
 // logging is disabled (no fork, no worker, no native dep loaded).
@@ -91,6 +92,7 @@ export function initLogging(opts: {
     rememberedName: getRememberedName,
     forgetName: forgetSessionName,
     log: logInfo,
+    notIndexed: { lookup: notIndexedFor, bound: noteNotIndexedBound },
   }))
 }
 

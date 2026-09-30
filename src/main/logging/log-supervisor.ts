@@ -280,9 +280,9 @@ export class LogSupervisor {
   /** Bind a discovered transcript file to the session's current run; the worker
    *  starts tailing it immediately. `sourceFormat` (P3.12): a Codex rollout is
    *  tailed with the Codex normalizer; absent = Claude's JSONL, as before. */
-  bindTranscript(sessionId: string, path: string, confidence: 'exact' | 'heuristic', sourceVersion?: string, sourceFormat?: 'claude-jsonl' | 'codex-rollout'): void {
+  bindTranscript(sessionId: string, path: string, confidence: 'exact' | 'heuristic', sourceVersion?: string, sourceFormat?: 'claude-jsonl' | 'codex-rollout', sourceIdentity?: string, notIndexed?: { since?: number; ifBegunBefore?: number }): void {
     this.enqueueOrSend(sourceFormat
-      ? { type: 'transcript-bind', sessionId, path, confidence, sourceVersion, sourceFormat }
+      ? { type: 'transcript-bind', sessionId, path, confidence, sourceVersion, sourceFormat, ...(sourceIdentity ? { sourceIdentity } : {}), ...(notIndexed ? { notIndexed } : {}) }
       : { type: 'transcript-bind', sessionId, path, confidence, sourceVersion })
   }
 

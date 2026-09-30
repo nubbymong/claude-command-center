@@ -804,7 +804,9 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     // P3.12 (row 65): a Codex session's own rollout (the one its watcher
     // holds, in its realm), else Claude's project folder, as before.
     const events = await loadSessionTranscriptEvents(session, deps.codexRolloutFor ?? (() => null))
-    const recentFiles = extractFileSignals(events.toolCalls)
+    // P3.12 round 1 (A4): the paths relative to the session's folder, so a
+    // file named relative and absolute is listed once.
+    const recentFiles = extractFileSignals(events.toolCalls, session?.workingDirectory)
     const transcriptRefs = cfg?.transcriptScanningOptIn
       ? scanTranscriptMessages(events.messages)
       : []
@@ -847,7 +849,9 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
         }
       },
     })
-    return { ok: true, data: ctx }
+    // P3.12 round 1 (A4): the heading of the recent files names the
+    // session's own assistant.
+    return { ok: true, data: { ...ctx, assistant: session?.provider === 'codex' ? 'codex' : 'claude' } }
   })
 
   // Helper: resolve a token for an action IPC. Every action needs a token

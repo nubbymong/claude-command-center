@@ -147,6 +147,7 @@ export class CodexProvider implements SessionProvider {
       // session's proof that an inferred claim here is not this one's.
       noteExactRollout: (rolloutPath: string) => watch.noteExactRollout?.(rolloutPath) ?? null,
       refuteInferredClaim: (rolloutPath: string) => watch.refuteInferredClaim?.(rolloutPath) ?? false,
+      recheckShared: () => watch.recheckShared?.() ?? false,
     }
   }
 

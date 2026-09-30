@@ -62,6 +62,9 @@ export interface ResumableTranscript {
   parserVersion: number
   /** The format it is tailed with (a worker restart resumes with it). */
   sourceFormat: string
+  /** P3.12 round 1: a Codex rollout's file identity (dev:ino) as claimed;
+   *  the tail reads only that file. Null for a Claude transcript. */
+  sourceIdentity: string | null
 }
 
 /** Shape returned by listSlots(). */
@@ -167,12 +170,21 @@ export interface TranscriptsDb {
   bindTranscript(
     runId: number,
     path: string,
-    opts: { confidence: 'exact' | 'heuristic'; sourceVersion?: string; parserVersion: number; sourceFormat?: TranscriptSourceFormat },
-  ): { transcriptId: number; ord: number; isNew: boolean; cursor: number; sourceFormat: string }
+    opts: { confidence: 'exact' | 'heuristic'; sourceVersion?: string; parserVersion: number; sourceFormat?: TranscriptSourceFormat; sourceIdentity?: string },
+  ): { transcriptId: number; ord: number; isNew: boolean; cursor: number; sourceFormat: string; status: string; identityChanged: boolean }
 
   /** P3.12: the binding of `path` to `runId`, or null. A re-bind keeps the
    *  format the binding was made with. */
   findTranscript(runId: number, path: string): { transcriptId: number } | null
+
+  /** P3.12 round 1: the Codex bindings of other runs whose file has the name
+   *  `name` (the same rollout, or its copy in another account's folder), with
+   *  how far each was read. */
+  priorCodexBindings(runId: number, name: string, sessionId: string): Array<{ transcriptId: number; path: string; ingestCursor: number; sourceIdentity: string | null; runStartedAt: number }>
+
+  /** P3.12 (X1): the latest earlier run's Codex binding of exactly `path`
+   *  (any session): what the index holds of that file. */
+  latestCodexBindingAtPath(runId: number, path: string): { ingestCursor: number; sourceIdentity: string | null } | null
 
   setTranscriptStatus(transcriptId: number, status: 'pending' | 'tailing' | 'complete' | 'failed'): void
 
@@ -512,6 +524,9 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
   // Apply PRAGMAs and create schema. exec() runs multiple semicolon-separated
   // statements so we can do this in one shot.
   sqlite.exec(DDL)
+  // P3.12 round 1: a Codex rollout's file identity, on a database made before it.
+  const transcriptCols = new Set((sqlite.prepare('PRAGMA table_info(transcripts)').all() as Array<{ name: string }>).map((c) => c.name))
+  if (!transcriptCols.has('sourceIdentity')) sqlite.exec('ALTER TABLE transcripts ADD COLUMN sourceIdentity TEXT')
 
   // ---------------------------------------------------------------------------
   // Prepared statements (prepared once; reused across calls for performance)
@@ -578,19 +593,37 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
 
   // ---- transcripts ----
   const stmtGetTranscriptByRunPath: Statement = sqlite.prepare(
-    `SELECT id, ord, sourceFormat FROM transcripts WHERE runId = ? AND path = ?`,
+    `SELECT id, ord, sourceFormat, status, sourceIdentity FROM transcripts WHERE runId = ? AND path = ?`,
   )
   const stmtRebindTranscript: Statement = sqlite.prepare(`
     UPDATE transcripts
     SET confidence = @confidence, sourceVersion = @sourceVersion, parserVersion = @parserVersion
     WHERE id = @id
   `)
+  // P3.12 round 1: a Codex binding learns its file identity; another file at
+  // the same path is read from its start.
+  const stmtSetIdentity: Statement = sqlite.prepare(`UPDATE transcripts SET sourceIdentity = @identity WHERE id = @id`)
+  const stmtResetIdentity: Statement = sqlite.prepare(`UPDATE transcripts SET sourceIdentity = @identity, ingestCursor = 0 WHERE id = @id`)
+  // P3.12 round 2 (W8): the same session's earlier runs only, the latest first.
+  const stmtPriorCodex: Statement = sqlite.prepare(`
+    SELECT t.id AS transcriptId, t.path AS path, t.ingestCursor AS ingestCursor, t.sourceIdentity AS sourceIdentity, r.startedAt AS runStartedAt
+    FROM transcripts t JOIN runs r ON r.runId = t.runId
+    WHERE t.sourceFormat = 'codex-rollout' AND t.runId < @runId AND r.sessionId = @sessionId
+      AND length(t.path) > @n AND substr(t.path, -@n) = @name
+    ORDER BY t.runId DESC, t.ingestCursor DESC
+  `)
+  // P3.12 (X1): the latest earlier run's Codex binding of exactly this path.
+  const stmtLatestCodexAtPath: Statement = sqlite.prepare(`
+    SELECT ingestCursor, sourceIdentity FROM transcripts
+    WHERE sourceFormat = 'codex-rollout' AND path = @path AND runId < @runId
+    ORDER BY runId DESC LIMIT 1
+  `)
   const stmtNextOrd: Statement = sqlite.prepare(
     `SELECT COALESCE(MAX(ord) + 1, 0) AS nextOrd FROM transcripts WHERE runId = ?`,
   )
   const stmtInsertTranscript: Statement = sqlite.prepare(`
-    INSERT INTO transcripts (runId, path, ord, sourceFormat, sourceVersion, parserVersion, confidence)
-    VALUES (@runId, @path, @ord, @sourceFormat, @sourceVersion, @parserVersion, @confidence)
+    INSERT INTO transcripts (runId, path, ord, sourceFormat, sourceVersion, parserVersion, confidence, sourceIdentity)
+    VALUES (@runId, @path, @ord, @sourceFormat, @sourceVersion, @parserVersion, @confidence, @sourceIdentity)
   `)
   const stmtSetTranscriptStatus: Statement = sqlite.prepare(
     `UPDATE transcripts SET status = @status WHERE id = @id`,
@@ -599,7 +632,7 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
     `UPDATE transcripts SET ingestCursor = @cursor WHERE id = @id`,
   )
   const stmtListResumable: Statement = sqlite.prepare(`
-    SELECT id AS transcriptId, runId, path, ingestCursor, parserVersion, sourceFormat
+    SELECT id AS transcriptId, runId, path, ingestCursor, parserVersion, sourceFormat, sourceIdentity
     FROM transcripts WHERE status = 'tailing' ORDER BY id
   `)
 
@@ -609,9 +642,9 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
     (
       runId: number,
       path: string,
-      opts: { confidence: 'exact' | 'heuristic'; sourceVersion?: string; parserVersion: number; sourceFormat?: TranscriptSourceFormat },
-    ): { transcriptId: number; ord: number; isNew: boolean; cursor: number; sourceFormat: string } => {
-      const existing = stmtGetTranscriptByRunPath.get(runId, path) as { id: number; ord: number; sourceFormat: string } | undefined
+      opts: { confidence: 'exact' | 'heuristic'; sourceVersion?: string; parserVersion: number; sourceFormat?: TranscriptSourceFormat; sourceIdentity?: string },
+    ): { transcriptId: number; ord: number; isNew: boolean; cursor: number; sourceFormat: string; status: string; identityChanged: boolean } => {
+      const existing = stmtGetTranscriptByRunPath.get(runId, path) as { id: number; ord: number; sourceFormat: string; status: string; sourceIdentity: string | null } | undefined
       if (existing) {
         stmtRebindTranscript.run({
           id: existing.id,
@@ -619,8 +652,15 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
           sourceVersion: opts.sourceVersion ?? null,
           parserVersion: opts.parserVersion,
         })
+        let identityChanged = false
+        if (opts.sourceIdentity && existing.sourceIdentity && existing.sourceIdentity !== opts.sourceIdentity) {
+          stmtResetIdentity.run({ id: existing.id, identity: opts.sourceIdentity })
+          identityChanged = true
+        } else if (opts.sourceIdentity && !existing.sourceIdentity) {
+          stmtSetIdentity.run({ id: existing.id, identity: opts.sourceIdentity })
+        }
         const { ingestCursor } = stmtGetCursor.get(existing.id) as { ingestCursor: number }
-        return { transcriptId: existing.id, ord: existing.ord, isNew: false, cursor: ingestCursor, sourceFormat: existing.sourceFormat }
+        return { transcriptId: existing.id, ord: existing.ord, isNew: false, cursor: ingestCursor, sourceFormat: existing.sourceFormat, status: existing.status, identityChanged }
       }
       const { nextOrd } = stmtNextOrd.get(runId) as { nextOrd: number }
       const sourceFormat: TranscriptSourceFormat = opts.sourceFormat ?? 'claude-jsonl'
@@ -632,8 +672,9 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
         sourceVersion: opts.sourceVersion ?? null,
         parserVersion: opts.parserVersion,
         confidence: opts.confidence,
+        sourceIdentity: opts.sourceIdentity ?? null,
       })
-      return { transcriptId: Number(info.lastInsertRowid), ord: nextOrd, isNew: true, cursor: 0, sourceFormat }
+      return { transcriptId: Number(info.lastInsertRowid), ord: nextOrd, isNew: true, cursor: 0, sourceFormat, status: 'pending', identityChanged: false }
     },
   )
 
@@ -925,6 +966,18 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
     findTranscript(runId, path) {
       const row = stmtGetTranscriptByRunPath.get(runId, path) as { id: number } | undefined
       return row ? { transcriptId: row.id } : null
+    },
+
+    priorCodexBindings(runId, name, sessionId) {
+      if (!name || !sessionId) return []
+      const rows = stmtPriorCodex.all({ runId, sessionId, n: name.length, name }) as Array<{ transcriptId: number; path: string; ingestCursor: number; sourceIdentity: string | null; runStartedAt: number }>
+      // The whole file name only: the character before it is a separator.
+      return rows.filter((r) => /[\\/]/.test(r.path.charAt(r.path.length - name.length - 1)))
+    },
+
+    latestCodexBindingAtPath(runId, path) {
+      const row = stmtLatestCodexAtPath.get({ runId, path }) as { ingestCursor: number; sourceIdentity: string | null } | undefined
+      return row ? { ingestCursor: row.ingestCursor, sourceIdentity: row.sourceIdentity } : null
     },
 
     setTranscriptStatus(transcriptId, status) {

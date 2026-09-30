@@ -24,7 +24,7 @@ import * as os from 'os'
 import * as path from 'path'
 
 interface FakePty { cmd: string; exit: Array<(e: { exitCode: number }) => void>; kill: ReturnType<typeof vi.fn> }
-interface FakeSource { sid: string; opts: Record<string, any>; stop: ReturnType<typeof vi.fn>; noteExactRollout: ReturnType<typeof vi.fn>; refuteInferredClaim: ReturnType<typeof vi.fn> }
+interface FakeSource { sid: string; opts: Record<string, any>; stop: ReturnType<typeof vi.fn>; noteExactRollout: ReturnType<typeof vi.fn>; refuteInferredClaim: ReturnType<typeof vi.fn>; recheckShared: ReturnType<typeof vi.fn> }
 const TOKEN = '0f8b6a2c-1d3e-4f50-9a61-7b2c3d4e5f60'
 const h = vi.hoisted(() => ({
   ptys: [] as FakePty[],
@@ -38,6 +38,7 @@ const h = vi.hoisted(() => ({
   disposed: [] as string[],
   hooksInstalled: true,
   exactResult: null as null | { id: string; cwd: string },
+  refuted: false,
   wdStarts: [] as Array<{ sid: string; info: Record<string, unknown> }>,
   wdFeeds: [] as string[],
   failCapture: false,
@@ -107,7 +108,7 @@ vi.mock('../../../src/main/providers', () => ({
     } : {}),
     ingestSessionTelemetry: (sid: string, opts: Record<string, any>) => {
       if (h.failTelemetry) throw new Error('telemetry failed')
-      const src: FakeSource = { sid, opts, stop: vi.fn(), noteExactRollout: vi.fn(() => h.exactResult), refuteInferredClaim: vi.fn(() => false) }
+      const src: FakeSource = { sid, opts, stop: vi.fn(), noteExactRollout: vi.fn(() => h.exactResult), refuteInferredClaim: vi.fn(() => h.refuted), recheckShared: vi.fn(() => true) }
       h.sources.push(src)
       return src
     },
@@ -199,7 +200,7 @@ beforeEach(() => {
   for (const sid of [SID, SID2, CLAUDE_SID]) { try { killPty(sid) } catch { /* none */ } }
   exitAll()
   h.ptys = []; h.built = []; h.sources = []; h.registered = []; h.unregistered = []; h.prepared = []; h.disposed = []
-  h.gatewayListening = true; h.hooksInstalled = true; h.exactResult = null; h.wdStarts = []; h.wdFeeds = []; h.failCapture = false
+  h.gatewayListening = true; h.hooksInstalled = true; h.exactResult = null; h.refuted = false; h.wdStarts = []; h.wdFeeds = []; h.failCapture = false
   h.failBuild = false; h.failTelemetry = false; h.failSpawn = false; h.prepareNull = false; h.warns = []; h.removedFiles = []; h.clearedAccounts = []
 })
 
@@ -364,6 +365,20 @@ describe('a hook\'s transcript path: the exact claim (P3.5, P3.6 limits)', () =>
     expect(source(SID).noteExactRollout).toHaveBeenCalledTimes(1)
   })
 
+  it('P3.12 round 1 (B1): once another session\'s inferred claim is refuted, the session whose Codex started the conversation is re-checked (it may now hold it); not when nothing was refuted', () => {
+    start(SID, 'a')
+    start(SID2, 'a')
+    const p = rollout('a', ID_A)
+    h.exactResult = { id: ID_A, cwd: '/p' }
+    noteCodexHookTranscript(SID, p)
+    noteCodexHookEvent(sessionStart(SID, 'startup', p))
+    expect(source(SID).recheckShared).not.toHaveBeenCalled()
+    h.refuted = true
+    noteCodexHookEvent(sessionStart(SID, 'startup', p))
+    expect(source(SID).recheckShared).toHaveBeenCalledTimes(1)
+    expect(source(SID2).recheckShared).not.toHaveBeenCalled()
+  })
+
   it('round 1 (B4): a conversation the session\'s own Codex STARTED proves another session\'s inferred claim of it wrong', () => {
     start(SID, 'a')
     start(SID2, 'a')
@@ -503,5 +518,16 @@ describe('the C item: a local spawn that throws after its process started', () =
     h.failSpawn = true
     expect(() => spawnPty(fakeWin, CLAUDE_SID, { cwd: os.tmpdir() } as never)).toThrow(/File not found/)
     expect(h.ptys.length).toBe(0)
+  })
+})
+
+describe('P3.12 round 2 (Q3): a holder stops', () => {
+  it('the other Codex sessions are re-checked (a reader beside it holds the conversation now); not before', () => {
+    start(SID, 'a')
+    start(SID2, 'a')
+    expect(source(SID2).recheckShared).not.toHaveBeenCalled()
+    killPty(SID)
+    expect(source(SID2).recheckShared).toHaveBeenCalledTimes(1)
+    expect(source(SID).recheckShared).not.toHaveBeenCalled()
   })
 })

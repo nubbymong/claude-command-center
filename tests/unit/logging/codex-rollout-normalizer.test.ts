@@ -221,3 +221,23 @@ describe('the rollout line reader the GitHub Session Context shares (P3.12, row 
     expect(readCodexRolloutLine('{bad')).toBeNull()
   })
 })
+
+// P3.12 round 1 (B6): a legacy user_message event carries a kind in some
+// builds (user_instructions, environment_context: the context Codex injects);
+// only a plain one (or one with no kind) is the user's words.
+describe('the Codex rollout normalizer: user_message kinds (P3.12 round 1, B6)', () => {
+  it('a user_message of a kind other than plain is not indexed as the user\'s words; plain or no kind is', () => {
+    const { rows } = run([
+      event({ type: 'user_message', kind: 'user_instructions', message: '# AGENTS.md instructions for /w\n\n<INSTRUCTIONS>be brief</INSTRUCTIONS>' }),
+      event({ type: 'user_message', kind: 'environment_context', message: '<environment_context>/w</environment_context>' }),
+      event({ type: 'user_message', kind: 'plain', message: 'the real prompt' }),
+      event({ type: 'user_message', message: 'a later prompt' }),
+    ])
+    expect(rows.map((r) => [r.role, r.kind, r.content])).toEqual([
+      ['user', 'message', 'the real prompt'],
+      ['user', 'message', 'a later prompt'],
+    ])
+    const read = readCodexRolloutLine(event({ type: 'user_message', kind: 'user_instructions', message: 'x' }))
+    expect(read?.entries).toEqual([])
+  })
+})

@@ -12,7 +12,7 @@
  * link-creation rights on the host.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync, renameSync, symlinkSync, lstatSync, unlinkSync, rmdirSync } from 'node:fs'
 import { join, dirname, basename } from 'node:path'
 import { tmpdir } from 'node:os'
 import { writeRealmNameSidecar, nodeRealmNameFs, type RealmNameFs } from '../../../src/main/logging/session-name-sidecar'
@@ -83,6 +83,7 @@ describe('the name file next to a Codex rollout (P3.12, row 32)', () => {
       unlink: (p) => { ops.push(`unlink ${basename(p)}`) },
       randomHex: () => '0123456789abcdef',
       now: () => 1,
+      realpath: (x) => x,
     }
   }
   const dirs = () => ({ [sessions]: 'dir', [join(sessions, '2026')]: 'dir', [join(sessions, '2026', '09')]: 'dir', [day]: 'dir' } as Record<string, 'dir' | 'file' | 'link'>)
@@ -123,5 +124,88 @@ describe('the name file next to a Codex rollout (P3.12, row 32)', () => {
     writeFileSync(at, 'x')
     expect(() => nodeRealmNameFs.createExclusive(at, 'y')).toThrow()
     expect(readFileSync(at, 'utf8')).toBe('x')
+  })
+
+  // ---- round 1 ----
+
+  it('A2: writes at the path it checked (the realm\'s folders and the file\'s name), never at a spelling of the input it did not check', () => {
+    const f = fakeFs(dirs())
+    const spelled = join(sessions, '2026', '09', '.', '29', basename(rollout))
+    expect(writeRealmNameSidecar(spelled, sessions, 'n', f)).toBe(true)
+    const tmp = `${basename(nameFile())}.0123456789abcdef.tmp`
+    expect(f.ops).toEqual([`create ${tmp}`, `rename ${tmp} -> ${basename(nameFile())}`])
+    const at: string[] = []
+    const g = { ...fakeFs(dirs()), createExclusive: (x: string) => { at.push(x) }, rename: (_a: string, b: string) => { at.push(b) } }
+    writeRealmNameSidecar(spelled, sessions, 'n', g)
+    expect(at).toEqual([join(day, tmp), nameFile()])
+  })
+
+  it.runIf(process.platform === 'win32')('A2 (Windows): an input spelled in another case is written at the checked spelling', () => {
+    const at: string[] = []
+    const g = { ...fakeFs(dirs()), createExclusive: (x: string) => { at.push(x) }, rename: (_a: string, b: string) => { at.push(b) } }
+    const upper = join(sessions.toUpperCase(), '2026', '09', '29', basename(rollout))
+    expect(writeRealmNameSidecar(upper, sessions, 'n', g)).toBe(true)
+    expect(at).toEqual([join(day, `${basename(nameFile())}.0123456789abcdef.tmp`), nameFile()])
+  })
+
+  it('A2: a day folder swapped for another between the check and the write: the new file is taken back, nothing named', () => {
+    const f = fakeFs(dirs())
+    const ops: string[] = []
+    let created = false
+    const swapped: RealmNameFs = {
+      ...f,
+      createExclusive: (x) => { created = true; ops.push(`create ${basename(x)}`) },
+      // Before the write the day folder is itself; the new file then turns out to sit elsewhere.
+      realpath: (x) => (created && x.endsWith('.tmp') ? join(root, 'elsewhere', basename(x)) : x),
+      unlink: (x) => { ops.push(`unlink ${basename(x)}`) },
+      rename: (a, b) => { ops.push(`rename ${basename(a)} -> ${basename(b)}`) },
+    }
+    expect(writeRealmNameSidecar(rollout, sessions, 'n', swapped)).toBe(false)
+    const tmp = `${basename(nameFile())}.0123456789abcdef.tmp`
+    expect(ops).toEqual([`create ${tmp}`, `unlink ${tmp}`])
+  })
+
+  it('Q3: a write that fails after the new file was made takes it back (unless the name was already taken)', () => {
+    const tmp = `${basename(nameFile())}.0123456789abcdef.tmp`
+    const ops: string[] = []
+    const failing: RealmNameFs = { ...fakeFs(dirs()), createExclusive: () => { const e = new Error('disk full') as NodeJS.ErrnoException; e.code = 'ENOSPC'; throw e }, unlink: (x) => { ops.push(`unlink ${basename(x)}`) } }
+    expect(writeRealmNameSidecar(rollout, sessions, 'n', failing)).toBe(false)
+    expect(ops).toEqual([`unlink ${tmp}`])
+    const taken: string[] = []
+    const exists: RealmNameFs = { ...fakeFs(dirs()), createExclusive: () => { const e = new Error('exists') as NodeJS.ErrnoException; e.code = 'EEXIST'; throw e }, unlink: (x) => { taken.push(x) } }
+    expect(writeRealmNameSidecar(rollout, sessions, 'n', exists)).toBe(false)
+    expect(taken).toEqual([])
+  })
+
+  // ---- round 2 (W2): real folders, the day folder swapped for a junction ----
+
+  describe('the day folder swapped for a junction to a folder outside the realm (real folders)', () => {
+    let elsewhere: string
+    const swapDay = () => { renameSync(day, day + '-orig'); symlinkSync(elsewhere, day, 'junction') }
+    beforeEach(() => { elsewhere = join(root, 'not-the-realm'); mkdirSync(elsewhere) })
+    afterEach(() => { try { if (lstatSync(day).isSymbolicLink()) { try { unlinkSync(day) } catch { rmdirSync(day) } } } catch { /* gone */ } })
+
+    it('at the first real-path look: nothing is written outside, nothing named', () => {
+      let swapped = false
+      const racing: RealmNameFs = { ...nodeRealmNameFs, realpath: (p) => { if (!swapped) { swapped = true; swapDay() } return nodeRealmNameFs.realpath(p) } }
+      expect(writeRealmNameSidecar(rollout, sessions, 'RACED', racing)).toBe(false)
+      expect(swapped).toBe(true)
+      expect(readdirSync(elsewhere)).toEqual([])
+    })
+
+    it('a swap made at a look at the day folder\'s own real path: none is taken, and nothing is written outside', () => {
+      let looked = false
+      const racing: RealmNameFs = { ...nodeRealmNameFs, realpath: (p) => { if (p === day) { looked = true; swapDay() } return nodeRealmNameFs.realpath(p) } }
+      writeRealmNameSidecar(rollout, sessions, 'RACED', racing)
+      expect(looked).toBe(false)
+      expect(readdirSync(elsewhere)).toEqual([])
+    })
+
+    it('between the check and the new file: nothing is written outside, nothing named', () => {
+      let swapped = false
+      const racing: RealmNameFs = { ...nodeRealmNameFs, createExclusive: (p, d) => { if (!swapped) { swapped = true; swapDay() } nodeRealmNameFs.createExclusive(p, d) } }
+      expect(writeRealmNameSidecar(rollout, sessions, 'RACED', racing)).toBe(false)
+      expect(readdirSync(elsewhere)).toEqual([])
+    })
   })
 })

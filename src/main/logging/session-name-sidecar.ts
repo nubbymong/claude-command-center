@@ -140,27 +140,35 @@ export interface RealmNameFs {
   unlink: (p: string) => void
   randomHex: () => string
   now: () => number
+  /** P3.12 round 1 (A2): the real path of `p` (links and junctions resolved). */
+  realpath: (p: string) => string
 }
 
 /** A Codex rollout's own file name. */
 const ROLLOUT_NAME_RE = /^rollout-[^\\/]+\.jsonl$/
 
-/** Whether `dir` is `sessionsDir`'s YYYY/MM/DD day folder, every folder from
- *  `sessionsDir` down a real folder (not a link or junction to one), as the
- *  rollout watcher's own check (P3.5). Both are resolved paths. The day-folder
- *  rule is the containment too: a folder outside `sessionsDir` is reached
- *  through `..` (or, on Windows, is on another drive), never through three
- *  names of four, two and two digits. */
-function realDayFolder(sessionsDir: string, dir: string, fsi: RealmNameFs): boolean {
+/** `dir` as `sessionsDir`'s YYYY/MM/DD day folder, built from the parts it
+ *  checked (and the parts), when every folder from `sessionsDir` down is a
+ *  real folder (not a link or junction to one), as the rollout watcher's own
+ *  check (P3.5); else null. Both are resolved paths. The day-folder rule is the containment too:
+ *  a folder outside `sessionsDir` is reached through `..` (or, on Windows,
+ *  is on another drive), never through three names of four, two and two
+ *  digits. */
+function realDayFolder(sessionsDir: string, dir: string, fsi: RealmNameFs): { day: string; parts: string[] } | null {
   const parts = path.relative(sessionsDir, dir).split(path.sep)
-  if (parts.length !== 3 || !/^\d{4}$/.test(parts[0]) || !/^\d{2}$/.test(parts[1]) || !/^\d{2}$/.test(parts[2])) return false
+  if (parts.length !== 3 || !/^\d{4}$/.test(parts[0]) || !/^\d{2}$/.test(parts[1]) || !/^\d{2}$/.test(parts[2])) return null
   let at = sessionsDir
-  if (!fsi.lstat(at)?.isDirectory()) return false
+  if (!fsi.lstat(at)?.isDirectory()) return null
   for (const part of parts) {
     at = path.join(at, part)
-    if (!fsi.lstat(at)?.isDirectory()) return false
+    if (!fsi.lstat(at)?.isDirectory()) return null
   }
-  return true
+  return { day: at, parts }
+}
+
+/** The same folder: case-folded on Windows, where the file system is. */
+function sameFolder(a: string, b: string): boolean {
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b
 }
 
 /**
@@ -177,11 +185,19 @@ export function writeRealmNameSidecar(rolloutPath: string, sessionsDir: string, 
   try {
     if (typeof rolloutPath !== 'string' || typeof sessionsDir !== 'string') return false
     const resolved = path.resolve(rolloutPath)
-    if (!ROLLOUT_NAME_RE.test(path.basename(resolved))) return false
-    const target = sidecarPathFor(resolved)
+    const fileName = path.basename(resolved)
+    if (!ROLLOUT_NAME_RE.test(fileName)) return false
+    // The realm's real path, taken before its folders are walked: the new file
+    // must sit in its YYYY/MM/DD day folder there.
+    const realm = path.resolve(sessionsDir)
+    const realSessions = fsi.realpath(realm)
+    const checked = realDayFolder(realm, path.dirname(resolved), fsi)
+    if (!checked) return false
+    const day = checked.day
+    const expectedDay = path.join(realSessions, ...checked.parts)
+    // Round 1 (A2): the name file at the path the check built, not the input's.
+    const target = sidecarPathFor(path.join(day, fileName))
     if (!target) return false
-    const dir = path.dirname(resolved)
-    if (!realDayFolder(path.resolve(sessionsDir), dir, fsi)) return false
     const existing = fsi.lstat(target)
     if (existing && !existing.isFile()) return false
     const trimmed = typeof name === 'string' ? name.trim() : ''
@@ -190,7 +206,22 @@ export function writeRealmNameSidecar(rolloutPath: string, sessionsDir: string, 
       return true
     }
     const tmp = `${target}.${fsi.randomHex()}.tmp`
-    fsi.createExclusive(tmp, JSON.stringify({ name: trimmed, updatedAt: fsi.now() }))
+    try {
+      fsi.createExclusive(tmp, JSON.stringify({ name: trimmed, updatedAt: fsi.now() }))
+    } catch (err) {
+      // Round 1 (Q3): a new file made before the write failed is taken back;
+      // one that was there already (EEXIST) is not this write's.
+      if ((err as NodeJS.ErrnoException)?.code !== 'EEXIST') { try { fsi.unlink(tmp) } catch { /* not made */ } }
+      return false
+    }
+    // Round 1 (A2): the new file must sit in the day folder that was checked,
+    // not in a folder put in its place meanwhile.
+    let landed = false
+    try { landed = sameFolder(path.dirname(fsi.realpath(tmp)), expectedDay) } catch { landed = false }
+    if (!landed) {
+      try { fsi.unlink(tmp) } catch { /* already gone */ }
+      return false
+    }
     try {
       fsi.rename(tmp, target)
     } catch {
@@ -213,4 +244,5 @@ export const nodeRealmNameFs: RealmNameFs = {
   unlink: (p) => { fs.unlinkSync(p) },
   randomHex: () => randomBytes(8).toString('hex'),
   now: () => Date.now(),
+  realpath: (p) => fs.realpathSync.native(p),
 }

@@ -813,7 +813,8 @@ describe('transcripts-worker', () => {
       { timestamp: T, type: 'response_item', payload: { type: 'function_call', name: 'shell', call_id: 'c', arguments: JSON.stringify({ command: ['bash', '-lc', 'git status'] }) } },
       { timestamp: T, type: 'event_msg', payload: { type: 'item_completed', item: { type: 'AgentMessage', id: 'a', content: [{ type: 'Text', text: 'done' }] } } },
     ].map((o) => JSON.stringify(o)).join('\n') + '\n')
-    h.send({ type: 'transcript-bind', sessionId: 'cx1', path: rollout, confidence: 'exact', sourceFormat: 'codex-rollout' })
+    const st = statSync(rollout, { bigint: true })
+    h.send({ type: 'transcript-bind', sessionId: 'cx1', path: rollout, confidence: 'exact', sourceFormat: 'codex-rollout', sourceIdentity: `${st.dev}:${st.ino}` })
     h.worker.tickNow()
     h.send({ type: 'query', id: 31, kind: 'read-messages', args: { sessionId: 'cx1', anchor: 'tail', dir: 'older', limit: 50 } })
     const page = h.out.find((m) => m.type === 'query-result' && m.id === 31) as { rows: Array<{ role: string; kind: string; content: string; toolName: string | null; provider: string }> }
