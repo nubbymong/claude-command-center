@@ -14,12 +14,25 @@ export const codexIdleMarks = new Map<string, CodexIdleMark>()
 
 /** The approval request a Codex session's dot is raised for: its turn and
  *  tool, as the PermissionRequest named them (Codex's carries no tool call
- *  id), when it did. */
+ *  id), when it did. Round 2 (R3): `awaitingOwnPre` while the request came
+ *  before its own call's PreToolUse (which is then taken as its own, once);
+ *  `callId`, that PreToolUse's tool_use_id once taken. */
 export interface CodexPendingApproval {
   turn?: string
   tool?: string
+  awaitingOwnPre: boolean
+  callId?: string
 }
 export const codexPendingApprovals = new Map<string, CodexPendingApproval>()
+
+/** Round 2 (R3): each Codex session's latest PreToolUse whose PostToolUse
+ *  has not come yet: its turn, tool and tool_use_id. */
+export interface CodexOpenCall {
+  turn?: string
+  tool?: string
+  callId?: string
+}
+export const codexOpenCalls = new Map<string, CodexOpenCall>()
 
 /** Drop the session's pending idle mark (its timer stopped) and its pending
  *  approval: its run ended, restarted or moved to another account. */
@@ -30,10 +43,12 @@ export function clearCodexIdleAttention(sessionId: string): void {
     try { mark.clear(mark.handle) } catch { /* already gone */ }
   }
   codexPendingApprovals.delete(sessionId)
+  codexOpenCalls.delete(sessionId)
 }
 
 /** Test seam: drop everything. */
 export function _clearAllCodexIdleAttentionForTest(): void {
   for (const id of [...codexIdleMarks.keys()]) clearCodexIdleAttention(id)
   codexPendingApprovals.clear()
+  codexOpenCalls.clear()
 }

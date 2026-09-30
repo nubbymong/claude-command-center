@@ -122,5 +122,8 @@ describe('app knowledge after P3.10 (round 1, S2)', () => {
     expect(k).toMatch(/Continue without trusting/)
     expect(k).toMatch(/attention dot does not light up/)
     expect(k).toMatch(/To trust them later/)
+    // Round 2 (R9): it says the hooks send the app each event's details, as Claude Code's do.
+    expect(k).toMatch(/sends the app, on this computer only, the details Codex gives each of these events, as Claude Code.s hooks do/)
+    expect(k).not.toMatch(/only tells the app/)
   })
 })

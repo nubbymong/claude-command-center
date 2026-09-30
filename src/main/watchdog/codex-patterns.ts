@@ -82,6 +82,22 @@ function liveRegion(lines: string[], maxRows: number): { lines: string[]; start:
   return { lines: lines.slice(start, stop), start }
 }
 
+/**
+ * P3.10 round 2 (R2): the turn now on screen -- the live region's rows below
+ * its newest user message (a prompt-glyph row above the composer), or all of
+ * it when none is in view. An error cell above a newer user message belongs to
+ * an earlier turn: the session has moved on since (a retry the Watchdog typed,
+ * or the user's own message), so it is not the current state. Codex leaves an
+ * error cell on screen after the turn that follows it succeeds; read without
+ * this, one overload got a second retry a minute after the first succeeded
+ * (the P3.10 VM run). The usage-limit check has the same rule, as a message
+ * sent below a limit cell is the session moving on (codexResumedAfterLimit).
+ */
+function currentTurn(region: string[]): string[] {
+  for (let i = region.length - 1; i >= 0; i--) if (PROMPT_ROW_RE.test(region[i])) return region.slice(i + 1)
+  return region
+}
+
 /** Each error cell in `lines`: its row index and its text, its continuation
  *  rows joined with spaces (a long message wraps). */
 function errorCells(lines: string[]): Array<{ at: number; text: string }> {
@@ -99,10 +115,21 @@ function errorCells(lines: string[]): Array<{ at: number; text: string }> {
   return out
 }
 
-/** The live usage-limit cell, bottom-most first: its row in the live region
- *  and its text; null when none. */
-function liveLimitCell(text: string, tailLines: number): { at: number; text: string; region: string[] } | null {
+/** The bottom-most usage-limit cell in the live region, whatever turn it
+ *  belongs to: its row there and its text; null when none. */
+function lastLimitCell(text: string, tailLines: number): { at: number; text: string; region: string[] } | null {
   const region = liveRegion(rows(text), tailLines > 0 ? tailLines : CODEX_LIVE_ROWS).lines
+  const cells = errorCells(region)
+  for (let k = cells.length - 1; k >= 0; k--) {
+    if (USAGE_LIMIT_RE.some((re) => re.test(cells[k].text))) return { ...cells[k], region }
+  }
+  return null
+}
+
+/** The live usage-limit cell: one in the turn now on screen (round 2, R2),
+ *  bottom-most first; its row in that turn and its text; null when none. */
+function liveLimitCell(text: string, tailLines: number): { at: number; text: string; region: string[] } | null {
+  const region = currentTurn(liveRegion(rows(text), tailLines > 0 ? tailLines : CODEX_LIVE_ROWS).lines)
   const cells = errorCells(region)
   for (let k = cells.length - 1; k >= 0; k--) {
     if (USAGE_LIMIT_RE.some((re) => re.test(cells[k].text))) return { ...cells[k], region }
@@ -136,15 +163,16 @@ export function codexFindRateLimitMessage(text: string): string | null {
  *  turn running, below the limit cell. With no limit cell live: a turn
  *  running. */
 export function codexResumedAfterLimit(text: string, tailLines = CODEX_LIVE_ROWS): boolean {
-  const cell = liveLimitCell(text, tailLines)
+  const cell = lastLimitCell(text, tailLines)
   if (!cell) return codexIsWorking(text)
   return cell.region.slice(cell.at + 1).some((l) => PROMPT_ROW_RE.test(l) || WORKING_RE.test(l))
 }
 
-/** A sustained server error cell in the live region. `_patterns` (the
+/** A sustained server error cell in the turn now on screen (round 2, R2: one
+ *  above a newer user message is an earlier turn's). `_patterns` (the
  *  config's, Claude Code's) are never used for Codex: its own are. */
 export function codexDetectOverload(text: string, _patterns?: unknown): boolean {
-  const region = liveRegion(rows(text), CODEX_LIVE_ROWS).lines
+  const region = currentTurn(liveRegion(rows(text), CODEX_LIVE_ROWS).lines)
   return errorCells(region).some((c) => CODEX_OVERLOAD_PATTERNS.some((re) => re.test(c.text)))
 }
 

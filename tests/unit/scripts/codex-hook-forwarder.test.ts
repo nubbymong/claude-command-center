@@ -176,6 +176,29 @@ describe('readHookFile', () => {
     }
   })
 
+  it('round 2: compares file identities as bigints (an NTFS id past 2^53 loses its low bits as a number)', () => {
+    const dir = hookDir()
+    const file = goodFile(dir)
+    // The file looked at differs from the one opened only in its id's lowest
+    // bit: equal as numbers once past 2^53, different as bigints.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fsCjs = require('fs') as typeof import('fs')
+    const realLstat = fsCjs.lstatSync
+    const spy = vi.spyOn(fsCjs, 'lstatSync').mockImplementation(((p: string, o?: { bigint?: boolean }) => {
+      const real = (realLstat as (...a: unknown[]) => unknown)(p, o) as Record<string, unknown>
+      if (p !== file || !o || o.bigint !== true) return real
+      return new Proxy(real, { get: (target, k) => (k === 'ino' ? (target.ino as bigint) ^ 1n : typeof target[k as string] === 'function' ? (target[k as string] as () => unknown).bind(target) : target[k as string]) })
+    }) as unknown as typeof fsCjs.lstatSync)
+    try {
+      expect(fwd.readHookFile({ CCC_CODEX_HOOK_FILE: file, CLAUDE_MULTI_SESSION_ID: 'sess-1' })).toBeNull()
+      // The same file, looked at and opened, is read (bigint ids equal).
+      spy.mockRestore()
+      expect(fwd.readHookFile({ CCC_CODEX_HOOK_FILE: file, CLAUDE_MULTI_SESSION_ID: 'sess-1' })).not.toBeNull()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   it('never reads through a file link', (ctx) => {
     const dir = hookDir()
     const target = join(dirname(dir), 'real.json')

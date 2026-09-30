@@ -6,7 +6,8 @@
 import { getGateway } from './hooks/index'
 import { pushAttention } from './ipc/channel-handlers'
 import { emitInternal } from './internal-events'
-import { codexIdleMarks, codexPendingApprovals, clearCodexIdleAttention, _clearAllCodexIdleAttentionForTest } from './codex-idle-attention'
+import { codexIdleMarks, codexPendingApprovals, codexOpenCalls, clearCodexIdleAttention, _clearAllCodexIdleAttentionForTest } from './codex-idle-attention'
+import type { CodexPendingApproval } from './codex-idle-attention'
 import type { HookEvent } from '../shared/hook-types'
 
 // P3.10 round 1 (Q1): pty-manager drops a session's pending idle mark with
@@ -108,14 +109,36 @@ function mayBeTheApprovedCall(pending: { turn?: string; tool?: string }, e: Hook
   return true
 }
 
+/** Round 2 (R3): an event of another turn than the approval's (both known):
+ *  a new turn has started, so the approval is over. */
+function ofAnotherTurn(pending: CodexPendingApproval, e: HookEvent): boolean {
+  const turn = payloadString(e, 'turn_id')
+  return !!pending.turn && !!turn && pending.turn !== turn
+}
+
+/** Round 2 (R3): the PermissionRequest came after its own call's PreToolUse:
+ *  the session's open call is of the same turn and tool (both known). */
+function followsItsOwnPre(open: { turn?: string; tool?: string } | undefined, approval: { turn?: string; tool?: string }): boolean {
+  return !!open && !!open.turn && !!open.tool && open.turn === approval.turn && open.tool === approval.tool
+}
+
 /** Route one hook event to the attention flasher. Exported for tests.
  *  P3.10 round 1 (V1): Codex runs the app's hooks asynchronously, and fires
  *  PreToolUse and PermissionRequest for one shell command at the same moment,
  *  so the gateway gets them in either order (VM: 3 of 6 rounds on 0.153.4
  *  had PreToolUse second). A PreToolUse never clears the raise for the
- *  approval of its own call: the dot stays up while the approval waits. The
- *  approval's hold is used up by that one PreToolUse; a PostToolUse, a prompt
- *  or a turn's end ends it. */
+ *  approval of its own call: the dot stays up while the approval waits.
+ *  Round 2 (R3): when the approval request came first, the next PreToolUse
+ *  that may be its call is taken as its own, once, and its tool_use_id kept;
+ *  from then on, while the approval waits, only that call's PostToolUse, a
+ *  prompt or the turn's end ends it (another call of the turn, running
+ *  beside it, clears nothing), and an event of a newer turn ends it too.
+ *  When the request came after its own call's PreToolUse there is nothing to
+ *  take: the dot is raised and the next tool event clears it, as for any
+ *  raise (a PermissionRequest carries no call id, so a call running beside
+ *  the one waiting cannot be told from the model's next call after the user
+ *  declined). A turn's end does not clear the dot, as Claude's does not; it
+ *  arms the idle mark. */
 export function routeAttentionEvent(e: HookEvent, opts: AttentionSourceOptions = {}): void {
   const push = opts.push ?? pushAttention
   const isCodex = opts.isCodexSession?.(e.sessionId) === true
@@ -130,24 +153,48 @@ export function routeAttentionEvent(e: HookEvent, opts: AttentionSourceOptions =
   const clearTimer = opts.clearTimer ?? ((h: ReturnType<typeof setTimeout>) => clearTimeout(h))
   const pending = codexIdleMarks.get(sid)
   if (pending) { codexIdleMarks.delete(sid); pending.clear(pending.handle) }
+  const callId = payloadString(e, 'tool_use_id')
   if (e.event === 'PermissionRequest') {
-    codexPendingApprovals.set(sid, approvalOf(e))
+    const approval = approvalOf(e)
+    if (followsItsOwnPre(codexOpenCalls.get(sid), approval)) codexPendingApprovals.delete(sid)
+    else codexPendingApprovals.set(sid, { ...approval, awaitingOwnPre: true })
     push(sid, true)
     return
   }
   if (e.event === 'PreToolUse') {
+    codexOpenCalls.set(sid, { ...approvalOf(e), ...(callId ? { callId } : {}) })
     const approval = codexPendingApprovals.get(sid)
-    if (approval && mayBeTheApprovedCall(approval, e)) {
-      // Its own call's PreToolUse, landing after the approval request: the
-      // approval still waits, so the dot stays.
-      codexPendingApprovals.delete(sid)
+    if (approval && !ofAnotherTurn(approval, e)) {
+      if (approval.awaitingOwnPre && mayBeTheApprovedCall(approval, e)) {
+        // Its own call's PreToolUse, landing after the approval request: the
+        // approval still waits, so the dot stays; its call is this one.
+        approval.awaitingOwnPre = false
+        if (callId) approval.callId = callId
+      }
+      // Another call of the same turn while the approval waits: nothing clears.
       return
     }
+    codexPendingApprovals.delete(sid)
     push(sid, false)
     return
   }
-  // A tool that ran, a prompt, a turn's end: the approval is over.
+  if (e.event === 'PostToolUse') {
+    const open = codexOpenCalls.get(sid)
+    if (open && (!callId || !open.callId || open.callId === callId)) codexOpenCalls.delete(sid)
+    const approval = codexPendingApprovals.get(sid)
+    if (approval && !ofAnotherTurn(approval, e)) {
+      // A call running beside the one waiting finished: the approval still
+      // waits. (A PostToolUse naming no call may be the approved one: it clears.)
+      if (approval.awaitingOwnPre && callId) return
+      if (approval.callId && callId && approval.callId !== callId) return
+    }
+    codexPendingApprovals.delete(sid)
+    push(sid, false)
+    return
+  }
+  // A prompt, a turn's end: the approval is over.
   codexPendingApprovals.delete(sid)
+  codexOpenCalls.delete(sid)
   if (v === 'idle') {
     const setTimer = opts.setTimer ?? ((cb: () => void, ms: number) => setTimeout(cb, ms))
     const h = setTimer(() => {
@@ -157,7 +204,7 @@ export function routeAttentionEvent(e: HookEvent, opts: AttentionSourceOptions =
       if (opts.isCodexSession?.(sid) !== true) return
       push(sid, true)
       // P3.10 round 1 (S5): the notification rules get what Claude's own
-      // idle_prompt gives them (channel-rules idlePromptRuleContext), so the
+      // idle_prompt gives them (channel-rules notificationRuleContext), so the
       // Attention Pulse rule treats both assistants alike.
       try { emitInternal('attention:idle-prompt', { sessionId: sid }) } catch { /* a rule never stops the mark */ }
     }, CODEX_IDLE_ATTENTION_MS)

@@ -367,7 +367,22 @@ function SshConnectionPill({ session }: { session: Session }) {
  * Codex session with every check it has on reads green, as a Claude one does.
  */
 const WATCHDOG_CHECK_WORDS = { rateLimit: 'rate-limit resume', overload: 'API overload', safeguard: 'safeguard' } as const
-function WatchdogPill({ watchdog }: { watchdog?: Session['watchdog'] }) {
+/**
+ * P3.10 round 2 (R1): the pill reads the session's LIVE watchdog state from
+ * the store, not the record the header was handed. The shell hands the header
+ * a session copy refreshed only on structural changes (structuralSessionsEqual),
+ * and `watchdog` is deliberately not structural (it changes with every
+ * incident), so the handed copy went stale: the pill appeared only after some
+ * other structural change (a tab closed), and a check switched off left it
+ * reading on (the P3.10 VM run; the same path for a Claude and a Codex
+ * session). The handed copy stands in only while the store has no such
+ * session.
+ */
+function WatchdogPill({ session }: { session: Session }) {
+  const watchdog = useSessionStore((s) => {
+    const live = s.sessions.find((x) => x.id === session.id)
+    return live ? live.watchdog : session.watchdog
+  })
   // Presence of the state IS the armed signal: main pushes one only for a
   // session it actually watches, and clears it on teardown.
   if (!watchdog) return null
@@ -609,7 +624,7 @@ function SessionAuthPills({ session }: { session: Session }) {
           profileId={sshProfileId}
           refresh={refresh}
           gitHubTail={gitHubTail}
-          watchdogPill={<WatchdogPill watchdog={session.watchdog} />}
+          watchdogPill={<WatchdogPill session={session} />}
         />
       )
     }
@@ -622,7 +637,7 @@ function SessionAuthPills({ session }: { session: Session }) {
           title={accountTitle}
           testId="session-pill-account"
         />
-        <WatchdogPill watchdog={session.watchdog} />
+        <WatchdogPill session={session} />
         {gitHubTail}
       </>
     )
@@ -634,7 +649,7 @@ function SessionAuthPills({ session }: { session: Session }) {
     // Codex session shows its Watchdog pill as a Claude one does (nothing
     // when no watcher is armed for it).
     const codexWatchdog = (session.provider ?? 'claude') === 'codex' && !session.shellOnly
-      ? <WatchdogPill watchdog={session.watchdog} />
+      ? <WatchdogPill session={session} />
       : null
     const gitHubPart = !isAsk && session.githubIntegration?.repoSlug
       ? (<><div className="w-px h-4 bg-surface1 shrink-0" />{gitHub}</>)
@@ -693,7 +708,7 @@ function SessionAuthPills({ session }: { session: Session }) {
       profileId={profileId}
       refresh={refresh}
       gitHubTail={<><div className="w-px h-4 bg-surface1 shrink-0" />{gitHub}</>}
-      watchdogPill={<WatchdogPill watchdog={session.watchdog} />}
+      watchdogPill={<WatchdogPill session={session} />}
     />
   )
 }

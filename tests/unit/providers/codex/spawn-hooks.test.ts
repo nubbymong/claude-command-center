@@ -29,6 +29,11 @@ vi.mock('../../../../src/main/conductor-mcp-server', () => ({
   mcpSessionToken: () => 'tok',
   issueMcpSessionToken: () => 'tok',
 }))
+const warns = vi.hoisted(() => [] as string[])
+vi.mock('../../../../src/main/debug-logger', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../../src/main/debug-logger')>()),
+  logWarn: (...a: unknown[]) => { warns.push(a.map(String).join(' ')) },
+}))
 vi.mock('../../../../src/main/config-manager', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../../src/main/config-manager')>()),
   readConfig: () => ({}),
@@ -36,7 +41,7 @@ vi.mock('../../../../src/main/config-manager', async (importOriginal) => ({
 }))
 
 import { CodexProvider } from '../../../../src/main/providers/codex'
-import { codexHookCommand, codexHookConfigArgs, codexPlainWrapperDir, stagePlainCodexHookWrapper, __setCodexLocalAppDataForTests, CODEX_HOOK_FILE_ENV } from '../../../../src/main/providers/codex/hooks'
+import { codexHookCommand, codexHookConfigArgs, codexPlainWrapperDir, stagePlainCodexHookWrapper, __setCodexLocalAppDataForTests, __resetCodexHookFoldersForTests, CODEX_HOOK_FILE_ENV } from '../../../../src/main/providers/codex/hooks'
 import { codexCmdExeTarget, CODEX_OPEN_ELSEWHERE_ENV } from '../../../../src/main/providers/codex/spawn'
 
 const TEST_PREFIX = 'p310-spawn-hooks-'
@@ -60,6 +65,8 @@ function resources(deploy = true, sub?: string): string {
 afterEach(() => {
   ;(globalThis as any).__mockResourcesDir = undefined
   __setCodexLocalAppDataForTests(null)
+  __resetCodexHookFoldersForTests()
+  warns.length = 0
   // TEST CLEANUP GUARD: only the folders this test made, by their own prefix, under the temp folder.
   for (const d of made.splice(0)) {
     if (!basename(d).startsWith(TEST_PREFIX) || dirname(d) !== realpathSync.native(tmpdir())) continue
@@ -181,7 +188,7 @@ describe('round 1 (V3): the npm shim route from a resources folder with a space'
     const lad = tempDir()
     __setCodexLocalAppDataForTests(lad)
     const plainDir = codexPlainWrapperDir(lad, res)
-    // Where the host's temp folder is not a plain path there is nothing to show.
+    // Where this host's test folders have no plain-word path there is nothing to show.
     if (!plainDir) { ctx.skip(); return }
     const shim = 'C:\\npm\\codex.cmd'
     const viaShim = () => new CodexProvider().buildSpawnCommand({ ...opts, realmLaunch: { ...launch, executable: shim }, codexHooks: { hookFile } })
@@ -206,5 +213,24 @@ describe('round 1 (V3): the npm shim route from a resources folder with a space'
     const direct = new CodexProvider().buildSpawnCommand({ ...opts, codexHooks: { hookFile } })
     expect(direct.hooksInstalled).toBe(true)
     expect(hookArgs(direct.args)).toEqual(hookArgs(codexHookConfigArgs(`& '${join(res, 'scripts', 'ccc-codex-hook.cmd')}'`)))
+  })
+})
+
+describe('round 2 (R7): a plain-path copy that could not be made is said at boot', () => {
+  it.runIf(process.platform === 'win32')('the deploy logs it, and the shim route then has no hooks', async (ctx) => {
+    const res = resources(true, 'AI Code Conductor')
+    const lad = tempDir()
+    __setCodexLocalAppDataForTests(lad)
+    if (!codexPlainWrapperDir(lad, res)) { ctx.skip(); return }
+    // The owner-only rule does not take: nothing staged, and it says so.
+    await new CodexProvider().deployResumePickerScript(res, { hardenDir: () => false })
+    expect(warns.some((w) => /plain-path copy of the hook wrapper could not be made/.test(w))).toBe(true)
+    const out = new CodexProvider().buildSpawnCommand({ ...opts, realmLaunch: { ...launch, executable: 'C:\\npm\\codex.cmd' }, codexHooks: { hookFile } })
+    expect(out.hooksInstalled).toBe(false)
+    // A local app data folder whose path is not a plain word: said too.
+    warns.length = 0
+    __setCodexLocalAppDataForTests(join(lad, 'Riley Smith'))
+    await new CodexProvider().deployResumePickerScript(res, { hardenDir: () => true })
+    expect(warns.some((w) => /is not a plain word/.test(w))).toBe(true)
   })
 })

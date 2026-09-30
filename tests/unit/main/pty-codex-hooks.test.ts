@@ -279,6 +279,15 @@ describe('a Codex launch and its hooks (rows 43, 46, 47, 63)', () => {
     expect(h.built.at(-1)!.codexOpenElsewhere).toEqual([])
   })
 
+  it('round 2 (R10): only tabs on the same account count: the same conversation open on another account holds no lock here', () => {
+    start(SID, 'b', { resume: { uuid: ID_A, cwd: os.tmpdir() } })
+    start(SID2, 'a', { useResumePicker: true })
+    expect(h.built.at(-1)!.codexOpenElsewhere).toEqual([])
+    start(CLAUDE_SID, 'a', { resume: { uuid: ID_B, cwd: os.tmpdir() } })
+    start(SID2, 'a', { useResumePicker: true })
+    expect(h.built.at(-1)!.codexOpenElsewhere).toEqual([ID_B])
+  })
+
   it('round 1 (Q1): a turn\'s pending idle mark goes with the run it was for (a kill, a Restart)', () => {
     start(SID)
     const clear = vi.fn()
@@ -311,15 +320,21 @@ describe('a hook\'s transcript path: the exact claim (P3.5, P3.6 limits)', () =>
     expect(bind).toHaveBeenCalledTimes(1)
   })
 
-  it('round 1 (B1): a killed Codex session whose token is still registered (until its exit) is still Codex\'s: never a Claude sink; after its exit, not', () => {
+  it('round 1 (B1) and round 2 (R8): a killed Codex session\'s token goes at the kill (the gateway refuses its late hooks); a hook already on its way is still Codex\'s, never a Claude sink; after its exit, the session is no longer Codex\'s', () => {
     start(SID)
     killPty(SID)
-    expect(h.unregistered).not.toContain(SID)
+    expect(h.unregistered).toEqual([SID])
     expect(noteCodexHookTranscript(SID, rollout('a', ID_A))).toBe(true)
     expect(source(SID).noteExactRollout).not.toHaveBeenCalled()
     exitAll()
     expect(h.unregistered).toContain(SID)
     expect(noteCodexHookTranscript(SID, rollout('a', ID_A))).toBe(false)
+  })
+
+  it('round 2 (R8): a Claude session\'s token is not dropped at its kill (it goes with its exit, as before)', () => {
+    spawnPty(fakeWin, CLAUDE_SID, { cwd: os.tmpdir() } as never)
+    killPty(CLAUDE_SID)
+    expect(h.unregistered).toEqual([])
   })
 
   it('round 1 (B1): a session respawned as Claude with a token of its own is Claude\'s again', () => {

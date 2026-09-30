@@ -79,18 +79,23 @@ function readHookFile(env, platform) {
   if (typeof file !== 'string' || typeof sid !== 'string' || !SESSION_ID_RE.test(sid)) return null
   if (!path.isAbsolute(file) || path.basename(file) !== FILE_NAME) return null
   if (!laidOutAsMade(file, plat)) return null
+  // Identities as bigints (round 2): an NTFS file id can pass 2^53, where a
+  // number loses its low bits and two files could compare equal; on Windows
+  // (no O_NOFOLLOW) this comparison is the only check that the file opened is
+  // the one looked at.
   let st
-  try { st = fs.lstatSync(file) } catch { return null }
-  if (!st.isFile() || st.nlink !== 1 || st.size > MAX_FILE_BYTES) return null
+  try { st = fs.lstatSync(file, { bigint: true }) } catch { return null }
+  if (!st.isFile() || st.nlink !== 1n || st.size > BigInt(MAX_FILE_BYTES)) return null
   let text
   let fd = null
   try {
     fd = fs.openSync(file, READ_NO_FOLLOW)
-    const opened = fs.fstatSync(fd)
+    const opened = fs.fstatSync(fd, { bigint: true })
     // Still the file looked at (not one put in its place since).
-    if (!opened.isFile() || opened.dev !== st.dev || opened.ino !== st.ino || opened.nlink !== 1 || opened.size > MAX_FILE_BYTES) return null
-    const buf = Buffer.alloc(opened.size)
-    const n = opened.size > 0 ? fs.readSync(fd, buf, 0, opened.size, 0) : 0
+    if (!opened.isFile() || opened.dev !== st.dev || opened.ino !== st.ino || opened.nlink !== 1n || opened.size > BigInt(MAX_FILE_BYTES)) return null
+    const size = Number(opened.size)
+    const buf = Buffer.alloc(size)
+    const n = size > 0 ? fs.readSync(fd, buf, 0, size, 0) : 0
     text = buf.subarray(0, n).toString('utf8')
   } catch {
     return null

@@ -26,6 +26,7 @@ import {
   realFolderChainBelow,
   codexPlainWrapperDir,
   stagePlainCodexHookWrapper,
+  __resetCodexHookFoldersForTests,
   verifyPlainCodexHookWrapper,
   CODEX_HOOK_EVENTS,
   CODEX_HOOK_DIR_PREFIX,
@@ -50,6 +51,7 @@ function folderLink(target: string, at: string): void {
   links.push(at)
 }
 afterEach(() => {
+  __resetCodexHookFoldersForTests()
   // Links first, removed as links (never followed).
   for (const l of links.splice(0)) {
     try { if (fs.lstatSync(l).isSymbolicLink()) { try { fs.unlinkSync(l) } catch { fs.rmdirSync(l) } } } catch { /* gone */ }
@@ -233,7 +235,7 @@ describe('sweepStaleCodexHookFolders', () => {
     expect(fs.readdirSync(oldWithMore.dir)).toEqual(['keep.txt'])
   })
 
-  it('round 1 (A5): sweeps only a hook root, never another folder (the system temp folder another install shares)', () => {
+  it('round 1 (A5): sweeps only a hook root, never another folder', () => {
     const shared = tmp()
     const lookalike = fs.mkdtempSync(path.join(shared, CODEX_HOOK_DIR_PREFIX))
     const past = new Date(Date.now() - CODEX_HOOK_STALE_MS - 60_000)
@@ -280,7 +282,8 @@ describe('round 1 (V3): the plain-path copy for the npm shim route', () => {
     const plain = path.join(lad, CODEX_HOOK_PLAIN_BASE, 'codex-hooks-abcdef012345')
     const hardened: string[] = []
     expect(stagePlainCodexHookWrapper(src, plain, (d) => { hardened.push(d); return true })).toBe(true)
-    expect(hardened).toEqual([plain])
+    // Both levels are made owner-only, the base folder first (round 2, R4).
+    expect(hardened).toEqual([path.dirname(plain), plain])
     expect(fs.readFileSync(path.join(plain, 'ccc-codex-hook.cmd'), 'utf8')).toBe('rem wrapper')
     expect(verifyPlainCodexHookWrapper(src, plain)).toBe(true)
     // Changed since it was staged.
@@ -310,5 +313,39 @@ describe('round 1 (V3): the plain-path copy for the npm shim route', () => {
     expect(stagePlainCodexHookWrapper(src, path.join(lad2, CODEX_HOOK_PLAIN_BASE, 'codex-hooks-abcdef012345'))).toBe(false)
     const lad3 = tmp()
     expect(stagePlainCodexHookWrapper(src, path.join(lad3, CODEX_HOOK_PLAIN_BASE, 'codex-hooks-abcdef012345'), () => false)).toBe(false)
+  })
+})
+
+describe('round 2: the owner-only rule once a run, and on both plain-copy levels (R4, R6)', () => {
+  it('R6: a second launch does not harden the hook root again (the folder chain is still checked each time)', () => {
+    const data = tmp()
+    let calls = 0
+    const harden = () => { calls++; return true }
+    expect(ensureCodexHookRoot(data, harden)).not.toBeNull()
+    expect(ensureCodexHookRoot(data, harden)).not.toBeNull()
+    expect(calls).toBe(1)
+    // Replaced by a junction meanwhile: refused, hardened or not.
+    const root = path.join(data, CODEX_HOOK_ROOT_NAME)
+    fs.rmdirSync(root)
+    folderLink(tmp(), root)
+    expect(ensureCodexHookRoot(data, harden)).toBeNull()
+    expect(calls).toBe(1)
+  })
+
+  it('R4: the plain copy is used only when both levels took the owner-only rule this run; a copy left from before is not', () => {
+    const res = tmp()
+    fs.mkdirSync(path.join(res, 'scripts'))
+    fs.writeFileSync(path.join(res, 'scripts', 'ccc-codex-hook.js'), '// forwarder')
+    fs.writeFileSync(path.join(res, 'scripts', 'ccc-codex-hook.cmd'), 'rem wrapper')
+    const src = path.join(res, 'scripts')
+    const plain = path.join(tmp(), CODEX_HOOK_PLAIN_BASE, 'codex-hooks-abcdef012345')
+    expect(stagePlainCodexHookWrapper(src, plain, () => true)).toBe(true)
+    expect(verifyPlainCodexHookWrapper(src, plain)).toBe(true)
+    // The next start cannot make the base folder owner-only: the copy is not used, though its bytes are right.
+    expect(stagePlainCodexHookWrapper(src, plain, (d) => d !== path.dirname(plain))).toBe(false)
+    expect(verifyPlainCodexHookWrapper(src, plain)).toBe(false)
+    // Nor one that was never staged in this run.
+    __resetCodexHookFoldersForTests()
+    expect(verifyPlainCodexHookWrapper(src, plain)).toBe(false)
   })
 })

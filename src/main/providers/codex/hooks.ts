@@ -60,9 +60,8 @@ export const CODEX_HOOK_FILE_NAME = 'hook.json'
 /** P3.10 round 1 (A5): the folder inside the app's own data folder that
  *  holds the per-launch hook folders: `<data>/codex-hooks/ccc-codex-hook-*`.
  *  The data folder is this install's own (a dev build, the installed app and
- *  a test run each have theirs), never the system temporary folder (every
- *  install and every other program shares it) nor the resources folder (it
- *  may sit inside a project folder). The forwarder
+ *  a test run each have theirs); not the resources folder (it may sit inside
+ *  a project folder). The forwarder
  *  checks the same layout (scripts/ccc-codex-hook.js ROOT_NAME). */
 export const CODEX_HOOK_ROOT_NAME = 'codex-hooks'
 /** The header the forwarder sends so the gateway never holds a Codex
@@ -198,13 +197,24 @@ function ownerOnlyPosix(dir: string): boolean {
   }
 }
 
+/** Round 2 (R6): the hook roots hardened by the app's owner-only folder rule
+ *  in this run. That rule is a synchronous ACL call on Windows, so it runs
+ *  once a run per root (at boot, or the first launch), not on every launch;
+ *  every launch still checks the folder chain. */
+const hardenedHookRoots = new Set<string>()
+/** Test seam: forget which hook roots were hardened, and which plain copies staged. */
+export function __resetCodexHookFoldersForTests(): void {
+  hardenedHookRoots.clear()
+  stagedPlainDirs.clear()
+}
+
 /**
  * P3.10 round 1 (A5): the folder holding the per-launch hook folders,
  * `<dataDir>/codex-hooks`, made when missing: a real folder inside the app's
  * own data folder (never a link or a junction), this user's only (0700 on
  * POSIX; `hardenDir`, the app's owner-only folder rule, on Windows, where it
- * removes every inherited grant). Null when it is not that, or cannot be
- * made so: the launch then gets no hooks.
+ * removes every inherited grant; once a run, round 2). Null when it is not
+ * that, or cannot be made so: the launch then gets no hooks.
  */
 export function ensureCodexHookRoot(dataDir: string, hardenDir?: (dir: string) => boolean): string | null {
   if (typeof dataDir !== 'string' || !dataDir || !path.isAbsolute(dataDir) || CONTROL_RE.test(dataDir)) return null
@@ -212,8 +222,9 @@ export function ensureCodexHookRoot(dataDir: string, hardenDir?: (dir: string) =
   if (!makeOwnFolder(root)) return null
   if (!realFolderChainBelow(dataDir, root)) return null
   if (!ownerOnlyPosix(root)) return null
-  if (hardenDir) {
+  if (hardenDir && !hardenedHookRoots.has(root)) {
     try { if (!hardenDir(root)) return null } catch { return null }
+    hardenedHookRoots.add(root)
   }
   return root
 }
@@ -334,10 +345,13 @@ export async function deployCodexHookScripts(resourcesDir: string, sourceRoot?: 
 //    dev build never overwrites the installed app's copy, and an update keeps
 //    the same path, and so the same command, which Codex keeps trusted;
 //  - made by the app, a real folder at both levels (never a link or a
-//    junction), and this user's only (the app's owner-only folder rule, which
-//    removes every inherited grant);
-//  - checked again before each launch uses it: still real folders, and each
-//    file a plain file whose bytes are the resources folder's copy.
+//    junction), and both levels this user's only (the app's owner-only folder
+//    rule, which removes every inherited grant; round 2, R4: the base folder
+//    too, since Codex runs the wrapper from there during the session, so the
+//    folders' own rights, not only the check before a launch, keep it);
+//  - staged this run (both levels hardened) and checked again before each
+//    launch uses it: still real folders, and each file a plain file whose
+//    bytes are the resources folder's copy.
 // When that path is not a plain word either (a user name with a space), the
 // shim route gets no hooks, as before.
 
@@ -367,10 +381,16 @@ export function codexPlainWrapperDir(localAppData: string | undefined, resources
   return isPlainWinPath(path.win32.join(dir, CODEX_HOOK_WRAPPER)) ? dir : null
 }
 
-/** The plain copies are what a launch may run: both folders real (below the
- *  local app data folder), and each file a plain file (not a link, one name
- *  only) whose bytes are the resources folder's copy. */
+/** Round 2 (R4): the plain-copy folders staged this run, both levels made
+ *  owner-only (stagePlainCodexHookWrapper). */
+const stagedPlainDirs = new Set<string>()
+
+/** The plain copies are what a launch may run: staged this run (both folders
+ *  hardened, round 2), both folders real (below the local app data folder),
+ *  and each file a plain file (not a link, one name only) whose bytes are the
+ *  resources folder's copy. */
 export function verifyPlainCodexHookWrapper(scriptsDir: string, plainDir: string): boolean {
+  if (!stagedPlainDirs.has(plainDir)) return false
   if (!realFolderChainBelow(path.dirname(path.dirname(plainDir)), plainDir)) return false
   for (const name of [CODEX_HOOK_SCRIPT, CODEX_HOOK_WRAPPER]) {
     const copy = path.join(plainDir, name)
@@ -391,15 +411,22 @@ export function verifyPlainCodexHookWrapper(scriptsDir: string, plainDir: string
 }
 
 /** Copy the forwarder and its wrapper from `scriptsDir` into `plainDir` (see
- *  above), making its folders when missing; each copy is written whole and
- *  replaces the last. True when the copies then pass
- *  verifyPlainCodexHookWrapper. */
+ *  above), making its folders when missing, both made owner-only first (the
+ *  base folder too, round 2); each copy is written whole and replaces the
+ *  last. True when the copies then pass verifyPlainCodexHookWrapper. */
 export function stagePlainCodexHookWrapper(scriptsDir: string, plainDir: string, hardenDir?: (dir: string) => boolean): boolean {
+  stagedPlainDirs.delete(plainDir)
   const base = path.dirname(plainDir)
   if (!makeOwnFolder(base) || !makeOwnFolder(plainDir)) return false
   if (!realFolderChainBelow(path.dirname(base), plainDir)) return false
   if (hardenDir) {
-    try { if (!hardenDir(plainDir)) return false } catch { return false }
+    try {
+      if (!hardenDir(base) || !hardenDir(plainDir)) return false
+    } catch {
+      return false
+    }
+    // Hardening changes rights, never what a folder is: still real folders.
+    if (!realFolderChainBelow(path.dirname(base), plainDir)) return false
   }
   for (const name of [CODEX_HOOK_SCRIPT, CODEX_HOOK_WRAPPER]) {
     let bytes: Buffer
@@ -411,5 +438,8 @@ export function stagePlainCodexHookWrapper(scriptsDir: string, plainDir: string,
     } catch { /* not there yet */ }
     try { atomicWriteFileSync(copy, bytes, { mode: 0o600 }) } catch { return false }
   }
-  return verifyPlainCodexHookWrapper(scriptsDir, plainDir)
+  stagedPlainDirs.add(plainDir)
+  if (verifyPlainCodexHookWrapper(scriptsDir, plainDir)) return true
+  stagedPlainDirs.delete(plainDir)
+  return false
 }

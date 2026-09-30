@@ -438,10 +438,12 @@ function keepCodexConversation(sessionId: string, conversation: { uuid: string; 
 // Round 1:
 //  - codexHooksHeard (S4): the sessions whose CURRENT launch's own hooks have
 //    been heard -- Codex runs them for that session (see keptCodexConversations);
-//  - codexGatewayTokens (B1): the sessions whose gateway token a Codex launch
-//    minted, for as long as that token is registered. It decides that a
-//    hook's transcript path is a Codex one, and outlives the PTY entry
-//    killPty removes (the token goes only with the process's exit);
+//  - codexGatewayTokens (B1): the sessions whose latest gateway token a Codex
+//    launch minted, until that session's process exits (or another launch's
+//    token replaces it). It decides that a hook's transcript path is a Codex
+//    one, and outlives both the PTY entry and (round 2, R8) the token itself,
+//    which killPty now unregisters at once: a hook already on its way from
+//    the gateway when the token went is still never a Claude sink;
 //  - codexResumedById (S4): the conversation each live launch resumed by id,
 //    whose P3.6 doubt no hook clears, this tab's or another's (the app's own
 //    choice, from a record that may be in doubt);
@@ -575,11 +577,16 @@ function clearCodexDoubtFromHook(uuid: string): void {
 
 /** P3.10 round 1 (V2): the conversations other open Codex tabs are on (they
  *  hold their account lease), as main recorded them, for the resume picker
- *  to say one is open in another tab. */
-function codexConversationsOpenElsewhere(sessionId: string): string[] {
+ *  to say one is open in another tab. Round 2 (R10): only tabs on the same
+ *  account as this launch -- Codex's writer lock is per account folder, and a
+ *  conversation carried to another account keeps its id, so the same id open
+ *  on another account is no lock here. */
+function codexConversationsOpenElsewhere(sessionId: string, accountId: string | undefined): string[] {
   const out: string[] = []
   for (const [other, kept] of keptCodexConversations) {
-    if (other !== sessionId && codexLaunchLeases.has(other)) out.push(kept.uuid)
+    if (other === sessionId || !codexLaunchLeases.has(other)) continue
+    if (!accountId || kept.accountId !== accountId) continue
+    out.push(kept.uuid)
   }
   return out
 }
@@ -4549,7 +4556,7 @@ function spawnPtyResolved(
         ),
         ...(hookFile ? { codexHooks: { hookFile: hookFile.hookFile } } : {}),
         // Round 1 (V2): for the picker, the conversations other tabs are on.
-        ...(options?.useResumePicker ? { codexOpenElsewhere: codexConversationsOpenElsewhere(sessionId) } : {}),
+        ...(options?.useResumePicker ? { codexOpenElsewhere: codexConversationsOpenElsewhere(sessionId, launch.lease.accountId) } : {}),
       })
       const { cmd: spawnCmd, args: spawnArgs, env: spawnEnv, commandLine } = built
       // P3.10: a hook file the launch did not use goes at once; one it uses
@@ -6003,6 +6010,12 @@ export function killPty(sessionId: string): void {
     releaseCodexLeaseOnExit(entry.ptyProcess, dyingLease)
     // P3.6: a Switch account's carry waits for this process to end.
     noteCodexRunEnding(sessionId, entry.ptyProcess)
+  }
+  // P3.10 round 2 (R8): a killed Codex session's gateway token goes now, so
+  // the gateway refuses its dying process's late hooks; the record that its
+  // hooks are Codex's stays until the process exits (codexGatewayTokens).
+  if (codexGatewayTokens.has(sessionId)) {
+    try { getGateway()?.unregisterSession(sessionId) } catch { /* the gateway may have stopped */ }
   }
   // Read persistence BEFORE cleanupSessionResources runs (it no longer clears
   // these, but killPty does, at the end).
