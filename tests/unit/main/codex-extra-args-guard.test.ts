@@ -3,14 +3,15 @@
  * driven through the REAL pty:spawn schema and the fail-open restore sanitizer
  * (never a mirror of them).
  *
- * Parity with Claude's field: the same character guard (length, charset, no
- * trailing backslash), and the flags the app sets refused whole, as Claude's
- * refuses --model, --settings and the rest. For Codex that is the model, every
- * -c setting (the app delivers its effort, MCP server and hooks through -c, as
- * Claude's through --settings), the permission flags, the working folder, the
- * resume selection, and anything that changes the account, provider or
- * endpoint; in any spelling. A plain lowercase word is refused too: Codex reads
- * one in the first-argument place as one of its commands (login, logout, ...).
+ * The same field and the same character guard (length, charset, no trailing
+ * backslash) for both assistants, and Codex's own rule: the flags the app sets
+ * for a Codex launch are refused whole, in any spelling and under every alias
+ * the supported CLIs (0.153.4, 0.155.1) give them: the model, every -c setting
+ * (the app delivers its effort, MCP server and hooks through -c), the
+ * permission flags, the working folder (--cd, --worktree), the resume
+ * selection, and anything that changes the account, provider or endpoint. A
+ * plain lowercase word is refused too: Codex reads one in the first-argument
+ * place as one of its commands (login, logout, ...).
  */
 import { describe, it, expect, vi } from 'vitest'
 import { spawnOptionsSchema } from '../../../src/main/ipc/pty-handlers'
@@ -25,7 +26,7 @@ const refusal = (v: unknown): string => {
   return r.success ? '' : r.error.message
 }
 
-describe('Codex extra CLI arguments: what passes (as Claude\'s field, the flags the app does not set)', () => {
+describe('Codex extra CLI arguments: what passes (the flags the app does not set)', () => {
   const ok = [
     '',
     '   ',
@@ -38,7 +39,6 @@ describe('Codex extra CLI arguments: what passes (as Claude\'s field, the flags 
     '-i shot.png',
     '--image=a.png,b.png',
     '--no-alt-screen --strict-config',
-    '--worktree',
     '-h',
     '-V',
     '--all',
@@ -61,16 +61,16 @@ describe('Codex extra CLI arguments: the flags the app sets, and account, provid
     '-c model_reasoning_effort=high', '--config=sandbox_mode=x', '--config model_provider=x', '-cmodel=x', '-C=x',
     '--enable=x_y', '--disable=x_y', '--enable x_y',
     // permissions
-    '--sandbox=danger-full-access', '-s=x', '-s x.y', '--ask-for-approval=never', '-a=never', '--approve-for-me',
+    '--sandbox=danger-full-access', '-s=x', '-s x.y', '--ask-for-approval=never', '-a=never', '-a x.y', '--approve-for-me',
     '--full-auto', '--yolo', '--dangerously-bypass-approvals-and-sandbox', '--dangerously-bypass-hook-trust',
     '--dangerously-anything-else',
     // resume selection
     '--last',
-    // the working folder
-    '--cd=/tmp', '--cd /tmp', '-C /tmp',
+    // the working folder: the one the app starts Codex in, and a new one (--worktree, 0.155.1)
+    '--cd=/tmp', '--cd /tmp', '-C /tmp', '--worktree', '--WORKTREE', '--work', '--worktree=x',
     // account, provider, endpoint, config profile
     '--profile=work', '-p=work', '-p x.y', '--oss', '--local-provider=x_y', '--remote=ws://h:1', '--remote-auth-token-env=X_Y',
-    // a name that starts with a managed one (as Claude's \b rule), a shortened one, another case, a backslash
+    // a name that starts with a managed one and a hyphen, a shortened one, another case, a backslash
     '--model-provider=x', '--remote-control', '--sand=x', '--s', '--l', '--SANDBOX=x', '--Model=x', '--mo\\del=x', '\\--model=x',
     // clusters and attached values of short options
     '-hm', '-ix.png', '-1',
@@ -87,6 +87,22 @@ describe('Codex extra CLI arguments: the flags the app sets, and account, provid
   }
 })
 
+// B1 (round 1): every clap alias the supported CLIs give a refused flag (their
+// tagged sources, rust-v0.153.4 and rust-v0.155.1: codex-rs/utils/cli/src/
+// shared_options.rs, codex-rs/tui/src/cli.rs, codex-rs/utils/cli/src/
+// config_override.rs, codex-rs/cli/src/main.rs): --not-so-yolo (hidden) for
+// --approve-for-me and --yolo for --dangerously-bypass-approvals-and-sandbox;
+// none of the other refused flags has one. The command aliases (e, a,
+// cloud-tasks) are plain words.
+describe('Codex extra CLI arguments: every alias the supported CLIs give a refused flag is refused', () => {
+  for (const v of ['--not-so-yolo', '--NOT-SO-YOLO', '--not-so-yolo=x', '--not-so', '--yolo', '--YOLO', '--search --not-so-yolo', 'cloud-tasks', 'e', 'a']) {
+    it(`refuses ${JSON.stringify(v)}`, () => {
+      expect(accepts(v)).toBe(false)
+      expect(codexExtraArgsProblem(v)).not.toBeNull()
+    })
+  }
+})
+
 describe('Codex extra CLI arguments: a plain word is refused, since Codex would read it as one of its commands', () => {
   const words = ['login', 'logout', 'resume', 'fork', 'mcp', 'exec', 'e', 'a', 'update', 'app-server', 'mcp-server', 'Login', 'log\\in', 'x1-y',
     '--search logout', '--add-dir docs', '--no-alt-screen login --search']
@@ -96,9 +112,12 @@ describe('Codex extra CLI arguments: a plain word is refused, since Codex would 
       expect(codexExtraArgsProblem(v)).toMatch(/one of its commands/)
     })
   }
-  it('says how to give a folder named that way instead', () => {
-    expect(codexExtraArgsProblem('--add-dir docs')).toMatch(/--add-dir=docs/)
-    expect(codexExtraArgsProblem('--add-dir docs')).toMatch(/starts with \.\/ or ends with \//)
+  it('says a lone word is the opening prompt, and how to give a folder as the value of --add-dir', () => {
+    const m = codexExtraArgsProblem('--add-dir docs')
+    expect(m).toMatch(/opening prompt/)
+    expect(m).toMatch(/--add-dir=docs/)
+    expect(m).toMatch(/--add-dir \.\/docs/)
+    expect(codexExtraArgsProblem('/srv')).toMatch(/--add-dir \/srv\//)
   })
 })
 
@@ -142,9 +161,7 @@ describe('Claude\'s field is unchanged', () => {
     expect(spawnOptionsSchema.safeParse({ extraArgs: '--add-dir docs' }).success).toBe(true)
     expect(spawnOptionsSchema.safeParse({ extraArgs: '--settings x.json' }).success).toBe(false)
   })
-  it('Claude\'s top-level field never takes the Codex rule, and the Codex field never takes Claude\'s list alone', () => {
-    // -c is Claude's --continue: Claude's field has always taken it.
-    expect(spawnOptionsSchema.safeParse({ extraArgs: '-c' }).success).toBe(true)
+  it('the Codex field refuses -c whole', () => {
     expect(accepts('-c')).toBe(false)
   })
 })

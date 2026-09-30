@@ -21,7 +21,7 @@
  *   - codex `reasoningEffort`: one off CODEX_EFFORTS is DROPPED; the session
  *     launches on its model's default effort (P3.8).
  *   - codex `extraArgs`: a value codexExtraArgsProblem refuses is DROPPED; the
- *     session launches without them, as a Claude session's `extraArgs` (P3.11).
+ *     session launches without them (P3.11). This runs on every pty:spawn.
  *
  * Every other field is left untouched and still strict-parses downstream. Pure and
  * dependency-injected for logging so it unit-tests without the Electron ABI (and
@@ -30,6 +30,7 @@
  */
 import { UUID_RE } from './logging/transcript-discovery'
 import { CODEX_MODEL_ID_MAX, CODEX_MODEL_ID_RE } from '../shared/model-registry'
+import { claudeExtraArgsProblem, codexExtraArgsProblem } from '../shared/extra-args'
 
 /** The Codex permission presets. 'plan' (P3.8, L2; round 2, PM1) is Claude's
  *  Plan mode launch option: it launches read-only, as 'read-only' does, then
@@ -57,85 +58,17 @@ export const CODEX_MODEL_RE = CODEX_MODEL_ID_RE
  *  row 40). 'none' means "no override" to the spawn, as it always has. */
 export const CODEX_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const
 
-export const EXTRA_ARGS_MAX = 512
-export const EXTRA_ARGS_CHARSET_RE = /^[A-Za-z0-9 _\-=.\/\\:@,+]*$/
-
-/** The managed-flag refine, on a backslash-collapsed copy, plus the trailing-
- *  backslash ban — byte-identical to the schema's refine (see pty-handlers for
- *  the shell-expansion analysis behind it). */
-export function extraArgsRefineOk(v: string): boolean {
-  return (
-    !v.endsWith('\\') &&
-    !/(^|\s)--(model|effort|permission-mode|settings|mcp-config|agents|resume)\b/.test(v.replace(/\\/g, ''))
-  )
-}
-
-// ── A Codex session's extra CLI arguments (P3.11, row 62) ───────────────────
-// The same field and character guard as Claude's (EXTRA_ARGS_MAX,
-// EXTRA_ARGS_CHARSET_RE, no trailing backslash), with Codex's own list of what
-// the app sets. No shell reads a Codex launch (argv, or one verbatim cmd.exe
-// line whose arguments carry no character cmd.exe gives a meaning), so each
-// word is one argument, placed after every flag the app sets.
-
-/** Long options the app sets, or that change the account, provider, endpoint
- *  or config folder: refused in full, shortened (a leading part of one), or
- *  extended with a hyphen (as Claude's `\b` rule refuses `--model-x`).
- *  `config`, `enable`, `disable`: the app delivers its effort, MCP server and
- *  hooks through `-c` (as Claude's through --settings, which Claude's field
- *  refuses whole), and a `-c` key can set any other setting. `dangerously`:
- *  --dangerously-bypass-approvals-and-sandbox and
- *  --dangerously-bypass-hook-trust (the app's hooks rely on Codex's own
- *  review). `cd`: the app starts Codex in the configured folder, or in the
- *  resumed conversation's, and finds the conversation by that folder.
- *  `last`: the conversation a launch resumes is the app's. */
-const CODEX_MANAGED_LONG = [
-  'model', 'config', 'enable', 'disable',
-  'sandbox', 'ask-for-approval', 'approve-for-me', 'full-auto', 'yolo', 'dangerously',
-  'last', 'cd',
-  'profile', 'oss', 'local-provider', 'remote',
-] as const
-/** Their one-letter forms: -m, -c, -p, -s, -a, and -C (the working folder),
- *  matched in lower case. */
-const CODEX_MANAGED_SHORT = new Set(['m', 'c', 'p', 's', 'a'])
-/** A word Codex would read, in the first-argument place, as one of its
- *  commands (login, logout, resume, mcp, exec, ...): the list differs between
- *  versions and holds names its help does not show, so the shape is refused.
- *  With a leading slash, the shape of one of its slash commands (/logout,
- *  /model, /permissions): a word that is not a flag is its opening prompt. */
-const CODEX_COMMAND_WORD_RE = /^\/?[a-z][a-z0-9-]*$/
-
-/** The words of a Codex session's extra CLI arguments, each one argument. */
-export function codexExtraArgWords(v: string): string[] {
-  return v.split(' ').filter((w) => w !== '')
-}
-
-/** Why a Codex session's extra CLI arguments are refused, or null when they
- *  pass. One rule for the pty:spawn schema, the restore sanitizer and the
- *  launch builder. Each word is matched with its backslashes removed and in
- *  lower case, so no other spelling of a refused flag or word passes. */
-export function codexExtraArgsProblem(v: unknown): string | null {
-  if (typeof v !== 'string') return 'they are not text'
-  if (v.length > EXTRA_ARGS_MAX) return `they are longer than ${EXTRA_ARGS_MAX} characters`
-  if (!EXTRA_ARGS_CHARSET_RE.test(v)) return 'they hold a character other than letters, digits, spaces and _ - = . / \\ : @ , +'
-  if (v.endsWith('\\')) return 'they end in a backslash'
-  for (const word of codexExtraArgWords(v)) {
-    const w = word.replace(/\\/g, '').toLowerCase()
-    if (w.startsWith('--')) {
-      const name = w.slice(2).split('=')[0]
-      if (!/^[a-z0-9]/.test(name)) return `"${word}" is not an option name`
-      if (CODEX_MANAGED_LONG.some((m) => m.startsWith(name) || name.startsWith(`${m}-`))) {
-        return `"${word}" is set by the app, or changes the account, provider or endpoint`
-      }
-    } else if (w.startsWith('-')) {
-      const letters = w.slice(1)
-      if (!/^[a-z]$/.test(letters)) return `"${word}": give a short option on its own, such as -i, or use its long form`
-      if (CODEX_MANAGED_SHORT.has(letters)) return `"${word}" is set by the app, or changes the account, provider or endpoint`
-    } else if (CODEX_COMMAND_WORD_RE.test(w)) {
-      return `"${word}": Codex would read this word as one of its commands; give a folder or file with = (--add-dir=${word}), or as a path that starts with ./ or ends with /`
-    }
-  }
-  return null
-}
+// The extra CLI arguments rules (both assistants) live in src/shared/extra-args.ts,
+// so the session dialog reads the same rule; re-exported here for main.
+export {
+  EXTRA_ARGS_MAX,
+  EXTRA_ARGS_CHARSET_RE,
+  extraArgsBaseProblem,
+  extraArgsRefineOk,
+  claudeExtraArgsProblem,
+  codexExtraArgWords,
+  codexExtraArgsProblem,
+} from '../shared/extra-args'
 
 export function sanitizeRestoredSpawnOptions<T>(
   options: T,
@@ -189,7 +122,7 @@ export function sanitizeRestoredSpawnOptions<T>(
       out.codexOptions = { ...out.codexOptions, reasoningEffort: undefined }
     }
     // P3.11 (row 62): extra CLI arguments the strict parse refuses are
-    // dropped, as a Claude session's are below; the session launches without them.
+    // dropped; the session launches without them.
     const extraArgs = out.codexOptions.extraArgs
     if (extraArgs !== undefined && codexExtraArgsProblem(extraArgs) !== null) {
       log('[pty] dropping invalid persisted Codex extra CLI arguments; the session launches without them')
@@ -211,11 +144,9 @@ export function sanitizeRestoredSpawnOptions<T>(
     }
   }
   if (out.extraArgs !== undefined) {
-    const ok =
-      typeof out.extraArgs === 'string' &&
-      out.extraArgs.length <= EXTRA_ARGS_MAX &&
-      EXTRA_ARGS_CHARSET_RE.test(out.extraArgs) &&
-      extraArgsRefineOk(out.extraArgs)
+    // The cap, charset, trailing backslash and managed-flag refine the schema
+    // applies (claudeExtraArgsProblem, src/shared/extra-args.ts).
+    const ok = claudeExtraArgsProblem(out.extraArgs) === null
     if (!ok) {
       log('[pty] #397: dropping invalid persisted extraArgs; the session launches without them')
       out.extraArgs = undefined

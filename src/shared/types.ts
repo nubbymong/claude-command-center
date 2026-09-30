@@ -175,12 +175,13 @@ export interface CodexOptions {
    *  CODEX_EFFORTS (sanitize-restored-spawn-options.ts). */
   reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
   permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted' | 'plan'
-  /** P3.11 (row 62): Claude's extraArgs field for Codex. Each word is one
-   *  launch argument, after every flag the app sets. Checked at the IPC seam
-   *  (codexExtraArgsProblem, sanitize-restored-spawn-options.ts): the same
-   *  charset as Claude's, and no flag the app sets (model, -c settings,
-   *  permissions, working folder, resume), none that changes the account,
-   *  provider or endpoint, and no word Codex reads as one of its commands. */
+  /** P3.11 (row 62): the extraArgs field for Codex. Each word is one launch
+   *  argument, after every flag the app sets. One rule (codexExtraArgsProblem,
+   *  src/shared/extra-args.ts) in the dialog, which says why and holds Save
+   *  back, and at launch, which drops a refused value: the shared charset, and
+   *  no flag the app sets (model, -c settings, permissions, working folder,
+   *  resume), none that changes the account, provider or endpoint, and no word
+   *  Codex reads as one of its commands. */
   extraArgs?: string
 }
 
