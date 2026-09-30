@@ -2035,12 +2035,13 @@ only, so a new conversation in a session whose hooks were declined is named
 in the picker only while its tab is open or saved, and after Switch Account
 the copy in the other account's folder has no name file until the session is
 renamed again (known issue, with that workaround); a Codex tab that has
-claimed nothing yet reads no Session Context; a Codex conversation written
-while it was not indexed is indexed, when a run next binds it, from its end as
-it is then, so what it held before is not indexed either unless the index
-already holds it; a record of those conversations found damaged at start, or
-full, makes every conversation begun before then count as so written until a
-run binds it; the name file and the GitHub loader check paths (the realm's
+claimed nothing yet reads no Session Context; what a Codex conversation holds
+is left out by record time (a record stamped inside a window when it was
+written while not indexed), so a record stamped at a moment a session not
+indexed held the conversation is left out whichever session wrote it (two tabs
+writing one conversation at once); a record of those windows found damaged at
+start makes every record stamped before then count as so written, and a full
+one does the same for the conversations it drops; the name file and the GitHub loader check paths (the realm's
 real path and its real day folder, the file opened the one looked at), so
 repeated swaps of a day folder between a junction and the real folder, which
 need write access to the account's sessions folder, can still let a name file
@@ -2116,7 +2117,14 @@ id, never indexes what was written then (X1); a conversation begun elsewhere
 afterwards is indexed in full (X1); a damaged record is set aside (X2); the
 changelog line (T1); and the regressions: PASS. One observation: search listed
 a conversation twice when two tabs' sessions had each held it (item 3 of the
-fourth list).
+fourth list). Its re-check with the fourth fixes (the same versions): search
+listing a conversation two tabs had once, the damaged records kept, and a copy
+after a Switch carrying a digest (also after an app restart): PASS; three
+findings: the first turn after returning from a stretch not indexed was lost
+(F1), a Switch after such a stretch read its copy from the start and indexed
+the turns written while off (F2a), and a new tab reading the conversation from
+its start did the same (F2b); all three came from a rule by position in the
+file, replaced by the rule by record time (the fifth list).
 The fixes (mocked). The logging switches, both assistants (V1, W3): turning
 Index conversation logs off, in Settings or in a config, stops indexing the
 running sessions it covers at once (their runs end as stopped, their tails
@@ -2125,35 +2133,41 @@ drain and retire, a Codex session's later claims bind nothing); every launch
 and the config's own field as saved, so a relaunch while it is off records
 nothing and ends any run the session still had open; turning it on applies to
 sessions started after it, and every text about the switch says so. What a
-Codex session writes while it is not indexed is never indexed (W4, X1-X3):
-every conversation a local Codex session is on while not indexed (logging off
-in Settings or in its config, or before the notice naming Codex was seen) is
-marked by conversation, its rollout id, in a record main keeps in the app's
-data folder whether or not logging is on (written coalesced from a timer,
-atomically, and at quit); any later run that binds a marked conversation, from
-any tab or session, starts at the file's end as it is then, after a divider
-saying the turns while logging was off are not indexed, unless the index
-already holds that file and nothing was written since; once a run has bound
-it, the mark goes. A record found damaged at start is kept aside, and a full
-one keeps every mark until it takes the same rule: every conversation begun
-before then counts as marked until a run binds it. A conversation never so
-written is read as usual. Otherwise a new run continues a conversation (V2,
+Codex session writes while it is not indexed is never indexed (W4, X1-X3,
+Y1): main keeps, per conversation (its rollout id, so an account copy is the
+same conversation), the wall-clock windows during which a local Codex session
+not indexed held it (logging off in Settings or in its config, or before the
+notice naming Codex was seen): a window opens at that session's run block, at
+a switch-off, or at a later claim while not indexed, and closes when the
+session stops holding it (its end, a Restart, a Switch, a claim of another
+conversation); a window still open when the app stopped closes at the next
+start. The record is kept in the app's data folder whether or not logging is
+on (a new window written at once, the rest coalesced, atomically, and at
+quit); nothing clears a window. The worker starts with every window and is
+told of each change, and every read of that conversation, from any tab,
+session, copy or offset, leaves out each record stamped inside a window (a
+record at a window's start is inside it, one at its end is not; a record with
+no time of its own takes the time of the record before it in that read, and
+with none is left out whenever the conversation has a window), with one
+divider saying the turns while logging was off are not indexed where a
+skipped run of records was. Nothing written while indexed is left out, so the
+turn that comes with a resume is kept. A record found damaged at start is kept
+aside (the newest three), and every record stamped before then counts as
+written while not indexed; a full one merges a conversation's oldest windows,
+and drops the least recently changed conversation only after that rule covers
+its windows. Otherwise a new run continues a conversation (V2,
 W5, W8, X4, Codex) from what the same session's earlier run read of it: the
 same file (by its identity), or after a Switch the conversation's copy in the
 other account where its own first bytes have the digest of the bytes that
 earlier binding read (stored with that binding's cursor, so it holds across
 app and worker restarts, and a tail resumed after a restart goes on vouching
 for what it read), whatever the earlier file holds now; another file at a path
-is read from its start, and a copy that went its own way whole. The same
-not-indexed rule holds when a run binds again a conversation it held earlier
-(A, B, A) or its tail is gone: a marked conversation grown since it was read,
-or another file at its path, starts at the file's end after the divider.
+is read from its start, and a copy that went its own way whole (the digest of
+a resumed tail is checked when it next reads, not at the worker's start).
 Search lists each turn of a Codex conversation once, whichever sessions
-indexed it (a turn is the same when its role, its record time and its words
-are); Claude's hits are listed as before. A conversation's first mark is
-written to the record at once (later ones coalesced), and only the newest
-three damaged records are kept aside (older ones removed by their own name in
-the record's folder). Claude's resume binds the resumed transcript as
+indexed it (a turn is the same when it is of the same conversation, a rollout
+id both runs read, and its role, its record time and a hash of its words are);
+Claude's hits are listed as before. Claude's resume binds the resumed transcript as
 a new transcript of the new run and indexes it from its start, so its earlier
 turns are listed twice; recorded for P3.16. A Codex tail reads only the file
 its watcher claimed (A1, W6): the file's device and file id ride on the bind
@@ -2189,13 +2203,13 @@ Codex's indexing (a notice version), and before the first-config dialog when
 due; a Claude-only user, or one who turned indexing off, sees nothing new;
 main records a Codex run only once that notice was seen. Tests only: an
 unbind stays within the sending session (B3); the rename asks about the
-caller's own session (B4). Mutation: every guard broken alone turns a test red (143 mutants; the one equivalent is recorded).
-Owed: the VM re-check of the fourth fix list on WINDOWS_1 with real Codex
-0.153.4 and 0.155.1 (a run going back to a conversation written meanwhile
-while not indexed; a copy after a Switch following an app restart; search
-listing a conversation two tabs had once; the damaged records kept); the
-native SQL tests in CI (the identity column and its migration, the prior
-bindings by session, the latest binding at a path, the read digest stored with
+caller's own session (B4). Mutation: every guard broken alone turns a test red (172 mutants; the one equivalent is recorded).
+Owed: the VM re-check of the fifth fix list on WINDOWS_1 with real Codex
+0.153.4 and 0.155.1 (the turn after returning from a stretch not indexed kept;
+a Switch after such a stretch, with and without a digest, and a new tab
+reading from the start: the turns written while off never indexed; an app
+stopped with a window open); the native SQL tests in CI (the identity column
+and its migration, the prior bindings by session, the read digest stored with
 the cursor, search through the repeat check); the owner's screenshot review (the VM checks' galleries);
 the fresh PR-level ADR-009 pass (P3.12 is quarantined under ADR-009: its
 bounded rounds are exhausted); the SSH live matrix at PR 3's head (no Codex
