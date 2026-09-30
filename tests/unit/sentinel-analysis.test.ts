@@ -334,7 +334,8 @@ describe('the analysis, round 2', () => {
     for (const t of ['Bash', 'PowerShell', 'REPL', 'Read', 'WebFetch', 'WebBrowser', 'Monitor', 'CronCreate', 'EnterWorktree', 'ToolSearch', 'SendMessage', 'Artifact']) expect(denied, t).toContain(t)
     expect(Object.isFrozen(CLAUDE_ANALYSIS_ENV)).toBe(true)
     expect({ ...CLAUDE_ANALYSIS_ENV }).toEqual({ CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1', CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1' })
-    expect(() => assertHeadlessOptions({ cwd: 'C:\\r', env: CLAUDE_ANALYSIS_ENV })).not.toThrow()
+    // An absolute folder on every platform (a drive path is relative on macOS and Linux).
+    expect(() => assertHeadlessOptions({ cwd: process.cwd(), env: CLAUDE_ANALYSIS_ENV })).not.toThrow()
   })
 
   it('evidence is ONE passage of the notes, at least ' + String(QUOTE_MIN_CHARS) + ' characters, read as it is shown', () => {
