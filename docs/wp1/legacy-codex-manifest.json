@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-30T01:26:11.759Z",
-  "head": "f1d608f37460d9e57b2c23040b2ea8186133aa1b",
-  "tree": "91f9f532772eb1abffba34db8f03978b328d1f6c",
+  "generatedAt": "2026-09-30T01:42:33.818Z",
+  "head": "f0627975ec095e771c762297eb6b4c499ed75e2e",
+  "tree": "6f8051537726fe1c05de2054dec758219e31783c",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -189,7 +189,8 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 397
+      "lineCount": 424,
+      "truncated": true
     },
     {
       "path": "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
@@ -703,7 +704,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 72
+      "lineCount": 71
     },
     {
       "path": "src/main/providers/codex/index.ts",
@@ -3129,7 +3130,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 84
+      "lineCount": 86
     },
     {
       "path": "tests/unit/main/pty-handlers-codex-review.test.ts",
@@ -4629,7 +4630,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 34
+      "lineCount": 35
     },
     {
       "path": "tests/unit/scripts/codex-resume-picker-open-elsewhere.test.ts",
