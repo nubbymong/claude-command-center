@@ -135,9 +135,11 @@ describe('app knowledge after P3.10 (round 1, S2)', () => {
   })
 })
 
-// P3.11 (row 62): a Codex config takes extra CLI arguments, as a Claude one
-// does; the Feature Guide and Ask Conductor say how they reach Codex and what
-// the app refuses, and how to give a folder named with a plain word.
+// P3.11 (row 62): a Codex config takes extra CLI arguments; the Feature Guide
+// and Ask Conductor say how they reach Codex and what the app refuses, and how
+// to give a folder named with a plain word. Round 1 (S3, B2, Q1): the rule on
+// its own terms; the dialog says why and Save waits; a saved value that is
+// refused is dropped when the session starts (it starts without it).
 describe('app knowledge after P3.11', () => {
   it('says a Codex config takes extra CLI arguments, one argument per word, and what is refused', () => {
     const s = APP_KNOWLEDGE_SECTIONS.find((x) => x.id === 'sessions')!.body
@@ -146,5 +148,11 @@ describe('app knowledge after P3.11', () => {
     expect(s).toMatch(/a profile, another provider or endpoint/)
     expect(s).toMatch(/one of its commands/)
     expect(s).toMatch(/--add-dir=docs/)
+    expect(s).toMatch(/What the app sets, or what changes the account, is refused: the model/)
+    expect(s).toMatch(/the dialog says why under the field, and Save waits until it is fixed/)
+    expect(s).toMatch(/a saved value that is refused is dropped when the session starts, and the session starts without it/)
+    expect(s).toMatch(/--add-dir \.\/docs/)
+    expect(s).not.toMatch(/does not start/)
+    expect(s).not.toMatch(/as the app.s own flags are for Claude Code/)
   })
 })
