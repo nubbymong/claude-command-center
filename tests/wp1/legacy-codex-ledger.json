@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "b03b73c6daab77c834a7d21073b50a03492ccf4ddf54c91beb1c3dfdfa17b888",
-  "manifestHead": "a840bd99ee5844ce786a21ec858469d36216ba12",
+  "manifestPathDigest": "84c4f8f20d9714a75b16f001b7b4a7d0b90fc395ef430e34dec91b15af9c0f3a",
+  "manifestHead": "89a9723487f8158d8c1dbc61f091c3265ddda0f8",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -838,6 +838,17 @@
       "disposition": "replace",
       "evidence": "WP2 PR 3 P3.12 (rows 31, 32, 65; logs and GitHub context; parity) (WP1.68): makes the Codex log binder beside Claude's, with the realm name-file writer; tests/unit/main/pty-codex-logs.test.ts",
       "note": "newly names Codex in WP2 PR 3 P3.12"
+    },
+    {
+      "path": "src/main/logging/search-dedupe.ts",
+      "predicates": [
+        "P05",
+        "P14"
+      ],
+      "category": "TELEMETRY",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.12 (rows 31, 32, 65; the fixes from the reviews and the VM checks) module (src/main/logging/search-dedupe.ts): search lists each turn of a Codex conversation once, whichever sessions indexed it (a provider conditional); Claude hits as before (WP1.68); tests/unit/logging/search-dedupe.test.ts",
+      "note": "created by WP2 PR 3 P3.12 (fixes); pure"
     },
     {
       "path": "src/main/logging/session-name-sidecar.ts",
@@ -4378,6 +4389,16 @@
       "category": "TEST",
       "disposition": "added",
       "evidence": "new WP2 PR 3 P3.12 (rows 31, 32, 65; the fixes from the reviews and the VM checks) test (tests/unit/logging/indexing-gaps.test.ts): the Codex conversations written while not indexed, by rollout id, cleared once bound; a damaged or full record fails toward not indexing; written coalesced and at quit (WP1.68)",
+      "note": "created by WP2 PR 3 P3.12 (fixes)"
+    },
+    {
+      "path": "tests/unit/logging/search-dedupe.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.12 (rows 31, 32, 65; the fixes from the reviews and the VM checks) test (tests/unit/logging/search-dedupe.test.ts): a Codex turn indexed by two sessions is listed once, two turns alike in words but not in role or time stay two, Claude hits all kept (WP1.68)",
       "note": "created by WP2 PR 3 P3.12 (fixes)"
     },
     {

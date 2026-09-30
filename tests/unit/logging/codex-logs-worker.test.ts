@@ -17,7 +17,7 @@ import { statSync, unlinkSync, mkdirSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 
 interface Run { runId: number; sessionId: string; configId: string | null; provider: string; projectCwd: string | null; status: string; startedAt: number; endedAt: number | null }
-interface Tr { id: number; runId: number; path: string; ord: number; status: string; cursor: number; parserVersion: number; sourceFormat: string; confidence: string; identity: string | null }
+interface Tr { id: number; runId: number; path: string; ord: number; status: string; cursor: number; parserVersion: number; sourceFormat: string; confidence: string; identity: string | null; digest?: string | null }
 interface Msg { runId: number; idx: number; ts: number; role: string; kind: string; content: string; toolName?: string; toolMeta?: string }
 
 const fake = vi.hoisted(() => ({ runs: [] as Run[], trs: [] as Tr[], msgs: [] as Msg[], next: 1 }))
@@ -27,7 +27,7 @@ vi.mock('../../../src/main/logging/transcripts-db', () => ({
     const latestOpen = (sid: string) => [...fake.runs].reverse().find((r) => r.sessionId === sid && r.status === 'running')
     return {
       closeDanglingRuns: () => { let n = 0; for (const r of fake.runs) if (r.status === 'running') { r.status = 'crashed'; n++ } return n },
-      listResumableTranscripts: () => fake.trs.filter((t) => t.status === 'tailing').map((t) => ({ transcriptId: t.id, runId: t.runId, path: t.path, ingestCursor: t.cursor, parserVersion: t.parserVersion, sourceFormat: t.sourceFormat, sourceIdentity: t.identity })),
+      listResumableTranscripts: () => fake.trs.filter((t) => t.status === 'tailing').map((t) => ({ transcriptId: t.id, runId: t.runId, path: t.path, ingestCursor: t.cursor, parserVersion: t.parserVersion, sourceFormat: t.sourceFormat, sourceIdentity: t.identity, readDigest: t.digest ?? null })),
       getRunScope: (runId: number) => { const r = fake.runs.find((x) => x.runId === runId); return r ? { sessionId: r.sessionId, configId: r.configId } : null },
       reopenRun: (runId: number) => { const r = fake.runs.find((x) => x.runId === runId); if (r) { r.status = 'running'; r.endedAt = null } },
       getOpenRunId: (sid: string) => latestOpen(sid)?.runId ?? null,
@@ -48,7 +48,7 @@ vi.mock('../../../src/main/logging/transcripts-db', () => ({
           let identityChanged = false
           if (opts.sourceIdentity && existing.identity && existing.identity !== opts.sourceIdentity) { existing.cursor = 0; identityChanged = true }
           if (opts.sourceIdentity) existing.identity = opts.sourceIdentity
-          return { transcriptId: existing.id, ord: existing.ord, isNew: false, cursor: existing.cursor, sourceFormat: existing.sourceFormat, status, identityChanged }
+          return { transcriptId: existing.id, ord: existing.ord, isNew: false, cursor: existing.cursor, sourceFormat: existing.sourceFormat, status, identityChanged, readDigest: identityChanged ? null : existing.digest ?? null }
         }
         const ord = fake.trs.filter((t) => t.runId === runId).length
         const t: Tr = { id: fake.next++, runId, path, ord, status: 'pending', cursor: 0, parserVersion: opts.parserVersion, sourceFormat: opts.sourceFormat ?? 'claude-jsonl', confidence: opts.confidence, identity: opts.sourceIdentity ?? null }
@@ -59,17 +59,17 @@ vi.mock('../../../src/main/logging/transcripts-db', () => ({
       priorCodexBindings: (runId: number, name: string, sessionId: string) => fake.trs
         .filter((t) => t.runId < runId && t.sourceFormat === 'codex-rollout' && t.path.endsWith(name) && (sessionId === undefined || fake.runs.find((r) => r.runId === t.runId)?.sessionId === sessionId))
         .sort((x, y) => y.runId - x.runId || y.cursor - x.cursor)
-        .map((t) => ({ transcriptId: t.id, path: t.path, ingestCursor: t.cursor, sourceIdentity: t.identity, runStartedAt: fake.runs.find((r) => r.runId === t.runId)!.startedAt })),
+        .map((t) => ({ transcriptId: t.id, path: t.path, ingestCursor: t.cursor, sourceIdentity: t.identity, runStartedAt: fake.runs.find((r) => r.runId === t.runId)!.startedAt, readDigest: t.digest ?? null })),
       // Round 3 (X1): the latest earlier binding of this exact path, any session.
       latestCodexBindingAtPath: (runId: number, path: string) => {
         const t = fake.trs.filter((x) => x.runId < runId && x.sourceFormat === 'codex-rollout' && x.path === path).sort((x, y) => y.runId - x.runId)[0]
         return t ? { ingestCursor: t.cursor, sourceIdentity: t.identity } : null
       },
-      advanceCursor: (id: number, cursor: number) => { const t = fake.trs.find((x) => x.id === id); if (t) t.cursor = cursor },
+      advanceCursor: (id: number, cursor: number, digest?: string | null) => { const t = fake.trs.find((x) => x.id === id); if (t) { t.cursor = cursor; if (digest !== undefined) t.digest = digest } },
       findTranscript: (runId: number, path: string) => { const t = fake.trs.find((x) => x.runId === runId && x.path === path); return t ? { transcriptId: t.id } : null },
       setTranscriptStatus: (id: number, status: string) => { const t = fake.trs.find((x) => x.id === id); if (t) t.status = status },
       appendMessages: (runId: number, msgs: Msg[]) => { for (const m of msgs) fake.msgs.push({ ...m, runId }) },
-      appendBatch: (runId: number, id: number, msgs: Msg[], cursor: number) => { for (const m of msgs) fake.msgs.push({ ...m, runId }); const t = fake.trs.find((x) => x.id === id); if (t) t.cursor = cursor },
+      appendBatch: (runId: number, id: number, msgs: Msg[], cursor: number, digest?: string | null) => { for (const m of msgs) fake.msgs.push({ ...m, runId }); const t = fake.trs.find((x) => x.id === id); if (t) { t.cursor = cursor; if (digest !== undefined) t.digest = digest } },
       nextIdx: (runId: number) => { const own = fake.msgs.filter((m) => m.runId === runId); return own.length ? Math.max(...own.map((m) => m.idx)) + 1 : 0 },
       lastMessageTs: () => null,
       sessionActivity: () => fake.runs.map((r) => ({ sessionId: r.sessionId, lastActive: r.startedAt, projectCwd: r.projectCwd, provider: r.provider })),
@@ -556,5 +556,84 @@ describe('the transcripts worker and a Codex rollout (P3.12, row 31)', () => {
     writeFileSync(b, cx.meta + cx.user('one') + cx.user('two') + cx.user('three'))
     send(runStart('s1', 3)); send(bindNI('s1', b)); w.tickNow()
     expect(fake.runs.map((r) => texts(r.runId))).toEqual([['one'], ['two'], ['three']])
+  })
+
+  // ---- round 4 ----
+
+  it('(1) a run going back to a conversation it held (A, B, A), written meanwhile while not indexed: from its end, after a divider', () => {
+    const { w, send } = boot()
+    const a = join(dir, 'rollout-2026-09-30T10-00-00-019dd000-0001-7000-8000-000000000051.jsonl')
+    const b = join(dir, 'rollout-2026-09-30T10-00-00-019dd000-0001-7000-8000-000000000052.jsonl')
+    writeFileSync(a, cx.meta + cx.user('A-1'))
+    writeFileSync(b, cx.meta + cx.user('B-1'))
+    send(runStart('s1', 1)); send(bindNI('s1', a)); w.tickNow()
+    send(bindNI('s1', b)); w.tickNow()
+    appendFileSync(a, cx.user('A-WRITTEN-WHILE-NOT-INDEXED'))
+    send(bindNI('s1', a, { since: 5 })); w.tickNow()
+    appendFileSync(a, cx.user('A-2')); w.tickNow()
+    expect(fake.msgs.map((m) => m.content)).not.toContain('A-WRITTEN-WHILE-NOT-INDEXED')
+    expect(shown().slice(-2)).toEqual([`-- ${GAP} --`, 'A-2'])
+  })
+
+  it('(1) the same, nothing written meanwhile: back to it at its cursor with the usual divider', () => {
+    const { w, send } = boot()
+    const a = join(dir, 'rollout-2026-09-30T10-00-00-019dd000-0001-7000-8000-000000000053.jsonl')
+    const b = join(dir, 'rollout-2026-09-30T10-00-00-019dd000-0001-7000-8000-000000000054.jsonl')
+    writeFileSync(a, cx.meta + cx.user('A-1'))
+    writeFileSync(b, cx.meta + cx.user('B-1'))
+    send(runStart('s1', 1)); send(bindNI('s1', a)); w.tickNow()
+    send(bindNI('s1', b)); w.tickNow()
+    send(bindNI('s1', a, { since: 5 })); w.tickNow()
+    appendFileSync(a, cx.user('A-2')); w.tickNow()
+    expect(shown()).toEqual(['A-1', '--', 'B-1', '--', 'A-2'])
+  })
+
+  it('(2) the digest of what was read is stored with the cursor: after a worker restart, a copy after a Switch still continues', () => {
+    const name = 'rollout-2026-09-30T10-00-00-019dd000-0001-7000-8000-000000000055.jsonl'
+    const a = join(dir, 'realm-a', name)
+    const b = join(dir, 'realm-b', name)
+    for (const d of [dirname(a), dirname(b)]) mkdirSync(d, { recursive: true })
+    writeFileSync(a, cx.meta + cx.user('before the switch'))
+    const first = boot()
+    first.send(runStart('s1', 1)); first.send(bindNI('s1', a)); first.w.tickNow()
+    first.send({ type: 'run-end', sessionId: 's1', ts: 2, status: 'exited' } as In)
+    first.w.stop()
+    writeFileSync(b, cx.meta + cx.user('before the switch') + cx.user('after the switch'))
+    const second = boot()
+    second.send(runStart('s1', 3)); second.send(bindNI('s1', b)); second.w.tickNow()
+    expect(texts(fake.runs[1].runId)).toEqual(['after the switch'])
+  })
+
+  it('(2) after a worker restart, a copy whose first bytes are not what was read is read whole', () => {
+    const name = 'rollout-2026-09-30T10-00-00-019dd000-0001-7000-8000-000000000056.jsonl'
+    const a = join(dir, 'realm-a', name)
+    const b = join(dir, 'realm-b', name)
+    for (const d of [dirname(a), dirname(b)]) mkdirSync(d, { recursive: true })
+    writeFileSync(a, cx.meta + cx.user('INDEXED-IN-A0000'))
+    const first = boot()
+    first.send(runStart('s1', 1)); first.send(bindNI('s1', a)); first.w.tickNow()
+    first.send({ type: 'run-end', sessionId: 's1', ts: 2, status: 'exited' } as In)
+    first.w.stop()
+    writeFileSync(b, cx.meta + cx.user('HIDDEN-FROM-INDX') + cx.user('after'))
+    const second = boot()
+    second.send(runStart('s1', 3)); second.send(bindNI('s1', b)); second.w.tickNow()
+    expect(texts(fake.runs[1].runId)).toEqual(['HIDDEN-FROM-INDX', 'after'])
+  })
+
+  it('(2) a tail resumed after a worker restart goes on vouching for what it read: a later copy continues', () => {
+    const name = 'rollout-2026-09-30T10-00-00-019dd000-0001-7000-8000-000000000057.jsonl'
+    const a = join(dir, 'realm-a', name)
+    const b = join(dir, 'realm-b', name)
+    for (const d of [dirname(a), dirname(b)]) mkdirSync(d, { recursive: true })
+    writeFileSync(a, cx.meta + cx.user('one'))
+    const first = boot()
+    first.send(runStart('s1', 1)); first.send(bindNI('s1', a)); first.w.tickNow()
+    first.w.stop()
+    appendFileSync(a, cx.user('two'))
+    const second = boot()
+    second.w.tickNow()
+    writeFileSync(b, cx.meta + cx.user('one') + cx.user('two') + cx.user('three'))
+    second.send(runStart('s1', 3)); second.send(bindNI('s1', b)); second.w.tickNow()
+    expect(fake.runs.map((r) => texts(r.runId))).toEqual([['one', 'two'], ['three']])
   })
 })
