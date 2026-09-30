@@ -134,3 +134,17 @@ describe('app knowledge after P3.10 (round 1, S2)', () => {
     expect(k).not.toMatch(/only tells the app/)
   })
 })
+
+// P3.11 (row 62): a Codex config takes extra CLI arguments, as a Claude one
+// does; the Feature Guide and Ask Conductor say how they reach Codex and what
+// the app refuses, and how to give a folder named with a plain word.
+describe('app knowledge after P3.11', () => {
+  it('says a Codex config takes extra CLI arguments, one argument per word, and what is refused', () => {
+    const s = APP_KNOWLEDGE_SECTIONS.find((x) => x.id === 'sessions')!.body
+    expect(s).toMatch(/For Codex, each word of the extra CLI arguments reaches Codex as one argument/)
+    expect(s).toMatch(/the model, -c and the other settings flags, the permission and working-folder flags/)
+    expect(s).toMatch(/a profile, another provider or endpoint/)
+    expect(s).toMatch(/one of its commands/)
+    expect(s).toMatch(/--add-dir=docs/)
+  })
+})

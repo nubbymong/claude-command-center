@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-30T11:35:08.137Z",
-  "head": "4ba85a3a47470394414d758685a2dcbf0f17d64d",
-  "tree": "5a65cfaaa0eedd005ae9925aa65d00d02a0ec867",
+  "generatedAt": "2026-09-30T11:41:35.743Z",
+  "head": "28739b196f9730f9d4b369ca6f257fa0fdb78f31",
+  "tree": "0fe8808f8a54fa8343a0bf67aa44bbfd44ec6109",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 458,
+      "lineCount": 475,
       "truncated": true
     },
     {
@@ -211,7 +211,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 91
+      "lineCount": 92
     },
     {
       "path": "docs/wp2/plan.md",
@@ -4784,7 +4784,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 8
+      "lineCount": 12
     },
     {
       "path": "tests/unit/status-ingest.test.ts",

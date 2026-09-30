@@ -61,14 +61,14 @@ still owes recorded in 4. "2; 3" means partly built in 2, the rest in 3.
 
 ## 2. Summary
 
-- 75 rows: **42 DONE, 20 PARTIAL, 13 OPEN** (recounted after P3.10, with section 4's P3.2 to P3.10 rows brought current from their phase records;
+- 75 rows: **43 DONE, 20 PARTIAL, 12 OPEN** (recounted after P3.11, with section 4's P3.2 to P3.11 rows brought current from their phase records;
   they agree with the parity checklist).
-- The 33 rows not DONE, by gap: **implementation 18, verification 10, owner 5** (rows 15 and 58, an owner action and a record to sign; rows 22, 41 and 63, each built as a default pending the owner's decision, section 10). Row 53
+- The 32 rows not DONE, by gap: **implementation 17, verification 10, owner 5** (rows 15 and 58, an owner action and a record to sign; rows 22, 41 and 63, each built as a default pending the owner's decision, section 10). Row 53
   moved from owner to implementation when the owner decided it
   (`docs/wp1/owner-decisions-2026-09-27.md`, M4).
-- By PR: **18 in PR 3, 15 in PR 4**. No row changes package. The Ask Conductor
+- By PR: **17 in PR 3, 15 in PR 4**. No row changes package. The Ask Conductor
   part of row 14 goes with row 53 into PR 4, because it is the same change.
-- 37 DONE rows still owe verification. The 17 built in PR 3 (rows 7, 8, 10, 20, 24, 28, 36, 37, 38, 39, 40, 42, 43, 46, 47, 61 and 69) owe their VM checks under
+- 38 DONE rows still owe verification. The 18 built in PR 3 (rows 7, 8, 10, 20, 24, 28, 36, 37, 38, 39, 40, 42, 43, 46, 47, 61, 62 and 69) owe their VM checks under
   PR 3's gate 6 (section 6). The other 20 (rows 1, 2, 3, 4, 6, 9, 12, 13, 18, 21, 23, 25,
   27, 29, 33, 48, 49, 50, 64 and 74) owe real-CLI, per-OS or packaged
   verification, recorded in PR 4 and closed at release level. The other 5
@@ -187,7 +187,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 59 | PR CI on Linux | OPEN: Windows and macOS only (`.github/workflows/ci.yml`) | OD20 D5 | implementation | 4 |
 | 60 | Real-CLI coverage in CI | OPEN: no workflow installs Codex | OD20 D7; WP1.71 | implementation | 4 |
 | 61 | Compact | DONE (P3.8, 260d4abc; round 1, caef0d42): the strip's Compact on a Codex session types Codex's own /compact only at its ready, empty prompt (otherwise it types nothing and says why) and presses Enter only in the same run; the real TUI submits it that way on 0.153.4 and 0.155.1 (VM) | Parity: Codex's own compact command (evidence first) | verification: round 1 on the VM; what a real /compact does to a conversation (a real sign-in) | 3 |
-| 62 | Extra CLI arguments | OPEN: Claude only (`extraArgs`, `src/shared/types.ts:126-130`) | Parity: the same field and IPC character guard, plus a block-list of the flags the app manages and of any setting that changes the account, provider or endpoint | implementation | 3 |
+| 62 | Extra CLI arguments | DONE (P3.11, 28739b19; mocked): a Codex config has Claude's Extra CLI arguments field (the one field, in the Codex section), saved as `codexOptions.extraArgs`; each word is one launch argument after every flag the app sets; the IPC seam holds it to Claude's character guard and refuses, in any spelling, the flags the app sets, the account, provider and endpoint settings, and a word Codex reads as one of its commands; a restored session drops refused ones and launches, as Claude's | Parity: the same field and IPC character guard, plus a block-list of the flags the app manages and of any setting that changes the account, provider or endpoint | verification: the ADR-009 pass; the VM run with real Codex 0.153.4 and 0.155.1 (a launch with extra arguments on the direct and npm `.cmd` routes and through the picker, and a refused one) | 3 |
 | 63 | Hooks gateway and notification rules | PARTIAL, built as the default pending the owner's decision (P3.10, d8f538b1; mocked): each local Codex launch gets six command hooks running the app's forwarder, which posts each event to the Hooks gateway as a Claude http hook does (loopback, the session's token, the size cap, redaction); Codex asks the user to review them once per account. Notification rules: the one rule on a hook event (Attention Pulse, Claude's idle Notification, filter-only) gets from a Codex idle mark what Claude's idle_prompt gives it (round 1). Round 1 (afae03f7) fixes ADR-009 pass 1 (the forwarder never through an environment proxy; no PowerShell call of a path it reads as a wildcard or cmd.exe expands; the hook folders in the app's own data folder, owner-only, read only at their real path) and gives an npm-installed Codex its hooks from a resources folder with a space (a checked plain-path copy). VM at 6d576634: all six events at the gateway on both versions and routes, the review once per account; the round 1 re-check passed V3 (the plain-path copy through the npm shim from the default resources folder, reused across starts) and S6 (a user's own hooks still run). Round 2 (5b178c7a): both plain-copy folders owner-only, bigint file ids, the root hardened once a run; VM at 6b465aef: both plain-copy folders and the root owner-only (R4), the picker told only of tabs on the same account (R10). Round 3 (18029bb0): a hook folder the app did not make this run is used only once it belongs to the user, and the root is hardened again when made again in the run. VM at the round-3b build: a hook folder from an earlier run used once it is the user's (an admin account). Rounds 3b and 4: the hook wrapper and the picker resolve their helpers from fixed locations; the hook folders are prepared asynchronously and only while Codex is on, by one call of the owner-only rule (on Windows one PowerShell call), used only when read back as this user's alone, and checked again before first use; VM at the round-4 build: the wrapper, the folders' real rights, the app's start with Codex on and off, an early launch that waited and got its hooks. Round 5: any folder name makes the round trip exactly, a name ending in a dot or a space is refused, a failed preparation waits five minutes before the same folders are tried again, and a launch waits only while the Hooks gateway listens (and for the wiring) | Parity: route Codex `notify` and hook events. Codex reviews hooks given at launch, which Claude does not, so the trust step cannot carry over as it is | owner: the default (section 10, question 4); verification: the VM re-run of the rule's real round trip at the final build; a hook folder from an earlier run on a standard account (VM); ADR-009 on rounds 4 and 5 and the PR-level pass on the final head; the POSIX hook runner; the SSH live matrix | 3 |
 | 64 | Partner terminal wording | DONE | P2 | verification: per OS | 2, v4 |
 | 65 | GitHub session context | PARTIAL: reads Claude transcripts only (`src/main/github/session/transcript-loader.ts:59`) | Parity: read the session's realm rollouts | implementation | 3 |
@@ -1881,7 +1881,61 @@ Codex, rejecting the flags the app manages (model, effort, permissions, MCP,
 resume) and any setting that changes the account, provider or endpoint. Likely
 files: `src/shared/types.ts`, `CodexFormFields.tsx`,
 `src/main/ipc/pty-handlers.ts`, `providers/codex/spawn.ts`, `pty-manager.ts`.
-ADR-009: yes. SSH radius: yes.
+Built (28739b19, mocked), settled by parity. The session dialog renders the one
+Extra CLI arguments field (Claude's label, help button, input and hint) in the
+Codex section, after the Permissions, saved as the config's
+`codexOptions.extraArgs`, trimmed (nothing for a blank), so it rides every
+path `codexOptions` takes (the launch, the saved session, Restart and Switch).
+The pty:spawn schema holds it to Claude's guard (512 characters, Claude's
+charset, no trailing backslash) and refuses, in any spelling (shortened,
+extended with a hyphen, another case, with backslashes, a short option
+clustered or with an attached value): the model (`--model`, `-m`);
+`-c`/`--config` whole, with `--enable` and `--disable`, since the app
+delivers its effort, MCP server and hooks through `-c` as Claude's through
+`--settings`, which Claude's field refuses whole; the permission flags
+(`--sandbox`, `-s`, `--ask-for-approval`, `-a`, `--approve-for-me`,
+`--full-auto`, `--yolo` and every `--dangerously-` flag, the hook-trust one
+included); `--last`; the working folder (`--cd`, `-C`: the app starts Codex in
+the configured folder or the resumed conversation's, and finds the
+conversation by it); and what changes the account, provider or endpoint
+(`--profile`, `-p`, `--oss`, `--local-provider`, `--remote`,
+`--remote-auth-token-env`). A plain lowercase word, or one shaped like a slash
+command, is refused too: Codex reads the first such word as one of its
+commands (`login`, `logout`, `mcp`, `resume`; the list differs between
+versions and has names its help does not show) and a word that is not a flag
+as its opening prompt. One rule (`codexExtraArgsProblem`, beside Claude's in
+`sanitize-restored-spawn-options.ts`) serves the schema, the restore sanitizer
+(a restored session's refused value is dropped and it launches without it, as
+a Claude one) and the launch builder (checked again; a refusal ends the launch
+as the schema's does, the tab saying why). Each word is one argument, after
+every flag the app sets, on the direct, resume-by-id, picker and npm `.cmd`
+routes; no shell reads a Codex launch, and the charset leaves nothing the
+cmd.exe route refuses (`codex-extra-args-guard.test.ts`,
+`spawn-extra-args.test.ts`, `session-dialog-codex-extra-args.test.tsx`,
+`app-knowledge.test.ts`). Each change red first; 25 mutants, all red.
+Deviation, recorded: the field is rendered in `SessionDialog.tsx`, not
+`CodexFormFields.tsx`, so that both sections render literally the same field.
+Allowed, by parity with Claude's field (which suggests `--add-dir` and does not
+refuse its own `--worktree` or tool flags): `--add-dir`, `--image`/`-i`,
+`--search`, `--no-alt-screen`, `--strict-config`, `--worktree` and the rest
+not named.
+Limits, recorded: a folder or file named with a plain lowercase word, or a
+one-part absolute path, is given with `=` (`--add-dir=docs`) or as a path
+(`./docs`, or with its closing slash); a Codex setting that rides `-c` cannot
+be given here, as a Claude setting that rides `--settings` cannot. Not yet
+seen: whether Codex runs an opening prompt such as `/logout` as its command
+(such a word is refused either way), and how the app follows the conversation
+of a session started with `--worktree`, which runs in a folder the app did not
+start it in.
+ADR-009: yes (the IPC schema, the restore sanitizer, the launch argv). SSH
+radius: yes; `pty-manager.ts` changes its inline `codexOptions` type only,
+and no SSH path changes (a Codex session over SSH is refused before anything
+is built). Owed: the independent spec and code-quality reviews; the ADR-009
+pass; the VM run with real Codex 0.153.4 and 0.155.1 (a launch with extra
+arguments on the direct and npm `.cmd` routes and through the picker; a
+refused one saying why in the tab; a restored session with a refused value
+launching without it); the owner's screenshot review of the Codex section's
+field, both themes; the SSH live matrix at PR 3's head.
 
 **P3.12 Logs and GitHub context.** Each realm's rollouts indexed for Logs
 (history, search, transcript), realms never crossing; the Logs tool live on
