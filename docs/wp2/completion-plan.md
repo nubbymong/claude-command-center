@@ -2027,8 +2027,10 @@ folder started within seconds (P3.5's limit, until the session's own hook
 claims exactly) may index each other's conversation until the claim is
 corrected, which retires that tail (what was indexed stays, as a Claude
 heuristic bind's does); a tab on a conversation another tab holds does not
-index it while the holder runs, and indexes it once the holder stops; the
-name file is written against an exact claim
+index it while the holder runs, and indexes it once the holder stops (in its
+own slot, from its start: each session's slot holds the conversation it had,
+and search lists each of its turns once); the name file is written against an
+exact claim
 only, so a new conversation in a session whose hooks were declined is named
 in the picker only while its tab is open or saved, and after Switch Account
 the copy in the other account's folder has no name file until the session is
@@ -2082,8 +2084,10 @@ second fixes: the ADR-009 pass 3, the last bounded one, lens A PASS (two minor
 findings) and lens B one major finding; spec, one blocker (a changelog
 sentence); code quality PASS with fixes (two minor). P3.12 is QUARANTINED under
 ADR-009: its bounded rounds are exhausted, the third fix list landed without a
-further re-attack, and the fresh PR-level ADR-009 pass covers it. All three fix
-lists are done, below.
+further re-attack, and the fresh PR-level ADR-009 pass covers it. After the
+quarantine, the code-quality review and the VM re-check of the third fixes
+gave a fourth, small list; it is done too, below, and the same PR-level pass
+covers it.
 The VM check at ff7be273 (WINDOWS_1, real Codex 0.155.1 direct and 0.153.4
 through the npm shim): (1) a Codex session's turns and tool calls indexed and
 searchable, injected context, reasoning and tool output not: PASS; (2) a
@@ -2106,7 +2110,13 @@ off), fixed in the second list (W4); e2e 81 passed; the vitest and native
 files exit 0 (transcripts-db 49, transcripts-worker 29). Its re-check with the
 second fixes (the same versions): W4, W3, W9, W2 and W7, and the regressions,
 PASS on both; Switch Account's not-carried case (B2) last seen at the re-check
-before.
+before. Its re-check with the third fixes (the same versions): a new tab
+resuming a conversation written while not indexed, through the picker and by
+id, never indexes what was written then (X1); a conversation begun elsewhere
+afterwards is indexed in full (X1); a damaged record is set aside (X2); the
+changelog line (T1); and the regressions: PASS. One observation: search listed
+a conversation twice when two tabs' sessions had each held it (item 3 of the
+fourth list).
 The fixes (mocked). The logging switches, both assistants (V1, W3): turning
 Index conversation logs off, in Settings or in a config, stops indexing the
 running sessions it covers at once (their runs end as stopped, their tails
@@ -2131,9 +2141,19 @@ written is read as usual. Otherwise a new run continues a conversation (V2,
 W5, W8, X4, Codex) from what the same session's earlier run read of it: the
 same file (by its identity), or after a Switch the conversation's copy in the
 other account where its own first bytes have the digest of the bytes that
-earlier binding read (kept while the worker runs), whatever the earlier file
-holds now; another file at a path is read from its start, and a copy that
-went its own way whole. Claude's resume binds the resumed transcript as
+earlier binding read (stored with that binding's cursor, so it holds across
+app and worker restarts, and a tail resumed after a restart goes on vouching
+for what it read), whatever the earlier file holds now; another file at a path
+is read from its start, and a copy that went its own way whole. The same
+not-indexed rule holds when a run binds again a conversation it held earlier
+(A, B, A) or its tail is gone: a marked conversation grown since it was read,
+or another file at its path, starts at the file's end after the divider.
+Search lists each turn of a Codex conversation once, whichever sessions
+indexed it (a turn is the same when its role, its record time and its words
+are); Claude's hits are listed as before. A conversation's first mark is
+written to the record at once (later ones coalesced), and only the newest
+three damaged records are kept aside (older ones removed by their own name in
+the record's folder). Claude's resume binds the resumed transcript as
 a new transcript of the new run and indexes it from its start, so its earlier
 turns are listed twice; recorded for P3.16. A Codex tail reads only the file
 its watcher claimed (A1, W6): the file's device and file id ride on the bind
@@ -2169,13 +2189,14 @@ Codex's indexing (a notice version), and before the first-config dialog when
 due; a Claude-only user, or one who turned indexing off, sees nothing new;
 main records a Codex run only once that notice was seen. Tests only: an
 unbind stays within the sending session (B3); the rename asks about the
-caller's own session (B4). Mutation: every guard broken alone turns a test red (130 mutants; the one equivalent is recorded).
-Owed: the VM re-check of the third fix list on WINDOWS_1 with real Codex
-0.153.4 and 0.155.1 (a new tab resuming a conversation written while not
-indexed; a conversation begun elsewhere afterwards read whole; the record kept
-aside when damaged; the changelog line); the native SQL tests in CI (the
-identity column and its migration, the prior bindings by session, the latest
-binding at a path); the owner's screenshot review (the VM checks' galleries);
+caller's own session (B4). Mutation: every guard broken alone turns a test red (143 mutants; the one equivalent is recorded).
+Owed: the VM re-check of the fourth fix list on WINDOWS_1 with real Codex
+0.153.4 and 0.155.1 (a run going back to a conversation written meanwhile
+while not indexed; a copy after a Switch following an app restart; search
+listing a conversation two tabs had once; the damaged records kept); the
+native SQL tests in CI (the identity column and its migration, the prior
+bindings by session, the latest binding at a path, the read digest stored with
+the cursor, search through the repeat check); the owner's screenshot review (the VM checks' galleries);
 the fresh PR-level ADR-009 pass (P3.12 is quarantined under ADR-009: its
 bounded rounds are exhausted); the SSH live matrix at PR 3's head (no Codex
 case: a Codex session over SSH is refused).
