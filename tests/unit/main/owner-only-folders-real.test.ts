@@ -2,9 +2,11 @@
 // folder whose rights let Everyone in (inherited by what is made inside it),
 // a folder already there and a folder made by the call itself both end with
 // exactly the user and SYSTEM, full control, inherited by what is inside,
-// inheritance from above off, the user the owner (read with icacls /save, by
-// SID, and with Windows PowerShell). A link is refused and its target left as
-// it was; a folder below a refused one is not made. Round 5 (G1, G2): folders
+// inheritance from above off, the user the owner (read with icacls /save,
+// every entry's SID in full as Windows parses the SDDL, which writes some
+// accounts as an abbreviation such as LA, and with Windows PowerShell). A
+// link is refused and its target left as it was; a folder below a refused
+// one is not made. Round 5 (G1, G2): folders
 // with any Unicode name make the same round trip; a name ending in a dot is
 // refused and nothing is made for it.
 //
@@ -43,6 +45,24 @@ function sddl(dir: string, scratch: string): string {
   return text.split(/\r?\n/)[1] ?? ''
 }
 
+/** Each entry of an SDDL DACL as `type|flags|mask|SID`, the SID in full.
+ *  SDDL writes some accounts as a two-letter abbreviation (SY for SYSTEM; LA
+ *  for the built-in Administrator, the account CI runs as), so Windows
+ *  itself parses the SDDL (RawSecurityDescriptor) and each SID is compared
+ *  whole, as the product compares them. Sorted. */
+async function acesBySid(sddlText: string): Promise<string[]> {
+  const out = await runWindowsPowerShell([
+    "$ErrorActionPreference = 'Stop'",
+    '$d = New-Object Security.AccessControl.RawSecurityDescriptor($env:CCC_T_SDDL)',
+    "@($d.DiscretionaryAcl | ForEach-Object { '{0}|{1}|{2}|{3}' -f [int]$_.AceType, [int]$_.AceFlags, [int]$_.AccessMask, $_.SecurityIdentifier.Value }) -join ','",
+  ].join('\n'), { CCC_T_SDDL: sddlText })
+  return out.trim().split(',').filter(Boolean).sort()
+}
+/** An allow entry (type 0), inherited by folders and files inside (flags 3),
+ *  full control (FA, 0x1F01FF), for `sid`. */
+const fullFor = (sid: string) => `0|3|2032127|${sid}`
+const SYSTEM_SID = 'S-1-5-18'
+
 describe.runIf(IS_WIN)('secureFoldersWindows: the real rights it leaves (P3.10 round 4)', () => {
   it('a folder already there and one it makes: exactly the user and SYSTEM, inheritance off, owned by the user', async () => {
     const top = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), PREFIX)))
@@ -64,8 +84,7 @@ describe.runIf(IS_WIN)('secureFoldersWindows: the real rights it leaves (P3.10 r
     for (const d of [existing, fresh]) {
       const s = sddl(d, scratch)
       expect(s.startsWith('D:P'), s).toBe(true)
-      const aces = s.slice(s.indexOf('(')).match(/\([^)]*\)/g) ?? []
-      expect(aces.sort(), s).toEqual([`(A;OICI;FA;;;${user})`, '(A;OICI;FA;;;SY)'].sort())
+      expect(await acesBySid(s), s).toEqual([fullFor(user), fullFor(SYSTEM_SID)].sort())
       const owner = (await runWindowsPowerShell('[IO.Directory]::GetAccessControl($env:CCC_T_DIR, [Security.AccessControl.AccessControlSections]::Owner).GetOwner([Security.Principal.SecurityIdentifier]).Value', { CCC_T_DIR: d })).trim()
       expect(owner).toBe(user)
     }
@@ -107,12 +126,18 @@ describe.runIf(IS_WIN)('secureFoldersWindows: the real rights it leaves (P3.10 r
     for (const d of dirs) {
       expect(fs.statSync(d).isDirectory(), d).toBe(true)
       const s = sddl(d, scratch)
-      const aces = s.slice(s.indexOf('(')).match(/\([^)]*\)/g) ?? []
       expect(s.startsWith('D:P'), d).toBe(true)
-      expect(aces.sort(), d).toEqual([`(A;OICI;FA;;;${user})`, '(A;OICI;FA;;;SY)'].sort())
+      expect(await acesBySid(s), `${d}: ${s}`).toEqual([fullFor(user), fullFor(SYSTEM_SID)].sort())
     }
     const dotted = await secureFoldersWindows([path.join(top, 'sub.')])
     expect(dotted.map((r) => r.ok)).toEqual([false])
     expect(fs.existsSync(path.join(top, 'sub'))).toBe(false)
+  })
+
+  it('the SDDL read gives each account its full SID, the built-in Administrator\'s abbreviation (LA) included', async () => {
+    const aces = await acesBySid('D:PAI(A;OICI;FA;;;LA)(A;OICI;FA;;;SY)')
+    expect(aces).toHaveLength(2)
+    expect(aces).toContain(fullFor(SYSTEM_SID))
+    expect(aces.find((a) => a !== fullFor(SYSTEM_SID))).toMatch(/^0\|3\|2032127\|S-1-5-21-\d+-\d+-\d+-500$/)
   })
 })
