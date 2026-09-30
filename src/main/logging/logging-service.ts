@@ -27,7 +27,7 @@ import { readConfig } from '../config-manager'
 import { logInfo } from '../debug-logger'
 import { getRememberedName, forgetSessionName, writeNameSidecar, nodeNameSidecarDeps, writeRealmNameSidecar, nodeRealmNameFs } from './session-name-sidecar'
 import { makeCodexLogBinder, setCodexLogBinder } from './codex-log-binder'
-import { notIndexedFor, noteNotIndexedBound } from './indexing-gaps'
+import { notIndexedSnapshot, setNotIndexedListener } from './indexing-gaps'
 
 // Module-level singleton. Null until initLogging() runs, and stays null when
 // logging is disabled (no fork, no worker, no native dep loaded).
@@ -57,7 +57,11 @@ export function initLogging(opts: {
     forkChild: forkTranscriptsWorker,
     dbPath: opts.dbPath,
     emit: opts.emit,
+    // P3.12 (Y1): the worker starts with every not-indexed window, and is told
+    // of each change.
+    notIndexedSnapshot,
   })
+  setNotIndexedListener((update) => sup.notIndexedWindows(update))
   sup.start()   // forks the worker; it reconciles dangling runs itself on open
   _supervisor = sup
   // Bind discovery sources to this supervisor. Uses Task-3 canonicalize + the
@@ -92,7 +96,6 @@ export function initLogging(opts: {
     rememberedName: getRememberedName,
     forgetName: forgetSessionName,
     log: logInfo,
-    notIndexed: { lookup: notIndexedFor, bound: noteNotIndexedBound },
   }))
 }
 
@@ -112,6 +115,7 @@ export function getTranscriptBinder(): TranscriptBinder | null {
  * when never initialised / disabled — the ref is null.
  */
 export function shutdownLogging(): void {
+  setNotIndexedListener(null)
   _supervisor?.shutdown()
   _supervisor = null
   _binder = null

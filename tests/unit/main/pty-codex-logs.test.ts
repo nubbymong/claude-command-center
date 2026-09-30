@@ -141,7 +141,10 @@ vi.mock('../../../src/main/provider-accounts', () => ({ getAccountsService: () =
 
 const { spawnPty, killPty, codexRolloutForSessionContext, CODEX_CONTEXT_ROLLOUTS_MAX, applyLoggingSwitches } = await import('../../../src/main/pty-manager')
 const { getCodexLogBinder } = await import('../../../src/main/logging/codex-log-binder')
-const { notIndexedFor, noteNotIndexedBound, resetIndexingGapsForTests } = await import('../../../src/main/logging/indexing-gaps')
+const { notIndexedSnapshot, conversationKey, resetIndexingGapsForTests } = await import('../../../src/main/logging/indexing-gaps')
+/** A conversation's not-indexed windows (as main keeps them). */
+const windowsOf = (id: string) => notIndexedSnapshot().conversations[conversationKey(rolloutOfId(id))] ?? []
+const rolloutOfId = (id: string) => `/res/codex-realms/a/sessions/2026/09/29/rollout-2026-09-29T10-00-00-${id}.jsonl`
 // P3.12 round 2 (W9): a Codex run is recorded once the notice naming Codex's indexing was seen.
 const CONSENT = { loggingConsentSeen: true, loggingConsentVersion: 2 }
 const { makeCodexLogBinder, setCodexLogBinder } = await import('../../../src/main/logging/codex-log-binder')
@@ -186,7 +189,6 @@ beforeEach(() => {
     rememberedName: (sid) => names.get(sid) ?? null,
     forgetName: (sid) => { names.delete(sid) },
     // As main's logging service wires it (logging-switch-wiring.test.ts).
-    notIndexed: { lookup: notIndexedFor, bound: noteNotIndexedBound },
   }))
 })
 
@@ -372,59 +374,64 @@ describe('P3.12 round 2: the switches at every launch (W3), the stretches not in
     expect(kindsOf(CLAUDE_SID)).toEqual(['runStart', 'runEnd:stopped', 'runEnd:exited'])
   })
 
-  it('X1: a Codex session not indexed marks the conversations it is on (a claim, and the one it holds when stopped); an indexed one marks nothing', () => {
+  it('Y1: a Codex session not indexed opens a window on the conversation it holds (at a switch-off, and at each claim), closing the one before; an indexed one opens none', () => {
     const before = Date.now()
     start(SID)
     ;(source(SID).opts.onRollout as (r: unknown) => void)({ ...report(ID_A, true), identity: '7:1' })
-    expect(notIndexedFor(rolloutOf(ID_A))).toBeNull()
+    expect(windowsOf(ID_A)).toEqual([])
     h.settings = { ...CONSENT, loggingEnabled: false }
     applyLoggingSwitches()
-    expect(notIndexedFor(rolloutOf(ID_A))!.since).toBeGreaterThanOrEqual(before)
+    expect(windowsOf(ID_A)).toEqual([[expect.any(Number), null]])
+    expect(windowsOf(ID_A)[0][0]).toBeGreaterThanOrEqual(before)
     ;(source(SID).opts.onRollout as (r: unknown) => void)({ ...report(ID_B, true), identity: '7:2' })
-    expect(notIndexedFor(rolloutOf(ID_B))!.since).toBeGreaterThanOrEqual(before)
+    expect(windowsOf(ID_A)[0][1]).toEqual(expect.any(Number))
+    expect(windowsOf(ID_B)).toEqual([[expect.any(Number), null]])
+    ;(source(SID).opts.onRollout as (r: unknown) => void)(null)
+    expect(windowsOf(ID_B)[0][1]).toEqual(expect.any(Number))
   })
 
-  it('X1: another tab resuming a conversation written while not indexed binds it with the mark, which then goes; one never so written binds without', () => {
+  it('Y1: a launch not indexed opens a window on what it holds; its end (exit, or a Restart) closes it; windows stay (nothing clears them)', () => {
     h.settings = { ...CONSENT, loggingEnabled: false }
     start(CTX)
     ;(source(CTX).opts.onRollout as (r: unknown) => void)({ ...report(ID_A, true), identity: '7:1' })
-    const since = notIndexedFor(rolloutOf(ID_A))!.since
+    expect(windowsOf(ID_A)).toEqual([[expect.any(Number), null]])
     exitAll()
+    expect(windowsOf(ID_A)).toEqual([[expect.any(Number), expect.any(Number)]])
     h.settings = { ...CONSENT }
     start(SID)
     ;(source(SID).opts.onRollout as (r: unknown) => void)({ ...report(ID_A, true), identity: '7:1' })
-    ;(source(SID).opts.onRollout as (r: unknown) => void)({ ...report(ID_B, true), identity: '7:2' })
-    const binds = h.sup.filter((c) => c[0] === 'bind')
-    expect(binds[0]).toEqual(['bind', SID, rolloutOf(ID_A), 'exact', undefined, 'codex-rollout', '7:1', { since }])
-    expect(binds[1]).toEqual(['bind', SID, rolloutOf(ID_B), 'exact', undefined, 'codex-rollout', '7:2'])
-    expect(notIndexedFor(rolloutOf(ID_A))).toBeNull()
+    expect(h.sup.filter((c) => c[0] === 'bind').at(-1)).toEqual(['bind', SID, rolloutOf(ID_A), 'exact', undefined, 'codex-rollout', '7:1'])
+    expect(windowsOf(ID_A)).toHaveLength(1)
   })
 
-  it('X1: a launch indexed after one that was not: its claim at the start is not taken as written while not indexed', () => {
-    // A session id of its own: no conversation of an earlier test is its own.
+  it('Y1: a launch indexed after one that was not closes the earlier window; its claim at the start opens none', () => {
     const FRESH = 'cx0000000000000000000013'
     h.settings = { ...CONSENT, loggingEnabled: false }
+    h.claimAtStart = { ...report(ID_A, true), identity: '7:1' }
     start(FRESH)
+    ;(source(FRESH).opts.onRollout as (r: unknown) => void)({ ...report(ID_A, true), identity: '7:1' })
+    expect(windowsOf(ID_A)).toEqual([[expect.any(Number), null]])
     h.settings = { ...CONSENT }
     h.claimAtStart = { ...report(ID_B, true), identity: '7:2' }
     start(FRESH)
-    expect(h.sup.filter((c) => c[0] === 'bind').at(-1)).toEqual(['bind', FRESH, rolloutOf(ID_B), 'exact', undefined, 'codex-rollout', '7:2'])
+    expect(windowsOf(ID_A)).toEqual([[expect.any(Number), expect.any(Number)]])
+    expect(windowsOf(ID_B)).toEqual([])
     try { killPty(FRESH) } catch { /* gone */ }
   })
 
-  it('X3: a Codex tab relaunched as a Claude one with logging off does not mark the Codex conversation it was on', () => {
+  it('X3: a Codex tab relaunched as a Claude one with logging off opens no window on the Codex conversation it was on', () => {
     start(SID)
     ;(source(SID).opts.onRollout as (r: unknown) => void)({ ...report(ID_A, true), identity: '7:1' })
     h.settings = { ...CONSENT, loggingEnabled: false }
     spawnPty(fakeWin, SID, { cwd: os.tmpdir(), provider: 'claude' } as never)
-    expect(notIndexedFor(rolloutOf(ID_A))).toBeNull()
+    expect(windowsOf(ID_A)).toEqual([])
   })
 
-  it('X3: a Claude session not indexed, and a shell, mark nothing', () => {
+  it('X3: a Claude session not indexed, and a shell, open no window', () => {
     h.settings = { ...CONSENT, loggingEnabled: false }
     spawnPty(fakeWin, CLAUDE_SID, { cwd: os.tmpdir(), provider: 'claude' } as never)
     spawnPty(fakeWin, 'shell-only-1', { cwd: os.tmpdir(), shellOnly: true } as never)
-    expect(notIndexedFor(rolloutOf(ID_A))).toBeNull()
+    expect(Object.keys(notIndexedSnapshot().conversations)).toEqual([])
   })
 
   it('W9: a Codex session is indexed only once the notice naming Codex\'s indexing was seen; a Claude session keeps its rule', () => {

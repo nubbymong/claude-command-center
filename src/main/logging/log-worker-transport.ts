@@ -50,13 +50,12 @@ export type ToTranscriptsWorker =
       /** P3.12 round 1: a Codex rollout's file identity (dev:ino) as its
        *  watcher claimed it; the tail reads only that file. */
       sourceIdentity?: string
-      /** P3.12 (W4, X1, X2): this conversation was written while it was not
-       *  indexed (`since`: when that was noted), or it may have been
-       *  (`ifBegunBefore`: the not-indexed record cannot vouch for a
-       *  conversation begun before that time); what was written then is
-       *  never indexed. */
-      notIndexed?: { since?: number; ifBegunBefore?: number }
     }
+  /** P3.12 (Y1): when Codex conversations were written while not indexed:
+   *  each listed conversation's windows ([start, end), end null while open),
+   *  whole; `before`, every record stamped earlier; `replace`, the whole
+   *  set (the worker's start). Every read skips the records stamped inside. */
+  | { type: 'not-indexed-windows'; conversations: Record<string, Array<[number, number | null]>>; before: number | null; replace?: boolean }
   /** P3.12: the session is no longer on this transcript (a Codex claim let
    *  go): its tail is drained and retired; what it gave stays. */
   | { type: 'transcript-unbind'; sessionId: string; path: string }

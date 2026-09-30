@@ -54,7 +54,7 @@ export interface CodexRolloutReport {
 
 export interface CodexLogBinderDeps {
   supervisor: {
-    bindTranscript(sessionId: string, path: string, confidence: 'exact' | 'heuristic', sourceVersion?: string, sourceFormat?: 'claude-jsonl' | 'codex-rollout', sourceIdentity?: string, notIndexed?: { since?: number; ifBegunBefore?: number }): void
+    bindTranscript(sessionId: string, path: string, confidence: 'exact' | 'heuristic', sourceVersion?: string, sourceFormat?: 'claude-jsonl' | 'codex-rollout', sourceIdentity?: string): void
     unbindTranscript(sessionId: string, path: string): void
   }
   /** Write (or, for a blank name, clear) the name file next to a rollout of
@@ -65,13 +65,6 @@ export interface CodexLogBinderDeps {
   forgetName: (sessionId: string) => void
   /** Paths-only diagnostics. */
   log?: (msg: string) => void
-  /** P3.12 (X1): what is known of a conversation written while not indexed
-   *  (indexing-gaps.ts), carried on its bind (the worker never indexes what
-   *  was written then), and cleared once it is bound. */
-  notIndexed?: {
-    lookup: (rolloutPath: string) => { since?: number; ifBegunBefore?: number } | null
-    bound: (rolloutPath: string) => void
-  }
 }
 
 export interface CodexLogBinder {
@@ -140,12 +133,8 @@ export function makeCodexLogBinder(deps: CodexLogBinderDeps): CodexLogBinder {
     s.bound = { path: claim.path, exact: claim.exact, ...(claim.identity ? { identity: claim.identity } : {}) }
     const confidence = claim.exact ? 'exact' : 'heuristic'
     try {
-      const known = claim.identity ? deps.notIndexed?.lookup(claim.path) ?? null : null
-      if (claim.identity && known) deps.supervisor.bindTranscript(sessionId, claim.path, confidence, undefined, 'codex-rollout', claim.identity, known)
-      else if (claim.identity) deps.supervisor.bindTranscript(sessionId, claim.path, confidence, undefined, 'codex-rollout', claim.identity)
+      if (claim.identity) deps.supervisor.bindTranscript(sessionId, claim.path, confidence, undefined, 'codex-rollout', claim.identity)
       else deps.supervisor.bindTranscript(sessionId, claim.path, confidence, undefined, 'codex-rollout')
-      // Bound with its identity, the worker applied what was known: it goes.
-      if (claim.identity) deps.notIndexed?.bound(claim.path)
     } catch { /* the index is best-effort */ }
   }
 

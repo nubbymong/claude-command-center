@@ -45,7 +45,7 @@ interface Harness {
   tick: (ms: number) => void
 }
 
-function makeHarness(opts?: { maxRestarts?: number; bufferCapBytes?: number }): Harness {
+function makeHarness(opts?: { maxRestarts?: number; bufferCapBytes?: number; notIndexedSnapshot?: () => { conversations: Record<string, Array<[number, number | null]>>; before: number | null } }): Harness {
   let clock = 1000
   const workers: Array<ReturnType<typeof makeFakeWorker>> = []
   const forkSpy = vi.fn(() => {
@@ -61,6 +61,7 @@ function makeHarness(opts?: { maxRestarts?: number; bufferCapBytes?: number }): 
     now: () => clock,
     maxRestarts: opts?.maxRestarts,
     bufferCapBytes: opts?.bufferCapBytes,
+    ...(opts?.notIndexedSnapshot ? { notIndexedSnapshot: opts.notIndexedSnapshot } : {}),
   })
   return {
     sup,
@@ -528,5 +529,19 @@ describe('LogSupervisor', () => {
       h.sup.shutdown()
       expect(h.sup.manualRestart('logging')).toEqual({ ok: false, reason: 'shutting-down' })
     })
+  })
+})
+
+describe('LogSupervisor: the not-indexed windows (P3.12, Y1)', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('each worker it starts gets every window right after open', () => {
+    const snapshot = { conversations: { k1: [[1, 2]] as Array<[number, number | null]> }, before: null }
+    const h = makeHarness({ notIndexedSnapshot: () => snapshot })
+    h.sup.start()
+    const posts = h.current().posts as Array<{ type: string }>
+    const openAt = posts.findIndex((m) => m.type === 'open')
+    expect(posts[openAt + 1]).toEqual({ type: 'not-indexed-windows', ...snapshot, replace: true })
   })
 })

@@ -60,11 +60,13 @@ describe('the logging switches reach running sessions (P3.12 round 1, V1)', () =
     expect(configsBody).toMatch(/try \{ applyLoggingSwitches\(\) \} catch \(err\) \{ logError\(/)
   })
 
-  it('P3.12 (W4, X1, X3): main keeps the conversations written while not indexed from start-up, before (and whether or not) logging starts; the Codex binder reads and clears them; they are written at quit', () => {
+  it('P3.12 (W4, X1, X3): main keeps the conversations written while not indexed from start-up, before (and whether or not) logging starts; the worker starts with them and is told of each change; they are written at quit', () => {
     const gapsAt = indexSource.indexOf("initIndexingGaps(join(getDataDirectory(), 'logging-gaps.json'))")
     expect(gapsAt).toBeGreaterThan(-1)
     expect(gapsAt).toBeLessThan(indexSource.indexOf('initLogging({ emit: emitWithMerge'))
-    expect(loggingServiceSource).toMatch(/notIndexed: \{ lookup: notIndexedFor, bound: noteNotIndexedBound \},/)
+    // P3.12 (Y1): the worker starts with every window, and is told of each change.
+    expect(loggingServiceSource).toMatch(/notIndexedSnapshot,\r?\n/)
+    expect(loggingServiceSource).toMatch(/setNotIndexedListener\(\(update\) => sup\.notIndexedWindows\(update\)\)/)
     const quitAt = indexSource.indexOf('quitTeardown = () => {')
     expect(indexSource.slice(quitAt, quitAt + 1200)).toMatch(/try \{ flushIndexingGaps\(\) \} catch/)
     const sigAt = indexSource.indexOf("process.on('SIGTERM', () => {")

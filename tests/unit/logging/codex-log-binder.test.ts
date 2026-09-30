@@ -189,31 +189,3 @@ describe('the Codex log binder, P3.12 round 1', () => {
     expect(() => binder.stopIndexing('nobody')).not.toThrow()
   })
 })
-
-describe('P3.12 (X1): a conversation written while not indexed rides on its bind, and is cleared once bound', () => {
-  it('a bind carries what is known of the conversation; a bound one is cleared; a bind without the file identity clears nothing', () => {
-    const calls: unknown[][] = []
-    const marks = new Map<string, { since?: number; ifBegunBefore?: number }>([['/r/s.jsonl', { since: 1234 }], ['/r/u.jsonl', { since: 9 }]])
-    const cleared: string[] = []
-    const b = makeCodexLogBinder({
-      supervisor: { bindTranscript: (...a: unknown[]) => { calls.push(['bind', ...a]) }, unbindTranscript: () => {} },
-      writeName: () => {}, rememberedName: () => null, forgetName: () => {},
-      notIndexed: { lookup: (p) => marks.get(p) ?? null, bound: (p) => { cleared.push(p); marks.delete(p) } },
-    })
-    for (const sid of ['s', 't']) {
-      b.beginLaunch(sid)
-      b.startRun(sid, true)
-      b.noteRollout(sid, { path: `/r/${sid}.jsonl`, sessionsDir: '/r', exact: true, shared: false, identity: '7:1' })
-    }
-    b.beginLaunch('u')
-    b.startRun('u', true)
-    b.noteRollout('u', { path: '/r/u.jsonl', sessionsDir: '/r', exact: true, shared: false })
-    expect(calls).toEqual([
-      ['bind', 's', '/r/s.jsonl', 'exact', undefined, 'codex-rollout', '7:1', { since: 1234 }],
-      ['bind', 't', '/r/t.jsonl', 'exact', undefined, 'codex-rollout', '7:1'],
-      ['bind', 'u', '/r/u.jsonl', 'exact', undefined, 'codex-rollout'],
-    ])
-    expect(cleared).toEqual(['/r/s.jsonl', '/r/t.jsonl'])
-    expect(marks.get('/r/u.jsonl')).toEqual({ since: 9 })
-  })
-})

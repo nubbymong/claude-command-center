@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "84c4f8f20d9714a75b16f001b7b4a7d0b90fc395ef430e34dec91b15af9c0f3a",
-  "manifestHead": "00e1fcbf27188987a002a9f924498a1159fe3746",
+  "manifestPathDigest": "bec6dfb931ebe5baedcdd36eafc667107f1ffdb67332ab57a13e630fff65c510",
+  "manifestHead": "f8bfada079b9f548ca61afd1a8c730546ddda34f",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -806,7 +806,7 @@
       ],
       "category": "TELEMETRY",
       "disposition": "added",
-      "evidence": "new WP2 PR 3 P3.12 (rows 31, 32, 65; the fixes from the reviews and the VM checks) module (src/main/logging/indexing-gaps.ts): the Codex conversations written while not indexed, by rollout id, kept in the app data folder (coalesced, atomic, flushed at quit), cleared once a run binds one; a damaged or full record fails toward not indexing; no later run indexes what was written then (WP1.68); tests/unit/logging/indexing-gaps.test.ts, tests/unit/main/pty-codex-logs.test.ts",
+      "evidence": "new WP2 PR 3 P3.12 (rows 31, 32, 65; the fixes from the reviews and the VM checks) module (src/main/logging/indexing-gaps.ts): per Codex conversation (rollout id), the wall-clock windows during which a session not indexed held it, kept in the app data folder (a new window at once, the rest coalesced, atomic, closed at quit or at the next start); a damaged or full record fails toward not indexing; every read skips the records stamped inside (WP1.68); tests/unit/logging/indexing-gaps.test.ts, tests/unit/main/pty-codex-logs.test.ts, tests/unit/logging/codex-logs-worker.test.ts",
       "note": "created by WP2 PR 3 P3.12 (fixes)"
     },
     {
@@ -3058,6 +3058,17 @@
       "disposition": "retain",
       "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33)",
       "note": ""
+    },
+    {
+      "path": "src/shared/codex-conversation-key.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "category": "TELEMETRY",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.12 (rows 31, 32, 65; the fixes from the reviews and the VM checks) module (src/shared/codex-conversation-key.ts): a Codex conversation key from its rollout file name (the rollout id), shared by the not-indexed record, the transcripts worker and search (WP1.68); tests/unit/logging/indexing-gaps.test.ts, tests/unit/logging/search-dedupe.test.ts",
+      "note": "created by WP2 PR 3 P3.12 (fixes); pure"
     },
     {
       "path": "src/shared/codex-screen.ts",
