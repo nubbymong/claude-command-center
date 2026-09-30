@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-30T03:07:33.193Z",
-  "head": "5b178c7a64b6732a96d36d9c0807c6d033f86462",
-  "tree": "55dc2f6275795a8b074e68cc3213a0511676403f",
+  "generatedAt": "2026-09-30T05:16:07.409Z",
+  "head": "ce70e205d0d40deb84a515eeee876dc5c0517b8f",
+  "tree": "d9c8e9b11af9764747ef67304a7db983d81a5c5d",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2528,
+  "trackedFileCount": 2530,
   "excludedFileCount": 384,
-  "scannedFileCount": 2144,
+  "scannedFileCount": 2146,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 589,
-  "pathDigest": "a3af2eeb39c20e4db5b997841f8898304119e61df5e5263d7dc2683577de9877",
+  "matchedPathCount": 590,
+  "pathDigest": "c42239a4f5bcd6c675cc58b9e3c1d5ce80405273b368c0cef6ef4b36e3b3b80e",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 438,
+      "lineCount": 447,
       "truncated": true
     },
     {
@@ -367,7 +367,7 @@
         "P05",
         "P14"
       ],
-      "lineCount": 43
+      "lineCount": 48
     },
     {
       "path": "src/main/canvas-mcp-tool.ts",
@@ -715,7 +715,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 227
+      "lineCount": 230
     },
     {
       "path": "src/main/providers/codex/install-recipes.ts",
@@ -1085,7 +1085,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 4
+      "lineCount": 5
     },
     {
       "path": "src/main/watchdog/watchdog-manager.ts",
@@ -2892,7 +2892,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 33
+      "lineCount": 36
     },
     {
       "path": "tests/unit/main/canvas-mcp-tool.test.ts",
@@ -3270,6 +3270,13 @@
       "lineCount": 67
     },
     {
+      "path": "tests/unit/main/watchdog/overload-episode.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 9
+    },
+    {
       "path": "tests/unit/main/watchdog/watchdog-manager.test.ts",
       "predicates": [
         "P13"
@@ -3470,7 +3477,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 142
+      "lineCount": 172
     },
     {
       "path": "tests/unit/providers/codex/mcp-config.test.ts",
@@ -3557,7 +3564,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 79
+      "lineCount": 86
     },
     {
       "path": "tests/unit/providers/codex/spawn-resume.test.ts",

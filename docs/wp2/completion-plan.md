@@ -158,11 +158,11 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 40 | Effort | DONE (P3.8, 260d4abc; round 1, caef0d42): each Codex model's own levels, from the CLI's catalogue (0.155.1's are the same, VM); a launch drops a saved effort its model cannot run. The CLI accepts max and ultra at launch on both versions (VM) | Parity | verification: whether the server takes max and ultra (a real sign-in; the CLI does not check at launch) | 3 |
 | 41 | Mid-session model and effort | PARTIAL, built as the default pending the owner's decision (P3.8 round 1, caef0d42): on a live session the command bar's model pill types a bare `/model`, only at Codex's ready prompt, which opens Codex's own model-and-effort picker and keeps the conversation; a stopped session keeps the select, applied at its next start | Parity: applied live, keeping the conversation. Codex has no one-line form (VM: `/model <slug>` is sent as a message; there is no `/effort`), so Claude's one-step switch cannot carry over as it is | owner: the default (section 10, question 2); verification: the pill on the VM | 3 |
 | 42 | Sentinel | DONE (P3.9, 3a4ed400; mocked): while Codex is on, its version against the supported range (a finding outside it), the live model list (row 39), and a changed version's release notes analysed against its launch flags, TUI, rollout session files and config and account files; the analysis runs on the provider that is on (both on: the one Ask Conductor runs on, Claude Code until PR 4's row); the same panel, dot, Settings section and Transparency card | Parity: version drift, flags and the rollout format checked, with findings; the analysis runs on whichever provider is on | verification: the VM run at 7678c433 (the findings as specified; a Codex-run analysis left config.toml unchanged; the notes read failed, fixed in round 1, e357fe33, with the ADR-009 pass 1 findings); the VM re-check at 82c78680, five of six passed, its bug and the ADR-009 pass 2 findings fixed in round 2, 1f010667); the VM re-check at 84fd2d03, the suspended git left by a fast failure fixed in round 3, 5fd82db8); ADR-009: FINDINGS after pass 3, P3.9 quarantined, a fresh pass owed before #626 leaves draft; the VM re-check at 2499766e: direct route 10/10 clean, npm route 1/15 left a suspended git (round 4 logs the kill's result; an access-denied result is an upstream residual); owed: a completed real analysis (owner) and the owner's screenshot review | 3 |
-| 43 | Watchdog | DONE (P3.10, d8f538b1; mocked): armed for a local Codex session (opt-in, off by default, as for Claude) with Codex's own detectors: its usage-limit and sustained server-error cells above the composer, the reset time, a turn running, Codex's own retry; the retry typed only into its ready, empty composer, Enter 300 ms later only when the pane shows it typed; the safeguard check shown unavailable (Codex has no such message). Round 1 (afae03f7): the session header's Watchdog pill shows on a Codex session and counts only the checks Codex has; the Feature Guide, tip and What's New cover it, under the one switch. VM at 6d576634: armed only when switched on, backoff and retry on a server error. Round 2 (5b178c7a): the header pill follows the watchdog live (it showed only after another change); one overload is retried once (an error above a newer turn is an earlier one's) | Parity: auto-retry and silence detection; aicc_planning#72 (a CLI without its own patterns reports Watchdog unavailable, never Claude's) | verification: a real usage limit and overload (a working model, owner); the owner's screenshot review; ADR-009 pass 2; the SSH live matrix | 3 |
+| 43 | Watchdog | DONE (P3.10, d8f538b1; mocked): armed for a local Codex session (opt-in, off by default, as for Claude) with Codex's own detectors: its usage-limit and sustained server-error cells above the composer, the reset time, a turn running, Codex's own retry; the retry typed only into its ready, empty composer, Enter 300 ms later only when the pane shows it typed; the safeguard check shown unavailable (Codex has no such message). Round 1 (afae03f7): the session header's Watchdog pill shows on a Codex session and counts only the checks Codex has; the Feature Guide, tip and What's New cover it, under the one switch. VM at 6d576634: armed only when switched on, backoff and retry on a server error. Round 2 (5b178c7a): the header pill follows the watchdog live (it showed only after another change); one overload is retried once (an error above a newer turn is an earlier one's). VM at 6b465aef: the pill live on a Codex and a Claude session (R1); one retry per overload (R2); a persistent overload retried without backing off, fixed in round 3 (18029bb0): an episode lasts until two minutes of quiet after a retry, for Claude and Codex alike, so the backoff grows and the cap trips | Parity: auto-retry and silence detection; aicc_planning#72 (a CLI without its own patterns reports Watchdog unavailable, never Claude's) | verification: the VM re-check of round 3 (a persistent overload backing off, on a Codex and a Claude session); a real usage limit and overload (a working model, owner); the owner's screenshot review; ADR-009's PR-level pass; the SSH live matrix | 3 |
 | 44 | Services (PTY integrity) | PARTIAL: built, unproven (Codex output is fed to the monitor) | Parity | verification | 3 |
 | 45 | Provider status pill | PARTIAL (P3.4, aa0411b0, 87ba9c2d; the VM walk PASS at c7f9a34a and f65de184): an OpenAI status pill beside Anthropic's, each read and shown only while its provider is on | Parity: an OpenAI status pill beside Anthropic's, each shown only while its provider is on | verification: the Desktop test gate (owner); macOS and Linux; packaged | 3 |
 | 46 | Busy sweep and sleep moon | DONE (P3.10, d8f538b1; mocked): the sweep and the moon on a Codex card as on a Claude card (the moon, as Claude's, with the Watchdog on); the working pill names Codex. VM at 6d576634: the sweep, the pill and the moon on a Codex card | Parity: fed from output and silence | verification: the owner's screenshot review | 3 |
-| 47 | Waiting-for-input and attention dot | DONE (P3.10, d8f538b1; mocked): fed by Codex's hooks (once trusted in Codex's review, row 63): an approval request raises the dot, a turn's end raises it after Claude's 60 s idle wait, a prompt or a tool clears it. Deviation: `notify` is not used (the Stop hook marks a turn's end; setting `notify` would replace the user's own). VM at 6d576634: the dot on an approval and 60 s after a turn's end; its bug (a PreToolUse landing after its approval cleared the dot) fixed in round 1 (afae03f7), passed 12 of 12 on the re-check; round 2 (5b178c7a) pairs an approval with its call's tool_use_id | Parity: fed by Codex `notify` and hooks | verification: the VM re-check of that fix (six rounds on each version); an approval request under a working model (owner); the owner's screenshot review | 3 |
+| 47 | Waiting-for-input and attention dot | DONE (P3.10, d8f538b1; mocked): fed by Codex's hooks (once trusted in Codex's review, row 63): an approval request raises the dot, a turn's end raises it after Claude's 60 s idle wait, a prompt or a tool clears it. Deviation: `notify` is not used (the Stop hook marks a turn's end; setting `notify` would replace the user's own). VM at 6d576634: the dot on an approval and 60 s after a turn's end; its bug (a PreToolUse landing after its approval cleared the dot) fixed in round 1 (afae03f7), passed 12 of 12 on the re-check; round 2 (5b178c7a) pairs an approval with its call's tool_use_id; VM at 6b465aef: 12 of 12 approval rounds pulsed, the bad order included (R3); round 3 (18029bb0) pairs an approval with an open call only when its PreToolUse came within 3 s before it | Parity: fed by Codex `notify` and hooks | verification: the VM re-check of round 3 (the 3 s window); an approval request under a working model (owner); the owner's screenshot review | 3 |
 
 ### D. MCP, reviews, Canvas, browser, Ask, knowledge, Memory, logs, cloud, web
 
@@ -188,7 +188,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 60 | Real-CLI coverage in CI | OPEN: no workflow installs Codex | OD20 D7; WP1.71 | implementation | 4 |
 | 61 | Compact | DONE (P3.8, 260d4abc; round 1, caef0d42): the strip's Compact on a Codex session types Codex's own /compact only at its ready, empty prompt (otherwise it types nothing and says why) and presses Enter only in the same run; the real TUI submits it that way on 0.153.4 and 0.155.1 (VM) | Parity: Codex's own compact command (evidence first) | verification: round 1 on the VM; what a real /compact does to a conversation (a real sign-in) | 3 |
 | 62 | Extra CLI arguments | OPEN: Claude only (`extraArgs`, `src/shared/types.ts:126-130`) | Parity: the same field and IPC character guard, plus a block-list of the flags the app manages and of any setting that changes the account, provider or endpoint | implementation | 3 |
-| 63 | Hooks gateway and notification rules | PARTIAL, built as the default pending the owner's decision (P3.10, d8f538b1; mocked): each local Codex launch gets six command hooks running the app's forwarder, which posts each event to the Hooks gateway as a Claude http hook does (loopback, the session's token, the size cap, redaction); Codex asks the user to review them once per account. Notification rules: the one rule on a hook event (Attention Pulse, Claude's idle Notification, filter-only) gets from a Codex idle mark what Claude's idle_prompt gives it (round 1). Round 1 (afae03f7) fixes ADR-009 pass 1 (the forwarder never through an environment proxy; no PowerShell call of a path it reads as a wildcard or cmd.exe expands; the hook folders in the app's own data folder, owner-only, read only at their real path) and gives an npm-installed Codex its hooks from a resources folder with a space (a checked plain-path copy). VM at 6d576634: all six events at the gateway on both versions and routes, the review once per account; the round 1 re-check passed V3 (the plain-path copy through the npm shim from the default resources folder, reused across starts) and S6 (a user's own hooks still run). Round 2 (5b178c7a): both plain-copy folders owner-only, bigint file ids, the root hardened once a run | Parity: route Codex `notify` and hook events. Codex reviews hooks given at launch, which Claude does not, so the trust step cannot carry over as it is | owner: the default (section 10, question 4); verification: the VM re-check after round 1; ADR-009 pass 2; the POSIX hook runner; the SSH live matrix | 3 |
+| 63 | Hooks gateway and notification rules | PARTIAL, built as the default pending the owner's decision (P3.10, d8f538b1; mocked): each local Codex launch gets six command hooks running the app's forwarder, which posts each event to the Hooks gateway as a Claude http hook does (loopback, the session's token, the size cap, redaction); Codex asks the user to review them once per account. Notification rules: the one rule on a hook event (Attention Pulse, Claude's idle Notification, filter-only) gets from a Codex idle mark what Claude's idle_prompt gives it (round 1). Round 1 (afae03f7) fixes ADR-009 pass 1 (the forwarder never through an environment proxy; no PowerShell call of a path it reads as a wildcard or cmd.exe expands; the hook folders in the app's own data folder, owner-only, read only at their real path) and gives an npm-installed Codex its hooks from a resources folder with a space (a checked plain-path copy). VM at 6d576634: all six events at the gateway on both versions and routes, the review once per account; the round 1 re-check passed V3 (the plain-path copy through the npm shim from the default resources folder, reused across starts) and S6 (a user's own hooks still run). Round 2 (5b178c7a): both plain-copy folders owner-only, bigint file ids, the root hardened once a run; VM at 6b465aef: both plain-copy folders and the root owner-only (R4), the picker told only of tabs on the same account (R10). Round 3 (18029bb0): a hook folder the app did not make this run is used only once it belongs to the user, and the root is hardened again when made again in the run | Parity: route Codex `notify` and hook events. Codex reviews hooks given at launch, which Claude does not, so the trust step cannot carry over as it is | owner: the default (section 10, question 4); verification: the VM re-check of round 3 (a hook folder from an earlier run); ADR-009 on V3 (a completed lens A run) and the PR-level pass; the POSIX hook runner; the SSH live matrix | 3 |
 | 64 | Partner terminal wording | DONE | P2 | verification: per OS | 2, v4 |
 | 65 | GitHub session context | PARTIAL: reads Claude transcripts only (`src/main/github/session/transcript-loader.ts:59`) | Parity: read the session's realm rollouts | implementation | 3 |
 | 66 | Packaged smoke | PARTIAL: Windows only, an unsigned candidate on a used VM | OD20 D8; WP1.63 | verification (release level; owner hosts) | 4 |
@@ -1690,6 +1690,51 @@ on the same account, since Codex's writer lock is per account folder (R10)
 `codex-hook-forwarder.test.ts`, `pty-codex-hooks.test.ts`,
 `app-knowledge.test.ts`). Each fix was red on ec16e61c first; 17 mutants, all
 red.
+The VM re-check of round 2 at 6b465aef (WINDOWS_1, real Codex 0.153.4 and
+0.155.1, a local fake model): R1 passed, the header pill at once and following
+a check switched off and on, on a Codex and a Claude session; R3 passed, 12 of
+12 approval rounds pulsed, the four in the bad order included; R4 passed, both
+plain-copy folders and the hook root with exactly the user's and SYSTEM's
+grants and nothing inherited, and hooks on the shim route; R10 passed, a
+conversation open on another account not marked as open in another tab; R2
+passed for one retry per overload and for a new error after a retry that
+worked, and failed for a persistent overload: every retry opened a new episode
+at attempt 1 (8 retries in 5 min on 0.155.1, 6 in 3.4 min on 0.153.4), fixed in
+round 3 (F2). Also seen: an approval declined with Esc ends Codex's turn with
+no further event, so the dot stays up until the next prompt (limits, below);
+and the Claude resume picker could not start a Claude CLI whose path has a
+space (fixed in round 3, F5). e2e 81 of 81.
+Round 3 (2026-09-30; 18029bb0; mocked). The re-review of round 2 and that
+re-check. An approval request pairs with an open call only when that call's
+PreToolUse reached the gateway within 3 s before it (CODEX_OWN_PRE_WINDOW_MS:
+the VM's slowest own pair was an apply_patch, 2156 ms apart, and the model's
+next call came about 7 s later), so a previous call's late PostToolUse, or a
+stale open call, no longer clears a real raise (F1). The shared Watchdog state
+machine keeps an overload episode that ended with the session moving on after a
+retry until the session has been quiet for two minutes (OVERLOAD_SETTLE_MS: a
+failing retry's error came back within seconds on the VM, and the CLIs' own
+retries are not quiet), and an error before then continues it, for Claude and
+Codex alike: a persistent overload now backs off 30, 60, 120, 240, then 300 s
+and gives up at the two-hour cap (about 26 retries with the default settings),
+where it retried about every 35 s (Codex, VM) or 40 s (Claude, lens B) without
+end. No incident opens while the session works on, and a screen that moved on
+ends the render memo, so a repeated error in a scrolled pane is seen (F2). A
+hook folder the app did not make this run is used only once it belongs to the
+user; otherwise the launch has no hooks, logged at boot and at the launch (F3).
+The hook root is hardened once a run per folder identity, so one made again in
+the run is hardened again (F4); a launch runs only the two verified names from
+the plain-path copy (tested). The Claude resume picker runs an npm `.cmd` shim
+as the Codex picker and the version probe do (`/d /v:off /s /c`, verbatim, the
+shim path quoted, each argument as Node writes it), so a Claude CLI in a folder
+with a space or brackets starts, as for an npm install under a Windows user
+name with a space (F5). The Feature Guide's hooks text says a tool that has run
+sends its result too, and that the hooks feed the notification rules (F8);
+What's New has the fix lines (F7) (`attention-source-codex.test.ts`,
+`overload-episode.test.ts`, `session-watchdog.test.ts`, `hooks.test.ts`,
+`spawn-hooks.test.ts`, `harden-take-ownership.test.ts`,
+`resume-picker-spawn-target.test.ts`, `app-knowledge.test.ts`). Each fix was
+red on 6b465aef first; 39 mutants, 38 red, one equivalent on NTFS (the folder
+identity alone catches a root made again).
 Deviations, recorded: Codex's `notify` is not used. The Stop hook marks a
 turn's end as `notify`'s turn-complete call would, and setting `notify`
 through `-c` replaces the user's own notify program rather than adding to it.
@@ -1705,50 +1750,57 @@ carried by a Switch once the session's own hooks run, and a conversation
 resumed by id from a record in doubt stays in doubt whoever's hook names it
 (S3). A turn's end does not clear the dot (as Claude's Stop does not): it ends
 a pending approval and arms the idle mark.
-Limits, recorded: where Codex's hooks do not run for a session (Codex's
-review declined or not yet answered, the Hooks gateway off, a Codex
-installed with npm when neither the resources folder's path nor the user's
-local app data folder's is a plain word, or no node on the PATH), it has no
-attention dot and P3.5's and P3.6's rules and limits hold as before; the
-sweep, the moon and the Watchdog read the terminal and still work.
-SessionStart comes with the first turn, so until a session's own hooks are
-heard its claim is inferred and keeps P3.6's rules (carried when certain), so
-a writer outside the app can still make it look certain in that window, as
-P3.6 recorded. Stop does not fire for a turn interrupted with Esc or failed
-(VM), so no idle mark follows one. How a POSIX Codex runs the command is not
-yet seen (macOS and Linux). The hook files sit in the app's own data folder,
-owner-only. The picker's "open in another tab" is as the launch saw it: a tab
-opened on that conversation after the picker started is not marked; and on
-0.155.1 Codex shows its own lock screen and does not exit, so the picker's
-words cannot appear there (its row mark does). An approval request after its
-own call's PreToolUse cannot be told apart from a call running beside it, so
-there the other call's events clear the dot (a PermissionRequest carries no
-call id). A persistent overload is retried once for each error Codex shows:
-an error after a retry that started a turn is a new incident, as Claude's
-screen-read path treats it. The plain-path copies are one folder per
-resources folder path under `ai-code-conductor`; the app never removes
-another's (another install or a dev build may use it), so one is left behind
-after the resources folder moves. The forwarder's "never reads through a file
-link" test skips on a Windows host without the right to make one; it runs
+Limits, recorded: where Codex's hooks do not run for a session (Codex's review
+declined or not yet answered, the Hooks gateway off, a Codex installed with npm
+when neither the resources folder's path nor the user's local app data folder's
+is a plain word, or no node on the PATH), it has no attention dot and P3.5's
+and P3.6's rules and limits hold as before; the sweep, the moon and the
+Watchdog read the terminal and still work. SessionStart comes with the first
+turn, so until a session's own hooks are heard its claim is inferred and keeps
+P3.6's rules (carried when certain), so a writer outside the app can still make
+it look certain in that window, as P3.6 recorded. Stop does not fire for a turn
+interrupted with Esc or failed (VM), so no idle mark follows one. How a POSIX
+Codex runs the command is not yet seen (macOS and Linux). The hook files sit in
+the app's own data folder, owner-only. The picker's "open in another tab" is as
+the launch saw it: a tab opened on that conversation after the picker started
+is not marked; and on 0.155.1 Codex shows its own lock screen and does not
+exit, so the picker's words cannot appear there (its row mark does). An
+approval request after its own call's PreToolUse cannot be told apart from a
+call running beside it, so there the other call's events clear the dot (a
+PermissionRequest carries no call id); and a previous call of the same tool
+whose PreToolUse came within 3 s before the request, with its PostToolUse late,
+is still taken for its own (none seen on the VM, where calls came about 7 s
+apart). An approval declined with Esc: Codex ends the turn with no further
+event (VM, both versions), so the dot stays up until the next prompt; Claude
+Code sends none for a decline either (its Stop does not run on an interrupt,
+and the app maps no other event), so a Claude session's dot does the same (from
+the mapping and Claude Code's hooks reference, not run on the VM). A new error
+within two minutes of a retry that worked continues that episode, with the
+longer backoff, for Claude and Codex alike (F2). The plain-path copies are one
+folder per resources folder path under `ai-code-conductor`; the app never
+removes another's (another install or a dev build may use it), so one is left
+behind after the resources folder moves. The forwarder's "never reads through a
+file link" test skips on a Windows host without the right to make one; it runs
 where links can be made (CI on macOS and Linux), and the junction cases run
 everywhere.
-ADR-009: yes; pass 1 at 6d576634 FINDINGS (lens A two major, three minor;
-lens B PASS with minor findings), all fixed in round 1; the re-attack of round 1
-passed (lens A on A1 to A4, V3 not assessed; lens B with one minor finding,
-fixed in round 2). SSH radius: yes;
-`pty-manager.ts` changes the Codex launch branch, the local branch (the C
-item), the Claude branch's gateway token record (one line), the shared exit
-and resource cleanup (the same token removal plus that record, and a Codex
-idle mark dropped), killPty's removal of a Codex session's token, and the
-local Watchdog arm site; no SSH-specific path. Owed: the independent spec and
-code-quality reviews of round 2; ADR-009 on round 2 (lens A on the V3 copy and
-its owner-only folders, R4); the VM re-check of round 2 (the pill following
-the watchdog live on a Claude and a Codex session; one overload retried once;
-the approval dot with the new pairing); a real
-paid-model turn (owner): an approval request raising the dot, and the
-Watchdog on a real usage limit and overload; the POSIX hook runner on macOS
-and Linux; the SSH live matrix at PR 3's head; the owner's review of the
-P3.10 gallery and screenshots, and the owner's answer to question 4.
+ADR-009: yes; passes 1 to 3 run. Pass 1 at 6d576634 FINDINGS (lens A two major,
+three minor; lens B PASS with minor findings), all fixed in round 1; the
+re-attacks of rounds 1 and 2: lens B PASS, lens A PASS on A1 to A4, V3 pending
+a completed attacker run; their findings are fixed in rounds 2 and 3. SSH
+radius: yes; `pty-manager.ts` changes the Codex launch branch, the local branch
+(the C item), the Claude branch's gateway token record (one line), the shared
+exit and resource cleanup (the same token removal plus that record, and a Codex
+idle mark dropped), killPty's removal of a Codex session's token, and the local
+Watchdog arm site; no SSH-specific path. Owed: the independent spec and
+code-quality reviews of round 3; ADR-009 on V3 (a completed lens A run) and the
+PR-level pass; the VM re-check of round 3 (a persistent overload backing off
+and giving up, on a Codex and a Claude session; the approval dot with the 3 s
+window; a hook folder from an earlier run used once it is the user's, on a
+standard and an admin account; the Claude picker from a folder with a space); a
+real paid-model turn (owner): an approval request raising the dot, and the
+Watchdog on a real usage limit and overload; the POSIX hook runner on macOS and
+Linux; the SSH live matrix at PR 3's head; the owner's review of the P3.10
+gallery and screenshots, and the owner's answer to question 4.
 
 **P3.11 Extra CLI arguments.** Claude's field and IPC character guard for
 Codex, rejecting the flags the app manages (model, effort, permissions, MCP,
