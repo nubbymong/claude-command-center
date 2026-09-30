@@ -240,7 +240,7 @@ describe('transcripts-db', () => {
     db.setTranscriptStatus(b.transcriptId, 'failed')
 
     expect(db.listResumableTranscripts()).toEqual([
-      { transcriptId: a.transcriptId, runId: r1, path: 'C:/t/a.jsonl', ingestCursor: 4096, parserVersion: 3 },
+      { transcriptId: a.transcriptId, runId: r1, path: 'C:/t/a.jsonl', ingestCursor: 4096, parserVersion: 3, sourceFormat: 'claude-jsonl' },
     ])
 
     db.setTranscriptStatus(a.transcriptId, 'complete')
@@ -949,6 +949,50 @@ describe('transcripts-db', () => {
       } finally {
         db2.close()
       }
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // P3.12 (row 31): a Codex rollout's format, the run's provider on each page
+  // row, and the provider on session activity
+  // -------------------------------------------------------------------------
+
+  describe('P3.12: Codex rollouts', () => {
+    it('a binding keeps the format it was made with (default Claude\'s), and a restart resumes with it', () => {
+      const r1 = db.insertRun(runMeta({ provider: 'codex' }))
+      const a = db.bindTranscript(r1, 'C:/r/rollout-a.jsonl', { confidence: 'heuristic', parserVersion: 1, sourceFormat: 'codex-rollout' })
+      expect(a).toMatchObject({ isNew: true, sourceFormat: 'codex-rollout' })
+      // A re-bind (the hook confirming the claim) keeps the format.
+      const again = db.bindTranscript(r1, 'C:/r/rollout-a.jsonl', { confidence: 'exact', parserVersion: 1 })
+      expect(again).toMatchObject({ isNew: false, transcriptId: a.transcriptId, sourceFormat: 'codex-rollout' })
+      const c = db.bindTranscript(r1, 'C:/t/c.jsonl', { confidence: 'exact', parserVersion: 1 })
+      expect(c.sourceFormat).toBe('claude-jsonl')
+      db.setTranscriptStatus(a.transcriptId, 'tailing')
+      expect(db.listResumableTranscripts()).toEqual([
+        { transcriptId: a.transcriptId, runId: r1, path: 'C:/r/rollout-a.jsonl', ingestCursor: 0, parserVersion: 1, sourceFormat: 'codex-rollout' },
+      ])
+      expect(inspect((raw) => raw.prepare('SELECT sourceFormat, confidence FROM transcripts WHERE id = ?').get(a.transcriptId))).toEqual({ sourceFormat: 'codex-rollout', confidence: 'exact' })
+      expect(db.findTranscript(r1, 'C:/r/rollout-a.jsonl')).toEqual({ transcriptId: a.transcriptId })
+      expect(db.findTranscript(r1, 'C:/r/none.jsonl')).toBeNull()
+    })
+
+    it('each page row (and a relaunch divider) carries its run\'s provider', () => {
+      const r1 = db.insertRun(runMeta({ sessionId: 's1', configId: 'cfg1', provider: 'claude', startedAt: 100 }))
+      db.appendMessages(r1, [{ idx: 0, ts: 110, role: 'assistant', kind: 'message', content: 'from claude' }])
+      const r2 = db.insertRun(runMeta({ sessionId: 's1', configId: 'cfg1', provider: 'codex', startedAt: 200 }))
+      db.appendMessages(r2, [{ idx: 0, ts: 210, role: 'assistant', kind: 'message', content: 'from codex' }])
+      const page = db.readMessagesPage({ configId: 'cfg1' }, { anchor: 'tail', dir: 'older', limit: 10 })
+      expect(page.map((m) => [m.kind, m.provider])).toEqual([['message', 'claude'], ['relaunch', 'codex'], ['message', 'codex']])
+      const older = db.readMessagesPage({ configId: 'cfg1' }, { anchor: { runId: r2, idx: 0 }, dir: 'older', limit: 10 })
+      expect(older.map((m) => [m.kind, m.provider])).toEqual([['message', 'claude'], ['relaunch', 'codex']])
+      const newer = db.readMessagesPage({ configId: 'cfg1' }, { anchor: { runId: r1, idx: 0 }, dir: 'newer', limit: 10 })
+      expect(newer.map((m) => [m.kind, m.provider])).toEqual([['relaunch', 'codex'], ['message', 'codex']])
+    })
+
+    it('session activity names each session\'s provider (its latest run\'s)', () => {
+      db.insertRun(runMeta({ sessionId: 'a', provider: 'claude', startedAt: 1, projectCwd: '/p' }))
+      db.insertRun(runMeta({ sessionId: 'b', provider: 'codex', startedAt: 2, projectCwd: '/p' }))
+      expect(db.sessionActivity().map((r) => [r.sessionId, r.provider])).toEqual([['b', 'codex'], ['a', 'claude']])
     })
   })
 })

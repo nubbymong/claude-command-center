@@ -44,7 +44,13 @@ export type ToTranscriptsWorker =
       path: string
       confidence: 'exact' | 'heuristic'
       sourceVersion?: string
+      /** P3.12: the transcript's format; absent = Claude's JSONL. A Codex
+       *  rollout is tailed with the Codex normalizer. */
+      sourceFormat?: 'claude-jsonl' | 'codex-rollout'
     }
+  /** P3.12: the session is no longer on this transcript (a Codex claim let
+   *  go): its tail is drained and retired; what it gave stays. */
+  | { type: 'transcript-unbind'; sessionId: string; path: string }
   | {
       // #480: durable session->conversation mapping, written on every EXACT bind.
       // Independent of the runs/transcripts index so restart resume has a single

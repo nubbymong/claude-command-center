@@ -183,6 +183,11 @@ export interface CodexOptions {
    *  resume), none that changes the account, provider or endpoint, and no word
    *  Codex reads as one of its commands. */
   extraArgs?: string
+  /** P3.12 (row 31): the per-config indexing opt-out, as
+   *  ClaudeOptions.loggingEnabled. DEFAULT-TRUE (undefined / true = on); when
+   *  false the app does not index this config's Codex conversations for the
+   *  Logs viewer. Codex keeps them in its account's sessions folder either way. */
+  loggingEnabled?: boolean
 }
 
 // ── Session Persistence ──

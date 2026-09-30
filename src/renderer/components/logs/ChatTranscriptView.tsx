@@ -17,9 +17,10 @@
 //
 // Rendering reuses the T12 components (MarkdownMessage / ToolCallRow); dividers
 // and unknown rows are rendered inline here per the spec.
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import MarkdownMessage from './MarkdownMessage'
 import ToolCallRow from './ToolCallRow'
+import { CodexGlyph } from '../sidebar/Badges'
 import type { Logs2Message } from '../../hooks/useWindowedTurns'
 
 // esbuild rejects `\u{...}` escapes in JSX (CLAUDE.md) — build the glyphs here.
@@ -51,11 +52,16 @@ export interface ChatTranscriptViewProps {
   className?: string
 }
 
-function roleLabel(role: string): { glyph: string; label: string; tone: string } | null {
+function roleLabel(role: string, provider?: string): { glyph: ReactNode; label: string; tone: string } | null {
   if (role === 'user') {
     return { glyph: YOU_GLYPH, label: 'you', tone: 'text-[var(--color-blue)]' }
   }
   if (role === 'assistant') {
+    // P3.12: a turn of a Codex run is Codex's (the app's Codex mark, as the
+    // sidebar shows it); every other run is Claude's, as before.
+    if (provider === 'codex') {
+      return { glyph: <span className="inline-flex" data-testid="agent-glyph-codex"><CodexGlyph size={11} /></span>, label: 'codex', tone: 'text-[var(--color-mauve)]' }
+    }
     return { glyph: CLAUDE_GLYPH, label: 'claude', tone: 'text-[var(--color-mauve)]' }
   }
   return null
@@ -94,7 +100,7 @@ function UnknownRow({ content }: { content: string }) {
 }
 
 function MessageRow({ m }: { m: Logs2Message }) {
-  const r = roleLabel(m.role)
+  const r = roleLabel(m.role, m.provider)
   return (
     <div data-role={m.role} className="px-2 py-1.5">
       {r && (

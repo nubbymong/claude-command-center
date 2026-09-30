@@ -253,6 +253,8 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
   // P3.11 (row 62): Codex's Extra CLI arguments, kept apart from Claude Code's
   // value (each assistant has its own flags).
   const [codexExtraArgs, setCodexExtraArgs] = useState(initial?.codexOptions?.extraArgs ?? '')
+  // P3.12 (row 31): Codex's own indexing opt-out, as Claude's loggingEnabled.
+  const [codexLoggingEnabled, setCodexLoggingEnabled] = useState(initial?.codexOptions?.loggingEnabled !== false)
   // The Codex account (WP2 commit 6). `null` = not touched: the field shows
   // the saved binding, else the provider default, and follows the snapshot
   // until the user picks. Editing a config the user did not re-point keeps
@@ -539,6 +541,8 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
       permissionsPreset: codexPreset,
       // Trimmed, and nothing for a blank field.
       extraArgs: codexExtraArgs.trim() || undefined,
+      // DEFAULT-TRUE, as Claude's: only false is written (P3.12).
+      loggingEnabled: !codexLoggingEnabled ? false : undefined,
     } : undefined
 
     // SECURITY (adversarial review, #188): every credential decision is gated on
@@ -766,6 +770,27 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
       {f.problem && (
         <p aria-live="polite" data-testid="extra-args-problem" className="text-[11px] mt-1 leading-snug text-[var(--status-warning)]">{f.problem}</p>
       )}
+      <Hint k={f.helpKey}>{f.hint}</Hint>
+    </div>
+  )
+
+  // P3.12 (row 31): the one "Index conversation logs" field both sections
+  // render (the same label, checkbox and help button), each with its own
+  // value and hint.
+  const loggingField = (f: { checked: boolean; onChange: (v: boolean) => void; helpKey: string; hint: React.ReactNode }) => (
+    <div>
+      <div className="flex items-center gap-1.5">
+        <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
+          <input
+            type="checkbox"
+            checked={f.checked}
+            onChange={(e) => f.onChange(e.target.checked)}
+            className="rounded border-[var(--border-subtle)] accent-[var(--brand)]"
+          />
+          Index conversation logs
+        </label>
+        <HelpBtn k={f.helpKey} label="About conversation logs" />
+      </div>
       <Hint k={f.helpKey}>{f.hint}</Hint>
     </div>
   )
@@ -1312,27 +1337,18 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
                         </>
                       ),
                     })}
-                    {sessionType === 'local' && (
-                      <div>
-                        <div className="flex items-center gap-1.5">
-                          <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={loggingEnabled}
-                              onChange={(e) => setLoggingEnabled(e.target.checked)}
-                              className="rounded border-[var(--border-subtle)] accent-[var(--brand)]"
-                            />
-                            Index conversation logs
-                          </label>
-                          <HelpBtn k="logs" label="About conversation logs" />
-                        </div>
-                        <Hint k="logs">
+                    {sessionType === 'local' && loggingField({
+                      checked: loggingEnabled,
+                      onChange: setLoggingEnabled,
+                      helpKey: 'logs',
+                      hint: (
+                        <>
                           Lets you browse this session's transcript inside the Conductor. Your conversation is always
                           saved by Claude Code either way (~/.claude/projects) — this only controls whether
                           the app indexes it.
-                        </Hint>
-                      </div>
-                    )}
+                        </>
+                      ),
+                    })}
                   </div>
                 </>
               )}
@@ -1393,6 +1409,21 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
                             reads it as one of its commands, and a word that is not a flag or a flag's value is its
                             opening prompt. Give a folder as the value of --add-dir: --add-dir=docs, or --add-dir
                             ./docs.
+                          </>
+                        ),
+                      })}
+                    </div>
+                    {/* P3.12 (row 31): the same "Index conversation logs" field. */}
+                    <div className="mb-2">
+                      {loggingField({
+                        checked: codexLoggingEnabled,
+                        onChange: setCodexLoggingEnabled,
+                        helpKey: 'logs-cx',
+                        hint: (
+                          <>
+                            Lets you browse this session's transcript inside the Conductor. Codex saves your
+                            conversation either way, in its account's sessions folder; this only controls whether the
+                            app indexes it.
                           </>
                         ),
                       })}

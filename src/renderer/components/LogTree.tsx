@@ -131,7 +131,7 @@ export default function LogTree({
         {live.length === 0 && orphaned.length === 0 && (
           <div className="px-4 py-10 text-center">
             <p className="text-[11px] text-overlay0">No conversations yet</p>
-            <p className="text-[10px] text-overlay0/60 mt-1">Slots appear as Claude sessions run</p>
+            <p className="text-[10px] text-overlay0/60 mt-1">Slots appear as sessions run</p>
           </div>
         )}
       </div>

@@ -14,9 +14,15 @@
  * Every operation is BEST-EFFORT: a name is a convenience, never worth throwing
  * into a spawn / rename / bind path. All I/O is injected so the logic is
  * unit-testable without disk. No default export (project convention).
+ *
+ * P3.12 (row 32): the same file is written next to a Codex rollout
+ * (writeRealmNameSidecar), inside the account's own sessions folder and never
+ * through a link; Codex's picker prefers it as Claude's does.
  */
 
 import * as fs from 'node:fs'
+import * as path from 'node:path'
+import { randomBytes } from 'node:crypto'
 
 /** The sidecar file for a `<uuid>.jsonl` transcript, or null if the path is not a transcript. */
 export function sidecarPathFor(transcriptPath: string): string | null {
@@ -117,5 +123,94 @@ export const nodeNameSidecarDeps: NameSidecarDeps = {
   writeFile: (p, data) => { fs.writeFileSync(p, data, 'utf-8') },
   readFile: (p) => fs.readFileSync(p, 'utf-8'),
   removeFile: (p) => { fs.rmSync(p, { force: true }) },
+  now: () => Date.now(),
+}
+
+// ---------------------------------------------------------------------------
+// The name file next to a Codex rollout (P3.12, row 32)
+// ---------------------------------------------------------------------------
+
+/** The file-system surface the realm writer uses (injected for tests). */
+export interface RealmNameFs {
+  /** What is at `p`, not following a link; null when nothing is. */
+  lstat: (p: string) => { isFile(): boolean; isDirectory(): boolean } | null
+  /** Create `p` new (fails if anything is there, a link included). */
+  createExclusive: (p: string, data: string) => void
+  rename: (from: string, to: string) => void
+  unlink: (p: string) => void
+  randomHex: () => string
+  now: () => number
+}
+
+/** A Codex rollout's own file name. */
+const ROLLOUT_NAME_RE = /^rollout-[^\\/]+\.jsonl$/
+
+/** Whether `dir` is `sessionsDir`'s YYYY/MM/DD day folder, every folder from
+ *  `sessionsDir` down a real folder (not a link or junction to one), as the
+ *  rollout watcher's own check (P3.5). Both are resolved paths. The day-folder
+ *  rule is the containment too: a folder outside `sessionsDir` is reached
+ *  through `..` (or, on Windows, is on another drive), never through three
+ *  names of four, two and two digits. */
+function realDayFolder(sessionsDir: string, dir: string, fsi: RealmNameFs): boolean {
+  const parts = path.relative(sessionsDir, dir).split(path.sep)
+  if (parts.length !== 3 || !/^\d{4}$/.test(parts[0]) || !/^\d{2}$/.test(parts[1]) || !/^\d{2}$/.test(parts[2])) return false
+  let at = sessionsDir
+  if (!fsi.lstat(at)?.isDirectory()) return false
+  for (const part of parts) {
+    at = path.join(at, part)
+    if (!fsi.lstat(at)?.isDirectory()) return false
+  }
+  return true
+}
+
+/**
+ * Write (or, for a blank name, remove) the name file next to a Codex rollout
+ * (`rollout-...jsonl` -> `rollout-....ccc-name.json`), the file both pickers
+ * read. Only inside `sessionsDir`'s own real day folders; a name-file entry
+ * that is not a plain file (a link, a folder) is left alone; the content is
+ * written to a file created new beside it and renamed into place, so a link
+ * put there is replaced, never written through. Codex, and every reader in
+ * the app, lists only `rollout-*.jsonl`, so neither file is taken for a
+ * rollout. True when the name file now says `name`. Never throws.
+ */
+export function writeRealmNameSidecar(rolloutPath: string, sessionsDir: string, name: string, fsi: RealmNameFs): boolean {
+  try {
+    if (typeof rolloutPath !== 'string' || typeof sessionsDir !== 'string') return false
+    const resolved = path.resolve(rolloutPath)
+    if (!ROLLOUT_NAME_RE.test(path.basename(resolved))) return false
+    const target = sidecarPathFor(resolved)
+    if (!target) return false
+    const dir = path.dirname(resolved)
+    if (!realDayFolder(path.resolve(sessionsDir), dir, fsi)) return false
+    const existing = fsi.lstat(target)
+    if (existing && !existing.isFile()) return false
+    const trimmed = typeof name === 'string' ? name.trim() : ''
+    if (!trimmed) {
+      if (existing) fsi.unlink(target)
+      return true
+    }
+    const tmp = `${target}.${fsi.randomHex()}.tmp`
+    fsi.createExclusive(tmp, JSON.stringify({ name: trimmed, updatedAt: fsi.now() }))
+    try {
+      fsi.rename(tmp, target)
+    } catch {
+      try { fsi.unlink(tmp) } catch { /* already gone */ }
+      return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Production I/O for writeRealmNameSidecar: node fs, owner-only new files. */
+export const nodeRealmNameFs: RealmNameFs = {
+  lstat: (p) => {
+    try { return fs.lstatSync(p) } catch { return null }
+  },
+  createExclusive: (p, data) => { fs.writeFileSync(p, data, { encoding: 'utf-8', flag: 'wx', mode: 0o600 }) },
+  rename: (from, to) => { fs.renameSync(from, to) },
+  unlink: (p) => { fs.unlinkSync(p) },
+  randomHex: () => randomBytes(8).toString('hex'),
   now: () => Date.now(),
 }

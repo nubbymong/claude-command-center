@@ -224,8 +224,9 @@ export default function GlobalLogsView({ initialSessionId, onInitialSessionConsu
     if (busy) return
     // deleteSlot does NOT protect a currently-running run — the worker marks the
     // live tail failed if its slot is deleted mid-run. Honest copy: this removes
-    // INDEXED history; Claude's own conversation in ~/.claude/projects remains.
-    if (!window.confirm(`Delete indexed history for "${s.configLabel}"? This removes the app's index for this slot (the conversation in ~/.claude/projects is not affected) and cannot be undone.`)) return
+    // INDEXED history; the conversation itself (Claude Code's in ~/.claude/projects,
+    // a Codex session's in its account's sessions folder) remains.
+    if (!window.confirm(`Delete indexed history for "${s.configLabel}"? This removes the app's index for this slot (the conversation itself, in ~/.claude/projects or a Codex account's sessions folder, is not affected) and cannot be undone.`)) return
     setBusy(true)
     try {
       await window.electronAPI.logs2.deleteSlot({ scope: scopeFor(s) })
@@ -238,7 +239,7 @@ export default function GlobalLogsView({ initialSessionId, onInitialSessionConsu
 
   const clearAll = useCallback(async () => {
     if (busy) return
-    if (!window.confirm('Delete ALL indexed conversation history? This removes the app\'s index for every slot (your conversations in ~/.claude/projects are not affected) and cannot be undone.')) return
+    if (!window.confirm('Delete ALL indexed conversation history? This removes the app\'s index for every slot (your conversations in ~/.claude/projects and in the Codex accounts\' sessions folders are not affected) and cannot be undone.')) return
     setBusy(true)
     try {
       await window.electronAPI.logs2.clearAll()
@@ -271,7 +272,7 @@ export default function GlobalLogsView({ initialSessionId, onInitialSessionConsu
         <svg width="13" height="13" viewBox="0 0 14 14" fill="none" className="text-overlay0 shrink-0"><circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.2" /><line x1="9.5" y1="9.5" x2="12.5" y2="12.5" stroke="currentColor" strokeWidth="1.2" /></svg>
         <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search all conversations" className="bg-transparent text-text text-xs outline-none border-none placeholder:text-overlay0 font-mono w-48" />
       </div>
-      <button onClick={() => void clearAll()} disabled={busy} className="px-2.5 py-0.5 text-xs rounded border border-surface1 bg-surface0 text-overlay1 hover:bg-red/10 hover:text-red hover:border-red/40 transition-colors disabled:opacity-50" title="Delete all indexed history (conversations in ~/.claude are not affected)">
+      <button onClick={() => void clearAll()} disabled={busy} className="px-2.5 py-0.5 text-xs rounded border border-surface1 bg-surface0 text-overlay1 hover:bg-red/10 hover:text-red hover:border-red/40 transition-colors disabled:opacity-50" title="Delete all indexed history (your conversations in Claude Code's and Codex's own files are not affected)">
         Clear all
       </button>
     </div>

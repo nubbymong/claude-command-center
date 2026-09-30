@@ -22,7 +22,8 @@ import { ipcMain, BrowserWindow } from 'electron'
 import { z } from 'zod'
 import { IPC } from '../../shared/ipc-channels'
 import { getLogSupervisor, getTranscriptBinder } from '../logging/logging-service'
-import { rememberSessionName, forgetSessionName, writeNameSidecar, nodeNameSidecarDeps } from '../logging/session-name-sidecar'
+import { rememberSessionName, forgetSessionName, writeNameSidecar, nodeNameSidecarDeps, writeRealmNameSidecar, nodeRealmNameFs } from '../logging/session-name-sidecar'
+import { getCodexLogBinder } from '../logging/codex-log-binder'
 import { detectOldLogArtifacts, executeWipe } from '../logging/logs-wipe'
 import { logInfo, logError } from '../debug-logger'
 
@@ -146,6 +147,20 @@ export function registerLogs2Handlers(getWindow: () => BrowserWindow | null): vo
     // known), and write now only against an EXACT bind — never a heuristic guess
     // (which in a shared folder could be a sibling card's transcript). Best-effort.
     const nameForSidecar = customName ?? configLabel
+    // P3.12 (row 32): a Codex session's name file goes next to the rollout its
+    // watcher claimed exactly (never an inferred or shared claim), inside its
+    // realm and never through a link; else it is remembered for that claim.
+    const codex = getCodexLogBinder()
+    if (codex?.knows(sessionId)) {
+      const exact = codex.exactRollout(sessionId)
+      if (exact) {
+        writeRealmNameSidecar(exact.path, exact.sessionsDir, nameForSidecar, nodeRealmNameFs)
+        forgetSessionName(sessionId)
+      } else {
+        rememberSessionName(sessionId, nameForSidecar)
+      }
+      return { ok: true }
+    }
     const exactPath = getTranscriptBinder()?.getExactResumeTarget(sessionId)
     if (exactPath) {
       // Already bound: write directly and DO NOT keep a pending entry — a lingering

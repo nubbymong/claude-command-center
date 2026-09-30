@@ -264,6 +264,10 @@ describe('the status line is told how to find the conversation (row 38)', () => 
     const onShared = () => {}
     new CodexProvider().ingestSessionTelemetry('sid', { cwd: '/w', spawnTimestamp: 7, sessionsDir: '/r/sessions', onShared }, cb)
     expect((vi.mocked(watchAndClaimRollout).mock.calls[2][6] as { onShared?: unknown }).onShared).toBe(onShared)
+    // P3.12: the listener for the rollout claimed (the session's logs, name file and GitHub context).
+    const onRollout = () => {}
+    new CodexProvider().ingestSessionTelemetry('sid', { cwd: '/w', spawnTimestamp: 7, sessionsDir: '/r/sessions', onRollout }, cb)
+    expect((vi.mocked(watchAndClaimRollout).mock.calls[3][6] as { onRollout?: unknown }).onRollout).toBe(onRollout)
     vi.mocked(watchAndClaimRollout).mockClear()
     new CodexProvider().ingestSessionTelemetry('sid', { cwd: '/w', spawnTimestamp: 7, sessionsDir: '/r/sessions' }, cb)
     expect(vi.mocked(watchAndClaimRollout).mock.calls[0]).toEqual(['sid', '/w', 7, cb, '/r/sessions', undefined])

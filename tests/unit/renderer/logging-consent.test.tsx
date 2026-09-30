@@ -86,6 +86,9 @@ describe('LoggingConsentPrompt', () => {
     unmount = u
     expect(container.textContent).toContain('Conversation indexing is on')
     expect(container.querySelector('button')).toBeTruthy()
+    // P3.12: what is indexed, and where each assistant keeps it either way.
+    expect(container.textContent).toContain("Claude Code's and Codex's own conversation transcripts")
+    expect(container.textContent).toContain('sessions folder')
   })
 
   it('renders the prompt when loggingConsentSeen is undefined', () => {

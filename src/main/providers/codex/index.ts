@@ -135,8 +135,8 @@ export class CodexProvider implements SessionProvider {
     // P3.5: how the watcher finds a resumed conversation, and who hears which
     // conversation it claimed.
     const onAllowance = live ? (reading: AllowanceReading) => live.record(sessionsDir, reading) : undefined
-    const watch = opts.resumeId || opts.pickFile || opts.onClaim || opts.onRelease || opts.onShared
-      ? watchAndClaimRollout(sessionId, opts.cwd, opts.spawnTimestamp, onUpdate, sessionsDir, onAllowance, { resumeId: opts.resumeId, resumePath: opts.resumePath, pickFile: opts.pickFile, pickFolder: opts.pickFolder, onClaim: opts.onClaim, onRelease: opts.onRelease, onShared: opts.onShared })
+    const watch = opts.resumeId || opts.pickFile || opts.onClaim || opts.onRelease || opts.onShared || opts.onRollout
+      ? watchAndClaimRollout(sessionId, opts.cwd, opts.spawnTimestamp, onUpdate, sessionsDir, onAllowance, { resumeId: opts.resumeId, resumePath: opts.resumePath, pickFile: opts.pickFile, pickFolder: opts.pickFolder, onClaim: opts.onClaim, onRelease: opts.onRelease, onShared: opts.onShared, onRollout: opts.onRollout })
       : watchAndClaimRollout(sessionId, opts.cwd, opts.spawnTimestamp, onUpdate, sessionsDir, onAllowance)
     if (!live) return watch
     // The realm's live figure lasts while one of its sessions still reports.

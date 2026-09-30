@@ -30,8 +30,14 @@ const sidecar = vi.hoisted(() => ({
   forgetSessionName: vi.fn(),
   writeNameSidecar: vi.fn(),
   nodeNameSidecarDeps: {},
+  writeRealmNameSidecar: vi.fn(),
+  nodeRealmNameFs: {},
 }))
 vi.mock('../../../src/main/logging/session-name-sidecar', () => sidecar)
+
+// P3.12 (row 32): the Codex log binder a Codex session's rename is routed to.
+const codex = vi.hoisted(() => ({ binder: null as null | { knows: (sid: string) => boolean; exactRollout: (sid: string) => { path: string; sessionsDir: string } | null } }))
+vi.mock('../../../src/main/logging/codex-log-binder', () => ({ getCodexLogBinder: () => codex.binder }))
 
 import { registerLogs2Handlers } from '../../../src/main/ipc/logs2-handlers'
 
@@ -52,6 +58,8 @@ describe('logs2 IPC handlers', () => {
     sidecar.rememberSessionName.mockReset()
     sidecar.forgetSessionName.mockReset()
     sidecar.writeNameSidecar.mockReset()
+    sidecar.writeRealmNameSidecar.mockReset()
+    codex.binder = null
     sent = []
     const win = {
       isDestroyed: () => false,
@@ -282,5 +290,40 @@ describe('logs2 IPC handlers', () => {
     exactPathForRename = null
     await invoke(IPC.LOGS2_RENAME_SESSION, { sessionId: 's4', configLabel: 'Config A' })
     expect(sidecar.rememberSessionName).toHaveBeenCalledWith('s4', 'Config A')
+  })
+
+  // -------------------------------------------------------------------------
+  // P3.12 (row 32): a Codex session's rename writes the name file next to its
+  // exactly claimed rollout, in its realm; else it is remembered
+  // -------------------------------------------------------------------------
+
+  const ROLLOUT = { path: 'C:\\r\\sessions\\2026\\09\\29\\rollout-2026-09-29T10-00-00-019dd000-0001-7000-8000-00000000000a.jsonl', sessionsDir: 'C:\\r\\sessions' }
+
+  it('P3.12: a Codex session exactly on a rollout: the name file is written there (the realm writer), the pending entry retired; never Claude\'s sidecar', async () => {
+    exactPathForRename = 'C:\\claude\\aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl'
+    codex.binder = { knows: (sid) => sid === 'cx1', exactRollout: () => ROLLOUT }
+    await invoke(IPC.LOGS2_RENAME_SESSION, { sessionId: 'cx1', configLabel: 'Codex A', customName: 'Auth Bug' })
+    expect(renameRunSpy).toHaveBeenCalledWith('cx1', 'Codex A')
+    expect(sidecar.writeRealmNameSidecar).toHaveBeenCalledWith(ROLLOUT.path, ROLLOUT.sessionsDir, 'Auth Bug', sidecar.nodeRealmNameFs)
+    expect(sidecar.forgetSessionName).toHaveBeenCalledWith('cx1')
+    expect(sidecar.writeNameSidecar).not.toHaveBeenCalled()
+    expect(sidecar.rememberSessionName).not.toHaveBeenCalled()
+  })
+
+  it('P3.12: a Codex session not yet exactly on a rollout: remembered for its exact claim, nothing written', async () => {
+    exactPathForRename = 'C:\\claude\\aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl'
+    codex.binder = { knows: (sid) => sid === 'cx2', exactRollout: () => null }
+    await invoke(IPC.LOGS2_RENAME_SESSION, { sessionId: 'cx2', configLabel: 'Codex A', customName: 'Docs' })
+    expect(sidecar.rememberSessionName).toHaveBeenCalledWith('cx2', 'Docs')
+    expect(sidecar.writeRealmNameSidecar).not.toHaveBeenCalled()
+    expect(sidecar.writeNameSidecar).not.toHaveBeenCalled()
+  })
+
+  it('P3.12: a session the Codex binder does not know takes Claude\'s path, as before', async () => {
+    exactPathForRename = 'C:\\p\\aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl'
+    codex.binder = { knows: () => false, exactRollout: () => ROLLOUT }
+    await invoke(IPC.LOGS2_RENAME_SESSION, { sessionId: 's9', configLabel: 'Config A', customName: 'X' })
+    expect(sidecar.writeNameSidecar).toHaveBeenCalledWith(exactPathForRename, 'X', sidecar.nodeNameSidecarDeps)
+    expect(sidecar.writeRealmNameSidecar).not.toHaveBeenCalled()
   })
 })

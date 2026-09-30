@@ -37,6 +37,7 @@ import * as nodeFs from 'fs'
 import { openTranscriptsDb } from './transcripts-db'
 import type { TranscriptsDb, NewMessage, TranscriptScope } from './transcripts-db'
 import { makeNormalizer, PARSER_VERSION } from './transcript-normalizer'
+import { makeCodexRolloutNormalizer, CODEX_PARSER_VERSION } from './codex-rollout-normalizer'
 import { mangleCwdToProjectDir } from '../../shared/project-key'
 import type { Normalizer } from './transcript-normalizer'
 import type {
@@ -287,14 +288,18 @@ export function createTranscriptsWorker(
     configId: string | null
     path: string
     cursor: number
+    /** P3.12: the binding's stored format picks its normalizer. */
+    sourceFormat: string
   }): void {
+    const { sourceFormat, ...state } = meta
+    // Seed idx/ts continuity from what the run already stored.
+    const seed = {
+      startIdx: db!.nextIdx(meta.runId),
+      startTs: db!.lastMessageTs(meta.runId) ?? 0,
+    }
     tails.set(meta.transcriptId, {
-      ...meta,
-      // Seed idx/ts continuity from what the run already stored.
-      normalizer: makeNormalizer({
-        startIdx: db!.nextIdx(meta.runId),
-        startTs: db!.lastMessageTs(meta.runId) ?? 0,
-      }),
+      ...state,
+      normalizer: sourceFormat === 'codex-rollout' ? makeCodexRolloutNormalizer(seed) : makeNormalizer(seed),
     })
   }
 
@@ -349,6 +354,7 @@ export function createTranscriptsWorker(
         configId: scope.configId,
         path: r.path,
         cursor: r.ingestCursor,
+        sourceFormat: r.sourceFormat,
       })
     }
 
@@ -463,8 +469,10 @@ export function createTranscriptsWorker(
       case 'recent-sessions': {
         const projectDir = typeof args.projectDir === 'string' ? args.projectDir : ''
         const limit = typeof args.limit === 'number' ? args.limit : 5
+        // The Memory page's rail for a Claude memory project (P3.12): Claude
+        // runs only, though a Codex session may share the folder.
         rows = db!.sessionActivity()
-          .filter((r) => r.projectCwd !== null && mangleCwdToProjectDir(r.projectCwd) === projectDir)
+          .filter((r) => r.provider === 'claude' && r.projectCwd !== null && mangleCwdToProjectDir(r.projectCwd) === projectDir)
           .slice(0, limit)
           .map((r) => ({ sessionId: r.sessionId, lastActive: r.lastActive }))
         break
@@ -577,10 +585,14 @@ export function createTranscriptsWorker(
           log('warn', `[bind] dropped transcript-bind for unknown session ${msg.sessionId}`)
           return
         }
+        // P3.12: a Codex rollout is tailed with the Codex normalizer; any
+        // other value is Claude's format, as before.
+        const codex = msg.sourceFormat === 'codex-rollout'
         const bound = db.bindTranscript(runId, msg.path, {
           confidence: msg.confidence,
           sourceVersion: msg.sourceVersion,
-          parserVersion: PARSER_VERSION,
+          parserVersion: codex ? CODEX_PARSER_VERSION : PARSER_VERSION,
+          sourceFormat: codex ? 'codex-rollout' : 'claude-jsonl',
         })
         if (bound.isNew && bound.ord > 0) {
           // Rotation within a run (e.g. /clear): retire the previous tails FIRST
@@ -602,8 +614,30 @@ export function createTranscriptsWorker(
             configId: scope?.configId ?? null,
             path: msg.path,
             cursor: bound.cursor,
+            sourceFormat: bound.sourceFormat,
           })
         }
+        return
+      }
+
+      case 'transcript-unbind': {
+        // P3.12: the session let this transcript go (a Codex claim released).
+        // Final-drain it, mark it complete and stop tailing it; its rows stay.
+        // A later bind of the same path to the same run resumes at its cursor.
+        const runId = sessionToRun.get(msg.sessionId)
+        if (runId === undefined) return
+        const found = db.findTranscript(runId, msg.path)
+        if (!found) return
+        const tail = tails.get(found.transcriptId)
+        if (tail) {
+          try {
+            drainTail(tail)
+          } catch {
+            /* best-effort final drain */
+          }
+          tails.delete(found.transcriptId)
+        }
+        db.setTranscriptStatus(found.transcriptId, 'complete')
         return
       }
 

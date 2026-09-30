@@ -98,10 +98,10 @@ export default function LoggingConsentPrompt() {
         {/* Body */}
         <DialogBody className="space-y-3">
           <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-            AI Code Conductor indexes Claude's own conversation transcripts so you can browse and review them here.
-            Your conversations always live in Claude's own files (
-            <code className="text-xs font-mono">~/.claude/projects</code>
-            ) — the app only reads them to build a local index.
+            AI Code Conductor indexes Claude Code's and Codex's own conversation transcripts so you can browse and
+            review them here. Your conversations always live in their own files (Claude Code's in{' '}
+            <code className="text-xs font-mono">~/.claude/projects</code>, Codex's in each Codex account's sessions
+            folder); the app only reads them to build a local index.
           </p>
           <DialogCallout tone="warning">
             <strong className="font-medium" style={{ color: 'var(--text-primary)' }}>Note:</strong> Transcripts may include

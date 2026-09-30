@@ -28,6 +28,7 @@ import { execSync, execFile } from 'child_process'
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { shouldRegisterRun } from './logging/should-register-run'
 import { getLogSupervisor, getTranscriptBinder } from './logging/logging-service'
+import { getCodexLogBinder } from './logging/codex-log-binder'
 import { resolveResumeTargetFromTranscript, mangleCwdToProjectDir, UUID_RE } from './logging/transcript-discovery'
 import { buildClaudeLaunchCommand, resolveResumeLaunch, recoverOrphanResumeLaunch, buildResumeTranscriptPath, quoteArgForShell, modelFlag, expandResumeTargetCwd, parseWorktreePaths } from './spawn-claude-command'
 import { ensureCompanionDir, nodeFsCompanionDeps } from './logging/companion-dir'
@@ -412,6 +413,33 @@ export const KEPT_CODEX_CONVERSATIONS_MAX = 512
 // session (a tab that declined Codex's review sends none, whatever another
 // tab of the same account chose).
 const keptCodexConversations = new Map<string, { uuid: string; cwd: string; accountId?: string; inferred?: boolean; hooksHeard?: boolean }>()
+
+// P3.12 (row 65): the rollout each Codex session's watcher holds (claimed, or
+// read beside another tab), for its GitHub Session Context, as Claude's reads
+// the newest transcript of its project folder. The watcher checked it is a
+// plain rollout file of the session's own realm (the loader checks again).
+// Replaced by the next claim, gone when a claim is let go, kept after the
+// process ends (the tab still shows that conversation); bounded.
+const codexContextRollouts = new Map<string, { path: string; sessionsDir: string }>()
+export const CODEX_CONTEXT_ROLLOUTS_MAX = 512
+
+function noteCodexContextRollout(sessionId: string, rollout: { path: string; sessionsDir: string } | null): void {
+  codexContextRollouts.delete(sessionId)
+  if (!rollout || typeof rollout.path !== 'string' || typeof rollout.sessionsDir !== 'string') return
+  codexContextRollouts.set(sessionId, { path: rollout.path, sessionsDir: rollout.sessionsDir })
+  while (codexContextRollouts.size > CODEX_CONTEXT_ROLLOUTS_MAX) {
+    const oldest = codexContextRollouts.keys().next().value
+    if (oldest === undefined) break
+    codexContextRollouts.delete(oldest)
+  }
+}
+
+/** P3.12 (row 65): the rollout a Codex session's watcher holds (and its
+ *  realm's sessions folder), for the GitHub Session Context; null when none. */
+export function codexRolloutForSessionContext(sessionId: string): { path: string; sessionsDir: string } | null {
+  const r = codexContextRollouts.get(sessionId)
+  return r ? { path: r.path, sessionsDir: r.sessionsDir } : null
+}
 
 function keepCodexConversation(sessionId: string, conversation: { uuid: string; cwd: string }, accountId?: string, how?: { inferred: boolean }): void {
   if (typeof conversation.uuid !== 'string' || !UUID_RE.test(conversation.uuid) || typeof conversation.cwd !== 'string') return
@@ -4620,6 +4648,10 @@ function spawnPtyResolved(
         getWatchdogManager()?.feedData(sessionId, data)
         win.webContents.send(`pty:data:${sessionId}`, data)
       })
+      // P3.12 (row 31): whatever an earlier launch of this session claimed is
+      // not this run's; this launch's claims are held until its run is
+      // recorded (a resume claims at once, inside ingestSessionTelemetry).
+      getCodexLogBinder()?.beginLaunch(sessionId)
       // Start rollout watch-and-claim telemetry. Updates are dispatched to the
       // renderer (statusline:update) identically to how Claude statusline
       // updates flow through statusline-watcher.ts. (Tokenomics is no longer fed
@@ -4658,6 +4690,14 @@ function spawnPtyResolved(
           onShared: (shared) => {
             keepCodexConversation(sessionId, { uuid: shared.id, cwd: shared.cwd }, launch.lease.accountId, { inferred: shared.exact !== true })
             if (shared.fromHook === true) clearCodexDoubtFromHook(shared.id)
+          },
+          // P3.12 (rows 31, 32, 65): the rollout claimed, as the watcher
+          // checked it (its realm, a plain rollout file), or null when let
+          // go: the session's logs and name file (the Codex log binder) and
+          // its GitHub Session Context read the conversation from this alone.
+          onRollout: (rollout) => {
+            noteCodexContextRollout(sessionId, rollout)
+            getCodexLogBinder()?.noteRollout(sessionId, rollout)
           },
         },
         (data) => {
@@ -5455,7 +5495,7 @@ function spawnPtyResolved(
   // needs a restart.
   const settings = readConfig<{ loggingEnabled?: boolean }>('settings') ?? {}
   // Single source of truth for the run-registration decision (Task 9):
-  // claude-local-only (not codex/other), not shell-only, not SSH, per-config
+  // local Claude or (P3.12) local Codex, not shell-only, not SSH, per-config
   // loggingEnabled !== false, global loggingEnabled !== false. The matching
   // runEnd/endRun on exit are gated on this same `logSup` being non-null, so a
   // run is only ended if it was registered.
@@ -5477,12 +5517,18 @@ function spawnPtyResolved(
     provider: options?.provider ?? 'claude',
     startedAt: Date.now(),
   })
+  // P3.12 (row 31): a local Codex run's transcript is the rollout its own
+  // watcher claims (the Codex log binder, told by onRollout above), bound
+  // from here on; Claude's discovery below (its heuristic scan of
+  // ~/.claude/projects, its resume-bind) is Claude's alone.
+  const codexLocalRun = !options?.ssh && !options?.shellOnly && (options?.provider ?? 'claude') === 'codex'
+  if (codexLocalRun) getCodexLogBinder()?.startRun(sessionId, !!logSup)
   // Logs v2 (Task 8): arm the heuristic transcript-discovery fallback for this run.
   // The exact sources (hooks + statusline) bind first; if neither has bound ~20s
   // later, the binder scans ~/.claude/projects for the newest matching JSONL.
-  // Gated on logSup (the consolidated shouldRegisterRun decision — already
-  // claude-local-only, so no separate provider re-check) + a known cwd.
-  if (logSup && effectiveLaunchCwd) {
+  // Gated on logSup (the consolidated shouldRegisterRun decision) + a known cwd,
+  // and on a Claude run (P3.12: a Codex run is registered too, and has its own).
+  if (logSup && effectiveLaunchCwd && !codexLocalRun) {
     // FIX 4: register with the effective launch cwd so the 20s heuristic
     // fallback scans the folder Claude ran in (the resume override when active).
     const binder = getTranscriptBinder()
@@ -5583,6 +5629,8 @@ function spawnPtyResolved(
       // Logs v2 (Task 8): cancel any pending heuristic timer + clear the binder's
       // per-session bind state so a reused sessionId (restart) binds fresh.
       getTranscriptBinder()?.endRun(sessionId)
+      // P3.12: and the Codex log binder's (a Codex run's claims).
+      getCodexLogBinder()?.endRun(sessionId)
       // #536: retire any remembered CCC name so a renamed-but-never-bound session
       // does not leak an entry in the pending-name registry for the process life.
       forgetSessionName(sessionId)

@@ -103,6 +103,25 @@ describe('ChatTranscriptView (presentational)', () => {
     expect(text).toContain('unsupported entry')
   })
 
+  it('P3.12: an assistant turn of a Codex run reads codex with the Codex mark; a Claude run\'s still reads claude', async () => {
+    const mixed: Logs2Message[] = [
+      msg({ idx: 0, kind: 'message', role: 'assistant', content: 'from claude', provider: 'claude' }),
+      msg({ idx: 1, kind: 'message', role: 'assistant', content: 'from codex', provider: 'codex', runId: 2 }),
+    ]
+    await act(async () => {
+      root.render(React.createElement(ChatTranscriptView, viewProps(mixed)))
+    })
+    await flush()
+    const rows = [...container.querySelectorAll('[data-role="assistant"]')]
+    expect(rows).toHaveLength(2)
+    expect(rows[0].textContent).toContain(CLAUDE)
+    expect(rows[0].textContent).toContain('claude')
+    expect(rows[1].textContent).not.toContain(CLAUDE)
+    expect(rows[1].textContent).not.toContain('claude')
+    expect(rows[1].textContent).toContain('codex')
+    expect(rows[1].querySelector('[data-testid="agent-glyph-codex"]')).toBeTruthy()
+  })
+
   it('blue tone for user header, mauve tone for claude header', async () => {
     await act(async () => {
       root.render(React.createElement(ChatTranscriptView, viewProps(WINDOW)))

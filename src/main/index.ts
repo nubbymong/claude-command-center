@@ -7,7 +7,7 @@ import { createSplashWindow, closeSplashWindow, SPLASH_MIN_MS, SPLASH_POST_READY
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerAccountWebHandlers } from './ipc/account-web-handlers'
 import { sweepAbandonedProfiles } from './account-web/sign-in'
-import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine, routeHookTranscriptPath, noteCodexHookEvent, isCodexPtySession } from './pty-manager'
+import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine, routeHookTranscriptPath, noteCodexHookEvent, isCodexPtySession, codexRolloutForSessionContext } from './pty-manager'
 import { registerResumeHandlers } from './ipc/resume-handlers'
 import { registerCliHandlers } from './ipc/cli-handlers'
 import { registerClipboardHandlers } from './ipc/clipboard-handlers'
@@ -760,6 +760,8 @@ if (!gotTheLock) {
       resourcesDir: getConfigDir(),
       getWindow,
       loadSessions: async () => loadSessionState()?.sessions ?? [],
+      // P3.12 (row 65): a Codex session's Session Context reads its own rollout.
+      codexRolloutFor: codexRolloutForSessionContext,
       saveSessions: async (sessions) => {
         const existing = loadSessionState()
         // Through the durability core, never saveSessionState directly: a

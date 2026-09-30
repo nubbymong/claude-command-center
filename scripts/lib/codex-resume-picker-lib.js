@@ -194,7 +194,9 @@ function walkRollouts(home, maxDays, where, platform) {
       if (!parsed) continue
       const wt = worktrees.find((w) => samePath(w.path, parsed.cwd, plat))
       if (!wt) continue
-      matches.push({ id: parsed.id, cwd: parsed.cwd, model: parsed.model, effort: parsed.effort, label: parsed.label, mtime, sourceCwd: wt.path, worktreeLabel: worktreeLabelFor(wt) })
+      // P3.12 (row 32): the name the app wrote next to the rollout, if any.
+      const name = readRolloutName(fp)
+      matches.push({ id: parsed.id, cwd: parsed.cwd, model: parsed.model, effort: parsed.effort, label: parsed.label, mtime, sourceCwd: wt.path, worktreeLabel: worktreeLabelFor(wt), ...(name ? { name } : {}) })
     }
   }
 
@@ -384,6 +386,37 @@ function loadWorkNames(configDir) {
   return map
 }
 
+// -- The name file (P3.12, row 32) ----------------------------------
+// The app writes `rollout-....ccc-name.json` next to a rollout (on a rename,
+// and at the session's exact claim of it), as it writes `<uuid>.ccc-name.json`
+// next to a Claude transcript; the picker prefers it over the session-state
+// names, as Claude's picker does, so a renamed conversation keeps its name
+// after its tab is closed. Read only when it is a plain file (never through a
+// link: lstat, then the opened file must be that one), at most
+// NAME_FILE_MAX_BYTES, valid JSON with a non-blank string name. FAIL-SAFE: null.
+const NAME_FILE_MAX_BYTES = 4096
+function readRolloutName(rolloutPath) {
+  let fd = null
+  try {
+    if (typeof rolloutPath !== 'string' || !rolloutPath.endsWith('.jsonl')) return null
+    const p = rolloutPath.slice(0, -'.jsonl'.length) + '.ccc-name.json'
+    const seen = fs.lstatSync(p, { bigint: true })
+    if (!seen.isFile() || seen.size > BigInt(NAME_FILE_MAX_BYTES)) return null
+    fd = fs.openSync(p, 'r')
+    const st = fs.fstatSync(fd, { bigint: true })
+    if (!st.isFile() || st.dev !== seen.dev || st.ino !== seen.ino) return null
+    const buf = Buffer.alloc(NAME_FILE_MAX_BYTES)
+    const n = fs.readSync(fd, buf, 0, NAME_FILE_MAX_BYTES, 0)
+    const parsed = JSON.parse(buf.subarray(0, n).toString('utf-8'))
+    const name = parsed && typeof parsed.name === 'string' ? parsed.name.trim() : ''
+    return name || null
+  } catch {
+    return null
+  } finally {
+    if (fd !== null) { try { fs.closeSync(fd) } catch { /* already closed */ } }
+  }
+}
+
 // -- buildPickerRows ------------------------------------------------
 // The ONE place the picker's rows are built: every string in a row has
 // been through displayText and fits `width` code points. A conversation
@@ -393,7 +426,9 @@ function buildPickerRows(conversations, names, width, now, openElsewhere) {
   const w = Math.max(10, Math.floor(Number(width) || 60))
   const at = typeof now === 'number' ? now : Date.now()
   return (Array.isArray(conversations) ? conversations : []).map((conv, i) => {
-    const name = names && typeof names.get === 'function' ? names.get(conv.id) : undefined
+    // The name file's name first (P3.12), then the session-state name.
+    const fileName = typeof conv.name === 'string' && conv.name ? conv.name : undefined
+    const name = fileName || (names && typeof names.get === 'function' ? names.get(conv.id) : undefined)
     const label = displayText(conv.label)
     const title = fit(name ? displayText(name) : label, w)
     const meta = fit([
@@ -661,6 +696,6 @@ function isResumeId(id) {
 
 module.exports = {
   parseRollout, walkRollouts, buildResumeArgs, shouldFallback, shouldUseShell, launchTarget, isResumeId,
-  samePath, parseWorktrees, listWorktrees, worktreeLabelFor, displayText, buildPickerRows, loadWorkNames, pickDecision, writePick, recordPick, folderIdOf, childEnv, isDirectory, resolveRetargetCwd, timeAgo,
+  samePath, parseWorktrees, listWorktrees, worktreeLabelFor, displayText, buildPickerRows, loadWorkNames, readRolloutName, pickDecision, writePick, recordPick, folderIdOf, childEnv, isDirectory, resolveRetargetCwd, timeAgo,
   openElsewhereIds, fallbackNotice,
 }
