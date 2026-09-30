@@ -180,6 +180,9 @@ describe('secureFoldersWindows: any Unicode folder name (round 5)', () => {
     // An answer whose count is not what was asked: nothing counts.
     const short = await secureFoldersWindows(dirs, async () => JSON.stringify({ user: USER, folders: [good(dirs[0])] }))
     expect(short.map((r) => r.ok)).toEqual([false, false])
+    // Nor one with more entries than folders asked for.
+    const long = await secureFoldersWindows(dirs, async () => JSON.stringify({ user: USER, folders: [good(dirs[0]), good(dirs[1]), good('C:\\t\\other')] }))
+    expect(long.map((r) => [r.ok, r.detail])).toEqual([[false, 'the answer does not match what was asked'], [false, 'the answer does not match what was asked']])
   })
 
   it('the script writes its answer in ASCII only, every other character escaped', async () => {
