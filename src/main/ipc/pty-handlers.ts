@@ -397,7 +397,8 @@ export const spawnOptionsSchema = z.object({
   // an ordinary flag or path needs one.
   // Cap, charset and refine are shared with the fail-open sanitizer (see the
   // permissionMode note above) — the collapse/trailing-backslash analysis
-  // stays here, the values live in sanitize-restored-spawn-options.ts.
+  // stays here, the values live in src/shared/extra-args.ts (re-exported by
+  // sanitize-restored-spawn-options.ts), which the session dialog reads too.
   extraArgs: z.string().max(EXTRA_ARGS_MAX).regex(EXTRA_ARGS_CHARSET_RE).refine(
     // Collapse backslashes before matching -- see the note above. Also reject a
     // trailing backslash outright: it turns the SSH launch line into a shell
@@ -437,11 +438,12 @@ export const spawnOptionsSchema = z.object({
     // then Codex's own /plan is typed into its first ready prompt (renderer,
     // lib/codexComposer.ts).
     permissionsPreset: z.enum(CODEX_PRESETS),
-    // P3.11 (row 62): Claude's extraArgs field for Codex -- the same cap and
+    // P3.11 (row 62): the extraArgs field for Codex -- the same cap and
     // charset, plus Codex's own refusals (the flags the app sets, the account,
     // provider and endpoint settings, and a word Codex reads as a command);
-    // the rule lives with the sanitizer, which drops exactly what this rejects,
-    // and the launch builder checks it again. Each word becomes one argument.
+    // one rule (src/shared/extra-args.ts) for the dialog, this parse, the
+    // sanitizer (which drops exactly what this rejects, on every spawn) and the
+    // launch builder. Each word becomes one argument.
     extraArgs: z.string().max(EXTRA_ARGS_MAX).regex(EXTRA_ARGS_CHARSET_RE).superRefine((v, ctx) => {
       const problem = codexExtraArgsProblem(v)
       if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `the Codex extra CLI arguments are refused: ${problem}` })

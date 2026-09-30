@@ -11,6 +11,7 @@ import { trackUsage } from '../stores/tipsStore'
 import { generateId } from '../utils/id'
 import { resolveAllowMultiSpawnOnSave } from '../utils/multiSpawn'
 import { secretValueProblem, secretPlacementProblem } from '../../shared/command-secret'
+import { claudeExtraArgsProblem, codexExtraArgsProblem } from '../../shared/extra-args'
 import { parseDockerPostCommand } from '../../shared/container-command'
 import { DialogOverlay, DialogPanel, DialogHeader, DialogFooter, DialogButton, ON_BRAND } from './ui/Dialog'
 import { useProviderAccountsStore } from '../stores/providerAccountsStore'
@@ -249,7 +250,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
     return codexEffortSupported(registry, initialCodexModel, saved) ? saved : ''
   })
   const [codexPreset, setCodexPreset] = useState<CodexOptions['permissionsPreset']>(initial?.codexOptions?.permissionsPreset ?? 'standard')
-  // P3.11 (row 62): Claude's Extra CLI arguments, kept apart from Claude's
+  // P3.11 (row 62): Codex's Extra CLI arguments, kept apart from Claude Code's
   // value (each assistant has its own flags).
   const [codexExtraArgs, setCodexExtraArgs] = useState(initial?.codexOptions?.extraArgs ?? '')
   // The Codex account (WP2 commit 6). `null` = not touched: the field shows
@@ -401,6 +402,17 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
 
   // The footer's validation slot: names the next step in a fixed order instead
   // of letting Save silently no-op (the old dialog's worst habit).
+  // P3.11 round 1 (B2): the Extra CLI arguments this config would save (trimmed),
+  // held to the rule its assistant's launch uses (src/shared/extra-args.ts): a
+  // refused value is said under the field and holds Save back, since a launch
+  // drops it (pty:spawn's restore sanitizer runs on every spawn).
+  const extraArgsProblem = (() => {
+    const value = uiProvider === 'claude' ? extraArgs.trim() : uiProvider === 'codex' ? codexExtraArgs.trim() : ''
+    if (!value) return null
+    const problem = uiProvider === 'codex' ? codexExtraArgsProblem(value) : claudeExtraArgsProblem(value)
+    return problem ? `Extra CLI arguments: ${problem}` : null
+  })()
+
   const validationMsg = (() => {
     if (!uiProvider) return 'Choose what this launcher runs'
     if (!sessionType) return 'Choose where it runs'
@@ -459,6 +471,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
       // The per-launch confirmation for an unverified sign-in (canvas F6).
       if (askRealmAck && !realmAck) return 'Confirm the sign-in for this launch to continue'
     }
+    if (extraArgsProblem) return extraArgsProblem
     if (!label.trim()) return 'Add a label to save'
     return ''
   })()
@@ -524,7 +537,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
       model: codexModel || undefined,
       reasoningEffort: effectiveCodexEffort || undefined,
       permissionsPreset: codexPreset,
-      // As Claude's: trimmed, and nothing for a blank field.
+      // Trimmed, and nothing for a blank field.
       extraArgs: codexExtraArgs.trim() || undefined,
     } : undefined
 
@@ -733,11 +746,10 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
 
   const inputCls = 'w-full bg-[var(--surface-base)] border border-[var(--border-strong)] rounded-lg px-2.5 py-1.5 text-[12.5px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] outline-none focus-ring'
 
-  // P3.11 (row 62): the one Extra CLI arguments field, in Claude's section and
-  // in Codex's: the same label, help button, input and hint. Nothing is
-  // checked here, as for Claude always: main refuses at launch what the
-  // assistant's own rule refuses.
-  const extraArgsField = (f: { value: string; onChange: (v: string) => void; helpKey: string; placeholder: string; hint: React.ReactNode }) => (
+  // P3.11 (row 62): the one Extra CLI arguments field, in the Claude Code
+  // section and in Codex's: the same label, help button, input and hint, and
+  // (round 1, B2) the rule's message under it while the value is refused.
+  const extraArgsField = (f: { value: string; onChange: (v: string) => void; helpKey: string; placeholder: string; hint: React.ReactNode; problem: string | null }) => (
     <div>
       <div className="flex items-center gap-1.5 mb-1">
         <label className="text-xs text-[var(--text-secondary)]">Extra CLI arguments</label>
@@ -751,6 +763,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
         spellCheck={false}
         className={inputCls + ' font-mono text-xs'}
       />
+      {f.problem && (
+        <p role="alert" data-testid="extra-args-problem" className="text-[11px] mt-1 leading-snug text-[var(--status-warning)]">{f.problem}</p>
+      )}
       <Hint k={f.helpKey}>{f.hint}</Hint>
     </div>
   )
@@ -1287,6 +1302,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
                       value: extraArgs,
                       onChange: setExtraArgs,
                       helpKey: 'xargs',
+                      problem: extraArgsProblem,
                       placeholder: sessionType === 'ssh' ? '--add-dir /srv/shared' : '--verbose --add-dir F:\\shared_libs',
                       hint: (
                         <>
@@ -1358,23 +1374,25 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
                         onAckChange: (checked) => setRealmAckFor(checked ? codexAccountId : null),
                       }}
                     />
-                    {/* P3.11 (row 62): Claude's field, after the Permissions
-                        (mt-4 keeps the Codex fields' spacing). */}
+                    {/* P3.11 (row 62): the Extra CLI arguments field, after the
+                        Permissions (mt-4 keeps the Codex fields' spacing). */}
                     <div className="mt-4 mb-2">
                       {extraArgsField({
                         value: codexExtraArgs,
                         onChange: setCodexExtraArgs,
                         helpKey: 'xargs-cx',
+                        problem: extraArgsProblem,
                         placeholder: '--search --add-dir F:\\shared_libs',
                         hint: (
                           <>
                             Advanced. Added to the codex command, each word as one argument. Shell characters are
                             blocked, and so is anything the app sets or that changes the account, provider or
                             endpoint: --model, -c (--config), --enable, --disable, --sandbox, --ask-for-approval and
-                            the other permission flags, --cd, --last, --profile, --oss, --local-provider and
-                            --remote. A plain word such as login, or one such as /logout, is refused too, since Codex
-                            reads it as one of its commands: give a folder with = (--add-dir=docs) or as a path
-                            (./docs, /srv/).
+                            the other permission flags, --cd, --worktree, --last, --profile, --oss, --local-provider
+                            and --remote. A plain word such as login, or one such as /logout, is refused too: Codex
+                            reads it as one of its commands, and a word that is not a flag or a flag's value is its
+                            opening prompt. Give a folder as the value of --add-dir: --add-dir=docs, or --add-dir
+                            ./docs.
                           </>
                         ),
                       })}

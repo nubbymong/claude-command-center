@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 /**
  * P3.11 (row 62): the session dialog's Extra CLI arguments for Codex, driven
- * through the REAL dialog. The same field Claude's section has (one render:
- * the same label, help button, input and hint shape), saved as the config's
- * codexOptions.extraArgs as Claude's is saved as claudeOptions.extraArgs:
- * trimmed, and nothing for a blank. No check in the dialog, as Claude's field
- * has none: main refuses at launch (tests/unit/main/codex-extra-args-guard.test.ts).
+ * through the REAL dialog. One field for both assistants (one render: the same
+ * label, help button, input and hint shape), saved as the config's
+ * codexOptions.extraArgs (claudeOptions.extraArgs for Claude Code): trimmed,
+ * and nothing for a blank. Round 1 (B2): while the value is one the
+ * assistant's rule refuses, the field says why under it and Save waits (the
+ * footer names it), for either assistant; a saved value the rule refuses is
+ * dropped at launch (tests/unit/main/codex-extra-args-launch.test.ts).
  */
 import React from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -87,7 +89,7 @@ function field() {
   return { row, help, input, box: row.parentElement! }
 }
 
-describe('a Codex config has Claude\'s Extra CLI arguments field (row 62)', () => {
+describe('a Codex config has the Extra CLI arguments field (row 62)', () => {
   it('shows the same field, after the Permissions, and saves what is typed, trimmed', () => {
     const onConfirm = newCodexConfig()
     const f = field()
@@ -125,7 +127,10 @@ describe('a Codex config has Claude\'s Extra CLI arguments field (row 62)', () =
     expect(hint).toMatch(/-c/)
     expect(hint).toMatch(/--sandbox/)
     expect(hint).toMatch(/--cd/)
+    expect(hint).toMatch(/--worktree/)
     expect(hint).toMatch(/--profile/)
+    expect(hint).toMatch(/opening prompt/)
+    expect(hint).toMatch(/--add-dir \.\/docs/)
     expect(hint).toMatch(/account, provider or endpoint/)
     expect(hint).toMatch(/command/)
   })
@@ -133,7 +138,7 @@ describe('a Codex config has Claude\'s Extra CLI arguments field (row 62)', () =
   function newCodexConfig() { return newConfig('Codex') }
 })
 
-describe('Claude\'s field is the same field, and unchanged', () => {
+describe('Claude Code\'s field is the same field', () => {
   it('saves claudeOptions.extraArgs as before, and a Codex config never inherits it', () => {
     const onConfirm = render({ initial: { id: 'c2', provider: 'claude', sessionType: 'local', label: 'x', workingDirectory: 'C:\\proj', color: '', claudeOptions: { extraArgs: '--verbose' } } })
     const f = field()
@@ -156,5 +161,60 @@ describe('Claude\'s field is the same field, and unchanged', () => {
     expect(codex.input.className).toBe(claudeShape.input)
     // What was typed for one assistant stays with it.
     expect(codex.input.value).toBe('')
+  })
+})
+
+// Round 1 (B2): the rule's message under the field, and Save held back, while
+// the value is refused; for either assistant, each by its own rule.
+const footer = () => container.querySelector('[data-testid="session-dialog-validation"]')!.textContent ?? ''
+const saveButton = () => container.querySelector('[data-testid="session-dialog-submit"]') as HTMLButtonElement
+const inline = () => container.querySelector('[data-testid="extra-args-problem"]')
+
+describe('a refused value is said under the field, and Save waits (round 1, B2)', () => {
+  it('Codex: the rule\'s message under the field and in the footer; Save disabled and not taken; a fixed value saves', () => {
+    const onConfirm = newConfig('Codex')
+    const f = field()
+    expect(inline()).toBeNull()
+    setInput(f.input, '--search --model=gpt-5')
+    expect(inline()?.textContent).toMatch(/Extra CLI arguments: "--model=gpt-5" is set by the app/)
+    expect(inline()?.getAttribute('role')).toBe('alert')
+    expect(footer()).toMatch(/Extra CLI arguments: "--model=gpt-5"/)
+    expect(saveButton().disabled).toBe(true)
+    submit()
+    expect(onConfirm).not.toHaveBeenCalled()
+    for (const bad of ['login', '--worktree', '--not-so-yolo', '--add-dir a;b', '--add-dir x\\']) {
+      setInput(f.input, bad)
+      expect(inline(), bad).not.toBeNull()
+      expect(saveButton().disabled, bad).toBe(true)
+    }
+    setInput(f.input, '--search --add-dir ./docs')
+    expect(inline()).toBeNull()
+    expect(saveButton().disabled).toBe(false)
+    submit()
+    expect(saved(onConfirm).codexOptions.extraArgs).toBe('--search --add-dir ./docs')
+  })
+
+  it('Codex: an edit whose stored value is refused says so on opening, and Save waits until it is fixed', () => {
+    const onConfirm = render({ initial: { id: 'c3', provider: 'codex', sessionType: 'local', label: 'x', workingDirectory: 'C:\\proj', color: '', codexOptions: { permissionsPreset: 'auto', extraArgs: '--yolo' } } })
+    expect(inline()?.textContent).toMatch(/"--yolo"/)
+    submit()
+    expect(onConfirm).not.toHaveBeenCalled()
+    setInput(field().input, '')
+    submit()
+    expect(saved(onConfirm).codexOptions.extraArgs).toBeUndefined()
+  })
+
+  it('Claude Code: its own rule, the same way', () => {
+    const onConfirm = render({ initial: { id: 'c4', provider: 'claude', sessionType: 'local', label: 'x', workingDirectory: 'C:\\proj', color: '' } })
+    const f = field()
+    setInput(f.input, '--settings x.json')
+    expect(inline()?.textContent).toMatch(/^Extra CLI arguments: /)
+    expect(saveButton().disabled).toBe(true)
+    submit()
+    expect(onConfirm).not.toHaveBeenCalled()
+    setInput(f.input, '--verbose --add-dir F:\\shared_libs')
+    expect(inline()).toBeNull()
+    submit()
+    expect(saved(onConfirm).claudeOptions.extraArgs).toBe('--verbose --add-dir F:\\shared_libs')
   })
 })

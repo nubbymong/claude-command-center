@@ -1,10 +1,10 @@
-// P3.11 (row 62): a Codex session's extra CLI arguments reach the launch as a
-// Claude session's do: after every flag the app sets, each word one argument,
-// on every route (a direct launch, a resume by id, the picker, and the npm
-// .cmd shim through cmd.exe). No shell reads a Codex launch, so a word needs
-// no quoting; the builder checks the value again (the spawn schema's rule) and
-// refuses the launch as the schema does. Nothing is started: the node lookup
-// is a fake.
+// P3.11 (row 62): a Codex session's extra CLI arguments reach the launch after
+// every flag the app sets, each word one argument, on every route (a direct
+// launch, a resume by id, the picker, and the npm .cmd shim through cmd.exe).
+// No shell reads a Codex launch, so a word needs no quoting. The builder checks
+// the value again with the rule pty:spawn uses (which drops a refused value
+// before the launch) and ends a launch that reaches it with one. Nothing is
+// started: the node lookup is a fake.
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'fs'
 import { join, basename, dirname } from 'path'
@@ -139,10 +139,42 @@ describe('the npm .cmd shim through cmd.exe', () => {
     const out = withWin32(() => build({ realmLaunch: shim, useResumePicker: true, codexOptions: co('--search') }))
     expect(out.args[out.args.length - 1]).toBe('--search')
   })
+  // Round 1 (A1): a resume by id on that route too.
+  it('a resume by id carries them at the end of the line, after resume, the id and the app flags', () => {
+    const out = withWin32(() => build({ realmLaunch: shim, resume: { uuid: RESUME_ID, cwd: 'C:\\w' }, codexOptions: { permissionsPreset: 'standard', extraArgs: '--search --add-dir=F:\\shared_libs' } }))
+    expect(out.resumeId).toBe(RESUME_ID)
+    expect(out.commandLine).toBe(`/d /v:off /s /c ""C:\\npm\\codex.cmd" resume ${RESUME_ID} --sandbox workspace-write --ask-for-approval on-request --search --add-dir=F:\\shared_libs"`)
+  })
+  // Round 1 (A3): the picker starts the same executable through cmd.exe, so the
+  // launch is refused before the picker is started when that line could not
+  // pass cmd.exe unchanged (as the direct cmd.exe route refuses it).
+  it('the picker route refuses a launch cmd.exe would re-read, before the picker starts', () => {
+    resources(['codex-resume-picker.js'])
+    expect(() => withWin32(() => build({ realmLaunch: { ...shim, executable: 'C:\\a%b\\codex.cmd' }, useResumePicker: true, codexOptions: co('--search') }))).toThrow(/cmd\.exe would reinterpret/)
+  })
+})
+
+// Round 1 (A2): each word reaches Codex exactly as typed: every punctuation
+// character the charset takes (_ - = . / \ : @ , +), a share path, doubled
+// backslashes, and a word that ends in a backslash in the middle of the value;
+// on the direct route (argv) and in the one cmd.exe line.
+describe('words carrying every allowed punctuation character arrive exactly', () => {
+  const WORDS = ['--add-dir=\\\\server\\share\\x_y', '--image=a,b.png', '-i', './u@v+w.png', '--add-dir', 'C:\\dir\\', '--add-dir', 'C:\\a\\\\b', '--search']
+  const value = WORDS.join(' ')
+  it('as argv on the direct route', () => {
+    const out = withWin32(() => build({ realmLaunch: { ...posix, executable: 'C:\\codex\\codex.exe', env: winEnv }, codexOptions: { permissionsPreset: 'standard', extraArgs: value } }))
+    expect(out.args).toEqual(['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request', ...WORDS])
+    const posixOut = withPlatform('linux', () => build({ codexOptions: { permissionsPreset: 'standard', extraArgs: value } }))
+    expect(posixOut.args).toEqual(['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request', ...WORDS])
+  })
+  it('in the one cmd.exe line', () => {
+    const out = withWin32(() => build({ realmLaunch: { ...posix, executable: 'C:\\npm\\codex.cmd', env: winEnv }, codexOptions: { permissionsPreset: 'standard', extraArgs: value } }))
+    expect(out.commandLine).toBe(`/d /v:off /s /c ""C:\\npm\\codex.cmd" --sandbox workspace-write --ask-for-approval on-request ${value}"`)
+  })
 })
 
 describe('the builder refuses what the spawn schema refuses, whichever route', () => {
-  const refused = ['--model=x', '-c model=x', '--yolo', '--cd=/tmp', '--profile=p', 'login', '--add-dir docs', '--add-dir a;b', '--add-dir x\\', '-hm']
+  const refused = ['--model=x', '-c model=x', '--yolo', '--not-so-yolo', '--cd=/tmp', '--worktree', '--profile=p', 'login', '--add-dir docs', '--add-dir a;b', '--add-dir x\\', '-hm']
   for (const v of refused) {
     it(`refuses ${JSON.stringify(v)}, naming it`, () => {
       expect(() => withPlatform('linux', () => build({ codexOptions: co(v) }))).toThrow(/^Cannot start Codex: its extra CLI arguments are refused/)
