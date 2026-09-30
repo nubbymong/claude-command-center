@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-30T05:16:07.409Z",
-  "head": "ce70e205d0d40deb84a515eeee876dc5c0517b8f",
-  "tree": "d9c8e9b11af9764747ef67304a7db983d81a5c5d",
+  "generatedAt": "2026-09-30T10:42:24.714Z",
+  "head": "37a1a62f5d979c79e74312938b38e9068a1e0e6d",
+  "tree": "cc4e1bb10c55951a46c637cc882b15e96a3e9954",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2530,
+  "trackedFileCount": 2536,
   "excludedFileCount": 384,
-  "scannedFileCount": 2146,
+  "scannedFileCount": 2152,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 590,
-  "pathDigest": "c42239a4f5bcd6c675cc58b9e3c1d5ce80405273b368c0cef6ef4b36e3b3b80e",
+  "matchedPathCount": 594,
+  "pathDigest": "e8eec13a133801508de021f005ee8307b0c897c14d98bd2ce2ceba053fdd93f4",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 447,
+      "lineCount": 458,
       "truncated": true
     },
     {
@@ -367,7 +367,7 @@
         "P05",
         "P14"
       ],
-      "lineCount": 48
+      "lineCount": 50
     },
     {
       "path": "src/main/canvas-mcp-tool.ts",
@@ -424,6 +424,14 @@
         "P14"
       ],
       "lineCount": 1
+    },
+    {
+      "path": "src/main/codex-hook-folders.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "lineCount": 29
     },
     {
       "path": "src/main/codex-idle-attention.ts",
@@ -496,7 +504,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 14
+      "lineCount": 22
     },
     {
       "path": "src/main/install-secret.ts",
@@ -528,7 +536,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 97
+      "lineCount": 99
     },
     {
       "path": "src/main/ipc/tokenomics2-handlers.ts",
@@ -704,7 +712,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 74
+      "lineCount": 95
     },
     {
       "path": "src/main/providers/codex/index.ts",
@@ -715,7 +723,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 230
+      "lineCount": 233
     },
     {
       "path": "src/main/providers/codex/install-recipes.ts",
@@ -764,7 +772,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 8
+      "lineCount": 9
     },
     {
       "path": "src/main/providers/codex/rate-limits.ts",
@@ -903,7 +911,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 27
+      "lineCount": 28
     },
     {
       "path": "src/main/pty-manager.ts",
@@ -2955,6 +2963,14 @@
       "lineCount": 37
     },
     {
+      "path": "tests/unit/main/codex-hook-folders.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 40
+    },
+    {
       "path": "tests/unit/main/codex-resume-launch.test.ts",
       "predicates": [
         "P01",
@@ -3169,7 +3185,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 37
+      "lineCount": 47
     },
     {
       "path": "tests/unit/main/pty-spawn-waits-for-refresh.test.ts",
@@ -3274,7 +3290,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 9
+      "lineCount": 10
     },
     {
       "path": "tests/unit/main/watchdog/watchdog-manager.test.ts",
@@ -3472,12 +3488,20 @@
       "lineCount": 89
     },
     {
+      "path": "tests/unit/providers/codex/hook-wrapper-start-folder.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 6
+    },
+    {
       "path": "tests/unit/providers/codex/hooks.test.ts",
       "predicates": [
         "P01",
         "P13"
       ],
-      "lineCount": 172
+      "lineCount": 183
     },
     {
       "path": "tests/unit/providers/codex/mcp-config.test.ts",
@@ -3532,6 +3556,14 @@
       "lineCount": 11
     },
     {
+      "path": "tests/unit/providers/codex/process-env-path.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 9
+    },
+    {
       "path": "tests/unit/providers/codex/rate-limits.test.ts",
       "predicates": [
         "P01",
@@ -3564,7 +3596,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 86
+      "lineCount": 101
     },
     {
       "path": "tests/unit/providers/codex/spawn-resume.test.ts",
