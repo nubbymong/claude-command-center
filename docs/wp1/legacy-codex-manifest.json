@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-30T01:42:33.818Z",
-  "head": "f0627975ec095e771c762297eb6b4c499ed75e2e",
-  "tree": "6f8051537726fe1c05de2054dec758219e31783c",
+  "generatedAt": "2026-09-30T03:07:33.193Z",
+  "head": "5b178c7a64b6732a96d36d9c0807c6d033f86462",
+  "tree": "55dc2f6275795a8b074e68cc3213a0511676403f",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 424,
+      "lineCount": 438,
       "truncated": true
     },
     {
@@ -367,7 +367,7 @@
         "P05",
         "P14"
       ],
-      "lineCount": 34
+      "lineCount": 43
     },
     {
       "path": "src/main/canvas-mcp-tool.ts",
@@ -431,7 +431,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 16
+      "lineCount": 21
     },
     {
       "path": "src/main/codex-review-mcp-tool.ts",
@@ -704,7 +704,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 71
+      "lineCount": 74
     },
     {
       "path": "src/main/providers/codex/index.ts",
@@ -715,7 +715,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 225
+      "lineCount": 227
     },
     {
       "path": "src/main/providers/codex/install-recipes.ts",
@@ -913,7 +913,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 273
+      "lineCount": 277
     },
     {
       "path": "src/main/sanitize-restored-spawn-options.ts",
@@ -1071,7 +1071,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 40
+      "lineCount": 43
     },
     {
       "path": "src/main/watchdog/detectors.ts",
@@ -1273,7 +1273,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 20
+      "lineCount": 21
     },
     {
       "path": "src/renderer/components/SessionStatusStrip.tsx",
@@ -3130,7 +3130,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 86
+      "lineCount": 88
     },
     {
       "path": "tests/unit/main/pty-handlers-codex-review.test.ts",
@@ -3267,7 +3267,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 59
+      "lineCount": 67
     },
     {
       "path": "tests/unit/main/watchdog/watchdog-manager.test.ts",
@@ -3470,7 +3470,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 127
+      "lineCount": 142
     },
     {
       "path": "tests/unit/providers/codex/mcp-config.test.ts",
@@ -3557,7 +3557,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 69
+      "lineCount": 79
     },
     {
       "path": "tests/unit/providers/codex/spawn-resume.test.ts",
@@ -4362,7 +4362,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 11
+      "lineCount": 13
     },
     {
       "path": "tests/unit/renderer/session-launch.test.ts",
@@ -4630,7 +4630,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 35
+      "lineCount": 37
     },
     {
       "path": "tests/unit/scripts/codex-resume-picker-open-elsewhere.test.ts",
@@ -4715,7 +4715,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 7
+      "lineCount": 8
     },
     {
       "path": "tests/unit/status-ingest.test.ts",
