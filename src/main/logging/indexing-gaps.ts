@@ -22,8 +22,8 @@
  *
  * No default export (project convention).
  */
-import { readFileSync, renameSync } from 'fs'
-import { basename } from 'path'
+import { readFileSync, renameSync, readdirSync, unlinkSync } from 'fs'
+import { basename, dirname, join } from 'path'
 import { atomicWriteFileSync } from '../atomic-write'
 
 /** The most conversations marked; past it the begun-before rule covers the
@@ -33,6 +33,8 @@ export const NOT_INDEXED_MARKS_MAX = 50000
  *  the oldest dropped count again (toward not indexing). */
 const CLEARED_MAX = 50000
 const KEY_MAX = 200
+/** The damaged records kept aside, the newest first. */
+const DAMAGED_KEPT = 3
 /** How long marks gather before they are written. */
 const WRITE_DELAY_MS = 500
 const ROLLOUT_ID_RE = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i
@@ -102,6 +104,19 @@ function parse(raw: unknown): { marks: Map<string, number>; suspectBefore: numbe
   return { marks: out, suspectBefore: since, cleared: done }
 }
 
+/** The newest DAMAGED_KEPT records set aside stay; older ones go: only files
+ *  in the record's own folder named exactly `<record>.damaged-<time>`. */
+function pruneDamaged(path: string): void {
+  const folder = dirname(path)
+  const prefix = `${basename(path)}.damaged-`
+  let names: string[]
+  try { names = readdirSync(folder) } catch { return }
+  const kept = names
+    .filter((n) => n.startsWith(prefix) && /^\d+$/.test(n.slice(prefix.length)))
+    .sort((a, b) => Number(b.slice(prefix.length)) - Number(a.slice(prefix.length)))
+  for (const n of kept.slice(DAMAGED_KEPT)) { try { unlinkSync(join(folder, n)) } catch { /* best-effort */ } }
+}
+
 /** Read the record at `path` (`now`: this start's time) and keep it there
  *  from now on. */
 export function initIndexingGaps(path: string, now: number = Date.now()): void {
@@ -121,6 +136,7 @@ export function initIndexingGaps(path: string, now: number = Date.now()): void {
   if (!parsed) {
     // Damaged (or another shape): kept aside, and toward not indexing.
     try { renameSync(path, `${path}.damaged-${now}`) } catch { /* left in place; overwritten below */ }
+    pruneDamaged(path)
     suspectFrom(now)
     dirty = true
     write()
@@ -136,6 +152,7 @@ export function markNotIndexed(rolloutPath: string, ts: number): void {
   if (typeof rolloutPath !== 'string' || !rolloutPath || !Number.isFinite(ts)) return
   const key = conversationKey(rolloutPath)
   const was = marks.get(key)
+  const first = typeof was !== 'number'
   marks.delete(key)
   marks.set(key, typeof was === 'number' ? Math.max(was, ts) : ts)
   cleared.delete(key)
@@ -145,7 +162,8 @@ export function markNotIndexed(rolloutPath: string, ts: number): void {
     suspectFrom(Date.now())
     while (marks.size > NOT_INDEXED_MARKS_MAX) marks.delete(marks.keys().next().value as string)
   }
-  schedule()
+  // A conversation's first mark is written at once; later ones coalesce.
+  if (first) { dirty = true; write() } else schedule()
 }
 
 /** What is known of the conversation at `rolloutPath`: written while not
