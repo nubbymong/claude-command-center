@@ -67,7 +67,7 @@ import { designatedWorktreeDir } from './canvas/canvas-worktree'
 import { forgetSessionForCanvas } from './canvas/canvas-session-link'
 import { forgetCanvasMarkers } from './canvas/canvas-marker-delivery'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
-import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal, withProfileHome, MANAGED_LAUNCH_REFUSAL } from './account-profiles'
+import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal, withProfileHome, MANAGED_LAUNCH_REFUSAL, hardenCredentialDir } from './account-profiles'
 export { withProfileHome } from './account-profiles'
 import { gateManagedLaunchDirs, recordManagedLaunchPreflight, displayPath } from './managed-launch-diagnostics'
 import { stripSpoofableText } from '../shared/safe-text'
@@ -78,6 +78,7 @@ import { updateSessionMeta, clearSessionMeta, markPtySessionAlive, markPtySessio
 import { readConfig, getConfigDir } from './config-manager'
 import { getPtyIntegrityMonitor } from './services/pty-integrity-monitor'
 import { getWatchdogManager } from './watchdog/watchdog-manager'
+import { clearCodexIdleAttention } from './codex-idle-attention'
 
 import * as path from 'path'
 import * as fs from 'fs'
@@ -405,12 +406,14 @@ const codexTelemetrySources = new Map<string, TelemetrySource>()
 // it (its lease's), which a Switch account carries it from; never persisted.
 export const KEPT_CODEX_CONVERSATIONS_MAX = 512
 // P3.10: `inferred` -- the conversation was taken by folder and time (a new
-// one), not known (a resume by id, a pick, or the session's own hook);
-// `hookedRealm` -- the launch that took it carried the app's hooks, in that
-// realm (its sessions folder).
-const keptCodexConversations = new Map<string, { uuid: string; cwd: string; accountId?: string; inferred?: boolean; hookedRealm?: string }>()
+// one), not known (a resume by id, a pick, or the session's own hook).
+// Round 1 (S4): `hooksHeard` -- this session's own launch's hooks had been
+// heard when it took it, or have been since: Codex runs them for this very
+// session (a tab that declined Codex's review sends none, whatever another
+// tab of the same account chose).
+const keptCodexConversations = new Map<string, { uuid: string; cwd: string; accountId?: string; inferred?: boolean; hooksHeard?: boolean }>()
 
-function keepCodexConversation(sessionId: string, conversation: { uuid: string; cwd: string }, accountId?: string, how?: { inferred: boolean; hookedRealm?: string }): void {
+function keepCodexConversation(sessionId: string, conversation: { uuid: string; cwd: string }, accountId?: string, how?: { inferred: boolean }): void {
   if (typeof conversation.uuid !== 'string' || !UUID_RE.test(conversation.uuid) || typeof conversation.cwd !== 'string') return
   keptCodexConversations.delete(sessionId)
   keptCodexConversations.set(sessionId, {
@@ -418,7 +421,7 @@ function keepCodexConversation(sessionId: string, conversation: { uuid: string; 
     cwd: conversation.cwd,
     ...(typeof accountId === 'string' && accountId ? { accountId } : {}),
     ...(how?.inferred ? { inferred: true } : {}),
-    ...(how?.hookedRealm ? { hookedRealm: how.hookedRealm } : {}),
+    ...(codexHooksHeard.has(sessionId) ? { hooksHeard: true } : {}),
   })
   while (keptCodexConversations.size > KEPT_CODEX_CONVERSATIONS_MAX) {
     const oldest = keptCodexConversations.keys().next().value
@@ -428,18 +431,28 @@ function keepCodexConversation(sessionId: string, conversation: { uuid: string; 
 }
 
 // P3.10 (rows 43, 46, 47, 63): the Codex launches given the app's hooks (see
-// providers/codex/hooks.ts), their hook files (removed with the session's
-// resources), the realm each runs in, and the realms (sessions folders) a hook
-// has been heard from in this run -- proof that the user trusted the app's
-// hooks there (Codex asks once per account folder). A hook's rollout path is
-// the exact claim of the conversation the session is on (as Claude's #480
-// bind); the last one taken is kept so the frequent events (a prompt, each
-// tool) cost one comparison.
+// providers/codex/hooks.ts) and their hook files (removed with the session's
+// resources). A hook's rollout path is the exact claim of the conversation
+// the session is on (as Claude's #480 bind); the last one taken is kept so
+// the frequent events (a prompt, each tool) cost one comparison.
+// Round 1:
+//  - codexHooksHeard (S4): the sessions whose CURRENT launch's own hooks have
+//    been heard -- Codex runs them for that session (see keptCodexConversations);
+//  - codexGatewayTokens (B1): the sessions whose gateway token a Codex launch
+//    minted, for as long as that token is registered. It decides that a
+//    hook's transcript path is a Codex one, and outlives the PTY entry
+//    killPty removes (the token goes only with the process's exit);
+//  - codexResumedById (S4): the conversation each live launch resumed by id,
+//    whose P3.6 doubt no hook clears, this tab's or another's (the app's own
+//    choice, from a record that may be in doubt);
+//  - codexRefusedHookLogged (N1): a refused path is logged once a launch.
 const codexHookFiles = new Map<string, { hookFile: string; dispose(): void }>()
-const codexHookedLaunches = new Map<string, string>()
-const codexHookRealms = new Set<string>()
+const codexHookedLaunches = new Set<string>()
+const codexHooksHeard = new Set<string>()
+const codexGatewayTokens = new Set<string>()
+const codexResumedById = new Map<string, string>()
+const codexRefusedHookLogged = new Set<string>()
 const lastCodexHookRollout = new Map<string, string>()
-export const CODEX_HOOK_REALMS_MAX = 256
 
 function forgetCodexHooks(sessionId: string): void {
   const file = codexHookFiles.get(sessionId)
@@ -448,47 +461,98 @@ function forgetCodexHooks(sessionId: string): void {
     try { file.dispose() } catch { /* best-effort */ }
   }
   codexHookedLaunches.delete(sessionId)
+  codexHooksHeard.delete(sessionId)
+  codexResumedById.delete(sessionId)
+  codexRefusedHookLogged.delete(sessionId)
   lastCodexHookRollout.delete(sessionId)
+}
+
+/** P3.10 round 1 (B1): the session's gateway token was just minted, by a
+ *  Codex launch or not. */
+function noteGatewayToken(sessionId: string, codex: boolean): void {
+  if (codex) codexGatewayTokens.add(sessionId)
+  else codexGatewayTokens.delete(sessionId)
+}
+
+/** P3.10 round 1 (B1, B2): the session's gateway token goes -- its process
+ *  exited, its spawn failed, or its launch sends no hook at all. */
+function dropGatewayToken(sessionId: string): void {
+  try { getGateway()?.unregisterSession(sessionId) } catch { /* the gateway may have stopped */ }
+  codexGatewayTokens.delete(sessionId)
 }
 
 /**
  * P3.10: a hook of Codex session `sessionId` (authenticated by the gateway
  * with that session's token) named `rolloutPath` as the transcript it is on.
- * True when the session is a Codex one, so the caller hands the path to no
- * Claude sink (the Claude transcript binder, the Claude account attribution).
- * Its realm counts as one whose hooks run; its telemetry claims the rollout
- * exactly (checked there: a rollout inside the realm whose session_meta names
- * the id in its name), and any other session's claim of that rollout that was
- * only inferred is let go (it was the wrong new conversation).
+ * True when the session is a Codex one -- its PTY runs Codex, or (round 1,
+ * B1) its registered token is a Codex launch's, killed or not -- so the
+ * caller hands the path to no Claude sink (the Claude transcript binder, the
+ * Claude account attribution). This session's own hooks count as heard
+ * (round 1, S4); its telemetry claims the rollout exactly (checked there: a
+ * rollout inside the realm whose session_meta names the id in its name).
+ * Another session's inferred claim of it is proved wrong only by a
+ * conversation this one STARTED (noteCodexHookEvent, round 1, B4).
  */
 export function noteCodexHookTranscript(sessionId: string, rolloutPath: string): boolean {
-  if (ptySessions.get(sessionId)?.agent !== 'codex') return false
-  const realm = codexHookedLaunches.get(sessionId)
-  // A Codex session this launch gave no hooks: nothing it says is taken.
-  if (!realm) return true
-  if (!codexHookRealms.has(realm)) {
-    codexHookRealms.add(realm)
-    while (codexHookRealms.size > CODEX_HOOK_REALMS_MAX) {
-      const oldest = codexHookRealms.values().next().value
-      if (oldest === undefined) break
-      codexHookRealms.delete(oldest)
-    }
+  if (!codexGatewayTokens.has(sessionId) && ptySessions.get(sessionId)?.agent !== 'codex') return false
+  // A Codex session this launch gave no hooks, or one already torn down:
+  // nothing it says is taken.
+  if (!codexHookedLaunches.has(sessionId)) return true
+  if (!codexHooksHeard.has(sessionId)) {
+    codexHooksHeard.add(sessionId)
+    const kept = keptCodexConversations.get(sessionId)
+    if (kept) kept.hooksHeard = true
   }
   if (lastCodexHookRollout.get(sessionId) === rolloutPath) return true
   const tel = codexTelemetrySources.get(sessionId)
   const took = tel?.noteExactRollout?.(rolloutPath) ?? null
   if (!took) {
-    logWarn(`[pty] Codex session ${sessionId}: a hook named a transcript that is not a rollout of its account folder (length ${typeof rolloutPath === 'string' ? rolloutPath.length : 'n/a'}); ignored`)
+    if (!codexRefusedHookLogged.has(sessionId)) {
+      codexRefusedHookLogged.add(sessionId)
+      logWarn(`[pty] Codex session ${sessionId}: a hook named a transcript that is not a rollout of its account folder (length ${typeof rolloutPath === 'string' ? rolloutPath.length : 'n/a'}); ignored (said once for this launch)`)
+    }
     return true
   }
   lastCodexHookRollout.set(sessionId, rolloutPath)
+  return true
+}
+
+/**
+ * P3.10 round 1 (B4): proof that another session's inferred claim is wrong
+ * comes only from a conversation this session's own Codex STARTED: its
+ * SessionStart hook with `source: startup`. No other session's Codex can
+ * have written that rollout, so another session that took it by folder and
+ * time took the wrong one: it is let go and never taken by inference again
+ * (telemetry refuteInferredClaim). A conversation this session RESUMED
+ * (`source: resume`: the TUI's own /resume, a resume by id, a pick) may be
+ * another tab's own new conversation, which that tab's Codex made and may
+ * still be writing, so it proves nothing about the others. The path must be
+ * the one this session's own watch took from its hook: the gateway hands the
+ * transcript path over (noteCodexHookTranscript) before the event itself.
+ */
+export function noteCodexHookEvent(e: { sessionId?: unknown; event?: unknown; payload?: unknown }): void {
+  if (!e || e.event !== 'SessionStart' || typeof e.sessionId !== 'string') return
+  const sessionId = e.sessionId
+  if (!codexHookedLaunches.has(sessionId)) return
+  const p = e.payload as { source?: unknown; transcript_path?: unknown } | null | undefined
+  if (!p || typeof p !== 'object' || p.source !== 'startup') return
+  const named = lastCodexHookRollout.get(sessionId)
+  if (!named || p.transcript_path !== named) return
   for (const [other, source] of codexTelemetrySources) {
     if (other === sessionId) continue
     try {
-      if (source.refuteInferredClaim?.(rolloutPath)) logInfo(`[pty] Codex session ${other}: its inferred conversation is ${sessionId}'s (that session's hook said so); it claims again`)
+      if (source.refuteInferredClaim?.(named)) logInfo(`[pty] Codex session ${other}: its inferred conversation is one ${sessionId}'s Codex started (its hook said so); it claims again`)
     } catch { /* one session's watch never breaks another's */ }
   }
-  return true
+}
+
+/** P3.10 (round 1, B5): where a hook's transcript path goes: a Codex
+ *  session's own watch (noteCodexHookTranscript), else Claude's sinks, the
+ *  account attribution and the transcript binder, as before P3.10. */
+export function routeHookTranscriptPath(sessionId: string, transcriptPath: string, claude: { attribute: (sessionId: string, transcriptPath: string) => void; bind: (sessionId: string, transcriptPath: string) => void }): void {
+  if (noteCodexHookTranscript(sessionId, transcriptPath)) return
+  claude.attribute(sessionId, transcriptPath)
+  claude.bind(sessionId, transcriptPath)
 }
 
 /** P3.10: whether `sessionId` runs Codex now (a live PTY started as a Codex
@@ -497,12 +561,27 @@ export function isCodexPtySession(sessionId: string): boolean {
   return ptySessions.get(sessionId)?.agent === 'codex'
 }
 
-function unmarkCodexConversationUncertain(uuid: string): void {
-  if (typeof uuid === 'string') uncertainCodexConversations.delete(uuid.toLowerCase())
+/** P3.10: a session's own hook named conversation `uuid`: P3.6's doubt
+ *  about it goes -- unless a live launch resumed it by id (round 1, S4:
+ *  this tab's or another's). That was the app's own choice from a record
+ *  that may be in doubt, and a hook proves only which conversation the
+ *  hooked tab is on, not that record. */
+function clearCodexDoubtFromHook(uuid: string): void {
+  if (typeof uuid !== 'string') return
+  const key = uuid.toLowerCase()
+  for (const resumed of codexResumedById.values()) if (resumed === key) return
+  uncertainCodexConversations.delete(key)
 }
 
-function sameConversationId(a: string | undefined, b: string | undefined): boolean {
-  return typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase()
+/** P3.10 round 1 (V2): the conversations other open Codex tabs are on (they
+ *  hold their account lease), as main recorded them, for the resume picker
+ *  to say one is open in another tab. */
+function codexConversationsOpenElsewhere(sessionId: string): string[] {
+  const out: string[] = []
+  for (const [other, kept] of keptCodexConversations) {
+    if (other !== sessionId && codexLaunchLeases.has(other)) out.push(kept.uuid)
+  }
+  return out
 }
 
 /** The conversation a Codex session is on, for session:save (P3.5). */
@@ -515,15 +594,17 @@ export function getKeptCodexConversation(sessionId: string): { uuid: string; cwd
  *  ran under, for a Switch account to carry it into another account; none
  *  unless both are known. `uncertain`: its claim could have been another
  *  session's (see uncertainCodexConversations), so it is never carried.
- *  P3.10 `unconfirmed`: it was only inferred, by a launch that carried the
- *  app's hooks, in a realm whose hooks have been heard from -- so Codex runs
- *  them there, and would have named this session's conversation had it sent
- *  a message: the inferred rollout may be another writer's, so it is never
- *  carried either (it holds no message of this session's). */
+ *  P3.10 `unconfirmed`: it is only inferred, though this session's own
+ *  hooks have been heard (round 1, S4: keyed to the session, not its
+ *  account) -- Codex runs them for this session and names the conversation
+ *  it is on with every event, yet not this one, so it may be another
+ *  writer's: never carried either. A session whose own hooks are not heard
+ *  (the review declined or not answered, the gateway off, no hook given)
+ *  keeps P3.6's rules. */
 export function getKeptCodexConversationSource(sessionId: string): { uuid: string; cwd: string; accountId: string; uncertain: boolean; unconfirmed: boolean } | undefined {
   const kept = keptCodexConversations.get(sessionId)
   if (!kept || !kept.accountId) return undefined
-  const unconfirmed = kept.inferred === true && !!kept.hookedRealm && codexHookRealms.has(kept.hookedRealm)
+  const unconfirmed = kept.inferred === true && kept.hooksHeard === true
   return { uuid: kept.uuid, cwd: kept.cwd, accountId: kept.accountId, uncertain: uncertainCodexConversations.has(kept.uuid.toLowerCase()), unconfirmed }
 }
 
@@ -4420,6 +4501,9 @@ function spawnPtyResolved(
     // (never a command line). The previous launch's are gone with its
     // resources (killPty above).
     let hookFile: { hookFile: string; dispose(): void } | null = null
+    // Round 1 (B2): whether this launch minted the session's gateway token,
+    // which goes again whenever nothing will use it.
+    let tokenMinted = false
     try {
       const provider = getProvider('codex')
       const gw = getGateway()
@@ -4427,7 +4511,11 @@ function spawnPtyResolved(
       if (gw && gwStatus?.listening && gwStatus.port && provider.prepareSessionHooks) {
         try {
           const secret = gw.registerSession(sessionId)
-          hookFile = provider.prepareSessionHooks(sessionId, gwStatus.port, secret)
+          tokenMinted = true
+          noteGatewayToken(sessionId, true)
+          // Round 1 (A5): in the app's own data folder, owner-only by the
+          // app's folder rule.
+          hookFile = provider.prepareSessionHooks(sessionId, gwStatus.port, secret, { hardenDir: hardenCredentialDir })
         } catch (err) {
           logError(`[pty] Failed to prepare Codex hooks for ${sessionId}: ${(err as Error)?.message ?? err}`)
           hookFile = null
@@ -4460,25 +4548,34 @@ function spawnPtyResolved(
           nativeTheme.shouldUseDarkColors,
         ),
         ...(hookFile ? { codexHooks: { hookFile: hookFile.hookFile } } : {}),
+        // Round 1 (V2): for the picker, the conversations other tabs are on.
+        ...(options?.useResumePicker ? { codexOpenElsewhere: codexConversationsOpenElsewhere(sessionId) } : {}),
       })
       const { cmd: spawnCmd, args: spawnArgs, env: spawnEnv, commandLine } = built
       // P3.10: a hook file the launch did not use goes at once; one it uses
-      // goes with the session's resources.
-      const hookedRealm = built.hooksInstalled === true && hookFile ? launch.sessionsDir : undefined
-      if (hookFile && hookedRealm) {
+      // goes with the session's resources. Round 1 (B2): a token nothing will
+      // use (no hook file, or hooks the launch could not carry) goes too.
+      const hooked = built.hooksInstalled === true && !!hookFile
+      if (hookFile && hooked) {
         codexHookFiles.set(sessionId, hookFile)
-        codexHookedLaunches.set(sessionId, hookedRealm)
+        codexHookedLaunches.add(sessionId)
       } else if (hookFile) {
         try { hookFile.dispose() } catch { /* best-effort */ }
       }
       hookFile = null
-      logInfo(`[pty-manager] Codex hooks for ${sessionId}: ${hookedRealm ? 'on' : 'off (the Hooks gateway is off or not listening, or the hook could not be given on this launch)'}`)
+      if (tokenMinted && !hooked) {
+        dropGatewayToken(sessionId)
+        tokenMinted = false
+      }
+      // Round 1 (S4): the conversation this launch resumed by id keeps its doubt.
+      if (built.resumeId) codexResumedById.set(sessionId, built.resumeId.toLowerCase())
+      logInfo(`[pty-manager] Codex hooks for ${sessionId}: ${hooked ? 'on' : 'off (the Hooks gateway is off or not listening, or the hook could not be given on this launch)'}`)
       // Where the CLI runs: the resumed conversation's own directory, else the configured one.
       const codexCwd = built.cwd || resolvedCwd
       // The tab is on the conversation it resumes; a launch that resumes
       // nothing (the picker, a fresh start) lets the kept one go until the
       // status line claims the next.
-      if (built.resumeId) keepCodexConversation(sessionId, { uuid: built.resumeId, cwd: codexCwd }, launch.lease.accountId, { inferred: false, hookedRealm })
+      if (built.resumeId) keepCodexConversation(sessionId, { uuid: built.resumeId, cwd: codexCwd }, launch.lease.accountId, { inferred: false })
       else keptCodexConversations.delete(sessionId)
       // Said, never silent: the conversation's rollout does not record the
       // directory this session kept, so it resumes in the configured one.
@@ -4530,23 +4627,27 @@ function spawnPtyResolved(
           ...(built.resumeId && built.resumePath ? { resumePath: built.resumePath } : {}),
           ...(built.pickFile ? { pickFile: built.pickFile, pickFolder: built.pickFolder } : {}),
           onClaim: (claimed) => {
-            keepCodexConversation(sessionId, { uuid: claimed.id, cwd: claimed.cwd }, launch.lease.accountId, { inferred: claimed.exact !== true, hookedRealm })
+            keepCodexConversation(sessionId, { uuid: claimed.id, cwd: claimed.cwd }, launch.lease.accountId, { inferred: claimed.exact !== true })
             // P3.6: a claim that could have been another session's.
             if (claimed.certain !== true) markCodexConversationUncertain(claimed.id)
             // P3.10: the session's own hook named it: this session is on it,
-            // as Codex says, which clears P3.6's doubt -- unless it is the
-            // conversation this launch resumed by id (the app's own choice,
-            // from a record that may already be in doubt: that stays).
-            else if (claimed.fromHook === true && !sameConversationId(claimed.id, built.resumeId)) unmarkCodexConversationUncertain(claimed.id)
+            // as Codex says, which clears P3.6's doubt -- unless a live launch
+            // resumed it by id (clearCodexDoubtFromHook).
+            else if (claimed.fromHook === true) clearCodexDoubtFromHook(claimed.id)
           },
-          // The picker decided again after a claim: the session is no longer on it.
-          onRelease: () => { keptCodexConversations.delete(sessionId) },
+          // The picker decided again after a claim: the session is no longer
+          // on it. Round 1 (Q3): nor is the path its hook last named taken
+          // as read (the same path again is handed to the watch).
+          onRelease: () => {
+            keptCodexConversations.delete(sessionId)
+            lastCodexHookRollout.delete(sessionId)
+          },
           // P3.6 (VM finding V2): on a conversation another session holds
           // (picked, resumed by id, or named by its hook): recorded as this
           // session's too, so a Switch refuses it as in use and says so.
           onShared: (shared) => {
-            keepCodexConversation(sessionId, { uuid: shared.id, cwd: shared.cwd }, launch.lease.accountId, { inferred: shared.exact !== true, hookedRealm })
-            if (shared.fromHook === true && !sameConversationId(shared.id, built.resumeId)) unmarkCodexConversationUncertain(shared.id)
+            keepCodexConversation(sessionId, { uuid: shared.id, cwd: shared.cwd }, launch.lease.accountId, { inferred: shared.exact !== true })
+            if (shared.fromHook === true) clearCodexDoubtFromHook(shared.id)
           },
         },
         (data) => {
@@ -4575,9 +4676,11 @@ function spawnPtyResolved(
         registerClaudeReviewSession(sessionId, resolvedCwd)
       }
     } catch (err) {
-      // P3.10: a launch that failed keeps no hook file or hooked mark.
+      // P3.10: a launch that failed keeps no hook file or hooked mark, and
+      // (round 1, B2) no gateway token it minted.
       if (hookFile) { try { hookFile.dispose() } catch { /* best-effort */ } }
       forgetCodexHooks(sessionId)
+      if (tokenMinted) dropGatewayToken(sessionId)
       if (codexLaunchLeases.get(sessionId) === launch.lease) codexLaunchLeases.delete(sessionId)
       if (started) {
         // A PTY that started: its lease goes when its process does.
@@ -5151,6 +5254,8 @@ function spawnPtyResolved(
         if (gw && gwStatus?.listening && gwStatus.port) {
           try {
             const secret = gw.registerSession(sessionId)
+            // P3.10 round 1 (B1): this token is a Claude launch's.
+            noteGatewayToken(sessionId, false)
             injectHooks({ sessionId, settingsPath: sesPath, port: gwStatus.port, secret, cwd: claudeCwd })
           } catch (err) {
             logError(`[pty] Failed to inject hooks for ${sessionId}: ${(err as Error)?.message ?? err}`)
@@ -5280,7 +5385,7 @@ function spawnPtyResolved(
       if (localStarted) {
         logWarn(`[pty] Local spawn for ${sessionId} failed after its process started; the process is ended (${(err as Error)?.message ?? err})`)
         try { localStarted.kill() } catch { /* already gone */ }
-        try { getGateway()?.unregisterSession(sessionId) } catch { /* gateway stopped */ }
+        dropGatewayToken(sessionId)
         try { removeLocalSessionSettings(sessionId) } catch { /* best-effort */ }
         try { removeLocalSessionMcpConfig(sessionId) } catch { /* best-effort */ }
         try { removeLocalSessionStatusUrl(sessionId) } catch { /* best-effort */ }
@@ -5474,10 +5579,8 @@ function spawnPtyResolved(
       getPtyIntegrityMonitor()?.endSession(sessionId)
       // (watchdog teardown now lives UNCONDITIONALLY in cleanupSessionResources
       //  below — see FINDING 1 — so the restart-race stale exit tears it down too)
-      try {
-        const gwExit = getGateway()
-        if (gwExit) gwExit.unregisterSession(sessionId)
-      } catch { /* gateway may have already stopped during shutdown */ }
+      // (P3.10 round 1, B1: with the record that a Codex launch minted it.)
+      dropGatewayToken(sessionId)
       removeLocalSessionSettings(sessionId)
       removeLocalSessionMcpConfig(sessionId)
       // ADR-009 token custody: the status-URL sidecar carries this session's MCP
@@ -5799,6 +5902,10 @@ function cleanupSessionResources(sessionId: string): void {
   // the session's resources; the gateway's token for it goes on exit, as a
   // Claude session's does, and a respawn mints a new one.
   forgetCodexHooks(sessionId)
+  // P3.10 round 1 (Q1): a Codex turn's pending idle mark goes with the run it
+  // was for (an exit, a Restart, a Switch), so a fresh run is never marked
+  // for its predecessor's turn.
+  clearCodexIdleAttention(sessionId)
   // Clear the SSH flow controller too -- otherwise a stale entry keeps
   // a closure over the old ptyProcess and a renderer click after
   // session restart would write to a dead pty.

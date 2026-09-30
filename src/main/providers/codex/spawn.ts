@@ -3,14 +3,14 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { execSync } from 'child_process'
 import { sandboxFor, approvalFor } from './permissions'
-import { getResourcesDirectory } from '../../ipc/setup-handlers'
+import { getResourcesDirectory, getDataDirectory } from '../../ipc/setup-handlers'
 import type { SpawnOptions, ProviderSpawnCommand, PickFolderIdentity } from '../types'
 import { getConductorMcpPort, issueMcpSessionToken } from '../../conductor-mcp-server'
 import { readConfig, getConfigDir } from '../../config-manager'
 import { colorFgBgValue } from '../host-color-scheme'
-import { codexShellEnv } from './cli-runner'
+import { codexShellEnv, CMD_UNSAFE_PATH_RE } from './cli-runner'
 import { CODEX_CONVERSATION_ID_RE, codexFolderIdentity, resolveCodexResume } from './rollout-lookup'
-import { codexHookCommand, codexHookConfigArgs, CODEX_HOOK_FILE_ENV, CODEX_HOOK_SCRIPT, CODEX_HOOK_WRAPPER } from './hooks'
+import { codexHookCommand, codexHookConfigArgs, codexPlainWrapperDir, codexLocalAppData, verifyPlainCodexHookWrapper, CODEX_HOOK_FILE_ENV, CODEX_HOOK_SCRIPT, CODEX_HOOK_WRAPPER } from './hooks'
 
 export function resolveCodexBinary(): { cmd: string; args: string[] } | null {
   if (os.platform() !== 'win32') {
@@ -124,12 +124,25 @@ export function getCodexResumePickerPath(): string | null {
   return null
 }
 
+/** P3.10 round 1 (A5): the app's own data folder -- this install's (a dev
+ *  build, the installed app and a test run each have their own) -- where the
+ *  hook folders live (hooks.ts ensureCodexHookRoot); null when unknown. */
+export function codexHookDataDir(): string | null {
+  try { return getDataDirectory() || null } catch { return null }
+}
+
+/** P3.10 round 1 (V2): the picker's variable naming the conversations other
+ *  open tabs of this app are on (comma-separated ids), and how many it
+ *  carries at most. */
+export const CODEX_OPEN_ELSEWHERE_ENV = 'CCC_CODEX_OPEN_ELSEWHERE'
+export const CODEX_OPEN_ELSEWHERE_MAX = 64
+
 /** A value that must reach cmd.exe exactly as written holds no control character. */
 const hasControl = (s: string): boolean => [...s].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127)
 /** The shim's path is quoted on the line, but cmd.exe still expands `%` inside
  *  quotes and the npm shim re-reads its own path (`%~dp0`): the characters
- *  discovery's own cmd.exe route refuses (cli-runner `codexCommandLine`). */
-const CMD_UNSAFE_PATH_RE = /["%&^]/
+ *  refused there are cli-runner's CMD_UNSAFE_PATH_RE (shared with the hook
+ *  wrapper's route, P3.10 round 1). */
 /** Arguments go unquoted (none needs quoting): any character cmd.exe gives a
  *  meaning, and any whitespace, is refused. */
 const CMD_UNSAFE_ARG_RE = /["%&^|<>!()\s]/
@@ -267,16 +280,26 @@ export function buildCodexSpawn(opts: SpawnOptions): ProviderSpawnCommand {
   // token). None when the Hooks gateway is off or not listening (no hook
   // file), the forwarder is not deployed yet, or its path cannot be given
   // safely on this launch's route (codexHookCommand).
+  // P3.10 round 1 (V3): a launch through the npm .cmd shim can carry the
+  // command only as a plain word; when the resources folder's path is not
+  // one (the default has a space), it runs the app's plain-path copy of the
+  // wrapper under the user's local app data folder, checked again here
+  // before it is used (hooks.ts verifyPlainCodexHookWrapper).
   let hooksInstalled = false
   const hookFile = opts.codexHooks?.hookFile
   if (typeof hookFile === 'string' && hookFile && path.isAbsolute(hookFile) && !hasControl(hookFile)) {
-    let scriptsDir: string | null = null
-    try {
-      const resDir = getResourcesDirectory()
-      if (resDir) scriptsDir = path.join(resDir, 'scripts')
-    } catch { scriptsDir = null }
-    const command = scriptsDir ? codexHookCommand(scriptsDir, process.platform, viaCmdExe) : null
-    const target = scriptsDir ? path.join(scriptsDir, win32 ? CODEX_HOOK_WRAPPER : CODEX_HOOK_SCRIPT) : null
+    let resDir: string | null = null
+    try { resDir = getResourcesDirectory() || null } catch { resDir = null }
+    const scriptsDir = resDir ? path.join(resDir, 'scripts') : null
+    let command = scriptsDir ? codexHookCommand(scriptsDir, process.platform, viaCmdExe) : null
+    let target = scriptsDir ? path.join(scriptsDir, win32 ? CODEX_HOOK_WRAPPER : CODEX_HOOK_SCRIPT) : null
+    if (!command && win32 && viaCmdExe && resDir && scriptsDir) {
+      const plainDir = codexPlainWrapperDir(codexLocalAppData(), resDir)
+      if (plainDir && verifyPlainCodexHookWrapper(scriptsDir, plainDir)) {
+        command = codexHookCommand(plainDir, 'win32', true)
+        target = path.join(plainDir, CODEX_HOOK_WRAPPER)
+      }
+    }
     let deployed = false
     try { deployed = !!target && fs.statSync(target).isFile() } catch { deployed = false }
     if (command && deployed) {
@@ -352,6 +375,12 @@ export function buildCodexSpawn(opts: SpawnOptions): ProviderSpawnCommand {
       // with its tab's name (session-state.json), as Claude's picker does.
       // Read-only, best-effort.
       try { setOwned(pickerEnv, 'CCC_CONFIG_DIR', getConfigDir(), win32) } catch { /* no names */ }
+      // P3.10 round 1 (V2): the conversations other open tabs of this app are
+      // on (main's own record, ids only), so the picker can say one is open in
+      // another tab -- Codex lets one tab at a time write a conversation --
+      // rather than that it is no longer available. Codex never gets it.
+      const openElsewhere = (opts.codexOpenElsewhere ?? []).filter((id) => typeof id === 'string' && CODEX_CONVERSATION_ID_RE.test(id)).slice(0, CODEX_OPEN_ELSEWHERE_MAX)
+      if (openElsewhere.length > 0) setOwned(pickerEnv, CODEX_OPEN_ELSEWHERE_ENV, openElsewhere.join(','), win32)
       // Bare 'node' fails under node-pty/ConPTY on Windows (no PATH lookup).
       // Resolve to the full node.exe path via `where node`. See resolveNodeExe.
       return { cmd: resolveNodeExe(), args: [pickerScript, ...flags], env: pickerEnv, ...(pickFile && pickFolder ? { pickFile, pickFolder } : {}), hooksInstalled }

@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-09-29T23:04:18.295Z",
-  "head": "d8f538b19cb3bcd3ffdc7bee5623dddc44328674",
-  "tree": "780e93d82cfc874efb87cbbd2fd87931acdaab46",
+  "generatedAt": "2026-09-30T01:26:11.759Z",
+  "head": "f1d608f37460d9e57b2c23040b2ea8186133aa1b",
+  "tree": "91f9f532772eb1abffba34db8f03978b328d1f6c",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2525,
+  "trackedFileCount": 2528,
   "excludedFileCount": 384,
-  "scannedFileCount": 2141,
+  "scannedFileCount": 2144,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 584,
-  "pathDigest": "f19b3c68e5f55a8d5168368045193e42976e62f06da283c128b02448294219fa",
+  "matchedPathCount": 589,
+  "pathDigest": "a3af2eeb39c20e4db5b997841f8898304119e61df5e5263d7dc2683577de9877",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -272,7 +272,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 11
+      "lineCount": 15
     },
     {
       "path": "scripts/codex-resume-picker.js",
@@ -281,7 +281,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 38
+      "lineCount": 39
     },
     {
       "path": "scripts/lib/codex-resume-picker-lib.js",
@@ -289,7 +289,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 20
+      "lineCount": 26
     },
     {
       "path": "scripts/readme-shots/stage/content.js",
@@ -366,7 +366,7 @@
         "P05",
         "P14"
       ],
-      "lineCount": 28
+      "lineCount": 34
     },
     {
       "path": "src/main/canvas-mcp-tool.ts",
@@ -415,7 +415,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 2
+      "lineCount": 3
     },
     {
       "path": "src/main/claude-account-identity.ts",
@@ -423,6 +423,14 @@
         "P14"
       ],
       "lineCount": 1
+    },
+    {
+      "path": "src/main/codex-idle-attention.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "lineCount": 16
     },
     {
       "path": "src/main/codex-review-mcp-tool.ts",
@@ -487,7 +495,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 12
+      "lineCount": 14
     },
     {
       "path": "src/main/install-secret.ts",
@@ -501,7 +509,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 1
+      "lineCount": 2
     },
     {
       "path": "src/main/ipc/codex-review-handlers.ts",
@@ -519,7 +527,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 96
+      "lineCount": 97
     },
     {
       "path": "src/main/ipc/tokenomics2-handlers.ts",
@@ -695,7 +703,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 48
+      "lineCount": 72
     },
     {
       "path": "src/main/providers/codex/index.ts",
@@ -706,7 +714,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 217
+      "lineCount": 225
     },
     {
       "path": "src/main/providers/codex/install-recipes.ts",
@@ -820,7 +828,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 77
+      "lineCount": 89
     },
     {
       "path": "src/main/providers/codex/telemetry.ts",
@@ -894,7 +902,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 25
+      "lineCount": 27
     },
     {
       "path": "src/main/pty-manager.ts",
@@ -904,7 +912,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 231
+      "lineCount": 273
     },
     {
       "path": "src/main/sanitize-restored-spawn-options.ts",
@@ -1264,7 +1272,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 14
+      "lineCount": 20
     },
     {
       "path": "src/renderer/components/SessionStatusStrip.tsx",
@@ -1879,7 +1887,7 @@
         "P11",
         "P12"
       ],
-      "lineCount": 99
+      "lineCount": 101
     },
     {
       "path": "src/renderer/training-steps.ts",
@@ -1943,7 +1951,7 @@
         "P12",
         "P14"
       ],
-      "lineCount": 71
+      "lineCount": 73
     },
     {
       "path": "src/shared/ask-conductor-provider.ts",
@@ -2780,6 +2788,13 @@
       "lineCount": 25
     },
     {
+      "path": "tests/unit/channel-rules-idle-prompt.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 5
+    },
+    {
       "path": "tests/unit/channel-rules-store.test.ts",
       "predicates": [
         "P13"
@@ -2876,7 +2891,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 20
+      "lineCount": 33
     },
     {
       "path": "tests/unit/main/canvas-mcp-tool.test.ts",
@@ -3114,7 +3129,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 43
+      "lineCount": 84
     },
     {
       "path": "tests/unit/main/pty-handlers-codex-review.test.ts",
@@ -3454,7 +3469,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 63
+      "lineCount": 127
     },
     {
       "path": "tests/unit/providers/codex/mcp-config.test.ts",
@@ -3541,7 +3556,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 40
+      "lineCount": 69
     },
     {
       "path": "tests/unit/providers/codex/spawn-resume.test.ts",
@@ -3606,7 +3621,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 18
+      "lineCount": 23
     },
     {
       "path": "tests/unit/providers/codex/telemetry-lines.test.ts",
@@ -4342,6 +4357,13 @@
       "lineCount": 21
     },
     {
+      "path": "tests/unit/renderer/session-header.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 11
+    },
+    {
       "path": "tests/unit/renderer/session-launch.test.ts",
       "predicates": [
         "P13"
@@ -4607,7 +4629,15 @@
         "P01",
         "P13"
       ],
-      "lineCount": 18
+      "lineCount": 34
+    },
+    {
+      "path": "tests/unit/scripts/codex-resume-picker-open-elsewhere.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 12
     },
     {
       "path": "tests/unit/scripts/codex-resume-picker-worktrees.test.ts",
@@ -4678,6 +4708,13 @@
         "P13"
       ],
       "lineCount": 17
+    },
+    {
+      "path": "tests/unit/shared/app-knowledge.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 7
     },
     {
       "path": "tests/unit/status-ingest.test.ts",

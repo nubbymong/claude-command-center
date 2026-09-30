@@ -97,3 +97,30 @@ describe('app knowledge is publishable', () => {
     expect(body, 'says which things are shared instead').toMatch(/shared/i)
   })
 })
+
+// P3.10 round 1 (S2): the Feature Guide and Ask Conductor say what P3.10 made
+// true: the Session Watchdog covers local Codex sessions too, under the one
+// switch, without the safeguard check; and Codex's one-time Hooks need review
+// step is explained where a user would look (what to choose, what declining
+// costs, how to trust later).
+describe('app knowledge after P3.10 (round 1, S2)', () => {
+  const body = (id: string) => APP_KNOWLEDGE_SECTIONS.find((s) => s.id === id)!.body
+
+  it('the Session Watchdog covers Codex sessions under the one switch, and says what differs', () => {
+    const w = body('session-watchdog')
+    expect(w).not.toMatch(/only for Claude sessions/i)
+    expect(w).not.toMatch(/never a plain terminal, a Codex session/i)
+    expect(w).toMatch(/for Codex sessions/)
+    expect(w).toMatch(/one Session Watchdog switch in Settings covers both assistants/)
+    expect(w).toMatch(/safeguard check does not apply to Codex/)
+  })
+
+  it('Codex\'s hooks review is explained: what to choose, what declining costs, how to trust later', () => {
+    const k = body('known-issues')
+    expect(k).toMatch(/Hooks need review/)
+    expect(k).toMatch(/Trust all and continue/)
+    expect(k).toMatch(/Continue without trusting/)
+    expect(k).toMatch(/attention dot does not light up/)
+    expect(k).toMatch(/To trust them later/)
+  })
+})

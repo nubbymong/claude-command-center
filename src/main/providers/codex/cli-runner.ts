@@ -96,6 +96,12 @@ export interface CodexCommand {
 
 const isWindowsAbsolute = (p: string | undefined): p is string => !!p && /^([A-Za-z]:[\\/]|[\\/]{2}[^\\/?.])/.test(p)
 
+/** A path cmd.exe is handed quoted still has `%` expanded (and the npm shim
+ *  re-reads its own path with `%~dp0`): the characters refused in such a
+ *  path, by every route that gives cmd.exe one (the npm shim, spawn.ts; the
+ *  hook wrapper PowerShell hands cmd.exe, hooks.ts; P3.10 round 1). */
+export const CMD_UNSAFE_PATH_RE = /["%&^]/
+
 /** ComSpec and SystemRoot from an environment COPY, for codexCommandLine.
  *  process.env looks names up case-insensitively on Windows; a plain-object
  *  copy of it does not, and a parent may spell them SYSTEMROOT and COMSPEC (a

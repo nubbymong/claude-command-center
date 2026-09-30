@@ -389,7 +389,7 @@ function loadWorkNames(configDir) {
 // been through displayText and fits `width` code points. A conversation
 // with a name leads with it and shows its first prompt beneath (as
 // Claude's picker does); `tag` names a worktree other than the main one.
-function buildPickerRows(conversations, names, width, now) {
+function buildPickerRows(conversations, names, width, now, openElsewhere) {
   const w = Math.max(10, Math.floor(Number(width) || 60))
   const at = typeof now === 'number' ? now : Date.now()
   return (Array.isArray(conversations) ? conversations : []).map((conv, i) => {
@@ -400,6 +400,7 @@ function buildPickerRows(conversations, names, width, now) {
       conv.model ? displayText(conv.model, 64) : null,
       conv.effort ? displayText(conv.effort, 32) : null,
       timeAgo(conv.mtime, at),
+      isOpenElsewhere(openElsewhere, conv.id) ? OPEN_ELSEWHERE_WORDS : null,
     ].filter(Boolean).join(` ${MIDDLE_DOT} `), w)
     return {
       num: String(i + 1).padStart(2),
@@ -410,6 +411,40 @@ function buildPickerRows(conversations, names, width, now) {
       tag: conv.worktreeLabel ? fit(displayText(conv.worktreeLabel, 64), Math.min(24, w)) : null,
     }
   })
+}
+
+// -- Open in another tab (P3.10 round 1, V2) ------------------------
+// Codex lets one tab at a time write a conversation (0.155.1 shows its own
+// lock screen; 0.153.4 refuses the resume). The app names the conversations
+// its other open tabs are on (CCC_CODEX_OPEN_ELSEWHERE: ids, comma-separated,
+// from main's own record, as the launch saw them), so a row says so, and a
+// resume Codex refused for one is said to be open in another tab rather than
+// gone. FAIL-SAFE: an empty set.
+const OPEN_ELSEWHERE_VAR = 'CCC_CODEX_OPEN_ELSEWHERE'
+const OPEN_ELSEWHERE_MAX = 64
+const OPEN_ELSEWHERE_WORDS = 'open in another tab'
+function openElsewhereIds(env) {
+  const values = new Set()
+  for (const k of Object.keys(env || {})) {
+    const v = env[k]
+    if (typeof v === 'string' && k.toUpperCase() === OPEN_ELSEWHERE_VAR) values.add(v)
+  }
+  const out = new Set()
+  if (values.size !== 1) return out
+  for (const id of [...values][0].split(',').slice(0, OPEN_ELSEWHERE_MAX)) {
+    if (isResumeId(id)) out.add(id.toLowerCase())
+  }
+  return out
+}
+function isOpenElsewhere(openElsewhere, id) {
+  return !!openElsewhere && typeof openElsewhere.has === 'function' && typeof id === 'string' && openElsewhere.has(id.toLowerCase())
+}
+// The line the picker prints when Codex's resume of the picked conversation
+// failed and it starts a new one instead.
+function fallbackNotice(resumeUuid, openElsewhere) {
+  return isOpenElsewhere(openElsewhere, resumeUuid)
+    ? 'This conversation is open in another tab, and Codex lets one tab at a time write to it -- starting a new conversation...'
+    : 'Conversation no longer available -- starting fresh session...'
 }
 
 // -- The pick file --------------------------------------------------
@@ -518,12 +553,12 @@ function recordPick(file, resumeUuid, dirId, ops) {
 // The environment Codex itself starts with: the picker's own, without the
 // pick file's name or its folder's identity (in any spelling; Windows names
 // are case-insensitive), so nothing the session runs can record a pick of
-// its own.
+// its own; nor the ids of other tabs' conversations (P3.10 round 1).
 function childEnv(env) {
   const out = {}
   for (const k of Object.keys(env || {})) {
     const name = k.toUpperCase()
-    if (name === 'CCC_CODEX_PICK_FILE' || name === 'CCC_CODEX_PICK_DIR_ID') continue
+    if (name === 'CCC_CODEX_PICK_FILE' || name === 'CCC_CODEX_PICK_DIR_ID' || name === OPEN_ELSEWHERE_VAR) continue
     out[k] = env[k]
   }
   return out
@@ -627,4 +662,5 @@ function isResumeId(id) {
 module.exports = {
   parseRollout, walkRollouts, buildResumeArgs, shouldFallback, shouldUseShell, launchTarget, isResumeId,
   samePath, parseWorktrees, listWorktrees, worktreeLabelFor, displayText, buildPickerRows, loadWorkNames, pickDecision, writePick, recordPick, folderIdOf, childEnv, isDirectory, resolveRetargetCwd, timeAgo,
+  openElsewhereIds, fallbackNotice,
 }
