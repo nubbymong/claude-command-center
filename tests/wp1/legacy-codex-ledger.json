@@ -2,7 +2,7 @@
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "manifestPathDigest": "9b0830b2b2b8cd73e8081fac8809321e6a88ae062c31e1f9733e0a7a839805c6",
-  "manifestHead": "f70a57fd52bbcb55da73afd60f37b92e103643ab",
+  "manifestHead": "54422e2ae0f790778592f1badd644afaae455fec",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -191,7 +191,7 @@
       ],
       "category": "DOCS",
       "disposition": "added",
-      "evidence": "WP2 completion plan (owner instruction 2026-09-27: no interim release; finish the agreed 2.1.1 parity first): the 75 parity checklist rows reconciled with the recorded owner decisions (docs/wp1/owner-decisions-2026-09-20.md, docs/wp1/owner-decisions-2026-09-26.md, docs/wp1/owner-decisions-2026-09-27.md), each with its status, settling record, gap and PR, the package and release completion criteria and the PR 3 and PR 4 phases; no Codex code path (WP1.70); WP2 PR 3 P3.13 (row 72; the one-at-a-time C item): the P3.13 entry, row 72 and the section 2 recount (WP1.70)",
+      "evidence": "WP2 completion plan (owner instruction 2026-09-27: no interim release; finish the agreed 2.1.1 parity first): the 75 parity checklist rows reconciled with the recorded owner decisions (docs/wp1/owner-decisions-2026-09-20.md, docs/wp1/owner-decisions-2026-09-26.md, docs/wp1/owner-decisions-2026-09-27.md), each with its status, settling record, gap and PR, the package and release completion criteria and the PR 3 and PR 4 phases; no Codex code path (WP1.70); WP2 PR 3 P3.13 (row 72; the one-at-a-time C item): the P3.13 entry, row 72 and the section 2 recount (WP1.70); WP2 PR 3 P3.13 round 1 (row 72; the one-at-a-time C item): the P3.13 entry and row 72 record that the rule gates new copies and that a restored or accepted session keeps its right (WP1.70)",
       "note": "release plan text, not a user-facing claim"
     },
     {
@@ -221,7 +221,7 @@
       ],
       "category": "DOCS",
       "disposition": "added",
-      "evidence": "WP2 P2 (owner decision 2026-09-26, P1): the tracked 2.1.1 Codex parity checklist the owner decisions name as the release-wide list; one row per shared Conductor feature with its Mocked, Real CLI and Packaged evidence kept apart, mapping each row to its test or record; no Codex code path (WP1.70); docs/wp1/owner-decisions-2026-09-26.md; WP2 P3 usage track, MP1/MP2 review fixes: row 18 says what MP2 finished and what MP6 and MP8 still owe (WP1.70); docs/wp1/owner-decisions-2026-09-27.md; WP2 P3 usage track MP13 (the user-facing sweep for the usage UX the owner approved 2026-09-27): rows 17 to 21 and 25 to 30 from the usage track evidence (WP1.70); WP2 P3 usage track MP13 round 1 (spec review): row 26 cites the real-layout Claude attribution test (WP1.70); WP2 P3 usage track records: the owner approval of the usage screenshots on the usage rows and in the status section, CI and VM e2e results, and the kill-chain CI results (WP1.70); WP2 completion plan (2026-09-27, owner instruction: finish the agreed parity first): rows 17 and 28 to PARTIAL with the gap named, rows 52, 68 and 69 from OWNER to MISSING (settled by parity), and the header points at docs/wp2/completion-plan.md; docs/wp1/owner-decisions-2026-09-26.md (WP1.70); WP2 PR 3 P3.13 (row 72; the one-at-a-time C item) records: row 72 to VERIFIED and the C item fixed, the VM check owed (WP1.70)",
+      "evidence": "WP2 P2 (owner decision 2026-09-26, P1): the tracked 2.1.1 Codex parity checklist the owner decisions name as the release-wide list; one row per shared Conductor feature with its Mocked, Real CLI and Packaged evidence kept apart, mapping each row to its test or record; no Codex code path (WP1.70); docs/wp1/owner-decisions-2026-09-26.md; WP2 P3 usage track, MP1/MP2 review fixes: row 18 says what MP2 finished and what MP6 and MP8 still owe (WP1.70); docs/wp1/owner-decisions-2026-09-27.md; WP2 P3 usage track MP13 (the user-facing sweep for the usage UX the owner approved 2026-09-27): rows 17 to 21 and 25 to 30 from the usage track evidence (WP1.70); WP2 P3 usage track MP13 round 1 (spec review): row 26 cites the real-layout Claude attribution test (WP1.70); WP2 P3 usage track records: the owner approval of the usage screenshots on the usage rows and in the status section, CI and VM e2e results, and the kill-chain CI results (WP1.70); WP2 completion plan (2026-09-27, owner instruction: finish the agreed parity first): rows 17 and 28 to PARTIAL with the gap named, rows 52, 68 and 69 from OWNER to MISSING (settled by parity), and the header points at docs/wp2/completion-plan.md; docs/wp1/owner-decisions-2026-09-26.md (WP1.70); WP2 PR 3 P3.13 (row 72; the one-at-a-time C item) records: row 72 to VERIFIED and the C item fixed, the VM check owed (WP1.70); WP2 PR 3 P3.13 round 1 (row 72; the one-at-a-time C item) records: the rule gates new copies, restored and accepted sessions keep their right, the VM check owed (WP1.70)",
       "note": "release checklist text, not a user-facing claim"
     },
     {

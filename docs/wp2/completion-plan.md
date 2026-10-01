@@ -199,7 +199,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 69 | Plan mode | DONE (P3.8 round 1, caef0d42; round 2, f1783110): a "Plan mode" permissions choice, as Claude's launch option: the session starts READ-ONLY and Codex's own `/plan` is typed into its first ready prompt only (never the folder-trust prompt, the user's typing or after a turn), within a bounded wait; otherwise a note says Plan mode is not on and the session is read-only. The pill reads "plan" only while Codex's footer shows its Plan mode | Parity: Claude's Plan mode launch option (`src/renderer/lib/claude-cli-options.ts:85`); Codex has `/plan` on both supported versions and no launch flag for it (VM), so no section 19 record | verification: Plan mode on the VM, 0.153.4's fresh launches included (round 3); the approval flow with a working model (owner-only) | 3 |
 | 70 | Image paste | PARTIAL: built, unproven; the tip still says "Claude's prompt" (`tips-library.ts:370`) | Parity | verification (and the tip) | 3 |
 | 71 | Copy, paste, scrollback, mouse | PARTIAL: built, unproven; the trace is from 0.125 | Parity | verification (re-captured at 0.155.1) | 3 |
-| 72 | Multi Spawn and Quick Start with Codex | DONE (P2; P3.13, 3e45825d; mocked): a Codex config that is not Multi Spawn runs one copy at a time in the sidebar (P2) and now in main at `pty:spawn`, refused with the typed `already-running` before an account is prepared or leased; N copies of a Multi Spawn Codex config are N processes, each on its own account lease, a copy ending or closing letting go of its own lease only; Quick Start launches a Codex pin, with its x N control, blocked start and select lock, as a Claude pin's (`pty-spawn-one-at-a-time.test.ts`, `codex-multi-spawn-leases.test.ts`, `multi-spawn-codex.test.tsx`) | Parity: N copies with one lease each; Quick Start | verification: the VM check (PR 3 gate 6) | 2; 3 |
+| 72 | Multi Spawn and Quick Start with Codex | DONE (P2; P3.13, 3e45825d; round 1, 54422e2a; mocked): a Codex config that is not Multi Spawn runs one copy at a time in the sidebar (P2) and now in main at `pty:spawn` for NEW copies (a session that already runs, restored at this start or accepted in this run, keeps its right through a Restart, a Switch and a reattach), a new copy refused with the typed `already-running` before an account is prepared or leased; N copies of a Multi Spawn Codex config are N processes, each on its own account lease, a copy ending or closing letting go of its own lease only; Quick Start launches a Codex pin, with its x N control, blocked start and select lock, as a Claude pin's (`pty-spawn-one-at-a-time.test.ts`, `pty-spawn-one-at-a-time-rights.test.ts`, `codex-multi-spawn-leases.test.ts`, `multi-spawn-codex.test.tsx`) | Parity: N copies with one lease each; Quick Start | verification: the VM check (PR 3 gate 6) | 2; 3 |
 | 73 | Channel rules delivery | PARTIAL: built, unproven | Parity | verification | 3 |
 | 74 | Command buttons, preset pill, restart menu, theme | DONE | ADR-018 | verification: the real-CLI pass | 2, v4 |
 | 75 | Claude-only environment switches | DONE (not a Codex feature) | Labelled Claude only | none | none |
@@ -2330,95 +2330,132 @@ one lease each; Quick Start with Codex; a test on the Codex path. Enforcing the
 one-at-a-time rule in main also closes that C item. Likely files:
 `sidebar/QuickStartPanel.tsx`, `sidebar/MultiSpawnControl.tsx`, the launch gate
 and leases. ADR-009: yes (the launch gate).
-Built (3e45825d; mocked), settled by parity. The sidebar's half was already
-provider-neutral (its pins, rows, popover and select lock ask one rule and read
-each provider's own launch gate), so the work is main's half and the tests on
-the Codex path. A saved config that is not Multi Spawn runs one copy at a time
-in main, at `pty:spawn`, the one path every launch takes (a new launch, a
-restored session, a Restart, each copy of a Multi Spawn, Quick Start), for every
-config: Claude, Codex, terminal-only and SSH. The rule and its words are one
-definition (`src/shared/multi-spawn-rule.ts`), and the sidebar's
-`isMultiSpawnLaunchBlocked` and popover copy delegate to it. The gate
-(`src/main/launch-one-at-a-time.ts`, called in `pty-handlers.ts` straight after
-the provider rule) reads whether the config is Multi Spawn from the saved
-configs on disk (the first with that id, as every other reader takes it), never
-from the request. It asks and claims in one synchronous step, before the first
-await and before anything is installed, prepared, leased or spawned (every path
-with an await registers its spawn with pty-manager before it), so a second copy
-asked for while the first is still preparing its account finds it. Whether a
-claimed copy is still held comes from pty-manager at the moment of asking
-(`isSessionLiveOrStarting`, the end of `pty-manager.ts`: a PTY, or a spawn
-parked or preparing); a claim whose session is gone is dropped at the next look,
-so nothing is released and a launch that fails after its claim leaves nothing
-behind. A refused copy answers with the typed refusal `already-running` (a fourth
-refusal code), takes no account lease and starts nothing; the tab says it as
-it says a provider that is off ("Not started.
-<config> is already running. It isn't a Multi Spawn config, so it runs one at a
-time. Close the other copy, or turn on Allow Multi Spawn for it, then Restart
-this tab."), is kept, and a restore's conversation target goes back on its
-record. Not copies of a config: Ask Conductor and a spawn that names no saved
-config, the partner terminal (shell-only and named for its session, a suffix
-the renderer and main now share, with a test that the renderer's three sites
-use it), the same session id again (a Restart, a Switch, a respawn) and an SSH
-reattach, which re-adopts a session that already exists, as the sidebar's own
-backstop never sat on that path. The config's name in the refusal is made safe
-to show in a terminal (`stripSpoofableText`) and is never logged.
-Limits and deviations, recorded: (1) the sidebar's rule never looked at a
-restore, and main does: a config that was declined (an explicit `false`) with
-more than one copy saved restores the first and leaves the rest Not started
-with the reason, where all of them used to start. A config never chosen is
-turned on by the startup migration when more than one copy was saved, and that
-is saved before any of its tabs starts (a tab starts when it is first viewed).
-(2) Main counts only the copies it holds: a tab whose process has ended still
-counts in the sidebar and not in main, so the sidebar is the stricter of the
-two, never the looser, and a Restart (the same session id) is never refused. (3)
-Not a security boundary, as the rule was not in the sidebar: a spawn that names
-no config is not a copy of one; and if the config's own save failed (the health
-banner says so) the screen can say Multi Spawn while the disk does not, and main
-refuses until the save lands. (4) An SSH reattach is exempt on the renderer's
-word (`ssh.reconnect`). (5) Not new: copies of one config started together in
-one folder claim their rollouts by folder and time unless Codex's hooks are
-trusted (P3.5's recorded limit, P3.10's exact claim); a x N of a Codex config is
-that case.
-Tests, 5 files and 108 tests, red first: `launch-one-at-a-time.test.ts` (the
-rule on its own), `pty-spawn-one-at-a-time.test.ts` (the real handler: a Codex,
-Claude, terminal-only and SSH config, never chosen and declined, each refused
-on the second copy before anything is prepared, leased or spawned; a Multi Spawn
-config runs several; a Restart, the partner terminal, Ask, a reattach and an
-unknown config are not refused; the preparation window, two copies in one tick,
-a failed or closed preparation, the provider rule first, the saved flag read from
-disk), `codex-multi-spawn-leases.test.ts` (the real handler, the real pty-manager
-and a real lease registry: three copies are three processes on three leases, one
-ending or closing lets go of its own only, a refused copy takes none),
+Built (3e45825d; round 1, 54422e2a; mocked), settled by parity. The sidebar's
+half was already provider-neutral (its pins, rows, popover and select lock ask
+one rule and read each provider's own launch gate), so the work is main's half
+and the tests on the Codex path. A saved config that is not Multi Spawn runs one
+copy at a time in main, at `pty:spawn`, the one path every launch takes, for
+every config: Claude, Codex, terminal-only and SSH. The rule gates NEW copies
+only: a session that already has the right to run keeps it (below), so no
+Claude behaviour changes except that main now enforces for new copies what the
+sidebar already enforced. The rule and its words are one definition
+(`src/shared/multi-spawn-rule.ts`), and the sidebar's `isMultiSpawnLaunchBlocked`
+and popover copy delegate to it. The gate (`src/main/launch-one-at-a-time.ts`,
+called in `pty-handlers.ts` straight after the provider rule) reads whether the
+config is Multi Spawn from the saved configs on disk (the first with that id, as
+every other reader takes it), never from the request. It asks and claims in one
+synchronous step, before the first await and before anything is installed,
+prepared, leased or spawned (every path with an await registers its spawn with
+pty-manager before it), so a second copy asked for while the first is still
+preparing its account finds it. Whether a copy is still live comes from
+pty-manager at the moment of asking (`isSessionLiveOrStarting`, the end of
+`pty-manager.ts`: a PTY, or a spawn parked or preparing), so nothing is released
+and a launch that fails after the gate leaves nothing behind. A refused copy
+answers with the typed refusal `already-running`, takes no account lease and
+starts nothing. The refusal is its own type (`SpawnRefusal`, in
+`shared/providers/launch-refusal.ts`), so the provider gate's refusal type, which
+the accounts service and the other entry points branch on, is unchanged. The tab
+says it as it says a provider that is off ("Not started. <config> is already
+running. It isn't a Multi Spawn config, so it runs one at a time. Close the other
+copy, or turn on Allow Multi Spawn for it, then Restart this tab."), is kept, and
+a restore's conversation target goes back on its record. The config's name in
+the refusal is made safe to show in a terminal (`stripSpoofableText`) and is
+never logged; the config's id in the log is made safe too.
+Round 1 (the spec and code-quality reviews and two ADR-009 lenses; the owner's
+design: the rule gates new copies, a session that already runs keeps its right).
+Who keeps the right to run, never refused: (a) a session accepted for the config
+in this run, through a Restart, a Switch account, a Recover or an SSH reattach,
+with another copy live or not, whatever the config says now (Multi Spawn may have
+been unticked while the copies ran): the right outlives the process, because a
+Restart kills it first, and is bounded (512, the oldest first); (b) a session
+restored at this start: main seeds the ids it read from the saved session state
+at the first load of the run (the session load's read-back, `app-session-durability.ts`;
+never a flag the renderer sends), the saved sessions and the remotes left running,
+each for the config it was saved with, until its first accepted spawn. A right is
+for one config. A spawn is recorded as a copy only once pty-manager accepted it
+(`settleConfigLaunch`, called by `pty:spawn` straight after the spawn call), so a
+live session's record is never re-pointed by a spawn that is refused or throws,
+and a session later spawned as a non-copy stops counting as one. Not copies: a
+spawn that names no saved config; and the renderer's own partner terminal in its
+exact shape (shell-only, the session id plus a suffix the renderer and main share,
+with a test that the renderer's three files use it, no ssh block, no terminal
+options, no elevation), only for a session main holds. The first cut also exempted
+an Ask flag and an `ssh.reconnect` flag; both are gone, because a request could
+name a config's credentials (an SSH password, a terminal secret argument) and set
+either to start a second credentialed copy. Every legitimate reattach is a
+session of this run or a restored remote, so the flag was never needed. When main
+refuses a copy while the screen shows Multi Spawn on (a save that did not land),
+the tab asks main for the saved config and the toggle is made the saved one
+(`src/renderer/utils/refusedMultiSpawn.ts`; screen only, nothing is written).
+Limits, recorded: (1) rights live in main's memory for this run, bounded (512
+accepted, 1024 restored); a tab the user opens while the resume prompt is up is a
+new tab, since only the first load of the run seeds. (2) A Restart of a tab that
+never started (a Not started tab) is a launch of its config: main refuses it
+while another copy runs, as the sidebar does (`restartLaunchRefusal`); a Restart
+of a tab that started is never refused. (3) Main counts only the copies it holds:
+a tab whose process has ended still counts in the sidebar and not in main, so the
+sidebar is the stricter of the two. (4) Not a security boundary, as the rule was
+not in the sidebar: a spawn that names no config is not a copy of one. (5) A
+parked spawn that main accepted and that then fails after the wait leaves its
+right behind; it can only restart that tab. (6) Not new: copies of one config
+started together in one folder claim their rollouts by folder and time unless
+Codex's hooks are trusted (P3.5's recorded limit, P3.10's exact claim); a x N of
+a Codex config is that case.
+Tests, 10 files, red first. Round 0: `launch-one-at-a-time.test.ts` (the gate on
+its own: the rule, the rights, the restored sessions, the partner shape, the
+bound), `pty-spawn-one-at-a-time.test.ts` (the real handler: a Codex, Claude,
+terminal-only and SSH config, never chosen and declined, each refused on the
+second copy before anything is prepared, leased or spawned; the preparation
+window; the provider rule first; the saved flag read from disk),
+`codex-multi-spawn-leases.test.ts` (the real handler, the real pty-manager and a
+real lease registry: three copies are three processes on three leases, one
+ending or closing lets go of its own only, a refused copy takes none, a Restart
+and a Switch after Multi Spawn is unticked, restored copies),
 `multi-spawn-codex.test.tsx` (a Codex config through the launch backstop, a x N
 launch, a Restart of a tab that started nothing, a Codex pin's x N control,
-blocked start and select lock, Codex off and not set up, and the sidebar's rule,
-the shared rule and main's refusal agreeing over every stored value and copy
-count) and `shared/multi-spawn-rule.test.ts`. Red on c11fb360: the files that need the
-new modules fail to load, and on its handler 22 of 38 and 3 of 15 fail (the rest
-pin behaviour that already held). Mutation: 36 mutants of the gate, the shared
-rule, the refusal code, the handler wiring and the manager export, and 20 of the
-sidebar and Quick Start, every one red (one by the existing provider-neutral
-launch test). On the host: 155 affected and tree-scanner files pass, the WP1
-gate, traceability, boundaries and conformance files pass 57/57, and `npm run
-typecheck` and `tsc` of the new tests are clean. ADR-009: the gate is a new
-refusal in `pty-handlers.ts`, before any credential read, lease or spawn; it
-reads the saved configs and nothing the request says about itself, and it is not
-a new way in. SSH radius: `pty-manager.ts` gains one read-only export and no SSH
-branch, sentinel parser or statusline route changed, but the gate does run for an
-SSH session's spawn, so PR 3's SSH live matrix (owed) is the check for a second
-SSH copy and a reattach (no Codex case: a Codex session over SSH is refused).
+blocked start and select lock, and the sidebar's rule, the shared rule and main's
+refusal agreeing over every stored value and copy count) and
+`shared/multi-spawn-rule.test.ts`. Round 1 adds
+`pty-spawn-one-at-a-time-rights.test.ts` (the real handler, the real gate and the
+real session load: restored copies of a declined Claude and Codex config start
+and a new tab is refused; a Restart and a Switch of a copy beside another;
+reattach; no exemption carries credentials; the live session's record is not
+re-pointed; the log id), `claude-managed-launch-one-at-a-time.test.ts` (the real
+pty-manager: a Claude managed launch parked by the profile wait or the project
+gate is held), `refused-multi-spawn.test.ts` and cases in the tab, durability,
+lease and shared tests: 82 new tests. Red on the first round's code: 22 of the 34
+cases of the rights file, and 2 of the tab cases. Mutation: round 0, 59 mutants;
+round 1, 37 mutants of the gate, the seeding, the wiring, the refusal types and
+the reconcile, every one red (one of round 0's is killed by the existing
+provider-neutral launch test; the lens B mutant that kept a claim only for a
+config that is not Multi Spawn is among round 1's). On the host: 168 affected and
+tree-scanner files pass, the WP1 gate, traceability, boundaries and conformance
+files pass, and `npm run typecheck` and `tsc` of the touched tests are clean.
+ADR-009: the gate is a refusal in `pty-handlers.ts`, before any credential read,
+lease or spawn; it reads the saved configs and the session state main already
+reads, and nothing the request says about itself except the exact partner shape
+and its own session id; it is not a way round a credential binding (the first
+cut was, and round 1 closed it). SSH radius: `pty-manager.ts` gains one read-only
+export and no SSH branch, sentinel parser or statusline route changed, but the
+gate does run for an SSH session's spawn, so PR 3's SSH live matrix (owed) is the
+check for a second SSH copy and a reattach (no Codex case: a Codex session over
+SSH is refused).
 Owed on the VM (WINDOWS_1, real Codex 0.155.1 and 0.153.4): three copies of a
 Multi Spawn Codex config on one account are three Codex processes and three
-sessions on the account, each tab starting when it is first viewed, a closed
-copy letting go of its session once its process has ended; a second launch of a
-config that is not Multi Spawn, from the Saved row and from a Quick Start pin, is
-refused on screen, and a restore of two copies of a declined config starts the
-first and shows the second Not started with the tab text (screenshot for the
-owner); a restart with two saved copies of a config never chosen starts both and
-shows the startup page's chip; the end-to-end suite at PR 3's head, which no
-spec of the restore path may break; and a x N of a Codex config in one folder,
-each copy on its own rollout and a Restart resuming its own.
+sessions on the account, a closed copy letting go of its session once its process
+has ended, and with Multi Spawn unticked meanwhile a Restart and a Switch account
+of one copy start and a new copy is refused; a second launch of a config that is
+not Multi Spawn, from the Saved row and from a Quick Start pin, is refused on
+screen, and forced past the sidebar (the screen on, the saved config off) the tab
+says so and the toggle shows off (screenshot for the owner); a restart of the app
+with two saved copies of a declined config, and of a config never chosen, starts
+both, for Claude and for Codex, and a new tab for the config while they run is
+refused, and a remote left running reattaches by its own id beside another copy;
+the end-to-end suite at PR 3's head, which no spec of the restore path may break;
+and a x N of a Codex config in one folder, each copy on its own rollout and a
+Restart resuming its own. When a restored tab spawns (the active tab at once, the
+others when their view first has a size) does not change the rule, so the check
+does not depend on it.
 
 **P3.14 Usage follow-up: Codex credits.** A credits row on a Codex card once
 P3.1 shows the unit, as Claude's card has one; the known issue removed. Likely
