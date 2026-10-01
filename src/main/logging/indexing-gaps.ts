@@ -1,26 +1,31 @@
 /**
- * P3.12 (W4, X1-X3, Y1, Z1, Z2): when each Codex conversation was written
- * while it was not indexed, as wall-clock windows per conversation (its
- * rollout id, so its copy in another account is the same conversation). A
- * window opens when a local Codex session that is not indexed (logging off in
- * Settings or in its config, or before the indexing notice naming Codex was
- * seen) holds the conversation, and closes when that session stops holding it
- * (its exit, a Restart, a Switch, a claim of another conversation) or a
- * launch of it is indexed. The transcripts worker, for every read of that
- * conversation (any tab, session, copy or offset), skips each record stamped
- * inside a window. Windows describe history: nothing clears them.
+ * P3.12 (W4, X1-X3, Y1, Z1, Z2, K1, K3): when each Codex conversation was
+ * written while it was not indexed, as wall-clock windows per conversation
+ * (its rollout id, so its copy in another account is the same conversation).
+ * A window opens when a local Codex session that is not indexed (logging off
+ * in Settings or in its config, or before the indexing notice naming Codex
+ * was seen) holds the conversation, and closes when that session stops
+ * holding it (its exit, a Restart, a Switch, a claim of another
+ * conversation) or a launch of it is indexed. The transcripts worker, for
+ * every read of that conversation (any tab, session, copy or offset), skips
+ * each record stamped inside a window. Windows describe history: nothing
+ * clears them.
  *
  * A window opens at the moment the session BECAME not indexed (its launch, or
  * the switch-off), not at its claim of the conversation: Codex writes the
  * rollout's session_meta and the first prompt before the claim, and a later
- * reader from the start would index them. Never before the conversation
- * began, which the rollout's own first record (session_meta) says when it
- * can be read; a conversation begun earlier (a resume) opens at that moment,
- * so what it had indexed stays indexed.
+ * reader from the start would index them. A conversation begun earlier (a
+ * resume) opens at that moment too, so what it had indexed stays indexed.
+ *
+ * A session that is killed (a tab closed, a Restart, a Switch) is released
+ * from its window at once, and the window is closed by the closer
+ * releaseNotIndexedWindow returns, when the process's exit is reported: a
+ * killed Codex goes on writing while it winds down.
  *
  * Failing toward not indexing: a window still open when the app stopped (a
- * crash, or a quit: Codex's last writes land after it, so a quit leaves them
- * open) is closed at the next start; a record found damaged at start is kept aside
+ * crash, or a final flush at quit: Codex's last writes land after it, so a
+ * quit leaves them open) is closed at the next start; a record found damaged
+ * at start is kept aside
  * (the newest three) and every record stamped before that start counts as
  * written while not indexed (`before`); a conversation's windows past
  * WINDOWS_PER_CONVERSATION_MAX are merged (the two oldest into one spanning
@@ -34,11 +39,10 @@
  *
  * No default export (project convention).
  */
-import { readFileSync, renameSync, readdirSync, unlinkSync, lstatSync, openSync, fstatSync, readSync, closeSync, constants as fsConstants } from 'fs'
+import { readFileSync, renameSync, readdirSync, unlinkSync } from 'fs'
 import { basename, dirname, join } from 'path'
 import { atomicWriteFileSync } from '../atomic-write'
 import { codexConversationKey } from '../../shared/codex-conversation-key'
-import { readCodexSessionStart } from './codex-rollout-normalizer'
 
 /** A window: [start, end) in wall-clock ms; end null while still open. */
 export type NotIndexedWindow = [number, number | null]
@@ -55,16 +59,12 @@ const KEY_MAX = 200
 const SESSION_MAX = 200
 const DAMAGED_KEPT = 3
 const WRITE_DELAY_MS = 500
-/** The most of a rollout's start read to find when it began (its first line). */
-const ROLLOUT_HEAD_MAX_BYTES = 512 * 1024
-/** Never through a link, and never waiting on a file that is not a plain one. */
-const READ_PLAIN = fsConstants.O_RDONLY | (typeof fsConstants.O_NOFOLLOW === 'number' ? fsConstants.O_NOFOLLOW : 0) | (typeof fsConstants.O_NONBLOCK === 'number' ? fsConstants.O_NONBLOCK : 0)
 
 const windows = new Map<string, NotIndexedWindow[]>()
-/** The conversation each session not indexed holds (its open window). */
-const openBy = new Map<string, string>()
+/** The conversation each session not indexed holds, and its open window. */
+const openBy = new Map<string, { key: string; win: NotIndexedWindow }>()
 let before: number | null = null
-/** The app is stopping (flushIndexingGaps): the windows still open stay open. */
+/** The app is stopping (a final flushIndexingGaps): the windows still open stay open. */
 let stopping = false
 let file: string | null = null
 let dirty = false
@@ -222,47 +222,29 @@ function closeOn(key: string, ts: number): void {
   }
 }
 
-/** When the conversation at `rolloutPath` began, from its first line (the
- *  session_meta record's time); null on any doubt: not a plain file (a link, a
- *  folder, a pipe), a first line past ROLLOUT_HEAD_MAX_BYTES or not a
- *  session_meta record, or a time with no zone. Reads only that start, and
- *  only the one number leaves it. */
-function conversationBegan(rolloutPath: string): number | null {
-  let fd: number | null = null
-  try {
-    if (!lstatSync(rolloutPath).isFile()) return null
-    fd = openSync(rolloutPath, READ_PLAIN)
-    if (!fstatSync(fd).isFile()) return null
-    const buf = Buffer.alloc(ROLLOUT_HEAD_MAX_BYTES)
-    const read = readSync(fd, buf, 0, ROLLOUT_HEAD_MAX_BYTES, 0)
-    const head = buf.subarray(0, read).toString('utf8')
-    const end = head.indexOf('\n')
-    return readCodexSessionStart(end < 0 ? head : head.slice(0, end))
-  } catch {
-    return null
-  } finally {
-    if (fd !== null) { try { closeSync(fd) } catch { /* best-effort */ } }
-  }
+/** Close the window a session held: that one, and not another session's on the
+ *  same conversation; if it was merged into an older one, the latest open one. */
+function closeHeld(held: { key: string; win: NotIndexedWindow }, ts: number): void {
+  const list = windows.get(held.key)
+  if (!list) return
+  if (!list.includes(held.win)) { closeOn(held.key, ts); return }
+  if (held.win[1] === null) held.win[1] = Math.max(held.win[0], ts)
 }
 
 /** `sessionId`, not indexed since `since` (its launch, or the switch-off),
  *  holds the conversation at `rolloutPath` as of `now` (the claim; by default
- *  `since`): a window opens at `since`, no earlier than the conversation
- *  began when its rollout says so (and says it no later than `now`), and the
- *  window the session held on another conversation closes at `now`. */
+ *  `since`): a window opens at `since`, and the window the session held on
+ *  another conversation closes at `now`. */
 export function openNotIndexedWindow(sessionId: string, rolloutPath: string, since: number, now: number = since): void {
   if (typeof sessionId !== 'string' || !sessionId || sessionId.length > SESSION_MAX || typeof rolloutPath !== 'string' || !rolloutPath || !Number.isFinite(since) || !Number.isFinite(now)) return
   const key = conversationKey(rolloutPath)
   const held = openBy.get(sessionId)
-  if (held === key) return
-  const began = conversationBegan(rolloutPath)
-  const from = Math.min(since, now)
-  const start = began !== null && began > from && began <= now ? began : from
+  if (held?.key === key) return
   const changed: string[] = []
-  if (held !== undefined) { closeOn(held, now); changed.push(held) }
-  const list = touch(key)
-  list.push([start, null])
-  openBy.set(sessionId, key)
+  if (held !== undefined) { closeHeld(held, now); changed.push(held.key) }
+  const win: NotIndexedWindow = [Math.min(since, now), null]
+  touch(key).push(win)
+  openBy.set(sessionId, { key, win })
   bound(key, now)
   changed.push(key)
   // A newly opened window is written at once.
@@ -276,12 +258,31 @@ export function openNotIndexedWindow(sessionId: string, rolloutPath: string, sin
 export function closeNotIndexedWindow(sessionId: string, ts: number): void {
   // Stopping: Codex's last writes land after this, so the window stays open (the next start closes it).
   if (stopping) return
-  const key = openBy.get(sessionId)
-  if (key === undefined) return
+  const held = openBy.get(sessionId)
+  if (held === undefined) return
   openBy.delete(sessionId)
-  if (Number.isFinite(ts)) closeOn(key, ts)
+  if (Number.isFinite(ts)) closeHeld(held, ts)
   schedule()
-  tell([key])
+  tell([held.key])
+}
+
+/** `sessionId` is killed (a tab closed, a Restart, a Switch): it holds its
+ *  window no more (its next launch opens one of its own), but a killed Codex
+ *  goes on writing while it winds down, so the window stays open until the
+ *  returned closer runs, when the process's exit is reported. The closer closes
+ *  that exact window, once, and nothing once the app is stopping; a window
+ *  merged into an older one is left open (toward not indexing). null when the
+ *  session holds none. */
+export function releaseNotIndexedWindow(sessionId: string): ((ts: number) => void) | null {
+  const held = openBy.get(sessionId)
+  if (held === undefined) return null
+  openBy.delete(sessionId)
+  return (ts: number): void => {
+    if (stopping || held.win[1] !== null || !Number.isFinite(ts)) return
+    held.win[1] = Math.max(held.win[0], ts)
+    schedule()
+    tell([held.key])
+  }
 }
 
 /** Every conversation's windows, and `before`: what the worker starts with. */
@@ -296,12 +297,14 @@ export function setNotIndexedListener(fn: ((update: NotIndexedUpdate) => void) |
   listener = fn
 }
 
-/** The app is stopping: write what is pending. The windows still open are left
- *  open, here and on disk, and a session's end reported while the app tears
- *  down closes none: Codex's last records land after the quit, so the next
- *  start closes them at its time (as it does after a crash). */
-export function flushIndexingGaps(): void {
-  stopping = true
+/** Write what is pending. A final flush (the app is quitting: the default) also
+ *  latches: the windows still open are left open, here and on disk, and a
+ *  session's end reported while the app tears down closes none, because Codex's
+ *  last records land after the quit; the next start closes them at its time (as
+ *  it does after a crash). A flush that is not final (an OS shutdown that may be
+ *  vetoed, the app running on) only writes. */
+export function flushIndexingGaps(opts: { final?: boolean } = {}): void {
+  if (opts.final !== false) stopping = true
   if (timer) { clearTimeout(timer); timer = null }
   write()
 }
