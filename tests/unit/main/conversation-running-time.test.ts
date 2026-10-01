@@ -112,11 +112,49 @@ describe('the gaps kept with a conversation\'s time', () => {
     expect(conversationRunningTimesForSave()).toEqual([{ id: A, ms: 1_000, until: NOW, gaps: [{ from: 0, to: NOW - 5_000 }] }, { id: B, ms: 2_000, until: NOW }])
   })
 
-  it('only spans before the time counted up to; at most CONVERSATION_GAPS_KEPT, the latest', () => {
+  it('only spans before the time counted up to; at most CONVERSATION_GAPS_KEPT, of spans alike the latest', () => {
     const many = Array.from({ length: CONVERSATION_GAPS_KEPT + 3 }, (_, i) => ({ from: 1_000 * i + 1, to: 1_000 * i + 500 }))
     // Given newest first, with some that are not spans before NOW among them.
     noteConversationRunningTime(A, 1_000, NOW, [{ from: 5, to: 5 }, { from: 9, to: 3 }, { from: -1, to: 4 }, { from: 1, to: NOW + 1 }, { from: '10', to: 20 } as never, ...[...many].reverse()])
     expect(conversationRunningTime(A)!.gaps).toEqual(many.slice(-CONVERSATION_GAPS_KEPT))
+  })
+
+  // P3.16 (M4): each Restart while a large rollout's count is incomplete adds
+  // one gap, the few seconds the session was not running. Past the cap the
+  // shortest go, never the conversation's history before the app first ran it.
+  it('past CONVERSATION_GAPS_KEPT the shortest spans go, never the long span of the history before them', () => {
+    const history = { from: 0, to: NOW - 100_000 }
+    const pauses = Array.from({ length: CONVERSATION_GAPS_KEPT + 2 }, (_, i) => ({ from: NOW - 90_000 + i * 5_000, to: NOW - 90_000 + i * 5_000 + 1_000 + (i % 3) * 100 }))
+    noteConversationRunningTime(A, 1_000, NOW, [history, ...pauses])
+    const gaps = conversationRunningTime(A)!.gaps
+    expect(gaps).toHaveLength(CONVERSATION_GAPS_KEPT)
+    expect(gaps[0]).toEqual(history)
+    // The three shortest pauses (1000 ms each, the earliest of them first) went.
+    const shortest = pauses.filter((_, i) => i % 3 === 0).slice(0, 3)
+    for (const p of shortest) expect(gaps).not.toContainEqual(p)
+    expect(gaps.map((g) => g.from)).toEqual([...gaps.map((g) => g.from)].sort((a, b) => a - b))
+  })
+
+  it('spans that touch or overlap are one span', () => {
+    noteConversationRunningTime(A, 1_000, NOW, [{ from: 40, to: 50 }, { from: 10, to: 20 }, { from: 20, to: 30 }, { from: 25, to: 35 }, { from: 60, to: 70 }, { from: 61, to: 65 }])
+    expect(conversationRunningTime(A)!.gaps).toEqual([{ from: 10, to: 35 }, { from: 40, to: 50 }, { from: 60, to: 70 }])
+  })
+
+  it('the turns of the gaps a run had counted are kept with them, as a figure never below them, and saved and read back', () => {
+    noteConversationRunningTime(A, 1_000, NOW, [{ from: 0, to: NOW - 5_000 }], 500)
+    expect(conversationRunningTime(A)).toEqual({ ms: 1_000, until: NOW, gaps: [{ from: 0, to: NOW - 5_000 }], gapMs: 500 })
+    expect(conversationRunningTimesForSave()).toEqual([{ id: A, ms: 1_000, until: NOW, gaps: [{ from: 0, to: NOW - 5_000 }], gapMs: 500 }])
+    __resetConversationRunningTimesForTests()
+    rememberConversationRunningTimesFrom({ conversationRunningTimes: [{ id: A, ms: 1_000, until: NOW, gaps: [{ from: 0, to: NOW - 5_000 }], gapMs: 500 }] })
+    expect(conversationRunningTime(A)!.gapMs).toBe(500)
+    // Without gaps there is nothing it is a part of: none kept.
+    noteConversationRunningTime(B, 2_000, NOW, [], 700)
+    expect(conversationRunningTime(B)).toEqual({ ms: 2_000, until: NOW, gaps: [] })
+    // Not a time: none kept.
+    for (const bad of [-1, Number.NaN, Number.POSITIVE_INFINITY, '5' as never]) {
+      noteConversationRunningTime(A, 1_000, NOW, [{ from: 0, to: NOW - 5_000 }], bad)
+      expect(conversationRunningTime(A)!.gapMs).toBeUndefined()
+    }
   })
 
   it('a gap that is not a span of numbers from 0 on, ending by its until, is passed over whatever else is kept', () => {

@@ -59,7 +59,7 @@ export interface ResumeEnrichDeps {
    * whichever tabs are open (a closed tab's conversation can be resumed
    * later), so a session's Duration carries on across a relaunch.
    */
-  getConversationRunningTimes?: () => Array<{ id: string; ms: number; until: number; gaps?: Array<{ from: number; to: number }> }>
+  getConversationRunningTimes?: () => Array<{ id: string; ms: number; until: number; gaps?: Array<{ from: number; to: number }>; gapMs?: number }>
 }
 
 /** A conversation id, as every resume target must carry (the spawn schema's form). */

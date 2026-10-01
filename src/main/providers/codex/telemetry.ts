@@ -870,8 +870,10 @@ export function watchAndClaimRollout(
    *  the moment counted from (`start`: the launch, or later if main already
    *  kept time past it), the running time main kept of it before, and the
    *  spans of time whose completed turns are not in that (`windows`): the
-   *  time main did not see before this run, and any gaps main kept. */
-  let run: { id: string; start: number; before: number; windows: TurnWindow[] } | null = null
+   *  time main did not see before this run, and any gaps main kept; and
+   *  (`floor`, P3.16 M4) the part of the gaps' turns a run already counted,
+   *  the least the windows' turns add. */
+  let run: { id: string; start: number; before: number; windows: TurnWindow[]; floor: number } | null = null
   /** Read states whose proven turns are not all counted: a background count
    *  of the part between the head and the tail is running, or gave none. */
   const turnsIncomplete = new WeakSet<RolloutReadState>()
@@ -987,13 +989,22 @@ export function watchAndClaimRollout(
       start,
       before: kept ? kept.ms : 0,
       windows: [...(kept ? kept.gaps : []), { from: kept ? kept.until : 0, to: start }],
+      floor: kept?.gapMs ?? 0,
     }
+  }
+
+  /** The windows' turns this run counts: those `state` proves, and never less
+   *  than a run before it had counted of them (P3.16, M4: a Restart while a
+   *  large rollout's count runs reads a new tail, which may no longer hold the
+   *  turns the last run's did). */
+  function windowTurnsMs(r: { floor: number }, state: RolloutReadState): number {
+    return Math.max(state.turnMs, r.floor)
   }
 
   /** The claimed conversation's running time at `now`, with the turns
    *  `state` proves (P3.7). */
-  function runningMs(r: { start: number; before: number }, state: RolloutReadState, now: number): number {
-    return r.before + state.turnMs + Math.max(0, now - r.start)
+  function runningMs(r: { start: number; before: number; floor: number }, state: RolloutReadState, now: number): number {
+    return r.before + windowTurnsMs(r, state) + Math.max(0, now - r.start)
   }
 
   /** Main keeps the run's running time up to `now` (P3.7): with the turns
@@ -1004,7 +1015,7 @@ export function watchAndClaimRollout(
    *  count lets go of the rollout at once). */
   function keepRun(r: NonNullable<typeof run>, state: RolloutReadState, now: number): void {
     try {
-      if (turnsIncomplete.has(state)) noteConversationRunningTime(r.id, r.before + Math.max(0, now - r.start), now, r.windows)
+      if (turnsIncomplete.has(state)) noteConversationRunningTime(r.id, r.before + Math.max(0, now - r.start), now, r.windows, windowTurnsMs(r, state))
       else noteConversationRunningTime(r.id, runningMs(r, state, now), now)
     } catch (err) {
       console.warn(`[codex/telemetry] the running time of session ${sessionId} could not be kept: ${(err as Error)?.message ?? err}`)
@@ -1229,9 +1240,10 @@ export function watchAndClaimRollout(
       lines.totalDurationMs = runningMs(run, readState, now)
       keepRun(run, readState, now)
     } else if (sharedRunId) {
-      // Beside the tab that keeps it: what main keeps, counted on to now.
+      // Beside the tab that keeps it: what main keeps (with the gaps' turns
+      // it has counted, P3.16 M4), counted on to now.
       const kept = conversationRunningTime(sharedRunId)
-      lines.totalDurationMs = kept ? kept.ms + Math.max(0, Date.now() - kept.until) : 0
+      lines.totalDurationMs = kept ? kept.ms + (kept.gapMs ?? 0) + Math.max(0, Date.now() - kept.until) : 0
     }
     try {
       if (readState.latest) {

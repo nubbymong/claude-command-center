@@ -19,8 +19,12 @@
  * session state at every save (session-resume-enrich) and reads it back at
  * load, schema-checked (app-session-durability). Only the most recent
  * CONVERSATION_RUNNING_TIMES_KEPT entries are kept, by `until`, and at most
- * CONVERSATION_GAPS_KEPT gaps each, the latest. Provider-neutral: ids and
- * numbers only.
+ * CONVERSATION_GAPS_KEPT gaps each (spans that touch or overlap are one; past
+ * the cap the shortest go, the few seconds of a Restart, never the history
+ * before the app first ran the conversation). With the gaps, `gapMs`: the
+ * part of their turns a run had counted (P3.16, M4), so a figure shown before
+ * a Restart is never shown less after it while the next count runs.
+ * Provider-neutral: ids and numbers only.
  */
 
 /** A span of time (epoch milliseconds, both ends excluded). */
@@ -36,6 +40,9 @@ export interface ConversationRunningTime {
   until: number
   /** Spans before `until` whose completed turns are not in `ms` yet. */
   gaps: RunningTimeGap[]
+  /** P3.16 (M4): of the gaps' completed turns, the running time a run had
+   *  counted (a part of them): the least they add to `ms`. Only with gaps. */
+  gapMs?: number
 }
 
 export interface SavedConversationRunningTime {
@@ -43,12 +50,13 @@ export interface SavedConversationRunningTime {
   ms: number
   until: number
   gaps?: RunningTimeGap[]
+  gapMs?: number
 }
 
 /** How many conversations' times are kept (the most recent, by `until`). */
 export const CONVERSATION_RUNNING_TIMES_KEPT = 1000
-/** How many gaps a conversation keeps (the latest, by `to`); the turns of
- *  one dropped are not counted. */
+/** How many gaps a conversation keeps (past it the shortest go); the turns
+ *  of one dropped are not counted. */
 export const CONVERSATION_GAPS_KEPT = 8
 /** No running time is longer than this. */
 const MAX_RUNNING_MS = 10 * 365 * 24 * 3600 * 1000
@@ -70,19 +78,49 @@ function validId(id: unknown): id is string {
   return typeof id === 'string' && CONVERSATION_ID.test(id)
 }
 
-/** The well-formed gaps of `gaps` (numbers, 0 <= from < to <= until), the
- *  latest CONVERSATION_GAPS_KEPT by `to`, oldest first; anything else is
- *  passed over. */
+/** The well-formed gaps of `gaps` (numbers, 0 <= from < to <= until), oldest
+ *  first; anything else is passed over. P3.16 (M4): spans that touch or
+ *  overlap are one span (their union: no turn is in it twice); past
+ *  CONVERSATION_GAPS_KEPT the shortest go (of spans alike, the oldest): each
+ *  Restart during a large rollout's count adds the few seconds the session
+ *  was not running, which hold no turn of the app's, while the span from 0
+ *  holds the conversation's history before the app first ran it. */
 function validGaps(gaps: unknown, until: number): RunningTimeGap[] {
   if (!Array.isArray(gaps)) return []
-  const out: RunningTimeGap[] = []
+  const spans: RunningTimeGap[] = []
   for (const g of gaps.slice(0, CONVERSATION_GAPS_KEPT * 4)) {
     if (!g || typeof g !== 'object') continue
     const { from, to } = g as { from?: unknown; to?: unknown }
     if (typeof from !== 'number' || typeof to !== 'number' || !(from >= 0) || !(to > from) || !(to <= until)) continue
-    out.push({ from, to })
+    spans.push({ from, to })
   }
-  return out.sort((a, b) => a.to - b.to).slice(-CONVERSATION_GAPS_KEPT)
+  spans.sort((a, b) => a.from - b.from)
+  const out: RunningTimeGap[] = []
+  for (const s of spans) {
+    const last = out[out.length - 1]
+    if (last && s.from <= last.to) last.to = Math.max(last.to, s.to)
+    else out.push({ from: s.from, to: s.to })
+  }
+  while (out.length > CONVERSATION_GAPS_KEPT) {
+    let shortest = 0
+    for (let i = 1; i < out.length; i++) {
+      if (out[i].to - out[i].from < out[shortest].to - out[shortest].from) shortest = i
+    }
+    out.splice(shortest, 1)
+  }
+  return out
+}
+
+/** P3.16 (M4): the counted part of the gaps' turns, when it is a time and
+ *  there are gaps it is a part of; else none. */
+function validGapMs(gapMs: unknown, gaps: RunningTimeGap[]): number | undefined {
+  return gaps.length > 0 && typeof gapMs === 'number' && gapMs > 0 && gapMs <= MAX_RUNNING_MS ? gapMs : undefined
+}
+
+function entryOf(ms: number, until: number, gaps: unknown, gapMs: unknown): ConversationRunningTime {
+  const kept = validGaps(gaps, until)
+  const counted = validGapMs(gapMs, kept)
+  return counted === undefined ? { ms, until, gaps: kept } : { ms, until, gaps: kept, gapMs: counted }
 }
 
 /** Past the limit, the entries counted up to the earliest go. */
@@ -102,20 +140,27 @@ function trim(): void {
 export function conversationRunningTime(id: string): ConversationRunningTime | null {
   if (!validId(id)) return null
   const t = times.get(id.toLowerCase())
-  return t ? { ms: t.ms, until: t.until, gaps: t.gaps.map((g) => ({ from: g.from, to: g.to })) } : null
+  if (!t) return null
+  const gaps = t.gaps.map((g) => ({ from: g.from, to: g.to }))
+  return t.gapMs === undefined ? { ms: t.ms, until: t.until, gaps } : { ms: t.ms, until: t.until, gaps, gapMs: t.gapMs }
 }
 
 /** Keep `ms` as the conversation's running time, counted up to `until`, with
- *  the spans before it whose completed turns are not in `ms` yet. */
-export function noteConversationRunningTime(id: string, ms: number, until: number, gaps: RunningTimeGap[] = []): void {
+ *  the spans before it whose completed turns are not in `ms` yet, and the
+ *  part of those turns already counted (`gapMs`, P3.16 M4). */
+export function noteConversationRunningTime(id: string, ms: number, until: number, gaps: RunningTimeGap[] = [], gapMs?: number): void {
   if (!validId(id) || !validTime(ms, until, Date.now())) return
-  times.set(id.toLowerCase(), { ms, until, gaps: validGaps(gaps, until) })
+  times.set(id.toLowerCase(), entryOf(ms, until, gaps, gapMs))
   trim()
 }
 
 /** Every kept time, for the saved session state (gaps only where there are some). */
 export function conversationRunningTimesForSave(): SavedConversationRunningTime[] {
-  return [...times].map(([id, t]) => (t.gaps.length ? { id, ms: t.ms, until: t.until, gaps: t.gaps.map((g) => ({ ...g })) } : { id, ms: t.ms, until: t.until }))
+  return [...times].map(([id, t]) => {
+    if (!t.gaps.length) return { id, ms: t.ms, until: t.until }
+    const gaps = t.gaps.map((g) => ({ ...g }))
+    return t.gapMs === undefined ? { id, ms: t.ms, until: t.until, gaps } : { id, ms: t.ms, until: t.until, gaps, gapMs: t.gapMs }
+  })
 }
 
 /**
@@ -132,11 +177,11 @@ export function rememberConversationRunningTimesFrom(state: unknown): void {
   const now = Date.now()
   for (const entry of list.slice(0, CONVERSATION_RUNNING_TIMES_KEPT)) {
     if (!entry || typeof entry !== 'object') continue
-    const { id, ms, until, gaps } = entry as { id?: unknown; ms?: unknown; until?: unknown; gaps?: unknown }
+    const { id, ms, until, gaps, gapMs } = entry as { id?: unknown; ms?: unknown; until?: unknown; gaps?: unknown; gapMs?: unknown }
     if (!validId(id) || !validTime(ms, until, now)) continue
     const key = id.toLowerCase()
     const had = times.get(key)
-    if (!had || (until as number) > had.until) times.set(key, { ms: ms as number, until: until as number, gaps: validGaps(gaps, until as number) })
+    if (!had || (until as number) > had.until) times.set(key, entryOf(ms as number, until as number, gaps, gapMs))
   }
   trim()
 }
