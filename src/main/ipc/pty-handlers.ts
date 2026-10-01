@@ -766,8 +766,8 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     // before anything is installed, prepared, leased or spawned, so a second
     // copy asked for meanwhile finds the first (launch-one-at-a-time.ts). The
     // provider rule above comes first: a provider that is off says so.
-    const alreadyRunning = claimConfigLaunch(sessionId, options, { savedConfigs: () => readConfig('configs'), isLive: (id) => isSessionLiveOrStarting(id) })
-    if (alreadyRunning) return { started: false as const, refused: alreadyRunning }
+    const configClaim = claimConfigLaunch(sessionId, options, { savedConfigs: () => readConfig('configs'), isLive: (id) => isSessionLiveOrStarting(id) })
+    if ('refused' in configClaim) return { started: false as const, refused: configClaim.refused }
     // A new spawn of this id replaces whatever ran under it before: an
     // accepted SSH "Launch Claude" of the old PTY no longer counts.
     sshClaudeLaunches.delete(sessionId)
@@ -987,9 +987,10 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
 
       if (preparation) preparation.spawn(resolvedOptions)
       else spawnPty(win, sessionId, resolvedOptions)
-      // P3.13: pty-manager took the spawn the one-at-a-time gate passed (a spawn
-      // refused or thrown before here changes nothing the gate holds).
-      settleConfigLaunch(sessionId)
+      // P3.13: pty-manager took the spawn the one-at-a-time gate passed. Only this
+      // spawn's own ticket is settled; a spawn refused or thrown before here
+      // changes nothing the gate holds.
+      settleConfigLaunch(configClaim.ticket)
       // P3.8 round 3 (PB1): the permissions preset this run launched with,
       // main's record of what it started, so the renderer's pill compares a
       // choice for the next start with what is running.

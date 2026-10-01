@@ -40,7 +40,8 @@ const realDeps: RefusedMultiSpawnDeps = {
  * Called when main answered a spawn with `already-running`. Returns true when
  * the screen's toggle was corrected. Does nothing when the screen already
  * agrees with the saved config (the refusal is then simply true), when the
- * saved configs cannot be read, or when the config is not on the screen.
+ * saved configs cannot be read, when the config is not on the screen, or when
+ * the user changed the toggle while the saved configs were being read.
  */
 export async function reconcileRefusedMultiSpawn(configId: string | undefined, deps: RefusedMultiSpawnDeps = realDeps): Promise<boolean> {
   if (typeof configId !== 'string' || configId === '') return false
@@ -51,6 +52,11 @@ export async function reconcileRefusedMultiSpawn(configId: string | undefined, d
     if (!saved) return false
     const mine = saved.find((c) => !!c && typeof c === 'object' && (c as { id?: unknown }).id === configId) as { allowMultiSpawn?: unknown } | undefined
     if (!mine || mine.allowMultiSpawn === true) return false
+    // The read took a moment: the user may have changed the toggle (or removed the
+    // config) meanwhile. Look again right before writing, and leave a change of
+    // theirs alone.
+    const now = deps.onScreen(configId)
+    if (!now.found || now.allowMultiSpawn !== true) return false
     deps.setOnScreen(configId, mine.allowMultiSpawn === false ? false : undefined)
     return true
   } catch {

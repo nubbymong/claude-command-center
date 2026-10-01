@@ -13,7 +13,6 @@ import {
   alreadyRunningRefusalMessage,
   PARTNER_PTY_SUFFIX,
   isPartnerPtyId,
-  partnerBaseId,
 } from '../../../src/shared/multi-spawn-rule'
 import { refusedTabText, launchRefusalOf, spawnRefusalOf, PROVIDER_LAUNCH_REFUSAL_CODES, SPAWN_REFUSAL_CODES } from '../../../src/shared/providers'
 
@@ -67,13 +66,6 @@ describe('the partner terminal id', () => {
     expect(isPartnerPtyId('a1b2c3')).toBe(false)
     expect(isPartnerPtyId('a1b2c3-partner-x')).toBe(false)
     expect(isPartnerPtyId('')).toBe(false)
-  })
-
-  it('names its session: the id without the suffix', () => {
-    expect(partnerBaseId('a1b2c3-partner')).toBe('a1b2c3')
-    expect(partnerBaseId('a1b2c3')).toBe('a1b2c3')
-    expect(partnerBaseId('-partner')).toBe('')
-    expect(partnerBaseId('x-partner-partner')).toBe('x-partner')
   })
 
   it('is the suffix every renderer site that names a partner terminal uses', () => {

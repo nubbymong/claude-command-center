@@ -68,4 +68,29 @@ describe('reconcileRefusedMultiSpawn', () => {
     const d = deps({ found: true, allowMultiSpawn: true }, [{ id: 'c1', allowMultiSpawn: true }, { id: 'c1', allowMultiSpawn: false }])
     expect(await reconcileRefusedMultiSpawn('c1', d)).toBe(false)
   })
+  // R5: the saved configs are read over IPC; the user can change the toggle while that is in flight.
+  it('a toggle the user changed while the saved config was being read is not overwritten', async () => {
+    const screens = [{ found: true, allowMultiSpawn: true }, { found: true, allowMultiSpawn: false }]
+    const set = vi.fn()
+    const read = vi.fn(async () => [{ id: 'c1', allowMultiSpawn: false }])
+    expect(await reconcileRefusedMultiSpawn('c1', { onScreen: () => screens.shift()!, readSaved: read, setOnScreen: set })).toBe(false)
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(set).not.toHaveBeenCalled()
+  })
+
+  it('a config that was removed from the screen while it was being read is not written back', async () => {
+    const screens = [{ found: true, allowMultiSpawn: true }, { found: false, allowMultiSpawn: undefined }]
+    const set = vi.fn()
+    expect(await reconcileRefusedMultiSpawn('c1', { onScreen: () => screens.shift()!, readSaved: async () => [{ id: 'c1', allowMultiSpawn: false }], setOnScreen: set })).toBe(false)
+    expect(set).not.toHaveBeenCalled()
+  })
+
+  it('the screen is looked at again right before it is changed, not only before the read', async () => {
+    let looks = 0
+    const set = vi.fn()
+    const d: RefusedMultiSpawnDeps = { onScreen: () => { looks++; return { found: true, allowMultiSpawn: true } }, readSaved: async () => [{ id: 'c1', allowMultiSpawn: false }], setOnScreen: set }
+    expect(await reconcileRefusedMultiSpawn('c1', d)).toBe(true)
+    expect(looks).toBe(2)
+    expect(set).toHaveBeenCalledWith('c1', false)
+  })
 })

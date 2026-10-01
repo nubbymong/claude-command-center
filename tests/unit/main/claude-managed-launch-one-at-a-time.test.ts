@@ -103,7 +103,8 @@ if (typeof h.handlers.get('pty:spawn') !== 'function') throw new Error('ipcMain 
 
 const spawnAs = (id: string, over: Record<string, unknown> = {}) => h.handlers.get('pty:spawn')!({}, id, { cwd: os.tmpdir(), configId: 'cfgclaude', profileId: 'p1', ...over })
 const closeTab = (id: string) => h.listeners.get('pty:kill')!({}, id)
-const tick = () => new Promise((r) => setTimeout(r, 20))
+// A macrotask boundary: every promise reaction of the rejection or the settle has run by then (no real wait).
+const tick = () => new Promise<void>((r) => setTimeout(r, 0))
 const S = (n: number) => `ad${String(n).padStart(22, '0')}`
 
 // The folders this file made go with it: only a path of its own prefix, directly under the temp folder.
