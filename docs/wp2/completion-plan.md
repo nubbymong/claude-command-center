@@ -3072,6 +3072,41 @@ indexed again under the new run (search lists its earlier turns twice), where
 a resumed Codex conversation continues from what was indexed; Claude's resume
 to be settled the same way, or recorded as a limit.
 
+P3.16a, UI track (items U1 to U7; the main-track items are recorded
+separately). Pre-existing bugs queued during PR 3, each confirmed at HEAD,
+root-caused, fixed red first, with mutation proof (commits 97ceb424, 271c5099,
+76018b92 and 8ee4e9d3). U1: the Logs pane's Close sat under the floating GitHub
+button; the pane chrome keeps pr-12 clear of it (`LogsPane.tsx`). U2: the
+onboarding card for Index conversation logs, the Session Activity Logging tip
+and `PRIVACY.md` said the conversation index powers Tokenomics; they say it
+powers the Logs page and the Memory page's recent sessions, and that Tokenomics
+has an index of its own which the switch does not change (`log-index-text.ts`,
+`tips-library.ts`). U3: the Status Line Live Preview's rows wrap and keep each
+value whole, so the last value shows at any width (`SettingsPage.tsx`). U4: the
+attention card and tab were unreadable because the pulse overlay set no opacity
+of its own (opaque identity colour whenever the animation does not run) and its
+peak (35%) left the card's muted lines and the tab label at 2.8 to 3.2:1; the
+peak is 16%, the rest 10% with reduced motion holding it, the card's muted
+lines use `--text-secondary` and the
+tab label `--color-text` while attention shows, and the pill is mixed over
+`--surface-panel`; `token-contrast.test.ts` holds every identity colour in both
+themes to 4.5:1. U5: `parseHdropBuffer` read fWide at byte 13, the struct has it
+at offset 16 (fixture fixed too, with a real-shaped 20-byte DROPFILES). U6: Alt+V
+in a plain terminal types only the path, quoted for its shell, with no sentence
+and no Enter; over SSH it types nothing and the hint says where the file is.
+U7: no Restart control passes isShowingPartner true, so a Restart pressed in the
+partner view restarts the main tab, whose remounted view is hidden and starts
+only when shown; the Restart now keeps a Not started tab's flag, so the sidebar
+counts it only once its view has started it. Mutants: 2, 4, 4, 11, 3, 6 and 2
+for U1 to U7, all red and restored. Checks: typecheck, tsc of the touched
+tests, 66 affected and scanner files, and the WP1 files (the path digest equals
+the ledger's without other agents' in-flight watchdog files). Owed on the VM:
+the Logs pane Close with the GitHub button showing, the preview at 1600px and a
+narrower window, an attention card and tab in both themes, Alt+V in a plain
+terminal (local, and over SSH), and a Restart in the partner view of a Not
+started tab. Left to the sweep: the Alt+V tip and `training-steps.ts` line 695
+describe the assistant routes only.
+
 ## 9. PR 4 outline
 
 After PR 3, one PR at a time. Less detail here; PR 4 gets its own phase plan
