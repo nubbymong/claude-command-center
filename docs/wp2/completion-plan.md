@@ -3133,75 +3133,103 @@ terminal (local, and over SSH), and a Restart in the partner view of a Not
 started tab. Left to the sweep: the Alt+V tip and `training-steps.ts` line 695
 describe the assistant routes only.
 
-P3.16a, main track (items M1 to M9). Each confirmed at HEAD, root-caused, fixed
-red first with mutation proof, or recorded with its evidence or a design.
-M1 (8cb070d9; ADR-009): Claude's resume continues from what was indexed, as
-Codex's does, and a local Claude session uses P3.12's record-time windows,
-provider-neutral. The
-worker continues a Claude transcript a new run of the same session binds
-from that session's earlier binding of it (the digest of what was read
-vouches for the file when it can be compared; where it cannot, an earlier
-binding that kept none or more than the compare limit read, from its cursor,
-as across a worker restart), a Claude tail keeps the digest of what it read,
-and it leaves out the records stamped inside a not-indexed window of its
-conversation with the divider (Claude's normalizer takes the rule: a stamp
-without a zone is no time, a record with none takes the time before it). The
-earlier bindings are read by format; search lists a turn once whichever
-sessions indexed it, a Claude turn as a Codex one. Main marks the conversation
-a local Claude session not indexed is on (the transcript its hooks and status
-line name, or its exact resume at launch, keyed by the transcript's id) from
-the moment it became not indexed (its launch, or the switch-off); a new
-transcript closes the window before; a killed session's window closes when
-its exit is reported or the account lease's grace passes. Shells and SSH
-sessions mark nothing. Tests: the worker, normalizer, search and pty-manager
-files, and the native db file (CI). M2 (19b26919): the Claude Code overload
-and safeguard detectors read only the current turn, the rows below the
-newest user message in the 12-row tail, as Codex's do (`patterns.ts`); a
-one-line answer left the error it answered in the tail, and the simulation
-retried 6 times in an hour after a success; a draft in the input is not a user
-message. M3 (19b26919): a notification rule's duration is how long the
-session's turn ran, from its UserPromptSubmit to its Stop as the Hooks gateway
-received them, for both assistants (`channel-rules.ts`); Claude Code's
-Notification input carries no duration_ms, so the built-in Attention Pulse (at
-least 120000 ms) matched neither. M4 (2bb5ffc9): a run's gaps that touch or
-overlap are one span, past the 8-gap cap the shortest go (never the span of
-the history before the app ran the conversation), and the part of the gaps'
-turns a run counted is kept with them (`gapMs`), so a Restart while a large
-rollout's count runs never shows less (`conversation-running-time.ts`,
-`telemetry.ts`). M5 (636a96f7; ADR-009 by the path table): the Services byte
-count's record ends in the per-spawn teardown that every Restart and respawn
-runs, so each process's count starts with it on either ConPTY
-(`pty-manager.ts`). M6: already fixed at HEAD by P3.10 (d8f538b1): a tab on a
+P3.16a, main track (items M1 to M9; round 1, N1 to N10). Each confirmed at
+HEAD, root-caused, fixed red first with mutation proof, or recorded with its
+evidence or a design.
+M1 (8cb070d9, round 1 eef49197; ADR-009): Claude's resume continues from what
+was indexed, as Codex's does, and a local Claude session uses P3.12's
+record-time windows, provider-neutral. The worker continues a Claude
+transcript a new run of the
+same session binds from that session's earlier binding of it (the digest of
+what was read vouches for the file when it can be compared; where it cannot,
+an earlier binding that kept none or more than the compare limit read, from
+its cursor, as across a worker restart), a Claude tail keeps the digest of what
+it read, and it leaves out the records stamped inside a not-indexed window of
+its conversation or of its projects folder, with the divider (Claude's
+normalizer takes the rule: a stamp without a zone is no time, a record with
+none takes the time before it). The earlier bindings are read by format;
+search lists a turn once whichever sessions indexed it, a Claude turn as a
+Codex one. Main marks what a local Claude session writes while its run is one
+the logging switches and rules leave out (not one whose log service is missing
+that time): while it has named no transcript, its projects folder (the
+canonical folder its transcripts are bound under, from its launch folder), and
+each transcript it names (only a `<uuid>.jsonl` directly in that folder, from
+its hooks and status line, or its exact resume at launch), each from the
+moment it became not indexed (its launch, or the switch-off), the folder until
+its first name, each name until the session ends. A killed session's windows
+close when its exit is reported (its exit handler) or the account lease's
+grace passes. A session holds at most 32 windows; its first is written at once,
+the rest in the coalesced write. Shells and SSH sessions mark nothing.
+M2 (19b26919; round 1 N10, ASCII source): the Claude Code overload and
+safeguard detectors read only the current turn, the rows below the newest user
+message in the 12-row tail, as Codex's do (`patterns.ts`); a draft in the input
+is not a user message; an overload whose retry is answered in one line is
+retried once. M3 (19b26919, round 1 N6): a notification rule's duration is how
+long the session's turn ran, from its UserPromptSubmit to its Stop as the Hooks
+gateway received them, for both assistants (`channel-rules.ts`; Claude Code's
+Notification input carries no duration), and the rules hear the gateway
+whenever it is set (`onGateway`, `hooks/index.ts`), so the built-in Attention
+Pulse fires after a turn of two minutes or more of either assistant. M4
+(2bb5ffc9): a run's gaps that touch or overlap are one span, past the 8-gap cap
+the shortest go (never the span of the history before the app ran the
+conversation), and the part of the gaps' turns a run counted is kept with them
+(`gapMs`), so the Duration carries on through a Restart while a large
+rollout's count runs (`conversation-running-time.ts`, `telemetry.ts`). M5
+(636a96f7, round 1 e8440b20 and eef49197; ADR-009): the Services byte count of
+a session starts again with each new process (the per-spawn teardown restarts
+it quietly, with no "session ended" event) and with each new terminal mount
+(each mount names itself in its reports, so a Restart from the partner view
+starts it again too). M6: already fixed at HEAD by P3.10 (d8f538b1): a tab on a
 conversation another tab holds reads it beside the holder and shows its
 figures (`telemetry-claim-anywhere.test.ts`, `telemetry-exact-claim.test.ts`,
 `telemetry-duration.test.ts`); no change. M7 (4e5cfbc8): every e2e app
 instance runs with a home inside its own data dir (`isolated-env.ts`), the
 runner's Claude config folder and Codex home removed, and each Electron launch
-of the suite uses it (a unit scan holds that). M8 (c2973d1b; ADR-009 by the
-path table): the vision browser an earlier run left is identified by its
-name, its command line (the port and profile arguments, whole) and its
-creation time, which the kill reads again (`vision-browser-owner.ts`), and
-ended before the launch; while the debug port stays in use, vision is not
-started. M9: stopped,
-not a contained change: the realm's last-seen reading after a Codex Sign in
-again needs an owner decision. Two designs for the owner: learn the account
-from the app-server's account read and record it with the realm (it widens
-the app-server exception scoped to usage); or drop the realm's last-seen
-reading at every Codex Sign in again by a per-folder floor in the carry marks
-document that the last-seen reader's cutoff applies, so a Sign in again shows
-no reading until its next session. Mutants: M1 29 of 30 red (one
-equivalent, unreachable), M2 4, M3 5, M4 11, M5 2, M7 7, M8 21, all red and
-restored. Checks: typecheck, tsc of the touched tests, the affected and
-scanner files, the WP1 files (manifest rebound twice); 5 pty-manager test
-files fail at c0e4b231 before these changes, on a pty-manager mock without
-`isSessionLiveOrStarting`. Owed on the VM: a Claude session with logging off
-then on (Restart, and a new tab resuming its conversation: the record-time
-windows, nothing twice), a Claude overload retried once after a
-short answer, the Attention Pulse after a long turn of each assistant, a
-Restart's Services byte count on both ConPTYs, an e2e run leaving nothing in
-the real home, a crash's vision browser ended at the next start and the
-debug port in use at start (vision not started). Left to the sweep: a
-changelog line names Codex only.
+of the suite uses it (a unit scan holds that). M8 (c2973d1b, round 1 b1d5759e;
+ADR-009): vision clears a browser an earlier run left before it starts its
+own. The browser the app starts is ended by its process while its exit has
+not been
+observed; one an earlier run left is found by its profile, whether or not it
+listens, and ended once identified by its name, its whole port and profile
+arguments and its creation time, read again at the kill (a profile path is
+compared by its long real path, case-insensitively on Windows); while the
+debug port stays in use, vision is not started. N9 (6903fad2): an unfocused
+Alt+V goes to the pane on screen; in a tab's partner view the partner shell
+gets the image's quoted path, with no sentence and no Enter. M9: stopped, not a
+contained change: the realm's last-seen reading after a Codex Sign in again
+needs an owner decision. Two designs for the owner: learn the account from the
+app-server's account read and record it with the realm (it widens the
+app-server exception scoped to usage); or drop the realm's last-seen reading
+at every Codex Sign in again by a per-folder floor in the carry marks document
+that the last-seen reader's cutoff applies, so a Sign in again shows no
+reading until its next session.
+Limits (round 1, N5): a record stamped before the moment its session became
+not indexed (the machine's clock set back while it was not indexed) is in no
+window, and a later reader indexes it, for both assistants; a Claude projects
+folder's window covers every transcript in that folder for its stretch, so
+what another session indexed there in that stretch is left out of a later
+reader's read (toward not indexing); the folder is worked out from the launch
+folder as the transcript binder's discovery works it out.
+Mutants: round 0, M1 29 of 30 red (one equivalent, unreachable), M2 4, M3 5,
+M4 11, M5 2, M7 7, M8 21; round 1, N1 to N4 19, N6 and N10 7, N7 44, N8 20, N9
+11; all red and restored. Checks: typecheck, tsc of the touched tests, the
+affected and scanner files (round 1: 181), the WP1 files (manifest rebound,
+round 1 fa175eaf).
+VM at 855e1484 (WINDOWS_1, the fake Claude and Codex models): PASS M1 (nothing
+listed twice; the record-time windows as for Codex; a run stays not indexed
+until its next start once the switch is on again), M2, M4, M5 (a
+Restart: gap 0 on both ConPTYs), M8 with the debug port in use (vision not
+started); the Attention Pulse and a crash's vision browser are round 1's N6
+and N7; M7 inconclusive (the real home untouched, but no e2e Claude session
+started). Owed on the VM for round 1: the Attention Pulse after a turn of two
+minutes or more of each assistant; after a crash, the next start ends the
+earlier browser and vision recovers; Stop and quit end the app's browser; a
+Restart from the partner view (Services gap 0) and no "session ended" event at
+a Restart; Alt+V in a partner view; the projects folder window of a Claude
+session whose hooks and status line are off (N1); an e2e Claude session with
+the isolated home. Left to the sweep: a changelog line names Codex only; the
+Alt+V tip and `training-steps.ts` line 695
+do not mention the partner view.
 
 ## 9. PR 4 outline
 
