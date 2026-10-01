@@ -1778,7 +1778,7 @@ describe('a conversation copied into another account\'s folder (P3.6, row 22)', 
       // other account's figures, so a mark that cannot be kept never stops a
       // carry. With a store whose file cannot be read the mark is held in memory.
       it('a mark that cannot be kept, or asked for, never stops the carry', async () => {
-        const refusing = { record: () => false, markOf: () => null, remove: () => {}, cutoff: (): number | null => null, dropRealm: () => {}, adopt: () => true }
+        const refusing = { record: () => false, markOf: () => null, remove: () => {}, markIfNone: () => {}, cutoff: (): number | null => null, dropRealm: () => {}, adopt: () => true }
         const a = carrying(undefined, 60, { marks: refusing })
         expect(await a.folders.copyConversation!(A, B, { id: CID })).toEqual({ ok: true, carried: 'copied' })
         expect(a.calls).toHaveLength(1)
@@ -1800,11 +1800,40 @@ describe('a conversation copied into another account\'s folder (P3.6, row 22)', 
         expect(unwritable.markOf(sessionsOf(d.w, B), CID)).toBe(NOW)
       })
 
-      it('a copy that was present, whose earlier mark cannot be read yet, leaves the file\'s mark to stand: the mark made for the carry is taken back', async () => {
-        const closed = createCodexCarryMarks({ platform: 'win32', port: { read: () => ({ kind: 'unavailable' }), write: () => {}, setAside: () => false }, now: () => NOW })
-        const { w, folders } = carrying(() => ({ ok: true, carried: 'present', bytes: 1 }), 60, { marks: closed, now: () => NOW })
+      // Round 4 (the round 3 quality nit): taking the mark back and leaving it
+      // to the file left a copy the file has no mark for (a carry made before
+      // marks existed) reading whole for good. It is marked once the file
+      // reads, only when the file has none, as with the file readable.
+      it('a copy that was present, whose earlier mark cannot be read yet, keeps the file\'s mark once it reads, and is marked then only when the file has none', async () => {
+        for (const fileMark of [null, NOW - 5000]) {
+          let dir = ''
+          let readable = false
+          let t = NOW
+          const marksText = () => JSON.stringify({ schema: 1, marks: fileMark === null ? [] : [{ realm: RB, dir, id: CID, at: fileMark }] })
+          const closed = createCodexCarryMarks({ platform: 'win32', port: { read: () => (readable ? { kind: 'ok', text: marksText() } : { kind: 'unavailable' }), write: () => {}, setAside: () => false }, now: () => t })
+          const { w, folders } = carrying(() => ({ ok: true, carried: 'present', bytes: 1 }), 60, { marks: closed, now: () => NOW })
+          dir = sessionsOf(w, B)
+          expect(await folders.copyConversation!(A, B, { id: CID })).toEqual({ ok: true, carried: 'present' })
+          // Not known yet: the mark made for the carry is not put over the file's.
+          expect(closed.markOf(dir, CID), String(fileMark)).toBeUndefined()
+          readable = true
+          t = NOW + 60_000
+          expect(closed.markOf(dir, CID), String(fileMark)).toBe(fileMark ?? NOW)
+        }
+      })
+
+      it('a copy that was present, whose marks file reads while it is copied, keeps the mark made for the carry (it only hides more)', async () => {
+        let readable = false
+        let t = NOW
+        const closed = createCodexCarryMarks({ platform: 'win32', port: { read: () => (readable ? { kind: 'missing' } : { kind: 'unavailable' }), write: () => {}, setAside: () => false }, now: () => t })
+        const { w, folders } = carrying((c) => {
+          readable = true
+          t = NOW + 60_000
+          closed.cutoff(w.api.join(c.toHome, 'sessions'), CID)
+          return { ok: true, carried: 'present', bytes: 1 }
+        }, 60, { marks: closed, now: () => NOW })
         expect(await folders.copyConversation!(A, B, { id: CID })).toEqual({ ok: true, carried: 'present' })
-        expect(closed.markOf(sessionsOf(w, B), CID)).toBeUndefined()
+        expect(closed.markOf(sessionsOf(w, B), CID)).toBe(NOW)
       })
 
       it('a copy that fails while the marks file cannot be read takes its mark back, and leaves the folder as it was', async () => {

@@ -2809,6 +2809,33 @@ order of the set-aside; the orchestrator decides whether to re-attack it. Owed o
 with the marks file made unreadable, a Switch Account and a Sign in again go on and no card
 is an error; a corrupt file set aside with its copy beside it, and put back when its
 replacement cannot be written.
+Round 4 (the round 3 reviews: code quality PASS with two nits, spec PASS with one nit).
+(1) A copy the carry found already there (`present`) while the marks file could not be
+read had the mark made for the carry taken back so the file's would stand; when the file
+then held no mark for it (a carry made before marks existed) it read whole for good, where
+with the file readable it would have been marked. The store now keeps a "mark it if the
+file has none" for such a copy (`markIfNone`; up to 64, and past that the mark made for
+the carry stays, which only hides more): applied when the file reads, after the
+adoptions made meanwhile, so the file's own mark (or one an adoption brings) stands;
+dropped with its realm, and carried to the new folder by an adoption (the later time
+kept, as for a mark). Meanwhile its folder is held to the first failed read, as any
+folder carried into is. A copy whose marks file reads while it is being copied keeps the
+mark made for the carry. (2) A set-aside whose replacement cannot be written is tried 3
+times in a run and then left, with one log line: the file stays where it is and is read
+again after each wait (a file put right is taken), and the store stays as for a file it
+cannot read, instead of renaming it aside and back up to every 30 seconds. (3) The app
+knowledge sentence on a conversation moved in an earlier run now ends "until its session
+reports or the note can be read". ADR-023 says the same. Tests, red first on 2d432a6d
+(9 failed: 7 of the store, 2 of the folder work; a new case, fewer than 3 failed
+set-asides retried with nothing logged, is a control proved by mutants). Mutation: 28
+mutants of the store, the cap and its log, and the folder work, each alone and restored
+byte-identically, all red (removing the queue's reset at load is equivalent: nothing
+reads it once the file is read). Host: 130 affected and scanner files, 2801 passed, 8
+skipped. ADR-009: not re-run for round 4, which changes what the store does for a
+present copy and a failing set-aside while the file is unread; the orchestrator decides.
+Owed on the VM: a copy carried while the marks file is unreadable and found already
+there is marked once the file reads; a corrupt file whose replacement cannot be written
+is tried 3 times and then left in place.
 
 **P3.15 Terminal verification.** On the VM with real Codex 0.155.1: a Codex
 session in the Services snapshot; Alt+V image paste reaching Codex (and the tip

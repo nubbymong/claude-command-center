@@ -401,7 +401,7 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
   const liveUsage = deps.liveUsage ?? createCodexLiveUsage(deps.realmFs?.platform ?? process.platform)
   // Conversations carried by Switch Account (ADR-023): read by the session
   // watchers and the last-seen reader, written by the conversation copy.
-  const carryMarks = deps.carryMarks ?? createCodexCarryMarks({ ...(deps.carryMarksPort ? { port: deps.carryMarksPort } : {}), platform: deps.realmFs?.platform ?? process.platform, ...(deps.now ? { now: deps.now } : {}) })
+  const carryMarks = deps.carryMarks ?? createCodexCarryMarks({ ...(deps.carryMarksPort ? { port: deps.carryMarksPort } : {}), platform: deps.realmFs?.platform ?? process.platform, ...(deps.now ? { now: deps.now } : {}), log: (message) => logWarn(message) })
   const session = new CodexProvider(liveUsage, carryMarks)
   // The CLI setup last proved. Sign-in re-verifies it and runs exactly it. A
   // re-check clears it while it runs, and a failed check leaves it clear, so

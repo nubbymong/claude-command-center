@@ -17,7 +17,7 @@
 // PURE: an in-memory filesystem port records every call (the real port is
 // driven through an injected fs api); no real file is read and no process is
 // started.
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -1141,6 +1141,132 @@ describe('carry marks (ADR-023)', () => {
     })
   })
 
+  // Round 4 (the round 3 quality nit): a copy the carry found already in the
+  // folder keeps the mark the file has for it. While the file cannot be read
+  // that mark is not known, so the mark made for the carry is taken back and
+  // a "mark it if the file has none" is kept instead, applied once the file
+  // reads: a copy the file has no mark for is marked then, as it would have
+  // been with the file readable, instead of reading whole for good.
+  describe('a copy found already there while the file cannot be read: the file\'s mark stands, and it is marked only when the file has none (round 4)', () => {
+    // What the folder work does for such a copy: the mark made before the copy, then this.
+    const present = (m: CodexCarryMarks, realm: string, dir: string, id: string, at: number) => { m.record(realm, dir, id, at); m.markIfNone(realm, dir, id, at) }
+
+    it('is marked once the file reads when the file has none, keeps the file\'s own when it has one, and both are written', () => {
+      const { box, port } = memoryPort()
+      const t = clock(AT)
+      box.kind = 'unavailable'
+      box.text = doc([{ ...good, id: OTHER, at: AT - 50 }])
+      const m = createCodexCarryMarks({ platform: 'win32', port, now: t.now })
+      present(m, 'realm-b', SESSIONS, CID, AT + 100)
+      present(m, 'realm-b', SESSIONS, OTHER, AT + 100)
+      // Not known yet, and the folder carried into stays held to the first failed read meanwhile.
+      expect(m.markOf(SESSIONS, CID)).toBeUndefined()
+      expect(m.markOf(SESSIONS, OTHER)).toBeUndefined()
+      expect(m.cutoff(SESSIONS, CID)).toBe(AT)
+      expect(m.cutoff(C_DIR, CID)).toBeNull()
+      expect(box.writes).toBe(0)
+      box.kind = null
+      t.set(AT + 60_000)
+      expect(m.cutoff(SESSIONS, CID)).toBe(AT + 100)
+      expect(m.cutoff(SESSIONS, OTHER)).toBe(AT - 50)
+      const again = createCodexCarryMarks({ platform: 'win32', port })
+      expect(again.cutoff(SESSIONS, CID)).toBe(AT + 100)
+      expect(again.cutoff(SESSIONS, OTHER)).toBe(AT - 50)
+    })
+
+    it('found there again before the file reads, the first time is kept; a carry that copies it after wins', () => {
+      for (const copiedAfter of [false, true]) {
+        const { box, port } = memoryPort()
+        const t = clock(AT)
+        box.kind = 'unavailable'
+        const m = createCodexCarryMarks({ platform: 'win32', port, now: t.now })
+        present(m, 'realm-b', SESSIONS, CID, AT + 100)
+        present(m, 'realm-b', SESSIONS, CID, AT + 200)
+        if (copiedAfter) m.record('realm-b', SESSIONS, CID, AT + 300)
+        box.kind = null
+        t.set(AT + 60_000)
+        expect(m.cutoff(SESSIONS, CID), String(copiedAfter)).toBe(copiedAfter ? AT + 300 : AT + 100)
+      }
+    })
+
+    it('a realm dropped before the file reads takes them with it; an adoption takes them to the new folder', () => {
+      // Dropped: nothing is marked once the file reads.
+      const d = memoryPort()
+      const td = clock(AT)
+      d.box.kind = 'unavailable'
+      const dropped = createCodexCarryMarks({ platform: 'win32', port: d.port, now: td.now })
+      present(dropped, 'realm-b', SESSIONS, CID, AT + 100)
+      present(dropped, 'realm-c', C_DIR, CID, AT + 100)
+      dropped.dropRealm('realm-b')
+      d.box.kind = null
+      td.set(AT + 60_000)
+      expect(dropped.cutoff(SESSIONS, CID)).toBeNull()
+      expect(dropped.cutoff(C_DIR, CID)).toBe(AT + 100)
+      // Adopted (a Sign in again after the carry): the new folder is marked as the old one is, from the file's mark when it has one.
+      const NEW_DIR = 'C:\\Users\\u\\new\\sessions'
+      for (const fileMark of [null, AT - 50]) {
+        const a = memoryPort()
+        const ta = clock(AT)
+        a.box.kind = 'unavailable'
+        a.box.text = fileMark === null ? null : doc([{ ...good, at: fileMark }])
+        const m = createCodexCarryMarks({ platform: 'win32', port: a.port, now: ta.now })
+        present(m, 'realm-b', SESSIONS, CID, AT + 100)
+        m.adopt('realm-b', 'realm-new', NEW_DIR)
+        a.box.kind = null
+        ta.set(AT + 60_000)
+        expect(m.cutoff(SESSIONS, CID), String(fileMark)).toBe(fileMark ?? AT + 100)
+        expect(m.cutoff(NEW_DIR, CID), String(fileMark)).toBe(fileMark ?? AT + 100)
+      }
+      // The new folder already had one for that copy: the later time is kept, as an adoption keeps a mark's.
+      const l = memoryPort()
+      const tl = clock(AT)
+      l.box.kind = 'unavailable'
+      const later = createCodexCarryMarks({ platform: 'win32', port: l.port, now: tl.now })
+      present(later, 'realm-new', NEW_DIR, CID, AT + 100)
+      present(later, 'realm-b', SESSIONS, CID, AT + 200)
+      later.adopt('realm-b', 'realm-new', NEW_DIR)
+      l.box.kind = null
+      tl.set(AT + 60_000)
+      expect(later.cutoff(NEW_DIR, CID)).toBe(AT + 200)
+    })
+
+    it('past its bound, the mark made for the carry stays (it only hides more)', () => {
+      const { box, port } = memoryPort()
+      const t = clock(AT)
+      box.kind = 'unavailable'
+      box.text = doc(Array.from({ length: 65 }, (_, i) => ({ ...good, id: idN(i), at: AT - 50 })))
+      const m = createCodexCarryMarks({ platform: 'win32', port, now: t.now })
+      for (let i = 0; i < 65; i++) present(m, 'realm-b', SESSIONS, idN(i), AT + 100)
+      expect(m.markOf(SESSIONS, idN(63))).toBeUndefined()
+      expect(m.markOf(SESSIONS, idN(64))).toBe(AT + 100)
+      // An adoption with the bound reached: the new folder's are marked now too.
+      const NEW_DIR = 'C:\\Users\\u\\new\\sessions'
+      m.adopt('realm-b', 'realm-new', NEW_DIR)
+      box.kind = null
+      t.set(AT + 60_000)
+      expect(m.cutoff(SESSIONS, idN(0))).toBe(AT - 50)
+      expect(m.cutoff(SESSIONS, idN(63))).toBe(AT - 50)
+      expect(m.cutoff(SESSIONS, idN(64))).toBe(AT + 100)
+      expect(m.cutoff(NEW_DIR, idN(0))).toBe(AT + 100)
+      expect(m.cutoff(NEW_DIR, idN(64))).toBe(AT + 100)
+    })
+
+    it('with the file read, it keeps the mark a copy has and marks one that has none (written); it refuses what is not a mark', () => {
+      const m = createCodexCarryMarks({ platform: 'win32' })
+      m.record('realm-b', SESSIONS, CID, AT)
+      m.markIfNone('realm-b', SESSIONS, CID, AT + 100)
+      expect(m.cutoff(SESSIONS, CID)).toBe(AT)
+      m.markIfNone('realm-b', SESSIONS, OTHER, AT + 100)
+      expect(m.cutoff(SESSIONS, OTHER)).toBe(AT + 100)
+      const notMarks: Array<[string, string, string, number]> = [['', SESSIONS, idN(5), AT], ['realm-b', '', idN(5), AT], ['realm-b', SESSIONS, 'x', AT], ['realm-b', SESSIONS, idN(5), Number.NaN]]
+      for (const [realm, dir, id, at] of notMarks) expect(() => m.markIfNone(realm, dir, id, at)).not.toThrow()
+      expect(m.cutoff(SESSIONS, idN(5))).toBeNull()
+      const { port } = memoryPort()
+      createCodexCarryMarks({ platform: 'win32', port }).markIfNone('realm-b', SESSIONS, CID, AT)
+      expect(createCodexCarryMarks({ platform: 'win32', port }).cutoff(SESSIONS, CID)).toBe(AT)
+    })
+  })
+
   describe('a file that is not what was written fails closed, and is set aside and replaced in one step (rounds 2 and 3)', () => {
     const bad: Array<[string, string]> = [
       ['empty', ''], ['junk', 'not json'], ['an array', '[]'], ['null', 'null'],
@@ -1216,12 +1342,44 @@ describe('carry marks (ADR-023)', () => {
       const t = clock(AT)
       box.kind = 'corrupt'
       box.asideFails = true
-      const m = createCodexCarryMarks({ platform: 'win32', port, now: t.now })
+      const log = vi.fn()
+      const m = createCodexCarryMarks({ platform: 'win32', port, now: t.now, log })
       m.record('realm-b', SESSIONS, CID, AT)
       for (let i = 0; i < 5; i++) { t.set(AT + (i + 1) * 40_000); expect(m.cutoff(SESSIONS, OTHER), String(i)).toBe(AT) }
-      expect(box.asides).toBe(6)
+      // Round 4 (the round 3 quality nit): three tries in a run, then it is left
+      // where it is (one log line), not renamed aside and back every 30 seconds.
+      expect(box.asides).toBe(3)
+      expect(log).toHaveBeenCalledTimes(1)
+      expect(String(log.mock.calls[0][0])).toMatch(/carry marks/)
+      expect(box.reads).toBe(6)
       expect(box.writes).toBe(0)
       expect(box.kind).toBe('corrupt')
+      // It is still read after each wait, so a file put right meanwhile is taken.
+      box.kind = null
+      box.text = doc([{ ...good, id: OTHER, at: AT - 50 }])
+      t.set(AT + 300_000)
+      expect(m.cutoff(SESSIONS, OTHER)).toBe(AT - 50)
+      expect(m.cutoff(SESSIONS, CID)).toBe(AT)
+      expect(box.asides).toBe(3)
+      expect(log).toHaveBeenCalledTimes(1)
+    })
+
+    it('fewer than three failed set-asides in a run: it is tried again after the wait, and nothing is logged', () => {
+      const { box, port } = memoryPort()
+      const t = clock(AT)
+      box.kind = 'corrupt'
+      box.asideFails = true
+      const log = vi.fn()
+      const m = createCodexCarryMarks({ platform: 'win32', port, now: t.now, log })
+      m.cutoff(SESSIONS, CID)
+      t.set(AT + 40_000)
+      m.cutoff(SESSIONS, CID)
+      expect(box.asides).toBe(2)
+      box.asideFails = false
+      t.set(AT + 80_000)
+      expect(m.cutoff(SESSIONS, CID)).toBe(AT + 80_000)
+      expect(box.asides).toBe(3)
+      expect(log).not.toHaveBeenCalled()
     })
 
     it('reads own properties only: a polluted Object.prototype makes no entry or file valid', () => {
@@ -1297,7 +1455,7 @@ describe('carry marks (ADR-023)', () => {
     expect(m.cutoff(SESSIONS, CID)).toBe(Number.MAX_SAFE_INTEGER)
     expect(m.record('realm-b', SESSIONS, CID, AT)).toBe(false)
     expect(m.markOf(SESSIONS, CID)).toBeNull()
-    expect(() => { m.remove(SESSIONS, CID); m.dropRealm('realm-b') }).not.toThrow()
+    expect(() => { m.remove(SESSIONS, CID); m.dropRealm('realm-b'); m.markIfNone('realm-b', SESSIONS, CID, AT) }).not.toThrow()
     expect(m.adopt('realm-b', 'realm-new', C_DIR)).toBe(false)
   })
 

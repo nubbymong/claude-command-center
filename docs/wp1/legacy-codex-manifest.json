@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-01T17:03:14.112Z",
-  "head": "4e5cfbc8b6bd3fe6383d933c9f284c2cdc06b47c",
-  "tree": "9b187c0892e2a720f032159f97ef36e8ba6371ee",
+  "generatedAt": "2026-10-01T17:35:06.603Z",
+  "head": "f87271f8908d4fc0e640c54784e31e1c54b3d1eb",
+  "tree": "b12f46213155dbb1209e723febb8be23a3e28e66",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 623,
+      "lineCount": 629,
       "truncated": true
     },
     {
@@ -975,7 +975,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 72
+      "lineCount": 73
     },
     {
       "path": "src/main/providers/compose.ts",
@@ -4105,7 +4105,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 166
+      "lineCount": 178
     },
     {
       "path": "tests/unit/providers/host-color-scheme.test.ts",

@@ -487,7 +487,7 @@ describe('a conversation carried by Switch Account (P3.14 round 1, C2; ADR-023)'
     let marks = fresh()
     const store: CodexCarryMarks = {
       record: (...a) => marks.record(...a), markOf: (...a) => marks.markOf(...a), remove: (...a) => marks.remove(...a), cutoff: (...a) => marks.cutoff(...a),
-      dropRealm: (r) => marks.dropRealm(r), adopt: (...a) => marks.adopt(...a),
+      dropRealm: (r) => marks.dropRealm(r), adopt: (...a) => marks.adopt(...a), markIfNone: (...a) => marks.markIfNone(...a),
     }
     let now = SWITCH_TO_B
     let carried: 'copied' | 'extended' = 'copied'
@@ -760,7 +760,7 @@ describe('a conversation carried by Switch Account (P3.14 round 1, C2; ADR-023)'
   it('H1: a sign in again goes on whatever the marks do: an adoption that throws, or says no, never stops it', async () => {
     for (const adopt of [(): boolean => { throw new Error('marks') }, () => false]) {
       const w = await carryWorld()
-      const marks = { record: () => true, markOf: () => null, remove: () => {}, cutoff: (): number | null => null, dropRealm: () => {}, adopt }
+      const marks = { record: () => true, markOf: () => null, remove: () => {}, cutoff: (): number | null => null, dropRealm: () => {}, adopt, markIfNone: () => {} }
       const h = await harness({ usageFs: w.fs.port, liveUsage: w.live, preference: { codex: () => 'on' }, carryMarks: marks })
       const b = await addCodexAccount(h, 'B')
       const r = await h.service.signInAgain({ sameAccount: true, accountId: b, method: 'browser' }, 1)

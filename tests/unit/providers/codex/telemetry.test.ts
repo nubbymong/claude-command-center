@@ -1155,7 +1155,7 @@ describe('allowance from the rollout (usage track MP2)', () => {
       const ts = new Date(spawn + 100).toISOString()
       const folder = p314Sessions([meta(ts, '/p314/cwd'), aEvent(ts)], NAME)
       const live = createCodexLiveUsage(process.platform)
-      const throwing = { record: () => false, markOf: () => null, remove: () => {}, adopt: () => false, cutoff: (): number | null => { throw new Error('marks') }, dropRealm: () => {} }
+      const throwing = { record: () => false, markOf: () => null, remove: () => {}, adopt: () => false, cutoff: (): number | null => { throw new Error('marks') }, dropRealm: () => {}, markIfNone: () => {} }
       const src = new CodexProvider(live, throwing).ingestSessionTelemetry('sess-carried-throws', { cwd: '/p314/cwd', spawnTimestamp: spawn, sessionsDir: folder.sessions }, () => {})
       try {
         await vi.advanceTimersByTimeAsync(1000)

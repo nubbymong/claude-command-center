@@ -471,6 +471,12 @@ const MARKS_RETRY_MAX_MS = 30_000
 const MARKS_DROPPED_MAX = 256
 /** So are the adoptions (a Sign in again's history copy) made meanwhile. */
 const MARKS_ADOPT_QUEUE_MAX = 64
+/** And the copies a carry found already there meanwhile, to mark once the file
+ *  reads if it has no mark for them; past this, the mark made for the carry stays. */
+const MARKS_IF_NONE_MAX = 64
+/** Failed set-asides in a run after which a file is no longer set aside in that
+ *  run: it stays where it is and is still read after each wait. */
+const MARKS_ASIDE_TRIES = 3
 const ROLLOUT_ID_RE = /(?:^|[\\/])rollout-[^\\/]*?-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\.jsonl$/
 const CONVERSATION_ID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
 /** How far past now a stamp may claim to be before it is taken for garbage. */
@@ -557,14 +563,16 @@ export interface CodexCarryMarksPort {
  * that cannot be read or written never stops a carry or a Sign in again and
  * never blanks a card. Kept in memory and in the injected port:
  * - while the file cannot be read, marks, drops and adoptions are kept in
- *   memory and written once it can be; the first failed read is a floor for the
- *   folders carried into since (no event dated at or before it counts there);
- *   the read is asked again after a growing wait (not at all counted as failed
- *   while the resources folder is not known yet);
+ *   memory and written once it can be (a copy a carry found already there is
+ *   marked then only when the file has no mark for it); the first failed read
+ *   is a floor for the folders carried into since (no event dated at or before
+ *   it counts there); the read is asked again after a growing wait (not at all
+ *   counted as failed while the resources folder is not known yet);
  * - a file that is not what this code wrote (not a plain file within its cap,
  *   not the expected shape in any field) is set aside and replaced in one step,
  *   never overwritten, with a floor at that moment: no rollout counts an event
- *   dated before it; if that cannot be done the file stays as it was;
+ *   dated before it; if that cannot be done the file stays as it was, and after
+ *   MARKS_ASIDE_TRIES failures in a run it is not set aside again in that run;
  * - a mark that cannot be written is kept in memory and written when it can be;
  * - the file is trimmed at write time (oldest first) to fit what a read accepts.
  * Bounded to the newest CODEX_CARRY_MARKS_MAX, a realm over its share evicting
@@ -582,6 +590,11 @@ export interface CodexCarryMarks {
   markOf(sessionsDir: string, conversationId: string | null): number | null | undefined
   /** Take a mark back (a copy that failed). */
   remove(sessionsDir: string, conversationId: string): void
+  /** A copy the carry found already in the folder keeps the mark it has; only
+   *  one with none is marked at `at`. While the file has not been read, the
+   *  mark made for the carry is taken back and this is settled when it reads
+   *  (past MARKS_IF_NONE_MAX such copies, the mark made for the carry stays). */
+  markIfNone(realmId: string, sessionsDir: string, conversationId: string, at: number): void
   /** The time after which a rollout's events count: its mark, or the floor if
    *  later, or null for no mark and no floor. While the file has not been
    *  read: for a folder carried into since, the later of its mark and the
@@ -636,7 +649,7 @@ function parseCarryDoc(text: string): CarryDoc | null {
   return { marks: out, floor }
 }
 
-export function createCodexCarryMarks(opts: { port?: CodexCarryMarksPort; platform?: NodeJS.Platform; max?: number; now?: () => number } = {}): CodexCarryMarks {
+export function createCodexCarryMarks(opts: { port?: CodexCarryMarksPort; platform?: NodeJS.Platform; max?: number; now?: () => number; log?: (message: string) => void } = {}): CodexCarryMarks {
   const keyOf = keyer(opts.platform ?? process.platform)
   const port = opts.port
   const max = typeof opts.max === 'number' && opts.max > 0 ? Math.floor(opts.max) : CODEX_CARRY_MARKS_MAX
@@ -664,6 +677,11 @@ export function createCodexCarryMarks(opts: { port?: CodexCarryMarksPort; platfo
    *  applied to what it holds once it can be. */
   const dropped = new Set<string>()
   const adoptions: Array<{ from: string; to: string; dir: string }> = []
+  /** Copies a carry found already there while the file could not be read:
+   *  each is marked once the file reads, only when the file has no mark for it. */
+  const ifNone = new Map<string, CarryMark>()
+  /** Set-asides that failed in this run. */
+  let asideFailures = 0
   const keyFor = (dir: string, id: string) => `${keyOf(dir)}|${id}`
   const validDir = (dir: unknown): dir is string => typeof dir === 'string' && dir.length > 0 && dir.length <= MARKS_DIR_MAX
   const validId = (id: unknown): id is string => typeof id === 'string' && CONVERSATION_ID_RE.test(id)
@@ -700,11 +718,26 @@ export function createCodexCarryMarks(opts: { port?: CodexCarryMarksPort; platfo
     }
     return any
   }
-  /** A folder this run carried into, or adopted a history into, while the file could not be read. */
+  /** Keep `p` to be marked once the file reads, if the file has no mark for it;
+   *  past the bound it is marked now instead (that only hides more). With one
+   *  kept for it already, the earlier time stays, or with `later` the later. */
+  const keepIfNone = (p: CarryMark, later: boolean) => {
+    const k = keyFor(p.dir, p.id)
+    const there = ifNone.get(k)
+    if (there) {
+      if (later && p.at > there.at) ifNone.set(k, p)
+      return
+    }
+    if (ifNone.size >= MARKS_IF_NONE_MAX) { putInto(marks, p); return }
+    ifNone.set(k, p)
+  }
+  /** A folder this run carried into (a copy found already there included), or
+   *  adopted a history into, while the file could not be read. */
   const isHeld = (dir: string): boolean => {
     const key = keyOf(dir)
     for (const m of marks.values()) if (keyOf(m.dir) === key) return true
     for (const a of adoptions) if (keyOf(a.dir) === key) return true
+    for (const p of ifNone.values()) if (keyOf(p.dir) === key) return true
     return false
   }
   /** The file text for `map` and `floorAt`, the oldest marks left out until it fits what a read accepts. */
@@ -753,17 +786,19 @@ export function createCodexCarryMarks(opts: { port?: CodexCarryMarksPort; platfo
     return false
   }
   /** What the marks are once the file's are known: the file's (not those of a
-   *  realm dropped meanwhile, and moved as adopted meanwhile), then this run's. */
+   *  realm dropped meanwhile, and moved as adopted meanwhile), a copy found
+   *  already there meanwhile where they have no mark for it, then this run's. */
   const mergedWith = (fileMarks: CarryMark[]): Map<string, CarryMark> => {
     const out = new Map<string, CarryMark>()
     for (const m of fileMarks) if (!dropped.has(m.realm)) putInto(out, m)
     for (const a of adoptions) rekeyInto(out, a.from, a.to, a.dir)
+    for (const [k, p] of ifNone) if (!out.has(k)) putInto(out, p)
     for (const m of marks.values()) putInto(out, m)
     return out
   }
   /** The file is known: take what it holds, with this run's beside it. */
   const commitLoad = (merged: Map<string, CarryMark>, fileFloor: number | null, written: boolean, fileMarks: CarryMark[]) => {
-    const pending = marks.size > 0
+    const pending = marks.size > 0 || ifNone.size > 0
     const touched = pending
       || fileMarks.some((m) => dropped.has(m.realm))
       || (adoptions.length > 0 && fileMarks.some((m) => adoptions.some((a) => a.from === m.realm)))
@@ -775,6 +810,7 @@ export function createCodexCarryMarks(opts: { port?: CodexCarryMarksPort; platfo
     retryAt = Number.NEGATIVE_INFINITY
     dropped.clear()
     adoptions.length = 0
+    ifNone.clear()
     if (written) { dirty = false; return }
     if (touched) { dirty = true; writeNow() }
   }
@@ -803,12 +839,22 @@ export function createCodexCarryMarks(opts: { port?: CodexCarryMarksPort; platfo
     // step put a file in its place that holds the floor and what this run has
     // made. Nothing before this moment counts in any rollout from now on. If
     // that cannot be done the file stays where it was: it is found again.
+    // After MARKS_ASIDE_TRIES failures in this run it is not tried again (it
+    // would be renamed aside and back at every try): the file stays, is read
+    // again after each wait, and the store stays as for a file it cannot read.
+    if (asideFailures >= MARKS_ASIDE_TRIES) return failRead()
     const at = clock()
     const merged = mergedWith([])
     const replacement = serialiseOf(merged, at)
     let aside = false
     try { aside = port.setAside(replacement.text) === true } catch { aside = false }
-    if (!aside) return failRead()
+    if (!aside) {
+      asideFailures++
+      if (asideFailures === MARKS_ASIDE_TRIES) {
+        try { opts.log?.(`[codex] carry marks: the marks file is not one the app wrote and could not be set aside in ${MARKS_ASIDE_TRIES} tries; it is left where it is for this run, and the conversations carried meanwhile are held by time`) } catch { /* nothing to tell */ }
+      }
+      return failRead()
+    }
     commitLoad(replacement.kept, at, true, [])
     return true
   }
@@ -844,6 +890,26 @@ export function createCodexCarryMarks(opts: { port?: CodexCarryMarksPort; platfo
         if (marks.delete(keyFor(sessionsDir, conversationId.toLowerCase()))) changed()
       } catch { /* nothing to take back */ }
     },
+    markIfNone(realmId, sessionsDir, conversationId, at) {
+      try {
+        if (typeof realmId !== 'string' || !MARKS_REALM_RE.test(realmId)) return
+        if (!validDir(sessionsDir) || !validId(conversationId) || !validAt(at)) return
+        ensureLoaded()
+        const id = conversationId.toLowerCase()
+        const k = keyFor(sessionsDir, id)
+        if (loaded) {
+          // The file is known: the mark there stands (one made for the carry
+          // and merged over the file's while the copy ran included: it only
+          // hides more); a copy with none is marked now.
+          if (!marks.has(k)) { putInto(marks, { realm: realmId, dir: sessionsDir, id, at }); changed() }
+          return
+        }
+        // Not known yet: the file's mark, if it has one, must not be replaced
+        // by the one made for the carry. Taken back, settled when the file reads.
+        marks.delete(k)
+        keepIfNone({ realm: realmId, dir: sessionsDir, id, at }, false)
+      } catch { /* the mark made for the carry stands */ }
+    },
     cutoff(sessionsDir, conversationId) {
       try {
         if (!validDir(sessionsDir) || !validId(conversationId)) return null
@@ -866,6 +932,7 @@ export function createCodexCarryMarks(opts: { port?: CodexCarryMarksPort; platfo
         ensureLoaded()
         let any = false
         for (const [k, m] of [...marks.entries()]) if (m.realm === realmId) { marks.delete(k); any = true }
+        for (const [k, p] of [...ifNone.entries()]) if (p.realm === realmId) ifNone.delete(k)
         if (!loaded) {
           // Not brought back by the file once it can be read.
           if (dropped.size < MARKS_DROPPED_MAX) dropped.add(realmId)
@@ -881,9 +948,11 @@ export function createCodexCarryMarks(opts: { port?: CodexCarryMarksPort; platfo
         const any = rekeyInto(marks, fromRealmId, toRealmId, toSessionsDir)
         if (loaded) {
           if (any) changed()
-        } else if (adoptions.length < MARKS_ADOPT_QUEUE_MAX) {
+        } else {
+          // A copy found already there is settled for the new folder too.
+          for (const p of [...ifNone.values()]) if (p.realm === fromRealmId) keepIfNone({ realm: toRealmId, dir: toSessionsDir, id: p.id, at: p.at }, true)
           // The file's own marks of the old realm follow once it can be read.
-          adoptions.push({ from: fromRealmId, to: toRealmId, dir: toSessionsDir })
+          if (adoptions.length < MARKS_ADOPT_QUEUE_MAX) adoptions.push({ from: fromRealmId, to: toRealmId, dir: toSessionsDir })
         }
         return true
       } catch {
