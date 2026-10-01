@@ -1036,9 +1036,9 @@ describe('transcripts-db', () => {
       db.advanceCursor(x.transcriptId, 30, 'bb')
       expect(db.bindTranscript(r1, p, { confidence: 'exact', parserVersion: 1, sourceIdentity: '1:1' })).toMatchObject({ cursor: 30, readDigest: 'bb' })
       const r2 = db.insertRun(runMeta({ provider: 'codex', startedAt: 2 }))
-      expect(db.priorCodexBindings(r2, 'rollout-1_z.jsonl', 's1')[0]).toMatchObject({ ingestCursor: 30, readDigest: 'bb' })
+      expect(db.priorBindings(r2, 'rollout-1_z.jsonl', 's1', 'codex-rollout')[0]).toMatchObject({ ingestCursor: 30, readDigest: 'bb' })
       db.advanceCursor(x.transcriptId, 40, null)
-      expect(db.priorCodexBindings(r2, 'rollout-1_z.jsonl', 's1')[0]).toMatchObject({ ingestCursor: 40, readDigest: null })
+      expect(db.priorBindings(r2, 'rollout-1_z.jsonl', 's1', 'codex-rollout')[0]).toMatchObject({ ingestCursor: 40, readDigest: null })
       expect(db.bindTranscript(r1, p, { confidence: 'exact', parserVersion: 1, sourceIdentity: '9:9' })).toMatchObject({ cursor: 0, identityChanged: true, readDigest: null })
     })
 
@@ -1054,13 +1054,38 @@ describe('transcripts-db', () => {
       db.bindTranscript(other, 'C:/d/sessions/2026/09/29/rollout-1_x.jsonl', { confidence: 'exact', parserVersion: 1, sourceFormat: 'codex-rollout', sourceIdentity: '4:4' })
       const y = db.bindTranscript(r2, 'C:/b/sessions/2026/09/29/rollout-1_x.jsonl', { confidence: 'exact', parserVersion: 1, sourceFormat: 'codex-rollout', sourceIdentity: '2:2' })
       db.bindTranscript(r3, 'C:/e/sessions/2026/09/29/rollout-1_x.jsonl', { confidence: 'exact', parserVersion: 1, sourceFormat: 'codex-rollout', sourceIdentity: '3:3' })
-      expect(db.priorCodexBindings(r3, 'rollout-1_x.jsonl', 's1')).toEqual([
+      expect(db.priorBindings(r3, 'rollout-1_x.jsonl', 's1', 'codex-rollout')).toEqual([
         { transcriptId: y.transcriptId, path: 'C:/b/sessions/2026/09/29/rollout-1_x.jsonl', ingestCursor: 0, sourceIdentity: '2:2', runStartedAt: 3, readDigest: null },
         { transcriptId: x.transcriptId, path: 'C:/a/sessions/2026/09/29/rollout-1_x.jsonl', ingestCursor: 70, sourceIdentity: '1:1', runStartedAt: 1, readDigest: null },
       ])
-      expect(db.priorCodexBindings(r2, 'rollout-1_x.jsonl', 's1').map((r) => r.transcriptId)).toEqual([x.transcriptId])
-      expect(db.priorCodexBindings(r3, 'rollout-1_x.jsonl', 's2').map((r) => r.path)).toEqual(['C:/d/sessions/2026/09/29/rollout-1_x.jsonl'])
-      expect(db.priorCodexBindings(r3, 'rollout-1_x.jsonl', '')).toEqual([])
+      expect(db.priorBindings(r2, 'rollout-1_x.jsonl', 's1', 'codex-rollout').map((r) => r.transcriptId)).toEqual([x.transcriptId])
+      expect(db.priorBindings(r3, 'rollout-1_x.jsonl', 's2', 'codex-rollout').map((r) => r.path)).toEqual(['C:/d/sessions/2026/09/29/rollout-1_x.jsonl'])
+      expect(db.priorBindings(r3, 'rollout-1_x.jsonl', '', 'codex-rollout')).toEqual([])
+    })
+
+    it('P3.16 (M1): the earlier bindings are of the format asked for: a Claude transcript\'s, with the digest of what was read, never a Codex rollout\'s of the same name', () => {
+      const r1 = db.insertRun(runMeta({ startedAt: 1 }))
+      const r2 = db.insertRun(runMeta({ startedAt: 2 }))
+      const name = '7f3e0c1a-0000-4000-8000-0000000000d1.jsonl'
+      const claude = db.bindTranscript(r1, `C:/h/.claude/projects/C--w/${name}`, { confidence: 'exact', parserVersion: 1 })
+      db.appendBatch(r1, claude.transcriptId, [], 120, 'cc')
+      db.bindTranscript(r1, `C:/a/sessions/2026/09/29/${name}`, { confidence: 'exact', parserVersion: 1, sourceFormat: 'codex-rollout', sourceIdentity: '1:1' })
+      expect(db.priorBindings(r2, name, 's1', 'claude-jsonl')).toEqual([
+        { transcriptId: claude.transcriptId, path: `C:/h/.claude/projects/C--w/${name}`, ingestCursor: 120, sourceIdentity: null, runStartedAt: 1, readDigest: 'cc' },
+      ])
+      expect(db.priorBindings(r2, name, 's1', 'codex-rollout').map((r) => r.path)).toEqual([`C:/a/sessions/2026/09/29/${name}`])
+      expect(db.priorBindings(r2, name, 's1', 'other' as never)).toEqual([])
+    })
+
+    it('P3.16 (M1): search lists a turn of a Claude conversation indexed by two sessions once', () => {
+      const r1 = db.insertRun(runMeta({ startedAt: 1 }))
+      const r2 = db.insertRun(runMeta({ sessionId: 's2', startedAt: 2 }))
+      const p = 'C:/h/.claude/projects/C--w/7f3e0c1a-0000-4000-8000-0000000000d2.jsonl'
+      db.bindTranscript(r1, p, { confidence: 'exact', parserVersion: 1 })
+      db.bindTranscript(r2, p, { confidence: 'exact', parserVersion: 1 })
+      for (const r of [r1, r2]) db.appendMessages(r, [{ idx: 0, ts: 500, role: 'user', kind: 'message', content: 'claudetwiceneedle here' }])
+      db.appendMessages(r2, [{ idx: 1, ts: 600, role: 'user', kind: 'message', content: 'claudetwiceneedle again' }])
+      expect(db.searchMessages('claudetwiceneedle').map((h) => [h.runId, h.idx]).sort()).toEqual([[r1, 0], [r2, 1]].sort())
     })
 
     it('adds the identity column to a database made before it', () => {

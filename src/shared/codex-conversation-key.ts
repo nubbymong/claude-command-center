@@ -3,7 +3,8 @@
  * rollout id in lower case (so its copy in another account, the same name,
  * is the same conversation), else the file name. Used by main's record of
  * the conversations written while not indexed, by the transcripts worker
- * and by search.
+ * and by search. P3.16 (M1): a Claude transcript's key too: its file name is
+ * the conversation's id (`<id>.jsonl`).
  *
  * Pure; no default export (project convention).
  */

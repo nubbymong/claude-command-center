@@ -508,9 +508,10 @@ function stopIndexingRun(sessionId: string): void {
   const run = indexedRuns.get(sessionId)
   indexedRuns.delete(sessionId)
   const now = Date.now()
-  // P3.12 (X1): a Codex session goes on not indexed: the conversation it is
-  // on, and each it claims from now, are marked written while not indexed.
-  if (run?.provider === 'codex') markCodexSessionNotIndexed(sessionId, now)
+  // P3.12 (X1): a session goes on not indexed: the conversation it is on, and
+  // each it moves to from now, are marked written while not indexed (P3.16
+  // M1: a Claude session as a Codex one).
+  if (run) markSessionNotIndexed(sessionId, run.provider, now)
   try { getLogSupervisor()?.runEnd(sessionId, now, 'stopped') } catch { /* best-effort */ }
   try { getCodexLogBinder()?.stopIndexing(sessionId) } catch { /* best-effort */ }
   logInfo(`[pty] indexing stopped for ${sessionId}: a logging switch was turned off`)
@@ -556,20 +557,68 @@ function savedConfigLoggingOff(configs: unknown, configId: string | undefined, p
  * conversation (Codex writes the first records before the claim), so no later
  * run, from any tab, indexes what was written then. Cleared when a launch of
  * the session begins.
+ *
+ * P3.16 (M1): a local Claude session the same way (logging off in Settings or
+ * in its config, or before the indexing notice was seen); the conversation it
+ * is on is the transcript its hooks and status line name, or its exact resume
+ * at launch (claudeTranscripts). Each entry keeps the assistant the session
+ * runs, so a session's conversation is the one of its own assistant.
  */
-const notIndexedCodexSessions = new Map<string, number>()
+const notIndexedSessions = new Map<string, { since: number; provider: 'claude' | 'codex' }>()
+
+/** P3.16 (M1): the transcript each local Claude session is on, the latest its
+ *  hooks or status line named (or its exact resume at launch), for the
+ *  windows above. Gone at the session's teardown; bounded. */
+const claudeTranscripts = new Map<string, string>()
+export const CLAUDE_TRANSCRIPTS_MAX = 512
 
 /** `since`: the moment the session became not indexed; `now`: this moment. */
-function markCodexSessionNotIndexed(sessionId: string, since: number, now: number = since): void {
-  notIndexedCodexSessions.set(sessionId, since)
-  const held = codexContextRollouts.get(sessionId)
-  if (held) { try { openNotIndexedWindow(sessionId, held.path, since, now) } catch { /* best-effort */ } }
+function markSessionNotIndexed(sessionId: string, provider: 'claude' | 'codex', since: number, now: number = since): void {
+  notIndexedSessions.set(sessionId, { since, provider })
+  const held = provider === 'codex' ? codexContextRollouts.get(sessionId)?.path : claudeTranscripts.get(sessionId)
+  if (held) { try { openNotIndexedWindow(sessionId, held, since, now) } catch { /* best-effort */ } }
 }
 
 /** P3.12 (Y1): the session no longer holds a conversation while not indexed
  *  (it ends, relaunches or lets the claim go): its window closes. */
-function endCodexSessionNotIndexed(sessionId: string, now: number): void {
+function endSessionNotIndexed(sessionId: string, now: number): void {
   try { closeNotIndexedWindow(sessionId, now) } catch { /* best-effort */ }
+}
+
+/** P3.16 (M1): a Claude session is on the transcript at `transcriptPath` (its
+ *  hook or status line said so, or its exact resume): kept for the windows,
+ *  and while the session runs not indexed that conversation's window opens
+ *  from the moment it became not indexed (the one it was on before closes
+ *  now). Only the file name is used (the conversation's id); nothing is read. */
+function noteClaudeTranscript(sessionId: string, transcriptPath: string): void {
+  if (typeof sessionId !== 'string' || !sessionId || typeof transcriptPath !== 'string' || !/\.jsonl$/i.test(transcriptPath)) return
+  claudeTranscripts.delete(sessionId)
+  claudeTranscripts.set(sessionId, transcriptPath)
+  while (claudeTranscripts.size > CLAUDE_TRANSCRIPTS_MAX) {
+    const oldest = claudeTranscripts.keys().next().value
+    if (oldest === undefined) break
+    claudeTranscripts.delete(oldest)
+  }
+  const notIndexed = notIndexedSessions.get(sessionId)
+  if (notIndexed?.provider === 'claude') {
+    try { openNotIndexedWindow(sessionId, transcriptPath, notIndexed.since, Date.now()) } catch { /* best-effort */ }
+  }
+}
+
+/** P3.12 (K1), P3.16 (M1): a killed session's window stays open while its
+ *  process winds down, and closes, only that window, when its exit is
+ *  reported or the grace the account lease uses passes. */
+function closeWindowWhenEnded(proc: pty.IPty, close: (ts: number) => void): void {
+  let done = false
+  const settle = (): void => {
+    if (done) return
+    done = true
+    clearTimeout(timer)
+    try { close(Date.now()) } catch { /* best-effort */ }
+  }
+  const timer = setTimeout(settle, CODEX_LEASE_EXIT_GRACE_MS)
+  ;(timer as unknown as { unref?: () => void }).unref?.()
+  try { proc.onExit(() => settle()) } catch { settle() }
 }
 
 /** P3.12 (row 65): the rollout a Codex session's watcher holds (and its
@@ -728,6 +777,9 @@ export function noteCodexHookEvent(e: { sessionId?: unknown; event?: unknown; pa
  *  account attribution and the transcript binder, as before P3.10. */
 export function routeHookTranscriptPath(sessionId: string, transcriptPath: string, claude: { attribute: (sessionId: string, transcriptPath: string) => void; bind: (sessionId: string, transcriptPath: string) => void }): void {
   if (noteCodexHookTranscript(sessionId, transcriptPath)) return
+  // P3.16 (M1): the conversation a Claude session is on, for the windows
+  // written while not indexed (whether or not the binder indexes it).
+  noteClaudeTranscript(sessionId, transcriptPath)
   claude.attribute(sessionId, transcriptPath)
   claude.bind(sessionId, transcriptPath)
 }
@@ -1972,6 +2024,8 @@ function spawnPtyResolved(
   // P3.12 round 6 (Z1): when this launch's Codex process was started (taken before
   // its spawn): the moment the session became not indexed, when it launched so.
   let codexLaunchedAt: number | undefined
+  // P3.16 (M1): the same for this launch's Claude process.
+  let claudeLaunchedAt: number | undefined
 
   // Hoisted to function scope so the shared post-spawn tail (session-log capture)
   // can read them for EVERY branch (ssh / codex / claude / shell-only). They were
@@ -4846,7 +4900,7 @@ function spawnPtyResolved(
       getCodexLogBinder()?.beginLaunch(sessionId)
       // P3.12 (X1): this launch is not yet known as not indexed (its own run
       // block says, below); a claim it makes before that is not marked.
-      notIndexedCodexSessions.delete(sessionId)
+      notIndexedSessions.delete(sessionId)
       // P3.12 round 1 (B2): a launch on another account (Switch Account) is on
       // another account's folder: the rollout recorded for the Session
       // Context goes until this launch claims one.
@@ -4899,10 +4953,10 @@ function spawnPtyResolved(
             noteCodexContextRollout(sessionId, rollout)
             // P3.12 (X1, Z1): a conversation a session not indexed is on: its
             // window opens when the session became not indexed, not now.
-            const notIndexedSince = notIndexedCodexSessions.get(sessionId)
-            if (notIndexedSince !== undefined) {
-              if (rollout) { try { openNotIndexedWindow(sessionId, rollout.path, notIndexedSince, Date.now()) } catch { /* best-effort */ } }
-              else endCodexSessionNotIndexed(sessionId, Date.now())
+            const notIndexed = notIndexedSessions.get(sessionId)
+            if (notIndexed?.provider === 'codex') {
+              if (rollout) { try { openNotIndexedWindow(sessionId, rollout.path, notIndexed.since, Date.now()) } catch { /* best-effort */ } }
+              else endSessionNotIndexed(sessionId, Date.now())
             }
             getCodexLogBinder()?.noteRollout(sessionId, rollout)
           },
@@ -5318,6 +5372,7 @@ function spawnPtyResolved(
       assertGatedDirectory(options, claudeCwd, 'resume directory', recordUnverifiedDirectory)
       logInfo(`[pty-manager] Launching Claude via shell in PTY: ${spawnCmd} -> ${cmd} cwd=${describePathForLog(claudeCwd)} (resumePicker=${!!options?.useResumePicker}, resume=${resumeUuid ?? 'none'})`)
 
+      claudeLaunchedAt = Date.now()
       ptyProcess = pty.spawn(spawnCmd, spawnArgs, {
         name: 'xterm-256color',
         cols,
@@ -5720,14 +5775,22 @@ function spawnPtyResolved(
   // exits after this spawn, so its own exit does not), so nothing is added to
   // it; one that is indexed is recorded for the logging switches.
   const codexRunProvider = !options?.ssh && !options?.shellOnly && (options?.provider ?? 'claude') === 'codex'
+  // P3.16 (M1): a local Claude session's conversation is known at launch when
+  // it resumes one exactly; its hooks and status line name it after.
+  const claudeRunProvider = !options?.ssh && !options?.shellOnly && (options?.provider ?? 'claude') === 'claude'
+  if (claudeRunProvider && resumeUuidForBind && effectiveLaunchCwd) {
+    const resumed = buildResumeTranscriptPath(effectiveLaunchCwd, resumeUuidForBind)
+    if (resumed) noteClaudeTranscript(sessionId, resumed)
+  }
   if (logSup) {
     indexedRuns.set(sessionId, { ...(options?.configId ? { configId: options.configId } : {}), provider: codexRunProvider ? 'codex' : 'claude' })
   } else {
     indexedRuns.delete(sessionId)
     try { getLogSupervisor()?.runEnd(sessionId, Date.now(), 'exited') } catch { /* best-effort */ }
-    // P3.12 (X1, X3): a local Codex session running not indexed marks the
-    // conversations it is on.
-    if (codexRunProvider) markCodexSessionNotIndexed(sessionId, codexLaunchedAt ?? Date.now(), Date.now())
+    // P3.12 (X1, X3): a local session running not indexed marks the
+    // conversations it is on (P3.16 M1: a Claude session as a Codex one).
+    if (codexRunProvider) markSessionNotIndexed(sessionId, 'codex', codexLaunchedAt ?? Date.now(), Date.now())
+    else if (claudeRunProvider) markSessionNotIndexed(sessionId, 'claude', claudeLaunchedAt ?? Date.now(), Date.now())
   }
   logSup?.runStart({
     sessionId,
@@ -6192,9 +6255,11 @@ function cleanupSessionResources(sessionId: string): void {
   // place that stops the 500ms full-file-read tail poller — killPty isn't hit
   // until the tab is closed, so without this the poller ran for the dead tab.
   const codexTel = codexTelemetrySources.get(sessionId)
-  // P3.12 (Y1): a session ending holds no conversation while not indexed.
-  notIndexedCodexSessions.delete(sessionId)
-  endCodexSessionNotIndexed(sessionId, Date.now())
+  // P3.12 (Y1): a session ending holds no conversation while not indexed
+  // (P3.16 M1: and the Claude transcript it was on is not the next launch's).
+  notIndexedSessions.delete(sessionId)
+  claudeTranscripts.delete(sessionId)
+  endSessionNotIndexed(sessionId, Date.now())
   if (codexTel) {
     try { codexTel.stop() } catch { /* noop */ }
     codexTelemetrySources.delete(sessionId)
@@ -6321,6 +6386,13 @@ export function killPty(sessionId: string): void {
     try { closeWindow = releaseNotIndexedWindow(sessionId) } catch { /* best-effort */ }
     // P3.6: a Switch account's carry waits for this process to end.
     noteCodexRunEnding(sessionId, entry.ptyProcess, closeWindow ? () => closeWindow?.(Date.now()) : undefined)
+  } else if (entry) {
+    // P3.16 (M1): a killed Claude session's window the same way: open while
+    // its process winds down, closed when its exit is reported or the grace
+    // passes, and only that window. (None was opened for a shell or SSH.)
+    let closeWindow: ((ts: number) => void) | null = null
+    try { closeWindow = releaseNotIndexedWindow(sessionId) } catch { /* best-effort */ }
+    if (closeWindow) closeWindowWhenEnded(entry.ptyProcess, closeWindow)
   }
   // P3.10 round 2 (R8): a killed Codex session's gateway token goes now, so
   // the gateway refuses its dying process's late hooks; the record that its

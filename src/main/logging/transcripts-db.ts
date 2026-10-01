@@ -184,15 +184,17 @@ export interface TranscriptsDb {
    *  format the binding was made with. */
   findTranscript(runId: number, path: string): { transcriptId: number } | null
 
-  /** P3.12 round 1: the Codex bindings of other runs whose file has the name
-   *  `name` (the same rollout, or its copy in another account's folder), with
-   *  how far each was read. */
-  priorCodexBindings(runId: number, name: string, sessionId: string): Array<{ transcriptId: number; path: string; ingestCursor: number; sourceIdentity: string | null; runStartedAt: number; readDigest: string | null }>
+  /** P3.12 round 1: the bindings of format `sourceFormat` of the same
+   *  session's earlier runs whose file has the name `name` (the same
+   *  transcript, or a Codex rollout's copy in another account's folder), with
+   *  how far each was read. P3.16 (M1): either format (a Claude transcript as
+   *  a Codex rollout). */
+  priorBindings(runId: number, name: string, sessionId: string, sourceFormat: TranscriptSourceFormat): Array<{ transcriptId: number; path: string; ingestCursor: number; sourceIdentity: string | null; runStartedAt: number; readDigest: string | null }>
 
   setTranscriptStatus(transcriptId: number, status: 'pending' | 'tailing' | 'complete' | 'failed'): void
 
-  /** `readDigest` (P3.12, a Codex transcript): the digest of the bytes up to
-   *  `cursor` (null: none); absent leaves it as it is. */
+  /** `readDigest` (P3.12; P3.16 M1, either format): the digest of the bytes
+   *  up to `cursor` (null: none); absent leaves it as it is. */
   advanceCursor(transcriptId: number, cursor: number, readDigest?: string | null): void
 
   /** All transcripts with status='tailing' (worker restart resume points). */
@@ -612,10 +614,11 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
   const stmtSetIdentity: Statement = sqlite.prepare(`UPDATE transcripts SET sourceIdentity = @identity WHERE id = @id`)
   const stmtResetIdentity: Statement = sqlite.prepare(`UPDATE transcripts SET sourceIdentity = @identity, ingestCursor = 0, readDigest = NULL WHERE id = @id`)
   // P3.12 round 2 (W8): the same session's earlier runs only, the latest first.
-  const stmtPriorCodex: Statement = sqlite.prepare(`
+  // P3.16 (M1): of the binding's own format (Claude's or Codex's).
+  const stmtPriorBindings: Statement = sqlite.prepare(`
     SELECT t.id AS transcriptId, t.path AS path, t.ingestCursor AS ingestCursor, t.sourceIdentity AS sourceIdentity, r.startedAt AS runStartedAt, t.readDigest AS readDigest
     FROM transcripts t JOIN runs r ON r.runId = t.runId
-    WHERE t.sourceFormat = 'codex-rollout' AND t.runId < @runId AND r.sessionId = @sessionId
+    WHERE t.sourceFormat = @format AND t.runId < @runId AND r.sessionId = @sessionId
       AND length(t.path) > @n AND substr(t.path, -@n) = @name
     ORDER BY t.runId DESC, t.ingestCursor DESC
   `)
@@ -764,13 +767,14 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
 
   // ---- search ----
   // snippet() uses FTS column index 0 (content), marks up to 16 tokens.
-  // P3.12: with each hit's provider, role, time and words, so a Codex turn
-  // indexed by two sessions is listed once (search-dedupe.ts).
+  // P3.12: with each hit's provider, role, time and words, so a turn indexed
+  // by two sessions is listed once (search-dedupe.ts; P3.16 M1: a Claude
+  // turn as a Codex one, by the run's transcript paths of either format).
   const stmtSearchMessages: Statement = sqlite.prepare(`
     SELECT m.runId AS runId, m.idx AS idx, r.configId AS configId, r.sessionId AS sessionId,
            snippet(messages_fts, 0, '[', ']', '...', 16) AS snippet,
            r.provider AS provider, m.role AS role, m.ts AS ts, m.content AS content,
-           (SELECT group_concat(t.path, char(10)) FROM transcripts t WHERE t.runId = m.runId AND t.sourceFormat = 'codex-rollout') AS codexPaths
+           (SELECT group_concat(t.path, char(10)) FROM transcripts t WHERE t.runId = m.runId) AS transcriptPaths
     FROM messages_fts
     JOIN messages m ON m.id = messages_fts.rowid
     JOIN runs r ON r.runId = m.runId
@@ -977,9 +981,9 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
       return row ? { transcriptId: row.id } : null
     },
 
-    priorCodexBindings(runId, name, sessionId) {
-      if (!name || !sessionId) return []
-      const rows = stmtPriorCodex.all({ runId, sessionId, n: name.length, name }) as Array<{ transcriptId: number; path: string; ingestCursor: number; sourceIdentity: string | null; runStartedAt: number; readDigest: string | null }>
+    priorBindings(runId, name, sessionId, sourceFormat) {
+      if (!name || !sessionId || (sourceFormat !== 'claude-jsonl' && sourceFormat !== 'codex-rollout')) return []
+      const rows = stmtPriorBindings.all({ runId, sessionId, format: sourceFormat, n: name.length, name }) as Array<{ transcriptId: number; path: string; ingestCursor: number; sourceIdentity: string | null; runStartedAt: number; readDigest: string | null }>
       // The whole file name only: the character before it is a separator.
       return rows.filter((r) => /[\\/]/.test(r.path.charAt(r.path.length - name.length - 1)))
     },
@@ -1076,7 +1080,7 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
       const safeQuery = sanitizeFtsQuery(query)
       if (!safeQuery) return []
       try {
-        // Enough rows for the limit after a Codex turn met again is dropped.
+        // Enough rows for the limit after a turn met again is dropped.
         const rows = stmtSearchMessages.all({ query: safeQuery, limit: Math.min(limit * 4, SEARCH_ROWS_MAX) }) as RankedSearchRow[]
         return dedupeSearchHits(rows, limit) as TranscriptSearchHit[]
       } catch {

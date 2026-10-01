@@ -62,9 +62,10 @@ vi.mock('../../../src/main/logging/transcripts-db', () => ({
         fake.trs.push(t)
         return { transcriptId: t.id, ord, isNew: true, cursor: 0, sourceFormat: t.sourceFormat, status: 'pending', identityChanged: false }
       },
-      // Round 2 (W8): the same session's earlier runs only, the latest first.
-      priorCodexBindings: (runId: number, name: string, sessionId: string) => fake.trs
-        .filter((t) => t.runId < runId && t.sourceFormat === 'codex-rollout' && t.path.endsWith(name) && (sessionId === undefined || fake.runs.find((r) => r.runId === t.runId)?.sessionId === sessionId))
+      // Round 2 (W8): the same session's earlier runs only, the latest first;
+      // P3.16 (M1): of the format asked for.
+      priorBindings: (runId: number, name: string, sessionId: string, format: string) => fake.trs
+        .filter((t) => t.runId < runId && t.sourceFormat === format && t.path.endsWith(name) && (sessionId === undefined || fake.runs.find((r) => r.runId === t.runId)?.sessionId === sessionId))
         .sort((x, y) => y.runId - x.runId || y.cursor - x.cursor)
         .map((t) => ({ transcriptId: t.id, path: t.path, ingestCursor: t.cursor, sourceIdentity: t.identity, runStartedAt: fake.runs.find((r) => r.runId === t.runId)!.startedAt, readDigest: t.digest ?? null })),
       advanceCursor: (id: number, cursor: number, digest?: string | null) => { const t = fake.trs.find((x) => x.id === id); if (t) { t.cursor = cursor; if (digest !== undefined) t.digest = digest } },
@@ -239,7 +240,7 @@ describe('the transcripts worker and a Codex rollout (P3.12, row 31)', () => {
     expect(texts(r3)).toEqual(['a different history', 'more'])
   })
 
-  it('V2: a Claude transcript bound again by a new run is read as before (Claude unchanged)', () => {
+  it('V2, P3.16 (M1): a Claude transcript bound again by a new run of the same session continues from what was indexed, as a Codex one: nothing twice', () => {
     const { w, send } = boot()
     const f = join(dir, 'claude.jsonl')
     writeFileSync(f, claudeLine('once'))
@@ -247,11 +248,12 @@ describe('the transcripts worker and a Codex rollout (P3.12, row 31)', () => {
     send({ type: 'transcript-bind', sessionId: 's1', path: f, confidence: 'exact' })
     w.tickNow()
     send({ type: 'run-start', meta: { sessionId: 's1', configLabel: 'Claude', provider: 'claude', startedAt: 2 } })
+    appendFileSync(f, claudeLine('twice'))
     send({ type: 'transcript-bind', sessionId: 's1', path: f, confidence: 'exact' })
     w.tickNow()
     const [r1, r2] = fake.runs.map((r) => r.runId)
     expect(texts(r1)).toEqual(['once'])
-    expect(texts(r2)).toEqual(['once'])
+    expect(texts(r2)).toEqual(['twice'])
   })
 
   it('A1: a Codex tail reads only the file it was bound to: another file put at the path is not read, and the tail retires', () => {
@@ -782,5 +784,209 @@ describe('the transcripts worker and a Codex rollout (P3.12, row 31)', () => {
     writeFileSync(copy, readFileSync(f, 'utf8'))
     send(runStart('U', BASE + 7000)); send(bindNI('U', copy)); w.tickNow()
     expect(shown5(fake.runs.find((r) => r.sessionId === 'U')!.runId)).toEqual(['BEFORE', '-- off --', 'LATER'])
+  })
+})
+
+describe('Claude\'s resume continues from what was indexed, with Codex\'s record-time windows (P3.16, M1)', () => {
+  const BASE = Date.now() - 600_000
+  const at = (ms: number) => new Date(BASE + ms).toISOString()
+  const uuid = (n: number) => `7f3e0c1a-0000-4000-8000-0000000002${String(n).padStart(2, '0')}`
+  const tfile = (n: number, sub = '') => { const d = sub ? join(dir, sub) : dir; mkdirSync(d, { recursive: true }); return join(d, `${uuid(n)}.jsonl`) }
+  /** A Claude record: a user turn (or an assistant one) stamped at BASE + ms, or with no time. */
+  const say = (text: string, ms: number | null, type: 'user' | 'assistant' = 'user') =>
+    JSON.stringify({ type, ...(ms === null ? {} : { timestamp: at(ms) }), message: { role: type, content: text } }) + '\n'
+  const sayAs = (text: string, timestamp: string) => JSON.stringify({ type: 'user', timestamp, message: { role: 'user', content: text } }) + '\n'
+  /** Records that give no rows: metadata, and a user record of a tool's result. */
+  const meta = (ms: number) => JSON.stringify({ type: 'file-history-snapshot', timestamp: at(ms) }) + '\n'
+  const toolResult = (ms: number) => JSON.stringify({ type: 'user', timestamp: at(ms), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: 'out' }] } }) + '\n'
+  const runC = (sid: string, startedAt: number): In => ({ type: 'run-start', meta: { sessionId: sid, configLabel: 'Claude', provider: 'claude', startedAt } } as In)
+  const bindC = (sid: string, f: string): In => ({ type: 'transcript-bind', sessionId: sid, path: f, confidence: 'exact' } as In)
+  const windowsFor = (n: number, list: Array<[number, number | null]>, before: number | null = null): In =>
+    ({ type: 'not-indexed-windows', conversations: { [uuid(n)]: list.map(([s0, e0]) => [BASE + s0, e0 === null ? null : BASE + e0]) }, before } as unknown as In)
+  const shown = (runId?: number) => fake.msgs.filter((m) => runId === undefined || m.runId === runId).map((m) => m.kind === 'clear' ? (m.content ? '-- off --' : '--') : m.content)
+  const runOf = (sid: string, nth = 0) => fake.runs.filter((r) => r.sessionId === sid)[nth].runId
+  const localIso = (ms: number) => {
+    const d = new Date(ms)
+    const p = (n: number, w = 2) => String(n).padStart(w, '0')
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`
+  }
+
+  it('a Restart, then another: each run reads on from the one before, and stores what it read with its cursor', () => {
+    const { w, send } = boot()
+    const f = tfile(1)
+    writeFileSync(f, say('ONE', 1000))
+    send(runC('s1', BASE)); send(bindC('s1', f)); w.tickNow()
+    // (A new run first: its start drains the run before it.)
+    send(runC('s1', BASE + 1500)); appendFileSync(f, say('TWO', 2000)); send(bindC('s1', f)); w.tickNow()
+    send(runC('s1', BASE + 2500)); appendFileSync(f, say('THREE', 3000)); send(bindC('s1', f)); w.tickNow()
+    expect([0, 1, 2].map((n) => shown(runOf('s1', n)))).toEqual([['ONE'], ['TWO'], ['THREE']])
+    expect(fake.trs.every((t) => typeof t.digest === 'string' && t.digest.length === 64)).toBe(true)
+  })
+
+  it('a file at the path whose first bytes are not what was read is read from its start', () => {
+    const { w, send } = boot()
+    const f = tfile(2)
+    writeFileSync(f, say('ORIGINAL', 1000))
+    send(runC('s1', BASE)); send(bindC('s1', f)); w.tickNow()
+    writeFileSync(f, say('OTHER-1', 1000) + say('OTHER-2', 2000) + say('OTHER-3', 3000))
+    send(runC('s1', BASE + 4000)); send(bindC('s1', f)); w.tickNow()
+    expect(shown(runOf('s1', 1))).toEqual(['OTHER-1', 'OTHER-2', 'OTHER-3'])
+  })
+
+  it('an earlier binding that kept no digest (indexed by a build before this one) continues from its cursor', () => {
+    const { w, send } = boot()
+    const f = tfile(3)
+    writeFileSync(f, say('ONE', 1000))
+    send(runC('s1', BASE)); send(bindC('s1', f)); w.tickNow()
+    send(runC('s1', BASE + 1500))
+    fake.trs[0].digest = null
+    appendFileSync(f, say('TWO', 2000))
+    send(bindC('s1', f)); w.tickNow()
+    expect(shown(runOf('s1', 1))).toEqual(['TWO'])
+  })
+
+  it('with no digest to go on, a file shorter than what was read is read from its start', () => {
+    const { w, send } = boot()
+    const f = tfile(15)
+    writeFileSync(f, say('A-LONG-FIRST-TURN', 1000) + say('ANOTHER', 1500))
+    send(runC('s1', BASE)); send(bindC('s1', f)); w.tickNow()
+    send(runC('s1', BASE + 2500))
+    fake.trs[0].digest = null
+    writeFileSync(f, say('SHORT', 2000))
+    send(bindC('s1', f)); w.tickNow()
+    expect(shown(runOf('s1', 1))).toEqual(['SHORT'])
+  })
+
+  it('back to a transcript within a run (A, B, A): it goes on vouching for what it read, so a later file there that is not that is read whole', () => {
+    const { w, send } = boot()
+    const a = tfile(16)
+    const b = tfile(17)
+    writeFileSync(a, say('A-1', 1000))
+    writeFileSync(b, say('B-1', 1000))
+    send(runC('s1', BASE)); send(bindC('s1', a)); w.tickNow()
+    send(bindC('s1', b)); w.tickNow()
+    appendFileSync(a, say('A-2', 2000))
+    send(bindC('s1', a)); w.tickNow()
+    expect(fake.trs.find((t) => t.path === a)!.digest).toMatch(/^[0-9a-f]{64}$/)
+    send(runC('s1', BASE + 3000))
+    writeFileSync(a, say('X-1', 1000) + say('X-2', 2000) + say('X-3', 3000) + say('X-4', 4000))
+    send(bindC('s1', a)); w.tickNow()
+    expect(shown(runOf('s1', 1))).toEqual(['X-1', 'X-2', 'X-3', 'X-4'])
+  })
+
+  it('a file shorter than what was read is read from its start', () => {
+    const { w, send } = boot()
+    const f = tfile(4)
+    writeFileSync(f, say('A-LONG-FIRST-TURN', 1000) + say('ANOTHER', 1500))
+    send(runC('s1', BASE)); send(bindC('s1', f)); w.tickNow()
+    writeFileSync(f, say('SHORT', 2000))
+    send(runC('s1', BASE + 2500)); send(bindC('s1', f)); w.tickNow()
+    expect(shown(runOf('s1', 1))).toEqual(['SHORT'])
+  })
+
+  it('another session on the same transcript (a resume in a new tab) is not continued: read from its start, in its own slot', () => {
+    const { w, send } = boot()
+    const f = tfile(5)
+    writeFileSync(f, say('ONE', 1000))
+    send(runC('s1', BASE)); send(bindC('s1', f)); w.tickNow()
+    appendFileSync(f, say('TWO', 2000))
+    send(runC('s2', BASE + 1500)); send(bindC('s2', f)); w.tickNow()
+    expect(shown(runOf('s2'))).toEqual(['ONE', 'TWO'])
+  })
+
+  it('a worker restart keeps vouching for what was read: a later run still continues', () => {
+    const f = tfile(6)
+    writeFileSync(f, say('ONE', 1000))
+    const first = boot()
+    first.send(runC('s1', BASE)); first.send(bindC('s1', f)); first.w.tickNow()
+    first.w.stop()
+    appendFileSync(f, say('TWO', 2000))
+    const second = boot()
+    second.w.tickNow()
+    second.send(runC('s1', BASE + 2500))
+    appendFileSync(f, say('THREE', 3000))
+    second.send(bindC('s1', f)); second.w.tickNow()
+    expect(fake.runs.map((r) => shown(r.runId))).toEqual([['ONE', 'TWO'], ['THREE']])
+  })
+
+  it('a Restart after logging was off for the session: the turns written while off are left out, a divider where they were; the turn that came with the resume is kept', () => {
+    const { w, send } = boot()
+    const f = tfile(7)
+    writeFileSync(f, say('ON-1', 1000))
+    send(runC('s1', BASE + 500)); send(bindC('s1', f)); w.tickNow()
+    send({ type: 'run-end', sessionId: 's1', ts: BASE + 2000, status: 'stopped' } as In)
+    appendFileSync(f, say('OFF-1', 3000) + say('OFF-2', 3500, 'assistant'))
+    send(windowsFor(7, [[2000, 4000]]))
+    appendFileSync(f, say('RESUME-TURN', 4500))
+    send(runC('s1', BASE + 4000)); send(bindC('s1', f)); w.tickNow()
+    expect(shown()).toEqual(['ON-1', '-- off --', 'RESUME-TURN'])
+  })
+
+  it('a new tab reading the conversation from its start: the turns written while not indexed are left out, a divider where they were', () => {
+    const { w, send } = boot()
+    const f = tfile(8)
+    writeFileSync(f, say('ON-1', 1000) + say('OFF-1', 3000) + say('OFF-2', 3500) + say('ON-2', 5000))
+    send(windowsFor(8, [[2000, 4000]]))
+    send(runC('T', BASE + 6000)); send(bindC('T', f)); w.tickNow()
+    expect(shown()).toEqual(['ON-1', '-- off --', 'ON-2'])
+  })
+
+  it('a window still open: every record from its start is left out, as it comes; once it closes, records after are read', () => {
+    const { w, send } = boot()
+    const f = tfile(9)
+    writeFileSync(f, say('ON-1', 1000))
+    send(windowsFor(9, [[2000, null]]))
+    send(runC('s1', BASE + 500)); send(bindC('s1', f)); w.tickNow()
+    appendFileSync(f, say('OFF-1', 3000)); w.tickNow()
+    send(windowsFor(9, [[2000, 4000]]))
+    appendFileSync(f, say('ON-2', 5000)); w.tickNow()
+    expect(shown()).toEqual(['ON-1', '-- off --', 'ON-2'])
+  })
+
+  it('the edges, and records with no time: at a window\'s start left out, at its end read; no time takes the one before; none before is left out; a zoneless time is no time', () => {
+    const { w, send } = boot()
+    const f = tfile(10)
+    writeFileSync(f, say('BEFORE', 1999) + say('AT-START', 2000) + say('NO-TIME-IN', null) + say('AT-END', 4000) + sayAs('ZONELESS-AFTER-END', localIso(BASE + 3000)))
+    send(windowsFor(10, [[2000, 4000]]))
+    send(runC('s1', BASE + 500)); send(bindC('s1', f)); w.tickNow()
+    expect(shown()).toEqual(['BEFORE', '-- off --', 'AT-END', 'ZONELESS-AFTER-END'])
+    const g = tfile(11)
+    writeFileSync(g, say('NO-TIME-FIRST', null) + sayAs('ZONELESS-FIRST', localIso(BASE + 9000)) + say('ON-X', 5000))
+    send(windowsFor(11, [[2000, 4000]]))
+    send(runC('s2', BASE + 600)); send(bindC('s2', g)); w.tickNow()
+    expect(shown(runOf('s2'))).toEqual(['-- off --', 'ON-X'])
+  })
+
+  it('records that give no rows (metadata, a tool\'s result) left out leave no divider; one that gives rows does', () => {
+    const { w, send } = boot()
+    const f = tfile(12)
+    writeFileSync(f, say('ON-1', 1000) + meta(3000) + toolResult(3200) + say('ON-2', 5000))
+    send(windowsFor(12, [[2000, 4000]]))
+    send(runC('s1', BASE + 500)); send(bindC('s1', f)); w.tickNow()
+    expect(shown()).toEqual(['ON-1', 'ON-2'])
+  })
+
+  it('a conversation with no window and no before-time is read whole, records with no time included', () => {
+    const { w, send } = boot()
+    const f = tfile(13)
+    writeFileSync(f, say('NO-TIME', null) + say('ON-1', 1000))
+    send(windowsFor(99, [[0, 9000]]))
+    send(runC('s1', BASE + 500)); send(bindC('s1', f)); w.tickNow()
+    expect(shown()).toEqual(['NO-TIME', 'ON-1'])
+  })
+
+  it('main\'s record of the windows, kept by a Claude transcript\'s path, is the one the worker reads by (the conversation\'s id)', () => {
+    const { w, send } = boot()
+    resetIndexingGapsForTests()
+    setNotIndexedListener((u) => send({ type: 'not-indexed-windows', ...u } as unknown as In))
+    const f = tfile(14, 'projects/C--w')
+    writeFileSync(f, say('BEFORE', 100) + say('FIRST-PROMPT', 1000) + say('FIRST-REPLY', 1500, 'assistant'))
+    // A Claude session launched not indexed at 500, its transcript learned at 2000 (its hook).
+    openNotIndexedWindow('S', join(dir, 'other-spelling', `${uuid(14).toUpperCase()}.jsonl`), BASE + 500, BASE + 2000)
+    expect(notIndexedSnapshot().conversations[uuid(14)]).toEqual([[BASE + 500, null]])
+    closeNotIndexedWindow('S', BASE + 4000)
+    appendFileSync(f, say('LATER', 5000))
+    send(runC('T', BASE + 6000)); send(bindC('T', f)); w.tickNow()
+    expect(shown()).toEqual(['BEFORE', '-- off --', 'LATER'])
   })
 })

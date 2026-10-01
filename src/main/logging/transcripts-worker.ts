@@ -109,6 +109,9 @@ interface TailState {
   /** P3.12 (Y3): the stored digest of what was read up to `cursor`, checked
    *  (and the running digest built) only when the tail next reads. */
   digestStored?: string
+  /** P3.16 (M1): whether this tail stores the digest of what it read with its
+   *  cursor (a Codex tail with its claimed identity, and a Claude tail). */
+  vouches?: boolean
 }
 
 export interface TranscriptsWorker {
@@ -175,9 +178,9 @@ export function createTranscriptsWorker(
 
   /** Commit a batch (rows + cursor, one transaction) and post new-messages. */
   function flushBatch(tail: TailState, msgs: NewMessage[], newCursor: number): void {
-    // P3.12: a Codex tail stores the digest of what it read with its cursor
-    // (none when it cannot vouch for it); Claude's rows are written as before.
-    const readDigest = tail.identity === undefined ? undefined : tail.digest ? tail.digest.copy().digest('hex') : null
+    // P3.12, P3.16 (M1): a tail stores the digest of what it read with its
+    // cursor (none when it cannot vouch for it), a Claude tail as a Codex one.
+    const readDigest = !tail.vouches ? undefined : tail.digest ? tail.digest.copy().digest('hex') : null
     db!.appendBatch(tail.runId, tail.transcriptId, msgs, newCursor, readDigest)
     tail.cursor = newCursor
     if (msgs.length > 0) {
@@ -350,19 +353,34 @@ export function createTranscriptsWorker(
    * starts at 0. Nothing is indexed twice. (What was written while the
    * conversation was not indexed is left out by record time on every read,
    * wherever it starts: notIndexedAt.)
+   *
+   * P3.16 (M1): a Claude transcript the same way (Claude's resume continues
+   * from what was indexed, as Codex's does), its earlier bindings of the same
+   * format. A Claude binding carries no file identity: at the same path the
+   * digest of what was read vouches for the file (a file whose first bytes
+   * are not what was read is read from its start); where it cannot (an
+   * earlier binding that kept none, or more than the compare limit read),
+   * the transcript continues from its cursor, as a Claude tail does across a
+   * worker restart.
    */
-  function continuationStart(runId: number, sessionId: string, path: string, identity: string): { cursor: number; digest?: Hash } {
+  function continuationStart(runId: number, sessionId: string, path: string, format: 'claude-jsonl' | 'codex-rollout', identity?: string): { cursor: number; digest?: Hash } {
     let size: number
     try {
       size = fsi.statSync(path).size
     } catch {
       return { cursor: 0 }
     }
-    for (const prior of db!.priorCodexBindings(runId, pathBasename(path), sessionId)) {
+    for (const prior of db!.priorBindings(runId, pathBasename(path), sessionId, format)) {
       const at = prior.ingestCursor
       if (prior.path === path) {
-        if (prior.sourceIdentity === identity && at > 0 && at <= size) return { cursor: at, digest: digestIfRead(path, at, prior.readDigest) }
-        return { cursor: 0 }
+        if (format === 'codex-rollout') {
+          if (prior.sourceIdentity === identity && at > 0 && at <= size) return { cursor: at, digest: digestIfRead(path, at, prior.readDigest) }
+          return { cursor: 0 }
+        }
+        if (at <= 0 || at > size) return { cursor: 0 }
+        if (!prior.readDigest || at > CONTINUE_COMPARE_MAX_BYTES) return { cursor: at }
+        const read = digestIfRead(path, at, prior.readDigest)
+        return read ? { cursor: at, digest: read } : { cursor: 0 }
       }
       if (at > 0 && at <= size && at <= CONTINUE_COMPARE_MAX_BYTES) {
         const read = digestIfRead(path, at, prior.readDigest)
@@ -449,21 +467,28 @@ export function createTranscriptsWorker(
       startTs: db!.lastMessageTs(meta.runId) ?? 0,
     }
     const codex = sourceFormat === 'codex-rollout'
-    // P3.12 round 6 (Z4): the conversation's key, worked out once for this tail.
-    const conversation = codex ? codexConversationKey(meta.path) : ''
+    // P3.12 round 6 (Z4): the conversation's key, worked out once for this
+    // tail. P3.16 (M1): a Claude transcript's too (its file name is the
+    // conversation's id, as a rollout's ends with it).
+    const conversation = codexConversationKey(meta.path)
+    const skip = (ts: number | null): boolean => notIndexedAt(conversation, ts)
+    // P3.16 (M1): a Claude tail vouches for what it read, as a Codex tail
+    // with its claimed identity does.
+    const vouches = codex ? !!identity : true
     tails.set(meta.transcriptId, {
       ...state,
-      // P3.12 (Y1): a Codex tail leaves out the records written while its
-      // conversation was not indexed, by record time, whatever its offset.
+      // P3.12 (Y1), P3.16 (M1): a tail leaves out the records written while
+      // its conversation was not indexed, by record time, whatever its offset.
       normalizer: codex
-        ? makeCodexRolloutNormalizer({ ...seed, skip: (ts) => notIndexedAt(conversation, ts), skippedLabel: NOT_INDEXED_DIVIDER })
-        : makeNormalizer(seed),
+        ? makeCodexRolloutNormalizer({ ...seed, skip, skippedLabel: NOT_INDEXED_DIVIDER })
+        : makeNormalizer({ ...seed, skip, skippedLabel: NOT_INDEXED_DIVIDER }),
       ...(codex && identity ? { identity } : {}),
-      // P3.12 (X4): a Codex tail from the file's start reads it all; one that
-      // goes on from a cursor vouches for its bytes only with the digest of
-      // what was read before it.
-      ...(codex && identity && (digest || meta.cursor === 0) ? { digest: digest ?? createHash('sha256') } : {}),
-      ...(codex && identity && !digest && meta.cursor > 0 && digestStored ? { digestStored } : {}),
+      vouches,
+      // P3.12 (X4): a tail from the file's start reads it all; one that goes
+      // on from a cursor vouches for its bytes only with the digest of what
+      // was read before it.
+      ...(vouches && (digest || meta.cursor === 0) ? { digest: digest ?? createHash('sha256') } : {}),
+      ...(vouches && !digest && meta.cursor > 0 && digestStored ? { digestStored } : {}),
     })
   }
 
@@ -527,9 +552,9 @@ export function createTranscriptsWorker(
         cursor: r.ingestCursor,
         sourceFormat: r.sourceFormat,
         identity: r.sourceIdentity,
-        // P3.12 (Y3): a resumed Codex tail goes on vouching for what it read,
-        // its stored digest checked when it next reads.
-        digestStored: r.sourceFormat === 'codex-rollout' ? r.readDigest : null,
+        // P3.12 (Y3): a resumed tail goes on vouching for what it read, its
+        // stored digest checked when it next reads (P3.16 M1: Claude's too).
+        digestStored: r.readDigest,
       })
     }
 
@@ -778,8 +803,8 @@ export function createTranscriptsWorker(
           ...(identity ? { sourceIdentity: identity } : {}),
         })
         let cursor = bound.cursor
-        // P3.12 round 1 (V2): where a new binding of a Codex rollout starts
-        // (Claude's are read as before).
+        // P3.12 round 1 (V2): where a new binding of a Codex rollout starts;
+        // P3.16 (M1): a Claude transcript's too.
         let digest: Hash | undefined
         let digestStored: string | null = null
         // A rotation within a run: a new transcript (e.g. /clear), or (round 1,
@@ -789,14 +814,14 @@ export function createTranscriptsWorker(
         // after everything already ingested; two live normalizers on one run
         // would otherwise collide on idx.
         const backToEarlier = !bound.isNew && (bound.status === 'complete' || bound.status === 'failed' || bound.identityChanged)
-        if (codex && identity && bound.isNew) {
-          const start = continuationStart(runId, msg.sessionId, msg.path, identity)
+        if (bound.isNew) {
+          const start = continuationStart(runId, msg.sessionId, msg.path, codex ? 'codex-rollout' : 'claude-jsonl', identity)
           if (start.cursor > 0) {
             db.advanceCursor(bound.transcriptId, start.cursor, start.digest ? start.digest.copy().digest('hex') : null)
             cursor = start.cursor
           }
           digest = start.digest
-        } else if (codex && identity) {
+        } else {
           // A re-bind that (re)starts the tail goes on from its cursor,
           // vouching for what it read (checked when it next reads).
           digestStored = bound.readDigest
