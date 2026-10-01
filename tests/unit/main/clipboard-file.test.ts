@@ -18,9 +18,9 @@ describe('parseFileUrl (macOS public.file-url)', () => {
 // A real-shaped DROPFILES, as Explorer puts it on the clipboard (shlobj_core.h):
 // pFiles (4 bytes, offset 0), pt (two 4-byte coordinates, offset 4), fNC (4 bytes,
 // offset 12) and fWide (4 bytes, offset 16): 20 bytes, then the path list.
-function dropfiles(list: string, opts: { wide: boolean; fNC?: number }): Buffer {
+function dropfiles(list: string, opts: { wide: boolean; fNC?: number; pFiles?: number }): Buffer {
   const header = Buffer.alloc(20)
-  header.writeUInt32LE(20, 0)
+  header.writeUInt32LE(opts.pFiles ?? 20, 0)
   header.writeInt32LE(0, 4)
   header.writeInt32LE(0, 8)
   header.writeUInt32LE(opts.fNC ?? 0, 12)
@@ -50,6 +50,20 @@ describe('parseHdropBuffer (Windows CF_HDROP)', () => {
   })
   it('returns [] for a too-short buffer', () => {
     expect(parseHdropBuffer(Buffer.alloc(4))).toEqual([])
+  })
+  // P3.16a UI round 1 (the quality review's U5 bounds): the list follows the
+  // 20-byte header, and ends at its double NUL.
+  it('returns [] when pFiles points inside the 20-byte header (it would read the header as paths)', () => {
+    for (const pFiles of [1, 8, 12, 16, 19]) {
+      expect(parseHdropBuffer(dropfiles('C:\\pics\\a.png\0\0', { wide: true, pFiles })), String(pFiles)).toEqual([])
+      expect(parseHdropBuffer(dropfiles('C:\\pics\\a.png\0\0', { wide: false, pFiles })), String(pFiles)).toEqual([])
+    }
+  })
+  it('stops at the double NUL: bytes after the list (the rest of the clipboard block) are not paths', () => {
+    expect(parseHdropBuffer(dropfiles('C:\\pics\\a.png\0C:\\pics\\b.png\0\0D:\\junk.png\0more\0\0', { wide: true }))).toEqual(['C:\\pics\\a.png', 'C:\\pics\\b.png'])
+    expect(parseHdropBuffer(dropfiles('C:\\pics\\a.png\0\0D:\\junk.png\0\0', { wide: false }))).toEqual(['C:\\pics\\a.png'])
+    // An empty list (its first entry is the end) is no paths, whatever follows.
+    expect(parseHdropBuffer(dropfiles('\0\0D:\\junk.png\0\0', { wide: true }))).toEqual([])
   })
 })
 

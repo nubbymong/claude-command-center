@@ -253,7 +253,9 @@ describe('Transparency, the log indexing card (P3.12)', () => {
       renderWith(over)
       const t = cardText().replace(/\s+/g, ' ')
       expect(t, JSON.stringify(over)).toContain('Tokenomics reads them with an index of its own, which this switch does not change.')
-      expect(t, JSON.stringify(over)).not.toMatch(/Powers[^.]*Tokenomics/)
+      // By sentence (a full stop and a space): the dot in ~/.claude/projects
+      // does not end one, as `[^.]*` did (P3.16a UI round 1).
+      expect(t.split(/\.\s/).filter((s) => /Powers.*Tokenomics/.test(s)), JSON.stringify(over)).toEqual([])
     }
   })
 

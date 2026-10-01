@@ -193,7 +193,7 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
         <span className="text-[13px] truncate" style={{ fontWeight: isActive ? 700 : 600, opacity: asleep ? 0.7 : undefined }} title={session.customName?.trim() ? `${session.customName.trim()} · ${session.label}` : session.label}>{session.customName?.trim() || session.label}</span>
         {ordinal !== undefined && (
           <span
-            className="shrink-0 text-[11px] tabular-nums text-[var(--text-muted)]"
+            className="session-ordinal shrink-0 text-[11px] tabular-nums text-[var(--text-muted)]"
             title={`Instance ${ordinal} of this config`}
             data-testid="session-row-ordinal"
           >

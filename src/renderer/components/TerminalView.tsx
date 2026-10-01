@@ -938,12 +938,16 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
             settleOwnStart('no-spawn-here')
             return
           }
-          // A tab whose last launch started nothing, remounted by anything
-          // other than a Restart (a partner-terminal restart re-keys this
-          // view): starting it launches its config, so it passes the Multi
-          // Spawn rule like any launch (restartLaunchRefusal). Refused: nothing
-          // spawns, and it stays Not started, saying why. Allowed: it counts
-          // as running again from here, as a Restart's remount does.
+          // A tab whose last launch started nothing (neverStarted), remounted
+          // by a Restart (which keeps the flag: useRestartSession) or by
+          // anything else (a partner-terminal restart re-keys this view):
+          // starting it launches its config, so it passes the Multi Spawn rule
+          // like any launch (restartLaunchRefusal), here, when it actually
+          // starts. Refused: nothing spawns, and it stays Not started, saying
+          // why. Allowed: the flag is cleared here, before the spawn, so it
+          // counts as running from now; settleOwnStart sets it again if this
+          // start ends with nothing started, and markLive clears it when a PTY
+          // starts.
           const record = useSessionStore.getState().sessions.find((s) => s.id === sessionId)
           if (record?.neverStarted) {
             const refusal = restartLaunchRefusal(record, useConfigStore.getState().configs)

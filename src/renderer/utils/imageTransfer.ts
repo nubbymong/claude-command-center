@@ -1,7 +1,13 @@
 import { writeSessionInput } from '../components/terminal/tmuxWheelScroll'
 import { quoteArgForShell } from '../../shared/shell-quote'
 /**
- * Image transfer helper — gets a host-saved image into a Claude session.
+ * Image transfer helper: gets a host-saved image into a session. The prompts
+ * below are a Claude session's; a plain terminal (and the partner shell) gets
+ * only the image's path, quoted for its shell (composeShellImagePath, below);
+ * a Codex session's line goes through lib/codexComposer.ts
+ * (sendImagePathToCodex).
+ *
+ * For a Claude session:
  *
  * Local sessions: write the absolute path into the prompt. Claude's
  * built-in Read tool ingests the file directly — no extra MCP round-

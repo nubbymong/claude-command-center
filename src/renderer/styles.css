@@ -423,10 +423,12 @@ input[type="range"] {
 }
 .session-card .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* P3.16a (U4): an attention card has the session's identity colour pulsing
-   under its text, so its muted lines (the model line, the account line) use the
-   secondary text colour: --text-muted clears 4.5:1 on the bare panel but not
-   on the tinted one in every identity colour. Held by token-contrast.test.ts. */
-.session-card[data-attention="true"] { --text-muted: var(--text-secondary); }
+   under its text, so its muted text (the model line and context %, the account
+   line, the #N ordinal) uses the secondary text colour: --text-muted clears
+   4.5:1 on the bare panel but not on the tinted one in every identity colour.
+   Set on those text elements only, so the context meter's fill (.meter-neutral)
+   keeps its colour. Held by token-contrast.test.ts. */
+.session-card[data-attention="true"] :is(.meta, .session-ordinal) { --text-muted: var(--text-secondary); }
 .session-card .meta {
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px;

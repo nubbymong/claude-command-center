@@ -113,11 +113,14 @@ export function useKeyboardShortcuts(
       // NOTE: rename (F2) is handled in Sidebar so it edits the active session
       // in the Active Sessions list (only when the sidebar is visible), not the
       // tab. Tab double-click / right-click still edit the tab inline.
-      // Paste clipboard image: saves to host screenshots dir, then routes to
-      // Claude. Local sessions get the absolute path written into the prompt
-      // (Claude's Read tool ingests it directly). SSH sessions can't reach
-      // the host filesystem so they go through the Conductor MCP
-      // fetch over the reverse tunnel.
+      // Paste clipboard image: saves to host screenshots dir, then routes it by
+      // the pane on screen. A Claude session: a local one gets the absolute path
+      // written into the prompt (Claude's Read tool ingests it directly), an SSH
+      // one, which can't reach the host filesystem, the Conductor MCP fetch over
+      // the reverse tunnel. A Codex session: its line through the Codex typing
+      // rule. A plain terminal, and the partner shell in the partner view: only
+      // the quoted path, with no Enter (nothing over SSH, or for a terminal that
+      // is not running, with a hint saying where the image is).
       if (matchesShortcut(e, shortcuts.pasteImage)) {
         e.preventDefault()
         const state = useSessionStore.getState()
@@ -147,7 +150,12 @@ export function useKeyboardShortcuts(
               // gets the image's path, quoted for its shell, and no sentence or
               // Enter. Over SSH the file is on this computer, which the remote
               // shell cannot read: nothing is typed, and the hint says where it is.
-              if (session.sessionType === 'ssh') {
+              // A terminal whose process has ended or never started has no shell
+              // to type into: nothing is typed, and the hint says so (round 1),
+              // as the Codex route says when its session is not running.
+              if (session.ptyExited || session.neverStarted) {
+                usePasteHintStore.getState().show(sessionId, `This terminal is not running, so nothing was typed; the image was saved on this computer at ${res.path}.`)
+              } else if (session.sessionType === 'ssh') {
                 usePasteHintStore.getState().show(sessionId, `The image was saved on this computer at ${res.path}; the remote shell cannot read it, so nothing was typed.`)
               } else {
                 typeImagePathIntoShell(sessionId, res.path, window.electronPlatform === 'win32')

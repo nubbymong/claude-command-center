@@ -101,12 +101,16 @@ describe('the logging switches reach running sessions (P3.12 round 1, V1)', () =
       'the Session Activity Logging tip': tipBody,
       'PRIVACY.md (the index entry)': privacySource.slice(privacyAt).split(/\r?\n- /)[0],
     }
-    for (const [name, src] of Object.entries(surfaces)) {
-      // A sentence that names Tokenomics beside power/powered/used to power would
-      // say this index feeds it (a separate index of its own is said in its own
-      // sentence, after a full stop).
-      expect(flat(src), name).not.toMatch(/(?:[Pp]owers?|powered by|used to power)\b[^.]*\bTokenomics\b|\bTokenomics\b[^.]*\b(?:is|are) powered by\b/)
-    }
+    // A sentence that names Tokenomics beside power/powered/used to power would
+    // say this index feeds it (a separate index of its own is said in its own
+    // sentence). A sentence ends at a full stop and a space, so the dot in a path
+    // such as ~/.claude/projects does not end one (round 1: `[^.]*` stopped there,
+    // and a regression after the path went unseen).
+    const powersTokenomics = (text: string) => flat(text).split(/\.\s/)
+      .some((s) => /(?:[Pp]owers?|powered by|used to power)\b.*\bTokenomics\b|\bTokenomics\b.*\b(?:is|are) powered by\b/.test(s))
+    expect(powersTokenomics("Powers the Logs page by indexing Claude's own transcripts (~/.claude/projects) and the Tokenomics page.")).toBe(true)
+    expect(powersTokenomics("Powers the Logs page by indexing Claude's own transcripts (~/.claude/projects). Tokenomics reads them with an index of its own.")).toBe(false)
+    for (const [name, src] of Object.entries(surfaces)) expect(powersTokenomics(src), name).toBe(false)
   })
 
   it('P3.12 (T1): the changelog says what is never indexed for a Codex session only', () => {
