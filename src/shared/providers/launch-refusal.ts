@@ -10,15 +10,11 @@ import type { ProviderId } from '../types'
 
 /** Why a launch was refused: the provider is switched off, the user has not
  *  said yet whether they use it (a provider whose absent value means "not
- *  answered yet", until they answer: owner decision 2026-09-26), main
- *  could not read whether it is on (no answer is never a yes, for a launch),
- *  or the config is not a Multi Spawn config and a copy of it is already
- *  running (`already-running`: pty:spawn's one-at-a-time rule, P3.13). That
- *  last one names the provider the session would have run, though it is not
- *  about the provider: the code is what the renderer branches on. */
-export type ProviderLaunchRefusalCode = 'provider-off' | 'provider-not-set-up' | 'provider-state-unknown' | 'already-running'
+ *  answered yet", until they answer: owner decision 2026-09-26), or main
+ *  could not read whether it is on (no answer is never a yes, for a launch). */
+export type ProviderLaunchRefusalCode = 'provider-off' | 'provider-not-set-up' | 'provider-state-unknown'
 
-export const PROVIDER_LAUNCH_REFUSAL_CODES: readonly ProviderLaunchRefusalCode[] = ['provider-off', 'provider-not-set-up', 'provider-state-unknown', 'already-running']
+export const PROVIDER_LAUNCH_REFUSAL_CODES: readonly ProviderLaunchRefusalCode[] = ['provider-off', 'provider-not-set-up', 'provider-state-unknown']
 
 export interface ProviderLaunchRefusal {
   code: ProviderLaunchRefusalCode
@@ -61,11 +57,47 @@ export function refusedTabText(refusal: Pick<ProviderLaunchRefusal, 'message'>):
 /** The refusal an IPC answer carries, or null when it carries none. Checks
  *  the shape, so anything else an entry point returns reads as no refusal. */
 export function launchRefusalOf(value: unknown): ProviderLaunchRefusal | null {
+  return refusalOf(value, PROVIDER_LAUNCH_REFUSAL_CODES) as ProviderLaunchRefusal | null
+}
+
+// P3.13 (round 1, N3): pty:spawn has one refusal more than the provider gate
+// has, and it is its own type: the provider gate's consumers (the accounts
+// service's cliRefusal, the Cloud Agents and Insights entry points, the SSH
+// overlay) branch on ProviderLaunchRefusalCode and never see it.
+
+/** What pty:spawn refuses besides what the provider gate refuses: the config
+ *  is not a Multi Spawn config and a copy of it is already running
+ *  (`already-running`, the one-at-a-time rule: src/main/launch-one-at-a-time.ts).
+ *  It names the provider the session would have run, though it is not about
+ *  the provider. */
+export type SpawnRefusalCode = ProviderLaunchRefusalCode | 'already-running'
+
+export const SPAWN_REFUSAL_CODES: readonly SpawnRefusalCode[] = [...PROVIDER_LAUNCH_REFUSAL_CODES, 'already-running']
+
+export interface SpawnRefusal {
+  code: SpawnRefusalCode
+  providerId: ProviderId
+  /** A plain sentence naming what to do. */
+  message: string
+}
+
+/** What a refused pty:spawn answers instead of starting anything. */
+export interface SpawnRefused {
+  refused: SpawnRefusal
+}
+
+/** The refusal a pty:spawn answer carries (any of the provider gate's, or the
+ *  one-at-a-time rule's), or null when it carries none. */
+export function spawnRefusalOf(value: unknown): SpawnRefusal | null {
+  return refusalOf(value, SPAWN_REFUSAL_CODES)
+}
+
+function refusalOf(value: unknown, codes: readonly string[]): SpawnRefusal | null {
   if (!value || typeof value !== 'object') return null
   const r = (value as { refused?: unknown }).refused
   if (!r || typeof r !== 'object') return null
-  const { code, providerId, message } = r as Partial<ProviderLaunchRefusal>
-  if (!PROVIDER_LAUNCH_REFUSAL_CODES.includes(code as ProviderLaunchRefusalCode)) return null
+  const { code, providerId, message } = r as Partial<SpawnRefusal>
+  if (typeof code !== 'string' || !codes.includes(code)) return null
   if (typeof providerId !== 'string' || typeof message !== 'string' || message.length === 0) return null
-  return { code: code as ProviderLaunchRefusalCode, providerId: providerId as ProviderId, message }
+  return { code, providerId: providerId as ProviderId, message }
 }

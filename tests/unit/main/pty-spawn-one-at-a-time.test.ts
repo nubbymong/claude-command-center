@@ -71,7 +71,8 @@ vi.mock('../../../src/main/provider-accounts', () => ({
 }))
 
 const { registerPtyHandlers } = await import('../../../src/main/ipc/pty-handlers')
-const { launchRefusalOf, refusedTabText } = await import('../../../src/shared/providers')
+const { spawnRefusalOf, refusedTabText } = await import('../../../src/shared/providers')
+const { _resetConfigLaunchClaimsForTest } = await import('../../../src/main/launch-one-at-a-time')
 const { alreadyRunningRefusalMessage } = await import('../../../src/shared/multi-spawn-rule')
 registerPtyHandlers(() => ({} as never))
 const spawn = handlers.get('pty:spawn')!
@@ -96,6 +97,7 @@ beforeEach(() => {
   live.clear(); pending.clear()
   spawnPty.mockClear(); beginSpawnPreparation.mockClear(); loadCredential.mockClear(); logWarn.mockClear(); lease.release.mockClear()
   acct.state = { claude: 'on', codex: 'on' }
+  _resetConfigLaunchClaimsForTest()
   let n = 0
   acct.prepareLaunch = vi.fn(async () => { n++; return { ok: true, lease, binding: {}, realmOnly: false, home: 'C:/res/r1', executable: 'C:/proven/codex.exe', env: {}, sessionsDir: `C:/res/r1/sessions${n}` } })
   configsOnDisk = null
@@ -161,7 +163,7 @@ describe('a config that is not Multi Spawn runs one copy at a time, in main', ()
     disk(savedCodex())
     await spawn({}, A, { ...codex, configId: 'cfgcodex' })
     const r = await spawn({}, B, { ...codex, configId: 'cfgcodex' })
-    const refusal = launchRefusalOf(r)
+    const refusal = spawnRefusalOf(r)
     expect(refusal).toEqual({ code: 'already-running', providerId: 'codex', message: expect.stringContaining('Codex Dev is already running.') })
     expect(refusal!.message).toContain("It isn't a Multi Spawn config, so it runs one at a time.")
     // The tab: "Not started." then the reason, then what to do.
@@ -221,24 +223,25 @@ describe('what is not a copy of the config', () => {
   it('Ask Conductor and a spawn that names no config are not copies of anything', async () => {
     disk(savedClaude())
     await spawn({}, A, { cwd: 'C:/w', configId: 'cfgclaude' })
-    expect(await spawn({}, B, { cwd: 'C:/help', isAsk: true, configId: 'cfgclaude' })).not.toMatchObject({ refused: expect.anything() })
+    // Ask Conductor's session names no config; the renderer never sends one with it.
+    expect(await spawn({}, B, { cwd: 'C:/help', isAsk: true })).not.toMatchObject({ refused: expect.anything() })
     expect(await spawn({}, C, { cwd: 'C:/w' })).not.toMatchObject({ refused: expect.anything() })
     // ...and none of them makes the config count: with A gone, a launch is free.
     kill({}, A)
     expect(await spawn({}, 'd1b2c3d4e5f6a1b2c3d4e5f6', { cwd: 'C:/w', configId: 'cfgclaude' })).not.toMatchObject({ refused: expect.anything() })
   })
 
-  it('an SSH reattach re-adopts a session that already exists: never refused, and it counts from then on', async () => {
+  it('a reconnect flag is not a right: an SSH copy that says it is a reattach is a new copy unless main already holds that session (rights: pty-spawn-one-at-a-time-rights.test.ts)', async () => {
     disk(savedSsh())
     await spawn({}, A, { cwd: 'C:/w', configId: 'cfgssh', ssh: { ...SSH } })
-    expect(await spawn({}, B, { cwd: 'C:/w', configId: 'cfgssh', ssh: { ...SSH, reconnect: true } })).not.toMatchObject({ refused: expect.anything() })
-    expect(live.has(B)).toBe(true)
-    expect(await spawn({}, C, { cwd: 'C:/w', configId: 'cfgssh', ssh: { ...SSH } })).toMatchObject({ started: false, refused: { code: 'already-running' } })
+    expect(await spawn({}, B, { cwd: 'C:/w', configId: 'cfgssh', ssh: { ...SSH, reconnect: true } })).toMatchObject({ started: false, refused: { code: 'already-running' } })
+    expect(live.has(B)).toBe(false)
   })
 
   it('a config main cannot find (deleted, never saved, a file it cannot read) has no rule to apply', async () => {
     for (const on of [null, {}, 'junk', [], [savedClaude({ id: 'other' })]] as unknown[]) {
       live.clear()
+      _resetConfigLaunchClaimsForTest()
       configsOnDisk = on
       await spawn({}, A, { cwd: 'C:/w', configId: 'cfgclaude' })
       expect(await spawn({}, B, { cwd: 'C:/w', configId: 'cfgclaude' }), JSON.stringify(on)).not.toMatchObject({ refused: expect.anything() })

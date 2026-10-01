@@ -5,56 +5,73 @@
 //
 // THE RULE (src/shared/multi-spawn-rule.ts, the one the renderer's launch
 // surfaces ask too): a saved config that is not Multi Spawn runs ONE copy at a
-// time. A spawn that names such a config while another session of it is live is
-// refused, before anything is installed, prepared, leased or spawned, with the
-// typed refusal the terminal tab already knows how to say.
+// time. The rule gates NEW copies. A spawn that names such a config while
+// another session of it is live is refused, before anything is installed,
+// prepared, leased or spawned, with the refusal the terminal tab already knows
+// how to say (answered, never thrown). A session that already has the right to
+// run keeps it (below).
 //
 // WHAT MAIN KNOWS, and no more: whether a config is Multi Spawn is read from
 // the saved configs on disk, never from the request (a request that says
-// `allowMultiSpawn` is not asked); which sessions are copies of it is main's
-// own record of the spawns it accepted (`claims`), and whether one is still
-// held comes from pty-manager at the moment of asking, never from a count kept
-// here. So nothing has to be told when a session ends: a claim whose session is
-// gone is dropped the next time the rule looks, and a launch that fails after
-// its claim (a refused account, a spawn that threw) leaves a claim nothing
-// holds. There is no release to forget.
+// `allowMultiSpawn` is not asked). Which sessions are copies of it is main's
+// own record of the spawns it accepted: `inflight` for a spawn that passed this
+// gate and is not yet accepted by pty-manager, `held` for one it accepted, and
+// `restored` for the sessions saved at the last quit. Whether a copy is LIVE is
+// asked of pty-manager at the moment of asking, never counted here, so nothing
+// has to be told when a session ends.
 //
-// ATOMIC: the question and the claim are one synchronous step, taken in the
-// same tick as pty:spawn's provider check and before its first await. Every
-// path with an await registers its spawn with pty-manager before that await (a
+// ATOMIC: the question and the in-flight claim are one synchronous step, taken
+// in the same tick as pty:spawn's provider check and before its first await.
+// Every path with an await registers its spawn with pty-manager before it (a
 // launch preparation), and a path with none reaches the PTY in the same tick,
 // so a second copy asked for in between always finds the first.
 //
-// NOT A SECURITY BOUNDARY, as the rule was not in the renderer: a spawn that
-// names no config is not a copy of one, and a request made by something that
-// can choose its own spawn options can leave the config out. What this closes
-// is the renderer being the only place the rule lived: a launch surface that
-// forgot to ask, a stale render, a restore or Restart the rule never saw.
+// WHO KEEPS THE RIGHT TO RUN (never a new copy, so never refused):
+//   - a session accepted for this config in THIS RUN: a Restart, a Switch of
+//     account, a Recover and an SSH reattach respawn their own session, with or
+//     without another copy live, whatever the config says now (Multi Spawn may
+//     have been unticked while the copies ran). The right outlives the process
+//     (a Restart kills it first) and is bounded (HELD_MAX, the oldest first);
+//   - a session RESTORED at this start: the ids main read from the saved
+//     session state at the first load (seedRestoredSessions, from
+//     app-session-durability's read-back, never from anything the renderer
+//     sends), each for the config it was saved with, until its first accepted
+//     spawn. Remotes left running count too (their reattach reuses the id).
+//   A right is for ONE config: the same id naming another config is a new copy
+//   of that one.
 //
-// WHAT IS NOT A COPY OF A CONFIG:
-//   - Ask Conductor and a spawn that names no saved config (nothing to count);
-//   - the partner terminal, a plain shell started under `<session id>-partner`
-//     with the config's id (the renderer's own count skips it: it is not a
-//     session). Recognised by shape: shell-only AND that suffix;
-//   - the same session id again: a Restart, a Switch of account, a respawn
-//     replace their own process, they do not add one;
-//   - an SSH reattach (`ssh.reconnect`): it re-adopts a session that already
-//     exists on the remote rather than making a copy, which is why the
-//     renderer's own backstop does not sit on that path either. It counts as a
-//     copy from then on.
+// WHAT IS NOT A COPY OF A CONFIG (and carries no exemption beyond this):
+//   - a spawn that names no saved config (nothing to count);
+//   - the renderer's own partner terminal, in its exact shape: shell-only, the
+//     id `<session id>-partner`, the config's id, no ssh block, no terminal
+//     options and no elevation, and only for a session main holds (accepted in
+//     this run, or restored). It is the one plain shell of a session; anything
+//     with more on it (credentials, a secret argument) is a copy like any other.
+//
+// A spawn is recorded as a copy only once it is ACCEPTED (settleConfigLaunch,
+// called by pty:spawn straight after pty-manager took it). A live session's
+// record is never re-pointed by a spawn that is refused or throws; a session
+// later spawned as a non-copy stops counting as a copy.
+//
+// NOT A SECURITY BOUNDARY, as the rule was not in the renderer: a request made
+// by something that can choose its own spawn options can leave the config out.
+// What this closes is the renderer being the only place the rule lived: a
+// launch surface that forgot to ask, a stale render, a second path.
 import { findSavedConfig } from './spawn-credential-binding'
-import { isOneAtATimeBlocked, alreadyRunningRefusalMessage, isPartnerPtyId } from '../shared/multi-spawn-rule'
+import { isOneAtATimeBlocked, alreadyRunningRefusalMessage, isPartnerPtyId, partnerBaseId } from '../shared/multi-spawn-rule'
 import { stripSpoofableText } from '../shared/safe-text'
-import type { ProviderId, ProviderLaunchRefusal } from '../shared/providers'
+import type { ProviderId, SpawnRefusal } from '../shared/providers'
 import { logWarn } from './debug-logger'
 
 /** What the rule reads of a spawn request. */
 export interface ConfigLaunchRequest {
   configId?: string
-  isAsk?: boolean
   shellOnly?: boolean
   provider?: ProviderId
-  ssh?: { reconnect?: boolean }
+  elevated?: boolean
+  /** Only whether these are present is read (the partner shell carries neither). */
+  ssh?: unknown
+  terminalOptions?: unknown
 }
 
 export interface ConfigLaunchDeps {
@@ -65,10 +82,24 @@ export interface ConfigLaunchDeps {
   isLive: (sessionId: string) => boolean
 }
 
-/** Session id -> the id of the saved config it was spawned from. Only a config
- *  main found on disk is recorded, so it is bounded by what is saved and by the
- *  sessions held: every look drops the sessions that are gone. */
-const claims = new Map<string, string>()
+/** Sessions accepted in this run: session id -> the saved config it runs. Their
+ *  right to respawn outlives their process; past the bound the oldest go. */
+const held = new Map<string, string>()
+export const HELD_MAX = 512
+
+/** Spawns that passed the gate and are not yet accepted: session id -> the
+ *  config they would be a copy of, or null for a spawn that is not a copy.
+ *  Dropped at the next look once the session is not live. */
+const inflight = new Map<string, string | null>()
+
+/** Sessions saved at the last quit, read from the saved session state: id ->
+ *  the config each was saved with. A right until the id's first accepted spawn. */
+const restored = new Map<string, string>()
+export const RESTORED_MAX = 1024
+let restoreSeeded = false
+
+/** The same charset pty:spawn holds a session id to (sessionIdSchema). */
+const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,200}$/
 
 /** The config's name as the refusal says it: the user's own text for it, made
  *  safe to show in a terminal. */
@@ -78,43 +109,125 @@ function labelOf(saved: object): string {
   return text === '' ? 'This config' : text
 }
 
-/**
- * Ask the rule for a spawn about to start `sessionId`, and, when it passes,
- * record the session as a copy of its config. Returns the refusal to answer
- * with (nothing is recorded then), or null to go ahead.
- */
-export function claimConfigLaunch(sessionId: string, request: ConfigLaunchRequest | undefined, deps: ConfigLaunchDeps): ProviderLaunchRefusal | null {
-  const configId = request?.configId
-  if (typeof configId !== 'string' || configId === '') return null
-  if (request?.isAsk === true) return null
-  if (request?.shellOnly === true && isPartnerPtyId(sessionId)) return null
-  const saved = findSavedConfig(deps.savedConfigs(), configId)
-  if (!saved) return null
-
-  // The other copies of this config that main still holds. Anything it no
-  // longer holds is dropped on the way.
-  let others = 0
-  for (const [id, claimed] of claims) {
-    if (id === sessionId) continue
-    if (!deps.isLive(id)) { claims.delete(id); continue }
-    if (claimed === saved.id) others++
-  }
-
-  const reattach = request?.ssh?.reconnect === true
-  if (!reattach && isOneAtATimeBlocked((saved as { allowMultiSpawn?: unknown }).allowMultiSpawn, others)) {
-    logWarn(`[launch] session ${sessionId} refused: config ${saved.id} is not Multi Spawn and is already running`)
-    return { code: 'already-running', providerId: request?.provider ?? 'claude', message: alreadyRunningRefusalMessage(labelOf(saved)) }
-  }
-  claims.set(sessionId, saved.id)
+/** The spawn is not a copy of a config: nothing to ask, and it stops counting
+ *  as a copy once it is accepted. */
+function notACopy(sessionId: string): null {
+  inflight.set(sessionId, null)
   return null
 }
 
-/** Test seam: how many sessions the rule is holding as copies of a config. */
-export function _claimedSessionCountForTest(): number {
-  return claims.size
+/** Whether main holds this session for this config: accepted in this run, or
+ *  restored at this start. */
+function holds(sessionId: string, configId: string): boolean {
+  return held.get(sessionId) === configId || restored.get(sessionId) === configId
 }
 
-/** Test seam: forget every claim. */
+/** The renderer's own partner terminal, exactly as it starts one. */
+function isPartnerShell(sessionId: string, configId: string, request: ConfigLaunchRequest): boolean {
+  return request.shellOnly === true
+    && isPartnerPtyId(sessionId)
+    && request.ssh === undefined
+    && request.terminalOptions === undefined
+    && request.elevated !== true
+    && holds(partnerBaseId(sessionId), configId)
+}
+
+/**
+ * Ask the rule for a spawn about to start `sessionId`, and, when it passes,
+ * record it as in flight. Returns the refusal to answer with (nothing is
+ * recorded then), or null to go ahead.
+ */
+export function claimConfigLaunch(sessionId: string, request: ConfigLaunchRequest | undefined, deps: ConfigLaunchDeps): SpawnRefusal | null {
+  const configId = request?.configId
+  if (!request || typeof configId !== 'string' || configId === '') return notACopy(sessionId)
+  if (isPartnerShell(sessionId, configId, request)) return notACopy(sessionId)
+  const saved = findSavedConfig(deps.savedConfigs(), configId)
+  if (!saved) return notACopy(sessionId)
+
+  // The other copies of this config that main still holds. A session counts for
+  // the config it was ACCEPTED for (held), else for the one it is starting for
+  // (inflight); a spawn that did not start is dropped on the way.
+  for (const id of inflight.keys()) if (id !== sessionId && !deps.isLive(id)) inflight.delete(id)
+  let others = 0
+  for (const id of new Set([...held.keys(), ...inflight.keys()])) {
+    if (id === sessionId) continue
+    if ((held.get(id) ?? inflight.get(id)) === saved.id && deps.isLive(id)) others++
+  }
+
+  const keepsItsRight = holds(sessionId, saved.id)
+  if (!keepsItsRight && isOneAtATimeBlocked((saved as { allowMultiSpawn?: unknown }).allowMultiSpawn, others)) {
+    logWarn(`[launch] session ${sessionId} refused: config ${stripSpoofableText(saved.id, 64)} is not Multi Spawn and is already running`)
+    return { code: 'already-running', providerId: request.provider ?? 'claude', message: alreadyRunningRefusalMessage(labelOf(saved)) }
+  }
+  inflight.set(sessionId, saved.id)
+  return null
+}
+
+/**
+ * pty-manager accepted the spawn the gate passed for `sessionId`: main now
+ * holds the session's right to run again (or, for a spawn that is not a copy,
+ * none). Never called for a spawn that was refused or threw, so such a spawn
+ * changes nothing about what main already holds.
+ */
+export function settleConfigLaunch(sessionId: string): void {
+  if (!inflight.has(sessionId)) return
+  const config = inflight.get(sessionId)
+  inflight.delete(sessionId)
+  held.delete(sessionId)
+  if (typeof config !== 'string') return
+  held.set(sessionId, config)
+  restored.delete(sessionId)
+  for (const id of held.keys()) {
+    if (held.size <= HELD_MAX) break
+    if (id !== sessionId && !inflight.has(id)) held.delete(id)
+  }
+}
+
+/**
+ * Seed the sessions restored at this start from the saved session state main
+ * read at the first load of this run (app-session-durability's read-back): the
+ * sessions it saved, and the remotes it recorded as left running, each for the
+ * config it was saved with. Only the first load seeds, so a later load (the
+ * resume prompt's Refresh, which can list tabs opened in this run) adds
+ * nothing. A restored copy that comes back Not started keeps its right until it
+ * starts.
+ */
+export function seedRestoredSessions(state: unknown): void {
+  if (restoreSeeded || !state || typeof state !== 'object') return
+  restoreSeeded = true
+  const { sessions, detachedRemotes } = state as { sessions?: unknown; detachedRemotes?: unknown }
+  const add = (id: unknown, configId: unknown): void => {
+    if (restored.size >= RESTORED_MAX) return
+    if (typeof id !== 'string' || !SESSION_ID_RE.test(id)) return
+    if (typeof configId !== 'string' || configId === '' || configId.length > 200) return
+    restored.set(id, configId)
+  }
+  if (Array.isArray(sessions)) {
+    for (const s of sessions.slice(0, RESTORED_MAX)) {
+      if (!s || typeof s !== 'object') continue
+      const e = s as { id?: unknown; configId?: unknown; kind?: unknown }
+      if (e.kind === 'ask') continue
+      add(e.id, e.configId)
+    }
+  }
+  if (Array.isArray(detachedRemotes)) {
+    for (const r of detachedRemotes.slice(0, RESTORED_MAX)) {
+      if (!r || typeof r !== 'object') continue
+      const e = r as { sessionId?: unknown; configId?: unknown }
+      add(e.sessionId, e.configId)
+    }
+  }
+}
+
+/** Test seam: how many sessions the rule is holding (accepted or in flight). */
+export function _claimedSessionCountForTest(): number {
+  return held.size + inflight.size
+}
+
+/** Test seam: forget everything, as at a fresh start. */
 export function _resetConfigLaunchClaimsForTest(): void {
-  claims.clear()
+  held.clear()
+  inflight.clear()
+  restored.clear()
+  restoreSeeded = false
 }

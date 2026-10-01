@@ -19,6 +19,7 @@ import { getTranscriptBinder } from './logging/logging-service'
 import { resolveResumeTargetFromTranscript } from './logging/transcript-discovery'
 import { getKeptCodexConversation, uncertainCodexConversationIds, rememberUncertainCodexConversationsFrom } from './pty-manager'
 import { conversationRunningTimesForSave, rememberConversationRunningTimesFrom } from './conversation-running-time'
+import { seedRestoredSessions } from './launch-one-at-a-time'
 import { logInfo } from './debug-logger'
 
 export function createAppSessionDurability(): SessionDurability {
@@ -45,9 +46,16 @@ export function createAppSessionDurability(): SessionDurability {
     // times too, even when the uncertain list cannot be read back.
     readBack: (state) => {
       try {
-        rememberUncertainCodexConversationsFrom(state)
+        try {
+          rememberUncertainCodexConversationsFrom(state)
+        } finally {
+          rememberConversationRunningTimesFrom(state)
+        }
       } finally {
-        rememberConversationRunningTimesFrom(state)
+        // P3.13 (round 1, M1): the sessions saved at the last quit keep their
+        // right to run beside another copy of a config that is not Multi Spawn
+        // (the first load of this run only; launch-one-at-a-time.ts).
+        seedRestoredSessions(state)
       }
     },
     log: logInfo,
