@@ -251,7 +251,9 @@ describe('app knowledge and tips after P3.15', () => {
     // Round 1 (spec 3): no question once a folder is trusted or 2 was chosen; the way back is not confirmed, and what to do meanwhile.
     expect(k).toMatch(/asks only when you trust a new folder, so a folder you trusted before, or an earlier choice of 2, brings no question/)
     // Round 2 (J6): the command Codex lists for it (the CLI fixtures' slash popup), not yet confirmed.
-    expect(k).toMatch(/Codex lists a \/setup-default-sandbox command \(set up elevated agent sandbox\) for this, not yet confirmed; until it is, approve each edit when Codex asks, and use Standard rather than Auto/)
+    // Round 4 (P6): only after a choice of 2; the administrator prompt blocks Codex's input (the VM at 98455d52).
+    expect(k).toMatch(/After a choice of 2, Codex also lists a \/setup-default-sandbox command \(set up elevated agent sandbox\): it asks Windows for administrator permission, and Codex takes no input until that is answered, so without a yes the session stays stuck until you close its tab/)
+    expect(k).toMatch(/Whether it then lets Codex edit on its own is not yet confirmed; until it is, approve each edit when Codex asks, and use Standard rather than Auto/)
     expect(k).not.toMatch(/has not been confirmed yet/)
     expect(k).toMatch(/2\. Use non-admin sandbox/)
     expect(k).toMatch(/on Standard Codex asks before every edit/)
@@ -284,8 +286,8 @@ describe('app knowledge and tips after P3.15', () => {
     expect(p.body).toMatch(/on \*\*Standard\*\* it asks before every edit, and on \*\*Auto\*\* edits fail/)
     expect(p.body).toMatch(/Do not run the app as administrator/)
     expect(p.body).toMatch(/\(Codex says it needs administrator permission\)/)
-    expect(p.body).toMatch(/Codex also lists \*\*\/setup-default-sandbox\*\* for this \(not yet confirmed\)/)
-    expect(p.body).toMatch(/asks only when you trust a new folder\. Codex also lists \*\*\/setup-default-sandbox\*\* for this \(not yet confirmed\)\. If it never asks you, approve each edit when Codex asks about it, and use \*\*Standard\*\* rather than \*\*Auto\*\*/)
+    expect(p.body).toMatch(/After choosing 2, Codex also lists \*\*\/setup-default-sandbox\*\*: it asks for administrator permission, and Codex takes no input until you answer \(without a yes, close the tab\); whether it then lets Codex edit on its own is not yet confirmed/)
+    expect(p.body).toMatch(/asks only when you trust a new folder\. After choosing 2, Codex also lists \*\*\/setup-default-sandbox\*\*[^.]*\. If it never asks you, approve each edit when Codex asks about it, and use \*\*Standard\*\* rather than \*\*Auto\*\*/)
     expect(`${p.title} ${p.body}`).not.toMatch(/\u2014/)
   })
 })

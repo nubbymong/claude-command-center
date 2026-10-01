@@ -17,7 +17,7 @@ vi.mock('../../../src/main/debug-logger', async (importOriginal) => ({
   logWarn: (...a: unknown[]) => { h.warns.push(a.map(String).join(' ')) },
 }))
 
-const { chooseConpty, nativeModuleDirs, asarUnpackedPath, bundledConptyChoice, bundledConptyFailed, findNodePtyLibDir, NODE_PTY_MAX_PATH, LOADED_MODULE_PREFIX, _resetBundledConptyForTest } = await import('../../../src/main/bundled-conpty')
+const { chooseConpty, nativeModuleDirs, asarUnpackedPath, bundledConptyChoice, bundledConptyFailed, findNodePtyLibDir, NODE_PTY_MAX_PATH, LOADED_MODULE_PREFIX, namespacedPrefixLength, _resetBundledConptyForTest } = await import('../../../src/main/bundled-conpty')
 
 const LIB = path.join(path.sep, 'app', 'node_modules', 'node-pty', 'lib')
 const PKG = path.dirname(LIB)
@@ -167,6 +167,21 @@ describe('a conpty.dll path too long for node-pty (round 1, F2)', () => {
 
 // Round 1 (F5): the app's own lookup, with no lookup or file check handed in:
 // node-pty found by require.resolve, and the files checked as files.
+// Round 4 (P8): the loader's prefix is longer for a UNC install (\\?\UNC\).
+describe('namespacedPrefixLength (round 4, P8)', () => {
+  const W = (...p: string[]) => p.join(String.fromCharCode(92))
+  it('4 for a drive path, 6 for a UNC path, none for a namespaced path, as path.toNamespacedPath adds them', () => {
+    const drive = W('C:', 'Program Files', 'App', 'conpty.dll')
+    const unc = W('', '', 'server', 'share', 'App', 'conpty.dll')
+    const named = W('', '', '?', 'C:', 'App', 'conpty.dll')
+    expect(namespacedPrefixLength(drive)).toBe(4)
+    expect(namespacedPrefixLength(unc)).toBe(6)
+    expect(namespacedPrefixLength(named)).toBe(0)
+    for (const p of [drive, unc]) expect(path.win32.toNamespacedPath(p).length - p.length, p).toBe(namespacedPrefixLength(p))
+    expect(namespacedPrefixLength('/app/node_modules/node-pty/prebuilds/win32-x64/conpty/conpty.dll')).toBe(4)
+  })
+})
+
 describe('the app\'s own lookup (round 1, F5)', () => {
   const made: string[] = []
   afterAll(() => {

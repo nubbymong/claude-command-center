@@ -23,6 +23,7 @@ interface FakePty {
   data: ((d: string) => void) | null
   exit: ((e: { exitCode: number }) => void) | null
   inSocket: import('events').EventEmitter
+  outSocket: import('events').EventEmitter
 }
 
 const h = vi.hoisted(() => ({
@@ -33,6 +34,7 @@ const h = vi.hoisted(() => ({
     data: ((d: string) => void) | null
     exit: ((e: { exitCode: number }) => void) | null
     inSocket: import('events').EventEmitter
+    outSocket: import('events').EventEmitter
   }>,
   execFiles: [] as Array<{ bin: string; args: string[] }>,
   execFileError: null as Error | null,
@@ -47,7 +49,9 @@ vi.mock('node-pty', () => ({
   spawn: (_bin: string, args: string[]) => {
     // P3.15 round 3 (K1): node-pty's Windows PTY writes its input to a socket on its agent.
     const { EventEmitter } = require('events') as typeof import('events')
-    const rec = { args, writes: [] as string[], killed: false, data: null as ((d: string) => void) | null, exit: null as ((e: { exitCode: number }) => void) | null, inSocket: new EventEmitter() }
+    const rec = { args, writes: [] as string[], killed: false, data: null as ((d: string) => void) | null, exit: null as ((e: { exitCode: number }) => void) | null, inSocket: new EventEmitter(), outSocket: new EventEmitter() }
+    // Round 4 (P4): node-pty's own output error handler, which throws without a second listener.
+    rec.outSocket.on('error', (err: NodeJS.ErrnoException) => { if (rec.outSocket.listeners('error').length < 2) throw err })
     h.ptySpawns.push(rec)
     return {
       pid: 999,
@@ -58,6 +62,7 @@ vi.mock('node-pty', () => ({
       resize: () => {},
       kill: () => { rec.killed = true },
       _agent: { inSocket: rec.inSocket },
+      on: (ev: string, l: (...a: unknown[]) => void) => { rec.outSocket.on(ev, l) },
     }
   },
 }))
@@ -159,7 +164,7 @@ vi.mock('../../../src/main/account-profiles', async (importOriginal) => ({
   backupProfileHomeToCanonical: () => {},
 }))
 
-const { endSshRemote, endSshRemoteDetailed, killPty, _setSshTargetForTest } = await import('../../../src/main/pty-manager')
+const { endSshRemote, endSshRemoteDetailed, killPty, _setSshTargetForTest, probeTmuxLive } = await import('../../../src/main/pty-manager')
 const { buildContainerKillCommand, buildRemoteTmuxKillCommand } = await import('../../../src/main/providers/claude/ssh-shim')
 
 const lastPty = (): FakePty => h.ptySpawns[h.ptySpawns.length - 1]
@@ -220,6 +225,27 @@ describe('endSshRemote (#572)', () => {
     expect(() => fake.inSocket.emit('error', Object.assign(new Error('write EAGAIN'), { code: 'EAGAIN' }))).not.toThrow()
     fake.exit!({ exitCode: 0 })
     await expect(p).resolves.toBe('completed')
+  })
+
+  it('round 4 (P4): an output error on the End helper PTY is caught too, and End still settles', async () => {
+    _setSshTargetForTest('sid-outerr', { username: 'pi', host: 'h7', port: 22, password: 'pw4' })
+    const p = endSshRemote('sid-outerr')
+    const fake = lastPty()
+    expect(() => fake.outSocket.emit('error', Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }))).not.toThrow()
+    fake.exit!({ exitCode: 0 })
+    await expect(p).resolves.toBe('completed')
+  })
+
+  // P3.15 round 4 (P3): the liveness probe of a password host runs its own PTY; an
+  // error on its input or output never quits the app, and the probe still settles.
+  it('round 4 (P3): the liveness probe PTY of a password host: input and output errors are caught, and the probe settles', async () => {
+    for (const side of ['inSocket', 'outSocket'] as const) {
+      const probe = probeTmuxLive({ username: 'pi', host: 'h8', port: 22, password: 'pw5' }, ['a'])
+      const fake = lastPty()
+      expect(() => fake[side].emit('error', Object.assign(new Error('io EAGAIN'), { code: 'EAGAIN' })), side).not.toThrow()
+      fake.exit!({ exitCode: 255 })
+      await expect(probe, side).resolves.toMatchObject({ outcome: 'unverified' })
+    }
   })
 
   it('password target: a prompt split across chunks still matches exactly once', async () => {

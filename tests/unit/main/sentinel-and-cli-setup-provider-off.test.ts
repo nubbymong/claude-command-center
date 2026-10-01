@@ -249,6 +249,20 @@ describe('the first-run CLI setup terminal runs Claude Code', () => {
     expect(real.countCliSetupInUse()).toBe(0)
   })
 
+  // P3.15 round 4 (P2): the user types into this terminal; an error on its
+  // input or its output (node-pty's Windows sockets) never quits the app.
+  it('round 4 (P2): an error on the input or output of the terminal is caught', async () => {
+    const { EventEmitter } = await import('events')
+    const inSocket = new EventEmitter()
+    const outSocket = new EventEmitter()
+    outSocket.on('error', (err: NodeJS.ErrnoException) => { if (outSocket.listeners('error').length < 2) throw err })
+    ptySpawn.mockImplementationOnce(() => ({ onData: vi.fn(), onExit: vi.fn(), kill: vi.fn(), write: vi.fn(), _agent: { inSocket }, on: (ev: string, l: (...a: unknown[]) => void) => { outSocket.on(ev, l) } }) as never)
+    const h = await setupHandler()
+    await expect(h({ sender: {} }, 100, 20)).resolves.toBe('__cli_setup__')
+    expect(() => inSocket.emit('error', Object.assign(new Error('write EAGAIN'), { code: 'EAGAIN' }))).not.toThrow()
+    expect(() => outSocket.emit('error', Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }))).not.toThrow()
+  })
+
   it('with Claude Code on, the terminal starts as before', async () => {
     const h = await setupHandler()
     await expect(h({ sender: {} }, 100, 20)).resolves.toBe('__cli_setup__')

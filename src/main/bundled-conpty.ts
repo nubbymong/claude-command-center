@@ -71,6 +71,16 @@ export const NODE_PTY_MAX_PATH = 260
  *  longer than the path measured here. */
 export const LOADED_MODULE_PREFIX = 4
 
+/** P3.15 round 4 (P8): how many characters the loader's namespaced name adds
+ *  to the path `p` (path.toNamespacedPath): LOADED_MODULE_PREFIX for a drive
+ *  path (\\?\C:\...), 6 for a UNC path (\\server\share becomes
+ *  \\?\UNC\server\share), none for a path that is already namespaced. */
+export function namespacedPrefixLength(p: string): number {
+  if (/^[\\/]{2}[?.][\\/]/.test(p)) return 0
+  if (/^[\\/]{2}[^\\/?.]/.test(p)) return 6
+  return LOADED_MODULE_PREFIX
+}
+
 /** P3.15 round 2 (J5): a PTY under the bundled ConPTY that ends within this
  *  long of its start having put nothing on screen (beyond the console host's
  *  own setup sequences) is taken as the bundled ConPTY failing after node-pty
@@ -109,8 +119,9 @@ export function chooseConpty(deps: ConptyChoiceDeps): ConptyChoice {
     if (!deps.exists(p)) return system(`${p} is missing`)
   }
   const dll = path.join(dir, 'conpty', 'conpty.dll')
-  if (dll.length + LOADED_MODULE_PREFIX >= NODE_PTY_MAX_PATH) {
-    return system(`the path to ${dll} is ${dll.length} characters, ${dll.length + LOADED_MODULE_PREFIX} as Windows names the loaded module, more than the ${NODE_PTY_MAX_PATH - 1} node-pty can use`)
+  const named = dll.length + namespacedPrefixLength(dll)
+  if (named >= NODE_PTY_MAX_PATH) {
+    return system(`the path to ${dll} is ${dll.length} characters, ${named} as Windows names the loaded module, more than the ${NODE_PTY_MAX_PATH - 1} node-pty can use`)
   }
   return { kind: 'bundled', options: BUNDLED_CONPTY_OPTIONS, dir }
 }

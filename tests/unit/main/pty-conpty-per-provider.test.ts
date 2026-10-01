@@ -15,7 +15,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as os from 'os'
 import * as path from 'path'
 
-interface Spawned { cmd: string; args: unknown; opts: Record<string, unknown>; exit: Array<(e: { exitCode: number }) => void>; emitData: (d: string) => void; inSocket: import('events').EventEmitter; kill: ReturnType<typeof vi.fn> }
+interface Spawned { cmd: string; args: unknown; opts: Record<string, unknown>; exit: Array<(e: { exitCode: number }) => void>; emitData: (d: string) => void; inSocket: import('events').EventEmitter; outSocket: import('events').EventEmitter; kill: ReturnType<typeof vi.fn> }
 interface Attempt { cmd: string; args: unknown; opts: Record<string, unknown> }
 const h = vi.hoisted(() => ({
   spawned: [] as Spawned[],
@@ -41,7 +41,13 @@ vi.mock('node-pty', () => ({
     const dataCbs: Array<(d: string) => void> = []
     // Round 3 (K1): node-pty's Windows PTY writes its input to a socket on its agent.
     const { EventEmitter } = require('events') as typeof import('events')
-    const p: Spawned = { cmd, args, opts, exit: [], emitData: (d) => { for (const cb of dataCbs) cb(d) }, inSocket: new EventEmitter(), kill: vi.fn() }
+    const p: Spawned = { cmd, args, opts, exit: [], emitData: (d) => { for (const cb of dataCbs) cb(d) }, inSocket: new EventEmitter(), outSocket: new EventEmitter(), kill: vi.fn() }
+    // Round 4 (P4): node-pty's own handler on the output socket (windowsTerminal.js):
+    // EIO is ignored; any other error is thrown unless something else listens.
+    p.outSocket.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code && (err.code.includes('errno 5') || err.code.includes('EIO'))) return
+      if (p.outSocket.listeners('error').length < 2) throw err
+    })
     h.spawned.push(p)
     return {
       pid: 7000 + h.spawned.length,
@@ -52,6 +58,8 @@ vi.mock('node-pty', () => ({
       resize: () => {},
       kill: p.kill,
       _agent: { inSocket: p.inSocket },
+      // Terminal.prototype.on: every event but 'close' goes to the output socket.
+      on: (ev: string, l: (...a: unknown[]) => void) => { p.outSocket.on(ev, l) },
     }
   },
 }))
@@ -444,5 +452,74 @@ describe('a failed write to a PTY\'s input (round 3, K1, K2)', () => {
     vi.advanceTimersByTime(5_000)
     expect(old.kill).toHaveBeenCalledTimes(1) // by killPty only
     expect(next.kill).not.toHaveBeenCalled()
+  })
+})
+
+// Round 4 (P4): node-pty's handler on a PTY's output socket throws any error
+// but EIO unless the PTY has a listener of its own, which the app had not given
+// it: the same app-quit class as the input side. Now every session's PTY gets
+// one: the error is logged once, and a session that has not ended within the
+// grace is ended, as for an input error.
+describe('an error on a PTY\'s output (round 4, P4)', () => {
+  beforeEach(() => { vi.useFakeTimers(); sent.length = 0 })
+  afterEach(() => { vi.useRealTimers() })
+  const failure = (code: string) => Object.assign(new Error(`read ${code}`), { code, syscall: 'read' })
+  const kinds: Array<[string, string, () => void]> = [
+    ['Codex, bundled ConPTY', CX, () => startCodex()],
+    ['Codex, system ConPTY', CX, () => { dllMissing(); startCodex() }],
+    ['Claude', CL, () => spawnPty(fakeWin, CL, { cwd: os.tmpdir() } as never)],
+    ['plain terminal', SH, () => spawnPty(fakeWin, SH, { cwd: os.tmpdir(), shellOnly: true } as never)],
+  ]
+
+  it('every kind of session: an output error is caught (never thrown), logged once; EIO is node-pty\'s own and stays silent', () => {
+    for (const [name, id, start] of kinds) {
+      for (const code of ['ECONNRESET', 'EINVAL']) {
+        h.warns = []
+        start()
+        const p = last()
+        expect(() => p.outSocket.emit('error', failure(code)), `${name} ${code}`).not.toThrow()
+        expect(() => p.outSocket.emit('error', failure(code)), `${name} ${code}`).not.toThrow()
+        const lines = h.warns.filter((w) => w.includes(`output of session ${id} failed`))
+        expect(lines, `${name} ${code}`).toHaveLength(1)
+        expect(lines[0], `${name} ${code}`).toContain(code)
+        for (const cb of [...p.exit]) cb({ exitCode: 0 })
+        bundledThere()
+      }
+      // EIO: the program's end as node-pty reads it; not a failure, nothing logged.
+      h.warns = []
+      start()
+      const q = last()
+      expect(() => q.outSocket.emit('error', failure('EIO')), `${name} EIO`).not.toThrow()
+      expect(h.warns.filter((w) => w.includes('output of session')), `${name} EIO`).toEqual([])
+      vi.advanceTimersByTime(5_000)
+      expect(q.kill, `${name} EIO`).not.toHaveBeenCalled()
+      for (const cb of [...q.exit]) cb({ exitCode: 0 })
+      bundledThere()
+    }
+  })
+
+  it('a session that has not ended within the grace after an output error is ended, with the line in its terminal', () => {
+    for (const [name, id, start] of kinds) {
+      sent.length = 0
+      start()
+      const p = last()
+      p.outSocket.emit('error', failure('ECONNRESET'))
+      vi.advanceTimersByTime(2_999)
+      expect(p.kill, name).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(1)
+      expect(p.kill, name).toHaveBeenCalledTimes(1)
+      expect(sent.some(([ch, d]) => ch === `pty:data:${id}` && String(d).includes('stopped taking input')), name).toBe(true)
+      for (const cb of [...p.exit]) cb({ exitCode: 1 })
+      bundledThere()
+    }
+  })
+
+  it('an input error and an output error on the same PTY end it once', () => {
+    startCodex()
+    const p = last()
+    p.inSocket.emit('error', Object.assign(new Error('write EAGAIN'), { code: 'EAGAIN' }))
+    p.outSocket.emit('error', failure('ECONNRESET'))
+    vi.advanceTimersByTime(5_000)
+    expect(p.kill).toHaveBeenCalledTimes(1)
   })
 })
