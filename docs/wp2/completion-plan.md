@@ -2417,10 +2417,14 @@ A session id accepted in this run now keeps its right for the run (the store sta
 bounded, an ended session going before a live one), a restored right stays one-shot
 and bounded to the saved ids, and only an id that was never accepted and never
 restored is gated, so main refuses what the sidebar refuses, a NEW copy. Pending
-tickets: `pty:spawn` discards its ticket on every throw and every early return (the
-body is `spawnSession`, and the registered handler discards in a `finally`; a ticket
-already settled is gone, so it does nothing then), a spawn that is not a copy keeps no
-pending ticket, and a session that already has 8 spawns of its id under way is
+tickets: a ticket still pending when `pty:spawn` ends is discarded (the body is
+`spawnSession`, and the registered handler looks in a `finally`; a ticket already
+settled is gone, so nothing happens then), except, since round 4 (c0e4b231), when
+the call reached pty-manager's spawn and the session is live or starting: that
+session is running (it threw after pty-manager registered its PTY), so the ticket is
+settled; a spawn that never reached pty-manager's spawn is discarded even when its
+session id is live (a forged same-id spawn does not re-point it). A spawn that is
+not a copy keeps no pending ticket, and a session that already has 8 spawns of its id under way is
 refused the NEW claim (`already-running`) instead of the oldest being pushed out
 (lens A's N4c: nine forged same-id spawns that threw pushed a real launch's ticket
 out while it prepared, and a second copy then got through). The toggle's second look

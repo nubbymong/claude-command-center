@@ -21,6 +21,8 @@ vi.mock('../../../src/main/pty-manager', () => ({
   beginSpawnPreparation: (win: unknown, sid: string) => ({ current: true, spawn: (o: unknown) => spawnPty(win, sid, o), abandon: vi.fn() }),
   holdsCodexLaunchLease: () => false,
   codexLaunchLeaseTaken: () => false,
+  // P3.13: no session is held here (the one-at-a-time rule has its own files).
+  isSessionLiveOrStarting: () => false,
   // P3.6: no conversation kept, so a Codex spawn carries nothing.
   getKeptCodexConversationSource: () => undefined,
   getKeptCodexConversation: () => undefined,
