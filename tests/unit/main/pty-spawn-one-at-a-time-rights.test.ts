@@ -46,7 +46,7 @@ vi.mock('../../../src/main/pty-manager', () => ({
   uncertainCodexConversationIds: () => [],
   rememberUncertainCodexConversationsFrom: () => {},
 }))
-const state = vi.hoisted(() => ({ loaded: null as unknown }))
+const state = vi.hoisted(() => ({ loaded: null as unknown, codexOff: false, prepGate: null as null | Promise<void> }))
 vi.mock('../../../src/main/session-state', () => ({
   loadSessionState: () => state.loaded,
   saveSessionState: () => true,
@@ -76,10 +76,11 @@ vi.mock('../../../src/main/hooks', async (importOriginal) => ({
 const prepared: Array<Record<string, unknown>> = []
 vi.mock('../../../src/main/provider-accounts', () => ({
   getAccountsService: () => ({
-    launchRefusal: () => null,
+    launchRefusal: (id: string) => (id === 'codex' && state.codexOff ? { code: 'provider-off', providerId: 'codex', message: 'Codex is off. Turn it on in Settings, Accounts.' } : null),
     remoteLaunchRefusal: () => null,
     prepareLaunch: async (input: Record<string, unknown>) => {
       prepared.push(input)
+      if (state.prepGate) await state.prepGate
       return { ok: true, lease: { release: vi.fn() }, binding: {}, realmOnly: false, home: 'C:/res/r1', executable: 'C:/proven/codex.exe', env: {}, sessionsDir: 'C:/res/r1/sessions' }
     },
   }),
@@ -117,6 +118,8 @@ beforeEach(() => {
   live.clear(); pending.clear(); spawned.length = 0; prepared.length = 0; logs.length = 0
   spawnPty.mockClear(); loadCredential.mockClear()
   state.loaded = null
+  state.codexOff = false
+  state.prepGate = null
   configsOnDisk = null
   _resetConfigLaunchClaimsForTest()
 })
@@ -176,14 +179,21 @@ describe('M1: a session restored at this start keeps its right to run', () => {
     expect(isRefused(await spawn({}, B, claudeReq))).toBe(true)
   })
 
-  it('an SSH remote left running is reattached by its own id, with another copy live', async () => {
+  it('an SSH remote left running is reattached by its own id; a NEW id claiming to be a reattach is a new copy (M3)', async () => {
     disk(savedSsh())
     load([], [{ sessionId: A, configId: 'cfgssh', host: SSH.host, username: SSH.username, remotePath: SSH.remotePath }])
-    await spawn({}, B, sshReq)
     expect(isRefused(await spawn({}, A, { ...sshReq, ssh: { ...SSH, reconnect: true } }))).toBe(false)
     expect(live.has(A)).toBe(true)
-    // ...and a NEW id claiming to be a reattach is a new copy (M3).
     expect(isRefused(await spawn({}, C, { ...sshReq, ssh: { ...SSH, reconnect: true } }))).toBe(true)
+  })
+
+  it('recorded limit (R2): a new copy launched BEFORE the reattach lapses the remote\'s right, so its reattach is refused until that copy is closed', async () => {
+    disk(savedSsh())
+    load([], [{ sessionId: A, configId: 'cfgssh', host: SSH.host, username: SSH.username, remotePath: SSH.remotePath }])
+    await spawn({}, B, sshReq) // a new copy while the remote is not live
+    expect(isRefused(await spawn({}, A, { ...sshReq, ssh: { ...SSH, reconnect: true } }))).toBe(true)
+    kill({}, B) // the user closes the new copy; Restart on the Not started tab then reattaches
+    expect(isRefused(await spawn({}, A, { ...sshReq, ssh: { ...SSH, reconnect: true } }))).toBe(false)
   })
 })
 
@@ -319,10 +329,11 @@ describe('M3: an exemption never carries a config\'s credentials', () => {
     expect(live.has(`${A}-partner`)).toBe(true)
   })
 
-  it('its partner is exempt only for a session main holds: a partner of an id main never accepted is an ordinary copy', async () => {
+  it('its partner is never a copy, whether or not main holds the session it belongs to', async () => {
     disk(savedClaude())
     await spawn({}, A, claudeReq)
-    expect(isRefused(await spawn({}, `${B}-partner`, { cwd: 'C:/w', shellOnly: true, configId: 'cfgclaude' }))).toBe(true)
+    expect(isRefused(await spawn({}, `${B}-partner`, { cwd: 'C:/w', shellOnly: true, configId: 'cfgclaude' }))).toBe(false)
+    expect(live.has(`${B}-partner`)).toBe(true)
   })
 
   it('a partner of a session whose tab has ended (its process gone, accepted in this run) still opens', async () => {
@@ -388,5 +399,139 @@ describe('M5: the log carries a config id made safe', () => {
     expect(line).toBeTruthy()
     expect(line).not.toMatch(new RegExp('[\\x00-\\x1f\\x7f-\\x9f' + String.fromCharCode(0x2028, 0x2029) + String.fromCharCode(0x202a) + '-' + String.fromCharCode(0x202e) + ']'))
     expect(line.length).toBeLessThan(300)
+  })
+})
+
+describe('R1: the exact partner shell never counts, so it can never block its config', () => {
+  const partner = (base: string) => [`${base}-partner`, { cwd: 'C:/w', shellOnly: true, configId: 'cfgcodex' }] as const
+
+  it('a tab that started nothing (Codex off) whose partner shell was opened does not block a new tab, nor the tab itself, once Codex is on', async () => {
+    disk(savedCodex())
+    state.codexOff = true
+    await expect(spawn({}, A, codexReq)).resolves.toMatchObject({ started: false, refused: { code: 'provider-off' } }) // tab A: Not started
+    expect(isRefused(await spawn({}, ...partner(A)))).toBe(false) // the user opens its partner shell
+    expect(live.has(`${A}-partner`)).toBe(true)
+    state.codexOff = false // Codex is turned on
+    expect(isRefused(await spawn({}, B, codexReq))).toBe(false) // a new tab: no session of the config runs, only a plain shell
+    expect(live.has(B)).toBe(true)
+  })
+
+  it('the base tab itself starts when its partner shell is the only thing running', async () => {
+    disk(savedCodex())
+    state.codexOff = true
+    await spawn({}, A, codexReq)
+    await spawn({}, ...partner(A))
+    state.codexOff = false
+    expect(isRefused(await spawn({}, A, codexReq))).toBe(false)
+    expect(live.has(A)).toBe(true)
+  })
+
+  it('a partner shell of an id main never held starts beside a live copy, and is recorded as nothing', async () => {
+    disk(savedCodex())
+    await spawn({}, A, codexReq)
+    expect(isRefused(await spawn({}, ...partner(C)))).toBe(false)
+    kill({}, A)
+    expect(isRefused(await spawn({}, B, codexReq))).toBe(false) // only the shell was left
+  })
+
+  it('it carries no SSH credential and no secret argument: the exact shape reads neither', async () => {
+    disk(savedSsh(), savedShell())
+    await spawn({}, A, sshReq)
+    loadCredential.mockClear()
+    await spawn({}, 'zz-partner', { cwd: 'C:/w', shellOnly: true, configId: 'cfgssh' })
+    await spawn({}, 'yy-partner', { cwd: 'C:/w', shellOnly: true, configId: 'cfgshell' })
+    const keys = loadCredential.mock.calls.map((c) => String(c[0]))
+    expect(keys.filter((k) => k === 'cfgssh' || k === 'cfgssh_sudo' || k.endsWith('_argsecret'))).toEqual([])
+    for (const id of ['zz-partner', 'yy-partner']) {
+      const o = spawned.find((s) => s.sid === id)!.o
+      expect(o.ssh).toBeUndefined()
+      expect(o.terminalSecret).toBeUndefined()
+    }
+  })
+})
+
+describe('R2: a right lapses once another copy is accepted while its holder is not live', () => {
+  it('the forged sequence is refused: accept A, close A, accept B, then A again beside B', async () => {
+    disk(savedSsh())
+    await spawn({}, A, sshReq)
+    kill({}, A) // the tab is closed
+    await spawn({}, B, sshReq) // a new copy, with nothing else live: A's right lapses
+    loadCredential.mockClear()
+    expect(isRefused(await spawn({}, A, sshReq))).toBe(true) // a second credentialed copy
+    expect(live.has(A)).toBe(false)
+    expect(loadCredential).not.toHaveBeenCalled()
+  })
+
+  it('the cycle does not bank rights: N closed ids cannot come back as N concurrent copies', async () => {
+    disk(savedSsh())
+    const ids = ['n1', 'n2', 'n3', 'n4', 'n5']
+    for (const id of ids) { await spawn({}, id, sshReq); kill({}, id) }
+    const out: boolean[] = []
+    for (const id of ids) out.push(isRefused(await spawn({}, id, sshReq)))
+    expect(out.filter((x) => !x)).toHaveLength(1) // the first back is a new copy; the rest are refused
+  })
+
+  it('M2 holds: copies accepted together, one ended, restart beside the other (the holder was live when the other was accepted)', async () => {
+    disk(savedClaude({ allowMultiSpawn: true }))
+    await spawn({}, A, claudeReq)
+    await spawn({}, B, claudeReq) // A is live: its right stays
+    disk(savedClaude({ allowMultiSpawn: false }))
+    kill({}, A)
+    expect(isRefused(await spawn({}, A, claudeReq))).toBe(false)
+  })
+
+  it('a copy that uses its own right does not lapse the others', async () => {
+    disk(savedClaude({ allowMultiSpawn: true }))
+    await spawn({}, A, claudeReq)
+    await spawn({}, B, claudeReq)
+    await spawn({}, C, claudeReq)
+    disk(savedClaude({ allowMultiSpawn: false }))
+    kill({}, A); kill({}, B)
+    expect(isRefused(await spawn({}, A, claudeReq))).toBe(false) // uses its right: B's must stay
+    expect(isRefused(await spawn({}, B, claudeReq))).toBe(false)
+  })
+
+  it('restored rights lapse the same way: once a new copy is accepted while they are not live', async () => {
+    disk(savedClaude({ allowMultiSpawn: true }))
+    load([{ id: A, configId: 'cfgclaude' }, { id: B, configId: 'cfgclaude' }, { id: C, configId: 'cfgclaude' }])
+    await spawn({}, D, claudeReq) // a new copy (Multi Spawn is on): the restored copies are not live yet
+    disk(savedClaude({ allowMultiSpawn: false }))
+    expect(isRefused(await spawn({}, A, claudeReq))).toBe(true)
+  })
+
+  it('restored copies starting one after another keep each other\'s right (each uses its own)', async () => {
+    disk(savedClaude({ allowMultiSpawn: false }))
+    load([{ id: A, configId: 'cfgclaude' }, { id: B, configId: 'cfgclaude' }, { id: C, configId: 'cfgclaude' }])
+    for (const id of [A, B, C]) expect(isRefused(await spawn({}, id, claudeReq))).toBe(false)
+  })
+})
+
+describe('R3: a forged same-id spawn that throws after the gate cannot overwrite a pending spawn', () => {
+  async function withPendingCodex(forged: Record<string, unknown>) {
+    disk(savedCodex(), savedSsh())
+    let release!: () => void
+    state.prepGate = new Promise<void>((r) => { release = r })
+    const first = spawn({}, A, codexReq) // A: preparing its account (in flight)
+    await Promise.resolve()
+    expect(pending.has(A)).toBe(true)
+    let err = ''
+    try { await spawn({}, A, forged) } catch (e) { err = String(e) } // throws after the gate (the SSH bind)
+    expect(err).toMatch(/SSH spawn refused/)
+    state.prepGate = null
+    release()
+    await first
+  }
+
+  it('N4: the forged spawn names another config; the pending one still settles as what it is, a Codex copy', async () => {
+    await withPendingCodex({ cwd: 'C:/w', configId: 'cfgssh', ssh: { ...SSH, host: 'other-box' } })
+    expect(live.has(A)).toBe(true)
+    expect(isRefused(await spawn({}, B, codexReq))).toBe(true) // A is still the running Codex copy
+    expect(isRefused(await spawn({}, C, sshReq))).toBe(false) // and not a Build Box copy
+  })
+
+  it('N4b: the forged spawn names no saved config; the pending one still counts as a copy', async () => {
+    await withPendingCodex({ cwd: 'C:/w', configId: 'nope', ssh: { ...SSH } })
+    expect(live.has(A)).toBe(true)
+    expect(isRefused(await spawn({}, B, codexReq))).toBe(true)
   })
 })

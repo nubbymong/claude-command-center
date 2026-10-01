@@ -114,13 +114,18 @@ describe('the app\'s session durability core, as main composes it', () => {
     const live = new Set<string>(liveIds)
     return { live, deps: { savedConfigs: () => [{ id: 'c1', label: 'App Dev', allowMultiSpawn: false }], isLive: (id: string) => live.has(id) } }
   }
+  /** The gate's answer as the refusal, or null when the spawn may go ahead. */
+  const ask = (id: string, deps: ReturnType<typeof gate>['deps']) => {
+    const c = claimConfigLaunch(id, { configId: 'c1' }, deps)
+    return 'refused' in c ? c.refused : null
+  }
 
   it('load: the saved sessions are the ones the one-at-a-time rule lets run, and a new tab is still refused', () => {
     h.loaded = { sessions: [{ id: 'r1', configId: 'c1' }, { id: 'r2', configId: 'c1' }], activeSessionId: null, savedAt: 1 } as unknown as SessionState
     createAppSessionDurability().load()
     const { live, deps } = gate()
-    for (const id of ['r1', 'r2']) { expect(claimConfigLaunch(id, { configId: 'c1' }, deps)).toBeNull(); live.add(id) }
-    expect(claimConfigLaunch('n1', { configId: 'c1' }, deps)).toMatchObject({ code: 'already-running' })
+    for (const id of ['r1', 'r2']) { expect(ask(id, deps)).toBeNull(); live.add(id) }
+    expect(ask('n1', deps)).toMatchObject({ code: 'already-running' })
   })
 
   it('load: the remotes left running are restored too, and only the first load of the run seeds', () => {
@@ -129,9 +134,9 @@ describe('the app\'s session durability core, as main composes it', () => {
     h.loaded = { sessions: [{ id: 'later', configId: 'c1' }], activeSessionId: null, savedAt: 2 } as unknown as SessionState
     createAppSessionDurability().load()
     const { live, deps } = gate()
-    expect(claimConfigLaunch('other', { configId: 'c1' }, deps)).toBeNull(); live.add('other')
-    expect(claimConfigLaunch('d1', { configId: 'c1' }, deps)).toBeNull()
-    expect(claimConfigLaunch('later', { configId: 'c1' }, deps)).toMatchObject({ code: 'already-running' })
+    expect(ask('other', deps)).toBeNull(); live.add('other')
+    expect(ask('d1', deps)).toBeNull()
+    expect(ask('later', deps)).toMatchObject({ code: 'already-running' })
   })
 
   it('load: a read of the other records that fails does not stop the seeding', () => {
@@ -139,8 +144,8 @@ describe('the app\'s session durability core, as main composes it', () => {
     h.uncertainReadBackThrows = true
     createAppSessionDurability().load()
     const { live, deps } = gate()
-    expect(claimConfigLaunch('other', { configId: 'c1' }, deps)).toBeNull(); live.add('other')
-    expect(claimConfigLaunch('r1', { configId: 'c1' }, deps)).toBeNull()
+    expect(ask('other', deps)).toBeNull(); live.add('other')
+    expect(ask('r1', deps)).toBeNull()
   })
 
   it('load with nothing saved seeds nothing and does not use up the one seeding of the run', () => {
@@ -148,7 +153,7 @@ describe('the app\'s session durability core, as main composes it', () => {
     h.loaded = { sessions: [{ id: 'r1', configId: 'c1' }], activeSessionId: null, savedAt: 1 } as unknown as SessionState
     createAppSessionDurability().load()
     const { live, deps } = gate()
-    expect(claimConfigLaunch('other', { configId: 'c1' }, deps)).toBeNull(); live.add('other')
-    expect(claimConfigLaunch('r1', { configId: 'c1' }, deps)).toBeNull()
+    expect(ask('other', deps)).toBeNull(); live.add('other')
+    expect(ask('r1', deps)).toBeNull()
   })
 })

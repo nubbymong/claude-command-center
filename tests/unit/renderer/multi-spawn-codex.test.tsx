@@ -174,11 +174,11 @@ describe('the renderer and main ask the SAME rule', () => {
         for (let i = 0; i < count; i++) {
           // Held copies were accepted while the config was Multi Spawn.
           const accepted = claimConfigLaunch(`held-${i}`, { configId: 'cx-1', provider: 'codex' }, { ...deps, savedConfigs: () => [{ id: 'cx-1', label: 'x', allowMultiSpawn: true }] })
-          expect(accepted).toBeNull()
+          expect('ticket' in accepted).toBe(true)
           held.add(`held-${i}`)
         }
-        const refusal = claimConfigLaunch('new', { configId: 'cx-1', provider: 'codex' }, deps)
-        expect(refusal !== null, `main ${String(flag)} x${count}`).toBe(blocked)
+        const answer = claimConfigLaunch('new', { configId: 'cx-1', provider: 'codex' }, deps)
+        expect('refused' in answer, `main ${String(flag)} x${count}`).toBe(blocked)
       }
     }
   })
@@ -190,7 +190,8 @@ describe('the renderer and main ask the SAME rule', () => {
     const held = new Set<string>(['a'])
     const deps = { savedConfigs: () => [{ id: 'cx-1', label: 'Codex Dev' }], isLive: (id: string) => held.has(id) }
     claimConfigLaunch('a', { configId: 'cx-1', provider: 'codex' }, deps)
-    const refusal = claimConfigLaunch('b', { configId: 'cx-1', provider: 'codex' }, deps)!
+    const answer = claimConfigLaunch('b', { configId: 'cx-1', provider: 'codex' }, deps)
+    const refusal = 'refused' in answer ? answer.refused : { message: '' }
     expect(refusal.message.startsWith(`${copy.headline} ${copy.body}`)).toBe(true)
   })
 })

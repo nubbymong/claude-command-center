@@ -1,5 +1,5 @@
 /**
- * P3.13 (row 72; round 1): main's one-at-a-time rule
+ * P3.13 (row 72; rounds 1 and 2): main's one-at-a-time rule
  * (src/main/launch-one-at-a-time.ts), on its own: pure over an injected
  * saved-config reader and liveness question, nothing mocked but the logger.
  * The same rule through the real pty:spawn handler is
@@ -13,27 +13,38 @@ vi.mock('../../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn, lo
 
 const {
   claimConfigLaunch, settleConfigLaunch, seedRestoredSessions, HELD_MAX, RESTORED_MAX,
-  _claimedSessionCountForTest, _resetConfigLaunchClaimsForTest,
+  _claimedSessionCountForTest, _heldSessionIdsForTest, _resetConfigLaunchClaimsForTest,
 } = await import('../../../src/main/launch-one-at-a-time')
+type Ticket = Parameters<typeof settleConfigLaunch>[0]
 
 const live = new Set<string>()
 let configs: unknown
 const reads = vi.fn()
 const deps = { savedConfigs: () => { reads(); return configs }, isLive: (id: string) => live.has(id) }
-const ask = (id: string, req: Record<string, unknown> = { configId: 'c1' }) => claimConfigLaunch(id, req, deps)
-/** A spawn main accepts: it passes the gate, pty-manager takes it (live), and pty:spawn settles it. */
+/** The ticket each id was last handed (a spawn that passed the gate). */
+const last = new Map<string, Ticket>()
+/** The gate's answer as a refusal, or null when the spawn may go ahead (its ticket is kept in `last`). */
+const ask = (id: string, req: Record<string, unknown> = { configId: 'c1' }) => {
+  const c = claimConfigLaunch(id, req, deps)
+  if ('refused' in c) return c.refused
+  last.set(id, c.ticket)
+  return null
+}
+/** A spawn main accepts: it passes the gate, pty-manager takes it (live), and pty:spawn settles its ticket. */
 const start = (id: string, req?: Record<string, unknown>) => {
   const r = ask(id, req)
-  if (r === null) { live.add(id); settleConfigLaunch(id) }
+  if (r === null) { live.add(id); settleConfigLaunch(last.get(id)!) }
   return r
 }
 /** The renderer's partner shell of a session: shell-only, <session>-partner, the config's id. */
 const partnerReq = (over: Record<string, unknown> = {}) => ({ configId: 'c1', shellOnly: true, ...over })
 const askPartner = (base: string, over: Record<string, unknown> = {}) => ask(`${base}-partner`, partnerReq(over))
 const startPartner = (base: string, over: Record<string, unknown> = {}) => start(`${base}-partner`, partnerReq(over))
+const off = () => { configs = [{ id: 'c1', label: 'App Dev', allowMultiSpawn: false }] }
+const multi = () => { configs = [{ id: 'c1', label: 'App Dev', allowMultiSpawn: true }] }
 
 beforeEach(() => {
-  live.clear(); reads.mockClear(); logWarn.mockClear()
+  live.clear(); last.clear(); reads.mockClear(); logWarn.mockClear()
   _resetConfigLaunchClaimsForTest()
   configs = [{ id: 'c1', label: 'App Dev' }, { id: 'c2', label: 'Other', allowMultiSpawn: true }]
 })
@@ -128,9 +139,9 @@ describe('claimConfigLaunch', () => {
 
 describe('copies started under Multi Spawn still count once it is turned off', () => {
   it('a further copy is refused while the copies started under Multi Spawn are live', () => {
-    configs = [{ id: 'c1', label: 'App Dev', allowMultiSpawn: true }]
+    multi()
     for (const id of ['s1', 's2', 's3']) expect(start(id)).toBeNull()
-    configs = [{ id: 'c1', label: 'App Dev', allowMultiSpawn: false }] // the user unticks it; the three keep running
+    off() // the user unticks it; the three keep running
     expect(ask('s4')).toMatchObject({ code: 'already-running' })
     // ...until they have ended.
     for (const id of ['s1', 's2', 's3']) live.delete(id)
@@ -140,9 +151,9 @@ describe('copies started under Multi Spawn still count once it is turned off', (
 
 describe('who keeps the right to run', () => {
   it('a session accepted in this run restarts beside another copy, before or after its process ended', () => {
-    configs = [{ id: 'c1', label: 'App Dev', allowMultiSpawn: true }]
+    multi()
     start('s1'); start('s2')
-    configs = [{ id: 'c1', label: 'App Dev', allowMultiSpawn: false }]
+    off()
     expect(ask('s1')).toBeNull() // Restart / Switch / Recover: its own process is replaced
     live.delete('s1') // killed first, as a Restart does
     expect(ask('s1')).toBeNull()
@@ -179,22 +190,6 @@ describe('who keeps the right to run', () => {
     expect(ask('s2')).not.toBeNull()
   })
 
-  it('the rights are bounded: past HELD_MAX the oldest go, and what is not accepted is dropped once it is not live', () => {
-    configs = [{ id: 'c1', label: 'App Dev', allowMultiSpawn: true }]
-    for (let i = 0; i < HELD_MAX + 300; i++) { start(`s${i}`); live.delete(`s${i}`) }
-    for (let i = 0; i < 300; i++) ask(`never${i}`) // passed, never live
-    ask('last')
-    expect(_claimedSessionCountForTest()).toBeLessThanOrEqual(HELD_MAX + 1)
-  })
-
-  it('the oldest session lost its right past the bound; the newest keep theirs', () => {
-    configs = [{ id: 'c1', label: 'App Dev', allowMultiSpawn: true }]
-    for (let i = 0; i < HELD_MAX + 5; i++) start(`s${i}`)
-    configs = [{ id: 'c1', label: 'App Dev', allowMultiSpawn: false }]
-    expect(ask(`s${HELD_MAX + 4}`)).toBeNull()
-    expect(ask('s0')).not.toBeNull()
-  })
-
   it('a session that is later accepted as a non-copy stops counting as a copy of its config', () => {
     start('s1')
     expect(ask('s2')).not.toBeNull()
@@ -221,12 +216,171 @@ describe('who keeps the right to run', () => {
   })
 })
 
+describe('R2: a right lapses once a new copy of its config is accepted while the holder is not live', () => {
+  it('the forged sequence is refused: accept A, close A, accept B, then A again beside B', () => {
+    start('a')
+    live.delete('a') // the tab is closed
+    expect(start('b')).toBeNull() // a new copy: nothing else runs
+    expect(ask('a')?.code).toBe('already-running') // A's right lapsed with B
+  })
+
+  it('the cycle does not bank rights: N closed ids cannot come back as N concurrent copies', () => {
+    const ids = ['n1', 'n2', 'n3', 'n4', 'n5']
+    for (const id of ids) { start(id); live.delete(id) }
+    expect(_heldSessionIdsForTest()).toEqual(['n5']) // each new copy lapsed the closed ones before it
+    const back = ids.map((id) => start(id))
+    expect(back.filter((r) => r === null)).toHaveLength(1)
+  })
+
+  it('a holder that is live keeps its right: copies accepted together restart beside each other after one ends', () => {
+    multi()
+    start('s1'); start('s2') // s1 is live when s2 is accepted
+    off()
+    live.delete('s1') // killed
+    expect(ask('s1')).toBeNull()
+  })
+
+  it('a restored copy that is live (its spawn is under way) keeps its right when a new copy is accepted, even if that spawn then fails', () => {
+    multi()
+    seedRestoredSessions({ sessions: [{ id: 'r1', configId: 'c1' }] })
+    expect(ask('r1')).toBeNull() // passed the gate and under way (preparing)
+    live.add('r1')
+    expect(start('n1')).toBeNull() // a new copy is accepted meanwhile
+    live.delete('r1') // r1's spawn failed: never settled
+    off()
+    expect(ask('r1')).toBeNull() // its right was there when n1 was accepted, so it is still there
+  })
+
+  it('a copy that uses its own right does not lapse the others', () => {
+    multi()
+    start('s1'); start('s2'); start('s3')
+    off()
+    live.delete('s1'); live.delete('s2')
+    expect(start('s1')).toBeNull() // uses its right
+    expect(ask('s2')).toBeNull() // s2's is still there
+  })
+
+  it('only the config\'s own holders lapse', () => {
+    configs = [{ id: 'c1', label: 'A', allowMultiSpawn: true }, { id: 'c2', label: 'B', allowMultiSpawn: true }]
+    start('x1', { configId: 'c2' }); live.delete('x1')
+    start('y1', { configId: 'c1' }); live.delete('y1')
+    start('y2', { configId: 'c1' }) // lapses y1, not x1
+    expect(_heldSessionIdsForTest().sort()).toEqual(['x1', 'y2'])
+  })
+
+  it('a spawn that is not a copy lapses nothing', () => {
+    multi()
+    start('a'); live.delete('a')
+    expect(start('shell', {})).toBeNull()
+    expect(startPartner('shell')).toBeNull()
+    expect(_heldSessionIdsForTest()).toEqual(['a'])
+  })
+
+  it('restored rights lapse the same way, and restored copies using their own rights do not lapse each other', () => {
+    multi()
+    seedRestoredSessions({ sessions: [{ id: 'r1', configId: 'c1' }, { id: 'r2', configId: 'c1' }, { id: 'r3', configId: 'c1' }] })
+    expect(start('r1')).toBeNull(); expect(start('r2')).toBeNull() // each uses its own right
+    off()
+    expect(ask('r3')).toBeNull() // r3's right is still there
+    // ...until a new copy is accepted while it is not live.
+    multi()
+    expect(start('n1')).toBeNull()
+    off()
+    expect(ask('r3')?.code).toBe('already-running')
+  })
+})
+
+describe('R3: tickets, one per spawn that passed the gate', () => {
+  it('each pending spawn of a session keeps its own ticket: a forged spawn of the same id cannot overwrite it', () => {
+    configs = [{ id: 'c1', label: 'A' }, { id: 'c2', label: 'B' }]
+    const first = claimConfigLaunch('s1', { configId: 'c1' }, deps) as { ticket: Ticket }
+    live.add('s1') // preparing
+    const forged = claimConfigLaunch('s1', { configId: 'c2' }, deps) as { ticket: Ticket } // throws after the gate: never settled
+    expect(forged.ticket).not.toBe(first.ticket)
+    expect(ask('s2', { configId: 'c1' })?.code).toBe('already-running') // before it settles, the pending spawn still counts as c1's copy
+    settleConfigLaunch(first.ticket)
+    expect(ask('s2', { configId: 'c1' })?.code).toBe('already-running') // s1 is c1's copy
+    expect(ask('s3', { configId: 'c2' })).toBeNull() // and not c2's
+  })
+
+  it('a forged same-id spawn naming no config does not turn the pending copy into a non-copy', () => {
+    const first = claimConfigLaunch('s1', { configId: 'c1' }, deps) as { ticket: Ticket }
+    live.add('s1')
+    claimConfigLaunch('s1', { configId: 'nope' }, deps) // passes (no such config), then throws
+    settleConfigLaunch(first.ticket)
+    expect(ask('s2')?.code).toBe('already-running')
+  })
+
+  it('a ticket settles once, and only a ticket the gate handed out settles at all', () => {
+    const c = claimConfigLaunch('s1', { configId: 'c1' }, deps) as { ticket: Ticket }
+    live.add('s1')
+    settleConfigLaunch({ sessionId: 's1' } as Ticket) // a look-alike
+    settleConfigLaunch(Object.freeze({ sessionId: 's1' }) as Ticket)
+    expect(_heldSessionIdsForTest()).toEqual([])
+    settleConfigLaunch(c.ticket)
+    expect(_heldSessionIdsForTest()).toEqual(['s1'])
+    live.delete('s1')
+    start('s2') // a new copy lapses s1
+    settleConfigLaunch(c.ticket) // settled already: nothing comes back
+    expect(_heldSessionIdsForTest()).toEqual(['s2'])
+  })
+
+  it('the pending tickets of one session are bounded', () => {
+    start('s1')
+    for (let i = 0; i < 200; i++) claimConfigLaunch('s1', { configId: 'c1' }, deps)
+    expect(_claimedSessionCountForTest()).toBeLessThanOrEqual(1 + 8)
+  })
+})
+
+describe('R4: the bound on the rights lets ended sessions go first', () => {
+  it('past HELD_MAX the oldest go when every session is live', () => {
+    multi()
+    for (let i = 0; i < HELD_MAX + 5; i++) start(`s${i}`)
+    expect(_heldSessionIdsForTest()).toHaveLength(HELD_MAX)
+    expect(_heldSessionIdsForTest()).not.toContain('s0')
+    expect(_heldSessionIdsForTest()).toContain(`s${HELD_MAX + 4}`)
+  })
+
+  it('an entry whose session has ended goes before an older one that is live, and a live one never while one has ended', () => {
+    configs = [{ id: 'c1', label: 'A', allowMultiSpawn: true }, ...Array.from({ length: 10 }, (_, i) => ({ id: `e${i}`, label: 'E', allowMultiSpawn: true }))]
+    for (let i = 0; i < 5; i++) start(`live${i}`, { configId: 'c1' }) // the oldest, and live
+    for (let i = 0; i < 10; i++) { start(`ended${i}`, { configId: `e${i}` }); live.delete(`ended${i}`) } // each on a config of its own: no lapse
+    for (let i = 0; i < HELD_MAX - 15; i++) start(`more${i}`, { configId: 'c1' })
+    expect(_heldSessionIdsForTest()).toHaveLength(HELD_MAX)
+    for (let i = 0; i < 10; i++) {
+      start(`new${i}`, { configId: 'c1' })
+      expect(_heldSessionIdsForTest()).toHaveLength(HELD_MAX)
+      expect(_heldSessionIdsForTest(), `ended${i}`).not.toContain(`ended${i}`) // the ended one went, oldest first
+      expect(_heldSessionIdsForTest()).toContain('live0') // the oldest live one stayed
+    }
+    // Ten new copies took the ten ended entries; the next must take a live one.
+    start('overflow', { configId: 'c1' })
+    expect(_heldSessionIdsForTest()).not.toContain('live0')
+  })
+
+  it('the entry being settled is never the one that goes', () => {
+    multi()
+    for (let i = 0; i < HELD_MAX; i++) start(`s${i}`)
+    start('newest')
+    expect(_heldSessionIdsForTest()).toContain('newest')
+  })
+
+  it('what is not accepted is dropped once it is not live', () => {
+    multi()
+    for (let i = 0; i < 300; i++) ask(`never${i}`) // passed, never live
+    ask('last')
+    expect(_claimedSessionCountForTest()).toBeLessThanOrEqual(1)
+  })
+})
+
 describe('the partner terminal', () => {
-  it('in the renderer\'s exact shape, for a session main holds, is not a copy and is never recorded', () => {
+  it('in the renderer\'s exact shape is never a copy and never recorded, whether or not main holds its session', () => {
     start('s1')
     expect(startPartner('s1')).toBeNull()
+    expect(startPartner('never-seen')).toBeNull()
     live.delete('s1')
-    expect(ask('s2')).toBeNull() // only the shell is left: the config is not running
+    expect(ask('s2')).toBeNull() // only the shells are left: the config is not running
+    expect(_heldSessionIdsForTest()).toEqual(['s1'])
   })
 
   it('is not exempt without its shape: no shell-only flag, another suffix, an ssh block, terminal options or elevation', () => {
@@ -240,37 +394,23 @@ describe('the partner terminal', () => {
     expect(ask('s2-PARTNER', { configId: 'c1', shellOnly: true })?.code).toBe('already-running')
   })
 
-  it('is exempt only for a session main holds, and for the same config', () => {
-    start('s1')
-    expect(askPartner('zz')?.code).toBe('already-running') // main never accepted zz
-    configs = [{ id: 'c1', label: 'App Dev' }, { id: 'c2', label: 'Other' }]
-    start('s2', { configId: 'c2' })
-    expect(askPartner('s2')?.code).toBe('already-running') // names c1, but s2 runs c2
-  })
-
-  it('opens for a session whose process ended (accepted in this run) or that was restored', () => {
-    configs = [{ id: 'c1', label: 'App Dev', allowMultiSpawn: true }]
-    start('s1'); start('s2')
-    configs = [{ id: 'c1', label: 'App Dev', allowMultiSpawn: false }]
-    live.delete('s1')
-    expect(askPartner('s1')).toBeNull()
-    seedRestoredSessions({ sessions: [{ id: 'r1', configId: 'c1' }] })
-    expect(askPartner('r1')).toBeNull()
+  it('never counts toward its config: it cannot block a copy, nor the tab it belongs to', () => {
+    startPartner('s1')
+    expect(start('s1')).toBeNull() // the tab the shell belongs to
+    expect(ask('s2')?.code).toBe('already-running') // the tab runs; the shell alone never did
   })
 })
 
 describe('restored sessions', () => {
-  const declined = () => { configs = [{ id: 'c1', label: 'App Dev', allowMultiSpawn: false }] }
-
   it('every restored copy of a config that is not Multi Spawn starts; a new one does not', () => {
-    declined()
+    off()
     seedRestoredSessions({ sessions: [{ id: 'r1', configId: 'c1' }, { id: 'r2', configId: 'c1' }, { id: 'r3', configId: 'c1' }] })
     for (const id of ['r1', 'r2', 'r3']) expect(start(id), id).toBeNull()
     expect(ask('n1')).toMatchObject({ code: 'already-running' })
   })
 
   it('the right is until the first accepted spawn, then the session\'s own (it restarts again)', () => {
-    declined()
+    off()
     seedRestoredSessions({ sessions: [{ id: 'r1', configId: 'c1' }, { id: 'r2', configId: 'c1' }] })
     start('r1'); start('r2')
     expect(ask('r1')).toBeNull()
@@ -279,7 +419,7 @@ describe('restored sessions', () => {
   })
 
   it('a restored copy that came back Not started keeps its right while it has not started', () => {
-    declined()
+    off()
     seedRestoredSessions({ sessions: [{ id: 'r1', configId: 'c1' }, { id: 'r2', configId: 'c1' }] })
     start('r2')
     expect(ask('r1')).toBeNull() // r1's first start comes later, beside r2
@@ -301,25 +441,24 @@ describe('restored sessions', () => {
   })
 
   it('remotes left running are restored too, for their own config', () => {
-    declined()
+    off()
     seedRestoredSessions({ sessions: [], detachedRemotes: [{ sessionId: 'd1', configId: 'c1' }, { sessionId: 'd2' }] })
-    start('s1')
-    expect(ask('d1')).toBeNull()
+    expect(start('d1')).toBeNull() // the reattach
     expect(ask('d2')?.code).toBe('already-running')
+    expect(ask('d3')?.code).toBe('already-running')
   })
 
   it('only the first state of a run seeds, and an empty read does not use it up', () => {
-    declined()
+    off()
     seedRestoredSessions(null)
     seedRestoredSessions({ sessions: [{ id: 'r1', configId: 'c1' }] })
     seedRestoredSessions({ sessions: [{ id: 'r1', configId: 'c1' }, { id: 'r2', configId: 'c1' }] })
-    start('s1')
-    expect(ask('r1')).toBeNull()
-    expect(ask('r2')).not.toBeNull()
+    expect(start('r1')).toBeNull() // the first load's right
+    expect(ask('r2')).not.toBeNull() // the later load's is no right
   })
 
   it('an Ask session, an entry with no config, a bad id and a bad shape are no rights', () => {
-    declined()
+    off()
     seedRestoredSessions({
       sessions: [{ id: 'a', configId: 'c1', kind: 'ask' }, { id: 'b' }, { id: 'bad id', configId: 'c1' }, { id: 5, configId: 'c1' }, null, 'x', { id: 'e', configId: '' }, { id: 'f', configId: 'x'.repeat(201) }],
       detachedRemotes: [null, 3, { sessionId: 'g' }],
@@ -329,17 +468,17 @@ describe('restored sessions', () => {
   })
 
   it('what is seeded is bounded', () => {
-    declined()
+    off()
     const sessions = Array.from({ length: RESTORED_MAX + 50 }, (_, i) => ({ id: `r${i}`, configId: 'c1' }))
     seedRestoredSessions({ sessions, detachedRemotes: [{ sessionId: 'extra', configId: 'c1' }] })
-    start('s1')
+    start('r0') // a restored copy runs, using its own right
     expect(ask(`r${RESTORED_MAX - 1}`)).toBeNull()
     expect(ask(`r${RESTORED_MAX + 1}`)?.code).toBe('already-running')
     expect(ask('extra')?.code).toBe('already-running') // the sessions and the remotes share the one bound
   })
 
   it('is not a reconnect flag: a new id that says it reattaches is a new copy', () => {
-    declined()
+    off()
     start('s1')
     expect(ask('x1', { configId: 'c1', ssh: { reconnect: true } })?.code).toBe('already-running')
   })
