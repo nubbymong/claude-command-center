@@ -5,7 +5,7 @@ import { requestCloseSession } from '../stores/sshCloseStore'
 import { matchesShortcut, DEFAULT_SHORTCUTS } from '../utils/shortcuts'
 import { captureGlyphDiagnostic } from '../utils/glyphDiagnostic'
 import { requestResync } from '../components/terminal/repaintRegistry'
-import { sendImageToSession } from '../utils/imageTransfer'
+import { sendImageToSession, typeImagePathIntoShell } from '../utils/imageTransfer'
 import { sendImagePathToCodex } from '../lib/codexComposer'
 import { usePasteHintStore } from '../stores/pasteHintStore'
 import { useAppMetaStore } from '../stores/appMetaStore'
@@ -114,7 +114,17 @@ export function useKeyboardShortcuts(
             // focused terminal hands Alt+V to the CLI, which pastes the image
             // itself). A Codex session's line goes through the rule the app
             // types into Codex by, and a line it could not send says why.
-            if (session?.provider === 'codex' && !session.shellOnly) {
+            if (session?.shellOnly) {
+              // P3.16a (U6): a plain terminal has no assistant to tell, so it
+              // gets the image's path, quoted for its shell, and no sentence or
+              // Enter. Over SSH the file is on this computer, which the remote
+              // shell cannot read: nothing is typed, and the hint says where it is.
+              if (session.sessionType === 'ssh') {
+                usePasteHintStore.getState().show(sessionId, `The image was saved on this computer at ${res.path}; the remote shell cannot read it, so nothing was typed.`)
+              } else {
+                typeImagePathIntoShell(sessionId, res.path, window.electronPlatform === 'win32')
+              }
+            } else if (session?.provider === 'codex') {
               sendImagePathToCodex(sessionId, res.path, (note) => usePasteHintStore.getState().show(sessionId, note))
             } else {
               // Success is self-evident — the path appears in the prompt (no toast).

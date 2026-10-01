@@ -5,7 +5,11 @@
  * saves the clipboard image, then: a Claude session gets the line it always
  * got (unchanged); a Codex session gets its line through the Codex typing
  * rule (sendImagePathToCodex), whose notes show in the session's paste hint;
- * a plain terminal of either provider is treated as before.
+ * a plain terminal (P3.16a, U6) gets only the image's path, quoted for its shell,
+ * typed and not submitted, with no sentence: a shell reads no images, and a
+ * sentence and an Enter would be typed into it as a command. Over SSH the file
+ * is on this computer, which the remote shell cannot read, so nothing is typed
+ * and the hint says so.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import React from 'react'
@@ -14,9 +18,9 @@ import { act } from 'react'
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
-const h = vi.hoisted(() => ({ sendImageToSession: vi.fn(), sendImagePathToCodex: vi.fn() }))
+const h = vi.hoisted(() => ({ sendImageToSession: vi.fn(), sendImagePathToCodex: vi.fn(), typeImagePathIntoShell: vi.fn() }))
 vi.mock('../../../src/renderer/onboarding/gate', () => ({ deriveOnboarding: () => ({ due: false, steps: [] }) }))
-vi.mock('../../../src/renderer/utils/imageTransfer', () => ({ sendImageToSession: h.sendImageToSession }))
+vi.mock('../../../src/renderer/utils/imageTransfer', () => ({ sendImageToSession: h.sendImageToSession, typeImagePathIntoShell: h.typeImagePathIntoShell }))
 vi.mock('../../../src/renderer/lib/codexComposer', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/renderer/lib/codexComposer')>()),
   sendImagePathToCodex: h.sendImagePathToCodex,
@@ -47,6 +51,7 @@ let saveImage: ReturnType<typeof vi.fn>
 beforeEach(() => {
   h.sendImageToSession.mockReset()
   h.sendImagePathToCodex.mockReset()
+  h.typeImagePathIntoShell.mockReset()
   saveImage = vi.fn(async () => ({ path: IMG }))
   ;(window as any).electronAPI = { clipboard: { saveImage } }
   useSettingsStore.setState({ settings: { keyboardShortcuts: DEFAULT_SHORTCUTS } as any })
@@ -67,7 +72,7 @@ async function altV(sessions: Session[], active: string) {
   act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'v', altKey: true, bubbles: true })) })
   // The handler awaits the saved image, then acts once: a sender, or a hint.
   await vi.waitFor(() => {
-    const acted = h.sendImageToSession.mock.calls.length + h.sendImagePathToCodex.mock.calls.length + Object.keys(usePasteHintStore.getState().hints).length
+    const acted = h.sendImageToSession.mock.calls.length + h.sendImagePathToCodex.mock.calls.length + h.typeImagePathIntoShell.mock.calls.length + Object.keys(usePasteHintStore.getState().hints).length
     if (acted === 0) throw new Error('the Alt+V handler has not acted yet')
   })
 }
@@ -90,10 +95,36 @@ describe('Alt+V with focus outside the terminal (P3.15, row 70)', () => {
     expect(usePasteHintStore.getState().hints.cx1).toBe('Codex is busy with a turn, so nothing was sent.')
   })
 
-  it('a plain terminal is treated as before, whichever provider its config names', async () => {
-    await altV([session('sh1', { provider: 'codex', shellOnly: true } as Partial<Session>)], 'sh1')
+  it('a plain terminal on this computer gets only the path, whichever provider its config names: no sentence typed for an assistant, nothing submitted', async () => {
+    for (const provider of ['claude', 'codex'] as const) {
+      h.typeImagePathIntoShell.mockReset()
+      await altV([session('sh1', { provider, shellOnly: true } as Partial<Session>)], 'sh1')
+      expect(h.typeImagePathIntoShell, provider).toHaveBeenCalledTimes(1)
+      expect(h.typeImagePathIntoShell.mock.calls[0].slice(0, 2), provider).toEqual(['sh1', IMG])
+      expect(h.sendImageToSession, provider).not.toHaveBeenCalled()
+      expect(h.sendImagePathToCodex, provider).not.toHaveBeenCalled()
+      expect(usePasteHintStore.getState().hints.sh1, provider).toBeUndefined()
+    }
+  })
+
+  it('the path is quoted for the shell the plain terminal runs: PowerShell on Windows, a POSIX shell elsewhere', async () => {
+    for (const [platform, isWin32] of [['win32', true], ['linux', false], ['darwin', false]] as const) {
+      ;(window as any).electronPlatform = platform
+      h.typeImagePathIntoShell.mockReset()
+      await altV([session('sh1', { shellOnly: true } as Partial<Session>)], 'sh1')
+      expect(h.typeImagePathIntoShell.mock.calls[0][2], platform).toBe(isWin32)
+    }
+    delete (window as any).electronPlatform
+  })
+
+  it('a plain terminal over SSH gets nothing typed (the file is on this computer, which the remote shell cannot read), and the hint says so', async () => {
+    await altV([session('sh2', { shellOnly: true, sessionType: 'ssh' } as Partial<Session>)], 'sh2')
+    expect(h.typeImagePathIntoShell).not.toHaveBeenCalled()
+    expect(h.sendImageToSession).not.toHaveBeenCalled()
     expect(h.sendImagePathToCodex).not.toHaveBeenCalled()
-    expect(h.sendImageToSession).toHaveBeenCalledWith('sh1', IMG, 'I just pasted an image \u2014 please view it.', 'local')
+    const hint = usePasteHintStore.getState().hints.sh2
+    expect(hint).toContain('remote shell cannot read')
+    expect(hint).toContain(IMG)
   })
 
   it('no image on the clipboard: the same hint as before, and nothing typed', async () => {
