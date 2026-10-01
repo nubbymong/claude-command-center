@@ -774,7 +774,13 @@ describe('the transcripts worker and a Codex rollout (P3.12, row 31)', () => {
     appendFileSync(f, said('WIND-DOWN', 3000))
     closeWindow(BASE + 4000)
     appendFileSync(f, said('LATER', 5000))
+    // A Restart reads the original from its start.
     send(runStart('T', BASE + 6000)); send(bindNI('T', f)); w.tickNow()
     expect(shown5(fake.runs[0].runId)).toEqual(['BEFORE', '-- off --', 'LATER'])
+    // A Switch's copy, in the other account's folder under the same rollout id, is read from its start by another run.
+    const copy = file(25, 'realm-b')
+    writeFileSync(copy, readFileSync(f, 'utf8'))
+    send(runStart('U', BASE + 7000)); send(bindNI('U', copy)); w.tickNow()
+    expect(shown5(fake.runs.find((r) => r.sessionId === 'U')!.runId)).toEqual(['BEFORE', '-- off --', 'LATER'])
   })
 })

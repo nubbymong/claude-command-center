@@ -174,12 +174,19 @@ describe('when Codex conversations were written while not indexed (P3.12)', () =
     expect(of(ID)[0]).toEqual([100, null])
   })
 
-  it('K1: a session that ends normally closes its window even when it was merged into an older one (the latest open window is closed)', () => {
+  it('L1: a session that ends while its window was merged into an older one leaves it open, and closes no other session\'s window on the conversation (toward not indexing)', () => {
     openNotIndexedWindow('s1', A, 100)
     for (let i = 0; i < WINDOWS_PER_CONVERSATION_MAX; i++) { openNotIndexedWindow('s2', A, 1000 + i * 10); closeNotIndexedWindow('s2', 1005 + i * 10) }
     expect(of(ID)[0]).toEqual([100, null])
-    closeNotIndexedWindow('s1', 9000)
-    expect(of(ID)[0]).toEqual([100, 9000])
+    // Another session holds the conversation too.
+    openNotIndexedWindow('s3', A, 20_000)
+    expect(of(ID).at(-1)).toEqual([20_000, null])
+    closeNotIndexedWindow('s1', 30_000)
+    expect(of(ID)[0]).toEqual([100, null])
+    expect(of(ID).at(-1)).toEqual([20_000, null])
+    // Its own window, still in the record, closes as ever.
+    closeNotIndexedWindow('s3', 40_000)
+    expect(of(ID).at(-1)).toEqual([20_000, 40_000])
   })
 
   it('K3: a flush that is not final writes what is pending but does not latch: a close after it still closes; a final flush latches', () => {
