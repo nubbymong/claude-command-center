@@ -1016,6 +1016,69 @@ describe('main refuses a launch because its provider is off', () => {
     expect(removeSession).not.toHaveBeenCalled()
   })
 
+  // P3.13 round 1 (M7): main enforces the one-at-a-time rule from the SAVED config; when the
+  // screen's toggle says Multi Spawn is on but the saved config says it is not (a save that did
+  // not land), the refusal says "turn on Allow Multi Spawn" beside a toggle that is already on.
+  describe('a copy main refused because the config is not Multi Spawn (already-running)', () => {
+    const REFUSED = (label: string) => ({ started: false, refused: { code: 'already-running', providerId: 'claude', message: `${label} is already running. It isn't a Multi Spawn config, so it runs one at a time. Close the other copy, or turn on Allow Multi Spawn for it.` } })
+    const cfg = { id: 'cfg-1', label: 'api-server', workingDirectory: 'C:/proj', color: '', sessionType: 'local', provider: 'claude', allowMultiSpawn: true }
+    let loadAll: ReturnType<typeof vi.fn>
+    const mountConfig = () => {
+      H.sessionState.sessions = [claudeSession()]
+      act(() => {
+        root.render(React.createElement(TerminalView as any, { key: 'a', sessionId: 's-1', configId: 'cfg-1', cwd: 'C:/proj', isActive: true, provider: 'claude' }))
+      })
+    }
+    const saved = (flag: unknown) => { loadAll = vi.fn(async () => ({ data: { configs: [{ ...cfg, allowMultiSpawn: flag }] }, needsMigration: false })); (window as any).electronAPI.config = { loadAll } }
+    afterEach(() => { (useConfigStore as any).setState({ configs: [] }); delete (window as any).electronAPI.config })
+
+    it('the tab says why, and a toggle the screen shows on is made the saved one', async () => {
+      ;(useConfigStore as any).setState({ configs: [{ ...cfg }] })
+      saved(false)
+      mountConfig()
+      await settle()
+      await act(async () => { settles[0].resolve(REFUSED('api-server')) })
+      await settle()
+      expect(termLines()).toContain("Not started. api-server is already running. It isn't a Multi Spawn config, so it runs one at a time. Close the other copy, or turn on Allow Multi Spawn for it, then Restart this tab.")
+      expect(loadAll).toHaveBeenCalledTimes(1)
+      expect((useConfigStore as any).getState().configs[0].allowMultiSpawn).toBe(false)
+      expect(exitedMarks()).toHaveLength(1)
+    })
+
+    it('a screen that already says it is not Multi Spawn reads nothing: the refusal is simply true', async () => {
+      ;(useConfigStore as any).setState({ configs: [{ ...cfg, allowMultiSpawn: false }] })
+      saved(false)
+      mountConfig()
+      await settle()
+      await act(async () => { settles[0].resolve(REFUSED('api-server')) })
+      await settle()
+      expect(loadAll).not.toHaveBeenCalled()
+      expect((useConfigStore as any).getState().configs[0].allowMultiSpawn).toBe(false)
+    })
+
+    it('a saved config that agrees with the screen changes nothing', async () => {
+      ;(useConfigStore as any).setState({ configs: [{ ...cfg }] })
+      saved(true)
+      mountConfig()
+      await settle()
+      await act(async () => { settles[0].resolve(REFUSED('api-server')) })
+      await settle()
+      expect(loadAll).toHaveBeenCalledTimes(1)
+      expect((useConfigStore as any).getState().configs[0].allowMultiSpawn).toBe(true)
+    })
+
+    it('a provider refusal is not this: nothing is re-read', async () => {
+      ;(useConfigStore as any).setState({ configs: [{ ...cfg }] })
+      saved(false)
+      mountConfig()
+      await settle()
+      await act(async () => { settles[0].resolve(claudeOff) })
+      await settle()
+      expect(loadAll).not.toHaveBeenCalled()
+      expect((useConfigStore as any).getState().configs[0].allowMultiSpawn).toBe(true)
+    })
+  })
+
   it('a refused launch marks its tab as never started, so it does not count as running; a later start clears it', async () => {
     mount(codexSession({ providerAccountId: 'acc-work' }))
     await settle()

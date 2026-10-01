@@ -13,9 +13,10 @@
  * (src/main/launch-one-at-a-time.ts); the renderer's half of the same rule is
  * tests/unit/renderer/multi-spawn-codex.test.tsx.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest'
 import * as os from 'os'
 import * as path from 'path'
+import * as fs from 'fs'
 import { ConsumerLeaseRegistry } from '../../../src/main/providers/core/consumer-leases'
 
 interface FakePty { cmd: string; env: Record<string, string>; exit: Array<(e: { exitCode: number }) => void>; kill: ReturnType<typeof vi.fn> }
@@ -28,6 +29,8 @@ const h = vi.hoisted(() => ({
   configs: [] as unknown[],
   prepared: [] as Array<{ ownerId: string; sessionId: string; providerAccountId?: string }>,
   prepareGate: null as null | Promise<void>,
+  /** The resources folder the setup-handlers mock made (this file's own mkdtemp). */
+  resDir: '',
 }))
 
 vi.mock('node-pty', () => ({
@@ -53,6 +56,7 @@ vi.mock('../../../src/main/ipc/setup-handlers', () => {
   const nodeOs = require('node:os') as typeof import('node:os')
   const nodePath = require('node:path') as typeof import('node:path')
   const dir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'ccc-multi-spawn-res-'))
+  h.resDir = dir
   return { getResourcesDirectory: () => dir, getDataDirectory: () => dir, registerSetupHandlers: () => {}, writeCliSetupPty: () => {} }
 })
 vi.mock('electron', () => ({
@@ -153,7 +157,7 @@ vi.mock('../../../src/main/provider-accounts', () => ({
 
 const { killPty, killAllPty, holdsCodexLaunchLease, isSessionLiveOrStarting } = await import('../../../src/main/pty-manager')
 const { registerPtyHandlers } = await import('../../../src/main/ipc/pty-handlers')
-const { _resetConfigLaunchClaimsForTest } = await import('../../../src/main/launch-one-at-a-time')
+const { _resetConfigLaunchClaimsForTest, seedRestoredSessions } = await import('../../../src/main/launch-one-at-a-time')
 
 const fakeWin = { isDestroyed: () => false, webContents: { send: () => {} } }
 registerPtyHandlers(() => fakeWin as never)
@@ -169,6 +173,16 @@ const ALL = [S1, S2, S3]
 const savedConfig = (over: Record<string, unknown> = {}) => ({ id: 'cfgcodex', label: 'Codex Dev', provider: 'codex', sessionType: 'local', workingDirectory: os.tmpdir(), ...over })
 const STARTED = { started: true, launched: { codexPreset: 'read-only' } }
 const holders = () => registry.sessionsHolding(ACCOUNT).sort()
+
+// The one folder this file made (its mkdtemp, in the setup-handlers mock) goes with it: only a
+// path of that prefix, directly under the temp folder, is ever removed.
+afterAll(() => {
+  const dir = h.resDir
+  if (!dir) return
+  if (path.basename(dir).startsWith('ccc-multi-spawn-res-') && path.resolve(path.dirname(dir)) === path.resolve(os.tmpdir())) {
+    try { fs.rmSync(dir, { recursive: true, force: true }) } catch { /* best effort */ }
+  }
+})
 
 beforeEach(() => {
   for (const id of ALL) { try { killPty(id) } catch { /* nothing running */ } }
@@ -240,6 +254,21 @@ describe('N copies of a Multi Spawn Codex config, one lease each', () => {
     exitPty(h.ptys[1])
     expect(registry.runningSessions(ACCOUNT)).toBe(3)
     expect(holders()).toEqual([...ALL].sort())
+  })
+
+  it('Multi Spawn unticked while the copies run: a Restart and a Switch of one copy start, each on a lease of its own, and a new copy is refused', async () => {
+    for (const id of ALL) await spawnAs(id)
+    h.configs = [savedConfig({ allowMultiSpawn: false })]
+    expect(await spawnAs(S1)).toEqual(STARTED) // Restart: the copy's own process is replaced
+    expect(await spawnAs(S1, { providerAccountId: 'acct-b' })).toEqual(STARTED) // Switch account
+    expect(await spawnAs('mc0000000000000000000004')).toMatchObject({ started: false, refused: { code: 'already-running' } })
+    expect(h.ptys).toHaveLength(5)
+    // The two replaced processes let go of their leases once they have ended.
+    exitPty(h.ptys[0])
+    exitPty(h.ptys[3])
+    expect(registry.runningSessions(ACCOUNT)).toBe(2)
+    expect(holders()).toEqual([S2, S3].sort())
+    expect(registry.runningSessions('acct-b')).toBe(1)
   })
 
   it('the whole set can be swept: every lease is let go as its process ends', async () => {
@@ -334,6 +363,19 @@ describe('a config that is not Multi Spawn: one process, one lease', () => {
     expect(await spawnAs(`${S1}-partner`, { provider: undefined, codexOptions: undefined, shellOnly: true })).not.toMatchObject({ refused: expect.anything() })
     expect(h.ptys).toHaveLength(2)
     expect(registry.count(ACCOUNT)).toBe(1)
+  })
+})
+
+describe('restored copies keep their right to run', () => {
+  it('two restored copies of a declined config start, each on its own lease; a new copy is refused and takes none', async () => {
+    h.configs = [savedConfig({ allowMultiSpawn: false })]
+    seedRestoredSessions({ sessions: [{ id: S1, configId: 'cfgcodex' }, { id: S2, configId: 'cfgcodex' }] })
+    expect(await spawnAs(S1)).toEqual(STARTED)
+    expect(await spawnAs(S2)).toEqual(STARTED)
+    expect(registry.runningSessions(ACCOUNT)).toBe(2)
+    expect(await spawnAs(S3)).toMatchObject({ started: false, refused: { code: 'already-running' } })
+    expect(h.prepared).toHaveLength(2)
+    expect(holders()).toEqual([S1, S2].sort())
   })
 })
 

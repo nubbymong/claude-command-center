@@ -59,7 +59,8 @@ import { useActiveTabEffect } from '../hooks/useActiveTabEffect'
 import { useCursorLayerVisibility } from '../hooks/useCursorLayerVisibility'
 import { noteActivityGrace } from '../stores/activeStore'
 import type { ProviderId, CodexOptions, TerminalOptions } from '../../shared/types'
-import { launchRefusalOf, refusedTabText } from '../../shared/providers'
+import { spawnRefusalOf, refusedTabText } from '../../shared/providers'
+import { reconcileRefusedMultiSpawn } from '../utils/refusedMultiSpawn'
 import { isConfigLaunchBlocked, useLaunchGateSettings, restartLaunchRefusal } from '../hooks/useLaunchConfig'
 import { useConfigStore } from '../stores/configStore'
 
@@ -1101,7 +1102,11 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
                 // kept: its exact-conversation restore target, consumed above,
                 // goes back on the record, so a Restart once the provider is
                 // on resumes the same conversation.
-                const refusal = nothingStarted ? launchRefusalOf(result) : null
+                const refusal = nothingStarted ? spawnRefusalOf(result) : null
+                // P3.13 (round 1, M7): main refused a copy of a config that is not Multi
+                // Spawn. If the screen says it is (a save that did not land), the toggle
+                // is made the saved one, so the tab's words are true beside it.
+                if (refusal?.code === 'already-running') void reconcileRefusedMultiSpawn(configId)
                 if (refusal && resume && (!disposed || isCurrentSpawn(sessionId, spawnToken))) {
                   updateSession(sessionId, { resumeUuid: resume.uuid, resumeCwd: resume.cwd })
                 }

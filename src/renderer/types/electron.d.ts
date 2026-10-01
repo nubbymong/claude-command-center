@@ -276,7 +276,7 @@ export interface ElectronAPI {
        *  conversation carried whole (main's words, and whether it resumed).
        *  P3.8 round 3: a Codex run says the permissions preset it launched
        *  with (`launched`). */
-    }) => Promise<void | { started: false } | ({ started: false } & import('../../shared/providers').ProviderLaunchRefused) | { started: true; carry?: import('../../shared/providers').ConversationCarryNotice; launched?: { codexPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted' | 'plan' } }>
+    }) => Promise<void | { started: false } | ({ started: false } & import('../../shared/providers').SpawnRefused) | { started: true; carry?: import('../../shared/providers').ConversationCarryNotice; launched?: { codexPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted' | 'plan' } }>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void
     kill: (sessionId: string) => void

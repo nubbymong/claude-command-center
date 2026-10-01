@@ -46,3 +46,8 @@ export const PARTNER_PTY_SUFFIX = '-partner'
 export function isPartnerPtyId(sessionId: string): boolean {
   return sessionId.endsWith(PARTNER_PTY_SUFFIX)
 }
+
+/** The session a partner terminal id belongs to (the id without its suffix). */
+export function partnerBaseId(partnerPtyId: string): string {
+  return isPartnerPtyId(partnerPtyId) ? partnerPtyId.slice(0, partnerPtyId.length - PARTNER_PTY_SUFFIX.length) : partnerPtyId
+}

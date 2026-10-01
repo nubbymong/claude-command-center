@@ -13,8 +13,9 @@ import {
   alreadyRunningRefusalMessage,
   PARTNER_PTY_SUFFIX,
   isPartnerPtyId,
+  partnerBaseId,
 } from '../../../src/shared/multi-spawn-rule'
-import { refusedTabText } from '../../../src/shared/providers'
+import { refusedTabText, launchRefusalOf, spawnRefusalOf, PROVIDER_LAUNCH_REFUSAL_CODES, SPAWN_REFUSAL_CODES } from '../../../src/shared/providers'
 
 const ROOT = resolve(__dirname, '..', '..', '..')
 
@@ -68,6 +69,13 @@ describe('the partner terminal id', () => {
     expect(isPartnerPtyId('')).toBe(false)
   })
 
+  it('names its session: the id without the suffix', () => {
+    expect(partnerBaseId('a1b2c3-partner')).toBe('a1b2c3')
+    expect(partnerBaseId('a1b2c3')).toBe('a1b2c3')
+    expect(partnerBaseId('-partner')).toBe('')
+    expect(partnerBaseId('x-partner-partner')).toBe('x-partner')
+  })
+
   it('is the suffix every renderer site that names a partner terminal uses', () => {
     // main recognises the shell of a session by this shape; a renderer that
     // named it another way would make the shell count as a copy of its config.
@@ -76,6 +84,30 @@ describe('the partner terminal id', () => {
       const named = [...text.matchAll(/\+\s*'(-[a-z]+)'/g)].map((m) => m[1]).filter((s) => /partner/.test(s))
       expect(named.length, file).toBeGreaterThan(0)
       for (const s of named) expect(s, file).toBe(PARTNER_PTY_SUFFIX)
+    }
+  })
+})
+
+describe('the refusal pty:spawn answers (N3: its own type, not the provider gate type)', () => {
+  const answer = (code: string) => ({ started: false, refused: { code, providerId: 'claude', message: 'Why.' } })
+
+  it('already-running is a pty:spawn refusal and not a provider-gate refusal', () => {
+    expect(spawnRefusalOf(answer('already-running'))).toEqual({ code: 'already-running', providerId: 'claude', message: 'Why.' })
+    expect(launchRefusalOf(answer('already-running'))).toBeNull()
+    expect(PROVIDER_LAUNCH_REFUSAL_CODES).not.toContain('already-running')
+    expect(SPAWN_REFUSAL_CODES).toContain('already-running')
+  })
+
+  it('every provider-gate refusal is still a pty:spawn refusal (main refuses the provider first)', () => {
+    for (const code of PROVIDER_LAUNCH_REFUSAL_CODES) {
+      expect(spawnRefusalOf(answer(code))?.code).toBe(code)
+      expect(launchRefusalOf(answer(code))?.code).toBe(code)
+    }
+  })
+
+  it('anything else reads as no refusal', () => {
+    for (const v of [null, undefined, 'x', 3, {}, { refused: null }, { refused: 'x' }, answer('nope'), answer(''), { refused: { code: 'already-running', providerId: 'claude', message: '' } }, { refused: { code: 'already-running', providerId: 5, message: 'x' } }]) {
+      expect(spawnRefusalOf(v), JSON.stringify(v)).toBeNull()
     }
   })
 })

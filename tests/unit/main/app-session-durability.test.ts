@@ -37,13 +37,15 @@ vi.mock('../../../src/main/conversation-running-time', () => ({
 vi.mock('../../../src/main/hooks', () => ({ isExactBindSourceActive: () => true }))
 vi.mock('../../../src/main/logging/logging-service', () => ({ getTranscriptBinder: () => null }))
 vi.mock('../../../src/main/logging/transcript-discovery', () => ({ resolveResumeTargetFromTranscript: () => null }))
-vi.mock('../../../src/main/debug-logger', () => ({ logInfo: () => {} }))
+vi.mock('../../../src/main/debug-logger', () => ({ logInfo: () => {}, logWarn: () => {} }))
 
 const { createAppSessionDurability } = await import('../../../src/main/app-session-durability')
+const { claimConfigLaunch, _resetConfigLaunchClaimsForTest } = await import('../../../src/main/launch-one-at-a-time')
 
 const CONV = '019dd000-0001-7000-8000-0000000000e1'
 
 beforeEach(() => {
+  _resetConfigLaunchClaimsForTest()
   h.loaded = null
   h.saved = []
   h.readBack = []
@@ -100,5 +102,53 @@ describe('the app\'s session durability core, as main composes it', () => {
     const d = createAppSessionDurability()
     expect(d.saveEnriched({ sessions: [], activeSessionId: null, savedAt: 1 } as unknown as SessionState)).toBe(true)
     expect(h.saved[0]).toMatchObject({ conversationRunningTimes: [{ id: CONV, ms: 61_000, until: 5 }] })
+  })
+
+  // P3.13 round 1 (M1): the sessions this load brings back keep their right to
+  // run beside another copy of a config that is not Multi Spawn, read from the
+  // saved state by main (never a flag the renderer sends). The gate itself is
+  // launch-one-at-a-time.test.ts's; the spawn handler's is
+  // pty-spawn-one-at-a-time-rights.test.ts's.
+  /** A gate whose live copies are the ones the test names. */
+  function gate(liveIds: string[] = []) {
+    const live = new Set<string>(liveIds)
+    return { live, deps: { savedConfigs: () => [{ id: 'c1', label: 'App Dev', allowMultiSpawn: false }], isLive: (id: string) => live.has(id) } }
+  }
+
+  it('load: the saved sessions are the ones the one-at-a-time rule lets run, and a new tab is still refused', () => {
+    h.loaded = { sessions: [{ id: 'r1', configId: 'c1' }, { id: 'r2', configId: 'c1' }], activeSessionId: null, savedAt: 1 } as unknown as SessionState
+    createAppSessionDurability().load()
+    const { live, deps } = gate()
+    for (const id of ['r1', 'r2']) { expect(claimConfigLaunch(id, { configId: 'c1' }, deps)).toBeNull(); live.add(id) }
+    expect(claimConfigLaunch('n1', { configId: 'c1' }, deps)).toMatchObject({ code: 'already-running' })
+  })
+
+  it('load: the remotes left running are restored too, and only the first load of the run seeds', () => {
+    h.loaded = { sessions: [], activeSessionId: null, savedAt: 1, detachedRemotes: [{ sessionId: 'd1', configId: 'c1' }] } as unknown as SessionState
+    createAppSessionDurability().load()
+    h.loaded = { sessions: [{ id: 'later', configId: 'c1' }], activeSessionId: null, savedAt: 2 } as unknown as SessionState
+    createAppSessionDurability().load()
+    const { live, deps } = gate()
+    expect(claimConfigLaunch('other', { configId: 'c1' }, deps)).toBeNull(); live.add('other')
+    expect(claimConfigLaunch('d1', { configId: 'c1' }, deps)).toBeNull()
+    expect(claimConfigLaunch('later', { configId: 'c1' }, deps)).toMatchObject({ code: 'already-running' })
+  })
+
+  it('load: a read of the other records that fails does not stop the seeding', () => {
+    h.loaded = { sessions: [{ id: 'r1', configId: 'c1' }], activeSessionId: null, savedAt: 1 } as unknown as SessionState
+    h.uncertainReadBackThrows = true
+    createAppSessionDurability().load()
+    const { live, deps } = gate()
+    expect(claimConfigLaunch('other', { configId: 'c1' }, deps)).toBeNull(); live.add('other')
+    expect(claimConfigLaunch('r1', { configId: 'c1' }, deps)).toBeNull()
+  })
+
+  it('load with nothing saved seeds nothing and does not use up the one seeding of the run', () => {
+    createAppSessionDurability().load()
+    h.loaded = { sessions: [{ id: 'r1', configId: 'c1' }], activeSessionId: null, savedAt: 1 } as unknown as SessionState
+    createAppSessionDurability().load()
+    const { live, deps } = gate()
+    expect(claimConfigLaunch('other', { configId: 'c1' }, deps)).toBeNull(); live.add('other')
+    expect(claimConfigLaunch('r1', { configId: 'c1' }, deps)).toBeNull()
   })
 })

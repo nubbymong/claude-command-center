@@ -6,7 +6,7 @@ import { getAccountsService } from '../provider-accounts'
 import { awaitCodexHookFolders } from '../codex-hook-folders'
 import { getGateway } from '../hooks'
 import { providerLaunchRefusal } from '../provider-launch-gate'
-import { claimConfigLaunch } from '../launch-one-at-a-time'
+import { claimConfigLaunch, settleConfigLaunch } from '../launch-one-at-a-time'
 import type { AccountLease, AccountsService } from '../providers/core'
 import type { ConversationCarryNotice } from '../../shared/providers'
 import { forgetCanvasMarkers } from '../canvas/canvas-marker-delivery'
@@ -987,6 +987,9 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
 
       if (preparation) preparation.spawn(resolvedOptions)
       else spawnPty(win, sessionId, resolvedOptions)
+      // P3.13: pty-manager took the spawn the one-at-a-time gate passed (a spawn
+      // refused or thrown before here changes nothing the gate holds).
+      settleConfigLaunch(sessionId)
       // P3.8 round 3 (PB1): the permissions preset this run launched with,
       // main's record of what it started, so the renderer's pill compares a
       // choice for the next start with what is running.

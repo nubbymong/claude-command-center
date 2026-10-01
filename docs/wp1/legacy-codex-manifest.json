@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-01T06:04:41.792Z",
-  "head": "c65b359eec86713d6a037ba1925b6514ddbd6c64",
-  "tree": "71313dff6d030d05b5d38a2b888e057f91e7a336",
+  "generatedAt": "2026-10-01T06:43:59.996Z",
+  "head": "f70a57fd52bbcb55da73afd60f37b92e103643ab",
+  "tree": "392134f4b1fdc75681ce047bfd83e6bb3afd5bff",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2574,
+  "trackedFileCount": 2578,
   "excludedFileCount": 385,
-  "scannedFileCount": 2189,
+  "scannedFileCount": 2193,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 648,
-  "pathDigest": "2e16d0a1216ee4b7d697a9979fc7ceaf774ab369a20132c1c546bf5108c89b15",
+  "matchedPathCount": 650,
+  "pathDigest": "9b0830b2b2b8cd73e8081fac8809321e6a88ae062c31e1f9733e0a7a839805c6",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -3197,6 +3197,13 @@
       "lineCount": 4
     },
     {
+      "path": "tests/unit/main/claude-managed-launch-one-at-a-time.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
       "path": "tests/unit/main/codex-effort-allowlist.test.ts",
       "predicates": [
         "P01",
@@ -3251,7 +3258,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 22
+      "lineCount": 23
     },
     {
       "path": "tests/unit/main/codex-name-sidecar.test.ts",
@@ -3381,7 +3388,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 2
+      "lineCount": 1
     },
     {
       "path": "tests/unit/main/logging-switch-wiring.test.ts",
@@ -3501,6 +3508,14 @@
         "P13"
       ],
       "lineCount": 2
+    },
+    {
+      "path": "tests/unit/main/pty-spawn-one-at-a-time-rights.test.ts",
+      "predicates": [
+        "P07",
+        "P13"
+      ],
+      "lineCount": 24
     },
     {
       "path": "tests/unit/main/pty-spawn-one-at-a-time.test.ts",
