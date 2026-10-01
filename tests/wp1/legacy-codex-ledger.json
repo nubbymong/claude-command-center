@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "f40525c9dfff6c49ab5fb3a2d05706a6972bc1cb0b46126097f37be47dd6a914",
-  "manifestHead": "ccda8f07af216d7340322c4cb39e3118a2cc3a9b",
+  "manifestPathDigest": "d96bf390c61f82ef42c804d57964c4be0aa34ced44ecc6300322e1403ba750ae",
+  "manifestHead": "c2973d1bbe22a7ec02c96f9d05f9a62ac10c9737",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -524,7 +524,7 @@
       ],
       "category": "REVIEW-MCP",
       "disposition": "retain",
-      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); WP2 PR 3 P3.10 round 1 (ADR-009 pass 1, spec, quality and VM findings) (WP1.68): a Codex session's idle mark feeds the notification rules the input Claude's idle_prompt does (S5); tests/unit/channel-rules-idle-prompt.test.ts",
+      "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); WP2 PR 3 P3.10 round 1 (ADR-009 pass 1, spec, quality and VM findings) (WP1.68): a Codex session's idle mark feeds the notification rules the input Claude's idle_prompt does (S5); tests/unit/channel-rules-idle-prompt.test.ts; WP2 PR 3 P3.16a main track (WP1.68): a notification rule's duration is how long the session's turn ran, from its UserPromptSubmit to its Stop as the Hooks gateway received them, for both assistants; tests/unit/channel-rules-idle-prompt.test.ts",
       "note": ""
     },
     {
@@ -611,7 +611,7 @@
       ],
       "category": "REVIEW-MCP",
       "disposition": "replace",
-      "evidence": "WP2 commits 5a, 5b and 6: codex_review is offered per connection only while the built-in tools and the Codex review switch are on, Codex is on and a Codex review could be prepared now, and a Codex session is offered claude_review instead (offeredReviewTool); a connection's provider is the one its credential was issued to (issueMcpSessionToken), no longer read from the URL (parseSourceFromUrl is gone) (WP1.57); tests/unit/main/conductor-mcp-server-source-filter.test.ts, tests/unit/main/conductor-mcp-review-switches.test.ts, tests/unit/main/conductor-mcp-provider-binding.test.ts; a review never outlives its session; tests/unit/main/codex-review-session-abort.test.ts",
+      "evidence": "WP2 commits 5a, 5b and 6: codex_review is offered per connection only while the built-in tools and the Codex review switch are on, Codex is on and a Codex review could be prepared now, and a Codex session is offered claude_review instead (offeredReviewTool); a connection's provider is the one its credential was issued to (issueMcpSessionToken), no longer read from the URL (parseSourceFromUrl is gone) (WP1.57); tests/unit/main/conductor-mcp-server-source-filter.test.ts, tests/unit/main/conductor-mcp-review-switches.test.ts, tests/unit/main/conductor-mcp-provider-binding.test.ts; a review never outlives its session; tests/unit/main/codex-review-session-abort.test.ts; WP2 PR 3 P3.16a main track (WP1.68): the boot does not start vision when the debug port stays in use; tests/unit/vision-browser-teardown.test.ts",
       "note": "source gating is runtime-package scope; the config.toml heal is called at server start and stop with no argument: src/main/providers/codex/mcp-config.ts resolves the external default home itself"
     },
     {
@@ -633,7 +633,7 @@
       ],
       "category": "OTHER",
       "disposition": "added",
-      "evidence": "new WP2 PR 3 P3.7 (row 36) module: each provider conversation's running time, kept by main by conversation id (the most recent 1000), written into the saved session state at every save and read back at load, schema-checked, so a Codex session's Duration carries on across launches and relaunches as Claude Code's does (WP1.33, WP1.38); tests/unit/main/conversation-running-time.test.ts",
+      "evidence": "new WP2 PR 3 P3.7 (row 36) module: each provider conversation's running time, kept by main by conversation id (the most recent 1000), written into the saved session state at every save and read back at load, schema-checked, so a Codex session's Duration carries on across launches and relaunches as Claude Code's does (WP1.33, WP1.38); tests/unit/main/conversation-running-time.test.ts; WP2 PR 3 P3.16a main track (WP1.68): gaps that touch or overlap are one; past the cap the shortest go; the part of the gaps' turns a run counted is kept with them (gapMs); tests/unit/main/conversation-running-time.test.ts",
       "note": "provider-neutral (ids and numbers only); names Codex in its header only, as the reason the rollout cannot tell runs apart; the Codex watcher is its writer"
     },
     {
@@ -1318,7 +1318,7 @@
       ],
       "category": "TELEMETRY",
       "disposition": "replace",
-      "evidence": "WP1.68 rollout telemetry ADAPTED: tests/unit/providers/codex/telemetry.test.ts keeps every parsing case and gains a realm-sessions-dir case; WP2 commit 6g: the sessions folder is required, with no fallback to the ambient home (getCodexHome deleted); without one nothing is watched (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP2: the allowance is read from every token_count, the pre-response one (info null) included, through normaliseCodexRateLimits; plan_type typed on the snapshot, not under primary; updates carry usageBuckets labelled from window_minutes, rateLimitsAt (the event time) and the legacy rateLimitCurrent/Weekly from the validated reading only; an out-of-range reset time no longer throws and drops the update; the 30 s give-up sends usageUnavailable no-reading once (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): watchAndClaimRollout hands the validated allowance to an optional recorder, whose throw never stops the watch (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track, MP1/MP2 review fixes: the token mapper no longer copies raw rate limits (the fields come only from the validated allowance), and an event at the edge of the Date range no longer stops the status line (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 PR 3 P3.5 (row 38, parity): the claim re-reads its day folders on every poll (today and yesterday, by UTC and by local date), finds a resumed conversation's rollout by its id anywhere in the realm (name and session_meta agree) or the one the resume picker opened once it grows, never claims a sibling's new rollout on a resume by id, reads only bounded first lines, reports the claimed conversation id, and a picker launch waits for the user (WP1.68); tests/unit/providers/codex/telemetry-claim-anywhere.test.ts; WP2 PR 3 P3.5 fix round 1: the resume picker's every decision is what a picker launch claims (nothing before one), the pick is read only as a small regular file never through a link and dealt with once; a claimed rollout is read by size first and only what it gained, at a claim its head and tail; a conversation another session holds is not walked for again; the scan follows no link (WP1.68); tests/unit/providers/codex/telemetry-claim-anywhere.test.ts, tests/unit/providers/codex/telemetry-bounded-reads.test.ts; WP2 PR 3 P3.10: the exact claim from the session's own hook (a rollout of its realm in real day folders whose name and session_meta agree) confirms or corrects an inferred claim and follows a conversation switched inside the TUI; another session's hook proves an inferred claim wrong; a conversation another tab holds is read beside it, one keeper counting the running time (WP1.68); tests/unit/providers/codex/telemetry-exact-claim.test.ts, tests/unit/providers/codex/telemetry-claim-anywhere.test.ts; WP2 PR 3 P3.10 round 1 (ADR-009 pass 1, spec, quality and VM findings) (WP1.68): a hook's path with a stream name refused and a name keyed by the day folder's own spelling (A4); the no-claim deadline armed again after a refuted claim (Q4); tests/unit/providers/codex/telemetry-exact-claim.test.ts; WP2 PR 3 P3.12 (rows 31, 32, 65; logs and GitHub context; parity) (WP1.68): the watcher reports the rollout it claimed to onRollout (path, realm, exact, shared) and null when it lets it go; tests/unit/providers/codex/telemetry-rollout-report.test.ts",
+      "evidence": "WP1.68 rollout telemetry ADAPTED: tests/unit/providers/codex/telemetry.test.ts keeps every parsing case and gains a realm-sessions-dir case; WP2 commit 6g: the sessions folder is required, with no fallback to the ambient home (getCodexHome deleted); without one nothing is watched (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP2: the allowance is read from every token_count, the pre-response one (info null) included, through normaliseCodexRateLimits; plan_type typed on the snapshot, not under primary; updates carry usageBuckets labelled from window_minutes, rateLimitsAt (the event time) and the legacy rateLimitCurrent/Weekly from the validated reading only; an out-of-range reset time no longer throws and drops the update; the 30 s give-up sends usageUnavailable no-reading once (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): watchAndClaimRollout hands the validated allowance to an optional recorder, whose throw never stops the watch (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track, MP1/MP2 review fixes: the token mapper no longer copies raw rate limits (the fields come only from the validated allowance), and an event at the edge of the Date range no longer stops the status line (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 PR 3 P3.5 (row 38, parity): the claim re-reads its day folders on every poll (today and yesterday, by UTC and by local date), finds a resumed conversation's rollout by its id anywhere in the realm (name and session_meta agree) or the one the resume picker opened once it grows, never claims a sibling's new rollout on a resume by id, reads only bounded first lines, reports the claimed conversation id, and a picker launch waits for the user (WP1.68); tests/unit/providers/codex/telemetry-claim-anywhere.test.ts; WP2 PR 3 P3.5 fix round 1: the resume picker's every decision is what a picker launch claims (nothing before one), the pick is read only as a small regular file never through a link and dealt with once; a claimed rollout is read by size first and only what it gained, at a claim its head and tail; a conversation another session holds is not walked for again; the scan follows no link (WP1.68); tests/unit/providers/codex/telemetry-claim-anywhere.test.ts, tests/unit/providers/codex/telemetry-bounded-reads.test.ts; WP2 PR 3 P3.10: the exact claim from the session's own hook (a rollout of its realm in real day folders whose name and session_meta agree) confirms or corrects an inferred claim and follows a conversation switched inside the TUI; another session's hook proves an inferred claim wrong; a conversation another tab holds is read beside it, one keeper counting the running time (WP1.68); tests/unit/providers/codex/telemetry-exact-claim.test.ts, tests/unit/providers/codex/telemetry-claim-anywhere.test.ts; WP2 PR 3 P3.10 round 1 (ADR-009 pass 1, spec, quality and VM findings) (WP1.68): a hook's path with a stream name refused and a name keyed by the day folder's own spelling (A4); the no-claim deadline armed again after a refuted claim (Q4); tests/unit/providers/codex/telemetry-exact-claim.test.ts; WP2 PR 3 P3.12 (rows 31, 32, 65; logs and GitHub context; parity) (WP1.68): the watcher reports the rollout it claimed to onRollout (path, realm, exact, shared) and null when it lets it go; tests/unit/providers/codex/telemetry-rollout-report.test.ts; WP2 PR 3 P3.16a main track (WP1.68): a Restart while a large rollout's count runs never shows less than the run before, and a tab beside it shows the same; tests/unit/providers/codex/telemetry-duration.test.ts",
       "note": "watchAndClaimRollout takes the sessions directory of the launch binding realm instead of getCodexHome(); MP2 rebuilt the rate-limit contract (replace); P3.5 rebuilt the claim (day folders on every poll, a resumed conversation by id or the picker's pick, the claimed id reported); token usage parsing and the realm rule unchanged",
       "adaptsTests": [
         "tests/unit/providers/codex/telemetry.test.ts"
@@ -1538,7 +1538,7 @@
       ],
       "category": "OTHER",
       "disposition": "replace",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); skips non-Claude sessions (runtime work package scope); WP2 PR 3 P3.5 (row 34, parity): a Codex session is stamped with the conversation main keeps for it (getProviderResumeTarget), a conversation id only; the Claude path is unchanged (WP1.33); tests/unit/main/session-resume-enrich.test.ts",
+      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); skips non-Claude sessions (runtime work package scope); WP2 PR 3 P3.5 (row 34, parity): a Codex session is stamped with the conversation main keeps for it (getProviderResumeTarget), a conversation id only; the Claude path is unchanged (WP1.33); tests/unit/main/session-resume-enrich.test.ts; WP2 PR 3 P3.16a main track (WP1.68): the saved running-time entry type names gapMs (type only); tests/unit/main/session-resume-enrich.test.ts",
       "note": "P3.5 rebuilt it for non-Claude sessions (replace)"
     },
     {
@@ -3225,7 +3225,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "replace",
-      "evidence": "type-level; binding types exercised by tests/wp1/launch-handoff.test.ts (WP1.42); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): TerminalOptions.noCommandSecrets for the install tab; tests/unit/main/install-tab-command-secrets.test.ts; WP2 P3 usage track MP2: StatuslineData gains rateLimitsAt and usageUnavailable, set by the rollout telemetry (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): the session row's account key, the provider and account filter, and the attribution progress (WP1.2); tests/unit/tokenomics/tokenomics2-handlers.test.ts; WP2 P3 usage track MP11 (owner decision 2026-09-26, Q1.4: unpriced models read \"no price\", not $0; each KPI and the cost chart split by provider): the same Tokenomics types for the renderer (WP1.39); tests/unit/renderer/tokenomics-t19-components.test.tsx; WP2 P3 usage track MP12 (owner decisions 2026-09-26, Q1.4 and Q1.5; the approved canvas \"Tokenomics with two providers\", option A): the same for the renderer (WP1.39); tests/unit/renderer/tokenomics-mp12.test.tsx; WP2 P3 usage track MP11 round 1 (review fixes) and the MP9 lens B nits: the same for the renderer (WP1.39); tests/unit/renderer/tokenomics-mp12.test.tsx; WP2 P3 usage track MP9 (VM final pass, defect 4 follow-up): stage 1 of the account re-read says it is counting its files until they are counted, in the progress the page reads (WP1.2); tests/unit/renderer/tokenomics-mp12.test.tsx; WP2 PR 3 P3.8 (row 40): CodexOptions' effort gains max and ultra; a model is any registry Codex model or a saved one (WP1.68); tests/unit/main/codex-effort-allowlist.test.ts; WP2 PR 3 P3.8 round 1 (row 69): CodexOptions' preset gains plan (WP1.68); tests/unit/main/codex-effort-allowlist.test.ts; WP2 PR 3 P3.11 (row 62, extra CLI arguments; parity) (WP1.68): CodexOptions gains extraArgs; tests/unit/main/codex-extra-args-guard.test.ts; WP2 PR 3 P3.11 round 1 (ADR-009 pass 1, spec and quality findings) (WP1.68): the CodexOptions.extraArgs comment; tests/unit/main/codex-extra-args-guard.test.ts; WP2 PR 3 P3.12 (rows 31, 32, 65; logs and GitHub context; parity) (WP1.68): CodexOptions.loggingEnabled; tests/unit/main/codex-logging-optout-spawn.test.ts",
+      "evidence": "type-level; binding types exercised by tests/wp1/launch-handoff.test.ts (WP1.42); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): TerminalOptions.noCommandSecrets for the install tab; tests/unit/main/install-tab-command-secrets.test.ts; WP2 P3 usage track MP2: StatuslineData gains rateLimitsAt and usageUnavailable, set by the rollout telemetry (WP1.68); tests/unit/providers/codex/telemetry.test.ts; WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): the session row's account key, the provider and account filter, and the attribution progress (WP1.2); tests/unit/tokenomics/tokenomics2-handlers.test.ts; WP2 P3 usage track MP11 (owner decision 2026-09-26, Q1.4: unpriced models read \"no price\", not $0; each KPI and the cost chart split by provider): the same Tokenomics types for the renderer (WP1.39); tests/unit/renderer/tokenomics-t19-components.test.tsx; WP2 P3 usage track MP12 (owner decisions 2026-09-26, Q1.4 and Q1.5; the approved canvas \"Tokenomics with two providers\", option A): the same for the renderer (WP1.39); tests/unit/renderer/tokenomics-mp12.test.tsx; WP2 P3 usage track MP11 round 1 (review fixes) and the MP9 lens B nits: the same for the renderer (WP1.39); tests/unit/renderer/tokenomics-mp12.test.tsx; WP2 P3 usage track MP9 (VM final pass, defect 4 follow-up): stage 1 of the account re-read says it is counting its files until they are counted, in the progress the page reads (WP1.2); tests/unit/renderer/tokenomics-mp12.test.tsx; WP2 PR 3 P3.8 (row 40): CodexOptions' effort gains max and ultra; a model is any registry Codex model or a saved one (WP1.68); tests/unit/main/codex-effort-allowlist.test.ts; WP2 PR 3 P3.8 round 1 (row 69): CodexOptions' preset gains plan (WP1.68); tests/unit/main/codex-effort-allowlist.test.ts; WP2 PR 3 P3.11 (row 62, extra CLI arguments; parity) (WP1.68): CodexOptions gains extraArgs; tests/unit/main/codex-extra-args-guard.test.ts; WP2 PR 3 P3.11 round 1 (ADR-009 pass 1, spec and quality findings) (WP1.68): the CodexOptions.extraArgs comment; tests/unit/main/codex-extra-args-guard.test.ts; WP2 PR 3 P3.12 (rows 31, 32, 65; logs and GitHub context; parity) (WP1.68): CodexOptions.loggingEnabled; tests/unit/main/codex-logging-optout-spawn.test.ts; WP2 PR 3 P3.16a main track (WP1.68): the saved running-time entry type names gapMs (type only); tests/unit/main/conversation-running-time.test.ts",
       "note": "binding/identity types added; CodexOptions retained"
     },
     {
@@ -3238,7 +3238,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "WP2 reconfirm (owner decision 2026-09-26, U1): the real-app upgrade walk: three upgraders from an earlier build with no codexAnswered (Claude only, Codex only, both); the earlier codexEnabled never carries over, No cannot be chosen while Claude Code is off, and closing before answering asks again (WP1.5, WP1.60); runs on the test VM only; tests/e2e/codex-reconfirm-upgrade.spec.ts; docs/wp1/owner-decisions-2026-09-26.md; WP2 P2 review round 1: each absence is asserted only once the app shows uncovered, and every launch sets CODEX_HOME to an empty folder of the run's own, so the VM's ~/.codex is never read (WP1.5); tests/e2e/codex-reconfirm-upgrade.spec.ts",
+      "evidence": "WP2 reconfirm (owner decision 2026-09-26, U1): the real-app upgrade walk: three upgraders from an earlier build with no codexAnswered (Claude only, Codex only, both); the earlier codexEnabled never carries over, No cannot be chosen while Claude Code is off, and closing before answering asks again (WP1.5, WP1.60); runs on the test VM only; tests/e2e/codex-reconfirm-upgrade.spec.ts; docs/wp1/owner-decisions-2026-09-26.md; WP2 P2 review round 1: each absence is asserted only once the app shows uncovered, and every launch sets CODEX_HOME to an empty folder of the run's own, so the VM's ~/.codex is never read (WP1.5); tests/e2e/codex-reconfirm-upgrade.spec.ts; WP2 PR 3 P3.16a main track (WP1.68): launches with the isolated environment (a home inside its data dir); tests/unit/e2e-isolated-env.test.ts",
       "note": "the P05 hits are its codexEnabled seeds and assertions; the P04 hits set CODEX_HOME to the run's own empty folder (isolation, not a resolver)"
     },
     {
@@ -3272,7 +3272,7 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.58: adapted for the WP2 reconfirm (owner decision 2026-09-26): the seed answers the one-time Codex question (codexAnswered), so the release notes still hand over to the resume prompt as this spec pins; nothing else changed; part of the e2e gate (docs/wp1/evidence/mode-matrix.md); tests/e2e/first-launch-whats-new.spec.ts",
+      "evidence": "WP1.58: adapted for the WP2 reconfirm (owner decision 2026-09-26): the seed answers the one-time Codex question (codexAnswered), so the release notes still hand over to the resume prompt as this spec pins; nothing else changed; part of the e2e gate (docs/wp1/evidence/mode-matrix.md); tests/e2e/first-launch-whats-new.spec.ts; WP2 PR 3 P3.16a main track (WP1.68): launches with the isolated environment (a home inside its data dir); tests/unit/e2e-isolated-env.test.ts",
       "note": ""
     },
     {
@@ -3282,7 +3282,7 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "WP1.58: adapted for the WP2 reconfirm (owner decision 2026-09-26): the clean seed answers the one-time Codex question (codexAnswered), so that page does not cover every e2e spec; a spec that needs Codex on still saves its own on/off (tests/e2e/codex-session-creation.spec.ts); tests/e2e/helpers/electron-app.ts",
+      "evidence": "WP1.58: adapted for the WP2 reconfirm (owner decision 2026-09-26): the clean seed answers the one-time Codex question (codexAnswered), so that page does not cover every e2e spec; a spec that needs Codex on still saves its own on/off (tests/e2e/codex-session-creation.spec.ts); tests/e2e/helpers/electron-app.ts; WP2 PR 3 P3.16a main track (WP1.68): launches with the isolated environment (a home inside its data dir); tests/unit/e2e-isolated-env.test.ts",
       "note": ""
     },
     {
@@ -3297,6 +3297,17 @@
       "disposition": "added",
       "evidence": "WP2 visual fixes (VM audit 2026-09-25), round 2: the e2e fake Codex CLI, the observable contract of the wp1 fake (tests/wp1/fake-cli.test.ts) cut to --version at the pinned version and login status, behind the same npm .cmd shim; put first on the app instance's PATH with every real Codex taken off it, so the adapted e2e never depends on the host's Codex (WP1.58, WP1.2); tests/e2e/codex-session-creation.spec.ts; WP2 P3 usage track MP7 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): the fake answers an app-server usage read (WP1.41); tests/unit/providers/codex/app-server-read.test.ts; WP2 P3 usage track MP7 round-1 review fixes (the scoped WP1.41 exception; ADR-022): the fake helper names its version in its user agent, as the real one does (WP1.41); tests/e2e/helpers/fake-codex.ts; WP2 P3 usage track MP8 round 2 (VM walk and review fixes; the scoped WP1.41 exception; ADR-022): the fake helper answers to the new argv (WP1.41); tests/e2e/helpers/fake-codex.ts; WP2 P3 usage track MP8 round 3 (VM walk and review fixes; the scoped WP1.41 exception; ADR-022): the fake helper answers to the constant argv again (WP1.41); tests/e2e/helpers/fake-codex.ts",
       "note": "P04: the instance gets a CODEX_HOME of its own, never ~/.codex; P09: the fake refuses an ambient OPENAI_API_KEY, as the wp1 fake does"
+    },
+    {
+      "path": "tests/e2e/helpers/isolated-env.ts",
+      "predicates": [
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.16a (main track, M7) e2e helper (tests/e2e/helpers/isolated-env.ts): every e2e app instance runs with a home inside its own data dir (USERPROFILE and HOME), the runner's CLAUDE_CONFIG_DIR and CODEX_HOME removed, a spec's own entries set whatever their case (WP1.68); tests/unit/e2e-isolated-env.test.ts",
+      "note": "created by WP2 PR 3 P3.16a; no Playwright import, read by the unit suite"
     },
     {
       "path": "tests/e2e/session-dialog-permutations.spec.ts",
@@ -3316,7 +3327,7 @@
       ],
       "category": "TEST",
       "disposition": "retain",
-      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
+      "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json; WP2 PR 3 P3.16a main track (WP1.68): launches with the isolated environment (a home inside its data dir); tests/unit/e2e-isolated-env.test.ts",
       "note": ""
     },
     {
@@ -4239,7 +4250,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "new WP2 PR 3 P3.10 round 1 test (tests/unit/channel-rules-idle-prompt.test.ts): a Claude Notification idle_prompt and a Codex session's 60 s idle mark give the notification rules the same input, and the built-in Attention Pulse rule treats them alike (S5) (WP1.68); tests/unit/channel-rules-idle-prompt.test.ts",
+      "evidence": "new WP2 PR 3 P3.10 round 1 test (tests/unit/channel-rules-idle-prompt.test.ts): a Claude Notification idle_prompt and a Codex session's 60 s idle mark give the notification rules the same input, and the built-in Attention Pulse rule treats them alike (S5) (WP1.68); tests/unit/channel-rules-idle-prompt.test.ts; WP2 PR 3 P3.16a main track (WP1.68): the built-in Attention Pulse fires for a Claude or a Codex turn of 2 min or more and for neither after a short one, each session its own; tests/unit/channel-rules-idle-prompt.test.ts",
       "note": "created by WP2 PR 3 P3.10 round 1"
     },
     {
@@ -4316,6 +4327,17 @@
       "disposition": "retain",
       "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
+    },
+    {
+      "path": "tests/unit/e2e-isolated-env.test.ts",
+      "predicates": [
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.16a (main track, M7) test (tests/unit/e2e-isolated-env.test.ts): the e2e launch environment's home is inside the instance's data dir, the runner's home, Claude config folder and Codex home go whatever their case, and every electron.launch of the e2e suite passes it (WP1.68)",
+      "note": "created by WP2 PR 3 P3.16a; writes only in its own mkdtemp folder"
     },
     {
       "path": "tests/unit/github/codex-rollout-loader-swap.test.ts",
@@ -4810,7 +4832,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "new WP2 PR 3 P3.7 (row 36) test (tests/unit/main/conversation-running-time.test.ts): the running-time store keeps each conversation's time by id, refuses what is not an id or a time, keeps the most recent entries, and reads the saved list back schema-checked without undoing a later count (WP1.33, WP1.38)",
+      "evidence": "new WP2 PR 3 P3.7 (row 36) test (tests/unit/main/conversation-running-time.test.ts): the running-time store keeps each conversation's time by id, refuses what is not an id or a time, keeps the most recent entries, and reads the saved list back schema-checked without undoing a later count (WP1.33, WP1.38); WP2 PR 3 P3.16a main track (WP1.68): merged gaps, the shortest dropped past the cap, gapMs kept, saved and read back; tests/unit/main/conversation-running-time.test.ts",
       "note": "created by WP2 PR 3 P3.7; pure, fake timers only"
     },
     {
@@ -4983,6 +5005,16 @@
       "disposition": "replace",
       "evidence": "existing pty:spawn strip suite; WP2 commit 4 added the codexLaunch case: a renderer-sent launch is stripped and a Codex spawn with no accounts service is refused (WP1.38, WP1.42; tests/wp1/launch-handoff.test.ts, tests/wp1/launch-handoff-pty.test.ts); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the suite gained a mock of the launch gate answering on; the refusal is tested in tests/unit/main/pty-spawn-provider-off.test.ts",
       "note": "baseline pty:spawn strip suite; WP2 commit 4 added the codexLaunch case (re-dispositioned: it changed)"
+    },
+    {
+      "path": "tests/unit/main/pty-integrity-restart.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.16a (main track, M5) test (tests/unit/main/pty-integrity-restart.test.ts): the Services byte count starts with the new process after a Restart and after a respawn without a kill, and a real gap within one process still shows; the Codex review registration is mocked, as in the other pty-manager tests (WP1.68)",
+      "note": "created by WP2 PR 3 P3.16a; node-pty faked, the real integrity monitor, nothing spawned"
     },
     {
       "path": "tests/unit/main/pty-managed-deferral-carries-launch.test.ts",
@@ -5183,7 +5215,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "new WP2 PR 3 P3.10 round 3 test (tests/unit/main/watchdog/overload-episode.test.ts): the shared Watchdog machine with the real Claude Code and Codex detectors: a persistent overload backs off 30, 60, 120, 240, then 300 s and gives up at the cap; a success then a later error starts afresh; an error within two minutes of quiet continues the episode (WP1.68); WP2 PR 3 P3.10 rounds 3b and 4 (the hook wrapper and the picker resolve their helpers from fixed locations; the hook folders prepared asynchronously and read back; approval pairing; the Watchdog episode) (WP1.68): step-by-step cases for both CLIs (the last-output recovery, the logged backoff); tests/unit/main/watchdog/overload-episode.test.ts",
+      "evidence": "new WP2 PR 3 P3.10 round 3 test (tests/unit/main/watchdog/overload-episode.test.ts): the shared Watchdog machine with the real Claude Code and Codex detectors: a persistent overload backs off 30, 60, 120, 240, then 300 s and gives up at the cap; a success then a later error starts afresh; an error within two minutes of quiet continues the episode (WP1.68); WP2 PR 3 P3.10 rounds 3b and 4 (the hook wrapper and the picker resolve their helpers from fixed locations; the hook folders prepared asynchronously and read back; approval pairing; the Watchdog episode) (WP1.68): step-by-step cases for both CLIs (the last-output recovery, the logged backoff); tests/unit/main/watchdog/overload-episode.test.ts; WP2 PR 3 P3.16a main track (WP1.68): Claude Code with one-line answers: one overload and a retry that succeeds is retried once, as the other assistant; tests/unit/main/watchdog/overload-episode.test.ts",
       "note": "created by WP2 PR 3 P3.10 round 3"
     },
     {
@@ -5719,7 +5751,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "new WP2 PR 3 P3.7 (row 36) test (tests/unit/providers/codex/telemetry-duration.test.ts): a Codex session's Duration is its conversation's running time (the app's launches of it, kept by main, from the launch or the picker's choice to the watch's end), plus the turns the rollout records as completed in the time main did not see (the recorded 0.155.1 rollout), each only for its part inside that time; a claim let go settles and clears it (WP1.68); WP2 PR 3 P3.10: two tabs on one conversation both show its Duration, the time they both ran it counted once, one keeper at a time (WP1.68); tests/unit/providers/codex/telemetry-duration.test.ts",
+      "evidence": "new WP2 PR 3 P3.7 (row 36) test (tests/unit/providers/codex/telemetry-duration.test.ts): a Codex session's Duration is its conversation's running time (the app's launches of it, kept by main, from the launch or the picker's choice to the watch's end), plus the turns the rollout records as completed in the time main did not see (the recorded 0.155.1 rollout), each only for its part inside that time; a claim let go settles and clears it (WP1.68); WP2 PR 3 P3.10: two tabs on one conversation both show its Duration, the time they both ran it counted once, one keeper at a time (WP1.68); tests/unit/providers/codex/telemetry-duration.test.ts; WP2 PR 3 P3.16a main track (WP1.68): the Restart mid-count and the tab beside an incomplete count; tests/unit/providers/codex/telemetry-duration.test.ts",
       "note": "created by WP2 PR 3 P3.7; real files in a temp folder, no Codex process"
     },
     {
