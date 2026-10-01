@@ -11,7 +11,23 @@ import { usePasteHintStore } from '../stores/pasteHintStore'
 import { useAppMetaStore } from '../stores/appMetaStore'
 import { deriveOnboarding } from '../onboarding/gate'
 import { useHelloCodexStore } from '../onboarding/hello-codex-open'
+import { PARTNER_PTY_SUFFIX } from '../../shared/multi-spawn-rule'
 import type { ViewType } from '../types/views'
+
+/**
+ * P3.16a (N9): whether the tab's partner shell is the pane on screen. The
+ * partner view shows the partner shell (its own PTY, `<session id>-partner`)
+ * in place of the session's terminal, which is hidden then. TerminalView marks
+ * its pane with data-terminal-session (the PTY id) and the one pane on screen
+ * with data-terminal-active, as the Ctrl+Alt+R handler below reads them. The
+ * id is compared as a value, never put into a selector.
+ */
+function partnerOnScreen(sessionId: string): boolean {
+  const partnerId = sessionId + PARTNER_PTY_SUFFIX
+  return Array.from(document.querySelectorAll('[data-terminal-session]')).some(
+    (el) => el.getAttribute('data-terminal-session') === partnerId && el.hasAttribute('data-terminal-active'),
+  )
+}
 
 /**
  * Global keyboard shortcuts (configurable via settings).
@@ -108,13 +124,25 @@ export function useKeyboardShortcuts(
         const sessionId = state.activeSessionId
         if (sessionId) {
           const session = state.sessions.find((s) => s.id === sessionId)
+          // The pane on screen when Alt+V is pressed is the target, read
+          // before the image is saved, as the session is.
+          const showingPartner = partnerOnScreen(sessionId)
           const res = await window.electronAPI.clipboard.saveImage()
           if ('path' in res) {
             // P3.15 (row 70): this runs with focus outside the terminal (a
             // focused terminal hands Alt+V to the CLI, which pastes the image
             // itself). A Codex session's line goes through the rule the app
             // types into Codex by, and a line it could not send says why.
-            if (session?.shellOnly) {
+            if (showingPartner) {
+              // P3.16a (N9): in the partner view the partner shell is on screen
+              // and the session's terminal is hidden, so the image goes to the
+              // partner shell and the assistant behind it gets nothing. The
+              // partner is a plain shell on this computer for every tab (an SSH
+              // tab's too: it opens at home here), so it gets what a plain
+              // terminal on this computer gets: the image's path, quoted for its
+              // shell, with no sentence and no Enter.
+              typeImagePathIntoShell(sessionId + PARTNER_PTY_SUFFIX, res.path, window.electronPlatform === 'win32')
+            } else if (session?.shellOnly) {
               // P3.16a (U6): a plain terminal has no assistant to tell, so it
               // gets the image's path, quoted for its shell, and no sentence or
               // Enter. Over SSH the file is on this computer, which the remote
