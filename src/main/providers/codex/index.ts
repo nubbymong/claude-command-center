@@ -28,8 +28,8 @@ import { createCodexRealmFolders, createCodexRealmLocks, resolveCodexRealmRoots 
 import { carryCodexRollout } from './conversation-carry'
 import type { CodexConversationCarry } from './conversation-carry'
 import { codexExternalDefaultHome, codexHomeDisplay } from './realm-paths'
-import { createCodexLiveUsage, createCodexUsageOperations, realCodexUsageFsPort } from './usage'
-import type { CodexLiveUsage, CodexUsageFsPort } from './usage'
+import { createCodexLiveUsage, createCodexUsageOperations, createCodexCarryMarks, codexRolloutIdFromName, realCodexUsageFsPort } from './usage'
+import type { CodexLiveUsage, CodexUsageFsPort, CodexCarryMarks, CodexCarryMarksPort } from './usage'
 import type { CodexFolderLookup, CodexFsEntry, CodexRealmFsPort, CodexRealmFolderLimits } from './realm-folders'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -92,9 +92,10 @@ export type { CodexConversationCarry, CodexCarryInput, CodexCarryResult, CodexCa
 export { normaliseCodexRateLimits, mergeAllowanceReadings, readingToBuckets, CODEX_DEFAULT_LIMIT_ID } from './rate-limits'
 export {
   readLastSeenAllowance, lookupLastSeenAllowance, createCodexLiveUsage, createCodexUsageOperations, realCodexUsageFsPort,
+  createCodexCarryMarks, codexRolloutIdFromName, CODEX_CARRY_MARKS_MAX,
   CODEX_USAGE_TAIL_BYTES, CODEX_USAGE_TAIL_MAX_BYTES, CODEX_USAGE_MAX_FILES, CODEX_USAGE_MAX_DAYS, CODEX_USAGE_WALK_BUDGET, CODEX_USAGE_DAY_ENTRIES, CODEX_USAGE_READ_TIMEOUT_MS,
 } from './usage'
-export type { CodexUsageFsPort, CodexUsageEntry, CodexUsageFsApi, CodexLiveUsage, CodexUsageDeps, LastSeenCache, LastSeenLookup } from './usage'
+export type { CodexUsageFsPort, CodexUsageEntry, CodexUsageFsApi, CodexLiveUsage, CodexUsageDeps, LastSeenCache, LastSeenLookup, CodexCarryMarks, CodexCarryMarksPort } from './usage'
 
 /** Why the two session-contract methods a Codex launch never uses refuse: a
  *  Codex session runs only the executable its managed launch proved (the
@@ -107,7 +108,7 @@ export class CodexProvider implements SessionProvider {
 
   /** `liveUsage` (usage track MP3): where each session's allowance is
    *  recorded, by its realm's sessions folder, for the Account usage page. */
-  constructor(private readonly liveUsage?: CodexLiveUsage) {}
+  constructor(private readonly liveUsage?: CodexLiveUsage, private readonly carryMarks?: CodexCarryMarks) {}
 
   /** Required by the session contract; refuses (CODEX_MANAGED_LAUNCH_ONLY). */
   resolveBinary(_legacyVersion?: LegacyVersion): { cmd: string; args: string[] } | null {
@@ -135,8 +136,11 @@ export class CodexProvider implements SessionProvider {
     // P3.5: how the watcher finds a resumed conversation, and who hears which
     // conversation it claimed.
     const onAllowance = live ? (reading: AllowanceReading) => live.record(sessionsDir, reading) : undefined
-    const watch = opts.resumeId || opts.pickFile || opts.onClaim || opts.onRelease || opts.onShared || opts.onRollout
-      ? watchAndClaimRollout(sessionId, opts.cwd, opts.spawnTimestamp, onUpdate, sessionsDir, onAllowance, { resumeId: opts.resumeId, resumePath: opts.resumePath, pickFile: opts.pickFile, pickFolder: opts.pickFolder, onClaim: opts.onClaim, onRelease: opts.onRelease, onShared: opts.onShared, onRollout: opts.onRollout })
+    // ADR-023: a conversation carried into this realm counts only from the carry on.
+    const marks = this.carryMarks
+    const allowanceAfter = marks ? (rolloutPath: string): number | null => marks.cutoff(sessionsDir, codexRolloutIdFromName(rolloutPath)) : undefined
+    const watch = opts.resumeId || opts.pickFile || opts.onClaim || opts.onRelease || opts.onShared || opts.onRollout || allowanceAfter
+      ? watchAndClaimRollout(sessionId, opts.cwd, opts.spawnTimestamp, onUpdate, sessionsDir, onAllowance, { resumeId: opts.resumeId, resumePath: opts.resumePath, pickFile: opts.pickFile, pickFolder: opts.pickFolder, onClaim: opts.onClaim, onRelease: opts.onRelease, onShared: opts.onShared, onRollout: opts.onRollout, ...(allowanceAfter ? { allowanceAfter } : {}) })
       : watchAndClaimRollout(sessionId, opts.cwd, opts.spawnTimestamp, onUpdate, sessionsDir, onAllowance)
     if (!live) return watch
     // The realm's live figure lasts while one of its sessions still reports.
@@ -371,6 +375,14 @@ export interface CodexPackageDeps {
   liveUsage?: CodexLiveUsage
   /** Replaces the file work of a conversation copy (P3.6), for a test. */
   conversationCarry?: CodexConversationCarry
+  /** Where the conversations Switch Account carried are marked (ADR-023);
+   *  replaces the in-memory-plus-port store, for a test. */
+  carryMarks?: CodexCarryMarks
+  /** Where those marks are kept between runs (the composition root's file
+   *  next to the account registry). Absent: kept in memory only. */
+  carryMarksPort?: CodexCarryMarksPort
+  /** The clock a carry is stamped with, for a test. */
+  now?: () => number
 }
 
 /** The CODEX_HOME the app inherited, in every spelling, captured once when
@@ -384,7 +396,10 @@ function inheritedCodexHome(env: NodeJS.ProcessEnv): Readonly<Record<string, str
 export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage {
   // Each session's allowance, by its realm's sessions folder (usage track MP3).
   const liveUsage = deps.liveUsage ?? createCodexLiveUsage(deps.realmFs?.platform ?? process.platform)
-  const session = new CodexProvider(liveUsage)
+  // Conversations carried by Switch Account (ADR-023): read by the session
+  // watchers and the last-seen reader, written by the conversation copy.
+  const carryMarks = deps.carryMarks ?? createCodexCarryMarks({ ...(deps.carryMarksPort ? { port: deps.carryMarksPort } : {}), platform: deps.realmFs?.platform ?? process.platform })
+  const session = new CodexProvider(liveUsage, carryMarks)
   // The CLI setup last proved. Sign-in re-verifies it and runs exactly it. A
   // re-check clears it while it runs, and a failed check leaves it clear, so
   // nothing ever runs on stale proof; overlapping checks keep the newest.
@@ -445,10 +460,11 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
         deps.usageFs ?? realCodexUsageFsPort(realmFs.platform),
         liveUsage,
         () => proven,
+        carryMarks,
       ),
       // P3.6: a switched session's conversation is carried with the real
       // file system (conversation-carry.ts), under these same realm locks.
-      realmFolders: createCodexRealmFolders({ lookupRealm, fs: realmFs, locks, carry: deps.conversationCarry ?? carryCodexRollout, ...(deps.realmLimits ? { limits: deps.realmLimits } : {}) }),
+      realmFolders: createCodexRealmFolders({ lookupRealm, fs: realmFs, locks, carry: deps.conversationCarry ?? carryCodexRollout, marks: carryMarks, ...(deps.now ? { now: deps.now } : {}), ...(deps.realmLimits ? { limits: deps.realmLimits } : {}) }),
       // The user's own ~/.codex (or inherited CODEX_HOME), adopted only when
       // the user chooses to use it and it is signed in (owner decision
       // 2026-09-26): realm-only, never vouched for (design 6.3).
@@ -464,7 +480,7 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
 /** The auth operations, the launch preparation that shares their realm and
  *  executable checks, and the usage port that locates a realm's sessions
  *  folder exactly as a launch does: one package, one proof. */
-function withRealms(ops: CodexAuthOperations, usageFs: CodexUsageFsPort, liveUsage: CodexLiveUsage, proven: () => CodexDiscovery | null): Pick<ProviderPackage, 'auth' | 'launch' | 'usage'> {
+function withRealms(ops: CodexAuthOperations, usageFs: CodexUsageFsPort, liveUsage: CodexLiveUsage, proven: () => CodexDiscovery | null, marks: CodexCarryMarks): Pick<ProviderPackage, 'auth' | 'launch' | 'usage'> {
   return {
     auth: ops,
     // MP9 round 1 (B-F1): the usage index reads a realm's folder held to the
@@ -473,7 +489,7 @@ function withRealms(ops: CodexAuthOperations, usageFs: CodexUsageFsPort, liveUsa
     // its own.
     launch: { kinds: ['session', 'review'], prepare: (realm) => ops.prepareLaunch(realm), sessionsDir: (realm) => ops.usageSessionsDir(realm) },
     usage: createCodexUsageOperations({
-      sessionsDir: (realm) => ops.usageSessionsDir(realm), fs: usageFs, live: liveUsage,
+      sessionsDir: (realm) => ops.usageSessionsDir(realm), fs: usageFs, live: liveUsage, marks,
       // MP8: the one helper read, and the executable it would run.
       readUsage: (realm, opts) => ops.readUsage(realm, opts),
       executable: () => codexExecutableKey(proven()),

@@ -2,7 +2,7 @@
 
 **AI Code Conductor** (the "app")
 
-Last updated: 25 September 2026
+Last updated: 1 October 2026
 
 ## The short version
 
@@ -50,6 +50,14 @@ during installation (and can change later in Settings):
   them, and which account is the default and which the reviewer
 - one sign-in folder for each Codex account you add (see "Codex accounts and
   sign-ins" below)
+- a small note for each Codex conversation you move to another Codex account
+  with Switch Account, kept in the same folder as the account list (never in an
+  account's own folder): which account's folder the conversation was copied
+  into, the conversation's id, and the time of the move. It holds no text from
+  the conversation and no usage figure. The app uses it so that account's usage
+  card shows only what that account itself used after the move, not the earlier
+  account's figures. The newest 256 notes are kept, and an account's notes are
+  deleted when the account is removed
 - an index of your Claude Code and Codex session transcripts, used to power
   the Logs and Tokenomics views (the Logs index reads a Codex session's
   transcript from that session's own Codex account folder)

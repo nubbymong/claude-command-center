@@ -79,6 +79,19 @@ const isLimitId = (v: unknown): v is string => typeof v === 'string' && LIMIT_ID
 /** An epoch-ms time a Date can hold, or null. */
 const dateMs = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= MAX_DATE_MS ? v : null)
 
+/** A date-time with a zone designator (Z or an offset), the form Codex writes:
+ *  the same rule as the transcript reader's (P3.12). A stamp with none is no
+ *  time, since Date.parse would read it as this machine's local time. */
+const ZONED_TIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})$/
+
+/** The epoch-ms time of a zoned date-time stamp, or null (not a string, no zone
+ *  designator, or not a date). Never throws. */
+export function zonedTimeMs(value: unknown): number | null {
+  if (typeof value !== 'string' || !ZONED_TIME_RE.test(value)) return null
+  const at = Date.parse(value)
+  return dateMs(at)
+}
+
 /** ISO text for an epoch-ms time, or '' for one a Date cannot hold (never throws). */
 export function isoFromEpochMs(ms: number | null): string {
   const v = dateMs(ms)

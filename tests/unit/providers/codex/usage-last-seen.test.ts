@@ -20,10 +20,11 @@
 import { describe, it, expect } from 'vitest'
 import {
   readLastSeenAllowance, lookupLastSeenAllowance, createCodexLiveUsage, createCodexUsageOperations, realCodexUsageFsPort,
+  createCodexCarryMarks, codexRolloutIdFromName, CODEX_CARRY_MARKS_MAX,
   CODEX_USAGE_TAIL_BYTES, CODEX_USAGE_TAIL_MAX_BYTES, CODEX_USAGE_MAX_FILES, CODEX_USAGE_WALK_BUDGET, CODEX_USAGE_MAX_DAYS,
   CODEX_USAGE_DAY_ENTRIES,
 } from '../../../../src/main/providers/codex/usage'
-import type { CodexUsageFsPort, CodexUsageEntry, CodexUsageFsApi } from '../../../../src/main/providers/codex/usage'
+import type { CodexUsageFsPort, CodexUsageEntry, CodexUsageFsApi, CodexCarryMarks, CodexCarryMarksPort } from '../../../../src/main/providers/codex/usage'
 import { CODEX_DEFAULT_LIMIT_ID } from '../../../../src/main/providers/codex/rate-limits'
 import type { AllowanceReading } from '../../../../src/shared/usage-types'
 
@@ -713,5 +714,319 @@ describe('realCodexUsageFsPort (through an injected fs api)', () => {
   it('lstat reports kind, identity, links, size and time', async () => {
     const { a } = api({ data: Buffer.from('abc') })
     expect(await realCodexUsageFsPort('linux', a).lstat('/x/f')).toEqual({ kind: 'file', dev: '9', ino: '5', nlink: 1, size: 3, mtimeMs: 7 })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// P3.14 round 1, C2 (ADR-023): a conversation Switch Account carried into an
+// account's folder is a copy of the earlier account's rollout, with the earlier
+// account's events in it. Its allowance, plan and credits count only from the
+// carry on: the marks say when.
+// ---------------------------------------------------------------------------
+
+describe('carry marks (ADR-023)', () => {
+  const CID = '0198a0b0-1c2d-7e3f-8a4b-5c6d7e8f9a0b'
+  const OTHER = '0198a0b0-1c2d-7e3f-8a4b-5c6d7e8f9a0c'
+  const AT = Date.parse('2026-09-27T10:30:00Z')
+
+  /** A persisted file in memory: what a restart would find. */
+  const memoryPort = () => {
+    const box: { text: string | null; writes: number; fail: boolean; unavailable: boolean; throwsOnRead: boolean } = { text: null, writes: 0, fail: false, unavailable: false, throwsOnRead: false }
+    const port: CodexCarryMarksPort = {
+      read: () => {
+        if (box.throwsOnRead) throw new Error('read')
+        if (box.unavailable) return { kind: 'unavailable' }
+        return box.text === null ? { kind: 'missing' } : { kind: 'ok', text: box.text }
+      },
+      write: (text) => { if (box.fail) throw new Error('disk full'); box.text = text; box.writes++ },
+    }
+    return { box, port }
+  }
+
+  it('names the conversation in a rollout file name or path, lower case, and nothing else', () => {
+    expect(codexRolloutIdFromName(`rollout-2026-09-27T08-00-00-${CID.toUpperCase()}.jsonl`)).toBe(CID)
+    expect(codexRolloutIdFromName(`C:\\Users\\u\\.codex\\sessions\\2026\\09\\27\\rollout-2026-09-27T08-00-00-${CID}.jsonl`)).toBe(CID)
+    expect(codexRolloutIdFromName(`/home/u/.codex/sessions/2026/09/27/rollout-2026-09-27T08-00-00-${CID}.jsonl`)).toBe(CID)
+    for (const bad of ['', 'rollout-x.jsonl', `${CID}.jsonl`, `rollout-2026-${CID}.json`, `xrollout-2026-09-27T08-00-00-${CID}.jsonl`, `rollout-2026-09-27T08-00-00-${CID}.jsonl.tmp`, 'rollout-2026-09-27T08-00-00-not-a-uuid.jsonl', null, undefined, 7, {}]) {
+      expect(codexRolloutIdFromName(bad), String(bad)).toBeNull()
+    }
+    expect(codexRolloutIdFromName(`rollout-${'a'.repeat(20_000)}-${CID}.jsonl`)).toBeNull()
+  })
+
+  it('records a carry and tells its time, by sessions folder and conversation', () => {
+    const m = createCodexCarryMarks({ platform: 'win32' })
+    expect(m.cutoff(SESSIONS, CID)).toBeNull()
+    expect(m.record('realm-b', SESSIONS, CID, AT)).toBe(true)
+    expect(m.cutoff(SESSIONS, CID)).toBe(AT)
+    // Another conversation, another folder, no conversation: no mark.
+    expect(m.cutoff(SESSIONS, OTHER)).toBeNull()
+    expect(m.cutoff('C:\\Users\\u\\other\\sessions', CID)).toBeNull()
+    expect(m.cutoff(SESSIONS, null)).toBeNull()
+    // The folder is named the same however it is spelled on Windows (caseless, trailing slash); the id in either case.
+    expect(m.cutoff(SESSIONS.toUpperCase() + '\\', CID.toUpperCase())).toBe(AT)
+    // A later carry of the same conversation into the same folder replaces it.
+    m.record('realm-b', SESSIONS, CID, AT + 1000)
+    expect(m.cutoff(SESSIONS, CID)).toBe(AT + 1000)
+    // Recorded under an upper-case id: found by the lower-case one.
+    m.record('realm-b', SESSIONS, OTHER.toUpperCase(), AT + 2000)
+    expect(m.cutoff(SESSIONS, OTHER)).toBe(AT + 2000)
+  })
+
+  it('case matters off Windows and macOS', () => {
+    const m = createCodexCarryMarks({ platform: 'linux' })
+    m.record('realm-b', '/r/B/sessions', CID, AT)
+    expect(m.cutoff('/r/B/sessions', CID)).toBe(AT)
+    expect(m.cutoff('/R/B/sessions', CID)).toBeNull()
+  })
+
+  it('refuses what is not a realm id, a folder, a conversation id or a time', () => {
+    const m = createCodexCarryMarks({ platform: 'win32' })
+    for (const [realm, dir, id, at] of [
+      ['', SESSIONS, CID, AT], ['a b', SESSIONS, CID, AT], ['x'.repeat(200), SESSIONS, CID, AT], [7, SESSIONS, CID, AT],
+      ['realm-b', '', CID, AT], ['realm-b', 'x'.repeat(5000), CID, AT], ['realm-b', null, CID, AT],
+      ['realm-b', SESSIONS, 'not-a-uuid', AT], ['realm-b', SESSIONS, '', AT], ['realm-b', SESSIONS, null, AT],
+      ['realm-b', SESSIONS, CID, Number.NaN], ['realm-b', SESSIONS, CID, Infinity], ['realm-b', SESSIONS, CID, 9e15], ['realm-b', SESSIONS, CID, '123'],
+    ] as unknown[][]) {
+      expect(m.record(realm as string, dir as string, id as string, at as number), JSON.stringify([realm, dir, id, at])).toBe(false)
+    }
+    expect(m.cutoff(SESSIONS, CID)).toBeNull()
+  })
+
+  it(`keeps the newest ${CODEX_CARRY_MARKS_MAX}, and a conversation carried again is the newest`, () => {
+    const id = (n: number) => `0198a0b0-1c2d-7e3f-8a4b-${String(n).padStart(12, '0')}`
+    const m = createCodexCarryMarks({ platform: 'linux' })
+    for (let i = 0; i < CODEX_CARRY_MARKS_MAX + 10; i++) m.record('realm-b', '/r/B/sessions', id(i), AT + i)
+    expect(m.cutoff('/r/B/sessions', id(0))).toBeNull()
+    expect(m.cutoff('/r/B/sessions', id(9))).toBeNull()
+    expect(m.cutoff('/r/B/sessions', id(10))).toBe(AT + 10)
+    expect(m.cutoff('/r/B/sessions', id(CODEX_CARRY_MARKS_MAX + 9))).toBe(AT + CODEX_CARRY_MARKS_MAX + 9)
+    const small = createCodexCarryMarks({ platform: 'linux', max: 3 })
+    for (let i = 0; i < 3; i++) small.record('realm-b', '/r/B/sessions', id(i), AT + i)
+    small.record('realm-b', '/r/B/sessions', id(0), AT + 100) // carried again: now the newest
+    small.record('realm-b', '/r/B/sessions', id(3), AT + 3)
+    expect([0, 1, 2, 3].map((i) => small.cutoff('/r/B/sessions', id(i)))).toEqual([AT + 100, null, AT + 2, AT + 3])
+  })
+
+  it('drops every mark of a realm, and only that realm\'s', () => {
+    const m = createCodexCarryMarks({ platform: 'win32' })
+    m.record('realm-b', SESSIONS, CID, AT)
+    m.record('realm-b', SESSIONS, OTHER, AT)
+    m.record('realm-c', 'C:\\Users\\u\\c\\sessions', CID, AT)
+    m.dropRealm('realm-b')
+    expect(m.cutoff(SESSIONS, CID)).toBeNull()
+    expect(m.cutoff(SESSIONS, OTHER)).toBeNull()
+    expect(m.cutoff('C:\\Users\\u\\c\\sessions', CID)).toBe(AT)
+    m.dropRealm('realm-nobody')
+    m.dropRealm(7 as never)
+  })
+
+  it('survives an app restart: a new store over the same file finds the marks, and a dropped realm stays dropped', () => {
+    const { box, port } = memoryPort()
+    const first = createCodexCarryMarks({ platform: 'win32', port })
+    first.record('realm-b', SESSIONS, CID, AT)
+    first.record('realm-c', 'C:\\Users\\u\\c\\sessions', OTHER, AT + 5)
+    expect(box.writes).toBeGreaterThan(0)
+    const second = createCodexCarryMarks({ platform: 'win32', port })
+    expect(second.cutoff(SESSIONS, CID)).toBe(AT)
+    expect(second.cutoff('C:\\Users\\u\\c\\sessions', OTHER)).toBe(AT + 5)
+    second.dropRealm('realm-b')
+    const third = createCodexCarryMarks({ platform: 'win32', port })
+    expect(third.cutoff(SESSIONS, CID)).toBeNull()
+    expect(third.cutoff('C:\\Users\\u\\c\\sessions', OTHER)).toBe(AT + 5)
+  })
+
+  it('what is written is the three facts of a carry and nothing else, and no more than the newest marks', () => {
+    const { box, port } = memoryPort()
+    const m = createCodexCarryMarks({ platform: 'win32', port, max: 2 })
+    for (let i = 0; i < 4; i++) m.record('realm-b', SESSIONS, `0198a0b0-1c2d-7e3f-8a4b-${String(i).padStart(12, '0')}`, AT + i)
+    const doc = JSON.parse(box.text!) as { schema: number; marks: Array<Record<string, unknown>> }
+    expect(doc.schema).toBe(1)
+    expect(doc.marks).toHaveLength(2)
+    for (const mark of doc.marks) expect(Object.keys(mark).sort()).toEqual(['at', 'dir', 'id', 'realm'])
+  })
+
+  it('reads back only what is valid: junk, another schema, a wrong shape or hostile entries give nothing or only the good ones', () => {
+    const good = { realm: 'realm-b', dir: SESSIONS, id: CID, at: AT }
+    const texts: Array<[string, string | null, number | null]> = [
+      ['empty', '', null], ['junk', 'not json', null], ['an array', '[]', null], ['null', 'null', null],
+      ['another schema', JSON.stringify({ schema: 2, marks: [good] }), null], ['no schema', JSON.stringify({ marks: [good] }), null],
+      ['no marks', JSON.stringify({ schema: 1 }), null], ['marks not a list', JSON.stringify({ schema: 1, marks: { good } }), null],
+      ['too long', 'x'.repeat(2 * 1024 * 1024), null],
+      ['a good one beside bad ones', JSON.stringify({ schema: 1, marks: [null, 7, 'x', [], { ...good, id: 'x' }, { ...good, at: 'now' }, { ...good, realm: '' }, { ...good, dir: '' }, { realm: 'realm-b' }, good] }), AT],
+      ['inherited fields are not read', '{"schema":1,"marks":[{"__proto__":{"realm":"realm-b","dir":"' + SESSIONS.replace(/\\/g, '\\\\') + '","id":"' + CID + '","at":1}}]}', null],
+    ]
+    for (const [name, text, expected] of texts) {
+      const m = createCodexCarryMarks({ platform: 'win32', port: { read: () => ({ kind: 'ok', text: text as string }), write: () => {} } })
+      expect(m.cutoff(SESSIONS, CID), name).toBe(expected)
+    }
+    // Each bad entry alone gives nothing.
+    const bad: Array<[string, unknown]> = [
+      ['null', null], ['a number', 7], ['text', 'x'], ['a list', []], ['a bad id', { ...good, id: 'x' }], ['a time that is text', { ...good, at: 'now' }],
+      ['a time out of range', { ...good, at: 9e15 }], ['an empty realm', { ...good, realm: '' }], ['a realm with a space', { ...good, realm: 'a b' }],
+      ['an empty folder', { ...good, dir: '' }], ['a folder too long', { ...good, dir: 'x'.repeat(5000) }], ['a missing field', { realm: 'realm-b', dir: SESSIONS, id: CID }],
+    ]
+    for (const [name, entry] of bad) {
+      const m = createCodexCarryMarks({ platform: 'win32', port: { read: () => ({ kind: 'ok', text: JSON.stringify({ schema: 1, marks: [entry] }) }), write: () => {} } })
+      expect(m.cutoff(SESSIONS, CID), name).toBeNull()
+    }
+    // What is kept is written back only from valid entries, an id in either case read as lower case.
+    let written = ''
+    const kept = createCodexCarryMarks({
+      platform: 'win32',
+      port: { read: () => ({ kind: 'ok', text: JSON.stringify({ schema: 1, marks: [...bad.map(([, e]) => e), { ...good, id: CID.toUpperCase(), realm: 'realm-c' }] }) }), write: (t) => { written = t } },
+    })
+    kept.record('realm-b', SESSIONS, OTHER, AT + 1)
+    expect((JSON.parse(written) as { marks: unknown[] }).marks).toEqual([{ realm: 'realm-c', dir: SESSIONS, id: CID, at: AT }, { realm: 'realm-b', dir: SESSIONS, id: OTHER, at: AT + 1 }])
+  })
+
+  it('a file that cannot be read yet is asked again; what was marked meanwhile is kept and joined by what the file holds', () => {
+    const { box, port } = memoryPort()
+    box.text = JSON.stringify({ schema: 1, marks: [{ realm: 'realm-c', dir: 'C:\\Users\\u\\c\\sessions', id: OTHER, at: AT + 9 }] })
+    box.unavailable = true
+    const m = createCodexCarryMarks({ platform: 'win32', port })
+    expect(m.cutoff(SESSIONS, CID)).toBeNull()
+    m.record('realm-b', SESSIONS, CID, AT)
+    // Not written over a file that could not be read.
+    expect(box.writes).toBe(0)
+    box.unavailable = false
+    expect(m.cutoff('C:\\Users\\u\\c\\sessions', OTHER)).toBe(AT + 9)
+    expect(m.cutoff(SESSIONS, CID)).toBe(AT)
+    expect(box.writes).toBeGreaterThan(0)
+    expect(createCodexCarryMarks({ platform: 'win32', port }).cutoff(SESSIONS, CID)).toBe(AT)
+  })
+
+  it('a file that reads back as junk never loses what was marked meanwhile', () => {
+    for (const junk of [JSON.stringify({ schema: 1, marks: { not: 'a list' } }), 'not json', JSON.stringify({ schema: 9, marks: [] }), '[]']) {
+      const { box, port } = memoryPort()
+      box.unavailable = true
+      const m = createCodexCarryMarks({ platform: 'win32', port })
+      m.record('realm-b', SESSIONS, CID, AT)
+      box.unavailable = false
+      box.text = junk
+      expect(m.cutoff(SESSIONS, CID), junk).toBe(AT)
+    }
+  })
+
+  it('a port that throws, or fails to write, never breaks it: the marks stay in memory', () => {
+    const { box, port } = memoryPort()
+    box.throwsOnRead = true
+    const m = createCodexCarryMarks({ platform: 'win32', port })
+    expect(m.record('realm-b', SESSIONS, CID, AT)).toBe(true)
+    expect(m.cutoff(SESSIONS, CID)).toBe(AT)
+    box.throwsOnRead = false
+    box.fail = true
+    expect(m.record('realm-b', SESSIONS, OTHER, AT + 1)).toBe(true)
+    expect(m.cutoff(SESSIONS, OTHER)).toBe(AT + 1)
+    expect(() => m.dropRealm('realm-b')).not.toThrow()
+  })
+})
+
+describe('the last-seen reading of a carried conversation (ADR-023)', () => {
+  const CID = '0198a0b0-1c2d-7e3f-8a4b-5c6d7e8f9a0b'
+  const OTHER = '0198a0b0-1c2d-7e3f-8a4b-5c6d7e8f9a0c'
+  const CARRIED_AT = Date.parse('2026-09-27T10:30:00Z')
+  const file = (id = CID) => `${day('2026', '09', '27')}\\rollout-2026-09-27T08-00-00-${id}.jsonl`
+  const A_PRO = { has_credits: true, unlimited: false, balance: '1250.0000000000' }
+  // The earlier account's events (A: Pro, 1250 credits, 40%), then this one's (B: Plus, no credits, 5%).
+  const aEvent = tokenCount('2026-09-27T10:00:00Z', limits(40, { plan_type: 'pro', credits: A_PRO }))
+  const bEvent = tokenCount('2026-09-27T11:00:00Z', limits(5, { plan_type: 'plus', credits: null }))
+  const marksAt = (at = CARRIED_AT, dir = SESSIONS, id = CID) => { const m = createCodexCarryMarks({ platform: 'win32' }); m.record('realm-b', dir, id, at); return m }
+  const reading = (f: ReturnType<typeof fakeFs>, marks?: CodexCarryMarks) => readLastSeenAllowance(SESSIONS, f.port, NOW, undefined, marks)
+
+  it('shows nothing of the earlier account until this one reports its own: no bars, no plan, no credits', async () => {
+    const f = fakeFs()
+    f.file(file(), rollout(meta('2026-09-27T08:00:00Z'), aEvent))
+    // Without the mark the copy reads as the account's own (the control).
+    const unmarked = (await reading(f))!
+    expect([pct(unmarked), unmarked.planType, unmarked.credits]).toEqual([40, 'pro', { hasCredits: true, unlimited: false, balance: 1250 }])
+    expect(await reading(f, marksAt())).toBeNull()
+  })
+
+  it('then shows this account\'s own event, with its own plan, bars and no credits', async () => {
+    const f = fakeFs()
+    f.file(file(), rollout(meta('2026-09-27T08:00:00Z'), aEvent, bEvent))
+    const r = (await reading(f, marksAt()))!
+    expect([pct(r), r.planType, r.readingAt]).toEqual([5, 'plus', Date.parse('2026-09-27T11:00:00Z')])
+    expect(Object.prototype.hasOwnProperty.call(r, 'credits')).toBe(false)
+  })
+
+  it('an event at the carry\'s own moment is the earlier account\'s; one a millisecond later is this one\'s', async () => {
+    const f = fakeFs()
+    f.file(file(), rollout(meta('2026-09-27T08:00:00Z'), tokenCount('2026-09-27T10:30:00.000Z', limits(11, { plan_type: 'pro' }))))
+    expect(await reading(f, marksAt())).toBeNull()
+    const g = fakeFs()
+    g.file(file(), rollout(meta('2026-09-27T08:00:00Z'), tokenCount('2026-09-27T10:30:00.001Z', limits(12, { plan_type: 'plus' }))))
+    expect(pct((await reading(g, marksAt()))!)).toBe(12)
+  })
+
+  it('an event with no zoned time is no event in a carried conversation; a time with an offset is read as the instant it names', async () => {
+    const f = fakeFs()
+    f.file(file(), rollout(meta('2026-09-27T08:00:00Z'), tokenCount('2026-09-27T11:00:00', limits(21, { plan_type: 'plus' })), tokenCount('not a time', limits(22, { plan_type: 'plus' })), tokenCount('', limits(23, { plan_type: 'plus' }))))
+    expect(await reading(f, marksAt())).toBeNull()
+    const g = fakeFs()
+    // 12:00 at +01:00 is 11:00 UTC: after the carry.
+    g.file(file(), rollout(meta('2026-09-27T08:00:00Z'), tokenCount('2026-09-27T12:00:00+01:00', limits(24, { plan_type: 'plus' }))))
+    expect(pct((await reading(g, marksAt()))!)).toBe(24)
+    // 11:00 at +01:00 is 10:00 UTC: before it.
+    const h = fakeFs()
+    h.file(file(), rollout(meta('2026-09-27T08:00:00Z'), tokenCount('2026-09-27T11:00:00+01:00', limits(25, { plan_type: 'plus' }))))
+    expect(await reading(h, marksAt())).toBeNull()
+    // An unmarked rollout keeps reading a zoneless time as it always did.
+    const k = fakeFs()
+    k.file(file(), rollout(meta('2026-09-27T08:00:00Z'), tokenCount('2026-09-27T11:00:00', limits(26, { plan_type: 'plus' }))))
+    expect(pct((await reading(k))!)).toBe(26)
+  })
+
+  it('a mark applies to its own conversation in its own folder only', async () => {
+    const f = fakeFs()
+    f.file(file(), rollout(meta('2026-09-27T08:00:00Z'), aEvent))
+    // Another conversation's mark, another folder's mark, a mark with no conversation: the copy reads as it is.
+    for (const marks of [marksAt(CARRIED_AT, SESSIONS, OTHER), marksAt(CARRIED_AT, 'C:\\Users\\u\\other\\sessions'), createCodexCarryMarks({ platform: 'win32' })]) {
+      expect(pct((await reading(f, marks))!)).toBe(40)
+    }
+    // Another conversation's rollout in the same folder is read whole.
+    const g = fakeFs()
+    g.file(file(OTHER), rollout(meta('2026-09-27T08:00:00Z'), aEvent))
+    expect(pct((await reading(g, marksAt()))!)).toBe(40)
+  })
+
+  it('A, then B, then A again: the copy brought back to A shows A\'s own events after that, not B\'s', async () => {
+    // A's folder holds the whole conversation: A's earlier events, B's, then A's own after coming back at 12:30.
+    const f = fakeFs()
+    f.file(file(), rollout(
+      meta('2026-09-27T08:00:00Z'),
+      tokenCount('2026-09-27T09:00:00Z', limits(10, { plan_type: 'pro', credits: A_PRO })),
+      bEvent,
+    ))
+    const back = Date.parse('2026-09-27T12:30:00Z')
+    expect(await reading(f, marksAt(back))).toBeNull()
+    f.grow(file(), '\n' + tokenCount('2026-09-27T12:45:00Z', limits(14, { plan_type: 'pro', credits: A_PRO })) + '\n')
+    const r = (await reading(f, marksAt(back)))!
+    expect([pct(r), r.planType, r.credits]).toEqual([14, 'pro', { hasCredits: true, unlimited: false, balance: 1250 }])
+  })
+
+  it('a reading cached before the carry is not reused after it', async () => {
+    const f = fakeFs()
+    f.file(file(), rollout(meta('2026-09-27T08:00:00Z'), aEvent))
+    const held = new Map<string, { fingerprint: string; reading: AllowanceReading | null }>()
+    const cache = { get: (dir: string) => held.get(dir), set: (dir: string, v: { fingerprint: string; reading: AllowanceReading | null }) => { held.set(dir, v) } }
+    const marks = createCodexCarryMarks({ platform: 'win32' })
+    expect(pct((await readLastSeenAllowance(SESSIONS, f.port, NOW, cache, marks))!)).toBe(40)
+    marks.record('realm-b', SESSIONS, CID, CARRIED_AT)
+    expect(await readLastSeenAllowance(SESSIONS, f.port, NOW, cache, marks)).toBeNull()
+    // And the same again, from the cache now.
+    expect(await readLastSeenAllowance(SESSIONS, f.port, NOW, cache, marks)).toBeNull()
+  })
+
+  it('the usage port honours the marks: last-seen shows none of the earlier account\'s figures', async () => {
+    const f = fakeFs()
+    f.file(file(), rollout(meta('2026-09-27T08:00:00Z'), aEvent))
+    const live = createCodexLiveUsage('win32')
+    const realm = { authRealmId: 'realm-' + '1'.repeat(32) }
+    const marked = createCodexUsageOperations({ sessionsDir: async () => SESSIONS, fs: f.port, live, now: () => NOW, marks: marksAt() })
+    expect(await marked.lastSeen(realm)).toEqual({ ok: true, reading: null })
+    const plain = createCodexUsageOperations({ sessionsDir: async () => SESSIONS, fs: f.port, live, now: () => NOW })
+    const seen = await plain.lastSeen(realm)
+    expect(seen.ok && seen.reading?.planLabel).toBe('Pro')
   })
 })

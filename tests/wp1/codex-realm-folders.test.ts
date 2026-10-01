@@ -14,9 +14,9 @@ import { describe, it, expect, vi } from 'vitest'
 import path from 'node:path'
 import {
   createCodexRealmFolders, createCodexRealmLocks, codexRealmLockKey, resolveCodexRealmRoots, codexRealmHome, codexExternalHomeCandidate,
-  createCodexPackage, CODEX_REMOVE_MAX_DEPTH, CODEX_REMOVE_MAX_ENTRIES, CODEX_UNDER_LOCK_LOOKUP_MS, CODEX_CARRY_LOCK_WAIT_MS,
+  createCodexCarryMarks, createCodexPackage, CODEX_REMOVE_MAX_DEPTH, CODEX_REMOVE_MAX_ENTRIES, CODEX_UNDER_LOCK_LOOKUP_MS, CODEX_CARRY_LOCK_WAIT_MS,
 } from '../../src/main/providers/codex'
-import type { CodexRealmFsPort, CodexFsEntry, CodexFolderLookup, CodexRealmRoots } from '../../src/main/providers/codex'
+import type { CodexRealmFsPort, CodexFsEntry, CodexFolderLookup, CodexRealmRoots, CodexCarryMarks } from '../../src/main/providers/codex'
 import { packageRegistrationProblem } from '../../src/main/providers/core'
 
 // ---------------------------------------------------------------------------
@@ -1383,6 +1383,30 @@ describe('the package exposes folder operations only when wired, sharing one loc
     return { pkg, runs }
   }
 
+  // P3.14 round 1, C2 (ADR-023): the package keeps what a carry marked in the
+  // file the composition root hands it, and reads it back after a restart.
+  it('a carry through the package is marked in the marks file it is given, and a new package over that file finds the mark', async () => {
+    const w = world()
+    w.realms.set(RA, managed(RA, 'active'))
+    w.realms.set(RB, managed(RB, 'active'))
+    w.fs.dir(w.home(RA))
+    w.fs.dir(w.home(RB))
+    const CID = '019dd000-0006-7000-8000-0000000000c1'
+    const NOW = Date.parse('2026-09-27T10:30:00Z')
+    const box: { text: string | null } = { text: null }
+    const carryMarksPort = { read: () => (box.text === null ? { kind: 'missing' as const } : { kind: 'ok' as const, text: box.text }), write: (text: string) => { box.text = text } }
+    const make = () => createCodexPackage({ realms: source(w), realmFs: w.fs, conversationCarry: async () => ({ ok: true, carried: 'copied', bytes: 1 }), carryMarksPort, now: () => NOW })
+    const sessionsB = w.api.join(w.home(RB), 'sessions')
+    const first = make()
+    expect(await first.realmFolders!.copyConversation!(A, B, { id: CID })).toEqual({ ok: true, carried: 'copied' })
+    expect(JSON.parse(box.text!)).toEqual({ schema: 1, marks: [{ realm: RB, dir: sessionsB, id: CID, at: NOW }] })
+    // A restart: a new package over the same file; its readers (here the folder
+    // operations' forget, then a re-carry kept as it was) find the mark.
+    const second = make()
+    second.realmFolders!.forget!(B)
+    expect(JSON.parse(box.text!)).toEqual({ schema: 1, marks: [] })
+  })
+
   it('a folder under a running sign-in is busy for removal', async () => {
     const w = world()
     let finish: () => void = () => {}
@@ -1450,7 +1474,7 @@ describe('the package exposes folder operations only when wired, sharing one loc
 describe('a conversation copied into another account\'s folder (P3.6, row 22)', () => {
   const CID = '019dd000-0006-7000-8000-0000000000c1'
   type CarryCall = { fromSessionsDir: string; toHome: string; id: string; preferCwd?: string }
-  function carrying(answer: (c: CarryCall) => unknown = () => ({ ok: true, carried: 'copied', bytes: 10 }), carryLockWaitMs = 60, o: { platform?: NodeJS.Platform; extHome?: Partial<Node> } = {}) {
+  function carrying(answer: (c: CarryCall) => unknown = () => ({ ok: true, carried: 'copied', bytes: 10 }), carryLockWaitMs = 60, o: { platform?: NodeJS.Platform; extHome?: Partial<Node>; marks?: CodexCarryMarks; now?: () => number } = {}) {
     const w = world(o.platform ? { platform: o.platform } : {})
     w.realms.set(RA, managed(RA, 'active'))
     w.realms.set(RB, managed(RB, 'active'))
@@ -1464,6 +1488,8 @@ describe('a conversation copied into another account\'s folder (P3.6, row 22)', 
     const folders = createCodexRealmFolders({
       lookupRealm: w.lookupRealm, fs: w.fs, locks: w.locks,
       limits: { carryLockWaitMs },
+      ...(o.marks ? { marks: o.marks } : {}),
+      ...(o.now ? { now: o.now } : {}),
       carry: async (c) => {
         const { shouldStop, ...call } = c as CarryCall & { shouldStop?: () => boolean }
         calls.push(call)
@@ -1665,5 +1691,111 @@ describe('a conversation copied into another account\'s folder (P3.6, row 22)', 
     w.fs.dir(w.home(RA))
     w.fs.dir(w.home(RB))
     expect(await w.folders.copyConversation!(A, B, { id: CID })).toMatchObject({ ok: false, code: 'io-failed', message: expect.stringMatching(/not carried over/) })
+  })
+
+  // P3.14 round 1, C2 (ADR-023): the copy that landed in the destination's
+  // folder holds the earlier account's events; its readers count only what is
+  // written after it, so the carry is marked, by the destination's realm and
+  // sessions folder, with the moment it was made.
+  describe('the carry is marked (ADR-023)', () => {
+    const NOW = Date.parse('2026-09-27T10:30:00Z')
+    const sessionsOf = (w: ReturnType<typeof world>, ref: { authRealmId: string }) => w.api.join(w.home(ref.authRealmId), 'sessions')
+
+    it('a copy is marked in the destination\'s sessions folder at the moment it was made, and the source is not', async () => {
+      const marks = createCodexCarryMarks({ platform: 'win32' })
+      const { w, folders } = carrying(undefined, 60, { marks, now: () => NOW })
+      expect(await folders.copyConversation!(A, B, { id: CID })).toEqual({ ok: true, carried: 'copied' })
+      expect(marks.cutoff(sessionsOf(w, B), CID)).toBe(NOW)
+      expect(marks.cutoff(sessionsOf(w, A), CID)).toBeNull()
+    })
+
+    it('an extension (A, B, then back to A) is marked again, the newer moment replacing the older', async () => {
+      const marks = createCodexCarryMarks({ platform: 'win32' })
+      let now = NOW
+      let carried: 'copied' | 'extended' = 'copied'
+      const { w, folders } = carrying(() => ({ ok: true, carried, bytes: 10 }), 60, { marks, now: () => now })
+      expect(await folders.copyConversation!(A, B, { id: CID })).toEqual({ ok: true, carried: 'copied' })
+      now = NOW + 3_600_000
+      carried = 'extended'
+      expect(await folders.copyConversation!(B, A, { id: CID })).toEqual({ ok: true, carried: 'extended' })
+      expect(marks.cutoff(sessionsOf(w, A), CID)).toBe(NOW + 3_600_000)
+      expect(marks.cutoff(sessionsOf(w, B), CID)).toBe(NOW)
+      now = NOW + 7_200_000
+      expect(await folders.copyConversation!(A, B, { id: CID })).toEqual({ ok: true, carried: 'extended' })
+      expect(marks.cutoff(sessionsOf(w, B), CID)).toBe(NOW + 7_200_000)
+    })
+
+    it('a copy already there (present) keeps the mark it has, and is marked now only when it has none', async () => {
+      const marks = createCodexCarryMarks({ platform: 'win32' })
+      let now = NOW
+      let carried: 'copied' | 'present' = 'present'
+      const { w, folders } = carrying(() => ({ ok: true, carried, bytes: 10 }), 60, { marks, now: () => now })
+      expect(await folders.copyConversation!(A, B, { id: CID })).toEqual({ ok: true, carried: 'present' })
+      expect(marks.cutoff(sessionsOf(w, B), CID)).toBe(NOW)
+      now = NOW + 60_000
+      expect(await folders.copyConversation!(A, B, { id: CID })).toEqual({ ok: true, carried: 'present' })
+      expect(marks.cutoff(sessionsOf(w, B), CID)).toBe(NOW)
+      carried = 'copied'
+      expect(await folders.copyConversation!(A, B, { id: CID })).toEqual({ ok: true, carried: 'copied' })
+      expect(marks.cutoff(sessionsOf(w, B), CID)).toBe(NOW + 60_000)
+    })
+
+    it('a copy that failed, was refused or was cancelled marks nothing', async () => {
+      const marks = createCodexCarryMarks({ platform: 'win32' })
+      for (const answer of [{ ok: false, code: 'cancelled' }, { ok: false, code: 'not-found' }, { ok: false, code: 'io-failed' }, null, undefined]) {
+        const { w, folders } = carrying(() => answer, 60, { marks, now: () => NOW })
+        await folders.copyConversation!(A, B, { id: CID })
+        expect(marks.cutoff(sessionsOf(w, B), CID), JSON.stringify(answer)).toBeNull()
+      }
+      const { w, folders } = carrying(undefined, 60, { marks, now: () => NOW })
+      await folders.copyConversation!(A, B, { id: CID }, { current: () => false })
+      await folders.copyConversation!(A, A, { id: CID })
+      await folders.copyConversation!(A, B, { id: 'not-an-id' })
+      expect(marks.cutoff(sessionsOf(w, B), CID)).toBeNull()
+    })
+
+    it('a mark that cannot be kept, or a clock that throws, never fails the carry', async () => {
+      const throwing = { record: () => { throw new Error('marks') }, cutoff: (): number | null => { throw new Error('marks') }, dropRealm: () => { throw new Error('marks') } }
+      const a = carrying(undefined, 60, { marks: throwing })
+      expect(await a.folders.copyConversation!(A, B, { id: CID })).toEqual({ ok: true, carried: 'copied' })
+      expect(() => a.folders.forget!(B)).not.toThrow()
+      const marks = createCodexCarryMarks({ platform: 'win32' })
+      const b = carrying(undefined, 60, { marks, now: () => { throw new Error('clock') } })
+      expect(await b.folders.copyConversation!(A, B, { id: CID })).toEqual({ ok: true, carried: 'copied' })
+      expect(marks.cutoff(sessionsOf(b.w, B), CID)).not.toBeNull()
+      // No marks at all: the carry is as it was.
+      expect(await carrying().folders.copyConversation!(A, B, { id: CID })).toEqual({ ok: true, carried: 'copied' })
+    })
+
+    it('forgetting a realm drops its marks and no other realm\'s', async () => {
+      const marks = createCodexCarryMarks({ platform: 'win32' })
+      const { w, folders } = carrying(undefined, 60, { marks, now: () => NOW })
+      await folders.copyConversation!(A, B, { id: CID })
+      await folders.copyConversation!(B, A, { id: CID })
+      folders.forget!(B)
+      expect(marks.cutoff(sessionsOf(w, B), CID)).toBeNull()
+      expect(marks.cutoff(sessionsOf(w, A), CID)).toBe(NOW)
+      folders.forget!({ authRealmId: 'realm-unknown' })
+    })
+
+    it('removing a realm\'s folder drops its marks (and an absent folder has none to keep)', async () => {
+      const marks = createCodexCarryMarks({ platform: 'win32' })
+      const w = world()
+      const folders = createCodexRealmFolders({ lookupRealm: w.lookupRealm, fs: w.fs, locks: w.locks, marks })
+      marks.record(RA, w.api.join(w.home(RA), 'sessions'), CID, NOW)
+      marks.record(RB, w.api.join(w.home(RB), 'sessions'), CID, NOW)
+      w.fs.dir(w.home(RA))
+      // A folder that cannot be removed (it holds something) keeps its marks.
+      w.fs.file(w.api.join(w.home(RA), 'config.toml'))
+      expect(await folders.remove(A, { contents: 'empty-only' })).toMatchObject({ ok: false, code: 'not-empty' })
+      expect(marks.cutoff(w.api.join(w.home(RA), 'sessions'), CID)).toBe(NOW)
+      expect(await folders.remove(A, { contents: 'all' })).toEqual({ ok: true, removed: true })
+      expect(marks.cutoff(w.api.join(w.home(RA), 'sessions'), CID)).toBeNull()
+      expect(marks.cutoff(w.api.join(w.home(RB), 'sessions'), CID)).toBe(NOW)
+      // An absent folder: nothing to remove, and nothing marked stays.
+      marks.record(RB, w.api.join(w.home(RB), 'sessions'), CID, NOW)
+      expect(await folders.remove(B, { contents: 'all' })).toEqual({ ok: true, removed: false })
+      expect(marks.cutoff(w.api.join(w.home(RB), 'sessions'), CID)).toBeNull()
+    })
   })
 })

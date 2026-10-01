@@ -273,6 +273,11 @@ export interface ProviderRealmFolderOperations {
    *  nothing left behind). Absent: the provider keeps no conversation a
    *  session could carry. */
   copyConversation?(from: RealmRef, to: RealmRef, conversation: { id: string; cwd?: string }, opts?: { current?: () => boolean }): Promise<RealmFolderResult & { carried?: 'copied' | 'present' | 'extended' }>
+  /** An account of this provider was removed (archived): forget whatever the
+   *  provider kept about its realm besides the folder (the marks of the
+   *  conversations carried into it, ADR-023). Never throws; absent: nothing
+   *  is kept. */
+  forget?(ref: RealmRef): void
 }
 
 /** What a launch in a bound realm needs, proven at launch time (plan A10):

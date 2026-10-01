@@ -11,8 +11,8 @@
 import { describe, it, expect } from 'vitest'
 import { harness, addCodexAccount, managedHome, EXT_HOME } from '../../wp1/accounts-harness'
 import type { Harness } from '../../wp1/accounts-harness'
-import { createCodexLiveUsage, CODEX_DEFAULT_LIMIT_ID } from '../../../src/main/providers/codex'
-import type { CodexUsageFsPort } from '../../../src/main/providers/codex'
+import { createCodexLiveUsage, createCodexCarryMarks, CODEX_DEFAULT_LIMIT_ID } from '../../../src/main/providers/codex'
+import type { CodexUsageFsPort, CodexCarryMarks, CodexCarryMarksPort } from '../../../src/main/providers/codex'
 import type { ProviderAccountUsageView, ProviderPreference } from '../../../src/shared/providers'
 
 function usageFs() {
@@ -51,6 +51,13 @@ function usageFs() {
   }
   return {
     port, calls, hooks,
+    /** A rollout of conversation `id` with exactly this text (a carried copy, P3.14 round 1). */
+    rolloutText: (sessions: string, id: string, text: string) => {
+      const d = `${sessions}\\2026\\09\\20`
+      const parts = norm(d).split('\\')
+      for (let i = 1; i <= parts.length; i++) dirs.add(parts.slice(0, i).join('\\'))
+      files.set(norm(`${d}\\rollout-2026-09-20T09-00-00-${id}.jsonl`), text)
+    },
     rollout: (sessions: string, pct: number, plan = 'plus', credits?: unknown) => {
       // A past day: a reading time later than now would be held to now.
       const d = `${sessions}\\2026\\09\\20`
@@ -443,5 +450,156 @@ describe('what each account shows (plan section 3)', () => {
     const text = JSON.stringify(s.got)
     for (const bad of ['C:\\\\', 'codex-realms', '.codex', 'sessions', 'rollout-', 'realm-']) expect(text, bad).not.toContain(bad)
     for (const v of s.got) expect(Object.keys(v).sort()).toEqual(expect.arrayContaining(['accountId', 'buckets', 'providerId', 'status']))
+  })
+})
+
+// P3.14 round 1, C2 (ADR-023): Switch Account carries a conversation into the
+// account it moves to, and the copy holds the earlier account's events. The
+// accounts service's carry marks it, and the page's card for the new account
+// counts only what that account writes after the carry. Through the real
+// accounts service, the real Codex package and its realm folders, a stub for
+// the file work, and an in-memory usage filesystem.
+describe('a conversation carried by Switch Account (P3.14 round 1, C2; ADR-023)', () => {
+  const CID = '0198a0b0-1c2d-7e3f-8a4b-5c6d7e8f9a0b'
+  const ev = (ts: string, pct: number, plan: string, credits: unknown) => JSON.stringify({
+    timestamp: ts, type: 'event_msg',
+    payload: { type: 'token_count', info: null, rate_limits: { limit_id: CODEX_DEFAULT_LIMIT_ID, primary: { used_percent: pct, window_minutes: 300 }, plan_type: plan, credits } },
+  })
+  const A_PRO = { has_credits: true, unlimited: false, balance: '1250.0000000000' }
+  // Account A (Pro, 1250 credits) ran the conversation; account B (Plus, no credits) takes it over.
+  const A_EVENT = ev('2026-09-20T09:00:00Z', 40, 'pro', A_PRO)
+  const B_EVENT = ev('2026-09-20T10:00:00Z', 5, 'plus', null)
+  const SWITCH_TO_B = Date.parse('2026-09-20T09:30:00Z')
+
+  async function carryWorld() {
+    const fs = usageFs()
+    const live = createCodexLiveUsage('win32')
+    // The marks' file, in memory, and a store that can be "restarted" over it.
+    const box: { text: string | null } = { text: null }
+    const port: CodexCarryMarksPort = { read: () => (box.text === null ? { kind: 'missing' } : { kind: 'ok', text: box.text }), write: (text) => { box.text = text } }
+    let marks = createCodexCarryMarks({ platform: 'win32', port })
+    const store: CodexCarryMarks = { record: (...a) => marks.record(...a), cutoff: (...a) => marks.cutoff(...a), dropRealm: (r) => marks.dropRealm(r) }
+    let now = SWITCH_TO_B
+    let carried: 'copied' | 'extended' = 'copied'
+    const h = await harness({
+      usageFs: fs.port, liveUsage: live, preference: { codex: () => 'on' },
+      carryMarks: store, carryNow: () => now,
+      conversationCarry: async () => ({ ok: true, carried, bytes: 1 }),
+    })
+    const a = await addCodexAccount(h, 'A')
+    const b = await addCodexAccount(h, 'B')
+    const text = (...lines: string[]) => lines.join('\n') + '\n'
+    return {
+      h, fs, live, a, b, marks: () => marks, text,
+      restart: () => { marks = createCodexCarryMarks({ platform: 'win32', port }) },
+      /** The switch: the conversation is carried from `from` into `to` at `at`. */
+      carry: async (from: string, to: string, at: number, how: 'copied' | 'extended' = 'copied') => {
+        now = at
+        carried = how
+        return h.service.carryConversation({ accountId: to }, { uuid: CID, cwd: 'C:\\p\\demo', accountId: from })
+      },
+      card: async (accountId: string) => {
+        const r = await h.service.readAccountUsage({ accountId }, { read: true })
+        if (!r.ok) throw new Error(r.code)
+        return r.usage
+      },
+    }
+  }
+
+  it('B\'s card shows nothing of A\'s bars, plan or credits after the carry, and after an app restart; then B\'s own event shows', async () => {
+    const w = await carryWorld()
+    // The carry put A's rollout into B's folder.
+    w.fs.rolloutText(sessionsOf(w.h, w.b), CID, w.text(A_EVENT))
+    expect(await w.carry(w.a, w.b, SWITCH_TO_B)).toEqual({ ok: true, carried: 'copied' })
+    const before = await w.card(w.b)
+    expect(before).toMatchObject({ status: 'no-session-yet', buckets: [] })
+    for (const key of ['credits', 'planLabel', 'source', 'readingAt']) expect(Object.prototype.hasOwnProperty.call(before, key), key).toBe(false)
+    // After an app restart the marks are read back from their file.
+    w.restart()
+    expect(await w.card(w.b)).toMatchObject({ status: 'no-session-yet', buckets: [] })
+    // B reports its own event: its own bars and plan, and no credits.
+    w.fs.rolloutText(sessionsOf(w.h, w.b), CID, w.text(A_EVENT, B_EVENT))
+    const after = await w.card(w.b)
+    expect(after).toMatchObject({ status: 'ok', source: 'last-seen', planLabel: 'Plus', readingAt: Date.parse('2026-09-20T10:00:00Z') })
+    expect(after.buckets.map((b) => b.percent)).toEqual([5])
+    expect(Object.prototype.hasOwnProperty.call(after, 'credits')).toBe(false)
+    // And again after a restart.
+    w.restart()
+    expect((await w.card(w.b)).buckets.map((b) => b.percent)).toEqual([5])
+  })
+
+  it('an account with a session open shows none of A\'s figures either: the live figure is none, so its history answers, from the carry on', async () => {
+    const w = await carryWorld()
+    w.fs.rolloutText(sessionsOf(w.h, w.b), CID, w.text(A_EVENT))
+    await w.carry(w.a, w.b, SWITCH_TO_B)
+    expect(w.h.leases.add(w.b, 'codex', { kind: 'session', ownerId: 'sess-1' }).ok).toBe(true)
+    const r = await w.h.service.readAccountUsage({ accountId: w.b })
+    expect(r).toMatchObject({ ok: true, usage: { status: 'no-session-yet', buckets: [] } })
+  })
+
+  it('without a carry the same rollout is the account\'s own (the control)', async () => {
+    const w = await carryWorld()
+    w.fs.rolloutText(sessionsOf(w.h, w.b), CID, w.text(A_EVENT))
+    const own = await w.card(w.b)
+    expect(own).toMatchObject({ status: 'ok', planLabel: 'Pro', credits: { hasCredits: true, unlimited: false, balance: 1250 } })
+  })
+
+  it('A, then B, then back to A: A\'s card shows A\'s own events after the return, not B\'s', async () => {
+    const w = await carryWorld()
+    w.fs.rolloutText(sessionsOf(w.h, w.b), CID, w.text(A_EVENT))
+    await w.carry(w.a, w.b, SWITCH_TO_B)
+    // B ran it for an hour, then it comes back: A's folder now holds the whole conversation.
+    const BACK_TO_A = Date.parse('2026-09-20T11:00:00Z')
+    w.fs.rolloutText(sessionsOf(w.h, w.a), CID, w.text(A_EVENT, B_EVENT))
+    expect(await w.carry(w.b, w.a, BACK_TO_A, 'extended')).toEqual({ ok: true, carried: 'extended' })
+    expect(await w.card(w.a)).toMatchObject({ status: 'no-session-yet', buckets: [] })
+    // A reports its own event after coming back.
+    w.fs.rolloutText(sessionsOf(w.h, w.a), CID, w.text(A_EVENT, B_EVENT, ev('2026-09-20T12:00:00Z', 14, 'pro', A_PRO)))
+    const r = await w.card(w.a)
+    expect(r).toMatchObject({ status: 'ok', planLabel: 'Pro', credits: { hasCredits: true, unlimited: false, balance: 1250 } })
+    expect(r.buckets.map((b) => b.percent)).toEqual([14])
+    // B's own mark stands beside it.
+    expect(w.marks().cutoff(sessionsOf(w.h, w.b), CID)).toBe(SWITCH_TO_B)
+  })
+
+  it('removing an account (archive) drops its marks, and not the other account\'s', async () => {
+    const w = await carryWorld()
+    w.fs.rolloutText(sessionsOf(w.h, w.b), CID, w.text(A_EVENT))
+    w.fs.rolloutText(sessionsOf(w.h, w.a), CID, w.text(A_EVENT))
+    await w.carry(w.a, w.b, SWITCH_TO_B)
+    await w.carry(w.b, w.a, SWITCH_TO_B + 1000, 'extended')
+    expect(w.marks().cutoff(sessionsOf(w.h, w.b), CID)).toBe(SWITCH_TO_B)
+    expect((await w.h.service.setLifecycle({ accountId: w.b, lifecycle: 'inactive' })).ok).toBe(true)
+    expect(w.marks().cutoff(sessionsOf(w.h, w.b), CID)).toBe(SWITCH_TO_B)
+    expect(await w.h.service.setLifecycle({ accountId: w.b, lifecycle: 'archived' })).toEqual({ ok: true })
+    expect(w.marks().cutoff(sessionsOf(w.h, w.b), CID)).toBeNull()
+    expect(w.marks().cutoff(sessionsOf(w.h, w.a), CID)).toBe(SWITCH_TO_B + 1000)
+    // The drop is in the file too: a restart finds the same.
+    w.restart()
+    expect(w.marks().cutoff(sessionsOf(w.h, w.b), CID)).toBeNull()
+    expect(w.marks().cutoff(sessionsOf(w.h, w.a), CID)).toBe(SWITCH_TO_B + 1000)
+  })
+
+  it('a provider that fails to forget an archived account\'s marks never fails the archive', async () => {
+    const w = await carryWorld()
+    const folders = w.h.codex.realmFolders as unknown as { forget: (ref: unknown) => void }
+    folders.forget = () => { throw new Error('forget') }
+    expect((await w.h.service.setLifecycle({ accountId: w.b, lifecycle: 'inactive' })).ok).toBe(true)
+    expect(await w.h.service.setLifecycle({ accountId: w.b, lifecycle: 'archived' })).toEqual({ ok: true })
+  })
+
+  it('a carry that failed marks nothing: the destination\'s own earlier history still reads whole', async () => {
+    const w = await carryWorld()
+    w.fs.rolloutText(sessionsOf(w.h, w.b), CID, w.text(A_EVENT))
+    // The stub's answer is a refusal this time.
+    const refusing = await harness({
+      usageFs: w.fs.port, liveUsage: w.live, preference: { codex: () => 'on' }, carryMarks: w.marks(),
+      conversationCarry: async () => ({ ok: false, code: 'io-failed' }),
+    })
+    const a = await addCodexAccount(refusing, 'A')
+    const b = await addCodexAccount(refusing, 'B')
+    const r = await refusing.service.carryConversation({ accountId: b }, { uuid: CID, cwd: 'C:\\p\\demo', accountId: a })
+    expect(r.ok).toBe(false)
+    expect(w.marks().cutoff(sessionsOf(refusing, b), CID)).toBeNull()
   })
 })
