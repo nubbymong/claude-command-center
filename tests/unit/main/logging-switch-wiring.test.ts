@@ -16,6 +16,7 @@ import logIndexTextSource from '../../../src/renderer/lib/log-index-text.ts?raw'
 import knowledgeSource from '../../../src/shared/app-knowledge.ts?raw'
 import tipsSource from '../../../src/renderer/tips-library.ts?raw'
 import changelogSource from '../../../src/renderer/changelog.ts?raw'
+import privacySource from '../../../PRIVACY.md?raw'
 
 const h = vi.hoisted(() => ({ handlers: {} as Record<string, (e: unknown, ...a: unknown[]) => unknown>, saved: [] as string[] }))
 vi.mock('electron', () => ({ ipcMain: { handle: (c: string, fn: (e: unknown, ...a: unknown[]) => unknown) => { h.handlers[c] = fn } } }))
@@ -83,6 +84,29 @@ describe('the logging switches reach running sessions (P3.12 round 1, V1)', () =
       expect(flat(src), name).toMatch(/sessions started after/)
     }
     expect(flat(sessionDialogSource)).not.toMatch(/They keep the settings they launched with; your edits apply/)
+  })
+
+  it('P3.16a (U2): no text says the conversation index powers Tokenomics; the Tokenomics cost index is its own, which the switch does not stop', () => {
+    const flat = (s: string) => s.replace(/\s+/g, ' ')
+    // The premise the texts follow: app knowledge says the two indexes are separate.
+    expect(flat(knowledgeSource)).toMatch(/the Tokenomics cost index, which reads Claude and Codex transcripts locally, is separate and not affected by that switch/)
+    const tipAt = tipsSource.indexOf("title: 'Session Activity Logging'")
+    expect(tipAt).toBeGreaterThan(-1)
+    const bodyAt = tipsSource.indexOf('body:', tipAt)
+    const tipBody = tipsSource.slice(bodyAt, tipsSource.indexOf('\n', bodyAt))
+    const privacyAt = privacySource.indexOf('an index of your Claude Code and Codex session transcripts')
+    expect(privacyAt).toBeGreaterThan(-1)
+    const surfaces: Record<string, string> = {
+      'log-index-text.ts': logIndexTextSource,
+      'the Session Activity Logging tip': tipBody,
+      'PRIVACY.md (the index entry)': privacySource.slice(privacyAt).split(/\r?\n- /)[0],
+    }
+    for (const [name, src] of Object.entries(surfaces)) {
+      // A sentence that names Tokenomics beside power/powered/used to power would
+      // say this index feeds it (a separate index of its own is said in its own
+      // sentence, after a full stop).
+      expect(flat(src), name).not.toMatch(/(?:[Pp]owers?|powered by|used to power)\b[^.]*\bTokenomics\b|\bTokenomics\b[^.]*\b(?:is|are) powered by\b/)
+    }
   })
 
   it('P3.12 (T1): the changelog says what is never indexed for a Codex session only', () => {
