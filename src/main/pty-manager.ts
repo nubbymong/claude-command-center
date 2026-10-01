@@ -35,6 +35,7 @@ import { buildClaudeLaunchCommand, resolveResumeLaunch, recoverOrphanResumeLaunc
 import { ensureCompanionDir, nodeFsCompanionDeps } from './logging/companion-dir'
 import { forgetSessionName } from './logging/session-name-sidecar'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
+import { bundledConptyChoice } from './bundled-conpty'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { TMUX_WHEEL_EXIT_KEY } from '../shared/tmux-wheel'
 import { buildRemoteSessionCleanupCommand, buildTmuxBinPatchCommand, buildRemoteTmuxKillCommand, buildContainerKillCommand, parseEndSudoSentinel, getWindowsRemoteSetupCommand, buildWindowsClaudeCommand } from './providers/claude/ssh-shim'
@@ -4714,7 +4715,18 @@ function spawnPtyResolved(
       if (built.resumeId && built.resumeCwdMismatch) {
         logWarn(`[pty-manager] Codex resume for ${sessionId}: no rollout of ${built.resumeId} records the directory the session kept; resuming in ${describePathForLog(codexCwd)}`)
       }
-      logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${commandLine ?? spawnArgs.join(' ')} cwd=${describePathForLog(codexCwd)} (resume=${built.resumeId ?? 'none'})`)
+      // P3.15 (row 71): on Windows a local Codex session runs under node-pty's
+      // bundled ConPTY (its conpty.dll and the OpenConsole.exe beside it, the
+      // console host Windows Terminal ships). The ConPTY built into Windows
+      // repaints Codex's screen in place, so the terminal kept no scrollback
+      // and the wheel did nothing; the bundled one passes Codex's scrolling
+      // through. The system ConPTY when the bundled files are missing (said in
+      // the launch line, and once in bundled-conpty.ts). Claude sessions, plain
+      // terminals and SSH sessions keep the system ConPTY, as before.
+      const conpty = bundledConptyChoice()
+      const conptyNote = conpty.kind === 'bundled' ? ' conpty=bundled'
+        : conpty.kind === 'system' ? ` conpty=system (${describePathForLog(conpty.reason)})` : ''
+      logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${commandLine ?? spawnArgs.join(' ')} cwd=${describePathForLog(codexCwd)} (resume=${built.resumeId ?? 'none'})${conptyNote}`)
       // Codex sessions never designate a canvas worktree; drop any inherited
       // hint, in every spelling (Windows names are case-insensitive).
       for (const k of Object.keys(spawnEnv)) if (k.toUpperCase() === 'CCC_SESSION_WORKTREE') delete (spawnEnv as Record<string, string>)[k]
@@ -4733,6 +4745,7 @@ function spawnPtyResolved(
         cwd: codexCwd,
         env: spawnEnv,
         useConpty: true,
+        ...(conpty.kind === 'bundled' ? { useConptyDll: true } : {}),
       })
       ptyProcess.onData((data) => {
         if (win.isDestroyed()) return

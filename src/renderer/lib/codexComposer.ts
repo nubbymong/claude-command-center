@@ -290,6 +290,38 @@ export function typeIntoCodexComposer(
   }
 }
 
+/** P3.15 (row 70): the words the app types before an image's path at Codex's
+ *  prompt. The same as Claude's line, in ASCII: Codex dropped its em dash. */
+export const CODEX_IMAGE_LINE = 'I just pasted an image - please view it.'
+export const IMAGE_TYPED_NOT_SENT = "The image's path is at the Codex prompt but was not sent: check it, then press Enter."
+export const IMAGE_TAKEN_BACK = 'The image was not sent: Codex was not ready for it, so what the app typed was taken back.'
+export const IMAGE_BEHIND_QUESTION = "The image was not sent: Codex asked a question first. Answer it, then check the Codex prompt for the image's path and press Enter."
+
+/**
+ * P3.15 (row 70): Alt+V pressed with focus outside the terminal, on a Codex
+ * session, after the app saved the clipboard image to `hostFilePath`. As for
+ * Claude, the app types a line naming the image and submits it; for Codex it
+ * is typed by the rule above (the ready, empty composer only, its Enter on
+ * its own after the burst, and only when the screen then shows exactly the
+ * line), because the VM run showed one write of the line and its Enter is
+ * taken as a paste and never submitted. `onNote` hears why it was not sent;
+ * nothing when it was, or when the session restarted in between.
+ */
+export function sendImagePathToCodex(
+  sessionId: string,
+  hostFilePath: string,
+  onNote: (note: string) => void,
+  deps: CodexComposerDeps = defaultCodexComposerDeps,
+): void {
+  const typing = typeIntoCodexComposer(sessionId, `${CODEX_IMAGE_LINE} ${hostFilePath}`, deps, {
+    onSettled: (sent, how) => {
+      if (sent || how.reason === 'cancelled' || how.reason === 'run-changed') return
+      onNote(how.erased ? IMAGE_TAKEN_BACK : how.reason === 'blocked' ? IMAGE_BEHIND_QUESTION : IMAGE_TYPED_NOT_SENT)
+    },
+  })
+  if (!typing.typed && typing.reason) onNote(typing.reason)
+}
+
 /** Why a Plan mode launch's /plan was not sent (rounds 2 and 3): the prompt
  *  never came in time; something was typed, or a turn ran, first; Codex put
  *  up a prompt; its prompt could not be read; it kept starting (its MCP

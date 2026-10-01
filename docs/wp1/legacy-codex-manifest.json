@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-01T06:47:41.920Z",
-  "head": "54422e2ae0f790778592f1badd644afaae455fec",
-  "tree": "acc9b051a265caae3d02fcfa5fd7ce109e69e848",
+  "generatedAt": "2026-10-01T07:15:25.722Z",
+  "head": "965c8bb625f9c9e5687954dbb33f980389c7e4fc",
+  "tree": "629f33d1cdc3810af662b218fadab970541a1609",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2578,
+  "trackedFileCount": 2583,
   "excludedFileCount": 385,
-  "scannedFileCount": 2193,
+  "scannedFileCount": 2198,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 650,
-  "pathDigest": "9b0830b2b2b8cd73e8081fac8809321e6a88ae062c31e1f9733e0a7a839805c6",
+  "matchedPathCount": 653,
+  "pathDigest": "f40525c9dfff6c49ab5fb3a2d05706a6972bc1cb0b46126097f37be47dd6a914",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -1033,7 +1033,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 352
+      "lineCount": 355
     },
     {
       "path": "src/main/sanitize-restored-spawn-options.ts",
@@ -1696,9 +1696,10 @@
     {
       "path": "src/renderer/hooks/useKeyboardShortcuts.ts",
       "predicates": [
+        "P05",
         "P11"
       ],
-      "lineCount": 4
+      "lineCount": 10
     },
     {
       "path": "src/renderer/hooks/useLaunchConfig.ts",
@@ -1746,7 +1747,7 @@
         "P07",
         "P11"
       ],
-      "lineCount": 86
+      "lineCount": 97
     },
     {
       "path": "src/renderer/lib/command-upgrade.ts",
@@ -2037,7 +2038,7 @@
         "P11",
         "P12"
       ],
-      "lineCount": 105
+      "lineCount": 125
     },
     {
       "path": "src/renderer/training-steps.ts",
@@ -2108,7 +2109,7 @@
         "P12",
         "P14"
       ],
-      "lineCount": 73
+      "lineCount": 75
     },
     {
       "path": "src/shared/ask-conductor-provider.ts",
@@ -3479,6 +3480,13 @@
       "lineCount": 66
     },
     {
+      "path": "tests/unit/main/pty-conpty-per-provider.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 21
+    },
+    {
       "path": "tests/unit/main/pty-handlers-codex-review.test.ts",
       "predicates": [
         "P01",
@@ -4185,6 +4193,13 @@
       "lineCount": 3
     },
     {
+      "path": "tests/unit/renderer/alt-v-image-route.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 18
+    },
+    {
       "path": "tests/unit/renderer/app-lifecycle-wiring.test.ts",
       "predicates": [
         "P13"
@@ -4247,6 +4262,14 @@
         "P13"
       ],
       "lineCount": 156
+    },
+    {
+      "path": "tests/unit/renderer/codex-image-paste.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 29
     },
     {
       "path": "tests/unit/renderer/codex-mini-icon.test.ts",
@@ -5201,7 +5224,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 33
+      "lineCount": 44
     },
     {
       "path": "tests/unit/status-ingest.test.ts",
