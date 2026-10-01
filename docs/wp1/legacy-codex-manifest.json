@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-01T01:39:00.492Z",
-  "head": "c3f09b7618f023998cdb27cdec674e4b0bad5675",
-  "tree": "9cf4aee91106e38adb6a41c9eac2cf658079dc8a",
+  "generatedAt": "2026-10-01T03:06:06.979Z",
+  "head": "43f78818e7a80bd6a77966d18dd7e0c15901efd5",
+  "tree": "63abd77ec69fd7f99e523073d61be384fd2e02d4",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 527,
+      "lineCount": 530,
       "truncated": true
     },
     {
@@ -590,7 +590,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 30
+      "lineCount": 29
     },
     {
       "path": "src/main/logging/indexing-gaps.ts",
@@ -1033,7 +1033,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 351
+      "lineCount": 352
     },
     {
       "path": "src/main/sanitize-restored-spawn-options.ts",
@@ -3080,7 +3080,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 72
+      "lineCount": 73
     },
     {
       "path": "tests/unit/logging/codex-rollout-normalizer.test.ts",
@@ -3088,14 +3088,14 @@
         "P01",
         "P13"
       ],
-      "lineCount": 38
+      "lineCount": 29
     },
     {
       "path": "tests/unit/logging/indexing-gaps.test.ts",
       "predicates": [
         "P13"
       ],
-      "lineCount": 5
+      "lineCount": 3
     },
     {
       "path": "tests/unit/logging/search-dedupe.test.ts",
@@ -3451,7 +3451,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 62
+      "lineCount": 66
     },
     {
       "path": "tests/unit/main/pty-handlers-codex-review.test.ts",
