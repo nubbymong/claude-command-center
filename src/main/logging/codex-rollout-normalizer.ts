@@ -30,8 +30,8 @@
  * Session Context loader use (row 65), so the two read a rollout alike.
  *
  * Contract (Claude's): never throws, idx dense from startIdx, ts from each
- * record's `timestamp`, else the last one seen. No imports beyond types and
- * the shared bounds; no default export.
+ * record's `timestamp` (a stamp with no zone designator is none), else the last
+ * one seen. No imports beyond types and the shared bounds; no default export.
  */
 import type { NewMessage } from './transcripts-db'
 import { buildToolMeta, capRaw, type Normalizer, type NormalizerStats } from './transcript-normalizer'
@@ -243,6 +243,34 @@ function eventEntries(p: Record<string, unknown>): CodexRolloutEntry[] {
   }
 }
 
+/** A date-time with a zone designator (Z or an offset), the form Codex writes. */
+const ZONED_TIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})$/
+
+/**
+ * P3.12 round 6 (Z3): a record's time, when its stamp is a date-time with a
+ * zone designator. A stamp with none is no time: Date.parse would read it as
+ * the machine's local time, which is not the clock the windows are kept in,
+ * so such a record takes the time of the one before it (or is left out).
+ */
+export function parseRolloutTime(value: unknown): number | null {
+  if (typeof value !== 'string' || !ZONED_TIME_RE.test(value)) return null
+  const at = Date.parse(value)
+  return Number.isFinite(at) ? at : null
+}
+
+/**
+ * P3.12 round 6 (Z1): when a rollout began, from its first line: the time of
+ * a session_meta record; null for any other record, a stamp with no zone, or
+ * a line that is not a JSON object. Never throws.
+ */
+export function readCodexSessionStart(line: string): number | null {
+  if (typeof line !== 'string') return null
+  let rec: unknown
+  try { rec = JSON.parse(line) } catch { return null }
+  if (!isObject(rec) || rec.type !== 'session_meta') return null
+  return parseRolloutTime(rec.timestamp)
+}
+
 /**
  * What one rollout line says: its time (null when it gives none) and its
  * entries, or null when the line is not a JSON object (malformed). A blank
@@ -253,8 +281,7 @@ export function readCodexRolloutLine(line: string): { ts: number | null; entries
   let rec: unknown
   try { rec = JSON.parse(line) } catch { return null }
   if (!isObject(rec)) return null
-  const at = typeof rec.timestamp === 'string' ? Date.parse(rec.timestamp) : NaN
-  const ts = Number.isFinite(at) ? at : null
+  const ts = parseRolloutTime(rec.timestamp)
   const type = rec.type
   if (typeof type !== 'string' || !KNOWN_RECORDS.has(type)) return { ts, entries: [{ kind: 'unknown' }] }
   const payload = rec.payload

@@ -17,6 +17,7 @@ import { resolve } from 'node:path'
 import {
   makeCodexRolloutNormalizer,
   readCodexRolloutLine,
+  readCodexSessionStart,
   CODEX_PARSER_VERSION,
 } from '../../../src/main/logging/codex-rollout-normalizer'
 import type { NewMessage } from '../../../src/main/logging/transcripts-db'
@@ -257,5 +258,43 @@ describe('the Codex rollout normalizer: records left out by time (P3.12, Y1)', (
     const rows = lines.flatMap((l) => n.push(l))
     expect(rows.map((r) => [r.kind, r.content])).toEqual([['message', 'kept-1'], ['clear', 'OFF'], ['message', 'kept-2'], ['message', 'kept-3'], ['message', 'kept-no-time']])
     expect(rows.map((r) => r.idx)).toEqual([0, 1, 2, 3, 4])
+  })
+})
+
+describe('the Codex rollout normalizer: a record\'s time (P3.12 round 6, Z3)', () => {
+  const stamped = (timestamp: unknown) => L({ timestamp, type: 'event_msg', payload: { type: 'user_message', message: 'x' } })
+  const tsOf = (timestamp: unknown) => readCodexRolloutLine(stamped(timestamp))!.ts
+
+  it('a timestamp with a zone designator (Z or an offset) is a time; one with none is no time, not the machine\'s local time', () => {
+    expect(tsOf('2026-09-30T10:00:00.250Z')).toBe(Date.UTC(2026, 8, 30, 10, 0, 0, 250))
+    expect(tsOf('2026-09-30T10:00:00Z')).toBe(Date.UTC(2026, 8, 30, 10, 0, 0))
+    expect(tsOf('2026-09-30T10:00:00+01:00')).toBe(Date.UTC(2026, 8, 30, 9, 0, 0))
+    expect(tsOf('2026-09-30T10:00:00-0500')).toBe(Date.UTC(2026, 8, 30, 15, 0, 0))
+    for (const bare of ['2026-09-30T10:00:00', '2026-09-30T10:00:00.250', '2026-09-30T10:00', '2026-09-30', '2026-09-30 10:00:00', 'Sep 30 2026 10:00:00', '', 'x']) {
+      expect(tsOf(bare), bare).toBeNull()
+    }
+    expect(tsOf(1790000000000)).toBeNull()
+    expect(tsOf(null)).toBeNull()
+  })
+
+  it('the normalizer treats it so: a record with a zoneless stamp takes the time of the one before it, and its row carries that time', () => {
+    const seen: Array<number | null> = []
+    const n = makeCodexRolloutNormalizer({ skip: (ts) => { seen.push(ts); return false } })
+    const rows = [stamped('2026-09-30T10:00:00.000Z'), stamped('2026-09-30T11:30:00'), stamped('2026-09-30T10:00:05.000Z')].flatMap((l) => n.push(l))
+    expect(seen).toEqual([Date.UTC(2026, 8, 30, 10, 0, 0), Date.UTC(2026, 8, 30, 10, 0, 0), Date.UTC(2026, 8, 30, 10, 0, 5)])
+    expect(rows.map((r) => r.ts)).toEqual([Date.UTC(2026, 8, 30, 10, 0, 0), Date.UTC(2026, 8, 30, 10, 0, 0), Date.UTC(2026, 8, 30, 10, 0, 5)])
+  })
+})
+
+describe('the Codex rollout normalizer: when a rollout began (P3.12 round 6, Z1)', () => {
+  it('the time of a session_meta record with a zoned stamp; nothing for any other record, a stamp with no zone or an unreadable line', () => {
+    const rec = (type: string, timestamp: unknown) => L({ timestamp, type, payload: { id: 'i' } })
+    expect(readCodexSessionStart(rec('session_meta', '2026-09-30T10:00:00.500Z'))).toBe(Date.UTC(2026, 8, 30, 10, 0, 0, 500))
+    expect(readCodexSessionStart(rec('turn_context', '2026-09-30T10:00:00.500Z'))).toBeNull()
+    expect(readCodexSessionStart(rec('session_meta', '2026-09-30T10:00:00'))).toBeNull()
+    expect(readCodexSessionStart(L({ type: 'session_meta', payload: {} }))).toBeNull()
+    expect(readCodexSessionStart('{bad')).toBeNull()
+    expect(readCodexSessionStart('[]')).toBeNull()
+    expect(readCodexSessionStart('')).toBeNull()
   })
 })
