@@ -135,3 +135,125 @@ describe('Alt+V with focus outside the terminal (P3.15, row 70)', () => {
     expect(usePasteHintStore.getState().hints.cx1).toMatch(/No image in clipboard/)
   })
 })
+
+/**
+ * P3.16a (N9): the partner view shows the tab's partner shell (a plain shell on
+ * this computer, PTY id `<session id>-partner`) in place of the session's own
+ * terminal, which is hidden then. Alt+V goes to the pane on screen: in the
+ * partner view that is the partner shell, which gets what a plain terminal
+ * gets (the quoted path, no sentence, no Enter), and the hidden assistant gets
+ * nothing. In the main view the assistant routes above apply.
+ * The panes are the elements TerminalView renders: data-terminal-session names
+ * the PTY id, and data-terminal-active marks the one pane on screen.
+ */
+describe('Alt+V in the partner view goes to the partner shell on screen (P3.16a, N9)', () => {
+  let paneEls: HTMLElement[] = []
+  function mountPanes(panes: Array<[string, boolean]>) {
+    for (const [id, onScreen] of panes) {
+      const el = document.createElement('div')
+      el.setAttribute('data-terminal-session', id)
+      if (onScreen) el.setAttribute('data-terminal-active', '')
+      document.body.appendChild(el)
+      paneEls.push(el)
+    }
+  }
+  afterEach(() => {
+    for (const el of paneEls) el.remove()
+    paneEls = []
+    delete (window as any).electronPlatform
+  })
+
+  it('a Codex tab showing its partner shell: only the quoted path, typed into the partner PTY, and nothing to the hidden Codex session', async () => {
+    mountPanes([['cx1', false], ['cx1-partner', true]])
+    await altV([session('cx1', { provider: 'codex' } as Partial<Session>)], 'cx1')
+    expect(h.typeImagePathIntoShell).toHaveBeenCalledTimes(1)
+    expect(h.typeImagePathIntoShell.mock.calls[0].slice(0, 2)).toEqual(['cx1-partner', IMG])
+    expect(h.sendImagePathToCodex).not.toHaveBeenCalled()
+    expect(h.sendImageToSession).not.toHaveBeenCalled()
+    expect(usePasteHintStore.getState().hints).toEqual({})
+  })
+
+  it('a Codex tab showing its main view (the partner mounted and hidden): the Codex route, to the Codex session', async () => {
+    mountPanes([['cx1', true], ['cx1-partner', false]])
+    await altV([session('cx1', { provider: 'codex' } as Partial<Session>)], 'cx1')
+    expect(h.sendImagePathToCodex).toHaveBeenCalledTimes(1)
+    expect(h.sendImagePathToCodex.mock.calls[0].slice(0, 2)).toEqual(['cx1', IMG])
+    expect(h.typeImagePathIntoShell).not.toHaveBeenCalled()
+    expect(h.sendImageToSession).not.toHaveBeenCalled()
+  })
+
+  it('a Claude tab showing its partner shell: only the quoted path, typed into the partner PTY, and no line for the hidden Claude session', async () => {
+    mountPanes([['cl1', false], ['cl1-partner', true]])
+    await altV([session('cl1')], 'cl1')
+    expect(h.typeImagePathIntoShell).toHaveBeenCalledTimes(1)
+    expect(h.typeImagePathIntoShell.mock.calls[0].slice(0, 2)).toEqual(['cl1-partner', IMG])
+    expect(h.sendImageToSession).not.toHaveBeenCalled()
+    expect(h.sendImagePathToCodex).not.toHaveBeenCalled()
+  })
+
+  it('a Claude tab showing its main view (the partner mounted and hidden): the line it always got, to the Claude session', async () => {
+    mountPanes([['cl1', true], ['cl1-partner', false]])
+    await altV([session('cl1')], 'cl1')
+    expect(h.sendImageToSession).toHaveBeenCalledWith('cl1', IMG, 'I just pasted an image \u2014 please view it.', 'local')
+    expect(h.typeImagePathIntoShell).not.toHaveBeenCalled()
+    expect(h.sendImagePathToCodex).not.toHaveBeenCalled()
+  })
+
+  it('an SSH tab showing its partner shell: the partner is a shell on this computer, so the path is typed into it and no remote-shell hint shows', async () => {
+    for (const extra of [{}, { provider: 'codex' }, { shellOnly: true }] as Array<Partial<Session>>) {
+      const label = JSON.stringify(extra)
+      h.typeImagePathIntoShell.mockReset()
+      usePasteHintStore.setState({ hints: {} })
+      for (const el of paneEls) el.remove()
+      paneEls = []
+      mountPanes([['ss1', false], ['ss1-partner', true]])
+      await altV([session('ss1', { sessionType: 'ssh', ...extra } as Partial<Session>)], 'ss1')
+      expect(h.typeImagePathIntoShell, label).toHaveBeenCalledTimes(1)
+      expect(h.typeImagePathIntoShell.mock.calls[0].slice(0, 2), label).toEqual(['ss1-partner', IMG])
+      expect(h.sendImageToSession, label).not.toHaveBeenCalled()
+      expect(h.sendImagePathToCodex, label).not.toHaveBeenCalled()
+      expect(usePasteHintStore.getState().hints.ss1, label).toBeUndefined()
+    }
+  })
+
+  it('the path is quoted for the shell the partner runs: PowerShell on Windows, a POSIX shell elsewhere', async () => {
+    mountPanes([['cx1', false], ['cx1-partner', true]])
+    for (const [platform, isWin32] of [['win32', true], ['linux', false], ['darwin', false]] as const) {
+      ;(window as any).electronPlatform = platform
+      h.typeImagePathIntoShell.mockReset()
+      await altV([session('cx1', { provider: 'codex' } as Partial<Session>)], 'cx1')
+      expect(h.typeImagePathIntoShell.mock.calls[0][2], platform).toBe(isWin32)
+    }
+  })
+
+  it('the pane on screen when Alt+V is pressed is the target, even when the view changes while the image is saved', async () => {
+    mountPanes([['cx1', false], ['cx1-partner', true]])
+    saveImage.mockImplementation(async () => {
+      // Back to the Codex view before the saved image comes back.
+      paneEls[0].setAttribute('data-terminal-active', '')
+      paneEls[1].removeAttribute('data-terminal-active')
+      return { path: IMG }
+    })
+    await altV([session('cx1', { provider: 'codex' } as Partial<Session>)], 'cx1')
+    expect(h.typeImagePathIntoShell).toHaveBeenCalledTimes(1)
+    expect(h.typeImagePathIntoShell.mock.calls[0].slice(0, 2)).toEqual(['cx1-partner', IMG])
+    expect(h.sendImagePathToCodex).not.toHaveBeenCalled()
+  })
+
+  it('only this tab\'s own partner counts: another tab\'s partner marked on screen leaves this tab\'s route as it is', async () => {
+    mountPanes([['cx1', false], ['cx2-partner', true]])
+    await altV([session('cx1', { provider: 'codex' } as Partial<Session>), session('cx2', { provider: 'codex' } as Partial<Session>)], 'cx1')
+    expect(h.sendImagePathToCodex).toHaveBeenCalledTimes(1)
+    expect(h.sendImagePathToCodex.mock.calls[0].slice(0, 2)).toEqual(['cx1', IMG])
+    expect(h.typeImagePathIntoShell).not.toHaveBeenCalled()
+  })
+
+  it('no image on the clipboard in the partner view: the same hint, and nothing typed into either terminal', async () => {
+    mountPanes([['cx1', false], ['cx1-partner', true]])
+    saveImage.mockResolvedValue({ error: 'no-image' })
+    await altV([session('cx1', { provider: 'codex' } as Partial<Session>)], 'cx1')
+    expect(h.typeImagePathIntoShell).not.toHaveBeenCalled()
+    expect(h.sendImagePathToCodex).not.toHaveBeenCalled()
+    expect(usePasteHintStore.getState().hints.cx1).toMatch(/No image in clipboard/)
+  })
+})
