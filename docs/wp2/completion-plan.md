@@ -199,7 +199,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 69 | Plan mode | DONE (P3.8 round 1, caef0d42; round 2, f1783110): a "Plan mode" permissions choice, as Claude's launch option: the session starts READ-ONLY and Codex's own `/plan` is typed into its first ready prompt only (never the folder-trust prompt, the user's typing or after a turn), within a bounded wait; otherwise a note says Plan mode is not on and the session is read-only. The pill reads "plan" only while Codex's footer shows its Plan mode | Parity: Claude's Plan mode launch option (`src/renderer/lib/claude-cli-options.ts:85`); Codex has `/plan` on both supported versions and no launch flag for it (VM), so no section 19 record | verification: Plan mode on the VM, 0.153.4's fresh launches included (round 3); the approval flow with a working model (owner-only) | 3 |
 | 70 | Image paste | DONE (P3.15, bbcb6ef8; the focused key on the VM at c11fb360, both versions): with the terminal focused Alt+V goes to the CLI and Codex attaches the image itself ("[Image #1]"); with focus elsewhere a Codex session's line is ASCII and typed by the Codex typing rule, its notes in the paste hint (mocked: `codex-image-paste.test.ts`, `alt-v-image-route.test.tsx`); the tip and the Tips and Shortcuts card say both | Parity | verification: the unfocused line on the VM; real Claude Code's own Alt+V; macOS, Linux | 3 |
 | 71 | Copy, paste, scrollback, mouse | DONE (P3.15, bbcb6ef8; the VM at c11fb360): copy, paste (Ctrl+V and right-click, bracketed) and mouse (Codex sets no mouse mode) as Claude's; scrollback: a local Codex session on Windows runs under node-pty's bundled ConPTY, which keeps it (122 lines and the wheel scrolling in the VM's in-app trial, against 38 and an inert wheel under the system ConPTY), with the system ConPTY as the fallback (mocked: `bundled-conpty.test.ts`, `pty-conpty-per-provider.test.ts`) | Parity | verification: scrollback and the wheel in the packaged build, and copy, paste, mouse, keys and process teardown under the bundled ConPTY; the TUI trace re-captured under it; macOS, Linux | 3 |
-| 72 | Multi Spawn and Quick Start with Codex | DONE (P2; P3.13, 3e45825d; round 1, 54422e2a; mocked): a Codex config that is not Multi Spawn runs one copy at a time in the sidebar (P2) and now in main at `pty:spawn` for NEW copies (a session that already runs, restored at this start or accepted in this run, keeps its right through a Restart, a Switch and a reattach), a new copy refused with the typed `already-running` before an account is prepared or leased; N copies of a Multi Spawn Codex config are N processes, each on its own account lease, a copy ending or closing letting go of its own lease only; Quick Start launches a Codex pin, with its x N control, blocked start and select lock, as a Claude pin's (`pty-spawn-one-at-a-time.test.ts`, `pty-spawn-one-at-a-time-rights.test.ts`, `codex-multi-spawn-leases.test.ts`, `multi-spawn-codex.test.tsx`) | Parity: N copies with one lease each; Quick Start | verification: the VM check (PR 3 gate 6) | 2; 3 |
+| 72 | Multi Spawn and Quick Start with Codex | DONE (P2; P3.13, 3e45825d; round 1, 54422e2a; round 2, b86bed6d; mocked): a Codex config that is not Multi Spawn runs one copy at a time in the sidebar (P2) and now in main at `pty:spawn` for NEW copies (a session that already runs, restored at this start or accepted in this run, keeps its right through a Restart, a Switch and a reattach), a new copy refused with the typed `already-running` before an account is prepared or leased; N copies of a Multi Spawn Codex config are N processes, each on its own account lease, a copy ending or closing letting go of its own lease only; Quick Start launches a Codex pin, with its x N control, blocked start and select lock, as a Claude pin's (`pty-spawn-one-at-a-time.test.ts`, `pty-spawn-one-at-a-time-rights.test.ts`, `codex-multi-spawn-leases.test.ts`, `multi-spawn-codex.test.tsx`) | Parity: N copies with one lease each; Quick Start | verification: the VM check (PR 3 gate 6) | 2; 3 |
 | 73 | Channel rules delivery | DONE (P3.15; the VM at c11fb360): a rule's envelope reaches Codex's composer bracketed with no Enter, and its rollout verbatim after Enter; the ledger records it for both sessions | Parity | verification: the re-check under the bundled ConPTY | 3 |
 | 74 | Command buttons, preset pill, restart menu, theme | DONE | ADR-018 | verification: the real-CLI pass | 2, v4 |
 | 75 | Claude-only environment switches | DONE (not a Codex feature) | Labelled Claude only | none | none |
@@ -2330,7 +2330,7 @@ one lease each; Quick Start with Codex; a test on the Codex path. Enforcing the
 one-at-a-time rule in main also closes that C item. Likely files:
 `sidebar/QuickStartPanel.tsx`, `sidebar/MultiSpawnControl.tsx`, the launch gate
 and leases. ADR-009: yes (the launch gate).
-Built (3e45825d; round 1, 54422e2a; mocked), settled by parity. The sidebar's
+Built (3e45825d; round 1, 54422e2a; round 2, b86bed6d; mocked), settled by parity. The sidebar's
 half was already provider-neutral (its pins, rows, popover and select lock ask
 one rule and read each provider's own launch gate), so the work is main's half
 and the tests on the Codex path. A saved config that is not Multi Spawn runs one
@@ -2361,13 +2361,15 @@ copy, or turn on Allow Multi Spawn for it, then Restart this tab."), is kept, an
 a restore's conversation target goes back on its record. The config's name in
 the refusal is made safe to show in a terminal (`stripSpoofableText`) and is
 never logged; the config's id in the log is made safe too.
-Round 1 (the spec and code-quality reviews and two ADR-009 lenses; the owner's
-design: the rule gates new copies, a session that already runs keeps its right).
+Round 1 (the spec and code-quality reviews and two ADR-009 lenses; the rule gates
+new copies and a session that already runs keeps its right: the orchestrator's
+decision, pending the owner's confirmation, in the owner queue).
 Who keeps the right to run, never refused: (a) a session accepted for the config
 in this run, through a Restart, a Switch account, a Recover or an SSH reattach,
 with another copy live or not, whatever the config says now (Multi Spawn may have
 been unticked while the copies ran): the right outlives the process, because a
-Restart kills it first, and is bounded (512, the oldest first); (b) a session
+Restart kills it first, and is bounded (512: a session that has ended goes before
+one that is live, the oldest first); (b) a session
 restored at this start: main seeds the ids it read from the saved session state
 at the first load of the run (the session load's read-back, `app-session-durability.ts`;
 never a flag the renderer sends), the saved sessions and the remotes left running,
@@ -2379,14 +2381,35 @@ and a session later spawned as a non-copy stops counting as one. Not copies: a
 spawn that names no saved config; and the renderer's own partner terminal in its
 exact shape (shell-only, the session id plus a suffix the renderer and main share,
 with a test that the renderer's three files use it, no ssh block, no terminal
-options, no elevation), only for a session main holds. The first cut also exempted
+options, no elevation), never a copy and never counted, whether or not main holds
+its session: round 1 counted the shell of a tab that started nothing (its provider
+was off) as a copy, so a plain shell blocked a new tab and the tab itself. The shape
+reads no SSH credential and no secret argument, which a test asserts. The first cut
+also exempted
 an Ask flag and an `ssh.reconnect` flag; both are gone, because a request could
 name a config's credentials (an SSH password, a terminal secret argument) and set
 either to start a second credentialed copy. Every legitimate reattach is a
 session of this run or a restored remote, so the flag was never needed. When main
 refuses a copy while the screen shows Multi Spawn on (a save that did not land),
 the tab asks main for the saved config and the toggle is made the saved one
-(`src/renderer/utils/refusedMultiSpawn.ts`; screen only, nothing is written).
+(`src/renderer/utils/refusedMultiSpawn.ts`; screen only, nothing is written; it looks
+at the toggle again after the read and leaves a change the user made meanwhile alone).
+Round 2 (the second ADR-009 pass, lens A passing with two minor findings and lens B
+finding the partner major above; the spec and code-quality reviews). A right lapses
+when a new copy of its config, one that does not itself use a right, is accepted
+while the holder is not live (the tab was closed or its process ended and the config
+has moved on): a forged cycle of accept, close, accept another, respawn the first can
+no longer bank rights into concurrent credentialed copies. A holder that is live keeps
+its right, copies that use their own rights never lapse each other's (so a restore
+brings every copy back), and a Restart of an ended tab beside another copy still
+works when that copy was accepted while the tab ran. Restored rights lapse the same
+way. `claimConfigLaunch` hands back a ticket per spawn that passes the gate and
+`pty:spawn` settles that ticket only: a forged spawn of the same session id that
+throws after the gate cannot overwrite a pending spawn and re-label it at settle;
+each pending spawn keeps its own ticket (at most 8 per session), a ticket settles
+once, and one the gate did not hand out settles nothing. A restored tab spawns on its
+first view (settled by the spec review and ADR-009 lens B), so a restored set starts
+as its tabs are shown; the rule does not depend on it.
 Limits, recorded: (1) rights live in main's memory for this run, bounded (512
 accepted, 1024 restored); a tab the user opens while the resume prompt is up is a
 new tab, since only the first load of the run seeds. (2) A Restart of a tab that
@@ -2400,7 +2423,11 @@ parked spawn that main accepted and that then fails after the wait leaves its
 right behind; it can only restart that tab. (6) Not new: copies of one config
 started together in one folder claim their rollouts by folder and time unless
 Codex's hooks are trusted (P3.5's recorded limit, P3.10's exact claim); a x N of
-a Codex config is that case.
+a Codex config is that case. (7) A remote left running that is reattached AFTER a
+new copy of its config was launched has lost its right (rights lapse), so its
+reattach is refused with the usual tab text, and the card the reattach used up is
+gone; closing the new copy and a Restart on that tab reattaches (SSH Persistent;
+checked on the VM).
 Tests, 10 files, red first. Round 0: `launch-one-at-a-time.test.ts` (the gate on
 its own: the rule, the rights, the restored sessions, the partner shape, the
 bound), `pty-spawn-one-at-a-time.test.ts` (the real handler: a Codex, Claude,
@@ -2423,12 +2450,20 @@ reattach; no exemption carries credentials; the live session's record is not
 re-pointed; the log id), `claude-managed-launch-one-at-a-time.test.ts` (the real
 pty-manager: a Claude managed launch parked by the profile wait or the project
 gate is held), `refused-multi-spawn.test.ts` and cases in the tab, durability,
-lease and shared tests: 82 new tests. Red on the first round's code: 22 of the 34
-cases of the rights file, and 2 of the tab cases. Mutation: round 0, 59 mutants;
+lease and shared tests: 82 new tests. Round 2 adds the partner of a tab that started
+nothing (lens B's probe, adopted: the provider off, the partner opened, the provider
+on), the forged cycle, the lapse rules with their exceptions, a forged same-id spawn
+during a Codex preparation (two cases), the eviction order, the ticket rules and the
+toggle recheck, and the sleep of the Claude managed-launch test is a zero-delay
+flush: 28 more tests net. Red on the first round's code: 22 of the 34 cases of the
+rights file, and 2 of the tab cases; on round 1's, 10 of the 47 cases of the rights
+file and 3 of the toggle file. Mutation: round 0, 59 mutants;
 round 1, 37 mutants of the gate, the seeding, the wiring, the refusal types and
 the reconcile, every one red (one of round 0's is killed by the existing
 provider-neutral launch test; the lens B mutant that kept a claim only for a
-config that is not Multi Spawn is among round 1's). On the host: 168 affected and
+config that is not Multi Spawn is among round 1's); round 2, 20 mutants of the gate,
+the lapse, the tickets, the bound, the toggle and the handler wiring, every one red
+(two of them after a test was added for a first survivor). On the host: 168 affected and
 tree-scanner files pass, the WP1 gate, traceability, boundaries and conformance
 files pass, and `npm run typecheck` and `tsc` of the touched tests are clean.
 ADR-009: the gate is a refusal in `pty-handlers.ts`, before any credential read,
@@ -2453,9 +2488,12 @@ both, for Claude and for Codex, and a new tab for the config while they run is
 refused, and a remote left running reattaches by its own id beside another copy;
 the end-to-end suite at PR 3's head, which no spec of the restore path may break;
 and a x N of a Codex config in one folder, each copy on its own rollout and a
-Restart resuming its own. When a restored tab spawns (the active tab at once, the
-others when their view first has a size) does not change the rule, so the check
-does not depend on it.
+Restart resuming its own; a tab that started nothing (a provider that was off)
+whose partner shell was opened, then the provider turned on: a new tab and the tab
+itself start; a remote left running reattached after a new copy was launched is
+refused until that copy is closed (limit 7). A restored tab spawns on its first view
+(a hidden tab does not start until it is shown), so the others of a restored set
+start as they are shown; the rule does not depend on it.
 
 **P3.14 Usage follow-up: Codex credits.** A credits row on a Codex card once
 P3.1 shows the unit, as Claude's card has one; the known issue removed. Likely

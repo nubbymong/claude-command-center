@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-01T07:15:25.722Z",
-  "head": "965c8bb625f9c9e5687954dbb33f980389c7e4fc",
-  "tree": "629f33d1cdc3810af662b218fadab970541a1609",
+  "generatedAt": "2026-10-01T08:27:17.012Z",
+  "head": "b86bed6da5f89e35eefa84030fcf71ecdbecaa86",
+  "tree": "8f3e93bc97e507f45932f00f83a23f2d4946c9e9",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 555,
+      "lineCount": 591,
       "truncated": true
     },
     {
@@ -197,7 +197,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 73
+      "lineCount": 84
     },
     {
       "path": "docs/wp2/hello-codex-spec.md",
@@ -211,7 +211,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 94
+      "lineCount": 95
     },
     {
       "path": "docs/wp2/plan.md",
@@ -892,7 +892,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 15
+      "lineCount": 16
     },
     {
       "path": "src/main/providers/codex/realm-folders.ts",
@@ -3523,7 +3523,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 24
+      "lineCount": 50
     },
     {
       "path": "tests/unit/main/pty-spawn-one-at-a-time.test.ts",
@@ -3925,7 +3925,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 104
+      "lineCount": 119
     },
     {
       "path": "tests/unit/providers/codex/resume-picker-deploy.test.ts",
@@ -4065,7 +4065,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 96
+      "lineCount": 102
     },
     {
       "path": "tests/unit/providers/codex/ui-detection.test.ts",
@@ -4083,7 +4083,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 75
+      "lineCount": 76
     },
     {
       "path": "tests/unit/providers/host-color-scheme.test.ts",
@@ -4132,7 +4132,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 20
+      "lineCount": 25
     },
     {
       "path": "tests/unit/renderer/accounts-identity-lifecycle.test.tsx",
