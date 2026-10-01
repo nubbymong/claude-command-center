@@ -187,14 +187,6 @@ describe('M1: a session restored at this start keeps its right to run', () => {
     expect(isRefused(await spawn({}, C, { ...sshReq, ssh: { ...SSH, reconnect: true } }))).toBe(true)
   })
 
-  it('recorded limit (R2): a new copy launched BEFORE the reattach lapses the remote\'s right, so its reattach is refused until that copy is closed', async () => {
-    disk(savedSsh())
-    load([], [{ sessionId: A, configId: 'cfgssh', host: SSH.host, username: SSH.username, remotePath: SSH.remotePath }])
-    await spawn({}, B, sshReq) // a new copy while the remote is not live
-    expect(isRefused(await spawn({}, A, { ...sshReq, ssh: { ...SSH, reconnect: true } }))).toBe(true)
-    kill({}, B) // the user closes the new copy; Restart on the Not started tab then reattaches
-    expect(isRefused(await spawn({}, A, { ...sshReq, ssh: { ...SSH, reconnect: true } }))).toBe(false)
-  })
 })
 
 describe('M2: a session accepted in this run keeps its right to run again', () => {
@@ -491,12 +483,31 @@ describe('R2: a right lapses once another copy is accepted while its holder is n
     expect(isRefused(await spawn({}, B, claudeReq))).toBe(false)
   })
 
-  it('restored rights lapse the same way: once a new copy is accepted while they are not live', async () => {
-    disk(savedClaude({ allowMultiSpawn: true }))
-    load([{ id: A, configId: 'cfgclaude' }, { id: B, configId: 'cfgclaude' }, { id: C, configId: 'cfgclaude' }])
-    await spawn({}, D, claudeReq) // a new copy (Multi Spawn is on): the restored copies are not live yet
-    disk(savedClaude({ allowMultiSpawn: false }))
-    expect(isRefused(await spawn({}, A, claudeReq))).toBe(true)
+  it('restored rights never lapse: a restored copy starts on its first view even after a new copy started (Claude and Codex)', async () => {
+    for (const [saved, req, id] of [[savedClaude, claudeReq, 'cfgclaude'], [savedCodex, codexReq, 'cfgcodex']] as const) {
+      live.clear(); _resetConfigLaunchClaimsForTest()
+      disk(saved({ allowMultiSpawn: false }))
+      load([{ id: A, configId: id }])
+      expect(isRefused(await spawn({}, D, req)), id).toBe(false) // a new copy starts first: the restored tab is not shown yet
+      expect(isRefused(await spawn({}, A, req)), id).toBe(false) // first view of the restored tab
+      expect(live.has(A)).toBe(true)
+      expect(isRefused(await spawn({}, B, req)), id).toBe(true) // and a further new copy is still refused
+    }
+  })
+
+  it('a restored SSH remote left running resumes on first view after a new copy started, and only once', async () => {
+    disk(savedSsh())
+    load([], [{ sessionId: A, configId: 'cfgssh', host: SSH.host, username: SSH.username, remotePath: SSH.remotePath }])
+    expect(isRefused(await spawn({}, B, sshReq))).toBe(false) // a new copy while the remote is not live
+    const reattach = { ...sshReq, ssh: { ...SSH, reconnect: true } }
+    expect(isRefused(await spawn({}, A, reattach))).toBe(false) // the reattach is not refused
+    expect(live.has(A)).toBe(true)
+    // Once: the restored right was used by that spawn. What is left is a right of this run, which lapses.
+    kill({}, A)
+    expect(isRefused(await spawn({}, C, sshReq))).toBe(true) // B still runs: a new copy is refused
+    kill({}, B)
+    expect(isRefused(await spawn({}, C, sshReq))).toBe(false) // a new copy: A's right of this run lapses with it
+    expect(isRefused(await spawn({}, A, reattach))).toBe(true)
   })
 
   it('restored copies starting one after another keep each other\'s right (each uses its own)', async () => {
