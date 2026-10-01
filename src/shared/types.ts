@@ -316,8 +316,9 @@ export interface SessionState {
    *  conversation-running-time.ts), written by main at every save and read
    *  back by main at load, schema-checked, so a session's Duration carries on
    *  across a relaunch. `gaps`: spans whose completed turns are not in `ms`
-   *  yet (the next run counts them). */
-  conversationRunningTimes?: Array<{ id: string; ms: number; until: number; gaps?: Array<{ from: number; to: number }> }>
+   *  yet (the next run counts them); `gapMs` (P3.16): the part of those
+   *  turns a run had counted. */
+  conversationRunningTimes?: Array<{ id: string; ms: number; until: number; gaps?: Array<{ from: number; to: number }>; gapMs?: number }>
 }
 
 /**

@@ -267,11 +267,12 @@ describe('a Codex session\'s Duration is its conversation\'s running time', () =
       const x = watch(sessions, '/p/demo', { resumeId: ID })
       // Shown with what the head and tail prove (the tail's turn).
       expect(x.updates.at(-1)?.totalDurationMs).toBe(500)
-      // Kept as it goes without them, the span they are in a gap.
-      expect(conversationRunningTime(ID)).toEqual({ ms: 0, until: t0, gaps: [{ from: 0, to: t0 }] })
+      // Kept as it goes without them, the span they are in a gap; the turns
+      // of it counted so far (the tail's) kept beside it (P3.16, M4).
+      expect(conversationRunningTime(ID)).toEqual({ ms: 0, until: t0, gaps: [{ from: 0, to: t0 }], gapMs: 500 })
       await vi.advanceTimersByTimeAsync(5_000)
       x.src.stop()
-      expect(conversationRunningTime(ID)).toEqual({ ms: 5_000, until: t0 + 5_000, gaps: [{ from: 0, to: t0 }] })
+      expect(conversationRunningTime(ID)).toEqual({ ms: 5_000, until: t0 + 5_000, gaps: [{ from: 0, to: t0 }], gapMs: 500 })
     } finally {
       h.done()
       await __codexCountsSettledForTests()
@@ -289,7 +290,7 @@ describe('a Codex session\'s Duration is its conversation\'s running time', () =
       const x = watch(sessions, '/p/demo', { resumeId: ID })
       await vi.advanceTimersByTimeAsync(EDIT_COUNT_MAX_MS)
       x.src.stop()
-      expect(conversationRunningTime(ID)).toEqual({ ms: EDIT_COUNT_MAX_MS, until: t0 + EDIT_COUNT_MAX_MS, gaps: [{ from: 0, to: t0 }] })
+      expect(conversationRunningTime(ID)).toEqual({ ms: EDIT_COUNT_MAX_MS, until: t0 + EDIT_COUNT_MAX_MS, gaps: [{ from: 0, to: t0 }], gapMs: 500 })
     } finally {
       h.done()
       await __codexCountsSettledForTests()
@@ -353,6 +354,62 @@ describe('a Codex session\'s Duration is its conversation\'s running time', () =
       const kept = conversationRunningTime(ID)!
       expect(kept.gaps).toEqual([])
       expect(Math.abs(kept.ms - (3_500 + yKept.ms + (zStop - zSpawn)))).toBeLessThanOrEqual(15)
+    } finally {
+      h.done()
+      await __codexCountsSettledForTests()
+    }
+  })
+
+  // P3.16 (M4): a Restart while the count is still running. Codex wrote on in
+  // between, so the turn the last run read in the tail is now between the new
+  // head and tail, where only the new count can reach it: the figure carries
+  // on from the last run's, never below it.
+  it('a Restart while a large rollout\'s count is incomplete never shows less than the last run did', async () => {
+    vi.useFakeTimers()
+    const t0 = Date.parse('2026-09-29T10:00:00.000Z')
+    vi.setSystemTime(t0)
+    const sessions = realm()
+    largeWithTurns(sessions)
+    const file = join(dayOf(sessions, new Date(t0 - 3 * 24 * 3600 * 1000)), `rollout-x-${ID}.jsonl`)
+    const h = holdOpens([0, 1])
+    try {
+      const x = watch(sessions, '/p/demo', { resumeId: ID })
+      expect(x.updates.at(-1)?.totalDurationMs).toBe(500)
+      await vi.advanceTimersByTimeAsync(5_000)
+      // What the run shows when it ends: the tail's turn and its own 5 s.
+      const shownAtEnd = 500 + 5_000
+      x.src.stop()
+      expect(conversationRunningTime(ID)).toEqual({ ms: 5_000, until: t0 + 5_000, gaps: [{ from: 0, to: t0 }], gapMs: 500 })
+      appendFileSync(file, filler(CLAIM_TAIL_BYTES + 64 * 1024) + tokenLine(t0 + 5_000, 778) + '\n')
+      const y = watch(sessions, '/p/demo', { resumeId: ID })
+      expect(y.updates.at(-1)?.totalDurationMs).toBeGreaterThanOrEqual(shownAtEnd)
+      await vi.advanceTimersByTimeAsync(2_000)
+      y.src.stop()
+      // Kept with the same floor: the next run starts from it too.
+      expect(conversationRunningTime(ID)).toEqual({ ms: 7_000, until: t0 + 7_000, gaps: [{ from: 0, to: t0 }], gapMs: 500 })
+    } finally {
+      h.done()
+      await __codexCountsSettledForTests()
+    }
+  })
+
+  it('a tab beside one whose large rollout\'s count is incomplete shows what that one shows (P3.16, M4)', async () => {
+    vi.useFakeTimers()
+    const t0 = Date.parse('2026-09-29T10:00:00.000Z')
+    vi.setSystemTime(t0)
+    const sessions = realm()
+    largeWithTurns(sessions)
+    const h = holdOpens([0, 1])
+    try {
+      const x = watch(sessions, '/p/demo', { resumeId: ID })
+      expect(x.updates.at(-1)?.totalDurationMs).toBe(500)
+      await vi.advanceTimersByTimeAsync(10_000)
+      const y = watch(sessions, '/p/demo', { resumeId: ID })
+      await vi.advanceTimersByTimeAsync(0)
+      // x's figure now: the tail's turn and its 10 s.
+      expect(y.updates.at(-1)?.totalDurationMs).toBe(10_500)
+      y.src.stop()
+      x.src.stop()
     } finally {
       h.done()
       await __codexCountsSettledForTests()
