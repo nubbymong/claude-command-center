@@ -12,8 +12,10 @@
 import { useConfigStore } from '../stores/configStore'
 
 export interface RefusedMultiSpawnDeps {
-  /** The config's Allow Multi Spawn as the screen has it (undefined: not there). */
-  onScreen: (configId: string) => { found: boolean; allowMultiSpawn: unknown }
+  /** The config's Allow Multi Spawn as the screen has it (undefined: not there),
+   *  with the config object itself: the store makes a new one for every edit, so a
+   *  different object on the second look means the user changed the config. */
+  onScreen: (configId: string) => { found: boolean; allowMultiSpawn: unknown; config?: unknown }
   /** The saved configs main holds, or null when they could not be read. */
   readSaved: () => Promise<unknown[] | null>
   /** Make the screen's Allow Multi Spawn for this config the saved one. */
@@ -23,7 +25,7 @@ export interface RefusedMultiSpawnDeps {
 const realDeps: RefusedMultiSpawnDeps = {
   onScreen: (configId) => {
     const c = useConfigStore.getState().configs.find((x) => x.id === configId)
-    return { found: !!c, allowMultiSpawn: c?.allowMultiSpawn }
+    return { found: !!c, allowMultiSpawn: c?.allowMultiSpawn, config: c }
   },
   readSaved: async () => {
     const r = await window.electronAPI.config.loadAll()
@@ -41,7 +43,8 @@ const realDeps: RefusedMultiSpawnDeps = {
  * the screen's toggle was corrected. Does nothing when the screen already
  * agrees with the saved config (the refusal is then simply true), when the
  * saved configs cannot be read, when the config is not on the screen, or when
- * the user changed the toggle while the saved configs were being read.
+ * the user changed the config (the toggle, even back to where it was) while the
+ * saved configs were being read.
  */
 export async function reconcileRefusedMultiSpawn(configId: string | undefined, deps: RefusedMultiSpawnDeps = realDeps): Promise<boolean> {
   if (typeof configId !== 'string' || configId === '') return false
@@ -53,10 +56,11 @@ export async function reconcileRefusedMultiSpawn(configId: string | undefined, d
     const mine = saved.find((c) => !!c && typeof c === 'object' && (c as { id?: unknown }).id === configId) as { allowMultiSpawn?: unknown } | undefined
     if (!mine || mine.allowMultiSpawn === true) return false
     // The read took a moment: the user may have changed the toggle (or removed the
-    // config) meanwhile. Look again right before writing, and leave a change of
+    // config) meanwhile, even off and back on, which leaves the same value in a
+    // new config object. Look again right before writing, and leave a change of
     // theirs alone.
     const now = deps.onScreen(configId)
-    if (!now.found || now.allowMultiSpawn !== true) return false
+    if (!now.found || now.allowMultiSpawn !== true || now.config !== screen.config) return false
     deps.setOnScreen(configId, mine.allowMultiSpawn === false ? false : undefined)
     return true
   } catch {

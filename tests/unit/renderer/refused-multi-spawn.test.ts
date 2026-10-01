@@ -93,4 +93,22 @@ describe('reconcileRefusedMultiSpawn', () => {
     expect(looks).toBe(2)
     expect(set).toHaveBeenCalledWith('c1', false)
   })
+
+  // Round 3 (G4): the second look compared only the value, so a toggle that went off and back on within the one read
+  // still read true and the stale saved value overwrote the user's newer save. Compare the config object itself too.
+  it('a config the user edited and put back while it was being read (same value, a new object) is not overwritten', async () => {
+    const first = { id: 'c1', allowMultiSpawn: true }
+    const edited = { id: 'c1', allowMultiSpawn: true } // off and back on: the store made a new object
+    const screens = [{ found: true, allowMultiSpawn: true, config: first }, { found: true, allowMultiSpawn: true, config: edited }]
+    const set = vi.fn()
+    expect(await reconcileRefusedMultiSpawn('c1', { onScreen: () => screens.shift()!, readSaved: async () => [{ id: 'c1', allowMultiSpawn: false }], setOnScreen: set })).toBe(false)
+    expect(set).not.toHaveBeenCalled()
+  })
+
+  it('the same config object on both looks is corrected as before', async () => {
+    const cfg = { id: 'c1', allowMultiSpawn: true }
+    const set = vi.fn()
+    expect(await reconcileRefusedMultiSpawn('c1', { onScreen: () => ({ found: true, allowMultiSpawn: true, config: cfg }), readSaved: async () => [{ id: 'c1', allowMultiSpawn: false }], setOnScreen: set })).toBe(true)
+    expect(set).toHaveBeenCalledWith('c1', false)
+  })
 })

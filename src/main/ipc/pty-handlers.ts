@@ -6,7 +6,7 @@ import { getAccountsService } from '../provider-accounts'
 import { awaitCodexHookFolders } from '../codex-hook-folders'
 import { getGateway } from '../hooks'
 import { providerLaunchRefusal } from '../provider-launch-gate'
-import { claimConfigLaunch, settleConfigLaunch } from '../launch-one-at-a-time'
+import { claimConfigLaunch, settleConfigLaunch, discardConfigLaunch, type ConfigLaunchTicket } from '../launch-one-at-a-time'
 import type { AccountLease, AccountsService } from '../providers/core'
 import type { ConversationCarryNotice } from '../../shared/providers'
 import { forgetCanvasMarkers } from '../canvas/canvas-marker-delivery'
@@ -671,7 +671,10 @@ function endTargetFromSavedConfig(configId: string, sessionId: string): SshEndTa
 }
 
 export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void {
-  ipcMain.handle('pty:spawn', async (_event, sessionId: string, options?: {
+  // The body of pty:spawn. `claim` holds the one-at-a-time gate's ticket for this
+  // call (P3.13): the handler registered below discards it when the call ends,
+  // so a spawn that throws or returns early leaves nothing pending.
+  const spawnSession = async (sessionId: string, claim: { ticket?: ConfigLaunchTicket }, options?: {
     cwd?: string
     cols?: number
     rows?: number
@@ -768,6 +771,7 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     // provider rule above comes first: a provider that is off says so.
     const configClaim = claimConfigLaunch(sessionId, options, { savedConfigs: () => readConfig('configs'), isLive: (id) => isSessionLiveOrStarting(id) })
     if ('refused' in configClaim) return { started: false as const, refused: configClaim.refused }
+    claim.ticket = configClaim.ticket
     // A new spawn of this id replaces whatever ran under it before: an
     // accepted SSH "Launch Claude" of the old PTY no longer counts.
     sshClaudeLaunches.delete(sessionId)
@@ -1016,6 +1020,18 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
       }
       preparation?.abandon()
       throw err
+    }
+  }
+
+  ipcMain.handle('pty:spawn', async (_event, sessionId: string, options?: Parameters<typeof spawnSession>[2]) => {
+    const claim: { ticket?: ConfigLaunchTicket } = {}
+    try {
+      return await spawnSession(sessionId, claim, options)
+    } finally {
+      // P3.13 (round 3): a ticket still pending now belongs to a spawn that
+      // pty-manager did not take (it threw, or returned early). Forget it. A
+      // ticket settled on the way is already gone, so this does nothing then.
+      if (claim.ticket) discardConfigLaunch(claim.ticket)
     }
   })
 

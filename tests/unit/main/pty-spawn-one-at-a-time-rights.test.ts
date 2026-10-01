@@ -15,7 +15,11 @@
  *      shell the renderer starts;
  *  M4  a live session's record is never re-pointed by a spawn that is refused
  *      or throws;
- *  M5  the log carries a config id made safe, never raw.
+ *  M5  the log carries a config id made safe, never raw;
+ *  G1  (round 3) a session accepted in this run keeps its right for the run: only an
+ *      id main never accepted and never restored is gated;
+ *  N4c (round 3) a spawn forgets its pending ticket on every throw or early return,
+ *      so forged same-id spawns cannot push a real pending ticket out.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
@@ -88,7 +92,7 @@ vi.mock('../../../src/main/provider-accounts', () => ({
 
 const { registerPtyHandlers } = await import('../../../src/main/ipc/pty-handlers')
 const { createAppSessionDurability } = await import('../../../src/main/app-session-durability')
-const { _resetConfigLaunchClaimsForTest } = await import('../../../src/main/launch-one-at-a-time')
+const { _resetConfigLaunchClaimsForTest, _claimedSessionCountForTest } = await import('../../../src/main/launch-one-at-a-time')
 registerPtyHandlers(() => ({} as never))
 const spawn = handlers.get('pty:spawn')!
 const kill = handlers.get('pty:kill')!
@@ -442,44 +446,62 @@ describe('R1: the exact partner shell never counts, so it can never block its co
   })
 })
 
-describe('R2: a right lapses once another copy is accepted while its holder is not live', () => {
-  it('the forged sequence is refused: accept A, close A, accept B, then A again beside B', async () => {
+describe('G1 (round 3): a session accepted in this run keeps its right for the run', () => {
+  it('SSH Persistent: Leave running, launch the config again, then Resume the first starts (lens B\'s probe)', async () => {
     disk(savedSsh())
-    await spawn({}, A, sshReq)
-    kill({}, A) // the tab is closed
-    await spawn({}, B, sshReq) // a new copy, with nothing else live: A's right lapses
-    loadCredential.mockClear()
-    expect(isRefused(await spawn({}, A, sshReq))).toBe(true) // a second credentialed copy
-    expect(live.has(A)).toBe(false)
-    expect(loadCredential).not.toHaveBeenCalled()
+    expect(isRefused(await spawn({}, A, sshReq))).toBe(false)
+    kill({}, A) // Leave running: the local PTY goes, the remote stays, a card is registered
+    expect(isRefused(await spawn({}, B, sshReq))).toBe(false) // a plain launch: always a NEW session
+    // Resume: the card is dropped, then the ORIGINAL id is spawned with reconnect.
+    expect(isRefused(await spawn({}, A, { ...sshReq, ssh: { ...SSH, reconnect: true } }))).toBe(false)
+    expect(live.has(A)).toBe(true)
+    expect(isRefused(await spawn({}, C, sshReq))).toBe(true) // a NEW id beside the live copies is still a new copy
   })
 
-  it('the cycle does not bank rights: N closed ids cannot come back as N concurrent copies', async () => {
+  const shapes: Array<[string, (over?: Record<string, unknown>) => unknown, Record<string, unknown>]> = [
+    ['Claude', savedClaude, claudeReq],
+    ['Codex', savedCodex, codexReq],
+    ['SSH', savedSsh, sshReq],
+    ['terminal-only', savedShell, shellReq],
+  ]
+  for (const [name, saved, req] of shapes) {
+    it(`${name}: Multi Spawn on, A ends, B is launched, Multi Spawn off, then a Restart of A starts; a new tab does not`, async () => {
+      disk(saved({ allowMultiSpawn: true }))
+      await spawn({}, A, req)
+      kill({}, A) // A's process ends, its tab stays
+      expect(isRefused(await spawn({}, B, req))).toBe(false) // launched while Multi Spawn is on
+      disk(saved({ allowMultiSpawn: false }))
+      expect(isRefused(await spawn({}, A, req))).toBe(false) // Restart A: its own session
+      expect(live.has(A)).toBe(true)
+      expect(isRefused(await spawn({}, C, req))).toBe(true) // a new tab is a new copy beside A and B
+    })
+  }
+
+  it('every closed session accepted in this run can come back; an id main never accepted is a new copy', async () => {
     disk(savedSsh())
     const ids = ['n1', 'n2', 'n3', 'n4', 'n5']
     for (const id of ids) { await spawn({}, id, sshReq); kill({}, id) }
-    const out: boolean[] = []
-    for (const id of ids) out.push(isRefused(await spawn({}, id, sshReq)))
-    expect(out.filter((x) => !x)).toHaveLength(1) // the first back is a new copy; the rest are refused
+    for (const id of ids) expect(isRefused(await spawn({}, id, sshReq)), id).toBe(false)
+    expect(isRefused(await spawn({}, 'n6', sshReq))).toBe(true)
   })
 
-  it('M2 holds: copies accepted together, one ended, restart beside the other (the holder was live when the other was accepted)', async () => {
+  it('M2 holds: copies accepted together, one ended, restart beside the other', async () => {
     disk(savedClaude({ allowMultiSpawn: true }))
     await spawn({}, A, claudeReq)
-    await spawn({}, B, claudeReq) // A is live: its right stays
+    await spawn({}, B, claudeReq)
     disk(savedClaude({ allowMultiSpawn: false }))
     kill({}, A)
     expect(isRefused(await spawn({}, A, claudeReq))).toBe(false)
   })
 
-  it('a copy that uses its own right does not lapse the others', async () => {
+  it('a copy that uses its own right takes no other\'s', async () => {
     disk(savedClaude({ allowMultiSpawn: true }))
     await spawn({}, A, claudeReq)
     await spawn({}, B, claudeReq)
     await spawn({}, C, claudeReq)
     disk(savedClaude({ allowMultiSpawn: false }))
     kill({}, A); kill({}, B)
-    expect(isRefused(await spawn({}, A, claudeReq))).toBe(false) // uses its right: B's must stay
+    expect(isRefused(await spawn({}, A, claudeReq))).toBe(false)
     expect(isRefused(await spawn({}, B, claudeReq))).toBe(false)
   })
 
@@ -495,19 +517,16 @@ describe('R2: a right lapses once another copy is accepted while its holder is n
     }
   })
 
-  it('a restored SSH remote left running resumes on first view after a new copy started, and only once', async () => {
+  it('a restored SSH remote left running resumes on first view after a new copy started, and again later; an id that was not saved does not', async () => {
     disk(savedSsh())
     load([], [{ sessionId: A, configId: 'cfgssh', host: SSH.host, username: SSH.username, remotePath: SSH.remotePath }])
     expect(isRefused(await spawn({}, B, sshReq))).toBe(false) // a new copy while the remote is not live
     const reattach = { ...sshReq, ssh: { ...SSH, reconnect: true } }
     expect(isRefused(await spawn({}, A, reattach))).toBe(false) // the reattach is not refused
     expect(live.has(A)).toBe(true)
-    // Once: the restored right was used by that spawn. What is left is a right of this run, which lapses.
     kill({}, A)
-    expect(isRefused(await spawn({}, C, sshReq))).toBe(true) // B still runs: a new copy is refused
-    kill({}, B)
-    expect(isRefused(await spawn({}, C, sshReq))).toBe(false) // a new copy: A's right of this run lapses with it
-    expect(isRefused(await spawn({}, A, reattach))).toBe(true)
+    expect(isRefused(await spawn({}, A, reattach))).toBe(false) // a right of this run, kept for the run
+    expect(isRefused(await spawn({}, C, reattach))).toBe(true) // an id that was never saved or accepted is a new copy
   })
 
   it('restored copies starting one after another keep each other\'s right (each uses its own)', async () => {
@@ -544,5 +563,53 @@ describe('R3: a forged same-id spawn that throws after the gate cannot overwrite
     await withPendingCodex({ cwd: 'C:/w', configId: 'nope', ssh: { ...SSH } })
     expect(live.has(A)).toBe(true)
     expect(isRefused(await spawn({}, B, codexReq))).toBe(true)
+  })
+
+  // Round 3 (lens A, N4c): the pending spawns of one session id were bounded by pushing the OLDEST out, so nine forged
+  // same-id spawns that throw could push a real launch's ticket out while it prepared; a second copy then got through.
+  const forgedThrows: Array<[string, Record<string, unknown>]> = [
+    ['a copy of another config', { cwd: 'C:/w', configId: 'cfgssh', ssh: { ...SSH, host: 'other-box' } }],
+    ['no saved config', { cwd: 'C:/w', configId: 'nope', ssh: { ...SSH } }],
+  ]
+  for (const [what, forged] of forgedThrows) {
+    it(`N4c: nine forged same-id spawns that throw (${what}) while a real launch prepares: a second copy is still refused`, async () => {
+      disk(savedCodex(), savedSsh())
+      let release!: () => void
+      state.prepGate = new Promise<void>((r) => { release = r })
+      const first = spawn({}, A, codexReq) // A: preparing its account
+      await Promise.resolve()
+      expect(pending.has(A)).toBe(true)
+      for (let i = 0; i < 9; i++) await expect(spawn({}, A, forged)).rejects.toThrow(/SSH spawn refused/)
+      expect(_claimedSessionCountForTest()).toBe(1) // every forged spawn forgot its own ticket on the way out
+      expect(isRefused(await spawn({}, B, codexReq))).toBe(true) // A still counts while it prepares
+      state.prepGate = null
+      release()
+      await first
+      expect(live.has(A)).toBe(true)
+      expect(live.has(B)).toBe(false)
+      expect(isRefused(await spawn({}, B, codexReq))).toBe(true)
+    })
+  }
+
+  it('a launch that was closed while it prepared leaves nothing pending, and starts nothing', async () => {
+    disk(savedCodex())
+    let release!: () => void
+    state.prepGate = new Promise<void>((r) => { release = r })
+    const first = spawn({}, A, codexReq)
+    await Promise.resolve()
+    expect(_claimedSessionCountForTest()).toBe(1)
+    kill({}, A) // closed while it prepared
+    state.prepGate = null
+    release()
+    await expect(first).resolves.toMatchObject({ started: false })
+    expect(live.has(A)).toBe(false)
+    expect(_claimedSessionCountForTest()).toBe(0) // the early return forgot its ticket
+    expect(isRefused(await spawn({}, B, codexReq))).toBe(false)
+  })
+
+  it('a spawn that throws after the gate forgets its ticket: nothing is left pending', async () => {
+    disk(savedSsh())
+    await expect(spawn({}, A, { cwd: 'C:/w', configId: 'cfgssh', ssh: { ...SSH, host: 'other-box' } })).rejects.toThrow(/SSH spawn refused/)
+    expect(_claimedSessionCountForTest()).toBe(0)
   })
 })
