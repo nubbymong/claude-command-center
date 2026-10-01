@@ -490,18 +490,22 @@ function savedConfigLoggingOff(configs: unknown, configId: string | undefined, p
 }
 
 /**
- * P3.12 (X1): the local Codex sessions running while not indexed (logging off
- * in Settings or in their config, or before the notice naming Codex was
- * seen). Every conversation such a session is on is marked written while not
- * indexed (indexing-gaps.ts), so no later run, from any tab, indexes what was
- * written then. Cleared when a launch of the session begins.
+ * P3.12 (X1, Z1): the local Codex sessions running while not indexed (logging
+ * off in Settings or in their config, or before the notice naming Codex was
+ * seen), each with the moment it became not indexed (its launch, or the
+ * switch-off). Every conversation such a session is on is marked written while
+ * not indexed (indexing-gaps.ts) from that moment, not from its claim of the
+ * conversation (Codex writes the first records before the claim), so no later
+ * run, from any tab, indexes what was written then. Cleared when a launch of
+ * the session begins.
  */
-const notIndexedCodexSessions = new Set<string>()
+const notIndexedCodexSessions = new Map<string, number>()
 
-function markCodexSessionNotIndexed(sessionId: string, now: number): void {
-  notIndexedCodexSessions.add(sessionId)
+/** `since`: the moment the session became not indexed; `now`: this moment. */
+function markCodexSessionNotIndexed(sessionId: string, since: number, now: number = since): void {
+  notIndexedCodexSessions.set(sessionId, since)
   const held = codexContextRollouts.get(sessionId)
-  if (held) { try { openNotIndexedWindow(sessionId, held.path, now) } catch { /* best-effort */ } }
+  if (held) { try { openNotIndexedWindow(sessionId, held.path, since, now) } catch { /* best-effort */ } }
 }
 
 /** P3.12 (Y1): the session no longer holds a conversation while not indexed
@@ -1901,6 +1905,9 @@ function spawnPtyResolved(
   const rows = options?.rows || 30
 
   let ptyProcess: pty.IPty
+  // P3.12 round 6 (Z1): when this launch's Codex process was started (taken before
+  // its spawn): the moment the session became not indexed, when it launched so.
+  let codexLaunchedAt: number | undefined
 
   // Hoisted to function scope so the shared post-spawn tail (session-log capture)
   // can read them for EVERY branch (ssh / codex / claude / shell-only). They were
@@ -4711,6 +4718,7 @@ function spawnPtyResolved(
       for (const k of Object.keys(spawnEnv)) if (k.toUpperCase() === 'CCC_SESSION_WORKTREE') delete (spawnEnv as Record<string, string>)[k]
       // Capture timestamp before spawn so the watch-and-claim window starts no later than PTY launch.
       const codexSpawnTimestamp = Date.now()
+      codexLaunchedAt = codexSpawnTimestamp
       // The lease is this session's from here: the killPty above has already
       // released the previous spawn's (or will, once its process has ended).
       codexLaunchLeases.set(sessionId, launch.lease)
@@ -4790,9 +4798,11 @@ function spawnPtyResolved(
           // its GitHub Session Context read the conversation from this alone.
           onRollout: (rollout) => {
             noteCodexContextRollout(sessionId, rollout)
-            // P3.12 (X1): a conversation a session not indexed is on.
-            if (notIndexedCodexSessions.has(sessionId)) {
-              if (rollout) { try { openNotIndexedWindow(sessionId, rollout.path, Date.now()) } catch { /* best-effort */ } }
+            // P3.12 (X1, Z1): a conversation a session not indexed is on: its
+            // window opens when the session became not indexed, not now.
+            const notIndexedSince = notIndexedCodexSessions.get(sessionId)
+            if (notIndexedSince !== undefined) {
+              if (rollout) { try { openNotIndexedWindow(sessionId, rollout.path, notIndexedSince, Date.now()) } catch { /* best-effort */ } }
               else endCodexSessionNotIndexed(sessionId, Date.now())
             }
             getCodexLogBinder()?.noteRollout(sessionId, rollout)
@@ -5615,7 +5625,7 @@ function spawnPtyResolved(
     try { getLogSupervisor()?.runEnd(sessionId, Date.now(), 'exited') } catch { /* best-effort */ }
     // P3.12 (X1, X3): a local Codex session running not indexed marks the
     // conversations it is on.
-    if (codexRunProvider) markCodexSessionNotIndexed(sessionId, Date.now())
+    if (codexRunProvider) markCodexSessionNotIndexed(sessionId, codexLaunchedAt ?? Date.now(), Date.now())
   }
   logSup?.runStart({
     sessionId,

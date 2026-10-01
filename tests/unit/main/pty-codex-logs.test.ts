@@ -7,7 +7,7 @@
 // handed to the Codex log binder: held until the run is recorded, bound with the
 // Codex format, let go when the claim is. The run ends at exit. The GitHub
 // Session Context reads the rollout the session's watcher holds.
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as os from 'os'
 import * as path from 'path'
 
@@ -21,6 +21,8 @@ const h = vi.hoisted(() => ({
   // The watcher's report made at once, inside ingestSessionTelemetry (a resume
   // claims synchronously), before pty-manager records the run.
   claimAtStart: null as null | { path: string; sessionsDir: string; exact: boolean; shared: boolean; identity?: string },
+  // Run inside ingestSessionTelemetry, before that claim: time passing during a launch.
+  duringStart: null as null | (() => void),
   settings: {} as { loggingEnabled?: boolean; loggingConsentSeen?: boolean; loggingConsentVersion?: number },
   configs: [] as unknown[],
   // What reached the log supervisor and Claude's binder, in order.
@@ -83,6 +85,7 @@ vi.mock('../../../src/main/providers', () => ({
     ingestSessionTelemetry: (sid: string, opts: Record<string, any>) => {
       const src = { sid, opts, stop: vi.fn(), noteExactRollout: vi.fn(() => null), refuteInferredClaim: vi.fn(() => false) }
       h.sources.push(src)
+      h.duringStart?.()
       if (h.claimAtStart) opts.onRollout?.(h.claimAtStart)
       return src
     },
@@ -177,7 +180,7 @@ const written: string[][] = []
 beforeEach(() => {
   for (const sid of [SID, CLAUDE_SID, CTX]) { try { killPty(sid) } catch { /* none */ } }
   exitAll()
-  h.ptys = []; h.built = []; h.sources = []; h.claimAtStart = null; h.settings = { ...CONSENT }; h.configs = []; h.sup = []; h.claudeBinder = []
+  h.ptys = []; h.built = []; h.sources = []; h.claimAtStart = null; h.duringStart = null; h.settings = { ...CONSENT }; h.configs = []; h.sup = []; h.claudeBinder = []
   names.clear(); written.length = 0
   resetIndexingGapsForTests()
   setCodexLogBinder(makeCodexLogBinder({
@@ -440,5 +443,61 @@ describe('P3.12 round 2: the switches at every launch (W3), the stretches not in
     spawnPty(fakeWin, CLAUDE_SID, { cwd: os.tmpdir(), provider: 'claude' } as never)
     expect(kindsOf(SID).filter((k) => k === 'runStart')).toEqual([])
     expect(kindsOf(CLAUDE_SID).filter((k) => k === 'runStart')).toEqual(['runStart'])
+  })
+})
+
+describe('P3.12 round 6 (Z1): a window opens when the session became not indexed, not at its claim', () => {
+  // Codex writes a conversation's session_meta and first prompt before the
+  // session's watcher claims it, so a window opened at the claim would leave
+  // those records outside it for a later reader from the start.
+  const T0 = Date.parse('2026-09-30T10:00:00.000Z')
+  // One session id per test: the rollout a session held is kept after it ends.
+  const used: string[] = []
+  let next = 20
+  const fresh = () => { const sid = `cx${'0'.repeat(20)}${next++}`; used.push(sid); return sid }
+  const clock = (ms: number) => vi.setSystemTime(T0 + ms)
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); clock(0) })
+  afterEach(() => { for (const sid of used.splice(0)) { try { killPty(sid) } catch { /* gone */ } } vi.useRealTimers() })
+
+  it('a launch not indexed: the window opens at the launch, though the launch takes time and the claim comes seconds later', () => {
+    const S = fresh()
+    h.settings = { ...CONSENT, loggingEnabled: false }
+    h.duringStart = () => clock(1500)
+    start(S)
+    clock(4000)
+    ;(source(S).opts.onRollout as (r: unknown) => void)({ ...report(ID_A, true), identity: '7:1' })
+    expect(windowsOf(ID_A)).toEqual([[T0, null]])
+  })
+
+  it('a resume claimed during the launch: the window opens at the launch, not when the launch finished', () => {
+    const S = fresh()
+    h.settings = { ...CONSENT, loggingEnabled: false }
+    h.duringStart = () => clock(2500)
+    h.claimAtStart = { ...report(ID_A, true), identity: '7:1' }
+    start(S)
+    expect(windowsOf(ID_A)).toEqual([[T0, null]])
+  })
+
+  it('switched off before any claim: the window opens at the switch-off, though the claim comes later', () => {
+    const S = fresh()
+    start(S)
+    clock(3000)
+    h.settings = { ...CONSENT, loggingEnabled: false }
+    applyLoggingSwitches()
+    clock(9000)
+    ;(source(S).opts.onRollout as (r: unknown) => void)({ ...report(ID_A, true), identity: '7:1' })
+    expect(windowsOf(ID_A)).toEqual([[T0 + 3000, null]])
+  })
+
+  it('a later claim of another conversation closes the first at that claim and opens the next at the same moment the session became not indexed', () => {
+    const S = fresh()
+    h.settings = { ...CONSENT, loggingEnabled: false }
+    start(S)
+    clock(1000)
+    ;(source(S).opts.onRollout as (r: unknown) => void)({ ...report(ID_A, true), identity: '7:1' })
+    clock(7000)
+    ;(source(S).opts.onRollout as (r: unknown) => void)({ ...report(ID_B, true), identity: '7:2' })
+    expect(windowsOf(ID_A)).toEqual([[T0, T0 + 7000]])
+    expect(windowsOf(ID_B)).toEqual([[T0, null]])
   })
 })

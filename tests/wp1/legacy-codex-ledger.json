@@ -806,7 +806,7 @@
       ],
       "category": "TELEMETRY",
       "disposition": "added",
-      "evidence": "new WP2 PR 3 P3.12 (rows 31, 32, 65; the fixes from the reviews and the VM checks) module (src/main/logging/indexing-gaps.ts): per Codex conversation (rollout id), the wall-clock windows during which a session not indexed held it, kept in the app data folder (a new window at once, the rest coalesced, atomic, closed at quit or at the next start); a damaged or full record fails toward not indexing; every read skips the records stamped inside (WP1.68); tests/unit/logging/indexing-gaps.test.ts, tests/unit/main/pty-codex-logs.test.ts, tests/unit/logging/codex-logs-worker.test.ts",
+      "evidence": "new WP2 PR 3 P3.12 (rows 31, 32, 65; the fixes from the reviews and the VM checks) module (src/main/logging/indexing-gaps.ts): per Codex conversation (rollout id), the wall-clock windows during which a session not indexed held it, kept in the app data folder (a window opens when the session became not indexed, not at its claim, and no earlier than the conversation began; a new window written at once, the rest coalesced, atomic; a window still open at quit stays open and closes at the next start); a damaged or full record fails toward not indexing; every read skips the records stamped inside (WP1.68); tests/unit/logging/indexing-gaps.test.ts, tests/unit/main/pty-codex-logs.test.ts, tests/unit/logging/codex-logs-worker.test.ts",
       "note": "created by WP2 PR 3 P3.12 (fixes)"
     },
     {
@@ -4399,7 +4399,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "new WP2 PR 3 P3.12 (rows 31, 32, 65; the fixes from the reviews and the VM checks) test (tests/unit/logging/indexing-gaps.test.ts): the Codex conversations written while not indexed, by rollout id, cleared once bound; a damaged or full record fails toward not indexing; written coalesced and at quit (WP1.68)",
+      "evidence": "new WP2 PR 3 P3.12 (rows 31, 32, 65; the fixes from the reviews and the VM checks) test (tests/unit/logging/indexing-gaps.test.ts): the Codex conversations written while not indexed, by rollout id: windows opened when the session became not indexed and never cleared; a damaged or full record fails toward not indexing; written coalesced, and left open at quit (WP1.68)",
       "note": "created by WP2 PR 3 P3.12 (fixes)"
     },
     {

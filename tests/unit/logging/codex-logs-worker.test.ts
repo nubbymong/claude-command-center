@@ -21,6 +21,13 @@ interface Tr { id: number; runId: number; path: string; ord: number; status: str
 interface Msg { runId: number; idx: number; ts: number; role: string; kind: string; content: string; toolName?: string; toolMeta?: string }
 
 const fake = vi.hoisted(() => ({ runs: [] as Run[], trs: [] as Tr[], msgs: [] as Msg[], next: 1 }))
+// How many times a conversation key is worked out (round 6, Z4).
+const keyWork = vi.hoisted(() => ({ calls: 0 }))
+
+vi.mock('../../../src/shared/codex-conversation-key', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/shared/codex-conversation-key')>()
+  return { ...actual, codexConversationKey: (p: string) => { keyWork.calls++; return actual.codexConversationKey(p) } }
+})
 
 vi.mock('../../../src/main/logging/transcripts-db', () => ({
   openTranscriptsDb: () => {
@@ -74,6 +81,7 @@ vi.mock('../../../src/main/logging/transcripts-db', () => ({
 }))
 
 const { createTranscriptsWorker } = await import('../../../src/main/logging/transcripts-worker')
+const { openNotIndexedWindow, closeNotIndexedWindow, setNotIndexedListener, notIndexedSnapshot, resetIndexingGapsForTests } = await import('../../../src/main/logging/indexing-gaps')
 const { FakeTranscriptsWorkerTransport } = await import('../../../src/main/logging/log-worker-transport')
 const { CODEX_PARSER_VERSION } = await import('../../../src/main/logging/codex-rollout-normalizer')
 const { PARSER_VERSION } = await import('../../../src/main/logging/transcript-normalizer')
@@ -109,6 +117,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   for (const w of workers.splice(0)) w.stop()
+  resetIndexingGapsForTests()
   // Only the folder this test made, by its own prefix, in the folder it was made in.
   if (basename(dir).startsWith('ccc-p312-worker-') && dirname(dir) === tmpdir()) rmSync(dir, { recursive: true, force: true })
 })
@@ -677,5 +686,80 @@ describe('the transcripts worker and a Codex rollout (P3.12, row 31)', () => {
     send({ type: 'not-indexed-windows', conversations: {}, before: null, replace: true } as unknown as In)
     send(bindNI('s1', g)); w.tickNow()
     expect(words5(fake.runs[0].runId)).toContain('IN-DROPPED-WINDOW')
+  })
+
+  // ---- round 6: a window opens when the session became not indexed (Z1); a time has a zone (Z3); the key once (Z4) ----
+
+  const metaStamped = (id: string, ms: number) => JSON.stringify({ timestamp: at5(ms), type: 'session_meta', payload: { id, cwd: '/w' } }) + '\n'
+  /** A user turn stamped with a text as given (not a time made here). */
+  const saidAs = (text: string, timestamp: string) => JSON.stringify({ timestamp, type: 'event_msg', payload: { type: 'item_completed', item: { type: 'UserMessage', id: 'u', content: [{ type: 'text', text }] } } }) + '\n'
+  /** A time as a text with no zone designator (the machine's local time), which Date.parse reads as local time. */
+  const localIso = (ms: number) => {
+    const d = new Date(ms)
+    const p = (n: number, w = 2) => String(n).padStart(w, '0')
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`
+  }
+  /** Main's real record of the windows, told to the worker at each change (as the logging service does). */
+  const wire = (send: (m: In) => void) => {
+    resetIndexingGapsForTests()
+    setNotIndexedListener((u) => send({ type: 'not-indexed-windows', ...u } as unknown as In))
+  }
+
+  it('Z1: Codex writes a conversation\'s session_meta and first prompt before the claim: a later reader from the start leaves them out, and what follows the window is kept', () => {
+    const { w, send } = boot()
+    wire(send)
+    const f = file(20)
+    // The session was launched not indexed at -300; Codex wrote these before the claim at 2000.
+    writeFileSync(f, metaStamped(conv(20), 0) + said('FIRST-PROMPT', 1000) + said('FIRST-REPLY', 1500))
+    openNotIndexedWindow('S', f, BASE - 300, BASE + 2000)
+    expect(notIndexedSnapshot().conversations[conv(20)]).toEqual([[BASE, null]])
+    closeNotIndexedWindow('S', BASE + 4000)
+    appendFileSync(f, said('LATER', 5000))
+    send(runStart('T', BASE + 6000)); send(bindNI('T', f)); w.tickNow()
+    expect(shown5(fake.runs[0].runId)).toEqual(['-- off --', 'LATER'])
+  })
+
+  it('Z1: a resumed conversation keeps the turns it had indexed: its window opens when the session became not indexed, after them', () => {
+    const { w, send } = boot()
+    wire(send)
+    const f = file(21)
+    writeFileSync(f, metaStamped(conv(21), -86_400_000) + said('EARLIER-INDEXED', -86_000_000) + said('RESUME-PROMPT', 1000) + said('RESUME-REPLY', 1500))
+    openNotIndexedWindow('S', f, BASE + 500, BASE + 2000)
+    expect(notIndexedSnapshot().conversations[conv(21)]).toEqual([[BASE + 500, null]])
+    closeNotIndexedWindow('S', BASE + 4000)
+    appendFileSync(f, said('LATER', 5000))
+    send(runStart('T', BASE + 6000)); send(bindNI('T', f)); w.tickNow()
+    expect(shown5(fake.runs[0].runId)).toEqual(['EARLIER-INDEXED', '-- off --', 'LATER'])
+  })
+
+  it('Z3: a timestamp with no zone designator is no time: the record takes the one before it in the read, or is left out when there is none', () => {
+    const { w, send } = boot()
+    const f = file(22)
+    // The window is 2000 to 4000; the stamp reads, as local time, 3000: inside, were it taken for a time.
+    writeFileSync(f, meta5(conv(22)) + said('ON-1', 1000) + saidAs('ZONELESS-AFTER-ON', localIso(BASE + 3000)) + said('ON-2', 5000))
+    send(windowsFor(22, [[2000, 4000]]))
+    send(runStart('s1', BASE + 500)); send(bindNI('s1', f)); w.tickNow()
+    expect(words5(fake.runs[0].runId)).toEqual(['ON-1', 'ZONELESS-AFTER-ON', 'ON-2'])
+    // With no time before it in the read, it is left out (read as local time it would be 9000, after the window).
+    const g = file(23)
+    writeFileSync(g, saidAs('ZONELESS-FIRST', localIso(BASE + 9000)) + said('ON-X', 5000))
+    send(windowsFor(23, [[2000, 4000]]))
+    send(bindNI('s1', g)); w.tickNow()
+    expect(words5(fake.runs[0].runId)).not.toContain('ZONELESS-FIRST')
+    expect(words5(fake.runs[0].runId).slice(-1)).toEqual(['ON-X'])
+  })
+
+  it('Z4: a tail works its conversation key out once, not for every record it reads', () => {
+    const { w, send } = boot()
+    const f = file(24)
+    let body = meta5(conv(24))
+    for (let i = 0; i < 40; i++) body += said(`T-${i}`, 100 + i)
+    writeFileSync(f, body)
+    send(windowsFor(24, [[50_000, null]]))
+    keyWork.calls = 0
+    send(runStart('s1', BASE + 500)); send(bindNI('s1', f)); w.tickNow()
+    expect(words5(fake.runs[0].runId)).toHaveLength(40)
+    expect(keyWork.calls).toBeGreaterThan(0)
+    expect(keyWork.calls).toBeLessThan(5)
   })
 })

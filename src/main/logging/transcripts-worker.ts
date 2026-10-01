@@ -449,12 +449,14 @@ export function createTranscriptsWorker(
       startTs: db!.lastMessageTs(meta.runId) ?? 0,
     }
     const codex = sourceFormat === 'codex-rollout'
+    // P3.12 round 6 (Z4): the conversation's key, worked out once for this tail.
+    const conversation = codex ? codexConversationKey(meta.path) : ''
     tails.set(meta.transcriptId, {
       ...state,
       // P3.12 (Y1): a Codex tail leaves out the records written while its
       // conversation was not indexed, by record time, whatever its offset.
       normalizer: codex
-        ? makeCodexRolloutNormalizer({ ...seed, skip: (ts) => notIndexedAt(codexConversationKey(meta.path), ts), skippedLabel: NOT_INDEXED_DIVIDER })
+        ? makeCodexRolloutNormalizer({ ...seed, skip: (ts) => notIndexedAt(conversation, ts), skippedLabel: NOT_INDEXED_DIVIDER })
         : makeNormalizer(seed),
       ...(codex && identity ? { identity } : {}),
       // P3.12 (X4): a Codex tail from the file's start reads it all; one that

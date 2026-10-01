@@ -1069,7 +1069,9 @@ if (!gotTheLock) {
     // #397 Group 2: persist sessions BEFORE the logging teardown below tears the
     // transcript binder down — flushing after that would lose the resume targets.
     sessionDurability.flushOnExit('before-quit')
-    // P3.12 (X3): the conversations written while not indexed, written now.
+    // P3.12 (X3, Z2): the conversations written while not indexed, written now;
+    // a window still open stays open (Codex's last records land after the
+    // quit), and the next start closes it.
     try { flushIndexingGaps() } catch { /* best-effort */ }
     // S5: mark the supervisor shutting-down BEFORE killAllPty() so a hooks-child
     // exit during teardown does NOT trigger a restart (race-free shutdown).
