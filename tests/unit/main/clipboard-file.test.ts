@@ -15,20 +15,38 @@ describe('parseFileUrl (macOS public.file-url)', () => {
   })
 })
 
+// A real-shaped DROPFILES, as Explorer puts it on the clipboard (shlobj_core.h):
+// pFiles (4 bytes, offset 0), pt (two 4-byte coordinates, offset 4), fNC (4 bytes,
+// offset 12) and fWide (4 bytes, offset 16): 20 bytes, then the path list.
+function dropfiles(list: string, opts: { wide: boolean; fNC?: number }): Buffer {
+  const header = Buffer.alloc(20)
+  header.writeUInt32LE(20, 0)
+  header.writeInt32LE(0, 4)
+  header.writeInt32LE(0, 8)
+  header.writeUInt32LE(opts.fNC ?? 0, 12)
+  header.writeUInt32LE(opts.wide ? 1 : 0, 16)
+  return Buffer.concat([header, Buffer.from(list, opts.wide ? 'ucs2' : 'latin1')])
+}
+
 describe('parseHdropBuffer (Windows CF_HDROP)', () => {
   it('reads a single wide (UTF-16LE) path from a DROPFILES buffer', () => {
-    const header = Buffer.alloc(20)
-    header.writeUInt32LE(20, 0) // pFiles offset
-    header.writeUInt8(1, 13)    // fWide = 1
-    const body = Buffer.from('C:\\pics\\a.png' + '\0\0', 'ucs2')
-    expect(parseHdropBuffer(Buffer.concat([header, body]))).toEqual(['C:\\pics\\a.png'])
+    expect(parseHdropBuffer(dropfiles('C:\\pics\\a.png' + '\0\0', { wide: true }))).toEqual(['C:\\pics\\a.png'])
   })
   it('reads multiple null-separated paths', () => {
-    const header = Buffer.alloc(20)
-    header.writeUInt32LE(20, 0)
-    header.writeUInt8(1, 13)
-    const body = Buffer.from('C:\\a.png\0C:\\b.jpg\0\0', 'ucs2')
-    expect(parseHdropBuffer(Buffer.concat([header, body]))).toEqual(['C:\\a.png', 'C:\\b.jpg'])
+    expect(parseHdropBuffer(dropfiles('C:\\a.png\0C:\\b.jpg\0\0', { wide: true }))).toEqual(['C:\\a.png', 'C:\\b.jpg'])
+  })
+  it('reads a wide path with spaces and non-Latin letters whole, not as 8-bit junk', () => {
+    const path = 'C:\\Users\\me\\My Pictures\\caf\u00e9 \u65e5\u672c.png'
+    expect(parseHdropBuffer(dropfiles(path + '\0\0', { wide: true }))).toEqual([path])
+  })
+  it('reads fWide at offset 16: a set fNC (offset 12, whose second byte is offset 13) does not make a narrow list wide', () => {
+    // fNC = 0x100 puts a 1 at byte 13, the byte the parser used to read.
+    expect(parseHdropBuffer(dropfiles('C:\\pics\\a.png\0\0', { wide: false, fNC: 0x100 }))).toEqual(['C:\\pics\\a.png'])
+    // And a wide list with fNC set is still wide.
+    expect(parseHdropBuffer(dropfiles('C:\\pics\\a.png\0\0', { wide: true, fNC: 0x100 }))).toEqual(['C:\\pics\\a.png'])
+  })
+  it('reads a narrow (fWide 0) list as 8-bit text', () => {
+    expect(parseHdropBuffer(dropfiles('C:\\pics\\a.png\0C:\\pics\\b.png\0\0', { wide: false }))).toEqual(['C:\\pics\\a.png', 'C:\\pics\\b.png'])
   })
   it('returns [] for a too-short buffer', () => {
     expect(parseHdropBuffer(Buffer.alloc(4))).toEqual([])

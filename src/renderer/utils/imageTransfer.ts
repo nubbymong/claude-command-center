@@ -1,4 +1,5 @@
 import { writeSessionInput } from '../components/terminal/tmuxWheelScroll'
+import { quoteArgForShell } from '../../shared/shell-quote'
 /**
  * Image transfer helper — gets a host-saved image into a Claude session.
  *
@@ -76,6 +77,24 @@ export function sendImageToSession(
     : composeFetchHostScreenshotPrompt(basename(hostFilePath), userContext)
   // Trailing \r submits the prompt to Claude
   writeSessionInput(sessionId, prompt + '\r')
+}
+
+/**
+ * The text Alt+V puts into a PLAIN terminal (a shell with no assistant): the
+ * image's path, quoted for the shell it runs (PowerShell on Windows, a POSIX
+ * shell elsewhere: shared/shell-quote.ts), and nothing else. A shell reads no
+ * images, so the sentence an assistant is told would be typed into it as a
+ * command, and an Enter would run it; a shell user wants the path at the cursor
+ * to use in a command of their own.
+ */
+export function composeShellImagePath(hostFilePath: string, isWin32: boolean): string {
+  return quoteArgForShell(hostFilePath, isWin32)
+}
+
+/** Type the quoted path of a host-saved image at a plain terminal's prompt:
+ *  not submitted (no Enter). */
+export function typeImagePathIntoShell(sessionId: string, hostFilePath: string, isWin32: boolean): void {
+  writeSessionInput(sessionId, composeShellImagePath(hostFilePath, isWin32))
 }
 
 /**
