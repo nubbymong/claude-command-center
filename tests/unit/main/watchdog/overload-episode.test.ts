@@ -63,6 +63,11 @@ const CLAUDE: Cli = {
   }),
 }
 
+// P3.16 (M2): Claude Code with a one-line answer. The error the retry answered
+// stays two rows above it, inside the 12-row tail; only the rows below the
+// newest user message are the current turn (Codex's currentTurn rule).
+const CLAUDE_SHORT: Cli = { ...CLAUDE, name: 'Claude Code (one-line answers)', answer: (i) => [`${ch(0x25cf)} Done, step ${i}.`] }
+
 interface Run {
   /** Seconds from the start at which each retry was typed. */
   sends: number[]
@@ -119,7 +124,7 @@ function openings(r: Run): Array<{ at: number; wait: number; again: boolean }> {
     .map((s) => ({ at: s.at, wait: Math.round(((s.waitUntil as number) - (Date.UTC(2026, 8, 30, 3, 0, 0) + s.at * 1000)) / 1000), again: /again/.test(s.lastAction ?? '') }))
 }
 
-for (const cli of [CODEX, CLAUDE]) {
+for (const cli of [CODEX, CLAUDE, CLAUDE_SHORT]) {
   describe(`${cli.name}: an overload episode lasts until the session is quiet (P3.10 round 3, F2)`, () => {
     it('a persistent outage backs off (30, 60, 120, 240, then 300 s) and gives up at the cap', () => {
       const r = simulate(cli, { seconds: 4 * 3600, down: () => true })
@@ -195,7 +200,7 @@ function manual(cli: Cli, rand: () => number = () => 0.5) {
   }
 }
 
-for (const cli of [CODEX, CLAUDE]) {
+for (const cli of [CODEX, CLAUDE, CLAUDE_SHORT]) {
   describe(`${cli.name}: the overload episode, step by step (P3.10 round 4)`, () => {
     it('P4: the recovering frame is the last output for hours: the next error starts a fresh episode', () => {
       const m = manual(cli)
@@ -239,3 +244,24 @@ for (const cli of [CODEX, CLAUDE]) {
     })
   })
 }
+
+describe('Claude Code: an error above a newer user message is an earlier turn\'s (P3.16, M2)', () => {
+  it('one overload and a retry answered in one line: one retry in an hour, as Codex', () => {
+    for (const cli of [CODEX, CLAUDE_SHORT]) {
+      const r = simulate(cli, { seconds: 3600, down: (s) => s < 30 })
+      expect(r.sends.length, cli.name).toBe(1)
+      expect(r.gaveUp, cli.name).toBe(false)
+      expect(r.states.at(-1)?.status, cli.name).toBe('monitoring')
+    }
+  })
+
+  it('a new error below the newest user message is live again', () => {
+    const m = manual(CLAUDE_SHORT)
+    m.set([...CLAUDE_SHORT.user('task'), ...CLAUDE_SHORT.error, ...CLAUDE_SHORT.user('continue'), ...CLAUDE_SHORT.answer(1)])
+    m.wd.feed()
+    expect(m.wd.getState().status).toBe('monitoring')
+    m.set([...m.settled(), ...CLAUDE_SHORT.user('next step'), ...CLAUDE_SHORT.error])
+    m.wd.feed()
+    expect(m.wd.getState().status).toBe('overload')
+  })
+})
