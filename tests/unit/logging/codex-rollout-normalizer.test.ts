@@ -17,7 +17,6 @@ import { resolve } from 'node:path'
 import {
   makeCodexRolloutNormalizer,
   readCodexRolloutLine,
-  readCodexSessionStart,
   CODEX_PARSER_VERSION,
 } from '../../../src/main/logging/codex-rollout-normalizer'
 import type { NewMessage } from '../../../src/main/logging/transcripts-db'
@@ -283,18 +282,5 @@ describe('the Codex rollout normalizer: a record\'s time (P3.12 round 6, Z3)', (
     const rows = [stamped('2026-09-30T10:00:00.000Z'), stamped('2026-09-30T11:30:00'), stamped('2026-09-30T10:00:05.000Z')].flatMap((l) => n.push(l))
     expect(seen).toEqual([Date.UTC(2026, 8, 30, 10, 0, 0), Date.UTC(2026, 8, 30, 10, 0, 0), Date.UTC(2026, 8, 30, 10, 0, 5)])
     expect(rows.map((r) => r.ts)).toEqual([Date.UTC(2026, 8, 30, 10, 0, 0), Date.UTC(2026, 8, 30, 10, 0, 0), Date.UTC(2026, 8, 30, 10, 0, 5)])
-  })
-})
-
-describe('the Codex rollout normalizer: when a rollout began (P3.12 round 6, Z1)', () => {
-  it('the time of a session_meta record with a zoned stamp; nothing for any other record, a stamp with no zone or an unreadable line', () => {
-    const rec = (type: string, timestamp: unknown) => L({ timestamp, type, payload: { id: 'i' } })
-    expect(readCodexSessionStart(rec('session_meta', '2026-09-30T10:00:00.500Z'))).toBe(Date.UTC(2026, 8, 30, 10, 0, 0, 500))
-    expect(readCodexSessionStart(rec('turn_context', '2026-09-30T10:00:00.500Z'))).toBeNull()
-    expect(readCodexSessionStart(rec('session_meta', '2026-09-30T10:00:00'))).toBeNull()
-    expect(readCodexSessionStart(L({ type: 'session_meta', payload: {} }))).toBeNull()
-    expect(readCodexSessionStart('{bad')).toBeNull()
-    expect(readCodexSessionStart('[]')).toBeNull()
-    expect(readCodexSessionStart('')).toBeNull()
   })
 })

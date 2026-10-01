@@ -81,7 +81,7 @@ vi.mock('../../../src/main/logging/transcripts-db', () => ({
 }))
 
 const { createTranscriptsWorker } = await import('../../../src/main/logging/transcripts-worker')
-const { openNotIndexedWindow, closeNotIndexedWindow, setNotIndexedListener, notIndexedSnapshot, resetIndexingGapsForTests } = await import('../../../src/main/logging/indexing-gaps')
+const { openNotIndexedWindow, closeNotIndexedWindow, releaseNotIndexedWindow, setNotIndexedListener, notIndexedSnapshot, resetIndexingGapsForTests } = await import('../../../src/main/logging/indexing-gaps')
 const { FakeTranscriptsWorkerTransport } = await import('../../../src/main/logging/log-worker-transport')
 const { CODEX_PARSER_VERSION } = await import('../../../src/main/logging/codex-rollout-normalizer')
 const { PARSER_VERSION } = await import('../../../src/main/logging/transcript-normalizer')
@@ -712,7 +712,7 @@ describe('the transcripts worker and a Codex rollout (P3.12, row 31)', () => {
     // The session was launched not indexed at -300; Codex wrote these before the claim at 2000.
     writeFileSync(f, metaStamped(conv(20), 0) + said('FIRST-PROMPT', 1000) + said('FIRST-REPLY', 1500))
     openNotIndexedWindow('S', f, BASE - 300, BASE + 2000)
-    expect(notIndexedSnapshot().conversations[conv(20)]).toEqual([[BASE, null]])
+    expect(notIndexedSnapshot().conversations[conv(20)]).toEqual([[BASE - 300, null]])
     closeNotIndexedWindow('S', BASE + 4000)
     appendFileSync(f, said('LATER', 5000))
     send(runStart('T', BASE + 6000)); send(bindNI('T', f)); w.tickNow()
@@ -761,5 +761,20 @@ describe('the transcripts worker and a Codex rollout (P3.12, row 31)', () => {
     expect(words5(fake.runs[0].runId)).toHaveLength(40)
     expect(keyWork.calls).toBeGreaterThan(0)
     expect(keyWork.calls).toBeLessThan(5)
+  })
+
+  it('K1: what a killed Codex writes after the kill and before its exit is reported is left out for a reader from the start (a Switch copy, a Restart); what follows the reported exit is read', () => {
+    const { w, send } = boot()
+    wire(send)
+    const f = file(25)
+    writeFileSync(f, meta5(conv(25)) + said('BEFORE', 100) + said('ON-1', 1000))
+    openNotIndexedWindow('S', f, BASE + 500, BASE + 600)
+    // The tab is closed: the session lets go, the window stays open until the process has ended.
+    const closeWindow = releaseNotIndexedWindow('S')!
+    appendFileSync(f, said('WIND-DOWN', 3000))
+    closeWindow(BASE + 4000)
+    appendFileSync(f, said('LATER', 5000))
+    send(runStart('T', BASE + 6000)); send(bindNI('T', f)); w.tickNow()
+    expect(shown5(fake.runs[0].runId)).toEqual(['BEFORE', '-- off --', 'LATER'])
   })
 })

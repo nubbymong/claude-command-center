@@ -468,7 +468,9 @@ if (!gotTheLock) {
     // can end the app without the window-close flow running. Persist sessions first.
     powerMonitor.on('shutdown', () => {
       sessionDurability.flushOnExit('powerMonitor shutdown')
-      try { flushIndexingGaps() } catch { /* best-effort */ }
+      // P3.12 (K3): write only; this shutdown can be vetoed and the app run on,
+      // so it does not latch the windows open (quit and SIGTERM do).
+      try { flushIndexingGaps({ final: false }) } catch { /* best-effort */ }
     })
     powerMonitor.on('suspend', () => sessionDurability.flushOnExit('powerMonitor suspend'))
     // Only SIGTERM. SIGINT is intentionally LEFT to Node's default so a console

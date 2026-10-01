@@ -252,23 +252,10 @@ const ZONED_TIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?
  * the machine's local time, which is not the clock the windows are kept in,
  * so such a record takes the time of the one before it (or is left out).
  */
-export function parseRolloutTime(value: unknown): number | null {
+function parseRolloutTime(value: unknown): number | null {
   if (typeof value !== 'string' || !ZONED_TIME_RE.test(value)) return null
   const at = Date.parse(value)
   return Number.isFinite(at) ? at : null
-}
-
-/**
- * P3.12 round 6 (Z1): when a rollout began, from its first line: the time of
- * a session_meta record; null for any other record, a stamp with no zone, or
- * a line that is not a JSON object. Never throws.
- */
-export function readCodexSessionStart(line: string): number | null {
-  if (typeof line !== 'string') return null
-  let rec: unknown
-  try { rec = JSON.parse(line) } catch { return null }
-  if (!isObject(rec) || rec.type !== 'session_meta') return null
-  return parseRolloutTime(rec.timestamp)
 }
 
 /**

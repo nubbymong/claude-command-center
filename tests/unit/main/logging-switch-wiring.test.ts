@@ -69,6 +69,10 @@ describe('the logging switches reach running sessions (P3.12 round 1, V1)', () =
     expect(loggingServiceSource).toMatch(/setNotIndexedListener\(\(update\) => sup\.notIndexedWindows\(update\)\)/)
     const quitAt = indexSource.indexOf('quitTeardown = () => {')
     expect(indexSource.slice(quitAt, quitAt + 1200)).toMatch(/try \{ flushIndexingGaps\(\) \} catch/)
+    // Round 7 (K3): an OS shutdown that may be vetoed writes without latching the quit.
+    const shutAt = indexSource.indexOf("powerMonitor.on('shutdown'")
+    expect(shutAt).toBeGreaterThan(-1)
+    expect(indexSource.slice(shutAt, shutAt + 300)).toMatch(/flushIndexingGaps\(\{ final: false \}\)/)
     const sigAt = indexSource.indexOf("process.on('SIGTERM', () => {")
     expect(indexSource.slice(sigAt, sigAt + 300)).toMatch(/flushIndexingGaps\(\)/)
   })

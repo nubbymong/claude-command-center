@@ -1,18 +1,18 @@
 /**
- * P3.12 (W4, Y1, Z1, Z2): when each Codex conversation was written while not
- * indexed, as windows per conversation (its rollout id): opened (when the
- * session became not indexed, not before the conversation began) and closed
- * per session, never cleared; kept on disk (a new window at once, the rest
- * coalesced, open windows left open at quit and closed at the next start, as
- * after a crash); a damaged or full record fails toward not indexing. Real
- * files in a fresh temp folder that only this test removes.
+ * P3.12 (W4, Y1, Z1, Z2, K1, K3): when each Codex conversation was written while
+ * not indexed, as windows per conversation (its rollout id): opened (when the
+ * session became not indexed) and closed per session (a killed session's once
+ * its process has ended), never cleared; kept on disk (a new window at once,
+ * the rest coalesced, open windows left open at a final flush and closed at the
+ * next start, as after a crash); a damaged or full record fails toward not
+ * indexing. Real files in a fresh temp folder that only this test removes.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync, symlinkSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs'
 import { join, dirname, basename } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
-  initIndexingGaps, openNotIndexedWindow, closeNotIndexedWindow, notIndexedSnapshot, setNotIndexedListener, flushIndexingGaps,
+  initIndexingGaps, openNotIndexedWindow, closeNotIndexedWindow, releaseNotIndexedWindow, notIndexedSnapshot, setNotIndexedListener, flushIndexingGaps,
   conversationKey, indexingGapsWritesForTests, resetIndexingGapsForTests, NOT_INDEXED_CONVERSATIONS_MAX, WINDOWS_PER_CONVERSATION_MAX,
   type NotIndexedUpdate,
 } from '../../../src/main/logging/indexing-gaps'
@@ -99,60 +99,14 @@ describe('when Codex conversations were written while not indexed (P3.12)', () =
 
   // ---- round 6 (Z1): a window opens when the session became not indexed ----
 
-  /** A rollout file whose first record is a session_meta stamped `at` (a string as Codex writes it). */
-  const rolloutFile = (id: string, first: string) => {
-    const f = join(dir, `rollout-2026-09-30T10-00-00-${id}.jsonl`)
-    writeFileSync(f, first + '\n' + JSON.stringify({ timestamp: new Date().toISOString(), type: 'event_msg', payload: { type: 'agent_message', message: 'x' } }) + '\n')
-    return f
-  }
-  const meta = (at: unknown, type = 'session_meta') => JSON.stringify({ timestamp: at, type, payload: { id: ID, cwd: '/w' } })
   const NOW = Date.now()
-  const iso = (ms: number) => new Date(ms).toISOString()
-  /** The time as a zoneless text (local time, no zone designator), which Date.parse reads as local time. */
-  const localIso = (ms: number) => {
-    const d = new Date(ms)
-    const p = (n: number, w = 2) => String(n).padStart(w, '0')
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`
-  }
 
-  it('Z1: the window opens at the moment the session became not indexed, not before the conversation began: a conversation begun after that moment starts it at its own session_meta time', () => {
-    // The session was launched not indexed 5 s ago; Codex wrote the conversation's session_meta 4 s ago; the claim is now.
-    openNotIndexedWindow('s1', rolloutFile(ID, meta(iso(NOW - 4000))), NOW - 5000, NOW)
-    expect(of(ID)).toEqual([[NOW - 4000, null]])
-  })
-
-  it('Z1: a conversation begun before that moment (a resume) keeps its earlier turns: the window opens at the moment, not at the conversation\'s start', () => {
-    openNotIndexedWindow('s1', rolloutFile(OTHER_ID, meta(iso(NOW - 86_400_000))), NOW - 5000, NOW)
-    expect(of(OTHER_ID)).toEqual([[NOW - 5000, null]])
-  })
-
-  it('Z1: a session_meta time that cannot be trusted bounds nothing (the window keeps its earlier start): later than the claim, with no zone, not a session_meta record, a first line too long, no such file, a folder, a link', () => {
-    const since = NOW - 5000
-    const cases: Array<[string, string | null]> = [
-      ['0001', meta(iso(NOW + 60_000))],
-      ['0002', meta(localIso(NOW - 4000))],
-      ['0003', meta(iso(NOW - 4000), 'turn_context')],
-      ['0004', JSON.stringify({ timestamp: iso(NOW - 4000), type: 'session_meta', payload: { text: 'a'.repeat(600 * 1024) } })],
-      ['0005', null],
-    ]
-    for (const [n, first] of cases) {
-      const id = `019dd000-0001-7000-8000-00000000${n}`
-      const path = first === null ? join(dir, `rollout-2026-09-30T10-00-00-${id}.jsonl`) : rolloutFile(id, first)
-      openNotIndexedWindow(`s-${n}`, path, since, NOW)
-      expect(of(id), n).toEqual([[since, null]])
-    }
-    // A folder at the path.
-    const folderId = '019dd000-0001-7000-8000-000000000006'
-    const folder = join(dir, `rollout-2026-09-30T10-00-00-${folderId}.jsonl`)
-    mkdirSync(folder)
-    openNotIndexedWindow('s-0006', folder, since, NOW)
-    expect(of(folderId), '0006').toEqual([[since, null]])
-    // A link to a rollout that does bound (made where links can be: not on a host that refuses them).
-    const target = rolloutFile(ID, meta(iso(NOW - 4000)))
-    const linkId = '019dd000-0001-7000-8000-000000000007'
-    try { symlinkSync(target, join(dir, `rollout-2026-09-30T10-00-00-${linkId}.jsonl`)) } catch { return }
-    openNotIndexedWindow('s-0007', join(dir, `rollout-2026-09-30T10-00-00-${linkId}.jsonl`), since, NOW)
-    expect(of(linkId), '0007').toEqual([[since, null]])
+  it('Z1 (round 7, K2): the window opens at the moment the session became not indexed, whatever its rollout says of its own start: nothing of the rollout is read, so a stamp out of order cannot narrow it', () => {
+    // A real rollout whose session_meta is stamped after the moment the session became not indexed (5 s ago): the window still starts at that moment.
+    const f = join(dir, `rollout-2026-09-30T10-00-00-${ID}.jsonl`)
+    writeFileSync(f, JSON.stringify({ timestamp: new Date(NOW - 4000).toISOString(), type: 'session_meta', payload: { id: ID, cwd: '/w' } }) + '\n')
+    openNotIndexedWindow('s1', f, NOW - 5000, NOW)
+    expect(of(ID)).toEqual([[NOW - 5000, null]])
   })
 
   it('Z1: a moment later than the claim is not one the session was on it: the window opens at the claim', () => {
@@ -165,6 +119,89 @@ describe('when Codex conversations were written while not indexed (P3.12)', () =
     openNotIndexedWindow('s1', OTHER, NOW - 9000, NOW)
     expect(of(ID)).toEqual([[NOW - 9000, NOW]])
     expect(of(OTHER_ID)).toEqual([[NOW - 9000, null]])
+  })
+
+  // ---- round 7 (K1): a killed session's window closes when its process has ended ----
+
+  it('K1: a session released from its window leaves it open until the returned closer runs, at the time given; its next launch opens a window of its own, which the old closer never closes', () => {
+    openNotIndexedWindow('s1', A, 100)
+    const close = releaseNotIndexedWindow('s1')!
+    expect(close).toEqual(expect.any(Function))
+    expect(of(ID)).toEqual([[100, null]])
+    // It holds nothing now: its end reported while the process winds down changes nothing.
+    closeNotIndexedWindow('s1', 200)
+    expect(of(ID)).toEqual([[100, null]])
+    // The next launch opens its own window on the same conversation.
+    openNotIndexedWindow('s1', A, 300)
+    close(400)
+    expect(of(ID)).toEqual([[100, 400], [300, null]])
+    close(500)
+    expect(of(ID)).toEqual([[100, 400], [300, null]])
+    expect(releaseNotIndexedWindow('nobody')).toBeNull()
+  })
+
+  it('K1: each session closes only its own window: two sessions on one conversation, released or ended in either order', () => {
+    openNotIndexedWindow('s1', A, 100)
+    openNotIndexedWindow('s2', A, 150)
+    const close1 = releaseNotIndexedWindow('s1')!
+    closeNotIndexedWindow('s2', 250)
+    expect(of(ID)).toEqual([[100, null], [150, 250]])
+    close1(300)
+    expect(of(ID)).toEqual([[100, 300], [150, 250]])
+    // The other way: the one opened first ends normally while the later is released.
+    openNotIndexedWindow('s3', A, 400)
+    openNotIndexedWindow('s4', A, 450)
+    const close4 = releaseNotIndexedWindow('s4')!
+    closeNotIndexedWindow('s3', 500)
+    close4(600)
+    expect(of(ID)).toEqual([[100, 300], [150, 250], [400, 500], [450, 600]])
+  })
+
+  it('K1: a closer does nothing once the app is stopping (the next start closes the window), and nothing for a window merged into an older one (it stays open: toward not indexing)', () => {
+    openNotIndexedWindow('s1', A, 100)
+    const close = releaseNotIndexedWindow('s1')!
+    flushIndexingGaps()
+    close(200)
+    expect(of(ID)).toEqual([[100, null]])
+    resetIndexingGapsForTests()
+    // Merged: the released window is the oldest, so it is spanned into one with the next oldest.
+    openNotIndexedWindow('s1', A, 100)
+    const closeMerged = releaseNotIndexedWindow('s1')!
+    for (let i = 0; i < WINDOWS_PER_CONVERSATION_MAX; i++) { openNotIndexedWindow('s2', A, 1000 + i * 10); closeNotIndexedWindow('s2', 1005 + i * 10) }
+    expect(of(ID)).toHaveLength(WINDOWS_PER_CONVERSATION_MAX)
+    expect(of(ID)[0][1]).toBeNull()
+    closeMerged(9000)
+    expect(of(ID)[0]).toEqual([100, null])
+  })
+
+  it('K1: a session that ends normally closes its window even when it was merged into an older one (the latest open window is closed)', () => {
+    openNotIndexedWindow('s1', A, 100)
+    for (let i = 0; i < WINDOWS_PER_CONVERSATION_MAX; i++) { openNotIndexedWindow('s2', A, 1000 + i * 10); closeNotIndexedWindow('s2', 1005 + i * 10) }
+    expect(of(ID)[0]).toEqual([100, null])
+    closeNotIndexedWindow('s1', 9000)
+    expect(of(ID)[0]).toEqual([100, 9000])
+  })
+
+  it('K3: a flush that is not final writes what is pending but does not latch: a close after it still closes; a final flush latches', () => {
+    vi.useFakeTimers()
+    const file = join(dir, 'logging-gaps.json')
+    initIndexingGaps(file, 50)
+    openNotIndexedWindow('s1', A, 100)
+    openNotIndexedWindow('s2', OTHER, 120)
+    closeNotIndexedWindow('s2', 130)
+    flushIndexingGaps({ final: false })
+    const saved = () => JSON.parse(readFileSync(file, 'utf8')).conversations
+    expect(saved()[OTHER_ID]).toEqual([[120, 130]])
+    // The app went on running (the shutdown was vetoed): the session ends and its window closes.
+    closeNotIndexedWindow('s1', 800)
+    vi.advanceTimersByTime(5000)
+    expect(of(ID)).toEqual([[100, 800]])
+    expect(saved()[ID]).toEqual([[100, 800]])
+    // A final flush latches.
+    openNotIndexedWindow('s3', A, 900)
+    flushIndexingGaps({ final: true })
+    closeNotIndexedWindow('s3', 950)
+    expect(of(ID)).toEqual([[100, 800], [900, null]])
   })
 
   it('a damaged record at start is kept aside (the newest three), and every record stamped before then counts as written while not indexed', () => {

@@ -142,9 +142,9 @@ vi.mock('../../../src/main/legacy-version-manager', () => ({ isVersionInstalled:
 vi.mock('../../../src/main/credential-store', () => ({ loadCredential: () => null }))
 vi.mock('../../../src/main/provider-accounts', () => ({ getAccountsService: () => null }))
 
-const { spawnPty, killPty, codexRolloutForSessionContext, CODEX_CONTEXT_ROLLOUTS_MAX, applyLoggingSwitches } = await import('../../../src/main/pty-manager')
+const { spawnPty, killPty, codexRolloutForSessionContext, CODEX_CONTEXT_ROLLOUTS_MAX, CODEX_LEASE_EXIT_GRACE_MS, applyLoggingSwitches } = await import('../../../src/main/pty-manager')
 const { getCodexLogBinder } = await import('../../../src/main/logging/codex-log-binder')
-const { notIndexedSnapshot, conversationKey, resetIndexingGapsForTests } = await import('../../../src/main/logging/indexing-gaps')
+const { notIndexedSnapshot, conversationKey, resetIndexingGapsForTests, flushIndexingGaps } = await import('../../../src/main/logging/indexing-gaps')
 /** A conversation's not-indexed windows (as main keeps them). */
 const windowsOf = (id: string) => notIndexedSnapshot().conversations[conversationKey(rolloutOfId(id))] ?? []
 const rolloutOfId = (id: string) => `/res/codex-realms/a/sessions/2026/09/29/rollout-2026-09-29T10-00-00-${id}.jsonl`
@@ -407,16 +407,20 @@ describe('P3.12 round 2: the switches at every launch (W3), the stretches not in
     expect(windowsOf(ID_A)).toHaveLength(1)
   })
 
-  it('Y1: a launch indexed after one that was not closes the earlier window; its claim at the start opens none', () => {
+  it('Y1: a launch indexed after one that was not closes the earlier window once the old process has ended; its claim at the start opens none', () => {
     const FRESH = 'cx0000000000000000000013'
     h.settings = { ...CONSENT, loggingEnabled: false }
     h.claimAtStart = { ...report(ID_A, true), identity: '7:1' }
     start(FRESH)
+    const old = h.ptys.at(-1)!
     ;(source(FRESH).opts.onRollout as (r: unknown) => void)({ ...report(ID_A, true), identity: '7:1' })
     expect(windowsOf(ID_A)).toEqual([[expect.any(Number), null]])
     h.settings = { ...CONSENT }
     h.claimAtStart = { ...report(ID_B, true), identity: '7:2' }
     start(FRESH)
+    // Round 7 (K1): the old process is still winding down: the window stays open until its exit is reported.
+    expect(windowsOf(ID_A)).toEqual([[expect.any(Number), null]])
+    for (const cb of [...old.exit]) cb({ exitCode: 0 })
     expect(windowsOf(ID_A)).toEqual([[expect.any(Number), expect.any(Number)]])
     expect(windowsOf(ID_B)).toEqual([])
     try { killPty(FRESH) } catch { /* gone */ }
@@ -499,5 +503,88 @@ describe('P3.12 round 6 (Z1): a window opens when the session became not indexed
     ;(source(S).opts.onRollout as (r: unknown) => void)({ ...report(ID_B, true), identity: '7:2' })
     expect(windowsOf(ID_A)).toEqual([[T0, T0 + 7000]])
     expect(windowsOf(ID_B)).toEqual([[T0, null]])
+  })
+})
+
+describe('P3.12 round 7 (K1): a killed session\'s window closes when its process has ended', () => {
+  // A killed Codex winds down for seconds and goes on writing (a Switch's copy
+  // waits for it), so the window it held is closed when its exit is reported,
+  // or after the grace its account lease uses when none is.
+  const T0 = Date.parse('2026-09-30T10:00:00.000Z')
+  const used: string[] = []
+  let next = 40
+  const fresh = () => { const sid = `cx${'0'.repeat(20)}${next++}`; used.push(sid); return sid }
+  const clock = (ms: number) => vi.setSystemTime(T0 + ms)
+  const claimA = (sid: string) => (source(sid).opts.onRollout as (r: unknown) => void)({ ...report(ID_A, true), identity: '7:1' })
+  const exitOf = (proc: { exit: Array<(e: { exitCode: number }) => void> }) => { for (const cb of [...proc.exit]) cb({ exitCode: 0 }) }
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] }); clock(0) })
+  afterEach(() => { for (const sid of used.splice(0)) { try { killPty(sid) } catch { /* gone */ } } vi.useRealTimers() })
+
+  it('a tab closed while not indexed: the window stays open through the wind-down and closes when the process\'s exit is reported', () => {
+    const S = fresh()
+    h.settings = { ...CONSENT, loggingEnabled: false }
+    start(S)
+    const proc = h.ptys.at(-1)!
+    clock(1000)
+    claimA(S)
+    clock(2000)
+    killPty(S)
+    expect(windowsOf(ID_A)).toEqual([[T0, null]])
+    clock(5000)
+    exitOf(proc)
+    expect(windowsOf(ID_A)).toEqual([[T0, T0 + 5000]])
+  })
+
+  it('no exit reported: the window closes after the grace the account lease uses, not before', () => {
+    const S = fresh()
+    h.settings = { ...CONSENT, loggingEnabled: false }
+    start(S)
+    claimA(S)
+    clock(2000)
+    killPty(S)
+    vi.advanceTimersByTime(CODEX_LEASE_EXIT_GRACE_MS - 1)
+    expect(windowsOf(ID_A)).toEqual([[T0, null]])
+    vi.advanceTimersByTime(1)
+    expect(windowsOf(ID_A)).toEqual([[T0, T0 + 2000 + CODEX_LEASE_EXIT_GRACE_MS]])
+  })
+
+  it('a Restart: the new launch\'s window is its own, and the old process\'s late exit closes only the old one', () => {
+    const S = fresh()
+    h.settings = { ...CONSENT, loggingEnabled: false }
+    start(S)
+    const old = h.ptys.at(-1)!
+    clock(1000)
+    claimA(S)
+    clock(2000)
+    start(S)
+    expect(windowsOf(ID_A)).toEqual([[T0, null], [T0 + 2000, null]])
+    clock(4000)
+    exitOf(old)
+    expect(windowsOf(ID_A)).toEqual([[T0, T0 + 4000], [T0 + 2000, null]])
+  })
+
+  it('a quit during the wind-down leaves the window open (the next start closes it), whatever the process does after', () => {
+    const S = fresh()
+    h.settings = { ...CONSENT, loggingEnabled: false }
+    start(S)
+    const proc = h.ptys.at(-1)!
+    claimA(S)
+    clock(2000)
+    killPty(S)
+    flushIndexingGaps()
+    clock(5000)
+    exitOf(proc)
+    vi.advanceTimersByTime(CODEX_LEASE_EXIT_GRACE_MS)
+    expect(windowsOf(ID_A)).toEqual([[T0, null]])
+  })
+
+  it('a session that was indexed holds no window to close: its kill and exit open and close none', () => {
+    const S = fresh()
+    start(S)
+    const proc = h.ptys.at(-1)!
+    claimA(S)
+    killPty(S)
+    exitOf(proc)
+    expect(windowsOf(ID_A)).toEqual([])
   })
 })

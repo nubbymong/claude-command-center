@@ -27,7 +27,7 @@ import * as os from 'os'
 import { execSync, execFile } from 'child_process'
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { shouldRegisterRun } from './logging/should-register-run'
-import { openNotIndexedWindow, closeNotIndexedWindow } from './logging/indexing-gaps'
+import { openNotIndexedWindow, closeNotIndexedWindow, releaseNotIndexedWindow } from './logging/indexing-gaps'
 import { getLogSupervisor, getTranscriptBinder } from './logging/logging-service'
 import { getCodexLogBinder } from './logging/codex-log-binder'
 import { resolveResumeTargetFromTranscript, mangleCwdToProjectDir, UUID_RE } from './logging/transcript-discovery'
@@ -800,7 +800,7 @@ export function codexConversationHeldElsewhere(sessionId: string, uuid: string):
 // the session replaces it.
 const endingCodexRuns = new Map<string, Promise<boolean>>()
 
-function noteCodexRunEnding(sessionId: string, proc: pty.IPty): void {
+function noteCodexRunEnding(sessionId: string, proc: pty.IPty, onEnded?: () => void): void {
   let settleWith!: (reported: boolean) => void
   const done = new Promise<boolean>((resolve) => { settleWith = resolve })
   endingCodexRuns.set(sessionId, done)
@@ -809,6 +809,8 @@ function noteCodexRunEnding(sessionId: string, proc: pty.IPty): void {
     if (timer) clearTimeout(timer)
     settleWith(reported)
     if (endingCodexRuns.get(sessionId) === done) endingCodexRuns.delete(sessionId)
+    // P3.12 (K1): whatever waited for the process to end (a not-indexed window).
+    try { onEnded?.() } catch { /* best-effort */ }
   }
   timer = setTimeout(() => settle(false), CODEX_LEASE_EXIT_GRACE_MS)
   ;(timer as unknown as { unref?: () => void }).unref?.()
@@ -6201,8 +6203,14 @@ export function killPty(sessionId: string): void {
   if (entry && dyingLease) {
     codexLaunchLeases.delete(sessionId)
     releaseCodexLeaseOnExit(entry.ptyProcess, dyingLease)
+    // P3.12 (K1): a not-indexed window this session holds stays open until the
+    // process has ended (a killed Codex goes on writing while it winds down, and
+    // a Switch's carry copies what it writes), or the grace passes with no end
+    // reported; it is closed then, at that moment, and only that window.
+    let closeWindow: ((ts: number) => void) | null = null
+    try { closeWindow = releaseNotIndexedWindow(sessionId) } catch { /* best-effort */ }
     // P3.6: a Switch account's carry waits for this process to end.
-    noteCodexRunEnding(sessionId, entry.ptyProcess)
+    noteCodexRunEnding(sessionId, entry.ptyProcess, closeWindow ? () => closeWindow?.(Date.now()) : undefined)
   }
   // P3.10 round 2 (R8): a killed Codex session's gateway token goes now, so
   // the gateway refuses its dying process's late hooks; the record that its
