@@ -82,7 +82,8 @@ vi.mock('../../../src/main/logging/transcripts-db', () => ({
 }))
 
 const { createTranscriptsWorker } = await import('../../../src/main/logging/transcripts-worker')
-const { openNotIndexedWindow, closeNotIndexedWindow, releaseNotIndexedWindow, setNotIndexedListener, notIndexedSnapshot, resetIndexingGapsForTests } = await import('../../../src/main/logging/indexing-gaps')
+const { openNotIndexedWindow, closeNotIndexedWindow, releaseNotIndexedWindow, setNotIndexedListener, notIndexedSnapshot, resetIndexingGapsForTests, keepNotIndexedWindow, closeHeldNotIndexedWindow } = await import('../../../src/main/logging/indexing-gaps')
+const { claudeFolderKey } = await import('../../../src/main/logging/claude-folder-key')
 const { FakeTranscriptsWorkerTransport } = await import('../../../src/main/logging/log-worker-transport')
 const { CODEX_PARSER_VERSION } = await import('../../../src/main/logging/codex-rollout-normalizer')
 const { PARSER_VERSION } = await import('../../../src/main/logging/transcript-normalizer')
@@ -988,5 +989,46 @@ describe('Claude\'s resume continues from what was indexed, with Codex\'s record
     appendFileSync(f, say('LATER', 5000))
     send(runC('T', BASE + 6000)); send(bindC('T', f)); w.tickNow()
     expect(shown()).toEqual(['BEFORE', '-- off --', 'LATER'])
+  })
+
+  // P3.16 round 1 (N1): a session not indexed that named no transcript marks
+  // its whole projects folder; a reader of any transcript there leaves out
+  // what is stamped in that window (lens A case 1: an indexed exact resume
+  // later reading the transcript from its start).
+  it('N1: a folder marked while a session named none: every transcript in it leaves out its records in that window; another folder\'s does not', () => {
+    const { w, send } = boot()
+    resetIndexingGapsForTests()
+    setNotIndexedListener((u) => send({ type: 'not-indexed-windows', ...u } as unknown as In))
+    const f = tfile(30, 'proj-a')
+    const g = tfile(31, 'proj-a')
+    const other = tfile(32, 'proj-b')
+    for (const p of [f, g, other]) writeFileSync(p, say('BEFORE', 100) + say('WRITTEN-WHILE-NOT-INDEXED', 1000) + say('AFTER', 5000))
+    keepNotIndexedWindow('S', claudeFolderKey(dirname(f)), BASE + 500, BASE + 500, { writeNow: true })
+    closeNotIndexedWindow('S', BASE + 4000)
+    send(runC('R', BASE + 6000)); send(bindC('R', f)); w.tickNow()
+    expect(shown(runOf('R'))).toEqual(['BEFORE', '-- off --', 'AFTER'])
+    send(runC('T', BASE + 6100)); send(bindC('T', g)); w.tickNow()
+    expect(shown(runOf('T'))).toEqual(['BEFORE', '-- off --', 'AFTER'])
+    send(runC('U', BASE + 6200)); send(bindC('U', other)); w.tickNow()
+    expect(shown(runOf('U'))).toEqual(['BEFORE', 'WRITTEN-WHILE-NOT-INDEXED', 'AFTER'])
+  })
+
+  it('N1, N2: a folder window closed at the first name keeps that stretch; the named transcript\'s own window covers it from the start', () => {
+    const { w, send } = boot()
+    resetIndexingGapsForTests()
+    setNotIndexedListener((u) => send({ type: 'not-indexed-windows', ...u } as unknown as In))
+    const named = tfile(33, 'proj-c')
+    const sibling = tfile(34, 'proj-c')
+    writeFileSync(named, say('N-EARLY', 1000) + say('N-LATE', 3000) + say('N-AFTER', 5000))
+    writeFileSync(sibling, say('S-EARLY', 1000) + say('S-LATE', 3000))
+    keepNotIndexedWindow('S', claudeFolderKey(dirname(named)), BASE + 500, BASE + 500, { writeNow: true })
+    keepNotIndexedWindow('S', uuid(33), BASE + 500, BASE + 2000)
+    closeHeldNotIndexedWindow('S', claudeFolderKey(dirname(named)), BASE + 2000)
+    closeNotIndexedWindow('S', BASE + 4000)
+    send(runC('R', BASE + 6000)); send(bindC('R', named)); w.tickNow()
+    expect(shown(runOf('R'))).toEqual(['-- off --', 'N-AFTER'])
+    send(runC('T', BASE + 6100)); send(bindC('T', sibling)); w.tickNow()
+    // The folder's stretch (500 to 2000) is left out; the sibling after it is read.
+    expect(shown(runOf('T'))).toEqual(['-- off --', 'S-LATE'])
   })
 })

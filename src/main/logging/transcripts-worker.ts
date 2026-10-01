@@ -35,7 +35,8 @@
  */
 import * as nodeFs from 'fs'
 import { createHash, type Hash } from 'crypto'
-import { basename as pathBasename } from 'path'
+import { basename as pathBasename, dirname as pathDirname } from 'path'
+import { claudeFolderKey } from './claude-folder-key'
 import { openTranscriptsDb } from './transcripts-db'
 import type { TranscriptsDb, NewMessage, TranscriptScope } from './transcripts-db'
 import { makeNormalizer, PARSER_VERSION } from './transcript-normalizer'
@@ -144,16 +145,17 @@ export function createTranscriptsWorker(
    *  open; and `before`, every record stamped earlier. */
   const notIndexedWindows = new Map<string, Array<[number, number | null]>>()
   let notIndexedBefore: number | null = null
-  /** Whether a record of the conversation `key` written at `ts` is left
-   *  out. A record with no time (none of its own, none before it in the read)
-   *  is left out whenever the conversation has any such rule. A record at a
+  /** Whether a record written at `ts` under any of `keys` (its conversation,
+   *  and for a Claude transcript its projects folder, P3.16 round 1 N1) is
+   *  left out. A record with no time (none of its own, none before it in the
+   *  read) is left out whenever any of them has such a rule. A record at a
    *  window's start is inside it; one at its end is not. */
-  function notIndexedAt(key: string, ts: number | null): boolean {
-    const list = notIndexedWindows.get(key)
-    if ((!list || list.length === 0) && notIndexedBefore === null) return false
+  function notIndexedAt(keys: string[], ts: number | null): boolean {
+    const lists = keys.map((k) => notIndexedWindows.get(k)).filter((l): l is Array<[number, number | null]> => !!l && l.length > 0)
+    if (lists.length === 0 && notIndexedBefore === null) return false
     if (ts === null) return true
     if (notIndexedBefore !== null && ts < notIndexedBefore) return true
-    return !!list && list.some(([start, end]) => ts >= start && (end === null || ts < end))
+    return lists.some((list) => list.some(([start, end]) => ts >= start && (end === null || ts < end)))
   }
   /** P3.12 (X4): the running digest of the first `cursor` bytes of `path`,
    *  when they are what a tail read (their SHA-256 is `stored`, the digest
@@ -471,7 +473,10 @@ export function createTranscriptsWorker(
     // tail. P3.16 (M1): a Claude transcript's too (its file name is the
     // conversation's id, as a rollout's ends with it).
     const conversation = codexConversationKey(meta.path)
-    const skip = (ts: number | null): boolean => notIndexedAt(conversation, ts)
+    // P3.16 round 1 (N1): a Claude transcript is also left out where its
+    // projects folder was marked (a session not indexed that named none).
+    const keys = codex ? [conversation] : [conversation, claudeFolderKey(pathDirname(meta.path))]
+    const skip = (ts: number | null): boolean => notIndexedAt(keys, ts)
     // P3.16 (M1): a Claude tail vouches for what it read, as a Codex tail
     // with its claimed identity does.
     const vouches = codex ? !!identity : true

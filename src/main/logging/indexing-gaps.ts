@@ -65,10 +65,16 @@ const KEY_MAX = 200
 const SESSION_MAX = 200
 const DAMAGED_KEPT = 3
 const WRITE_DELAY_MS = 500
+/** P3.16 round 1 (N4): the most windows one session holds open at once (a
+ *  Claude session keeps one per transcript it names); past it, more names
+ *  open none (its folder's window, or the ones it holds, cover it). */
+export const HELD_WINDOWS_PER_SESSION_MAX = 32
 
 const windows = new Map<string, NotIndexedWindow[]>()
-/** The conversation each session not indexed holds, and its open window. */
-const openBy = new Map<string, { key: string; win: NotIndexedWindow }>()
+/** The conversations each session not indexed holds, and their open windows
+ *  (a Codex session one at a time; a Claude session one per transcript it
+ *  named, P3.16 round 1, N2). */
+const openBy = new Map<string, Array<{ key: string; win: NotIndexedWindow }>>()
 let before: number | null = null
 /** The app is stopping (a final flushIndexingGaps): the windows still open stay open. */
 let stopping = false
@@ -235,13 +241,13 @@ function closeHeld(held: { key: string; win: NotIndexedWindow }, ts: number): vo
 export function openNotIndexedWindow(sessionId: string, rolloutPath: string, since: number, now: number = since): void {
   if (typeof sessionId !== 'string' || !sessionId || sessionId.length > SESSION_MAX || typeof rolloutPath !== 'string' || !rolloutPath || !Number.isFinite(since) || !Number.isFinite(now)) return
   const key = conversationKey(rolloutPath)
-  const held = openBy.get(sessionId)
-  if (held?.key === key) return
+  const held = openBy.get(sessionId) ?? []
+  if (held.some((h) => h.key === key)) return
   const changed: string[] = []
-  if (held !== undefined) { closeHeld(held, now); changed.push(held.key) }
+  for (const h of held) { closeHeld(h, now); changed.push(h.key) }
   const win: NotIndexedWindow = [Math.min(since, now), null]
   touch(key).push(win)
-  openBy.set(sessionId, { key, win })
+  openBy.set(sessionId, [{ key, win }])
   bound(key, now)
   changed.push(key)
   // A newly opened window is written at once.
@@ -250,35 +256,76 @@ export function openNotIndexedWindow(sessionId: string, rolloutPath: string, sin
   tell(changed)
 }
 
-/** `sessionId` stops holding its conversation while not indexed (it ends,
- *  relaunches, lets the claim go, or is indexed). */
+/**
+ * P3.16 round 1 (N1, N2, N4): `sessionId`, not indexed since `since`, is on
+ * the conversation (or, for a Claude session that has named none, the
+ * projects folder) whose key is `key`, as of `now`: a window opens at `since`
+ * beside the ones the session already holds, which stay open until the
+ * session ends (a Claude session keeps one per transcript it names). At most
+ * HELD_WINDOWS_PER_SESSION_MAX held at once. Written at once when `writeNow`
+ * (a session's first window), else with the coalesced write. True when one
+ * opened.
+ */
+export function keepNotIndexedWindow(sessionId: string, key: string, since: number, now: number = since, opts: { writeNow?: boolean } = {}): boolean {
+  if (typeof sessionId !== 'string' || !sessionId || sessionId.length > SESSION_MAX || typeof key !== 'string' || !key || key.length > KEY_MAX || !Number.isFinite(since) || !Number.isFinite(now)) return false
+  const held = openBy.get(sessionId) ?? []
+  if (held.some((h) => h.key === key) || held.length >= HELD_WINDOWS_PER_SESSION_MAX) return false
+  const win: NotIndexedWindow = [Math.min(since, now), null]
+  touch(key).push(win)
+  held.push({ key, win })
+  openBy.set(sessionId, held)
+  bound(key, now)
+  if (opts.writeNow) { dirty = true; write() } else schedule()
+  tell([key])
+  return true
+}
+
+/** P3.16 round 1 (N1): `sessionId` stops holding the one window it holds on
+ *  `key` (a Claude session's folder window, once it names a transcript); the
+ *  others it holds stay open. */
+export function closeHeldNotIndexedWindow(sessionId: string, key: string, ts: number): void {
+  if (stopping) return
+  const held = openBy.get(sessionId)
+  const at = held ? held.findIndex((h) => h.key === key) : -1
+  if (!held || at < 0) return
+  const [one] = held.splice(at, 1)
+  if (held.length === 0) openBy.delete(sessionId)
+  if (Number.isFinite(ts)) closeHeld(one, ts)
+  schedule()
+  tell([one.key])
+}
+
+/** `sessionId` stops holding its conversations while not indexed (it ends,
+ *  relaunches, lets the claim go, or is indexed): every window it holds closes. */
 export function closeNotIndexedWindow(sessionId: string, ts: number): void {
   // Stopping: Codex's last writes land after this, so the window stays open (the next start closes it).
   if (stopping) return
   const held = openBy.get(sessionId)
   if (held === undefined) return
   openBy.delete(sessionId)
-  if (Number.isFinite(ts)) closeHeld(held, ts)
+  if (Number.isFinite(ts)) for (const h of held) closeHeld(h, ts)
   schedule()
-  tell([held.key])
+  tell(held.map((h) => h.key))
 }
 
 /** `sessionId` is killed (a tab closed, a Restart, a Switch): it holds its
- *  window no more (its next launch opens one of its own), but a killed Codex
- *  goes on writing while it winds down, so the window stays open until the
- *  returned closer runs, when the process's exit is reported. The closer closes
- *  that exact window, once, and nothing once the app is stopping; a window
- *  merged into an older one is left open (toward not indexing). null when the
+ *  windows no more (its next launch opens its own), but a killed process
+ *  goes on writing while it winds down, so they stay open until the returned
+ *  closer runs, when the process's exit is reported. The closer closes those
+ *  exact windows, once, and nothing once the app is stopping; a window merged
+ *  into an older one is left open (toward not indexing). null when the
  *  session holds none. */
 export function releaseNotIndexedWindow(sessionId: string): ((ts: number) => void) | null {
   const held = openBy.get(sessionId)
   if (held === undefined) return null
   openBy.delete(sessionId)
   return (ts: number): void => {
-    if (stopping || held.win[1] !== null || !Number.isFinite(ts)) return
-    held.win[1] = Math.max(held.win[0], ts)
+    if (stopping || !Number.isFinite(ts)) return
+    const closing = held.filter((h) => h.win[1] === null)
+    if (closing.length === 0) return
+    for (const h of closing) h.win[1] = Math.max(h.win[0], ts)
     schedule()
-    tell([held.key])
+    tell(closing.map((h) => h.key))
   }
 }
 

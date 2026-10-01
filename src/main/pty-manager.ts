@@ -27,10 +27,11 @@ import * as os from 'os'
 import { execSync, execFile } from 'child_process'
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { shouldRegisterRun } from './logging/should-register-run'
-import { openNotIndexedWindow, closeNotIndexedWindow, releaseNotIndexedWindow } from './logging/indexing-gaps'
+import { openNotIndexedWindow, closeNotIndexedWindow, releaseNotIndexedWindow, keepNotIndexedWindow, closeHeldNotIndexedWindow, conversationKey } from './logging/indexing-gaps'
+import { claudeFolderKey, normaliseClaudeFolder } from './logging/claude-folder-key'
 import { getLogSupervisor, getTranscriptBinder } from './logging/logging-service'
 import { getCodexLogBinder } from './logging/codex-log-binder'
-import { resolveResumeTargetFromTranscript, mangleCwdToProjectDir, UUID_RE } from './logging/transcript-discovery'
+import { resolveResumeTargetFromTranscript, mangleCwdToProjectDir, UUID_RE, canonicalizeTranscriptPath } from './logging/transcript-discovery'
 import { buildClaudeLaunchCommand, resolveResumeLaunch, recoverOrphanResumeLaunch, buildResumeTranscriptPath, quoteArgForShell, modelFlag, expandResumeTargetCwd, parseWorktreePaths } from './spawn-claude-command'
 import { ensureCompanionDir, nodeFsCompanionDeps } from './logging/companion-dir'
 import { forgetSessionName } from './logging/session-name-sidecar'
@@ -559,41 +560,72 @@ function savedConfigLoggingOff(configs: unknown, configId: string | undefined, p
  * the session begins.
  *
  * P3.16 (M1): a local Claude session the same way (logging off in Settings or
- * in its config, or before the indexing notice was seen); the conversation it
- * is on is the transcript its hooks and status line name, or its exact resume
- * at launch (claudeTranscripts). Each entry keeps the assistant the session
- * runs, so a session's conversation is the one of its own assistant.
+ * in its config, or before the indexing notice was seen). Round 1 (N1, N2):
+ * it marks every transcript of its projects folder it names (its hooks and
+ * status line, or its exact resume at launch), each from the moment it became
+ * not indexed and each until the session ends; while it has named none it
+ * marks its whole projects folder (claude-folder-key.ts), so a session whose
+ * transcript is never named still leaves out what it wrote. Each entry keeps
+ * the assistant the session runs, so a session's conversation is the one of
+ * its own assistant. Only a run the logging switches and rules leave out is
+ * not indexed (shouldRegisterRun), not one whose log service is missing.
  */
 const notIndexedSessions = new Map<string, { since: number; provider: 'claude' | 'codex' }>()
 
 /** P3.16 (M1): the transcript each local Claude session is on, the latest its
- *  hooks or status line named (or its exact resume at launch), for the
- *  windows above. Gone at the session's teardown; bounded. */
+ *  hooks or status line named (or its exact resume at launch), canonical, for
+ *  the windows above. Gone at the session's teardown; bounded. */
 const claudeTranscripts = new Map<string, string>()
 export const CLAUDE_TRANSCRIPTS_MAX = 512
+
+/** P3.16 round 1 (N1, N4): each local Claude session's projects folder, the
+ *  canonical one its transcripts are bound under (from its launch folder);
+ *  only a `<uuid>.jsonl` directly in it is taken as the session's transcript.
+ *  Set at its launch, gone at its teardown; bounded. */
+const claudeFolders = new Map<string, string>()
 
 /** `since`: the moment the session became not indexed; `now`: this moment. */
 function markSessionNotIndexed(sessionId: string, provider: 'claude' | 'codex', since: number, now: number = since): void {
   notIndexedSessions.set(sessionId, { since, provider })
-  const held = provider === 'codex' ? codexContextRollouts.get(sessionId)?.path : claudeTranscripts.get(sessionId)
-  if (held) { try { openNotIndexedWindow(sessionId, held, since, now) } catch { /* best-effort */ } }
+  if (provider === 'codex') {
+    const held = codexContextRollouts.get(sessionId)?.path
+    if (held) { try { openNotIndexedWindow(sessionId, held, since, now) } catch { /* best-effort */ } }
+    return
+  }
+  // A Claude session's first window is written at once: the transcript it is
+  // on, or while it has named none, its projects folder.
+  const named = claudeTranscripts.get(sessionId)
+  const folder = claudeFolders.get(sessionId)
+  const key = named ? conversationKey(named) : folder ? claudeFolderKey(folder) : null
+  if (key) { try { keepNotIndexedWindow(sessionId, key, since, now, { writeNow: true }) } catch { /* best-effort */ } }
 }
 
 /** P3.12 (Y1): the session no longer holds a conversation while not indexed
- *  (it ends, relaunches or lets the claim go): its window closes. */
+ *  (it ends, relaunches or lets the claim go): its windows close. */
 function endSessionNotIndexed(sessionId: string, now: number): void {
   try { closeNotIndexedWindow(sessionId, now) } catch { /* best-effort */ }
 }
 
-/** P3.16 (M1): a Claude session is on the transcript at `transcriptPath` (its
- *  hook or status line said so, or its exact resume): kept for the windows,
- *  and while the session runs not indexed that conversation's window opens
- *  from the moment it became not indexed (the one it was on before closes
- *  now). Only the file name is used (the conversation's id); nothing is read. */
+/** P3.16 (M1), round 1 (N2, N4): a Claude session is on the transcript at
+ *  `transcriptPath` (its hook or status line said so, or its exact resume).
+ *  Taken only as a `<uuid>.jsonl` directly in the session's own projects
+ *  folder (a subagent's transcript, or a path anywhere else, is not its
+ *  conversation). Kept for the windows; while the session runs not indexed,
+ *  that conversation's window opens from the moment it became not indexed and
+ *  stays open beside the others it named until the session ends, and its
+ *  folder's window, if it held one, closes now. Only the name and folder are
+ *  used; nothing is read. */
 function noteClaudeTranscript(sessionId: string, transcriptPath: string): void {
-  if (typeof sessionId !== 'string' || !sessionId || typeof transcriptPath !== 'string' || !/\.jsonl$/i.test(transcriptPath)) return
+  if (typeof sessionId !== 'string' || !sessionId || typeof transcriptPath !== 'string') return
+  const folder = claudeFolders.get(sessionId)
+  if (!folder) return
+  const canonical = canonicalizeTranscriptPath(transcriptPath)
+  if (!canonical) return
+  const name = path.basename(canonical)
+  if (!/\.jsonl$/.test(name) || !UUID_RE.test(name.slice(0, -'.jsonl'.length))) return
+  if (normaliseClaudeFolder(path.dirname(canonical)) !== normaliseClaudeFolder(folder)) return
   claudeTranscripts.delete(sessionId)
-  claudeTranscripts.set(sessionId, transcriptPath)
+  claudeTranscripts.set(sessionId, canonical)
   while (claudeTranscripts.size > CLAUDE_TRANSCRIPTS_MAX) {
     const oldest = claudeTranscripts.keys().next().value
     if (oldest === undefined) break
@@ -601,24 +633,47 @@ function noteClaudeTranscript(sessionId: string, transcriptPath: string): void {
   }
   const notIndexed = notIndexedSessions.get(sessionId)
   if (notIndexed?.provider === 'claude') {
-    try { openNotIndexedWindow(sessionId, transcriptPath, notIndexed.since, Date.now()) } catch { /* best-effort */ }
+    const now = Date.now()
+    try { keepNotIndexedWindow(sessionId, conversationKey(canonical), notIndexed.since, now) } catch { /* best-effort */ }
+    try { closeHeldNotIndexedWindow(sessionId, claudeFolderKey(folder), now) } catch { /* best-effort */ }
   }
 }
 
-/** P3.12 (K1), P3.16 (M1): a killed session's window stays open while its
- *  process winds down, and closes, only that window, when its exit is
- *  reported or the grace the account lease uses passes. */
+/** P3.16 round 1 (N1): a local Claude session's projects folder, from the
+ *  folder it is launched in (as the transcript binder binds it). */
+function noteClaudeFolder(sessionId: string, launchCwd: string): void {
+  if (typeof launchCwd !== 'string' || !launchCwd) return
+  claudeFolders.delete(sessionId)
+  claudeFolders.set(sessionId, path.join(os.homedir(), '.claude', 'projects', mangleCwdToProjectDir(launchCwd)))
+  while (claudeFolders.size > CLAUDE_TRANSCRIPTS_MAX) {
+    const oldest = claudeFolders.keys().next().value
+    if (oldest === undefined) break
+    claudeFolders.delete(oldest)
+  }
+}
+
+/** P3.16 (M1): the window closer waiting on each killed process, run by the
+ *  process's exit handler (spawnPty registers one for every PTY; no second
+ *  listener is added). */
+const windowClosersOnExit = new WeakMap<pty.IPty, () => void>()
+
+/** P3.12 (K1), P3.16 (M1): a killed session's windows stay open while its
+ *  process winds down, and close, only those windows, when its exit is
+ *  reported (its exit handler) or the grace the account lease uses passes. */
 function closeWindowWhenEnded(proc: pty.IPty, close: (ts: number) => void): void {
   let done = false
   const settle = (): void => {
     if (done) return
     done = true
     clearTimeout(timer)
+    if (windowClosersOnExit.get(proc) === settle) windowClosersOnExit.delete(proc)
     try { close(Date.now()) } catch { /* best-effort */ }
   }
   const timer = setTimeout(settle, CODEX_LEASE_EXIT_GRACE_MS)
   ;(timer as unknown as { unref?: () => void }).unref?.()
-  try { proc.onExit(() => settle()) } catch { settle() }
+  // A closer already waiting on this process (a second kill) settles now.
+  try { windowClosersOnExit.get(proc)?.() } catch { /* best-effort */ }
+  windowClosersOnExit.set(proc, settle)
 }
 
 /** P3.12 (row 65): the rollout a Codex session's watcher holds (and its
@@ -5769,15 +5824,18 @@ function spawnPtyResolved(
   // loggingEnabled !== false, global loggingEnabled !== false. The matching
   // runEnd/endRun on exit are gated on this same `logSup` being non-null, so a
   // run is only ended if it was registered.
-  const logSup = shouldRegisterRun(registerOptions, settings) ? getLogSupervisor() : null
+  const registersRun = shouldRegisterRun(registerOptions, settings)
+  const logSup = registersRun ? getLogSupervisor() : null
   // P3.12 round 1 (V1): a spawn that is not indexed (logging off, a shell, SSH)
   // ends whatever run this session id still had open (a Restart's old process
   // exits after this spawn, so its own exit does not), so nothing is added to
   // it; one that is indexed is recorded for the logging switches.
   const codexRunProvider = !options?.ssh && !options?.shellOnly && (options?.provider ?? 'claude') === 'codex'
-  // P3.16 (M1): a local Claude session's conversation is known at launch when
-  // it resumes one exactly; its hooks and status line name it after.
+  // P3.16 (M1): a local Claude session's projects folder (round 1, N1) and,
+  // when it resumes one exactly, its conversation are known at launch; its
+  // hooks and status line name the transcript after.
   const claudeRunProvider = !options?.ssh && !options?.shellOnly && (options?.provider ?? 'claude') === 'claude'
+  if (claudeRunProvider && effectiveLaunchCwd) noteClaudeFolder(sessionId, effectiveLaunchCwd)
   if (claudeRunProvider && resumeUuidForBind && effectiveLaunchCwd) {
     const resumed = buildResumeTranscriptPath(effectiveLaunchCwd, resumeUuidForBind)
     if (resumed) noteClaudeTranscript(sessionId, resumed)
@@ -5789,8 +5847,12 @@ function spawnPtyResolved(
     try { getLogSupervisor()?.runEnd(sessionId, Date.now(), 'exited') } catch { /* best-effort */ }
     // P3.12 (X1, X3): a local session running not indexed marks the
     // conversations it is on (P3.16 M1: a Claude session as a Codex one).
-    if (codexRunProvider) markSessionNotIndexed(sessionId, 'codex', codexLaunchedAt ?? Date.now(), Date.now())
-    else if (claudeRunProvider) markSessionNotIndexed(sessionId, 'claude', claudeLaunchedAt ?? Date.now(), Date.now())
+    // Round 1 (N3): only a run the switches and rules leave out; one they
+    // index whose log service is missing this time marks nothing.
+    if (!registersRun) {
+      if (codexRunProvider) markSessionNotIndexed(sessionId, 'codex', codexLaunchedAt ?? Date.now(), Date.now())
+      else if (claudeRunProvider) markSessionNotIndexed(sessionId, 'claude', claudeLaunchedAt ?? Date.now(), Date.now())
+    }
   }
   logSup?.runStart({
     sessionId,
@@ -5867,6 +5929,10 @@ function spawnPtyResolved(
   // adjacent, so the window is one statement wide.
   markPtySessionAlive(sessionId)
   ptyProcess.onExit(({ exitCode }) => {
+    // P3.16 (M1): a killed Claude session's not-indexed windows close now that
+    // its process has ended (closeWindowWhenEnded), whichever session the id
+    // belongs to by now.
+    try { windowClosersOnExit.get(ptyProcess)?.() } catch { /* best-effort */ }
     // P3.15 round 2 (J1): under node-pty's bundled ConPTY a Codex that quits by
     // itself can end before its exit code is known: said as unknown, and the
     // run recorded as exited, not crashed.
@@ -6212,12 +6278,13 @@ function cleanupSessionResources(sessionId: string): void {
     codexLaunchLeases.delete(sessionId)
     codexLease.release()
   }
-  // P3.16 (M5): the integrity monitor's record of the PTY this ends goes with
-  // it. A Restart (and every respawn: spawnPty runs killPty first) starts a new
-  // process, and the renderer counts the bytes of each terminal mount from 0, so
-  // the new process's record starts from 0 too, on either ConPTY. A no-op when
-  // there is none (the session's own exit ends it as well).
-  getPtyIntegrityMonitor()?.endSession(sessionId)
+  // P3.16 (M5): the integrity monitor's count of the PTY this ends starts again
+  // (round 1, N8: quietly, with no "session ended" event; the session's own
+  // exit ends the record). A Restart (and every respawn: spawnPty runs killPty
+  // first) starts a new process, and the renderer counts the bytes of each
+  // terminal mount from 0, so the new process's count starts from 0 too, on
+  // either ConPTY. A no-op when there is none.
+  getPtyIntegrityMonitor()?.resetSession(sessionId)
   pendingWrites.delete(sessionId)
   launchPendingSessions.delete(sessionId)
   recentWrites.delete(sessionId)
@@ -6256,9 +6323,11 @@ function cleanupSessionResources(sessionId: string): void {
   // until the tab is closed, so without this the poller ran for the dead tab.
   const codexTel = codexTelemetrySources.get(sessionId)
   // P3.12 (Y1): a session ending holds no conversation while not indexed
-  // (P3.16 M1: and the Claude transcript it was on is not the next launch's).
+  // (P3.16 M1: and the Claude transcript and folder it was on are not the next
+  // launch's).
   notIndexedSessions.delete(sessionId)
   claudeTranscripts.delete(sessionId)
+  claudeFolders.delete(sessionId)
   endSessionNotIndexed(sessionId, Date.now())
   if (codexTel) {
     try { codexTel.stop() } catch { /* noop */ }
