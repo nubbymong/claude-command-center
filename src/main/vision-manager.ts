@@ -20,13 +20,19 @@ import * as net from 'net'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
-import { spawn, execSync } from 'child_process'
+import { spawn } from 'child_process'
 import { BrowserWindow, nativeImage } from 'electron'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError } from './debug-logger'
 import { getConductorMcpPort } from './conductor-mcp-server'
 import { getBrowserPaths } from './browser-paths'
+import {
+  VisionPortHeldError, isAppVisionBrowser, listenerFacts, factsOfPid, endVerified, endVerifiedSync,
+  defaultOwnerPorts, type OwnerPorts,
+} from './vision-browser-owner'
 import type { GlobalVisionConfig } from '../shared/types'
+
+export { VisionPortHeldError }
 
 // chrome-remote-interface (lazy require so a missing optional dep never crashes
 // boot). Test seam: _setCdpForTest injects a fake so the router logic is unit-
@@ -615,13 +621,35 @@ export function tryReconnectGlobalVision(): void { if (globalManager) globalMana
  *  which a bare `export ... from` would not do. */
 export { getBrowserPaths }
 
-// Any browser CCC itself spawns is detached + unref'd, so without an explicit
-// kill it survives app quit forever (orphan process tree + an open CDP debug port
-// with no owner, showing as a blank window). Track the pid of whatever launchBrowser
-// spawned — headless or headed, since both are CCC's own child — and tear it down on
-// stop/quit (killSpawnedBrowser) and before any relaunch. A browser the USER opened
-// themselves never comes through launchBrowser, so it is never tracked or killed.
-let spawnedBrowserPid: number | null = null
+// Any browser the app spawns is detached + unref'd, so the app ends it itself:
+// at stop/quit (killSpawnedBrowser) and before any relaunch. It is tracked with
+// the port and profile folder it was started with and, once read back from the
+// OS and verified as the app's vision browser (vision-browser-owner), its
+// creation time. A kill goes only through the verified path: the same pid with
+// the same creation time. A tracked browser whose creation time is unknown is
+// never ended by pid. A browser the USER opened themselves never comes through
+// launchBrowser, so it is never tracked.
+interface TrackedBrowser {
+  pid: number
+  port: number
+  profileDir: string
+  /** Its creation time once verified as the app's vision browser; null until
+   *  then, or when it could not be verified. */
+  created: string | null
+  /** Settles when the read-back after spawn is done. */
+  verified: Promise<void>
+}
+let spawnedBrowser: TrackedBrowser | null = null
+
+/** How the owner checks reach the OS. Test seam: _setVisionOwnerPortsForTest. */
+let ownerPortsOverride: OwnerPorts | null = null
+const ownerPorts = (): OwnerPorts => ownerPortsOverride ?? defaultOwnerPorts()
+/** Test seam: inject a fake OS for the owner checks. Pass null to restore. */
+export function _setVisionOwnerPortsForTest(ports: OwnerPorts | null): void { ownerPortsOverride = ports }
+
+/** How long the launch waits for the debug port to come free, and how often it looks. */
+const PORT_FREE_WAIT_MS = 3000
+const PORT_FREE_POLL_MS = 150
 
 // ── Heartbeat auto-relaunch (backoff + circuit breaker) ───────────────────
 let lastAutoRelaunchAt = 0
@@ -686,13 +714,6 @@ export function _resetAutoRelaunchForTest(): void { resetVisionRelaunchBreaker()
  *  can drive consecutive attempts and exercise the circuit breaker. */
 export function _clearRelaunchCooldownForTest(): void { lastAutoRelaunchAt = 0 }
 
-/** Kill ORPHANED debug browsers left over from a PREVIOUS CCC run. The tracked-pid
- *  kill above only covers this process's own spawn — after a crash the pid is lost
- *  and the detached browser survives as a blank zombie window that also holds the
- *  CDP port and the profile singleton lock (making the next launch silently fail).
- *  Match main processes (not --type= children) by the profile-dir signature we bake
- *  into the command line (`chrome-debug-<port>` / `msedge-debug-<port>`) and kill
- *  each tree. Best-effort: never throws, no-op when nothing matches. */
 /** Cheap TCP probe: is anything LISTENING on 127.0.0.1:port? Sub-millisecond
  *  when the port is free (connection refused). Lets us skip the kill entirely on
  *  the common boot case — no process spawn at all. */
@@ -709,96 +730,95 @@ function isPortListening(port: number, timeoutMs = 300): Promise<boolean> {
   })
 }
 
-async function sweepOrphanDebugBrowsers(debugPort: number): Promise<void> {
-  // Free the debug PORT before we respawn, so the new browser never races an
-  // orphan from a prior crashed run for the port (that race left the browser
-  // stuck on "launching…").
-  //
-  // Fast path: if nothing is listening on the debug port there is no orphan —
-  // skip the kill (and its process spawn) entirely. This is the common case at
-  // boot and shaves the PowerShell cold-start off the launch path.
+/** Free the debug PORT before a launch, so the new browser never races a
+ *  browser the app left running from an earlier run (after a crash it holds the
+ *  port and the profile lock, and the new browser sticks on "launching...").
+ *
+ *  Fast path: nothing listening on the port means nothing to free, and no
+ *  process query runs at all (the common case at boot).
+ *
+ *  Otherwise each listener on the port is read back (one filtered OS query) and
+ *  ended, verified, only when it is the app's own vision browser for THIS port
+ *  with this port's profile folder (`chrome-debug-<port>` or
+ *  `edge-debug-<port>`: the executable may fall back to the other browser).
+ *  Then the port gets PORT_FREE_WAIT_MS to come free. A port still held after
+ *  that is held by a program not identified as the app's vision browser: it
+ *  is left running and the launch stops with VisionPortHeldError. */
+async function freeDebugPort(debugPort: number, tmpDir: string): Promise<void> {
   if (!(await isPortListening(debugPort))) return
-  //
-  // Otherwise target the PORT, not a Win32_Process command-line scan: the old
-  // `Get-CimInstance Win32_Process` enumerated EVERY process's command line via
-  // WMI, which on a loaded machine took ~20s and starved the main process at
-  // boot (the app hung on "Loading…"). Get-NetTCPConnection is a cheap, direct
-  // port lookup.
-  if (process.platform === 'win32') {
-    const ps =
-      `$p = Get-NetTCPConnection -State Listen -LocalPort ${debugPort} -ErrorAction SilentlyContinue ` +
-      `| Select-Object -ExpandProperty OwningProcess -Unique; ` +
-      `if ($p) { $p | ForEach-Object { taskkill /PID $_ /T /F } }`
-    await runKillAwait('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps], 4000)
-  } else {
-    await runKillAwait('pkill', ['-f', `-debug-${debugPort}`], 4000)
+  const ports = ownerPorts()
+  const profileDirs = (['chrome', 'edge'] as const).map((b) => path.join(tmpDir, `${b}-debug-${debugPort}`))
+  for (const facts of await listenerFacts(debugPort, ports)) {
+    if (!profileDirs.some((dir) => isAppVisionBrowser(facts, debugPort, dir, ports.platform))) continue
+    logInfo(`[vision] Ending the app's vision browser left from an earlier run (pid ${facts.pid}) on port ${debugPort}`)
+    await endVerified(facts, ports)
   }
-}
-
-/** Spawn a kill command and resolve when it finishes (or a timeout elapses).
- *  Serialises kill-before-respawn so the new browser never races the old one for
- *  the debug port, WITHOUT execSync's event-loop freeze. Best-effort: a missing
- *  tool / nothing-to-kill resolves rather than rejecting. */
-function runKillAwait(command: string, args: string[], timeoutMs = 4000): Promise<void> {
-  return new Promise((resolve) => {
-    let settled = false
-    let timer: ReturnType<typeof setTimeout> | null = null
-    let child: ReturnType<typeof spawn> | null = null
-    const finish = () => {
-      if (settled) return
-      settled = true
-      if (timer) clearTimeout(timer)
-      resolve()
+  const deadline = Date.now() + PORT_FREE_WAIT_MS
+  while (await isPortListening(debugPort)) {
+    if (Date.now() >= deadline) {
+      const err = new VisionPortHeldError(debugPort)
+      logInfo(`[vision] Not launching: ${err.message}`)
+      throw err
     }
-    try {
-      child = spawn(command, args, { windowsHide: true, stdio: 'ignore' })
-      child.on('close', finish)
-      child.on('error', finish)
-      // On timeout, kill the (possibly hung/slow) kill command so it can't keep
-      // running in the background and starve the main process, then resolve.
-      timer = setTimeout(() => { try { child?.kill() } catch { /* already gone */ } finish() }, timeoutMs)
-      if (typeof timer.unref === 'function') timer.unref()
-    } catch { finish() }
-  })
+    await new Promise((r) => setTimeout(r, PORT_FREE_POLL_MS))
+  }
 }
 
-/** Awaited counterpart to killSpawnedBrowser, used on the launch/relaunch path so
- *  the previous browser is dead (port freed) before the respawn — without the
- *  event-loop freeze execSync caused. The sync killSpawnedBrowser is retained for
- *  quit/stop where the kill must run before the process exits. */
-async function killSpawnedBrowserForRelaunch(): Promise<void> {
-  const pid = spawnedBrowserPid
-  spawnedBrowserPid = null
-  if (!pid) return
-  logInfo(`[vision] Killing previous app-spawned browser (pid ${pid}) before relaunch`)
-  if (process.platform === 'win32') {
-    await runKillAwait('taskkill', ['/pid', String(pid), '/T', '/F'])
-  } else {
-    try { process.kill(-pid, 'SIGTERM') } catch { try { process.kill(pid, 'SIGTERM') } catch { /* already gone */ } }
+/** Read the spawned browser back from the OS and keep its creation time, only
+ *  when it is verified as the app's vision browser on its port and profile. */
+async function verifyTrackedBrowser(t: TrackedBrowser): Promise<void> {
+  const ports = ownerPorts()
+  const facts = await factsOfPid(t.pid, ports)
+  if (facts && isAppVisionBrowser(facts, t.port, t.profileDir, ports.platform)) {
+    t.created = facts.created
+    return
   }
+  logInfo(`[vision] The browser the app started (pid ${t.pid}) could not be verified as its vision browser`)
+}
+
+/** Awaited counterpart to killSpawnedBrowser, used on the launch/relaunch path
+ *  so the previous browser is gone (port freed) before the respawn, without
+ *  blocking the event loop. The tracked browser is re-read from the OS and
+ *  ended only when it is still the app's vision browser with the creation time
+ *  recorded at spawn; the kill re-checks that creation time once more. */
+async function killSpawnedBrowserForRelaunch(): Promise<void> {
+  const t = spawnedBrowser
+  spawnedBrowser = null
+  if (!t) return
+  await t.verified
+  if (t.created === null) {
+    logInfo(`[vision] The previous browser (pid ${t.pid}) was not verified as the app's vision browser; it was left running`)
+    return
+  }
+  const ports = ownerPorts()
+  const facts = await factsOfPid(t.pid, ports)
+  if (!facts) return // already exited
+  if (facts.created !== t.created || !isAppVisionBrowser(facts, t.port, t.profileDir, ports.platform)) {
+    logInfo(`[vision] pid ${t.pid} is no longer the app's vision browser; it was left running`)
+    return
+  }
+  logInfo(`[vision] Ending the previous app-started browser (pid ${t.pid}) before relaunch`)
+  await endVerified(facts, ports)
 }
 
 /**
- * Kill the headless browser process tree CCC spawned, if any. Best-effort with a
- * hard fallback: taskkill /T /F (whole tree) on Windows, process.kill(-pid) on
- * POSIX. No-op when CCC didn't spawn one (e.g. user launched a headed browser).
- * Safe to call repeatedly; clears the tracked pid.
+ * End the browser tree the app spawned, if any, synchronously (stop and quit:
+ * the process may exit before an awaited kill runs). Only through the verified
+ * path: the kill ends that pid only while it still has the creation time read
+ * back and verified (name, command line) after spawn, so a pid that now belongs
+ * to another program is left running. A browser whose creation time is unknown
+ * is never ended by pid. Safe to call repeatedly; clears the tracked browser.
  */
 export function killSpawnedBrowser(): void {
-  const pid = spawnedBrowserPid
-  spawnedBrowserPid = null
-  if (!pid) return
-  try {
-    if (process.platform === 'win32') {
-      // /T kills the whole Chrome process tree (renderers/gpu), /F forces it.
-      execSync(`taskkill /pid ${pid} /T /F`, { windowsHide: true, timeout: 5000 })
-    } else {
-      // Negative pid targets the detached process group (spawn was detached).
-      try { process.kill(-pid, 'SIGTERM') } catch { process.kill(pid, 'SIGTERM') }
-    }
-    logInfo(`[vision] Killed app-spawned headless browser (pid ${pid})`)
-  } catch {
-    // Already exited / not found — nothing to clean up.
+  const t = spawnedBrowser
+  spawnedBrowser = null
+  if (!t) return
+  if (t.created === null) {
+    logInfo(`[vision] The app-started browser (pid ${t.pid}) was not verified as the app's vision browser; it was left running`)
+    return
+  }
+  if (endVerifiedSync({ pid: t.pid, created: t.created }, ownerPorts())) {
+    logInfo(`[vision] Ended the app-started browser (pid ${t.pid})`)
   }
 }
 
@@ -836,21 +856,18 @@ export function buildBrowserLaunchArgs(
 }
 
 export async function launchBrowser(browser: 'chrome' | 'edge', debugPort: number, url?: string, headless: boolean = true): Promise<{ pid: number; command: string }> {
-  // Relaunch path: kill the previous CCC-spawned browser first so we never
-  // stack orphans (the --user-data-dir singleton means a stale one would also
-  // reject the new debug port). Then sweep UNTRACKED orphans from a prior
-  // crashed run — those hold the same profile lock and would make this spawn
-  // silently die.
-  // Serialised kills (resilience fix): AWAIT the previous browser + orphan
-  // sweep so the debug port / profile lock is free before we respawn — otherwise
-  // a lingering zombie holds the port and the new browser hangs on "launching…".
-  // These awaits do NOT block the event loop (unlike the old execSync), so boot
-  // IPC stays responsive.
-  await killSpawnedBrowserForRelaunch()
-  await sweepOrphanDebugBrowsers(debugPort)
-
   const tmpDir = process.env.TEMP || process.env.TMP || os.tmpdir()
   const profileDir = path.join(tmpDir, `${browser}-debug-${debugPort}`)
+  // Relaunch path: end the previous app-started browser first (verified), so
+  // browsers never stack up (the --user-data-dir singleton means a stale one
+  // would also reject the new debug port). Then free the port from a browser
+  // the app left running in an earlier run (verified), or stop with
+  // VisionPortHeldError while the port stays in use.
+  // Both are awaited, so the port and profile lock are free before the spawn,
+  // without blocking the event loop.
+  await killSpawnedBrowserForRelaunch()
+  await freeDebugPort(debugPort, tmpDir)
+
   const other: 'chrome' | 'edge' = browser === 'edge' ? 'chrome' : 'edge'
   // Bare-name PATH fallback when no candidate path exists. On Linux the
   // conventional binary name is `chromium`/`microsoft-edge` — `chrome` exists
@@ -874,10 +891,15 @@ export async function launchBrowser(browser: 'chrome' | 'edge', debugPort: numbe
     logInfo(`[vision] Browser launch failed; vision disabled (non-fatal): ${err instanceof Error ? err.message : String(err)}`)
   })
   child.unref()
-  // Track EVERY browser WE spawn (headless or headed) for teardown — anything
-  // launched via launchBrowser is CCC's own detached child, so it must be killed
-  // on stop/quit or it orphans as a blank window that outlives the app. (A browser
-  // the USER opened themselves never comes through here, so it's never touched.)
-  if (child.pid) spawnedBrowserPid = child.pid
+  // Track EVERY browser the app spawns (headless or headed) for teardown: it is
+  // the app's own detached child, so the app ends it at stop/quit. It is read
+  // back from the OS right away; only once verified does it carry the creation
+  // time a kill needs. (A browser the USER opened themselves never comes
+  // through here, so it is never tracked.)
+  if (child.pid) {
+    const tracked: TrackedBrowser = { pid: child.pid, port: debugPort, profileDir, created: null, verified: Promise.resolve() }
+    tracked.verified = verifyTrackedBrowser(tracked).catch(() => { /* stays unverified */ })
+    spawnedBrowser = tracked
+  }
   return { pid: child.pid || 0, command }
 }
