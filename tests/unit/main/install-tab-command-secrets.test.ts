@@ -24,6 +24,8 @@ vi.mock('../../../src/main/pty-manager', () => ({
   beginSpawnPreparation: (win: unknown, sid: string) => ({ current: true, spawn: (o: unknown) => spawnPty(win, sid, o), abandon: vi.fn() }),
   holdsCodexLaunchLease: () => false,
   codexLaunchLeaseTaken: () => false,
+  // P3.13: no session is held here (the one-at-a-time rule has its own files).
+  isSessionLiveOrStarting: () => false,
 }))
 vi.mock('../../../src/main/debug-capture', () => ({ logUserInput: vi.fn(), isDebugModeEnabled: () => false }))
 vi.mock('../../../src/main/legacy-version-manager', () => ({ isVersionInstalled: () => true, installVersion: vi.fn(), resolveVersionBinary: () => null }))

@@ -23,6 +23,8 @@ vi.mock('../../../src/main/pty-manager', () => ({
   spawnPty, writePty: vi.fn(), resizePty: vi.fn(), killPty: vi.fn(), getSshFlow: () => ({ launchClaude: vi.fn() }), endSshRemote: vi.fn(),
   beginSpawnPreparation, holdsCodexLaunchLease: () => false, codexLaunchLeaseTaken: () => false,
   isSessionWritable: () => false,
+  // P3.13: no session is held here (the one-at-a-time rule has its own files).
+  isSessionLiveOrStarting: () => false,
   getKeptCodexConversationSource: () => undefined,
   getKeptCodexConversation: () => undefined,
   codexRunEnded: async () => true,

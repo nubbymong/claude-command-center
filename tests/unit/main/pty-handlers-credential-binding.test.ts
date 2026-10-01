@@ -16,6 +16,8 @@ vi.mock('electron', () => ({
 const spawnPty = vi.fn()
 vi.mock('../../../src/main/pty-manager', () => ({
   spawnPty, writePty: vi.fn(), resizePty: vi.fn(), killPty: vi.fn(), getSshFlow: vi.fn(), endSshRemote: vi.fn(),
+  // P3.13: no session is held here (the one-at-a-time rule has its own files).
+  isSessionLiveOrStarting: () => false,
 }))
 vi.mock('../../../src/main/debug-capture', () => ({ logUserInput: vi.fn(), isDebugModeEnabled: () => false }))
 vi.mock('../../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }))

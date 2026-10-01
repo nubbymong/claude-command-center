@@ -62,11 +62,14 @@
 // A spawn is recorded as a copy only once it is ACCEPTED: claimConfigLaunch hands
 // back a TICKET and pty:spawn settles that ticket straight after pty-manager took
 // the spawn (settleConfigLaunch). Each ticket is settled on its own: a spawn that
-// is refused or throws after the gate never settles, so it cannot change what
-// main holds, and a forged spawn of the same session id cannot overwrite a
-// pending one (each pending spawn keeps its own ticket). pty:spawn discards its
-// ticket (discardConfigLaunch) on every throw and every early return, so a
-// ticket is pending only while its spawn is. A spawn that is not a copy keeps no
+// is refused, or throws before it reaches pty-manager's spawn, never settles, so
+// it cannot change what main holds, and a forged spawn of the same session id
+// cannot overwrite a pending one (each pending spawn keeps its own ticket). A
+// spawn that ends without settling has its ticket discarded by pty:spawn
+// (discardConfigLaunch), so a ticket is pending only while its spawn is; the one
+// exception is a spawn that reached pty-manager's spawn and threw after it while
+// the session is live or starting: that session runs, so its ticket is settled
+// (P3.13 round 4). A spawn that is not a copy keeps no
 // pending ticket at all, and a session that already has INFLIGHT_PER_ID pending
 // spawns has the NEW claim refused: nothing pending is ever pushed out by a later
 // claim. A session later spawned as a non-copy stops counting as a copy.
@@ -262,8 +265,9 @@ function evictRights(except: string, isLive: (sessionId: string) => boolean): vo
  * pty-manager accepted the spawn this ticket was handed out for: main now holds
  * the session's right to run again (or, for a spawn that is not a copy, none).
  * Only the matching ticket counts, once: a ticket this module did not hand out,
- * or one already settled, changes nothing. A spawn that was refused or threw
- * never settles, so it changes nothing about what main already holds.
+ * or one already settled, changes nothing. A spawn that was refused, or threw
+ * before it reached pty-manager's spawn, never settles, so it changes nothing
+ * about what main already holds.
  */
 export function settleConfigLaunch(ticket: ConfigLaunchTicket): void {
   const data = tickets.get(ticket)
@@ -280,7 +284,9 @@ export function settleConfigLaunch(ticket: ConfigLaunchTicket): void {
 
 /**
  * The spawn this ticket was handed out for ended without pty-manager taking it:
- * it threw, or returned early (refused, closed or superseded while it prepared).
+ * it threw or returned early (refused, closed or superseded while it prepared)
+ * before it reached pty-manager's spawn, or reached it and left nothing live or
+ * starting.
  * Forget that pending spawn, and nothing else. Only a ticket this module handed
  * out and has not settled or discarded does anything: a look-alike, a ticket
  * already settled (its spawn was accepted, so it stays accepted) and a second
