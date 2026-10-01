@@ -29,7 +29,12 @@ vi.mock('../../src/main/session-registry', () => ({
   getSessionMeta: () => undefined,
 }))
 vi.mock('../../src/main/internal-events', () => ({ onInternal: (e: string, cb: any) => { h.internal[e] = cb; return () => {} } }))
-vi.mock('../../src/main/hooks/index', () => ({ getGateway: () => ({ subscribe: (cb: (e: any) => void) => { h.gwSubscribers.push(cb); return () => {} } }) }))
+vi.mock('../../src/main/hooks/index', () => ({
+  onGateway: (bind: (gw: any) => unknown) => {
+    bind({ subscribe: (cb: (e: any) => void) => { h.gwSubscribers.push(cb); return () => {} } })
+    return () => {}
+  },
+}))
 
 const { startRulesEngine, notificationRuleContext } = await import('../../src/main/channel-rules')
 const { BUILTIN_RULES } = await vi.importActual<typeof import('../../src/main/channel-rules-store')>('../../src/main/channel-rules-store')

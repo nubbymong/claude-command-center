@@ -442,7 +442,7 @@ function tail(text: string): WindowedLines {
 // text after it ("> task", or U+276F and the task in the versions with the unboxed input). The
 // input's own row (a typed draft) sits directly under the input's top rule, and is not one.
 const USER_MESSAGE_ROW = new RegExp(`^[>${String.fromCharCode(0x276f)}] \\S`)
-const RULE_ROW = /^\s*[─-╿]+\s*$/
+const RULE_ROW = /^\s*[\u2500-\u257f]+\s*$/
 
 /** The first row of the current turn in all[start, end): just below the newest user
  *  message there, or `start` when none is in the window. */

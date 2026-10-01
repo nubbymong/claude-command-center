@@ -1,7 +1,7 @@
 // src/main/channel-rules.ts
 import { send } from './channel-bus'
 import { loadRules, saveRule } from './channel-rules-store'
-import { getGateway } from './hooks/index'
+import { onGateway } from './hooks/index'
 import { onInternal, type InternalEventMap } from './internal-events'
 import { getSessionsForDependentBranches, getSessionsForProject, getSessionMeta, type SessionMeta } from './session-registry'
 import { shouldFire, renderTemplate, type RuleEventContext } from './channel-rules-core'
@@ -88,16 +88,16 @@ export function startRulesEngine(): void {
   )
 
   // Attention Pulse rule consumes the CC-side Notification(idle_prompt) hook (filter-only).
-  const gw = getGateway()
-  if (gw) {
-    gw.subscribe((e) => {
-      noteTurnEvent(e)
-      if (e.event === 'Notification') {
-        const p = e.payload as { notification_type?: unknown }
-        fireMatching(notificationRuleContext(p.notification_type, turnMsAt(e.sessionId, e.ts)))
-      }
-    })
-  }
+  // P3.16a (N6): bound through onGateway, which hands the engine the Hooks gateway
+  // when src/main/index.ts sets it (after this engine starts) and each gateway set
+  // after it, so the turns and notifications are heard whichever starts first.
+  onGateway((gw) => gw.subscribe((e) => {
+    noteTurnEvent(e)
+    if (e.event === 'Notification') {
+      const p = e.payload as { notification_type?: unknown }
+      fireMatching(notificationRuleContext(p.notification_type, turnMsAt(e.sessionId, e.ts)))
+    }
+  }))
 
   // P3.10 round 1 (S5): a Codex session has no Notification hook; its 60 s
   // idle mark (attention-source) feeds the rules exactly what Claude Code's
@@ -133,7 +133,11 @@ function noteTurnEvent(e: { sessionId?: unknown; event?: unknown; ts?: unknown }
   }
 }
 
-/** How long the session's last turn ran (0 when none was seen). */
+/** How long the session's last turn ran (0 when none was seen). A Notification
+ *  for a prompt whose UserPromptSubmit the gateway missed (the hooks restarted
+ *  mid-turn) reads the turn before it. Harmless: at most that one notification
+ *  is judged by the earlier turn's length, and the next prompt the gateway sees
+ *  starts a new turn. */
 function turnMsAt(sessionId: unknown, at: number): number {
   const t = typeof sessionId === 'string' ? turns.get(sessionId) : undefined
   if (!t) return 0
