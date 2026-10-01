@@ -1,10 +1,20 @@
-// The vision browser is ended only when it is verified as the app's own: by its
-// name, its command line and its creation time, and the kill re-reads the
-// creation time of the same pid immediately before ending it. A pid alone is
-// never enough. No test here starts a program: every OS call goes through a
-// fake OwnerPorts, and child_process is replaced so nothing real can run.
+// How vision recognises and ends its own browsers.
+//
+// - The browser the app spawned in this run is its own child: while its exit has
+//   not been observed (exitCode and signalCode both null) its pid stays its own,
+//   so it is ended by that pid with no read-back (taskkill /T on Windows, the
+//   process group on Linux and macOS, SIGKILL after a grace).
+// - A browser left by an earlier run is found by its profile, whether or not it
+//   listens: its name, its command line (the exact debug-port argument, a
+//   profile argument naming the same folder, no --type=) and its creation time,
+//   which the kill re-reads for the same pid.
+// No test here starts a program: every OS call goes through a fake OwnerPorts,
+// and child_process is replaced so nothing real can run.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { EventEmitter } from 'events'
+import * as fs from 'fs'
+import * as os from 'os'
+import * as path from 'path'
 
 const cp = vi.hoisted(() => ({
   spawn: null as null | ((...a: unknown[]) => unknown),
@@ -44,13 +54,15 @@ vi.mock('../../../src/main/update-watcher', () => ({
 }))
 
 import {
-  isAppVisionBrowser, splitWindowsCommandLine, parseWindowsFacts, parseLsofPids,
-  listenerFacts, factsOfPid, endVerified, endVerifiedSync, runAwait, defaultOwnerPorts,
-  VisionPortHeldError, OWNER_QUERY_TIMEOUT_MS, OWNER_SYNC_KILL_TIMEOUT_MS,
-  type OwnerPorts, type ProcessFacts,
+  isAppVisionBrowser, splitWindowsCommandLine, parseWindowsFacts, parsePsPidArgs, findAppVisionBrowsers,
+  factsOfPid, endVerified, endOwnChild, endOwnChildSync, ownChildRunning, runAwait, defaultOwnerPorts,
+  VisionPortHeldError, WINDOWS_BROWSERS_SCRIPT, OWNER_QUERY_TIMEOUT_MS, OWNER_SYNC_KILL_TIMEOUT_MS,
+  POSIX_TERM_GRACE_MS, OWN_QUIT_GRACE_MS,
+  type OwnerPorts, type ProcessFacts, type OwnChild,
 } from '../../../src/main/vision-browser-owner'
 
 const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+const TASKKILL = 'C:\\Windows\\System32\\taskkill.exe'
 const CREATED = '133700000000000000'
 const WIN_DIR = 'C:\\Users\\me\\AppData\\Local\\Temp\\chrome-debug-9222'
 const WIN_EXE = '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"'
@@ -66,14 +78,21 @@ const b64 = (v: unknown) => Buffer.from(JSON.stringify(v), 'utf8').toString('bas
 interface Call { file: string; args: string[]; timeoutMs: number; sync: boolean }
 function fakePorts(
   platform: NodeJS.Platform,
-  answer: (file: string, args: string[]) => string | Error,
-  opts: { exists?: (f: string) => boolean; signal?: (pid: number) => void; systemRoot?: string | undefined } = {},
+  answer: (file: string, args: string[], timeoutMs: number) => string | Error,
+  opts: {
+    exists?: (f: string) => boolean
+    signal?: (pid: number, sig: string) => void
+    systemRoot?: string | undefined
+    realpath?: (p: string) => string | null
+  } = {},
 ) {
   const calls: Call[] = []
   const signals: Array<[number, string]> = []
+  const sleeps: number[] = []
+  const syncSleeps: number[] = []
   const reply = (file: string, args: string[], timeoutMs: number, sync: boolean) => {
     calls.push({ file, args, timeoutMs, sync })
-    const a = answer(file, args)
+    const a = answer(file, args, timeoutMs)
     if (a instanceof Error) throw a
     return a
   }
@@ -82,15 +101,19 @@ function fakePorts(
     systemRoot: 'systemRoot' in opts ? opts.systemRoot : 'C:\\Windows',
     run: async (file, args, timeoutMs) => reply(file, args, timeoutMs, false),
     runSync: (file, args, timeoutMs) => reply(file, args, timeoutMs, true),
-    signal: (pid, sig) => { signals.push([pid, sig]); opts.signal?.(pid) },
+    signal: (pid, sig) => { signals.push([pid, sig]); opts.signal?.(pid, sig) },
     exists: (f) => (opts.exists ? opts.exists(f) : true),
+    realpath: (p) => (opts.realpath ? opts.realpath(p) : null),
+    sleep: async (ms) => { sleeps.push(ms); await new Promise((r) => setTimeout(r, 0)) },
+    sleepSync: (ms) => { syncSleeps.push(ms) },
   }
-  return { ports, calls, signals }
+  return { ports, calls, signals, sleeps, syncSleeps }
 }
 const scriptOf = (c: Call) => c.args[c.args.length - 1]
 
 describe('isAppVisionBrowser on Windows', () => {
-  const ok = (f: ProcessFacts, port = 9222, dir = WIN_DIR) => isAppVisionBrowser(f, port, dir, 'win32')
+  const ok = (f: ProcessFacts, port = 9222, dir = WIN_DIR, realpath?: (p: string) => string | null) =>
+    isAppVisionBrowser(f, port, dir, 'win32', realpath)
 
   it('matches the app vision browser: browser name, exact port and profile arguments', () => {
     expect(ok(facts('chrome.exe', WIN_OK))).toBe(true)
@@ -112,12 +135,14 @@ describe('isAppVisionBrowser on Windows', () => {
     expect(ok(facts('chrome.exe', `${WIN_OK} --remote-debugging-port=1234`))).toBe(false)
   })
 
-  it('needs the profile argument exactly: a folder that is a prefix of another does not match', () => {
+  it('needs the profile argument to name the same folder: a prefix or another folder does not match', () => {
     expect(ok(facts('chrome.exe', WIN_OK.replace(WIN_DIR, `${WIN_DIR}-other`)))).toBe(false)
     expect(ok(facts('chrome.exe', WIN_OK), 9222, 'C:\\Users\\me\\AppData\\Local\\Temp\\chrome-debug')).toBe(false)
     expect(ok(facts('chrome.exe', WIN_OK), 9222, `${WIN_DIR}-other`)).toBe(false)
     expect(ok(facts('chrome.exe', WIN_OK.replace(`--user-data-dir=${WIN_DIR} `, '')))).toBe(false)
     expect(ok(facts('chrome.exe', `${WIN_OK} --user-data-dir=C:\\Users\\me\\Profile`))).toBe(false)
+    expect(ok(facts('chrome.exe', WIN_OK.replace(WIN_DIR, 'D:\\Temp\\chrome-debug-9222')))).toBe(false)
+    expect(ok(facts('chrome.exe', WIN_OK.replace(WIN_DIR, 'chrome-debug-9222')))).toBe(false)
   })
 
   it('reads a quoted profile path, either way it is quoted', () => {
@@ -125,6 +150,56 @@ describe('isAppVisionBrowser on Windows', () => {
     expect(ok(facts('chrome.exe', winCmd(`--remote-debugging-port=9222 "--user-data-dir=${dir}" --headless=new`)), 9222, dir)).toBe(true)
     expect(ok(facts('chrome.exe', winCmd(`--remote-debugging-port=9222 --user-data-dir="${dir}" --headless=new`)), 9222, dir)).toBe(true)
     expect(ok(facts('chrome.exe', winCmd(`--remote-debugging-port=9222 "--user-data-dir=${dir}" --headless=new`)), 9222, 'C:\\Users\\Jo')).toBe(false)
+  })
+
+  it('B-M8-2: the same profile folder in another case still matches', () => {
+    const lower = WIN_OK.replace(WIN_DIR, WIN_DIR.toLowerCase())
+    expect(ok(facts('chrome.exe', lower))).toBe(true)
+    expect(ok(facts('chrome.exe', WIN_OK), 9222, WIN_DIR.toUpperCase())).toBe(true)
+    expect(ok(facts('chrome.exe', WIN_OK.replace(WIN_DIR, `${WIN_DIR}\\`)))).toBe(true)
+  })
+
+  it('B-M8-2: the profile folder written with a short (8.3) TEMP still matches, through the real long path', () => {
+    const SHORT = 'C:\\Users\\LONGUS~1\\AppData\\Local\\Temp\\chrome-debug-9222'
+    const LONG = 'C:\\Users\\longusername\\AppData\\Local\\Temp\\chrome-debug-9222'
+    const realpath = (p: string) => (p.toLowerCase() === SHORT.toLowerCase() || p.toLowerCase() === LONG.toLowerCase() ? LONG : null)
+    const orphan = facts('chrome.exe', WIN_OK.replace(WIN_DIR, SHORT))
+    expect(ok(orphan, 9222, LONG, realpath)).toBe(true)
+    // Without the real path the short form is another spelling: no match.
+    expect(ok(orphan, 9222, LONG)).toBe(false)
+    // A short form of another folder resolves elsewhere: no match.
+    const otherReal = (p: string) => (p === SHORT ? 'C:\\Users\\other\\AppData\\Local\\Temp\\chrome-debug-9222' : p === LONG ? LONG : null)
+    expect(ok(orphan, 9222, LONG, otherReal)).toBe(false)
+  })
+
+  it('resolves the TEMP folder when the profile folder itself is gone', () => {
+    const SHORT_T = 'C:\\PROGRA~3\\T'
+    const LONG_T = 'C:\\ProgramData\\Temp'
+    const realpath = (p: string) => (p === SHORT_T || p === LONG_T ? LONG_T : null)
+    expect(ok(facts('chrome.exe', WIN_OK.replace(WIN_DIR, `${SHORT_T}\\chrome-debug-9222`)), 9222, `${LONG_T}\\chrome-debug-9222`, realpath)).toBe(true)
+  })
+
+  it('a different last folder never matches, even when both resolve to one place', () => {
+    const realpath = () => 'C:\\Same'
+    expect(ok(facts('chrome.exe', WIN_OK.replace(WIN_DIR, 'C:\\Temp\\edge-debug-9222')), 9222, 'C:\\Temp\\chrome-debug-9222', realpath)).toBe(false)
+  })
+
+  it('a resolver that throws reads as no real path', () => {
+    const realpath = () => { throw new Error('EPERM') }
+    expect(ok(facts('chrome.exe', WIN_OK), 9222, WIN_DIR, realpath)).toBe(true)
+    expect(ok(facts('chrome.exe', WIN_OK.replace(WIN_DIR, 'C:\\X\\chrome-debug-9222')), 9222, WIN_DIR, realpath)).toBe(false)
+  })
+
+  it('a relative profile path never matches, even one that would resolve to the folder', () => {
+    const realpath = (p: string) => (p === 'chrome-debug-9222' || p === WIN_DIR ? WIN_DIR : null)
+    expect(ok(facts('chrome.exe', WIN_OK.replace(WIN_DIR, 'chrome-debug-9222')), 9222, WIN_DIR, realpath)).toBe(false)
+    expect(ok(facts('chrome.exe', WIN_OK.replace(WIN_DIR, '.\\chrome-debug-9222')), 9222, WIN_DIR, realpath)).toBe(false)
+  })
+
+  it('every profile argument must name the folder', () => {
+    expect(ok(facts('chrome.exe', `${WIN_OK} --user-data-dir=${WIN_DIR.toLowerCase()}`))).toBe(true)
+    expect(ok(facts('chrome.exe', `${WIN_OK} --user-data-dir=${WIN_DIR}-x`))).toBe(false)
+    expect(ok(facts('chrome.exe', `${WIN_OK} --user-data-dir`))).toBe(false)
   })
 
   it('does not match a child process (--type=)', () => {
@@ -144,7 +219,8 @@ describe('isAppVisionBrowser on Windows', () => {
 })
 
 describe('isAppVisionBrowser on Linux and macOS', () => {
-  const ok = (f: ProcessFacts, port = 9222, dir = NIX_DIR, platform: NodeJS.Platform = 'linux') => isAppVisionBrowser(f, port, dir, platform)
+  const ok = (f: ProcessFacts, port = 9222, dir = NIX_DIR, platform: NodeJS.Platform = 'linux', realpath?: (p: string) => string | null) =>
+    isAppVisionBrowser(f, port, dir, platform, realpath)
 
   it('matches the app vision browser', () => {
     expect(ok(facts('chrome', NIX_OK))).toBe(true)
@@ -163,11 +239,31 @@ describe('isAppVisionBrowser on Linux and macOS', () => {
     expect(ok(facts('chrome', `${NIX_OK} --remote-debugging-port=1234`))).toBe(false)
   })
 
-  it('needs the profile argument exactly', () => {
+  it('needs the profile argument to name the same folder', () => {
     expect(ok(facts('chrome', NIX_OK.replace(NIX_DIR, `${NIX_DIR}-other`)))).toBe(false)
     expect(ok(facts('chrome', NIX_OK), 9222, '/tmp/chrome-debug')).toBe(false)
     expect(ok(facts('chrome', NIX_OK), 9222, `${NIX_DIR}-other`)).toBe(false)
     expect(ok(facts('chrome', `${NIX_OK} --user-data-dir=/home/me/.config/chrome`))).toBe(false)
+    // Case matters off Windows.
+    expect(ok(facts('chrome', NIX_OK.replace(NIX_DIR, NIX_DIR.toUpperCase())))).toBe(false)
+  })
+
+  it('matches the same folder through its real path (macOS /var and /private/var)', () => {
+    const A = '/var/folders/ab/T/chrome-debug-9222'
+    const B = '/private/var/folders/ab/T/chrome-debug-9222'
+    const realpath = (p: string) => (p === A || p === B ? B : null)
+    expect(ok(facts('chrome', NIX_OK.replace(NIX_DIR, A)), 9222, B, 'darwin', realpath)).toBe(true)
+    expect(ok(facts('chrome', NIX_OK.replace(NIX_DIR, A)), 9222, B, 'darwin')).toBe(false)
+  })
+
+  it('a relative profile path never matches, even one that would resolve to the folder', () => {
+    const realpath = (p: string) => (p === 'chrome-debug-9222' || p === NIX_DIR ? NIX_DIR : null)
+    expect(ok(facts('chrome', NIX_OK.replace(NIX_DIR, 'chrome-debug-9222')), 9222, NIX_DIR, 'linux', realpath)).toBe(false)
+  })
+
+  it('reads the profile argument when it is the last one', () => {
+    expect(ok(facts('chrome', nixCmd(`--remote-debugging-port=9222 --user-data-dir=${NIX_DIR}`)))).toBe(true)
+    expect(ok(facts('chrome', nixCmd(`--remote-debugging-port=9222 --user-data-dir=${NIX_DIR}x`)))).toBe(false)
   })
 
   it('reads a profile folder with a space in it', () => {
@@ -206,65 +302,105 @@ describe('parsing what the OS reports', () => {
     expect(parseWindowsFacts(b64([one, { ...one, name: 7 }]))).toEqual([])
   })
 
-  it('reads lsof pids, one a line, and anything else as none', () => {
-    expect(parseLsofPids('311\n512\n311\n')).toEqual([311, 512])
-    expect(parseLsofPids('')).toEqual([])
-    expect(parseLsofPids('COMMAND PID USER\n311\n')).toEqual([])
+  it('reads ps pid and args lines, and skips a line that is not one', () => {
+    expect(parsePsPidArgs(`  311 ${NIX_OK}\n512 /bin/bash -l\n\nnot a row\n  9 \n77777777777 x\n`)).toEqual([
+      { pid: 311, args: NIX_OK }, { pid: 512, args: '/bin/bash -l' },
+    ])
+    expect(parsePsPidArgs('')).toEqual([])
   })
 })
 
-describe('reading the listeners on Windows', () => {
-  const chromeFacts = facts('chrome.exe', WIN_OK)
+describe('finding the app vision browsers on Windows: by profile, whether or not they listen', () => {
+  const mine = facts('chrome.exe', WIN_OK, 900)
+  const edge = facts('msedge.exe', WIN_OK.replace(WIN_DIR, WIN_DIR.replace('chrome-debug', 'edge-debug')), 901)
+  const user = facts('chrome.exe', winCmd('--remote-debugging-port=9222 --user-data-dir=C:\\Users\\me\\Profile'), 902)
+  const child = facts('chrome.exe', `${WIN_OK} --type=renderer`, 903)
+  const dirs = [WIN_DIR, WIN_DIR.replace('chrome-debug', 'edge-debug')]
 
-  it('asks ONE PowerShell by its absolute path, for this port, with filtered process queries', async () => {
-    const { ports, calls } = fakePorts('win32', () => b64([chromeFacts]))
-    expect(await listenerFacts(9222, ports)).toEqual([chromeFacts])
+  it('asks ONE PowerShell by its absolute path, with a query filtered to the browser names, and matches in TypeScript', async () => {
+    const { ports, calls } = fakePorts('win32', () => b64([mine, edge, user, child]))
+    expect((await findAppVisionBrowsers(9222, dirs, ports)).map((f) => f.pid)).toEqual([900, 901])
     expect(calls).toHaveLength(1)
     expect(calls[0].file).toBe(PS)
     expect(calls[0].args).toContain('-NoProfile')
     expect(calls[0].args).toContain('-NonInteractive')
-    expect(calls[0].timeoutMs).toBe(OWNER_QUERY_TIMEOUT_MS)
-    const script = scriptOf(calls[0])
-    expect(script).toContain('Get-NetTCPConnection -State Listen -LocalPort 9222 ')
-    expect(script).toContain('CreationDate.ToFileTimeUtc()')
-    // Never every process: each process query is filtered to one ProcessId.
-    const queries = script.match(/Get-CimInstance[^\n]*/g) ?? []
-    expect(queries.length).toBeGreaterThan(0)
-    for (const q of queries) expect(q).toMatch(/-Filter \('ProcessId=' \+ \[uint32\]\$id\)/)
+    expect(scriptOf(calls[0])).toBe(WINDOWS_BROWSERS_SCRIPT)
   })
 
-  it('cannot identify on a failure, a malformed answer, a bad port or no system folder: nothing', async () => {
-    expect(await listenerFacts(9222, fakePorts('win32', () => new Error('timed out')).ports)).toEqual([])
-    expect(await listenerFacts(9222, fakePorts('win32', () => 'garbage!').ports)).toEqual([])
+  it('the query is one constant script: filtered by name, never every process, nothing put into it', async () => {
+    const queries = WINDOWS_BROWSERS_SCRIPT.match(/Get-CimInstance[^\n]*/g) ?? []
+    expect(queries).toHaveLength(1)
+    expect(queries[0]).toContain("-Filter 'Name=''chrome.exe'' OR Name=''msedge.exe'''")
+    expect(WINDOWS_BROWSERS_SCRIPT).toContain('CreationDate.ToFileTimeUtc()')
+    expect(WINDOWS_BROWSERS_SCRIPT).not.toMatch(/\d{4}/)
+    expect(WINDOWS_BROWSERS_SCRIPT).not.toContain('chrome-debug')
+    const a = fakePorts('win32', () => b64([]))
+    const b = fakePorts('win32', () => b64([]))
+    await findAppVisionBrowsers(9222, dirs, a.ports)
+    await findAppVisionBrowsers(9335, ['C:\\x\\chrome-debug-9335'], b.ports)
+    expect(scriptOf(a.calls[0])).toBe(scriptOf(b.calls[0]))
+  })
+
+  it('B-M8-4: an answer slower than 4 s still identifies (the query has a 20 s bound, async)', async () => {
+    expect(OWNER_QUERY_TIMEOUT_MS).toBeGreaterThanOrEqual(20000)
+    // The fake answers only when its latency fits the bound it was given.
+    const { ports, calls } = fakePorts('win32', (_f, _a, timeoutMs) => (timeoutMs >= 6000 ? b64([mine]) : new Error('timed out')))
+    expect((await findAppVisionBrowsers(9222, dirs, ports)).map((f) => f.pid)).toEqual([900])
+    expect(calls[0].sync).toBe(false)
+  })
+
+  it('B-M8-2: a browser started with TEMP in another case or in its short form is found', async () => {
+    const SHORT = 'C:\\Users\\ME~1\\AppData\\Local\\Temp\\chrome-debug-9222'
+    const realpath = (p: string) => ([SHORT.toLowerCase(), WIN_DIR.toLowerCase()].includes(p.toLowerCase()) ? WIN_DIR : null)
+    const shortOne = facts('chrome.exe', WIN_OK.replace(WIN_DIR, SHORT), 910)
+    const caseOne = facts('chrome.exe', WIN_OK.replace(WIN_DIR, WIN_DIR.toUpperCase()), 911)
+    const { ports } = fakePorts('win32', () => b64([shortOne, caseOne]), { realpath })
+    expect((await findAppVisionBrowsers(9222, dirs, ports)).map((f) => f.pid)).toEqual([910, 911])
+  })
+
+  it('finds nothing on a failure, a malformed answer, a bad port or no system folder', async () => {
+    expect(await findAppVisionBrowsers(9222, dirs, fakePorts('win32', () => new Error('timed out')).ports)).toEqual([])
+    expect(await findAppVisionBrowsers(9222, dirs, fakePorts('win32', () => 'garbage!').ports)).toEqual([])
     for (const port of [0, -1, 65536, 9222.5, Number.NaN]) {
-      const { ports, calls } = fakePorts('win32', () => b64([chromeFacts]))
-      expect(await listenerFacts(port, ports)).toEqual([])
+      const { ports, calls } = fakePorts('win32', () => b64([mine]))
+      expect(await findAppVisionBrowsers(port, dirs, ports)).toEqual([])
       expect(calls).toHaveLength(0)
     }
     for (const systemRoot of [undefined, 'Windows', '\\Windows']) {
-      const { ports, calls } = fakePorts('win32', () => b64([chromeFacts]), { systemRoot })
-      expect(await listenerFacts(9222, ports)).toEqual([])
+      const { ports, calls } = fakePorts('win32', () => b64([mine]), { systemRoot })
+      expect(await findAppVisionBrowsers(9222, dirs, ports)).toEqual([])
       expect(calls).toHaveLength(0)
     }
+    const none = fakePorts('win32', () => b64([mine]))
+    expect(await findAppVisionBrowsers(9222, [], none.ports)).toEqual([])
+    expect(none.calls).toHaveLength(0)
   })
 
   it('reads one pid with a filtered query, and only that pid', async () => {
-    const { ports, calls } = fakePorts('win32', () => b64([chromeFacts]))
-    expect(await factsOfPid(4242, ports)).toEqual(chromeFacts)
-    expect(scriptOf(calls[0])).toContain('$ids = @(4242)')
-    expect(scriptOf(calls[0])).not.toContain('Get-NetTCPConnection')
-    expect(await factsOfPid(77, fakePorts('win32', () => b64([chromeFacts])).ports)).toBeNull()
+    const { ports, calls } = fakePorts('win32', () => b64([mine]))
+    expect(await factsOfPid(900, ports)).toEqual(mine)
+    expect(scriptOf(calls[0])).toContain('$ids = @(900)')
+    expect(calls[0].timeoutMs).toBe(OWNER_QUERY_TIMEOUT_MS)
+    expect(await factsOfPid(77, fakePorts('win32', () => b64([mine])).ports)).toBeNull()
     for (const pid of [0, -4, 1.5, Number.NaN]) {
-      const f = fakePorts('win32', () => b64([chromeFacts]))
+      const f = fakePorts('win32', () => b64([mine]))
       expect(await factsOfPid(pid, f.ports)).toBeNull()
       expect(f.calls).toHaveLength(0)
     }
   })
 })
 
-describe('reading the listeners on Linux and macOS', () => {
-  const answer = (table: Record<number, { comm: string; args: string; lstart: string }>) => (file: string, args: string[]) => {
-    if (file.endsWith('lsof')) return Object.keys(table).join('\n') + '\n'
+describe('finding the app vision browsers on Linux and macOS: ps, no lsof', () => {
+  const table: Record<number, { comm: string; args: string; lstart: string }> = {
+    311: { comm: 'chrome', args: NIX_OK, lstart: 'Wed Oct  1 10:00:00 2026' },
+    312: { comm: 'chrome', args: `${NIX_OK} --type=renderer`, lstart: 'Wed Oct  1 10:00:01 2026' },
+    313: { comm: 'node', args: NIX_OK, lstart: 'Wed Oct  1 10:00:02 2026' },
+    314: { comm: 'bash', args: '/bin/bash -l', lstart: 'Wed Oct  1 10:00:03 2026' },
+    315: { comm: 'chrome', args: NIX_OK.replace(NIX_DIR, '/home/me/p'), lstart: 'Wed Oct  1 10:00:04 2026' },
+  }
+  const answer = (file: string, args: string[]) => {
+    if (file.endsWith('lsof')) return new Error('test: lsof must not run')
+    if (args[0] === '-A') return Object.entries(table).map(([pid, r]) => `${String(pid).padStart(6)} ${r.args}`).join('\n') + '\n'
     const pid = Number(args[args.indexOf('-p') + 1])
     const row = table[pid]
     if (!row) return new Error('exited with status 1')
@@ -272,27 +408,24 @@ describe('reading the listeners on Linux and macOS', () => {
     return (field === 'comm=' ? row.comm : field === 'args=' ? row.args : row.lstart) + '\n'
   }
 
-  it('asks lsof for this port, then ps for each pid, by absolute paths', async () => {
-    const { ports, calls } = fakePorts('linux', answer({ 311: { comm: 'chrome', args: NIX_OK, lstart: 'Wed Oct  1 10:00:00 2026' } }))
-    expect(await listenerFacts(9222, ports)).toEqual([{ pid: 311, name: 'chrome', commandLine: NIX_OK, created: 'Wed Oct  1 10:00:00 2026' }])
-    expect(calls[0].file).toBe('/usr/sbin/lsof')
-    expect(calls[0].args).toEqual(['-nP', '-iTCP:9222', '-sTCP:LISTEN', '-t'])
-    const fields = calls.slice(1).map((c) => [c.file, c.args.join(' ')])
-    expect(fields).toEqual(expect.arrayContaining([
-      ['/bin/ps', '-ww -p 311 -o comm='], ['/bin/ps', '-ww -p 311 -o args='], ['/bin/ps', '-ww -p 311 -o lstart='],
-    ]))
+  it('B-M8-3: with no lsof on the machine, ps alone finds the browser by its profile', async () => {
+    const { ports, calls } = fakePorts('linux', answer, { exists: (f) => f === '/bin/ps' })
+    expect(await findAppVisionBrowsers(9222, [NIX_DIR], ports)).toEqual([
+      { pid: 311, name: 'chrome', commandLine: NIX_OK, created: 'Wed Oct  1 10:00:00 2026' },
+    ])
+    expect(calls[0].file).toBe('/bin/ps')
+    expect(calls[0].args).toEqual(['-A', '-ww', '-o', 'pid=', '-o', 'args='])
+    expect(calls.every((c) => c.file === '/bin/ps' && !c.sync)).toBe(true)
+    // Only the rows naming this debug port are read further.
+    const perPid = new Set(calls.slice(1).map((c) => c.args[c.args.indexOf('-p') + 1]))
+    expect([...perPid].sort()).toEqual(['311', '312', '313', '315'])
   })
 
-  it('cannot identify on a failure or no lsof: nothing', async () => {
-    expect(await listenerFacts(9222, fakePorts('linux', () => new Error('exited with status 1')).ports)).toEqual([])
-    const noLsof = fakePorts('linux', () => '311\n', { exists: (f) => !f.endsWith('lsof') })
-    expect(await listenerFacts(9222, noLsof.ports)).toEqual([])
-    expect(noLsof.calls).toHaveLength(0)
-  })
-
-  it('skips a pid whose facts cannot be read', async () => {
-    const { ports } = fakePorts('linux', (file, args) => (file.endsWith('lsof') ? '311\n512\n' : answer({ 512: { comm: 'chrome', args: NIX_OK, lstart: 'x' } })(file, args)))
-    expect((await listenerFacts(9222, ports)).map((f) => f.pid)).toEqual([512])
+  it('finds nothing on a failure or with no ps', async () => {
+    expect(await findAppVisionBrowsers(9222, [NIX_DIR], fakePorts('linux', () => new Error('exited with status 1')).ports)).toEqual([])
+    const noPs = fakePorts('linux', answer, { exists: () => false })
+    expect(await findAppVisionBrowsers(9222, [NIX_DIR], noPs.ports)).toEqual([])
+    expect(noPs.calls).toHaveLength(0)
   })
 })
 
@@ -304,6 +437,7 @@ describe('ending a verified process on Windows', () => {
     expect(await endVerified(target, ports)).toBe(true)
     expect(calls).toHaveLength(1)
     expect(calls[0].file).toBe(PS)
+    expect(calls[0].sync).toBe(false)
     expect(calls[0].timeoutMs).toBe(OWNER_QUERY_TIMEOUT_MS)
     const script = scriptOf(calls[0])
     expect(script).toContain("Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId=4242'")
@@ -324,7 +458,6 @@ describe('ending a verified process on Windows', () => {
   it('never builds a script with the profile path or the command line in it', async () => {
     const { ports, calls } = fakePorts('win32', () => 'ended')
     await endVerified(target, ports)
-    endVerifiedSync(target, ports)
     for (const c of calls) {
       const script = scriptOf(c)
       expect(script).not.toContain(WIN_DIR)
@@ -338,60 +471,148 @@ describe('ending a verified process on Windows', () => {
     for (const bad of [{ pid: 0, created: CREATED }, { pid: 4242, created: 'not-a-number' }, { pid: 4242, created: '12 34' }, { pid: 4242, created: '' }]) {
       const { ports, calls } = fakePorts('win32', () => 'ended')
       expect(await endVerified(bad, ports)).toBe(false)
-      expect(endVerifiedSync(bad, ports)).toBe(false)
       expect(calls).toHaveLength(0)
     }
-  })
-
-  it('the synchronous kill at quit is the same verified script, with its own timeout', () => {
-    const { ports, calls } = fakePorts('win32', () => 'ended')
-    expect(endVerifiedSync(target, ports)).toBe(true)
-    expect(calls).toHaveLength(1)
-    expect(calls[0].sync).toBe(true)
-    expect(calls[0].timeoutMs).toBe(OWNER_SYNC_KILL_TIMEOUT_MS)
-    expect(scriptOf(calls[0])).toContain(`-eq '${CREATED}'`)
-    expect(endVerifiedSync(target, fakePorts('win32', () => 'left').ports)).toBe(false)
-    expect(endVerifiedSync(target, fakePorts('win32', () => new Error('timed out')).ports)).toBe(false)
   })
 })
 
 describe('ending a verified process on Linux and macOS', () => {
   const LSTART = 'Wed Oct  1 10:00:00 2026'
   const target = facts('chrome', NIX_OK, 4242, LSTART)
-  const lstartIs = (v: string | Error) => (file: string, args: string[]) => {
+  /** ps answers `lstart` for pid 4242 while it runs; `alive` says whether it does. */
+  const psFor = (alive: () => boolean, start = LSTART) => (file: string, args: string[]) => {
     expect(file).toBe('/bin/ps')
     expect(args).toEqual(['-p', '4242', '-o', 'lstart='])
-    return v instanceof Error ? v : `${v}\n`
+    return alive() ? `${start}\n` : new Error('exited with status 1')
   }
 
-  it('signals the process group only when the start time still matches', async () => {
-    const same = fakePorts('linux', lstartIs(LSTART))
+  it('signals the process group only when the start time still matches, and stops once it is gone', async () => {
+    let alive = true
+    const same = fakePorts('linux', psFor(() => alive), { signal: (_p, sig) => { if (sig === 'SIGTERM') alive = false } })
     expect(await endVerified(target, same.ports)).toBe(true)
     expect(same.signals).toEqual([[-4242, 'SIGTERM']])
 
-    const changed = fakePorts('linux', lstartIs('Wed Oct  1 10:00:01 2026'))
+    const changed = fakePorts('linux', psFor(() => true, 'Wed Oct  1 10:00:01 2026'))
     expect(await endVerified(target, changed.ports)).toBe(false)
     expect(changed.signals).toEqual([])
 
-    const gone = fakePorts('linux', lstartIs(new Error('exited with status 1')))
+    const gone = fakePorts('linux', psFor(() => false))
     expect(await endVerified(target, gone.ports)).toBe(false)
     expect(gone.signals).toEqual([])
   })
 
+  it('sends SIGKILL to the group when it is still the same process after the grace', async () => {
+    let alive = true
+    const f = fakePorts('linux', psFor(() => alive), { signal: (_p, sig) => { if (sig === 'SIGKILL') alive = false } })
+    expect(await endVerified(target, f.ports)).toBe(true)
+    expect(f.signals).toEqual([[-4242, 'SIGTERM'], [-4242, 'SIGKILL']])
+    expect(f.sleeps.reduce((a, b) => a + b, 0)).toBeGreaterThanOrEqual(POSIX_TERM_GRACE_MS)
+  })
+
+  it('does not send SIGKILL when the pid now has another start time', async () => {
+    let start = LSTART
+    const f = fakePorts('linux', (file, args) => psFor(() => true, start)(file, args), { signal: (_p, sig) => { if (sig === 'SIGTERM') start = 'Thu Oct  2 10:00:00 2026' } })
+    expect(await endVerified(target, f.ports)).toBe(true)
+    expect(f.signals).toEqual([[-4242, 'SIGTERM']])
+  })
+
   it('signals the pid itself when it leads no process group', async () => {
-    const f = fakePorts('linux', lstartIs(LSTART), { signal: (pid) => { if (pid < 0) throw new Error('ESRCH') } })
+    let alive = true
+    const f = fakePorts('linux', psFor(() => alive), { signal: (pid) => { if (pid < 0) throw new Error('ESRCH'); alive = false } })
     expect(await endVerified(target, f.ports)).toBe(true)
     expect(f.signals).toEqual([[-4242, 'SIGTERM'], [4242, 'SIGTERM']])
   })
+})
 
-  it('the synchronous kill re-reads the start time too', () => {
-    const same = fakePorts('linux', lstartIs(LSTART))
-    expect(endVerifiedSync(target, same.ports)).toBe(true)
-    expect(same.calls[0].sync).toBe(true)
-    expect(same.signals).toEqual([[-4242, 'SIGTERM']])
-    const changed = fakePorts('linux', lstartIs('Thu Oct  2 10:00:00 2026'))
-    expect(endVerifiedSync(target, changed.ports)).toBe(false)
-    expect(changed.signals).toEqual([])
+/** A ChildProcess stand-in: exitCode/signalCode stay null until its exit is
+ *  observed (emitted), as libuv does. */
+function fakeOwnChild(pid = 4242) {
+  const c = new EventEmitter() as EventEmitter & { pid?: number; exitCode: number | null; signalCode: NodeJS.Signals | null }
+  c.pid = pid
+  c.exitCode = null
+  c.signalCode = null
+  const exit = (sig: NodeJS.Signals | null = null) => queueMicrotask(() => {
+    if (sig) c.signalCode = sig; else c.exitCode = 1
+    c.emit('exit', c.exitCode, c.signalCode)
+  })
+  return { child: c as unknown as OwnChild & EventEmitter, exit, raw: c }
+}
+
+describe("ending the app's own browser by its pid", () => {
+  it('is running only while neither an exit code nor a signal was observed', () => {
+    const { raw } = fakeOwnChild()
+    expect(ownChildRunning(raw as unknown as OwnChild)).toBe(true)
+    raw.exitCode = 0
+    expect(ownChildRunning(raw as unknown as OwnChild)).toBe(false)
+    raw.exitCode = null; raw.signalCode = 'SIGTERM'
+    expect(ownChildRunning(raw as unknown as OwnChild)).toBe(false)
+  })
+
+  it('Windows, sync: taskkill /T /F by the absolute System32 path, bounded, no read-back', () => {
+    const { child } = fakeOwnChild()
+    const { ports, calls } = fakePorts('win32', () => 'SUCCESS')
+    expect(endOwnChildSync(child, ports)).toBe(true)
+    expect(calls).toEqual([{ file: TASKKILL, args: ['/PID', '4242', '/T', '/F'], timeoutMs: OWNER_SYNC_KILL_TIMEOUT_MS, sync: true }])
+  })
+
+  it('Windows, async: the kill itself is the same bounded call (no turn between the check and the kill), then it waits for the exit', async () => {
+    const { child, exit } = fakeOwnChild()
+    const { ports, calls } = fakePorts('win32', () => { exit(); return 'SUCCESS' })
+    expect(await endOwnChild(child, ports)).toBe(true)
+    expect(calls).toEqual([{ file: TASKKILL, args: ['/PID', '4242', '/T', '/F'], timeoutMs: OWNER_SYNC_KILL_TIMEOUT_MS, sync: true }])
+    expect(ownChildRunning(child)).toBe(false)
+  })
+
+  it('does nothing once its exit was observed, or with no pid', async () => {
+    for (const platform of ['win32', 'linux'] as const) {
+      const done = fakeOwnChild()
+      done.raw.exitCode = 0
+      const a = fakePorts(platform, () => 'SUCCESS')
+      expect(endOwnChildSync(done.child, a.ports)).toBe(false)
+      expect(await endOwnChild(done.child, a.ports)).toBe(false)
+      const killed = fakeOwnChild()
+      killed.raw.signalCode = 'SIGKILL'
+      expect(endOwnChildSync(killed.child, a.ports)).toBe(false)
+      const noPid = fakeOwnChild()
+      noPid.raw.pid = undefined
+      expect(endOwnChildSync(noPid.child, a.ports)).toBe(false)
+      expect(await endOwnChild(noPid.child, a.ports)).toBe(false)
+      expect(a.calls).toHaveLength(0)
+      expect(a.signals).toHaveLength(0)
+    }
+  })
+
+  it('Windows: no system folder, nothing run', () => {
+    const { child } = fakeOwnChild()
+    const { ports, calls } = fakePorts('win32', () => 'SUCCESS', { systemRoot: undefined })
+    expect(endOwnChildSync(child, ports)).toBe(false)
+    expect(calls).toHaveLength(0)
+  })
+
+  it('POSIX, async: SIGTERM to its group, and no SIGKILL when it exits within the grace', async () => {
+    const { child, exit } = fakeOwnChild()
+    const { ports, signals, calls } = fakePorts('linux', () => '', { signal: (_p, sig) => { if (sig === 'SIGTERM') exit('SIGTERM') } })
+    expect(await endOwnChild(child, ports)).toBe(true)
+    expect(signals).toEqual([[-4242, 'SIGTERM']])
+    expect(calls).toHaveLength(0)
+  })
+
+  it('POSIX, async: SIGKILL to its group when its exit is not observed within the grace', async () => {
+    const { child, exit } = fakeOwnChild()
+    const { ports, signals, sleeps } = fakePorts('linux', () => '', { signal: (_p, sig) => { if (sig === 'SIGKILL') exit('SIGKILL') } })
+    expect(await endOwnChild(child, ports)).toBe(true)
+    expect(signals).toEqual([[-4242, 'SIGTERM'], [-4242, 'SIGKILL']])
+    expect(sleeps[0]).toBe(POSIX_TERM_GRACE_MS)
+  })
+
+  it('POSIX, sync (quit): SIGTERM, a short bounded wait, then SIGKILL to the group', () => {
+    const { child } = fakeOwnChild()
+    const { ports, signals, syncSleeps, calls } = fakePorts('linux', () => '')
+    expect(endOwnChildSync(child, ports)).toBe(true)
+    expect(signals).toEqual([[-4242, 'SIGTERM'], [-4242, 'SIGKILL']])
+    expect(syncSleeps).toEqual([OWN_QUIT_GRACE_MS])
+    expect(OWN_QUIT_GRACE_MS).toBeLessThanOrEqual(1000)
+    expect(calls).toHaveLength(0)
   })
 })
 
@@ -437,6 +658,26 @@ describe('the real runner (child_process replaced)', () => {
     expect(opts.timeout).toBe(5000)
     expect(opts.shell).toBeUndefined()
     expect(opts.windowsHide).toBe(true)
+  })
+
+  it('the real path is the folder resolved by the OS, or null when it does not exist', () => {
+    const base = os.tmpdir()
+    const dir = fs.mkdtempSync(path.join(base, 'n7-owner-'))
+    try {
+      expect(defaultOwnerPorts().realpath(dir)).toBe(fs.realpathSync.native(dir))
+      expect(defaultOwnerPorts().realpath(path.join(dir, 'missing'))).toBeNull()
+    } finally {
+      fs.rmdirSync(dir)
+    }
+  })
+
+  it('the sync wait returns, and never blocks longer than a second whatever is asked', () => {
+    const t0 = Date.now()
+    defaultOwnerPorts().sleepSync(20)
+    expect(Date.now() - t0).toBeLessThan(1000)
+    const t1 = Date.now()
+    defaultOwnerPorts().sleepSync(30000)
+    expect(Date.now() - t1).toBeLessThan(2500)
   })
 })
 
