@@ -3031,6 +3031,35 @@ next launch on the system ConPTY, one warning; a normal /quit, and a Codex
 that quits at once with an error, change nothing); the Logs record of a /quit
 reads exited; if a Codex that quits leaving a process attached keeps its tab
 open, a known issue (close the tab).
+P3.15 round 3 (the VM blocker at 98455d52: under the bundled ConPTY a key
+typed right after Codex ended, on Ctrl+C at an empty prompt, failed with
+"write EAGAIN" and the whole app quit, in 4 of 5 fast-typing tries at Medium
+and High; 0 of 5 under the system ConPTY). Fixed in ccda8f07 (mocked), the
+bundled ConPTY kept. Cause: node-pty writes a Windows PTY's input to a
+net.Socket over the console's input pipe and gives it no 'error' listener, and
+the app's uncaught-exception handler ends the app on all but EPIPE and EIO;
+the write fails because the console host has let go of the pipe (node-pty
+releases the bundled pseudo console when it starts the program, so
+OpenConsole.exe ends with the program; the system host keeps the pipe until
+the PTY is killed). Nothing to retry: the writes block until there is room,
+and a failed write destroys the socket. Change: `guardPtyInput`
+(`src/main/pty-input-guard.ts`) gives that socket a listener for every
+session's PTY (Claude, Codex on either ConPTY, plain terminals, SSH) and the
+End and liveness helper PTYs; every error is caught and the first logged once;
+a session that then ends by itself is left to end, one that has not ended
+within 3 s is ended with a line in its terminal. The guard reaches node-pty's
+internal agent, and a test pins that shape in the installed node-pty. Also a
+known issue the VM confirmed: a Codex tab stays open after Codex quits while a
+command it started in the background still runs (close the tab). Tests, red
+first on 98455d52: 4 new session cases and the new pty-input-guard file;
+mutation 10 of 10 red. ADR-009 delta: the input socket's listener and the
+grace end (a kill of the session's own PTY, as killPty does); nothing written
+to any PTY changed. Owed on the VM (the packaged build of this round, 0.155.1
+and 0.153.4, Medium and High): 0 app exits in 10 fast-typing tries per
+version and integrity (Ctrl+C at an empty prompt then keys at once), the
+"input to session ... failed" log line seen and the tab ending normally; the
+earlier P3.15 list; and the headless vision Chrome that outlived the app and
+held its debug port (pre-existing, for P3.16).
 
 **P3.16 PR 3 records and user-facing sweep.** App knowledge (with known
 issues), tips, tour and Feature Guide, the changelog entry, the user guide,

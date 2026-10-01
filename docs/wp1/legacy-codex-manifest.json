@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-01T13:52:24.426Z",
-  "head": "7296dd430167b9888cfc9457c508dd8703acd24a",
-  "tree": "b2caee5edeb253236bff9d49d8d3aab2ecb020d1",
+  "generatedAt": "2026-10-01T15:27:20.217Z",
+  "head": "ccda8f07af216d7340322c4cb39e3118a2cc3a9b",
+  "tree": "c931a699bf5731087804b8c0c29246cbe4cb48cc",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2586,
+  "trackedFileCount": 2588,
   "excludedFileCount": 385,
-  "scannedFileCount": 2201,
+  "scannedFileCount": 2203,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 620,
+      "lineCount": 623,
       "truncated": true
     },
     {
@@ -1033,7 +1033,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 367
+      "lineCount": 368
     },
     {
       "path": "src/main/sanitize-restored-spawn-options.ts",
@@ -2109,7 +2109,7 @@
         "P12",
         "P14"
       ],
-      "lineCount": 75
+      "lineCount": 77
     },
     {
       "path": "src/shared/ask-conductor-provider.ts",
@@ -3484,7 +3484,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 35
+      "lineCount": 42
     },
     {
       "path": "tests/unit/main/pty-handlers-codex-review.test.ts",
@@ -5224,7 +5224,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 54
+      "lineCount": 57
     },
     {
       "path": "tests/unit/status-ingest.test.ts",

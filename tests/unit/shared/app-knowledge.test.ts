@@ -259,6 +259,12 @@ describe('app knowledge and tips after P3.15', () => {
     expect(k).toMatch(/the same in a terminal outside the app/)
     expect(k).toMatch(/Do not run the app as administrator/)
   })
+  it('round 3: the known issue for a tab that stays open after Codex quits, with its workaround (the VM at 98455d52)', () => {
+    const k = body('known-issues')
+    expect(k).toMatch(/On Windows, a Codex session's tab can stay open after Codex has quit/)
+    expect(k).toMatch(/a command Codex started in the background is still running/)
+    expect(k).toMatch(/Close the tab: that ends the command too/)
+  })
   it('round 2 (J6): the command named is the one both supported CLIs list in their slash popup', () => {
     for (const v of ['0.153.4', '0.155.1']) {
       const popup = fs.readFileSync(path.resolve(__dirname, '..', '..', 'fixtures', 'codex', 'cli', v, 'tui-slash-popup.txt'), 'utf8')
