@@ -148,7 +148,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 
 | # | Feature | Status | Settled by | Gap | PR |
 |---|---|---|---|---|---|
-| 31 | Logs history, search and transcript | DONE (P3.12, d86fd80f and its fixes; mocked; VM at ff7be273 (WINDOWS_1, real Codex 0.155.1 and 0.153.4), and its re-check with the fixes: indexing, search, the switches for new sessions and a Claude session unchanged PASS): a local Codex session's run is recorded under the gates a Claude run has; its transcript is the rollout its own watcher claims in its own realm (the Codex log binder: held until the run is recorded, exact or heuristic, let go when the claim is, never a conversation another tab holds), tailed with the Codex normalizer by the binding's stored format; the Logs page, search, the per-session pane and the Logs button (live on a Codex tab: ADR-018 D3's dimmed Codex tool ends); a Codex config's Index conversation logs field; a logging switch turned off stops indexing the running sessions it covers, both assistants, every launch reads the switches as saved, and turning one on applies to sessions started after it; what a Codex session writes while it is not indexed is never indexed, whichever tab later resumes the conversation; a new run continues a conversation the same session indexed before, from where it was read (Codex; Claude's resume indexes its transcript again, recorded for P3.16); a Codex tail reads only the file its watcher claimed; a user_message of another kind than plain is not the user's words; a Codex run is recorded once the indexing notice naming Codex was seen, which a Codex user who saw only the earlier notice is shown once more | Parity: index each realm's rollouts; realms never cross | verification: the VM re-check of the fixes (PR 3 gate 6); the owner's screenshot review; the fresh PR-level ADR-009 pass (P3.12 is quarantined under ADR-009: its bounded rounds are exhausted); the SSH live matrix at PR 3's head (no Codex case: a Codex session over SSH is refused); the native SQL tests in CI (the identity column, and the prior bindings a continuation reads) | 3 |
+| 31 | Logs history, search and transcript | DONE (P3.12, d86fd80f and its fixes; mocked; VM at ff7be273 (WINDOWS_1, real Codex 0.155.1 and 0.153.4), and its re-check with the fixes: indexing, search, the switches for new sessions and a Claude session unchanged PASS): a local Codex session's run is recorded under the gates a Claude run has; its transcript is the rollout its own watcher claims in its own realm (the Codex log binder: held until the run is recorded, exact or heuristic, let go when the claim is, never a conversation another tab holds), tailed with the Codex normalizer by the binding's stored format; the Logs page, search, the per-session pane and the Logs button (live on a Codex tab: ADR-018 D3's dimmed Codex tool ends); a Codex config's Index conversation logs field; a logging switch turned off stops indexing the running sessions it covers, both assistants, every launch reads the switches as saved, and turning one on applies to sessions started after it; what a Codex session writes while it is not indexed is never indexed, whichever tab later resumes the conversation; a new run continues a conversation the same session indexed before, from where it was read (both assistants: Claude's by P3.16a, M1, with the same record-time windows); a Codex tail reads only the file its watcher claimed; a user_message of another kind than plain is not the user's words; a Codex run is recorded once the indexing notice naming Codex was seen, which a Codex user who saw only the earlier notice is shown once more | Parity: index each realm's rollouts; realms never cross | verification: the VM re-check of the fixes (PR 3 gate 6); the owner's screenshot review; the fresh PR-level ADR-009 pass (P3.12 is quarantined under ADR-009: its bounded rounds are exhausted); the SSH live matrix at PR 3's head (no Codex case: a Codex session over SSH is refused); the native SQL tests in CI (the identity column, and the prior bindings a continuation reads) | 3 |
 | 32 | Resume picker | DONE (P3.5, 44729f29 and its fix rounds; mocked; VM c2c42e22; the name file P3.12, d86fd80f and its fixes; mocked; VM at ff7be273 (WINDOWS_1, real Codex 0.155.1 and 0.153.4), and its re-check with the fixes: the name file only at an exact claim, and in the picker after the tab closed, PASS): every git worktree's conversations, named and started in their own worktree; a name given to a Codex session is written next to the rollout it is exactly on (a rename, or a remembered name at the exact claim), inside its realm and never through a link, and Codex's picker leads with it, as Claude's does; the picker titles a conversation by its first user message as the index reads it, never the context Codex injects (AGENTS.md, the environment); the name file is written only into the realm's real day folder (the realm's real path taken before its folders are walked), a new file elsewhere, or one whose write fails, taken back (a path check: see P3.12's limits) | Parity | verification: the VM re-check of the fixes (PR 3 gate 6); the owner's screenshot review; the fresh PR-level ADR-009 pass (P3.12 is quarantined under ADR-009: its bounded rounds are exhausted); the SSH live matrix at PR 3's head (no Codex case: a Codex session over SSH is refused) | 3 |
 | 33 | Resume in the exact realm | DONE | PLAN A10 | verification: real, realm B never lists realm A | 2, v4 |
 | 34 | Exact resume on app relaunch | PARTIAL (P3.5, 90a717df; mocked; VM c2c42e22): a restored session resumes its own conversation in its own realm, bypassing the picker | Parity: resume by the claimed session id, `codex resume <id>` in the same realm | verification: the SSH live matrix; a conversation carried over by a staged Sign in again on the VM (owner action) | 3 |
@@ -2064,9 +2064,7 @@ be written, or a stray temporary file be left, outside the realm, or another
 file be read: inherent to a path check on a folder the user's own processes
 can change (Node has no directory-handle-relative open or handle-to-path call
 on Windows to do better without a native module); a resumed
-Claude transcript is indexed again under the new run (Claude's path,
-recorded for P3.16), while a resumed Codex conversation continues from what
-was indexed.
+conversation continues from what was indexed (Claude's by P3.16a, M1).
 Deviations: a separate `onRollout` listener rather than a path on
 `onClaim`/`onShared` (whose payloads stay as they are); a worker message
 of its own for a claim let go (Claude has no release); the Memory rail kept
@@ -2242,9 +2240,8 @@ a resumed tail is checked when it next reads, not at the worker's start).
 Search lists each turn of a Codex conversation once, whichever sessions
 indexed it (a turn is the same when it is of the same conversation, a rollout
 id both runs read, and its role, its record time and a hash of its words are);
-Claude's hits are listed as before. Claude's resume binds the resumed transcript as
-a new transcript of the new run and indexes it from its start, so its earlier
-turns are listed twice; recorded for P3.16. A Codex tail reads only the file
+P3.16a (M1) brings Claude's search and resume to the same rules
+(below, in P3.16). A Codex tail reads only the file
 its watcher claimed (A1, W6): the file's device and file id ride on the bind
 and are kept across a worker restart, another file at the path is not read
 (its tail retires), and a bind without that identity binds nothing. The
@@ -3067,10 +3064,8 @@ issues), tips, tour and Feature Guide, the changelog entry, the user guide,
 PR body, the ADR-009 verdict and the SSH matrix. Left to this sweep by
 P3.4: the Feature Guide catalogue cards that name both providers,
 `training-steps.ts` lines 90 (the Usage page), 132 (the Accounts section)
-and 748 (the usage meter). From P3.12: a resumed Claude transcript is
-indexed again under the new run (search lists its earlier turns twice), where
-a resumed Codex conversation continues from what was indexed; Claude's resume
-to be settled the same way, or recorded as a limit.
+and 748 (the usage meter). From P3.12: Claude's resume to continue from what
+was indexed, as Codex's does (done: P3.16a, M1, below).
 
 P3.16a, UI track (items U1 to U7; the main-track items are recorded
 separately). Pre-existing bugs queued during PR 3, each confirmed at HEAD,
@@ -3106,6 +3101,76 @@ narrower window, an attention card and tab in both themes, Alt+V in a plain
 terminal (local, and over SSH), and a Restart in the partner view of a Not
 started tab. Left to the sweep: the Alt+V tip and `training-steps.ts` line 695
 describe the assistant routes only.
+
+P3.16a, main track (items M1 to M9). Each confirmed at HEAD, root-caused, fixed
+red first with mutation proof, or recorded with its evidence or a design.
+M1 (8cb070d9; ADR-009): Claude's resume continues from what was indexed, as
+Codex's does, and a local Claude session uses P3.12's record-time windows,
+provider-neutral. The
+worker continues a Claude transcript a new run of the same session binds
+from that session's earlier binding of it (the digest of what was read
+vouches for the file when it can be compared; where it cannot, an earlier
+binding that kept none or more than the compare limit read, from its cursor,
+as across a worker restart), a Claude tail keeps the digest of what it read,
+and it leaves out the records stamped inside a not-indexed window of its
+conversation with the divider (Claude's normalizer takes the rule: a stamp
+without a zone is no time, a record with none takes the time before it). The
+earlier bindings are read by format; search lists a turn once whichever
+sessions indexed it, a Claude turn as a Codex one. Main marks the conversation
+a local Claude session not indexed is on (the transcript its hooks and status
+line name, or its exact resume at launch, keyed by the transcript's id) from
+the moment it became not indexed (its launch, or the switch-off); a new
+transcript closes the window before; a killed session's window closes when
+its exit is reported or the account lease's grace passes. Shells and SSH
+sessions mark nothing. Tests: the worker, normalizer, search and pty-manager
+files, and the native db file (CI). M2 (19b26919): the Claude Code overload
+and safeguard detectors read only the current turn, the rows below the
+newest user message in the 12-row tail, as Codex's do (`patterns.ts`); a
+one-line answer left the error it answered in the tail, and the simulation
+retried 6 times in an hour after a success; a draft in the input is not a user
+message. M3 (19b26919): a notification rule's duration is how long the
+session's turn ran, from its UserPromptSubmit to its Stop as the Hooks gateway
+received them, for both assistants (`channel-rules.ts`); Claude Code's
+Notification input carries no duration_ms, so the built-in Attention Pulse (at
+least 120000 ms) matched neither. M4 (2bb5ffc9): a run's gaps that touch or
+overlap are one span, past the 8-gap cap the shortest go (never the span of
+the history before the app ran the conversation), and the part of the gaps'
+turns a run counted is kept with them (`gapMs`), so a Restart while a large
+rollout's count runs never shows less (`conversation-running-time.ts`,
+`telemetry.ts`). M5 (636a96f7; ADR-009 by the path table): the Services byte
+count's record ends in the per-spawn teardown that every Restart and respawn
+runs, so each process's count starts with it on either ConPTY
+(`pty-manager.ts`). M6: already fixed at HEAD by P3.10 (d8f538b1): a tab on a
+conversation another tab holds reads it beside the holder and shows its
+figures (`telemetry-claim-anywhere.test.ts`, `telemetry-exact-claim.test.ts`,
+`telemetry-duration.test.ts`); no change. M7 (4e5cfbc8): every e2e app
+instance runs with a home inside its own data dir (`isolated-env.ts`), the
+runner's Claude config folder and Codex home removed, and each Electron launch
+of the suite uses it (a unit scan holds that). M8 (c2973d1b; ADR-009 by the
+path table): the vision browser an earlier run left is identified by its
+name, its command line (the port and profile arguments, whole) and its
+creation time, which the kill reads again (`vision-browser-owner.ts`), and
+ended before the launch; while the debug port stays in use, vision is not
+started. M9: stopped,
+not a contained change: the realm's last-seen reading after a Codex Sign in
+again needs an owner decision. Two designs for the owner: learn the account
+from the app-server's account read and record it with the realm (it widens
+the app-server exception scoped to usage); or drop the realm's last-seen
+reading at every Codex Sign in again by a per-folder floor in the carry marks
+document that the last-seen reader's cutoff applies, so a Sign in again shows
+no reading until its next session. Mutants: M1 29 of 30 red (one
+equivalent, unreachable), M2 4, M3 5, M4 11, M5 2, M7 7, M8 21, all red and
+restored. Checks: typecheck, tsc of the touched tests, the affected and
+scanner files, the WP1 files (manifest rebound twice); 5 pty-manager test
+files fail at c0e4b231 before these changes, on a pty-manager mock without
+`isSessionLiveOrStarting`. Owed on the VM: a Claude session with logging off
+then on (Restart, and a new tab resuming its conversation: the record-time
+windows, nothing twice), a Claude overload retried once after a
+short answer, the Attention Pulse after a long turn of each assistant, a
+Restart's Services byte count on both ConPTYs, an e2e run leaving nothing in
+the real home, a crash's vision browser ended at the next start and the
+debug port in use at start (vision not started). Left to the sweep: a
+changelog line names Codex only.
 
 ## 9. PR 4 outline
 
