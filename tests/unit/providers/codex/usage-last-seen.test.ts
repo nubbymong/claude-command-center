@@ -177,12 +177,37 @@ describe('readLastSeenAllowance: which rollout', () => {
     f.file(`${day('2026', '09', '27')}\\rollout-2026-09-27T09-00-00-b.jsonl`, rollout(
       meta('2026-09-27T09:00:00Z'),
       tokenCount('2026-09-27T09:00:01Z', limits(6, { credits: credits('250.5') })),
-      // A newer event with no credits does not take them away.
-      tokenCount('2026-09-27T09:00:02Z', limits(7, { credits: null })),
+      // A newer event that says nothing about credits (no key) does not take them away.
+      tokenCount('2026-09-27T09:00:02Z', limits(7)),
+      // Nor does a sub-limit's event, whatever it carries.
+      tokenCount('2026-09-27T09:00:03Z', { limit_id: 'codex_spark', limit_name: 'Spark', primary: { used_percent: 3, window_minutes: 300 }, credits: null }),
     ))
     const r = (await read(f))!
     expect(pct(r)).toBe(7)
     expect(r.credits).toEqual({ hasCredits: true, unlimited: false, balance: 250.5 })
+  })
+
+  // Round 1, C1: the credits are the newest default-limit event's, the one the
+  // bars come from. An account without credits writes null, which is "none now".
+  it('a newer default-limit event whose credits are null clears the older figure, and a later figure is the new one', async () => {
+    const f = fakeFs()
+    const credits = (balance: string) => ({ has_credits: true, unlimited: false, balance })
+    f.file(`${day('2026', '09', '27')}\\rollout-2026-09-27T09-00-00-a.jsonl`, rollout(
+      meta('2026-09-27T09:00:00Z'),
+      tokenCount('2026-09-27T09:00:01Z', limits(5, { credits: credits('300') })),
+      tokenCount('2026-09-27T09:00:02Z', limits(6, { credits: null })),
+    ))
+    const cleared = (await read(f))!
+    expect(pct(cleared)).toBe(6)
+    expect(Object.prototype.hasOwnProperty.call(cleared, 'credits')).toBe(false)
+    const g = fakeFs()
+    g.file(`${day('2026', '09', '27')}\\rollout-2026-09-27T09-00-00-a.jsonl`, rollout(
+      meta('2026-09-27T09:00:00Z'),
+      tokenCount('2026-09-27T09:00:01Z', limits(5, { credits: credits('300') })),
+      tokenCount('2026-09-27T09:00:02Z', limits(6, { credits: null })),
+      tokenCount('2026-09-27T09:00:03Z', limits(7, { credits: credits('290') })),
+    ))
+    expect((await read(g))!.credits).toEqual({ hasCredits: true, unlimited: false, balance: 290 })
   })
 
   it('a rollout with no credits gives a reading with no credits key, and hostile credits are not kept', async () => {

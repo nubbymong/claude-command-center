@@ -412,6 +412,20 @@ describe('credits (P3.14, ADR-023)', () => {
     expect(rollout(REAL).limits[0].primary?.usedPercent).toBe(20)
   })
 
+  // Round 1, C4: the credits ride the usage reading and view only. The status
+  // line (strip, footer) built from the same reading never gains a key for them.
+  it('the status line built from a reading with credits has exactly the keys of one without, and no credits text', () => {
+    for (const r of [rollout(REAL), server(REAL_SERVER)]) {
+      const without = { ...r } as Record<string, unknown>
+      delete without.credits
+      const a = withAllowance({ sessionId: 's' }, r)
+      const b = withAllowance({ sessionId: 's' }, without as unknown as typeof r)
+      expect(Object.keys(a).sort()).toEqual(Object.keys(b).sort())
+      expect(a).toEqual(b)
+      expect(JSON.stringify(a)).not.toMatch(/credits|1250/i)
+    }
+  })
+
   it('(b) the app-server answer\'s own rateLimits credits (camelCase) are kept', () => {
     expect(server(REAL_SERVER).credits).toEqual({ hasCredits: true, unlimited: false, balance: 1250 })
     expect(server(REAL_SERVER).planType).toBe('pro')
@@ -419,24 +433,45 @@ describe('credits (P3.14, ADR-023)', () => {
 
   it('(b) credits on an entry of the per-limit map are never kept, and never override the answer\'s own', () => {
     const entry = { limitId: 'codex_spark', limitName: 'Spark', primary: win(4, 300, '2026-09-27T15:00:00Z'), credits: { hasCredits: true, unlimited: true, balance: '999' } }
-    expect(server(null, { codex_spark: entry }).credits).toBeUndefined()
+    expect(server(null, { codex_spark: entry }).credits).toBeNull()
     expect(server(undefined, { codex_spark: entry }).credits).toBeUndefined()
     expect(server(REAL_SERVER, { codex_spark: entry }).credits).toEqual({ hasCredits: true, unlimited: false, balance: 1250 })
     expect(JSON.stringify(server(null, { codex_spark: entry }))).not.toContain('999')
+    expect(JSON.stringify(server(undefined, { codex_spark: entry }))).not.toContain('999')
+    // An entry keyed like the default limit is not the answer's own snapshot either.
+    const dup = { limitId: 'codex', primary: win(9, 300, '2026-09-27T14:10:00Z'), credits: { hasCredits: true, unlimited: true, balance: '777' } }
+    expect(server(undefined, { codex: dup }).credits).toBeUndefined()
+    expect(server(null, { codex: dup }).credits).toBeNull()
+    expect(JSON.stringify(server(undefined, { codex: dup }))).not.toContain('777')
   })
 
   it('each source reads its own spelling: a rollout\'s camelCase credits and the server\'s snake_case ones are not read', () => {
-    expect(rollout(REAL_SERVER).credits).toBeUndefined()
-    expect(server(REAL).credits).toBeUndefined()
+    expect(rollout(REAL_SERVER).credits).toBeNull()
+    expect(server(REAL).credits).toBeNull()
   })
 
-  it('no credits, or null credits, leaves the reading without a credits key at all', () => {
-    for (const r of [rollout(undefined), rollout(null), server(undefined), server(null)]) {
-      expect(hasCreditsKey(r)).toBe(false)
+  // The three states of a snapshot's credits (round 1, C1): a figure; none
+  // now (the key is null, as an account without credits writes it, or it is
+  // present and unusable); and no statement (the key is absent, or the
+  // snapshot is a sub-limit's, whose credits are never read).
+  it('absent credits leave the reading without a credits key; explicit null is "none now" (null)', () => {
+    for (const r of [rollout(undefined), server(undefined)]) expect(hasCreditsKey(r)).toBe(false)
+    for (const r of [rollout(null), server(null)]) {
+      expect(hasCreditsKey(r)).toBe(true)
+      expect(r.credits).toBeNull()
     }
+    // A real account without credits (rollout-sample.jsonl line 8) writes null.
     const l8 = line(8)
     const plain = normaliseCodexRateLimits(l8.payload.rate_limits, 'rollout', Date.parse(l8.timestamp))!
-    expect(hasCreditsKey(plain)).toBe(false)
+    expect(plain.credits).toBeNull()
+  })
+
+  it('a sub-limit\'s snapshot makes no statement about credits, whatever it carries', () => {
+    const sub = (credits: unknown) => normaliseCodexRateLimits({ limit_id: 'codex_spark', limit_name: 'Spark', plan_type: 'plus', primary: { used_percent: 4, window_minutes: 300 }, credits }, 'rollout', AT)!
+    for (const credits of [undefined, null, REAL, { has_credits: true, unlimited: true, balance: '999' }, 'junk']) {
+      expect(hasCreditsKey(sub(credits)), JSON.stringify(credits)).toBe(false)
+    }
+    expect(JSON.stringify(sub(REAL))).not.toContain('1250')
   })
 
   it('credits alone never make a reading: a snapshot with no window and no plan is still null', () => {
@@ -473,8 +508,8 @@ describe('credits (P3.14, ADR-023)', () => {
       }
     })
 
-    // A flag that is not a boolean drops the whole credits: nothing of it can
-    // be trusted. The limits and the plan survive.
+    // A flag that is not a boolean drops the whole credits (to null, "none
+    // now": nothing of it can be trusted). The limits and the plan survive.
     const BAD_FLAGS: Array<[string, Record<string, unknown>, Record<string, unknown>]> = [
       ['hasCredits as text', { has_credits: 'true', unlimited: false, balance: '5' }, { hasCredits: 'true', unlimited: false, balance: '5' }],
       ['hasCredits as a number', { has_credits: 1, unlimited: false, balance: '5' }, { hasCredits: 1, unlimited: false, balance: '5' }],
@@ -486,11 +521,11 @@ describe('credits (P3.14, ADR-023)', () => {
     for (const [name, snake, camel] of BAD_FLAGS) {
       it(`${name} drops the whole credits; limits and plan survive`, () => {
         const a = rollout(snake)
-        expect(a.credits).toBeUndefined()
+        expect(a.credits).toBeNull()
         expect(a.planType).toBe('plus')
         expect(a.limits).toHaveLength(1)
         const b = server(camel)
-        expect(b.credits).toBeUndefined()
+        expect(b.credits).toBeNull()
         expect(b.planType).toBe('pro')
         expect(b.limits).toHaveLength(1)
       })
@@ -500,12 +535,12 @@ describe('credits (P3.14, ADR-023)', () => {
       class Credits { has_credits = true; unlimited = false; balance = '5' }
       const inherited = Object.create({ has_credits: true, unlimited: false, balance: '5' })
       for (const credits of ['junk', 7, true, [REAL], [], new Credits(), inherited, new Map([['has_credits', true]])]) {
-        expect(rollout(credits).credits, String(credits)).toBeUndefined()
+        expect(rollout(credits).credits, String(credits)).toBeNull()
         expect(rollout(credits).limits).toHaveLength(1)
       }
       class ServerCredits { hasCredits = true; unlimited = false; balance = '5' }
       for (const credits of ['junk', 7, [REAL_SERVER], new ServerCredits(), Object.create(REAL_SERVER)]) {
-        expect(server(credits).credits).toBeUndefined()
+        expect(server(credits).credits).toBeNull()
         expect(server(credits).limits).toHaveLength(1)
       }
     })
@@ -529,7 +564,32 @@ describe('credits (P3.14, ADR-023)', () => {
       const parsed = JSON.parse('{"has_credits":false,"unlimited":false,"balance":null,"__proto__":{"has_credits":true,"unlimited":true,"balance":"1"}}')
       expect(rollout(parsed).credits).toEqual({ hasCredits: false, unlimited: false, balance: null })
       const poisoned = JSON.parse('{"__proto__":{"has_credits":true,"unlimited":false,"balance":"5"}}')
-      expect(rollout(poisoned).credits).toBeUndefined()
+      expect(rollout(poisoned).credits).toBeNull()
+    })
+
+    // Round 1, C3: only own properties are read. Pollute the prototype chain
+    // (restored in finally) and the flags and balance still come from the
+    // credits object itself, never from what it inherits.
+    it('reads own properties only: a polluted Object.prototype supplies no flag and no balance', () => {
+      const proto = Object.prototype as Record<string, unknown>
+      const keys = ['has_credits', 'hasCredits', 'unlimited', 'balance']
+      for (const k of keys) expect(Object.prototype.hasOwnProperty.call(proto, k), k).toBe(false)
+      try {
+        proto.has_credits = true
+        proto.hasCredits = true
+        proto.unlimited = true
+        proto.balance = '999'
+        // A plain object that names none of its own: nothing is read.
+        expect(rollout({}).credits).toBeNull()
+        expect(server({}).credits).toBeNull()
+        // Its own flags win, and a missing balance is not the inherited one.
+        expect(rollout({ has_credits: false, unlimited: false }).credits).toEqual({ hasCredits: false, unlimited: false, balance: null })
+        expect(server({ hasCredits: false, unlimited: false }).credits).toEqual({ hasCredits: false, unlimited: false, balance: null })
+        expect(JSON.stringify(rollout({}))).not.toContain('999')
+      } finally {
+        for (const k of keys) delete proto[k]
+      }
+      for (const k of keys) expect(Object.prototype.hasOwnProperty.call(proto, k), k).toBe(false)
     })
   })
 
@@ -545,16 +605,58 @@ describe('credits (P3.14, ADR-023)', () => {
       expect(mergeAllowanceReadings([b, a])!.credits).toEqual({ hasCredits: true, unlimited: false, balance: 1000 })
     })
 
-    it('an older reading\'s credits stay when a newer reading has none', () => {
+    // Round 1, C1: the credits are the newest default-limit reading's, the
+    // same reading as the bars. Its explicit null means "none now" and clears
+    // an older figure; an older figure stays only when the newer reading says
+    // nothing (no credits key at all) or is a sub-limit's.
+    it('an older figure stays when the newer reading has no credits key, or is a sub-limit\'s', () => {
       const a = normaliseCodexRateLimits(snap(10, with1000), 'rollout', AT)
-      const b = normaliseCodexRateLimits(snap(12, null), 'rollout', AT + 1000)
-      const c = normaliseCodexRateLimits(snap(3, undefined, 'codex_spark'), 'rollout', AT + 2000)
-      expect(mergeAllowanceReadings([a, b, c])!.credits).toEqual({ hasCredits: true, unlimited: false, balance: 1000 })
+      const absent = normaliseCodexRateLimits(snap(12, undefined), 'rollout', AT + 1000)
+      const subNull = normaliseCodexRateLimits(snap(3, null, 'codex_spark'), 'rollout', AT + 2000)
+      const subSet = normaliseCodexRateLimits(snap(3, with900, 'codex_spark'), 'rollout', AT + 3000)
+      expect(mergeAllowanceReadings([a, absent])!.credits).toEqual({ hasCredits: true, unlimited: false, balance: 1000 })
+      expect(mergeAllowanceReadings([a, subNull])!.credits).toEqual({ hasCredits: true, unlimited: false, balance: 1000 })
+      expect(mergeAllowanceReadings([a, absent, subNull, subSet])!.credits).toEqual({ hasCredits: true, unlimited: false, balance: 1000 })
     })
 
-    it('readings with no credits at all merge to a reading without a credits key', () => {
+    it('a newer default-limit reading whose credits are null clears the older figure (an account without credits writes null)', () => {
+      const a = normaliseCodexRateLimits(snap(10, with1000), 'rollout', AT)
+      const none = normaliseCodexRateLimits(snap(12, null), 'rollout', AT + 1000)
+      const m = mergeAllowanceReadings([a, none])!
+      expect(hasCreditsKey(m)).toBe(false)
+      expect(m.limits[0].primary!.usedPercent).toBe(12)
+      // And a figure written after that null is the new one.
+      const again = normaliseCodexRateLimits(snap(13, with900), 'rollout', AT + 2000)
+      expect(mergeAllowanceReadings([a, none, again])!.credits).toEqual({ hasCredits: true, unlimited: false, balance: 900 })
+    })
+
+    it('a newer default-limit reading whose credits are present and unusable clears the older figure too', () => {
+      const a = normaliseCodexRateLimits(snap(10, with1000), 'rollout', AT)
+      for (const junk of ['junk', { has_credits: 'yes', unlimited: false }, [with1000]]) {
+        const bad = normaliseCodexRateLimits(snap(12, junk), 'rollout', AT + 1000)
+        expect(hasCreditsKey(mergeAllowanceReadings([a, bad])!), JSON.stringify(junk)).toBe(false)
+      }
+    })
+
+    it('the merge is the same when readings are folded one at a time (as a session\'s watcher does)', () => {
+      const evs = [snap(10, with1000), snap(11, undefined), snap(2, null, 'codex_spark'), snap(12, null), snap(13, undefined), snap(14, with900)]
+      let acc: ReturnType<typeof mergeAllowanceReadings> = null
+      const seen: unknown[] = []
+      evs.forEach((e, i) => {
+        acc = mergeAllowanceReadings([acc, normaliseCodexRateLimits(e, 'rollout', AT + i * 1000)])
+        seen.push(acc!.credits ?? 'none')
+      })
+      expect(seen).toEqual([
+        { hasCredits: true, unlimited: false, balance: 1000 }, { hasCredits: true, unlimited: false, balance: 1000 }, { hasCredits: true, unlimited: false, balance: 1000 },
+        'none', 'none', { hasCredits: true, unlimited: false, balance: 900 },
+      ])
+    })
+
+    it('readings with no credits at all merge to a reading without a credits key (null included)', () => {
       const a = normaliseCodexRateLimits(snap(10, null), 'rollout', AT)
+      const b = normaliseCodexRateLimits(snap(10, undefined), 'rollout', AT)
       expect(hasCreditsKey(mergeAllowanceReadings([a, a])!)).toBe(false)
+      expect(hasCreditsKey(mergeAllowanceReadings([b, b])!)).toBe(false)
     })
   })
 
@@ -575,10 +677,11 @@ describe('credits (P3.14, ADR-023)', () => {
       })
     }
 
-    it('the older sample rollout carries credits null: no credits', () => {
+    it('the older sample rollout carries credits null: none now', () => {
       const l = line(8)
       const r = normaliseCodexRateLimits(l.payload.rate_limits, 'rollout', Date.parse(l.timestamp))!
-      expect(r.credits).toBeUndefined()
+      expect(r.credits).toBeNull()
+      expect(hasCreditsKey(mergeAllowanceReadings([r])!)).toBe(false)
     })
   })
 

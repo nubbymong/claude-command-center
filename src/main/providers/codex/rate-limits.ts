@@ -22,7 +22,12 @@
  * the whole is dropped), `balance` a plain decimal string (else null). They
  * are read from the rollout snapshot itself, or from the answer's own
  * `rateLimits`; never from an entry of the per-limit map. Codex credits are a
- * count, not money.
+ * count, not money. They belong to the account-wide (default) limit's report,
+ * the one the main bars come from, and have three states: a figure; `null`,
+ * "none now" (the key is null, as an account without credits writes it, or it
+ * is present and unusable); and no statement (the key is absent, or the
+ * snapshot is a sub-limit's, whose credits are never read). A later report's
+ * null clears an earlier figure; no statement leaves it.
  */
 
 import type { AllowanceCredits, AllowanceLimit, AllowanceReading, AllowanceWindow, UsageBucket } from '../../../shared/usage-types'
@@ -113,9 +118,10 @@ function readLimitName(v: unknown): string | null {
   return t
 }
 
-/** The account's credits count: the three validated fields, or null (absent,
+/** The account's credits count: the three validated fields, or null (null,
  *  not a plain object, or a flag that is not a boolean). A balance that is not
- *  a plain decimal is null, the flags kept. Never throws and copies no other
+ *  a plain decimal is null, the flags kept (the regex bounds it to at most 25
+ *  digits, so the Number is always finite). Never throws and copies no other
  *  key. */
 function readCredits(raw: unknown, n: Names): AllowanceCredits | null {
   if (!isPlain(raw)) return null
@@ -123,15 +129,13 @@ function readCredits(raw: unknown, n: Names): AllowanceCredits | null {
   const unlimited = own(raw, 'unlimited')
   if (typeof hasCredits !== 'boolean' || typeof unlimited !== 'boolean') return null
   const text = own(raw, 'balance')
-  let balance: number | null = null
-  if (typeof text === 'string' && BALANCE_RE.test(text)) {
-    const v = Number(text)
-    if (Number.isFinite(v)) balance = v
-  }
+  const balance = typeof text === 'string' && BALANCE_RE.test(text) ? Number(text) : null
   return { hasCredits, unlimited, balance }
 }
 
-interface Snapshot { limit: AllowanceLimit | null; planType: string | null; credits: AllowanceCredits | null }
+/** `credits`: see the header (a figure, null for "none now", undefined for no
+ *  statement). */
+interface Snapshot { limit: AllowanceLimit | null; planType: string | null; credits: AllowanceCredits | null | undefined }
 
 /** One snapshot; null when it cannot be trusted at all (not a plain object, or
  *  a limit id that is present but not a plain identifier). A snapshot with no
@@ -151,7 +155,11 @@ function readSnapshot(raw: unknown, n: Names, reference: number, readingAt: numb
   const limit = primary || secondary
     ? { limitId, limitName: readLimitName(own(raw, n.limitName)), readingAt, primary, secondary }
     : null
-  return { limit, planType, credits: readCredits(own(raw, 'credits'), n) }
+  // Only the default limit's snapshot speaks for the account's credits, and
+  // only when it has the key: a figure, or null (null, or unusable).
+  const rawCredits = own(raw, 'credits')
+  const credits = limitId === CODEX_DEFAULT_LIMIT_ID && rawCredits !== undefined ? readCredits(rawCredits, n) : undefined
+  return { limit, planType, credits }
 }
 
 /** The oldest time among limits, or null when none has one. */
@@ -225,19 +233,22 @@ export function normaliseCodexRateLimits(
   // Every limit here was read at the same moment: the reading is as old as it.
   const out: AllowanceReading = { limits, planType, readingAt }
   // The credits of the rollout's own snapshot or the answer's own `rateLimits`
-  // (the first snapshot of either): never an entry of the per-limit map.
+  // (the first snapshot of either): never an entry of the per-limit map. A
+  // figure, or null ("none now"); no key at all when it makes no statement.
   const credits = snapshots[0].credits
-  if (credits) out.credits = credits
+  if (credits !== undefined) out.credits = credits
   return out
 }
 
 /**
  * Merge readings taken over time (a session's `token_count` events, oldest
- * first): each limit keeps its newest reading WITH its own time, the plan and
- * the credits are the newest ones reported (an older figure stays when a newer
- * reading carries none), and the reading as a whole is as old as its oldest
- * limit (so a default figure left behind by a switch to another model's limit
- * never looks fresh). Null when there is nothing.
+ * first): each limit keeps its newest reading WITH its own time, the plan is
+ * the newest one reported, the credits are the newest default-limit reading's
+ * (a null clears an older figure; a reading that makes no statement about
+ * them leaves it; the merged reading never carries null), and the reading as
+ * a whole is as old as its oldest limit (so a default figure left behind by a
+ * switch to another model's limit never looks fresh). Null when there is
+ * nothing.
  */
 export function mergeAllowanceReadings(readings: readonly (AllowanceReading | null)[]): AllowanceReading | null {
   const present = readings.filter((r): r is AllowanceReading => r !== null)
@@ -249,7 +260,7 @@ export function mergeAllowanceReadings(readings: readonly (AllowanceReading | nu
   for (const r of present) {
     limits.push(...r.limits)
     if (r.planType !== null) planType = r.planType
-    if (r.credits) credits = r.credits
+    if (r.credits !== undefined) credits = r.credits
     if (r.readingAt !== null) readingAt = readingAt === null ? r.readingAt : Math.max(readingAt, r.readingAt)
   }
   // orderLimits keeps the LAST entry per id: the newest reading of each limit.
