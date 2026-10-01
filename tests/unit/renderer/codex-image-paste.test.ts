@@ -119,6 +119,17 @@ describe('sendImagePathToCodex (P3.15, row 70)', () => {
     }
   })
 
+  it('round 2 (J7): a wrapped line that is withheld (the start-up row of Codex came up) is never taken back: it stays typed, and the hint says it was not sent', () => {
+    const booting = (d: string): ScreenLine[] => S.BOOTING_153.map((l) => (l.text.startsWith(GLYPH) ? S.plain(`${GLYPH} ${d.slice(0, 50)}`) : l))
+      .flatMap((l) => (l.text.startsWith(GLYPH) ? [l, S.plain(`  ${LINE.slice(50)}`)] : [l]))
+    const h = harness(S.READY, booting)
+    h.send()
+    h.advance(CODEX_SUBMIT_DELAY_MS + CODEX_READY_POLL_MS * 3)
+    expect(h.writes).toEqual([LINE])
+    expect(h.notes).toEqual([IMAGE_TYPED_NOT_SENT])
+    expect(IMAGE_TYPED_NOT_SENT).toMatch(/was not sent/)
+  })
+
   it('round 1 (F8): wrapped rows holding anything more than the line are left typed, not sent, and the user is told to check it and press Enter', () => {
     const more = (d: string): ScreenLine[] => composerShows(`${GLYPH} ${d.slice(0, 50)}`, `  ${d.slice(50)} and more`)
     const h = harness(S.READY, more)

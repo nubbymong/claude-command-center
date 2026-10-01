@@ -35,7 +35,7 @@ import { buildClaudeLaunchCommand, resolveResumeLaunch, recoverOrphanResumeLaunc
 import { ensureCompanionDir, nodeFsCompanionDeps } from './logging/companion-dir'
 import { forgetSessionName } from './logging/session-name-sidecar'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
-import { bundledConptyChoice, bundledConptyFailed, SYSTEM_CONPTY_OPTIONS, type ConptySpawnOptions } from './bundled-conpty'
+import { bundledConptyChoice, bundledConptyFailed, SYSTEM_CONPTY_OPTIONS, BUNDLED_EARLY_EXIT_MS, type ConptySpawnOptions } from './bundled-conpty'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { TMUX_WHEEL_EXIT_KEY } from '../shared/tmux-wheel'
 import { buildRemoteSessionCleanupCommand, buildTmuxBinPatchCommand, buildRemoteTmuxKillCommand, buildContainerKillCommand, parseEndSudoSentinel, getWindowsRemoteSetupCommand, buildWindowsClaudeCommand } from './providers/claude/ssh-shim'
@@ -359,6 +359,34 @@ function releaseCodexLeaseOnExit(proc: pty.IPty, lease: AccountLease): void {
   try { proc.onExit(() => release()) } catch { release(); return }
   const timer = setTimeout(release, CODEX_LEASE_EXIT_GRACE_MS)
   ;(timer as unknown as { unref?: () => void }).unref?.()
+}
+
+/** Something drawn on the screen: a character that is neither a space nor a
+ *  control (once escape sequences are stripped). */
+const DRAWN_ON_SCREEN_RE = /[^\s\x00-\x1f\x7f]/
+
+/** P3.15 round 2 (J5): the bundled ConPTY can also fail after node-pty has
+ *  started it (OpenConsole.exe ended at once, or unable to create Codex in
+ *  it). Such a session ends within moments having drawn nothing (the console
+ *  host's own setup sequences aside), where a real Codex draws its screen at
+ *  once, even to say it cannot start. So a Codex PTY under the bundled ConPTY
+ *  that ends within BUNDLED_EARLY_EXIT_MS with nothing drawn, and that the app
+ *  did not end itself (a close, a Restart, a Switch account), makes the next
+ *  launch use the system ConPTY (bundledConptyFailed, said once). The session
+ *  is not relaunched. */
+function watchBundledConptyEarlyExit(sessionId: string, proc: pty.IPty): void {
+  const startedAt = Date.now()
+  let drew = false
+  let data: { dispose(): void } | null = null
+  try { data = proc.onData((d) => { if (!drew && DRAWN_ON_SCREEN_RE.test(stripAnsiForSentinel(d))) drew = true }) } catch { return }
+  try {
+    proc.onExit(() => {
+      try { data?.dispose() } catch { /* already gone */ }
+      if (drew || Date.now() - startedAt > BUNDLED_EARLY_EXIT_MS) return
+      if (ptySessions.get(sessionId)?.ptyProcess !== proc) return
+      bundledConptyFailed(`a Codex session under it ended within ${BUNDLED_EARLY_EXIT_MS / 1000} s with nothing on screen`)
+    })
+  } catch { try { data?.dispose() } catch { /* already gone */ } }
 }
 
 // rc.15 review R3 (aicc_planning#49): a LOCAL spawn whose profile is mid-refresh
@@ -4749,22 +4777,27 @@ function spawnPtyResolved(
         env: spawnEnv,
         ...conptyOptions,
       })
+      let onBundledConpty = conpty.kind === 'bundled'
       try {
         ptyProcess = started = spawnCodexPty(conpty.options)
       } catch (err) {
         // P3.15 round 1 (F1): the bundled files can be there and still fail as
         // the session starts (blocked or damaged, OpenConsole.exe unable to
-        // start); node-pty throws before any process starts. The session then
-        // starts on the system ConPTY, and the rest of the run uses it. A start
-        // that fails there too is not the bundled ConPTY's fault (a missing
-        // executable): the first error goes on and the choice stays.
+        // start). node-pty's startProcess then throws before Codex is started
+        // (Codex is created later, in node-pty's connect). A throw after
+        // startProcess (opening the console's input pipe) could in theory leave
+        // that connect pending and start a Codex no one sees; not seen, and not
+        // handled here. The session starts on the system ConPTY, and the rest
+        // of the run uses it. A start that fails there too is not the bundled
+        // ConPTY's fault (a missing executable): the first error goes on and
+        // the choice stays.
         if (conpty.kind !== 'bundled') throw err
-        let onSystem: pty.IPty
-        try { onSystem = spawnCodexPty(SYSTEM_CONPTY_OPTIONS) } catch { throw err }
+        try { ptyProcess = started = spawnCodexPty(SYSTEM_CONPTY_OPTIONS) } catch { throw err }
+        onBundledConpty = false
         bundledConptyFailed(String((err as Error)?.message ?? err))
         logInfo(`[pty-manager] Codex PTY for ${sessionId}: the bundled ConPTY failed to start; started on the system ConPTY`)
-        ptyProcess = started = onSystem
       }
+      if (onBundledConpty) watchBundledConptyEarlyExit(sessionId, started)
       ptyProcess.onData((data) => {
         if (win.isDestroyed()) return
         if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) return // rc.15 review R9
@@ -5735,7 +5768,11 @@ function spawnPtyResolved(
   // adjacent, so the window is one statement wide.
   markPtySessionAlive(sessionId)
   ptyProcess.onExit(({ exitCode }) => {
-    logInfo(`[pty] PTY exited for session ${sessionId} with code ${exitCode}`)
+    // P3.15 round 2 (J1): under node-pty's bundled ConPTY a Codex that quits by
+    // itself can end before its exit code is known: said as unknown, and the
+    // run recorded as exited, not crashed.
+    const exitCodeKnown = typeof exitCode === 'number' && Number.isFinite(exitCode)
+    logInfo(`[pty] PTY exited for session ${sessionId} with code ${exitCodeKnown ? exitCode : 'unknown'}`)
     // Restart-race guard: the renderer's restart flow kills the old PTY
     // and re-spawns synchronously with the SAME sessionId. node-pty's
     // exit callback is async — by the time it fires, the new PTY has
@@ -5785,7 +5822,7 @@ function spawnPtyResolved(
       // Gated on weAreCurrent so the restart-race stale exit can't end the
       // just-respawned session's run. No-op when logging is disabled / this
       // session was never recorded (logSup null).
-      logSup?.runEnd(sessionId, Date.now(), exitCode === 0 ? 'exited' : 'crashed')
+      logSup?.runEnd(sessionId, Date.now(), !exitCodeKnown || exitCode === 0 ? 'exited' : 'crashed')
       indexedRuns.delete(sessionId)
       // Logs v2 (Task 8): cancel any pending heuristic timer + clear the binder's
       // per-session bind state so a reused sessionId (restart) binds fresh.

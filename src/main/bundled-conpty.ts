@@ -18,11 +18,14 @@
  * bundled ConPTY is chosen only when conpty.dll and OpenConsole.exe are files
  * beside the module node-pty will load, found the way node-pty's own loader
  * finds it (lib/utils.js, loadNativeModule), and only when node-pty can use
- * the path (NODE_PTY_MAX_PATH); otherwise the system ConPTY, with the reason,
- * logged once. When the files are there but still fail as a session starts,
- * pty-manager starts that session on the system ConPTY and reports it here
- * (bundledConptyFailed), so the rest of the run uses the system one. Nothing
- * here starts anything or changes what a PTY is given beyond that one option.
+ * the path (NODE_PTY_MAX_PATH, LOADED_MODULE_PREFIX); otherwise the system
+ * ConPTY, with the reason, logged once. When the files are there but still
+ * fail as a session starts, pty-manager starts that session on the system
+ * ConPTY and reports it here (bundledConptyFailed); when a session under it
+ * ends at once with nothing on screen (BUNDLED_EARLY_EXIT_MS), pty-manager
+ * reports that too. Either way the rest of the run uses the system one.
+ * Nothing here starts anything or changes what a PTY is given beyond that one
+ * option.
  */
 import * as fs from 'fs'
 import * as path from 'path'
@@ -62,6 +65,18 @@ export interface ConptyChoiceDeps {
  *  own path is shorter, so the conpty.dll path is the one that binds. */
 export const NODE_PTY_MAX_PATH = 260
 
+/** P3.15 round 2 (J4): Node loads a .node file through its namespaced path
+ *  (path.toNamespacedPath: the \\?\ prefix), so the module name Windows
+ *  records for conpty.node, which node-pty reads back, is this many characters
+ *  longer than the path measured here. */
+export const LOADED_MODULE_PREFIX = 4
+
+/** P3.15 round 2 (J5): a PTY under the bundled ConPTY that ends within this
+ *  long of its start having put nothing on screen (beyond the console host's
+ *  own setup sequences) is taken as the bundled ConPTY failing after node-pty
+ *  started it. */
+export const BUNDLED_EARLY_EXIT_MS = 5000
+
 /** The folders node-pty's loader tries for a native module, in its order:
  *  each of build/Release, build/Debug and the prebuild for the platform and
  *  arch, beside its lib folder and then inside it. */
@@ -94,8 +109,8 @@ export function chooseConpty(deps: ConptyChoiceDeps): ConptyChoice {
     if (!deps.exists(p)) return system(`${p} is missing`)
   }
   const dll = path.join(dir, 'conpty', 'conpty.dll')
-  if (dll.length >= NODE_PTY_MAX_PATH) {
-    return system(`the path to ${dll} is ${dll.length} characters, more than the ${NODE_PTY_MAX_PATH - 1} node-pty can use`)
+  if (dll.length + LOADED_MODULE_PREFIX >= NODE_PTY_MAX_PATH) {
+    return system(`the path to ${dll} is ${dll.length} characters, ${dll.length + LOADED_MODULE_PREFIX} as Windows names the loaded module, more than the ${NODE_PTY_MAX_PATH - 1} node-pty can use`)
   }
   return { kind: 'bundled', options: BUNDLED_CONPTY_OPTIONS, dir }
 }
@@ -135,10 +150,11 @@ export function bundledConptyChoice(): ConptyChoice {
 
 /**
  * P3.15 round 1 (F1): the bundled ConPTY was chosen but failed as a session
- * started (node-pty threw before any process started: conpty.dll blocked,
- * damaged or gone since, OpenConsole.exe unable to start), and that session
- * then started on the system ConPTY. The rest of the run uses the system one;
- * said once. A choice that is not the bundled one is kept as it is.
+ * started (node-pty threw: conpty.dll blocked, damaged or gone since,
+ * OpenConsole.exe unable to start), and that session then started on the
+ * system ConPTY; or (round 2, J5) a session under it ended at once with
+ * nothing on screen. The rest of the run uses the system one; said once. A
+ * choice that is not the bundled one is kept as it is.
  */
 export function bundledConptyFailed(reason: string): ConptyChoice {
   const current = bundledConptyChoice()

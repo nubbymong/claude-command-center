@@ -9,6 +9,8 @@
  * internals, no em dashes. None of that was checked by anything.
  */
 import { describe, it, expect } from 'vitest'
+import * as fs from 'fs'
+import * as path from 'path'
 import { APP_KNOWLEDGE_SECTIONS } from '../../../src/shared/app-knowledge'
 import { TIPS_LIBRARY } from '../../../src/renderer/tips-library'
 import { trainingSteps } from '../../../src/renderer/training-steps'
@@ -248,12 +250,20 @@ describe('app knowledge and tips after P3.15', () => {
     expect(k).not.toMatch(/Windows asks for administrator permission once/)
     // Round 1 (spec 3): no question once a folder is trusted or 2 was chosen; the way back is not confirmed, and what to do meanwhile.
     expect(k).toMatch(/asks only when you trust a new folder, so a folder you trusted before, or an earlier choice of 2, brings no question/)
-    expect(k).toMatch(/a way to bring it back from the app has not been confirmed yet, so until then approve each edit when Codex asks, and use Standard rather than Auto/)
+    // Round 2 (J6): the command Codex lists for it (the CLI fixtures' slash popup), not yet confirmed.
+    expect(k).toMatch(/Codex lists a \/setup-default-sandbox command \(set up elevated agent sandbox\) for this, not yet confirmed; until it is, approve each edit when Codex asks, and use Standard rather than Auto/)
+    expect(k).not.toMatch(/has not been confirmed yet/)
     expect(k).toMatch(/2\. Use non-admin sandbox/)
     expect(k).toMatch(/on Standard Codex asks before every edit/)
     expect(k).toMatch(/on Auto every edit fails/)
     expect(k).toMatch(/the same in a terminal outside the app/)
     expect(k).toMatch(/Do not run the app as administrator/)
+  })
+  it('round 2 (J6): the command named is the one both supported CLIs list in their slash popup', () => {
+    for (const v of ['0.153.4', '0.155.1']) {
+      const popup = fs.readFileSync(path.resolve(__dirname, '..', '..', 'fixtures', 'codex', 'cli', v, 'tui-slash-popup.txt'), 'utf8')
+      expect(popup, v).toMatch(/^ +\/setup-default-sandbox +set up elevated agent sandbox\s*$/m)
+    }
   })
   it('a tip for Codex users says the same in short', () => {
     const t = TIPS_LIBRARY.find((x) => x.variants.primary.title === 'Codex Edits on Windows')!
@@ -268,7 +278,8 @@ describe('app knowledge and tips after P3.15', () => {
     expect(p.body).toMatch(/on \*\*Standard\*\* it asks before every edit, and on \*\*Auto\*\* edits fail/)
     expect(p.body).toMatch(/Do not run the app as administrator/)
     expect(p.body).toMatch(/\(Codex says it needs administrator permission\)/)
-    expect(p.body).toMatch(/asks only when you trust a new folder\. If it never asks you, approve each edit when Codex asks about it, and use \*\*Standard\*\* rather than \*\*Auto\*\*/)
+    expect(p.body).toMatch(/Codex also lists \*\*\/setup-default-sandbox\*\* for this \(not yet confirmed\)/)
+    expect(p.body).toMatch(/asks only when you trust a new folder\. Codex also lists \*\*\/setup-default-sandbox\*\* for this \(not yet confirmed\)\. If it never asks you, approve each edit when Codex asks about it, and use \*\*Standard\*\* rather than \*\*Auto\*\*/)
     expect(`${p.title} ${p.body}`).not.toMatch(/\u2014/)
   })
 })
