@@ -16,6 +16,11 @@ import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import { SUB_TOOL_PILL_TOKEN, SUB_TOOL_PILL_WASH } from '../../../src/renderer/components/conductor-mcp/sub-tool-tones'
+import { ATTENTION_PULSE_PEAK, ATTENTION_PULSE_REST } from '../../../src/renderer/utils/injectAttentionStyles'
+import { IDENTITY_PALETTE } from '../../../src/shared/identity-colors'
+import { StatusPill } from '../../../src/renderer/components/ui/StatusPill'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { createElement } from 'react'
 
 const CSS = fs.readFileSync(path.resolve(__dirname, '../../../src/renderer/styles.css'), 'utf8')
 
@@ -1060,5 +1065,89 @@ describe('contrast: the page header breadcrumb, the selected Settings tab and sm
         expect(r, `${name}: --text-muted on --${bg} = ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(MIN)
       }
     }
+  })
+})
+
+/* ---- P3.16a (U4): the attention card and tab under the pulse ------------- */
+
+describe('contrast, P3.16a (U4): an attention card and tab stay readable under the pulse', () => {
+  // The pulse is the session's identity colour painted over the sidebar card
+  // or the tab (both sit on --surface-panel; an attention card or tab is never
+  // the active one, so nothing else tints it) at an opacity that peaks at
+  // ATTENTION_PULSE_PEAK and rests at ATTENTION_PULSE_REST when the animation
+  // does not run. The text drawn over it is the card's name (--color-subtext0),
+  // its muted lines (--text-muted, which an attention card sets to
+  // --text-secondary: styles.css) and the tab's label (--color-text). The
+  // "attention" pill has a base of its own (below).
+  const pulse = Math.max(ATTENTION_PULSE_PEAK, ATTENTION_PULSE_REST)
+  // A card or tab that is hovered (or multi-selected, for a card) also has the
+  // identity colour at hex 12 (7%) under the overlay: SessionRow and TabBar set
+  // `identity + '12'` on it. The overlay is painted over that.
+  const UNDER = 0x12 / 255
+
+  it('rests at or below its peak, and the peak is a tint: never most of the identity colour', () => {
+    expect(ATTENTION_PULSE_REST).toBeGreaterThan(0)
+    expect(ATTENTION_PULSE_REST).toBeLessThanOrEqual(ATTENTION_PULSE_PEAK)
+    expect(ATTENTION_PULSE_PEAK).toBeLessThanOrEqual(0.25)
+  })
+
+  it('the tint laid under the overlay is the one the components set (hex 12 on hover and selection)', () => {
+    const row = fs.readFileSync(path.resolve(__dirname, '../../../src/renderer/components/sidebar/SessionRow.tsx'), 'utf8')
+    const bar = fs.readFileSync(path.resolve(__dirname, '../../../src/renderer/components/TabBar.tsx'), 'utf8')
+    expect(row).toMatch(/backgroundColor = identity \+ '12'/)
+    expect(bar).toMatch(/backgroundColor = color \+ '12'/)
+  })
+
+  it('the attention card sets its muted text to the secondary text, in styles.css', () => {
+    const rule = /\.session-card\[data-attention(?:=["']true["'])?\]\s*\{([^}]*)\}/.exec(CSS)
+    expect(rule, 'a .session-card[data-attention] rule').not.toBeNull()
+    expect(rule![1]).toMatch(/--text-muted:\s*var\(--text-secondary\)\s*;/)
+  })
+
+  it('every identity colour, both themes: the card name, its muted lines and the tab label clear 4.5:1 at the pulse\'s strongest', () => {
+    const rows: string[] = []
+    for (const [name, mode] of BOTH) {
+      const surface = token('surface-panel', mode)
+      for (const [key, hexes] of Object.entries(IDENTITY_PALETTE)) {
+        const identity = name === 'dark' ? hexes.dark : hexes.light
+        const card = wash(identity, pulse, wash(identity, UNDER, surface))
+        const pairs: [string, string, string][] = [
+          ['card name (--color-subtext0)', token('color-subtext0', mode), card],
+          ['card muted lines (--text-secondary)', token('text-secondary', mode), card],
+          ['tab label (--color-text)', token('color-text', mode), card],
+        ]
+        for (const [what, fg, bg] of pairs) {
+          const r = contrast(fg, bg)
+          if (r < MIN) rows.push(`${name} / ${key}: ${what} ${fg} on ${bg} = ${r.toFixed(2)}:1`)
+        }
+      }
+    }
+    expect(rows, rows.join('\n')).toEqual([])
+  })
+
+  it('the attention pill has a base of its own on the panel, so the pulse under it cannot move its contrast: --status-warning on a wash of itself over --surface-panel clears 4.5:1 in both themes', () => {
+    // StatusPill's awaiting pill is the status colour over a 15% wash of itself
+    // over an opaque --surface-panel (the sidebar's surface), not over whatever
+    // the card shows beneath: a light-theme tint of any identity colour takes
+    // --status-warning on its own wash below 4.5:1 at any visible strength.
+    const markup = renderToStaticMarkup(createElement(StatusPill, { state: 'awaiting' }))
+    expect(markup).toContain('color-mix(in srgb, var(--status-warning) 15%, var(--surface-panel))')
+    for (const state of ['running', 'error', 'compacting'] as const) {
+      expect(renderToStaticMarkup(createElement(StatusPill, { state })), state).toContain('15%, transparent)')
+    }
+    for (const [name, mode] of BOTH) {
+      const warning = token('status-warning', mode)
+      const r = contrast(warning, wash(warning, 0.15, token('surface-panel', mode)))
+      expect(r, `${name}: ${warning} on its wash over --surface-panel = ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(MIN)
+    }
+  })
+
+  it('the maths sees the failure it was written for: the old strength (35%) on the old tab label (--color-overlay1) fails for some identity', () => {
+    // Guards the guard: a block that could not fail would certify anything.
+    const worst = (name: 'dark' | 'light') => Math.min(...Object.values(IDENTITY_PALETTE).map((h) => {
+      const mode = name === 'dark' ? 0 : 1
+      return contrast(token('color-overlay1', mode), wash(name === 'dark' ? h.dark : h.light, 0.35, token('surface-panel', mode)))
+    }))
+    expect(Math.min(worst('dark'), worst('light'))).toBeLessThan(MIN)
   })
 })
