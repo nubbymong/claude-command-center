@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-01T20:55:04.683Z",
-  "head": "eef491973def712f22bc922d0252325da89f93cf",
-  "tree": "05d36c4e8e926c47d12bcd0c4c41e9dda2f5c971",
+  "generatedAt": "2026-10-01T21:09:53.979Z",
+  "head": "1801f7e6b8eee9c2cd5b7c49754b5a18be5e3481",
+  "tree": "c2e3eb78d9b0ae2bd49f907f743e1445d3ed21af",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2599,
+  "trackedFileCount": 2600,
   "excludedFileCount": 385,
-  "scannedFileCount": 2214,
+  "scannedFileCount": 2215,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 629,
+      "lineCount": 643,
       "truncated": true
     },
     {
@@ -3506,7 +3506,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 42
+      "lineCount": 45
     },
     {
       "path": "tests/unit/main/pty-handlers-codex-review.test.ts",
@@ -5253,7 +5253,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 57
+      "lineCount": 59
     },
     {
       "path": "tests/unit/status-ingest.test.ts",
