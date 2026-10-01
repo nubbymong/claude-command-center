@@ -2041,12 +2041,14 @@ written while not indexed), so a record stamped at a moment a session not
 indexed held the conversation is left out whichever session wrote it (two tabs
 writing one conversation at once; a conversation another session indexed, taken
 up by a session not indexed (Codex's /resume inside it), is left out from the
-moment that session became not indexed, or from the conversation's start if
-that is later; a quit or a crash leaves a window open until the next start, so
+moment that session became not indexed (a known limit: the turns another
+session indexed in between are left out of a later reader's read from the
+start, toward not indexing, and stay in the index from the session that
+indexed them); a quit or a crash leaves a window open until the next start, so
 a record Codex writes in between, in a run outside the app, is left out of a
-later read; a Restart, a Switch or a tab close closes its session's window
-when the app kills the process, so a record the old process writes after that
-and before another session holds the conversation is in no window); a record
+later read; a killed session's window closes when its process has ended, so a
+launch that is indexed straight after a Restart or a Switch has the old
+process's wind-down, a few seconds at most, left out too); a record
 of those windows found damaged at start makes every record stamped before then
 count as so written, and a full one does the same for the conversations it
 drops; the name file and the GitHub loader check paths (the realm's
@@ -2100,8 +2102,10 @@ gave a fourth, small list; it is done too, below, and the same PR-level pass
 covers it. The VM re-check of the fourth fixes gave a fifth (the rule by
 record time); the independent spec and code-quality reviews of that rule gave
 a sixth, small one (a major finding on where a window starts, a minor one on
-the quit, two nits); both are done, below, and the same PR-level pass covers
-them.
+the quit, two nits); both are done, below. The independent reviews and the VM
+re-check of the sixth fixes gave a seventh, also small (a major finding on a
+killed session's window, two minor ones, and a limit accepted); it is done too,
+below, and the same PR-level pass covers them all.
 The VM check at ff7be273 (WINDOWS_1, real Codex 0.155.1 direct and 0.153.4
 through the npm shim): (1) a Codex session's turns and tool calls indexed and
 searchable, injected context, reasoning and tool output not: PASS; (2) a
@@ -2137,7 +2141,22 @@ findings: the first turn after returning from a stretch not indexed was lost
 (F1), a Switch after such a stretch read its copy from the start and indexed
 the turns written while off (F2a), and a new tab reading the conversation from
 its start did the same (F2b); all three came from a rule by position in the
-file, replaced by the rule by record time (the fifth list).
+file, replaced by the rule by record time (the fifth list). Its re-check with
+the sixth fixes (45dae0db, the same versions): the first turn after returning
+kept, A then B then A, a Switch after a stretch not indexed, a new tab through
+the picker and by id after an app restart, Settings and a config switched
+on, off, on, before the consent notice, an app crash, a damaged record, two
+tabs, a session's session_meta and first prompt never indexed (Z1), a resumed
+conversation keeping the turns it had indexed, a quit while not indexed, a
+tab killed and the conversation read from the start, and the audit of the index
+(search once per turn: 47 markers, no mismatch, on both versions): PASS. One
+failure, on an upgraded round-4 folder (a record of the version only unpushed
+P3.12 builds wrote: a null digest let three turns be indexed on 0.155.1, and
+one marker mismatched on both): not user-reachable, because no pushed build or
+release ever wrote that record version, so no migration is built. One
+observation: on a Save-sessions quit the app exits each session gracefully
+first, and each window closes at its session's reported exit (after Codex's
+last write); a kill of the app leaves them open for the next start.
 The fixes (mocked). The logging switches, both assistants (V1, W3): turning
 Index conversation logs off, in Settings or in a config, stops indexing the
 running sessions it covers at once (their runs end as stopped, their tails
@@ -2154,20 +2173,26 @@ before the notice naming Codex was seen): a window opens at the moment the
 session became not indexed (its launch, taken before the process starts, or a
 switch-off), whichever conversation it goes on to claim, and not at the claim,
 because Codex writes a conversation's session_meta and first prompt before the
-claim; and no earlier than the conversation began, when its rollout's first
-record (session_meta) says so (main reads that first line once per claim: a
-plain file only, never through a link, at most 512 KB of it, and only the one
-time leaves it, which counts only when it has a zone designator and is not
-later than the claim). A conversation begun before that moment (a resume)
-opens at that moment, so what it had indexed stays indexed. A window closes
-when the session stops holding it (its end, a Restart, a Switch, and a claim
-of another conversation, at the claim); a window still open when the app
-stopped closes at the next start, after a crash and after a quit alike (a quit
-leaves them open, here and on disk, because Codex's last records land after
-it, and a session's end reported while the app tears down closes none). The
-record is kept in the app's data folder whether or not logging is on (a new
-window written at once, the rest coalesced, atomically, and what is pending at
-quit); nothing clears a window. The worker starts with every window and is
+claim, whatever the rollout's own first record says (main does not read the
+rollout). A conversation begun before that moment (a resume) opens at that
+moment, so what it had indexed stays indexed. A window closes in these ways,
+each exactly: (1) a session that ends on its own, or exits gracefully before a
+quit, closes its window when its exit is reported; (2) a session that is killed
+(a tab closed, a Restart, a Switch) is released from its window at the kill and
+the window is closed when that process's exit is reported, or when the grace
+its account lease uses (6 s) has passed with none, by a closer bound to that
+exact window (never another session's, never a newer launch's), because a
+killed Codex goes on writing while it winds down and a Switch's carry copies
+what it writes; (3) a claim of another conversation closes the first window at
+the claim; (4) a quit (the quit teardown, SIGTERM) flushes the record with a
+latch: the windows still open stay open, here and on disk, and nothing closes
+them while the app tears down, because Codex's last records land after the
+quit; the next start closes them at its time, as after a crash; (5) an OS
+shutdown that may be vetoed flushes the record without the latch, so the
+windows still close if the app runs on. The record is kept in the app's data
+folder whether or not logging is on (a new window written at once, the rest
+coalesced, atomically, and what is pending at a flush); nothing clears a
+window. The worker starts with every window and is
 told of each change, and every read of that conversation, from any tab,
 session, copy or offset, leaves out each record stamped inside a window (a
 record at a window's start is inside it, one at its end is not; a stamp with
@@ -2231,28 +2256,41 @@ due; a Claude-only user, or one who turned indexing off, sees nothing new;
 main records a Codex run only once that notice was seen. Tests only: an
 unbind stays within the sending session (B3); the rename asks about the
 caller's own session (B4). The sixth list (Z1-Z4), mocked: a window opens
-when the session became not indexed and no earlier than the conversation began
-(Z1: tests for the launch, a resume claimed during the launch, a switch-off
-before any claim, a later claim of another conversation, the rollout's start
-bounding it, a time that cannot be trusted bounding nothing, a reader from the
-start leaving the first prompt out, and a resumed conversation keeping the
-turns it had indexed); a quit leaves the windows open and the next start closes
-them (Z2); a stamp with no zone designator is no time (Z3); the key is worked
-out once per tail (Z4). Red on the fifth list's commit: 14 tests in the 4
-touched test files. Mutation: every guard broken alone turns a test red (172
-mutants through the fifth list; the one equivalent is recorded; the sixth list
-adds 30, 28 red, and two equivalent on this host: the plain-file checks before
-and after opening a rollout's first line, whose link case runs where links can
-be made, in CI). The new read in main of a rollout's first line is a new
-surface for the PR-level ADR-009 pass.
-Owed: the VM re-check of the sixth fix list on WINDOWS_1 with real Codex
-0.153.4 and 0.155.1 (a not-indexed session's first prompt and session_meta
-never indexed by a later reader from the start, a new tab or a Switch; a
-resumed conversation keeping the turns it had indexed; the turn after
-returning from a stretch not indexed kept; a Switch after such a stretch, with
-and without a digest, and a new tab reading from the start: the turns written
-while off never indexed; an app stopped with a window open: the window stays
-open and the next start closes it); the native SQL tests in CI (the identity column
+when the session became not indexed (Z1: tests for the launch, a resume
+claimed during the launch, a switch-off before any claim, a later claim of
+another conversation, a reader from the start leaving the first prompt out, and
+a resumed conversation keeping the turns it had indexed); a quit leaves the
+windows open and the next start closes them (Z2); a stamp with no zone
+designator is no time (Z3); the key is worked out once per tail (Z4). Red on
+the fifth list's commit: 14 tests in the 4 touched test files. Its first cut
+also bounded a window below by the rollout's own first record, read in main;
+the seventh list removed that (below). The seventh list (K1-K6), mocked: a
+killed session's window closes when its process's exit is reported, or after
+the grace, not at the kill (K1: tests for a tab closed, the grace with no
+exit, a Restart whose new launch keeps its own window, a quit during the
+wind-down, two sessions on one conversation, a closer after a final flush, a
+window merged into an older one, and a reader from the start leaving out what
+is written between the kill and the exit; a session that ends normally closes
+its own window and not another tab's); the window starts at the moment the
+session became not indexed and nothing of the rollout is read in main (K2: the
+bound by its first record changed no outcome for a well-ordered rollout, let a
+stamp out of order narrow the window, and was a new read surface; its tests
+and the two survivors it had go with it); an OS shutdown that may be vetoed
+flushes without the latch (K3, tested at the unit and at the call site); the
+in-session /resume limit and the quit and kill paths are recorded exactly (K4,
+K5, above). Red on the sixth list's commit: 13 tests in 4 of the 5 touched test
+files. Counts: the sixth list's fix commit says 392 affected and tree-scanner
+files; 391 ran (this corrects that; the history is not rewritten); the seventh
+list's run is 391 files, all green on the host. Mutation: every guard broken
+alone turns a test red (172 mutants through the fifth list; the one
+equivalent is recorded; the sixth list ran 30, 28 red and two equivalent, both
+on the first-record read, which the seventh list removed; the seventh list ran
+21, all red).
+Owed: the VM re-check of the seventh fix list on WINDOWS_1 with real Codex
+0.153.4 and 0.155.1 (a tab closed or a Restart or a Switch while Codex is
+writing: nothing it writes before its exit is reported indexed, by a reader
+from the start, a new tab or the Switch's copy; the windows of a quit and of a
+crash as before); the native SQL tests in CI (the identity column
 and its migration, the prior bindings by session, the read digest stored with
 the cursor, search through the repeat check); the owner's screenshot review (the VM checks' galleries);
 the fresh PR-level ADR-009 pass (P3.12 is quarantined under ADR-009: its
