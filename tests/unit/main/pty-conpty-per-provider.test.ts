@@ -15,7 +15,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as os from 'os'
 import * as path from 'path'
 
-interface Spawned { cmd: string; args: unknown; opts: Record<string, unknown>; exit: Array<(e: { exitCode: number }) => void>; emitData: (d: string) => void }
+interface Spawned { cmd: string; args: unknown; opts: Record<string, unknown>; exit: Array<(e: { exitCode: number }) => void>; emitData: (d: string) => void; inSocket: import('events').EventEmitter; kill: ReturnType<typeof vi.fn> }
 interface Attempt { cmd: string; args: unknown; opts: Record<string, unknown> }
 const h = vi.hoisted(() => ({
   spawned: [] as Spawned[],
@@ -39,7 +39,9 @@ vi.mock('node-pty', () => ({
     if (h.failAll) throw new Error(`File not found: ${cmd} (attempt ${h.attempts.length})`)
     if (h.failDll && opts.useConptyDll) throw new Error('Cannot launch conpty')
     const dataCbs: Array<(d: string) => void> = []
-    const p: Spawned = { cmd, args, opts, exit: [], emitData: (d) => { for (const cb of dataCbs) cb(d) } }
+    // Round 3 (K1): node-pty's Windows PTY writes its input to a socket on its agent.
+    const { EventEmitter } = require('events') as typeof import('events')
+    const p: Spawned = { cmd, args, opts, exit: [], emitData: (d) => { for (const cb of dataCbs) cb(d) }, inSocket: new EventEmitter(), kill: vi.fn() }
     h.spawned.push(p)
     return {
       pid: 7000 + h.spawned.length,
@@ -48,7 +50,8 @@ vi.mock('node-pty', () => ({
       onExit: (cb: (e: { exitCode: number }) => void) => { p.exit.push(cb); return { dispose: () => {} } },
       write: () => {},
       resize: () => {},
-      kill: () => {},
+      kill: p.kill,
+      _agent: { inSocket: p.inSocket },
     }
   },
 }))
@@ -147,7 +150,8 @@ const { _resetBundledConptyForTest } = await import('../../../src/main/bundled-c
 const CX = 'cx0000000000000000000315'
 const CL = 'cl0000000000000000000315'
 const SH = 'sh0000000000000000000315'
-const fakeWin = { isDestroyed: () => false, webContents: { send: () => {} } } as unknown as Parameters<typeof spawnPty>[0]
+const sent: Array<[string, unknown]> = []
+const fakeWin = { isDestroyed: () => false, webContents: { send: (ch: string, d: unknown) => { sent.push([ch, d]) } } } as unknown as Parameters<typeof spawnPty>[0]
 let lastLaunch: { lease: { release: ReturnType<typeof vi.fn> } } | null = null
 const launch = () => {
   const l = {
@@ -366,5 +370,79 @@ describe('an exit with no known code (round 2, J1)', () => {
     const line = h.infos.find((l) => l.includes(`PTY exited for session ${CX}`))
     expect(line).toContain('with code unknown')
     expect(line).not.toContain('undefined')
+  })
+})
+
+// Round 3 (K1, K2): a failed write to a PTY's input never quits the app, for
+// any kind of session. The VM at 98455d52: a key typed just after Codex ended
+// (under the bundled ConPTY) failed with "write EAGAIN" on node-pty's input
+// socket, which had no listener, and the app quit. Now the error is caught and
+// logged once; a session that then ends by itself is left to end; one that has
+// not ended within the grace is ended, with a line in its terminal saying why.
+describe('a failed write to a PTY\'s input (round 3, K1, K2)', () => {
+  beforeEach(() => { vi.useFakeTimers(); sent.length = 0 })
+  afterEach(() => { vi.useRealTimers() })
+  const failure = (code: string) => Object.assign(new Error(`write ${code}`), { code, syscall: 'write' })
+  const kinds: Array<[string, () => void]> = [
+    ['Codex, bundled ConPTY', () => startCodex()],
+    ['Codex, system ConPTY', () => { dllMissing(); startCodex() }],
+    ['Claude', () => spawnPty(fakeWin, CL, { cwd: os.tmpdir() } as never)],
+    ['plain terminal', () => spawnPty(fakeWin, SH, { cwd: os.tmpdir(), shellOnly: true } as never)],
+  ]
+  const idOf = (name: string) => (name.startsWith('Codex') ? CX : name === 'Claude' ? CL : SH)
+
+  it('every kind of session: EAGAIN, EPIPE or any other input error is caught, logged once, never thrown', () => {
+    for (const [name, start] of kinds) {
+      for (const code of ['EAGAIN', 'EPIPE', 'EINVAL']) {
+        h.warns = []
+        start()
+        const p = last()
+        expect(() => p.inSocket.emit('error', failure(code)), `${name} ${code}`).not.toThrow()
+        expect(() => p.inSocket.emit('error', failure('ERR_STREAM_DESTROYED')), `${name} ${code}`).not.toThrow()
+        const lines = h.warns.filter((w) => w.includes(`input to session ${idOf(name)} failed`))
+        expect(lines, `${name} ${code}`).toHaveLength(1)
+        expect(lines[0], `${name} ${code}`).toContain(code)
+        for (const cb of [...p.exit]) cb({ exitCode: 0 })
+        bundledThere()
+      }
+    }
+  })
+
+  it('a session that ends by itself after its input failed (the program had quit) is left to end: no kill, no line', () => {
+    startCodex()
+    const p = last()
+    p.inSocket.emit('error', failure('EAGAIN'))
+    for (const cb of [...p.exit]) cb({ exitCode: undefined as unknown as number })
+    vi.advanceTimersByTime(10_000)
+    expect(p.kill).not.toHaveBeenCalled()
+    expect(sent.filter(([ch, d]) => ch === `pty:data:${CX}` && String(d).includes('stopped taking input'))).toEqual([])
+  })
+
+  it('a session that has not ended within the grace is ended, with a line in its terminal saying why; the app stays up', () => {
+    for (const [name, start] of kinds) {
+      sent.length = 0
+      start()
+      const p = last()
+      p.inSocket.emit('error', failure('EAGAIN'))
+      vi.advanceTimersByTime(2_999)
+      expect(p.kill, name).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(1)
+      expect(p.kill, name).toHaveBeenCalledTimes(1)
+      expect(sent.some(([ch, d]) => ch === `pty:data:${idOf(name)}` && String(d).includes('[This session stopped taking input, so it was ended.]')), name).toBe(true)
+      for (const cb of [...p.exit]) cb({ exitCode: 1 })
+      bundledThere()
+    }
+  })
+
+  it('a session replaced in the meantime (a Restart) is not ended by its old PTY\'s input error', () => {
+    startCodex()
+    const old = last()
+    old.inSocket.emit('error', failure('EAGAIN'))
+    killPty(CX)
+    startCodex()
+    const next = last()
+    vi.advanceTimersByTime(5_000)
+    expect(old.kill).toHaveBeenCalledTimes(1) // by killPty only
+    expect(next.kill).not.toHaveBeenCalled()
   })
 })
