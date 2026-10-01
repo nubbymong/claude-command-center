@@ -13,7 +13,7 @@
 // user's home shortened to ~ and spoofable text stripped). No other part of
 // that path, and no environment value, crosses with it.
 import type { ProviderId } from '../types'
-import type { UsageBucket } from '../usage-types'
+import type { AllowanceCredits, UsageBucket } from '../usage-types'
 import type {
   AccountLifecycle, AuthMethod, KnownAuthState, OperationalState, IdentityAssurance, RealmLifecycle, DiscoveryState, Compatibility,
 } from './model'
@@ -301,8 +301,9 @@ export interface InstallRecipeView {
 
 /** An account's allowance as the Account usage page shows it (usage track
  *  MP3; plan section 3). Views only: percentages, reset times, window labels,
- *  the time of the reading and the plan's name. Never a path, a file name, a
- *  process detail or a credential.
+ *  the time of the reading, the plan's name and, for an account that has
+ *  them, its credits count (three validated fields; ADR-023). Never a path, a
+ *  file name, a process detail or a credential.
  *  - `ok`: a reading is shown; `source` says where it came from.
  *  - `no-session-yet`: nothing has reported an allowance for this account.
  *  - `per-token`: an API-key account, billed per token: nothing is read.
@@ -328,6 +329,9 @@ export interface ProviderAccountUsageView {
   readingAt?: number
   /** The plan's display name ("Plus", "Pro"), when known. */
   planLabel?: string
+  /** The account's Codex credits, a count and not money, when the shown
+   *  reading carries them; the key is omitted when it does not. */
+  credits?: AllowanceCredits
 }
 
 /** A usage stream's answer: `off` streams nothing (D5); `accounts` is how

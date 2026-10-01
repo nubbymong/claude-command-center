@@ -947,6 +947,38 @@ describe('allowance from the rollout (usage track MP2)', () => {
     expect(live.get(sessions)).toBeNull()
   })
 
+  // P3.14 (ADR-023): the credits count a session reports is recorded with its
+  // allowance, newest report that carries it winning.
+  it('parseCodexRollout carries the credits of the newest token_count that has them', () => {
+    const t0 = '2026-09-27T09:00:00.000Z'
+    const t1 = '2026-09-27T09:00:05.000Z'
+    const t2 = '2026-09-27T09:00:09.000Z'
+    const rl = (pct: number, credits: unknown) => ({ limit_id: DEFAULT_ID, primary: { used_percent: pct, window_minutes: 300 }, plan_type: 'plus', credits })
+    const { allowance } = parseCodexRollout([
+      meta(t0, '/p314/cwd'),
+      tokenCount(t1, null, rl(5, { has_credits: true, unlimited: false, balance: '1250.0000000000' })),
+      tokenCount(t2, usage(9), rl(6, null)),
+    ].join('\n') + '\n')
+    expect(allowance!.limits[0].primary!.usedPercent).toBe(6)
+    expect(allowance!.credits).toEqual({ hasCredits: true, unlimited: false, balance: 1250 })
+  })
+
+  it('the Codex session records its credits with its allowance for the usage page', async () => {
+    const spawn = startClock()
+    const ts = new Date(spawn + 100).toISOString()
+    const sessions = join(mkdtempSync(join(tmpdir(), 'ccc-test-codex-p314-')), 'sessions')
+    mkdirSync(join(sessions, ...ymdOf(new Date())), { recursive: true })
+    writeFileSync(join(sessions, ...ymdOf(new Date()), 'rollout-p314.jsonl'), [
+      meta(ts, '/p314/cwd'),
+      tokenCount(ts, null, { limit_id: DEFAULT_ID, primary: { used_percent: 26, window_minutes: 300 }, plan_type: 'pro', credits: { has_credits: true, unlimited: false, balance: '1250.0000000000' } }),
+    ].join('\n') + '\n', 'utf-8')
+    const live = createCodexLiveUsage(process.platform)
+    const src = new CodexProvider(live).ingestSessionTelemetry('sess-p314', { cwd: '/p314/cwd', spawnTimestamp: spawn, sessionsDir: sessions }, () => {})
+    await vi.advanceTimersByTimeAsync(800)
+    expect(live.get(sessions)).toMatchObject({ planType: 'pro', credits: { hasCredits: true, unlimited: false, balance: 1250 } })
+    src.stop()
+  })
+
   it('a recorder that throws never stops the status line updates', async () => {
     const spawn = startClock()
     const ts = new Date(spawn + 100).toISOString()

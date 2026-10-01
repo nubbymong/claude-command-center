@@ -10,7 +10,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import React from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
-import { AccountCard, CodexAccountCard } from '../../../src/renderer/components/AccountUsagePanel'
+import { AccountCard, CodexAccountCard, codexCreditsText } from '../../../src/renderer/components/AccountUsagePanel'
 import type { AccountUsage, UsageBucket } from '../../../src/shared/usage-types'
 import type { AccountView, ProviderAccountUsageView } from '../../../src/shared/providers'
 import { resolveIdentityColor } from '../../../src/shared/identity-colors'
@@ -264,5 +264,172 @@ describe('CodexAccountCard (usage track MP4)', () => {
     act(() => { (r.container.querySelector('button') as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true })) })
     expect(onSignInAgain).toHaveBeenCalledTimes(1)
     r.unmount()
+  })
+})
+
+// P3.14 (ADR-023): the credits row. Claude's card has one (money, an ISO
+// currency); a Codex card gets the same row in Codex's own unit: Codex
+// credits, a count, not money (P3.1 evidence answer 7).
+describe('the credits row (P3.14)', () => {
+  afterEach(() => { vi.useRealTimers() })
+
+  const count = (n: number) => new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(n)
+  const money = (n: number, currency: string) => new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(n)
+  const creditsRow = (c: HTMLElement) => q(c, 'account-usage-credits')
+  const withCredits = (credits: ProviderAccountUsageView['credits'], over: Partial<ProviderAccountUsageView> = {}) => ({ credits, ...over })
+
+  describe('Codex: codexCreditsText', () => {
+    it('a balance reads in Codex credits, the count the CLI itself prints', () => {
+      expect(codexCreditsText({ hasCredits: true, unlimited: false, balance: 1250 })).toBe(`${count(1250)} credits`)
+      expect(codexCreditsText({ hasCredits: true, unlimited: false, balance: 0.5 })).toBe(`${count(0.5)} credits`)
+      expect(codexCreditsText({ hasCredits: true, unlimited: false, balance: 1250.567 })).toBe(`${count(1250.567)} credits`)
+    })
+
+    it('shows at most two fraction digits', () => {
+      const text = codexCreditsText({ hasCredits: true, unlimited: false, balance: 1.23456 })!
+      expect(text).toBe(`${count(1.23)} credits`)
+      expect(text).not.toContain('456')
+    })
+
+    it('unlimited reads "Unlimited", whatever the balance', () => {
+      expect(codexCreditsText({ hasCredits: true, unlimited: true, balance: null })).toBe('Unlimited')
+      expect(codexCreditsText({ hasCredits: false, unlimited: true, balance: 5 })).toBe('Unlimited')
+    })
+
+    it('nothing to say is no text: no credits, no balance (an unobserved state is not invented)', () => {
+      expect(codexCreditsText({ hasCredits: false, unlimited: false, balance: null })).toBeNull()
+      expect(codexCreditsText({ hasCredits: false, unlimited: false, balance: 12 })).toBeNull()
+      expect(codexCreditsText({ hasCredits: true, unlimited: false, balance: null })).toBeNull()
+    })
+
+    it('never money: no currency symbol or code', () => {
+      const text = codexCreditsText({ hasCredits: true, unlimited: false, balance: 1250 })!
+      expect(text).not.toMatch(/USD|GBP|EUR/)
+      for (const symbol of ['$', String.fromCharCode(0xa3), String.fromCharCode(0x20ac)]) expect(text).not.toContain(symbol)
+    })
+  })
+
+  describe('Codex card', () => {
+    it('a balance shows as a "Credits" row under the bars, "N credits" on the right, styled as Claude\'s', () => {
+      const r = cxCard({ view: withCredits({ hasCredits: true, unlimited: false, balance: 1250 }) })
+      const row = creditsRow(r.container)!
+      expect(row).not.toBeNull()
+      const [label, value] = Array.from(row.querySelectorAll('span'))
+      expect(label.textContent).toBe('Credits')
+      expect(value.textContent).toBe(`${count(1250)} credits`)
+      // The same classes as Claude's row.
+      expect(row.className).toContain('border-t')
+      expect(label.className).toContain('text-overlay1')
+      expect(value.className).toContain('tabular-nums')
+      expect(value.className).toContain('text-text')
+      // Under the bars, in the same column.
+      const bars = r.container.querySelectorAll('[role="progressbar"]')
+      expect(bars.length).toBeGreaterThan(0)
+      expect(row.parentElement).toBe(bars[0].closest('div.flex.flex-col'))
+      r.unmount()
+    })
+
+    it('unlimited shows "Unlimited"', () => {
+      const r = cxCard({ view: withCredits({ hasCredits: true, unlimited: true, balance: null }) })
+      expect(creditsRow(r.container)!.textContent).toBe('CreditsUnlimited')
+      r.unmount()
+    })
+
+    it('hasCredits false, or no balance, or no credits at all: no row', () => {
+      for (const credits of [{ hasCredits: false, unlimited: false, balance: null }, { hasCredits: false, unlimited: false, balance: 40 }, { hasCredits: true, unlimited: false, balance: null }, undefined]) {
+        const r = cxCard({ view: withCredits(credits) })
+        expect(creditsRow(r.container), JSON.stringify(credits)).toBeNull()
+        expect(r.container.textContent).not.toContain('Credits')
+        r.unmount()
+      }
+    })
+
+    it('a card with credits keeps every other part of the card: the bars, the plan and the age line', () => {
+      const r = cxCard({ view: withCredits({ hasCredits: true, unlimited: false, balance: 1250 }) })
+      expect(r.container.textContent).toContain('18%')
+      expect(r.container.textContent).toContain('47%')
+      expect(r.container.textContent).toContain('Plus')
+      expect(r.container.textContent).toContain('Updated just now')
+      r.unmount()
+    })
+
+    it('a last-seen view shows its credits above "As of ..."', () => {
+      const r = cxCard({ view: withCredits({ hasCredits: true, unlimited: false, balance: 1250 }, { source: 'last-seen', readingAt: NOW - 3 * 3_600_000 }) })
+      const row = creditsRow(r.container)!
+      const as = Array.from(r.container.querySelectorAll('p')).find((p) => p.textContent?.startsWith('As of'))!
+      expect(as).toBeTruthy()
+      expect(row.compareDocumentPosition(as) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      r.unmount()
+    })
+
+    it('a signed-out account\'s last-seen credits show beside "Sign in again"', () => {
+      const r = cxCard({ account: { lastKnownAuthState: 'signed-out' }, view: withCredits({ hasCredits: true, unlimited: false, balance: 1250 }, { status: 'not-signed-in', source: 'last-seen', readingAt: NOW - 3_600_000 }) })
+      expect(creditsRow(r.container)!.textContent).toBe(`Credits${count(1250)} credits`)
+      expect(buttonTexts(r.container)).toEqual(['Sign in again'])
+      r.unmount()
+    })
+
+    it('no session yet, an API-key account and a parked account show no credits row, whatever the view carries', () => {
+      const credits = { hasCredits: true, unlimited: false, balance: 1250 }
+      const none = cxCard({ view: withCredits(credits, { status: 'no-session-yet', buckets: [], source: undefined, readingAt: undefined, planLabel: undefined }) })
+      expect(creditsRow(none.container)).toBeNull()
+      none.unmount()
+      const key = cxCard({ account: { authMethod: 'apiKey' }, method: 'API key', view: withCredits(credits, { status: 'per-token', buckets: [], source: undefined, readingAt: undefined, planLabel: undefined }) })
+      expect(creditsRow(key.container)).toBeNull()
+      key.unmount()
+      const parked = cxCard({ account: { lifecycle: 'inactive' }, view: withCredits(credits, { status: 'inactive', buckets: [] }) })
+      expect(creditsRow(parked.container)).toBeNull()
+      parked.unmount()
+    })
+
+    it('a view with credits but no bars shows no row (the bars are what it sits under)', () => {
+      const r = cxCard({ view: withCredits({ hasCredits: true, unlimited: false, balance: 1250 }, { buckets: [] }) })
+      expect(creditsRow(r.container)).toBeNull()
+      r.unmount()
+    })
+  })
+
+  describe('Claude card (the parity this row copies)', () => {
+    const claudeBuckets = [bucket('5h', 34, at(15, 10)), bucket('Weekly', 58, at(18, 0, 30))]
+    const claudeCard = (credits: AccountUsage['credits']) => render(<AccountCard row={row({ buckets: claudeBuckets, credits })} theme="dark" onSignIn={vi.fn()} now={NOW} />)
+    const claudeRow = (c: HTMLElement) => Array.from(c.querySelectorAll('span')).find((s) => s.textContent === 'Credits')?.parentElement as HTMLElement | undefined
+
+    it('enabled with a remaining balance reads "<money> left"', () => {
+      const r = claudeCard({ currency: 'GBP', remaining: 12.5, used: 7.5, limit: 20, enabled: true })
+      const rowEl = claudeRow(r.container)!
+      expect(rowEl.querySelectorAll('span')[1].textContent).toBe(`${money(12.5, 'GBP')} left`)
+      expect(rowEl.querySelectorAll('span')[1].className).toContain('text-text')
+      r.unmount()
+    })
+
+    it('enabled with no balance reads "<money> used"', () => {
+      const r = claudeCard({ currency: 'GBP', remaining: null, used: 4, limit: null, enabled: true })
+      expect(claudeRow(r.container)!.querySelectorAll('span')[1].textContent).toBe(`${money(4, 'GBP')} used`)
+      r.unmount()
+    })
+
+    it('disabled because out of credits reads "Out of credits", muted, with what was used', () => {
+      const r = claudeCard({ currency: 'GBP', remaining: 0, used: 20, limit: 20, enabled: false, disabledReason: 'out_of_credits' })
+      const value = claudeRow(r.container)!.querySelectorAll('span')[1]
+      expect(value.textContent).toBe(`Out of credits ${String.fromCharCode(0xb7)} ${money(20, 'GBP')} used`)
+      expect(value.className).toContain('text-overlay1')
+      r.unmount()
+    })
+
+    it('disabled for any other reason reads "Off"', () => {
+      const r = claudeCard({ currency: 'GBP', remaining: null, used: 0, limit: null, enabled: false })
+      expect(claudeRow(r.container)!.querySelectorAll('span')[1].textContent).toBe('Off')
+      r.unmount()
+    })
+
+    it('no credits, no row; and Claude\'s row is the markup it always was (no test id added)', () => {
+      const none = claudeCard(undefined)
+      expect(claudeRow(none.container)).toBeUndefined()
+      none.unmount()
+      const r = claudeCard({ currency: 'GBP', remaining: 12.5, used: 7.5, limit: 20, enabled: true })
+      expect(q(r.container, 'account-usage-credits')).toBeNull()
+      expect(claudeRow(r.container)!.className).toBe('flex items-center justify-between text-[0.8125rem] mt-1 pt-2 border-t border-surface0/60')
+      r.unmount()
+    })
   })
 })

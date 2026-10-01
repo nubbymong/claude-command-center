@@ -437,14 +437,17 @@ export function createCodexLiveUsage(platform: NodeJS.Platform = process.platfor
   }
 }
 
-/** A reading as the port reports it: buckets, time, plan name; null when it
- *  has nothing to draw. Never throws. */
+/** A reading as the port reports it: buckets, time, plan name and, when the
+ *  reading carries them, the credits count (ADR-023; the key is omitted
+ *  otherwise); null when it has nothing to draw. Never throws. */
 function toUsageReading(r: AllowanceReading | null): UsageReading | null {
   try {
     if (!r) return null
     const buckets = readingToBuckets(r)
     if (buckets.length === 0) return null
-    return { buckets, readingAt: r.readingAt, planLabel: planLabelFor(r.planType) }
+    const out: UsageReading = { buckets, readingAt: r.readingAt, planLabel: planLabelFor(r.planType) }
+    if (r.credits) out.credits = r.credits
+    return out
   } catch {
     return null
   }

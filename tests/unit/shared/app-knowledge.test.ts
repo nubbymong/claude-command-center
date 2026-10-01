@@ -183,3 +183,23 @@ describe('app knowledge after P3.12', () => {
     }
   })
 })
+
+// P3.14 (row 17): a Codex account on paid credits shows its balance on its
+// Usage card, in Codex credits (a count, not money). The known issue that said
+// the row was missing is gone.
+describe('app knowledge after P3.14', () => {
+  const body = (id: string) => APP_KNOWLEDGE_SECTIONS.find((x) => x.id === id)!.body
+  it('no longer says a Codex account on paid credits has no credits row', () => {
+    for (const s of APP_KNOWLEDGE_SECTIONS) {
+      expect(s.body, s.id).not.toMatch(/no credits row yet/i)
+      expect(s.body, s.id).not.toMatch(/Codex accounts on paid credits show their allowance/)
+    }
+    // Claude's own credits-row known issue is a different thing and stays.
+    expect(body('known-issues')).toMatch(/The credits row can be missing for an account on extra usage while one of its sessions is open/)
+  })
+  it('says the Usage page shows a Codex balance in Codex credits, under the bars, from the same reading', () => {
+    expect(body('accounts')).toMatch(/A Codex account on paid credits shows its balance under its bars, in Codex credits \(a count, not money\)/)
+    expect(body('accounts')).toMatch(/from the same reading/)
+    expect(body('accounts')).toMatch(/Unlimited/)
+  })
+})

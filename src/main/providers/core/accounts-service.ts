@@ -2621,6 +2621,9 @@ export class AccountsService {
         view.buckets = r.buckets
         if (typeof r.readingAt === 'number') view.readingAt = r.readingAt
         if (r.planLabel) view.planLabel = r.planLabel
+        // Codex credits (ADR-023): the three validated fields, from the live,
+        // read or last-seen reading alike; no key when the reading has none.
+        if (r.credits) view.credits = r.credits
       }
       if (!view.planLabel && a.planLabel) view.planLabel = a.planLabel
       return view
