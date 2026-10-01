@@ -65,7 +65,7 @@ The app keeps one more thing from a Codex usage reading, and nothing else:
    balance is missing or not readable (and the credits are not unlimited).
    `hasCredits: false` has not been observed, so nothing is invented for it.
 
-## Carry marks (rounds 1 to 3)
+## Carry marks (rounds 1 to 4)
 
 The credits row brought a second thing to keep. Switch Account carries a
 conversation into the account it moves to (`conversation-carry.ts`): the copy in
@@ -94,7 +94,11 @@ time, below.
    between leaves a record, which only counts less). A record that cannot be
    made never stops the carry: with the file unreadable or unwritable it is
    held in memory (item 2). A copy that was already there keeps the record it
-   has (one whose record cannot be read yet is left to the file); an extension
+   has, and is given this carry's record only when it has none. One whose
+   record cannot be read yet keeps the file's record once the file reads, and
+   is given this carry's record then only when the file has none (round 4; up
+   to 64 such copies are held in memory, and past that the carry's own record
+   stays, which only counts less); an extension
    (the conversation coming back to an account) replaces its record with the
    newer time. No text of the conversation, no figure, no credential.
 2. **Where, and how long.** In memory, and in `carry-marks.json` in the app's
@@ -114,7 +118,11 @@ time, below.
      either; an account's own events written after the floor count as usual. If
      the replacement cannot be written, the file is put back where it was, so
      the next start finds it again and sets it aside again, rather than finding
-     no file; the store stays as for a file that cannot be read.
+     no file; the store stays as for a file that cannot be read. After 3 such
+     failures in a run it is not set aside again in that run (one log line), so
+     it is not renamed aside and back at every try: it stays where it is, is
+     still read after each wait (a file put right is taken), and the store stays
+     as for a file that cannot be read (round 4).
    - A file that cannot be read now (busy, locked, the folder missing) is read
      again after a wait of 1 second that doubles to 30 seconds, not at every
      call. The resources folder not being known yet at startup is not a failed

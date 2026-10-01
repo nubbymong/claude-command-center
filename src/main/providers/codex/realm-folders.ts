@@ -1040,7 +1040,8 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
    *  cannot be recorded never stops the carry (the harm is a temporary wrong
    *  display, not worth a refused carry). `finish` after a copy that landed: a
    *  copy that was `present` already keeps the mark it had (marked now only when
-   *  it had none; one that cannot be read yet is left to the file), any other is
+   *  it had none; one whose mark cannot be read yet keeps the file's once it
+   *  reads, and is marked then only when the file has none), any other is
    *  marked no earlier than the newest time in the copy; `undo` after one that
    *  did not: the mark it replaced is back, or none. Neither throws. */
   function beginMark(to: RealmRef, sessionsDir: string, id: string): { finish(carried: 'copied' | 'present' | 'extended'): void; undo(): void } {
@@ -1057,7 +1058,7 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
         try {
           if (carried === 'present') {
             if (typeof prior === 'number') marks.record(to.authRealmId, sessionsDir, id, prior)
-            else if (prior === undefined) marks.remove(sessionsDir, id)
+            else if (prior === undefined) marks.markIfNone(to.authRealmId, sessionsDir, id, at)
             return
           }
           const newest = deps.newestStamp ? deps.newestStamp(sessionsDir, id) : null
