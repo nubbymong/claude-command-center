@@ -63,6 +63,7 @@ import { spawnRefusalOf, refusedTabText } from '../../shared/providers'
 import { reconcileRefusedMultiSpawn } from '../utils/refusedMultiSpawn'
 import { isConfigLaunchBlocked, useLaunchGateSettings, restartLaunchRefusal } from '../hooks/useLaunchConfig'
 import { useConfigStore } from '../stores/configStore'
+import { generateId } from '../utils/id'
 
 // Re-export for consumers
 export { killSessionPty } from '../ptyTracker'
@@ -535,7 +536,12 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     let lastWheelAt = Number.NEGATIVE_INFINITY
 
     // PTY-integrity instrumentation (scoped to this session's mount; resets on
-    // sessionId change because the effect re-runs).
+    // sessionId change because the effect re-runs). The generation names this
+    // mount on every report: a re-key that does not respawn the PTY (a Restart
+    // from the partner view re-keys this view while main's PTY runs on) starts
+    // these counts again from 0, and main restarts its count for the session
+    // when the generation changes.
+    const integrityGeneration = generateId()
     let bytesReceived = 0, bytesWritten = 0, strippedBytes = 0, ptyResizeCount = 0
     let lastSentCols: number | null = null, lastSentRows: number | null = null
     let reportTimer: ReturnType<typeof setTimeout> | null = null
@@ -570,6 +576,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           bytesReceived, bytesWritten, strippedBytes,
           cols: lastSentCols ?? 0, rows: lastSentRows ?? 0,
           resizeCount: ptyResizeCount,
+          generation: integrityGeneration,
         })
       }, 1000)
     }
