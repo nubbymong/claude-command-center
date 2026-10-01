@@ -82,11 +82,11 @@ describe('the carry marks file (ADR-023)', () => {
 // marks live only until the app quits, and a carried conversation would show
 // the earlier account's figures again after a restart.
 describe('the composition root', () => {
-  it('gives the Codex package the marks file next to the registry', async () => {
+  it('gives the provider package that keeps conversations the marks file next to the registry', async () => {
     const { readFileSync } = await import('node:fs')
     const compose = readFileSync(path.join(__dirname, '../../../src/main/providers/compose.ts'), 'utf-8')
     expect(compose).toMatch(/createCarryMarksFilePort\(\{/)
     expect(compose).toMatch(/path\.join\(resources, REGISTRY_DIRNAME\)/)
-    expect(compose).toMatch(/createCodexPackage\(\{[^\n]*carryMarksPort[^\n]*\}\)/)
+    expect(compose).toMatch(/create\w+Package\(\{[^\n]*carryMarksPort[^\n]*\}\)/)
   })
 })
