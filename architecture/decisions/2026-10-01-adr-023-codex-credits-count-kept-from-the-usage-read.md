@@ -65,7 +65,7 @@ The app keeps one more thing from a Codex usage reading, and nothing else:
    balance is missing or not readable (and the credits are not unlimited).
    `hasCredits: false` has not been observed, so nothing is invented for it.
 
-## Carry marks (rounds 1 and 2)
+## Carry marks (rounds 1 to 3)
 
 The credits row brought a second thing to keep. Switch Account carries a
 conversation into the account it moves to (`conversation-carry.ts`): the copy in
@@ -75,19 +75,28 @@ account's own would show the earlier account's bars, plan and credits on the
 new account's card until its session reports. This is not about the read bounds
 above; it changes what the app itself keeps, so it is recorded here.
 
+The proportion that rules every choice below: the harm guarded against is a
+temporary display of the user's OTHER account's figures on the wrong card. It
+is never a reason to refuse a carry or a Sign in again, and never a reason to
+blank every card. Round 2 refused both, and withheld every Codex figure, while
+the marks file could not be read; round 3 replaces that with failing closed by
+time, below.
+
 1. **What is kept.** One record per carry: the destination account's realm id,
    its sessions folder, the conversation id (lower case) and a time (epoch ms),
    the later of the moment of the carry and the newest event time that has a
    zone in the bytes that were copied (so an earlier machine clock, stepped back
    before the move, cannot let the earlier account's later-dated events count;
    a stamp more than 7 days ahead of the clock is taken for garbage and
-   ignored). The record is made before the copy and taken back if the copy
-   fails (a crash in between leaves a record, which only counts less); a
-   record that cannot be kept stops the carry ("not carried over"), never
-   lets it go on unmarked. A copy that was already there keeps the record it
-   has; an extension (the conversation coming back to an account) replaces its
-   record with the newer time. No text of the conversation, no figure, no
-   credential.
+   ignored; the scan reads the copy's last 256 KiB and, if that holds no time
+   and the copy is longer, its last 2 MiB, as the last-seen reader does). The
+   record is made before the copy and taken back if the copy fails (a crash in
+   between leaves a record, which only counts less). A record that cannot be
+   made never stops the carry: with the file unreadable or unwritable it is
+   held in memory (item 2). A copy that was already there keeps the record it
+   has (one whose record cannot be read yet is left to the file); an extension
+   (the conversation coming back to an account) replaces its record with the
+   newer time. No text of the conversation, no figure, no credential.
 2. **Where, and how long.** In memory, and in `carry-marks.json` in the app's
    own `providers/` configuration folder next to the account registry, never in
    an account's folder (`src/main/carry-marks-port.ts`; the composition root
@@ -98,19 +107,30 @@ above; it changes what the app itself keeps, so it is recorded here.
      with as the next item says.
    - A file that is not what this code wrote (not the expected shape in any one
      field, not valid text) is set aside (renamed to `carry-marks.json.bad-<ms>`,
-     the newest 3 kept), never overwritten; a floor at that moment is kept in
-     the new file, and no rollout counts an event dated before it. So the
+     the newest 3 kept) and, in the same step, replaced by a file that holds the
+     floor (the moment it was set aside) and what this run has made. It is never
+     overwritten. No rollout counts an event dated before the floor, so the
      events of a carried conversation that lost its record are not counted
-     either; an account's own events written after the floor count as usual.
+     either; an account's own events written after the floor count as usual. If
+     the replacement cannot be written, the file is put back where it was, so
+     the next start finds it again and sets it aside again, rather than finding
+     no file; the store stays as for a file that cannot be read.
    - A file that cannot be read now (busy, locked, the folder missing) is read
      again after a wait of 1 second that doubles to 30 seconds, not at every
-     call. While it cannot be read, no event of any Codex rollout counts, and a
-     carry is refused: the Usage page shows no last-seen Codex figure and the
-     live strip no Codex allowance until the file reads, then they come back.
-     Nothing the app shows is wrong, and nothing is hidden for good: a file
-     that stays unreadable shows no Codex last-seen figure until it is fixed.
-   - A record is kept only when it is written. The file is trimmed oldest first
-     when it is written so it always fits what a read accepts (1 MiB of text).
+     call. The resources folder not being known yet at startup is not a failed
+     read: it is asked again at once. Meanwhile carries, Sign in again and
+     archives go on and no card shows an error for it. Marks, dropped realms
+     (up to 256) and adoptions (up to 64, applied in order) are kept in
+     memory and written once the file reads, beside the file's own marks (this
+     run's record of a conversation wins). The failure fails closed by time:
+     the first failed read is a floor, in memory, for the folders this run has
+     carried a conversation into or adopted a history into; no event dated at
+     or before it counts there (nor before a conversation's own record, if
+     later). Every other folder reads whole.
+   - A record that cannot be written (disk full, a locked file) is held in
+     memory, and is written at the next ask after a wait of 1 second that
+     doubles to 30 seconds. The file is trimmed oldest first when it is written
+     so it always fits what a read accepts (1 MiB of text).
    - A realm dropped while the file could not be read is remembered (up to 256)
      and filtered out when the file is read, so its records do not come back.
    - Every field read back is validated, and only the object's own properties
@@ -120,8 +140,8 @@ above; it changes what the app itself keeps, so it is recorded here.
    its account is archived (the realm it has now and every realm it has had,
    such as a folder a Sign in again moved it off) and when its folder is
    removed. A Sign in again (copying the history into a replacement folder)
-   moves the old folder's records to the new one, and refuses to go on if they
-   cannot be kept.
+   moves the old folder's records to the new one, and goes on whether or not
+   they can be moved yet (an adoption that cannot be applied now is queued).
 3. **What reads it.** The session watcher (the live figure) and the last-seen
    reader count, in a rollout that has a record, only the token_count events
    dated after the record's time (or the floor, if later). An event whose
@@ -150,9 +170,30 @@ above; it changes what the app itself keeps, so it is recorded here.
      remove them: an account's own sub-limit is written only when that limit is
      used, so removing older ones would hide the account's own wrongly. The
      credits do follow the newest main report that states them (Decision, item 2).
-   - While the file cannot be read, the page withholds every Codex last-seen
-     figure (above), not only the carried conversations': the file says which
-     rollouts are carried, and that is not known.
+   - While the file cannot be read, which conversations an earlier run carried
+     is not known. Only the folders this run carried into are held, so a
+     conversation carried in an earlier run reads whole until the file reads
+     (one to 30 seconds between tries): the earlier account's figures can show
+     on the new account's card for that time. This is the accepted cost of never
+     refusing a carry and never blanking a card.
+   - If the app quits before the file could be read or written, what was held
+     in memory is lost: a mark made then is not kept for the next run, and a
+     realm dropped then keeps its records in the file (an archived account's
+     records are then not deleted from it).
+   - A marks file that is deleted reads as missing, which is no marks: the
+     conversations carried before then read whole again, and the earlier
+     account's figures can show on the new account's card until its session
+     reports. A deleted file leaves nothing to tell it from a new install.
+   - The floor of a file set aside holds in every folder, because which
+     rollouts were carried is lost with the file: every account's figures dated
+     before it show again with its next report, not at once. The set-aside
+     copies (the newest 3) hold the same kind of records as the file, an
+     archived account's included, and are not edited: they stay until three
+     newer copies replace them.
+   - A copy whose last line is over 2 MiB hides its newest time from the scan;
+     the record is then the carry's own moment. A replacement that cannot be
+     written and a file that then cannot be put back leaves the file renamed
+     with its copy beside it (the next start finds it missing, as a deleted one).
 
 ## Consequences
 
@@ -168,14 +209,17 @@ above; it changes what the app itself keeps, so it is recorded here.
   back if it fails), a new file in the app's configuration folder that is
   read, set aside and trimmed, and the archive and sign-in-again paths of the
   accounts service (`forget`, `adopt`): the pass covers them too (ADR-009).
-  A mark that cannot be kept stops that carry ("not carried over") and never
-  fails an archive.
-- Rejected: reading an unreadable marks file as "no marks". It would let the
-  earlier account's figures show on a new account's card whenever the file was
-  busy, and a corrupt file overwritten blind would lose every record at once.
-  The cost is that an unreadable file withholds every Codex last-seen figure
-  until it can be read (Carry marks, item 4); the wait before each new try
-  keeps that from costing a read at every call.
+  A mark that cannot be kept never stops a carry, a Sign in again or an
+  archive.
+- Rejected: reading an unreadable marks file as "no marks" with nothing held,
+  and overwriting a corrupt file blind: the first would show the earlier
+  account's figures on every carried card, the second would lose every record
+  at once. Rejected too, and this is round 2's design: refusing a carry or a
+  Sign in again, or withholding every Codex figure, while the file cannot be
+  read. The harm guarded against is a temporary wrong display, and refusing a
+  re-authentication, or blanking every card, costs the user more than it
+  protects. Failing closed by time (Carry marks, item 2) holds what this run
+  carried and leaves the rest as it was.
 - Rejected: taking credits from rollouts only. A closed account on a supported
   CLI is shown from the fresh read, which replaces last-seen, so its row would
   vanish exactly when the page reads afresh; that is not parity.

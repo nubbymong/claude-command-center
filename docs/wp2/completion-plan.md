@@ -2761,7 +2761,53 @@ byte-identically, all red (one survived once and was answered by a test). ADR-00
 yes, the same pass as round 1 (a file that is read, set aside and trimmed; the
 sign-in-again and archive paths). Owed on the VM: the Switch Account check above; with
 the marks file made unreadable, no Codex last-seen figure until it is readable again,
-and a corrupt one set aside with its copy beside it.
+and a corrupt one set aside with its copy beside it. (Round 3 below replaces what
+D2 and D4 do while the file cannot be read.)
+Round 3 (c61d889e; the reviews of round 2: ADR-009 pass 3 lens A PASS and lens B PASS,
+so P3.14's ADR-009 pass stands at e050a266; spec FINDINGS with one major; code quality
+PASS-WITH-FIXES). The proportion that rules it: the harm guarded against is a temporary
+display of the user's other account's figures on the wrong card, so it is never a reason to
+refuse a carry or a Sign in again, and never a reason to blank every card. (H1) Round 2
+refused both, and withheld every Codex figure, while `carry-marks.json` could not be read.
+Now carries, Sign in again and archives go on and no card shows an error for it: marks,
+dropped realms (up to 256) and adoptions (up to 64) are kept in memory and written once the
+file reads, beside its own marks, and a mark that cannot be written is kept and tried again
+after a wait. The failure fails closed by time: the first failed read is a floor, in memory,
+for the folders this run has carried into or adopted a history into (nothing dated at or
+before it counts there); every other folder reads whole, so a conversation carried in an
+earlier run can show the earlier account's figures for the one to 30 seconds between tries.
+`adopt` and `record` never fail for the file; `markOf` says "not known yet" until it is read.
+The user-facing sentence in app knowledge, `PRIVACY.md` and ADR-023 say so. (H2) A file that is
+not what the app wrote is set aside and, in the same step, replaced by a file holding the floor
+and this run's marks (`setAside(replacement)` in `carry-marks-port.ts`); if the replacement
+cannot be written the file is put back, so the next start finds it again, never as a missing
+file. (H3) The scan of a copy for its newest time reads the last 256 KiB and, when that holds
+no time, the last 2 MiB, as the last-seen reader does. (H4) A mark that throws in the live
+watcher closes that rollout. (H5) The resources folder not being known yet is "not ready", not
+a failed read: no wait. (H6, records) ADR-023 and `PRIVACY.md` now state: a deleted marks file
+reads as no marks (a limit); the up to 3 `.bad-<ms>` copies hold the same kind of notes, an
+archived account's included, are not edited, and stay until three newer ones replace them;
+marks and drops held in memory are lost if the app quits before the file can be read or
+written (an archived account's notes then stay in the file); the floor of a set-aside holds in
+every folder; a final line over 2 MiB hides a copy's newest time. Tests, red first on the
+round 2 sources (40 failed in 6 files, 33 of them for the new behaviour; seven fail only
+because the harness no longer has the removed `unavailable()`): the store (carry kept and
+written when the file reads, the floor by time and which folders it holds, adoptions in order
+and their bound, a realm dropped meanwhile, not-ready without a wait, a write that fails and
+is tried again, a set-aside that cannot be done), the port (not-ready, replace and put back),
+the stamp scan over a 300 KiB and a 2 MiB final line, the live watcher (unreadable, held, a
+throwing mark), the folder work (a carry never stopped, a present or failed copy with the
+earlier mark unknown), the accounts service end to end (an unreadable file: no card is an
+error, a carry and a Sign in again go on, the marks follow once it reads) and the app
+knowledge sentence. Mutation: 48 mutants of the store, the port, the folder work and the
+watcher, each alone and restored byte-identically, all red (three survived once and were
+answered by tests; one dead line was removed). Host: 143 affected and scanner files, 3237
+passed, 12 skipped. ADR-009: the pass stands at e050a266 and was
+not re-run for round 3, which changes how the store behaves on a failed read or write and the
+order of the set-aside; the orchestrator decides whether to re-attack it. Owed on the VM:
+with the marks file made unreadable, a Switch Account and a Sign in again go on and no card
+is an error; a corrupt file set aside with its copy beside it, and put back when its
+replacement cannot be written.
 
 **P3.15 Terminal verification.** On the VM with real Codex 0.155.1: a Codex
 session in the Services snapshot; Alt+V image paste reaching Codex (and the tip
@@ -3146,8 +3192,9 @@ screen at all. The owner reviews the review screen in the P3.10 VM gallery.
   (three validated fields) from the usage read and so widens ADR-022 bound 8,
   and keeps the carry marks file (`carry-marks.json` in the app's providers
   folder: realm id, sessions folder, conversation id and a time; no text, no
-  figure; it fails closed, is set aside and not overwritten when it is not what
-  the app wrote, and is deleted per account on archive). The live credits check runs on the VM's managed account, which shows a
+  figure; it fails closed by time and never stops a carry or a Sign in again, is
+  set aside and not overwritten when it is not what the app wrote, and is deleted
+  per account on archive). The live credits check runs on the VM's managed account, which shows a
   balance (P3.1 evidence, answer 7); the P3.14 fallback does not apply.
 - Section 7: a disposition for each C defect not fixed; the security report;
   the desktop attestation; the word to merge each PR.

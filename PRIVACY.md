@@ -59,11 +59,15 @@ during installation (and can change later in Settings):
   card shows only what that account itself used after the move, not the earlier
   account's figures. At most 256 notes are kept (an account with the most
   loses its oldest first), and all of an account's notes, including those of a
-  folder it was moved off by Sign in again, are deleted when the account is
-  archived or removed. A notes file the app cannot make sense of is renamed
-  with a ".bad" ending beside it (the newest 3 are kept) rather than
-  overwritten, and while it cannot be read the app shows no Codex last-seen
-  usage figure
+  folder it was moved off by Sign in again, are deleted from the notes file
+  when the account is archived or removed. A notes file the app cannot make
+  sense of is renamed with a ".bad" ending beside it and replaced, never
+  overwritten; the newest 3 such copies are kept until three newer ones
+  replace them. They hold the same kind of notes, an archived account's
+  included, and the app does not edit them. While the notes file cannot be read
+  or written the app keeps the notes in memory and writes them when it can; if
+  the app quits first they are lost, and the notes of an account archived in
+  the meantime stay in the file
 - an index of your Claude Code and Codex session transcripts, used to power
   the Logs and Tokenomics views (the Logs index reads a Codex session's
   transcript from that session's own Codex account folder)
