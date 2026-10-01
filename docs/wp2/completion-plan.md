@@ -61,14 +61,14 @@ still owes recorded in 4. "2; 3" means partly built in 2, the rest in 3.
 
 ## 2. Summary
 
-- 75 rows: **48 DONE, 16 PARTIAL, 11 OPEN** (recounted after P3.14, with section 4's P3.2 to P3.14 rows brought current from their phase records;
+- 75 rows: **52 DONE, 12 PARTIAL, 11 OPEN** (recounted after P3.15, with section 4's P3.2 to P3.15 rows brought current from their phase records;
   they agree with the parity checklist).
-- The 27 rows not DONE, by gap: **implementation 12, verification 10, owner 5** (rows 15 and 58, an owner action and a record to sign; rows 22, 41 and 63, each built as a default pending the owner's decision, section 10). Row 53
+- The 23 rows not DONE, by gap: **implementation 12, verification 6, owner 5** (rows 15 and 58, an owner action and a record to sign; rows 22, 41 and 63, each built as a default pending the owner's decision, section 10). Row 53
   moved from owner to implementation when the owner decided it
   (`docs/wp1/owner-decisions-2026-09-27.md`, M4).
-- By PR: **12 in PR 3, 15 in PR 4**. No row changes package. The Ask Conductor
+- By PR: **8 in PR 3, 15 in PR 4**. No row changes package. The Ask Conductor
   part of row 14 goes with row 53 into PR 4, because it is the same change.
-- 43 DONE rows still owe verification. The 23 built in PR 3 (rows 7, 8, 10, 17, 20, 24, 28, 31, 32, 36, 37, 38, 39, 40, 42, 43, 46, 47, 61, 62, 65, 69 and 72) owe their VM checks under
+- 47 DONE rows still owe verification. The 27 built or verified in PR 3 (rows 7, 8, 10, 17, 20, 24, 28, 31, 32, 36, 37, 38, 39, 40, 42, 43, 44, 46, 47, 61, 62, 65, 69, 70, 71, 72 and 73) owe their VM checks under
   PR 3's gate 6 (section 6). The other 20 (rows 1, 2, 3, 4, 6, 9, 12, 13, 18, 21, 23, 25,
   27, 29, 33, 48, 49, 50, 64 and 74) owe real-CLI, per-OS or packaged
   verification, recorded in PR 4 and closed at release level. The other 5
@@ -161,7 +161,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 41 | Mid-session model and effort | PARTIAL, built as the default pending the owner's decision (P3.8 round 1, caef0d42): on a live session the command bar's model pill types a bare `/model`, only at Codex's ready prompt, which opens Codex's own model-and-effort picker and keeps the conversation; a stopped session keeps the select, applied at its next start | Parity: applied live, keeping the conversation. Codex has no one-line form (VM: `/model <slug>` is sent as a message; there is no `/effort`), so Claude's one-step switch cannot carry over as it is | owner: the default (section 10, question 2); verification: the pill on the VM | 3 |
 | 42 | Sentinel | DONE (P3.9, 3a4ed400; mocked): while Codex is on, its version against the supported range (a finding outside it), the live model list (row 39), and a changed version's release notes analysed against its launch flags, TUI, rollout session files and config and account files; the analysis runs on the provider that is on (both on: the one Ask Conductor runs on, Claude Code until PR 4's row); the same panel, dot, Settings section and Transparency card | Parity: version drift, flags and the rollout format checked, with findings; the analysis runs on whichever provider is on | verification: the VM run at 7678c433 (the findings as specified; a Codex-run analysis left config.toml unchanged; the notes read failed, fixed in round 1, e357fe33, with the ADR-009 pass 1 findings); the VM re-check at 82c78680, five of six passed, its bug and the ADR-009 pass 2 findings fixed in round 2, 1f010667); the VM re-check at 84fd2d03, the suspended git left by a fast failure fixed in round 3, 5fd82db8); ADR-009: FINDINGS after pass 3, P3.9 quarantined, a fresh pass owed before #626 leaves draft; the VM re-check at 2499766e: direct route 10/10 clean, npm route 1/15 left a suspended git (round 4 logs the kill's result; an access-denied result is an upstream residual); owed: a completed real analysis (owner) and the owner's screenshot review | 3 |
 | 43 | Watchdog | DONE (P3.10, d8f538b1; mocked): armed for a local Codex session (opt-in, off by default, as for Claude) with Codex's own detectors: its usage-limit and sustained server-error cells above the composer, the reset time, a turn running, Codex's own retry; the retry typed only into its ready, empty composer, Enter 300 ms later only when the pane shows it typed; the safeguard check shown unavailable (Codex has no such message). Round 1 (afae03f7): the session header's Watchdog pill shows on a Codex session and counts only the checks Codex has; the Feature Guide, tip and What's New cover it, under the one switch. VM at 6d576634: armed only when switched on, backoff and retry on a server error. Round 2 (5b178c7a): the header pill follows the watchdog live (it showed only after another change); one overload is retried once (an error above a newer turn is an earlier one's). VM at 6b465aef: the pill live on a Codex and a Claude session (R1); one retry per overload (R2); a persistent overload retried without backing off, fixed in round 3 (18029bb0): an episode lasts until two minutes of quiet after a retry, for Claude and Codex alike, so the backoff grows and the cap trips; VM at the round-3b build: a persistent overload backs off 30, 60, 120, 240 and 300 s and gives up, on a Codex and a Claude session, and an error after two quiet minutes starts afresh. Round 4: an episode whose recovering frame was the session's last output settles two minutes after it, and the backoff a retry logs is the one the episode then waits; VM at the round-4 build: a fresh episode after a last-output recovery, the logged backoff equal to the wait | Parity: auto-retry and silence detection; aicc_planning#72 (a CLI without its own patterns reports Watchdog unavailable, never Claude's) | verification: the Watchdog on an SSH Claude session (a persistent overload backing off, in the owner's live SSH matrix); a real usage limit and overload (a working model, owner); the owner's screenshot review; ADR-009's PR-level pass; the SSH live matrix | 3 |
-| 44 | Services (PTY integrity) | PARTIAL: built, unproven (Codex output is fed to the monitor) | Parity | verification | 3 |
+| 44 | Services (PTY integrity) | DONE (P3.15; the VM at c11fb360, 0.155.1 and 0.153.4): a Codex tab is in the Services snapshot exactly as the Claude tab (bytes, gap 0, columns) | Parity | verification: the re-check under the bundled ConPTY (P3.15's fix, bbcb6ef8); macOS, Linux | 3 |
 | 45 | Provider status pill | PARTIAL (P3.4, aa0411b0, 87ba9c2d; the VM walk PASS at c7f9a34a and f65de184): an OpenAI status pill beside Anthropic's, each read and shown only while its provider is on | Parity: an OpenAI status pill beside Anthropic's, each shown only while its provider is on | verification: the Desktop test gate (owner); macOS and Linux; packaged | 3 |
 | 46 | Busy sweep and sleep moon | DONE (P3.10, d8f538b1; mocked): the sweep and the moon on a Codex card as on a Claude card (the moon, as Claude's, with the Watchdog on); the working pill names Codex. VM at 6d576634: the sweep, the pill and the moon on a Codex card | Parity: fed from output and silence | verification: the owner's screenshot review | 3 |
 | 47 | Waiting-for-input and attention dot | DONE (P3.10, d8f538b1; mocked): fed by Codex's hooks (once trusted in Codex's review, row 63): an approval request raises the dot, a turn's end raises it after Claude's 60 s idle wait, a prompt or a tool clears it. Deviation: `notify` is not used (the Stop hook marks a turn's end; setting `notify` would replace the user's own). VM at 6d576634: the dot on an approval and 60 s after a turn's end; its bug (a PreToolUse landing after its approval cleared the dot) fixed in round 1 (afae03f7), passed 12 of 12 on the re-check; round 2 (5b178c7a) pairs an approval with its call's tool_use_id; VM at 6b465aef: 12 of 12 approval rounds pulsed, the bad order included (R3); round 3 (18029bb0) pairs an approval with an open call only when its PreToolUse came within 3 s before it; VM at the round-3b build: 12 of 12 approval rounds with the 3 s window. Round 4: the approval keeps that call as its own, so another call's PostToolUse leaves the dot up; VM at the round-4 build: 12 of 12 approval rounds | Parity: fed by Codex `notify` and hooks | verification: an approval request under a working model (owner); the owner's screenshot review | 3 |
@@ -197,10 +197,10 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 67 | E2E mode matrix | PARTIAL | WP1.1, WP1.60 | implementation (restart, enable/disable, real launch cases); verification | 2; 4 |
 | 68 | Insights | OPEN: Claude only; Claude's Insights types Claude Code's own `/insights` in a terminal (`src/main/insights-runner.ts:234-237`) | Parity, recorded 2026-09-26 (the parity reset's "Resolved by parity" list, sessions batch; not one of that day's open questions): a Conductor-native Codex report, run with `codex exec`. A mockup comes before the build (section 10) | implementation | 4 |
 | 69 | Plan mode | DONE (P3.8 round 1, caef0d42; round 2, f1783110): a "Plan mode" permissions choice, as Claude's launch option: the session starts READ-ONLY and Codex's own `/plan` is typed into its first ready prompt only (never the folder-trust prompt, the user's typing or after a turn), within a bounded wait; otherwise a note says Plan mode is not on and the session is read-only. The pill reads "plan" only while Codex's footer shows its Plan mode | Parity: Claude's Plan mode launch option (`src/renderer/lib/claude-cli-options.ts:85`); Codex has `/plan` on both supported versions and no launch flag for it (VM), so no section 19 record | verification: Plan mode on the VM, 0.153.4's fresh launches included (round 3); the approval flow with a working model (owner-only) | 3 |
-| 70 | Image paste | PARTIAL: built, unproven; the tip still says "Claude's prompt" (`tips-library.ts:370`) | Parity | verification (and the tip) | 3 |
-| 71 | Copy, paste, scrollback, mouse | PARTIAL: built, unproven; the trace is from 0.125 | Parity | verification (re-captured at 0.155.1) | 3 |
+| 70 | Image paste | DONE (P3.15, bbcb6ef8; the focused key on the VM at c11fb360, both versions): with the terminal focused Alt+V goes to the CLI and Codex attaches the image itself ("[Image #1]"); with focus elsewhere a Codex session's line is ASCII and typed by the Codex typing rule, its notes in the paste hint (mocked: `codex-image-paste.test.ts`, `alt-v-image-route.test.tsx`); the tip and the Tips and Shortcuts card say both | Parity | verification: the unfocused line on the VM; real Claude Code's own Alt+V; macOS, Linux | 3 |
+| 71 | Copy, paste, scrollback, mouse | DONE (P3.15, bbcb6ef8; the VM at c11fb360): copy, paste (Ctrl+V and right-click, bracketed) and mouse (Codex sets no mouse mode) as Claude's; scrollback: a local Codex session on Windows runs under node-pty's bundled ConPTY, which keeps it (122 lines and the wheel scrolling in the VM's in-app trial, against 38 and an inert wheel under the system ConPTY), with the system ConPTY as the fallback (mocked: `bundled-conpty.test.ts`, `pty-conpty-per-provider.test.ts`) | Parity | verification: scrollback and the wheel in the packaged build, and copy, paste, mouse, keys and process teardown under the bundled ConPTY; the TUI trace re-captured under it; macOS, Linux | 3 |
 | 72 | Multi Spawn and Quick Start with Codex | DONE (P2; P3.13, 3e45825d; round 1, 54422e2a; mocked): a Codex config that is not Multi Spawn runs one copy at a time in the sidebar (P2) and now in main at `pty:spawn` for NEW copies (a session that already runs, restored at this start or accepted in this run, keeps its right through a Restart, a Switch and a reattach), a new copy refused with the typed `already-running` before an account is prepared or leased; N copies of a Multi Spawn Codex config are N processes, each on its own account lease, a copy ending or closing letting go of its own lease only; Quick Start launches a Codex pin, with its x N control, blocked start and select lock, as a Claude pin's (`pty-spawn-one-at-a-time.test.ts`, `pty-spawn-one-at-a-time-rights.test.ts`, `codex-multi-spawn-leases.test.ts`, `multi-spawn-codex.test.tsx`) | Parity: N copies with one lease each; Quick Start | verification: the VM check (PR 3 gate 6) | 2; 3 |
-| 73 | Channel rules delivery | PARTIAL: built, unproven | Parity | verification | 3 |
+| 73 | Channel rules delivery | DONE (P3.15; the VM at c11fb360): a rule's envelope reaches Codex's composer bracketed with no Enter, and its rollout verbatim after Enter; the ledger records it for both sessions | Parity | verification: the re-check under the bundled ConPTY | 3 |
 | 74 | Command buttons, preset pill, restart menu, theme | DONE | ADR-018 | verification: the real-CLI pass | 2, v4 |
 | 75 | Claude-only environment switches | DONE (not a Codex feature) | Labelled Claude only | none | none |
 
@@ -359,7 +359,7 @@ from P3.1, and then only that row.
 | P3.12 Logs and GitHub context | 31, 32 (the name file), 65 | Y | Y | APPROVED |
 | P3.13 Multi Spawn and Quick Start | 72 | Y | N | APPROVED |
 | P3.14 Usage follow-up: Codex credits | 17 | Y (the read keeps three more fields; ADR-023) | N | APPROVED |
-| P3.15 Terminal verification | 44, 70, 71, 73 | N | N | APPROVED |
+| P3.15 Terminal verification | 44, 70, 71, 73 | Y (the scrollback fix builds the Codex PTY with a new option and starts OpenConsole.exe) | Y by file (`pty-manager.ts`; no SSH path changed) | APPROVED |
 | P3.16 PR 3 records and user-facing sweep | none | N (docs) | N | APPROVED |
 
 The 35 rows: 7, 8, 10, 11, 14, 17, 20, 22, 24, 28, 31, 32, 34, 35, 36, 37,
@@ -2565,6 +2565,96 @@ sandbox refused a file edit (`docs/wp2/evidence/codex-cli-capabilities-2026-09-2
 default sandbox settings let a Codex session edit files. A failure becomes a
 fix in this phase with its own reviews, and its own ADR-009 pass if it touches
 a listed path.
+The VM run (2026-10-01, the unsigned candidate c11fb360, real Codex 0.155.1,
+and 0.153.4 for checks 1, 2 and 5; a Claude session on the same build to
+compare, a fake Claude because real Claude Code was signed out; evidence
+addendum 15 of `docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md`):
+(1) Services: PASS, a Codex tab in the snapshot exactly as the Claude tab.
+(2) Alt+V: PASS with the terminal focused (the key goes to the CLI and Codex
+attaches the image itself, "[Image #1]"); the tip FAILED (it said the app
+pastes a path into Claude's prompt, which happens only with focus elsewhere,
+and there Codex dropped the line's em dash and did not submit it).
+(3) Copy, paste and mouse: PASS (Codex sets no mouse mode); scrollback FAILED:
+the ConPTY built into Windows repaints Codex in place, 38 lines kept after 16
+turns and the wheel inert, with `--no-alt-screen` too. (4) Channel rules:
+PASS. (5) The default edit FAILED, upstream: Codex's non-admin Windows sandbox
+cannot write the workspace (Standard asks before every edit, Auto fails), in
+the app and outside it, at High and Medium integrity; after Codex's own
+administrator setup a normal user's Standard and Auto edit with no prompt; an
+elevated app stalls it. The fixes (bbcb6ef8, mocked):
+S1 (row 71): a local Codex session on Windows runs under node-pty's bundled
+ConPTY (`useConptyDll`: its conpty.dll and the OpenConsole.exe beside it, the
+console host Windows Terminal ships; the VM's in-app trial kept 122 lines and
+the wheel scrolled), chosen by `src/main/bundled-conpty.ts` only when both
+files are beside the native module node-pty will load (found as node-pty's
+own loader finds it, under app.asar.unpacked when packaged), else the system
+ConPTY, said in the launch line ("conpty=bundled", or "conpty=system" and why)
+and logged once (`pty-manager.ts`, the Codex branch's spawn). Claude
+sessions, plain terminals of either provider and SSH sessions keep exactly
+the options they had. Packaging is unchanged: `asarUnpack` already unpacks all
+of node-pty, and the VM install holds both files. S2 (row 70): with focus
+outside the terminal, a Codex session's line is ASCII ("I just pasted an
+image - please view it." and the path) and goes through the rule the app types
+into Codex by (P3.8: the ready, empty composer only, Enter on its own after
+the burst, only when the screen shows exactly the line; `sendImagePathToCodex`
+in `codexComposer.ts`, routed from `useKeyboardShortcuts.ts`); when it cannot
+be sent the paste hint says why. The Alt+V tip and the Tips and Shortcuts
+card's line say what happens in each case, for both assistants. S3: a known
+issue in app knowledge and a tip (`tip.codex-windows-sandbox`): choose Codex's
+"1. Set up default sandbox" once; the non-admin sandbox, or none, asks before
+every edit on Standard and fails on Auto; never run the app as administrator.
+No preset and no sandbox argument changed. Rows 44, 70, 71 and 73 move to
+DONE (verification owed for the fixes). Limits and deviations: (1) a Codex
+line goes in only when Codex's composer is ready and empty, where Claude's is
+typed into whatever is there, because that is the rule the app types into
+Codex by and it keeps the line's letters out of Codex's approval prompts; a
+line too long for one composer row is typed but not sent, and the hint says to
+check it and press Enter; (2) `tests/fixtures/codex/tui-trace.txt` is not
+replaced: the VM's traces were taken under the system ConPTY this phase
+replaces for Codex, so the re-capture is owed under the bundled one (and
+anonymised); (3) real Claude Code's own Alt+V was not seen (signed out), and
+macOS and Linux were not run. Tests, red first on 965c8bb6: the new
+`bundled-conpty.test.ts` (11, all red as the module did not exist),
+`pty-conpty-per-provider.test.ts` (2 of 5 red; the Claude, plain-terminal and
+off-Windows pins green before and after), `codex-image-paste.test.ts` (6 of
+6 red; a seventh, the question case, added after), `alt-v-image-route.test.tsx`
+(1 of 4 red; the Claude, plain-terminal and no-image pins green) and three new
+`app-knowledge.test.ts` cases (red); `ssh-spawn-callsite.test.ts` gains the
+SSH options pin. Mutation: 28 mutants, each alone and restored byte-identically
+with a sha check, all red (7 on the spawn options and launch line, 9 on the
+ConPTY choice, 5 on the Codex line, 3 on the routing, 4 on the texts). On the
+host 124 affected and 72 tree-scanner files pass, the WP1 gate, traceability,
+boundaries and conformance files pass, `npm run typecheck` and `tsc` of the
+touched tests are clean, and `electron-vite build` keeps the choice in
+`out/main`. The legacy Codex manifest is rewritten (653 paths): rows for the
+three new tests that name Codex, and `useKeyboardShortcuts.ts`
+re-dispositioned for its provider conditional (P05). ADR-009: yes (the fix
+constructs the Codex PTY with a new option, and a new executable,
+OpenConsole.exe, starts for every local Codex session on Windows). The exact
+change for the attackers: in the Codex branch of `spawnPtyResolved`, the
+spawn options gain `useConptyDll: true` when `bundledConptyChoice()` says
+"bundled", and the launch line gains the choice; the choice reads
+`require.resolve('node-pty')`, maps an `app.asar` path segment to
+`app.asar.unpacked`, and checks that `conpty.node`, `conpty/conpty.dll` and
+`conpty/OpenConsole.exe` are files in the first of node-pty's own native
+module folders that holds `conpty.node`. node-pty loads that conpty.dll by full
+path beside its own module, and conpty.dll starts the OpenConsole.exe beside
+it (both signed by Microsoft); argv, environment, working folder, account
+realm and lease are untouched. SSH radius: `pty-manager.ts` is in it by file;
+no SSH path changed (the options pinned), and the live SSH matrix is owed as
+for any change to that file. Owed on the VM (WINDOWS_1, the packaged build of
+this commit, 0.155.1 and 0.153.4): the launch line reads "conpty=bundled";
+scrollback after a dozen turns and the wheel scrolling it, a resize and a
+Restart (resume) without a damaged scrollback; copy, paste, right-click,
+mouse, the channel envelope, the Services snapshot, typing, Enter, Esc,
+Ctrl+C, arrows, Shift+Tab, Ctrl+T and Codex's own Alt+V under the bundled
+ConPTY; the unfocused Alt+V line typed and submitted, and its notes; closing
+the tab, Restart, Switch account and quitting Codex leave no codex.exe or
+OpenConsole.exe behind and release the account lease; the fallback (the
+bundled files renamed in a test install: the system ConPTY, the launch line
+and the one log line); a Claude session and a plain terminal unchanged (no
+OpenConsole.exe for them); the TUI trace re-captured; the known issue's
+administrator setup in the app at Medium integrity.
 
 **P3.16 PR 3 records and user-facing sweep.** App knowledge (with known
 issues), tips, tour and Feature Guide, the changelog entry, the user guide,

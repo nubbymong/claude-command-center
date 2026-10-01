@@ -343,6 +343,43 @@ gateway. No real account was used and no request left the VM.
 - Not established (they need a working model): the PermissionRequest hook under a real approval; the usage-limit and
   overload cells as drawn; how a POSIX CLI runs the command (macOS and Linux).
 
+### 15. Addendum (P3.15, 2026-10-01): the terminal in the app, and the Windows sandbox (rows 44, 70, 71, 73)
+
+Run on the Windows test VM (build 22621) with the unsigned candidate c11fb360 installed, real Codex 0.155.1 (and
+0.153.4 for the Services, Alt+V and sandbox checks), a fake model on loopback and throwaway account folders, with a
+Claude session on the same build to compare (a fake Claude: real Claude Code was signed out on the VM). The first walk
+ran from an elevated session; the sandbox check was repeated at Medium integrity, as a normal user's app runs.
+
+- [run] Services: a Codex tab is listed in the snapshot's PTY sessions exactly as the Claude tab (bytes, gap 0,
+  columns).
+- [run] Alt+V with the terminal focused reaches the CLI as ESC v and the app's own handler does not run; Codex attaches
+  the clipboard image itself ("[Image #1]", an `input_image` in the rollout), on both versions. With focus elsewhere
+  the app saved the image and typed its line: in Codex the line's em dash was dropped, and the Enter written with the
+  line did not submit it. Ctrl+V with only an image on the clipboard: the app's "Nothing to paste" hint, nothing sent.
+- [run] Copy (a selection and Ctrl+Shift+C) and paste (Ctrl+V, and a right-click with no selection, both bracketed) as
+  Claude's. Codex sets no mouse tracking mode, so a click writes nothing and the wheel only ever scrolls the
+  terminal's own scrollback.
+- [run] Scrollback: under the ConPTY built into Windows (node-pty with `useConpty` only, as the app ran it) a Codex
+  session kept none: after 16 turns the terminal held 38 lines with the view at the top, a headless terminal fed the
+  same bytes agreed, and `--no-alt-screen` changed nothing. The console host repaints Codex's output in place (no
+  scroll regions or scroll-ups in the stream); plain output scrolls either way. Under node-pty's bundled ConPTY
+  (`useConptyDll`, the OpenConsole 1.25 that Windows Terminal ships) the stream carries the scroll regions: outside the
+  app 104 lines after 14 turns, and in the app (a test-only wrapper adding the option) 122 lines after 16 turns, the
+  wheel scrolling the terminal and writing nothing to the PTY. The packaged app already ships the bundled files (all of
+  node-pty is unpacked from the archive).
+- [run] Channel rules: a rule's envelope lands in Codex's composer, bracketed, with no Enter; after Enter the rollout
+  holds it verbatim, and the ledger records the delivery for both sessions.
+- [run] The Windows sandbox (answer 5's open question, under the app's default Standard preset, `--sandbox
+  workspace-write --ask-for-approval on-request`): when a session trusts a new folder and the account has no sandbox
+  setting, Codex offers "1. Set up default sandbox (requires Administrator permissions)", "2. Use non-admin sandbox" or
+  "3. Quit". With the non-admin sandbox no write in the sandbox succeeds (Codex logs a sandbox violation,
+  failed_to_write_file): Standard asks "command failed; retry without sandbox?" before each edit (yes writes it,
+  outside the sandbox), and Auto (`--ask-for-approval never`) fails the edit. With no sandbox set up, Standard asks to
+  apply each edit and Auto is refused as read-only. The same outside the app with the app's arguments, at High and at
+  Medium integrity, on both versions. After the administrator setup (option 1) a Medium session edits in the sandbox
+  with no prompt on Standard and on Auto; from an elevated session it stalls (Standard) or fails (Auto).
+- Not established: real Claude Code's own Alt+V (signed out on the VM); macOS and Linux.
+
 ## Rows this affects
 
 | Row | Result |
@@ -356,6 +393,7 @@ gateway. No real account was used and no request left the VM.
 | 41, 61, 69 | `/model`, `/compact`, `/plan` exist on both versions; plan mode has no launch flag. Addendum 12: no `/effort`; `/model` shows no argument form. Addendum 13: `/model <slug>` is sent as a message; the footer marks a ready composer; `/plan` and a delayed-Enter `/compact` work on both versions. |
 | 39, 40 | Addendum 12: the catalogue's picker models and their effort levels (0.153.4). Addendum 13: 0.155.1's list (no gpt-5.2) and levels; `codex debug models` needs no sign-in. |
 | 43, 46, 47, 63 | Hook and notify payloads recorded, including PreToolUse and PostToolUse; PermissionRequest exists but was not observed. Addendum 14: `-c` hooks need the user's review once per account folder; the app's overrides and forwarder work on both versions; SessionStart and every event carry the rollout's path with the first turn. |
+| 44, 70, 71, 73 | Addendum 15: the Services snapshot, Alt+V into Codex, copy, paste, mouse and channel rules work as Claude's; scrollback needs node-pty's bundled ConPTY (built in P3.15); on Windows Codex edits on its own only after its administrator sandbox setup (upstream; a known issue in the app). |
 | 51 | Instructions via `developer_instructions` or a skill; no MCP roots; MCP tools via tool search. |
 | 55, 56 | Memory files and log folders located; memories off by default. |
 | 57, 68 | `codex exec --json` event stream recorded; resume usage differs by version. |
