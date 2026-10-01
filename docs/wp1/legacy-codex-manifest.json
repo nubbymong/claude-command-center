@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-01T09:07:54.257Z",
-  "head": "86e3efb9ddd941d24a41af6b2058b891889a2c97",
-  "tree": "7009a3ad81f633cb63c90f275d3c88339135b964",
+  "generatedAt": "2026-10-01T10:52:18.587Z",
+  "head": "497fddb055e419328fd59d7accd51c71be77a4b4",
+  "tree": "6a1aafc1330601ddf60cdc81e05ae2b2af1c4062",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2585,
+  "trackedFileCount": 2586,
   "excludedFileCount": 385,
-  "scannedFileCount": 2200,
+  "scannedFileCount": 2201,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 596,
+      "lineCount": 609,
       "truncated": true
     },
     {
@@ -197,7 +197,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 84
+      "lineCount": 86
     },
     {
       "path": "docs/wp2/hello-codex-spec.md",
@@ -1033,7 +1033,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 355
+      "lineCount": 359
     },
     {
       "path": "src/main/sanitize-restored-spawn-options.ts",
@@ -2146,7 +2146,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 31
+      "lineCount": 34
     },
     {
       "path": "src/shared/container-command.ts",
@@ -3484,7 +3484,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 21
+      "lineCount": 27
     },
     {
       "path": "tests/unit/main/pty-handlers-codex-review.test.ts",
@@ -4197,7 +4197,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 18
+      "lineCount": 19
     },
     {
       "path": "tests/unit/renderer/app-lifecycle-wiring.test.ts",
@@ -4269,7 +4269,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 29
+      "lineCount": 43
     },
     {
       "path": "tests/unit/renderer/codex-mini-icon.test.ts",
@@ -5040,7 +5040,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 136
+      "lineCount": 138
     },
     {
       "path": "tests/unit/renderer/titlebar-provider-status.test.tsx",
@@ -5224,7 +5224,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 45
+      "lineCount": 50
     },
     {
       "path": "tests/unit/status-ingest.test.ts",

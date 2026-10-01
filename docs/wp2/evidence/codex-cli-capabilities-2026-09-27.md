@@ -375,9 +375,18 @@ ran from an elevated session; the sandbox check was repeated at Medium integrity
   "3. Quit". With the non-admin sandbox no write in the sandbox succeeds (Codex logs a sandbox violation,
   failed_to_write_file): Standard asks "command failed; retry without sandbox?" before each edit (yes writes it,
   outside the sandbox), and Auto (`--ask-for-approval never`) fails the edit. With no sandbox set up, Standard asks to
-  apply each edit and Auto is refused as read-only. The same outside the app with the app's arguments, at High and at
-  Medium integrity, on both versions. After the administrator setup (option 1) a Medium session edits in the sandbox
-  with no prompt on Standard and on Auto; from an elevated session it stalls (Standard) or fails (Auto).
+  apply each edit and Auto is refused as read-only. Where each was seen: in the app, 0.155.1 at High and at Medium
+  integrity, and 0.153.4 at High (Standard only); outside the app with the app's arguments, 0.155.1 at High and at
+  Medium, with the same results. The administrator setup (option 1) was run outside the app only, from an elevated
+  session, so no administrator prompt was seen: after it a Medium session (0.155.1) edits in the sandbox with no
+  prompt on Standard and on Auto, and an elevated one stalls (Standard) or fails (Auto). The same in the app, and how a
+  user who chose option 2, or whose folder was trusted before, gets back to option 1, are not established.
+- [run] Re-check (P3.15 fix, the packaged 7c52a432; 0.155.1 and 0.153.4): under node-pty's bundled ConPTY the terminal
+  keeps scrollback (110 lines after 14 turns, 78 on 0.153.4) and the wheel scrolls it; a resize and a Restart leave
+  no duplicate; copy, paste, mouse, keys, Alt+V (focused, and the app's line with focus elsewhere), channel rules and
+  the Services snapshot work as before; closing, Restart, Switch account and /quit leave no codex.exe or
+  OpenConsole.exe; with conpty.dll or OpenConsole.exe renamed the session falls back to the system ConPTY. After
+  Codex's own /quit the exit is reported with no exit code (the terminal printed "code undefined").
 - Not established: real Claude Code's own Alt+V (signed out on the VM); macOS and Linux.
 
 ## Rows this affects
@@ -393,7 +402,7 @@ ran from an elevated session; the sandbox check was repeated at Medium integrity
 | 41, 61, 69 | `/model`, `/compact`, `/plan` exist on both versions; plan mode has no launch flag. Addendum 12: no `/effort`; `/model` shows no argument form. Addendum 13: `/model <slug>` is sent as a message; the footer marks a ready composer; `/plan` and a delayed-Enter `/compact` work on both versions. |
 | 39, 40 | Addendum 12: the catalogue's picker models and their effort levels (0.153.4). Addendum 13: 0.155.1's list (no gpt-5.2) and levels; `codex debug models` needs no sign-in. |
 | 43, 46, 47, 63 | Hook and notify payloads recorded, including PreToolUse and PostToolUse; PermissionRequest exists but was not observed. Addendum 14: `-c` hooks need the user's review once per account folder; the app's overrides and forwarder work on both versions; SessionStart and every event carry the rollout's path with the first turn. |
-| 44, 70, 71, 73 | Addendum 15: the Services snapshot, Alt+V into Codex, copy, paste, mouse and channel rules work as Claude's; scrollback needs node-pty's bundled ConPTY (built in P3.15); on Windows Codex edits on its own only after its administrator sandbox setup (upstream; a known issue in the app). |
+| 44, 70, 71, 73 | Addendum 15: the Services snapshot, Alt+V into Codex, copy, paste, mouse and channel rules work as Claude's; scrollback needs node-pty's bundled ConPTY (built in P3.15, re-checked packaged); on Windows Codex edits on its own only after its administrator sandbox setup (upstream, seen outside the app; a known issue in the app). |
 | 51 | Instructions via `developer_instructions` or a skill; no MCP roots; MCP tools via tool search. |
 | 55, 56 | Memory files and log folders located; memories off by default. |
 | 57, 68 | `codex exec --json` event stream recorded; resume usage differs by version. |
