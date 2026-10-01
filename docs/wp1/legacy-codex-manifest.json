@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-01T15:27:20.217Z",
-  "head": "ccda8f07af216d7340322c4cb39e3118a2cc3a9b",
-  "tree": "c931a699bf5731087804b8c0c29246cbe4cb48cc",
+  "generatedAt": "2026-10-01T16:41:41.935Z",
+  "head": "c2973d1bbe22a7ec02c96f9d05f9a62ac10c9737",
+  "tree": "0e4301df969169d4c35119cbda3540c058ebfd57",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2588,
+  "trackedFileCount": 2596,
   "excludedFileCount": 385,
-  "scannedFileCount": 2203,
+  "scannedFileCount": 2211,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 653,
-  "pathDigest": "f40525c9dfff6c49ab5fb3a2d05706a6972bc1cb0b46126097f37be47dd6a914",
+  "matchedPathCount": 656,
+  "pathDigest": "d96bf390c61f82ef42c804d57964c4be0aa34ced44ecc6300322e1403ba750ae",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -161,7 +161,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 49
+      "lineCount": 48
     },
     {
       "path": "README.md",
@@ -2260,7 +2260,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 67
+      "lineCount": 65
     },
     {
       "path": "tests/e2e/codex-session-creation.spec.ts",
@@ -2303,6 +2303,14 @@
         "P13"
       ],
       "lineCount": 38
+    },
+    {
+      "path": "tests/e2e/helpers/isolated-env.ts",
+      "predicates": [
+        "P04",
+        "P13"
+      ],
+      "lineCount": 4
     },
     {
       "path": "tests/e2e/session-dialog-permutations.spec.ts",
@@ -2980,7 +2988,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 5
+      "lineCount": 11
     },
     {
       "path": "tests/unit/channel-rules-store.test.ts",
@@ -3035,6 +3043,14 @@
         "P13"
       ],
       "lineCount": 1
+    },
+    {
+      "path": "tests/unit/e2e-isolated-env.test.ts",
+      "predicates": [
+        "P04",
+        "P13"
+      ],
+      "lineCount": 9
     },
     {
       "path": "tests/unit/github/codex-rollout-loader-swap.test.ts",
@@ -3396,7 +3412,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 3
+      "lineCount": 5
     },
     {
       "path": "tests/unit/main/logs2-ipc-handlers.test.ts",
@@ -3502,6 +3518,13 @@
         "P13"
       ],
       "lineCount": 24
+    },
+    {
+      "path": "tests/unit/main/pty-integrity-restart.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 2
     },
     {
       "path": "tests/unit/main/pty-managed-deferral-carries-launch.test.ts",
@@ -3646,7 +3669,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 10
+      "lineCount": 13
     },
     {
       "path": "tests/unit/main/watchdog/watchdog-manager.test.ts",
@@ -4018,7 +4041,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 27
+      "lineCount": 30
     },
     {
       "path": "tests/unit/providers/codex/telemetry-exact-claim.test.ts",
@@ -4197,7 +4220,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 19
+      "lineCount": 20
     },
     {
       "path": "tests/unit/renderer/app-lifecycle-wiring.test.ts",
@@ -4659,7 +4682,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 31
+      "lineCount": 33
     },
     {
       "path": "tests/unit/renderer/onboarding-welcome-copy.test.tsx",
