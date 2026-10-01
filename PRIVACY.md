@@ -69,10 +69,11 @@ during installation (and can change later in Settings):
   the app quits first they are lost, and the notes of an account archived in
   the meantime stay in the file
 - an index of your Claude Code and Codex session transcripts, used to power
-  the Logs and Tokenomics views (the Logs index reads a Codex session's
-  transcript from that session's own Codex account folder)
+  the Logs view and the Memory page's recent sessions (the Logs index reads a
+  Codex session's transcript from that session's own Codex account folder)
 - cost and usage figures calculated locally from those transcripts, with the
-  account each Claude and Codex session ran under
+  account each Claude and Codex session ran under (Tokenomics keeps an index
+  of its own for this, which the conversation indexing switch does not change)
 - application logs
 - screenshots and drawings you create in the app
 

@@ -239,9 +239,22 @@ describe('Transparency, the log indexing card (P3.12)', () => {
     act(() => { root.render(React.createElement(TransparencyStep, { onNext: () => {}, onBack: () => {} })) })
   }
 
-  it('Claude Code alone: as before', () => {
+  it('Claude Code alone: the Logs page and the Memory page\'s recent sessions, and Tokenomics has an index of its own', () => {
     renderWith({})
-    expect(cardText().replace(/\s+/g, ' ')).toBe("Powers the Logs, Memory and Tokenomics pages by indexing Claude's own transcripts (~/.claude/projects). Indexing is local; turning it off stops it at once, and turning it on applies to sessions started after. Your conversations stay in Claude's files either way.")
+    expect(cardText().replace(/\s+/g, ' ')).toBe("Powers the Logs page, and the recent sessions on the Memory page, by indexing Claude's own transcripts (~/.claude/projects). Tokenomics reads them with an index of its own, which this switch does not change. Indexing is local; turning it off stops it at once, and turning it on applies to sessions started after. Your conversations stay in Claude's files either way.")
+  })
+
+  // P3.16a (U2): this index does not power Tokenomics: the Tokenomics cost index
+  // is a separate one that the switch does not stop (app knowledge, privacy;
+  // PRIVACY.md), and the Memory page's recent sessions are the only reader of
+  // this one besides the Logs page.
+  it('P3.16a (U2): in every mode the card says Tokenomics has its own index, never that this one powers it', () => {
+    for (const over of [{}, { claudeEnabled: false, codexEnabled: true, codexAnswered: true }, { claudeEnabled: true, codexEnabled: true, codexAnswered: true }] as Partial<Settings>[]) {
+      renderWith(over)
+      const t = cardText().replace(/\s+/g, ' ')
+      expect(t, JSON.stringify(over)).toContain('Tokenomics reads them with an index of its own, which this switch does not change.')
+      expect(t, JSON.stringify(over)).not.toMatch(/Powers[^.]*Tokenomics/)
+    }
   })
 
   it('Codex alone: Codex\'s transcripts, in each account\'s sessions folder, nothing about Claude', () => {
