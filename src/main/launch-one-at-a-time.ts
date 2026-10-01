@@ -26,29 +26,28 @@
 // launch preparation), and a path with none reaches the PTY in the same tick,
 // so a second copy asked for in between always finds the first.
 //
-// WHO KEEPS THE RIGHT TO RUN (never a new copy, so never refused):
+// WHO KEEPS THE RIGHT TO RUN (never a new copy, so never refused). Only an id
+// main never accepted in this run and never restored is gated:
 //   - a session accepted for this config in THIS RUN: a Restart, a Switch of
-//     account, a Recover and an SSH reattach respawn their own session, with or
-//     without another copy live, whatever the config says now (Multi Spawn may
-//     have been unticked while the copies ran). The right outlives the process
-//     (a Restart kills it first), and is bounded (HELD_MAX: an entry whose
-//     session has ended goes before one that is live, the oldest first);
+//     account, a Recover and an SSH reattach (Leave running, then Resume)
+//     respawn their own session, with or without another copy live, whatever the
+//     config says now (Multi Spawn may have been unticked while the copies ran,
+//     and a copy launched meanwhile takes nothing from one that ended). The right
+//     is kept for the run: it outlives the process and the tab (a Restart kills
+//     it first). The store is bounded (HELD_MAX: an entry whose session has ended
+//     goes before one that is live, the oldest first);
 //   - a session RESTORED at this start: the ids main read from the saved
 //     session state at the first load (seedRestoredSessions, from
 //     app-session-durability's read-back, never from anything the renderer
 //     sends), each for the config it was saved with, until its first accepted
 //     spawn. Remotes left running count too (their reattach reuses the id). A
-//     restored right is one-shot, bounded to the ids saved at the last quit, and
-//     NEVER lapses: the shipped app resumed a restored remote or tab on its first
-//     view even beside a new copy, and main refuses only what the app already
-//     refused. Its first accepted spawn consumes it; what is left is a right of
-//     this run.
+//     restored right is one-shot and bounded to the ids saved at the last quit
+//     (RESTORED_MAX): the shipped app resumed a restored remote or tab on its
+//     first view even beside a new copy. Its first accepted spawn consumes it;
+//     what is left is a right of this run.
 //   A right is for ONE config: the same id naming another config is a new copy
-//   of that one. A right of THIS RUN LAPSES when a new copy of its config (one
-//   that does not itself use a right) is accepted while the holder is not live:
-//   the holder's tab was closed, or its process ended, and the config has moved
-//   on. A holder that is live keeps its right (its Restart kills it first), and
-//   copies that use their own rights never lapse each other's.
+//   of that one. No right is ever taken away by another copy being accepted:
+//   main refuses what the sidebar already refuses, a NEW copy.
 //
 // WHAT IS NOT A COPY OF A CONFIG:
 //   - a spawn that names no saved config (nothing to count);
@@ -65,13 +64,19 @@
 // the spawn (settleConfigLaunch). Each ticket is settled on its own: a spawn that
 // is refused or throws after the gate never settles, so it cannot change what
 // main holds, and a forged spawn of the same session id cannot overwrite a
-// pending one (each pending spawn keeps its own ticket). A session later spawned
-// as a non-copy stops counting as a copy.
+// pending one (each pending spawn keeps its own ticket). pty:spawn discards its
+// ticket (discardConfigLaunch) on every throw and every early return, so a
+// ticket is pending only while its spawn is. A spawn that is not a copy keeps no
+// pending ticket at all, and a session that already has INFLIGHT_PER_ID pending
+// spawns has the NEW claim refused: nothing pending is ever pushed out by a later
+// claim. A session later spawned as a non-copy stops counting as a copy.
 //
-// NOT A SECURITY BOUNDARY, as the rule was not in the renderer: a request made
-// by something that can choose its own spawn options can leave the config out.
-// What this closes is the renderer being the only place the rule lived: a
-// launch surface that forgot to ask, a stale render, a second path.
+// NOT A BOUNDARY AGAINST A COMPROMISED RENDERER, as the rule was not one in the
+// renderer: this holds the sidebar's rule for honest launches. A request made by
+// something that can choose its own spawn options can leave the config out, so
+// none of the rights above is tightened against it. What this closes is the
+// renderer being the only place the rule lived: a launch surface that forgot to
+// ask, a stale render, a second path.
 import { findSavedConfig } from './spawn-credential-binding'
 import { isOneAtATimeBlocked, alreadyRunningRefusalMessage, isPartnerPtyId } from '../shared/multi-spawn-rule'
 import { stripSpoofableText } from '../shared/safe-text'
@@ -111,8 +116,6 @@ interface TicketData {
   sessionId: string
   /** The config the spawn is a copy of, or null for a spawn that is not a copy. */
   config: string | null
-  /** The spawn used a right of its own (it is not a new copy). */
-  usedRight: boolean
   isLive: (sessionId: string) => boolean
 }
 const tickets = new WeakMap<ConfigLaunchTicket, TicketData>()
@@ -122,10 +125,12 @@ const tickets = new WeakMap<ConfigLaunchTicket, TicketData>()
 const held = new Map<string, string>()
 export const HELD_MAX = 512
 
-/** Spawns that passed the gate and are not yet accepted, per session id, oldest
- *  first. Dropped at the next look once the session is not live. */
+/** Copies that passed the gate and are not yet accepted, per session id, oldest
+ *  first. Dropped when pty:spawn discards the ticket, and at the next look once
+ *  the session is not live. */
 const inflight = new Map<string, ConfigLaunchTicket[]>()
-/** At most this many pending spawns are kept for one session id. */
+/** At most this many pending spawns are kept for one session id; one more is
+ *  refused, never made room for. */
 const INFLIGHT_PER_ID = 8
 
 /** Sessions saved at the last quit, read from the saved session state: id ->
@@ -145,20 +150,33 @@ function labelOf(saved: object): string {
   return text === '' ? 'This config' : text
 }
 
+/** A ticket for a spawn that is not a copy is only remembered by the ticket
+ *  itself (to settle it): it counts for nothing while it is pending, so it takes
+ *  no place in `inflight` and cannot push a real pending spawn out. */
 function newTicket(data: TicketData): ConfigLaunchTicket {
   const ticket: ConfigLaunchTicket = Object.freeze({ sessionId: data.sessionId })
   tickets.set(ticket, data)
-  const list = inflight.get(data.sessionId) ?? []
-  list.push(ticket)
-  if (list.length > INFLIGHT_PER_ID) list.shift()
-  inflight.set(data.sessionId, list)
+  if (typeof data.config === 'string') {
+    const list = inflight.get(data.sessionId) ?? []
+    list.push(ticket)
+    inflight.set(data.sessionId, list)
+  }
   return ticket
 }
 
 /** The spawn is not a copy of a config: nothing to ask, and it stops counting
  *  as a copy once it is accepted. */
 function notACopy(sessionId: string, deps: ConfigLaunchDeps): ConfigLaunchClaim {
-  return { ticket: newTicket({ sessionId, config: null, usedRight: false, isLive: deps.isLive }) }
+  return { ticket: newTicket({ sessionId, config: null, isLive: deps.isLive }) }
+}
+
+/** Take a ticket out of the pending ones of its session. */
+function forgetPending(ticket: ConfigLaunchTicket, sessionId: string): void {
+  const list = inflight.get(sessionId)
+  if (!list) return
+  const at = list.indexOf(ticket)
+  if (at >= 0) list.splice(at, 1)
+  if (list.length === 0) inflight.delete(sessionId)
 }
 
 /** Whether main holds a right for this session and config: accepted in this
@@ -210,19 +228,17 @@ export function claimConfigLaunch(sessionId: string, request: ConfigLaunchReques
     if (configsOf(id).includes(saved.id) && deps.isLive(id)) others++
   }
 
-  const keepsItsRight = holds(sessionId, saved.id)
-  if (!keepsItsRight && isOneAtATimeBlocked((saved as { allowMultiSpawn?: unknown }).allowMultiSpawn, others)) {
+  if (!holds(sessionId, saved.id) && isOneAtATimeBlocked((saved as { allowMultiSpawn?: unknown }).allowMultiSpawn, others)) {
     logWarn(`[launch] session ${sessionId} refused: config ${stripSpoofableText(saved.id, 64)} is not Multi Spawn and is already running`)
     return { refused: { code: 'already-running', providerId: request.provider ?? 'claude', message: alreadyRunningRefusalMessage(labelOf(saved)) } }
   }
-  return { ticket: newTicket({ sessionId, config: saved.id, usedRight: keepsItsRight, isLive: deps.isLive }) }
-}
-
-/** Rights of this run for `config` whose holder is not live lapse: a new copy of
- *  the config was accepted, so the config has moved on from them. Restored rights
- *  are not touched (see the header). */
-function lapseRights(config: string, except: string, isLive: (sessionId: string) => boolean): void {
-  for (const [id, c] of held) if (c === config && id !== except && !isLive(id)) held.delete(id)
+  // A session that already has this many spawns under way (only something that
+  // spawns one id again and again) is refused the NEW one: what is pending stays.
+  if ((inflight.get(sessionId)?.length ?? 0) >= INFLIGHT_PER_ID) {
+    logWarn(`[launch] session ${sessionId} refused: ${INFLIGHT_PER_ID} spawns of it are already under way`)
+    return { refused: { code: 'already-running', providerId: request.provider ?? 'claude', message: alreadyRunningRefusalMessage(labelOf(saved)) } }
+  }
+  return { ticket: newTicket({ sessionId, config: saved.id, isLive: deps.isLive }) }
 }
 
 /** Keep `held` within HELD_MAX: an entry whose session has ended goes first,
@@ -254,18 +270,27 @@ export function settleConfigLaunch(ticket: ConfigLaunchTicket): void {
   if (!data) return
   tickets.delete(ticket)
   const id = data.sessionId
-  const list = inflight.get(id)
-  if (list) {
-    const at = list.indexOf(ticket)
-    if (at >= 0) list.splice(at, 1)
-    if (list.length === 0) inflight.delete(id)
-  }
+  forgetPending(ticket, id)
   held.delete(id)
   if (typeof data.config !== 'string') return
-  if (!data.usedRight) lapseRights(data.config, id, data.isLive)
   held.set(id, data.config)
   restored.delete(id)
   evictRights(id, data.isLive)
+}
+
+/**
+ * The spawn this ticket was handed out for ended without pty-manager taking it:
+ * it threw, or returned early (refused, closed or superseded while it prepared).
+ * Forget that pending spawn, and nothing else. Only a ticket this module handed
+ * out and has not settled or discarded does anything: a look-alike, a ticket
+ * already settled (its spawn was accepted, so it stays accepted) and a second
+ * discard change nothing.
+ */
+export function discardConfigLaunch(ticket: ConfigLaunchTicket): void {
+  const data = tickets.get(ticket)
+  if (!data) return
+  tickets.delete(ticket)
+  forgetPending(ticket, data.sessionId)
 }
 
 /**

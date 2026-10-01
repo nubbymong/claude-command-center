@@ -1,5 +1,5 @@
 /**
- * P3.13 (row 72; rounds 1 and 2): main's one-at-a-time rule
+ * P3.13 (row 72; rounds 1, 2 and 3): main's one-at-a-time rule
  * (src/main/launch-one-at-a-time.ts), on its own: pure over an injected
  * saved-config reader and liveness question, nothing mocked but the logger.
  * The same rule through the real pty:spawn handler is
@@ -12,7 +12,7 @@ const logWarn = vi.hoisted(() => vi.fn())
 vi.mock('../../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn, logError: vi.fn() }))
 
 const {
-  claimConfigLaunch, settleConfigLaunch, seedRestoredSessions, HELD_MAX, RESTORED_MAX,
+  claimConfigLaunch, settleConfigLaunch, discardConfigLaunch, seedRestoredSessions, HELD_MAX, RESTORED_MAX,
   _claimedSessionCountForTest, _heldSessionIdsForTest, _resetConfigLaunchClaimsForTest,
 } = await import('../../../src/main/launch-one-at-a-time')
 type Ticket = Parameters<typeof settleConfigLaunch>[0]
@@ -216,25 +216,35 @@ describe('who keeps the right to run', () => {
   })
 })
 
-describe('R2: a right lapses once a new copy of its config is accepted while the holder is not live', () => {
-  it('the forged sequence is refused: accept A, close A, accept B, then A again beside B', () => {
+describe('R2 (round 3): a session accepted in this run keeps its right for the run', () => {
+  it('a session that ran comes back after its tab closed and another copy was accepted: a Resume, a Restart or a Switch starts', () => {
     start('a')
-    live.delete('a') // the tab is closed
+    live.delete('a') // the tab is closed (a remote left running, say)
     expect(start('b')).toBeNull() // a new copy: nothing else runs
-    expect(ask('a')?.code).toBe('already-running') // A's right lapsed with B
+    expect(ask('a')).toBeNull() // A's own right stays: its own session, not a new copy
+    expect(ask('c')?.code).toBe('already-running') // a NEW id is still a new copy beside the live B
   })
 
-  it('the cycle does not bank rights: N closed ids cannot come back as N concurrent copies', () => {
+  it('Multi Spawn on, A ends, B is launched, Multi Spawn off: a Restart of A starts', () => {
+    multi()
+    start('a'); live.delete('a')
+    expect(start('b')).toBeNull()
+    off()
+    expect(ask('a')).toBeNull()
+    expect(ask('c')?.code).toBe('already-running')
+  })
+
+  it('every ended session accepted in this run can come back; an id main never accepted is still a new copy', () => {
     const ids = ['n1', 'n2', 'n3', 'n4', 'n5']
     for (const id of ids) { start(id); live.delete(id) }
-    expect(_heldSessionIdsForTest()).toEqual(['n5']) // each new copy lapsed the closed ones before it
-    const back = ids.map((id) => start(id))
-    expect(back.filter((r) => r === null)).toHaveLength(1)
+    expect(_heldSessionIdsForTest()).toEqual(ids)
+    for (const id of ids) expect(start(id), id).toBeNull()
+    expect(ask('fresh')?.code).toBe('already-running')
   })
 
   it('a holder that is live keeps its right: copies accepted together restart beside each other after one ends', () => {
     multi()
-    start('s1'); start('s2') // s1 is live when s2 is accepted
+    start('s1'); start('s2')
     off()
     live.delete('s1') // killed
     expect(ask('s1')).toBeNull()
@@ -251,7 +261,7 @@ describe('R2: a right lapses once a new copy of its config is accepted while the
     expect(ask('r1')).toBeNull() // its right was there when n1 was accepted, so it is still there
   })
 
-  it('a copy that uses its own right does not lapse the others', () => {
+  it('a copy that uses its own right takes no other\'s', () => {
     multi()
     start('s1'); start('s2'); start('s3')
     off()
@@ -260,15 +270,7 @@ describe('R2: a right lapses once a new copy of its config is accepted while the
     expect(ask('s2')).toBeNull() // s2's is still there
   })
 
-  it('only the config\'s own holders lapse', () => {
-    configs = [{ id: 'c1', label: 'A', allowMultiSpawn: true }, { id: 'c2', label: 'B', allowMultiSpawn: true }]
-    start('x1', { configId: 'c2' }); live.delete('x1')
-    start('y1', { configId: 'c1' }); live.delete('y1')
-    start('y2', { configId: 'c1' }) // lapses y1, not x1
-    expect(_heldSessionIdsForTest().sort()).toEqual(['x1', 'y2'])
-  })
-
-  it('a spawn that is not a copy lapses nothing', () => {
+  it('a spawn that is not a copy changes no right', () => {
     multi()
     start('a'); live.delete('a')
     expect(start('shell', {})).toBeNull()
@@ -286,13 +288,21 @@ describe('R2: a right lapses once a new copy of its config is accepted while the
     expect(ask('n3')?.code).toBe('already-running')
   })
 
-  it('a restored right is one-shot: its first accepted spawn consumes it, and what is left is a right of this run, which lapses', () => {
+  it('a restored right is one-shot: its first accepted spawn consumes it, and what is left is a right of this run, which is kept for the run', () => {
     off()
     seedRestoredSessions({ sessions: [{ id: 'r1', configId: 'c1' }] })
     expect(start('r1')).toBeNull() // consumed
     live.delete('r1') // the tab is closed
-    expect(start('n1')).toBeNull() // a new copy: r1's right of this run lapses with it
-    expect(ask('r1')?.code).toBe('already-running')
+    expect(start('n1')).toBeNull() // a new copy
+    expect(ask('r1')).toBeNull() // r1's right of this run stays
+  })
+
+  it('a restored right is consumed by its first accepted spawn even when that spawn runs another config', () => {
+    configs = [{ id: 'c1', label: 'A' }, { id: 'c2', label: 'B' }]
+    seedRestoredSessions({ sessions: [{ id: 'r1', configId: 'c1' }] })
+    expect(start('n1', { configId: 'c1' })).toBeNull() // a new copy of c1
+    expect(start('r1', { configId: 'c2' })).toBeNull() // r1's first spawn runs c2: the saved right for c1 is spent
+    expect(ask('r1', { configId: 'c1' })?.code).toBe('already-running') // c1 runs in n1, and r1 holds no right for it
   })
 
   it('a restored id keeps no right once used, so it cannot start a second copy of itself: only the ids saved at the last quit have one', () => {
@@ -335,15 +345,68 @@ describe('R3: tickets, one per spawn that passed the gate', () => {
     settleConfigLaunch(c.ticket)
     expect(_heldSessionIdsForTest()).toEqual(['s1'])
     live.delete('s1')
-    start('s2') // a new copy lapses s1
-    settleConfigLaunch(c.ticket) // settled already: nothing comes back
-    expect(_heldSessionIdsForTest()).toEqual(['s2'])
+    start('s2') // a new copy
+    settleConfigLaunch(c.ticket) // settled already: nothing changes
+    expect(_heldSessionIdsForTest()).toEqual(['s1', 's2'])
   })
 
   it('the pending tickets of one session are bounded', () => {
     start('s1')
     for (let i = 0; i < 200; i++) claimConfigLaunch('s1', { configId: 'c1' }, deps)
     expect(_claimedSessionCountForTest()).toBeLessThanOrEqual(1 + 8)
+  })
+
+  it('round 3: a discarded ticket forgets that pending spawn only, once, and only a ticket the gate handed out discards', () => {
+    const real = claimConfigLaunch('s1', { configId: 'c1' }, deps) as { ticket: Ticket }
+    live.add('s1')
+    const forged = claimConfigLaunch('s1', { configId: 'c1' }, deps) as { ticket: Ticket }
+    expect(_claimedSessionCountForTest()).toBe(2)
+    discardConfigLaunch(forged.ticket)
+    expect(_claimedSessionCountForTest()).toBe(1)
+    discardConfigLaunch(forged.ticket) // twice: nothing
+    discardConfigLaunch({ sessionId: 's1' } as Ticket) // a look-alike
+    discardConfigLaunch(Object.freeze({ sessionId: 's1' }) as Ticket)
+    expect(_claimedSessionCountForTest()).toBe(1)
+    expect(ask('s2')?.code).toBe('already-running') // the real pending spawn still counts as a copy
+    settleConfigLaunch(forged.ticket) // discarded: it records nothing
+    expect(_heldSessionIdsForTest()).toEqual([])
+    settleConfigLaunch(real.ticket)
+    expect(_heldSessionIdsForTest()).toEqual(['s1'])
+  })
+
+  it('round 3: a ticket that was settled is not undone by a discard', () => {
+    const c = claimConfigLaunch('s1', { configId: 'c1' }, deps) as { ticket: Ticket }
+    live.add('s1')
+    settleConfigLaunch(c.ticket)
+    discardConfigLaunch(c.ticket)
+    expect(_heldSessionIdsForTest()).toEqual(['s1'])
+    expect(ask('s2')?.code).toBe('already-running')
+  })
+
+  it('round 3: overflowing the pending tickets of a session refuses the NEW claim and never pushes the real one out', () => {
+    const real = claimConfigLaunch('s1', { configId: 'c1' }, deps) as { ticket: Ticket }
+    live.add('s1')
+    for (let i = 0; i < 7; i++) expect('ticket' in claimConfigLaunch('s1', { configId: 'c1' }, deps)).toBe(true) // 8 pending in all
+    for (let i = 0; i < 20; i++) {
+      const over = claimConfigLaunch('s1', { configId: 'c1' }, deps)
+      expect('refused' in over, String(i)).toBe(true)
+      if ('refused' in over) expect(over.refused.code).toBe('already-running')
+    }
+    expect(_claimedSessionCountForTest()).toBe(8)
+    expect(ask('s2')?.code).toBe('already-running') // the pending spawns still count
+    settleConfigLaunch(real.ticket) // the first, real one is still there to settle
+    expect(_heldSessionIdsForTest()).toEqual(['s1'])
+  })
+
+  it('round 3: a spawn that is not a copy keeps nothing pending, so forged ones cannot push out a real pending ticket', () => {
+    const real = claimConfigLaunch('s1', { configId: 'c1' }, deps) as { ticket: Ticket }
+    live.add('s1')
+    for (let i = 0; i < 50; i++) claimConfigLaunch('s1', { configId: 'nope' }, deps) // names no saved config
+    for (let i = 0; i < 50; i++) claimConfigLaunch('s1', {}, deps)
+    expect(_claimedSessionCountForTest()).toBe(1)
+    expect(ask('s2')?.code).toBe('already-running')
+    settleConfigLaunch(real.ticket)
+    expect(_heldSessionIdsForTest()).toEqual(['s1'])
   })
 })
 
@@ -359,7 +422,7 @@ describe('R4: the bound on the rights lets ended sessions go first', () => {
   it('an entry whose session has ended goes before an older one that is live, and a live one never while one has ended', () => {
     configs = [{ id: 'c1', label: 'A', allowMultiSpawn: true }, ...Array.from({ length: 10 }, (_, i) => ({ id: `e${i}`, label: 'E', allowMultiSpawn: true }))]
     for (let i = 0; i < 5; i++) start(`live${i}`, { configId: 'c1' }) // the oldest, and live
-    for (let i = 0; i < 10; i++) { start(`ended${i}`, { configId: `e${i}` }); live.delete(`ended${i}`) } // each on a config of its own: no lapse
+    for (let i = 0; i < 10; i++) { start(`ended${i}`, { configId: `e${i}` }); live.delete(`ended${i}`) } // each on a config of its own
     for (let i = 0; i < HELD_MAX - 15; i++) start(`more${i}`, { configId: 'c1' })
     expect(_heldSessionIdsForTest()).toHaveLength(HELD_MAX)
     for (let i = 0; i < 10; i++) {
