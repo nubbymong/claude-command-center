@@ -213,7 +213,9 @@ describe('app knowledge after P3.14', () => {
     expect(body('accounts')).toMatch(/A conversation you move to another Codex account with Switch Account brings the earlier account's history with it, so the new account's card counts only what that account reports after the move/)
     expect(body('accounts')).toMatch(/until its session reports, the card shows none of the earlier account's limits, plan or credits/)
     // Round 3: while that note cannot be read or written, the move and Sign in again still go on.
-    expect(body('accounts')).toMatch(/If the app cannot read or write its note of which conversations were moved, the move and Sign in again still go on, with the note kept in memory until it can be written; a conversation moved in an earlier run may then show the earlier account's figures on the new account's card until its session reports or the note can be read\./)
+    // The VM saw the earlier account's figures for the whole run with the note unreadable
+    // from the start, so the sentence says how long, not that it is brief.
+    expect(body('accounts')).toMatch(/If the app cannot read or write its note of which conversations were moved, the move and Sign in again still go on, with the note kept in memory until it can be written; a conversation moved in an earlier run may then show the earlier account's figures on the new account's card until that account's session reports or the note can be read, which may be the whole run\./)
     expect(body('accounts')).not.toMatch(/it will not carry a conversation then/)
     expect(body('accounts')).not.toMatch(/it shows no last-seen Codex figures until it can/)
   })

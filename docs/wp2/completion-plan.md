@@ -2776,7 +2776,11 @@ file reads, beside its own marks, and a mark that cannot be written is kept and 
 after a wait. The failure fails closed by time: the first failed read is a floor, in memory,
 for the folders this run has carried into or adopted a history into (nothing dated at or
 before it counts there); every other folder reads whole, so a conversation carried in an
-earlier run can show the earlier account's figures for the one to 30 seconds between tries.
+earlier run can show the earlier account's figures until that account's session reports or
+the file can be read. The file is tried again every 1 to 30 seconds, but one that stays
+unreadable is never read in the run, so this may be the whole run: the VM check at 855e1484,
+with the file unreadable from the start, showed them for the whole run (wording corrected in
+P3.16a UI round 1).
 `adopt` and `record` never fail for the file; `markOf` says "not known yet" until it is read.
 The user-facing sentence in app knowledge, `PRIVACY.md` and ADR-023 say so. (H2) A file that is
 not what the app wrote is set aside and, in the same step, replaced by a file holding the floor
@@ -2824,8 +2828,9 @@ mark made for the carry. (2) A set-aside whose replacement cannot be written is 
 times in a run and then left, with one log line: the file stays where it is and is read
 again after each wait (a file put right is taken), and the store stays as for a file it
 cannot read, instead of renaming it aside and back up to every 30 seconds. (3) The app
-knowledge sentence on a conversation moved in an earlier run now ends "until its session
-reports or the note can be read". ADR-023 says the same. Tests, red first on 2d432a6d
+knowledge sentence on a conversation moved in an earlier run ends "until that account's
+session reports or the note can be read, which may be the whole run" (the last clause added
+by P3.16a UI round 1, after the VM check at 855e1484). ADR-023 says the same. Tests, red first on 2d432a6d
 (9 failed: 7 of the store, 2 of the folder work; a new case, fewer than 3 failed
 set-asides retried with nothing logged, is a control proved by mutants). Mutation: 28
 mutants of the store, the cap and its log, and the folder work, each alone and restored
@@ -3181,6 +3186,27 @@ narrower window, an attention card and tab in both themes, Alt+V in a plain
 terminal (local, and over SSH), and a Restart in the partner view of a Not
 started tab. Left to the sweep: the Alt+V tip and `training-steps.ts` line 695
 describe the assistant routes only.
+UI track round 1 (8278c740; the spec review and the code-quality review, both
+PASS-WITH-FIXES). Alt+V in a plain terminal that is not running (its process
+ended, or it never started) types nothing, and the paste hint says so and where
+the image was saved, as the other refusals do; the handler's comment and
+`imageTransfer.ts`'s header name every route. `parseHdropBuffer` needs pFiles of
+20 or more (inside the header it read the header as paths) and stops at the
+list's first empty entry (the double NUL), so the rest of a larger clipboard
+block is not read as paths. The attention card's `--text-muted` is redefined on
+its muted text only (the `.meta` lines and the #N ordinal, which gets a
+`session-ordinal` class), so the context meter's fill keeps its colour; the text
+stays at 4.5:1. The U2 scans split sentences on a full stop and a space (the dot
+in `~/.claude` ended the old span, and a regression after the path passed); the
+tint pin covers the multi-select tint too; the Alt+V route test deletes
+`electronPlatform` in `afterEach`; the comments in `TerminalView.tsx`,
+`sessionStore.ts` and `useRestartSession.ts` say a Restart keeps neverStarted
+and the view clears it at its pre-spawn check. Red first: 2, 1 and 1 failures
+(the parser, the meter scope, the stopped terminal); the U2 scan and the tint pin
+were proved by a regression the old test passes and the new one fails. 14
+mutants, all red and restored. Host: 191 affected and scanner files, 2851
+passed. Owed on the VM: Alt+V in a stopped plain terminal, and an attention card
+with an ordinal and its context meter in both themes.
 
 P3.16a, main track (items M1 to M9; round 1, N1 to N10). Each confirmed at
 HEAD, root-caused, fixed red first with mutation proof, or recorded with its
