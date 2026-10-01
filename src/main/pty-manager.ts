@@ -6354,3 +6354,12 @@ export function getActivePtySessionIds(): string[] {
 export function isSessionWritable(sessionId: string): boolean {
   return ptySessions.has(sessionId)
 }
+
+// P3.13: whether main holds this session, running or on its way to running: a
+// PTY, or a spawn parked on a profile refresh, the project gate or a launch
+// preparation (refreshWaitSpawns). The one-at-a-time rule (launch-one-at-a-time.ts)
+// counts a copy of a config from the moment its spawn is accepted, so a second
+// copy asked for while the first is still preparing is refused too.
+export function isSessionLiveOrStarting(sessionId: string): boolean {
+  return ptySessions.has(sessionId) || refreshWaitSpawns.has(sessionId)
+}
