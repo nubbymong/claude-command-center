@@ -1,4 +1,4 @@
-// The file the carried-conversation marks are kept in (P3.14 rounds 1 and 2;
+// The file the carried-conversation marks are kept in (P3.14 rounds 1 to 3;
 // ADR-023): `<resources>/providers/carry-marks.json`, next to the account
 // registry and never in an account's folder. PURE: every call goes to an
 // injected file system and writer; no disk is touched.
@@ -61,11 +61,12 @@ describe('the carry marks file (ADR-023)', () => {
     expect(calls[1]).toBe(`atomicWrite ${FILE} {"mode":384}`)
   })
 
-  it('cannot be read, nor written, before the resources folder is known', () => {
-    const { p } = port({ directory: () => null })
-    expect(p.read()).toEqual({ kind: 'unavailable' })
+  it('cannot be read, nor written, before the resources folder is known, and says that is "not ready", not a failed read (round 3)', () => {
+    const { p, calls } = port({ directory: () => null })
+    expect(p.read()).toEqual({ kind: 'not-ready' })
     expect(() => p.write('x')).toThrow(/not known yet/)
-    expect(p.setAside()).toBe(false)
+    expect(p.setAside('{"schema":1,"marks":[]}')).toBe(false)
+    expect(calls).toEqual([])
   })
 
   it('a missing file is absence only when the folder above it is there: an unmounted drive says ENOENT for everything', () => {
@@ -109,14 +110,60 @@ describe('the carry marks file (ADR-023)', () => {
     })
   })
 
-  describe('sets a file aside (round 2)', () => {
-    it('renames it by the time, never overwriting or deleting it, and it is gone from its place', () => {
+  describe('sets a file aside, and puts a replacement in its place in one step (rounds 2 and 3)', () => {
+    const REPLACEMENT = '{"schema":1,"floor":7,"marks":[]}'
+    it('renames it by the time, never overwriting or deleting it, and the replacement is what is in its place', () => {
       const { p, calls, entries } = port({ entries: { [FILE]: { kind: 'file', text: 'junk' } }, at: 4242 })
-      expect(p.setAside()).toBe(true)
-      expect(calls).toEqual(['rename carry-marks.json carry-marks.json.bad-4242'])
-      expect(entries[FILE]).toBeUndefined()
+      expect(p.setAside(REPLACEMENT)).toBe(true)
+      expect(calls).toEqual(['rename carry-marks.json carry-marks.json.bad-4242', `atomicWrite ${FILE} null`])
+      expect(entries[FILE]).toEqual({ kind: 'file', text: REPLACEMENT })
       expect(entries[at(4242)]).toEqual({ kind: 'file', text: 'junk' })
-      expect(p.read()).toEqual({ kind: 'missing' })
+      expect(p.read()).toEqual({ kind: 'ok', text: REPLACEMENT })
+    })
+
+    it('the replacement is owner-only where there are modes', () => {
+      const { p, calls } = port({ entries: { [FILE]: { kind: 'file', text: 'junk' } }, at: 4242, posix: true })
+      expect(p.setAside(REPLACEMENT)).toBe(true)
+      expect(calls[1]).toBe(`atomicWrite ${FILE} {"mode":384}`)
+    })
+
+    it('a replacement that cannot be written puts the file back as it was, so the next start finds it again and no copy is trimmed (round 3, H2)', () => {
+      const entries: Record<string, Entry> = {
+        [FILE]: { kind: 'file', text: 'junk' },
+        [at(10)]: { kind: 'file', text: 'a' }, [at(20)]: { kind: 'file', text: 'b' }, [at(30)]: { kind: 'file', text: 'c' },
+      }
+      const { p, calls } = port({ entries, at: 40, atomicWrite: () => { throw new Error('disk full') } })
+      expect(p.setAside(REPLACEMENT)).toBe(false)
+      expect(calls).toEqual(['rename carry-marks.json carry-marks.json.bad-40', 'rename carry-marks.json.bad-40 carry-marks.json'])
+      expect(entries[FILE]).toEqual({ kind: 'file', text: 'junk' })
+      expect(entries[at(40)]).toBeUndefined()
+      for (const n of [10, 20, 30]) expect(entries[at(n)], String(n)).toBeDefined()
+      expect(port({ entries, at: 41 }).p.read()).toEqual({ kind: 'ok', text: 'junk' })
+    })
+
+    it('a replacement that cannot be written, and a file that cannot be put back, still never throws: the copy stays beside it', () => {
+      const entries: Record<string, Entry> = { [FILE]: { kind: 'file', text: 'junk' } }
+      let renames = 0
+      const noBack = port({
+        entries, at: 40, atomicWrite: () => { throw new Error('disk full') },
+        fs: {
+          readFileSync: (() => '') as never, statSync: (() => ({ isDirectory: () => true })) as never, lstatSync: (() => ({ isFile: () => true, size: 4 })) as never,
+          renameSync: (() => { renames++; if (renames > 1) throw new Error('busy') }) as never, readdirSync: (() => []) as never, unlinkSync: (() => {}) as never,
+        },
+      })
+      expect(noBack.p.setAside(REPLACEMENT)).toBe(false)
+      expect(renames).toBe(2)
+    })
+
+    it('a file already gone still gets its replacement, and nothing is put back', () => {
+      const { p, calls, entries } = port({ at: 4242 })
+      expect(p.setAside(REPLACEMENT)).toBe(true)
+      expect(calls).toEqual(['rename carry-marks.json carry-marks.json.bad-4242', `atomicWrite ${FILE} null`])
+      expect(entries[FILE]).toEqual({ kind: 'file', text: REPLACEMENT })
+      // And if that cannot be written either, nothing is renamed back from a copy that was never made.
+      const failing = port({ at: 4242, atomicWrite: () => { throw new Error('disk full') } })
+      expect(failing.p.setAside(REPLACEMENT)).toBe(false)
+      expect(failing.calls).toEqual(['rename carry-marks.json carry-marks.json.bad-4242'])
     })
 
     it('keeps only the newest few of the copies it has set aside, and touches no other name', () => {
@@ -128,7 +175,7 @@ describe('the carry marks file (ADR-023)', () => {
         [path.join(DIR, 'carry-marks.json.keep')]: { kind: 'file', text: 'other' },
       }
       const { p } = port({ entries, at: 40 })
-      expect(p.setAside()).toBe(true)
+      expect(p.setAside(REPLACEMENT)).toBe(true)
       const bad = Object.keys(entries).map((k) => path.basename(k)).filter((n) => /^carry-marks\.json\.bad-\d+$/.test(n)).sort()
       expect(bad).toEqual(['carry-marks.json.bad-20', 'carry-marks.json.bad-30', 'carry-marks.json.bad-40'].slice(0, CARRY_MARKS_ASIDE_KEPT))
       expect(entries[path.join(DIR, 'registry.json')]).toBeDefined()
@@ -136,21 +183,22 @@ describe('the carry marks file (ADR-023)', () => {
       expect(entries[path.join(DIR, 'carry-marks.json.keep')]).toBeDefined()
     })
 
-    it('a file already gone is what was asked for; any other failure to rename is not', () => {
-      expect(port().p.setAside()).toBe(true)
+    it('any failure to rename but the file already being gone is a failure to set aside, and nothing is written', () => {
+      expect(port().p.setAside(REPLACEMENT)).toBe(true)
       const eperm = () => Object.assign(new Error('EPERM'), { code: 'EPERM' })
       const noWay = port({ entries: { [FILE]: { kind: 'file', text: 'junk' } }, fs: { readFileSync: (() => '') as never, statSync: (() => ({ isDirectory: () => true })) as never, lstatSync: (() => ({ isFile: () => true, size: 4 })) as never, renameSync: (() => { throw eperm() }) as never, readdirSync: (() => []) as never, unlinkSync: (() => {}) as never } })
-      expect(noWay.p.setAside()).toBe(false)
+      expect(noWay.p.setAside(REPLACEMENT)).toBe(false)
+      expect(noWay.calls).toEqual([])
     })
 
     it('a folder that cannot be listed, or a copy that cannot be removed, never fails the set-aside', () => {
       const fsOf = (over: Record<string, unknown>) => ({ readFileSync: (() => '') as never, statSync: (() => ({ isDirectory: () => true })) as never, lstatSync: (() => ({ isFile: () => true, size: 4 })) as never, renameSync: (() => {}) as never, readdirSync: (() => []) as never, unlinkSync: (() => {}) as never, ...over })
-      expect(port({ fs: fsOf({ readdirSync: () => { throw new Error('list') } }) }).p.setAside()).toBe(true)
+      expect(port({ fs: fsOf({ readdirSync: () => { throw new Error('list') } }) }).p.setAside(REPLACEMENT)).toBe(true)
       // One copy that cannot be removed does not stop the others being removed.
       const names = [1, 2, 3, 4, 5, 6].map((n) => `${CARRY_MARKS_FILENAME}.bad-${n}`)
       const tried: string[] = []
       const stuck = port({ fs: fsOf({ readdirSync: () => names, unlinkSync: (f: string) => { tried.push(path.basename(f)); if (f.endsWith('bad-3')) throw new Error('busy') } }) })
-      expect(stuck.p.setAside()).toBe(true)
+      expect(stuck.p.setAside(REPLACEMENT)).toBe(true)
       expect(tried.sort()).toEqual(['carry-marks.json.bad-1', 'carry-marks.json.bad-2', 'carry-marks.json.bad-3'])
     })
   })

@@ -6,10 +6,13 @@
 // is read when first needed, replaced atomically (staged, then renamed) when a
 // mark is added or an account's marks are dropped, and owner-only on POSIX.
 //
-// Fails closed (round 2): the file is looked at before it is read (a plain
-// file within its size cap, never a link, folder or oversize file), and one
-// that is not that is reported as corrupt for its owner to set aside; setting
-// it aside renames it (the newest few are kept), never overwrites it.
+// Fails closed (rounds 2 and 3): the file is looked at before it is read (a
+// plain file within its size cap, never a link, folder or oversize file), and
+// one that is not that is reported as corrupt for its owner to set aside;
+// setting it aside renames it (the newest few are kept), never overwrites it,
+// and puts the owner's replacement in its place in the one step: if the
+// replacement cannot be written the file is put back as it was, so the next
+// start finds it again rather than finding nothing.
 //
 // Injected, like the registry's own port, so it names no resources directory
 // and every branch is testable without a disk.
@@ -25,13 +28,16 @@ const ASIDE_RE = /^carry-marks\.json\.bad-(\d+)$/
 
 /** What the marks' owner needs of a file: the same shape on every platform. */
 export interface CarryMarksFilePort {
-  /** The file's text; its absence; "cannot be read now" (asked again later);
-   *  or "corrupt": there, but not a plain file within the size cap. */
-  read(): { kind: 'ok'; text: string } | { kind: 'missing' } | { kind: 'unavailable' } | { kind: 'corrupt' }
+  /** The file's text; its absence; "cannot be read now" (asked again after a
+   *  wait); "not ready" (the resources folder is not known yet, which is no
+   *  failed read: asked again at once); or "corrupt": there, but not a plain
+   *  file within the size cap. */
+  read(): { kind: 'ok'; text: string } | { kind: 'missing' } | { kind: 'unavailable' } | { kind: 'not-ready' } | { kind: 'corrupt' }
   /** Replace the file. Throws on any failure. */
   write(text: string): void
-  /** Rename the file out of its place; true when it is no longer there. */
-  setAside(): boolean
+  /** Rename the file out of its place and put `replacement` in it, in one
+   *  step: true when both were done, false (the file as it was) otherwise. */
+  setAside(replacement: string): boolean
 }
 
 export interface CarryMarksFileDeps {
@@ -56,7 +62,7 @@ export function createCarryMarksFilePort(deps: CarryMarksFileDeps): CarryMarksFi
   return {
     read() {
       const dir = deps.directory()
-      if (!dir) return { kind: 'unavailable' }
+      if (!dir) return { kind: 'not-ready' }
       const file = nodePath.join(dir, CARRY_MARKS_FILENAME)
       let entry: nodeFs.Stats
       try {
@@ -86,17 +92,27 @@ export function createCarryMarksFilePort(deps: CarryMarksFileDeps): CarryMarksFi
       deps.mkdirSecure(dir)
       deps.atomicWrite(nodePath.join(dir, CARRY_MARKS_FILENAME), text, deps.posix ? { mode: 0o600 } : undefined)
     },
-    setAside() {
+    setAside(replacement) {
       const dir = deps.directory()
       if (!dir) return false
       const file = nodePath.join(dir, CARRY_MARKS_FILENAME)
       let at = Date.now()
       try { const n = deps.now ? deps.now() : at; if (Number.isFinite(n)) at = Math.floor(n) } catch { /* the wall clock */ }
+      const aside = nodePath.join(dir, `${CARRY_MARKS_FILENAME}.bad-${at}`)
+      let moved = false
       try {
-        fs.renameSync(file, nodePath.join(dir, `${CARRY_MARKS_FILENAME}.bad-${at}`))
+        fs.renameSync(file, aside)
+        moved = true
       } catch (e) {
-        // Already gone is what was asked for.
-        return errCode(e) === 'ENOENT'
+        // Already gone is fine (the replacement is still wanted); anything else is a failure.
+        if (errCode(e) !== 'ENOENT') return false
+      }
+      try {
+        deps.atomicWrite(file, replacement, deps.posix ? { mode: 0o600 } : undefined)
+      } catch {
+        // Put it back, so the next start finds it as it was and not as a missing file.
+        if (moved) { try { fs.renameSync(aside, file) } catch { /* the copy stays beside it */ } }
+        return false
       }
       // The newest few stay; the rest go (only names this function gives).
       try {

@@ -653,7 +653,8 @@ export interface CodexClaimOptions {
    *  the rollout being read was carried, the time it was; its allowance, plan
    *  and credits then come only from events dated after it. Null (or absent):
    *  the whole rollout counts. Asked on every read, so a mark recorded later
-   *  applies from the next read. Never throws (a throw counts as none). */
+   *  applies from the next read. A throw closes the rollout: none of its
+   *  allowance events count. */
   allowanceAfter?: (rolloutPath: string) => number | null
   /** Where the resume picker records each decision it makes (P3.5 fix
    *  round 1): `{ id }` when it resumes that conversation, `{ fresh: true }`
@@ -1125,7 +1126,11 @@ export function watchAndClaimRollout(
       try {
         const m = claimOpts.allowanceAfter(file)
         allowanceAfter = typeof m === 'number' && Number.isFinite(m) ? m : null
-      } catch { allowanceAfter = null }
+      } catch {
+        // A mark that cannot be asked for closes that rollout: none of its
+        // allowance events count (the store itself never throws).
+        allowanceAfter = Number.MAX_SAFE_INTEGER
+      }
     }
     try {
       fd = openSync(file, 'r')
