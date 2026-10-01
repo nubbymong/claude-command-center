@@ -4,7 +4,7 @@
  * view acts on, and what its own start's end does with a held one.
  */
 import { describe, it, expect } from 'vitest'
-import { createSpawnExitHold } from '../../../src/renderer/utils/spawnExitHold'
+import { createSpawnExitHold, processExitLine } from '../../../src/renderer/utils/spawnExitHold'
 
 describe('a view that will spawn holds exits until its own start settles', () => {
   it('holds an exit before pty:spawn is called and while it is in flight', () => {
@@ -62,5 +62,19 @@ describe('a view that remounts onto a running PTY', () => {
     const h = createSpawnExitHold(false)
     h.begin()
     expect(h.exit(1)).toBe(false)
+  })
+})
+
+// P3.15 round 1 (F3): the line a terminal shows when its process has ended.
+// A process can end before its exit code is known (node-pty's bundled ConPTY
+// reports the end when its console host closes): no code is named then.
+describe('processExitLine', () => {
+  it('names a known code as before', () => {
+    expect(processExitLine(0)).toBe('[Process exited with code 0]')
+    expect(processExitLine(1)).toBe('[Process exited with code 1]')
+    expect(processExitLine(-1)).toBe('[Process exited with code -1]')
+  })
+  it('names no code when none is known', () => {
+    for (const code of [undefined, null, Number.NaN, '0', {}]) expect(processExitLine(code), String(code)).toBe('[Process exited]')
   })
 })

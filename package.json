@@ -28,7 +28,7 @@
     "changelog:check": "node scripts/gen-changelog.js --check",
     "prepare": "husky",
     "update-server": "node scripts/update-server.js",
-    "postinstall": "electron-rebuild --only=node-pty,better-sqlite3",
+    "postinstall": "electron-rebuild --only=node-pty,better-sqlite3 && node node_modules/node-pty/scripts/post-install.js",
     "rebuild": "electron-rebuild",
     "capture-training": "npx tsx scripts/capture-training-screenshots.ts",
     "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit && tsc -p tsconfig.bridge.json --noEmit",

@@ -6,9 +6,10 @@
 // bundled ConPTY is chosen only when both files are beside the module node-pty
 // will load, found as its own loader finds it (in a packaged app, under
 // app.asar.unpacked), and otherwise the system ConPTY, with the reason.
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest'
 import * as path from 'path'
 import * as fs from 'fs'
+import * as os from 'os'
 
 const h = vi.hoisted(() => ({ warns: [] as string[] }))
 vi.mock('../../../src/main/debug-logger', async (importOriginal) => ({
@@ -16,7 +17,7 @@ vi.mock('../../../src/main/debug-logger', async (importOriginal) => ({
   logWarn: (...a: unknown[]) => { h.warns.push(a.map(String).join(' ')) },
 }))
 
-const { chooseConpty, nativeModuleDirs, onDisk, bundledConptyChoice, _resetBundledConptyForTest } = await import('../../../src/main/bundled-conpty')
+const { chooseConpty, nativeModuleDirs, asarUnpackedPath, bundledConptyChoice, bundledConptyFailed, findNodePtyLibDir, NODE_PTY_MAX_PATH, _resetBundledConptyForTest } = await import('../../../src/main/bundled-conpty')
 
 const LIB = path.join(path.sep, 'app', 'node_modules', 'node-pty', 'lib')
 const PKG = path.dirname(LIB)
@@ -89,13 +90,13 @@ describe('chooseConpty', () => {
   })
 })
 
-describe('onDisk', () => {
+describe('asarUnpackedPath', () => {
   it('maps only an app.asar path segment, in either separator, and leaves app.asar.unpacked and look-alikes alone', () => {
-    expect(onDisk('C:\\P\\resources\\app.asar\\node_modules\\x')).toBe('C:\\P\\resources\\app.asar.unpacked\\node_modules\\x')
-    expect(onDisk('/r/app.asar/node_modules/x')).toBe('/r/app.asar.unpacked/node_modules/x')
-    expect(onDisk('/r/app.asar.unpacked/node_modules/x')).toBe('/r/app.asar.unpacked/node_modules/x')
-    expect(onDisk('/r/myapp.asar/x')).toBe('/r/myapp.asar/x')
-    expect(onDisk('/r/app.asarx/x')).toBe('/r/app.asarx/x')
+    expect(asarUnpackedPath('C:\\P\\resources\\app.asar\\node_modules\\x')).toBe('C:\\P\\resources\\app.asar.unpacked\\node_modules\\x')
+    expect(asarUnpackedPath('/r/app.asar/node_modules/x')).toBe('/r/app.asar.unpacked/node_modules/x')
+    expect(asarUnpackedPath('/r/app.asar.unpacked/node_modules/x')).toBe('/r/app.asar.unpacked/node_modules/x')
+    expect(asarUnpackedPath('/r/myapp.asar/x')).toBe('/r/myapp.asar/x')
+    expect(asarUnpackedPath('/r/app.asarx/x')).toBe('/r/app.asarx/x')
   })
 })
 
@@ -124,5 +125,117 @@ describe('bundledConptyChoice (the app\'s own, worked out once)', () => {
     _resetBundledConptyForTest({ platform: 'linux', arch: 'x64', nodePtyLibDir: LIB, exists: () => true })
     expect(bundledConptyChoice().kind).toBe('not-windows')
     expect(h.warns).toEqual([])
+  })
+})
+
+// Round 1 (F2): node-pty's LoadConptyDll (src/win/conpty.cc) reads its module's
+// path into a wchar_t[MAX_PATH] and builds conpty\conpty.dll beside it with
+// PathCombineW into another wchar_t[MAX_PATH]: the whole conpty.dll path must
+// fit in MAX_PATH (260) with its terminating null, so 259 characters at most,
+// or node-pty cannot find the file and the spawn fails (a long install folder).
+describe('a conpty.dll path too long for node-pty (round 1, F2)', () => {
+  const SUFFIX = path.join(path.sep, 'node_modules', 'node-pty', 'prebuilds', 'win32-x64', 'conpty', 'conpty.dll').length
+  /** A lib folder whose conpty.dll path is exactly `n` characters long. */
+  const at = (n: number) => {
+    const base = path.join(path.sep, 'x'.repeat(n - 1 - SUFFIX))
+    const lib = path.join(base, 'node_modules', 'node-pty', 'lib')
+    const pre = path.join(base, 'node_modules', 'node-pty', 'prebuilds', 'win32-x64')
+    expect(path.join(pre, 'conpty', 'conpty.dll').length).toBe(n)
+    return { lib, files: filesIn(pre, ALL) }
+  }
+  it('MAX_PATH is the bound node-pty has (260 with the terminating null)', () => {
+    expect(NODE_PTY_MAX_PATH).toBe(260)
+  })
+  it('259 characters: the bundled ConPTY; 260 and more: the system ConPTY, saying why', () => {
+    const ok = at(259)
+    expect(chooseConpty({ platform: 'win32', arch: 'x64', nodePtyLibDir: ok.lib, exists: existsOnly(ok.files) }).kind).toBe('bundled')
+    for (const n of [260, 300]) {
+      const long = at(n)
+      const c = chooseConpty({ platform: 'win32', arch: 'x64', nodePtyLibDir: long.lib, exists: existsOnly(long.files) })
+      expect(c.kind, String(n)).toBe('system')
+      expect(c.options, String(n)).toEqual({ useConpty: true })
+      expect(c.kind === 'system' && c.reason, String(n)).toMatch(new RegExp(`${n} characters, more than the 259 node-pty can use`))
+    }
+  })
+})
+
+// Round 1 (F5): the app's own lookup, with no lookup or file check handed in:
+// node-pty found by require.resolve, and the files checked as files.
+describe('the app\'s own lookup (round 1, F5)', () => {
+  const made: string[] = []
+  afterAll(() => {
+    // Only the folders this file made: its own mkdtemp prefix, in the temp folder.
+    for (const dir of made) {
+      if (path.basename(dir).startsWith('p315-conpty-') && path.resolve(path.dirname(dir)) === path.resolve(os.tmpdir())) fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+  it('resolves the lib folder of node-pty, the folder its loader looks from', () => {
+    expect(findNodePtyLibDir()).toBe(path.resolve(__dirname, '..', '..', '..', 'node_modules', 'node-pty', 'lib'))
+  })
+  it('finds the installed node-pty and its win32-x64 prebuild by itself', () => {
+    _resetBundledConptyForTest({ platform: 'win32', arch: 'x64' })
+    expect(bundledConptyChoice()).toMatchObject({
+      kind: 'bundled',
+      options: { useConpty: true, useConptyDll: true },
+      dir: path.resolve(__dirname, '..', '..', '..', 'node_modules', 'node-pty', 'prebuilds', 'win32-x64'),
+    })
+  })
+  it('a folder named conpty.dll is not the file: the system ConPTY (real folders in a temp tree)', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'p315-conpty-'))
+    made.push(root)
+    const pre = path.join(root, 'node_modules', 'node-pty', 'prebuilds', 'win32-x64')
+    fs.mkdirSync(path.join(pre, 'conpty', 'conpty.dll'), { recursive: true })
+    fs.writeFileSync(path.join(pre, 'conpty.node'), '')
+    fs.writeFileSync(path.join(pre, 'conpty', 'OpenConsole.exe'), '')
+    fs.mkdirSync(path.join(root, 'node_modules', 'node-pty', 'lib'), { recursive: true })
+    _resetBundledConptyForTest({ platform: 'win32', arch: 'x64', nodePtyLibDir: path.join(root, 'node_modules', 'node-pty', 'lib') })
+    const c = bundledConptyChoice()
+    expect(c.kind).toBe('system')
+    expect(c.kind === 'system' && c.reason).toContain(path.join(pre, 'conpty', 'conpty.dll'))
+  })
+})
+
+// Round 1 (F1): the bundled ConPTY can be there and still fail when a session
+// starts (a blocked or damaged file, OpenConsole.exe unable to start). pty-
+// manager then starts the session on the system ConPTY and reports it here,
+// so the rest of the run does not ask for the bundled one again.
+describe('bundledConptyFailed (round 1, F1)', () => {
+  it('turns the app\'s choice to the system ConPTY for the rest of the run, with the reason, logged once', () => {
+    _resetBundledConptyForTest({ platform: 'win32', arch: 'x64', nodePtyLibDir: LIB, exists: existsOnly(filesIn(PREBUILD, ALL)) })
+    expect(bundledConptyChoice().kind).toBe('bundled')
+    const c = bundledConptyFailed('Cannot launch conpty')
+    expect(c.kind).toBe('system')
+    expect(c.options).toEqual({ useConpty: true })
+    expect(c.kind === 'system' && c.reason).toMatch(/failed to start: Cannot launch conpty/)
+    expect(bundledConptyChoice()).toBe(c)
+    expect(bundledConptyFailed('a second report')).toBe(c)
+    expect(bundledConptyChoice()).toBe(c)
+    expect(h.warns.length).toBe(1)
+    expect(h.warns[0]).toMatch(/bundled ConPTY failed to start \(Cannot launch conpty\)/)
+  })
+  it('the warning lines carry no control characters from a reason or a path', () => {
+    _resetBundledConptyForTest({ platform: 'win32', arch: 'x64', nodePtyLibDir: LIB, exists: existsOnly(filesIn(PREBUILD, ALL)) })
+    bundledConptyChoice()
+    bundledConptyFailed(`bad${String.fromCharCode(27)}[2Jthing${String.fromCharCode(7)}`)
+    const odd = path.join(path.sep, `odd${String.fromCharCode(27)}]0;x`, 'node_modules', 'node-pty', 'lib')
+    _resetBundledConptyForTest({ platform: 'win32', arch: 'x64', nodePtyLibDir: odd, exists: (p) => p.endsWith('conpty.node') })
+    bundledConptyChoice()
+    expect(h.warns.length).toBe(2)
+    for (const w of h.warns) expect(w).not.toMatch(/[\u0000-\u001f\u007f]/)
+  })
+})
+
+// Round 1 (F6): a dev install that builds node-pty from source (electron-
+// rebuild) leaves build/Release/conpty.node, which node-pty loads first, with
+// no conpty folder beside it; node-pty's own post-install puts it there.
+describe('the dev install (round 1, F6)', () => {
+  it('runs node-pty\'s post-install after electron-rebuild', () => {
+    const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'package.json'), 'utf8')) as { scripts: Record<string, string> }
+    const post = pkg.scripts.postinstall
+    const rebuild = post.indexOf('electron-rebuild --only=node-pty')
+    const copy = post.indexOf('node node_modules/node-pty/scripts/post-install.js')
+    expect(rebuild).toBeGreaterThan(-1)
+    expect(copy).toBeGreaterThan(rebuild)
+    expect(post.slice(rebuild, copy)).toMatch(/&&\s*$/)
   })
 })

@@ -225,17 +225,25 @@ describe('app knowledge and tips after P3.15', () => {
   it('the Alt+V tip says what happens with the session focused and with focus elsewhere, for both assistants', () => {
     const t = tip('tip.paste-image')
     expect(t.body).not.toMatch(/Claude.s prompt/)
-    expect(t.body).toMatch(/Click into the session and press \*\*Alt\+V\*\*: the key goes to the assistant, which pastes the image itself/)
+    // Round 1 (spec 4): the focused key is evidenced for sessions on this computer;
+    // over SSH the app's own path (focus outside the terminal) is the one named.
+    expect(t.body).toMatch(/Click into a session on this computer and press \*\*Alt\+V\*\*: the key goes to the assistant, which pastes the image itself/)
+    expect(t.body).toMatch(/On an SSH session, press \*\*Alt\+V\*\* with focus outside the terminal: the app saves the image on this computer and asks Claude to fetch it over the connection/)
     expect(t.body).toMatch(/With focus elsewhere in the app, \*\*Alt\+V\*\* saves the image and types a line with its path into the session/)
     expect(t.body).toMatch(/On a Codex session the app types it only into an empty Codex prompt, and says why when it cannot/)
     const guide = trainingSteps.flatMap((s) => s.highlights ?? []).find((l) => l.startsWith('Alt+V'))!
     expect(guide).not.toMatch(/Claude.s prompt/)
-    expect(guide).toMatch(/the assistant pastes it itself; with focus elsewhere, the app saves it and types its path/)
+    expect(guide).toMatch(/in a local session, the assistant pastes it itself; with focus elsewhere, the app saves it and types its path \(over SSH, it asks Claude to fetch it\)/)
   })
   it('the known issue gives the Windows sandbox workaround: the administrator setup once, what the other choice does, and never an elevated app', () => {
     const k = body('known-issues')
     expect(k).toMatch(/On Windows, Codex edits files on its own only once its sandbox has been set up with administrator permission/)
-    expect(k).toMatch(/Choose 1\. Set up default sandbox: Windows asks for administrator permission once/)
+    // Round 1 (spec 2): what Codex itself says; the UAC prompt was never seen on the VM.
+    expect(k).toMatch(/Choose 1\. Set up default sandbox, which Codex says needs administrator permission/)
+    expect(k).not.toMatch(/Windows asks for administrator permission once/)
+    // Round 1 (spec 3): no question once a folder is trusted or 2 was chosen; the way back is not confirmed, and what to do meanwhile.
+    expect(k).toMatch(/asks only when you trust a new folder, so a folder you trusted before, or an earlier choice of 2, brings no question/)
+    expect(k).toMatch(/a way to bring it back from the app has not been confirmed yet, so until then approve each edit when Codex asks, and use Standard rather than Auto/)
     expect(k).toMatch(/2\. Use non-admin sandbox/)
     expect(k).toMatch(/on Standard Codex asks before every edit/)
     expect(k).toMatch(/on Auto every edit fails/)
@@ -247,11 +255,15 @@ describe('app knowledge and tips after P3.15', () => {
     // Shown to the users the other Codex tips are shown to.
     expect(t.requires).toEqual(TIPS_LIBRARY.find((x) => x.variants.primary.title === 'Restart a Codex Session')!.requires)
     expect(t.requires?.length).toBe(1)
+    // Round 1 (a nit): offered on Windows only.
+    expect(t.platforms).toEqual(['win32'])
     const p = t.variants.primary
     expect(p.shortText.length).toBeLessThan(60)
     expect(p.body).toMatch(/On Windows, when Codex asks to set up its sandbox, choose \*\*1\. Set up default sandbox\*\*/)
     expect(p.body).toMatch(/on \*\*Standard\*\* it asks before every edit, and on \*\*Auto\*\* edits fail/)
     expect(p.body).toMatch(/Do not run the app as administrator/)
+    expect(p.body).toMatch(/\(Codex says it needs administrator permission\)/)
+    expect(p.body).toMatch(/asks only when you trust a new folder\. If it never asks you, approve each edit when Codex asks about it, and use \*\*Standard\*\* rather than \*\*Auto\*\*/)
     expect(`${p.title} ${p.body}`).not.toMatch(/\u2014/)
   })
 })

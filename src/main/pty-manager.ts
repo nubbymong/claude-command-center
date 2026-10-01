@@ -35,7 +35,7 @@ import { buildClaudeLaunchCommand, resolveResumeLaunch, recoverOrphanResumeLaunc
 import { ensureCompanionDir, nodeFsCompanionDeps } from './logging/companion-dir'
 import { forgetSessionName } from './logging/session-name-sidecar'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
-import { bundledConptyChoice } from './bundled-conpty'
+import { bundledConptyChoice, bundledConptyFailed, SYSTEM_CONPTY_OPTIONS, type ConptySpawnOptions } from './bundled-conpty'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { TMUX_WHEEL_EXIT_KEY } from '../shared/tmux-wheel'
 import { buildRemoteSessionCleanupCommand, buildTmuxBinPatchCommand, buildRemoteTmuxKillCommand, buildContainerKillCommand, parseEndSudoSentinel, getWindowsRemoteSetupCommand, buildWindowsClaudeCommand } from './providers/claude/ssh-shim'
@@ -4721,10 +4721,11 @@ function spawnPtyResolved(
       // repaints Codex's screen in place, so the terminal kept no scrollback
       // and the wheel did nothing; the bundled one passes Codex's scrolling
       // through. The system ConPTY when the bundled files are missing (said in
-      // the launch line, and once in bundled-conpty.ts). Claude sessions, plain
-      // terminals and SSH sessions keep the system ConPTY, as before.
+      // the launch line, with the folder it was looked for in when bundled, and
+      // once in bundled-conpty.ts). Claude sessions, plain terminals and SSH
+      // sessions keep the system ConPTY, as before.
       const conpty = bundledConptyChoice()
-      const conptyNote = conpty.kind === 'bundled' ? ' conpty=bundled'
+      const conptyNote = conpty.kind === 'bundled' ? ` conpty=bundled (${describePathForLog(conpty.dir)})`
         : conpty.kind === 'system' ? ` conpty=system (${describePathForLog(conpty.reason)})` : ''
       logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${commandLine ?? spawnArgs.join(' ')} cwd=${describePathForLog(codexCwd)} (resume=${built.resumeId ?? 'none'})${conptyNote}`)
       // Codex sessions never designate a canvas worktree; drop any inherited
@@ -4738,15 +4739,32 @@ function spawnPtyResolved(
       codexLaunchLeases.set(sessionId, launch.lease)
       takenCodexLeases.add(launch.lease)
       // A cmd.exe line goes verbatim (see buildSpawnCommand's `commandLine`).
-      ptyProcess = started = pty.spawn(spawnCmd, commandLine ?? spawnArgs, {
+      // The ConPTY options are the choice's own; nothing else differs between
+      // the bundled and the system ConPTY.
+      const spawnCodexPty = (conptyOptions: ConptySpawnOptions): pty.IPty => pty.spawn(spawnCmd, commandLine ?? spawnArgs, {
         name: 'xterm-256color',
         cols,
         rows,
         cwd: codexCwd,
         env: spawnEnv,
-        useConpty: true,
-        ...(conpty.kind === 'bundled' ? { useConptyDll: true } : {}),
+        ...conptyOptions,
       })
+      try {
+        ptyProcess = started = spawnCodexPty(conpty.options)
+      } catch (err) {
+        // P3.15 round 1 (F1): the bundled files can be there and still fail as
+        // the session starts (blocked or damaged, OpenConsole.exe unable to
+        // start); node-pty throws before any process starts. The session then
+        // starts on the system ConPTY, and the rest of the run uses it. A start
+        // that fails there too is not the bundled ConPTY's fault (a missing
+        // executable): the first error goes on and the choice stays.
+        if (conpty.kind !== 'bundled') throw err
+        let onSystem: pty.IPty
+        try { onSystem = spawnCodexPty(SYSTEM_CONPTY_OPTIONS) } catch { throw err }
+        bundledConptyFailed(String((err as Error)?.message ?? err))
+        logInfo(`[pty-manager] Codex PTY for ${sessionId}: the bundled ConPTY failed to start; started on the system ConPTY`)
+        ptyProcess = started = onSystem
+      }
       ptyProcess.onData((data) => {
         if (win.isDestroyed()) return
         if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) return // rc.15 review R9

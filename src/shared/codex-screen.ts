@@ -201,6 +201,28 @@ export function codexCommandTyped(lines: ScreenLine[] | null | undefined, comman
   return shown.slice(i + 1).every((l) => POPUP_ROW_RE.test(l.text) || footer.test(l.text))
 }
 
+/** A row Codex wraps the composer's text onto: indented under the text. */
+const WRAPPED_ROW_RE = /^ {2,}\S/
+
+/** P3.15 round 1 (F8): whether the screen shows `text` typed at the composer,
+ *  over the composer row and the rows Codex wraps it onto in a narrow pane
+ *  (each indented under the text), with nothing in the way: no blocking
+ *  prompt, no turn running, and under it only those rows and then the footer.
+ *  The rows are read together with their spaces dropped, because a wrap may
+ *  fall at a space (which the wrap takes) or inside a word. */
+export function codexTextTyped(lines: ScreenLine[] | null | undefined, text: string, models?: readonly string[] | null): boolean {
+  const want = text.replace(/\s+/g, '')
+  if (want === '' || !lines || lines.length === 0 || blocked(lines) || lines.some((l) => BUSY_RE.test(l.text))) return false
+  const shown = lines.filter(nonBlank)
+  const i = composerIndex(shown)
+  if (i < 0) return false
+  const below = shown.slice(i + 1)
+  if (below.length === 0 || !footerRe(models).test(below[below.length - 1].text)) return false
+  const wrapped = below.slice(0, -1)
+  if (!wrapped.every((l) => WRAPPED_ROW_RE.test(l.text))) return false
+  return [composerContent(shown[i]), ...wrapped.map((l) => l.text)].join('').replace(/\s+/g, '') === want
+}
+
 /** Codex's Plan mode label, right-aligned in its footer after the folder. */
 const PLAN_MODE_SEGMENT_RE = /^Plan mode(?: \(shift\+tab to cycle\))?$/
 /** The cells Codex leaves after its footer's right segment (the raw bytes). */

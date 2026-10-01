@@ -20,6 +20,7 @@ import {
   BUSY_NOW,
   TEXT_IN_PROMPT,
   StartupDoneRuns,
+  codexTextTyped,
   type ScreenLine,
   type CodexComposerDeps,
 } from '../../../src/renderer/lib/codexComposer'
@@ -101,8 +102,35 @@ describe('sendImagePathToCodex (P3.15, row 70)', () => {
     }
   })
 
-  it('a line that does not come back whole on one composer row (it wrapped) is left typed, not sent, and the user is told to check it and press Enter', () => {
-    const h = harness(S.READY, (d) => composerShows(`${GLYPH} ${d.slice(0, 50)}`, `  ${d.slice(50)}`))
+  // Round 1 (F8): in a narrow (split) pane the line wraps onto more composer
+  // rows. Codex draws the rows after the first indented under the text; the
+  // line is sent when those rows, read together, hold exactly the line, and
+  // the footer is still the last row (a wrap may fall at a space, which the
+  // wrap then takes, or inside a word).
+  it('round 1 (F8): a line that wraps onto the next composer rows is still sent, wherever the wrap falls', () => {
+    const atSpace = (d: string): ScreenLine[] => composerShows(`${GLYPH} ${CODEX_IMAGE_LINE}`, `  ${d.slice(CODEX_IMAGE_LINE.length + 1)}`)
+    const midWord = (d: string): ScreenLine[] => composerShows(`${GLYPH} ${d.slice(0, 30)}`, `  ${d.slice(30, 70)}`, `  ${d.slice(70)}`)
+    for (const [name, after] of [['at a space', atSpace], ['inside words', midWord]] as const) {
+      const h = harness(S.READY, after)
+      h.send()
+      h.advance(CODEX_SUBMIT_DELAY_MS)
+      expect(h.writes, name).toEqual([LINE, '\r'])
+      expect(h.notes, name).toEqual([])
+    }
+  })
+
+  it('round 1 (F8): wrapped rows holding anything more than the line are left typed, not sent, and the user is told to check it and press Enter', () => {
+    const more = (d: string): ScreenLine[] => composerShows(`${GLYPH} ${d.slice(0, 50)}`, `  ${d.slice(50)} and more`)
+    const h = harness(S.READY, more)
+    h.send()
+    h.advance(CODEX_SUBMIT_DELAY_MS + CODEX_READY_POLL_MS * 2)
+    expect(h.writes).toEqual([LINE])
+    expect(h.notes).toEqual([IMAGE_TYPED_NOT_SENT])
+  })
+
+  it('round 1 (F8): a row under the line that is not one of its wrapped rows (not indented) stops the Enter', () => {
+    const stray = (d: string): ScreenLine[] => composerShows(`${GLYPH} ${d.slice(0, 50)}`, `${d.slice(50)}`)
+    const h = harness(S.READY, stray)
     h.send()
     h.advance(CODEX_SUBMIT_DELAY_MS + CODEX_READY_POLL_MS * 2)
     expect(h.writes).toEqual([LINE])
@@ -134,5 +162,27 @@ describe('sendImagePathToCodex (P3.15, row 70)', () => {
     h.advance(CODEX_SUBMIT_DELAY_MS * 4)
     expect(h.writes).toEqual([LINE])
     expect(h.notes).toEqual([])
+  })
+})
+
+// Round 1 (F8): the wrapped reading itself.
+describe('codexTextTyped (round 1, F8)', () => {
+  const wrapped = composerShows(`${GLYPH} ${LINE.slice(0, 40)}`, `  ${LINE.slice(40, 80)}`, `  ${LINE.slice(80)}`)
+  it('holds on the wrapped rows, and on one row', () => {
+    expect(codexTextTyped(wrapped, LINE)).toBe(true)
+    expect(codexTextTyped(composerShows(`${GLYPH} ${LINE}`), LINE)).toBe(true)
+  })
+  it('never while a turn runs, a prompt is up, the footer is not the last row, or for nothing', () => {
+    const busy = [...wrapped.slice(0, 10), S.plain(String.fromCharCode(0x25e6) + ' Working (2s ' + String.fromCharCode(0x2022) + ' esc to interrupt)'), ...wrapped.slice(10)]
+    expect(codexTextTyped(busy, LINE)).toBe(false)
+    expect(codexTextTyped([S.plain('  Press enter to continue'), ...wrapped], LINE)).toBe(false)
+    const footerFirst = wrapped.filter((l) => l.text.trim() !== '')
+    const noFooterLast = [...footerFirst.slice(0, -1), footerFirst[footerFirst.length - 1], S.plain('  more under the footer')]
+    expect(codexTextTyped(noFooterLast, LINE)).toBe(false)
+    expect(codexTextTyped(S.READY, '')).toBe(false)
+    expect(codexTextTyped(null, LINE)).toBe(false)
+  })
+  it('a slash command still goes by its own rule (its popup is not a wrapped row)', () => {
+    expect(codexTextTyped(S.TYPED_COMPACT, '/compact')).toBe(false)
   })
 })

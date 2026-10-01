@@ -64,10 +64,11 @@ afterEach(() => {
 async function altV(sessions: Session[], active: string) {
   useSessionStore.setState({ sessions, activeSessionId: active, renamingSessionId: null })
   act(() => { root.render(<Host />) })
-  await act(async () => {
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'v', altKey: true, bubbles: true }))
-    await Promise.resolve()
-    await Promise.resolve()
+  act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'v', altKey: true, bubbles: true })) })
+  // The handler awaits the saved image, then acts once: a sender, or a hint.
+  await vi.waitFor(() => {
+    const acted = h.sendImageToSession.mock.calls.length + h.sendImagePathToCodex.mock.calls.length + Object.keys(usePasteHintStore.getState().hints).length
+    if (acted === 0) throw new Error('the Alt+V handler has not acted yet')
   })
 }
 
