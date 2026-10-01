@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-01T10:52:18.587Z",
-  "head": "497fddb055e419328fd59d7accd51c71be77a4b4",
-  "tree": "6a1aafc1330601ddf60cdc81e05ae2b2af1c4062",
+  "generatedAt": "2026-10-01T11:28:15.826Z",
+  "head": "e050a266b59bbeb8e2792ca6fc884b25dd8159a4",
+  "tree": "7a0d424ed0e9cd479a7fb921a3a69193745e91f2",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -161,7 +161,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 49
+      "lineCount": 50
     },
     {
       "path": "README.md",
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 609,
+      "lineCount": 613,
       "truncated": true
     },
     {
@@ -976,7 +976,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 67
+      "lineCount": 71
     },
     {
       "path": "src/main/providers/compose.ts",
@@ -3418,7 +3418,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 94
+      "lineCount": 98
     },
     {
       "path": "tests/unit/main/provider-in-use.test.ts",
@@ -4065,7 +4065,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 109
+      "lineCount": 113
     },
     {
       "path": "tests/unit/providers/codex/ui-detection.test.ts",
@@ -4083,7 +4083,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 112
+      "lineCount": 144
     },
     {
       "path": "tests/unit/providers/host-color-scheme.test.ts",
@@ -5224,7 +5224,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 50
+      "lineCount": 51
     },
     {
       "path": "tests/unit/status-ingest.test.ts",

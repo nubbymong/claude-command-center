@@ -65,7 +65,7 @@ The app keeps one more thing from a Codex usage reading, and nothing else:
    balance is missing or not readable (and the credits are not unlimited).
    `hasCredits: false` has not been observed, so nothing is invented for it.
 
-## Carry marks (round 1)
+## Carry marks (rounds 1 and 2)
 
 The credits row brought a second thing to keep. Switch Account carries a
 conversation into the account it moves to (`conversation-carry.ts`): the copy in
@@ -76,32 +76,83 @@ new account's card until its session reports. This is not about the read bounds
 above; it changes what the app itself keeps, so it is recorded here.
 
 1. **What is kept.** One record per carry: the destination account's realm id,
-   its sessions folder, the conversation id (lower case) and the time of the
-   carry (epoch ms), made when the copy lands. A copy that was already there
-   keeps the record it has; an extension (the conversation coming back to an
-   account) replaces its record with the newer time. No text of the
-   conversation, no figure, no credential.
+   its sessions folder, the conversation id (lower case) and a time (epoch ms),
+   the later of the moment of the carry and the newest event time that has a
+   zone in the bytes that were copied (so an earlier machine clock, stepped back
+   before the move, cannot let the earlier account's later-dated events count;
+   a stamp more than 7 days ahead of the clock is taken for garbage and
+   ignored). The record is made before the copy and taken back if the copy
+   fails (a crash in between leaves a record, which only counts less); a
+   record that cannot be kept stops the carry ("not carried over"), never
+   lets it go on unmarked. A copy that was already there keeps the record it
+   has; an extension (the conversation coming back to an account) replaces its
+   record with the newer time. No text of the conversation, no figure, no
+   credential.
 2. **Where, and how long.** In memory, and in `carry-marks.json` in the app's
    own `providers/` configuration folder next to the account registry, never in
    an account's folder (`src/main/carry-marks-port.ts`; the composition root
    hands the port to the Codex package). Written atomically, owner-only where
-   there are modes, read back with every field validated (a file that is not the
-   expected shape reads as no marks). The newest 256 records are kept. A realm's
-   records are dropped when its account is archived and when its folder is
-   removed.
+   there are modes. The file fails closed:
+   - It is looked at before it is read: a link, a folder or any other thing
+     that is not a plain file, or a file over 4 MiB, is not read and is dealt
+     with as the next item says.
+   - A file that is not what this code wrote (not the expected shape in any one
+     field, not valid text) is set aside (renamed to `carry-marks.json.bad-<ms>`,
+     the newest 3 kept), never overwritten; a floor at that moment is kept in
+     the new file, and no rollout counts an event dated before it. So the
+     events of a carried conversation that lost its record are not counted
+     either; an account's own events written after the floor count as usual.
+   - A file that cannot be read now (busy, locked, the folder missing) is read
+     again after a wait of 1 second that doubles to 30 seconds, not at every
+     call. While it cannot be read, no event of any Codex rollout counts, and a
+     carry is refused: the Usage page shows no last-seen Codex figure and the
+     live strip no Codex allowance until the file reads, then they come back.
+     Nothing the app shows is wrong, and nothing is hidden for good: a file
+     that stays unreadable shows no Codex last-seen figure until it is fixed.
+   - A record is kept only when it is written. The file is trimmed oldest first
+     when it is written so it always fits what a read accepts (1 MiB of text).
+   - A realm dropped while the file could not be read is remembered (up to 256)
+     and filtered out when the file is read, so its records do not come back.
+   - Every field read back is validated, and only the object's own properties
+     are read.
+   The newest 256 records are kept. A realm over its share evicts its own
+   oldest record, never another account's. A realm's records are dropped when
+   its account is archived (the realm it has now and every realm it has had,
+   such as a folder a Sign in again moved it off) and when its folder is
+   removed. A Sign in again (copying the history into a replacement folder)
+   moves the old folder's records to the new one, and refuses to go on if they
+   cannot be kept.
 3. **What reads it.** The session watcher (the live figure) and the last-seen
    reader count, in a rollout that has a record, only the token_count events
-   dated after the carry time. An event whose timestamp has no zone designator
-   (or that is not a time) counts for nothing there, the same zoneless rule as
-   the transcript reader's (P3.12), so a doubt shows no figure rather than the
-   earlier account's. The new account's own events after the carry show as
-   usual. Everything else a rollout says (tokens, context, edits) is read as
-   before.
-4. **Limits.** The folder is recorded as a path: if the app's data folder is
-   moved, the records no longer match their folders and the rollout reads whole,
-   as it did before. An account's events from before an extension (the
-   conversation going A, B, A) are not counted for it either; they appear again
-   with its next report. A carry made before this change has no record.
+   dated after the record's time (or the floor, if later). An event whose
+   timestamp has no zone designator (or that is not a time) counts for nothing
+   there, the same zoneless rule as the transcript reader's (P3.12), so a doubt
+   shows no figure rather than the earlier account's. The new account's own
+   events after the carry show as usual. Everything else a rollout says
+   (tokens, context, edits) is read as before.
+4. **Limits.**
+   - The folder is recorded as a path: if the app's data folder is moved, the
+     records no longer match their folders and the rollout reads whole, as it
+     did before. An account's events from before an extension (the conversation
+     going A, B, A) are not counted for it either; they appear again with its
+     next report. A carry made before this change has no record.
+   - Past 256 records an account with the most records loses its oldest: that
+     conversation's rollout, if it is still on disk, reads whole again
+     (the earlier account's figures could show on its card until its session
+     reports). The bound is a count, not an age.
+   - The reports carry no account identifier (the fixtures hold none: a limit
+     id, a name, the two windows, a plan and the credits), so a sub-limit's bars
+     (an extra metered limit with its own id) cannot be tied to an account.
+     After a mark they are dated like every other event and an earlier
+     account's are not counted. In a rollout with no record (a carry made
+     before marks existed) an earlier account's sub-limit bars can still show
+     beside the new account's own main bars, and a newer main report does not
+     remove them: an account's own sub-limit is written only when that limit is
+     used, so removing older ones would hide the account's own wrongly. The
+     credits do follow the newest main report that states them (Decision, item 2).
+   - While the file cannot be read, the page withholds every Codex last-seen
+     figure (above), not only the carried conversations': the file says which
+     rollouts are carried, and that is not known.
 
 ## Consequences
 
@@ -113,10 +164,18 @@ above; it changes what the app itself keeps, so it is recorded here.
   addition in item 1 and the one reader that implements items 2 and 3
   (`readCredits` in `src/main/providers/codex/rate-limits.ts`).
 - The carry marks sit beside the conversation carry (realm-folders.ts runs the
-  copy under both realm locks and marks it after it lands), a new file in the
-  app's configuration folder, and the archive path of the accounts service
-  (`forget`): the pass covers them too (ADR-009). A mark that cannot be kept
-  never fails a carry or an archive.
+  copy under both realm locks, marks it before it starts and takes the mark
+  back if it fails), a new file in the app's configuration folder that is
+  read, set aside and trimmed, and the archive and sign-in-again paths of the
+  accounts service (`forget`, `adopt`): the pass covers them too (ADR-009).
+  A mark that cannot be kept stops that carry ("not carried over") and never
+  fails an archive.
+- Rejected: reading an unreadable marks file as "no marks". It would let the
+  earlier account's figures show on a new account's card whenever the file was
+  busy, and a corrupt file overwritten blind would lose every record at once.
+  The cost is that an unreadable file withholds every Codex last-seen figure
+  until it can be read (Carry marks, item 4); the wait before each new try
+  keeps that from costing a read at every call.
 - Rejected: taking credits from rollouts only. A closed account on a supported
   CLI is shown from the fresh read, which replaces last-seen, so its row would
   vanish exactly when the page reads afresh; that is not parity.
