@@ -367,7 +367,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Paste clipboard images with Alt+V',
         title: 'Paste Image from Clipboard',
-        body: 'Image on your clipboard? Press **Alt+V** in any session and the app saves it to a temp file and pastes the file path into Claude\'s prompt.\n\nWorks with screenshots, images copied from browser, diagrams from Excalidraw, anything in clipboard image format. No more "let me save this to disk first and drag it in".',
+        body: 'Image on your clipboard? Click into the session and press **Alt+V**: the key goes to the assistant, which pastes the image itself (Codex shows it as [Image #1]).\n\nWith focus elsewhere in the app, **Alt+V** saves the image and types a line with its path into the session, for the assistant to open. On a Codex session the app types it only into an empty Codex prompt, and says why when it cannot.\n\nWorks with screenshots, images copied from a browser, diagrams from Excalidraw: anything in clipboard image format. No more "let me save this to disk first and drag it in".',
       },
     },
   },
@@ -1034,6 +1034,24 @@ export const TIPS_LIBRARY: Tip[] = [
         actionLabel: 'Open Settings',
         actionTarget: 'settings',
         focusHint: 'Settings, Accounts -- the menu on a Codex account row',
+      },
+    },
+  },
+
+  // P3.15: Codex's own Windows sandbox (the VM run on 0.155.1 and 0.153.4).
+  // Only its administrator setup lets Codex edit on its own; the app does not
+  // change Codex's sandbox settings.
+  {
+    id: 'tip.codex-windows-sandbox',
+    category: 'sessions',
+    complexity: 'intermediate',
+    priority: 56,
+    requires: ['sessions.codex-config'],
+    variants: {
+      primary: {
+        shortText: 'Codex on Windows: set up its sandbox once',
+        title: 'Codex Edits on Windows',
+        body: 'On Windows, when Codex asks to set up its sandbox, choose **1. Set up default sandbox**. It needs administrator permission once, and after that Codex edits files in your project without asking, on **Standard** and on **Auto** alike.\n\nWith **2. Use non-admin sandbox**, or with no sandbox set up, Codex cannot write on its own: on **Standard** it asks before every edit, and on **Auto** edits fail. Codex remembers the choice for each Codex account.\n\nDo not run the app as administrator: Codex\'s sandbox stalls or fails in a session started from an app that runs elevated.',
       },
     },
   },

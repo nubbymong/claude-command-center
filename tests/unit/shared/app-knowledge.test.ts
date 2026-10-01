@@ -10,6 +10,8 @@
  */
 import { describe, it, expect } from 'vitest'
 import { APP_KNOWLEDGE_SECTIONS } from '../../../src/shared/app-knowledge'
+import { TIPS_LIBRARY } from '../../../src/renderer/tips-library'
+import { trainingSteps } from '../../../src/renderer/training-steps'
 
 describe('app knowledge is publishable', () => {
   it('has unique, stable-looking ids and a title and body for every section', () => {
@@ -201,5 +203,49 @@ describe('app knowledge after P3.14', () => {
     expect(body('accounts')).toMatch(/A Codex account on paid credits shows its balance under its bars, in Codex credits \(a count, not money\)/)
     expect(body('accounts')).toMatch(/from the same reading/)
     expect(body('accounts')).toMatch(/Unlimited/)
+  })
+})
+
+// P3.15 (rows 70, 71): what the VM run showed. Alt+V with the terminal focused
+// goes to the assistant, which pastes the image itself; with focus elsewhere
+// the app saves the image and types its path (the tip said it always pasted a
+// path into Claude's prompt). Codex's Windows sandbox: only the administrator
+// setup lets Codex edit on its own; the non-admin one, or none, asks before
+// every edit on Standard and fails on Auto; an elevated app stalls it. Codex's
+// own behaviour, given as a known issue with its workaround, and a tip.
+describe('app knowledge and tips after P3.15', () => {
+  const body = (id: string) => APP_KNOWLEDGE_SECTIONS.find((x) => x.id === id)!.body
+  const tip = (id: string) => TIPS_LIBRARY.find((t) => t.id === id)!.variants.primary
+  it('the Alt+V tip says what happens with the session focused and with focus elsewhere, for both assistants', () => {
+    const t = tip('tip.paste-image')
+    expect(t.body).not.toMatch(/Claude.s prompt/)
+    expect(t.body).toMatch(/Click into the session and press \*\*Alt\+V\*\*: the key goes to the assistant, which pastes the image itself/)
+    expect(t.body).toMatch(/With focus elsewhere in the app, \*\*Alt\+V\*\* saves the image and types a line with its path into the session/)
+    expect(t.body).toMatch(/On a Codex session the app types it only into an empty Codex prompt, and says why when it cannot/)
+    const guide = trainingSteps.flatMap((s) => s.highlights ?? []).find((l) => l.startsWith('Alt+V'))!
+    expect(guide).not.toMatch(/Claude.s prompt/)
+    expect(guide).toMatch(/the assistant pastes it itself; with focus elsewhere, the app saves it and types its path/)
+  })
+  it('the known issue gives the Windows sandbox workaround: the administrator setup once, what the other choice does, and never an elevated app', () => {
+    const k = body('known-issues')
+    expect(k).toMatch(/On Windows, Codex edits files on its own only once its sandbox has been set up with administrator permission/)
+    expect(k).toMatch(/Choose 1\. Set up default sandbox: Windows asks for administrator permission once/)
+    expect(k).toMatch(/2\. Use non-admin sandbox/)
+    expect(k).toMatch(/on Standard Codex asks before every edit/)
+    expect(k).toMatch(/on Auto every edit fails/)
+    expect(k).toMatch(/the same in a terminal outside the app/)
+    expect(k).toMatch(/Do not run the app as administrator/)
+  })
+  it('a tip for Codex users says the same in short', () => {
+    const t = TIPS_LIBRARY.find((x) => x.variants.primary.title === 'Codex Edits on Windows')!
+    // Shown to the users the other Codex tips are shown to.
+    expect(t.requires).toEqual(TIPS_LIBRARY.find((x) => x.variants.primary.title === 'Restart a Codex Session')!.requires)
+    expect(t.requires?.length).toBe(1)
+    const p = t.variants.primary
+    expect(p.shortText.length).toBeLessThan(60)
+    expect(p.body).toMatch(/On Windows, when Codex asks to set up its sandbox, choose \*\*1\. Set up default sandbox\*\*/)
+    expect(p.body).toMatch(/on \*\*Standard\*\* it asks before every edit, and on \*\*Auto\*\* edits fail/)
+    expect(p.body).toMatch(/Do not run the app as administrator/)
+    expect(`${p.title} ${p.body}`).not.toMatch(/\u2014/)
   })
 })

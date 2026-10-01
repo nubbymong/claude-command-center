@@ -6,6 +6,7 @@ import { matchesShortcut, DEFAULT_SHORTCUTS } from '../utils/shortcuts'
 import { captureGlyphDiagnostic } from '../utils/glyphDiagnostic'
 import { requestResync } from '../components/terminal/repaintRegistry'
 import { sendImageToSession } from '../utils/imageTransfer'
+import { sendImagePathToCodex } from '../lib/codexComposer'
 import { usePasteHintStore } from '../stores/pasteHintStore'
 import { useAppMetaStore } from '../stores/appMetaStore'
 import { deriveOnboarding } from '../onboarding/gate'
@@ -109,8 +110,16 @@ export function useKeyboardShortcuts(
           const session = state.sessions.find((s) => s.id === sessionId)
           const res = await window.electronAPI.clipboard.saveImage()
           if ('path' in res) {
-            // Success is self-evident — the path appears in the prompt (no toast).
-            sendImageToSession(sessionId, res.path, 'I just pasted an image — please view it.', session?.sessionType)
+            // P3.15 (row 70): this runs with focus outside the terminal (a
+            // focused terminal hands Alt+V to the CLI, which pastes the image
+            // itself). A Codex session's line goes through the rule the app
+            // types into Codex by, and a line it could not send says why.
+            if (session?.provider === 'codex' && !session.shellOnly) {
+              sendImagePathToCodex(sessionId, res.path, (note) => usePasteHintStore.getState().show(sessionId, note))
+            } else {
+              // Success is self-evident — the path appears in the prompt (no toast).
+              sendImageToSession(sessionId, res.path, 'I just pasted an image — please view it.', session?.sessionType)
+            }
           } else {
             usePasteHintStore.getState().show(
               sessionId,
