@@ -214,21 +214,11 @@ export function initIndexingGaps(path: string, now: number = Date.now()): void {
   if (closed) { dirty = true; write() }
 }
 
-function closeOn(key: string, ts: number): void {
-  const list = windows.get(key)
-  if (!list) return
-  for (let i = list.length - 1; i >= 0; i--) {
-    if (list[i][1] === null) { list[i][1] = Math.max(list[i][0], ts); break }
-  }
-}
-
-/** Close the window a session held: that one, and not another session's on the
- *  same conversation; if it was merged into an older one, the latest open one. */
+/** Close the window a session held: that exact one, never another session's on the
+ *  same conversation. One that was merged into an older window is left open (the
+ *  merged window is no longer the session's alone): toward not indexing. */
 function closeHeld(held: { key: string; win: NotIndexedWindow }, ts: number): void {
-  const list = windows.get(held.key)
-  if (!list) return
-  if (!list.includes(held.win)) { closeOn(held.key, ts); return }
-  if (held.win[1] === null) held.win[1] = Math.max(held.win[0], ts)
+  held.win[1] = Math.max(held.win[0], ts)
 }
 
 /** `sessionId`, not indexed since `since` (its launch, or the switch-off),
