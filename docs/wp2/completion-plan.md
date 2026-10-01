@@ -2476,9 +2476,11 @@ count, not money). The schemas declare the three fields (`hasCredits`,
 `unlimited`, `balance`, identical in 0.153.4, 0.155.1 and 0.157.1) and state no
 unit, so the unit rests on that evidence, which is a string search of the binary
 and not a live read of the screen. A Codex card on paid credits shows a Credits
-row under its bars: "N credits" (the balance, at most two fraction digits) or
-"Unlimited". No row when the account has no credits, no balance, or
-`hasCredits` false (never observed, so nothing is invented for it). It is a
+row under its bars: "N credits" (the balance, two fraction digits, and "<0.01
+credits" for a positive balance under 0.005) or "Unlimited". No row when the
+account has no credits, when `hasCredits` is false and the credits are not
+unlimited (never observed, so nothing is invented for it), or when the balance is
+missing or not readable. It is a
 count and never formatted as money, so Claude's `CreditsInfo` (an ISO currency)
 is not reused: the new type is `AllowanceCredits` (`hasCredits`, `unlimited`,
 `balance`). The row is placed and styled as Claude's through one shared
@@ -2494,9 +2496,12 @@ reset-credit grants (`rateLimitResetCredits`, a different thing). Untrusted
 input, as bound 8 treats the rest: own properties of a plain object only, a flag
 that is not a boolean drops the whole credits, a balance must match
 `^\d{1,13}(\.\d{1,12})?$` or it is null (the flags kept), no other key is copied,
-and credits alone never make a reading. In a merge the newest credits win and an
-older figure stays when a newer reading has none; the key is omitted from the
-reading, the port's reading and the page's view when there are none.
+and credits alone never make a reading. The credits are the newest default-limit
+report's, the one the main bars come from (round 1): a null there, which is what
+an account without credits writes, is "none now" and clears an older figure; a
+report with no credits key, or a sub-limit's, leaves it. The key is omitted from
+the merged reading, the port's reading and the page's view when there is no
+figure.
 The read itself does not change: the three code-built messages, argv, realm,
 lease, lifecycle, supported versions, triggers and the client's schema checks
 (`snapshotOk` and `readResultOk` do not look at credits, so a malformed credits
@@ -2513,14 +2518,18 @@ rate-limits.ts` (`readCredits`, the `NAMES` flag spelling per source, the merge)
 `usage.ts` (`toUsageReading`), `core/package.ts` (`UsageReading`),
 `core/accounts-service.ts` (the view's copy), `shared/providers/accounts-view.ts`,
 `AccountUsagePanel.tsx`, and comments in `app-server-client.ts`.
-Limits and deviations, recorded: (1) the credits are the newest report that has
-them, so after a newer event with none the figure can be older than the row's
-"As of" age implies; (2) a fresh read replaces last-seen whole, so a read whose
-answer has no credits shows none even where last-seen had them (the row is of
-the same reading as the bars, as Claude's is); (3) the unit rests on P3.1's
-strings evidence: if a reviewer rejects that, the fallback above applies (the
-known issue returns and row 17 goes to the owner as a section 19 record);
-(4) `hasCredits` false has never been seen, so it draws no row.
+Limits and deviations, recorded: (1) a fresh read replaces last-seen whole, so a
+read whose answer has no credits shows none even where last-seen had them (the
+row is of the same reading as the bars, as Claude's is); (2) the unit rests on
+P3.1's strings evidence: if a reviewer rejects that, the fallback above applies
+(the known issue returns and row 17 goes to the owner as a section 19 record);
+(3) `hasCredits` false has never been seen, so it draws no row; (4) a balance
+with more than 13 integer or 12 fraction digits is not read and shows no row;
+(5) open, not built in round 1: a conversation carried to another account by
+Switch Account is read from its start, so until the new account's session
+reports its own figure its card shows the carried figures (bars, plan and
+credits); the fix needs the carry's end known to both readers, which is outside
+this phase's files (see round 1).
 Tests, red first on 624eff9f (57 of the new tests failed in the eight touched
 files; all 345 now pass): `rate-limits.test.ts` (the three fields from a rollout
 and from the answer's own `rateLimits`; a per-limit entry's credits never kept;
@@ -2555,6 +2564,47 @@ bars, N matching the CLI's own status view; an open session shows it live; the
 last-seen reading shows it with its "As of" line; an account with no credits and
 an API-key account show no row; a screenshot for the owner, both themes. The
 owner confirms ADR-023.
+Round 1 (897cb345; reviews of c65b359e and f70a57fd: spec PASS-WITH-FIXES, code
+quality PASS, ADR-009 lens A PASS and lens B FINDINGS), built on 469e65b9. (C1) The
+credits are now the newest default-limit report's, the one the main bars come
+from. A real account without credits writes `credits: null` on every event
+(`tests/fixtures/codex/rollout-sample.jsonl` line 8), and the first round
+kept an older figure through it, so a card could show a balance the account no
+longer had. Now a snapshot's credits have three states: a figure; null, "none
+now" (the key is null, or present and unusable); and no statement (the key is
+absent, or the snapshot is a sub-limit's, whose credits are never read). A later
+null clears an earlier figure and no statement leaves it, in a merge and in the
+watcher's one-at-a-time fold; a merged reading never carries null. The app
+knowledge clause now says the balance is taken from the same report as the main
+bars and that a newer report with no credits takes the row away, and drops "so it
+carries the same age". (C3) A test pollutes `Object.prototype` and shows only
+own properties are read. (C4) A test shows the status line built from a reading
+with credits has exactly the keys of one without, and the session's emitted
+updates carry no credits key or text. (N1) The `Number.isFinite` that the regex
+made unreachable is gone. (N2) A positive balance under 0.005 reads "<0.01
+credits", never "0 credits"; ADR-023 now records that a balance with more than 13
+integer or 12 fraction digits shows no row. (N3) The telemetry test's folder is
+removed in a `finally` after the watcher stops, only if it is named like the
+test's own prefix and made directly in the OS temp folder. (N4) ADR-023 item 5
+lists every no-row case. Red first on the round 0 source: 24 of the changed and
+new tests failed in 5 files; now all 357 tests of the 8 touched files pass.
+Mutation: 63 runs, every one red, each alone and restored byte-identically (30
+new on the three states, the sub-limit and map-entry rules, own properties, the
+status line, the small balance and the clause; the round 0 set re-run on the new
+code, 33 red, and 9 of its mutants re-anchored where the code changed). On the
+host: 55 affected and 65 tree-scanner files and the WP1 gate files pass,
+`npm run typecheck` and `tsc` of the touched tests are clean, and the manifest
+check is complete. (C2, not built, for the orchestrator) After Switch Account the
+carried copy of the conversation sits in the new account's folder with the
+earlier account's events, and the watcher (`readNew`) and last-seen read it from
+its start, so until the new account reports its own figure its card shows the
+carried bars, plan and credits. Counting only events
+written after the carry needs the carry's end known to both readers; the carry
+result already carries its byte count, but it is handled in `pty-handlers.ts`
+(P3.13's and ADR-009's file) and a last-seen read after a restart needs it kept.
+A file-creation-time filter is contained but unreliable (a filesystem that
+reports the change time as creation time, Windows name tunnelling after a
+second carry), so it is not built.
 
 **P3.15 Terminal verification.** On the VM with real Codex 0.155.1: a Codex
 session in the Services snapshot; Alt+V image paste reaching Codex (and the tip
