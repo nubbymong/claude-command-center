@@ -1080,7 +1080,7 @@ function FooterDisplayCard(): React.ReactElement {
 
 /* ── Status Line Preview (mock data) ─────────────────── */
 
-function StatusLinePreview({ sl }: { sl: StatusLineSettings }) {
+export function StatusLinePreview({ sl }: { sl: StatusLineSettings }) {
   // Elements that are toggled off render at 30% opacity with strikethrough
   const vis = (on: boolean) =>
     on ? '' : 'opacity-30 line-through'
@@ -1089,8 +1089,11 @@ function StatusLinePreview({ sl }: { sl: StatusLineSettings }) {
     <div
       className="flex flex-col shrink-0 bg-crust border-t border-surface0 text-subtext0"
     >
-      {/* Row 1 */}
-      <div className="flex items-center gap-3 px-2 py-1">
+      {/* Row 1. P3.16a (U3): each row wraps and keeps every value whole. The
+          values come to more than the 696px the Settings column gives the
+          preview (max-w-3xl, less its padding), and the box around it clips,
+          so a single non-wrapping row cut off its last value. */}
+      <div data-testid="status-line-preview-row" className="flex flex-wrap items-center gap-x-3 gap-y-0.5 whitespace-nowrap px-2 py-1">
         <span className={`text-text font-medium ${vis(sl.showModel)}`}>Claude 4 Sonnet</span>
         <span className={`text-overlay1 ${vis(sl.showEffort)}`}>xhigh</span>
         <span className={`flex items-center gap-1 ${vis(sl.showAccount)}`}>
@@ -1121,7 +1124,7 @@ function StatusLinePreview({ sl }: { sl: StatusLineSettings }) {
         <span className={`text-overlay1 tabular-nums ${vis(sl.showDuration)}`}>3m 42s</span>
       </div>
       {/* Row 2: Rate limits */}
-      <div className={`flex items-center gap-3 px-2 py-0.5 border-t border-surface0/50 ${!sl.showRateLimits && !sl.showResetTime ? 'opacity-30' : ''}`}>
+      <div data-testid="status-line-preview-row" className={`flex flex-wrap items-center gap-x-3 gap-y-0.5 whitespace-nowrap px-2 py-0.5 border-t border-surface0/50 ${!sl.showRateLimits && !sl.showResetTime ? 'opacity-30' : ''}`}>
         <span className={!sl.showRateLimits ? 'opacity-30' : ''}>
           <MockRateDots label="5h" pct={35} />
         </span>

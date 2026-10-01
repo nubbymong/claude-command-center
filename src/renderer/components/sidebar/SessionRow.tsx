@@ -171,6 +171,7 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
         isActive ? 'text-text' : 'text-subtext0 hover:text-text'
       } ${isFocused ? 'card-focus' : ''}`}
       style={selectedStyle}
+      data-attention={st === 'awaiting' ? 'true' : undefined}
       onMouseEnter={(e) => { if (!isActive && !isSelected) (e.currentTarget as HTMLElement).style.backgroundColor = identity + '12' }}
       onMouseLeave={(e) => { if (!isActive && !isSelected) (e.currentTarget as HTMLElement).style.backgroundColor = '' }}
     >
