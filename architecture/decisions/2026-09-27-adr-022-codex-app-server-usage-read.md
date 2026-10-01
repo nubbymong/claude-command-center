@@ -134,7 +134,8 @@ owner decision and a new ADR.
    reset times within 60 days of now, window lengths positive integers, the
    plan from the known list only, stderr capped and never shown. The app keeps
    percentages, reset times, window lengths, limit name and plan; it never
-   reads `auth.json`.
+   reads `auth.json`. (ADR-023, 2026-10-01, adds the credits count to what is
+   kept; nothing else in this bound changes.)
 
 ## Evidence
 

@@ -166,6 +166,36 @@ describe('readLastSeenAllowance: which rollout', () => {
     expect(r.planType).toBe('plus')
   })
 
+  // P3.14 (ADR-023): the credits count of the rollout the figure comes from.
+  it('keeps the credits of the newest report that carries them, and of the rollout reported last', async () => {
+    const f = fakeFs()
+    const credits = (balance: string) => ({ has_credits: true, unlimited: false, balance })
+    f.file(`${day('2026', '09', '27')}\\rollout-2026-09-27T08-00-00-a.jsonl`, rollout(
+      meta('2026-09-27T08:00:00Z'),
+      tokenCount('2026-09-27T08:00:01Z', limits(5, { credits: credits('300') })),
+    ))
+    f.file(`${day('2026', '09', '27')}\\rollout-2026-09-27T09-00-00-b.jsonl`, rollout(
+      meta('2026-09-27T09:00:00Z'),
+      tokenCount('2026-09-27T09:00:01Z', limits(6, { credits: credits('250.5') })),
+      // A newer event with no credits does not take them away.
+      tokenCount('2026-09-27T09:00:02Z', limits(7, { credits: null })),
+    ))
+    const r = (await read(f))!
+    expect(pct(r)).toBe(7)
+    expect(r.credits).toEqual({ hasCredits: true, unlimited: false, balance: 250.5 })
+  })
+
+  it('a rollout with no credits gives a reading with no credits key, and hostile credits are not kept', async () => {
+    const f = fakeFs()
+    f.file(`${day('2026', '09', '27')}\\rollout-2026-09-27T09-00-00-a.jsonl`, rollout(meta('2026-09-27T09:00:00Z'), tokenCount('2026-09-27T09:00:01Z', limits(5))))
+    expect(Object.prototype.hasOwnProperty.call((await read(f))!, 'credits')).toBe(false)
+    const g = fakeFs()
+    g.file(`${day('2026', '09', '27')}\\rollout-2026-09-27T09-00-00-a.jsonl`, rollout(meta('2026-09-27T09:00:00Z'), tokenCount('2026-09-27T09:00:01Z', limits(5, { credits: { has_credits: 'yes', unlimited: false, balance: '5', extra: 'x-secret' } }))))
+    const r = (await read(g))!
+    expect(r.credits).toBeUndefined()
+    expect(JSON.stringify(r)).not.toContain('x-secret')
+  })
+
   it('is null for no sessions folder, an empty one, or rollouts with no allowance at all', async () => {
     expect(await read(fakeFs())).toBeNull()
     const f = fakeFs()
@@ -400,6 +430,22 @@ describe('createCodexUsageOperations', () => {
     expect(seen.ok && seen.reading?.buckets.map((b) => [b.label, b.percent])).toEqual([['5h', 33], ['Weekly', 34]])
     expect(seen.ok && seen.reading?.planLabel).toBe('Pro')
     expect(seen.ok && seen.reading?.readingAt).toBe(Date.parse('2026-09-27T09:00:01Z'))
+  })
+
+  // P3.14 (ADR-023): the credits count rides every reading the port gives.
+  it('live and last-seen both carry the reading\'s credits to the usage reading, and omit the key when there are none', async () => {
+    const f = fakeFs()
+    f.file(`${day('2026', '09', '27')}\\rollout-2026-09-27T09-00-00-a.jsonl`, rollout(tokenCount('2026-09-27T09:00:01Z', limits(33, { credits: { has_credits: true, unlimited: false, balance: '1250.0000000000' } }))))
+    const { live } = livePair()
+    const ops = createCodexUsageOperations({ sessionsDir: async () => SESSIONS, fs: f.port, live, now: () => NOW })
+    const seen = await ops.lastSeen(realm)
+    expect(seen.ok && seen.reading?.credits).toEqual({ hasCredits: true, unlimited: false, balance: 1250 })
+    live.record(SESSIONS, { limits: [{ limitId: 'codex', limitName: null, readingAt: 5, primary: { windowMinutes: 300, usedPercent: 44, resetsAt: null }, secondary: null }], planType: 'plus', readingAt: 5 })
+    const bare = await ops.live(realm)
+    expect(bare.ok && bare.reading && Object.prototype.hasOwnProperty.call(bare.reading, 'credits')).toBe(false)
+    live.record(SESSIONS, { limits: [{ limitId: 'codex', limitName: null, readingAt: 6, primary: { windowMinutes: 300, usedPercent: 45, resetsAt: null }, secondary: null }], planType: 'plus', readingAt: 6, credits: { hasCredits: true, unlimited: true, balance: null } })
+    const open = await ops.live(realm)
+    expect(open.ok && open.reading?.credits).toEqual({ hasCredits: true, unlimited: true, balance: null })
   })
 
   it('a realm whose home fails the launch\'s canonical-home check is refused before any read', async () => {

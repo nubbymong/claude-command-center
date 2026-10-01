@@ -7,7 +7,7 @@ import { formatResetTime } from '../utils/terminalFormatting'
 import PageFrame from './PageFrame'
 import { ProviderMark } from './sidebar/Badges'
 import { describeAuthWindow, type AuthWindowTone, type ProfileAuthInfo } from '../../shared/account-auth'
-import type { AccountUsage, UsageBucket } from '../../shared/usage-types'
+import type { AccountUsage, AllowanceCredits, UsageBucket } from '../../shared/usage-types'
 import { bucketPastReset, relAgo } from '../../shared/usage-labels'
 import type { AccountProfile } from '../../shared/account-types'
 import type { AccountsSnapshot, AccountView, ProviderAccountUsageView, ProviderId } from '../../shared/providers'
@@ -482,6 +482,31 @@ function CardPill({ children, end, plan }: { children: React.ReactNode; end?: bo
   )
 }
 
+/** The Credits row of a card, one markup for both providers: the label on the
+ *  left, the value on the right, under the bars. `muted` greys the value (an
+ *  account whose credit is switched off). Only the Codex card names a test id. */
+function CreditsRow({ value, muted, testId }: { value: string; muted?: boolean; testId?: string }) {
+  return (
+    <div className="flex items-center justify-between text-[0.8125rem] mt-1 pt-2 border-t border-surface0/60" data-testid={testId}>
+      <span className="text-overlay1">Credits</span>
+      <span className={`tabular-nums ${muted ? 'text-overlay1' : 'text-text'}`}>{value}</span>
+    </div>
+  )
+}
+
+/** A Codex account's credits as its card words them (ADR-023). Codex credits
+ *  are a COUNT, not money, so this is not Claude's money text: "Unlimited", or
+ *  the balance and the CLI's own word for it ("1,250 credits"). Null is no
+ *  row: no balance to show, or credits the reading says the account does not
+ *  have (a state no real account has shown, so nothing is invented for it). */
+export function codexCreditsText(c: AllowanceCredits): string | null {
+  if (c.unlimited) return 'Unlimited'
+  if (c.hasCredits && typeof c.balance === 'number' && Number.isFinite(c.balance)) {
+    return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(c.balance)} credits`
+  }
+  return null
+}
+
 function creditsText(c: NonNullable<AccountUsage['credits']>): string {
   if (!c.enabled) {
     const why = c.disabledReason === 'out_of_credits' ? 'Out of credits' : 'Off'
@@ -584,12 +609,7 @@ export function AccountCard({
       {row.status === 'ok' && row.buckets.length > 0 && (
         <div className="flex flex-col gap-2">
           {row.buckets.map((b) => <UsageBar key={b.key} bucket={b} now={now} />)}
-          {row.credits && (
-            <div className="flex items-center justify-between text-[0.8125rem] mt-1 pt-2 border-t border-surface0/60">
-              <span className="text-overlay1">Credits</span>
-              <span className={`tabular-nums ${row.credits.enabled ? 'text-text' : 'text-overlay1'}`}>{creditsText(row.credits)}</span>
-            </div>
-          )}
+          {row.credits && <CreditsRow value={creditsText(row.credits)} muted={!row.credits.enabled} />}
         </div>
       )}
 
@@ -675,6 +695,10 @@ export function CodexAccountCard({
   const plan = view.planLabel || account.planLabel
   const shown = (view.status === 'ok' || view.status === 'not-signed-in') && view.buckets.length > 0
   const line = shown ? readingLine(view, now) : null
+  // The balance, in Codex credits, from the same reading as the bars (ADR-023).
+  // It is drawn only under the bars, so a parked, no-session or per-token card
+  // (which never reaches that block) shows none.
+  const credits = view.credits ? codexCreditsText(view.credits) : null
   return (
     <div
       className={`rounded-xl border border-surface0/70 px-4 py-3.5 ${parked ? 'bg-surface0/10 opacity-60' : 'bg-surface0/20'}`}
@@ -712,6 +736,7 @@ export function CodexAccountCard({
           {shown && (
             <div className="flex flex-col gap-2">
               {view.buckets.map((b) => <UsageBar key={b.key} bucket={b} now={now} />)}
+              {credits !== null && <CreditsRow value={credits} testId="account-usage-credits" />}
             </div>
           )}
           {view.status === 'not-signed-in' && (

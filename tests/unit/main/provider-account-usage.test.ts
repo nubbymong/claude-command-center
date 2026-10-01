@@ -51,14 +51,14 @@ function usageFs() {
   }
   return {
     port, calls, hooks,
-    rollout: (sessions: string, pct: number, plan = 'plus') => {
+    rollout: (sessions: string, pct: number, plan = 'plus', credits?: unknown) => {
       // A past day: a reading time later than now would be held to now.
       const d = `${sessions}\\2026\\09\\20`
       const parts = norm(d).split('\\')
       for (let i = 1; i <= parts.length; i++) dirs.add(parts.slice(0, i).join('\\'))
       files.set(norm(`${d}\\rollout-2026-09-20T09-00-00-a.jsonl`), JSON.stringify({
         timestamp: '2026-09-20T09:00:01Z', type: 'event_msg',
-        payload: { type: 'token_count', info: null, rate_limits: { limit_id: CODEX_DEFAULT_LIMIT_ID, primary: { used_percent: pct, window_minutes: 300 }, plan_type: plan } },
+        payload: { type: 'token_count', info: null, rate_limits: { limit_id: CODEX_DEFAULT_LIMIT_ID, primary: { used_percent: pct, window_minutes: 300 }, plan_type: plan, ...(credits === undefined ? {} : { credits }) } },
       }) + '\n')
     },
   }
@@ -312,6 +312,66 @@ describe('what each account shows (plan section 3)', () => {
     t.h.signedIn.delete(realmHome.toLowerCase())
     expect((await t.h.service.refreshStatus({ accountId: a })).ok).toBe(true)
     expect(await t.h.service.readAccountUsage({ accountId: a })).toMatchObject({ ok: true, usage: { status: 'not-signed-in', source: 'last-seen' } })
+  })
+
+  // P3.14 (ADR-023): a Codex account's credits count comes with its allowance,
+  // from whichever source shows it, and the view has no credits key at all when
+  // the reading has none.
+  describe('credits (P3.14)', () => {
+    const CREDITS = { has_credits: true, unlimited: false, balance: '1250.0000000000' }
+    const SHOWN = { hasCredits: true, unlimited: false, balance: 1250 }
+    const hasKey = (v: object) => Object.prototype.hasOwnProperty.call(v, 'credits')
+
+    it('a closed account\'s last-seen reading carries its credits', async () => {
+      const t = await setup()
+      const a = await addCodexAccount(t.h, 'A')
+      t.fs.rollout(sessionsOf(t.h, a), 37, 'pro', CREDITS)
+      const r = await t.h.service.readAccountUsage({ accountId: a }, { read: true })
+      expect(r).toMatchObject({ ok: true, usage: { status: 'ok', source: 'last-seen', credits: SHOWN } })
+    })
+
+    it('an account in use shows the credits of its live figure', async () => {
+      const t = await setup()
+      const a = await addCodexAccount(t.h, 'A')
+      expect(t.h.leases.add(a, 'codex', { kind: 'session', ownerId: 'sess-1' }).ok).toBe(true)
+      t.live.record(sessionsOf(t.h, a), { limits: [{ limitId: 'codex', limitName: null, readingAt: 1234, primary: { windowMinutes: 300, usedPercent: 52, resetsAt: null }, secondary: null }], planType: 'plus', readingAt: 1234, credits: { hasCredits: true, unlimited: true, balance: null } })
+      const r = await t.h.service.readAccountUsage({ accountId: a })
+      expect(r).toMatchObject({ ok: true, usage: { status: 'ok', source: 'live', credits: { hasCredits: true, unlimited: true, balance: null } } })
+    })
+
+    it('a signed-out account\'s last-seen reading carries its credits', async () => {
+      const t = await setup()
+      const a = await addCodexAccount(t.h, 'A')
+      t.fs.rollout(sessionsOf(t.h, a), 12, 'plus', CREDITS)
+      const realmHome = managedHome(t.h.doc().accounts.find((x) => x.id === a)!.authRealmId)
+      t.h.signedIn.delete(realmHome.toLowerCase())
+      expect((await t.h.service.refreshStatus({ accountId: a })).ok).toBe(true)
+      expect(await t.h.service.readAccountUsage({ accountId: a })).toMatchObject({ ok: true, usage: { status: 'not-signed-in', source: 'last-seen', credits: SHOWN } })
+    })
+
+    it('no credits key at all when the reading has none (last-seen, live, and no session yet)', async () => {
+      const t = await setup()
+      const a = await addCodexAccount(t.h, 'A')
+      const none = await t.h.service.readAccountUsage({ accountId: a })
+      expect(none.ok && hasKey(none.usage)).toBe(false)
+      t.fs.rollout(sessionsOf(t.h, a), 37, 'pro')
+      const seen = await t.h.service.readAccountUsage({ accountId: a }, { read: true })
+      expect(seen.ok && seen.usage.source === 'last-seen' && !hasKey(seen.usage)).toBe(true)
+      expect(t.h.leases.add(a, 'codex', { kind: 'session', ownerId: 'sess-1' }).ok).toBe(true)
+      t.live.record(sessionsOf(t.h, a), { limits: [{ limitId: 'codex', limitName: null, readingAt: 9, primary: { windowMinutes: 300, usedPercent: 5, resetsAt: null }, secondary: null }], planType: null, readingAt: 9 })
+      const live = await t.h.service.readAccountUsage({ accountId: a })
+      expect(live.ok && live.usage.source === 'live' && !hasKey(live.usage)).toBe(true)
+    })
+
+    it('the view carries the three credits fields and nothing else of the reading\'s', async () => {
+      const t = await setup()
+      const a = await addCodexAccount(t.h, 'A')
+      t.fs.rollout(sessionsOf(t.h, a), 37, 'pro', { ...CREDITS, extra: 'x-secret' })
+      const r = await t.h.service.readAccountUsage({ accountId: a }, { read: true })
+      if (!r.ok) throw new Error(r.code)
+      expect(JSON.stringify(r.usage)).not.toContain('x-secret')
+      expect(Object.keys(r.usage.credits!).sort()).toEqual(['balance', 'hasCredits', 'unlimited'])
+    })
   })
 
   it('this computer\'s own sign-in is read only from its history, never by anything else', async () => {

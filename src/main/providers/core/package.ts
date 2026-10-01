@@ -14,7 +14,7 @@ import type {
   ProviderCapabilities, CapabilityPlatform, RealmEnvPatch, AuthMethod, KnownAuthState, DiscoveryState, Compatibility,
   SanitizedManagedSettings, ManagedLaunchPreflightInput, ManagedLaunchPreflight, RealmKind, AuthRealm,
 } from '../../../shared/providers'
-import type { UsageBucket } from '../../../shared/usage-types'
+import type { AllowanceCredits, UsageBucket } from '../../../shared/usage-types'
 import type { SessionProvider } from '../types'
 import type { LegacyAccountsPort } from './account-registry-store'
 import type { LaunchLeaseKind } from './consumer-leases'
@@ -362,13 +362,16 @@ export interface ProviderReviewOperations {
 }
 
 /** An account's allowance as a package reports it: provider-neutral buckets
- *  (the package keys and labels them), when they were reported, and the
- *  plan's display name. No path or file name. */
+ *  (the package keys and labels them), when they were reported, the plan's
+ *  display name, and, when the provider reports them, the account's credits
+ *  (a count, not money; ADR-023). No path or file name. */
 export interface UsageReading {
   buckets: UsageBucket[]
   /** Epoch ms of the report; null when unknown. */
   readingAt: number | null
   planLabel: string | null
+  /** Omitted (no key) when the reading carries none. */
+  credits?: AllowanceCredits
 }
 
 /** A usage port's answer: `ok: false` when the realm is refused before
