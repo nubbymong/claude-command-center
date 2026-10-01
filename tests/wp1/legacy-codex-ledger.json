@@ -2,7 +2,7 @@
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "manifestPathDigest": "f40525c9dfff6c49ab5fb3a2d05706a6972bc1cb0b46126097f37be47dd6a914",
-  "manifestHead": "e050a266b59bbeb8e2792ca6fc884b25dd8159a4",
+  "manifestHead": "f16a756a76a995c01b78e0886f0231d36d17ef01",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -191,7 +191,7 @@
       ],
       "category": "DOCS",
       "disposition": "added",
-      "evidence": "WP2 completion plan (owner instruction 2026-09-27: no interim release; finish the agreed 2.1.1 parity first): the 75 parity checklist rows reconciled with the recorded owner decisions (docs/wp1/owner-decisions-2026-09-20.md, docs/wp1/owner-decisions-2026-09-26.md, docs/wp1/owner-decisions-2026-09-27.md), each with its status, settling record, gap and PR, the package and release completion criteria and the PR 3 and PR 4 phases; no Codex code path (WP1.70); WP2 PR 3 P3.13 (row 72; the one-at-a-time C item): the P3.13 entry, row 72 and the section 2 recount (WP1.70); WP2 PR 3 P3.13 round 1 (row 72; the one-at-a-time C item): the P3.13 entry and row 72 record that the rule gates new copies and that a restored or accepted session keeps its right (WP1.70); WP2 PR 3 P3.13 round 2 (row 72; the one-at-a-time C item): the P3.13 entry records the partner shell that never counts, the lapse of stale rights, the per-spawn tickets and the toggle recheck, and that the round 1 rule is the orchestrator's decision pending the owner (WP1.70); WP2 PR 3 P3.13 round 2b (row 72; the one-at-a-time C item): the P3.13 entry records that a restored right is one-shot, bounded to the saved ids and never lapses, with the forged-renderer-only limit that replaces limit 7 (WP1.70)",
+      "evidence": "WP2 completion plan (owner instruction 2026-09-27: no interim release; finish the agreed 2.1.1 parity first): the 75 parity checklist rows reconciled with the recorded owner decisions (docs/wp1/owner-decisions-2026-09-20.md, docs/wp1/owner-decisions-2026-09-26.md, docs/wp1/owner-decisions-2026-09-27.md), each with its status, settling record, gap and PR, the package and release completion criteria and the PR 3 and PR 4 phases; no Codex code path (WP1.70); WP2 PR 3 P3.13 (row 72; the one-at-a-time C item): the P3.13 entry, row 72 and the section 2 recount (WP1.70); WP2 PR 3 P3.13 round 1 (row 72; the one-at-a-time C item): the P3.13 entry and row 72 record that the rule gates new copies and that a restored or accepted session keeps its right (WP1.70); WP2 PR 3 P3.13 round 2 (row 72; the one-at-a-time C item): the P3.13 entry records the partner shell that never counts, the lapse of stale rights, the per-spawn tickets and the toggle recheck, and that the round 1 rule is the orchestrator's decision pending the owner (WP1.70); WP2 PR 3 P3.13 round 2b (row 72; the one-at-a-time C item): the P3.13 entry records that a restored right is one-shot, bounded to the saved ids and never lapses, with the forged-renderer-only limit that replaces limit 7 (WP1.70); WP2 PR 3 P3.13 round 3 (row 72; the one-at-a-time C item): the P3.13 entry records that the lapse of rights is removed, a right of this run is kept for the run, the pending tickets are discarded on every throw and early return, and the rule is not a boundary against a compromised renderer (WP1.70)",
       "note": "release plan text, not a user-facing claim"
     },
     {
@@ -4830,7 +4830,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "new WP2 PR 3 P3.13 test (tests/unit/main/launch-one-at-a-time.test.ts): main's one-at-a-time rule on its own, pure over an injected saved-config reader and liveness question: the first copy goes ahead and the second is refused, a Multi Spawn config has no limit, a partner shell, Ask, the same session id and an SSH reattach are not copies, claims stay bounded, the refusal names the config safely (WP1.68); round 2b: a restored right survives a new copy, is consumed at its first spawn and stays inside the saved ids (WP1.68)",
+      "evidence": "new WP2 PR 3 P3.13 test (tests/unit/main/launch-one-at-a-time.test.ts): main's one-at-a-time rule on its own, pure over an injected saved-config reader and liveness question: the first copy goes ahead and the second is refused, a Multi Spawn config has no limit, a partner shell, Ask, the same session id and an SSH reattach are not copies, claims stay bounded, the refusal names the config safely (WP1.68); round 2b: a restored right survives a new copy, is consumed at its first spawn and stays inside the saved ids (WP1.68); round 3: the rights of this run are kept for the run, the pending tickets are discarded, and a session with 8 under way is refused the new claim (WP1.68)",
       "note": "created by WP2 PR 3 P3.13; nothing mocked but the logger"
     },
     {
@@ -5012,7 +5012,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "new WP2 PR 3 P3.13 round 1 test (tests/unit/main/pty-spawn-one-at-a-time-rights.test.ts): through the real pty:spawn handler, the real gate and the real session load path, the one-at-a-time rule gates new copies only: restored sessions and remotes left running start, a session accepted in this run restarts, switches and reattaches beside another copy, no exemption carries a config's credentials, a live session's record is not re-pointed by a spawn that does not start, the log carries a safe config id (WP1.60, WP1.68); round 2: the partner of a tab that started nothing, the forged cycle and the lapse rules, a forged same-id spawn during a preparation (WP1.60); round 2b: a restored remote or tab resumes on first view after a new copy started, and only once (WP1.60)",
+      "evidence": "new WP2 PR 3 P3.13 round 1 test (tests/unit/main/pty-spawn-one-at-a-time-rights.test.ts): through the real pty:spawn handler, the real gate and the real session load path, the one-at-a-time rule gates new copies only: restored sessions and remotes left running start, a session accepted in this run restarts, switches and reattaches beside another copy, no exemption carries a config's credentials, a live session's record is not re-pointed by a spawn that does not start, the log carries a safe config id (WP1.60, WP1.68); round 2: the partner of a tab that started nothing, the forged cycle and the lapse rules, a forged same-id spawn during a preparation (WP1.60); round 2b: a restored remote or tab resumes on first view after a new copy started, and only once (WP1.60); round 3: a session accepted in this run keeps its right for the run (Leave running, a new copy, Resume; a Restart after Multi Spawn was turned off), and forged same-id spawns cannot push a real pending ticket out (WP1.60)",
       "note": "created by WP2 PR 3 P3.13 round 1; fake ipcMain, pty-manager faked, nothing spawns"
     },
     {

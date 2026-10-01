@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-01T11:28:15.826Z",
-  "head": "e050a266b59bbeb8e2792ca6fc884b25dd8159a4",
-  "tree": "7a0d424ed0e9cd479a7fb921a3a69193745e91f2",
+  "generatedAt": "2026-10-01T12:36:06.358Z",
+  "head": "f16a756a76a995c01b78e0886f0231d36d17ef01",
+  "tree": "dafa9600e7c66b62c4324b2306923aa27c3eff05",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 613,
+      "lineCount": 614,
       "truncated": true
     },
     {
@@ -3523,7 +3523,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 52
+      "lineCount": 60
     },
     {
       "path": "tests/unit/main/pty-spawn-one-at-a-time.test.ts",
