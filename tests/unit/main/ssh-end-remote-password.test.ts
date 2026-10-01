@@ -22,6 +22,7 @@ interface FakePty {
   killed: boolean
   data: ((d: string) => void) | null
   exit: ((e: { exitCode: number }) => void) | null
+  inSocket: import('events').EventEmitter
 }
 
 const h = vi.hoisted(() => ({
@@ -31,6 +32,7 @@ const h = vi.hoisted(() => ({
     killed: boolean
     data: ((d: string) => void) | null
     exit: ((e: { exitCode: number }) => void) | null
+    inSocket: import('events').EventEmitter
   }>,
   execFiles: [] as Array<{ bin: string; args: string[] }>,
   execFileError: null as Error | null,
@@ -43,7 +45,9 @@ const h = vi.hoisted(() => ({
 
 vi.mock('node-pty', () => ({
   spawn: (_bin: string, args: string[]) => {
-    const rec = { args, writes: [] as string[], killed: false, data: null as ((d: string) => void) | null, exit: null as ((e: { exitCode: number }) => void) | null }
+    // P3.15 round 3 (K1): node-pty's Windows PTY writes its input to a socket on its agent.
+    const { EventEmitter } = require('events') as typeof import('events')
+    const rec = { args, writes: [] as string[], killed: false, data: null as ((d: string) => void) | null, exit: null as ((e: { exitCode: number }) => void) | null, inSocket: new EventEmitter() }
     h.ptySpawns.push(rec)
     return {
       pid: 999,
@@ -53,6 +57,7 @@ vi.mock('node-pty', () => ({
       write: (d: string) => { rec.writes.push(d) },
       resize: () => {},
       kill: () => { rec.killed = true },
+      _agent: { inSocket: rec.inSocket },
     }
   },
 }))
@@ -202,6 +207,17 @@ describe('endSshRemote (#572)', () => {
     // More output must not retype the password.
     fake.data!('\r\n')
     expect(fake.writes).toHaveLength(1)
+    fake.exit!({ exitCode: 0 })
+    await expect(p).resolves.toBe('completed')
+  })
+
+  // P3.15 round 3 (K1): a failed write to this helper PTY's input (the password
+  // typed as ssh ends) never quits the app; End still settles on the exit.
+  it('password target: an input error on its PTY is caught, and End still settles', async () => {
+    _setSshTargetForTest('sid-inerr', { username: 'pi', host: 'h6', port: 22, password: 'pw3' })
+    const p = endSshRemote('sid-inerr')
+    const fake = lastPty()
+    expect(() => fake.inSocket.emit('error', Object.assign(new Error('write EAGAIN'), { code: 'EAGAIN' }))).not.toThrow()
     fake.exit!({ exitCode: 0 })
     await expect(p).resolves.toBe('completed')
   })

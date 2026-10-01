@@ -36,6 +36,7 @@ import { ensureCompanionDir, nodeFsCompanionDeps } from './logging/companion-dir
 import { forgetSessionName } from './logging/session-name-sidecar'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
 import { bundledConptyChoice, bundledConptyFailed, SYSTEM_CONPTY_OPTIONS, BUNDLED_EARLY_EXIT_MS, type ConptySpawnOptions } from './bundled-conpty'
+import { guardPtyInput } from './pty-input-guard'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { TMUX_WHEEL_EXIT_KEY } from '../shared/tmux-wheel'
 import { buildRemoteSessionCleanupCommand, buildTmuxBinPatchCommand, buildRemoteTmuxKillCommand, buildContainerKillCommand, parseEndSudoSentinel, getWindowsRemoteSetupCommand, buildWindowsClaudeCommand } from './providers/claude/ssh-shim'
@@ -387,6 +388,34 @@ function watchBundledConptyEarlyExit(sessionId: string, proc: pty.IPty): void {
       bundledConptyFailed(`a Codex session under it ended within ${BUNDLED_EARLY_EXIT_MS / 1000} s with nothing on screen`)
     })
   } catch { try { data?.dispose() } catch { /* already gone */ } }
+}
+
+/** A PTY input error as a log line names it: its code, or its message. */
+function describePtyInputError(err: NodeJS.ErrnoException | undefined): string {
+  return stripSpoofableText(String(err?.code ?? err?.message ?? err), 120)
+}
+
+/** P3.15 round 3 (K1): how long a session whose PTY input failed may take to
+ *  end by itself (the program in it had ended, as after a Ctrl+C that quits
+ *  Codex) before it is ended. */
+export const PTY_INPUT_FAILED_GRACE_MS = 3000
+
+/** P3.15 round 3 (K1): a failed write to a session's PTY input never quits the
+ *  app (pty-input-guard.ts says why it can fail, and why there is nothing to
+ *  retry: the input is gone). Said once in the log. A session that has not
+ *  ended by itself within PTY_INPUT_FAILED_GRACE_MS is ended, with a line in
+ *  its terminal saying why, rather than left taking keys that go nowhere. */
+function guardSessionInput(win: BrowserWindow, sessionId: string, proc: pty.IPty): void {
+  guardPtyInput(proc, (err) => {
+    logWarn(`[pty] input to session ${sessionId} failed (${describePtyInputError(err)}); it takes no more input`)
+    const timer = setTimeout(() => {
+      if (ptySessions.get(sessionId)?.ptyProcess !== proc) return // it ended, or was replaced, by itself
+      logWarn(`[pty] session ${sessionId} did not end within ${PTY_INPUT_FAILED_GRACE_MS} ms of its input failing: ending it`)
+      if (!win.isDestroyed()) win.webContents.send(`pty:data:${sessionId}`, '\r\n[This session stopped taking input, so it was ended.]\r\n')
+      try { proc.kill() } catch { /* already gone */ }
+    }, PTY_INPUT_FAILED_GRACE_MS)
+    ;(timer as unknown as { unref?: () => void }).unref?.()
+  })
 }
 
 // rc.15 review R3 (aicc_planning#49): a LOCAL spawn whose profile is mid-refresh
@@ -1144,6 +1173,8 @@ export function endSshRemoteDetailed(sessionId: string, fallbackTarget?: SshEndT
         // the End promise the IPC handler returns and the live lanes await.
         const args = buildSshExecArgs(target, remoteCommand, os.platform(), { batchMode: false })
         child = pty.spawn(bin, args, { name: 'xterm-256color', cols: 120, rows: 30, cwd: os.homedir(), env: process.env as Record<string, string> })
+        // P3.15 round 3 (K1): a failed write to its input never quits the app.
+        guardPtyInput(child, (err) => logWarn(`[ssh] ${sessionId}: end-remote (password) input failed (${describePtyInputError(err)})`))
       } catch (err) {
         done('failed', `spawn: ${(err as Error)?.message ?? err}`)
         return
@@ -1284,6 +1315,8 @@ export function probeTmuxLive(
         // sync throw here must resolve 'unverified', never escape the promise.
         const args = buildSshExecArgs(target, remoteCommand, os.platform(), { batchMode: false })
         child = pty.spawn(bin, args, { name: 'xterm-256color', cols: 120, rows: 30, cwd: os.homedir(), env: process.env as Record<string, string> })
+        // P3.15 round 3 (K1): a failed write to its input never quits the app.
+        guardPtyInput(child, (err) => logWarn(`[ssh] liveness probe (password) input failed (${describePtyInputError(err)})`))
       } catch (err) {
         done(unverified, `spawn: ${(err as Error)?.message ?? err}`)
         return
@@ -5622,6 +5655,9 @@ function spawnPtyResolved(
   }
 
   ptySessions.set(sessionId, { ptyProcess, sessionId, agent: options?.shellOnly ? null : (options?.provider ?? 'claude') })
+  // P3.15 round 3 (K1): every session's PTY, of every kind: a failed write to
+  // its input never quits the app.
+  guardSessionInput(win, sessionId, ptyProcess)
   updateSessionMeta({ id: sessionId, label: options?.configLabel ?? sessionId, cwd: options?.cwd, provider: options?.provider ?? 'claude' })
   // Watchdog (#235): any interactive Claude session — LOCAL or SSH (owner
   // 2026-08-31: it observes the PTY, which an SSH session has too; the headless
