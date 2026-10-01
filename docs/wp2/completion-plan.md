@@ -359,7 +359,7 @@ from P3.1, and then only that row.
 | P3.12 Logs and GitHub context | 31, 32 (the name file), 65 | Y | Y | APPROVED |
 | P3.13 Multi Spawn and Quick Start | 72 | Y | N | APPROVED |
 | P3.14 Usage follow-up: Codex credits | 17 | Y (the read keeps three more fields; ADR-023) | N | APPROVED |
-| P3.15 Terminal verification | 44, 70, 71, 73 | Y (the scrollback fix builds the Codex PTY with a new option and starts OpenConsole.exe) | Y by file (`pty-manager.ts`; no SSH path changed) | APPROVED |
+| P3.15 Terminal verification | 44, 70, 71, 73 | Y (the scrollback fix builds the Codex PTY with a new option and starts OpenConsole.exe); PASS at pass 2 | Y by file (`pty-manager.ts`; no SSH path changed) | APPROVED |
 | P3.16 PR 3 records and user-facing sweep | none | N (docs) | N | APPROVED |
 
 The 35 rows: 7, 8, 10, 11, 14, 17, 20, 22, 24, 28, 31, 32, 34, 35, 36, 37,
@@ -2939,9 +2939,8 @@ its handle to the pseudo console, so no public node-pty call can close it
 (kill() then only closes the input pipe); a watch on Codex's pid could see it
 gone, but ending the session from there needs node-pty's internals or the
 attached processes' pids, which the app does not have. So a Codex that quits
-while a process it started stays attached may leave its tab open, and the run
-record of a Codex that quits by itself can read crashed (the code is not known
-at the exit). F4: the records now say conpty.dll keeps Microsoft's signature
+while a process it started stays attached may leave its tab open (the run
+record reading crashed for an unknown code is fixed in round 2, J1). F4: the records now say conpty.dll keeps Microsoft's signature
 and a signed release re-signs OpenConsole.exe with the app's certificate; the
 signing configuration is unchanged. F5: tests of the app's own lookup with
 nothing handed in (node-pty's lib folder pinned, the installed prebuild found,
@@ -2990,6 +2989,48 @@ sandbox tip absent on macOS and Linux; the TUI trace fixture replaced from the
 re-capture; the known issue's administrator setup in the app at Medium, and a
 way back to option 1 (for example removing the account's `[windows] sandbox`
 setting and trusting a new folder).
+P3.15 round 2 (the round 1 spec and code-quality reviews, PASS with fixes, and
+ADR-009 pass 2: lenses A and B PASS with minor findings, so P3.15's ADR-009 is
+PASS). Built in 7296dd43 (mocked). J1: an exit with no known code is logged as
+"code unknown" and ends the run as exited (a normal Codex /quit under the
+bundled ConPTY); a known non-zero code still ends it as crashed. J2: the
+real-tree tests compare real paths and expect the first folder node-pty's
+loader would load from (a tree built from source, a junctioned node_modules).
+J3: every node-pty attempt is recorded, and the retry must equal the first
+attempt but for `useConptyDll` (lens A's retry mutants with another
+environment, folder or arguments survived round 1's test). J4: Node loads a
+.node file through its \\?\ namespaced path, so the module name node-pty
+reads back is 4 characters longer than the path measured (lens A's probe of the
+loaded conpty.node): the conpty.dll path may be 255 characters at most
+(`LOADED_MODULE_PREFIX`). J5: a Codex PTY under the bundled ConPTY that ends
+within 5 s having drawn nothing (its console host's setup sequences aside),
+and that the app did not end itself (a close, a Restart, a Switch account), is
+taken as the bundled ConPTY failing after node-pty started it (OpenConsole.exe
+ended at once, or unable to create Codex): the next launch uses the system
+ConPTY, said once; nothing is relaunched. A real Codex draws at once, even to
+say it cannot start, so a real quick exit is not mistaken for it. J6: the known
+issue and the tip name /setup-default-sandbox, which both supported CLIs list
+in their slash popup (the CLI fixtures), as not yet confirmed. J7: the fallback
+assigns the started PTY before reporting; the comment says a throw after
+node-pty's startProcess could leave its connect pending (not handled); a
+withheld wrapped image line is never taken back and its hint says it was not
+sent. Tests, red first on bbaf05d2: J1 (2), J4 (2) and J5 (1); J3's three
+retry mutants survived round 1's test and are red now. Mutation: 14 round 2
+mutants and 6 round 1 mutants re-run, all red, restored with a sha check. On
+the host 161 affected files (160 pass, 1 skipped) and 71 tree-scanner files
+pass, the WP1 gate passes, `npm run typecheck` and `tsc` of the touched tests
+are clean. ADR-009 delta: the run-end status for an unknown code; the early
+end watch (it reads the PTY's output only to tell whether anything was drawn,
+and only turns the choice to the system one); the path bound 4 characters
+tighter; the start order in the fallback. Owed on the VM (the packaged build of
+this round, 0.155.1 and 0.153.4), beyond round 1's list: /setup-default-sandbox
+tried first, in a session at Medium integrity after option 2 and in a folder
+trusted before (then the known issue and the tip name it, or drop it); the
+early end (OpenConsole.exe ended right after a launch in a test install: the
+next launch on the system ConPTY, one warning; a normal /quit, and a Codex
+that quits at once with an error, change nothing); the Logs record of a /quit
+reads exited; if a Codex that quits leaving a process attached keeps its tab
+open, a known issue (close the tab).
 
 **P3.16 PR 3 records and user-facing sweep.** App knowledge (with known
 issues), tips, tour and Feature Guide, the changelog entry, the user guide,
