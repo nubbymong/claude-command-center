@@ -61,21 +61,23 @@ still owes recorded in 4. "2; 3" means partly built in 2, the rest in 3.
 
 ## 2. Summary
 
-- 75 rows: **47 DONE, 17 PARTIAL, 11 OPEN** (recounted after P3.13, with section 4's P3.2 to P3.13 rows brought current from their phase records;
+- 75 rows: **48 DONE, 16 PARTIAL, 11 OPEN** (recounted after P3.14, with section 4's P3.2 to P3.14 rows brought current from their phase records;
   they agree with the parity checklist).
-- The 28 rows not DONE, by gap: **implementation 13, verification 10, owner 5** (rows 15 and 58, an owner action and a record to sign; rows 22, 41 and 63, each built as a default pending the owner's decision, section 10). Row 53
+- The 27 rows not DONE, by gap: **implementation 12, verification 10, owner 5** (rows 15 and 58, an owner action and a record to sign; rows 22, 41 and 63, each built as a default pending the owner's decision, section 10). Row 53
   moved from owner to implementation when the owner decided it
   (`docs/wp1/owner-decisions-2026-09-27.md`, M4).
-- By PR: **13 in PR 3, 15 in PR 4**. No row changes package. The Ask Conductor
+- By PR: **12 in PR 3, 15 in PR 4**. No row changes package. The Ask Conductor
   part of row 14 goes with row 53 into PR 4, because it is the same change.
-- 42 DONE rows still owe verification. The 22 built in PR 3 (rows 7, 8, 10, 20, 24, 28, 31, 32, 36, 37, 38, 39, 40, 42, 43, 46, 47, 61, 62, 65, 69 and 72) owe their VM checks under
+- 43 DONE rows still owe verification. The 23 built in PR 3 (rows 7, 8, 10, 17, 20, 24, 28, 31, 32, 36, 37, 38, 39, 40, 42, 43, 46, 47, 61, 62, 65, 69 and 72) owe their VM checks under
   PR 3's gate 6 (section 6). The other 20 (rows 1, 2, 3, 4, 6, 9, 12, 13, 18, 21, 23, 25,
   27, 29, 33, 48, 49, 50, 64 and 74) owe real-CLI, per-OS or packaged
   verification, recorded in PR 4 and closed at release level. The other 5
   DONE rows (5, 19, 26, 30, 75) owe nothing.
 - Row 17 was counted PARTIAL here, from the code, while the checklist marked
-  it VERIFIED; the checklist now marks it PARTIAL too (no Codex credits row
-  yet; `src/shared/app-knowledge.ts` says so as a known issue). The checklist
+  it VERIFIED; the checklist marked it PARTIAL too until P3.14 (c65b359e) built
+  the Codex credits row and removed the known issue in
+  `src/shared/app-knowledge.ts`, and now marks it VERIFIED (mocked) with its
+  verification owed. The checklist
   moved rows 52, 68 and 69 from OWNER to MISSING, since parity settles them
   (section 10); row 69 is now built (P3.8).
 - Genuinely unresolved UX decisions: **three**, each built as a default pending the owner's decision: row 41 (P3.8 round 1, caef0d42: Codex has no one-line
@@ -127,7 +129,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 
 | # | Feature | Status | Settled by | Gap | PR |
 |---|---|---|---|---|---|
-| 17 | All-accounts usage page | PARTIAL: built and its screens approved; no Codex credits row (known issue in `src/shared/app-knowledge.ts`) | OD27 M1, M2; ADR-022; credits: parity, shown once a real read shows their unit (recorded with the usage plan, 2026-09-27) | implementation (evidence first, P3.1); verification: macOS, Linux, packaged | 2; 3, v4 |
+| 17 | All-accounts usage page | DONE (usage track MP3, MP4, MP8, screens approved; P3.14, c65b359e; mocked): a Codex card on paid credits shows a Credits row under its bars, in Codex credits (a count, not money): "N credits" or "Unlimited", placed and styled as Claude's row, from the live, fresh-read and last-seen reading alike; the known issue is removed (`rate-limits.test.ts`, `account-usage-panel.test.tsx`, `provider-account-usage.test.ts`, `codex-usage-read.test.ts`) | OD27 M1, M2; ADR-022 and ADR-023 (the credits count kept from the read, which widens ADR-022 bound 8; the owner confirms it on return); credits: parity, the unit from P3.1's evidence (recorded with the usage plan, 2026-09-27) | verification: the VM live credits check (PR 3 gate 6); the owner's screenshot review; the PR-level ADR-009 pass; macOS, Linux, packaged | 2; 3, v4 |
 | 18 | Session-strip meters | DONE | OD27 M1 (D2, D3); labels from `window_minutes` (decided by design, 2026-09-26) | verification: a 0.155.1 rollout fixture from a real session; a real-CLI run | 2, v4 |
 | 19 | Strip cost wording | DONE | "API-equivalent estimate" wording (decided by design, 2026-09-26) | none | 2 |
 | 20 | Account chip on the strip and in the sidebar | DONE (P3.6, 57ce396a, 68d00f62, 4439d7e2; mocked): a Codex session's account chip on the strip and its sidebar card, from the identity; Claude's chips read the identity's colour | Canvas 2026-09-26, "Switching a running Codex session's account": the strip's Codex account pill and its Switch account menu; the footer's label rule (a Codex identity shows its name); parity for the sidebar | verification: the VM check of W1; the owner's screenshot review; the SSH live matrix at PR 3's head | 2; 3 |
@@ -356,7 +358,7 @@ from P3.1, and then only that row.
 | P3.11 Extra CLI arguments | 62 | Y | Y | APPROVED |
 | P3.12 Logs and GitHub context | 31, 32 (the name file), 65 | Y | Y | APPROVED |
 | P3.13 Multi Spawn and Quick Start | 72 | Y | N | APPROVED |
-| P3.14 Usage follow-up: Codex credits | 17 | N (Y if the read changes) | N | APPROVED |
+| P3.14 Usage follow-up: Codex credits | 17 | Y (the read keeps three more fields; ADR-023) | N | APPROVED |
 | P3.15 Terminal verification | 44, 70, 71, 73 | N | N | APPROVED |
 | P3.16 PR 3 records and user-facing sweep | none | N (docs) | N | APPROVED |
 
@@ -2428,6 +2430,94 @@ is built from the credits fields the supported versions' schema declares
 release on an account with credits the owner provides (as for row 15); if the
 schema does not say the unit, the known issue stays and the row goes to the
 owner as a section 19 record.
+Built (c65b359e; mocked), settled by parity and by P3.1's evidence of the unit.
+The build branch applied, not the fallback: P3.1 ran on a managed account that
+has credits (`docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md`, answer 7:
+the real balance is a decimal string with ten fraction digits, and the CLI's own
+status view prints it followed by "credits", so the unit is Codex credits, a
+count, not money). The schemas declare the three fields (`hasCredits`,
+`unlimited`, `balance`, identical in 0.153.4, 0.155.1 and 0.157.1) and state no
+unit, so the unit rests on that evidence, which is a string search of the binary
+and not a live read of the screen. A Codex card on paid credits shows a Credits
+row under its bars: "N credits" (the balance, at most two fraction digits) or
+"Unlimited". No row when the account has no credits, no balance, or
+`hasCredits` false (never observed, so nothing is invented for it). It is a
+count and never formatted as money, so Claude's `CreditsInfo` (an ISO currency)
+is not reused: the new type is `AllowanceCredits` (`hasCredits`, `unlimited`,
+`balance`). The row is placed and styled as Claude's through one shared
+`CreditsRow` in `AccountUsagePanel.tsx` whose markup for Claude is unchanged (the
+Codex row alone names a test id, `account-usage-credits`). The footer and the
+strip show no credits for Claude and so none for Codex.
+The credits come with the reading, so they follow every source: the live figure
+of an open session, a fresh read of a closed account, and the last-seen reading,
+a signed-out account's too, with its "As of" line below the row. They are read
+from a rollout's `token_count` (`credits`, snake_case) or from the answer's own
+`rateLimits.credits`, never from an entry of the per-limit map, and never the
+reset-credit grants (`rateLimitResetCredits`, a different thing). Untrusted
+input, as bound 8 treats the rest: own properties of a plain object only, a flag
+that is not a boolean drops the whole credits, a balance must match
+`^\d{1,13}(\.\d{1,12})?$` or it is null (the flags kept), no other key is copied,
+and credits alone never make a reading. In a merge the newest credits win and an
+older figure stays when a newer reading has none; the key is omitted from the
+reading, the port's reading and the page's view when there are none.
+The read itself does not change: the three code-built messages, argv, realm,
+lease, lifecycle, supported versions, triggers and the client's schema checks
+(`snapshotOk` and `readResultOk` do not look at credits, so a malformed credits
+object is dropped by the normaliser and can never make a CLI "unsupported"; bound
+5 unchanged) are as before, and no IPC channel or preload file is touched (the
+page's view gains an optional `credits`). Records: ADR-023 (2026-10-01) widens
+ADR-022 bound 8 by exactly the three fields and says the owner confirms it on
+return, with a one-line pointer in ADR-022; `PRIVACY.md` names the credits
+count beside the allowance figures and the plan; the known issue "no credits row
+yet" is removed from `src/shared/app-knowledge.ts` and its Usage page paragraph
+gains the clause for the row (the changelog, tips, tour and Feature Guide stay
+with P3.16). Files: `src/shared/usage-types.ts`, `src/main/providers/codex/
+rate-limits.ts` (`readCredits`, the `NAMES` flag spelling per source, the merge),
+`usage.ts` (`toUsageReading`), `core/package.ts` (`UsageReading`),
+`core/accounts-service.ts` (the view's copy), `shared/providers/accounts-view.ts`,
+`AccountUsagePanel.tsx`, and comments in `app-server-client.ts`.
+Limits and deviations, recorded: (1) the credits are the newest report that has
+them, so after a newer event with none the figure can be older than the row's
+"As of" age implies; (2) a fresh read replaces last-seen whole, so a read whose
+answer has no credits shows none even where last-seen had them (the row is of
+the same reading as the bars, as Claude's is); (3) the unit rests on P3.1's
+strings evidence: if a reviewer rejects that, the fallback above applies (the
+known issue returns and row 17 goes to the owner as a section 19 record);
+(4) `hasCredits` false has never been seen, so it draws no row.
+Tests, red first on 624eff9f (57 of the new tests failed in the eight touched
+files; all 345 now pass): `rate-limits.test.ts` (the three fields from a rollout
+and from the answer's own `rateLimits`; a per-limit entry's credits never kept;
+each source's own spelling; 23 hostile balances and 6 hostile flags, credits that
+are lists, class instances, inherited, with no prototype or a JSON `__proto__`
+key; no other key copied; the merge; both supported CLIs' real rollouts, balance
+1250; the schema excerpts declare exactly the three fields and no unit),
+`app-server-client.test.ts` (a valid object on the verdict; a malformed one still
+an ok verdict, so bound 5 is pinned), `usage-last-seen.test.ts`,
+`telemetry.test.ts` (the live record), `provider-account-usage.test.ts` and
+`codex-usage-read.test.ts` (the view for the live, read, last-seen and
+signed-out sources, and no `credits` key when there are none),
+`account-usage-panel.test.tsx` (the row, "Unlimited", no row for no credits, no
+balance, no bars or the parked, no-session and per-token cards, the row above
+"As of", and the missing parity pin for Claude's own row) and
+`app-knowledge.test.ts`. Mutation: 46 mutants, each alone and restored
+byte-identically with a sha check, every one red (28 on the parser, the flag and
+balance rules, the merge, each source, the map entry, the copies and the client's
+validator; 14 on the card and Claude's row; 4 on app knowledge); one survivor, a
+redundant guard on the card, was removed from the code and replaced by a mutant
+that is red. On the host: 55 affected and 65 tree-scanner and WP1 gate files
+pass, `npm run typecheck` and `tsc` of the touched tests are clean, and the
+legacy Codex manifest is unchanged (path digest as before; "codex" kept out of
+`usage-types.ts`, which the catch-all predicate would otherwise add).
+ADR-009: yes. The exact change for the attackers is bound 8's addition and the
+one reader that implements it (`readCredits` and its two call sites in
+`rate-limits.ts`), the merge, and the copies down to the view; the client's
+validators and every other bound are untouched. SSH radius: none.
+Owed on the VM (WINDOWS_1, real Codex 0.155.1 and 0.153.4, the managed account
+that has credits): a closed account read afresh shows "N credits" under its
+bars, N matching the CLI's own status view; an open session shows it live; the
+last-seen reading shows it with its "As of" line; an account with no credits and
+an API-key account show no row; a screenshot for the owner, both themes. The
+owner confirms ADR-023.
 
 **P3.15 Terminal verification.** On the VM with real Codex 0.155.1: a Codex
 session in the Services snapshot; Alt+V image paste reaching Codex (and the tip
@@ -2636,8 +2726,10 @@ screen at all. The owner reviews the review screen in the P3.10 VM gallery.
   (OD20 D8).
 - Row 58: sign (or reject) the artifacts section 19 record.
 - Any section 19 record P3.1 raises (rows 22, 36, 41, 61, 69), one per row.
-- Row 17 (P3.14): a Codex account with credits, for the live credits check;
-  without one, the P3.14 fallback applies.
+- Row 17 (P3.14): confirm ADR-023, which keeps a Codex account's credits count
+  (three validated fields) from the usage read and so widens ADR-022 bound 8.
+  The live credits check runs on the VM's managed account, which shows a
+  balance (P3.1 evidence, answer 7); the P3.14 fallback does not apply.
 - Section 7: a disposition for each C defect not fixed; the security report;
   the desktop attestation; the word to merge each PR.
 

@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-01T04:23:33.232Z",
-  "head": "3e45825d7da78d4e19cb610f2ab023f809e1ac9d",
-  "tree": "3f2219f910abf1874475a57a7387bb8b3abf6ff4",
+  "generatedAt": "2026-10-01T06:04:41.792Z",
+  "head": "c65b359eec86713d6a037ba1925b6514ddbd6c64",
+  "tree": "71313dff6d030d05b5d38a2b888e057f91e7a336",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,8 +116,8 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2573,
-  "excludedFileCount": 384,
+  "trackedFileCount": 2574,
+  "excludedFileCount": 385,
   "scannedFileCount": 2189,
   "unscopedFileCount": 15,
   "unscoped": [
@@ -161,7 +161,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 47
+      "lineCount": 48
     },
     {
       "path": "README.md",
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 545,
+      "lineCount": 554,
       "truncated": true
     },
     {
@@ -892,7 +892,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 14
+      "lineCount": 15
     },
     {
       "path": "src/main/providers/codex/realm-folders.ts",
@@ -990,7 +990,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 6
+      "lineCount": 7
     },
     {
       "path": "src/main/providers/core/package.ts",
@@ -1246,7 +1246,7 @@
       "predicates": [
         "P11"
       ],
-      "lineCount": 73
+      "lineCount": 78
     },
     {
       "path": "src/renderer/components/AccountsPanel.tsx",
@@ -2108,7 +2108,7 @@
         "P12",
         "P14"
       ],
-      "lineCount": 75
+      "lineCount": 73
     },
     {
       "path": "src/shared/ask-conductor-provider.ts",
@@ -2198,7 +2198,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 11
+      "lineCount": 12
     },
     {
       "path": "src/shared/providers/capabilities.ts",
@@ -3316,7 +3316,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 116
+      "lineCount": 120
     },
     {
       "path": "tests/unit/main/conductor-mcp-auth.test.ts",
@@ -3410,7 +3410,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 68
+      "lineCount": 78
     },
     {
       "path": "tests/unit/main/provider-in-use.test.ts",
@@ -3784,7 +3784,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 23
+      "lineCount": 25
     },
     {
       "path": "tests/unit/providers/codex/app-server-read.test.ts",
@@ -3902,7 +3902,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 83
+      "lineCount": 104
     },
     {
       "path": "tests/unit/providers/codex/resume-picker-deploy.test.ts",
@@ -4042,7 +4042,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 89
+      "lineCount": 96
     },
     {
       "path": "tests/unit/providers/codex/ui-detection.test.ts",
@@ -4060,7 +4060,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 72
+      "lineCount": 75
     },
     {
       "path": "tests/unit/providers/host-color-scheme.test.ts",
@@ -4109,7 +4109,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 6
+      "lineCount": 20
     },
     {
       "path": "tests/unit/renderer/accounts-identity-lifecycle.test.tsx",
@@ -5186,7 +5186,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 27
+      "lineCount": 33
     },
     {
       "path": "tests/unit/status-ingest.test.ts",
