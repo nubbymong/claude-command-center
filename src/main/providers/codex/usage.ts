@@ -65,7 +65,7 @@ import fs from 'node:fs'
 import type { AllowanceReading } from '../../../shared/usage-types'
 import { planLabelFor } from '../../../shared/usage-types'
 import type { ProviderUsageOperations, RealmRef, UsageLookup, UsageReading, UsageReadResult, UsageReadOptions } from '../core'
-import { normaliseCodexRateLimits, mergeAllowanceReadings, readingToBuckets } from './rate-limits'
+import { normaliseCodexRateLimits, mergeAllowanceReadings, readingToBuckets, zonedTimeMs } from './rate-limits'
 import { classifyCodexVersion } from './cli-contract'
 import type { CodexUsageRead, CodexUsageReadOptions } from './auth-operations'
 
@@ -203,8 +203,10 @@ export function realCodexUsageFsPort(platform: NodeJS.Platform = process.platfor
 
 /** The allowance in one tail of a rollout: every token_count that carries
  *  rate_limits (a pre-response one included), newest reading of each limit.
- *  The first line of a partial tail is cut and never read. */
-function allowanceInTail(text: string, whole: boolean, now: number): AllowanceReading | null {
+ *  The first line of a partial tail is cut and never read. `after` (a carried
+ *  conversation's mark: ADR-023) keeps only the events dated after it; an event
+ *  with no zoned time is then no event. */
+function allowanceInTail(text: string, whole: boolean, now: number, after: number | null = null): AllowanceReading | null {
   let body = text
   if (!whole) {
     const nl = body.indexOf('\n')
@@ -220,7 +222,12 @@ function allowanceInTail(text: string, whole: boolean, now: number): AllowanceRe
     const e = evt as Record<string, unknown>
     const payload = e.payload as Record<string, unknown> | undefined
     if (e.type !== 'event_msg' || !payload || typeof payload !== 'object' || payload.type !== 'token_count' || payload.rate_limits == null) continue
-    const at = Date.parse(String(e.timestamp ?? ''))
+    let at = Date.parse(String(e.timestamp ?? ''))
+    if (after !== null) {
+      const zoned = zonedTimeMs(e.timestamp)
+      if (zoned === null || zoned <= after) continue
+      at = zoned
+    }
     readings.push(normaliseCodexRateLimits(payload.rate_limits, 'rollout', Number.isFinite(at) ? at : null, now))
   }
   const merged = mergeAllowanceReadings(readings)
@@ -230,12 +237,12 @@ function allowanceInTail(text: string, whole: boolean, now: number): AllowanceRe
 /** One rollout's allowance: a 256 KiB tail, then once a 2 MiB one.
  *  'unread' when it could not be read (busy, too many open files, changed or
  *  unverifiable): not the same as a rollout with no allowance in it. */
-async function allowanceInRollout(port: CodexUsageFsPort, file: string, entry: CodexUsageEntry, now: number): Promise<AllowanceReading | null | 'unread'> {
+async function allowanceInRollout(port: CodexUsageFsPort, file: string, entry: CodexUsageEntry, now: number, after: number | null = null): Promise<AllowanceReading | null | 'unread'> {
   for (const max of [CODEX_USAGE_TAIL_BYTES, CODEX_USAGE_TAIL_MAX_BYTES]) {
     let tail: { text: string; whole: boolean }
     try { tail = await port.readTail(file, max, entry) } catch { return 'unread' }
     if (!tail || typeof tail.text !== 'string') return 'unread'
-    const found = allowanceInTail(tail.text, tail.whole === true, now)
+    const found = allowanceInTail(tail.text, tail.whole === true, now, after)
     if (found || tail.whole === true) return found
   }
   return null
@@ -327,8 +334,8 @@ async function newestRollouts(sessionsDir: string, port: CodexUsageFsPort): Prom
 
 /** What the reading of these rollouts depends on: their paths and, as lstat
  *  saw them, identity, size and last write. */
-const fingerprintOf = (c: readonly Candidate[]): string =>
-  JSON.stringify(c.map((x) => [x.file, x.entry.dev, x.entry.ino, x.entry.size, x.entry.mtimeMs]))
+const fingerprintOf = (c: readonly Candidate[], cutoffs: readonly (number | null)[] = []): string =>
+  JSON.stringify(c.map((x, i) => [x.file, x.entry.dev, x.entry.ino, x.entry.size, x.entry.mtimeMs, cutoffs[i] ?? null]))
 
 /** A cache the reader may keep a result in, by sessions folder. */
 export interface LastSeenCache {
@@ -349,17 +356,21 @@ export type LastSeenLookup = { ok: true; reading: AllowanceReading | null } | { 
  * rollout examined could be read. Never rejects. See the module comment for
  * exactly what it may open.
  */
-export async function lookupLastSeenAllowance(sessionsDir: string, port: CodexUsageFsPort, now: number = Date.now(), cache?: LastSeenCache): Promise<LastSeenLookup> {
+export async function lookupLastSeenAllowance(sessionsDir: string, port: CodexUsageFsPort, now: number = Date.now(), cache?: LastSeenCache, marks?: CodexCarryMarks): Promise<LastSeenLookup> {
   try {
     const walk = await newestRollouts(sessionsDir, port)
     if (walk.unverifiable) return { ok: false }
-    const fingerprint = fingerprintOf(walk.candidates)
+    // A conversation carried into this realm (ADR-023): only the events written
+    // after the carry count. The marks are part of what a cached reading was
+    // read under.
+    const cutoffs = walk.candidates.map((c) => (marks ? marks.cutoff(sessionsDir, codexRolloutIdFromName(c.file)) : null))
+    const fingerprint = fingerprintOf(walk.candidates, cutoffs)
     const held = cache?.get(sessionsDir)
     if (held && held.fingerprint === fingerprint) return { ok: true, reading: held.reading }
     let best: AllowanceReading | null = null
     let unread = false
-    for (const c of walk.candidates) {
-      const r = await allowanceInRollout(port, c.file, c.entry, now)
+    for (const [i, c] of walk.candidates.entries()) {
+      const r = await allowanceInRollout(port, c.file, c.entry, now, cutoffs[i])
       if (r === 'unread') { unread = true; continue }
       if (r && (best === null || (r.readingAt ?? -Infinity) > (best.readingAt ?? -Infinity))) best = r
     }
@@ -374,8 +385,8 @@ export async function lookupLastSeenAllowance(sessionsDir: string, port: CodexUs
 }
 
 /** The reading lookupLastSeenAllowance finds, or null (none, or unavailable). */
-export async function readLastSeenAllowance(sessionsDir: string, port: CodexUsageFsPort, now: number = Date.now(), cache?: LastSeenCache): Promise<AllowanceReading | null> {
-  const r = await lookupLastSeenAllowance(sessionsDir, port, now, cache)
+export async function readLastSeenAllowance(sessionsDir: string, port: CodexUsageFsPort, now: number = Date.now(), cache?: LastSeenCache, marks?: CodexCarryMarks): Promise<AllowanceReading | null> {
+  const r = await lookupLastSeenAllowance(sessionsDir, port, now, cache, marks)
   return r.ok ? r.reading : null
 }
 
@@ -437,6 +448,153 @@ export function createCodexLiveUsage(platform: NodeJS.Platform = process.platfor
   }
 }
 
+// ---------------------------------------------------------------------------
+// Carry marks (P3.14 round 1; ADR-023)
+// ---------------------------------------------------------------------------
+
+/** Conversations kept in the marks: the newest, so the file stays small. */
+export const CODEX_CARRY_MARKS_MAX = 256
+const MARKS_FILE_MAX_CHARS = 1024 * 1024
+const MARKS_REALM_RE = /^[A-Za-z0-9._-]{1,128}$/
+const MARKS_DIR_MAX = 4096
+const MARKS_MAX_MS = 8.64e15
+const ROLLOUT_ID_RE = /(?:^|[\\/])rollout-[^\\/]*?-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\.jsonl$/
+const CONVERSATION_ID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
+
+/** The conversation id in a rollout's file name or path
+ *  (`rollout-<time>-<id>.jsonl`), lower case, or null. */
+export function codexRolloutIdFromName(file: unknown): string | null {
+  if (typeof file !== 'string' || file.length > MARKS_DIR_MAX * 2) return null
+  const m = ROLLOUT_ID_RE.exec(file)
+  return m ? m[1].toLowerCase() : null
+}
+
+/** Where the marks are kept between runs: the app's own configuration, next to
+ *  the account registry (never a file in an account's folder). `unavailable`:
+ *  it cannot be read now (the next use asks again); a throw counts as that. */
+export interface CodexCarryMarksPort {
+  read(): { kind: 'ok'; text: string } | { kind: 'missing' } | { kind: 'unavailable' }
+  /** Replace the file. Throws on any failure. */
+  write(text: string): void
+}
+
+/**
+ * Which conversations Switch Account carried into which account's folder, and
+ * when (ADR-023). A carried copy holds the earlier account's events, which are
+ * not this account's allowance, plan or credits: a reader of that rollout
+ * counts only the events dated after the carry (`cutoff`), and an event with no
+ * zoned time then counts for nothing. Kept in memory and in the injected port;
+ * bounded to the newest CODEX_CARRY_MARKS_MAX; a realm's marks go with its
+ * account (`dropRealm`). Everything read back is validated; nothing here ever
+ * throws.
+ */
+export interface CodexCarryMarks {
+  /** Mark `conversationId` as carried into `realmId`'s `sessionsDir` at `at`
+   *  (epoch ms). True when it was kept. */
+  record(realmId: string, sessionsDir: string, conversationId: string, at: number): boolean
+  /** The carry time of that conversation in that sessions folder, or null. */
+  cutoff(sessionsDir: string, conversationId: string | null): number | null
+  /** Forget every mark of a realm (its account was removed). */
+  dropRealm(realmId: string): void
+}
+
+interface CarryMark { realm: string; dir: string; id: string; at: number }
+
+/** The marks a persisted text holds, validated; nothing for text that is not
+ *  the expected shape. At most CODEX_CARRY_MARKS_MAX, the newest last. */
+function parseCarryMarks(text: string): CarryMark[] {
+  if (typeof text !== 'string' || text.length === 0 || text.length > MARKS_FILE_MAX_CHARS) return []
+  let doc: unknown
+  try { doc = JSON.parse(text) } catch { return [] }
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return []
+  // JSON.parse makes plain objects: nothing here can be inherited, and every
+  // field is checked by its type below.
+  const d = doc as Record<string, unknown>
+  if (d.schema !== 1 || !Array.isArray(d.marks)) return []
+  const out: CarryMark[] = []
+  for (const raw of d.marks) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
+    const { realm, dir, id, at } = raw as Record<string, unknown>
+    if (typeof realm !== 'string' || !MARKS_REALM_RE.test(realm)) continue
+    if (typeof dir !== 'string' || dir.length === 0 || dir.length > MARKS_DIR_MAX) continue
+    if (typeof id !== 'string' || !CONVERSATION_ID_RE.test(id)) continue
+    if (typeof at !== 'number' || !Number.isFinite(at) || Math.abs(at) > MARKS_MAX_MS) continue
+    out.push({ realm, dir, id: id.toLowerCase(), at })
+  }
+  return out.slice(-CODEX_CARRY_MARKS_MAX)
+}
+
+export function createCodexCarryMarks(opts: { port?: CodexCarryMarksPort; platform?: NodeJS.Platform; max?: number } = {}): CodexCarryMarks {
+  const keyOf = keyer(opts.platform ?? process.platform)
+  const port = opts.port
+  const max = typeof opts.max === 'number' && opts.max > 0 ? Math.floor(opts.max) : CODEX_CARRY_MARKS_MAX
+  const marks = new Map<string, CarryMark>()
+  /** The persisted marks have been read (or there is no port to read). */
+  let loaded = !port
+  const keyFor = (dir: string, id: string) => `${keyOf(dir)}|${id}`
+  const put = (m: CarryMark) => {
+    const k = keyFor(m.dir, m.id)
+    marks.delete(k)
+    marks.set(k, m)
+    while (marks.size > max) {
+      const oldest = marks.keys().next().value
+      if (oldest === undefined) break
+      marks.delete(oldest)
+    }
+  }
+  const save = () => {
+    if (!port || !loaded) return
+    try { port.write(JSON.stringify({ schema: 1, marks: [...marks.values()] })) } catch { /* kept in memory; the next change tries again */ }
+  }
+  const load = () => {
+    if (loaded || !port) return
+    let r: ReturnType<CodexCarryMarksPort['read']>
+    try { r = port.read() } catch { return }
+    if (!r || (r.kind !== 'ok' && r.kind !== 'missing')) return
+    loaded = true
+    // The file's marks first; what was recorded before it could be read wins.
+    const mine = [...marks.values()]
+    marks.clear()
+    if (r.kind === 'ok') for (const m of parseCarryMarks(r.text)) put(m)
+    for (const m of mine) put(m)
+    if (mine.length > 0) save()
+  }
+  return {
+    record(realmId, sessionsDir, conversationId, at) {
+      try {
+        if (typeof realmId !== 'string' || !MARKS_REALM_RE.test(realmId)) return false
+        if (typeof sessionsDir !== 'string' || sessionsDir.length === 0 || sessionsDir.length > MARKS_DIR_MAX) return false
+        if (typeof conversationId !== 'string' || !CONVERSATION_ID_RE.test(conversationId)) return false
+        if (typeof at !== 'number' || !Number.isFinite(at) || Math.abs(at) > MARKS_MAX_MS) return false
+        load()
+        put({ realm: realmId, dir: sessionsDir, id: conversationId.toLowerCase(), at })
+        save()
+        return true
+      } catch {
+        return false
+      }
+    },
+    cutoff(sessionsDir, conversationId) {
+      try {
+        if (typeof sessionsDir !== 'string' || sessionsDir.length === 0 || typeof conversationId !== 'string' || !CONVERSATION_ID_RE.test(conversationId)) return null
+        load()
+        return marks.get(keyFor(sessionsDir, conversationId.toLowerCase()))?.at ?? null
+      } catch {
+        return null
+      }
+    },
+    dropRealm(realmId) {
+      try {
+        if (typeof realmId !== 'string') return
+        load()
+        let dropped = false
+        for (const [k, m] of [...marks.entries()]) if (m.realm === realmId) { marks.delete(k); dropped = true }
+        if (dropped) save()
+      } catch { /* nothing to forget */ }
+    },
+  }
+}
+
 /** A reading as the port reports it: buckets, time, plan name and, when the
  *  reading carries them, the credits count (ADR-023; the key is omitted
  *  otherwise); null when it has nothing to draw. Never throws. */
@@ -460,6 +618,9 @@ export interface CodexUsageDeps {
   fs: CodexUsageFsPort
   live: CodexLiveUsage
   now?: () => number
+  /** Conversations carried into a realm by Switch Account (ADR-023): the
+   *  last-seen reading counts only the events written after the carry. */
+  marks?: CodexCarryMarks
   /** The longest a caller waits (tests shorten it). */
   timeoutMs?: number
   /** Usage track MP8: the auth operations' one helper read. Absent: the
@@ -545,7 +706,7 @@ export function createCodexUsageOperations(deps: CodexUsageDeps): ProviderUsageO
       return shared(reading, realmKey(realm), async (): Promise<UsageLookup> => {
         const dir = await locate(realm)
         if (!dir) return { ok: false }
-        const r = await lookupLastSeenAllowance(dir, deps.fs, now(), cache)
+        const r = await lookupLastSeenAllowance(dir, deps.fs, now(), cache, deps.marks)
         return r.ok ? { ok: true, reading: toUsageReading(r.reading) } : { ok: false }
       }, { ok: false })
     },

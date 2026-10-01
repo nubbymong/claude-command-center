@@ -2007,7 +2007,9 @@ export class AccountsService {
           if (changed) return changed
           // Held: the count is 0 and nothing new could start.
           const r = await ctx.store.mutate((d, t) => setAccountLifecycle(d, a.id, 'archived', { consumers: this.deps.leases.count(a.id) }, t))
-          return this.fromStore(r) ?? { ok: true }
+          const archived = this.fromStore(r)
+          if (!archived) this.forgetRealm(ctx.p, a.authRealmId)
+          return archived ?? { ok: true }
         } finally {
           release()
         }
@@ -2048,12 +2050,20 @@ export class AccountsService {
         if (!signedOut.ok) return this.fromStore(signedOut)!
         // Held: the count is 0 and nothing new could start.
         const r = await ctx.store.mutate((d, t) => setAccountLifecycle(d, a.id, 'archived', { consumers: this.deps.leases.count(a.id) }, t))
-        return this.fromStore(r) ?? { ok: true }
+        const archived = this.fromStore(r)
+        if (!archived) this.forgetRealm(ctx.p, a.authRealmId)
+        return archived ?? { ok: true }
       } finally {
         release()
       }
     }
     return failure('invalid-request')
+  }
+
+  /** An account was archived: the provider forgets what it kept about its
+   *  realm besides the folder (ADR-023: the carry marks). Never throws. */
+  private forgetRealm(p: ProviderPackage | null, authRealmId: string): void {
+    try { p?.realmFolders?.forget?.({ authRealmId }) } catch { /* a forgotten mark never fails the archive */ }
   }
 
   async setDefault(input: { accountId: string }): Promise<AccountsResult> {

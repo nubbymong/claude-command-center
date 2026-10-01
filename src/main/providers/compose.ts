@@ -16,8 +16,24 @@ import { readProfilesStrict, updateProfilesStrict, mkdirSecure, profileRealmLaun
 import { holdProfileForRun } from '../profile-consumers'
 import { resolveClaudeExecutable } from '../claude-cli-version'
 import { readConfigChecked } from '../config-manager'
-import { getAccountRegistry, getAccountRegistryResourcesDir } from '../provider-account-registry'
+import { getAccountRegistry, getAccountRegistryResourcesDir, REGISTRY_DIRNAME } from '../provider-account-registry'
 import { takeProviderSecret } from '../provider-accounts'
+import { atomicWriteFileSync } from '../atomic-write'
+import { createCarryMarksFilePort } from '../carry-marks-port'
+import path from 'node:path'
+
+/** Where the conversations a Switch Account carried are marked between runs
+ *  (ADR-023): a small file in the app's `providers/` folder next to the
+ *  registry, never in an account's folder. Handed to the Codex package. */
+const carryMarksPort = createCarryMarksFilePort({
+  directory: () => {
+    const resources = getAccountRegistryResourcesDir()
+    return resources ? path.join(resources, REGISTRY_DIRNAME) : null
+  },
+  mkdirSecure: (dir) => mkdirSecure(dir),
+  atomicWrite: (file, data, options) => atomicWriteFileSync(file, data, options),
+  posix: process.platform !== 'win32',
+})
 
 /** Claude's profiles.json and settings, handed to the Claude package so the
  *  registry can mirror its accounts (WP2). Injected here, at the root, so the
@@ -80,7 +96,7 @@ export const claudeReviewPorts: ClaudeReviewPorts = {
  *  Exactly one package per provider: the Codex realm locks live in it. */
 const PACKAGE_FACTORIES: Readonly<Record<ProviderId, ProviderPackageFactory>> = {
   claude: () => createClaudePackage({ legacyAccountsIo: claudeLegacyAccountsIo, review: claudeReviewPorts }),
-  codex: () => createCodexPackage({ realms: codexRealmSource, auth: { takeSecret: (handle) => takeProviderSecret(handle) } }),
+  codex: () => createCodexPackage({ realms: codexRealmSource, auth: { takeSecret: (handle) => takeProviderSecret(handle) }, carryMarksPort }),
 }
 
 /** Idempotent against the registry itself (no separate flag that could desync

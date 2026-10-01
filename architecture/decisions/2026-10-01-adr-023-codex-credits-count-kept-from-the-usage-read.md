@@ -65,14 +65,58 @@ The app keeps one more thing from a Codex usage reading, and nothing else:
    balance is missing or not readable (and the credits are not unlimited).
    `hasCredits: false` has not been observed, so nothing is invented for it.
 
+## Carry marks (round 1)
+
+The credits row brought a second thing to keep. Switch Account carries a
+conversation into the account it moves to (`conversation-carry.ts`): the copy in
+that account's sessions folder is the earlier account's rollout, so it holds the
+earlier account's events, and a reader that takes the newest event as the
+account's own would show the earlier account's bars, plan and credits on the
+new account's card until its session reports. This is not about the read bounds
+above; it changes what the app itself keeps, so it is recorded here.
+
+1. **What is kept.** One record per carry: the destination account's realm id,
+   its sessions folder, the conversation id (lower case) and the time of the
+   carry (epoch ms), made when the copy lands. A copy that was already there
+   keeps the record it has; an extension (the conversation coming back to an
+   account) replaces its record with the newer time. No text of the
+   conversation, no figure, no credential.
+2. **Where, and how long.** In memory, and in `carry-marks.json` in the app's
+   own `providers/` configuration folder next to the account registry, never in
+   an account's folder (`src/main/carry-marks-port.ts`; the composition root
+   hands the port to the Codex package). Written atomically, owner-only where
+   there are modes, read back with every field validated (a file that is not the
+   expected shape reads as no marks). The newest 256 records are kept. A realm's
+   records are dropped when its account is archived and when its folder is
+   removed.
+3. **What reads it.** The session watcher (the live figure) and the last-seen
+   reader count, in a rollout that has a record, only the token_count events
+   dated after the carry time. An event whose timestamp has no zone designator
+   (or that is not a time) counts for nothing there, the same zoneless rule as
+   the transcript reader's (P3.12), so a doubt shows no figure rather than the
+   earlier account's. The new account's own events after the carry show as
+   usual. Everything else a rollout says (tokens, context, edits) is read as
+   before.
+4. **Limits.** The folder is recorded as a path: if the app's data folder is
+   moved, the records no longer match their folders and the rollout reads whole,
+   as it did before. An account's events from before an extension (the
+   conversation going A, B, A) are not counted for it either; they appear again
+   with its next report. A carry made before this change has no record.
+
 ## Consequences
 
 - The privacy wording (`PRIVACY.md`) names the credits count beside the
-  allowance figures and the plan.
+  allowance figures and the plan, and the carry notes among what the app
+  stores.
 - Parsing the helper's untrusted output is security-sensitive (ADR-009): the
   change gets an adversarial pass. The exact change for the attackers is the
   addition in item 1 and the one reader that implements items 2 and 3
   (`readCredits` in `src/main/providers/codex/rate-limits.ts`).
+- The carry marks sit beside the conversation carry (realm-folders.ts runs the
+  copy under both realm locks and marks it after it lands), a new file in the
+  app's configuration folder, and the archive path of the accounts service
+  (`forget`): the pass covers them too (ADR-009). A mark that cannot be kept
+  never fails a carry or an archive.
 - Rejected: taking credits from rollouts only. A closed account on a supported
   CLI is shown from the fresh read, which replaces last-seen, so its row would
   vanish exactly when the page reads afresh; that is not parity.

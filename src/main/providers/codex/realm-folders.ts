@@ -66,6 +66,7 @@ import { codexRealmHome, codexExternalHomeCandidate, codexHomesOverlap, isFullyQ
 import type { CodexRealmRoots } from './realm-paths'
 import { CODEX_CONVERSATION_ID_RE } from './rollout-lookup'
 import type { CodexConversationCarry } from './conversation-carry'
+import type { CodexCarryMarks } from './usage'
 
 /** One directory entry as lstat sees it: the entry itself, never a link's target. */
 export interface CodexFsEntry {
@@ -337,6 +338,12 @@ export interface CodexRealmFolderDeps {
   /** The file work of a conversation copy (conversation-carry.ts). Absent:
    *  no conversation is copied. */
   carry?: CodexConversationCarry
+  /** Where a conversation carried into a realm is marked (ADR-023), so what
+   *  reads that realm's rollouts counts only what was written after the carry.
+   *  Absent: nothing is marked. */
+  marks?: CodexCarryMarks
+  /** The clock a carry is stamped with. */
+  now?: () => number
 }
 
 /** Bounds on a tree the removal will walk: an abandoned setup's home holds a
@@ -728,6 +735,10 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
       } finally {
         release()
       }
+    }).then((r) => {
+      // The folder is gone (or was never there): so are its carry marks (ADR-023).
+      if (r.ok === true) forget(ref)
+      return r
     })
   }
 
@@ -994,7 +1005,10 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
         } catch {
           return fail('io-failed')
         }
-        if (r && r.ok === true && (r.carried === 'copied' || r.carried === 'present' || r.carried === 'extended')) return { ok: true, carried: r.carried }
+        if (r && r.ok === true && (r.carried === 'copied' || r.carried === 'present' || r.carried === 'extended')) {
+          markCarried(to, dst.home, id, r.carried)
+          return { ok: true, carried: r.carried }
+        }
         const code = r && r.ok === false && typeof r.code === 'string' ? r.code : 'io-failed'
         return Object.prototype.hasOwnProperty.call(CARRY_FAILURES, code) ? CARRY_FAILURES[code] : fail('io-failed')
       } finally {
@@ -1003,7 +1017,29 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
     }).then((r) => (r.ok === false && r.code === 'io-failed' ? CARRY_IO_FAILED : r))
   }
 
-  return { prepare, remove, copyHistory, copyConversation }
+  /** The carry's mark (ADR-023): the copy now in the destination's folder holds
+   *  the earlier account's events, so a reader of that rollout counts only what
+   *  is written after this moment. A copy or an extension is marked now; one
+   *  that was `present` already keeps the mark it has, and is marked now only
+   *  when it has none. Never throws. */
+  function markCarried(to: RealmRef, home: string, id: string, carried: 'copied' | 'present' | 'extended'): void {
+    const marks = deps.marks
+    if (!marks) return
+    try {
+      const sessionsDir = pathApi.join(home, 'sessions')
+      if (carried === 'present' && marks.cutoff(sessionsDir, id) !== null) return
+      let at = Date.now()
+      try { const n = deps.now ? deps.now() : at; if (Number.isFinite(n)) at = n } catch { /* the wall clock */ }
+      marks.record(to.authRealmId, sessionsDir, id, at)
+    } catch { /* a mark that cannot be kept never fails the carry */ }
+  }
+
+  /** An account was removed: its realm's carry marks go (ADR-023). */
+  function forget(ref: RealmRef): void {
+    try { if (ref && typeof ref.authRealmId === 'string') deps.marks?.dropRealm(ref.authRealmId) } catch { /* nothing to forget */ }
+  }
+
+  return { prepare, remove, copyHistory, copyConversation, forget }
 }
 
 /** The promise's answer, or `late` once `ms` have passed. */

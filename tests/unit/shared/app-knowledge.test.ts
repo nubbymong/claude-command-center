@@ -206,6 +206,10 @@ describe('app knowledge after P3.14', () => {
     // Round 1: no claim about the balance's age beyond that.
     expect(body('accounts')).not.toMatch(/carries the same age/)
   })
+  it('says a conversation moved with Switch Account shows none of the earlier account\'s limits, plan or credits on the new account\'s card until it reports', () => {
+    expect(body('accounts')).toMatch(/A conversation you move to another Codex account with Switch Account brings the earlier account's history with it, so the new account's card counts only what that account reports after the move/)
+    expect(body('accounts')).toMatch(/until its session reports, the card shows none of the earlier account's limits, plan or credits/)
+  })
 })
 
 // P3.15 (rows 70, 71): what the VM run showed. Alt+V with the terminal focused

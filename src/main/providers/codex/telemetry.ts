@@ -23,7 +23,7 @@ import { computeCodexCostUsd } from './pricing'
 import { CODEX_CONVERSATION_ID_RE, codexDayFolders, codexFolderIdentity, findCodexRollout, isRealFolder, parseSessionMetaLine, readRolloutFirstLine, sameDirectory } from './rollout-lookup'
 import type { FoundRollout, RolloutSessionMeta } from './rollout-lookup'
 import type { PickFolderIdentity } from '../types'
-import { normaliseCodexRateLimits, mergeAllowanceReadings, readingToBuckets, isoFromEpochMs, CODEX_DEFAULT_LIMIT_ID } from './rate-limits'
+import { normaliseCodexRateLimits, mergeAllowanceReadings, readingToBuckets, isoFromEpochMs, zonedTimeMs, CODEX_DEFAULT_LIMIT_ID } from './rate-limits'
 import { conversationRunningTime, noteConversationRunningTime } from '../../conversation-running-time'
 import type { StatuslineData } from '../../../shared/types'
 import type { AllowanceReading } from '../../../shared/usage-types'
@@ -122,6 +122,10 @@ export interface RolloutReadState {
   contextWindow: number | null
   latest: TokenCountEvent | null
   allowance: AllowanceReading | null
+  /** A carried conversation's mark (ADR-023): when set, only the token_count
+   *  events dated after it (with a zoned time) count towards `allowance`. The
+   *  rest of what the rollout says is read as before. */
+  allowanceAfter: number | null
   linesAdded: number
   linesRemoved: number
   turnWindows: TurnWindow[]
@@ -136,7 +140,7 @@ export interface TurnWindow {
 }
 
 export function newRolloutReadState(turnWindows: TurnWindow[] = []): RolloutReadState {
-  return { meta: null, contextWindow: null, latest: null, allowance: null, linesAdded: 0, linesRemoved: 0, turnWindows, turnMs: 0 }
+  return { meta: null, contextWindow: null, latest: null, allowance: null, allowanceAfter: null, linesAdded: 0, linesRemoved: 0, turnWindows, turnMs: 0 }
 }
 
 /** Added and removed line counts. */
@@ -279,8 +283,16 @@ export function applyRolloutLine(state: RolloutReadState, line: string, onTokenC
   if (payload.type === 'token_count') {
     // The allowance first: a pre-response event (info null) already carries it.
     if (payload.rate_limits != null) {
-      const at = Date.parse(String(evt.timestamp ?? ''))
-      state.allowance = mergeAllowanceReadings([state.allowance, normaliseCodexRateLimits(payload.rate_limits, 'rollout', Number.isFinite(at) ? at : null)])
+      let at = Date.parse(String(evt.timestamp ?? ''))
+      // A carried conversation (ADR-023): an event of the earlier account, or
+      // one with no zoned time, is not this account's allowance.
+      let counts = true
+      if (state.allowanceAfter !== null) {
+        const zoned = zonedTimeMs(evt.timestamp)
+        counts = zoned !== null && zoned > state.allowanceAfter
+        if (zoned !== null) at = zoned
+      }
+      if (counts) state.allowance = mergeAllowanceReadings([state.allowance, normaliseCodexRateLimits(payload.rate_limits, 'rollout', Number.isFinite(at) ? at : null)])
     }
     // info is null for pre-response token_count events -- no usage in those
     const info = payload.info as Record<string, unknown> | null
@@ -637,6 +649,12 @@ export interface CodexClaimOptions {
    *  claimed without walking the realm again, when it is still that
    *  conversation's plain file inside this realm's real folders. */
   resumePath?: string
+  /** A conversation carried into this realm by Switch Account (ADR-023): when
+   *  the rollout being read was carried, the time it was; its allowance, plan
+   *  and credits then come only from events dated after it. Null (or absent):
+   *  the whole rollout counts. Asked on every read, so a mark recorded later
+   *  applies from the next read. Never throws (a throw counts as none). */
+  allowanceAfter?: (rolloutPath: string) => number | null
   /** Where the resume picker records each decision it makes (P3.5 fix
    *  round 1): `{ id }` when it resumes that conversation, `{ fresh: true }`
    *  when it starts a new one (a New conversation choice, nothing to list,
@@ -811,6 +829,9 @@ export function watchAndClaimRollout(
   /** What the claimed rollout has said so far, and how far it has been read
    *  (through its last complete line). */
   let readState = newRolloutReadState()
+  /** The carry mark of the rollout being read (claimOpts.allowanceAfter),
+   *  asked afresh at each read. */
+  let allowanceAfter: number | null = null
   let offset = 0
   /** How the claim was made (P3.10): known rather than inferred (a resume by
    *  id, a pick, the session's own hook), confirmed by that hook, and read
@@ -1083,6 +1104,7 @@ export function watchAndClaimRollout(
   function applyLines(buf: Buffer): number {
     const end = buf.lastIndexOf(0x0a) + 1
     if (end <= 0) return 0
+    readState.allowanceAfter = allowanceAfter
     for (const line of buf.subarray(0, end).toString('utf-8').split('\n')) {
       if (line) applyRolloutLine(readState, line)
     }
@@ -1098,6 +1120,13 @@ export function watchAndClaimRollout(
    *  background (countBetween, P3.7). */
   function readNew(file: string): boolean {
     let fd: number | null = null
+    allowanceAfter = null
+    if (typeof claimOpts?.allowanceAfter === 'function') {
+      try {
+        const m = claimOpts.allowanceAfter(file)
+        allowanceAfter = typeof m === 'number' && Number.isFinite(m) ? m : null
+      } catch { allowanceAfter = null }
+    }
     try {
       fd = openSync(file, 'r')
       // The tail re-checks it is still reading the claimed file (P3.5 final
