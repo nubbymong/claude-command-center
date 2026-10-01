@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-01T08:27:17.012Z",
-  "head": "b86bed6da5f89e35eefa84030fcf71ecdbecaa86",
-  "tree": "8f3e93bc97e507f45932f00f83a23f2d4946c9e9",
+  "generatedAt": "2026-10-01T09:07:54.257Z",
+  "head": "86e3efb9ddd941d24a41af6b2058b891889a2c97",
+  "tree": "7009a3ad81f633cb63c90f275d3c88339135b964",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2583,
+  "trackedFileCount": 2585,
   "excludedFileCount": 385,
-  "scannedFileCount": 2198,
+  "scannedFileCount": 2200,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -161,7 +161,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 48
+      "lineCount": 49
     },
     {
       "path": "README.md",
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 591,
+      "lineCount": 596,
       "truncated": true
     },
     {
@@ -835,7 +835,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 233
+      "lineCount": 238
     },
     {
       "path": "src/main/providers/codex/install-recipes.ts",
@@ -892,7 +892,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 16
+      "lineCount": 17
     },
     {
       "path": "src/main/providers/codex/realm-folders.ts",
@@ -902,7 +902,7 @@
         "P05",
         "P14"
       ],
-      "lineCount": 131
+      "lineCount": 133
     },
     {
       "path": "src/main/providers/codex/realm-paths.ts",
@@ -976,14 +976,14 @@
         "P01",
         "P14"
       ],
-      "lineCount": 55
+      "lineCount": 67
     },
     {
       "path": "src/main/providers/compose.ts",
       "predicates": [
         "P14"
       ],
-      "lineCount": 12
+      "lineCount": 13
     },
     {
       "path": "src/main/providers/core/accounts-service.ts",
@@ -3418,7 +3418,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 78
+      "lineCount": 94
     },
     {
       "path": "tests/unit/main/provider-in-use.test.ts",
@@ -3523,7 +3523,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 50
+      "lineCount": 52
     },
     {
       "path": "tests/unit/main/pty-spawn-one-at-a-time.test.ts",
@@ -4065,7 +4065,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 102
+      "lineCount": 109
     },
     {
       "path": "tests/unit/providers/codex/ui-detection.test.ts",
@@ -4083,7 +4083,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 76
+      "lineCount": 112
     },
     {
       "path": "tests/unit/providers/host-color-scheme.test.ts",
@@ -5224,7 +5224,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 44
+      "lineCount": 45
     },
     {
       "path": "tests/unit/status-ingest.test.ts",
