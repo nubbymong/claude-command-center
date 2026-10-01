@@ -198,7 +198,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 68 | Insights | OPEN: Claude only; Claude's Insights types Claude Code's own `/insights` in a terminal (`src/main/insights-runner.ts:234-237`) | Parity, recorded 2026-09-26 (the parity reset's "Resolved by parity" list, sessions batch; not one of that day's open questions): a Conductor-native Codex report, run with `codex exec`. A mockup comes before the build (section 10) | implementation | 4 |
 | 69 | Plan mode | DONE (P3.8 round 1, caef0d42; round 2, f1783110): a "Plan mode" permissions choice, as Claude's launch option: the session starts READ-ONLY and Codex's own `/plan` is typed into its first ready prompt only (never the folder-trust prompt, the user's typing or after a turn), within a bounded wait; otherwise a note says Plan mode is not on and the session is read-only. The pill reads "plan" only while Codex's footer shows its Plan mode | Parity: Claude's Plan mode launch option (`src/renderer/lib/claude-cli-options.ts:85`); Codex has `/plan` on both supported versions and no launch flag for it (VM), so no section 19 record | verification: Plan mode on the VM, 0.153.4's fresh launches included (round 3); the approval flow with a working model (owner-only) | 3 |
 | 70 | Image paste | DONE (P3.15, bbcb6ef8; the focused key on the VM at c11fb360, both versions): with the terminal focused Alt+V goes to the CLI and Codex attaches the image itself ("[Image #1]"); with focus elsewhere a Codex session's line is ASCII and typed by the Codex typing rule, its notes in the paste hint (mocked: `codex-image-paste.test.ts`, `alt-v-image-route.test.tsx`); the tip and the Tips and Shortcuts card say both | Parity | verification: the wrapped line on the VM (round 1); real Claude Code's own Alt+V; macOS, Linux | 3 |
-| 71 | Copy, paste, scrollback, mouse | DONE (P3.15, bbcb6ef8; the VM at c11fb360): copy, paste (Ctrl+V and right-click, bracketed) and mouse (Codex sets no mouse mode) as Claude's; scrollback: a local Codex session on Windows runs under node-pty's bundled ConPTY, which keeps it (122 lines and the wheel scrolling in the VM's in-app trial, against 38 and an inert wheel under the system ConPTY), with the system ConPTY as the fallback (mocked: `bundled-conpty.test.ts`, `pty-conpty-per-provider.test.ts`) | Parity | verification: re-checked packaged at 7c52a432; round 1's spawn-time fallback, a Codex that quits leaving a process attached, the TUI trace fixture replaced; macOS, Linux | 3 |
+| 71 | Copy, paste, scrollback, mouse | DONE (P3.15, bbcb6ef8; the VM at c11fb360): copy, paste (Ctrl+V and right-click, bracketed) and mouse (Codex sets no mouse mode) as Claude's; scrollback: a local Codex session on Windows runs under node-pty's bundled ConPTY, which keeps it (122 lines and the wheel scrolling in the VM's in-app trial, against 38 and an inert wheel under the system ConPTY), with the system ConPTY as the fallback (mocked: `bundled-conpty.test.ts`, `pty-conpty-per-provider.test.ts`) | Parity | verification: re-checked packaged at 7c52a432, 98455d52 and 855e1484 (the fallbacks, the input guard: 0 app exits in 40 tries); the cause of the input failure confirmed (round 4's VM items); the TUI trace fixture replaced; macOS, Linux. A tab left open by a background command is a known issue | 3 |
 | 72 | Multi Spawn and Quick Start with Codex | DONE (P2; P3.13, 3e45825d; round 1, 54422e2a; round 2, b86bed6d; round 2b, 86e3efb9; round 3, f16a756a; mocked): a Codex config that is not Multi Spawn runs one copy at a time in the sidebar (P2) and now in main at `pty:spawn` for NEW copies (a session that already runs, restored at this start or accepted in this run, keeps its right through a Restart, a Switch and a reattach), a new copy refused with the typed `already-running` before an account is prepared or leased; N copies of a Multi Spawn Codex config are N processes, each on its own account lease, a copy ending or closing letting go of its own lease only; Quick Start launches a Codex pin, with its x N control, blocked start and select lock, as a Claude pin's (`pty-spawn-one-at-a-time.test.ts`, `pty-spawn-one-at-a-time-rights.test.ts`, `codex-multi-spawn-leases.test.ts`, `multi-spawn-codex.test.tsx`) | Parity: N copies with one lease each; Quick Start | verification: the VM check (PR 3 gate 6) | 2; 3 |
 | 73 | Channel rules delivery | DONE (P3.15; the VM at c11fb360, re-checked under the bundled ConPTY at 7c52a432): a rule's envelope reaches Codex's composer bracketed with no Enter, and its rollout verbatim after Enter; the ledger records it for both sessions | Parity | verification: macOS, Linux | 3 |
 | 74 | Command buttons, preset pill, restart menu, theme | DONE | ADR-018 | verification: the real-CLI pass | 2, v4 |
@@ -359,7 +359,7 @@ from P3.1, and then only that row.
 | P3.12 Logs and GitHub context | 31, 32 (the name file), 65 | Y | Y | APPROVED |
 | P3.13 Multi Spawn and Quick Start | 72 | Y | N | APPROVED |
 | P3.14 Usage follow-up: Codex credits | 17 | Y (the read keeps three more fields; ADR-023) | N | APPROVED |
-| P3.15 Terminal verification | 44, 70, 71, 73 | Y (the scrollback fix builds the Codex PTY with a new option and starts OpenConsole.exe); PASS at pass 2 | Y by file (`pty-manager.ts`; no SSH path changed) | APPROVED |
+| P3.15 Terminal verification | 44, 70, 71, 73 | Y (the scrollback fix builds the Codex PTY with a new option and starts OpenConsole.exe): PASS at pass 2; round 3's input guard covered by the P3.16a pass (lens A and B minors only); round 4 owed | Y (SSH sessions' PTY input and output are guarded, and the End and liveness-probe helper PTYs): the live SSH matrix owed, End with a password and the liveness probe included | APPROVED |
 | P3.16 PR 3 records and user-facing sweep | none | N (docs) | N | APPROVED |
 
 The 35 rows: 7, 8, 10, 11, 14, 17, 20, 22, 24, 28, 31, 32, 34, 35, 36, 37,
@@ -3036,7 +3036,8 @@ and that the app did not end itself (a close, a Restart, a Switch account), is
 taken as the bundled ConPTY failing after node-pty started it (OpenConsole.exe
 ended at once, or unable to create Codex): the next launch uses the system
 ConPTY, said once; nothing is relaunched. A real Codex draws at once, even to
-say it cannot start, so a real quick exit is not mistaken for it. J6: the known
+say it cannot start, so a real quick exit is not mistaken for it (not
+observed on the VM either way: see the VM runs below). J6: the known
 issue and the tip name /setup-default-sandbox, which both supported CLIs list
 in their slash popup (the CLI fixtures), as not yet confirmed. J7: the fallback
 assigns the started PTY before reporting; the comment says a throw after
@@ -3063,13 +3064,20 @@ P3.15 round 3 (the VM blocker at 98455d52: under the bundled ConPTY a key
 typed right after Codex ended, on Ctrl+C at an empty prompt, failed with
 "write EAGAIN" and the whole app quit, in 4 of 5 fast-typing tries at Medium
 and High; 0 of 5 under the system ConPTY). Fixed in ccda8f07 (mocked), the
-bundled ConPTY kept. Cause: node-pty writes a Windows PTY's input to a
-net.Socket over the console's input pipe and gives it no 'error' listener, and
-the app's uncaught-exception handler ends the app on all but EPIPE and EIO;
-the write fails because the console host has let go of the pipe (node-pty
-releases the bundled pseudo console when it starts the program, so
-OpenConsole.exe ends with the program; the system host keeps the pipe until
-the PTY is killed). Nothing to retry: the writes block until there is room,
+bundled ConPTY kept. Why the app quit: node-pty writes a Windows PTY's input
+to a net.Socket over the console's input pipe and gives it no 'error'
+listener, and the app's uncaught-exception handler ends the app on all but
+EPIPE and EIO. Why the write failed, the likely cause, NOT YET CONFIRMED: the
+console host let go of the pipe as Codex ended (node-pty releases the bundled
+pseudo console when it starts the program, so OpenConsole.exe ends with the
+program; the system host keeps the pipe until the PTY is killed). The journal
+also fits a write that failed while Codex was alive (EAGAIN 3 ms after the
+Ctrl+C; once on the first write after the composer, before any exit line), so
+the VM is to log, on each try, whether Codex's exit text comes before the
+"input ... failed" line, and to type fast right after the start screen with
+no Ctrl+C (0 failures expected). A "stopped taking input" line on a live
+Codex means the bundled ConPTY refuses input itself: then K3 applies and it is
+turned off for Codex again. Nothing to retry: the writes block until there is room,
 and a failed write destroys the socket. Change: `guardPtyInput`
 (`src/main/pty-input-guard.ts`) gives that socket a listener for every
 session's PTY (Claude, Codex on either ConPTY, plain terminals, SSH) and the
@@ -3088,6 +3096,47 @@ version and integrity (Ctrl+C at an empty prompt then keys at once), the
 "input to session ... failed" log line seen and the tab ending normally; the
 earlier P3.15 list; and the headless vision Chrome that outlived the app and
 held its debug port (pre-existing, for P3.16).
+The VM runs. At 98455d52 (round 2): the regression sweep passed again; the
+round 2 fixes held ("[Process exited]", "code unknown", the run "exited");
+/setup-default-sandbox is listed only after a choice of 2 (with no setting on
+a machine whose elevated sandbox already exists Codex calls it unrecognised),
+and run at Medium it raises a UAC prompt and blocks Codex's input until
+answered, so without a yes the tab stays stuck; whether a yes then lets Codex
+edit on its own needs the owner. The running tool command and an MCP server
+end with the tab, Restart and Switch account; a background command left
+running keeps the tab open after /quit (now a known issue: close the tab).
+OpenConsole.exe killed 126 ms after a launch: Codex had already drawn, the
+session ended normally and the next launch stayed bundled, so J5's early end
+was not exercised by a real failure; its one false-positive case (a real
+Codex ending within 5 s having drawn nothing) has not been observed either.
+The spawn-time fallback (conpty.dll renamed live, and a 0-byte conpty.dll)
+started the session on the system ConPTY with one warning, as built. And the
+write EAGAIN that quit the app (round 3). At 855e1484 (round 3): 0 app exits
+in 40 fast-typing tries (0.155.1 and 0.153.4, Medium and High), each failed
+write logged once as "input to session ... failed (EAGAIN)" and the tab then
+"[Process exited with code 0]"; 0 failures in 10 under the system ConPTY;
+Claude and a plain terminal typed into as they ended: no exit.
+P3.15 round 4 (the rounds 2-3 reviews and the P3.16a ADR-009 lenses). Built in
+1801f7e6 (mocked). P4: node-pty's own handler on a PTY's output socket throws
+any error but EIO unless the PTY has an 'error' listener of the app's own, the
+same way to quit the app: every session's PTY, and the End and liveness helper
+PTYs, are guarded on both sides (`guardPtyIo`); the first error of each side
+is logged once, EIO (the program's end) is not reported, and a session that
+has not ended within the grace is ended once. P2: the first-run CLI setup
+terminal and the /insights PTY are guarded on both sides (log only). P3: tests
+for an SSH session's guard (adopted from lens B's B-K-1) and the liveness
+probe's helper. P8: the path bound adds the loader's prefix as
+path.toNamespacedPath does (6 for a UNC install). P6: the known issue and the
+tip say /setup-default-sandbox is listed only after a choice of 2, asks for
+administrator permission and blocks Codex's input until answered; the owner
+is to confirm the yes path. P1 and P7: above. Tests, red first on d082f6e8 (7
+of 59 in three files); the setup, insights and SSH input guards red by their
+mutants; mutation 11 round 4 mutants and 3 round 3 mutants re-run, all red.
+Owed on the VM (the packaged build of this round): per fast-typing try, the
+order of Codex's exit text and the "input ... failed" line; fast typing right
+after the start screen with no Ctrl+C (0 failures); no "stopped taking input"
+line on a live Codex (else K3); the earlier list; the live SSH matrix with End
+by password and the liveness probe (owner).
 
 **P3.16 PR 3 records and user-facing sweep.** App knowledge (with known
 issues), tips, tour and Feature Guide, the changelog entry, the user guide,
