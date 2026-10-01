@@ -291,6 +291,19 @@ describe('the credits row (P3.14)', () => {
       expect(text).not.toContain('456')
     })
 
+    // Round 1, N2: a positive balance below the smallest figure shown is never
+    // rounded down to "0 credits"; it reads "<0.01 credits". Zero stays zero.
+    it('a positive balance under the smallest figure shown reads "<0.01 credits", never "0 credits"', () => {
+      const small = `<${count(0.01)} credits`
+      for (const balance of [0.004, 0.001, 0.0049, 1e-12]) {
+        expect(codexCreditsText({ hasCredits: true, unlimited: false, balance }), String(balance)).toBe(small)
+      }
+      expect(codexCreditsText({ hasCredits: true, unlimited: false, balance: 0.005 })).toBe(`${count(0.01)} credits`)
+      expect(codexCreditsText({ hasCredits: true, unlimited: false, balance: 0.01 })).toBe(`${count(0.01)} credits`)
+      expect(codexCreditsText({ hasCredits: true, unlimited: false, balance: 0 })).toBe(`${count(0)} credits`)
+      expect(codexCreditsText({ hasCredits: true, unlimited: false, balance: 0 })).not.toContain('<')
+    })
+
     it('unlimited reads "Unlimited", whatever the balance', () => {
       expect(codexCreditsText({ hasCredits: true, unlimited: true, balance: null })).toBe('Unlimited')
       expect(codexCreditsText({ hasCredits: false, unlimited: true, balance: 5 })).toBe('Unlimited')

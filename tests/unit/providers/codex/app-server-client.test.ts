@@ -124,18 +124,22 @@ describe('the answer (ADR-022 bounds 3, 5, 8)', () => {
         if (!c.verdict?.ok) throw new Error('no reading')
         expect(c.verdict.reading.limits[0].primary?.usedPercent).toBe(18)
         expect(c.verdict.reading.planType).toBe('plus')
-        // Never the sticky verdict, and never a kept junk balance.
-        expect(c.verdict.reading.credits === undefined || c.verdict.reading.credits.balance === null, JSON.stringify(credits)).toBe(true)
+        // Never the sticky verdict, and never a kept junk balance: none now
+        // (null), or the flags with no balance.
+        const kept = c.verdict.reading.credits
+        expect(kept === null || (kept !== undefined && kept.balance === null), JSON.stringify(credits)).toBe(true)
       }
     })
 
-    it('no credits, or null credits: an ok verdict whose reading has no credits key', () => {
-      for (const credits of [undefined, null]) {
-        const { c } = client()
-        c.begin(); c.receive(initAnswer()); c.receive(answerWith(credits))
-        if (!c.verdict?.ok) throw new Error('no reading')
-        expect(Object.prototype.hasOwnProperty.call(c.verdict.reading, 'credits')).toBe(false)
-      }
+    it('no credits key: an ok verdict whose reading has no credits key; null credits: none now', () => {
+      const none = client()
+      none.c.begin(); none.c.receive(initAnswer()); none.c.receive(answerWith(undefined))
+      if (!none.c.verdict?.ok) throw new Error('no reading')
+      expect(Object.prototype.hasOwnProperty.call(none.c.verdict.reading, 'credits')).toBe(false)
+      const nul = client()
+      nul.c.begin(); nul.c.receive(initAnswer()); nul.c.receive(answerWith(null))
+      if (!nul.c.verdict?.ok) throw new Error('no reading')
+      expect(nul.c.verdict.reading.credits).toBeNull()
     })
 
     it('an extra key in credits never reaches the verdict', () => {

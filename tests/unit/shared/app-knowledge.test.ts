@@ -199,10 +199,12 @@ describe('app knowledge after P3.14', () => {
     // Claude's own credits-row known issue is a different thing and stays.
     expect(body('known-issues')).toMatch(/The credits row can be missing for an account on extra usage while one of its sessions is open/)
   })
-  it('says the Usage page shows a Codex balance in Codex credits, under the bars, from the same reading', () => {
+  it('says the Usage page shows a Codex balance in Codex credits, under the bars, from the same report as its main bars', () => {
     expect(body('accounts')).toMatch(/A Codex account on paid credits shows its balance under its bars, in Codex credits \(a count, not money\)/)
-    expect(body('accounts')).toMatch(/from the same reading/)
+    expect(body('accounts')).toMatch(/taken from the same report as its main bars, so a newer report that says the account has no credits takes the row away/)
     expect(body('accounts')).toMatch(/Unlimited/)
+    // Round 1: no claim about the balance's age beyond that.
+    expect(body('accounts')).not.toMatch(/carries the same age/)
   })
 })
 

@@ -496,13 +496,17 @@ function CreditsRow({ value, muted, testId }: { value: string; muted?: boolean; 
 
 /** A Codex account's credits as its card words them (ADR-023). Codex credits
  *  are a COUNT, not money, so this is not Claude's money text: "Unlimited", or
- *  the balance and the CLI's own word for it ("1,250 credits"). Null is no
- *  row: no balance to show, or credits the reading says the account does not
- *  have (a state no real account has shown, so nothing is invented for it). */
+ *  the balance and the CLI's own word for it ("1,250 credits"), to two
+ *  fraction digits; a positive balance under the smallest figure that shows
+ *  reads "<0.01 credits", never "0 credits". Null is no row: no balance to
+ *  show, or credits the reading says the account does not have (a state no
+ *  real account has shown, so nothing is invented for it). */
 export function codexCreditsText(c: AllowanceCredits): string | null {
   if (c.unlimited) return 'Unlimited'
   if (c.hasCredits && typeof c.balance === 'number' && Number.isFinite(c.balance)) {
-    return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(c.balance)} credits`
+    const fmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 })
+    if (c.balance > 0 && c.balance < 0.005) return `<${fmt.format(0.01)} credits`
+    return `${fmt.format(c.balance)} credits`
   }
   return null
 }

@@ -36,13 +36,20 @@ The app keeps one more thing from a Codex usage reading, and nothing else:
 2. **Where it is read from.** The answer's own `rateLimits.credits` for a fresh
    read, and the `rate_limits.credits` of a rollout's `token_count` event for
    the live and last-seen figures. Never the credits of an entry of the
-   per-limit map. The reset-credit grants (`rateLimitResetCredits`) are a
-   different thing and stay unread.
+   per-limit map, and never those of a rollout event for a sub-limit. The
+   reset-credit grants (`rateLimitResetCredits`) are a different thing and stay
+   unread. The credits are the newest account-wide (default limit) report's,
+   the report the main bars come from: a figure, or none now when that report's
+   credits are null (what an account without credits writes) or unusable. A
+   later such report clears an earlier figure; a report with no credits key, or
+   a sub-limit's, leaves it.
 3. **How it is treated (bound 8's rule).** Own properties of a plain object
    only. A flag that is not a boolean drops the whole credits. A balance must
-   match `^\d{1,13}(\.\d{1,12})?$`, else it is null. No other key is copied.
-   The client's schema checks (bound 5) are not widened: a credits object of
-   the wrong shape is dropped, never a reason to call the CLI unsupported.
+   match `^\d{1,13}(\.\d{1,12})?$`, else it is null: a balance with more than
+   13 integer or more than 12 fraction digits is not read, so a CLI that writes
+   one shows no row (it fails closed). No other key is copied. The client's
+   schema checks (bound 5) are not widened: a credits object of the wrong shape
+   is dropped, never a reason to call the CLI unsupported.
 4. **What does not change.** The three code-built messages, the argv, the realm,
    the lease, the lifecycle, the supported versions, the triggers and the
    verdict rules (bounds 1 to 7) are exactly as before. The usage IPC channels
@@ -50,8 +57,12 @@ The app keeps one more thing from a Codex usage reading, and nothing else:
    of the same three fields.
 5. **How it is shown.** A "Credits" row under a Codex card's bars, in the
    styling of Claude's, in Codex's own unit: "N credits" (the CLI's wording), or
-   "Unlimited". It is a count and is never formatted as money. An account that
-   reports no credits, or `hasCredits: false` with no balance, has no row;
+   "Unlimited". It is a count and is never formatted as money. The balance
+   shows to two fraction digits, and a positive balance under 0.005 reads
+   "<0.01 credits", never "0 credits". There is no row when the account has no
+   credits (none now), when `hasCredits` is false and the credits are not
+   unlimited (whatever the balance), or when `hasCredits` is true and the
+   balance is missing or not readable (and the credits are not unlimited).
    `hasCredits: false` has not been observed, so nothing is invented for it.
 
 ## Consequences
