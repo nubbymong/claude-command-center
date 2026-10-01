@@ -18,6 +18,34 @@ interface SessionRec {
   widthDesyncCount: number
   byteGapFlagged: boolean
   desyncFlagged: boolean
+  /** The renderer mount (PtyIntegrityReport.generation) whose counts the
+   *  record holds: null until a report names one, and again after a reset. */
+  mountGeneration: string | null
+}
+
+function freshRec(sessionId: string): SessionRec {
+  return {
+    sessionId, bytesFromPty: 0, chunksFromPty: 0, resizeCount: 0,
+    lastAppliedCols: null, lastAppliedRows: null,
+    bytesReceived: 0, bytesWritten: 0, strippedBytes: 0,
+    lastRendererCols: null, lastRendererRows: null, rendererResizeCount: 0,
+    widthDesyncCount: 0, byteGapFlagged: false, desyncFlagged: false,
+    mountGeneration: null,
+  }
+}
+
+// A renderer mount's generation as main takes it from a report: 1 to 64 of
+// [A-Za-z0-9_-] (TerminalView sends a randomId). Any other value is no
+// generation: the report counts against the mount the record already has.
+const GENERATION_MAX = 64
+const GENERATION_RE = /^[A-Za-z0-9_-]+$/
+function mountGenerationOf(v: unknown): string | null {
+  return typeof v === 'string' && v.length <= GENERATION_MAX && GENERATION_RE.test(v) ? v : null
+}
+
+/** A byte count main takes from a report: a non-negative safe integer. */
+function isByteCount(v: unknown): v is number {
+  return typeof v === 'number' && Number.isSafeInteger(v) && v >= 0
 }
 
 export interface PtyIntegrityMonitorOptions {
@@ -55,13 +83,7 @@ export class PtyIntegrityMonitor {
   private rec(sessionId: string): SessionRec {
     let r = this.sessions.get(sessionId)
     if (!r) {
-      r = {
-        sessionId, bytesFromPty: 0, chunksFromPty: 0, resizeCount: 0,
-        lastAppliedCols: null, lastAppliedRows: null,
-        bytesReceived: 0, bytesWritten: 0, strippedBytes: 0,
-        lastRendererCols: null, lastRendererRows: null, rendererResizeCount: 0,
-        widthDesyncCount: 0, byteGapFlagged: false, desyncFlagged: false,
-      }
+      r = freshRec(sessionId)
       this.sessions.set(sessionId, r)
     }
     return r
@@ -105,6 +127,7 @@ export class PtyIntegrityMonitor {
 
   recordRendererReport(report: PtyIntegrityReport): void {
     const r = this.rec(report.sessionId)
+    this.noteMount(r, report)
     r.bytesReceived = report.bytesReceived
     r.bytesWritten = report.bytesWritten
     r.strippedBytes = report.strippedBytes
@@ -113,6 +136,38 @@ export class PtyIntegrityMonitor {
     r.rendererResizeCount = report.resizeCount
     this.checkDesync(r)
     this.checkByteGap(r)
+    this.scheduleEmit()
+  }
+
+  /**
+   * A report names the TerminalView mount its counts are from, and each mount
+   * counts from 0. A change of mount while the PTY runs on (a re-key with no
+   * respawn: a Restart pressed from the partner view re-keys the main view)
+   * restarts main's count there: the bytes main read are set to the mount's
+   * count, so the gap is measured from this report on, and checkByteGap then
+   * finds none (it clears the flag). Quiet: no event, no log. Any change of
+   * mount does this, a late report of an earlier mount too, so neither one
+   * shows a gap. A record with no mount yet (a new one, or one reset: the next
+   * process and its mount start from 0 together) takes the mount as it is. A
+   * report without a valid generation or byte count changes nothing here.
+   */
+  private noteMount(r: SessionRec, report: PtyIntegrityReport): void {
+    const generation = mountGenerationOf(report.generation)
+    if (generation === null || generation === r.mountGeneration || !isByteCount(report.bytesReceived)) return
+    if (r.mountGeneration !== null) r.bytesFromPty = report.bytesReceived
+    r.mountGeneration = generation
+  }
+
+  /**
+   * The session's PTY process ended and its id may spawn again (pty-manager's
+   * per-spawn teardown, which a Restart and every respawn run). The record's
+   * counts and mount start again from 0, quietly: the record stays, with no
+   * event and no log. endSession is the session's end (its event, and the
+   * record goes). A session with no record has nothing to reset.
+   */
+  resetSession(sessionId: string): void {
+    if (!this.sessions.has(sessionId)) return
+    this.sessions.set(sessionId, freshRec(sessionId))
     this.scheduleEmit()
   }
 
