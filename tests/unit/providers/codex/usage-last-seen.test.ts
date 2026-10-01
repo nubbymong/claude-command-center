@@ -18,9 +18,12 @@
 // driven through an injected fs api); no real file is read and no process is
 // started.
 import { describe, it, expect } from 'vitest'
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
+import { tmpdir } from 'node:os'
 import {
   readLastSeenAllowance, lookupLastSeenAllowance, createCodexLiveUsage, createCodexUsageOperations, realCodexUsageFsPort,
-  createCodexCarryMarks, codexRolloutIdFromName, CODEX_CARRY_MARKS_MAX,
+  createCodexCarryMarks, codexRolloutIdFromName, newestStampInTail, newestCarriedStamp, CODEX_CARRY_MARKS_MAX, CODEX_CARRY_MARKS_FILE_MAX_CHARS,
   CODEX_USAGE_TAIL_BYTES, CODEX_USAGE_TAIL_MAX_BYTES, CODEX_USAGE_MAX_FILES, CODEX_USAGE_WALK_BUDGET, CODEX_USAGE_MAX_DAYS,
   CODEX_USAGE_DAY_ENTRIES,
 } from '../../../../src/main/providers/codex/usage'
@@ -728,20 +731,30 @@ describe('carry marks (ADR-023)', () => {
   const CID = '0198a0b0-1c2d-7e3f-8a4b-5c6d7e8f9a0b'
   const OTHER = '0198a0b0-1c2d-7e3f-8a4b-5c6d7e8f9a0c'
   const AT = Date.parse('2026-09-27T10:30:00Z')
+  const CLOSED = Number.MAX_SAFE_INTEGER
+  const idN = (n: number) => `0198a0b0-1c2d-7e3f-8a4b-${String(n).padStart(12, '0')}`
+  const C_DIR = 'C:\\Users\\u\\c\\sessions'
 
-  /** A persisted file in memory: what a restart would find. */
+  /** A persisted file in memory: what a restart would find, and how it fails. */
   const memoryPort = () => {
-    const box: { text: string | null; writes: number; fail: boolean; unavailable: boolean; throwsOnRead: boolean } = { text: null, writes: 0, fail: false, unavailable: false, throwsOnRead: false }
+    const box: { text: string | null; writes: number; reads: number; failWrite: boolean; kind: null | 'unavailable' | 'corrupt' | 'throws'; asides: number; asideFails: boolean } =
+      { text: null, writes: 0, reads: 0, failWrite: false, kind: null, asides: 0, asideFails: false }
     const port: CodexCarryMarksPort = {
       read: () => {
-        if (box.throwsOnRead) throw new Error('read')
-        if (box.unavailable) return { kind: 'unavailable' }
+        box.reads++
+        if (box.kind === 'throws') throw new Error('read')
+        if (box.kind === 'unavailable') return { kind: 'unavailable' }
+        if (box.kind === 'corrupt') return { kind: 'corrupt' }
         return box.text === null ? { kind: 'missing' } : { kind: 'ok', text: box.text }
       },
-      write: (text) => { if (box.fail) throw new Error('disk full'); box.text = text; box.writes++ },
+      write: (text) => { if (box.failWrite) throw new Error('disk full'); box.text = text; box.writes++ },
+      setAside: () => { box.asides++; if (box.asideFails) return false; box.text = null; box.kind = null; return true },
     }
     return { box, port }
   }
+  const clock = (t0 = AT) => { let t = t0; return { now: () => t, set: (n: number) => { t = n } } }
+  const doc = (marks: unknown[], extra: Record<string, unknown> = {}) => JSON.stringify({ schema: 1, ...extra, marks })
+  const good = { realm: 'realm-b', dir: SESSIONS, id: CID, at: AT }
 
   it('names the conversation in a rollout file name or path, lower case, and nothing else', () => {
     expect(codexRolloutIdFromName(`rollout-2026-09-27T08-00-00-${CID.toUpperCase()}.jsonl`)).toBe(CID)
@@ -758,6 +771,7 @@ describe('carry marks (ADR-023)', () => {
     expect(m.cutoff(SESSIONS, CID)).toBeNull()
     expect(m.record('realm-b', SESSIONS, CID, AT)).toBe(true)
     expect(m.cutoff(SESSIONS, CID)).toBe(AT)
+    expect(m.markOf(SESSIONS, CID)).toBe(AT)
     // Another conversation, another folder, no conversation: no mark.
     expect(m.cutoff(SESSIONS, OTHER)).toBeNull()
     expect(m.cutoff('C:\\Users\\u\\other\\sessions', CID)).toBeNull()
@@ -770,6 +784,17 @@ describe('carry marks (ADR-023)', () => {
     // Recorded under an upper-case id: found by the lower-case one.
     m.record('realm-b', SESSIONS, OTHER.toUpperCase(), AT + 2000)
     expect(m.cutoff(SESSIONS, OTHER)).toBe(AT + 2000)
+  })
+
+  it('takes a mark back, and tells nothing of one that is not there', () => {
+    const m = createCodexCarryMarks({ platform: 'win32' })
+    m.record('realm-b', SESSIONS, CID, AT)
+    m.remove(SESSIONS, OTHER)
+    expect(m.markOf(SESSIONS, CID)).toBe(AT)
+    m.remove(SESSIONS, CID)
+    expect(m.markOf(SESSIONS, CID)).toBeNull()
+    expect(m.cutoff(SESSIONS, CID)).toBeNull()
+    expect(() => m.remove('', 'x')).not.toThrow()
   })
 
   it('case matters off Windows and macOS', () => {
@@ -792,30 +817,46 @@ describe('carry marks (ADR-023)', () => {
     expect(m.cutoff(SESSIONS, CID)).toBeNull()
   })
 
-  it(`keeps the newest ${CODEX_CARRY_MARKS_MAX}, and a conversation carried again is the newest`, () => {
-    const id = (n: number) => `0198a0b0-1c2d-7e3f-8a4b-${String(n).padStart(12, '0')}`
-    const m = createCodexCarryMarks({ platform: 'linux' })
-    for (let i = 0; i < CODEX_CARRY_MARKS_MAX + 10; i++) m.record('realm-b', '/r/B/sessions', id(i), AT + i)
-    expect(m.cutoff('/r/B/sessions', id(0))).toBeNull()
-    expect(m.cutoff('/r/B/sessions', id(9))).toBeNull()
-    expect(m.cutoff('/r/B/sessions', id(10))).toBe(AT + 10)
-    expect(m.cutoff('/r/B/sessions', id(CODEX_CARRY_MARKS_MAX + 9))).toBe(AT + CODEX_CARRY_MARKS_MAX + 9)
-    const small = createCodexCarryMarks({ platform: 'linux', max: 3 })
-    for (let i = 0; i < 3; i++) small.record('realm-b', '/r/B/sessions', id(i), AT + i)
-    small.record('realm-b', '/r/B/sessions', id(0), AT + 100) // carried again: now the newest
-    small.record('realm-b', '/r/B/sessions', id(3), AT + 3)
-    expect([0, 1, 2, 3].map((i) => small.cutoff('/r/B/sessions', id(i)))).toEqual([AT + 100, null, AT + 2, AT + 3])
+  describe('the bound', () => {
+    it(`keeps the newest ${CODEX_CARRY_MARKS_MAX} of one realm, and a conversation carried again is the newest`, () => {
+      const m = createCodexCarryMarks({ platform: 'linux' })
+      for (let i = 0; i < CODEX_CARRY_MARKS_MAX + 10; i++) m.record('realm-b', '/r/B/sessions', idN(i), AT + i)
+      expect(m.cutoff('/r/B/sessions', idN(0))).toBeNull()
+      expect(m.cutoff('/r/B/sessions', idN(9))).toBeNull()
+      expect(m.cutoff('/r/B/sessions', idN(10))).toBe(AT + 10)
+      expect(m.cutoff('/r/B/sessions', idN(CODEX_CARRY_MARKS_MAX + 9))).toBe(AT + CODEX_CARRY_MARKS_MAX + 9)
+      const small = createCodexCarryMarks({ platform: 'linux', max: 3 })
+      for (let i = 0; i < 3; i++) small.record('realm-b', '/r/B/sessions', idN(i), AT + i)
+      small.record('realm-b', '/r/B/sessions', idN(0), AT + 100) // carried again: now the newest
+      small.record('realm-b', '/r/B/sessions', idN(3), AT + 3)
+      expect([0, 1, 2, 3].map((i) => small.cutoff('/r/B/sessions', idN(i)))).toEqual([AT + 100, null, AT + 2, AT + 3])
+    })
+
+    it('a realm over its share evicts its own oldest: another realm\'s marks are never evicted by it', () => {
+      const m = createCodexCarryMarks({ platform: 'linux' })
+      m.record('realm-b', '/r/B/sessions', idN(9000), AT)
+      m.record('realm-c', '/r/C/sessions', idN(9001), AT + 1)
+      for (let i = 0; i < CODEX_CARRY_MARKS_MAX + 40; i++) m.record('realm-x', '/r/X/sessions', idN(i), AT + 10 + i)
+      expect(m.cutoff('/r/B/sessions', idN(9000))).toBe(AT)
+      expect(m.cutoff('/r/C/sessions', idN(9001))).toBe(AT + 1)
+      // The busy realm lost its own oldest, and kept its newest.
+      expect(m.cutoff('/r/X/sessions', idN(0))).toBeNull()
+      expect(m.cutoff('/r/X/sessions', idN(CODEX_CARRY_MARKS_MAX + 39))).toBe(AT + 10 + CODEX_CARRY_MARKS_MAX + 39)
+      let kept = 0
+      for (let i = 0; i < CODEX_CARRY_MARKS_MAX + 40; i++) if (m.cutoff('/r/X/sessions', idN(i)) !== null) kept++
+      expect(kept).toBe(CODEX_CARRY_MARKS_MAX - 2)
+    })
   })
 
   it('drops every mark of a realm, and only that realm\'s', () => {
     const m = createCodexCarryMarks({ platform: 'win32' })
     m.record('realm-b', SESSIONS, CID, AT)
     m.record('realm-b', SESSIONS, OTHER, AT)
-    m.record('realm-c', 'C:\\Users\\u\\c\\sessions', CID, AT)
+    m.record('realm-c', C_DIR, CID, AT)
     m.dropRealm('realm-b')
     expect(m.cutoff(SESSIONS, CID)).toBeNull()
     expect(m.cutoff(SESSIONS, OTHER)).toBeNull()
-    expect(m.cutoff('C:\\Users\\u\\c\\sessions', CID)).toBe(AT)
+    expect(m.cutoff(C_DIR, CID)).toBe(AT)
     m.dropRealm('realm-nobody')
     m.dropRealm(7 as never)
   })
@@ -824,100 +865,320 @@ describe('carry marks (ADR-023)', () => {
     const { box, port } = memoryPort()
     const first = createCodexCarryMarks({ platform: 'win32', port })
     first.record('realm-b', SESSIONS, CID, AT)
-    first.record('realm-c', 'C:\\Users\\u\\c\\sessions', OTHER, AT + 5)
+    first.record('realm-c', C_DIR, OTHER, AT + 5)
     expect(box.writes).toBeGreaterThan(0)
     const second = createCodexCarryMarks({ platform: 'win32', port })
     expect(second.cutoff(SESSIONS, CID)).toBe(AT)
-    expect(second.cutoff('C:\\Users\\u\\c\\sessions', OTHER)).toBe(AT + 5)
+    expect(second.cutoff(C_DIR, OTHER)).toBe(AT + 5)
     second.dropRealm('realm-b')
     const third = createCodexCarryMarks({ platform: 'win32', port })
     expect(third.cutoff(SESSIONS, CID)).toBeNull()
-    expect(third.cutoff('C:\\Users\\u\\c\\sessions', OTHER)).toBe(AT + 5)
+    expect(third.cutoff(C_DIR, OTHER)).toBe(AT + 5)
   })
 
-  it('what is written is the three facts of a carry and nothing else, and no more than the newest marks', () => {
+  it('what is written is the three facts of a carry and nothing else (no floor when nothing was lost)', () => {
     const { box, port } = memoryPort()
-    const m = createCodexCarryMarks({ platform: 'win32', port, max: 2 })
-    for (let i = 0; i < 4; i++) m.record('realm-b', SESSIONS, `0198a0b0-1c2d-7e3f-8a4b-${String(i).padStart(12, '0')}`, AT + i)
-    const doc = JSON.parse(box.text!) as { schema: number; marks: Array<Record<string, unknown>> }
-    expect(doc.schema).toBe(1)
-    expect(doc.marks).toHaveLength(2)
-    for (const mark of doc.marks) expect(Object.keys(mark).sort()).toEqual(['at', 'dir', 'id', 'realm'])
-  })
-
-  it('reads back only what is valid: junk, another schema, a wrong shape or hostile entries give nothing or only the good ones', () => {
-    const good = { realm: 'realm-b', dir: SESSIONS, id: CID, at: AT }
-    const texts: Array<[string, string | null, number | null]> = [
-      ['empty', '', null], ['junk', 'not json', null], ['an array', '[]', null], ['null', 'null', null],
-      ['another schema', JSON.stringify({ schema: 2, marks: [good] }), null], ['no schema', JSON.stringify({ marks: [good] }), null],
-      ['no marks', JSON.stringify({ schema: 1 }), null], ['marks not a list', JSON.stringify({ schema: 1, marks: { good } }), null],
-      ['too long', 'x'.repeat(2 * 1024 * 1024), null],
-      ['a good one beside bad ones', JSON.stringify({ schema: 1, marks: [null, 7, 'x', [], { ...good, id: 'x' }, { ...good, at: 'now' }, { ...good, realm: '' }, { ...good, dir: '' }, { realm: 'realm-b' }, good] }), AT],
-      ['inherited fields are not read', '{"schema":1,"marks":[{"__proto__":{"realm":"realm-b","dir":"' + SESSIONS.replace(/\\/g, '\\\\') + '","id":"' + CID + '","at":1}}]}', null],
-    ]
-    for (const [name, text, expected] of texts) {
-      const m = createCodexCarryMarks({ platform: 'win32', port: { read: () => ({ kind: 'ok', text: text as string }), write: () => {} } })
-      expect(m.cutoff(SESSIONS, CID), name).toBe(expected)
-    }
-    // Each bad entry alone gives nothing.
-    const bad: Array<[string, unknown]> = [
-      ['null', null], ['a number', 7], ['text', 'x'], ['a list', []], ['a bad id', { ...good, id: 'x' }], ['a time that is text', { ...good, at: 'now' }],
-      ['a time out of range', { ...good, at: 9e15 }], ['an empty realm', { ...good, realm: '' }], ['a realm with a space', { ...good, realm: 'a b' }],
-      ['an empty folder', { ...good, dir: '' }], ['a folder too long', { ...good, dir: 'x'.repeat(5000) }], ['a missing field', { realm: 'realm-b', dir: SESSIONS, id: CID }],
-    ]
-    for (const [name, entry] of bad) {
-      const m = createCodexCarryMarks({ platform: 'win32', port: { read: () => ({ kind: 'ok', text: JSON.stringify({ schema: 1, marks: [entry] }) }), write: () => {} } })
-      expect(m.cutoff(SESSIONS, CID), name).toBeNull()
-    }
-    // What is kept is written back only from valid entries, an id in either case read as lower case.
-    let written = ''
-    const kept = createCodexCarryMarks({
-      platform: 'win32',
-      port: { read: () => ({ kind: 'ok', text: JSON.stringify({ schema: 1, marks: [...bad.map(([, e]) => e), { ...good, id: CID.toUpperCase(), realm: 'realm-c' }] }) }), write: (t) => { written = t } },
-    })
-    kept.record('realm-b', SESSIONS, OTHER, AT + 1)
-    expect((JSON.parse(written) as { marks: unknown[] }).marks).toEqual([{ realm: 'realm-c', dir: SESSIONS, id: CID, at: AT }, { realm: 'realm-b', dir: SESSIONS, id: OTHER, at: AT + 1 }])
-  })
-
-  it('a file that cannot be read yet is asked again; what was marked meanwhile is kept and joined by what the file holds', () => {
-    const { box, port } = memoryPort()
-    box.text = JSON.stringify({ schema: 1, marks: [{ realm: 'realm-c', dir: 'C:\\Users\\u\\c\\sessions', id: OTHER, at: AT + 9 }] })
-    box.unavailable = true
     const m = createCodexCarryMarks({ platform: 'win32', port })
-    expect(m.cutoff(SESSIONS, CID)).toBeNull()
-    m.record('realm-b', SESSIONS, CID, AT)
-    // Not written over a file that could not be read.
-    expect(box.writes).toBe(0)
-    box.unavailable = false
-    expect(m.cutoff('C:\\Users\\u\\c\\sessions', OTHER)).toBe(AT + 9)
-    expect(m.cutoff(SESSIONS, CID)).toBe(AT)
-    expect(box.writes).toBeGreaterThan(0)
-    expect(createCodexCarryMarks({ platform: 'win32', port }).cutoff(SESSIONS, CID)).toBe(AT)
+    for (let i = 0; i < 4; i++) m.record('realm-b', SESSIONS, idN(i), AT + i)
+    const written = JSON.parse(box.text!) as { schema: number; floor?: number; marks: Array<Record<string, unknown>> }
+    expect(written.schema).toBe(1)
+    expect(Object.keys(written).sort()).toEqual(['marks', 'schema'])
+    expect(written.marks).toHaveLength(4)
+    for (const mark of written.marks) expect(Object.keys(mark).sort()).toEqual(['at', 'dir', 'id', 'realm'])
   })
 
-  it('a file that reads back as junk never loses what was marked meanwhile', () => {
-    for (const junk of [JSON.stringify({ schema: 1, marks: { not: 'a list' } }), 'not json', JSON.stringify({ schema: 9, marks: [] }), '[]']) {
+  describe('a file that cannot be read now fails closed (round 2)', () => {
+    it('every rollout is marked as nothing counts, nothing is recorded, and the read is asked again after a wait', () => {
       const { box, port } = memoryPort()
-      box.unavailable = true
-      const m = createCodexCarryMarks({ platform: 'win32', port })
-      m.record('realm-b', SESSIONS, CID, AT)
-      box.unavailable = false
-      box.text = junk
-      expect(m.cutoff(SESSIONS, CID), junk).toBe(AT)
-    }
+      const t = clock()
+      box.kind = 'unavailable'
+      const m = createCodexCarryMarks({ platform: 'win32', port, now: t.now })
+      expect(m.unavailable()).toBe(true)
+      expect(m.cutoff(SESSIONS, CID)).toBe(CLOSED)
+      expect(m.cutoff(C_DIR, OTHER)).toBe(CLOSED)
+      expect(m.markOf(SESSIONS, CID)).toBeNull()
+      expect(m.record('realm-b', SESSIONS, CID, AT)).toBe(false)
+      expect(m.adopt('realm-b', 'realm-c', C_DIR)).toBe(false)
+      // Within the wait it is not read again, however often it is asked.
+      const reads = box.reads
+      for (let i = 0; i < 50; i++) m.cutoff(SESSIONS, CID)
+      expect(box.reads).toBe(reads)
+      // Once it can be read, and the wait has passed, the marks are there.
+      box.kind = null
+      box.text = doc([good])
+      t.set(AT + 60_000)
+      expect(m.unavailable()).toBe(false)
+      expect(m.cutoff(SESSIONS, CID)).toBe(AT)
+    })
+
+    it('the wait grows with each failed read, to a longest, and a throwing port counts as unreadable', () => {
+      const { box, port } = memoryPort()
+      const t = clock(0)
+      box.kind = 'throws'
+      const m = createCodexCarryMarks({ platform: 'win32', port, now: t.now })
+      m.cutoff(SESSIONS, CID)
+      expect(box.reads).toBe(1)
+      const gaps: number[] = []
+      let last = 0
+      for (let step = 0; step < 12; step++) {
+        // Find when it is next read: just before the wait it is not, at it, it is.
+        let waited = 0
+        for (waited = 1; waited < 40_000; waited++) {
+          t.set(last + waited)
+          const before = box.reads
+          m.cutoff(SESSIONS, CID)
+          if (box.reads > before) break
+        }
+        gaps.push(waited)
+        last += waited
+      }
+      expect(gaps.slice(0, 4)).toEqual([1000, 2000, 4000, 8000])
+      expect(Math.max(...gaps)).toBe(30_000)
+      expect(gaps[gaps.length - 1]).toBe(30_000)
+    })
+
+    it('a realm dropped while the file cannot be read is not brought back by it, and the file is written without it', () => {
+      const { box, port } = memoryPort()
+      const t = clock()
+      box.kind = 'unavailable'
+      box.text = doc([good, { ...good, realm: 'realm-c', dir: C_DIR, id: OTHER, at: AT + 9 }])
+      const m = createCodexCarryMarks({ platform: 'win32', port, now: t.now })
+      m.dropRealm('realm-b')
+      expect(box.writes).toBe(0)
+      box.kind = null
+      t.set(AT + 60_000)
+      expect(m.cutoff(SESSIONS, CID)).toBeNull()
+      expect(m.cutoff(C_DIR, OTHER)).toBe(AT + 9)
+      expect((JSON.parse(box.text!) as { marks: Array<{ realm: string }> }).marks.map((x) => x.realm)).toEqual(['realm-c'])
+      // And a new store finds the same.
+      expect(createCodexCarryMarks({ platform: 'win32', port }).cutoff(SESSIONS, CID)).toBeNull()
+    })
   })
 
-  it('a port that throws, or fails to write, never breaks it: the marks stay in memory', () => {
+  describe('a file that is not what was written fails closed, and is set aside (round 2)', () => {
+    const bad: Array<[string, string]> = [
+      ['empty', ''], ['junk', 'not json'], ['an array', '[]'], ['null', 'null'],
+      ['another schema', doc([good]).replace('"schema":1', '"schema":2')], ['no schema', JSON.stringify({ marks: [good] })],
+      ['no marks', JSON.stringify({ schema: 1 })], ['marks not a list', JSON.stringify({ schema: 1, marks: { good } })],
+      ['too long', 'x'.repeat(CODEX_CARRY_MARKS_FILE_MAX_CHARS + 1)],
+      ['more marks than are ever kept', doc(Array.from({ length: CODEX_CARRY_MARKS_MAX + 1 }, (_, i) => ({ ...good, id: idN(i) })))],
+      ['a bad floor', doc([good], { floor: 'now' })], ['a floor out of range', doc([good], { floor: 9e15 })],
+      ['a null entry', doc([good, null])], ['a number entry', doc([good, 7])], ['a text entry', doc([good, 'x'])], ['a list entry', doc([good, []])],
+      ['a bad id', doc([good, { ...good, id: 'x' }])], ['a time that is text', doc([good, { ...good, at: 'now' }])], ['a time out of range', doc([good, { ...good, at: 9e15 }])],
+      ['an empty realm', doc([good, { ...good, realm: '' }])], ['a realm with a space', doc([good, { ...good, realm: 'a b' }])],
+      ['an empty folder', doc([good, { ...good, dir: '' }])], ['a folder too long', doc([good, { ...good, dir: 'x'.repeat(5000) }])],
+      ['a missing field', doc([good, { realm: 'realm-b', dir: SESSIONS, id: CID }])],
+    ]
+    for (const [name, text] of bad) {
+      it(`${name}: set aside once, never read, no floor lost, and the store works from empty`, () => {
+        const { box, port } = memoryPort()
+        const t = clock(AT + 500)
+        box.text = text
+        const m = createCodexCarryMarks({ platform: 'win32', port, now: t.now })
+        // Nothing of the file is taken, and the rollouts are closed to everything before now.
+        expect(m.markOf(SESSIONS, CID)).toBeNull()
+        expect(m.unavailable()).toBe(false)
+        expect(m.cutoff(SESSIONS, CID)).toBe(AT + 500)
+        expect(m.cutoff(C_DIR, OTHER)).toBe(AT + 500)
+        expect(box.asides).toBe(1)
+        // The floor is kept in the file that replaced it.
+        expect(JSON.parse(box.text!)).toEqual({ schema: 1, floor: AT + 500, marks: [] })
+        // And a mark after it still counts, later than the floor.
+        expect(m.record('realm-b', SESSIONS, CID, AT + 900)).toBe(true)
+        expect(m.cutoff(SESSIONS, CID)).toBe(AT + 900)
+        expect(m.cutoff(C_DIR, OTHER)).toBe(AT + 500)
+        expect(JSON.parse(box.text!)).toMatchObject({ floor: AT + 500 })
+      })
+    }
+
+    it('a file that is not a plain file within its cap (the port says corrupt) is treated the same', () => {
+      const { box, port } = memoryPort()
+      box.kind = 'corrupt'
+      const m = createCodexCarryMarks({ platform: 'win32', port, now: clock(AT + 500).now })
+      expect(m.cutoff(SESSIONS, CID)).toBe(AT + 500)
+      expect(box.asides).toBe(1)
+    })
+
+    it('a file that cannot be set aside is not overwritten: it fails closed and asks again after a wait', () => {
+      const { box, port } = memoryPort()
+      const t = clock(AT)
+      box.text = 'junk'
+      box.asideFails = true
+      const m = createCodexCarryMarks({ platform: 'win32', port, now: t.now })
+      expect(m.cutoff(SESSIONS, CID)).toBe(CLOSED)
+      expect(m.record('realm-b', SESSIONS, CID, AT)).toBe(false)
+      expect(box.writes).toBe(0)
+      expect(box.text).toBe('junk')
+      const asides = box.asides
+      for (let i = 0; i < 20; i++) m.cutoff(SESSIONS, CID)
+      expect(box.asides).toBe(asides)
+      box.asideFails = false
+      t.set(AT + 60_000)
+      expect(m.cutoff(SESSIONS, CID)).toBe(AT + 60_000)
+      expect(box.asides).toBe(asides + 1)
+    })
+
+    it('reads own properties only: a polluted Object.prototype makes no entry or file valid', () => {
+      const proto = Object.prototype as Record<string, unknown>
+      const keys = ['schema', 'marks', 'realm', 'dir', 'id', 'at', 'floor']
+      for (const k of keys) expect(Object.prototype.hasOwnProperty.call(proto, k), k).toBe(false)
+      try {
+        proto.realm = 'realm-b'
+        proto.dir = SESSIONS
+        proto.id = CID
+        proto.at = AT
+        // An entry that names none of its own would inherit a complete mark.
+        const { box, port } = memoryPort()
+        box.text = JSON.stringify({ schema: 1, marks: [{}] })
+        const m = createCodexCarryMarks({ platform: 'win32', port, now: clock(AT + 7).now })
+        expect(m.markOf(SESSIONS, CID)).toBeNull()
+        expect(box.asides).toBe(1)
+        // A file that names neither schema nor marks would inherit them.
+        proto.schema = 1
+        proto.marks = [good]
+        const { box: box2, port: port2 } = memoryPort()
+        box2.text = '{}'
+        const m2 = createCodexCarryMarks({ platform: 'win32', port: port2, now: clock(AT + 7).now })
+        expect(m2.markOf(SESSIONS, CID)).toBeNull()
+        expect(box2.asides).toBe(1)
+      } finally {
+        for (const k of keys) delete proto[k]
+      }
+      for (const k of keys) expect(Object.prototype.hasOwnProperty.call(proto, k), k).toBe(false)
+    })
+  })
+
+  it('a floor in the file holds for every rollout, and for a marked one the later of the two; it stays in what is written', () => {
     const { box, port } = memoryPort()
-    box.throwsOnRead = true
+    box.text = doc([good], { floor: AT + 100 })
+    const m = createCodexCarryMarks({ platform: 'win32', port })
+    expect(m.cutoff(SESSIONS, CID)).toBe(AT + 100)
+    expect(m.cutoff(SESSIONS, OTHER)).toBe(AT + 100)
+    expect(m.markOf(SESSIONS, CID)).toBe(AT)
+    m.record('realm-b', SESSIONS, OTHER, AT + 500)
+    expect(m.cutoff(SESSIONS, OTHER)).toBe(AT + 500)
+    expect(JSON.parse(box.text!)).toMatchObject({ floor: AT + 100 })
+    expect(createCodexCarryMarks({ platform: 'win32', port }).cutoff(SESSIONS, idN(77))).toBe(AT + 100)
+  })
+
+  it('the file is trimmed when it is written, oldest first, so it always fits what a read accepts', () => {
+    const { box, port } = memoryPort()
+    const m = createCodexCarryMarks({ platform: 'linux', port })
+    const longDir = (n: number) => `/r/${'d'.repeat(4080)}${n}`
+    for (let i = 0; i < CODEX_CARRY_MARKS_MAX; i++) expect(m.record('realm-b', longDir(i), idN(i), AT + i), String(i)).toBe(true)
+    expect(box.text!.length).toBeLessThanOrEqual(CODEX_CARRY_MARKS_FILE_MAX_CHARS)
+    // The oldest went, in the file and in memory; the newest stays; and a restart reads what was written.
+    expect(m.cutoff(longDir(0), idN(0))).toBeNull()
+    expect(m.cutoff(longDir(CODEX_CARRY_MARKS_MAX - 1), idN(CODEX_CARRY_MARKS_MAX - 1))).toBe(AT + CODEX_CARRY_MARKS_MAX - 1)
+    const again = createCodexCarryMarks({ platform: 'linux', port })
+    expect(again.unavailable()).toBe(false)
+    expect(again.cutoff(longDir(CODEX_CARRY_MARKS_MAX - 1), idN(CODEX_CARRY_MARKS_MAX - 1))).toBe(AT + CODEX_CARRY_MARKS_MAX - 1)
+    expect(box.asides).toBe(0)
+  })
+
+  it('a mark that cannot be written is not kept: record is false and the marks are as they were', () => {
+    const { box, port } = memoryPort()
     const m = createCodexCarryMarks({ platform: 'win32', port })
     expect(m.record('realm-b', SESSIONS, CID, AT)).toBe(true)
+    box.failWrite = true
+    expect(m.record('realm-b', SESSIONS, OTHER, AT + 1)).toBe(false)
+    expect(m.cutoff(SESSIONS, OTHER)).toBeNull()
+    expect(m.record('realm-b', SESSIONS, CID, AT + 99)).toBe(false)
     expect(m.cutoff(SESSIONS, CID)).toBe(AT)
-    box.throwsOnRead = false
-    box.fail = true
-    expect(m.record('realm-b', SESSIONS, OTHER, AT + 1)).toBe(true)
-    expect(m.cutoff(SESSIONS, OTHER)).toBe(AT + 1)
     expect(() => m.dropRealm('realm-b')).not.toThrow()
+    expect(() => m.remove(SESSIONS, CID)).not.toThrow()
+  })
+
+  describe('adopting a realm\'s marks for its replacement folder (a sign in again\'s history copy)', () => {
+    it('records each mark of the old realm for the new folder, the later time kept, and leaves the old ones', () => {
+      const m = createCodexCarryMarks({ platform: 'win32' })
+      m.record('realm-b', SESSIONS, CID, AT)
+      m.record('realm-b', SESSIONS, OTHER, AT + 5)
+      m.record('realm-c', 'C:\\Users\\u\\x\\sessions', idN(5), AT + 6)
+      m.record('realm-new', C_DIR, CID, AT + 50)
+      expect(m.adopt('realm-b', 'realm-new', C_DIR)).toBe(true)
+      expect(m.cutoff(C_DIR, CID)).toBe(AT + 50)
+      expect(m.cutoff(C_DIR, OTHER)).toBe(AT + 5)
+      expect(m.cutoff(C_DIR, idN(5))).toBeNull()
+      expect(m.cutoff(SESSIONS, CID)).toBe(AT)
+      // Dropping the new realm leaves the old one's.
+      m.dropRealm('realm-new')
+      expect(m.cutoff(C_DIR, OTHER)).toBeNull()
+      expect(m.cutoff(SESSIONS, OTHER)).toBe(AT + 5)
+    })
+
+    it('is true with nothing to adopt, writes nothing then, and refuses what is not a realm or a folder', () => {
+      const { box, port } = memoryPort()
+      const m = createCodexCarryMarks({ platform: 'win32', port })
+      expect(m.adopt('realm-b', 'realm-new', C_DIR)).toBe(true)
+      expect(box.writes).toBe(0)
+      expect(m.adopt('realm-b', '', C_DIR)).toBe(false)
+      expect(m.adopt('realm-b', 'realm-new', '')).toBe(false)
+      expect(m.adopt(7 as never, 'realm-new', C_DIR)).toBe(false)
+    })
+
+    it('what it adopted is written, so a new store over the file finds it', () => {
+      const { box, port } = memoryPort()
+      const m = createCodexCarryMarks({ platform: 'win32', port })
+      m.record('realm-b', SESSIONS, CID, AT)
+      const writes = box.writes
+      expect(m.adopt('realm-b', 'realm-new', C_DIR)).toBe(true)
+      expect(box.writes).toBe(writes + 1)
+      expect(createCodexCarryMarks({ platform: 'win32', port }).cutoff(C_DIR, CID)).toBe(AT)
+    })
+
+    it('a mark that cannot be written leaves the marks as they were and says so', () => {
+      const { box, port } = memoryPort()
+      const m = createCodexCarryMarks({ platform: 'win32', port })
+      m.record('realm-b', SESSIONS, CID, AT)
+      box.failWrite = true
+      expect(m.adopt('realm-b', 'realm-new', C_DIR)).toBe(false)
+      expect(m.cutoff(C_DIR, CID)).toBeNull()
+      expect(m.cutoff(SESSIONS, CID)).toBe(AT)
+    })
+  })
+
+  describe('the newest time in a copy', () => {
+    const NOW = Date.parse('2026-09-27T12:00:00Z')
+    const line = (ts: unknown) => JSON.stringify({ timestamp: ts, type: 'event_msg', payload: {} })
+
+    it('is the newest zoned time of any line of a tail; the first line may be cut', () => {
+      const text = ['cut off half a line", "timestamp":"2026-09-27T11:59:00Z"}', line('2026-09-27T10:00:00Z'), line('2026-09-27T10:45:30.5Z'), line('2026-09-27T10:20:00+01:00'), 'not json "timestamp"'].join('\n')
+      expect(newestStampInTail(text, NOW)).toBe(Date.parse('2026-09-27T10:45:30.5Z'))
+    })
+
+    it('ignores a time with no zone, a stamp that is not a time, one more than a week ahead, and non-text', () => {
+      const text = [line('2026-09-27T11:00:00'), line('later'), line(7), line(null), line('2099-01-01T00:00:00Z'), line('2026-09-27T09:00:00Z')].join('\n')
+      expect(newestStampInTail(text, NOW)).toBe(Date.parse('2026-09-27T09:00:00Z'))
+      expect(newestStampInTail([line('2026-09-27T11:00:00'), line('later')].join('\n'), NOW)).toBeNull()
+      expect(newestStampInTail('', NOW)).toBeNull()
+      expect(newestStampInTail(7 as never, NOW)).toBeNull()
+      // A stamp up to a week past now is still a time (a clock that was ahead).
+      expect(newestStampInTail(line('2026-10-02T12:00:00Z'), NOW)).toBe(Date.parse('2026-10-02T12:00:00Z'))
+    })
+
+    it('the package hands the realm folders the real read of a copy, unless a test gives its own', () => {
+      const src = readFileSync(join(__dirname, '../../../../src/main/providers/codex/index.ts'), 'utf-8')
+      expect(src).toMatch(/newestStamp: deps\.newestCopiedStamp \?\? \(\(dir, id\) => newestCarriedStamp\(dir, id,/)
+    })
+
+    it('is read from the copy of the conversation under a sessions folder, and from nothing else', () => {
+      const parent = mkdtempSync(join(tmpdir(), 'ccc-test-codex-p314r2-'))
+      try {
+        const day = join(parent, 'sessions', '2026', '09', '27')
+        mkdirSync(day, { recursive: true })
+        writeFileSync(join(day, `rollout-2026-09-27T08-00-00-${CID}.jsonl`), [
+          JSON.stringify({ timestamp: '2026-09-27T08:00:00Z', type: 'session_meta', payload: { id: CID, cwd: '/p', timestamp: '2026-09-27T08:00:00Z' } }),
+          line('2026-09-27T10:00:00Z'), line('2026-09-27T11:15:00Z'),
+        ].join('\n') + '\n')
+        expect(newestCarriedStamp(join(parent, 'sessions'), CID, NOW)).toBe(Date.parse('2026-09-27T11:15:00Z'))
+        expect(newestCarriedStamp(join(parent, 'sessions'), OTHER, NOW)).toBeNull()
+        expect(newestCarriedStamp(join(parent, 'nope'), CID, NOW)).toBeNull()
+        expect(newestCarriedStamp('', CID, NOW)).toBeNull()
+      } finally {
+        if (dirname(parent) === tmpdir() && basename(parent).startsWith('ccc-test-codex-p314r2-')) rmSync(parent, { recursive: true, force: true })
+      }
+    })
   })
 })
 
@@ -961,7 +1222,8 @@ describe('the last-seen reading of a carried conversation (ADR-023)', () => {
 
   it('an event with no zoned time is no event in a carried conversation; a time with an offset is read as the instant it names', async () => {
     const f = fakeFs()
-    f.file(file(), rollout(meta('2026-09-27T08:00:00Z'), tokenCount('2026-09-27T11:00:00', limits(21, { plan_type: 'plus' })), tokenCount('not a time', limits(22, { plan_type: 'plus' })), tokenCount('', limits(23, { plan_type: 'plus' }))))
+    // A zoneless stamp a day and more after the carry: after it in every time zone, so that ignoring it is the rule's doing and not the host's zone.
+    f.file(file(), rollout(meta('2026-09-27T08:00:00Z'), tokenCount('2026-09-28T12:00:00', limits(21, { plan_type: 'plus' })), tokenCount('not a time', limits(22, { plan_type: 'plus' })), tokenCount('', limits(23, { plan_type: 'plus' }))))
     expect(await reading(f, marksAt())).toBeNull()
     const g = fakeFs()
     // 12:00 at +01:00 is 11:00 UTC: after the carry.
@@ -973,8 +1235,38 @@ describe('the last-seen reading of a carried conversation (ADR-023)', () => {
     expect(await reading(h, marksAt())).toBeNull()
     // An unmarked rollout keeps reading a zoneless time as it always did.
     const k = fakeFs()
-    k.file(file(), rollout(meta('2026-09-27T08:00:00Z'), tokenCount('2026-09-27T11:00:00', limits(26, { plan_type: 'plus' }))))
+    k.file(file(), rollout(meta('2026-09-27T08:00:00Z'), tokenCount('2026-09-28T12:00:00', limits(26, { plan_type: 'plus' }))))
     expect(pct((await reading(k))!)).toBe(26)
+  })
+
+  it('while the marks cannot be read the answer is that the history could not be read, never a figure', async () => {
+    const f = fakeFs()
+    f.file(file(), rollout(meta('2026-09-27T08:00:00Z'), aEvent))
+    const unreadable = createCodexCarryMarks({ platform: 'win32', port: { read: () => ({ kind: 'unavailable' }), write: () => {}, setAside: () => false }, now: () => NOW })
+    expect(await lookupLastSeenAllowance(SESSIONS, f.port, NOW, undefined, unreadable)).toEqual({ ok: false })
+    const live = createCodexLiveUsage('win32')
+    const ops = createCodexUsageOperations({ sessionsDir: async () => SESSIONS, fs: f.port, live, now: () => NOW, marks: unreadable })
+    expect(await ops.lastSeen({ authRealmId: 'realm-' + '1'.repeat(32) })).toEqual({ ok: false })
+    // And it is not cached as an answer: once the marks read, the figure is there.
+    const box: { text: string | null } = { text: null }
+    let readable = false
+    const flaky = createCodexCarryMarks({ platform: 'win32', port: { read: () => (readable ? { kind: 'missing' } : { kind: 'unavailable' }), write: (t) => { box.text = t }, setAside: () => false }, now: () => NOW + (readable ? 120_000 : 0) })
+    const held = new Map<string, { fingerprint: string; reading: AllowanceReading | null }>()
+    const cache = { get: (dir: string) => held.get(dir), set: (dir: string, v: { fingerprint: string; reading: AllowanceReading | null }) => { held.set(dir, v) } }
+    expect(await readLastSeenAllowance(SESSIONS, f.port, NOW, cache, flaky)).toBeNull()
+    readable = true
+    expect(pct((await readLastSeenAllowance(SESSIONS, f.port, NOW, cache, flaky))!)).toBe(40)
+  })
+
+  it('a floor holds for every rollout of the folder: nothing dated before it counts, a later event does', async () => {
+    const f = fakeFs()
+    f.file(file(), rollout(meta('2026-09-27T08:00:00Z'), aEvent, bEvent))
+    const withFloor = (floor: number) => createCodexCarryMarks({ platform: 'win32', port: { read: () => ({ kind: 'ok', text: JSON.stringify({ schema: 1, floor, marks: [] }) }), write: () => {}, setAside: () => false } })
+    // A floor between A's event (10:00) and B's (11:00).
+    const r = (await reading(f, withFloor(CARRIED_AT)))!
+    expect([pct(r), r.planType]).toEqual([5, 'plus'])
+    // A floor after both: nothing of the rollout counts.
+    expect(await reading(f, withFloor(Date.parse('2026-09-27T11:30:00Z')))).toBeNull()
   })
 
   it('a mark applies to its own conversation in its own folder only', async () => {

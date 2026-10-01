@@ -471,27 +471,39 @@ describe('a conversation carried by Switch Account (P3.14 round 1, C2; ADR-023)'
   const B_EVENT = ev('2026-09-20T10:00:00Z', 5, 'plus', null)
   const SWITCH_TO_B = Date.parse('2026-09-20T09:30:00Z')
 
-  async function carryWorld() {
+  async function carryWorld(opts: { newestStamp?: (dir: string, id: string) => number | null } = {}) {
     const fs = usageFs()
     const live = createCodexLiveUsage('win32')
     // The marks' file, in memory, and a store that can be "restarted" over it.
-    const box: { text: string | null } = { text: null }
-    const port: CodexCarryMarksPort = { read: () => (box.text === null ? { kind: 'missing' } : { kind: 'ok', text: box.text }), write: (text) => { box.text = text } }
-    let marks = createCodexCarryMarks({ platform: 'win32', port })
-    const store: CodexCarryMarks = { record: (...a) => marks.record(...a), cutoff: (...a) => marks.cutoff(...a), dropRealm: (r) => marks.dropRealm(r) }
+    const box: { text: string | null; kind: null | 'unavailable' | 'corrupt'; asides: number } = { text: null, kind: null, asides: 0 }
+    const port: CodexCarryMarksPort = {
+      read: () => (box.kind === 'unavailable' ? { kind: 'unavailable' } : box.kind === 'corrupt' ? { kind: 'corrupt' } : box.text === null ? { kind: 'missing' } : { kind: 'ok', text: box.text }),
+      write: (text) => { box.text = text },
+      setAside: () => { box.asides++; box.text = null; box.kind = null; return true },
+    }
+    // The marks' own clock (the wait before an unreadable file is read again, the floor of a lost one).
+    let markNow = SWITCH_TO_B
+    const fresh = () => createCodexCarryMarks({ platform: 'win32', port, now: () => markNow })
+    let marks = fresh()
+    const store: CodexCarryMarks = {
+      record: (...a) => marks.record(...a), markOf: (...a) => marks.markOf(...a), remove: (...a) => marks.remove(...a), cutoff: (...a) => marks.cutoff(...a),
+      unavailable: () => marks.unavailable(), dropRealm: (r) => marks.dropRealm(r), adopt: (...a) => marks.adopt(...a),
+    }
     let now = SWITCH_TO_B
     let carried: 'copied' | 'extended' = 'copied'
     const h = await harness({
       usageFs: fs.port, liveUsage: live, preference: { codex: () => 'on' },
       carryMarks: store, carryNow: () => now,
+      ...(opts.newestStamp ? { newestCopiedStamp: opts.newestStamp } : {}),
       conversationCarry: async () => ({ ok: true, carried, bytes: 1 }),
     })
     const a = await addCodexAccount(h, 'A')
     const b = await addCodexAccount(h, 'B')
     const text = (...lines: string[]) => lines.join('\n') + '\n'
     return {
-      h, fs, live, a, b, marks: () => marks, text,
-      restart: () => { marks = createCodexCarryMarks({ platform: 'win32', port }) },
+      h, fs, live, a, b, box, marks: () => marks, text,
+      restart: () => { marks = fresh() },
+      setMarkClock: (t: number) => { markNow = t },
       /** The switch: the conversation is carried from `from` into `to` at `at`. */
       carry: async (from: string, to: string, at: number, how: 'copied' | 'extended' = 'copied') => {
         now = at
@@ -601,5 +613,142 @@ describe('a conversation carried by Switch Account (P3.14 round 1, C2; ADR-023)'
     const r = await refusing.service.carryConversation({ accountId: b }, { uuid: CID, cwd: 'C:\\p\\demo', accountId: a })
     expect(r.ok).toBe(false)
     expect(w.marks().cutoff(sessionsOf(refusing, b), CID)).toBeNull()
+  })
+
+  // ------------------------------------------------------------------
+  // Round 2 (D1, D2, D4, D6, D7)
+  // ------------------------------------------------------------------
+
+  it('D1: a clock stepped back since A wrote its events cannot let A\'s later-dated events count for B', async () => {
+    // The carry is stamped 09:30, but A's newest event in the copy is dated 09:40 (A's clock was ahead).
+    const A_AHEAD = ev('2026-09-20T09:40:00Z', 77, 'pro', A_PRO)
+    const w = await carryWorld({ newestStamp: () => Date.parse('2026-09-20T09:40:00Z') })
+    w.fs.rolloutText(sessionsOf(w.h, w.b), CID, w.text(A_EVENT, A_AHEAD))
+    expect(await w.carry(w.a, w.b, SWITCH_TO_B)).toEqual({ ok: true, carried: 'copied' })
+    expect(w.marks().markOf(sessionsOf(w.h, w.b), CID)).toBe(Date.parse('2026-09-20T09:40:00Z'))
+    expect(await w.card(w.b)).toMatchObject({ status: 'no-session-yet', buckets: [] })
+    // B's own event after that shows.
+    w.fs.rolloutText(sessionsOf(w.h, w.b), CID, w.text(A_EVENT, A_AHEAD, B_EVENT))
+    expect(await w.card(w.b)).toMatchObject({ status: 'ok', planLabel: 'Plus' })
+    // Without the newest time, the same copy would have shown A's later event.
+    const plain = await carryWorld()
+    plain.fs.rolloutText(sessionsOf(plain.h, plain.b), CID, plain.text(A_EVENT, A_AHEAD))
+    await plain.carry(plain.a, plain.b, SWITCH_TO_B)
+    expect(await plain.card(plain.b)).toMatchObject({ status: 'ok', planLabel: 'Pro' })
+  })
+
+  it('D2: while the marks file cannot be read no account shows a last-seen figure, and once it can the figures are there', async () => {
+    const w = await carryWorld()
+    w.fs.rolloutText(sessionsOf(w.h, w.b), CID, w.text(A_EVENT))
+    w.fs.rollout(sessionsOf(w.h, w.a), 30, 'plus')
+    await w.carry(w.a, w.b, SWITCH_TO_B)
+    w.box.kind = 'unavailable'
+    w.restart()
+    // Neither the carried copy's account nor an unrelated one: the history cannot be told apart from a carried one.
+    expect(await w.card(w.b)).toMatchObject({ status: 'error', buckets: [] })
+    expect(await w.card(w.a)).toMatchObject({ status: 'error', buckets: [] })
+    // It can be read now, after the wait: the carried copy shows nothing of A's, the other account its own figure.
+    w.box.kind = null
+    w.setMarkClock(SWITCH_TO_B + 120_000)
+    expect(await w.card(w.b)).toMatchObject({ status: 'no-session-yet', buckets: [] })
+    expect(await w.card(w.a)).toMatchObject({ status: 'ok', planLabel: 'Plus' })
+  })
+
+  it('D2: a marks file that is not what was written is set aside and nothing dated before then counts, never A\'s events in a carried copy; B\'s own later event does', async () => {
+    const w = await carryWorld()
+    w.fs.rolloutText(sessionsOf(w.h, w.b), CID, w.text(A_EVENT))
+    await w.carry(w.a, w.b, SWITCH_TO_B)
+    // The file is damaged before the next start.
+    w.box.text = 'not what was written'
+    w.setMarkClock(Date.parse('2026-09-20T12:00:00Z'))
+    w.restart()
+    expect(await w.card(w.b)).toMatchObject({ status: 'no-session-yet', buckets: [] })
+    expect(w.box.asides).toBe(1)
+    expect(JSON.parse(w.box.text!)).toMatchObject({ schema: 1, floor: Date.parse('2026-09-20T12:00:00Z'), marks: [] })
+    // B's own report after that shows; another restart keeps the floor.
+    w.fs.rolloutText(sessionsOf(w.h, w.b), CID, w.text(A_EVENT, ev('2026-09-20T13:00:00Z', 5, 'plus', null)))
+    w.restart()
+    expect(await w.card(w.b)).toMatchObject({ status: 'ok', planLabel: 'Plus' })
+  })
+
+  it('D7: a carry that cannot mark is not made: the conversation is not copied and nothing is marked', async () => {
+    const w = await carryWorld()
+    w.box.kind = 'unavailable'
+    w.restart()
+    let copies = 0
+    const h = await harness({
+      usageFs: w.fs.port, liveUsage: w.live, preference: { codex: () => 'on' }, carryMarks: w.marks(),
+      conversationCarry: async () => { copies++; return { ok: true, carried: 'copied', bytes: 1 } },
+    })
+    const a = await addCodexAccount(h, 'A')
+    const b = await addCodexAccount(h, 'B')
+    const r = await h.service.carryConversation({ accountId: b }, { uuid: CID, cwd: 'C:\\p\\demo', accountId: a })
+    expect(r.ok).toBe(false)
+    expect(copies).toBe(0)
+  })
+
+  it('D6: archiving this computer\'s own Codex account (external) forgets its marks too', async () => {
+    const w = await carryWorld()
+    w.h.signedIn.set(EXT_HOME.toLowerCase(), 'chatgpt')
+    const adopted = await w.h.service.adoptExternalDefault({ providerId: 'codex' })
+    if (!adopted.ok) throw new Error(adopted.code)
+    const ext = adopted.accountId
+    expect(await w.carry(w.a, ext, SWITCH_TO_B)).toEqual({ ok: true, carried: 'copied' })
+    const marked = () => (JSON.parse(w.box.text!) as { marks: Array<{ realm: string }> }).marks.map((m) => m.realm)
+    const extRealm = w.h.doc().accounts.find((x) => x.id === ext)!.authRealmId
+    expect(marked()).toEqual([extRealm])
+    expect((await w.h.service.setLifecycle({ accountId: ext, lifecycle: 'inactive' })).ok).toBe(true)
+    expect(await w.h.service.setLifecycle({ accountId: ext, lifecycle: 'archived', acknowledgeExternal: true })).toEqual({ ok: true })
+    expect(marked()).toEqual([])
+  })
+
+  it('D4: a sign in again carries the history into a replacement folder, and the marks go with it', async () => {
+    const w = await carryWorld()
+    w.fs.rolloutText(sessionsOf(w.h, w.b), CID, w.text(A_EVENT))
+    await w.carry(w.a, w.b, SWITCH_TO_B)
+    const oldDir = sessionsOf(w.h, w.b)
+    expect(await w.h.service.signInAgain({ sameAccount: true, accountId: w.b, method: 'browser' }, 1)).toMatchObject({ ok: true })
+    const newDir = sessionsOf(w.h, w.b)
+    expect(newDir).not.toBe(oldDir)
+    expect(w.marks().cutoff(newDir, CID)).toBe(SWITCH_TO_B)
+    // The replacement's copy of the carried conversation shows nothing of A's.
+    w.fs.rolloutText(newDir, CID, w.text(A_EVENT))
+    expect(await w.card(w.b)).toMatchObject({ status: 'no-session-yet', buckets: [] })
+  })
+
+  it('D4: a sign in again whose marks cannot be kept stops, and changes nothing', async () => {
+    const w = await carryWorld()
+    w.fs.rolloutText(sessionsOf(w.h, w.b), CID, w.text(A_EVENT))
+    await w.carry(w.a, w.b, SWITCH_TO_B)
+    const before = sessionsOf(w.h, w.b)
+    w.box.kind = 'unavailable'
+    w.restart()
+    const r = await w.h.service.signInAgain({ sameAccount: true, accountId: w.b, method: 'browser' }, 1)
+    expect(r.ok).toBe(false)
+    expect(sessionsOf(w.h, w.b)).toBe(before)
+  })
+
+  it('D6: archiving an account forgets the marks of every realm it has had, the ones a sign in again moved it off too', async () => {
+    const w = await carryWorld()
+    w.fs.rolloutText(sessionsOf(w.h, w.b), CID, w.text(A_EVENT))
+    await w.carry(w.a, w.b, SWITCH_TO_B)
+    const currentDir = sessionsOf(w.h, w.b)
+    // A realm the account was moved off (retired), whose folder and marks are still there.
+    const retiredId = 'realm-' + '9'.repeat(32)
+    const accountId = w.b
+    const owner = w.h.doc().accounts.find((x) => x.id === accountId)!
+    const realm = w.h.doc().realms.find((x) => x.id === owner.authRealmId)!
+    const injected = await w.h.store.mutate((d) => ({ ok: true as const, doc: { ...d, realms: [...d.realms, { ...realm, id: retiredId, pathRef: `managed:${retiredId}`, lifecycle: 'retired' as const }] } }))
+    expect(injected.ok).toBe(true)
+    const retiredDir = `${managedHome(retiredId)}\\sessions`
+    expect(w.marks().record(retiredId, retiredDir, CID, SWITCH_TO_B)).toBe(true)
+    expect((await w.h.service.setLifecycle({ accountId, lifecycle: 'inactive' })).ok).toBe(true)
+    expect(await w.h.service.setLifecycle({ accountId, lifecycle: 'archived' })).toEqual({ ok: true })
+    expect(w.marks().cutoff(currentDir, CID)).toBeNull()
+    expect(w.marks().cutoff(retiredDir, CID)).toBeNull()
+    w.restart()
+    expect(w.marks().cutoff(retiredDir, CID)).toBeNull()
+    // Another account's marks stay.
+    expect(w.marks().record('realm-other', 'C:\\x\\sessions', CID, SWITCH_TO_B)).toBe(true)
   })
 })

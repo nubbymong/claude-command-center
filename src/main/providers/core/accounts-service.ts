@@ -2008,7 +2008,7 @@ export class AccountsService {
           // Held: the count is 0 and nothing new could start.
           const r = await ctx.store.mutate((d, t) => setAccountLifecycle(d, a.id, 'archived', { consumers: this.deps.leases.count(a.id) }, t))
           const archived = this.fromStore(r)
-          if (!archived) this.forgetRealm(ctx.p, a.authRealmId)
+          if (!archived) this.forgetRealms(ctx.p, ctx.store.current() ?? ctx.doc, a.id, a.authRealmId)
           return archived ?? { ok: true }
         } finally {
           release()
@@ -2051,7 +2051,7 @@ export class AccountsService {
         // Held: the count is 0 and nothing new could start.
         const r = await ctx.store.mutate((d, t) => setAccountLifecycle(d, a.id, 'archived', { consumers: this.deps.leases.count(a.id) }, t))
         const archived = this.fromStore(r)
-        if (!archived) this.forgetRealm(ctx.p, a.authRealmId)
+        if (!archived) this.forgetRealms(ctx.p, ctx.store.current() ?? ctx.doc, a.id, a.authRealmId)
         return archived ?? { ok: true }
       } finally {
         release()
@@ -2060,10 +2060,15 @@ export class AccountsService {
     return failure('invalid-request')
   }
 
-  /** An account was archived: the provider forgets what it kept about its
-   *  realm besides the folder (ADR-023: the carry marks). Never throws. */
-  private forgetRealm(p: ProviderPackage | null, authRealmId: string): void {
-    try { p?.realmFolders?.forget?.({ authRealmId }) } catch { /* a forgotten mark never fails the archive */ }
+  /** An account was archived: the provider forgets what it kept about each
+   *  realm the account has had (its current one and every one a sign in again
+   *  moved it off) besides the folder (ADR-023: the carry marks). Never throws. */
+  private forgetRealms(p: ProviderPackage | null, doc: ProviderRegistryDoc, accountId: string, authRealmId: string): void {
+    const ids = new Set<string>([authRealmId])
+    try { for (const r of doc.realms) if (r.ownerProviderAccountId === accountId) ids.add(r.id) } catch { /* the current realm alone */ }
+    for (const id of ids) {
+      try { p?.realmFolders?.forget?.({ authRealmId: id }) } catch { /* a forgotten mark never fails the archive */ }
+    }
   }
 
   async setDefault(input: { accountId: string }): Promise<AccountsResult> {

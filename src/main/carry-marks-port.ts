@@ -6,19 +6,32 @@
 // is read when first needed, replaced atomically (staged, then renamed) when a
 // mark is added or an account's marks are dropped, and owner-only on POSIX.
 //
+// Fails closed (round 2): the file is looked at before it is read (a plain
+// file within its size cap, never a link, folder or oversize file), and one
+// that is not that is reported as corrupt for its owner to set aside; setting
+// it aside renames it (the newest few are kept), never overwrites it.
+//
 // Injected, like the registry's own port, so it names no resources directory
 // and every branch is testable without a disk.
 import nodeFs from 'node:fs'
 import nodePath from 'node:path'
 
 export const CARRY_MARKS_FILENAME = 'carry-marks.json'
+/** The most bytes the file may hold: a file this code wrote is far smaller. */
+export const CARRY_MARKS_MAX_BYTES = 4 * 1024 * 1024
+/** The set-aside copies of a file that was not what this code wrote, kept. */
+export const CARRY_MARKS_ASIDE_KEPT = 3
+const ASIDE_RE = /^carry-marks\.json\.bad-(\d+)$/
 
 /** What the marks' owner needs of a file: the same shape on every platform. */
 export interface CarryMarksFilePort {
-  /** The file's text, its absence, or "cannot be read now" (asked again later). */
-  read(): { kind: 'ok'; text: string } | { kind: 'missing' } | { kind: 'unavailable' }
+  /** The file's text; its absence; "cannot be read now" (asked again later);
+   *  or "corrupt": there, but not a plain file within the size cap. */
+  read(): { kind: 'ok'; text: string } | { kind: 'missing' } | { kind: 'unavailable' } | { kind: 'corrupt' }
   /** Replace the file. Throws on any failure. */
   write(text: string): void
+  /** Rename the file out of its place; true when it is no longer there. */
+  setAside(): boolean
 }
 
 export interface CarryMarksFileDeps {
@@ -30,8 +43,10 @@ export interface CarryMarksFileDeps {
   /** The app's one atomic write (staging, then rename). */
   atomicWrite(file: string, data: string, options?: { mode: number }): void
   posix: boolean
-  /** Replaces the file system's reads, for a test. */
-  fs?: Pick<typeof nodeFs, 'readFileSync' | 'statSync'>
+  /** The clock a set-aside copy is named with. */
+  now?: () => number
+  /** Replaces the file system's calls, for a test. */
+  fs?: Pick<typeof nodeFs, 'readFileSync' | 'statSync' | 'lstatSync' | 'renameSync' | 'readdirSync' | 'unlinkSync'>
 }
 
 const errCode = (e: unknown): unknown => (e && typeof e === 'object' ? (e as { code?: unknown }).code : undefined)
@@ -43,8 +58,9 @@ export function createCarryMarksFilePort(deps: CarryMarksFileDeps): CarryMarksFi
       const dir = deps.directory()
       if (!dir) return { kind: 'unavailable' }
       const file = nodePath.join(dir, CARRY_MARKS_FILENAME)
+      let entry: nodeFs.Stats
       try {
-        return { kind: 'ok', text: fs.readFileSync(file, 'utf8') }
+        entry = fs.lstatSync(file)
       } catch (e) {
         if (errCode(e) !== 'ENOENT') return { kind: 'unavailable' }
         // Absence only when the folder above it is there: an unmounted drive
@@ -55,12 +71,42 @@ export function createCarryMarksFilePort(deps: CarryMarksFileDeps): CarryMarksFi
           return { kind: 'unavailable' }
         }
       }
+      // A link, a folder or anything but a plain file is not one this code made,
+      // and a file past the cap cannot be one it wrote: neither is read.
+      if (!entry.isFile() || entry.size > CARRY_MARKS_MAX_BYTES) return { kind: 'corrupt' }
+      try {
+        return { kind: 'ok', text: fs.readFileSync(file, 'utf8') }
+      } catch {
+        return { kind: 'unavailable' }
+      }
     },
     write(text) {
       const dir = deps.directory()
       if (!dir) throw new Error('the resources directory is not known yet')
       deps.mkdirSecure(dir)
       deps.atomicWrite(nodePath.join(dir, CARRY_MARKS_FILENAME), text, deps.posix ? { mode: 0o600 } : undefined)
+    },
+    setAside() {
+      const dir = deps.directory()
+      if (!dir) return false
+      const file = nodePath.join(dir, CARRY_MARKS_FILENAME)
+      let at = Date.now()
+      try { const n = deps.now ? deps.now() : at; if (Number.isFinite(n)) at = Math.floor(n) } catch { /* the wall clock */ }
+      try {
+        fs.renameSync(file, nodePath.join(dir, `${CARRY_MARKS_FILENAME}.bad-${at}`))
+      } catch (e) {
+        // Already gone is what was asked for.
+        return errCode(e) === 'ENOENT'
+      }
+      // The newest few stay; the rest go (only names this function gives).
+      try {
+        const names = fs.readdirSync(dir).map((n) => ({ n, t: ASIDE_RE.exec(n) })).filter((x): x is { n: string; t: RegExpExecArray } => x.t !== null)
+        names.sort((a, b) => Number(b.t[1]) - Number(a.t[1]))
+        for (const old of names.slice(CARRY_MARKS_ASIDE_KEPT)) {
+          try { fs.unlinkSync(nodePath.join(dir, old.n)) } catch { /* left for the next time */ }
+        }
+      } catch { /* the folder could not be listed: nothing is trimmed */ }
+      return true
     },
   }
 }
