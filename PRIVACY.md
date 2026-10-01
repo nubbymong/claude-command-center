@@ -53,11 +53,17 @@ during installation (and can change later in Settings):
 - a small note for each Codex conversation you move to another Codex account
   with Switch Account, kept in the same folder as the account list (never in an
   account's own folder): which account's folder the conversation was copied
-  into, the conversation's id, and the time of the move. It holds no text from
-  the conversation and no usage figure. The app uses it so that account's usage
+  into, the conversation's id, and a time (the move, or the newest event time
+  in the copied conversation if that is later). It holds no text from the
+  conversation and no usage figure. The app uses it so that account's usage
   card shows only what that account itself used after the move, not the earlier
-  account's figures. The newest 256 notes are kept, and an account's notes are
-  deleted when the account is removed
+  account's figures. At most 256 notes are kept (an account with the most
+  loses its oldest first), and all of an account's notes, including those of a
+  folder it was moved off by Sign in again, are deleted when the account is
+  archived or removed. A notes file the app cannot make sense of is renamed
+  with a ".bad" ending beside it (the newest 3 are kept) rather than
+  overwritten, and while it cannot be read the app shows no Codex last-seen
+  usage figure
 - an index of your Claude Code and Codex session transcripts, used to power
   the Logs and Tokenomics views (the Logs index reads a Codex session's
   transcript from that session's own Codex account folder)

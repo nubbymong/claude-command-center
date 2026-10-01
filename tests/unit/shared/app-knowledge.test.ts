@@ -199,9 +199,10 @@ describe('app knowledge after P3.14', () => {
     // Claude's own credits-row known issue is a different thing and stays.
     expect(body('known-issues')).toMatch(/The credits row can be missing for an account on extra usage while one of its sessions is open/)
   })
-  it('says the Usage page shows a Codex balance in Codex credits, under the bars, from the same report as its main bars', () => {
+  it('says the Usage page shows a Codex balance in Codex credits, under the bars, from the newest main report that states them', () => {
     expect(body('accounts')).toMatch(/A Codex account on paid credits shows its balance under its bars, in Codex credits \(a count, not money\)/)
-    expect(body('accounts')).toMatch(/taken from the same report as its main bars, so a newer report that says the account has no credits takes the row away/)
+    expect(body('accounts')).toMatch(/taken from the newest main report that states them, so a newer report that says the account has no credits takes the row away and one that says nothing about credits leaves the older figure/)
+    expect(body('accounts')).not.toMatch(/taken from the same report as its main bars/)
     expect(body('accounts')).toMatch(/Unlimited/)
     // Round 1: no claim about the balance's age beyond that.
     expect(body('accounts')).not.toMatch(/carries the same age/)
@@ -209,6 +210,8 @@ describe('app knowledge after P3.14', () => {
   it('says a conversation moved with Switch Account shows none of the earlier account\'s limits, plan or credits on the new account\'s card until it reports', () => {
     expect(body('accounts')).toMatch(/A conversation you move to another Codex account with Switch Account brings the earlier account's history with it, so the new account's card counts only what that account reports after the move/)
     expect(body('accounts')).toMatch(/until its session reports, the card shows none of the earlier account's limits, plan or credits/)
+    // Round 2: what the app does while that note cannot be read.
+    expect(body('accounts')).toMatch(/If the app cannot read the note it keeps of which conversations were moved, it shows no last-seen Codex figures until it can, and it will not carry a conversation then/)
   })
 })
 

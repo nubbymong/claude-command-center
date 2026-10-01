@@ -129,7 +129,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 
 | # | Feature | Status | Settled by | Gap | PR |
 |---|---|---|---|---|---|
-| 17 | All-accounts usage page | DONE (usage track MP3, MP4, MP8, screens approved; P3.14, c65b359e; mocked): a Codex card on paid credits shows a Credits row under its bars, in Codex credits (a count, not money): "N credits" or "Unlimited", placed and styled as Claude's row, from the live, fresh-read and last-seen reading alike; the known issue is removed (`rate-limits.test.ts`, `account-usage-panel.test.tsx`, `provider-account-usage.test.ts`, `codex-usage-read.test.ts`) | OD27 M1, M2; ADR-022 and ADR-023 (the credits count kept from the read, which widens ADR-022 bound 8; the owner confirms it on return); credits: parity, the unit from P3.1's evidence (recorded with the usage plan, 2026-09-27) | verification: the VM live credits check (PR 3 gate 6); the owner's screenshot review; the PR-level ADR-009 pass; macOS, Linux, packaged | 2; 3, v4 |
+| 17 | All-accounts usage page | DONE (usage track MP3, MP4, MP8, screens approved; P3.14, c65b359e; mocked): a Codex card on paid credits shows a Credits row under its bars, in Codex credits (a count, not money): "N credits" or "Unlimited", placed and styled as Claude's row, from the live, fresh-read and last-seen reading alike; the known issue is removed (`rate-limits.test.ts`, `account-usage-panel.test.tsx`, `provider-account-usage.test.ts`, `codex-usage-read.test.ts`) | OD27 M1, M2; ADR-022 and ADR-023 (the credits count kept from the read, which widens ADR-022 bound 8, and the carry marks file `carry-marks.json`; the owner confirms both on return); credits: parity, the unit from P3.1's evidence (recorded with the usage plan, 2026-09-27) | verification: the VM live credits check (PR 3 gate 6); the owner's screenshot review; the PR-level ADR-009 pass; macOS, Linux, packaged | 2; 3, v4 |
 | 18 | Session-strip meters | DONE | OD27 M1 (D2, D3); labels from `window_minutes` (decided by design, 2026-09-26) | verification: a 0.155.1 rollout fixture from a real session; a real-CLI run | 2, v4 |
 | 19 | Strip cost wording | DONE | "API-equivalent estimate" wording (decided by design, 2026-09-26) | none | 2 |
 | 20 | Account chip on the strip and in the sidebar | DONE (P3.6, 57ce396a, 68d00f62, 4439d7e2; mocked): a Codex session's account chip on the strip and its sidebar card, from the identity; Claude's chips read the identity's colour | Canvas 2026-09-26, "Switching a running Codex session's account": the strip's Codex account pill and its Switch account menu; the footer's label rule (a Codex identity shows its name); parity for the sidebar | verification: the VM check of W1; the owner's screenshot review; the SSH live matrix at PR 3's head | 2; 3 |
@@ -2637,11 +2637,10 @@ host: 55 affected and 65 tree-scanner files and the WP1 gate files pass,
 check is complete. (C2) Built in the next paragraph, by time and without the
 launch files.
 Round 1, C2 (the carry marks; 96979a4c and f00540a8). After Switch Account the new
-account's folder holds a copy of the conversation's rollout with the earlier
-account's events in it, and a reader that takes the newest event as the
-account's own showed that account's bars, plan and credits on the new account's
-card until its session reported. Now the carry is marked and what reads that
-rollout counts only the events written after it. When `copyConversation` lands a
+account's folder holds a copy of the conversation's rollout, with the earlier
+account's events in it. The carry is marked, and what reads that rollout counts
+only the events written after the mark, so the new account's card shows none of
+the earlier account's bars, plan or credits until its own session reports. When `copyConversation` lands a
 copy under both realm locks (`realm-folders.ts`, `markCarried`), it records
 `{destination realm, its sessions folder, the conversation id, the carry's time}`
 in a store the Codex package owns (`createCodexCarryMarks` in `usage.ts`): in
@@ -2690,6 +2689,48 @@ hook and the new file (the pass covers them). Owed on the VM: a real Switch
 Account between two Codex accounts (one with credits), the new account's card
 and strip empty until its first report, then its own; the same after an app
 restart.
+Round 2 (e050a266; the reviews of the carry marks: spec PASS-WITH-FIXES, code quality
+PASS, ADR-009 pass 2 lens A PASS and lens B PASS, each with minor items; VM PASS at
+7c52a432). (D1) The mark is the later of the carry's moment and the newest zoned
+event time in the copied bytes (`newestCarriedStamp` in `usage.ts`; a stamp over 7
+days ahead is ignored), so a machine clock stepped back before the move cannot let
+the earlier account's later-dated events count. (D2) The marks file fails closed.
+`carry-marks-port.ts` looks before it reads (a plain file within 4 MiB); one that is
+not what the app wrote is renamed `carry-marks.json.bad-<ms>` (the newest 3 kept),
+never overwritten, and a floor at that moment is kept so nothing dated before it
+counts; a file that cannot be read now is asked for again after a wait of 1 to 30
+seconds, and until it can be read no Codex rollout counts an event, no mark is
+recorded and no carry is made (the Usage page shows no last-seen Codex figure and
+the strip no Codex allowance until it reads; this covers every Codex account, because
+which rollouts are carried is not known). The file is trimmed oldest first at write
+time, a realm dropped while it could not be read is not brought back by it, and only
+own properties are read (D8). (D3) Past 256 marks the realm with the most evicts its
+own oldest, never another's; recorded as a limit. (D4) Sign in again re-keys the old
+folder's marks to the replacement folder, and refuses to go on if they cannot be kept.
+(D6) Archiving an account forgets the marks of every realm it has had
+(`AccountsService.forgetRealms`). (D7) `copyConversation` marks before it copies and
+takes the mark back if the copy fails; a mark that cannot be kept stops the carry
+("not carried over"). (D5) Recorded as a limit, not changed: the reports carry no
+account identifier, and removing older sub-limit bars on a newer main report would
+hide an account's own, so in a rollout with no mark (a carry made before marks
+existed) an earlier account's sub-limit bars can still show; after a mark they are
+dated like every other event. (D8) The zoneless last-seen test no longer depends on
+the machine's time zone (also run under four zones). (D9) The Usage page clause says
+the credits come from the newest main report that states them (an absent credits key
+keeps the older figure) and what the app does while the marks file cannot be read;
+`PRIVACY.md` and ADR-023 say the same. Tests, red first on 1446f237 (67 of the new
+and changed tests failed in 5 files): the store and its file (parse, fail closed, wait,
+floor, set-aside, trim, dropped realms, eviction, adopt), the newest-stamp read, the
+folder work (mark before, undo, finish, adopt), the accounts service end to end (a
+clock stepped back; a marks file that cannot be read, then can; a file that is not
+what was written; a Sign in again; archive of every realm, signed-out and external),
+the port and the app knowledge clause. Mutation: 71 mutants of the store, the reader,
+the folder work, the archive hook and the port, each alone and restored
+byte-identically, all red (one survived once and was answered by a test). ADR-009:
+yes, the same pass as round 1 (a file that is read, set aside and trimmed; the
+sign-in-again and archive paths). Owed on the VM: the Switch Account check above; with
+the marks file made unreadable, no Codex last-seen figure until it is readable again,
+and a corrupt one set aside with its copy beside it.
 
 **P3.15 Terminal verification.** On the VM with real Codex 0.155.1: a Codex
 session in the Services snapshot; Alt+V image paste reaching Codex (and the tip
@@ -3071,8 +3112,11 @@ screen at all. The owner reviews the review screen in the P3.10 VM gallery.
 - Row 58: sign (or reject) the artifacts section 19 record.
 - Any section 19 record P3.1 raises (rows 22, 36, 41, 61, 69), one per row.
 - Row 17 (P3.14): confirm ADR-023, which keeps a Codex account's credits count
-  (three validated fields) from the usage read and so widens ADR-022 bound 8.
-  The live credits check runs on the VM's managed account, which shows a
+  (three validated fields) from the usage read and so widens ADR-022 bound 8,
+  and keeps the carry marks file (`carry-marks.json` in the app's providers
+  folder: realm id, sessions folder, conversation id and a time; no text, no
+  figure; it fails closed, is set aside and not overwritten when it is not what
+  the app wrote, and is deleted per account on archive). The live credits check runs on the VM's managed account, which shows a
   balance (P3.1 evidence, answer 7); the P3.14 fallback does not apply.
 - Section 7: a disposition for each C defect not fixed; the security report;
   the desktop attestation; the word to merge each PR.
