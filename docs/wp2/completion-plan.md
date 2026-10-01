@@ -2562,12 +2562,7 @@ row is of the same reading as the bars, as Claude's is); (2) the unit rests on
 P3.1's strings evidence: if a reviewer rejects that, the fallback above applies
 (the known issue returns and row 17 goes to the owner as a section 19 record);
 (3) `hasCredits` false has never been seen, so it draws no row; (4) a balance
-with more than 13 integer or 12 fraction digits is not read and shows no row;
-(5) open, not built in round 1: a conversation carried to another account by
-Switch Account is read from its start, so until the new account's session
-reports its own figure its card shows the carried figures (bars, plan and
-credits); the fix needs the carry's end known to both readers, which is outside
-this phase's files (see round 1).
+with more than 13 integer or 12 fraction digits is not read and shows no row.
 Tests, red first on 624eff9f (57 of the new tests failed in the eight touched
 files; all 345 now pass): `rate-limits.test.ts` (the three fields from a rollout
 and from the answer's own `rateLimits`; a per-limit entry's credits never kept;
@@ -2632,17 +2627,62 @@ status line, the small balance and the clause; the round 0 set re-run on the new
 code, 33 red, and 9 of its mutants re-anchored where the code changed). On the
 host: 55 affected and 65 tree-scanner files and the WP1 gate files pass,
 `npm run typecheck` and `tsc` of the touched tests are clean, and the manifest
-check is complete. (C2, not built, for the orchestrator) After Switch Account the
-carried copy of the conversation sits in the new account's folder with the
-earlier account's events, and the watcher (`readNew`) and last-seen read it from
-its start, so until the new account reports its own figure its card shows the
-carried bars, plan and credits. Counting only events
-written after the carry needs the carry's end known to both readers; the carry
-result already carries its byte count, but it is handled in `pty-handlers.ts`
-(P3.13's and ADR-009's file) and a last-seen read after a restart needs it kept.
-A file-creation-time filter is contained but unreliable (a filesystem that
-reports the change time as creation time, Windows name tunnelling after a
-second carry), so it is not built.
+check is complete. (C2) Built in the next paragraph, by time and without the
+launch files.
+Round 1, C2 (the carry marks; 96979a4c and f00540a8). After Switch Account the new
+account's folder holds a copy of the conversation's rollout with the earlier
+account's events in it, and a reader that takes the newest event as the
+account's own showed that account's bars, plan and credits on the new account's
+card until its session reported. Now the carry is marked and what reads that
+rollout counts only the events written after it. When `copyConversation` lands a
+copy under both realm locks (`realm-folders.ts`, `markCarried`), it records
+`{destination realm, its sessions folder, the conversation id, the carry's time}`
+in a store the Codex package owns (`createCodexCarryMarks` in `usage.ts`): in
+memory and in `carry-marks.json` in the app's `providers/` folder next to the
+account registry (`src/main/carry-marks-port.ts`, handed to the package by
+`compose.ts`; never a file in an account's folder), written atomically, owner-only
+where there are modes, read back with every field validated, the newest 256
+kept. A copy or an extension is marked now (an extension replaces the older
+record: A, B, A); a copy already there keeps the record it has. A realm's records
+go when its account is archived (a new optional `forget` on the realm folder
+operations, called by the accounts service after the archive lands) and when its
+folder is removed. The live watcher asks for the mark at every read
+(`claimOpts.allowanceAfter`, set by `CodexProvider` from the store) and the
+last-seen reader asks for it per rollout (the file name carries the conversation
+id; the marks are part of what a cached reading was read under). In a marked
+rollout only a `token_count` dated after the carry counts, and one with no zoned
+time counts for nothing (`zonedTimeMs`, the transcript reader's rule); the same
+rollout unmarked reads whole. `pty-handlers.ts` and `pty-manager.ts` are not
+touched: the hook is in the folder work the service already calls. Records:
+ADR-023 ("Carry marks": what, where, how long, what reads it, the limits),
+`PRIVACY.md` (what the app stores) and the Usage page clause in app knowledge.
+Limits: the folder is recorded as a path, so a moved data folder reads a carried
+rollout whole, as before; a conversation coming back to an account (A, B, A)
+leaves that account's own earlier events uncounted until its next report; a
+carry made before this change has no record. Tests, red first on 897cb345 (36 of
+the new tests failed in 5 files): the marks store (what it records and refuses,
+the bound, a conversation carried again, dropping a realm, a restart over the
+same file, a file that reads back as junk, an unreadable file, a port that
+throws), the last-seen reader (nothing of the earlier account before the new
+account's own event, then its own with its own plan, bars and no credits; the
+carry's own moment is the earlier account's; a zoneless time counts for
+nothing; a mark applies to its own conversation and folder only; A, B, A; a
+cache is not reused across a carry; the usage port), the live watcher (a real
+temp-folder rollout through `CodexProvider`), the realm folders (a copy,
+extension, present, failed or cancelled carry; a mark or clock that throws;
+forget; a removed folder; the package over a marks file and a restart), the
+accounts service end to end (A with Pro and 1250 credits switches to B with Plus
+and none: B's card never shows A's bars, plan or credits, last-seen or with a
+session open, nor after a restart; B's own event shows; A, B, A; an archive
+drops the marks; a throwing forget never fails the archive), the marks file
+port and the composition wiring. Mutation: 59 mutants of the reader, the store,
+the watcher, the wiring, the folder work, the archive hook and the port, each
+alone and restored byte-identically, all red (six survived once: five were
+answered by a test, one by removing a redundant check). ADR-009: yes, the carry
+hook and the new file (the pass covers them). Owed on the VM: a real Switch
+Account between two Codex accounts (one with credits), the new account's card
+and strip empty until its first report, then its own; the same after an app
+restart.
 
 **P3.15 Terminal verification.** On the VM with real Codex 0.155.1: a Codex
 session in the Services snapshot; Alt+V image paste reaching Codex (and the tip
