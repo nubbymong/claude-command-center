@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-01T04:20:11.941Z",
-  "head": "c11fb360a15748974ded272cd1120866a8ffaf04",
-  "tree": "34742a544829ad70a6c6be0e402a424349fd71e3",
+  "generatedAt": "2026-10-01T04:23:33.232Z",
+  "head": "3e45825d7da78d4e19cb610f2ab023f809e1ac9d",
+  "tree": "3f2219f910abf1874475a57a7387bb8b3abf6ff4",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 532,
+      "lineCount": 545,
       "truncated": true
     },
     {
@@ -211,7 +211,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 93
+      "lineCount": 94
     },
     {
       "path": "docs/wp2/plan.md",
