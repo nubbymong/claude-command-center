@@ -35,6 +35,9 @@ import { mimeForImage } from './clipboard-file'
 import { removeConductorVisionFromCodexConfig } from './providers/codex/mcp-config'
 import { getGlobalManager, startGlobalVision, launchBrowser } from './vision-manager'
 import type { VisionCommand, VisionResult } from './vision-manager'
+// From the owner module itself (vision-manager re-exports it): a caller that
+// mocks vision-manager still gets the real class to test against.
+import { VisionPortHeldError } from './vision-browser-owner'
 import { readConfig } from './config-manager'
 import { dispatchSSHStatuslineUpdate } from './statusline-watcher'
 import { getInstallSecret } from './install-secret'
@@ -1682,6 +1685,12 @@ export async function startBrowserAtBoot(
   try {
     await launchBrowser(browser, debugPort, visionConfig.url, headless)
   } catch (err) {
+    // The debug port stays in use by a program not identified as the app's
+    // vision browser: it is left running and vision is not started.
+    if (err instanceof VisionPortHeldError) {
+      logError(`[vision] Vision was not started at boot: ${err.message}`)
+      return
+    }
     logError(`[vision] Browser spawn at boot failed: ${(err as Error)?.message}. Heartbeat will retry if browser becomes reachable.`)
   }
   await startGlobalVision({
