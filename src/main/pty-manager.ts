@@ -6149,6 +6149,12 @@ function cleanupSessionResources(sessionId: string): void {
     codexLaunchLeases.delete(sessionId)
     codexLease.release()
   }
+  // P3.16 (M5): the integrity monitor's record of the PTY this ends goes with
+  // it. A Restart (and every respawn: spawnPty runs killPty first) starts a new
+  // process, and the renderer counts the bytes of each terminal mount from 0, so
+  // the new process's record starts from 0 too, on either ConPTY. A no-op when
+  // there is none (the session's own exit ends it as well).
+  getPtyIntegrityMonitor()?.endSession(sessionId)
   pendingWrites.delete(sessionId)
   launchPendingSessions.delete(sessionId)
   recentWrites.delete(sessionId)
