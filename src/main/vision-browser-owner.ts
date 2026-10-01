@@ -1,20 +1,29 @@
 /**
- * Which process on the vision debug port is the app's own vision browser, and
- * ending one only once that is verified.
+ * How vision recognises and ends its own browsers.
  *
- * Rule: a pid alone is never enough to end a process. A process is ended only
- * when it is verified as the app's own vision browser by its NAME (a browser
- * executable the app launches), its COMMAND LINE (the exact debug-port and
- * profile-folder arguments the app passes, and no `--type=`, so it is a main
- * browser process) and its START (creation) TIME. The kill itself re-reads the
- * creation time of that same pid immediately before ending it, so a pid that
- * now belongs to another program is left running.
+ * Two kinds of browser, two ways to end one:
  *
- * Every OS query goes through OwnerPorts: absolute program paths, no shell, a
- * timeout on every call, and any failure or timeout reads as "cannot identify",
- * which ends nothing. Nothing caller-supplied is put into a PowerShell script
- * except a pid and a creation time, both checked as plain digits first; the
- * command-line check runs here in TypeScript, never in PowerShell.
+ * - The browser the app spawned in this run is its own child. Until its exit
+ *   has been observed (exitCode and signalCode both null), libuv still holds
+ *   that process, so its pid cannot name another one. It is ended by that pid
+ *   with no read-back: `taskkill /PID <pid> /T /F` on Windows, its process
+ *   group on Linux and macOS (SIGTERM, then SIGKILL after a grace). Once its
+ *   exit was observed, nothing is done with that pid.
+ *
+ * - A browser left by an earlier run of the app is found by its profile,
+ *   whether or not it listens on the debug port, and ended only once it is
+ *   identified as the app's vision browser by its NAME (a browser executable
+ *   the app launches), its COMMAND LINE (the exact debug-port argument, a
+ *   profile argument naming the same folder, and no `--type=`, so a main
+ *   browser process) and its START (creation) TIME. The kill re-reads the
+ *   creation time of that same pid immediately before ending it.
+ *
+ * Every OS call goes through OwnerPorts: absolute program paths, no shell, a
+ * timeout on every call, and any failure or timeout reads as "cannot
+ * identify", which ends nothing. The queries run asynchronously; the only
+ * synchronous call is the taskkill of the app's own browser. Nothing is put
+ * into a PowerShell script except a pid and a creation time, both checked as
+ * plain digits first; command lines are matched here in TypeScript.
  *
  * No Electron import, so the unit tests load it without a window.
  */
@@ -52,22 +61,36 @@ export interface OwnerPorts {
   /** Run a program by absolute path, no shell. Resolves its standard output;
    *  rejects on a non-zero exit, an error or the timeout. */
   run(file: string, args: string[], timeoutMs: number): Promise<string>
-  /** The synchronous counterpart, for the app's quit. Throws on failure. */
+  /** The synchronous counterpart, used only for the taskkill of the app's own
+   *  browser. Throws on failure. */
   runSync(file: string, args: string[], timeoutMs: number): string
   /** process.kill. */
   signal(pid: number, sig: NodeJS.Signals): void
   exists(file: string): boolean
+  /** The long real path of an existing file or folder, or null. */
+  realpath(p: string): string | null
+  /** Resolve after `ms`. */
+  sleep(ms: number): Promise<void>
+  /** Block for `ms` (bounded; the quit path only). */
+  sleepSync(ms: number): void
 }
 
-/** Every read, and the awaited kill. */
-export const OWNER_QUERY_TIMEOUT_MS = 4000
-/** The synchronous kill at quit. */
+/** Every async query and the awaited verified kill: a cold PowerShell on a
+ *  busy machine can take well over 4 s to answer. */
+export const OWNER_QUERY_TIMEOUT_MS = 20000
+/** The synchronous taskkill of the app's own browser. */
 export const OWNER_SYNC_KILL_TIMEOUT_MS = 5000
+/** POSIX: how long a browser gets after SIGTERM before SIGKILL (async paths). */
+export const POSIX_TERM_GRACE_MS = 3000
+/** POSIX, at quit: the bounded wait between SIGTERM and SIGKILL. */
+export const OWN_QUIT_GRACE_MS = 500
+/** How long an end waits for the app's own browser's exit to be observed. */
+export const OWN_EXIT_WAIT_MS = 5000
 
+const POSIX_POLL_MS = 150
 const MAX_OUTPUT = 1024 * 1024
 const POSIX_ENV: NodeJS.ProcessEnv = { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LC_ALL: 'C' }
 const POSIX_PS = ['/bin/ps', '/usr/bin/ps']
-const POSIX_LSOF = ['/usr/sbin/lsof', '/usr/bin/lsof', '/sbin/lsof', '/bin/lsof']
 const POWERSHELL_ARGS = ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command']
 
 /** Executable names of the browsers the app launches. */
@@ -175,18 +198,84 @@ function isBrowserName(name: string, platform: NodeJS.Platform): boolean {
   return POSIX_BROWSER_NAMES.includes(path.posix.basename(name))
 }
 
+type Realpath = (p: string) => string | null
+type PathKind = 'win32' | 'posix'
+
+function realOrNull(realpath: Realpath, p: string): string | null {
+  try {
+    const r = realpath(p)
+    return typeof r === 'string' && r !== '' ? r : null
+  } catch { return null }
+}
+
+function trimSeparators(p: string, kind: PathKind): string {
+  const root = kind === 'win32' ? /^[A-Za-z]:[\\/]?$/ : /^\/$/
+  let out = p
+  while (out.length > 1 && /[\\/]$/.test(out) && !root.test(out)) out = out.slice(0, -1)
+  return out
+}
+
+/** The long real spelling of a folder: its real path when it exists, else its
+ *  parent's real path joined with its own name, else the path as written,
+ *  normalised. On Windows the real path also expands short (8.3) names. */
+function longPath(dir: string, kind: PathKind, realpath: Realpath): string {
+  const p = kind === 'win32' ? path.win32 : path.posix
+  const norm = trimSeparators(p.normalize(dir), kind)
+  const real = realOrNull(realpath, norm)
+  if (real) return trimSeparators(p.normalize(real), kind)
+  const parent = realOrNull(realpath, p.dirname(norm))
+  return parent ? trimSeparators(p.join(parent, p.basename(norm)), kind) : norm
+}
+
+/** Whether a profile argument names the expected profile folder: the same
+ *  string, or both absolute with the same last folder name and the same long
+ *  real path (without regard to case on Windows). A prefix of the folder, or
+ *  another folder, never matches. */
+function sameProfile(actual: string, expected: string, kind: PathKind, realpath: Realpath): boolean {
+  if (actual === expected) return true
+  const p = kind === 'win32' ? path.win32 : path.posix
+  const absolute = kind === 'win32' ? isWindowsAbsolute(actual) && isWindowsAbsolute(expected) : actual.startsWith('/') && expected.startsWith('/')
+  if (!absolute) return false
+  const fold = (s: string) => (kind === 'win32' ? s.toLowerCase() : s)
+  if (fold(p.basename(trimSeparators(actual, kind))) !== fold(p.basename(trimSeparators(expected, kind)))) return false
+  return fold(longPath(actual, kind, realpath)) === fold(longPath(expected, kind, realpath))
+}
+
+/** POSIX: every `--user-data-dir` names the expected folder. `ps` joins the
+ *  arguments with spaces, so the value may end at any whitespace boundary: one
+ *  of those must name the folder. */
+function posixProfileMatches(cmd: string, expected: string, realpath: Realpath): boolean {
+  const re = /(?:^|\s)--?user-data-dir(?==|\s|$)/g
+  let found = false
+  for (const m of cmd.matchAll(re)) {
+    const rest = cmd.slice((m.index ?? 0) + m[0].length)
+    if (!rest.startsWith('=')) return false
+    const value = rest.slice(1)
+    const ends: number[] = []
+    for (let i = 0; i < value.length && ends.length < 64; i++) if (/\s/.test(value[i])) ends.push(i)
+    ends.push(value.length)
+    if (!ends.some((e) => sameProfile(value.slice(0, e), expected, 'posix', realpath))) return false
+    found = true
+  }
+  return found
+}
+
 /**
  * True only for the app's own vision browser on `port` with profile folder
  * `profileDir`: a browser executable the app launches, whose command line
- * carries `--remote-debugging-port=<port>` and `--user-data-dir=<profileDir>`
- * as whole arguments (every occurrence of each, so a second, different value
- * does not pass), and no `--type=` (a main browser process, not a child).
+ * carries `--remote-debugging-port=<port>` as a whole argument and
+ * `--user-data-dir` naming that folder (every occurrence of each, so a
+ * second, different value does not pass), and no `--type=` (a main browser
+ * process, not a child). `realpath` (optional) gives the long real path of a
+ * folder, so another spelling of the same folder (a short 8.3 TEMP, another
+ * case on Windows) still matches.
  */
 export function isAppVisionBrowser(
   facts: ProcessFacts,
   port: number,
   profileDir: string,
   platform: NodeJS.Platform = process.platform,
+  realpath: Realpath = () => null,
 ): boolean {
   if (!facts || !validPort(port) || typeof profileDir !== 'string' || profileDir === '') return false
   if (typeof facts.name !== 'string' || typeof facts.commandLine !== 'string') return false
@@ -194,12 +283,14 @@ export function isAppVisionBrowser(
   const cmd = facts.commandLine
   if (platform === 'win32') {
     const sw = windowsSwitches(cmd)
+    const dirs = sw.filter((s) => s.name === 'user-data-dir')
     return onlyValue(sw, 'remote-debugging-port', String(port))
-      && onlyValue(sw, 'user-data-dir', profileDir)
+      && dirs.length > 0
+      && dirs.every((s) => s.value !== null && sameProfile(s.value, profileDir, 'win32', realpath))
       && !sw.some((s) => s.name === 'type')
   }
   return posixOnlyValue(cmd, 'remote-debugging-port', String(port))
-    && posixOnlyValue(cmd, 'user-data-dir', profileDir)
+    && posixProfileMatches(cmd, profileDir, realpath)
     && !posixHasSwitch(cmd, 'type')
 }
 
@@ -211,13 +302,42 @@ function powershellPath(ports: OwnerPorts): string | null {
     : null
 }
 
-/** The facts of each process id in `$ids`, each read by a filtered CIM query
- *  (never every process), as compressed JSON in base64 so a non-ASCII command
- *  line survives the console code page. */
-function windowsFactsScript(idsLine: string): string {
+function taskkillPath(ports: OwnerPorts): string | null {
+  return isWindowsAbsolute(ports.systemRoot) ? path.win32.join(ports.systemRoot, 'System32', 'taskkill.exe') : null
+}
+
+const FACTS_OUTPUT = [
+  '$json = ConvertTo-Json -InputObject @($out) -Compress',
+  '[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))',
+]
+
+/**
+ * Every chrome.exe and msedge.exe process whose command line names a
+ * remote-debugging-port, with its facts, by ONE CIM query filtered to those
+ * two names (never every process), as compressed JSON in base64 so a
+ * non-ASCII command line survives the console code page. A constant script:
+ * nothing is put into it. Which of them is the app's is decided in TypeScript.
+ */
+export const WINDOWS_BROWSERS_SCRIPT = [
+  "$ErrorActionPreference = 'Stop'",
+  '$out = @()',
+  "foreach ($p in @(Get-CimInstance -ClassName Win32_Process -Filter 'Name=''chrome.exe'' OR Name=''msedge.exe''')) {",
+  '  try {',
+  '    $cmd = [string]$p.CommandLine',
+  "    if ($p.CreationDate -and ($cmd -like '*remote-debugging-port*')) {",
+  '      $out += [pscustomobject]@{ pid = [int64]$p.ProcessId; name = [string]$p.Name; commandLine = $cmd; created = [string]$p.CreationDate.ToFileTimeUtc() }',
+  '    }',
+  '  } catch { }',
+  '}',
+  ...FACTS_OUTPUT,
+].join('\n')
+
+/** The facts of one process id, by a CIM query filtered to that id. */
+export function windowsFactsOfPidScript(pid: number): string {
+  if (!validPid(pid)) throw new Error('invalid pid')
   return [
     "$ErrorActionPreference = 'Stop'",
-    idsLine,
+    `$ids = @(${pid})`,
     '$out = @()',
     'foreach ($id in $ids) {',
     '  try {',
@@ -225,20 +345,8 @@ function windowsFactsScript(idsLine: string): string {
     '    if ($p) { $out += [pscustomobject]@{ pid = [int64]$p.ProcessId; name = [string]$p.Name; commandLine = [string]$p.CommandLine; created = [string]$p.CreationDate.ToFileTimeUtc() } }',
     '  } catch { }',
     '}',
-    '$json = ConvertTo-Json -InputObject @($out) -Compress',
-    '[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))',
+    ...FACTS_OUTPUT,
   ].join('\n')
-}
-
-/** The listening owners of `port`, then each one's facts. `port` is checked. */
-export function windowsListenerScript(port: number): string {
-  if (!validPort(port)) throw new Error('invalid port')
-  return windowsFactsScript(`$ids = @(Get-NetTCPConnection -State Listen -LocalPort ${port} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique)`)
-}
-
-export function windowsFactsOfPidScript(pid: number): string {
-  if (!validPid(pid)) throw new Error('invalid pid')
-  return windowsFactsScript(`$ids = @(${pid})`)
 }
 
 /** Ends `pid`'s tree only when that pid still has creation time `created` at
@@ -256,7 +364,7 @@ export function windowsEndScript(pid: number, created: string): string {
   ].join('\n')
 }
 
-/** Parse the base64 JSON the facts script prints: one object or an array.
+/** Parse the base64 JSON the facts scripts print: one object or an array.
  *  Anything malformed is no facts at all. */
 export function parseWindowsFacts(stdout: string): ProcessFacts[] {
   const b64 = String(stdout ?? '').trim()
@@ -275,22 +383,21 @@ export function parseWindowsFacts(stdout: string): ProcessFacts[] {
   return out
 }
 
-// === POSIX: lsof, then ps per pid ===
+// === POSIX: ps ===
 
 function posixTool(ports: OwnerPorts, candidates: string[]): string | null {
   return candidates.find((f) => { try { return ports.exists(f) } catch { return false } }) ?? null
 }
 
-/** `lsof -t` output: one pid a line. Anything else is no pids at all. */
-export function parseLsofPids(stdout: string): number[] {
-  const out: number[] = []
-  for (const raw of String(stdout ?? '').split(/\r?\n/)) {
-    const line = raw.trim()
-    if (line === '') continue
-    if (!/^\d{1,10}$/.test(line)) return []
-    const pid = Number(line)
-    if (!validPid(pid)) return []
-    if (!out.includes(pid)) out.push(pid)
+/** `ps -A -o pid= -o args=` output: a pid, then the command line. A line that
+ *  is not one is skipped. */
+export function parsePsPidArgs(stdout: string): Array<{ pid: number; args: string }> {
+  const out: Array<{ pid: number; args: string }> = []
+  for (const line of String(stdout ?? '').split(/\r?\n/)) {
+    const m = /^\s*(\d{1,10})\s+(\S.*)$/.exec(line)
+    if (!m) continue
+    const pid = Number(m[1])
+    if (validPid(pid)) out.push({ pid, args: m[2] })
   }
   return out
 }
@@ -315,23 +422,39 @@ async function posixFactsOfPid(pid: number, ports: OwnerPorts): Promise<ProcessF
 
 // === The questions ===
 
-/** The facts of every process listening on `port`. Any failure, timeout or
- *  malformed answer is [] (cannot identify: nothing gets ended). */
-export async function listenerFacts(port: number, ports: OwnerPorts = defaultOwnerPorts()): Promise<ProcessFacts[]> {
+/**
+ * The app's vision browsers for `port`: every main browser process whose
+ * command line names this port and one of `profileDirs`, whether or not it
+ * listens on the port. One filtered query (Windows: CIM by browser name;
+ * elsewhere: `ps -A`, then the facts of the processes naming this port). Any
+ * failure, timeout or malformed answer is [] (cannot identify: nothing gets
+ * ended).
+ */
+export async function findAppVisionBrowsers(
+  port: number,
+  profileDirs: string[],
+  ports: OwnerPorts = defaultOwnerPorts(),
+): Promise<ProcessFacts[]> {
   if (!validPort(port)) return []
+  const dirs = (Array.isArray(profileDirs) ? profileDirs : []).filter((d) => typeof d === 'string' && d !== '')
+  if (dirs.length === 0) return []
+  const realpath: Realpath = (p) => ports.realpath(p)
+  const isApp = (f: ProcessFacts) => dirs.some((d) => isAppVisionBrowser(f, port, d, ports.platform, realpath))
   try {
     if (ports.platform === 'win32') {
       const ps = powershellPath(ports)
       if (!ps) return []
-      return parseWindowsFacts(await ports.run(ps, [...POWERSHELL_ARGS, windowsListenerScript(port)], OWNER_QUERY_TIMEOUT_MS))
+      return parseWindowsFacts(await ports.run(ps, [...POWERSHELL_ARGS, WINDOWS_BROWSERS_SCRIPT], OWNER_QUERY_TIMEOUT_MS)).filter(isApp)
     }
-    const lsof = posixTool(ports, POSIX_LSOF)
-    if (!lsof) return []
-    const pids = parseLsofPids(await ports.run(lsof, ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], OWNER_QUERY_TIMEOUT_MS))
+    const ps = posixTool(ports, POSIX_PS)
+    if (!ps) return []
+    const rows = parsePsPidArgs(await ports.run(ps, ['-A', '-ww', '-o', 'pid=', '-o', 'args='], OWNER_QUERY_TIMEOUT_MS))
     const out: ProcessFacts[] = []
-    for (const pid of pids) {
-      const f = await posixFactsOfPid(pid, ports)
-      if (f) out.push(f)
+    for (const row of rows) {
+      // Only a process naming this port is read further; the full check is isApp.
+      if (!posixOnlyValue(row.args, 'remote-debugging-port', String(port))) continue
+      const f = await posixFactsOfPid(row.pid, ports)
+      if (f && isApp(f)) out.push(f)
     }
     return out
   } catch { return [] }
@@ -359,18 +482,19 @@ function targetOk(t: VerifiedTarget, platform: NodeJS.Platform): boolean {
   return platform === 'win32' ? WINDOWS_CREATED_RE.test(t.created) : oneLine(t.created) === t.created
 }
 
-function signalTree(pid: number, ports: OwnerPorts): boolean {
+function signalTree(pid: number, sig: NodeJS.Signals, ports: OwnerPorts): boolean {
   // The negative pid is the process group the browser leads (it is started
   // detached); the pid itself when it leads none.
-  try { ports.signal(-pid, 'SIGTERM'); return true } catch { /* not a group leader */ }
-  try { ports.signal(pid, 'SIGTERM'); return true } catch { return false }
+  try { ports.signal(-pid, sig); return true } catch { /* not a group leader */ }
+  try { ports.signal(pid, sig); return true } catch { return false }
 }
 
 /**
  * End `target`'s process tree, only if the SAME pid still has the SAME
  * creation time at the moment of the kill. Resolves whether it was ended.
- * Never throws. The caller has verified the process (isAppVisionBrowser)
- * from facts carrying that creation time.
+ * Never throws. The caller has identified the process (isAppVisionBrowser)
+ * from facts carrying that creation time. On Linux and macOS a browser still
+ * running with that start time after POSIX_TERM_GRACE_MS gets SIGKILL.
  */
 export async function endVerified(target: VerifiedTarget, ports: OwnerPorts = defaultOwnerPorts()): Promise<boolean> {
   if (!targetOk(target, ports.platform)) return false
@@ -383,29 +507,100 @@ export async function endVerified(target: VerifiedTarget, ports: OwnerPorts = de
     }
     const ps = posixTool(ports, POSIX_PS)
     if (!ps) return false
-    const now = oneLine(await ports.run(ps, ['-p', String(target.pid), '-o', 'lstart='], OWNER_QUERY_TIMEOUT_MS))
-    if (now !== target.created) return false
-    return signalTree(target.pid, ports)
+    const startOf = async (): Promise<string | null> => {
+      try { return oneLine(await ports.run(ps, ['-p', String(target.pid), '-o', 'lstart='], OWNER_QUERY_TIMEOUT_MS)) } catch { return null }
+    }
+    if ((await startOf()) !== target.created) return false
+    if (!signalTree(target.pid, 'SIGTERM', ports)) return false
+    for (let waited = 0; waited < POSIX_TERM_GRACE_MS; waited += POSIX_POLL_MS) {
+      await ports.sleep(POSIX_POLL_MS)
+      if ((await startOf()) !== target.created) return true
+    }
+    // The same process after the grace, re-read just above.
+    signalTree(target.pid, 'SIGKILL', ports)
+    return true
   } catch { return false }
 }
 
-/** endVerified, synchronously, for the app's quit (the process may exit
- *  before an awaited kill runs). */
-export function endVerifiedSync(target: VerifiedTarget, ports: OwnerPorts = defaultOwnerPorts()): boolean {
-  if (!targetOk(target, ports.platform)) return false
+// === The app's own browser ===
+
+/** What this module needs of the ChildProcess the app spawned. */
+export interface OwnChild {
+  readonly pid?: number
+  readonly exitCode: number | null
+  readonly signalCode: NodeJS.Signals | null
+  once(event: 'exit', listener: () => void): unknown
+  removeListener(event: 'exit', listener: () => void): unknown
+}
+
+/** True while the child's exit has not been observed: libuv still holds the
+ *  process, so its pid cannot name another one. */
+export function ownChildRunning(child: OwnChild): boolean {
+  return !!child && child.exitCode === null && child.signalCode === null
+}
+
+/** Resolves true once the child's exit is observed, false after `ms`. Called
+ *  right after a kill sent in the same turn, while the child still runs. */
+async function exitWithin(child: OwnChild, ms: number, ports: OwnerPorts): Promise<boolean> {
+  let onExit: () => void = () => {}
+  const exited = new Promise<boolean>((resolve) => { onExit = () => resolve(true); child.once('exit', onExit) })
   try {
-    if (ports.platform === 'win32') {
-      const ps = powershellPath(ports)
-      if (!ps) return false
-      const out = ports.runSync(ps, [...POWERSHELL_ARGS, windowsEndScript(target.pid, target.created)], OWNER_SYNC_KILL_TIMEOUT_MS)
-      return String(out).trim() === 'ended'
-    }
-    const ps = posixTool(ports, POSIX_PS)
-    if (!ps) return false
-    const now = oneLine(ports.runSync(ps, ['-p', String(target.pid), '-o', 'lstart='], OWNER_SYNC_KILL_TIMEOUT_MS))
-    if (now !== target.created) return false
-    return signalTree(target.pid, ports)
+    return await Promise.race([exited, ports.sleep(ms).then(() => false)])
+  } finally {
+    child.removeListener('exit', onExit)
+  }
+}
+
+/** Windows: taskkill the child's tree by its pid, synchronously, so no event
+ *  loop turn (in which its exit could be observed) passes between the check
+ *  and the kill. */
+function taskkillOwnChild(pid: number, ports: OwnerPorts): boolean {
+  const tk = taskkillPath(ports)
+  if (!tk) return false
+  try {
+    ports.runSync(tk, ['/PID', String(pid), '/T', '/F'], OWNER_SYNC_KILL_TIMEOUT_MS)
+    return true
   } catch { return false }
+}
+
+/**
+ * End the app's own browser by its pid, synchronously (stop and quit). Only
+ * while its exit has not been observed. Windows: taskkill /T /F, bounded.
+ * Linux and macOS: SIGTERM to its process group, a short bounded wait, then
+ * SIGKILL to the group (the exit cannot be observed while this blocks, and
+ * until it is the pid stays the child's). Returns whether a kill was sent.
+ */
+export function endOwnChildSync(child: OwnChild, ports: OwnerPorts = defaultOwnerPorts()): boolean {
+  if (!ownChildRunning(child) || !validPid(child.pid)) return false
+  const pid = child.pid
+  if (ports.platform === 'win32') return taskkillOwnChild(pid, ports)
+  if (!signalTree(pid, 'SIGTERM', ports)) return false
+  try { ports.sleepSync(OWN_QUIT_GRACE_MS) } catch { /* the kill below still runs */ }
+  signalTree(pid, 'SIGKILL', ports)
+  return true
+}
+
+/**
+ * End the app's own browser by its pid and wait (bounded) for its exit to be
+ * observed (the relaunch path, so the port and the profile are free before
+ * the next spawn). Only while its exit has not been observed. Windows: the
+ * same bounded taskkill. Linux and macOS: SIGTERM to its process group, and
+ * SIGKILL to the group if its exit is not observed within
+ * POSIX_TERM_GRACE_MS. Resolves whether its exit was observed.
+ */
+export async function endOwnChild(child: OwnChild, ports: OwnerPorts = defaultOwnerPorts()): Promise<boolean> {
+  if (!ownChildRunning(child) || !validPid(child.pid)) return false
+  const pid = child.pid
+  if (ports.platform === 'win32') {
+    taskkillOwnChild(pid, ports)
+    return exitWithin(child, OWN_EXIT_WAIT_MS, ports)
+  }
+  if (!signalTree(pid, 'SIGTERM', ports)) return false
+  if (await exitWithin(child, POSIX_TERM_GRACE_MS, ports)) return true
+  // exitWithin resolved false in this same turn (its timer, then microtasks
+  // only), so the exit is still not observed and the pid is still the child's.
+  signalTree(pid, 'SIGKILL', ports)
+  return exitWithin(child, OWN_EXIT_WAIT_MS, ports)
 }
 
 // === The real OS ===
@@ -450,6 +645,20 @@ export function runAwait(file: string, args: string[], timeoutMs: number, opts: 
   })
 }
 
+/** The longest synchronous wait, whatever is asked. */
+const MAX_BLOCK_MS = 1000
+
+/** A bounded synchronous wait. */
+function blockFor(ms: number): void {
+  const bounded = Math.max(0, Math.min(ms, MAX_BLOCK_MS))
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, bounded)
+  } catch {
+    const end = Date.now() + bounded
+    while (Date.now() < end) { /* bounded */ }
+  }
+}
+
 /** The real OS, read at call time. */
 export function defaultOwnerPorts(): OwnerPorts {
   const platform = process.platform
@@ -464,5 +673,11 @@ export function defaultOwnerPorts(): OwnerPorts {
     })),
     signal: (pid, sig) => { process.kill(pid, sig) },
     exists: (f) => { try { return fs.statSync(f).isFile() } catch { return false } },
+    realpath: (p) => { try { return fs.realpathSync.native(p) } catch { return null } },
+    sleep: (ms) => new Promise<void>((resolve) => {
+      const t = setTimeout(resolve, ms)
+      if (typeof t.unref === 'function') t.unref()
+    }),
+    sleepSync: (ms) => blockFor(ms),
   }
 }

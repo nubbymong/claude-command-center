@@ -27,8 +27,8 @@ import { logInfo, logError } from './debug-logger'
 import { getConductorMcpPort } from './conductor-mcp-server'
 import { getBrowserPaths } from './browser-paths'
 import {
-  VisionPortHeldError, isAppVisionBrowser, listenerFacts, factsOfPid, endVerified, endVerifiedSync,
-  defaultOwnerPorts, type OwnerPorts,
+  VisionPortHeldError, findAppVisionBrowsers, factsOfPid, endVerified, endOwnChild, endOwnChildSync,
+  defaultOwnerPorts, type OwnerPorts, type OwnChild, type ProcessFacts,
 } from './vision-browser-owner'
 import type { GlobalVisionConfig } from '../shared/types'
 
@@ -622,22 +622,16 @@ export function tryReconnectGlobalVision(): void { if (globalManager) globalMana
 export { getBrowserPaths }
 
 // Any browser the app spawns is detached + unref'd, so the app ends it itself:
-// at stop/quit (killSpawnedBrowser) and before any relaunch. It is tracked with
-// the port and profile folder it was started with and, once read back from the
-// OS and verified as the app's vision browser (vision-browser-owner), its
-// creation time. A kill goes only through the verified path: the same pid with
-// the same creation time. A tracked browser whose creation time is unknown is
-// never ended by pid. A browser the USER opened themselves never comes through
-// launchBrowser, so it is never tracked.
+// at stop/quit (killSpawnedBrowser) and before any relaunch. It is tracked by
+// its ChildProcess. While the child's exit has not been observed (exitCode and
+// signalCode both null) libuv still holds the process, so its pid is still the
+// browser's: it is ended by that pid, with no read-back (vision-browser-owner
+// endOwnChild / endOwnChildSync). Once its exit was observed nothing is done
+// with that pid. Browsers left by an earlier run are a separate case: found by
+// profile and ended only once identified (freeDebugPort).
 interface TrackedBrowser {
+  child: OwnChild
   pid: number
-  port: number
-  profileDir: string
-  /** Its creation time once verified as the app's vision browser; null until
-   *  then, or when it could not be verified. */
-  created: string | null
-  /** Settles when the read-back after spawn is done. */
-  verified: Promise<void>
 }
 let spawnedBrowser: TrackedBrowser | null = null
 
@@ -647,9 +641,11 @@ const ownerPorts = (): OwnerPorts => ownerPortsOverride ?? defaultOwnerPorts()
 /** Test seam: inject a fake OS for the owner checks. Pass null to restore. */
 export function _setVisionOwnerPortsForTest(ports: OwnerPorts | null): void { ownerPortsOverride = ports }
 
-/** How long the launch waits for the debug port to come free, and how often it looks. */
-const PORT_FREE_WAIT_MS = 3000
+/** How long the launch waits for the debug port and the profile to come free,
+ *  how often it looks, and at most how many times. */
+const PORT_FREE_WAIT_MS = 5000
 const PORT_FREE_POLL_MS = 150
+const PORT_FREE_MAX_POLLS = 40
 
 // ── Heartbeat auto-relaunch (backoff + circuit breaker) ───────────────────
 let lastAutoRelaunchAt = 0
@@ -730,94 +726,89 @@ function isPortListening(port: number, timeoutMs = 300): Promise<boolean> {
   })
 }
 
-/** Free the debug PORT before a launch, so the new browser never races a
- *  browser the app left running from an earlier run (after a crash it holds the
- *  port and the profile lock, and the new browser sticks on "launching...").
+/** Before a launch, end the app's vision browsers left from an earlier run and
+ *  wait for the debug PORT and the PROFILE to be free, so the new browser
+ *  neither races one of them for the port nor hands off to one holding the
+ *  profile (after a crash the leftover can hold the profile without listening,
+ *  and the new browser then exits at once).
  *
- *  Fast path: nothing listening on the port means nothing to free, and no
- *  process query runs at all (the common case at boot).
+ *  The leftovers are found by profile, whether or not they listen: main
+ *  browser processes whose command line names THIS port and this port's
+ *  profile folder (`chrome-debug-<port>` or `edge-debug-<port>`: the
+ *  executable may fall back to the other browser), one filtered OS query.
+ *  Each is ended only once identified, through the verified path (the kill
+ *  re-reads its creation time).
  *
- *  Otherwise each listener on the port is read back (one filtered OS query) and
- *  ended, verified, only when it is the app's own vision browser for THIS port
- *  with this port's profile folder (`chrome-debug-<port>` or
- *  `edge-debug-<port>`: the executable may fall back to the other browser).
- *  Then the port gets PORT_FREE_WAIT_MS to come free. A port still held after
- *  that is held by a program not identified as the app's vision browser: it
- *  is left running and the launch stops with VisionPortHeldError. */
+ *  Fast path: nothing listening and no leftover found means no further work.
+ *  Otherwise the port and the ended leftovers get PORT_FREE_WAIT_MS. A port
+ *  still in use after that is held by a program not identified as the app's
+ *  vision browser: it is left running and the launch stops with
+ *  VisionPortHeldError. A leftover that has not ended stops the launch too. */
 async function freeDebugPort(debugPort: number, tmpDir: string): Promise<void> {
-  if (!(await isPortListening(debugPort))) return
   const ports = ownerPorts()
   const profileDirs = (['chrome', 'edge'] as const).map((b) => path.join(tmpDir, `${b}-debug-${debugPort}`))
-  for (const facts of await listenerFacts(debugPort, ports)) {
-    if (!profileDirs.some((dir) => isAppVisionBrowser(facts, debugPort, dir, ports.platform))) continue
+  const [listening, leftovers] = await Promise.all([
+    isPortListening(debugPort),
+    findAppVisionBrowsers(debugPort, profileDirs, ports),
+  ])
+  if (!listening && leftovers.length === 0) return
+  for (const facts of leftovers) {
     logInfo(`[vision] Ending the app's vision browser left from an earlier run (pid ${facts.pid}) on port ${debugPort}`)
     await endVerified(facts, ports)
   }
   const deadline = Date.now() + PORT_FREE_WAIT_MS
-  while (await isPortListening(debugPort)) {
-    if (Date.now() >= deadline) {
-      const err = new VisionPortHeldError(debugPort)
+  let profileHeld = leftovers.length > 0
+  for (let polls = 0; ; polls++) {
+    const portHeld = await isPortListening(debugPort)
+    if (profileHeld) profileHeld = await anyStillRunning(leftovers, ports)
+    if (!portHeld && !profileHeld) return
+    if (polls >= PORT_FREE_MAX_POLLS || Date.now() >= deadline) {
+      const err = portHeld
+        ? new VisionPortHeldError(debugPort)
+        : new Error("the vision browser's profile folder is still in use; vision was not started")
       logInfo(`[vision] Not launching: ${err.message}`)
       throw err
     }
-    await new Promise((r) => setTimeout(r, PORT_FREE_POLL_MS))
+    await ports.sleep(PORT_FREE_POLL_MS)
   }
 }
 
-/** Read the spawned browser back from the OS and keep its creation time, only
- *  when it is verified as the app's vision browser on its port and profile. */
-async function verifyTrackedBrowser(t: TrackedBrowser): Promise<void> {
-  const ports = ownerPorts()
-  const facts = await factsOfPid(t.pid, ports)
-  if (facts && isAppVisionBrowser(facts, t.port, t.profileDir, ports.platform)) {
-    t.created = facts.created
-    return
+/** Whether any of `ended` still runs: the same pid with the same creation time. */
+async function anyStillRunning(ended: ProcessFacts[], ports: OwnerPorts): Promise<boolean> {
+  for (const f of ended) {
+    const now = await factsOfPid(f.pid, ports)
+    if (now && now.created === f.created) return true
   }
-  logInfo(`[vision] The browser the app started (pid ${t.pid}) could not be verified as its vision browser`)
+  return false
 }
 
 /** Awaited counterpart to killSpawnedBrowser, used on the launch/relaunch path
- *  so the previous browser is gone (port freed) before the respawn, without
- *  blocking the event loop. The tracked browser is re-read from the OS and
- *  ended only when it is still the app's vision browser with the creation time
- *  recorded at spawn; the kill re-checks that creation time once more. */
+ *  so the previous browser is gone (port and profile free) before the respawn.
+ *  It is the app's own child: while its exit has not been observed it is ended
+ *  by its pid, and its exit is awaited (bounded); once observed, nothing. */
 async function killSpawnedBrowserForRelaunch(): Promise<void> {
   const t = spawnedBrowser
   spawnedBrowser = null
   if (!t) return
-  await t.verified
-  if (t.created === null) {
-    logInfo(`[vision] The previous browser (pid ${t.pid}) was not verified as the app's vision browser; it was left running`)
-    return
+  if (await endOwnChild(t.child, ownerPorts())) {
+    logInfo(`[vision] Ended the previous app-started browser (pid ${t.pid}) before relaunch`)
   }
-  const ports = ownerPorts()
-  const facts = await factsOfPid(t.pid, ports)
-  if (!facts) return // already exited
-  if (facts.created !== t.created || !isAppVisionBrowser(facts, t.port, t.profileDir, ports.platform)) {
-    logInfo(`[vision] pid ${t.pid} is no longer the app's vision browser; it was left running`)
-    return
-  }
-  logInfo(`[vision] Ending the previous app-started browser (pid ${t.pid}) before relaunch`)
-  await endVerified(facts, ports)
 }
 
 /**
  * End the browser tree the app spawned, if any, synchronously (stop and quit:
- * the process may exit before an awaited kill runs). Only through the verified
- * path: the kill ends that pid only while it still has the creation time read
- * back and verified (name, command line) after spawn, so a pid that now belongs
- * to another program is left running. A browser whose creation time is unknown
- * is never ended by pid. Safe to call repeatedly; clears the tracked browser.
+ * the process may exit before an awaited kill runs). It is the app's own
+ * child: while its exit has not been observed it is ended by its pid
+ * (Windows: taskkill /T /F, bounded; Linux and macOS: its process group,
+ * SIGTERM then SIGKILL after a short bounded wait), with no read-back. Once
+ * its exit was observed nothing is done with that pid. Safe to call
+ * repeatedly; clears the tracked browser.
  */
 export function killSpawnedBrowser(): void {
   const t = spawnedBrowser
   spawnedBrowser = null
   if (!t) return
-  if (t.created === null) {
-    logInfo(`[vision] The app-started browser (pid ${t.pid}) was not verified as the app's vision browser; it was left running`)
-    return
-  }
-  if (endVerifiedSync({ pid: t.pid, created: t.created }, ownerPorts())) {
+  if (endOwnChildSync(t.child, ownerPorts())) {
     logInfo(`[vision] Ended the app-started browser (pid ${t.pid})`)
   }
 }
@@ -858,13 +849,13 @@ export function buildBrowserLaunchArgs(
 export async function launchBrowser(browser: 'chrome' | 'edge', debugPort: number, url?: string, headless: boolean = true): Promise<{ pid: number; command: string }> {
   const tmpDir = process.env.TEMP || process.env.TMP || os.tmpdir()
   const profileDir = path.join(tmpDir, `${browser}-debug-${debugPort}`)
-  // Relaunch path: end the previous app-started browser first (verified), so
-  // browsers never stack up (the --user-data-dir singleton means a stale one
-  // would also reject the new debug port). Then free the port from a browser
-  // the app left running in an earlier run (verified), or stop with
-  // VisionPortHeldError while the port stays in use.
-  // Both are awaited, so the port and profile lock are free before the spawn,
-  // without blocking the event loop.
+  // Relaunch path: end the previous app-started browser first (its own child,
+  // by pid while its exit is not observed), so browsers never stack up (the
+  // --user-data-dir singleton means a stale one would also take over the new
+  // launch). Then end the app's vision browsers left by an earlier run (found
+  // by profile, identified) and wait for the port and the profile, or stop
+  // with VisionPortHeldError when the port stays in use. Both are awaited, so
+  // the port and profile lock are free before the spawn.
   await killSpawnedBrowserForRelaunch()
   await freeDebugPort(debugPort, tmpDir)
 
@@ -890,16 +881,17 @@ export async function launchBrowser(browser: 'chrome' | 'edge', debugPort: numbe
   child.on('error', (err) => {
     logInfo(`[vision] Browser launch failed; vision disabled (non-fatal): ${err instanceof Error ? err.message : String(err)}`)
   })
+  const spawnedPid = child.pid
+  // Say when the browser ends and how: a browser that ends at once (another
+  // one holds its profile) reads differently from one that keeps running.
+  child.once('exit', (code, signal) => {
+    logInfo(`[vision] The vision browser (pid ${spawnedPid ?? 'unknown'}) exited (code ${code ?? 'none'}, signal ${signal ?? 'none'})`)
+  })
   child.unref()
   // Track EVERY browser the app spawns (headless or headed) for teardown: it is
-  // the app's own detached child, so the app ends it at stop/quit. It is read
-  // back from the OS right away; only once verified does it carry the creation
-  // time a kill needs. (A browser the USER opened themselves never comes
-  // through here, so it is never tracked.)
-  if (child.pid) {
-    const tracked: TrackedBrowser = { pid: child.pid, port: debugPort, profileDir, created: null, verified: Promise.resolve() }
-    tracked.verified = verifyTrackedBrowser(tracked).catch(() => { /* stays unverified */ })
-    spawnedBrowser = tracked
-  }
+  // the app's own detached child, so the app ends it at stop/quit and before a
+  // relaunch, by its pid while its exit has not been observed. (A browser the
+  // USER opened themselves never comes through here, so it is never tracked.)
+  if (spawnedPid) spawnedBrowser = { child, pid: spawnedPid }
   return { pid: child.pid || 0, command }
 }
