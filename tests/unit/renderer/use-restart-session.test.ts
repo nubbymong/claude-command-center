@@ -287,7 +287,7 @@ describe('useRestartSession (P4 Task A)', () => {
       expect(view.heard).toEqual([])
     })
 
-    it('a Multi Spawn config, or nothing of it running: the Restart goes ahead and the flag goes', () => {
+    it('a Multi Spawn config, or nothing of it running: the Restart goes ahead, and the tab stays Not started until its new view has started it (P3.16a, U7)', () => {
       for (const [configs, others] of [[[cfg({ allowMultiSpawn: true })], [running]], [[cfg()], []]] as const) {
         useSessionStore.setState({ sessions: [], activeSessionId: null, isRestoring: false })
         killSessionPtyMock.mockReset()
@@ -297,8 +297,30 @@ describe('useRestartSession (P4 Task A)', () => {
         renderHarness(notStarted)
         act(() => { capturedActions!.restart() })
         expect(killSessionPtyMock).toHaveBeenCalledWith('old')
-        expect(useSessionStore.getState().sessions.find((s) => s.id === 'old')!.neverStarted).toBeUndefined()
+        // The flag is the new view's to clear, when its spawn has started a PTY
+        // (TerminalView markLive): a Restart that only remounts has started nothing.
+        expect(useSessionStore.getState().sessions.find((s) => s.id === 'old')!.neverStarted).toBe(true)
       }
+    })
+
+    // P3.16a (U7): a Restart pressed while the partner view is shown restarts the
+    // MAIN tab (every Restart control passes isShowingPartner false), whose view is
+    // hidden behind the partner and starts only when it is shown. Until it has
+    // started, the sidebar does not count it as running.
+    it('P3.16a (U7): a Restart of a Not started tab does not make the sidebar count it as running before it has started', async () => {
+      const { runningConfigCounts } = await import('../../../src/renderer/components/sidebar/savedConfigsView')
+      useConfigStore.setState({ configs: [cfg()] })
+      useSessionStore.getState().addSession(notStarted)
+      expect(runningConfigCounts(useSessionStore.getState().sessions).get('cfg-1')).toBeUndefined()
+      renderHarness(notStarted)
+      act(() => { capturedActions!.restart() })
+      const after = useSessionStore.getState().sessions.find((s) => s.id === 'old')!
+      expect(after.createdAt).toBeGreaterThan(1_000_000) // the views were remounted
+      expect(after.neverStarted).toBe(true)
+      expect(runningConfigCounts(useSessionStore.getState().sessions).get('cfg-1')).toBeUndefined()
+      // The tab that started is counted, as before.
+      useSessionStore.getState().updateSession('old', { neverStarted: undefined })
+      expect(runningConfigCounts(useSessionStore.getState().sessions).get('cfg-1')).toBe(1)
     })
 
     it('a tab that started is its config\'s running copy: its Restart only replaces it, as before', () => {
@@ -307,6 +329,8 @@ describe('useRestartSession (P4 Task A)', () => {
       renderHarness(running)
       act(() => { capturedActions!.restart() })
       expect(killSessionPtyMock).toHaveBeenCalledWith('new')
+      // It stays counted as its config's running copy through the Restart.
+      expect(useSessionStore.getState().sessions.find((s) => s.id === 'new')!.neverStarted).toBeUndefined()
     })
   })
 
