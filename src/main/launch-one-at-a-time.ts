@@ -37,14 +37,18 @@
 //     session state at the first load (seedRestoredSessions, from
 //     app-session-durability's read-back, never from anything the renderer
 //     sends), each for the config it was saved with, until its first accepted
-//     spawn. Remotes left running count too (their reattach reuses the id).
+//     spawn. Remotes left running count too (their reattach reuses the id). A
+//     restored right is one-shot, bounded to the ids saved at the last quit, and
+//     NEVER lapses: the shipped app resumed a restored remote or tab on its first
+//     view even beside a new copy, and main refuses only what the app already
+//     refused. Its first accepted spawn consumes it; what is left is a right of
+//     this run.
 //   A right is for ONE config: the same id naming another config is a new copy
-//   of that one. A right LAPSES when a new copy of its config (one that does not
-//   itself use a right) is accepted while the holder is not live: the holder's
-//   tab was closed, or its process ended, and the config has moved on. A holder
-//   that is live keeps its right (its Restart kills it first), and copies that
-//   use their own rights never lapse each other's, so a restore brings every
-//   copy back.
+//   of that one. A right of THIS RUN LAPSES when a new copy of its config (one
+//   that does not itself use a right) is accepted while the holder is not live:
+//   the holder's tab was closed, or its process ended, and the config has moved
+//   on. A holder that is live keeps its right (its Restart kills it first), and
+//   copies that use their own rights never lapse each other's.
 //
 // WHAT IS NOT A COPY OF A CONFIG:
 //   - a spawn that names no saved config (nothing to count);
@@ -214,11 +218,11 @@ export function claimConfigLaunch(sessionId: string, request: ConfigLaunchReques
   return { ticket: newTicket({ sessionId, config: saved.id, usedRight: keepsItsRight, isLive: deps.isLive }) }
 }
 
-/** Rights for `config` whose holder is not live lapse: a new copy of the config
- *  was accepted, so the config has moved on from them. */
+/** Rights of this run for `config` whose holder is not live lapse: a new copy of
+ *  the config was accepted, so the config has moved on from them. Restored rights
+ *  are not touched (see the header). */
 function lapseRights(config: string, except: string, isLive: (sessionId: string) => boolean): void {
   for (const [id, c] of held) if (c === config && id !== except && !isLive(id)) held.delete(id)
-  for (const [id, c] of restored) if (c === config && id !== except && !isLive(id)) restored.delete(id)
 }
 
 /** Keep `held` within HELD_MAX: an entry whose session has ended goes first,

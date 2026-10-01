@@ -276,17 +276,32 @@ describe('R2: a right lapses once a new copy of its config is accepted while the
     expect(_heldSessionIdsForTest()).toEqual(['a'])
   })
 
-  it('restored rights lapse the same way, and restored copies using their own rights do not lapse each other', () => {
+  it('restored rights never lapse: a new copy accepted first does not take them, whatever the config says', () => {
     multi()
-    seedRestoredSessions({ sessions: [{ id: 'r1', configId: 'c1' }, { id: 'r2', configId: 'c1' }, { id: 'r3', configId: 'c1' }] })
-    expect(start('r1')).toBeNull(); expect(start('r2')).toBeNull() // each uses its own right
+    seedRestoredSessions({ sessions: [{ id: 'r1', configId: 'c1' }, { id: 'r2', configId: 'c1' }, { id: 'r3', configId: 'c1' }], detachedRemotes: [{ sessionId: 'd1', configId: 'c1' }] })
+    expect(start('n1')).toBeNull() // a new copy is accepted first
+    expect(start('n2')).toBeNull()
     off()
-    expect(ask('r3')).toBeNull() // r3's right is still there
-    // ...until a new copy is accepted while it is not live.
-    multi()
-    expect(start('n1')).toBeNull()
+    for (const id of ['r1', 'r2', 'r3', 'd1']) expect(start(id), id).toBeNull() // each restored id still starts, once
+    expect(ask('n3')?.code).toBe('already-running')
+  })
+
+  it('a restored right is one-shot: its first accepted spawn consumes it, and what is left is a right of this run, which lapses', () => {
     off()
-    expect(ask('r3')?.code).toBe('already-running')
+    seedRestoredSessions({ sessions: [{ id: 'r1', configId: 'c1' }] })
+    expect(start('r1')).toBeNull() // consumed
+    live.delete('r1') // the tab is closed
+    expect(start('n1')).toBeNull() // a new copy: r1's right of this run lapses with it
+    expect(ask('r1')?.code).toBe('already-running')
+  })
+
+  it('a restored id keeps no right once used, so it cannot start a second copy of itself: only the ids saved at the last quit have one', () => {
+    off()
+    seedRestoredSessions({ sessions: [{ id: 'r1', configId: 'c1' }] })
+    expect(start('r1')).toBeNull()
+    expect(ask('r2')?.code).toBe('already-running') // not saved: a new copy beside r1
+    seedRestoredSessions({ sessions: [{ id: 'r2', configId: 'c1' }] }) // a later state seeds nothing
+    expect(ask('r2')?.code).toBe('already-running')
   })
 })
 
