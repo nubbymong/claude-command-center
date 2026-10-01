@@ -11,14 +11,15 @@
 // that fails as the session starts falls back to the system one (F1); the same
 // launch under both differs in that one option only (F5); the launch line names
 // the bundled folder (F6).
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as os from 'os'
 import * as path from 'path'
 
-interface Spawned { cmd: string; args: unknown; opts: Record<string, unknown>; exit: Array<(e: { exitCode: number }) => void> }
+interface Spawned { cmd: string; args: unknown; opts: Record<string, unknown>; exit: Array<(e: { exitCode: number }) => void>; emitData: (d: string) => void }
+interface Attempt { cmd: string; args: unknown; opts: Record<string, unknown> }
 const h = vi.hoisted(() => ({
   spawned: [] as Spawned[],
-  attempts: [] as Array<Record<string, unknown>>,
+  attempts: [] as Attempt[],
   infos: [] as string[],
   warns: [] as string[],
   choiceCalls: 0,
@@ -31,17 +32,19 @@ const h = vi.hoisted(() => ({
 
 vi.mock('node-pty', () => ({
   spawn: (cmd: string, args: unknown, opts: Record<string, unknown>) => {
-    h.attempts.push(opts)
+    // Round 2 (J3): every attempt, with its command, arguments and options.
+    h.attempts.push({ cmd, args, opts })
     // What node-pty's startProcess throws when conpty.dll cannot be loaded or
     // OpenConsole.exe cannot start, and when the executable is missing.
     if (h.failAll) throw new Error(`File not found: ${cmd} (attempt ${h.attempts.length})`)
     if (h.failDll && opts.useConptyDll) throw new Error('Cannot launch conpty')
-    const p: Spawned = { cmd, args, opts, exit: [] }
+    const dataCbs: Array<(d: string) => void> = []
+    const p: Spawned = { cmd, args, opts, exit: [], emitData: (d) => { for (const cb of dataCbs) cb(d) } }
     h.spawned.push(p)
     return {
       pid: 7000 + h.spawned.length,
       process: cmd,
-      onData: () => ({ dispose: () => {} }),
+      onData: (cb: (d: string) => void) => { dataCbs.push(cb); return { dispose: () => {} } },
       onExit: (cb: (e: { exitCode: number }) => void) => { p.exit.push(cb); return { dispose: () => {} } },
       write: () => {},
       resize: () => {},
@@ -254,7 +257,14 @@ describe('the bundled ConPTY failing at a session\'s start (round 1, F1)', () =>
   it('the session starts on the system ConPTY, said in the log, and later sessions go straight to it', () => {
     h.failDll = true
     startCodex()
-    expect(h.attempts.map((o) => o.useConptyDll === true)).toEqual([true, false])
+    expect(h.attempts.map((a) => a.opts.useConptyDll === true)).toEqual([true, false])
+    // Round 2 (J3): the retry is the same launch: command, arguments, and every
+    // option but useConptyDll (environment, folder, size, name).
+    const [first, retry] = h.attempts
+    expect(retry.cmd).toBe(first.cmd)
+    expect(retry.args).toEqual(first.args)
+    const { useConptyDll: _dll, ...firstRest } = first.opts
+    expect(retry.opts).toEqual(firstRest)
     expect(h.spawned.length).toBe(1)
     expect(Object.keys(last().opts).sort()).toEqual(SYSTEM_OPTION_KEYS)
     expect(h.failures).toEqual(['Cannot launch conpty'])
@@ -263,7 +273,7 @@ describe('the bundled ConPTY failing at a session\'s start (round 1, F1)', () =>
     killPty(CX)
     h.attempts = []
     startCodex()
-    expect(h.attempts.map((o) => o.useConptyDll === true)).toEqual([false])
+    expect(h.attempts.map((a) => a.opts.useConptyDll === true)).toEqual([false])
     expect(launchLine()).toContain('conpty=system (node-pty\'s bundled ConPTY failed to start: Cannot launch conpty)')
   })
 
@@ -271,14 +281,14 @@ describe('the bundled ConPTY failing at a session\'s start (round 1, F1)', () =>
     h.failAll = true
     // The first attempt's error (under the bundled ConPTY), not the retry's.
     expect(() => startCodex()).toThrow('File not found: /proven/a/codex (attempt 1)')
-    expect(h.attempts.map((o) => o.useConptyDll === true)).toEqual([true, false])
+    expect(h.attempts.map((a) => a.opts.useConptyDll === true)).toEqual([true, false])
     expect(h.failures).toEqual([])
     expect(h.warns.filter((w) => w.includes('[conpty]'))).toEqual([])
     expect(lastLaunch!.lease.release).toHaveBeenCalled()
     h.failAll = false
     h.attempts = []
     startCodex()
-    expect(h.attempts.map((o) => o.useConptyDll === true)).toEqual([true])
+    expect(h.attempts.map((a) => a.opts.useConptyDll === true)).toEqual([true])
   })
 
   it('the system choice is never retried: one attempt, its error goes on', () => {
@@ -287,5 +297,74 @@ describe('the bundled ConPTY failing at a session\'s start (round 1, F1)', () =>
     expect(() => startCodex()).toThrow('File not found')
     expect(h.attempts).toHaveLength(1)
     expect(h.failures).toEqual([])
+  })
+})
+
+// Round 2 (J5): a bundled ConPTY can also fail after node-pty has started it
+// (OpenConsole.exe ended at once, or unable to create Codex inside it): the
+// session then ends within moments with nothing on screen but the console
+// host's own setup. That is told apart from a real quick exit, which always
+// draws something, and from the app ending the session itself; the next launch
+// then uses the system ConPTY (said once). The session is not relaunched.
+describe('a bundled Codex session that ends at once with nothing on screen (round 2, J5)', () => {
+  const T0 = 1_800_000_000_000
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(T0) })
+  afterEach(() => { vi.useRealTimers() })
+  const exitIt = (code: number | undefined = undefined) => { for (const cb of [...last().exit]) cb({ exitCode: code as number }) }
+  const nextIsSystem = () => {
+    h.attempts = []
+    startCodex()
+    return h.attempts.map((a) => a.opts.useConptyDll === true)
+  }
+
+  it('no output at all, or only the console host\'s setup sequences: the next launch uses the system ConPTY, said once', () => {
+    for (const out of ['', '\x1b[?9001h\x1b[?1004h\x1b[?25l\r\n']) {
+      bundledThere()
+      h.warns = []
+      startCodex()
+      if (out) last().emitData(out)
+      vi.setSystemTime(T0 + 1500)
+      exitIt()
+      expect(nextIsSystem(), JSON.stringify(out)).toEqual([false])
+      expect(h.warns.filter((w) => w.includes('[conpty]')), JSON.stringify(out)).toHaveLength(1)
+      expect(h.warns.find((w) => w.includes('[conpty]')), JSON.stringify(out)).toMatch(/ended within 5 s with nothing on screen/)
+      killPty(CX)
+      vi.setSystemTime(T0)
+    }
+  })
+
+  it('a session that drew something, or ran longer than that, or that the app ended, keeps the bundled ConPTY', () => {
+    startCodex()
+    last().emitData('\x1b[1mError:\x1b[0m config.toml is invalid\r\n')
+    exitIt(1)
+    expect(nextIsSystem()).toEqual([true])
+    vi.setSystemTime(T0 + 6000)
+    exitIt()
+    expect(nextIsSystem()).toEqual([true])
+    killPty(CX)
+    exitIt()
+    expect(nextIsSystem()).toEqual([true])
+    expect(h.warns.filter((w) => w.includes('[conpty]'))).toEqual([])
+  })
+
+  it('a session already on the system ConPTY changes nothing', () => {
+    dllMissing()
+    startCodex()
+    h.warns = []
+    exitIt()
+    expect(nextIsSystem()).toEqual([false])
+    expect(h.warns.filter((w) => w.includes('[conpty]'))).toEqual([])
+  })
+})
+
+// Round 2 (J1): under the bundled ConPTY a Codex that quits by itself can end
+// before its exit code is known: the log says the code is unknown.
+describe('an exit with no known code (round 2, J1)', () => {
+  it('the log line says the code is unknown, never "undefined"', () => {
+    startCodex()
+    for (const cb of [...last().exit]) cb({ exitCode: undefined as unknown as number })
+    const line = h.infos.find((l) => l.includes(`PTY exited for session ${CX}`))
+    expect(line).toContain('with code unknown')
+    expect(line).not.toContain('undefined')
   })
 })

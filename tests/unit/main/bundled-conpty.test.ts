@@ -17,7 +17,7 @@ vi.mock('../../../src/main/debug-logger', async (importOriginal) => ({
   logWarn: (...a: unknown[]) => { h.warns.push(a.map(String).join(' ')) },
 }))
 
-const { chooseConpty, nativeModuleDirs, asarUnpackedPath, bundledConptyChoice, bundledConptyFailed, findNodePtyLibDir, NODE_PTY_MAX_PATH, _resetBundledConptyForTest } = await import('../../../src/main/bundled-conpty')
+const { chooseConpty, nativeModuleDirs, asarUnpackedPath, bundledConptyChoice, bundledConptyFailed, findNodePtyLibDir, NODE_PTY_MAX_PATH, LOADED_MODULE_PREFIX, _resetBundledConptyForTest } = await import('../../../src/main/bundled-conpty')
 
 const LIB = path.join(path.sep, 'app', 'node_modules', 'node-pty', 'lib')
 const PKG = path.dirname(LIB)
@@ -133,6 +133,10 @@ describe('bundledConptyChoice (the app\'s own, worked out once)', () => {
 // PathCombineW into another wchar_t[MAX_PATH]: the whole conpty.dll path must
 // fit in MAX_PATH (260) with its terminating null, so 259 characters at most,
 // or node-pty cannot find the file and the spawn fails (a long install folder).
+// Round 2 (J4): Node loads a .node file through its \\?\ namespaced path
+// (path.toNamespacedPath), so the module name Windows records, and node-pty
+// reads back, is 4 characters longer than the path the app measures (the
+// lens A probe: the loaded conpty.node is listed as \\?\F:\...): 255 at most.
 describe('a conpty.dll path too long for node-pty (round 1, F2)', () => {
   const SUFFIX = path.join(path.sep, 'node_modules', 'node-pty', 'prebuilds', 'win32-x64', 'conpty', 'conpty.dll').length
   /** A lib folder whose conpty.dll path is exactly `n` characters long. */
@@ -143,18 +147,20 @@ describe('a conpty.dll path too long for node-pty (round 1, F2)', () => {
     expect(path.join(pre, 'conpty', 'conpty.dll').length).toBe(n)
     return { lib, files: filesIn(pre, ALL) }
   }
-  it('MAX_PATH is the bound node-pty has (260 with the terminating null)', () => {
+  it('MAX_PATH is the bound node-pty has (260 with the terminating null), and the loader adds the 4-character \\?\ prefix', () => {
     expect(NODE_PTY_MAX_PATH).toBe(260)
+    expect(LOADED_MODULE_PREFIX).toBe(4)
+    expect(path.win32.toNamespacedPath('C:\\a\\conpty.node').length - 'C:\\a\\conpty.node'.length).toBe(LOADED_MODULE_PREFIX)
   })
-  it('259 characters: the bundled ConPTY; 260 and more: the system ConPTY, saying why', () => {
-    const ok = at(259)
+  it('round 2 (J4): 255 characters: the bundled ConPTY; 256 and more (259 too): the system ConPTY, saying why', () => {
+    const ok = at(255)
     expect(chooseConpty({ platform: 'win32', arch: 'x64', nodePtyLibDir: ok.lib, exists: existsOnly(ok.files) }).kind).toBe('bundled')
-    for (const n of [260, 300]) {
+    for (const n of [256, 259, 260, 300]) {
       const long = at(n)
       const c = chooseConpty({ platform: 'win32', arch: 'x64', nodePtyLibDir: long.lib, exists: existsOnly(long.files) })
       expect(c.kind, String(n)).toBe('system')
       expect(c.options, String(n)).toEqual({ useConpty: true })
-      expect(c.kind === 'system' && c.reason, String(n)).toMatch(new RegExp(`${n} characters, more than the 259 node-pty can use`))
+      expect(c.kind === 'system' && c.reason, String(n)).toMatch(new RegExp(`is ${n} characters, ${n + 4} as Windows names the loaded module, more than the 259 node-pty can use`))
     }
   })
 })
@@ -169,16 +175,28 @@ describe('the app\'s own lookup (round 1, F5)', () => {
       if (path.basename(dir).startsWith('p315-conpty-') && path.resolve(path.dirname(dir)) === path.resolve(os.tmpdir())) fs.rmSync(dir, { recursive: true, force: true })
     }
   })
+  // Round 2 (J2): real paths on both sides (a junctioned node_modules), and the
+  // first folder node-pty's loader would load from (a tree built from source
+  // loads build/Release, not the prebuild).
+  const real = (p: string): string => fs.realpathSync(p)
+  const isFileHere = (p: string): boolean => { try { return fs.statSync(p).isFile() } catch { return false } }
   it('resolves the lib folder of node-pty, the folder its loader looks from', () => {
-    expect(findNodePtyLibDir()).toBe(path.resolve(__dirname, '..', '..', '..', 'node_modules', 'node-pty', 'lib'))
+    expect(real(findNodePtyLibDir()!)).toBe(real(path.resolve(__dirname, '..', '..', '..', 'node_modules', 'node-pty', 'lib')))
   })
-  it('finds the installed node-pty and its win32-x64 prebuild by itself', () => {
+  it('finds, by itself, the folder node-pty loads its win32-x64 module from, and its bundled ConPTY there', () => {
+    const lib = findNodePtyLibDir()!
+    const first = nativeModuleDirs(lib, 'win32', 'x64').map(asarUnpackedPath).find((d) => isFileHere(path.join(d, 'conpty.node')))
+    expect(first).toBeDefined()
     _resetBundledConptyForTest({ platform: 'win32', arch: 'x64' })
-    expect(bundledConptyChoice()).toMatchObject({
-      kind: 'bundled',
-      options: { useConpty: true, useConptyDll: true },
-      dir: path.resolve(__dirname, '..', '..', '..', 'node_modules', 'node-pty', 'prebuilds', 'win32-x64'),
-    })
+    const c = bundledConptyChoice()
+    const there = ['conpty.dll', 'OpenConsole.exe'].every((f) => isFileHere(path.join(first!, 'conpty', f)))
+    if (there) {
+      expect(c).toMatchObject({ kind: 'bundled', options: { useConpty: true, useConptyDll: true } })
+      expect(real((c as { dir: string }).dir)).toBe(real(first!))
+    } else {
+      expect(c.kind).toBe('system')
+      expect(c.kind === 'system' && c.reason).toContain(first!)
+    }
   })
   it('a folder named conpty.dll is not the file: the system ConPTY (real folders in a temp tree)', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'p315-conpty-'))

@@ -236,6 +236,18 @@ describe('a local Codex session\'s logs (P3.12, row 31)', () => {
     expect(kinds().filter((k) => k === 'bind')).toEqual([])
   })
 
+  // P3.15 round 2 (J1): under node-pty's bundled ConPTY a Codex that quits by
+  // itself can end before its exit code is known; that is a normal end.
+  it('an exit with no known code ends the run as exited; a known non-zero code as crashed', () => {
+    start(SID)
+    for (const p of h.ptys) for (const cb of [...p.exit]) cb({ exitCode: undefined as unknown as number })
+    expect(h.sup.at(-1)).toEqual(['runEnd', SID, expect.any(Number), 'exited'])
+    start(SID)
+    const second = h.ptys[h.ptys.length - 1]
+    for (const cb of [...second.exit]) cb({ exitCode: 1 })
+    expect(h.sup.at(-1)).toEqual(['runEnd', SID, expect.any(Number), 'crashed'])
+  })
+
   it('a Restart records the new run before binding the claim the new launch makes (never into the old run)', () => {
     start(SID)
     ;(source(SID).opts.onRollout as (r: unknown) => void)(report(ID_A, true))
