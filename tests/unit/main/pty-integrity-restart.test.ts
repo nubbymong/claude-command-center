@@ -172,6 +172,8 @@ describe('the PTY byte count across a Restart (P3.16, M5)', () => {
     expect(row()?.bytesFromPty).toBe(3_000)
     expect(row()?.byteGap).toBe(0)
     expect(monitor.diagnostics().logs.filter((l) => l.code === 'pty-byte-gap')).toEqual([])
+    // P3.16 round 1 (N8): a Restart is not the session's end: no "session ended" event.
+    expect(monitor.snapshot().recentEvents.some((e) => e.kind === 'end')).toBe(false)
   })
 
   it('a respawn of the id without a kill first (spawnPty ends the PTY it replaces) does the same', () => {
