@@ -1765,34 +1765,54 @@ describe('a conversation copied into another account\'s folder (P3.6, row 22)', 
 
     // Round 2, D7: the mark is made before the copy, so a copy that lands is
     // never without one.
-    describe('the mark is made before the copy (round 2)', () => {
+    describe('the mark is made before the copy (rounds 2 and 3)', () => {
       it('the file work sees the mark already kept, at the moment the carry began', async () => {
         const marks = createCodexCarryMarks({ platform: 'win32' })
-        let during: number | null = null
+        let during: number | null | undefined = null
         const { w, folders } = carrying((c) => { during = marks.markOf(w.api.join(c.toHome, 'sessions'), CID); return { ok: true, carried: 'copied', bytes: 1 } }, 60, { marks, now: () => NOW })
         expect(await folders.copyConversation!(A, B, { id: CID })).toEqual({ ok: true, carried: 'copied' })
         expect(during).toBe(NOW)
       })
 
-      it('a mark that cannot be kept stops the carry before any file work: not carried, nothing copied', async () => {
-        const refusing = { record: () => false, markOf: () => null, remove: () => {}, cutoff: (): number | null => null, unavailable: () => false, dropRealm: () => {}, adopt: () => true }
+      // Round 3 (H1): the harm guarded against is a temporary display of the
+      // other account's figures, so a mark that cannot be kept never stops a
+      // carry. With a store whose file cannot be read the mark is held in memory.
+      it('a mark that cannot be kept, or asked for, never stops the carry', async () => {
+        const refusing = { record: () => false, markOf: () => null, remove: () => {}, cutoff: (): number | null => null, dropRealm: () => {}, adopt: () => true }
         const a = carrying(undefined, 60, { marks: refusing })
-        expect(await a.folders.copyConversation!(A, B, { id: CID })).toMatchObject({ ok: false, code: 'io-failed', message: expect.stringMatching(/not carried over/) })
-        expect(a.calls).toEqual([])
+        expect(await a.folders.copyConversation!(A, B, { id: CID })).toEqual({ ok: true, carried: 'copied' })
+        expect(a.calls).toHaveLength(1)
         const throwing = { ...refusing, record: (): boolean => { throw new Error('marks') }, markOf: (): number | null => { throw new Error('marks') } }
         const b = carrying(undefined, 60, { marks: throwing })
-        expect(await b.folders.copyConversation!(A, B, { id: CID })).toMatchObject({ ok: false, code: 'io-failed' })
-        expect(b.calls).toEqual([])
-        // Marks that cannot be read (the file unreadable) stop it the same way.
-        const closed = createCodexCarryMarks({ platform: 'win32', port: { read: () => ({ kind: 'unavailable' }), write: () => {}, setAside: () => false } })
-        const c = carrying(undefined, 60, { marks: closed })
-        expect(await c.folders.copyConversation!(A, B, { id: CID })).toMatchObject({ ok: false, code: 'io-failed' })
-        expect(c.calls).toEqual([])
-        // And marks that cannot be written.
-        const unwritable = createCodexCarryMarks({ platform: 'win32', port: { read: () => ({ kind: 'missing' }), write: () => { throw new Error('disk full') }, setAside: () => false } })
-        const d = carrying(undefined, 60, { marks: unwritable })
-        expect(await d.folders.copyConversation!(A, B, { id: CID })).toMatchObject({ ok: false, code: 'io-failed' })
-        expect(d.calls).toEqual([])
+        expect(await b.folders.copyConversation!(A, B, { id: CID })).toEqual({ ok: true, carried: 'copied' })
+        expect(b.calls).toHaveLength(1)
+        // Marks whose file cannot be read: the carry is made, and its mark is held in memory.
+        const closed = createCodexCarryMarks({ platform: 'win32', port: { read: () => ({ kind: 'unavailable' }), write: () => {}, setAside: () => false }, now: () => NOW })
+        const c = carrying(undefined, 60, { marks: closed, now: () => NOW })
+        expect(await c.folders.copyConversation!(A, B, { id: CID })).toEqual({ ok: true, carried: 'copied' })
+        expect(c.calls).toHaveLength(1)
+        expect(closed.markOf(sessionsOf(c.w, B), CID)).toBe(NOW)
+        // Marks that cannot be written: the same.
+        const unwritable = createCodexCarryMarks({ platform: 'win32', port: { read: () => ({ kind: 'missing' }), write: () => { throw new Error('disk full') }, setAside: () => false }, now: () => NOW })
+        const d = carrying(undefined, 60, { marks: unwritable, now: () => NOW })
+        expect(await d.folders.copyConversation!(A, B, { id: CID })).toEqual({ ok: true, carried: 'copied' })
+        expect(d.calls).toHaveLength(1)
+        expect(unwritable.markOf(sessionsOf(d.w, B), CID)).toBe(NOW)
+      })
+
+      it('a copy that was present, whose earlier mark cannot be read yet, leaves the file\'s mark to stand: the mark made for the carry is taken back', async () => {
+        const closed = createCodexCarryMarks({ platform: 'win32', port: { read: () => ({ kind: 'unavailable' }), write: () => {}, setAside: () => false }, now: () => NOW })
+        const { w, folders } = carrying(() => ({ ok: true, carried: 'present', bytes: 1 }), 60, { marks: closed, now: () => NOW })
+        expect(await folders.copyConversation!(A, B, { id: CID })).toEqual({ ok: true, carried: 'present' })
+        expect(closed.markOf(sessionsOf(w, B), CID)).toBeUndefined()
+      })
+
+      it('a copy that fails while the marks file cannot be read takes its mark back, and leaves the folder as it was', async () => {
+        const closed = createCodexCarryMarks({ platform: 'win32', port: { read: () => ({ kind: 'unavailable' }), write: () => {}, setAside: () => false }, now: () => NOW })
+        const { w, folders } = carrying(() => ({ ok: false, code: 'io-failed' }), 60, { marks: closed, now: () => NOW })
+        expect(await folders.copyConversation!(A, B, { id: CID })).toMatchObject({ ok: false, code: 'io-failed' })
+        expect(closed.markOf(sessionsOf(w, B), CID)).toBeUndefined()
+        expect(closed.cutoff(sessionsOf(w, B), CID)).toBeNull()
       })
 
       it('a copy that fails, throws or is refused takes its mark back, or restores the one it replaced', async () => {

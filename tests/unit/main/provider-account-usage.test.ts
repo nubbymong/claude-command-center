@@ -479,7 +479,7 @@ describe('a conversation carried by Switch Account (P3.14 round 1, C2; ADR-023)'
     const port: CodexCarryMarksPort = {
       read: () => (box.kind === 'unavailable' ? { kind: 'unavailable' } : box.kind === 'corrupt' ? { kind: 'corrupt' } : box.text === null ? { kind: 'missing' } : { kind: 'ok', text: box.text }),
       write: (text) => { box.text = text },
-      setAside: () => { box.asides++; box.text = null; box.kind = null; return true },
+      setAside: (replacement) => { box.asides++; box.text = replacement; box.kind = null; return true },
     }
     // The marks' own clock (the wait before an unreadable file is read again, the floor of a lost one).
     let markNow = SWITCH_TO_B
@@ -487,7 +487,7 @@ describe('a conversation carried by Switch Account (P3.14 round 1, C2; ADR-023)'
     let marks = fresh()
     const store: CodexCarryMarks = {
       record: (...a) => marks.record(...a), markOf: (...a) => marks.markOf(...a), remove: (...a) => marks.remove(...a), cutoff: (...a) => marks.cutoff(...a),
-      unavailable: () => marks.unavailable(), dropRealm: (r) => marks.dropRealm(r), adopt: (...a) => marks.adopt(...a),
+      dropRealm: (r) => marks.dropRealm(r), adopt: (...a) => marks.adopt(...a),
     }
     let now = SWITCH_TO_B
     let carried: 'copied' | 'extended' = 'copied'
@@ -637,21 +637,39 @@ describe('a conversation carried by Switch Account (P3.14 round 1, C2; ADR-023)'
     expect(await plain.card(plain.b)).toMatchObject({ status: 'ok', planLabel: 'Pro' })
   })
 
-  it('D2: while the marks file cannot be read no account shows a last-seen figure, and once it can the figures are there', async () => {
+  // Round 3 (H1): the harm guarded against is a temporary display of the
+  // other account's figures, so an unreadable marks file stops no carry and no
+  // Sign in again and makes no card an error. A carry made meanwhile is held in
+  // memory and written when the file reads.
+  it('H1: while the marks file cannot be read no card is an error: an account nothing was carried into shows its own figure', async () => {
     const w = await carryWorld()
-    w.fs.rolloutText(sessionsOf(w.h, w.b), CID, w.text(A_EVENT))
     w.fs.rollout(sessionsOf(w.h, w.a), 30, 'plus')
-    await w.carry(w.a, w.b, SWITCH_TO_B)
     w.box.kind = 'unavailable'
     w.restart()
-    // Neither the carried copy's account nor an unrelated one: the history cannot be told apart from a carried one.
-    expect(await w.card(w.b)).toMatchObject({ status: 'error', buckets: [] })
-    expect(await w.card(w.a)).toMatchObject({ status: 'error', buckets: [] })
-    // It can be read now, after the wait: the carried copy shows nothing of A's, the other account its own figure.
-    w.box.kind = null
-    w.setMarkClock(SWITCH_TO_B + 120_000)
+    expect(await w.card(w.a)).toMatchObject({ status: 'ok', planLabel: 'Plus' })
+    expect(await w.card(w.b)).toMatchObject({ status: 'no-session-yet', buckets: [] })
+  })
+
+  it('H1: a Switch Account carry goes on while the marks file cannot be read, B shows nothing of A until its own report, and the mark is written when the file reads', async () => {
+    const w = await carryWorld()
+    w.box.kind = 'unavailable'
+    w.restart()
+    w.fs.rolloutText(sessionsOf(w.h, w.b), CID, w.text(A_EVENT))
+    w.fs.rollout(sessionsOf(w.h, w.a), 30, 'plus')
+    expect(await w.carry(w.a, w.b, SWITCH_TO_B)).toEqual({ ok: true, carried: 'copied' })
     expect(await w.card(w.b)).toMatchObject({ status: 'no-session-yet', buckets: [] })
     expect(await w.card(w.a)).toMatchObject({ status: 'ok', planLabel: 'Plus' })
+    expect(w.box.text).toBeNull()
+    // B's own report shows.
+    w.fs.rolloutText(sessionsOf(w.h, w.b), CID, w.text(A_EVENT, B_EVENT))
+    expect(await w.card(w.b)).toMatchObject({ status: 'ok', planLabel: 'Plus' })
+    // The file reads after the wait: the mark is written, and a restart keeps B's card as it was.
+    w.box.kind = null
+    w.setMarkClock(SWITCH_TO_B + 120_000)
+    expect(await w.card(w.b)).toMatchObject({ status: 'ok', planLabel: 'Plus' })
+    expect((JSON.parse(w.box.text!) as { marks: Array<{ id: string; at: number }> }).marks.map((m) => [m.id, m.at])).toEqual([[CID, SWITCH_TO_B]])
+    w.restart()
+    expect(await w.card(w.b)).toMatchObject({ status: 'ok', planLabel: 'Plus' })
   })
 
   it('D2: a marks file that is not what was written is set aside and nothing dated before then counts, never A\'s events in a carried copy; B\'s own later event does', async () => {
@@ -671,7 +689,7 @@ describe('a conversation carried by Switch Account (P3.14 round 1, C2; ADR-023)'
     expect(await w.card(w.b)).toMatchObject({ status: 'ok', planLabel: 'Plus' })
   })
 
-  it('D7: a carry that cannot mark is not made: the conversation is not copied and nothing is marked', async () => {
+  it('H1: a carry is never refused for the marks file: unreadable, it is made and marked in memory', async () => {
     const w = await carryWorld()
     w.box.kind = 'unavailable'
     w.restart()
@@ -683,8 +701,9 @@ describe('a conversation carried by Switch Account (P3.14 round 1, C2; ADR-023)'
     const a = await addCodexAccount(h, 'A')
     const b = await addCodexAccount(h, 'B')
     const r = await h.service.carryConversation({ accountId: b }, { uuid: CID, cwd: 'C:\\p\\demo', accountId: a })
-    expect(r.ok).toBe(false)
-    expect(copies).toBe(0)
+    expect(r).toEqual({ ok: true, carried: 'copied' })
+    expect(copies).toBe(1)
+    expect(w.marks().markOf(sessionsOf(h, b), CID)).not.toBeNull()
   })
 
   it('D6: archiving this computer\'s own Codex account (external) forgets its marks too', async () => {
@@ -716,7 +735,7 @@ describe('a conversation carried by Switch Account (P3.14 round 1, C2; ADR-023)'
     expect(await w.card(w.b)).toMatchObject({ status: 'no-session-yet', buckets: [] })
   })
 
-  it('D4: a sign in again whose marks cannot be kept stops, and changes nothing', async () => {
+  it('H1: a sign in again is never refused for the marks file: unreadable, it goes on, and the old folder\'s marks follow to the new one once the file reads', async () => {
     const w = await carryWorld()
     w.fs.rolloutText(sessionsOf(w.h, w.b), CID, w.text(A_EVENT))
     await w.carry(w.a, w.b, SWITCH_TO_B)
@@ -724,8 +743,29 @@ describe('a conversation carried by Switch Account (P3.14 round 1, C2; ADR-023)'
     w.box.kind = 'unavailable'
     w.restart()
     const r = await w.h.service.signInAgain({ sameAccount: true, accountId: w.b, method: 'browser' }, 1)
-    expect(r.ok).toBe(false)
-    expect(sessionsOf(w.h, w.b)).toBe(before)
+    expect(r).toMatchObject({ ok: true })
+    const after = sessionsOf(w.h, w.b)
+    expect(after).not.toBe(before)
+    // The replacement's copy of the carried conversation is held while the file cannot be read: nothing of A's shows.
+    w.fs.rolloutText(after, CID, w.text(A_EVENT))
+    w.setMarkClock(SWITCH_TO_B + 60_000)
+    expect(await w.card(w.b)).toMatchObject({ status: 'no-session-yet', buckets: [] })
+    // Once it reads, the carried conversation's own mark is on the new folder.
+    w.box.kind = null
+    w.setMarkClock(SWITCH_TO_B + 180_000)
+    expect(w.marks().cutoff(after, CID)).toBe(SWITCH_TO_B)
+    expect(await w.card(w.b)).toMatchObject({ status: 'no-session-yet', buckets: [] })
+  })
+
+  it('H1: a sign in again goes on whatever the marks do: an adoption that throws, or says no, never stops it', async () => {
+    for (const adopt of [(): boolean => { throw new Error('marks') }, () => false]) {
+      const w = await carryWorld()
+      const marks = { record: () => true, markOf: () => null, remove: () => {}, cutoff: (): number | null => null, dropRealm: () => {}, adopt }
+      const h = await harness({ usageFs: w.fs.port, liveUsage: w.live, preference: { codex: () => 'on' }, carryMarks: marks })
+      const b = await addCodexAccount(h, 'B')
+      const r = await h.service.signInAgain({ sameAccount: true, accountId: b, method: 'browser' }, 1)
+      expect(r).toMatchObject({ ok: true })
+    }
   })
 
   it('D6: archiving an account forgets the marks of every realm it has had, the ones a sign in again moved it off too', async () => {

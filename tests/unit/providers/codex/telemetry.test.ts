@@ -1106,26 +1106,41 @@ describe('allowance from the rollout (usage track MP2)', () => {
       }
     })
 
-    it('while the marks cannot be read nothing of the rollout counts, then this account\'s own event does once they can (round 2)', async () => {
+    // Round 3 (H1): an unreadable marks file never blanks a card. Nothing was
+    // carried into the folder in this run, so the rollout reads as the account's
+    // own; a carry made meanwhile is held in memory and counts from its mark.
+    const unreadable = (spawn: number) => createCodexCarryMarks({
+      platform: process.platform,
+      port: { read: () => ({ kind: 'unavailable' }), write: () => {}, setAside: () => false },
+      now: () => spawn,
+    })
+
+    it('while the marks cannot be read the watcher is not blanked: a folder nothing was carried into reads as the account\'s own (round 3)', async () => {
       const spawn = startClock()
       const at = (ms: number) => new Date(spawn + ms).toISOString()
       const folder = p314Sessions([meta(at(50), '/p314/cwd'), aEvent(at(100))], NAME)
-      let readable = false
-      let clock = spawn
-      const marks = createCodexCarryMarks({
-        platform: process.platform,
-        port: { read: () => (readable ? { kind: 'missing' } : { kind: 'unavailable' }), write: () => {}, setAside: () => false },
-        now: () => clock,
-      })
       const live = createCodexLiveUsage(process.platform)
-      const src = new CodexProvider(live, marks).ingestSessionTelemetry('sess-carried-closed', { cwd: '/p314/cwd', spawnTimestamp: spawn, sessionsDir: folder.sessions }, () => {})
+      const src = new CodexProvider(live, unreadable(spawn)).ingestSessionTelemetry('sess-carried-unreadable', { cwd: '/p314/cwd', spawnTimestamp: spawn, sessionsDir: folder.sessions }, () => {})
+      try {
+        await vi.advanceTimersByTimeAsync(1000)
+        expect(live.get(folder.sessions)).toMatchObject({ planType: 'pro' })
+      } finally {
+        src.stop()
+        folder.remove()
+      }
+    })
+
+    it('a carry made while the marks cannot be read is held in memory: the watcher counts only what is written after it, and this account\'s own event shows (round 3)', async () => {
+      const spawn = startClock()
+      const at = (ms: number) => new Date(spawn + ms).toISOString()
+      const folder = p314Sessions([meta(at(50), '/p314/cwd'), aEvent(at(100))], NAME)
+      const marks = unreadable(spawn)
+      expect(marks.record('realm-b', folder.sessions, CID, spawn + 200)).toBe(true)
+      const live = createCodexLiveUsage(process.platform)
+      const src = new CodexProvider(live, marks).ingestSessionTelemetry('sess-carried-held', { cwd: '/p314/cwd', spawnTimestamp: spawn, sessionsDir: folder.sessions }, () => {})
       try {
         await vi.advanceTimersByTimeAsync(1000)
         expect(live.get(folder.sessions)).toBeNull()
-        // The marks can be read now (no mark was ever recorded: the file is missing), so this account's own
-        // event, written after, counts as soon as it is read.
-        readable = true
-        clock = spawn + 120_000
         append(folder.sessions, bEvent(at(300)))
         await vi.advanceTimersByTimeAsync(3000)
         expect(live.get(folder.sessions)).toMatchObject({ planType: 'plus' })
@@ -1135,16 +1150,20 @@ describe('allowance from the rollout (usage track MP2)', () => {
       }
     })
 
-    it('a mark that cannot be asked for (it throws) reads the rollout whole, as before', async () => {
+    it('a mark that cannot be asked for (it throws) closes that rollout: none of its allowance events count, the status line goes on (round 3, H4)', async () => {
       const spawn = startClock()
       const ts = new Date(spawn + 100).toISOString()
       const folder = p314Sessions([meta(ts, '/p314/cwd'), aEvent(ts)], NAME)
       const live = createCodexLiveUsage(process.platform)
-      const throwing = { record: () => false, markOf: () => null, remove: () => {}, unavailable: () => false, adopt: () => false, cutoff: (): number | null => { throw new Error('marks') }, dropRealm: () => {} }
+      const throwing = { record: () => false, markOf: () => null, remove: () => {}, adopt: () => false, cutoff: (): number | null => { throw new Error('marks') }, dropRealm: () => {} }
       const src = new CodexProvider(live, throwing).ingestSessionTelemetry('sess-carried-throws', { cwd: '/p314/cwd', spawnTimestamp: spawn, sessionsDir: folder.sessions }, () => {})
       try {
         await vi.advanceTimersByTimeAsync(1000)
-        expect(live.get(folder.sessions)).toMatchObject({ planType: 'pro' })
+        expect(live.get(folder.sessions)).toBeNull()
+        // A later event is no more counted than the earlier one: the mark is asked afresh at each read and throws again.
+        append(folder.sessions, bEvent(new Date(spawn + 300).toISOString()))
+        await vi.advanceTimersByTimeAsync(3000)
+        expect(live.get(folder.sessions)).toBeNull()
       } finally {
         src.stop()
         folder.remove()

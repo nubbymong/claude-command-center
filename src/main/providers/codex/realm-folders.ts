@@ -827,8 +827,10 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
       try {
         // The history carried into the replacement keeps its carry marks (ADR-023):
         // the copies in it are linked, not re-made, so nothing else would mark
-        // them. Kept before any file is linked; a mark that cannot be kept stops it.
-        if (deps.marks && !deps.marks.adopt(from.authRealmId, to.authRealmId, pathApi.join(dst.home, HISTORY_DIR))) return fail('io-failed')
+        // them. Adopted before any file is linked. A marks file that cannot be
+        // read or written never stops a Sign in again: the adoption is held in
+        // memory and the marks follow once it can be read.
+        try { deps.marks?.adopt(from.authRealmId, to.authRealmId, pathApi.join(dst.home, HISTORY_DIR)) } catch { /* the marks are never a reason to refuse */ }
         const planned: Planned[] = []
         // The transcripts folder, when there is one.
         const sessions = pathApi.join(src.home, HISTORY_DIR)
@@ -1008,12 +1010,10 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
         if (!unchanged(src.home, s.home) || !unchanged(dst.home, d.home)) return CARRY_CHANGED
         // No longer wanted: the locks go at once, before any file work.
         if (!current()) return fail('cancelled')
-        // The mark first (ADR-023): a copy that landed with no mark would show
-        // the earlier account's figures, so a mark that cannot be kept stops the
-        // carry before any file work, and one left by a copy that fails is taken
-        // back.
+        // The mark first (ADR-023), so a copy that lands is never without one, and
+        // one left by a copy that fails is taken back. A marks file that cannot
+        // be read or written never stops a carry (the mark is held in memory).
         const mark = beginMark(to, pathApi.join(dst.home, 'sessions'), id)
-        if (!mark) return fail('io-failed')
         let r: Awaited<ReturnType<CodexConversationCarry>>
         try {
           r = await carry({ fromSessionsDir: pathApi.join(src.home, 'sessions'), toHome: dst.home, id, ...(preferCwd ? { preferCwd } : {}), shouldStop: () => !current() })
@@ -1036,27 +1036,28 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
 
   /** The carry's mark (ADR-023), made before the copy: the copy that lands in
    *  the destination's folder holds the earlier account's events, so a reader of
-   *  that rollout counts only what is written after this moment. Null when the
-   *  mark cannot be kept (the carry must not go on). `finish` after a copy that
-   *  landed: a copy that was `present` already keeps the mark it had (marked
-   *  now only when it had none), any other is marked no earlier than the newest
-   *  time in the copy; `undo` after one that did not: the mark it replaced is
-   *  back, or none. Neither throws. */
-  function beginMark(to: RealmRef, sessionsDir: string, id: string): { finish(carried: 'copied' | 'present' | 'extended'): void; undo(): void } | null {
+   *  that rollout counts only what is written after this moment. A mark that
+   *  cannot be recorded never stops the carry (the harm is a temporary wrong
+   *  display, not worth a refused carry). `finish` after a copy that landed: a
+   *  copy that was `present` already keeps the mark it had (marked now only when
+   *  it had none; one that cannot be read yet is left to the file), any other is
+   *  marked no earlier than the newest time in the copy; `undo` after one that
+   *  did not: the mark it replaced is back, or none. Neither throws. */
+  function beginMark(to: RealmRef, sessionsDir: string, id: string): { finish(carried: 'copied' | 'present' | 'extended'): void; undo(): void } {
     const marks = deps.marks
     if (!marks) return { finish() {}, undo() {} }
     let at = Date.now()
     try { const n = deps.now ? deps.now() : at; if (Number.isFinite(n)) at = n } catch { /* the wall clock */ }
-    let prior: number | null = null
+    // null: no mark; undefined: not known yet (the marks file has not been read).
+    let prior: number | null | undefined = null
     try { prior = marks.markOf(sessionsDir, id) } catch { prior = null }
-    let kept = false
-    try { kept = marks.record(to.authRealmId, sessionsDir, id, at) === true } catch { kept = false }
-    if (!kept) return null
+    try { marks.record(to.authRealmId, sessionsDir, id, at) } catch { /* held nowhere: the carry goes on */ }
     return {
       finish(carried) {
         try {
           if (carried === 'present') {
-            if (prior !== null) marks.record(to.authRealmId, sessionsDir, id, prior)
+            if (typeof prior === 'number') marks.record(to.authRealmId, sessionsDir, id, prior)
+            else if (prior === undefined) marks.remove(sessionsDir, id)
             return
           }
           const newest = deps.newestStamp ? deps.newestStamp(sessionsDir, id) : null
@@ -1065,8 +1066,8 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
       },
       undo() {
         try {
-          if (prior === null) marks.remove(sessionsDir, id)
-          else marks.record(to.authRealmId, sessionsDir, id, prior)
+          if (typeof prior === 'number') marks.record(to.authRealmId, sessionsDir, id, prior)
+          else marks.remove(sessionsDir, id)
         } catch { /* a mark left behind only hides more */ }
       },
     }
