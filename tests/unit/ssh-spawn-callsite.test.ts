@@ -26,6 +26,12 @@ vi.mock('node-pty', () => ({
     throw new Error('__spawn_captured__')
   },
 }))
+// P3.15 round 1 (F7): the bundled ConPTY is on offer on every leg, whatever the
+// runner's platform, so an SSH spawn that took it would be caught here too.
+vi.mock('../../src/main/bundled-conpty', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/bundled-conpty')>()),
+  bundledConptyChoice: () => ({ kind: 'bundled', options: { useConpty: true, useConptyDll: true }, dir: '/np/prebuilds/win32-x64' }),
+}))
 
 import * as osMod from 'os'
 import type { SessionProvider } from '../../src/main/providers/types'

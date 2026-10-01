@@ -710,6 +710,19 @@ describe('the Restart pty:exit race', () => {
     expect(termLines()).toContain('[Process exited with code 0]')
   })
 
+  // P3.15 round 1 (F3): under node-pty's bundled ConPTY a Codex session that
+  // quits by itself can end before its exit code is known (the VM printed
+  // "[Process exited with code undefined]"): the line then names no code.
+  it('an exit with no known code says the process exited, never "undefined"; a known code is said as before', async () => {
+    mount(codexSession({ providerAccountId: 'acc-work' }))
+    await settle()
+    await act(async () => { settles[0].resolve(undefined) })
+    act(() => { fireExit!(undefined as unknown as number) })
+    expect(exitedMarks()).toHaveLength(1)
+    expect(termLines()).toContain('[Process exited]')
+    expect(termLines()).not.toMatch(/exited with code (undefined|null)/)
+  })
+
   it('a view that remounts onto a running PTY applies exits as they arrive', async () => {
     H.spawned.add('s-1')
     mount(codexSession({ providerAccountId: 'acc-work' }))

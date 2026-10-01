@@ -32,7 +32,7 @@ import SshFlowOverlay from './SshFlowOverlay'
 import { shouldUseResumePicker } from '../utils/resumePicker'
 import { shouldGateAccountChoice } from '../utils/sessionLaunch'
 import { resolveLaunchAccount, launchStep, accountsSnapshotWhenLoaded, describeLaunchFailure, providerOffForLaunch, type LaunchAccountFields, type LaunchAccountPlan, type LaunchFailureContext, type LaunchStep } from '../utils/launchAccount'
-import { createSpawnExitHold, type SpawnExitHold, type SpawnOutcome } from '../utils/spawnExitHold'
+import { createSpawnExitHold, processExitLine, type SpawnExitHold, type SpawnOutcome } from '../utils/spawnExitHold'
 import { useProviderAccountsStore, providerView, accountDisplayName } from '../stores/providerAccountsStore'
 import { useLaunchAckStore, consumeLaunchAcknowledgement } from '../stores/launchAckStore'
 import { stripCursorSequences } from '../utils/terminalFormatting'
@@ -628,7 +628,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // declined): the tab is not a running session.
       if (outcome === 'nothing-started') markNeverStarted()
       const r = exitHold.settle(outcome)
-      if (r.end) markExited(line !== undefined ? line : `[Process exited with code ${r.code}]`)
+      if (r.end) markExited(line !== undefined ? line : processExitLine(r.code))
     }
 
     const initTerminal = () => {
@@ -1543,7 +1543,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       })
       unsubExit = window.electronAPI.pty.onExit(sessionId, (exitCode) => {
         if (!exitHold.exit(exitCode)) return
-        markExited(`[Process exited with code ${exitCode}]`)
+        markExited(processExitLine(exitCode))
       })
 
       // Handle resize

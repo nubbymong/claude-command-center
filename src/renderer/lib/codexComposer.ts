@@ -44,9 +44,9 @@ export const CODEX_PLAN_MODE_WAIT_MS = 120_000
 // P3.10: the pure screen reading lives in src/shared/codex-screen.ts, shared
 // with the Watchdog's Codex send gate in main; re-exported here unchanged.
 import {
-  readCodexScreen, codexComposerState, codexComposerText, codexCommandTyped, codexPlanModeOnScreen,
+  readCodexScreen, codexComposerState, codexComposerText, codexCommandTyped, codexTextTyped, codexPlanModeOnScreen,
 } from '../../shared/codex-screen'
-export { readCodexScreen, codexComposerState, codexComposerText, codexCommandTyped, codexPlanModeOnScreen }
+export { readCodexScreen, codexComposerState, codexComposerText, codexCommandTyped, codexTextTyped, codexPlanModeOnScreen }
 export type { CodexComposerState, CodexScreenKind } from '../../shared/codex-screen'
 
 /** The session's Plan mode reading, from its live screen and its models. */
@@ -190,13 +190,15 @@ const BACKSPACE = String.fromCharCode(0x7f)
  * E1): the user's keys echoed late are never erased with it; when the
  * composer then holds anything but exactly the command, nothing is erased.
  * `onSettled` hears whether the Enter was sent, and why not. A write that
- * throws still settles the typing (round 3, Q1).
+ * throws still settles the typing (round 3, Q1). `wrapped` (P3.15 round 1,
+ * F8; text, never a command): the text may wrap onto further composer rows,
+ * and the Enter is pressed when those rows, read together, hold exactly it.
  */
 export function typeIntoCodexComposer(
   sessionId: string,
   command: string,
   deps: CodexComposerDeps = defaultCodexComposerDeps,
-  opts: { onSettled?: (sent: boolean, how: CodexSettled) => void } = {},
+  opts: { onSettled?: (sent: boolean, how: CodexSettled) => void; wrapped?: boolean } = {},
 ): CodexTyping {
   const none = (reason: string): CodexTyping => ({ typed: false, reason, cancel: () => {} })
   const pending = deps.pending ?? pendingSessions
@@ -256,7 +258,7 @@ export function typeIntoCodexComposer(
       if (!sameRun(run, deps.currentRun(sessionId))) return
       const models = deps.footerModels?.(sessionId) ?? null
       const screen = deps.readScreen(sessionId)
-      if (codexCommandTyped(screen, command, models)) {
+      if (opts.wrapped ? codexTextTyped(screen, command, models) : codexCommandTyped(screen, command, models)) {
         deps.write(sessionId, '\r')
         startupDone.add(sessionId, key)
         sent = true
@@ -304,8 +306,10 @@ export const IMAGE_BEHIND_QUESTION = "The image was not sent: Codex asked a ques
  * is typed by the rule above (the ready, empty composer only, its Enter on
  * its own after the burst, and only when the screen then shows exactly the
  * line), because the VM run showed one write of the line and its Enter is
- * taken as a paste and never submitted. `onNote` hears why it was not sent;
- * nothing when it was, or when the session restarted in between.
+ * taken as a paste and never submitted. In a narrow pane the line wraps onto
+ * further composer rows, which are read with it (round 1, F8). `onNote` hears
+ * why it was not sent; nothing when it was, or when the session restarted in
+ * between.
  */
 export function sendImagePathToCodex(
   sessionId: string,
@@ -318,6 +322,7 @@ export function sendImagePathToCodex(
       if (sent || how.reason === 'cancelled' || how.reason === 'run-changed') return
       onNote(how.erased ? IMAGE_TAKEN_BACK : how.reason === 'blocked' ? IMAGE_BEHIND_QUESTION : IMAGE_TYPED_NOT_SENT)
     },
+    wrapped: true,
   })
   if (!typing.typed && typing.reason) onNote(typing.reason)
 }

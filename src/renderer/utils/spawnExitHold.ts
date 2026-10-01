@@ -72,3 +72,12 @@ export function createSpawnExitHold(willSpawn: boolean): SpawnExitHold {
     },
   }
 }
+
+/** The line a terminal shows when its process has ended: the exit code when
+ *  it is known, else no code (P3.15 round 1, F3). Under node-pty's bundled
+ *  ConPTY the end is reported when the console host closes, which can come
+ *  before the process's own exit code is known; the line then said "code
+ *  undefined". */
+export function processExitLine(code: unknown): string {
+  return typeof code === 'number' && Number.isFinite(code) ? `[Process exited with code ${code}]` : '[Process exited]'
+}

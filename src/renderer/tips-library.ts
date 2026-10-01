@@ -30,6 +30,9 @@ export type TipCategory =
 
 export type TipComplexity = 'simple' | 'intermediate' | 'advanced'
 
+/** An operating system, as Electron names it. */
+export type TipPlatform = 'win32' | 'darwin' | 'linux'
+
 export interface TipContent {
   /** Short text shown in the header pill (keep under 60 chars) */
   shortText: string
@@ -60,6 +63,8 @@ export interface Tip {
   requires?: string[]
   /** Feature IDs that if used, make the primary variant irrelevant */
   excludes?: string[]
+  /** The operating systems the tip is about; offered only there (none: everywhere) */
+  platforms?: TipPlatform[]
   variants: {
     primary: TipContent
     postUse?: TipContent
@@ -367,7 +372,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Paste clipboard images with Alt+V',
         title: 'Paste Image from Clipboard',
-        body: 'Image on your clipboard? Click into the session and press **Alt+V**: the key goes to the assistant, which pastes the image itself (Codex shows it as [Image #1]).\n\nWith focus elsewhere in the app, **Alt+V** saves the image and types a line with its path into the session, for the assistant to open. On a Codex session the app types it only into an empty Codex prompt, and says why when it cannot.\n\nWorks with screenshots, images copied from a browser, diagrams from Excalidraw: anything in clipboard image format. No more "let me save this to disk first and drag it in".',
+        body: 'Image on your clipboard? Click into a session on this computer and press **Alt+V**: the key goes to the assistant, which pastes the image itself (Codex shows it as [Image #1]).\n\nWith focus elsewhere in the app, **Alt+V** saves the image and types a line with its path into the session, for the assistant to open. On a Codex session the app types it only into an empty Codex prompt, and says why when it cannot. On an SSH session, press **Alt+V** with focus outside the terminal: the app saves the image on this computer and asks Claude to fetch it over the connection.\n\nWorks with screenshots, images copied from a browser, diagrams from Excalidraw: anything in clipboard image format. No more "let me save this to disk first and drag it in".',
       },
     },
   },
@@ -1047,11 +1052,12 @@ export const TIPS_LIBRARY: Tip[] = [
     complexity: 'intermediate',
     priority: 56,
     requires: ['sessions.codex-config'],
+    platforms: ['win32'],
     variants: {
       primary: {
         shortText: 'Codex on Windows: set up its sandbox once',
         title: 'Codex Edits on Windows',
-        body: 'On Windows, when Codex asks to set up its sandbox, choose **1. Set up default sandbox**. It needs administrator permission once, and after that Codex edits files in your project without asking, on **Standard** and on **Auto** alike.\n\nWith **2. Use non-admin sandbox**, or with no sandbox set up, Codex cannot write on its own: on **Standard** it asks before every edit, and on **Auto** edits fail. Codex remembers the choice for each Codex account.\n\nDo not run the app as administrator: Codex\'s sandbox stalls or fails in a session started from an app that runs elevated.',
+        body: 'On Windows, when Codex asks to set up its sandbox, choose **1. Set up default sandbox** (Codex says it needs administrator permission). After that Codex edits files in your project without asking, on **Standard** and on **Auto** alike.\n\nWith **2. Use non-admin sandbox**, or with no sandbox set up, Codex cannot write on its own: on **Standard** it asks before every edit, and on **Auto** edits fail. Codex remembers the choice for each Codex account, and asks only when you trust a new folder. If it never asks you, approve each edit when Codex asks about it, and use **Standard** rather than **Auto**.\n\nDo not run the app as administrator: Codex\'s sandbox stalls or fails in a session started from an app that runs elevated.',
       },
     },
   },
