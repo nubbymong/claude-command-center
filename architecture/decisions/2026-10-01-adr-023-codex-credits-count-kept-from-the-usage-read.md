@@ -180,10 +180,14 @@ time, below.
      credits do follow the newest main report that states them (Decision, item 2).
    - While the file cannot be read, which conversations an earlier run carried
      is not known. Only the folders this run carried into are held, so a
-     conversation carried in an earlier run reads whole until the file reads
-     (one to 30 seconds between tries): the earlier account's figures can show
-     on the new account's card for that time. This is the accepted cost of never
-     refusing a carry and never blanking a card.
+     conversation carried in an earlier run reads whole until the file can be
+     read: the earlier account's figures can show on the new account's card
+     until that account's session reports or the file can be read. The file is
+     tried again every 1 to 30 seconds, but one that stays unreadable is never
+     read in the run, so this may be the whole run (the VM check at 855e1484,
+     with the file unreadable from the start, showed them for the whole run).
+     This is the accepted cost of never refusing a carry and never blanking a
+     card.
    - If the app quits before the file could be read or written, what was held
      in memory is lost: a mark made then is not kept for the next run, and a
      realm dropped then keeps its records in the file (an archived account's

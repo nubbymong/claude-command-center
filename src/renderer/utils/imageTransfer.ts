@@ -4,8 +4,8 @@ import { quoteArgForShell } from '../../shared/shell-quote'
  * Image transfer helper: gets a host-saved image into a session. The prompts
  * below are a Claude session's; a plain terminal (and the partner shell) gets
  * only the image's path, quoted for its shell (composeShellImagePath, below);
- * a Codex session's line goes through lib/codexComposer.ts
- * (sendImagePathToCodex).
+ * the other assistant's line goes through its own typing rule. Which route a
+ * pasted image takes is decided in hooks/useKeyboardShortcuts.ts.
  *
  * For a Claude session:
  *
