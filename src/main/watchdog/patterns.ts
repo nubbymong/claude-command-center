@@ -426,10 +426,33 @@ interface WindowedLines {
 // Windowed lines PLUS their tool-echo mask. The mask is computed on the full pane and
 // sliced to the window, so a result block taller than the window keeps its children
 // masked even when the `● Name(` header sits above the window.
+// P3.16 (M2): only the current turn counts, the rule the other assistant's detectors
+// already read by (their currentTurn): the window's rows below its newest user message. An error above a newer user message
+// belongs to an earlier turn: the session has moved on since (the retry the Watchdog
+// typed, or the user's own message), so a short answer that leaves it in view is not
+// read as the error again.
 function tail(text: string): WindowedLines {
   const all = stripAnsi(text).split('\n')
   const { start, end } = contentTailRange(all, OVERLOAD_TAIL_LINES, OVERLOAD_MAX_RAW_LINES)
-  return { lines: all.slice(start, end), mask: toolEchoMask(all).slice(start, end) }
+  const from = currentTurnStart(all, start, end)
+  return { lines: all.slice(from, end), mask: toolEchoMask(all).slice(from, end) }
+}
+
+// P3.16 (M2): a user message in Claude Code's history: the prompt glyph at column 0 and
+// text after it ("> task", or U+276F and the task in the versions with the unboxed input). The
+// input's own row (a typed draft) sits directly under the input's top rule, and is not one.
+const USER_MESSAGE_ROW = new RegExp(`^[>${String.fromCharCode(0x276f)}] \\S`)
+const RULE_ROW = /^\s*[─-╿]+\s*$/
+
+/** The first row of the current turn in all[start, end): just below the newest user
+ *  message there, or `start` when none is in the window. */
+function currentTurnStart(all: string[], start: number, end: number): number {
+  for (let i = end - 1; i >= start; i--) {
+    if (!USER_MESSAGE_ROW.test(all[i])) continue
+    if (i > 0 && RULE_ROW.test(all[i - 1])) continue // the input's own row: a draft
+    return i + 1
+  }
+  return start
 }
 
 // Compile a config pattern (string → case-insensitive RegExp) once per call. Invalid
