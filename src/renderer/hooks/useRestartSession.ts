@@ -78,8 +78,13 @@ export function useRestartSession(
         // check (findAskSession's, the dock's dot) read the fresh session as
         // dead.
         ptyExited: undefined,
-        // Nor does the last launch's "started nothing": this one may start.
-        neverStarted: undefined,
+        // A tab whose last launch started nothing (neverStarted) stays Not
+        // started through the remount, and so is not counted as running (the
+        // sidebar, the Multi Spawn rule) until its new view has started a PTY:
+        // TerminalView clears it then. A Restart pressed while the partner view
+        // is shown remounts a main view that is hidden, and a hidden view starts
+        // only when it is shown, so clearing it here would count a tab as running
+        // that nothing had started. (`merged` carries it from the live record.)
         // #85: the wheel->tmux-scrollback translation is armed off this flag,
         // and a restart re-runs SSH connect, auth and remote setup before
         // anything decides whether tmux is in play this time. Left set, the
