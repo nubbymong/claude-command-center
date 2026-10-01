@@ -612,4 +612,24 @@ describe('R3: a forged same-id spawn that throws after the gate cannot overwrite
     await expect(spawn({}, A, { cwd: 'C:/w', configId: 'cfgssh', ssh: { ...SSH, host: 'other-box' } })).rejects.toThrow(/SSH spawn refused/)
     expect(_claimedSessionCountForTest()).toBe(0)
   })
+
+  // Round 4 (the quality review's nit): the discard must not forget a session that is running.
+  it('a spawn that throws AFTER pty-manager registered its PTY still counts as a copy: a new copy is refused beside it', async () => {
+    disk(savedClaude())
+    spawnPty.mockImplementationOnce((_w: unknown, sid: string) => { live.add(sid); throw new Error('boom after the PTY was registered') })
+    await expect(spawn({}, A, claudeReq)).rejects.toThrow(/boom after/)
+    expect(live.has(A)).toBe(true) // a Claude PTY is not ended by the catch
+    expect(isRefused(await spawn({}, B, claudeReq))).toBe(true)
+    expect(live.has(B)).toBe(false)
+    kill({}, A) // its tab is closed
+    expect(isRefused(await spawn({}, A, claudeReq))).toBe(false) // and it keeps the right to come back
+  })
+
+  it('a spawn that throws before pty-manager registered anything counts for nothing', async () => {
+    disk(savedClaude())
+    spawnPty.mockImplementationOnce(() => { throw new Error('boom before the PTY was registered') })
+    await expect(spawn({}, A, claudeReq)).rejects.toThrow(/boom before/)
+    expect(_claimedSessionCountForTest()).toBe(0)
+    expect(isRefused(await spawn({}, B, claudeReq))).toBe(false)
+  })
 })

@@ -672,9 +672,11 @@ function endTargetFromSavedConfig(configId: string, sessionId: string): SshEndTa
 
 export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void {
   // The body of pty:spawn. `claim` holds the one-at-a-time gate's ticket for this
-  // call (P3.13): the handler registered below discards it when the call ends,
-  // so a spawn that throws or returns early leaves nothing pending.
-  const spawnSession = async (sessionId: string, claim: { ticket?: ConfigLaunchTicket }, options?: {
+  // call (P3.13), and whether the call reached pty-manager's spawn: the handler
+  // registered below discards the ticket when the call ends, so a spawn that
+  // throws or returns early leaves nothing pending, unless pty-manager already
+  // holds the session (see there).
+  const spawnSession = async (sessionId: string, claim: { ticket?: ConfigLaunchTicket; spawnCalled?: boolean }, options?: {
     cwd?: string
     cols?: number
     rows?: number
@@ -989,6 +991,7 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
         })
       }
 
+      claim.spawnCalled = true
       if (preparation) preparation.spawn(resolvedOptions)
       else spawnPty(win, sessionId, resolvedOptions)
       // P3.13: pty-manager took the spawn the one-at-a-time gate passed. Only this
@@ -1024,14 +1027,21 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
   }
 
   ipcMain.handle('pty:spawn', async (_event, sessionId: string, options?: Parameters<typeof spawnSession>[2]) => {
-    const claim: { ticket?: ConfigLaunchTicket } = {}
+    const claim: { ticket?: ConfigLaunchTicket; spawnCalled?: boolean } = {}
     try {
       return await spawnSession(sessionId, claim, options)
     } finally {
       // P3.13 (round 3): a ticket still pending now belongs to a spawn that
       // pty-manager did not take (it threw, or returned early). Forget it. A
       // ticket settled on the way is already gone, so this does nothing then.
-      if (claim.ticket) discardConfigLaunch(claim.ticket)
+      // Round 4: except a spawn that reached pty-manager and threw after the
+      // PTY was registered: that session is running, so it counts as a copy
+      // (settled). A spawn that never reached it is forgotten even when the
+      // same session id is live (a forged same-id spawn must not re-point it).
+      if (claim.ticket) {
+        if (claim.spawnCalled && isSessionLiveOrStarting(sessionId)) settleConfigLaunch(claim.ticket)
+        else discardConfigLaunch(claim.ticket)
+      }
     }
   })
 
