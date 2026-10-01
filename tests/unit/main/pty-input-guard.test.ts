@@ -9,7 +9,7 @@ import { EventEmitter } from 'events'
 import * as fs from 'fs'
 import * as path from 'path'
 
-const { guardPtyInput, ptyInputSocket } = await import('../../../src/main/pty-input-guard')
+const { guardPtyInput, ptyInputSocket, guardPtyOutput, guardPtyIo } = await import('../../../src/main/pty-input-guard')
 
 /** A Windows PTY as node-pty builds it: the input socket on its agent. */
 const windowsPty = () => {
@@ -60,5 +60,59 @@ describe('guardPtyInput', () => {
     expect(agent).toMatch(/this\._inSocket = new net_1\.Socket\(\{/)
     // ...and still gives it no 'error' listener of its own (when it does, the guard is belt and braces).
     expect(agent).not.toMatch(/_inSocket\.on\('error'/)
+  })
+})
+
+// Round 4 (P4): node-pty's handler on a PTY's output socket throws any error
+// but EIO unless the PTY has an 'error' listener of its own.
+describe('guardPtyOutput (round 4, P4)', () => {
+  /** A PTY as node-pty builds it: every event but 'close' on its output socket, with node-pty's own handler. */
+  const ptyWithOutput = () => {
+    const outSocket = new EventEmitter()
+    outSocket.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code && (err.code.includes('errno 5') || err.code.includes('EIO'))) return
+      if (outSocket.listeners('error').length < 2) throw err
+    })
+    return { pty: { on: (ev: string, l: (...a: unknown[]) => void) => { outSocket.on(ev, l) } }, outSocket }
+  }
+  it('without it, node-pty\'s handler throws: the same way to quit the app', () => {
+    const { outSocket } = ptyWithOutput()
+    expect(() => outSocket.emit('error', failure('ECONNRESET'))).toThrow()
+  })
+  it('with it nothing is thrown; the first error but EIO is reported once', () => {
+    const { pty, outSocket } = ptyWithOutput()
+    const seen = vi.fn()
+    expect(guardPtyOutput(pty, seen)).toBe(true)
+    expect(() => outSocket.emit('error', failure('EIO'))).not.toThrow()
+    expect(seen).not.toHaveBeenCalled()
+    expect(() => outSocket.emit('error', failure('ECONNRESET'))).not.toThrow()
+    expect(() => outSocket.emit('error', failure('EINVAL'))).not.toThrow()
+    expect(seen).toHaveBeenCalledTimes(1)
+    expect(seen.mock.calls[0][0].code).toBe('ECONNRESET')
+  })
+  it('a PTY that takes no listener is left alone; a report that throws is still caught', () => {
+    for (const pty of [{}, null, undefined, { on: 'no' }]) expect(guardPtyOutput(pty, () => {})).toBe(false)
+    const { pty, outSocket } = ptyWithOutput()
+    guardPtyOutput(pty, () => { throw new Error('reporting failed') })
+    expect(() => outSocket.emit('error', failure('ECONNRESET'))).not.toThrow()
+  })
+  it('guardPtyIo guards both sides and names the side', () => {
+    const inSocket = new EventEmitter()
+    const { pty, outSocket } = ptyWithOutput()
+    const both = { ...pty, _agent: { inSocket } }
+    const seen: string[] = []
+    expect(guardPtyIo(both, (side, err) => seen.push(`${side}:${err.code}`))).toEqual({ input: true, output: true })
+    inSocket.emit('error', failure('EAGAIN'))
+    outSocket.emit('error', failure('ECONNRESET'))
+    expect(seen).toEqual(['input:EAGAIN', 'output:ECONNRESET'])
+  })
+  it('the installed node-pty still throws an output error unless the PTY has a second listener, and Terminal.on puts it on the output socket', () => {
+    const lib = path.resolve(__dirname, '..', '..', '..', 'node_modules', 'node-pty', 'lib')
+    const windows = fs.readFileSync(path.join(lib, 'windowsTerminal.js'), 'utf8')
+    const terminal = fs.readFileSync(path.join(lib, 'terminal.js'), 'utf8')
+    expect(windows).toMatch(/_this\._socket\.on\('error', function \(err\) \{/)
+    expect(windows).toMatch(/if \(_this\.listeners\('error'\)\.length < 2\) \{\s*throw err;/)
+    expect(terminal).toMatch(/Terminal\.prototype\.on = function \(eventName, listener\) \{[\s\S]*?this\._socket\.on\(eventName, listener\);/)
+    expect(terminal).toMatch(/Terminal\.prototype\.listeners = function \(eventName\) \{\s*return this\._socket\.listeners\(eventName\);/)
   })
 })

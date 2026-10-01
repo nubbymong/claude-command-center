@@ -12,6 +12,8 @@ import {
   statSync,
 } from 'fs'
 import * as pty from 'node-pty'
+import { guardPtyIo } from './pty-input-guard'
+import { stripSpoofableText } from '../shared/safe-text'
 import { BrowserWindow } from 'electron'
 import { logInfo, logWarn, logError } from './debug-logger'
 import { resolveClaudeForPty, withProfileHome } from './pty-manager'
@@ -252,6 +254,10 @@ async function spawnClaudeInsights(home: string | null, timeoutMs = 600000): Pro
       cwd,
       env: withProfileHome(process.env as Record<string, string>, home, { launchId: 'insights', cwd, probe: false, projectGate })
     })
+    // P3.15 round 4 (P2): an error on this PTY's input (the app types
+    // /insights into it) or output never quits the app; the run settles on its
+    // exit or its time limit.
+    guardPtyIo(proc, (side, err) => logError(`[insights] PTY ${side} failed (${stripSpoofableText(String(err?.code ?? err?.message ?? err), 120)})`))
 
     let output = ''
     let resolved = false
