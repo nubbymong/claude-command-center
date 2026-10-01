@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-01T17:35:06.603Z",
-  "head": "f87271f8908d4fc0e640c54784e31e1c54b3d1eb",
-  "tree": "b12f46213155dbb1209e723febb8be23a3e28e66",
+  "generatedAt": "2026-10-01T20:55:04.683Z",
+  "head": "eef491973def712f22bc922d0252325da89f93cf",
+  "tree": "05d36c4e8e926c47d12bcd0c4c41e9dda2f5c971",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2596,
+  "trackedFileCount": 2599,
   "excludedFileCount": 385,
-  "scannedFileCount": 2211,
+  "scannedFileCount": 2214,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 656,
-  "pathDigest": "28c1af684de665ed1f40ff6dea642e02d707762e7513fb2ce8d35b9cc1603774",
+  "matchedPathCount": 657,
+  "pathDigest": "fa175eaf9673e4c89bdce3eb2836241ca5cf9b9c9acef688518df1c947ee8c80",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -662,7 +662,7 @@
         "P05",
         "P14"
       ],
-      "lineCount": 40
+      "lineCount": 41
     },
     {
       "path": "src/main/model-registry-service.ts",
@@ -1032,7 +1032,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 365
+      "lineCount": 366
     },
     {
       "path": "src/main/sanitize-restored-spawn-options.ts",
@@ -2983,6 +2983,13 @@
       "lineCount": 25
     },
     {
+      "path": "tests/unit/channel-rules-gateway-order.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 9
+    },
+    {
       "path": "tests/unit/channel-rules-idle-prompt.test.ts",
       "predicates": [
         "P13"
@@ -4219,7 +4226,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 20
+      "lineCount": 40
     },
     {
       "path": "tests/unit/renderer/app-lifecycle-wiring.test.ts",
