@@ -94,6 +94,13 @@ vi.mock('../../../src/main/providers', () => ({
 vi.mock('../../../src/main/providers/claude/spawn', () => ({ resolveClaudeBinary: () => ({ cmd: 'claude', source: 'system' }), resolveHostColorScheme: () => 'dark' }))
 vi.mock('../../../src/main/vision-manager', () => ({ isGlobalVisionRunning: () => false, getGlobalVisionConfig: () => null, teardownVisionSession: () => {} }))
 vi.mock('../../../src/main/canvas/canvas-plugin', () => ({ ensureCanvasPlugin: () => null }))
+// P3.16 (M1): an exact Claude resume the launch applies, when a test sets one;
+// otherwise the real resolution.
+const resumeAs = vi.hoisted(() => ({ next: null as null | { resumeUuid: string; claudeCwd: string } }))
+vi.mock('../../../src/main/spawn-claude-command', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/main/spawn-claude-command')>()
+  return { ...actual, resolveResumeLaunch: (...a: Parameters<typeof actual.resolveResumeLaunch>) => resumeAs.next ?? actual.resolveResumeLaunch(...a) }
+})
 vi.mock('../../../src/main/hooks', () => ({
   getGateway: () => ({
     status: () => ({ enabled: false, listening: false, port: null }),
@@ -142,7 +149,7 @@ vi.mock('../../../src/main/legacy-version-manager', () => ({ isVersionInstalled:
 vi.mock('../../../src/main/credential-store', () => ({ loadCredential: () => null }))
 vi.mock('../../../src/main/provider-accounts', () => ({ getAccountsService: () => null }))
 
-const { spawnPty, killPty, codexRolloutForSessionContext, CODEX_CONTEXT_ROLLOUTS_MAX, CODEX_LEASE_EXIT_GRACE_MS, applyLoggingSwitches } = await import('../../../src/main/pty-manager')
+const { spawnPty, killPty, codexRolloutForSessionContext, CODEX_CONTEXT_ROLLOUTS_MAX, CODEX_LEASE_EXIT_GRACE_MS, applyLoggingSwitches, routeHookTranscriptPath, CLAUDE_TRANSCRIPTS_MAX } = await import('../../../src/main/pty-manager')
 const { getCodexLogBinder } = await import('../../../src/main/logging/codex-log-binder')
 const { notIndexedSnapshot, conversationKey, resetIndexingGapsForTests, flushIndexingGaps } = await import('../../../src/main/logging/indexing-gaps')
 /** A conversation's not-indexed windows (as main keeps them). */
@@ -598,5 +605,145 @@ describe('P3.12 round 7 (K1): a killed session\'s window closes when its process
     killPty(S)
     exitOf(proc)
     expect(windowsOf(ID_A)).toEqual([])
+  })
+})
+
+describe('P3.16 (M1): a Claude session not indexed marks the conversation it is on, as a Codex one', () => {
+  // Claude's conversation is its transcript, named by its hooks and status line
+  // (routeHookTranscriptPath), or known at launch from an exact resume. The
+  // window is kept by the conversation's id (the transcript's file name).
+  const T0 = Date.parse('2026-09-30T10:00:00.000Z')
+  const CL_A = '7f3e0c1a-0000-4000-8000-0000000003a1'
+  const CL_B = '7f3e0c1a-0000-4000-8000-0000000003b2'
+  const transcript = (id: string) => path.join(os.homedir(), '.claude', 'projects', 'C--w', `${id}.jsonl`)
+  const claudeWindows = (id: string) => notIndexedSnapshot().conversations[id] ?? []
+  const used: string[] = []
+  let next = 60
+  const fresh = () => { const sid = `cl${'0'.repeat(20)}${next++}`; used.push(sid); return sid }
+  const clock = (ms: number) => vi.setSystemTime(T0 + ms)
+  const startClaude = (sid: string, extra: Record<string, unknown> = {}) => spawnPty(fakeWin, sid, { cwd: os.tmpdir(), provider: 'claude', configId: 'cfg-cl', ...extra } as never)
+  const hook = (sid: string, id: string) => routeHookTranscriptPath(sid, transcript(id), { attribute: () => {}, bind: () => {} })
+  const exitOf = (proc: { exit: Array<(e: { exitCode: number }) => void> }) => { for (const cb of [...proc.exit]) cb({ exitCode: 0 }) }
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] }); clock(0); resumeAs.next = null })
+  afterEach(() => { for (const sid of used.splice(0)) { try { killPty(sid) } catch { /* gone */ } } resumeAs.next = null; vi.useRealTimers() })
+
+  it('a launch not indexed: the transcript its hook names opens a window from the launch; a new one (a /clear) closes it then and opens the next', () => {
+    const S = fresh()
+    h.settings = { ...CONSENT, loggingEnabled: false }
+    startClaude(S)
+    expect(Object.keys(notIndexedSnapshot().conversations)).toEqual([])
+    clock(3000)
+    hook(S, CL_A)
+    expect(claudeWindows(CL_A)).toEqual([[T0, null]])
+    // The same transcript again (the status line, each tick) changes nothing.
+    clock(3500)
+    hook(S, CL_A)
+    expect(claudeWindows(CL_A)).toEqual([[T0, null]])
+    clock(5000)
+    hook(S, CL_B)
+    expect(claudeWindows(CL_A)).toEqual([[T0, T0 + 5000]])
+    expect(claudeWindows(CL_B)).toEqual([[T0, null]])
+  })
+
+  it('an indexed launch opens none, whatever its hooks name', () => {
+    const S = fresh()
+    startClaude(S)
+    hook(S, CL_A)
+    expect(claudeWindows(CL_A)).toEqual([])
+  })
+
+  it('an exact resume not indexed opens its window at the launch, before any hook', () => {
+    const S = fresh()
+    h.settings = { ...CONSENT, loggingEnabled: false }
+    resumeAs.next = { resumeUuid: CL_A, claudeCwd: os.tmpdir() }
+    clock(1000)
+    startClaude(S, { resume: { uuid: CL_A, cwd: os.tmpdir() } })
+    expect(claudeWindows(CL_A)).toEqual([[T0 + 1000, null]])
+  })
+
+  it('switched off while running: the window opens at the switch-off on the transcript the session is on', () => {
+    const S = fresh()
+    startClaude(S)
+    hook(S, CL_A)
+    clock(4000)
+    h.settings = { ...CONSENT, loggingEnabled: false }
+    applyLoggingSwitches()
+    expect(claudeWindows(CL_A)).toEqual([[T0 + 4000, null]])
+    clock(6000)
+    hook(S, CL_B)
+    expect(claudeWindows(CL_A)).toEqual([[T0 + 4000, T0 + 6000]])
+    expect(claudeWindows(CL_B)).toEqual([[T0 + 4000, null]])
+  })
+
+  it('a tab closed while not indexed: the window stays open through the wind-down and closes when the exit is reported; with none reported, after the grace', () => {
+    const S = fresh()
+    h.settings = { ...CONSENT, loggingEnabled: false }
+    startClaude(S)
+    const proc = h.ptys.at(-1)!
+    hook(S, CL_A)
+    clock(2000)
+    killPty(S)
+    expect(claudeWindows(CL_A)).toEqual([[T0, null]])
+    clock(3000)
+    exitOf(proc)
+    expect(claudeWindows(CL_A)).toEqual([[T0, T0 + 3000]])
+    const R = fresh()
+    clock(10_000)
+    startClaude(R)
+    hook(R, CL_B)
+    clock(11_000)
+    killPty(R)
+    vi.advanceTimersByTime(CODEX_LEASE_EXIT_GRACE_MS - 1)
+    expect(claudeWindows(CL_B)).toEqual([[T0 + 10_000, null]])
+    vi.advanceTimersByTime(1)
+    expect(claudeWindows(CL_B)).toEqual([[T0 + 10_000, T0 + 11_000 + CODEX_LEASE_EXIT_GRACE_MS]])
+  })
+
+  it('a Restart: the new launch learns its own transcript, its window is its own, and the old process\'s late exit closes only the old one', () => {
+    const S = fresh()
+    h.settings = { ...CONSENT, loggingEnabled: false }
+    startClaude(S)
+    const old = h.ptys.at(-1)!
+    hook(S, CL_A)
+    clock(2000)
+    startClaude(S)
+    // The Restart's launch has not named a transcript yet: nothing of the old one's is its.
+    expect(claudeWindows(CL_A)).toEqual([[T0, null]])
+    clock(2500)
+    hook(S, CL_A)
+    expect(claudeWindows(CL_A)).toEqual([[T0, null], [T0 + 2000, null]])
+    clock(4000)
+    exitOf(old)
+    expect(claudeWindows(CL_A)).toEqual([[T0, T0 + 4000], [T0 + 2000, null]])
+  })
+
+  it('a shell opens none, whatever reaches it; a Claude tab relaunched as a Codex one opens none on the Claude transcript', () => {
+    h.settings = { ...CONSENT, loggingEnabled: false }
+    const SH = fresh()
+    spawnPty(fakeWin, SH, { cwd: os.tmpdir(), shellOnly: true } as never)
+    hook(SH, CL_A)
+    expect(claudeWindows(CL_A)).toEqual([])
+    const S = fresh()
+    h.settings = { ...CONSENT }
+    startClaude(S)
+    hook(S, CL_B)
+    h.settings = { ...CONSENT, loggingEnabled: false }
+    start(S)
+    expect(claudeWindows(CL_B)).toEqual([])
+  })
+
+  it('the transcripts kept are bounded: the oldest session\'s goes first', () => {
+    const first = fresh()
+    const last = fresh()
+    startClaude(first)
+    startClaude(last)
+    hook(first, CL_A)
+    for (let i = 0; i < CLAUDE_TRANSCRIPTS_MAX - 1; i++) hook(`bound${String(i).padStart(19, '0')}`, CL_B)
+    hook(last, CL_B)
+    h.settings = { ...CONSENT, loggingEnabled: false }
+    applyLoggingSwitches()
+    // The first session's transcript is no longer known: its switch-off marks nothing; the last one's does.
+    expect(claudeWindows(CL_A)).toEqual([])
+    expect(claudeWindows(CL_B)).toEqual([[T0, null]])
   })
 })

@@ -11,6 +11,12 @@
  * each record stamped inside a window. Windows describe history: nothing
  * clears them.
  *
+ * P3.16 (M1): a Claude conversation the same way (its key is its transcript's
+ * id, the file name, as a rollout's ends with its id): a window opens when a
+ * local Claude session that is not indexed is on it (its hooks and status line
+ * name the transcript, or its exact resume at launch), and the worker leaves
+ * out its records by record time as it does a rollout's.
+ *
  * A window opens at the moment the session BECAME not indexed (its launch, or
  * the switch-off), not at its claim of the conversation: Codex writes the
  * rollout's session_meta and the first prompt before the claim, and a later
@@ -72,7 +78,8 @@ let timer: ReturnType<typeof setTimeout> | null = null
 let writes = 0
 let listener: ((update: NotIndexedUpdate) => void) | null = null
 
-/** A conversation's key (its rollout id), as the worker and search use it. */
+/** A conversation's key (its rollout id, or a Claude transcript's id), as the
+ *  worker and search use it. */
 export function conversationKey(rolloutPath: string): string {
   return codexConversationKey(rolloutPath)
 }

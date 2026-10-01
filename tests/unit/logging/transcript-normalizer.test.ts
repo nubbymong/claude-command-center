@@ -1036,3 +1036,44 @@ describe('verbatim-realistic fixture: full CC JSONL line', () => {
     expect(n.stats.unknown).toBe(0)
   })
 })
+
+// P3.16 (M1): a Claude transcript's records written while not indexed are left
+// out by record time, the rule the other assistant's records are read by.
+describe('makeNormalizer with skip (P3.16, M1)', () => {
+  const at = (s: number) => new Date(Date.UTC(2026, 8, 30, 10, 0, s)).toISOString()
+  const ms = (s: number) => Date.UTC(2026, 8, 30, 10, 0, s)
+  const user = (text: string, s: number | null) => JSON.stringify({ type: 'user', ...(s === null ? {} : { timestamp: at(s) }), message: { role: 'user', content: text } })
+  const tool = (s: number) => JSON.stringify({ type: 'assistant', timestamp: at(s), message: { role: 'assistant', content: [{ type: 'text', text: 'running it' }, { type: 'tool_use', name: 'Bash', input: { command: 'ls' } }] } })
+  const inWindow = (ts: number | null) => ts === null || (ts >= ms(10) && ts < ms(20))
+
+  it('a run of records left out leaves one divider before the next rows kept, in idx order, idx continuing', () => {
+    const n = makeNormalizer({ startIdx: 5, skip: inWindow, skippedLabel: 'off' })
+    const rows = [user('before', 1), user('in-1', 11), tool(12), user('after', 21), tool(22)].flatMap((l) => n.push(l))
+    expect(rows.map((r) => [r.idx, r.kind, r.kind === 'tool_call' ? r.toolName : r.content])).toEqual([
+      [5, 'message', 'before'],
+      [6, 'clear', 'off'],
+      [7, 'message', 'after'],
+      [8, 'message', 'running it'],
+      [9, 'tool_call', 'Bash'],
+    ])
+    expect(rows[1].ts).toBe(ms(21))
+  })
+
+  it('a divider then a record giving several rows: all after the divider, nothing reused', () => {
+    const n = makeNormalizer({ skip: inWindow, skippedLabel: 'off' })
+    const rows = [user('in', 15), tool(25)].flatMap((l) => n.push(l))
+    expect(rows.map((r) => [r.idx, r.kind])).toEqual([[0, 'clear'], [1, 'message'], [2, 'tool_call']])
+    expect(n.push(user('next', 26))[0].idx).toBe(3)
+  })
+
+  it('without skip it reads as it always has (no divider, records with no time kept)', () => {
+    const n = makeNormalizer()
+    expect([user('no-time', null), user('in', 11)].flatMap((l) => n.push(l)).map((r) => r.content)).toEqual(['no-time', 'in'])
+  })
+
+  it('a malformed line is still counted as malformed, not taken for a record left out', () => {
+    const n = makeNormalizer({ skip: () => true, skippedLabel: 'off' })
+    expect(n.push('{not json')).toEqual([])
+    expect(n.stats.malformed).toBe(1)
+  })
+})
