@@ -344,6 +344,11 @@ export interface CodexRealmFolderDeps {
   marks?: CodexCarryMarks
   /** The clock a carry is stamped with. */
   now?: () => number
+  /** The newest zoned time in the copy a carry just made, for its mark (the
+   *  mark is never earlier): a clock stepped back since the earlier account
+   *  wrote it cannot let that account's later events count. Absent: the
+   *  carry's own time. */
+  newestStamp?: (sessionsDir: string, id: string) => number | null
 }
 
 /** Bounds on a tree the removal will walk: an abandoned setup's home holds a
@@ -820,6 +825,10 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
       const releaseDst = deps.locks.hold(codexRealmLockKey(d.canonical, d.home.dev, d.home.ino))
       if (!releaseDst) { releaseSrc(); return fail('busy') }
       try {
+        // The history carried into the replacement keeps its carry marks (ADR-023):
+        // the copies in it are linked, not re-made, so nothing else would mark
+        // them. Kept before any file is linked; a mark that cannot be kept stops it.
+        if (deps.marks && !deps.marks.adopt(from.authRealmId, to.authRealmId, pathApi.join(dst.home, HISTORY_DIR))) return fail('io-failed')
         const planned: Planned[] = []
         // The transcripts folder, when there is one.
         const sessions = pathApi.join(src.home, HISTORY_DIR)
@@ -999,16 +1008,24 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
         if (!unchanged(src.home, s.home) || !unchanged(dst.home, d.home)) return CARRY_CHANGED
         // No longer wanted: the locks go at once, before any file work.
         if (!current()) return fail('cancelled')
+        // The mark first (ADR-023): a copy that landed with no mark would show
+        // the earlier account's figures, so a mark that cannot be kept stops the
+        // carry before any file work, and one left by a copy that fails is taken
+        // back.
+        const mark = beginMark(to, pathApi.join(dst.home, 'sessions'), id)
+        if (!mark) return fail('io-failed')
         let r: Awaited<ReturnType<CodexConversationCarry>>
         try {
           r = await carry({ fromSessionsDir: pathApi.join(src.home, 'sessions'), toHome: dst.home, id, ...(preferCwd ? { preferCwd } : {}), shouldStop: () => !current() })
         } catch {
+          mark.undo()
           return fail('io-failed')
         }
         if (r && r.ok === true && (r.carried === 'copied' || r.carried === 'present' || r.carried === 'extended')) {
-          markCarried(to, dst.home, id, r.carried)
+          mark.finish(r.carried)
           return { ok: true, carried: r.carried }
         }
+        mark.undo()
         const code = r && r.ok === false && typeof r.code === 'string' ? r.code : 'io-failed'
         return Object.prototype.hasOwnProperty.call(CARRY_FAILURES, code) ? CARRY_FAILURES[code] : fail('io-failed')
       } finally {
@@ -1017,21 +1034,42 @@ export function createCodexRealmFolders(deps: CodexRealmFolderDeps): ProviderRea
     }).then((r) => (r.ok === false && r.code === 'io-failed' ? CARRY_IO_FAILED : r))
   }
 
-  /** The carry's mark (ADR-023): the copy now in the destination's folder holds
-   *  the earlier account's events, so a reader of that rollout counts only what
-   *  is written after this moment. A copy or an extension is marked now; one
-   *  that was `present` already keeps the mark it has, and is marked now only
-   *  when it has none. Never throws. */
-  function markCarried(to: RealmRef, home: string, id: string, carried: 'copied' | 'present' | 'extended'): void {
+  /** The carry's mark (ADR-023), made before the copy: the copy that lands in
+   *  the destination's folder holds the earlier account's events, so a reader of
+   *  that rollout counts only what is written after this moment. Null when the
+   *  mark cannot be kept (the carry must not go on). `finish` after a copy that
+   *  landed: a copy that was `present` already keeps the mark it had (marked
+   *  now only when it had none), any other is marked no earlier than the newest
+   *  time in the copy; `undo` after one that did not: the mark it replaced is
+   *  back, or none. Neither throws. */
+  function beginMark(to: RealmRef, sessionsDir: string, id: string): { finish(carried: 'copied' | 'present' | 'extended'): void; undo(): void } | null {
     const marks = deps.marks
-    if (!marks) return
-    try {
-      const sessionsDir = pathApi.join(home, 'sessions')
-      if (carried === 'present' && marks.cutoff(sessionsDir, id) !== null) return
-      let at = Date.now()
-      try { const n = deps.now ? deps.now() : at; if (Number.isFinite(n)) at = n } catch { /* the wall clock */ }
-      marks.record(to.authRealmId, sessionsDir, id, at)
-    } catch { /* a mark that cannot be kept never fails the carry */ }
+    if (!marks) return { finish() {}, undo() {} }
+    let at = Date.now()
+    try { const n = deps.now ? deps.now() : at; if (Number.isFinite(n)) at = n } catch { /* the wall clock */ }
+    let prior: number | null = null
+    try { prior = marks.markOf(sessionsDir, id) } catch { prior = null }
+    let kept = false
+    try { kept = marks.record(to.authRealmId, sessionsDir, id, at) === true } catch { kept = false }
+    if (!kept) return null
+    return {
+      finish(carried) {
+        try {
+          if (carried === 'present') {
+            if (prior !== null) marks.record(to.authRealmId, sessionsDir, id, prior)
+            return
+          }
+          const newest = deps.newestStamp ? deps.newestStamp(sessionsDir, id) : null
+          if (typeof newest === 'number' && Number.isFinite(newest) && newest > at) marks.record(to.authRealmId, sessionsDir, id, newest)
+        } catch { /* the mark made before the copy stands */ }
+      },
+      undo() {
+        try {
+          if (prior === null) marks.remove(sessionsDir, id)
+          else marks.record(to.authRealmId, sessionsDir, id, prior)
+        } catch { /* a mark left behind only hides more */ }
+      },
+    }
   }
 
   /** An account was removed: its realm's carry marks go (ADR-023). */

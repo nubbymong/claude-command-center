@@ -28,7 +28,7 @@ import { createCodexRealmFolders, createCodexRealmLocks, resolveCodexRealmRoots 
 import { carryCodexRollout } from './conversation-carry'
 import type { CodexConversationCarry } from './conversation-carry'
 import { codexExternalDefaultHome, codexHomeDisplay } from './realm-paths'
-import { createCodexLiveUsage, createCodexUsageOperations, createCodexCarryMarks, codexRolloutIdFromName, realCodexUsageFsPort } from './usage'
+import { createCodexLiveUsage, createCodexUsageOperations, createCodexCarryMarks, codexRolloutIdFromName, newestCarriedStamp, realCodexUsageFsPort } from './usage'
 import type { CodexLiveUsage, CodexUsageFsPort, CodexCarryMarks, CodexCarryMarksPort } from './usage'
 import type { CodexFolderLookup, CodexFsEntry, CodexRealmFsPort, CodexRealmFolderLimits } from './realm-folders'
 import fs from 'node:fs'
@@ -92,7 +92,7 @@ export type { CodexConversationCarry, CodexCarryInput, CodexCarryResult, CodexCa
 export { normaliseCodexRateLimits, mergeAllowanceReadings, readingToBuckets, CODEX_DEFAULT_LIMIT_ID } from './rate-limits'
 export {
   readLastSeenAllowance, lookupLastSeenAllowance, createCodexLiveUsage, createCodexUsageOperations, realCodexUsageFsPort,
-  createCodexCarryMarks, codexRolloutIdFromName, CODEX_CARRY_MARKS_MAX,
+  createCodexCarryMarks, codexRolloutIdFromName, newestCarriedStamp, newestStampInTail, CODEX_CARRY_MARKS_MAX, CODEX_CARRY_MARKS_FILE_MAX_CHARS,
   CODEX_USAGE_TAIL_BYTES, CODEX_USAGE_TAIL_MAX_BYTES, CODEX_USAGE_MAX_FILES, CODEX_USAGE_MAX_DAYS, CODEX_USAGE_WALK_BUDGET, CODEX_USAGE_DAY_ENTRIES, CODEX_USAGE_READ_TIMEOUT_MS,
 } from './usage'
 export type { CodexUsageFsPort, CodexUsageEntry, CodexUsageFsApi, CodexLiveUsage, CodexUsageDeps, LastSeenCache, LastSeenLookup, CodexCarryMarks, CodexCarryMarksPort } from './usage'
@@ -383,6 +383,9 @@ export interface CodexPackageDeps {
   carryMarksPort?: CodexCarryMarksPort
   /** The clock a carry is stamped with, for a test. */
   now?: () => number
+  /** The newest time in the copy a carry made, for its mark; replaces the real
+   *  read of the copy, for a test. */
+  newestCopiedStamp?: (sessionsDir: string, id: string) => number | null
 }
 
 /** The CODEX_HOME the app inherited, in every spelling, captured once when
@@ -398,7 +401,7 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
   const liveUsage = deps.liveUsage ?? createCodexLiveUsage(deps.realmFs?.platform ?? process.platform)
   // Conversations carried by Switch Account (ADR-023): read by the session
   // watchers and the last-seen reader, written by the conversation copy.
-  const carryMarks = deps.carryMarks ?? createCodexCarryMarks({ ...(deps.carryMarksPort ? { port: deps.carryMarksPort } : {}), platform: deps.realmFs?.platform ?? process.platform })
+  const carryMarks = deps.carryMarks ?? createCodexCarryMarks({ ...(deps.carryMarksPort ? { port: deps.carryMarksPort } : {}), platform: deps.realmFs?.platform ?? process.platform, ...(deps.now ? { now: deps.now } : {}) })
   const session = new CodexProvider(liveUsage, carryMarks)
   // The CLI setup last proved. Sign-in re-verifies it and runs exactly it. A
   // re-check clears it while it runs, and a failed check leaves it clear, so
@@ -464,7 +467,7 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
       ),
       // P3.6: a switched session's conversation is carried with the real
       // file system (conversation-carry.ts), under these same realm locks.
-      realmFolders: createCodexRealmFolders({ lookupRealm, fs: realmFs, locks, carry: deps.conversationCarry ?? carryCodexRollout, marks: carryMarks, ...(deps.now ? { now: deps.now } : {}), ...(deps.realmLimits ? { limits: deps.realmLimits } : {}) }),
+      realmFolders: createCodexRealmFolders({ lookupRealm, fs: realmFs, locks, carry: deps.conversationCarry ?? carryCodexRollout, marks: carryMarks, newestStamp: deps.newestCopiedStamp ?? ((dir, id) => newestCarriedStamp(dir, id, deps.now ? deps.now() : Date.now())), ...(deps.now ? { now: deps.now } : {}), ...(deps.realmLimits ? { limits: deps.realmLimits } : {}) }),
       // The user's own ~/.codex (or inherited CODEX_HOME), adopted only when
       // the user chooses to use it and it is signed in (owner decision
       // 2026-09-26): realm-only, never vouched for (design 6.3).

@@ -178,6 +178,9 @@ export interface HarnessOpts {
   carryMarks?: CodexCarryMarks
   /** The clock a carry is stamped with. Absent: the wall clock. */
   carryNow?: () => number
+  /** The newest time in the copy a carry made (P3.14 round 2). Absent: none,
+   *  so no test reads a disk for it. */
+  newestCopiedStamp?: (sessionsDir: string, id: string) => number | null
   /** The model catalogue read's ports (P3.9). Absent: a stub whose run
    *  fails, so no test starts a process or makes a folder through it. */
   catalogueDeps?: () => Omit<CodexCatalogueDeps, 'proven'>
@@ -267,6 +270,7 @@ export async function harness(o: HarnessOpts = {}) {
     conversationCarry: o.conversationCarry ?? (async () => ({ ok: false, code: 'io-failed' })),
     ...(o.carryMarks ? { carryMarks: o.carryMarks } : {}),
     ...(o.carryNow ? { now: o.carryNow } : {}),
+    newestCopiedStamp: o.newestCopiedStamp ?? (() => null),
     catalogueDeps: o.catalogueDeps ?? (() => ({
       executablePorts: { resolve: () => EXE, realpath: (p) => p, stat: () => state.exeStat, platform: 'win32' },
       baseEnv: async () => ({ PATH: 'C:\\Tools', SystemRoot: 'C:\\Windows' }),

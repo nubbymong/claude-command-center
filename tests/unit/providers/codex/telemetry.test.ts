@@ -1091,7 +1091,8 @@ describe('allowance from the rollout (usage track MP2)', () => {
     it('an event with no zoned time, or at the carry\'s own moment, is not this account\'s', async () => {
       const c = await carried({ marked: true })
       try {
-        append(c.folder.sessions, bEvent(c.at(300).replace('Z', '')))
+        // A zoneless stamp a day and more after the carry: after it in every time zone, so ignoring it is the rule's doing, not the host zone's.
+        append(c.folder.sessions, bEvent(c.at(86_400_000 + 300).replace('Z', '')))
         append(c.folder.sessions, bEvent('later'))
         append(c.folder.sessions, bEvent(c.at(200)))
         await vi.advanceTimersByTimeAsync(2000)
@@ -1105,12 +1106,41 @@ describe('allowance from the rollout (usage track MP2)', () => {
       }
     })
 
+    it('while the marks cannot be read nothing of the rollout counts, then this account\'s own event does once they can (round 2)', async () => {
+      const spawn = startClock()
+      const at = (ms: number) => new Date(spawn + ms).toISOString()
+      const folder = p314Sessions([meta(at(50), '/p314/cwd'), aEvent(at(100))], NAME)
+      let readable = false
+      let clock = spawn
+      const marks = createCodexCarryMarks({
+        platform: process.platform,
+        port: { read: () => (readable ? { kind: 'missing' } : { kind: 'unavailable' }), write: () => {}, setAside: () => false },
+        now: () => clock,
+      })
+      const live = createCodexLiveUsage(process.platform)
+      const src = new CodexProvider(live, marks).ingestSessionTelemetry('sess-carried-closed', { cwd: '/p314/cwd', spawnTimestamp: spawn, sessionsDir: folder.sessions }, () => {})
+      try {
+        await vi.advanceTimersByTimeAsync(1000)
+        expect(live.get(folder.sessions)).toBeNull()
+        // The marks can be read now (no mark was ever recorded: the file is missing), so this account's own
+        // event, written after, counts as soon as it is read.
+        readable = true
+        clock = spawn + 120_000
+        append(folder.sessions, bEvent(at(300)))
+        await vi.advanceTimersByTimeAsync(3000)
+        expect(live.get(folder.sessions)).toMatchObject({ planType: 'plus' })
+      } finally {
+        src.stop()
+        folder.remove()
+      }
+    })
+
     it('a mark that cannot be asked for (it throws) reads the rollout whole, as before', async () => {
       const spawn = startClock()
       const ts = new Date(spawn + 100).toISOString()
       const folder = p314Sessions([meta(ts, '/p314/cwd'), aEvent(ts)], NAME)
       const live = createCodexLiveUsage(process.platform)
-      const throwing = { record: () => false, cutoff: (): number | null => { throw new Error('marks') }, dropRealm: () => {} }
+      const throwing = { record: () => false, markOf: () => null, remove: () => {}, unavailable: () => false, adopt: () => false, cutoff: (): number | null => { throw new Error('marks') }, dropRealm: () => {} }
       const src = new CodexProvider(live, throwing).ingestSessionTelemetry('sess-carried-throws', { cwd: '/p314/cwd', spawnTimestamp: spawn, sessionsDir: folder.sessions }, () => {})
       try {
         await vi.advanceTimersByTimeAsync(1000)
