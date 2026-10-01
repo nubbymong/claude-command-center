@@ -10,11 +10,15 @@ import type { ProviderId } from '../types'
 
 /** Why a launch was refused: the provider is switched off, the user has not
  *  said yet whether they use it (a provider whose absent value means "not
- *  answered yet", until they answer: owner decision 2026-09-26), or main
- *  could not read whether it is on (no answer is never a yes, for a launch). */
-export type ProviderLaunchRefusalCode = 'provider-off' | 'provider-not-set-up' | 'provider-state-unknown'
+ *  answered yet", until they answer: owner decision 2026-09-26), main
+ *  could not read whether it is on (no answer is never a yes, for a launch),
+ *  or the config is not a Multi Spawn config and a copy of it is already
+ *  running (`already-running`: pty:spawn's one-at-a-time rule, P3.13). That
+ *  last one names the provider the session would have run, though it is not
+ *  about the provider: the code is what the renderer branches on. */
+export type ProviderLaunchRefusalCode = 'provider-off' | 'provider-not-set-up' | 'provider-state-unknown' | 'already-running'
 
-export const PROVIDER_LAUNCH_REFUSAL_CODES: readonly ProviderLaunchRefusalCode[] = ['provider-off', 'provider-not-set-up', 'provider-state-unknown']
+export const PROVIDER_LAUNCH_REFUSAL_CODES: readonly ProviderLaunchRefusalCode[] = ['provider-off', 'provider-not-set-up', 'provider-state-unknown', 'already-running']
 
 export interface ProviderLaunchRefusal {
   code: ProviderLaunchRefusalCode

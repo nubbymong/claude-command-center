@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "bec6dfb931ebe5baedcdd36eafc667107f1ffdb67332ab57a13e630fff65c510",
-  "manifestHead": "ca6e2cc2b25a0dd5c1cd7fe4cd6452f79eb9868c",
+  "manifestPathDigest": "2e16d0a1216ee4b7d697a9979fc7ceaf774ab369a20132c1c546bf5108c89b15",
+  "manifestHead": "c11fb360a15748974ded272cd1120866a8ffaf04",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -4619,6 +4619,20 @@
       "note": "created by WP2 PR 3 P3.12"
     },
     {
+      "path": "tests/unit/main/codex-multi-spawn-leases.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P05",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.13 test (tests/unit/main/codex-multi-spawn-leases.test.ts): through the real pty:spawn handler and the real pty-manager on a real consumer-lease registry, N copies of a Multi Spawn Codex config are N processes each on its own account lease, a copy ending or closing lets go of its own lease only, and a config that is not Multi Spawn runs one copy at a time with the refused copy taking no lease (WP1.46, WP1.68)",
+      "note": "created by WP2 PR 3 P3.13; node-pty, the command builders and the accounts preparation faked, nothing spawns"
+    },
+    {
       "path": "tests/unit/main/codex-name-sidecar.test.ts",
       "predicates": [
         "P01",
@@ -4799,6 +4813,16 @@
       "note": "created by WP2 (main refuses every launch of a provider that is off)"
     },
     {
+      "path": "tests/unit/main/launch-one-at-a-time.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.13 test (tests/unit/main/launch-one-at-a-time.test.ts): main's one-at-a-time rule on its own, pure over an injected saved-config reader and liveness question: the first copy goes ahead and the second is refused, a Multi Spawn config has no limit, a partner shell, Ask, the same session id and an SSH reattach are not copies, claims stay bounded, the refusal names the config safely (WP1.68)",
+      "note": "created by WP2 PR 3 P3.13; nothing mocked but the logger"
+    },
+    {
       "path": "tests/unit/main/logging-switch-wiring.test.ts",
       "predicates": [
         "P13"
@@ -4958,6 +4982,19 @@
       "disposition": "retain",
       "evidence": "retained: its cases and assertions are unchanged since the WP1 base; its mock of src/main/conductor-mcp-server.ts gained registerClaudeReviewSession (WP2 commit 5b), which it does not test; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
+    },
+    {
+      "path": "tests/unit/main/pty-spawn-one-at-a-time.test.ts",
+      "predicates": [
+        "P04",
+        "P05",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.13 test (tests/unit/main/pty-spawn-one-at-a-time.test.ts): through the real pty:spawn handler, a second copy of a Codex, Claude, terminal-only or SSH config that is not Multi Spawn is refused before anything is prepared, leased or spawned, with the typed refusal; the rule holds while the first copy is still preparing and reads the saved flag from disk (WP1.60, WP1.68)",
+      "note": "created by WP2 PR 3 P3.13; fake ipcMain, pty-manager faked, nothing spawns"
     },
     {
       "path": "tests/unit/main/pty-spawn-provider-off.test.ts",
@@ -6334,6 +6371,19 @@
       "disposition": "retain",
       "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/multi-spawn-codex.test.tsx",
+      "predicates": [
+        "P01",
+        "P05",
+        "P07",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.13 test (tests/unit/renderer/multi-spawn-codex.test.tsx): Multi Spawn and Quick Start on a Codex config: the launch backstop, a x N launch of N distinct Codex copies, a Restart of a tab that started nothing, a Codex pin's x N control, blocked start and select lock, and the renderer and main asking the same rule (WP1.60, WP1.68)",
+      "note": "created by WP2 PR 3 P3.13"
     },
     {
       "path": "tests/unit/renderer/multi-spawn-launch.test.tsx",

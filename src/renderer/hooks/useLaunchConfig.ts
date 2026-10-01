@@ -6,6 +6,7 @@ import { generateId } from '../utils/id'
 import { markSessionForResumePicker } from '../utils/resumePicker'
 import { isClaudeOff, CLAUDE_OFF_LAUNCH_REASON } from '../lib/claudeOff'
 import { providerOffMessage, providerNotSetUpMessage, refusedTabText } from '../../shared/providers'
+import { isOneAtATimeBlocked, alreadyRunningCopy } from '../../shared/multi-spawn-rule'
 import { codexPreference } from '../onboarding/provider-choice'
 
 /** What the launch rule reads of a config. */
@@ -112,20 +113,21 @@ export const CODEX_NOT_SET_UP_LAUNCH_REASON = providerNotSetUpMessage('Codex', '
  * Deliberately `!== true`, so the stored field's third state (an explicit
  * `false` — "the user turned this off") blocks exactly like `undefined`. Only
  * the startup migration tells the two apart; see utils/multiSpawn.ts.
+ *
+ * The rule itself is shared (shared/multi-spawn-rule.ts): main asks the same
+ * function at pty:spawn (main/launch-one-at-a-time.ts), so the two cannot
+ * drift, and a launch this refuses on screen is one main would refuse too.
  */
 export function isMultiSpawnLaunchBlocked(
   config: Pick<TerminalConfig, 'allowMultiSpawn'>,
   runningCount: number,
 ): boolean {
-  return runningCount > 0 && config.allowMultiSpawn !== true
+  return isOneAtATimeBlocked(config.allowMultiSpawn, runningCount)
 }
 
 /** Popover copy for a launch refused by the rule above (bold head + body). */
 export function alreadyRunningLaunchCopy(label: string): { headline: string; body: string } {
-  return {
-    headline: `${label} is already running.`,
-    body: "It isn't a Multi Spawn config, so it runs one at a time.",
-  }
+  return alreadyRunningCopy(label)
 }
 
 /** Popover copy for a SELECTION refused by the same rule. */

@@ -1,11 +1,12 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { z } from 'zod'
-import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemoteDetailed, probeTmuxLive, holdsCodexLaunchLease, codexLaunchLeaseTaken, beginSpawnPreparation, isSessionWritable, SSHOptions, SshEndTarget, getKeptCodexConversation, getKeptCodexConversationSource, codexRunEnded, codexConversationHeldElsewhere } from '../pty-manager'
+import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemoteDetailed, probeTmuxLive, holdsCodexLaunchLease, codexLaunchLeaseTaken, beginSpawnPreparation, isSessionWritable, isSessionLiveOrStarting, SSHOptions, SshEndTarget, getKeptCodexConversation, getKeptCodexConversationSource, codexRunEnded, codexConversationHeldElsewhere } from '../pty-manager'
 import type { CodexLaunch } from '../pty-manager'
 import { getAccountsService } from '../provider-accounts'
 import { awaitCodexHookFolders } from '../codex-hook-folders'
 import { getGateway } from '../hooks'
 import { providerLaunchRefusal } from '../provider-launch-gate'
+import { claimConfigLaunch } from '../launch-one-at-a-time'
 import type { AccountLease, AccountsService } from '../providers/core'
 import type { ConversationCarryNotice } from '../../shared/providers'
 import { forgetCanvasMarkers } from '../canvas/canvas-marker-delivery'
@@ -759,6 +760,14 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
       const refused = providerLaunchRefusal(launchProvider)
       if (refused) return { started: false as const, refused }
     }
+    // P3.13 (row 72): a config that is not Multi Spawn runs one copy at a
+    // time, and main holds it to that here, as the renderer's own launch
+    // surfaces do. Asked and, when it passes, claimed in this same tick,
+    // before anything is installed, prepared, leased or spawned, so a second
+    // copy asked for meanwhile finds the first (launch-one-at-a-time.ts). The
+    // provider rule above comes first: a provider that is off says so.
+    const alreadyRunning = claimConfigLaunch(sessionId, options, { savedConfigs: () => readConfig('configs'), isLive: (id) => isSessionLiveOrStarting(id) })
+    if (alreadyRunning) return { started: false as const, refused: alreadyRunning }
     // A new spawn of this id replaces whatever ran under it before: an
     // accepted SSH "Launch Claude" of the old PTY no longer counts.
     sshClaudeLaunches.delete(sessionId)
