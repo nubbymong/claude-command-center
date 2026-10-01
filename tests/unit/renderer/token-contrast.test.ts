@@ -1094,14 +1094,28 @@ describe('contrast, P3.16a (U4): an attention card and tab stay readable under t
   it('the tint laid under the overlay is the one the components set (hex 12 on hover and selection)', () => {
     const row = fs.readFileSync(path.resolve(__dirname, '../../../src/renderer/components/sidebar/SessionRow.tsx'), 'utf8')
     const bar = fs.readFileSync(path.resolve(__dirname, '../../../src/renderer/components/TabBar.tsx'), 'utf8')
+    // The card's hover (onMouseEnter) and its multi-select (selectedStyle) tints:
+    // round 1 pins the second too, which a raise to '20' would otherwise pass.
+    // (The active card's '20' never shows attention.)
     expect(row).toMatch(/backgroundColor = identity \+ '12'/)
+    expect(row).toMatch(/:\s*isSelected\s*\?\s*\{\s*backgroundColor: identity \+ '12',/)
     expect(bar).toMatch(/backgroundColor = color \+ '12'/)
   })
 
-  it('the attention card sets its muted text to the secondary text, in styles.css', () => {
-    const rule = /\.session-card\[data-attention(?:=["']true["'])?\]\s*\{([^}]*)\}/.exec(CSS)
-    expect(rule, 'a .session-card[data-attention] rule').not.toBeNull()
-    expect(rule![1]).toMatch(/--text-muted:\s*var\(--text-secondary\)\s*;/)
+  it('the attention card sets its muted text to the secondary text, in styles.css, and only its text: the context meter keeps --text-muted (round 1)', () => {
+    // Redefined on the card's muted text elements, not on the whole card: on the
+    // card it also recoloured the context meter's fill (.meter-neutral).
+    const rule = /\.session-card\[data-attention="true"\]\s+:is\(([^)]*)\)\s*\{([^}]*)\}/.exec(CSS)
+    expect(rule, 'a .session-card[data-attention="true"] :is(...) rule').not.toBeNull()
+    expect(rule![1].split(',').map((s) => s.trim()).sort()).toEqual(['.meta', '.session-ordinal'])
+    expect(rule![2]).toMatch(/--text-muted:\s*var\(--text-secondary\)\s*;/)
+    expect(CSS, 'no rule redefines it on the whole attention card').not.toMatch(/\.session-card\[data-attention(?:=["']true["'])?\]\s*\{[^}]*--text-muted/)
+    expect(CSS).toMatch(/\.meter-neutral\s*\{\s*background:\s*var\(--text-muted\);/)
+    // Every element of the card drawn in --text-muted is one of the two the rule names.
+    const row = fs.readFileSync(path.resolve(__dirname, '../../../src/renderer/components/sidebar/SessionRow.tsx'), 'utf8')
+    const muted = row.match(/<[a-z]+\b[^>]*--text-muted[^>]*>/g) ?? []
+    expect(muted.length).toBeGreaterThanOrEqual(2)
+    for (const tag of muted) expect(tag.replace(/\s+/g, ' '), tag).toMatch(/className="(?:[^"]* )?(?:meta|session-ordinal)(?: [^"]*)?"/)
   })
 
   it('every identity colour, both themes: the card name, its muted lines and the tab label clear 4.5:1 at the pulse\'s strongest', () => {

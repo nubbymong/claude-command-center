@@ -173,8 +173,11 @@ export interface Session {
    *  running (runningConfigCounts), so it blocks neither a launch nor a
    *  delete. Also set by the restore for a session whose provider cannot
    *  launch then (session-persistence), before its tab is first viewed.
-   *  Cleared as soon as a PTY starts, and by a Restart. Ephemeral, like
-   *  ptyExited: not persisted. */
+   *  A Restart keeps it (useRestartSession). TerminalView clears it at its
+   *  pre-spawn check once the launch passes the Multi Spawn rule, before the
+   *  PTY starts; it is set again if that start ends with nothing started
+   *  (settleOwnStart), and cleared when a PTY starts (markLive). Ephemeral,
+   *  like ptyExited: not persisted. */
   neverStarted?: boolean
   /** True only for an in-progress add-account login shell; drives the /login
    *  guidance banner. Cleared once the account is detected. */

@@ -64,6 +64,9 @@ beforeEach(() => {
 afterEach(() => {
   act(() => { root.unmount() })
   container.remove()
+  // Set by the platform loops; deleted here so a failing case cannot leave it
+  // for the cases after it (P3.16a UI round 1).
+  delete (window as any).electronPlatform
 })
 
 async function altV(sessions: Session[], active: string) {
@@ -114,7 +117,23 @@ describe('Alt+V with focus outside the terminal (P3.15, row 70)', () => {
       await altV([session('sh1', { shellOnly: true } as Partial<Session>)], 'sh1')
       expect(h.typeImagePathIntoShell.mock.calls[0][2], platform).toBe(isWin32)
     }
-    delete (window as any).electronPlatform
+  })
+
+  // P3.16a UI round 1: a plain terminal whose process has ended, or that never
+  // started, has no shell to type into; it says so, as the other refusals do.
+  it('a plain terminal that is not running gets nothing typed, and the hint says so and where the image is', async () => {
+    for (const dead of [{ ptyExited: true }, { neverStarted: true }, { ptyExited: true, sessionType: 'ssh' as const }]) {
+      const label = JSON.stringify(dead)
+      h.typeImagePathIntoShell.mockReset()
+      usePasteHintStore.setState({ hints: {} })
+      await altV([session('sh3', { shellOnly: true, ...dead } as Partial<Session>)], 'sh3')
+      expect(h.typeImagePathIntoShell, label).not.toHaveBeenCalled()
+      expect(h.sendImageToSession, label).not.toHaveBeenCalled()
+      expect(h.sendImagePathToCodex, label).not.toHaveBeenCalled()
+      const hint = usePasteHintStore.getState().hints.sh3
+      expect(hint, label).toContain('not running')
+      expect(hint, label).toContain(IMG)
+    }
   })
 
   it('a plain terminal over SSH gets nothing typed (the file is on this computer, which the remote shell cannot read), and the hint says so', async () => {
