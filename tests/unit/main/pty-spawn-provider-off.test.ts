@@ -48,10 +48,13 @@ vi.mock('../../../src/main/config-manager', () => ({ readConfig: (key: string) =
 const loadCredential = vi.fn((_k: string) => 'pw')
 vi.mock('../../../src/main/credential-store', () => ({ loadCredential: (k: string) => loadCredential(k) }))
 // P3.10 round 5 (G4): whether the Hooks gateway listens (off unless a case turns it on).
-const gw = vi.hoisted(() => ({ listening: false }))
+// As in the app, a gateway that does not listen is still there (the in-process
+// gateway with hooks off, or the supervisor's proxy while it starts or backs
+// off): its status says listening: false. `present: false` is no gateway at all.
+const gw = vi.hoisted(() => ({ listening: false, present: true }))
 vi.mock('../../../src/main/hooks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/main/hooks')>()),
-  getGateway: () => (gw.listening ? { status: () => ({ listening: true, port: 51234 }) } : null),
+  getGateway: () => (gw.present ? { status: () => ({ listening: gw.listening, port: gw.listening ? 51234 : null }) } : null),
 }))
 
 // The accounts service's answer, per provider: on, off, or a saved setting
@@ -295,7 +298,7 @@ describe('the legacy Claude Code CLI install is for a Claude launch only', () =>
 // folders (prepared asynchronously, a no-op while ready); a Claude launch does
 // not ask for them.
 describe('P3.10 round 4: a local Codex launch waits for its hook folders', () => {
-  afterEach(() => { stopCodexHookFolders(); gw.listening = false })
+  afterEach(() => { stopCodexHookFolders(); gw.listening = false; gw.present = true })
 
   it('the spawn waits for the preparation, then starts; a Claude launch does not ask for it', async () => {
     set('on', 'on')
@@ -314,8 +317,18 @@ describe('P3.10 round 4: a local Codex launch waits for its hook folders', () =>
     expect(asked).toBe(1)
   })
 
-  it('round 5 (G4): with the Hooks gateway not listening, the launch does not wait for the hook folders', async () => {
+  it('round 5 (G4): with the Hooks gateway there but not listening, the launch does not wait for the hook folders', async () => {
     set('on', 'on')
+    let asked = 0
+    startCodexHookFolders({ providerOn: () => true, prepare: () => { asked++; return new Promise<boolean>(() => {}) } })
+    await spawn({}, SID, { cwd: 'C:/w', provider: 'codex', codexOptions: { permissionsPreset: 'standard' } })
+    expect(asked).toBe(0)
+    expect(spawnPty).toHaveBeenCalledTimes(1)
+  })
+
+  it('round 5 (G4): with no Hooks gateway at all, the launch does not wait for the hook folders', async () => {
+    set('on', 'on')
+    gw.present = false
     let asked = 0
     startCodexHookFolders({ providerOn: () => true, prepare: () => { asked++; return new Promise<boolean>(() => {}) } })
     await spawn({}, SID, { cwd: 'C:/w', provider: 'codex', codexOptions: { permissionsPreset: 'standard' } })

@@ -560,14 +560,38 @@ describe('round 5: a failed preparation waits before it is tried again', () => {
     vi.setSystemTime(Date.now() + CODEX_HOOK_FOLDERS_RETRY_MS - 1)
     expect((await prepareCodexHookFolders(plan, no.secure)).ran).toBe(false)
     expect(no.calls).toHaveLength(1)
+    // Gate 3 (quality item 1, nit 3): the SAME folders, once the wait is over
+    // (at exactly CODEX_HOOK_FOLDERS_RETRY_MS): the rule is asked again, and
+    // the wait starts again from that answer.
+    vi.setSystemTime(Date.now() + 1)
+    expect(await prepareCodexHookFolders(plan, no.secure)).toMatchObject({ root: false, ran: true })
+    expect(no.calls).toHaveLength(2)
+    expect((await prepareCodexHookFolders(plan, no.secure)).ran).toBe(false)
+    expect(no.calls).toHaveLength(2)
     // Other folders asked for: the rule is asked at once.
     expect((await prepareCodexHookFolders({ ...plan, dataDir: tmp() }, no.secure)).ran).toBe(true)
-    expect(no.calls).toHaveLength(2)
+    expect(no.calls).toHaveLength(3)
     // Past the wait: asked again, and a rule that takes now gives the root.
     vi.setSystemTime(Date.now() + CODEX_HOOK_FOLDERS_RETRY_MS)
     const ok = rule()
     expect((await prepareCodexHookFolders(plan, ok.secure)).root).toBe(true)
     expect(ok.calls).toHaveLength(1)
     expect(CODEX_HOOK_FOLDERS_RETRY_MS).toBeGreaterThanOrEqual(60_000)
+  })
+
+  // Gate 3 (quality item 1, nit 4): a clock that went back (the time now is
+  // before the failed answer's) never stretches the wait: the rule is asked
+  // again at once.
+  it('a clock that went back: the same folders are asked again at once', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(Date.UTC(2026, 8, 30, 12, 0, 0))
+    const plan = { dataDir: tmp(), scriptsDir: scriptsDir(), plainDir: null }
+    const no = rule(() => false)
+    expect((await prepareCodexHookFolders(plan, no.secure)).root).toBe(false)
+    expect((await prepareCodexHookFolders(plan, no.secure)).ran).toBe(false)
+    expect(no.calls).toHaveLength(1)
+    vi.setSystemTime(Date.now() - 1)
+    expect(await prepareCodexHookFolders(plan, no.secure)).toMatchObject({ root: false, ran: true })
+    expect(no.calls).toHaveLength(2)
   })
 })

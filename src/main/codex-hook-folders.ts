@@ -10,8 +10,10 @@
 //  - before a local Codex launch, which waits for it at most
 //    CODEX_HOOK_FOLDERS_LAUNCH_WAIT_MS and otherwise starts without hooks,
 //    said in the log (the provider says so again at the launch).
-// The composition root (index.ts) wires it; with nothing wired every call is
-// a no-op that resolves false.
+// The composition root (index.ts) wires it. With nothing wired,
+// codexHookFoldersSettingsChanged does nothing, and a launch waits for the
+// wiring within its bound (CODEX_HOOK_FOLDERS_LAUNCH_WAIT_MS), then resolves
+// false.
 
 /** How long after start the first preparation waits (past first paint). */
 export const CODEX_HOOK_FOLDERS_START_DELAY_MS = 5000

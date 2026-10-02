@@ -34,7 +34,8 @@ function holdersOf(profileId: string): { sessions?: string[]; unnamed?: number }
 
 export function registerAccountProfilesHandlers(getWindow: () => BrowserWindow | null): void {
   // Every handler here answers the app's own window only, as the Accounts
-  // handlers do (trusted-sender.ts); anything else is refused unanswered.
+  // handlers do (trusted-sender.ts); anything else is answered with the
+  // untrusted-sender refusal.
   const trusted = appWindowSender(getWindow)
   const handle = (channel: string, fn: (e: IpcMainInvokeEvent, ...args: any[]) => unknown): void => {
     ipcMain.handle(channel, (e, ...args) => (trusted(e) ? fn(e, ...args) : UNTRUSTED))

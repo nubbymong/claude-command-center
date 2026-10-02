@@ -653,6 +653,9 @@ describe('carryCodexRollout when something is swapped after its checks', () => {
     // bites only if the landing is resolved again; had it run, it ran whole.
     expect(landed).toBe(true)
     expect(repointError).toBeNull()
+    // Gate 3 (S3 NIT 1): on this code the landing is never resolved again (the
+    // carry refuses before it), so the re-point never ran: still armed.
+    expect(armed).toBe(true)
   })
 
   // ADR-009 round 2 (C5): the copy's second name, made through a day folder

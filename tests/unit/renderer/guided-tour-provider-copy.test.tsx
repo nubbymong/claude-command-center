@@ -91,16 +91,15 @@ describe('GuidedTour: every card, per assistants in use', () => {
     useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })
   })
 
-  /** Each card's whole text (title, counter, body, buttons) by its title,
-   *  from the last walk: what the no-Claude and no-Codex checks read. */
-  let wholes = new Map<string, string>()
-
-  /** Each card's body text by its title, first to last, as the tour shows them. */
-  function walk(on: { claudeEnabled?: boolean; codexEnabled?: boolean }): Map<string, string> {
+  /** Each card, first to last, as the tour shows them, by its title: `bodies`,
+   *  its body text (what the word-for-word checks compare); `wholes`, its
+   *  whole text (title, counter, body, buttons: what the no-Claude and
+   *  no-Codex checks read). */
+  function walk(on: { claudeEnabled?: boolean; codexEnabled?: boolean }): { bodies: Map<string, string>; wholes: Map<string, string> } {
     useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, ...on }, isLoaded: true })
     act(() => { root.render(React.createElement(GuidedTour, { onCreateConfig: () => {}, onClose: () => {} })) })
     const cards = new Map<string, string>()
-    wholes = new Map<string, string>()
+    const wholes = new Map<string, string>()
     for (let n = 0; n < 7; n++) {
       const text = container.textContent ?? ''
       const title = ['This is your workbench', 'Everything has a home', 'Saved configs live here', 'Review what your agent builds', 'Change anything, anytime', 'Help lives here', 'Ready to go'].find((t) => text.includes(t))!
@@ -111,11 +110,11 @@ describe('GuidedTour: every card, per assistants in use', () => {
       if (n < 6) act(() => { [...container.querySelectorAll('button')].find((b) => b.textContent?.startsWith('Next'))!.click() })
     }
     expect(cards.size).toBe(7)
-    return cards
+    return { bodies: cards, wholes }
   }
 
   it('Codex only: no card mentions Claude; the saved-config card says Codex runs on this computer', () => {
-    const cards = walk(CODEX_ONLY)
+    const { bodies: cards, wholes } = walk(CODEX_ONLY)
     expect(wholes.size).toBe(7)
     for (const [title, text] of wholes) expect(text, title).not.toContain('Claude')
     expect(cards.get('Saved configs live here')).toContain('whenever you want (Codex, on this computer).')
@@ -129,7 +128,7 @@ describe('GuidedTour: every card, per assistants in use', () => {
     for (const on of [CLAUDE_ONLY, { claudeEnabled: true }]) {
       act(() => { root.unmount() })
       root = createRoot(container)
-      const cards = walk(on)
+      const { bodies: cards, wholes } = walk(on)
       expect(wholes.size).toBe(7)
       for (const [title, text] of wholes) expect(text, `${title} ${JSON.stringify(on)}`).not.toContain('Codex')
       expect(cards.get('Saved configs live here')).toContain(`whenever you want (Claude, here or on another machine over SSH ${DASH} plain, or persistent so a dropped link does not kill it).`)
@@ -143,11 +142,11 @@ describe('GuidedTour: every card, per assistants in use', () => {
   const CANVAS_BEFORE_NOTE = `Every session has a Canvas button beside Snap. Your agent renders a mockup, a plan, or the site it just built, and you review it by pointing: click an element to leave a note, draw over it, then decide ${DASH} approve that version, or send it back for another round. Testing mode goes further ${DASH} click through a running build and every note saves the screen, the page state and how you got there. A small dot on the button means there is unfinished canvas work anyone here can pick up.`
 
   it('Claude Code only: the canvas card reads as it did before the Codex note, whole', () => {
-    expect(walk(CLAUDE_ONLY).get('Review what your agent builds')).toBe(CANVAS_BEFORE_NOTE)
+    expect(walk(CLAUDE_ONLY).bodies.get('Review what your agent builds')).toBe(CANVAS_BEFORE_NOTE)
   })
 
   it('both on: every card word for word as before', () => {
-    const cards = walk(BOTH)
+    const cards = walk(BOTH).bodies
     expect(cards.get('Saved configs live here')).toBe(`The left panel has two modes ${DASH} Saved is your launcher, Running is your live sessions. A saved config is a reusable launcher: project folder, model, account. Open the Saved tab, press "+ New" and pick Config to create one, then start a session from it whenever you want (Claude or Codex here, or Claude on another machine over SSH ${DASH} plain, or persistent so a dropped link does not kill it).`)
     expect(cards.get('Review what your agent builds')).toBe(`${CANVAS_BEFORE_NOTE} Claude sessions draw on it; a Codex agent cannot put work there yet.`)
     expect(cards.get('Help lives here')).toBe('The Feature Guide explains every feature in depth whenever you want it and, with Claude Code on, can hand your question to Ask Conductor, a Claude session that knows the app.')

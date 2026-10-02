@@ -114,6 +114,9 @@ describe.runIf(IS_WIN)('secureFoldersWindows: the real rights it leaves (P3.10 r
       'caf' + U(0xe9), U(0x4e2d) + U(0x6587), String.fromCodePoint(0x1f600),
       U(0x2018) + 'x' + U(0x2019), U(0x201a) + 'x' + U(0x201b), U(0x201c) + 'x' + U(0x201d), U(0x201e) + 'x',
       'nel' + U(0x85) + 'next', 'ls' + U(0x2028) + 'next', "o'brien", 'a b  c', 'w[ab]{0}', 'p%x%#h~t!b',
+      // Gate 3 (spec item 1, F1): the rest of the round-5 verifier's ASCII set,
+      // each a literal name PowerShell would otherwise read as code.
+      'sem;i', 'dollar$pwd$HOME', 'sub$(x)', 'tick`n', 'amp&(x)', "'+(x)+'", 'rng[a-z]x', 'at@(x)', '-Recurse',
     ]
     const top = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), PREFIX)))
     made.push(top)
