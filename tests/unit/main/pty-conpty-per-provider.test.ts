@@ -28,6 +28,8 @@ const h = vi.hoisted(() => ({
   failDll: false,
   /** node-pty failing whatever the ConPTY (the executable missing). */
   failAll: false,
+  /** Round 5 (R1): node-pty's PTY as unixTerminal.js builds it (macOS, Linux). */
+  unixHandler: false,
 }))
 
 vi.mock('node-pty', () => ({
@@ -44,7 +46,10 @@ vi.mock('node-pty', () => ({
     const p: Spawned = { cmd, args, opts, exit: [], emitData: (d) => { for (const cb of dataCbs) cb(d) }, inSocket: new EventEmitter(), outSocket: new EventEmitter(), kill: vi.fn() }
     // Round 4 (P4): node-pty's own handler on the output socket (windowsTerminal.js):
     // EIO is ignored; any other error is thrown unless something else listens.
+    // Round 5 (R1): unixTerminal.js returns on an EAGAIN first, and reads on.
+    const unix = h.unixHandler
     p.outSocket.on('error', (err: NodeJS.ErrnoException) => {
+      if (unix && err.code && err.code.includes('EAGAIN')) return
       if (err.code && (err.code.includes('errno 5') || err.code.includes('EIO'))) return
       if (p.outSocket.listeners('error').length < 2) throw err
     })
@@ -57,7 +62,8 @@ vi.mock('node-pty', () => ({
       write: () => {},
       resize: () => {},
       kill: p.kill,
-      _agent: { inSocket: p.inSocket },
+      // A unix PTY has no input socket (node-pty writes its input itself).
+      ...(unix ? {} : { _agent: { inSocket: p.inSocket } }),
       // Terminal.prototype.on: every event but 'close' goes to the output socket.
       on: (ev: string, l: (...a: unknown[]) => void) => { p.outSocket.on(ev, l) },
     }
@@ -196,6 +202,7 @@ beforeEach(() => {
   h.failures = []
   h.failDll = false
   h.failAll = false
+  h.unixHandler = false
   lastLaunch = null
   bundledThere()
 })
@@ -521,5 +528,82 @@ describe('an error on a PTY\'s output (round 4, P4)', () => {
     p.outSocket.emit('error', failure('ECONNRESET'))
     vi.advanceTimersByTime(5_000)
     expect(p.kill).toHaveBeenCalledTimes(1)
+  })
+})
+
+// Round 5 (R1): node-pty's unix handler (unixTerminal.js, macOS and Linux)
+// returns on an EAGAIN on the output socket and reads on, so the session is
+// healthy: the round 4 guard logged it as a failure and ended the session after
+// the grace. Off Windows an output EAGAIN is now not a failure. On Windows
+// node-pty closes the PTY on one, so there it stays one (logged, the grace end).
+describe('an EAGAIN on a PTY\'s output (round 5, R1)', () => {
+  const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  const onPlatform = (p: NodeJS.Platform) => Object.defineProperty(process, 'platform', { value: p, configurable: true })
+  beforeEach(() => { vi.useFakeTimers(); sent.length = 0 })
+  afterEach(() => { vi.useRealTimers(); Object.defineProperty(process, 'platform', realPlatform) })
+  const failure = (code: string) => Object.assign(new Error(`read ${code}`), { code, syscall: 'read' })
+  const kinds: Array<[string, string, () => void]> = [
+    ['Codex', CX, () => startCodex()],
+    ['Claude', CL, () => spawnPty(fakeWin, CL, { cwd: os.tmpdir() } as never)],
+    ['plain terminal', SH, () => spawnPty(fakeWin, SH, { cwd: os.tmpdir(), shellOnly: true } as never)],
+  ]
+
+  it('off Windows (node-pty\'s unix handler) every kind of session reads on: nothing logged, nothing thrown, never ended', () => {
+    for (const platform of ['linux', 'darwin'] as const) {
+      for (const [name, id, start] of kinds) {
+        onPlatform(platform)
+        notWindows()
+        h.unixHandler = true
+        h.warns = []
+        sent.length = 0
+        start()
+        const p = last()
+        expect(() => p.outSocket.emit('error', failure('EAGAIN')), `${platform} ${name}`).not.toThrow()
+        expect(() => p.outSocket.emit('error', failure('EAGAIN')), `${platform} ${name}`).not.toThrow()
+        vi.advanceTimersByTime(10_000)
+        expect(p.kill, `${platform} ${name}`).not.toHaveBeenCalled()
+        expect(h.warns.filter((w) => w.includes('output of session') || w.includes(`session ${id} did not end`)), `${platform} ${name}`).toEqual([])
+        expect(sent.filter(([, d]) => String(d).includes('stopped taking input')), `${platform} ${name}`).toEqual([])
+        for (const cb of [...p.exit]) cb({ exitCode: 0 })
+      }
+    }
+  })
+
+  it('off Windows any other output error is still a failure: logged once, and a session that does not end is ended', () => {
+    onPlatform('linux')
+    notWindows()
+    h.unixHandler = true
+    for (const [name, id, start] of kinds) {
+      h.warns = []
+      start()
+      const p = last()
+      p.outSocket.emit('error', failure('EAGAIN'))
+      p.outSocket.emit('error', failure('ECONNRESET'))
+      const lines = h.warns.filter((w) => w.includes(`output of session ${id} failed`))
+      expect(lines, name).toHaveLength(1)
+      expect(lines[0], name).toContain('ECONNRESET')
+      vi.advanceTimersByTime(3_000)
+      expect(p.kill, name).toHaveBeenCalledTimes(1)
+      for (const cb of [...p.exit]) cb({ exitCode: 1 })
+    }
+  })
+
+  it('on Windows (node-pty closes the PTY on an EAGAIN) it is still a failure: logged once, and a session that does not end is ended', () => {
+    onPlatform('win32')
+    for (const [name, id, start] of kinds) {
+      h.warns = []
+      sent.length = 0
+      start()
+      const p = last()
+      expect(() => p.outSocket.emit('error', failure('EAGAIN')), name).not.toThrow()
+      const lines = h.warns.filter((w) => w.includes(`output of session ${id} failed`))
+      expect(lines, name).toHaveLength(1)
+      expect(lines[0], name).toContain('EAGAIN')
+      vi.advanceTimersByTime(3_000)
+      expect(p.kill, name).toHaveBeenCalledTimes(1)
+      expect(sent.some(([ch, d]) => ch === `pty:data:${id}` && String(d).includes('stopped taking input')), name).toBe(true)
+      for (const cb of [...p.exit]) cb({ exitCode: 1 })
+      bundledThere()
+    }
   })
 })
