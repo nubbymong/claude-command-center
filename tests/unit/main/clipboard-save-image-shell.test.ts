@@ -12,7 +12,7 @@ const handlers = new Map<string, (...a: unknown[]) => unknown>()
 vi.mock('electron', () => ({
   ipcMain: { handle: (ch: string, fn: (...a: unknown[]) => unknown) => { handlers.set(ch, fn) }, on: () => {} },
 }))
-const h = vi.hoisted(() => ({ shell: '/bin/bash', picked: { path: '/res/screenshots/clipboard-1.png' } as { path: string } | { error: 'no-image' } }))
+const h = vi.hoisted(() => ({ shell: '/bin/bash', shellThrows: false, picked: { path: '/res/screenshots/clipboard-1.png' } as { path: string } | { error: 'no-image' } }))
 vi.mock('../../../src/main/clipboard-image', () => ({ readClipboardImageWithRetry: async () => null }))
 vi.mock('../../../src/main/clipboard-text', () => ({ readClipboardTextWithRetry: async () => '' }))
 vi.mock('../../../src/main/clipboard-file', () => ({ readClipboardImageFilePath: () => h.picked }))
@@ -20,7 +20,7 @@ vi.mock('../../../src/main/ipc/setup-handlers', () => ({ getResourcesDirectory: 
 vi.mock('../../../src/main/debug-logger', () => ({ logInfo: () => {}, logWarn: () => {}, logError: () => {} }))
 vi.mock('../../../src/main/login-shell', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/main/login-shell')>()),
-  localSessionShell: () => h.shell,
+  localSessionShell: () => { if (h.shellThrows) throw new Error('no shell'); return h.shell },
 }))
 
 const { registerClipboardHandlers } = await import('../../../src/main/ipc/clipboard-handlers')
@@ -30,7 +30,7 @@ const saveImage = handlers.get(IPC.CLIPBOARD_SAVE_IMAGE)!
 
 const realPlatform = process.platform
 const onPlatform = (p: NodeJS.Platform) => Object.defineProperty(process, 'platform', { value: p, configurable: true })
-beforeEach(() => { h.shell = '/bin/bash'; h.picked = { path: '/res/screenshots/clipboard-1.png' } })
+beforeEach(() => { h.shell = '/bin/bash'; h.shellThrows = false; h.picked = { path: '/res/screenshots/clipboard-1.png' } })
 afterEach(() => { onPlatform(realPlatform) })
 
 describe('clipboard:saveImage says whether a plain terminal\'s shell is of the sh family (PR-level ADR-009 round 1, A1)', () => {
@@ -40,6 +40,12 @@ describe('clipboard:saveImage says whether a plain terminal\'s shell is of the s
       h.shell = shell
       expect(await saveImage({}), `${p} ${shell}`).toEqual({ path: '/res/screenshots/clipboard-1.png', posixShell: kind })
     }
+  })
+
+  it('round 2 (A3): a shell check that throws answers other, so nothing is typed', async () => {
+    onPlatform('linux')
+    h.shellThrows = true
+    expect(await saveImage({})).toEqual({ path: '/res/screenshots/clipboard-1.png', posixShell: 'other' })
   })
 
   it('Windows: the answer it always gave', async () => {

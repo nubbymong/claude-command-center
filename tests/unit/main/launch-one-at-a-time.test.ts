@@ -12,7 +12,7 @@ const logWarn = vi.hoisted(() => vi.fn())
 vi.mock('../../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn, logError: vi.fn() }))
 
 const {
-  claimConfigLaunch, settleConfigLaunch, discardConfigLaunch, seedRestoredSessions, HELD_MAX, RESTORED_MAX,
+  claimConfigLaunch, settleConfigLaunch, discardConfigLaunch, noteConfigLaunchPreparation, seedRestoredSessions, HELD_MAX, RESTORED_MAX,
   _claimedSessionCountForTest, _heldSessionIdsForTest, _resetConfigLaunchClaimsForTest,
 } = await import('../../../src/main/launch-one-at-a-time')
 type Ticket = Parameters<typeof settleConfigLaunch>[0]
@@ -178,6 +178,17 @@ describe('who keeps the right to run', () => {
     live.add('s1') // preparing: pty-manager holds it, pty:spawn has not settled it yet
     expect(ask('s2')).toMatchObject({ code: 'already-running' })
     live.delete('s1') // its preparation was cancelled
+    expect(ask('s2')).toBeNull()
+  })
+
+  it('PR-level ADR-009 round 2 (B2): a pending spawn whose preparation check throws still counts (fails closed); one whose check says it was superseded does not', () => {
+    expect(ask('s1')).toBeNull()
+    live.add('s1')
+    noteConfigLaunchPreparation(last.get('s1')!, () => { throw new Error('no answer') })
+    expect(ask('s2')).toMatchObject({ code: 'already-running' })
+    _resetConfigLaunchClaimsForTest()
+    expect(ask('s1')).toBeNull()
+    noteConfigLaunchPreparation(last.get('s1')!, () => false)
     expect(ask('s2')).toBeNull()
   })
 
