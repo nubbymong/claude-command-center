@@ -82,6 +82,10 @@ export interface OwnerPorts {
   /** P3.16a round 2 (Q4, Q5): whether the browser profile folder `dir` is
    *  locked by a running browser (profileLockOf). Absent: 'unknown'. */
   profileLock?(dir: string): ProfileLockState
+  /** Fixer 3 (F3): whether no process has `pid` now (process.kill with
+   *  signal 0, which sends nothing, fails with ESRCH). Absent, or any other
+   *  answer: it may still run. */
+  pidGone?(pid: number): boolean
 }
 
 /** Whether a browser profile folder is locked: by a running browser
@@ -421,6 +425,12 @@ export function parsePsPidArgs(stdout: string): Array<{ pid: number; args: strin
   return out
 }
 
+/** Fixer 3 (F3): whether the OS says no process has `pid` now. Any failure to
+ *  tell, or no way to ask, is false: it may still run. */
+function pidGone(pid: number, ports: OwnerPorts): boolean {
+  try { return ports.pidGone?.(pid) === true } catch { return false }
+}
+
 /** One line of `ps -o <field>=` output, or null. */
 function oneLine(stdout: string): string | null {
   const s = String(stdout ?? '').trim()
@@ -462,7 +472,9 @@ export async function findAppVisionBrowsers(
  * answer" told from "it found none": null when the query fails, times out or
  * answers with something that is not an answer (Windows: no system folder, an
  * empty or malformed answer; elsewhere: no ps, or a process naming this port
- * whose facts cannot be read). [] when it answered and none is the app's.
+ * whose facts cannot be read and that may still run; fixer 3, F3: one that has
+ * exited since the list was read names nothing now and is skipped). [] when it
+ * answered and none is the app's.
  */
 export async function scanAppVisionBrowsers(
   port: number,
@@ -489,8 +501,13 @@ export async function scanAppVisionBrowsers(
       // Only a process naming this port is read further; the full check is isApp.
       if (!posixOnlyValue(row.args, 'remote-debugging-port', String(port))) continue
       const f = await posixFactsOfPid(row.pid, ports)
-      // One that names this port and cannot be read cannot be told apart.
-      if (!f) return null
+      if (!f) {
+        // One that has exited since the list was read names nothing now. One
+        // that names this port, may still run and cannot be read cannot be
+        // told apart.
+        if (pidGone(row.pid, ports)) continue
+        return null
+      }
       if (isApp(f)) out.push(f)
     }
     return out
@@ -801,5 +818,9 @@ export function defaultOwnerPorts(): OwnerPorts {
     }),
     sleepSync: (ms) => blockFor(ms),
     profileLock: (dir) => profileLockOf(dir, realProfileLockDeps(platform)),
+    // Signal 0 sends nothing; it only asks whether the pid exists.
+    pidGone: (pid) => {
+      try { process.kill(pid, 0); return false } catch (err) { return (err as NodeJS.ErrnoException)?.code === 'ESRCH' }
+    },
   }
 }

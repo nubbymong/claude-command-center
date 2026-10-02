@@ -85,6 +85,7 @@ function fakePorts(
     signal?: (pid: number, sig: string) => void
     systemRoot?: string | undefined
     realpath?: (p: string) => string | null
+    pidGone?: (pid: number) => boolean
   } = {},
 ) {
   const calls: Call[] = []
@@ -107,6 +108,7 @@ function fakePorts(
     realpath: (p) => (opts.realpath ? opts.realpath(p) : null),
     sleep: async (ms) => { sleeps.push(ms); await new Promise((r) => setTimeout(r, 0)) },
     sleepSync: (ms) => { syncSleeps.push(ms) },
+    ...(opts.pidGone ? { pidGone: opts.pidGone } : {}),
   }
   return { ports, calls, signals, sleeps, syncSleeps }
 }
@@ -662,6 +664,33 @@ describe('the browser query: none found, or no answer', () => {
     const failed = fakePorts('linux', () => new Error('timed out'))
     expect(await scanAppVisionBrowsers(9222, [NIX_DIR], failed.ports)).toBeNull()
   })
+
+  // Fixer 3 (F3, lens B VA2): a process naming the port that exits between
+  // the list and its own read names nothing now: it is skipped, and the
+  // browsers identified are kept. One that still runs, or may (no way to
+  // tell), and cannot be read cannot be told apart: no answer.
+  it('Linux and macOS: a row naming the port that has exited since the list is skipped; one that still runs and cannot be read is no answer', async () => {
+    const answer = (file: string, args: string[]) => {
+      if (args[0] === '-A') return `   312 ${NIX_OK} --type=renderer\n   311 ${NIX_OK}\n`
+      const pid = Number(args[args.indexOf('-p') + 1])
+      if (pid !== 311) return new Error('exited with status 1')
+      const field = args[args.indexOf('-o') + 1]
+      return (field === 'comm=' ? 'chrome' : field === 'args=' ? NIX_OK : 'Wed Oct  1 10:00:00 2026') + '\n'
+    }
+    const asked: number[] = []
+    const gone = fakePorts('linux', answer, { pidGone: (pid) => { asked.push(pid); return pid === 312 } })
+    expect(await scanAppVisionBrowsers(9222, [NIX_DIR], gone.ports)).toEqual([
+      { pid: 311, name: 'chrome', commandLine: NIX_OK, created: 'Wed Oct  1 10:00:00 2026' },
+    ])
+    // Asked only about the row it could not read.
+    expect(asked).toEqual([312])
+    const running = fakePorts('linux', answer, { pidGone: () => false })
+    expect(await scanAppVisionBrowsers(9222, [NIX_DIR], running.ports)).toBeNull()
+    const cannotTell = fakePorts('linux', answer, { pidGone: () => { throw new Error('no answer') } })
+    expect(await scanAppVisionBrowsers(9222, [NIX_DIR], cannotTell.ports)).toBeNull()
+    const noPort = fakePorts('linux', answer)
+    expect(await scanAppVisionBrowsers(9222, [NIX_DIR], noPort.ports)).toBeNull()
+  })
 })
 
 // P3.16a round 2 (Q4, Q5): whether a browser profile folder is locked, read
@@ -759,6 +788,25 @@ describe('the real runner (child_process replaced)', () => {
       expect(defaultOwnerPorts().realpath(path.join(dir, 'missing'))).toBeNull()
     } finally {
       fs.rmdirSync(dir)
+    }
+  })
+
+  // Fixer 3 (F3): signal 0 only asks whether the pid exists; nothing is sent.
+  it('a pid is gone only when the OS says no process has it (ESRCH); a process it may not signal still runs', () => {
+    const kill = vi.spyOn(process, 'kill')
+    const fail = (code: string) => () => { throw Object.assign(new Error(`kill ${code}`), { code }) }
+    try {
+      kill.mockImplementation(fail('ESRCH'))
+      expect(defaultOwnerPorts().pidGone?.(4242)).toBe(true)
+      kill.mockImplementation(fail('EPERM'))
+      expect(defaultOwnerPorts().pidGone?.(4242)).toBe(false)
+      kill.mockImplementation(fail('EINVAL'))
+      expect(defaultOwnerPorts().pidGone?.(4242)).toBe(false)
+      kill.mockImplementation(() => true)
+      expect(defaultOwnerPorts().pidGone?.(4242)).toBe(false)
+      expect(kill.mock.calls).toEqual([[4242, 0], [4242, 0], [4242, 0], [4242, 0]])
+    } finally {
+      kill.mockRestore()
     }
   })
 
