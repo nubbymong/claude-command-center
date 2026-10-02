@@ -630,4 +630,18 @@ describe('buildResumeTranscriptPath — canonical ~/.claude/projects path', () =
   it('returns null for an empty cwd', () => {
     expect(buildResumeTranscriptPath('', UUID2, () => HOME)).toBeNull()
   })
+
+  // P3.16a round 2 (Q1): the folder Claude Code writes the resumed conversation to.
+  it('a launch folder whose name is longer than 200 characters: the name cut at 200 with the hash Claude Code adds', () => {
+    const out = buildResumeTranscriptPath('C:\\Users\\jane\\' + 'a'.repeat(190), UUID2, () => HOME)
+    expect(out).toBe(path.join(HOME, '.claude', 'projects', 'C--Users-jane-' + 'a'.repeat(186) + '-vwg8id', `${UUID2}.jsonl`))
+  })
+
+  it('on Linux and macOS a launch folder reached through a symbolic link: the folder it points to', () => {
+    const realpath = (p: string) => (p === '/home/u/link' ? '/data/proj' : p)
+    for (const platform of ['linux', 'darwin'] as const) {
+      const out = buildResumeTranscriptPath('/home/u/link', UUID2, () => HOME, { platform, realpath })
+      expect(out, platform).toBe(path.join(HOME, '.claude', 'projects', '-data-proj', `${UUID2}.jsonl`))
+    }
+  })
 })

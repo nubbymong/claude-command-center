@@ -54,6 +54,15 @@ describe('resume-picker encodeProjectPath (mangle rule)', () => {
   it('does not collapse separator runs (\\\\ → --)', () => {
     expect(picker.encodeProjectPath('a\\\\b')).toBe('a--b')
   })
+
+  // P3.16a round 2 (Q1): Claude Code cuts a name longer than 200 characters at
+  // 200 and adds a hash of the whole folder; the picker's copy of the rule
+  // matches the shared one (src/shared/project-key.ts) and Claude Code's.
+  it('a folder whose name is longer than 200 characters: cut at 200 with the hash Claude Code adds', () => {
+    expect(picker.encodeProjectPath('C:\\Users\\jane\\' + 'a'.repeat(190))).toBe('C--Users-jane-' + 'a'.repeat(186) + '-vwg8id')
+    expect(picker.encodeProjectPath('/tmp/' + 'x'.repeat(196))).toBe('-tmp-' + 'x'.repeat(195) + '-diaimx')
+    expect(picker.encodeProjectPath('/tmp/' + 'x'.repeat(195))).toBe('-tmp-' + 'x'.repeat(195))
+  })
 })
 
 // ── parseWorktrees ─────────────────────────────────────────────────

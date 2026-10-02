@@ -28,6 +28,7 @@ import {
   mangleCwdToProjectDir,
   makeHeuristicBinder,
   resolveResumeTargetFromTranscript,
+  claudeProjectDirName,
 } from '../../../src/main/logging/transcript-discovery'
 
 // ---------------------------------------------------------------------------
@@ -470,6 +471,59 @@ describe('makeHeuristicBinder', () => {
     const binding = binder.bindOnce('sess-bnd', cwd, startedAt)
     expect(binding).not.toBeNull()
     void boundary
+  })
+
+  // P3.16a round 2 (Q1): the folder scanned is the one Claude Code writes to.
+  // A fake file system (nothing on disk): it lists only the folder named here.
+  describe('the folder Claude Code names (Q1)', () => {
+    const ROOT = path.join(path.sep === '\\' ? 'C:\\fake' : '/fake', 'projects')
+    const fakeFs = (folderName: string, file: string, mtimeMs: number) => {
+      const reads: string[] = []
+      return {
+        reads,
+        fsImpl: {
+          readdirSync: (dir: string) => { reads.push(dir); if (dir !== path.join(ROOT, folderName)) throw new Error('ENOENT'); return [file] },
+          statSync: (_p: string) => ({ mtimeMs }),
+        },
+      }
+    }
+    it('a launch folder whose name is longer than 200 characters: the name cut at 200 with the hash Claude Code adds', () => {
+      const cwd = 'C:\\Users\\jane\\' + 'a'.repeat(190)
+      const name = 'C--Users-jane-' + 'a'.repeat(186) + '-vwg8id'
+      const { reads, fsImpl } = fakeFs(name, 'conv.jsonl', 1_000_000)
+      const binding = makeHeuristicBinder({ projectsRoot: ROOT, fsImpl }).bindOnce('sess-long', cwd, 1_000_000)
+      expect(reads).toEqual([path.join(ROOT, name)])
+      expect(binding?.path).toBe(path.normalize(path.join(ROOT, name, 'conv.jsonl')))
+    })
+    it('on Linux and macOS a launch folder reached through a symbolic link: the folder it points to (Claude Code names its real path)', () => {
+      const realpath = (p: string) => (p === '/home/u/link' ? '/data/proj' : p)
+      const { reads, fsImpl } = fakeFs('-data-proj', 'conv.jsonl', 1_000_000)
+      for (const platform of ['linux', 'darwin'] as const) {
+        reads.length = 0
+        const binding = makeHeuristicBinder({ projectsRoot: ROOT, fsImpl, launchFolder: { platform, realpath } }).bindOnce('sess-link', '/home/u/link', 1_000_000)
+        expect(reads, platform).toEqual([path.join(ROOT, '-data-proj')])
+        expect(binding, platform).not.toBeNull()
+      }
+    })
+  })
+})
+
+describe('claudeProjectDirName (Q1)', () => {
+  it('Linux and macOS: the real path of the launch folder, named by the shared rule', () => {
+    const realpath = (p: string) => (p === '/home/u/link' ? '/data/proj' : p)
+    for (const platform of ['linux', 'darwin'] as const) {
+      expect(claudeProjectDirName('/home/u/link', { platform, realpath }), platform).toBe('-data-proj')
+    }
+  })
+  it('a launch folder that cannot be resolved (gone, or no access): named as given', () => {
+    const realpath = (_p: string): string => { throw new Error('ENOENT') }
+    expect(claudeProjectDirName('/gone/folder', { platform: 'linux', realpath })).toBe('-gone-folder')
+  })
+  it('Windows: named as given, the real path is not read', () => {
+    let read = 0
+    const realpath = (p: string) => { read++; return p }
+    expect(claudeProjectDirName('C:\\w\\proj', { platform: 'win32', realpath })).toBe('C--w-proj')
+    expect(read).toBe(0)
   })
 })
 
