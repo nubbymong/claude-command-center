@@ -38,6 +38,7 @@ import { createHash, type Hash } from 'crypto'
 import { basename as pathBasename, dirname as pathDirname } from 'path'
 import { claudeFolderKey, claudeProjectsRootKey } from './claude-folder-key'
 import { CODEX_FOLDER_KEY_PREFIX, codexFolderKey, codexRolloutSessionsDir, codexSessionMetaCwd } from './codex-folder-key'
+import { readBoundedFirstLine } from './bounded-first-line'
 import { openTranscriptsDb } from './transcripts-db'
 import type { TranscriptsDb, NewMessage, TranscriptScope } from './transcripts-db'
 import { makeNormalizer, PARSER_VERSION } from './transcript-normalizer'
@@ -82,11 +83,6 @@ export interface TranscriptsWorkerFs {
 /** P3.12 round 1 (V2): the most of a carried copy compared with the rollout
  *  it came from, to continue where that was read. */
 const CONTINUE_COMPARE_MAX_BYTES = 64 * 1024 * 1024
-
-/** PR-level ADR-009 round 1 (C1): the most of a rollout's first line (its
- *  session_meta) read for the folder it records, the bound rollout-lookup.ts
- *  reads a first line to. */
-const CODEX_HEAD_MAX_BYTES = 1024 * 1024
 
 /** P3.12 round 2 (W4): the divider where a conversation's indexing resumes
  *  after a stretch it was not indexed; that stretch is never indexed. */
@@ -160,8 +156,9 @@ export function createTranscriptsWorker(
    *  left out. A record with no time (none of its own, none before it in the
    *  read) is left out whenever any of them has such a rule. A record at a
    *  window's start is inside it; one at its end is not. */
-  function notIndexedAt(keys: string[], ts: number | null): boolean {
-    const lists = keys.map((k) => notIndexedWindows.get(k)).filter((l): l is Array<[number, number | null]> => !!l && l.length > 0)
+  function notIndexedAt(keys: Iterable<string>, ts: number | null): boolean {
+    const lists: Array<Array<[number, number | null]>> = []
+    for (const k of keys) { const l = notIndexedWindows.get(k); if (l && l.length > 0) lists.push(l) }
     if (lists.length === 0 && notIndexedBefore === null) return false
     if (ts === null) return true
     if (notIndexedBefore !== null && ts < notIndexedBefore) return true
@@ -169,30 +166,14 @@ export function createTranscriptsWorker(
   }
   /** PR-level ADR-009 round 1 (C1): the key of the folder a rollout's first
    *  line (its session_meta) records, in the realm the rollout lies in; null
-   *  when that line cannot be read, or records no folder. */
+   *  when that line cannot be read, or records no folder. Round 2 (K5): read
+   *  with the rollout lookup's own reader and bound, through this worker's
+   *  file port. */
   function codexFolderOf(path: string): string | null {
-    let fd: number | null = null
-    try {
-      fd = fsi.openSync(path, 'r')
-      const chunk = Buffer.alloc(64 * 1024)
-      const parts: Buffer[] = []
-      for (let total = 0; total < CODEX_HEAD_MAX_BYTES;) {
-        const n = fsi.readSync(fd, chunk, 0, Math.min(chunk.length, CODEX_HEAD_MAX_BYTES - total), total)
-        if (n <= 0) return null
-        const nl = chunk.subarray(0, n).indexOf(0x0a)
-        parts.push(Buffer.from(chunk.subarray(0, nl >= 0 ? nl : n)))
-        if (nl >= 0) {
-          const cwd = codexSessionMetaCwd(Buffer.concat(parts).toString('utf-8'))
-          return cwd ? codexFolderKey(codexRolloutSessionsDir(path), cwd) : null
-        }
-        total += n
-      }
-      return null
-    } catch {
-      return null
-    } finally {
-      if (fd !== null) { try { fsi.closeSync(fd) } catch { /* best-effort */ } }
-    }
+    const head = readBoundedFirstLine(path, fsi)
+    if (!head || head.kind !== 'line') return null
+    const cwd = codexSessionMetaCwd(head.line)
+    return cwd ? codexFolderKey(codexRolloutSessionsDir(path), cwd) : null
   }
   /** P3.12 (X4): the running digest of the first `cursor` bytes of `path`,
    *  when they are what a tail read (their SHA-256 is `stored`, the digest
@@ -521,11 +502,13 @@ export function createTranscriptsWorker(
     // it ended), as a Claude transcript is where its projects folder was;
     // worked out once, from the rollout's first line. One whose first line
     // records no folder is left out wherever any Codex folder window covers
-    // the record's time.
+    // the record's time. Round 2 (K5): the key list is built once per tail;
+    // the folders main has windows for are read as they are at each record
+    // (a window kept after the tail started counts too), not copied.
     const codexFolder = codex ? codexFolderOf(meta.path) : null
     const keys = codex ? (codexFolder ? [conversation, codexFolder] : [conversation]) : [conversation, claudeFolderKey(folder), claudeProjectsRootKey(pathDirname(folder))]
     const skip = codex && !codexFolder
-      ? (ts: number | null): boolean => notIndexedAt([conversation, ...codexFolderKeys], ts)
+      ? (ts: number | null): boolean => notIndexedAt(keys, ts) || notIndexedAt(codexFolderKeys, ts)
       : (ts: number | null): boolean => notIndexedAt(keys, ts)
     // P3.16 (M1): a Claude tail vouches for what it read, as a Codex tail
     // with its claimed identity does.

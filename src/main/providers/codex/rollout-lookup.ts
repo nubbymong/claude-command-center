@@ -19,6 +19,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { isHomeOrAncestor } from '../../path-utils'
+import { FIRST_LINE_MAX_BYTES, readBoundedFirstLine, type FirstLine } from '../../logging/bounded-first-line'
 import type { PickFolderIdentity } from '../types'
 
 /** A conversation id as Codex writes it and as a launch may name it: the
@@ -27,8 +28,10 @@ import type { PickFolderIdentity } from '../types'
 export const CODEX_CONVERSATION_ID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
 
 /** The most of a rollout's first line that is read: a session_meta line
- *  carries the base instructions (about 22 KB on 0.133), well under this. */
-export const CODEX_ROLLOUT_HEAD_MAX_BYTES = 1024 * 1024
+ *  carries the base instructions (about 22 KB on 0.133), well under this.
+ *  PR-level ADR-009 round 2 (K5): the shared reader's bound, the one the
+ *  transcripts worker reads to as well. */
+export const CODEX_ROLLOUT_HEAD_MAX_BYTES = FIRST_LINE_MAX_BYTES
 
 /** The most folder entries one lookup by id visits (years, months, days and
  *  the files in each day), and the most day folders it opens. */
@@ -38,32 +41,11 @@ export const CODEX_LOOKUP_MAX_DAYS = 3_660
 /** A rollout's first line, read up to the first newline: `line`; `partial`
  *  while it is still being written (no newline yet: read it again later);
  *  `too-long` when it runs past the bound (it never will be a session_meta
- *  this app reads). Null when the file cannot be read just now. */
-export type RolloutFirstLine = { kind: 'line'; line: string } | { kind: 'partial' } | { kind: 'too-long' }
+ *  this app reads). Null when the file cannot be read just now. Round 2
+ *  (K5): the reader the transcripts worker shares (bounded-first-line.ts). */
+export type RolloutFirstLine = FirstLine
 export function readRolloutFirstLine(file: string): RolloutFirstLine | null {
-  let fd: number | null = null
-  try {
-    fd = fs.openSync(file, 'r')
-    const chunk = Buffer.alloc(64 * 1024)
-    const parts: Buffer[] = []
-    let total = 0
-    while (total < CODEX_ROLLOUT_HEAD_MAX_BYTES) {
-      const n = fs.readSync(fd, chunk, 0, Math.min(chunk.length, CODEX_ROLLOUT_HEAD_MAX_BYTES - total), total)
-      if (n <= 0) return { kind: 'partial' }
-      const nl = chunk.subarray(0, n).indexOf(0x0a)
-      if (nl >= 0) {
-        parts.push(Buffer.from(chunk.subarray(0, nl)))
-        return { kind: 'line', line: Buffer.concat(parts).toString('utf-8') }
-      }
-      parts.push(Buffer.from(chunk.subarray(0, n)))
-      total += n
-    }
-    return { kind: 'too-long' }
-  } catch {
-    return null
-  } finally {
-    if (fd !== null) { try { fs.closeSync(fd) } catch { /* already closed */ } }
-  }
+  return readBoundedFirstLine(file, fs, CODEX_ROLLOUT_HEAD_MAX_BYTES)
 }
 
 export interface RolloutSessionMeta {

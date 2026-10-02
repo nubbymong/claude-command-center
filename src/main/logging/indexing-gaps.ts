@@ -34,8 +34,9 @@
  * at start is kept aside
  * (the newest three) and every record stamped before that start counts as
  * written while not indexed (`before`); a conversation's windows past
- * WINDOWS_PER_CONVERSATION_MAX are merged (the two oldest into one spanning
- * both), and past NOT_INDEXED_CONVERSATIONS_MAX conversations the least
+ * WINDOWS_PER_CONVERSATION_MAX are merged (the two oldest closed ones into one
+ * spanning both; round 2, K3: one still open is never merged), and past
+ * NOT_INDEXED_CONVERSATIONS_MAX conversations the least
  * recently changed one with no window still open goes after `before` is raised
  * past its windows (PR-level ADR-009 round 1, C2: one still open never goes).
  *
@@ -156,10 +157,17 @@ function bound(key: string, now: number): void {
   const list = windows.get(key)
   if (list && list.length > WINDOWS_PER_CONVERSATION_MAX) {
     list.sort((a, b) => a[0] - b[0])
+    // PR-level ADR-009 round 2 (K3): only closed windows are merged (the two
+    // oldest into one spanning both). A window still open is the exact one its
+    // holder closes, so it is never merged; past the most kept, the open ones
+    // are bounded by the sessions holding them.
     while (list.length > WINDOWS_PER_CONVERSATION_MAX) {
-      const [a, b] = list.splice(0, 2)
-      const end = a[1] === null || b[1] === null ? null : Math.max(a[1], b[1])
-      list.unshift([Math.min(a[0], b[0]), end])
+      const i = list.findIndex((w) => w[1] !== null)
+      const j = i < 0 ? -1 : list.findIndex((w, n) => n > i && w[1] !== null)
+      if (j < 0) break
+      const [a, b] = [list[i], list[j]]
+      list.splice(j, 1)
+      list[i] = [a[0], Math.max(a[1] as number, b[1] as number)]
     }
   }
   while (windows.size > conversationsMax) {
@@ -266,8 +274,8 @@ export function initIndexingGaps(path: string, now: number = Date.now()): void {
 }
 
 /** Close the window a session held: that exact one, never another session's on the
- *  same conversation. One that was merged into an older window is left open (the
- *  merged window is no longer the session's alone): toward not indexing. */
+ *  same conversation (round 2, K3: a window still open is never merged, so it is
+ *  always the one in the record). */
 function closeHeld(held: { key: string; win: NotIndexedWindow }, ts: number): void {
   held.win[1] = Math.max(held.win[0], ts)
 }
@@ -373,9 +381,8 @@ export function closeNotIndexedWindow(sessionId: string, ts: number, opts: { cov
  *  windows no more (its next launch opens its own), but a killed process
  *  goes on writing while it winds down, so they stay open until the returned
  *  closer runs, when the process's exit is reported. The closer closes those
- *  exact windows, once, and nothing once the app is stopping; a window merged
- *  into an older one is left open (toward not indexing). null when the
- *  session holds none. */
+ *  exact windows, once, and nothing once the app is stopping (round 2, K3:
+ *  they are never merged while open). null when the session holds none. */
 export function releaseNotIndexedWindow(sessionId: string): ((ts: number) => void) | null {
   const held = openBy.get(sessionId)
   if (held === undefined) return null

@@ -159,36 +159,60 @@ describe('when Codex conversations were written while not indexed (P3.12)', () =
     expect(of(ID)).toEqual([[100, 300], [150, 250], [400, 500], [450, 600]])
   })
 
-  it('K1: a closer does nothing once the app is stopping (the next start closes the window), and nothing for a window merged into an older one (it stays open: toward not indexing)', () => {
+  it('K1: a closer does nothing once the app is stopping (the next start closes the window); past the windows kept, its window is never merged, so the closer closes it (round 2, K3)', () => {
     openNotIndexedWindow('s1', A, 100)
     const close = releaseNotIndexedWindow('s1')!
     flushIndexingGaps()
     close(200)
     expect(of(ID)).toEqual([[100, null]])
     resetIndexingGapsForTests()
-    // Merged: the released window is the oldest, so it is spanned into one with the next oldest.
+    // The released window is the oldest; only the closed ones after it are merged.
     openNotIndexedWindow('s1', A, 100)
-    const closeMerged = releaseNotIndexedWindow('s1')!
+    const closeKept = releaseNotIndexedWindow('s1')!
     for (let i = 0; i < WINDOWS_PER_CONVERSATION_MAX; i++) { openNotIndexedWindow('s2', A, 1000 + i * 10); closeNotIndexedWindow('s2', 1005 + i * 10) }
     expect(of(ID)).toHaveLength(WINDOWS_PER_CONVERSATION_MAX)
-    expect(of(ID)[0][1]).toBeNull()
-    closeMerged(9000)
     expect(of(ID)[0]).toEqual([100, null])
+    expect(of(ID)[1]).toEqual([1000, 1015])
+    closeKept(9000)
+    expect(of(ID)[0]).toEqual([100, 9000])
   })
 
-  it('L1: a session that ends while its window was merged into an older one leaves it open, and closes no other session\'s window on the conversation (toward not indexing)', () => {
+  it('L1, K3 (round 2): past the windows kept, a session\'s open window is never merged: its end closes it, and no other session\'s window on the conversation', () => {
     openNotIndexedWindow('s1', A, 100)
     for (let i = 0; i < WINDOWS_PER_CONVERSATION_MAX; i++) { openNotIndexedWindow('s2', A, 1000 + i * 10); closeNotIndexedWindow('s2', 1005 + i * 10) }
     expect(of(ID)[0]).toEqual([100, null])
     // Another session holds the conversation too.
     openNotIndexedWindow('s3', A, 20_000)
     expect(of(ID).at(-1)).toEqual([20_000, null])
+    expect(of(ID)).toHaveLength(WINDOWS_PER_CONVERSATION_MAX)
     closeNotIndexedWindow('s1', 30_000)
-    expect(of(ID)[0]).toEqual([100, null])
+    expect(of(ID)[0]).toEqual([100, 30_000])
     expect(of(ID).at(-1)).toEqual([20_000, null])
-    // Its own window, still in the record, closes as ever.
     closeNotIndexedWindow('s3', 40_000)
     expect(of(ID).at(-1)).toEqual([20_000, 40_000])
+  })
+
+  it('K3 (round 2): past the windows kept with every window open, none is merged (each stays its holder\'s; bounded by the sessions holding them); the oldest closed ones merge once there are any', () => {
+    const n = WINDOWS_PER_CONVERSATION_MAX + 2
+    for (let i = 0; i < n; i++) openNotIndexedWindow(`h${i}`, A, 1000 + i * 10)
+    expect(of(ID)).toHaveLength(n)
+    expect(of(ID).every((w) => w[1] === null)).toBe(true)
+    for (let i = 0; i < n; i++) closeNotIndexedWindow(`h${i}`, 1005 + i * 10)
+    expect(of(ID).map((w) => w[1])).toEqual(Array.from({ length: n }, (_, i) => 1005 + i * 10))
+    openNotIndexedWindow('late', A, 5000)
+    expect(of(ID)).toHaveLength(WINDOWS_PER_CONVERSATION_MAX)
+    expect(of(ID)[0]).toEqual([1000, 1035])
+    expect(of(ID).at(-1)).toEqual([5000, null])
+  })
+
+  it('K3 (round 2): an open window between closed ones is never merged: the closed ones on either side merge around it, and its holder closes it', () => {
+    openNotIndexedWindow('s1', A, 100); closeNotIndexedWindow('s1', 150)
+    openNotIndexedWindow('s2', A, 200)
+    for (let i = 0; i < WINDOWS_PER_CONVERSATION_MAX - 1; i++) { openNotIndexedWindow('s3', A, 1000 + i * 10); closeNotIndexedWindow('s3', 1005 + i * 10) }
+    expect(of(ID)).toHaveLength(WINDOWS_PER_CONVERSATION_MAX)
+    expect(of(ID).slice(0, 2)).toEqual([[100, 1005], [200, null]])
+    closeNotIndexedWindow('s2', 9000)
+    expect(of(ID)[1]).toEqual([200, 9000])
   })
 
   it('K3: a flush that is not final writes what is pending but does not latch: a close after it still closes; a final flush latches', () => {
@@ -424,6 +448,17 @@ describe('the conversations kept past the cap (PR-level ADR-009 round 1, C2)', (
     told.length = 0
     closeNotIndexedWindow('held', 60_000)
     expect(told[0].conversations[key(0)]).toEqual([[1000, 60_000]])
+  })
+
+  it('C2d (round 2, E1): a conversation with one window closed and one still open is never dropped past the cap', () => {
+    setNotIndexedConversationsMaxForTests(1)
+    openNotIndexedWindow('s1', rollout(0), 1000); closeNotIndexedWindow('s1', 1100)
+    openNotIndexedWindow('s2', rollout(0), 1200)
+    expect(of(key(0))).toEqual([[1000, 1100], [1200, null]])
+    openNotIndexedWindow('s3', rollout(1), 1300)
+    expect(of(key(0))).toEqual([[1000, 1100], [1200, null]])
+    expect(of(key(1))).toEqual([[1300, null]])
+    expect(notIndexedSnapshot().before).toBeNull()
   })
 
   it('C2c: past the cap with every conversation open, a Claude name is refused and a cover is opened instead; a conversation kept already takes another window; a closed one makes room', () => {
