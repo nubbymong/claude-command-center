@@ -362,7 +362,9 @@ describe('the PR 3 user-facing sweep (P3.16)', () => {
     const k = body('shortcuts')
     expect(k).toMatch(/Alt\+V types only the image's path into a plain terminal, or into a session's partner shell/)
     expect(k).toMatch(/quoted for the shell, with no Enter/)
-    expect(k).toMatch(/A plain terminal over SSH, or a terminal that is not running, gets nothing/)
+    // PR-level ADR-009 round 1 (A1): off Windows, a path is typed only into a shell of the sh family.
+    expect(k).toMatch(/On macOS and Linux the path is typed only into an sh, bash, zsh, dash or ksh shell/)
+    expect(k).toMatch(/Any other shell, a plain terminal over SSH, or a terminal that is not running gets nothing/)
     expect(k).toMatch(/the hint says where the image was saved/)
     // The copied-file route reads File Explorer's and Finder's clipboard only.
     expect(k).toMatch(/an image file you copied in File Explorer or Finder/)
@@ -370,7 +372,8 @@ describe('the PR 3 user-facing sweep (P3.16)', () => {
     const t = tip('tip.paste-image').variants.primary.body
     expect(t).toMatch(/\*\*Alt\+V\*\* types only the image's path into a plain terminal, or into the partner shell/)
     expect(t).toMatch(/quoted for the shell, with no Enter/)
-    expect(t).toMatch(/Over SSH a plain terminal gets nothing/)
+    expect(t).toMatch(/On macOS and Linux the path is typed only into an sh, bash, zsh, dash or ksh shell/)
+    expect(t).toMatch(/Any other shell, or a plain terminal over SSH, gets nothing/)
     expect(t).toMatch(/an image file you copied in File Explorer or Finder/)
     expect(t).not.toMatch(/file manager/)
     const guide = trainingSteps.flatMap((s) => s.highlights ?? []).find((l) => l.startsWith('Alt+V'))!
@@ -456,6 +459,9 @@ describe('the PR 3 user-facing sweep (P3.16)', () => {
     expect(accounts).toMatch(/link it to another of your accounts, Claude or Codex/)
     expect(accounts).toMatch(/Needs attention: signed in a different way than before/)
     expect(stepText('ai-usage-meter')).toMatch(/rate-limit windows of this run's sessions/)
+    // The popover shows only the assistants that are on (row 14, OD27 M1 D5).
+    expect(stepText('ai-usage-meter').match(/side by side when both are on/g) ?? []).toHaveLength(3)
+    expect(tip('tip.github.ai-usage-meter').variants.primary.body).toMatch(/5h \/ 7d rate-limit windows, side by side when both are on/)
   })
 
   it('What\'s New (2.1.1-beta.2): a Codex Restart keeps its conversation, and PR 3\'s changes are listed', () => {
