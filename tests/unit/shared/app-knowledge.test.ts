@@ -254,7 +254,9 @@ describe('app knowledge and tips after P3.15', () => {
     expect(k).toMatch(/asks only when you trust a new folder, so a folder you trusted before, or an earlier choice of 2, brings no question/)
     // Round 2 (J6): the command Codex lists for it (the CLI fixtures' slash popup), not yet confirmed.
     // Round 4 (P6): only after a choice of 2; the administrator prompt blocks Codex's input (the VM at 98455d52).
-    expect(k).toMatch(/After a choice of 2, Codex also lists a \/setup-default-sandbox command \(set up elevated agent sandbox\): it asks Windows for administrator permission, and Codex takes no input until that is answered, so without a yes the session stays stuck until you close its tab/)
+    // Round 5 (R2): what the VM saw (the prompt left unanswered); a No was never tried, so nothing is said of it.
+    expect(k).toMatch(/After a choice of 2, Codex also lists a \/setup-default-sandbox command \(set up elevated agent sandbox\): it asks Windows for administrator permission, and Codex takes no input until that is answered; left unanswered, the session stays stuck, so unless you answer yes, close its tab\./)
+    expect(k).not.toMatch(/without a yes the session stays stuck/)
     expect(k).toMatch(/Whether it then lets Codex edit on its own is not yet confirmed; until it is, approve each edit when Codex asks, and use Standard rather than Auto/)
     expect(k).not.toMatch(/has not been confirmed yet/)
     expect(k).toMatch(/2\. Use non-admin sandbox/)
