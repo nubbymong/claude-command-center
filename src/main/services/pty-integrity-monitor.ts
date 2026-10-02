@@ -41,6 +41,10 @@ function freshRec(sessionId: string, retiredGenerations: string[] = []): Session
 /** P3.16a round 2 (Q5): how many replaced mounts a record remembers. */
 export const RETIRED_GENERATIONS_MAX = 8
 
+/** P3.16 final-head VM finding D3: how many ended sessions the monitor
+ *  remembers (the oldest dropped first). */
+export const ENDED_SESSIONS_MAX = 256
+
 // A renderer mount's generation as main takes it from a report: 1 to 64 of
 // [A-Za-z0-9_-] (TerminalView sends a randomId). Any other value is no
 // generation: the report counts against the mount the record already has.
@@ -68,6 +72,15 @@ const LOG_SERVICE = 'pty'
 
 export class PtyIntegrityMonitor {
   private sessions = new Map<string, SessionRec>()
+  /** P3.16 final-head VM finding D3: the sessions whose process ended (oldest
+   *  first, at most ENDED_SESSIONS_MAX). The renderer's report about 1 s after
+   *  a terminal's last bytes, and a resize of an ended tab's view, reach main
+   *  after the end; for these ids they are ignored, so they do not list the
+   *  session again (main's count 0, the renderer's N). The id's next process's
+   *  first output takes it off: only a live process's bytes reach
+   *  recordPtyData. Not cleared by resetSession, which the natural exit runs
+   *  right after endSession. */
+  private ended = new Set<string>()
   private events: PtyIntegrityEvent[] = []
   private logs: ServiceLogEntry[] = []
   private now: () => number
@@ -116,6 +129,7 @@ export class PtyIntegrityMonitor {
   }
 
   recordPtyData(sessionId: string, byteLength: number): void {
+    this.ended.delete(sessionId)
     const r = this.rec(sessionId)
     r.bytesFromPty += byteLength
     r.chunksFromPty += 1
@@ -123,6 +137,7 @@ export class PtyIntegrityMonitor {
   }
 
   recordResizeApplied(sessionId: string, cols: number, rows: number): void {
+    if (this.ended.has(sessionId)) return
     const r = this.rec(sessionId)
     r.resizeCount += 1
     r.lastAppliedCols = cols
@@ -133,6 +148,7 @@ export class PtyIntegrityMonitor {
   }
 
   recordRendererReport(report: PtyIntegrityReport): void {
+    if (this.ended.has(report.sessionId)) return
     const r = this.rec(report.sessionId)
     if (!this.noteMount(r, report)) return
     r.bytesReceived = report.bytesReceived
@@ -189,6 +205,10 @@ export class PtyIntegrityMonitor {
   }
 
   endSession(sessionId: string): void {
+    // D3: marked ended (the newest), whether or not it has a record.
+    this.ended.delete(sessionId)
+    this.ended.add(sessionId)
+    if (this.ended.size > ENDED_SESSIONS_MAX) this.ended.delete(this.ended.values().next().value as string)
     if (!this.sessions.has(sessionId)) return
     this.sessions.delete(sessionId)
     this.pushEvent('end', sessionId, 'session ended')
