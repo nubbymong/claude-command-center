@@ -87,7 +87,8 @@ function SectionHeader({ title, note }: { title: string; note?: string }) {
 }
 
 /**
- * Unified, READ-only usage popover anchored under the repo-strip AI chip.
+ * Unified, READ-only usage popover anchored above the status strip's AI chip
+ * (P3.16 final-head VM finding D2: fixed at the chip, portalled by it).
  * Three provider sections:
  *   - GitHub  : per-model rows from aiUsage (gross credits / covered / billed),
  *               a totals row, and a cap bar when copilotIncludedCredits is set.
@@ -109,6 +110,9 @@ export default function AiUsagePopover(props: {
   open: boolean
   onClose: () => void
   onOpenSettings?: (tab?: 'github' | 'statusline') => void
+  /** P3.16 final-head VM finding D2: where it is fixed, from the chip's
+   *  on-screen rect (the chip portals it onto document.body). */
+  anchor?: { right: number; bottom: number } | null
 }) {
   if (!props.open) return null
   return <AiUsagePopoverBody {...props} />
@@ -118,10 +122,12 @@ function AiUsagePopoverBody({
   open,
   onClose,
   onOpenSettings,
+  anchor,
 }: {
   open: boolean
   onClose: () => void
   onOpenSettings?: (tab?: 'github' | 'statusline') => void
+  anchor?: { right: number; bottom: number } | null
 }) {
   const aiUsage = useGitHubStore((s) => s.aiUsage)
   const aiUsageStatus = useGitHubStore((s) => s.aiUsageStatus)
@@ -159,8 +165,16 @@ function AiUsagePopoverBody({
       if (target.closest?.('[data-ai-usage-chip]')) return
       if (ref.current && !ref.current.contains(target)) onClose()
     }
+    // D2: Escape closes it too (IdentityOverflow's handler).
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
     document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
   }, [open, onClose])
 
   // Provider session sourcing. Claude = the active session when it is a Claude
@@ -208,10 +222,14 @@ function AiUsagePopoverBody({
       ref={ref}
       role="dialog"
       aria-label="AI usage"
-      className={`absolute right-0 top-full mt-1.5 z-50 w-80 rounded-lg border shadow-xl p-3 flex flex-col gap-3 transition-all duration-200 ease-out ${
-        entered ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-1'
+      // D2: fixed at the chip and rising from it (the chip sits at the
+      // window's bottom edge), so it enters from below.
+      className={`fixed z-50 w-80 rounded-lg border shadow-xl p-3 flex flex-col gap-3 transition-all duration-200 ease-out ${
+        entered ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-1'
       }`}
       style={{
+        right: anchor?.right,
+        bottom: anchor?.bottom,
         background: 'var(--surface-raised)',
         borderColor: 'var(--border-subtle)',
         color: 'var(--text-primary)',
