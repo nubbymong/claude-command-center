@@ -1114,7 +1114,11 @@ describe('contrast, P3.16a (U4): an attention card and tab stay readable under t
     // Every element of the card drawn in --text-muted is one of the two the rule names.
     const row = fs.readFileSync(path.resolve(__dirname, '../../../src/renderer/components/sidebar/SessionRow.tsx'), 'utf8')
     const muted = row.match(/<[a-z]+\b[^>]*--text-muted[^>]*>/g) ?? []
-    expect(muted.length).toBeGreaterThanOrEqual(2)
+    // P3.16a round 2 (Q7): the count pinned exactly, and every use of the token
+    // in the file is inside one of the tags found, so a tag the scan cut short
+    // (a `>` of an `=>` before the colour) cannot go unchecked.
+    expect(muted).toHaveLength(2)
+    expect(row.match(/--text-muted/g) ?? []).toHaveLength(muted.length)
     for (const tag of muted) expect(tag.replace(/\s+/g, ' '), tag).toMatch(/className="(?:[^"]* )?(?:meta|session-ordinal)(?: [^"]*)?"/)
   })
 
