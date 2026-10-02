@@ -25,7 +25,7 @@
 
 import * as nodePath from 'node:path'
 import * as nodeOs from 'node:os'
-import { UUID_RE, mangleCwdToProjectDir } from './logging/transcript-discovery'
+import { UUID_RE, claudeProjectDirName, type ClaudeLaunchFolderOptions } from './logging/transcript-discovery'
 import { askPromptRef } from './terminal-launch-line'
 import { escapeForCwdQuote, quoteArgForShell } from '../shared/shell-quote'
 
@@ -394,19 +394,22 @@ function relocate(src: string, dst: string, deps: RecoverOrphanDeps): void {
  *
  * `launchCwd` must be the cwd the conversation ACTUALLY runs in (the
  * resolveResumeLaunch `claudeCwd`), since that is what Claude CLI mangles into
- * the project-folder name. The uuid is re-validated against the canonical UUID
+ * the project-folder name (P3.16a round 2, Q1: the name Claude Code gives it,
+ * claudeProjectDirName). The uuid is re-validated against the canonical UUID
  * format (defense-in-depth) — a non-UUID stem or empty cwd returns null so the
  * caller simply skips the deterministic bind (the heuristic still covers it).
  *
- * `homedir` is injectable for testing; production passes os.homedir.
+ * `homedir` and `launchFolder` are injectable for testing; production passes
+ * os.homedir and reads the real folder.
  */
 export function buildResumeTranscriptPath(
   launchCwd: string,
   uuid: string,
   homedir: () => string = () => nodeOs.homedir(),
+  launchFolder?: ClaudeLaunchFolderOptions,
 ): string | null {
   if (!launchCwd || !uuid || !UUID_RE.test(uuid)) return null
-  return nodePath.join(homedir(), '.claude', 'projects', mangleCwdToProjectDir(launchCwd), `${uuid}.jsonl`)
+  return nodePath.join(homedir(), '.claude', 'projects', claudeProjectDirName(launchCwd, launchFolder), `${uuid}.jsonl`)
 }
 
 export function buildClaudeLaunchCommand(opts: BuildClaudeLaunchCommandOptions): string {

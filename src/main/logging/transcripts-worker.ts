@@ -36,7 +36,7 @@
 import * as nodeFs from 'fs'
 import { createHash, type Hash } from 'crypto'
 import { basename as pathBasename, dirname as pathDirname } from 'path'
-import { claudeFolderKey } from './claude-folder-key'
+import { claudeFolderKey, claudeProjectsRootKey } from './claude-folder-key'
 import { openTranscriptsDb } from './transcripts-db'
 import type { TranscriptsDb, NewMessage, TranscriptScope } from './transcripts-db'
 import { makeNormalizer, PARSER_VERSION } from './transcript-normalizer'
@@ -475,7 +475,10 @@ export function createTranscriptsWorker(
     const conversation = codexConversationKey(meta.path)
     // P3.16 round 1 (N1): a Claude transcript is also left out where its
     // projects folder was marked (a session not indexed that named none).
-    const keys = codex ? [conversation] : [conversation, claudeFolderKey(pathDirname(meta.path))]
+    // Round 2 (Q2, Q3): and where the projects folders' root above that folder
+    // was marked (a session past its cap that named another project's file).
+    const folder = pathDirname(meta.path)
+    const keys = codex ? [conversation] : [conversation, claudeFolderKey(folder), claudeProjectsRootKey(pathDirname(folder))]
     const skip = (ts: number | null): boolean => notIndexedAt(keys, ts)
     // P3.16 (M1): a Claude tail vouches for what it read, as a Codex tail
     // with its claimed identity does.

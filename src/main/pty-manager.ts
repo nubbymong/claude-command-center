@@ -28,10 +28,10 @@ import { execSync, execFile } from 'child_process'
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { shouldRegisterRun } from './logging/should-register-run'
 import { openNotIndexedWindow, closeNotIndexedWindow, releaseNotIndexedWindow, keepNotIndexedWindow, closeHeldNotIndexedWindow, conversationKey } from './logging/indexing-gaps'
-import { claudeFolderKey, normaliseClaudeFolder } from './logging/claude-folder-key'
+import { claudeFolderKey, claudeProjectsRootKey, normaliseClaudeFolder } from './logging/claude-folder-key'
 import { getLogSupervisor, getTranscriptBinder } from './logging/logging-service'
 import { getCodexLogBinder } from './logging/codex-log-binder'
-import { resolveResumeTargetFromTranscript, mangleCwdToProjectDir, UUID_RE, canonicalizeTranscriptPath } from './logging/transcript-discovery'
+import { resolveResumeTargetFromTranscript, claudeProjectDirName, UUID_RE, canonicalizeTranscriptPath } from './logging/transcript-discovery'
 import { buildClaudeLaunchCommand, resolveResumeLaunch, recoverOrphanResumeLaunch, buildResumeTranscriptPath, quoteArgForShell, modelFlag, expandResumeTargetCwd, parseWorktreePaths } from './spawn-claude-command'
 import { ensureCompanionDir, nodeFsCompanionDeps } from './logging/companion-dir'
 import { forgetSessionName } from './logging/session-name-sidecar'
@@ -621,12 +621,17 @@ function endSessionNotIndexed(sessionId: string, now: number): void {
 /** P3.16 (M1), round 1 (N2, N4): a Claude session is on the transcript at
  *  `transcriptPath` (its hook or status line said so, or its exact resume).
  *  Taken only as a `<uuid>.jsonl` directly in the session's own projects
- *  folder (a subagent's transcript, or a path anywhere else, is not its
- *  conversation). Kept for the windows; while the session runs not indexed,
- *  that conversation's window opens from the moment it became not indexed and
- *  stays open beside the others it named until the session ends, and its
- *  folder's window, if it held one, closes now. Only the name and folder are
- *  used; nothing is read. */
+ *  folder, or (round 2, Q3) directly in another project's folder under the
+ *  Claude projects root (a /resume across projects); a subagent's transcript,
+ *  or a path anywhere else, is not its conversation. Kept for the windows;
+ *  while the session runs not indexed, that conversation's window opens from
+ *  the moment it became not indexed and stays open beside the others it named
+ *  until the session ends, and its folder's window, if it held one, closes
+ *  now. Round 2 (Q2): past the most windows a session holds, a name is covered
+ *  from that same moment until the session ends instead: by its own folder's
+ *  window, opened again, or for another project's folder by one on the
+ *  projects root, so no name the session gives is in no window. Only the name
+ *  and folder are used; nothing is read. */
 function noteClaudeTranscript(sessionId: string, transcriptPath: string): void {
   if (typeof sessionId !== 'string' || !sessionId || typeof transcriptPath !== 'string') return
   const folder = claudeFolders.get(sessionId)
@@ -635,7 +640,9 @@ function noteClaudeTranscript(sessionId: string, transcriptPath: string): void {
   if (!canonical) return
   const name = path.basename(canonical)
   if (!/\.jsonl$/.test(name) || !UUID_RE.test(name.slice(0, -'.jsonl'.length))) return
-  if (normaliseClaudeFolder(path.dirname(canonical)) !== normaliseClaudeFolder(folder)) return
+  const projectsRoot = path.join(os.homedir(), '.claude', 'projects')
+  const ownFolder = normaliseClaudeFolder(path.dirname(canonical)) === normaliseClaudeFolder(folder)
+  if (!ownFolder && normaliseClaudeFolder(path.dirname(path.dirname(canonical))) !== normaliseClaudeFolder(projectsRoot)) return
   claudeTranscripts.delete(sessionId)
   claudeTranscripts.set(sessionId, canonical)
   while (claudeTranscripts.size > CLAUDE_TRANSCRIPTS_MAX) {
@@ -646,17 +653,26 @@ function noteClaudeTranscript(sessionId: string, transcriptPath: string): void {
   const notIndexed = notIndexedSessions.get(sessionId)
   if (notIndexed?.provider === 'claude') {
     const now = Date.now()
-    try { keepNotIndexedWindow(sessionId, conversationKey(canonical), notIndexed.since, now) } catch { /* best-effort */ }
-    try { closeHeldNotIndexedWindow(sessionId, claudeFolderKey(folder), now) } catch { /* best-effort */ }
+    let kept: ReturnType<typeof keepNotIndexedWindow> = 'invalid'
+    try { kept = keepNotIndexedWindow(sessionId, conversationKey(canonical), notIndexed.since, now) } catch { /* best-effort */ }
+    if (kept === 'full') {
+      const cover = ownFolder ? claudeFolderKey(folder) : claudeProjectsRootKey(projectsRoot)
+      try { keepNotIndexedWindow(sessionId, cover, notIndexed.since, now, { cover: true }) } catch { /* best-effort */ }
+    } else {
+      // A cover window is left open (indexing-gaps closes only the folder's first one).
+      try { closeHeldNotIndexedWindow(sessionId, claudeFolderKey(folder), now) } catch { /* best-effort */ }
+    }
   }
 }
 
 /** P3.16 round 1 (N1): a local Claude session's projects folder, from the
- *  folder it is launched in (as the transcript binder binds it). */
+ *  folder it is launched in (as the transcript binder binds it). Round 2
+ *  (Q1): the folder Claude Code names for it (its real path on Linux and
+ *  macOS; past 200 characters, the name cut with the folder's hash). */
 function noteClaudeFolder(sessionId: string, launchCwd: string): void {
   if (typeof launchCwd !== 'string' || !launchCwd) return
   claudeFolders.delete(sessionId)
-  claudeFolders.set(sessionId, path.join(os.homedir(), '.claude', 'projects', mangleCwdToProjectDir(launchCwd)))
+  claudeFolders.set(sessionId, path.join(os.homedir(), '.claude', 'projects', claudeProjectDirName(launchCwd)))
   while (claudeFolders.size > CLAUDE_TRANSCRIPTS_MAX) {
     const oldest = claudeFolders.keys().next().value
     if (oldest === undefined) break
@@ -5386,7 +5402,9 @@ function spawnPtyResolved(
           existsSync: fs.existsSync,
           statSync: (p) => fs.statSync(p),
           homedir: os.homedir,
-          mangleCwdToProjectDir,
+          // P3.16a round 2 (Q1): the folder Claude Code names (its real path on
+          // Linux and macOS; past 200 characters, cut with the folder's hash).
+          mangleCwdToProjectDir: (cwd) => claudeProjectDirName(cwd),
           projectsRoot: path.join(os.homedir(), '.claude', 'projects'),
           // Best-effort: ensure a direct-work conversation (no subagent/workflow,
           // hence no companion dir from the CLI) is resumable. Never throws.
@@ -5418,7 +5436,7 @@ function spawnPtyResolved(
             pid: () => process.pid,
             warn: (msg) => { logWarn(msg) },
             homedir: os.homedir,
-            mangleCwdToProjectDir,
+            mangleCwdToProjectDir: (cwd) => claudeProjectDirName(cwd),
             projectsRoot: path.join(os.homedir(), '.claude', 'projects'),
             isHomeOrAncestor,
             ensureCompanionDir: (projectDir, uuid) => { ensureCompanionDir(projectDir, uuid, nodeFsCompanionDeps) },

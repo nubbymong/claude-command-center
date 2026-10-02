@@ -154,7 +154,7 @@ vi.mock('../../../src/main/provider-accounts', () => ({ getAccountsService: () =
 
 const { spawnPty, killPty, codexRolloutForSessionContext, CODEX_CONTEXT_ROLLOUTS_MAX, CODEX_LEASE_EXIT_GRACE_MS, applyLoggingSwitches, routeHookTranscriptPath, CLAUDE_TRANSCRIPTS_MAX } = await import('../../../src/main/pty-manager')
 const { getCodexLogBinder } = await import('../../../src/main/logging/codex-log-binder')
-const { claudeFolderKey } = await import('../../../src/main/logging/claude-folder-key')
+const { claudeFolderKey, claudeProjectsRootKey } = await import('../../../src/main/logging/claude-folder-key')
 const { mangleCwdToProjectDir } = await import('../../../src/shared/project-key')
 const { notIndexedSnapshot, conversationKey, resetIndexingGapsForTests, flushIndexingGaps, initIndexingGaps, indexingGapsWritesForTests, HELD_WINDOWS_PER_SESSION_MAX } = await import('../../../src/main/logging/indexing-gaps')
 /** A conversation's not-indexed windows (as main keeps them). */
@@ -462,7 +462,7 @@ describe('P3.12 round 2: the switches at every launch (W3), the stretches not in
     h.settings = { ...CONSENT, loggingEnabled: false }
     spawnPty(fakeWin, CLAUDE_SID, { cwd: os.tmpdir(), provider: 'claude' } as never)
     spawnPty(fakeWin, 'shell-only-1', { cwd: os.tmpdir(), shellOnly: true } as never)
-    expect(Object.keys(notIndexedSnapshot().conversations)).toEqual([claudeFolderKey(path.join(os.homedir(), '.claude', 'projects', mangleCwdToProjectDir(os.tmpdir())))])
+    expect(Object.keys(notIndexedSnapshot().conversations)).toEqual([claudeFolderKey(path.join(os.homedir(), '.claude', 'projects', mangleCwdToProjectDir(process.platform === 'win32' ? os.tmpdir() : fs.realpathSync(os.tmpdir()))))])
   })
 
   it('W9: a Codex session is indexed only once the notice naming Codex\'s indexing was seen; a Claude session keeps its rule', () => {
@@ -624,7 +624,9 @@ describe('P3.16 (M1, round 1): a Claude session not indexed marks what it writes
   const T0 = Date.parse('2026-09-30T10:00:00.000Z')
   const CL_A = '7f3e0c1a-0000-4000-8000-0000000003a1'
   const CL_B = '7f3e0c1a-0000-4000-8000-0000000003b2'
-  const FOLDER = path.join(os.homedir(), '.claude', 'projects', mangleCwdToProjectDir(os.tmpdir()))
+  // Claude Code names the real path of its launch folder (round 2, Q1): on
+  // Linux and macOS the temp folder may be reached through a link.
+  const FOLDER = path.join(os.homedir(), '.claude', 'projects', mangleCwdToProjectDir(process.platform === 'win32' ? os.tmpdir() : fs.realpathSync(os.tmpdir())))
   const FOLDER_KEY = claudeFolderKey(FOLDER)
   const transcript = (id: string) => path.join(FOLDER, `${id}.jsonl`)
   const claudeWindows = (key: string) => notIndexedSnapshot().conversations[key] ?? []
@@ -709,29 +711,36 @@ describe('P3.16 (M1, round 1): a Claude session not indexed marks what it writes
     expect(claudeWindows(CL_B)).toEqual([[T0, null]])
   })
 
-  it('N4: only a <uuid>.jsonl directly in the session\'s own projects folder is taken; any other name or folder marks nothing', () => {
+  it('N4: only a <uuid>.jsonl directly in a folder of the Claude projects root is taken (round 2, Q3: another project\'s folder too); any other name or place marks nothing', () => {
     const S = fresh()
     h.settings = { ...CONSENT, loggingEnabled: false }
     startClaude(S)
     route(S, path.join(FOLDER, 'not-a-uuid.jsonl'))
-    route(S, path.join(os.homedir(), '.claude', 'projects', 'C--elsewhere', `${CL_A}.jsonl`))
     route(S, path.join(os.tmpdir(), `${CL_A}.jsonl`))
     route(S, path.join(FOLDER, `${CL_A}.json`))
+    route(S, path.join(FOLDER, CL_A, 'subagents', `${CL_B}.jsonl`))
+    route(S, path.join(os.homedir(), '.claude', 'projects', `${CL_A}.jsonl`))
+    route(S, path.join(os.homedir(), '.claude', `${CL_A}.jsonl`))
     expect(Object.keys(notIndexedSnapshot().conversations)).toEqual([FOLDER_KEY])
     // The same folder in another spelling (another config dir's projects folder) is the same folder.
-    route(S, path.join(os.tmpdir(), 'profile-x', '.claude', 'projects', mangleCwdToProjectDir(os.tmpdir()), `${CL_A.toUpperCase()}.jsonl`))
+    route(S, path.join(os.tmpdir(), 'profile-x', '.claude', 'projects', path.basename(FOLDER), `${CL_A.toUpperCase()}.jsonl`))
     expect(claudeWindows(CL_A)).toEqual([[T0, null]])
   })
 
-  it('N4 (lens B B-M1-4): one session naming many transcripts holds at most HELD_WINDOWS_PER_SESSION_MAX and never raises the before-time', () => {
+  it('N4 (lens B B-M1-4), round 2 (Q2, lens A CAP, lens B B2-2): past HELD_WINDOWS_PER_SESSION_MAX names the folder window opens again from the start of the stretch, until the session ends; still bounded, and the before-time never moves', () => {
     const S = fresh()
     h.settings = { ...CONSENT, loggingEnabled: false }
     startClaude(S)
+    const proc = h.ptys.at(-1)!
     clock(5000)
     for (let i = 0; i < 200; i++) hook(S, `7f3e0c1a-0000-4000-8000-${String(i).padStart(12, '0')}`)
     const snap = notIndexedSnapshot()
     expect(snap.before).toBeNull()
     expect(Object.keys(snap.conversations).length).toBe(HELD_WINDOWS_PER_SESSION_MAX + 1)
+    // Closed at the first name; open again, from the launch, at the first name past the cap.
+    expect(claudeWindows(FOLDER_KEY)).toEqual([[T0, T0 + 5000], [T0, null]])
+    clock(9000); killPty(S); exitOf(proc)
+    expect(claudeWindows(FOLDER_KEY)).toEqual([[T0, T0 + 5000], [T0, T0 + 9000]])
   })
 
   it('N4 (lens B B-M1-5): the first window is written at once; the names after it go in one coalesced write', () => {
@@ -849,5 +858,104 @@ describe('P3.16 (M1, round 1): a Claude session not indexed marks what it writes
     h.settings = { ...CONSENT, loggingEnabled: false }
     start(S)
     expect(claudeWindows(CL_B)).toEqual([])
+  })
+
+  // ---- P3.16a round 2 (Q1, Q2, Q3) ----
+  /** Claude Code 2.1.285 to 2.1.287's projects folder name, copied from the
+   *  pinned binaries (the oracle these cases check the app against): the name
+   *  cut at 200 characters, then `-` and the base-36 hash of the whole folder. */
+  const claudeCodeFolderName = (cwd: string): string => {
+    const k = cwd.replace(/[^a-zA-Z0-9]/g, '-')
+    if (k.length <= 200) return k
+    let hsh = 0
+    for (let i = 0; i < cwd.length; i++) hsh = (hsh << 5) - hsh + cwd.charCodeAt(i) | 0
+    return `${k.slice(0, 200)}-${Math.abs(hsh).toString(36)}`
+  }
+  /** The folder Claude Code launched in `cwd` writes to (it takes the real path of its launch folder). */
+  const claudeCodeFolder = (cwd: string) => path.join(os.homedir(), '.claude', 'projects', claudeCodeFolderName(process.platform === 'win32' ? cwd : fs.realpathSync(cwd)))
+  const PROJECTS = path.join(os.homedir(), '.claude', 'projects')
+  /** A launch folder whose name is longer than 200 characters, made for the case and removed after it. */
+  const withLongFolder = (fn: (cwd: string) => void) => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-test-p316r2-'))
+    try {
+      let long = base
+      while (long.length < 215) long = path.join(long, 'deeply-nested-package-folder')
+      fs.mkdirSync(long, { recursive: true })
+      fn(long)
+    } finally {
+      if (path.basename(base).startsWith('ccc-test-p316r2-') && path.dirname(base) === os.tmpdir()) fs.rmSync(base, { recursive: true, force: true })
+    }
+  }
+  const id = (i: number) => `7f3e0c1a-0000-4000-8000-${String(i).padStart(12, '0')}`
+
+  it('Q1 (lens A LONG, lens B B2-1): a launch folder whose name is longer than 200 characters: the folder marked and the names taken are the ones Claude Code writes to', () => {
+    withLongFolder((cwd) => {
+      expect(cwd.replace(/[^a-zA-Z0-9]/g, '-').length).toBeGreaterThan(200)
+      const S = fresh()
+      h.settings = { ...CONSENT, loggingEnabled: false }
+      startClaude(S, { cwd })
+      const real = claudeCodeFolder(cwd)
+      expect(Object.keys(notIndexedSnapshot().conversations)).toEqual([claudeFolderKey(real)])
+      clock(2000)
+      route(S, path.join(real, `${CL_A}.jsonl`))
+      expect(claudeWindows(CL_A)).toEqual([[T0, null]])
+      expect(claudeWindows(claudeFolderKey(real))).toEqual([[T0, T0 + 2000]])
+      killPty(S)
+    })
+  })
+
+  it('Q1: an exact resume in such a folder binds the transcript Claude Code writes to at the launch; not indexed, it marks that transcript', () => {
+    withLongFolder((cwd) => {
+      const S = fresh()
+      resumeAs.next = { resumeUuid: CL_B, claudeCwd: cwd }
+      startClaude(S, { cwd, resume: { uuid: CL_B, cwd } })
+      expect(h.claudeBinder.filter((c) => c[0] === 'notify' && c[1] === S)).toEqual([['notify', S, path.join(claudeCodeFolder(cwd), `${CL_B}.jsonl`)]])
+      killPty(S)
+      const R = fresh()
+      h.settings = { ...CONSENT, loggingEnabled: false }
+      resumeAs.next = { resumeUuid: CL_B, claudeCwd: cwd }
+      clock(1000)
+      startClaude(R, { cwd, resume: { uuid: CL_B, cwd } })
+      expect(claudeWindows(CL_B)).toEqual([[T0 + 1000, null]])
+      killPty(R)
+    })
+  })
+
+  it('Q3: a transcript in another project\'s folder (a /resume across projects) is marked within the cap, and the session\'s folder window closes as at any name', () => {
+    const S = fresh()
+    h.settings = { ...CONSENT, loggingEnabled: false }
+    startClaude(S)
+    clock(3000)
+    route(S, path.join(PROJECTS, 'C--elsewhere', `${CL_A}.jsonl`))
+    expect(claudeWindows(CL_A)).toEqual([[T0, null]])
+    expect(claudeWindows(FOLDER_KEY)).toEqual([[T0, T0 + 3000]])
+  })
+
+  it('Q2, Q3: past the cap, a name in another project\'s folder opens one window on the projects root, from the start of the stretch until the session ends', () => {
+    const S = fresh()
+    h.settings = { ...CONSENT, loggingEnabled: false }
+    startClaude(S)
+    const proc = h.ptys.at(-1)!
+    clock(5000)
+    for (let i = 0; i < HELD_WINDOWS_PER_SESSION_MAX; i++) hook(S, id(i))
+    clock(6000)
+    route(S, path.join(PROJECTS, 'C--elsewhere', `${id(500)}.jsonl`))
+    route(S, path.join(PROJECTS, 'C--another', `${id(501)}.jsonl`))
+    const ROOT_KEY = claudeProjectsRootKey(PROJECTS)
+    expect(claudeWindows(ROOT_KEY)).toEqual([[T0, null]])
+    expect(claudeWindows(id(500))).toEqual([])
+    // Its own folder's names past the cap: the folder window, open again.
+    clock(7000)
+    hook(S, id(502))
+    expect(claudeWindows(FOLDER_KEY)).toEqual([[T0, T0 + 5000], [T0, null]])
+    // A name it holds already (the status line names it again) leaves the cover open.
+    clock(7500)
+    hook(S, id(0))
+    expect(claudeWindows(FOLDER_KEY)).toEqual([[T0, T0 + 5000], [T0, null]])
+    expect(Object.keys(notIndexedSnapshot().conversations).length).toBe(HELD_WINDOWS_PER_SESSION_MAX + 2)
+    expect(notIndexedSnapshot().before).toBeNull()
+    clock(9000); killPty(S); exitOf(proc)
+    expect(claudeWindows(ROOT_KEY)).toEqual([[T0, T0 + 9000]])
+    expect(claudeWindows(FOLDER_KEY)).toEqual([[T0, T0 + 5000], [T0, T0 + 9000]])
   })
 })

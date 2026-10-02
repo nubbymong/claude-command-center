@@ -83,7 +83,7 @@ vi.mock('../../../src/main/logging/transcripts-db', () => ({
 
 const { createTranscriptsWorker } = await import('../../../src/main/logging/transcripts-worker')
 const { openNotIndexedWindow, closeNotIndexedWindow, releaseNotIndexedWindow, setNotIndexedListener, notIndexedSnapshot, resetIndexingGapsForTests, keepNotIndexedWindow, closeHeldNotIndexedWindow } = await import('../../../src/main/logging/indexing-gaps')
-const { claudeFolderKey } = await import('../../../src/main/logging/claude-folder-key')
+const { claudeFolderKey, claudeProjectsRootKey } = await import('../../../src/main/logging/claude-folder-key')
 const { FakeTranscriptsWorkerTransport } = await import('../../../src/main/logging/log-worker-transport')
 const { CODEX_PARSER_VERSION } = await import('../../../src/main/logging/codex-rollout-normalizer')
 const { PARSER_VERSION } = await import('../../../src/main/logging/transcript-normalizer')
@@ -1030,5 +1030,30 @@ describe('Claude\'s resume continues from what was indexed, with Codex\'s record
     send(runC('T', BASE + 6100)); send(bindC('T', sibling)); w.tickNow()
     // The folder's stretch (500 to 2000) is left out; the sibling after it is read.
     expect(shown(runOf('T'))).toEqual(['-- off --', 'S-LATE'])
+  })
+
+  // P3.16a round 2 (Q2, Q3): past the most windows a session holds, a name in
+  // another projects folder is covered by a window on the projects folders'
+  // root: every transcript in a folder directly under it leaves out what is
+  // stamped in that window; a transcript elsewhere does not.
+  it('Q3: a window on the projects root: every folder under it leaves out its records in that window; a transcript directly in the root, or deeper, does not', () => {
+    const { w, send } = boot()
+    resetIndexingGapsForTests()
+    setNotIndexedListener((u) => send({ type: 'not-indexed-windows', ...u } as unknown as In))
+    const a = tfile(40, 'proj-x')
+    const b = tfile(41, 'proj-y')
+    const loose = tfile(42)
+    const deeper = tfile(43, join('proj-z', 'nested'))
+    for (const p of [a, b, loose, deeper]) writeFileSync(p, say('BEFORE', 100) + say('WRITTEN-WHILE-NOT-INDEXED', 1000) + say('AFTER', 5000))
+    keepNotIndexedWindow('S', claudeProjectsRootKey(dir), BASE + 500, BASE + 500, { writeNow: true })
+    closeNotIndexedWindow('S', BASE + 4000)
+    send(runC('R', BASE + 6000)); send(bindC('R', a)); w.tickNow()
+    expect(shown(runOf('R'))).toEqual(['BEFORE', '-- off --', 'AFTER'])
+    send(runC('T', BASE + 6100)); send(bindC('T', b)); w.tickNow()
+    expect(shown(runOf('T'))).toEqual(['BEFORE', '-- off --', 'AFTER'])
+    send(runC('U', BASE + 6200)); send(bindC('U', loose)); w.tickNow()
+    expect(shown(runOf('U'))).toEqual(['BEFORE', 'WRITTEN-WHILE-NOT-INDEXED', 'AFTER'])
+    send(runC('V', BASE + 6300)); send(bindC('V', deeper)); w.tickNow()
+    expect(shown(runOf('V'))).toEqual(['BEFORE', 'WRITTEN-WHILE-NOT-INDEXED', 'AFTER'])
   })
 })

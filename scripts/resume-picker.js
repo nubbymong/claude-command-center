@@ -46,8 +46,17 @@ const readline = require('readline')
 // name for dotted/worktree paths, which is exactly why worktree conversations
 // were invisible. The case-insensitive readdirSync match in main() is kept as a
 // belt-and-braces guard on top of this.
+//
+// P3.16a round 2 (Q1): a name longer than 200 characters is cut at 200, and
+// `-` and the base-36 absolute value of a 32-bit hash of the WHOLE folder
+// follow it, as Claude Code names it (src/shared/project-key.ts, replicated).
 function encodeProjectPath(p) {
-  return String(p).replace(/[^A-Za-z0-9]/g, '-')
+  const cwd = String(p)
+  const name = cwd.replace(/[^A-Za-z0-9]/g, '-')
+  if (name.length <= 200) return name
+  let h = 0
+  for (let i = 0; i < cwd.length; i++) h = (h << 5) - h + cwd.charCodeAt(i) | 0
+  return name.slice(0, 200) + '-' + Math.abs(h).toString(36)
 }
 
 // ── Project-dir resolution ──────────────────────────────────────────

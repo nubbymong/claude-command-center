@@ -66,15 +66,27 @@ const SESSION_MAX = 200
 const DAMAGED_KEPT = 3
 const WRITE_DELAY_MS = 500
 /** P3.16 round 1 (N4): the most windows one session holds open at once (a
- *  Claude session keeps one per transcript it names); past it, more names
- *  open none (its folder's window, or the ones it holds, cover it). */
+ *  Claude session keeps one per transcript it names); past it, a name opens
+ *  no window of its own. Round 2 (Q2): a window that covers it is opened
+ *  instead (HELD_COVER_WINDOWS_MAX). */
 export const HELD_WINDOWS_PER_SESSION_MAX = 32
+/** P3.16a round 2 (Q2, Q3): the windows a session may hold past
+ *  HELD_WINDOWS_PER_SESSION_MAX to cover the names it can no longer give one
+ *  of their own (a Claude session: its projects folder's, and the projects
+ *  folders' root's). A cover window stays open until the session ends. */
+export const HELD_COVER_WINDOWS_MAX = 2
+
+/** What keepNotIndexedWindow did: opened a window, found the session already
+ *  holding one on that key, found it holding the most it may, or was given
+ *  something it does not take. */
+export type KeepNotIndexedResult = 'opened' | 'held' | 'full' | 'invalid'
 
 const windows = new Map<string, NotIndexedWindow[]>()
 /** The conversations each session not indexed holds, and their open windows
  *  (a Codex session one at a time; a Claude session one per transcript it
- *  named, P3.16 round 1, N2). */
-const openBy = new Map<string, Array<{ key: string; win: NotIndexedWindow }>>()
+ *  named, P3.16 round 1, N2; round 2, Q2: and a cover window past its cap,
+ *  which only its end closes). */
+const openBy = new Map<string, Array<{ key: string; win: NotIndexedWindow; cover?: true }>>()
 let before: number | null = null
 /** The app is stopping (a final flushIndexingGaps): the windows still open stay open. */
 let stopping = false
@@ -262,31 +274,38 @@ export function openNotIndexedWindow(sessionId: string, rolloutPath: string, sin
  * projects folder) whose key is `key`, as of `now`: a window opens at `since`
  * beside the ones the session already holds, which stay open until the
  * session ends (a Claude session keeps one per transcript it names). At most
- * HELD_WINDOWS_PER_SESSION_MAX held at once. Written at once when `writeNow`
- * (a session's first window), else with the coalesced write. True when one
- * opened.
+ * HELD_WINDOWS_PER_SESSION_MAX held at once; a `cover` window (round 2, Q2)
+ * may be held past it, up to HELD_COVER_WINDOWS_MAX more, and stays open until
+ * the session ends (closeHeldNotIndexedWindow leaves it). Written at once when
+ * `writeNow` (a session's first window), else with the coalesced write.
  */
-export function keepNotIndexedWindow(sessionId: string, key: string, since: number, now: number = since, opts: { writeNow?: boolean } = {}): boolean {
-  if (typeof sessionId !== 'string' || !sessionId || sessionId.length > SESSION_MAX || typeof key !== 'string' || !key || key.length > KEY_MAX || !Number.isFinite(since) || !Number.isFinite(now)) return false
+export function keepNotIndexedWindow(sessionId: string, key: string, since: number, now: number = since, opts: { writeNow?: boolean; cover?: boolean } = {}): KeepNotIndexedResult {
+  if (typeof sessionId !== 'string' || !sessionId || sessionId.length > SESSION_MAX || typeof key !== 'string' || !key || key.length > KEY_MAX || !Number.isFinite(since) || !Number.isFinite(now)) return 'invalid'
   const held = openBy.get(sessionId) ?? []
-  if (held.some((h) => h.key === key) || held.length >= HELD_WINDOWS_PER_SESSION_MAX) return false
+  const mine = held.find((h) => h.key === key)
+  if (mine) {
+    // Held already: asked for as a cover, it stays open until the session ends.
+    if (opts.cover) mine.cover = true
+    return 'held'
+  }
+  if (held.length >= HELD_WINDOWS_PER_SESSION_MAX + (opts.cover ? HELD_COVER_WINDOWS_MAX : 0)) return 'full'
   const win: NotIndexedWindow = [Math.min(since, now), null]
   touch(key).push(win)
-  held.push({ key, win })
+  held.push(opts.cover ? { key, win, cover: true } : { key, win })
   openBy.set(sessionId, held)
   bound(key, now)
   if (opts.writeNow) { dirty = true; write() } else schedule()
   tell([key])
-  return true
+  return 'opened'
 }
 
 /** P3.16 round 1 (N1): `sessionId` stops holding the one window it holds on
  *  `key` (a Claude session's folder window, once it names a transcript); the
- *  others it holds stay open. */
+ *  others it holds stay open. Round 2 (Q2): a cover window stays open too. */
 export function closeHeldNotIndexedWindow(sessionId: string, key: string, ts: number): void {
   if (stopping) return
   const held = openBy.get(sessionId)
-  const at = held ? held.findIndex((h) => h.key === key) : -1
+  const at = held ? held.findIndex((h) => h.key === key && !h.cover) : -1
   if (!held || at < 0) return
   const [one] = held.splice(at, 1)
   if (held.length === 0) openBy.delete(sessionId)
