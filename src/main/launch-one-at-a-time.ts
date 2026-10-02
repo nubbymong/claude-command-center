@@ -72,7 +72,10 @@
 // (P3.13 round 4). A spawn that is not a copy keeps no
 // pending ticket at all, and a session that already has INFLIGHT_PER_ID pending
 // spawns has the NEW claim refused: nothing pending is ever pushed out by a later
-// claim. A session later spawned as a non-copy stops counting as a copy.
+// claim. A pending spawn whose preparation pty-manager cancelled or superseded (a
+// close, a newer Restart) can no longer start, and counts for nothing from then
+// (PR-level ADR-009 round 1, B1). A session later spawned as a non-copy stops
+// counting as a copy.
 //
 // NOT A BOUNDARY AGAINST A COMPROMISED RENDERER, as the rule was not one in the
 // renderer: this holds the sidebar's rule for honest launches. A request made by
@@ -120,6 +123,10 @@ interface TicketData {
   /** The config the spawn is a copy of, or null for a spawn that is not a copy. */
   config: string | null
   isLive: (sessionId: string) => boolean
+  /** PR-level ADR-009 round 1 (B1): whether the spawn's preparation is still
+   *  the session's current one (pty-manager's); absent for a spawn that
+   *  prepares nothing. */
+  current?: () => boolean
 }
 const tickets = new WeakMap<ConfigLaunchTicket, TicketData>()
 
@@ -182,6 +189,22 @@ function forgetPending(ticket: ConfigLaunchTicket, sessionId: string): void {
   if (list.length === 0) inflight.delete(sessionId)
 }
 
+/** PR-level ADR-009 round 1 (B1): the session's pending spawns, after
+ *  forgetting each one whose preparation was cancelled (a close, a sweep) or
+ *  superseded (a newer spawn of the session, a Restart): such a spawn can no
+ *  longer reach pty-manager's spawn, so it counts for nothing. */
+function pendingOf(sessionId: string): ConfigLaunchTicket[] {
+  const list = inflight.get(sessionId)
+  if (!list) return []
+  for (const t of [...list]) {
+    const current = tickets.get(t)?.current
+    let gone = false
+    try { gone = !!current && !current() } catch { gone = false }
+    if (gone) { tickets.delete(t); forgetPending(t, sessionId) }
+  }
+  return inflight.get(sessionId) ?? []
+}
+
 /** Whether main holds a right for this session and config: accepted in this
  *  run, or restored at this start. */
 function holds(sessionId: string, configId: string): boolean {
@@ -203,7 +226,7 @@ function configsOf(sessionId: string): string[] {
   const accepted = held.get(sessionId)
   if (accepted !== undefined) return [accepted]
   const out: string[] = []
-  for (const t of inflight.get(sessionId) ?? []) {
+  for (const t of pendingOf(sessionId)) {
     const c = tickets.get(t)?.config
     if (typeof c === 'string') out.push(c)
   }
@@ -237,7 +260,9 @@ export function claimConfigLaunch(sessionId: string, request: ConfigLaunchReques
   }
   // A session that already has this many spawns under way (only something that
   // spawns one id again and again) is refused the NEW one: what is pending stays.
-  if ((inflight.get(sessionId)?.length ?? 0) >= INFLIGHT_PER_ID) {
+  // PR-level ADR-009 round 1 (B1): only spawns still current count (a Restart
+  // pressed again and again while a preparation is slow supersedes the earlier).
+  if (pendingOf(sessionId).length >= INFLIGHT_PER_ID) {
     logWarn(`[launch] session ${sessionId} refused: ${INFLIGHT_PER_ID} spawns of it are already under way`)
     return { refused: { code: 'already-running', providerId: request.provider ?? 'claude', message: alreadyRunningRefusalMessage(labelOf(saved)) } }
   }
@@ -280,6 +305,20 @@ export function settleConfigLaunch(ticket: ConfigLaunchTicket): void {
   held.set(id, data.config)
   restored.delete(id)
   evictRights(id, data.isLive)
+}
+
+/**
+ * PR-level ADR-009 round 1 (B1): the spawn this ticket was handed out for is
+ * prepared by pty-manager (beginSpawnPreparation): `current` says whether that
+ * preparation is still the session's current one. Once it says no (a close, a
+ * sweep, a newer spawn of the session), the spawn can no longer reach
+ * pty-manager's spawn, and its ticket stops counting toward the spawns one
+ * session may have under way. Only a ticket this module handed out and has not
+ * settled or discarded takes it.
+ */
+export function noteConfigLaunchPreparation(ticket: ConfigLaunchTicket, current: () => boolean): void {
+  const data = tickets.get(ticket)
+  if (data && typeof current === 'function') data.current = current
 }
 
 /**
