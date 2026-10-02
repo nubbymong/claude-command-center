@@ -3560,28 +3560,27 @@ P3.16, the PR-level ADR-009 pass, round 1 (PR 3's own commits, e0d4ddbc to
 coverage D1 to D6), all fixed or recorded in this pass; the re-attack is owed
 (bound: two fix and re-attack rounds). Built on 24574276.
 C1 (major; row 31): a Codex session that is not indexed also marks the
-folder it runs in, inside its realm, from the moment it became not indexed
+folder it runs in (round 2, K2: in every realm, no longer inside its own),
+from the moment it became not indexed
 until it ends, as a Claude session marks its projects folder
 (`src/main/logging/codex-folder-key.ts`; a cover window in `indexing-gaps.ts`,
 which its claims and a claim let go leave open, and a kill leaves open until
 the process has ended, as its conversation's; `pty-manager.ts` records each
-Codex launch's realm and folder). The transcripts worker leaves a rollout's
-records out where the folder its session_meta records was marked in the realm
-it lies in (worked out once per tail, from its first line); a rollout whose
+Codex launch's folder). The transcripts worker leaves a rollout's
+records out where the folder its session_meta records was marked, whichever
+realm the rollout lies in (worked out once per tail, from its first line); a rollout whose
 first line records no folder is left out wherever any Codex folder window
 covers the record's time. So the rollouts the session's own watcher never
 claimed are left out too: one another tab took by folder and time (two new
 sessions in one folder), one Codex began inside the session with no hook to
 say so (its /new, a backtrack, a /resume of a conversation of that folder).
 Limits, recorded (toward not indexing): while such a session runs, an indexed
-Codex session of the same account in the same folder (a folder reached through
-a link: by either spelling, round 2 K1) has its turns left out
+Codex session of any account in the same folder (round 2, K2; a folder reached
+through a link: by either spelling, round 2 K1) has its turns left out
 for that stretch, as Claude's folder window does in kind, but for the whole
 session; a conversation of another
 folder taken up inside the session with its hooks off is outside that window
-(with its hooks on, the hook names it and its own window opens). The folder
-windows are not yet carried into a Sign in again's history copy (round 2,
-owed: below).
+(with its hooks on, the hook names it and its own window opens).
 C2 (minor): the record of windows never drops a conversation whose window is
 still open; past its cap it drops the least recently changed one whose windows
 are all closed (`before` raised past them, as before). Past the cap with every
@@ -3667,22 +3666,31 @@ sits after the Codex card, before the footer; the AI usage meter card and its
 tip say the Claude and Codex windows are side by side when both are on. Row
 70: the Alt+V text in the Feature Guide and the tip says that on macOS and
 Linux the path is typed only into an sh, bash, zsh, dash or ksh shell.
-Owed, for a decision: K2 (lens C), the folder windows in a Sign in again's
-history copy (the copy runs only while no session uses the account, so none
-of that account's folder windows is open then).
+K2 (lens C; row 31): the folder window is keyed by the folder alone, in every
+account's realm, on both sides (`codex-folder-key.ts`: main's covers, K1's
+real-path one included, and the worker's key from a rollout's session_meta),
+so a rollout a Sign in again copied into the account's new realm is left out
+in the same windows as the original (the copy runs only while no session uses
+the account, so the windows that matter then are closed ones; nothing new is
+kept). The C1 limit widens with it: while a Codex session not indexed runs in
+a folder, an indexed Codex session of any account in that folder has its
+turns left out (above).
 Limits, recorded: the sh-family check is by the shell's name, not by what the
 program is; a path holding U+2028 is typed as it is (the shells do not take it
 as the end of a line).
 Tests, red first: the four K3 tests on 0aec9705's `indexing-gaps.ts`, the K1
 junction test on the unchanged `pty-manager.ts`, the K6 pin on 0aec9705's
-`release.yml`, and the new text pins on the text before; the others pin code
+`release.yml`, the new text pins on the text before, and K2's case (a rollout
+copied into a new realm, resumed there) on f4dff505; the others pin code
 that was right, so their proof is their mutant. Mutation: 16 mutants, all red
 (K3 2, E1, K1 2, F1, F2, F6, K5 3, B2, A3, X1, the popover 2; two after a test
-was added for a survivor), all served from copies; the K6 red-first placed
+was added for a survivor), then 3 for K2 (the realm put back on the worker's
+side; F1 and F6 on the new key), all red, all served from copies; the K6
+red-first placed
 0aec9705's `release.yml` in the tree and restored it byte-identical. Checks:
 typecheck; tsc of the touched tests; the affected and scanner files (155
-files, 2,969 passed, 32 host skips, one Claude test timing out under load that
-passes alone); the WP1 files (the legacy Codex manifest unmoved). Owed as
+files; with K2, 2,971 passed and 32 host skips); the WP1 files (the legacy
+Codex manifest unmoved). Owed as
 before: the VM checks and the SSH live matrix at PR 3's head.
 
 ## 9. PR 4 outline

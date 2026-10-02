@@ -157,7 +157,7 @@ const { getCodexLogBinder } = await import('../../../src/main/logging/codex-log-
 const { claudeFolderKey, claudeProjectsRootKey } = await import('../../../src/main/logging/claude-folder-key')
 const { mangleCwdToProjectDir } = await import('../../../src/shared/project-key')
 const { notIndexedSnapshot, conversationKey, resetIndexingGapsForTests, flushIndexingGaps, initIndexingGaps, indexingGapsWritesForTests, HELD_WINDOWS_PER_SESSION_MAX, keepNotIndexedWindow, setNotIndexedConversationsMaxForTests } = await import('../../../src/main/logging/indexing-gaps')
-const { codexFolderKey, codexRolloutSessionsDir } = await import('../../../src/main/logging/codex-folder-key')
+const { codexFolderKey } = await import('../../../src/main/logging/codex-folder-key')
 /** A conversation's not-indexed windows (as main keeps them). */
 const windowsOf = (id: string) => notIndexedSnapshot().conversations[conversationKey(rolloutOfId(id))] ?? []
 const rolloutOfId = (id: string) => `/res/codex-realms/a/sessions/2026/09/29/rollout-2026-09-29T10-00-00-${id}.jsonl`
@@ -614,20 +614,20 @@ describe('P3.12 round 7 (K1): a killed session\'s window closes when its process
   })
 })
 
-describe('PR-level ADR-009 round 1 (C1): a Codex session not indexed marks its realm\'s launch folder until it ends', () => {
+describe('PR-level ADR-009 round 1 (C1): a Codex session not indexed marks its launch folder until it ends', () => {
   // The parity of a Claude session's projects-folder window: the rollouts its
   // own watcher never claims (another tab took one by folder and time, Codex
-  // began one inside it with no hook to say so) are left out by the folder of
-  // its realm their session_meta records (transcripts worker).
+  // began one inside it with no hook to say so) are left out by the folder
+  // their session_meta records (transcripts worker; round 2, K2: in every realm).
   const T0 = Date.parse('2026-09-30T10:00:00.000Z')
   const used: string[] = []
   let next = 60
   const fresh = () => { const sid = `cx${'0'.repeat(20)}${next++}`; used.push(sid); return sid }
   const clock = (ms: number) => vi.setSystemTime(T0 + ms)
-  /** The folder window the session's launch holds: its realm and the folder its watcher matches rollouts by. */
+  /** The folder window the session's launch holds: the folder its watcher matches rollouts by (round 2, K2: in every realm). */
   const folderOf = (sid: string) => {
     const o = source(sid).opts
-    return notIndexedSnapshot().conversations[codexFolderKey(o.sessionsDir, o.cwd)] ?? []
+    return notIndexedSnapshot().conversations[codexFolderKey(o.cwd)] ?? []
   }
   const folderKeys = () => Object.keys(notIndexedSnapshot().conversations).filter((k) => k.startsWith('codex-folder:'))
   const exitOf = (proc: { exit: Array<(e: { exitCode: number }) => void> }) => { for (const cb of [...proc.exit]) cb({ exitCode: 0 }) }
@@ -704,8 +704,8 @@ describe('PR-level ADR-009 round 1 (C1): a Codex session not indexed marks its r
       expect(source(S).opts.cwd).toBe(link)
       const realPath = fs.realpathSync(link)
       expect(realPath).not.toBe(link)
-      // The key the transcripts worker works out for a rollout of this realm whose session_meta records the real path.
-      const realKey = codexFolderKey(codexRolloutSessionsDir(rolloutOf(ID_A)), realPath)
+      // The key the transcripts worker works out for a rollout whose session_meta records the real path.
+      const realKey = codexFolderKey(realPath)
       expect(folderOf(S)).toEqual([[T0, null]])
       expect(notIndexedSnapshot().conversations[realKey]).toEqual([[T0, null]])
       clock(9000)
