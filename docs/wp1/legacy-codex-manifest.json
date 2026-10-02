@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-02T04:25:14.922Z",
-  "head": "08a12adab4af7d590664fb6fbbf701a240ef4356",
-  "tree": "b3c4b2a45d1a4e29cb9406befcbaa23ef0e577dc",
+  "generatedAt": "2026-10-02T04:38:30.726Z",
+  "head": "feb8846fd98ceba4beacb0cbaf81ca2adc1c0943",
+  "tree": "a56bb2f8f5f98c952f8cfd3755a75bf591f4bc0f",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2600,
-  "excludedFileCount": 385,
-  "scannedFileCount": 2215,
+  "trackedFileCount": 2602,
+  "excludedFileCount": 386,
+  "scannedFileCount": 2216,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 658,
-  "pathDigest": "d9a7de512177c1b45d3154790385c8966cbc89517c2f97502437def4e5023fd2",
+  "matchedPathCount": 659,
+  "pathDigest": "f7e751be96faa477261c4b87a42e57e23cbc12948b85398b181e83fdfdcc98b2",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 663,
+      "lineCount": 665,
       "truncated": true
     },
     {
@@ -1267,7 +1267,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 14
+      "lineCount": 18
     },
     {
       "path": "src/renderer/components/CanvasCompleteButton.tsx",
@@ -4227,6 +4227,14 @@
         "P13"
       ],
       "lineCount": 3
+    },
+    {
+      "path": "tests/unit/renderer/ai-usage-popover-provider-off.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "lineCount": 26
     },
     {
       "path": "tests/unit/renderer/alt-v-image-route.test.tsx",

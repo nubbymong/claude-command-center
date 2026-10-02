@@ -22,7 +22,7 @@ export const CLAUDE_OFF_LAUNCH_REASON = providerOffMessage('Claude Code', 'to la
 
 /** OD27 M1 D5 (approved as drawn): the one muted line shown where a Claude
  *  Code accounts section would be while it is switched off (the Account
- *  usage page, the onboarding recap's Account row). */
+ *  usage page, the AI usage popover, the onboarding recap's Account row). */
 export const CLAUDE_OFF_ACCOUNTS_LINE = 'Claude Code is off. Turn it on in Settings, Accounts to see its accounts.'
 
 /** The reason Ask Conductor cannot open: it is a Claude session. */
