@@ -129,6 +129,15 @@ describe('the helpers', () => {
     writeFileSync(f, '{"a":1}\n{"b":2}\n')
     expect(readRolloutFirstLine(f)).toEqual({ kind: 'line', line: '{"a":1}' })
   })
+
+  it('round 2 (K5): a newline that is the first byte of a read ends the line (an empty first line; a line of exactly one read)', () => {
+    const f = join(temp('edge'), 'rollout-x.jsonl')
+    writeFileSync(f, '\n{"b":2}\n')
+    expect(readRolloutFirstLine(f)).toEqual({ kind: 'line', line: '' })
+    const whole = 'y'.repeat(64 * 1024)
+    writeFileSync(f, `${whole}\n{"b":2}\n`)
+    expect(readRolloutFirstLine(f)).toEqual({ kind: 'line', line: whole })
+  })
 })
 
 // P3.5 fix round 1 (theses 4, 5, 6): the walk is bounded, never follows a

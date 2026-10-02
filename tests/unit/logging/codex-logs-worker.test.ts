@@ -1137,6 +1137,36 @@ describe('a Codex realm folder marked while a session not indexed ran (PR-level 
     expect(words('T')).toEqual(['BEFORE', 'AFTER'])
   })
 
+  it('C1 (round 2, K5): a rollout whose first line records no folder, tailed before any folder window was kept: a window kept later still leaves out what is written in it', () => {
+    const { w, send } = boot()
+    wire(send)
+    const noMeta = rolloutIn(realmOf('realm-a'), 5)
+    writeFileSync(noMeta, turn('BEFORE', at(100)))
+    send(runX('R', BASE + 6000)); send(bindX('R', noMeta)); w.tickNow()
+    expect(words('R')).toEqual(['BEFORE'])
+    notIndexedFolder('S', realmOf('realm-z'), '/elsewhere', BASE + 500)
+    appendFileSync(noMeta, turn('WRITTEN-WHILE-NOT-INDEXED', at(1000)))
+    closeNotIndexedWindow('S', BASE + 4000)
+    appendFileSync(noMeta, turn('AFTER', at(5000)))
+    w.tickNow()
+    expect(words('R')).toEqual(['BEFORE', 'AFTER'])
+  })
+
+  it('C1 (round 2, F1 F2 F6): on Windows, main\'s key and the worker\'s are one however each side spells the realm or the folder (case, slashes, a trailing separator)', () => {
+    const key = codexFolderKey('C:\\Users\\U\\AppData\\realms\\a\\sessions', 'C:\\Work\\Demo', 'win32')
+    for (const [realm, folder] of [
+      ['c:/users/u/appdata/realms/a/sessions', 'c:/work/demo'],
+      ['C:\\Users\\U\\AppData\\realms\\a\\sessions\\', 'C:\\Work\\Demo\\'],
+      ['C:/USERS/U/APPDATA/REALMS/A/SESSIONS/', 'c:\\WORK\\demo'],
+    ]) expect(codexFolderKey(realm, folder, 'win32'), `${realm} | ${folder}`).toBe(key)
+    // Another folder of the realm, or the folder in another realm, is another key.
+    expect(codexFolderKey('C:\\Users\\U\\AppData\\realms\\a\\sessions', 'C:\\Work\\Other', 'win32')).not.toBe(key)
+    expect(codexFolderKey('C:\\Users\\U\\AppData\\realms\\b\\sessions', 'C:\\Work\\Demo', 'win32')).not.toBe(key)
+    // Off Windows a folder's case is its own; a trailing separator is not.
+    expect(codexFolderKey('/home/u/realms/a/sessions', '/work/Demo', 'linux')).not.toBe(codexFolderKey('/home/u/realms/a/sessions', '/work/demo', 'linux'))
+    expect(codexFolderKey('/home/u/realms/a/sessions/', '/work/demo/', 'linux')).toBe(codexFolderKey('/home/u/realms/a/sessions', '/work/demo', 'linux'))
+  })
+
   it('C1-1: two new sessions in one folder, the one not indexed launched second: the indexed tab that took its rollout by folder and time leaves out what was written while it ran', async () => {
     vi.useFakeTimers()
     const { w, send } = boot()

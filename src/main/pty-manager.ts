@@ -600,13 +600,20 @@ const claudeFolders = new Map<string, string>()
 /** PR-level ADR-009 round 1 (C1): each local Codex session's realm (its
  *  sessions folder) and the folder its watcher matches a new rollout by (the
  *  one it runs in), from its launch, for the folder window below. Set at each
- *  Codex launch, gone at its teardown; bounded. */
-const codexFolders = new Map<string, { sessionsDir: string; cwd: string }>()
+ *  Codex launch, gone at its teardown; bounded. Round 2 (K1): with the
+ *  folder's real path when it differs (a folder reached through a link), the
+ *  one a session_meta records off Windows (Codex records its working folder
+ *  with the links resolved). */
+const codexFolders = new Map<string, { sessionsDir: string; cwd: string; realCwd?: string }>()
 
 function noteCodexFolder(sessionId: string, sessionsDir: string, cwd: string): void {
   codexFolders.delete(sessionId)
   if (typeof sessionsDir !== 'string' || !sessionsDir || typeof cwd !== 'string' || !cwd) return
-  codexFolders.set(sessionId, { sessionsDir, cwd })
+  // The real path as the app names a Claude projects folder from it (since
+  // fixer 3, F6): Node's JS realpathSync, the folder as given when it cannot be read.
+  let realCwd = cwd
+  try { realCwd = fs.realpathSync(cwd) } catch { /* named as given */ }
+  codexFolders.set(sessionId, normaliseClaudeFolder(realCwd) === normaliseClaudeFolder(cwd) ? { sessionsDir, cwd } : { sessionsDir, cwd, realCwd })
   while (codexFolders.size > CLAUDE_TRANSCRIPTS_MAX) {
     const oldest = codexFolders.keys().next().value
     if (oldest === undefined) break
@@ -626,8 +633,15 @@ function markSessionNotIndexed(sessionId: string, provider: 'claude' | 'codex', 
     // out by that folder, as a Claude session's projects folder is. Written
     // at once. Fails closed: an indexed Codex session of the same realm in the
     // same folder has its turns left out meanwhile (a recorded limit).
+    // Round 2 (K1): a folder reached through a link is marked by both
+    // spellings, as launched and its real path, whichever one a rival
+    // session's rollout records.
     const at = codexFolders.get(sessionId)
-    if (at) { try { keepNotIndexedWindow(sessionId, codexFolderKey(at.sessionsDir, at.cwd), since, now, { writeNow: true, cover: true }) } catch { /* best-effort */ } }
+    if (at) {
+      for (const folder of at.realCwd ? [at.cwd, at.realCwd] : [at.cwd]) {
+        try { keepNotIndexedWindow(sessionId, codexFolderKey(at.sessionsDir, folder), since, now, { writeNow: true, cover: true }) } catch { /* best-effort */ }
+      }
+    }
     const held = codexContextRollouts.get(sessionId)?.path
     if (held) { try { openNotIndexedWindow(sessionId, held, since, now) } catch { /* best-effort */ } }
     return

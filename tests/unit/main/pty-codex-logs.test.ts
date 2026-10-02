@@ -157,7 +157,7 @@ const { getCodexLogBinder } = await import('../../../src/main/logging/codex-log-
 const { claudeFolderKey, claudeProjectsRootKey } = await import('../../../src/main/logging/claude-folder-key')
 const { mangleCwdToProjectDir } = await import('../../../src/shared/project-key')
 const { notIndexedSnapshot, conversationKey, resetIndexingGapsForTests, flushIndexingGaps, initIndexingGaps, indexingGapsWritesForTests, HELD_WINDOWS_PER_SESSION_MAX, keepNotIndexedWindow, setNotIndexedConversationsMaxForTests } = await import('../../../src/main/logging/indexing-gaps')
-const { codexFolderKey } = await import('../../../src/main/logging/codex-folder-key')
+const { codexFolderKey, codexRolloutSessionsDir } = await import('../../../src/main/logging/codex-folder-key')
 /** A conversation's not-indexed windows (as main keeps them). */
 const windowsOf = (id: string) => notIndexedSnapshot().conversations[conversationKey(rolloutOfId(id))] ?? []
 const rolloutOfId = (id: string) => `/res/codex-realms/a/sessions/2026/09/29/rollout-2026-09-29T10-00-00-${id}.jsonl`
@@ -683,6 +683,40 @@ describe('PR-level ADR-009 round 1 (C1): a Codex session not indexed marks its r
     clock(6000)
     exitOf(now)
     expect(folderOf(S)).toEqual([[T0, T0 + 4000], [T0 + 2000, T0 + 6000]])
+  })
+
+  it('round 2 (K1, lens C G1): a launch folder reached through a link is marked by its real path too (what a session_meta records off Windows), from the launch until the session ends', (ctx) => {
+    const PREFIX = 'ccc-test-k1-link-'
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), PREFIX))
+    const link = path.join(base, 'via-link')
+    try {
+      const real = path.join(base, 'real')
+      fs.mkdirSync(real)
+      // A junction on Windows (no privilege needed), a folder link elsewhere.
+      try { fs.symlinkSync(real, link, process.platform === 'win32' ? 'junction' : 'dir') } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'EPERM') throw err
+        ctx.skip()
+        return
+      }
+      const S = fresh()
+      h.settings = { ...CONSENT, loggingEnabled: false }
+      start(S, { cwd: link })
+      expect(source(S).opts.cwd).toBe(link)
+      const realPath = fs.realpathSync(link)
+      expect(realPath).not.toBe(link)
+      // The key the transcripts worker works out for a rollout of this realm whose session_meta records the real path.
+      const realKey = codexFolderKey(codexRolloutSessionsDir(rolloutOf(ID_A)), realPath)
+      expect(folderOf(S)).toEqual([[T0, null]])
+      expect(notIndexedSnapshot().conversations[realKey]).toEqual([[T0, null]])
+      clock(9000)
+      exitOf(h.ptys.at(-1)!)
+      expect(folderOf(S)).toEqual([[T0, T0 + 9000]])
+      expect(notIndexedSnapshot().conversations[realKey]).toEqual([[T0, T0 + 9000]])
+    } finally {
+      // TEST CLEANUP GUARD: the link first (never followed), then only the folder this test made.
+      try { if (fs.lstatSync(link).isSymbolicLink()) { try { fs.unlinkSync(link) } catch { fs.rmdirSync(link) } } } catch { /* never made */ }
+      if (path.basename(base).startsWith(PREFIX) && path.dirname(base) === os.tmpdir()) fs.rmSync(base, { recursive: true, force: true })
+    }
   })
 })
 
