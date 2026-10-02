@@ -121,7 +121,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 11 | Staged re-authentication (WP1.52) | PARTIAL (P3.3): Sign in again is offered while signed in too, staged in a new journalled folder with the conversation history carried over, and the account moves only once the new sign-in is verified | Parity: Claude's "Refresh sign-in" works while signed in; WP1.52; PLAN "Out of this PR" | verification (owner action): a second real sign-in on the VM, file and keyring stores, proving the old folder's sign-out never signs the new one out | 3 |
 | 12 | Upgrade question and the read-only sign-in check | DONE | OD26 U1, U2 | verification: real 0.153.4 and 0.155.1 | 2, v4 |
 | 13 | Hello Codex | DONE | Canvas 2026-09-24 (v1) and the commit 6 canvas; HCS | verification: per OS | 2, v4 |
-| 14 | Codex-only mode, no Claude noise | PARTIAL (P3.2, P3.4; mocked): with Claude Code off no Claude pills, no Claude status reads and no Claude sign-in prompts; the owner approved the P3.4 screens 2026-09-28; the AI usage popover follows D5 too (P3.16b follow-up, unit-tested), and opens above its chip, outside the status strip's clipped zone, where it never showed before (P3.16 final-head VM finding D2, pre-existing since June; unit-tested). Left: Ask (row 53) and the guide cards each later phase unlocks | Design section 2 (Claude is not a prerequisite); OD27 M1 D5 (a provider that is off shows one muted line or nothing); ADR-022 (the popover); parity | implementation (Ask with row 53; each card with its phase); verification: the cards on the VM, and the AI usage popover in the real strip at a Status bars scale of 1 and of 1.25 | 3 (Ask part: 4) |
+| 14 | Codex-only mode, no Claude noise | PARTIAL (P3.2, P3.4; mocked): with Claude Code off no Claude pills, no Claude status reads and no Claude sign-in prompts; the owner approved the P3.4 screens 2026-09-28; the AI usage popover follows D5 too (P3.16b follow-up, unit-tested), and opens above its chip, outside the status strip's clipped zone, where it never showed before (P3.16 final-head VM finding D2, pre-existing since June; unit-tested). Left: Ask (row 53) and the guide cards each later phase unlocks | Design section 2 (Claude is not a prerequisite); OD27 M1 D5 (a provider that is off shows one muted line or nothing); ADR-022 (the popover); parity | implementation (Ask with row 53; each card with its phase); verification: the cards on the VM, and the AI usage popover in the real strip at a Status bars scale of 1 and of 1.2 (the most it goes) | 3 (Ask part: 4) |
 | 15 | Owner-run gates (native keyring, sign-ins with real accounts, packaged smoke) | OPEN | OD20 D8 (blocks merge, not implementation); WP1.11, WP1.64, WP1.72 | owner: hosts, disposable test identities, timing; then verification | 4 |
 | 16 | WP1 traceability | PARTIAL: items still `planned` | OD20 D9; WP1.70, WP1.73 | verification: items move to evidenced as the evidence lands | 4 |
 
@@ -3727,7 +3727,9 @@ before fixer 8): three defects, each pre-existing since June and on main, not
 made by PR 3; fixed in fixer 8.
 D1 (row 31): a new Claude conversation was never indexed. Claude Code names
 its transcript (its status line at startup, its hooks) before it writes the
-file at the first message, so the exact bind came first, the worker's first
+file at the first message (read from the pinned Claude Code 2.1.285 to
+2.1.287 binaries, not seen live; the VM showed the loss with the stand-in
+Claude), so the exact bind came first, the worker's first
 read found no file and marked the transcript failed for good, and the exact
 bind had turned the heuristic's retry off (since 3ce4a01a and 1b284484). A
 /clear rotation was lost the same way. A tail whose file was never there now
@@ -3753,25 +3755,53 @@ made a new record (since 1fc7cc97). The integrity monitor keeps the ended
 sessions (at most 256, the oldest dropped first) and ignores their late
 reports and resizes until the id's next process's first output, so a Restart
 of an ended tab lists the new process, counted from 0
-(`pty-integrity-monitor.ts`; pty-manager unchanged). Limit, recorded: a
-process that never prints is not listed and its end logs no event; the
-restart test of a tab whose process had ended, restarted through a
-preparation, now gives the new process its first output.
+(`pty-integrity-monitor.ts`; pty-manager unchanged). Limits, recorded: the
+next process of a tab whose process ended is not listed until its first
+output (a fresh tab is unaffected), so if it never prints, its end logs no
+event; and the resize sent at its spawn, before that output, is not
+recorded, so the width check waits for its next resize. A start-of-session
+call from spawnPty would lift both, but it sits in the SSH live-matrix
+radius. The restart test of a tab whose process had ended, restarted
+through a preparation, now gives the new process its first output.
 What's New (2.1.1-beta.2) lists the three fixes. Tests, red first on
 b3937173: D1 8 (`codex-logs-worker.test.ts`), D2 4 (`ai-usage-chip.test.tsx`),
 D3 4 (`pty-integrity-monitor.test.ts`, `pty-integrity-restart.test.ts`), and
 the What's New pins on the text before; the other new cases are controls.
 Mutation: D1 4, D2 6, D3 7, all red, served from copies (the worktree's
 files checked byte-identical). Checks: typecheck; tsc of the touched tests
-(only an error `transcripts-worker.native.test.ts` has had since June); 90
-affected and scanner files (1,652 passed, 2 host skips); changelog:check; the
-WP1 files (the manifest unmoved).
+(only an error `transcripts-worker.native.test.ts` has had since June); the
+affected, scanner and changelog files at fixer 8's head, 95 files (1,712
+passed, 2 host skips; the run at the fix commits, before the records, was
+90 files and 1,652 passed); changelog:check; the WP1 files (the manifest
+unmoved).
+Fixer 8b (the fixer 8 reviews: spec and code quality PASS-WITH-FIXES, one
+major): D2's three Settings links close the popover before they open
+Settings (it floated over the Settings page, the sessions view staying
+mounted under it); focus moves into the popover when it opens (once, so a
+re-render does not take it back from one of its buttons), Escape hands it
+back to the chip, an outside click leaves it where the click put it, and
+the chip carries aria-haspopup and aria-expanded (IdentityOverflow's
+handling); a window resize closes it (RowMenu's rule: it is placed once);
+and its right offset is clamped so the popover (20rem at the root font size
+the global UI scale sets) stays 8px inside the window's left edge. D1: a
+file never seen that cannot be read for another reason than not being
+written yet (no right to it, a scanner holding it) is waited for too, and
+the log says so once (info). The Status bars scale stops at 1.2 (the VM saw
+it; `clampRegionScale`), so the zoom test and the VM check use 1.2. Tests,
+red first on 1e14b611: D2 6 (`ai-usage-chip.test.tsx`), D1 1
+(`codex-logs-worker.test.ts`); a focus-stays case pins the focus moving in
+once. Mutation: 14 new mutants (D2 11, D1 3) and 7 of fixer 8's run again
+on the new code, all red, served from copies (byte-identical after).
+Checks: typecheck; tsc of the touched tests (as before); the same 95 files
+at fixer 8b's code (1,720 passed, 2 host skips); the WP1 files (the
+manifest unmoved).
 CI only: two native twins of D1 in `transcripts-worker.native.test.ts`.
 Owed: the ADR-009 confirmation of D1; on the VM, the Claude smoke with the
 stand-in Claude without its touch flag (a fresh conversation indexed, its
 rows complete, not failed), the popover in the real strip at a Status bars
-scale of 1 and of 1.25, and an ended tab left open (no row, one "session
-ended"), then restarted (its new process listed).
+scale of 1 and of 1.2 (above the chip; a Settings link, Escape, an outside
+click and a resize each close it), and an ended tab left open (no row, one
+"session ended"), then restarted (its new process listed).
 
 ## 9. PR 4 outline
 
