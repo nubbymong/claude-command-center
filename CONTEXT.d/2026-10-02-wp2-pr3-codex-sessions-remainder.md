@@ -70,18 +70,31 @@ the checklist; their code findings and the gate-6 FAIL are fixed in fixer
 9 (86ae88ac, f83026f8, f86727c5, 12b8049a, aac1b46e and aca63cc7), each
 red first with mutation proof; its assessment of gate 6's three
 observations changed no code (one goes to P4.11, two are pre-existing on
-beta and in the owner's queue).
+beta and in the owner's queue). Fixer 9's reviews (spec PASS with fixes,
+code quality PASS) and its ADR-009 pass (lenses C and D: round 1 PASS,
+round 2 on fixer 10 PASS, no blocker or major) are fixed in fixer 10
+(ab1fbcc5: versions installed in turn stay within Sentinel's
+three-analysis cap, one start-up rule for both providers; d0caf0bd:
+nothing is written in front of a `.bak` a clear could not remove, "has
+saved sessions" means at least one session, the extra-arguments label
+tied to its field). Fixer 10's reviews (PASS with fixes) and round 2's
+minors are fixed by fixer 11 (`<fixer-11>`, in progress). The VM at
+aca63cc7 and d0caf0bd: row 36's Duration after a clear PASS on both
+versions, nothing coming back after "Close sessions", the real owner-only
+test 6 of 6, the e2e suite 81 of 81 each time, the real home untouched.
+Recorded limits: one transient read failure of the session file at start
+latches saves off for that run (since fixer 9 also after a clear that
+kept a running time); a version below the highest checked is never
+analysed at start (a Re-run analyses it).
 
-**Owed before #626 leaves draft**: gate 3, fixer 9's own spec and
-code-quality reviews (the gate closes when they pass); gate 4, the ADR-009
-re-attack of fixer 9's changes, the attackers' confirmation of P3.8's
-launched answer on `pty:spawn` (never probed), and the verdict comment
-with its marker line regenerated for the final head; gate 6, at fixer 9's
-head the VM re-check of row 36's Duration after a cleared session file
-and the real owner-only test with the names fixer 9 added (CI and the
-VM), row 38's midnight UTC check, the VM read of a leftover kill's log line on the npm
-route (row 42), and the e2e suite again at the final head (fixer 9 changes
-code); the SSH live matrix at PR 3's head (pty-manager.ts changed, and
+**Owed before #626 leaves draft**: gate 3, fixer 11's spec and
+code-quality reviews (the gate closes when they pass); gate 4, the lens C
+and D confirmation of fixer 11 (round 3), the attackers' confirmation of
+P3.8's launched answer on `pty:spawn` (never probed), and the verdict
+comment with its marker line regenerated for the final head; gate 6, at
+the final head on the VM the e2e suite and a seeded Sentinel panel check,
+row 38's midnight UTC check, and the VM read of a leftover kill's log
+line on the npm route (row 42); the SSH live matrix at PR 3's head (pty-manager.ts changed, and
 statusline-watcher.ts in P3.2), the owner's screenshot review and the
 Desktop test gate (owner-owed); CI at the final head with the native SQL
 tests (they pass on the VM at 525a00ac); the owner-only checks gate 6
