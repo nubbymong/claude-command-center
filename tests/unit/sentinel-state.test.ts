@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as fs from 'fs'; import * as path from 'path'; import * as os from 'os'
-import { SentinelState } from '../../src/main/sentinel/sentinel-state'
+import { SentinelState, UNVERIFIED_VERSIONS_KEPT } from '../../src/main/sentinel/sentinel-state'
 
 let dir: string
 beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-sen-')) })
-afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }) })
+// Only the folder this file made: its own prefix, directly in the temp folder.
+afterEach(() => { if (path.dirname(dir) === os.tmpdir() && path.basename(dir).startsWith('ccc-sen-')) fs.rmSync(dir, { recursive: true, force: true }) })
 
 const finding = {
   id: 'obs:model:claude-x-1', kind: 'registry-proposal' as const, severity: 'warn' as const,
@@ -111,33 +112,64 @@ describe('SentinelState: a dismissal made before quotes were redacted (round 3)'
   })
 })
 
-// P3.9 rounds 4 and 5: the counts of analyses whose findings could not be
-// matched, per provider and version; a later version of the same provider
-// drops the earlier one's count, and recording a version drops them all.
-describe('SentinelState: unmatched-analysis counts (rounds 4 and 5)', () => {
-  it('counts per version, drops a superseded version, and forgets a provider once its version is recorded', () => {
+// P3.9 round 4: the counts of analyses whose findings could not be matched,
+// per provider and version. Fixer 10 (the cap for versions installed in
+// turn): counting one version drops no other version's count (bar the file's
+// bound), and recording a version drops that provider's counts at or below it
+// (a start no longer analyses those), keeping a higher version's.
+describe('SentinelState: unmatched-analysis counts (round 4, fixer 10)', () => {
+  it('counts per version, keeps every other version\'s count, and recording a version forgets that provider\'s counts at or below it', () => {
     const s = new SentinelState(dir)
     expect(s.countUnverified('codex:0.155.1')).toBe(1)
     expect(s.countUnverified('codex:0.155.1')).toBe(2)
     expect(s.countUnverified('claude:2.1.300')).toBe(1)
     expect(s.countUnverified('codex:0.156.0')).toBe(1)
-    expect(s.snapshot().unverifiedTries).toEqual({ 'claude:2.1.300': 1, 'codex:0.156.0': 1 })
-    expect(new SentinelState(dir).snapshot().unverifiedTries).toEqual({ 'claude:2.1.300': 1, 'codex:0.156.0': 1 })
+    expect(s.snapshot().unverifiedTries).toEqual({ 'codex:0.155.1': 2, 'claude:2.1.300': 1, 'codex:0.156.0': 1 })
+    expect(new SentinelState(dir).snapshot().unverifiedTries).toEqual({ 'codex:0.155.1': 2, 'claude:2.1.300': 1, 'codex:0.156.0': 1 })
     s.clearUnverified('codex:0.157.0')
     expect(s.snapshot().unverifiedTries).toEqual({ 'claude:2.1.300': 1 })
+    expect(new SentinelState(dir).snapshot().unverifiedTries).toEqual({ 'claude:2.1.300': 1 })
   })
 
-  // Gate 3 (quality item 3): only a LOWER version's count is dropped, so two
-  // versions taken in turn (two installs, or a downgrade and re-upgrade) never
-  // reset each other: the newer one still reaches the cap.
-  it('two versions taken in turn: the newer one keeps its count and reaches three', () => {
+  // Two versions taken in turn (two installs, or two machines sharing one
+  // resources folder) never reset each other: each reaches the cap.
+  it('two versions taken in turn: each keeps its count and reaches three', () => {
     const s = new SentinelState(dir)
     expect(s.countUnverified('codex:0.156.0')).toBe(1)
     expect(s.countUnverified('codex:0.155.1')).toBe(1)
-    expect(s.snapshot().unverifiedTries).toEqual({ 'codex:0.156.0': 1, 'codex:0.155.1': 1 })
     expect(s.countUnverified('codex:0.156.0')).toBe(2)
-    expect(s.countUnverified('codex:0.155.1')).toBe(1)
+    expect(s.countUnverified('codex:0.155.1')).toBe(2)
+    expect(s.snapshot().unverifiedTries).toEqual({ 'codex:0.156.0': 2, 'codex:0.155.1': 2 })
+    expect(s.countUnverified('codex:0.155.1')).toBe(3)
     expect(s.countUnverified('codex:0.156.0')).toBe(3)
-    expect(s.snapshot().unverifiedTries).toEqual({ 'codex:0.156.0': 3 })
+  })
+
+  it('recording a version keeps a higher version\'s count (it may still be installed in turn) and drops a lower one\'s', () => {
+    const s = new SentinelState(dir)
+    s.countUnverified('codex:0.155.0')
+    s.countUnverified('codex:0.155.1')
+    s.countUnverified('codex:0.155.1')
+    s.countUnverified('codex:0.156.0')
+    s.countUnverified('codex:0.156.0')
+    s.countUnverified('claude:2.1.299')
+    s.clearUnverified('codex:0.155.1')
+    expect(s.snapshot().unverifiedTries).toEqual({ 'codex:0.156.0': 2, 'claude:2.1.299': 1 })
+    expect(s.countUnverified('codex:0.156.0')).toBe(3)
+    // Another provider's count is never touched by this one's record.
+    s.clearUnverified('claude:2.1.298')
+    expect(s.snapshot().unverifiedTries).toEqual({ 'codex:0.156.0': 3, 'claude:2.1.299': 1 })
+  })
+
+  it(`the file keeps the counts of a provider's ${UNVERIFIED_VERSIONS_KEPT} highest versions, always the one counted now`, () => {
+    const s = new SentinelState(dir)
+    s.countUnverified('claude:2.1.300')
+    const versions = Array.from({ length: UNVERIFIED_VERSIONS_KEPT + 2 }, (_, i) => `0.${150 + i}.0`)
+    for (const v of versions) s.countUnverified(`codex:${v}`)
+    const codexKeys = () => Object.keys(s.snapshot().unverifiedTries ?? {}).filter((k) => k.startsWith('codex:')).sort()
+    expect(codexKeys()).toEqual(versions.slice(2).map((v) => `codex:${v}`).sort())
+    expect(s.snapshot().unverifiedTries?.['claude:2.1.300']).toBe(1)
+    // A lower version counted now is kept; the lowest of the others goes.
+    expect(s.countUnverified('codex:0.140.0')).toBe(1)
+    expect(codexKeys()).toEqual(['codex:0.140.0', ...versions.slice(3).map((v) => `codex:${v}`)].sort())
   })
 })
