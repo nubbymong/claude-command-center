@@ -90,4 +90,23 @@ describe('closing or restarting the session drops a kept report', () => {
     killSessionPty('s-2')
     expect(kill.mock.calls).toEqual([['s-2'], ['s-2-partner']])
   })
+
+  // Fixer 3 (F1): a close kills the partner whether or not its process was
+  // started again after a Restart (its view not shown since), so main ends
+  // the partner's record too; a Restart kills only a partner that runs.
+  it('a close kills the partner even when it was not started again after a Restart; a Restart only a started one', async () => {
+    const kill = vi.fn()
+    ;(globalThis as any).window = (globalThis as any).window ?? {}
+    ;(globalThis as any).window.electronAPI = { ...((globalThis as any).window.electronAPI ?? {}), pty: { kill } }
+    const { killSessionPty, markSpawned } = await import('../../../src/renderer/ptyTracker')
+    markSpawned('s-3-partner')
+    killSessionPty('s-3', { restart: true })
+    expect(kill.mock.calls).toEqual([['s-3', 'restart'], ['s-3-partner', 'restart']])
+    kill.mockClear()
+    killSessionPty('s-3', { restart: true })
+    expect(kill.mock.calls).toEqual([['s-3', 'restart']])
+    kill.mockClear()
+    killSessionPty('s-3')
+    expect(kill.mock.calls).toEqual([['s-3'], ['s-3-partner']])
+  })
 })

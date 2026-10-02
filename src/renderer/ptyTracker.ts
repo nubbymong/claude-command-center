@@ -47,9 +47,11 @@ export function killSessionPty(sessionId: string, opts: { restart?: boolean } = 
   forgetSpawnEnd(sessionId)
   const kill = (id: string) => (opts.restart ? window.electronAPI.pty.kill(id, 'restart') : window.electronAPI.pty.kill(id))
   kill(sessionId)
-  // Also kill partner PTY if it was spawned
+  // Also kill the partner PTY: a Restart only one that was spawned; a close
+  // always, so main ends the partner's record too when a Restart ended its
+  // process and its view was not shown again (fixer 3, F1).
   const partnerId = sessionId + '-partner'
-  if (spawnedPtys.has(partnerId)) {
+  if (spawnedPtys.has(partnerId) || !opts.restart) {
     spawnedPtys.delete(partnerId)
     kill(partnerId)
   }

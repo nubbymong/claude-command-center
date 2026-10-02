@@ -1940,9 +1940,6 @@ export function beginSpawnPreparation(win: BrowserWindow, sessionId: string, age
 }
 
 export function spawnPty(win: BrowserWindow, sessionId: string, options?: SpawnPtyOptions): void {
-  // P3.16a round 2 (Q5): a Restart's mark is for the exit of the process it
-  // ended before this spawn; this spawn's own process ends as any other does.
-  restartKills.delete(sessionId)
   const supersededWait = refreshWaitSpawns.get(sessionId)
   const inheritedTeardown = supersededWait?.abandonedTeardown
   if (supersededWait) {
@@ -2056,6 +2053,11 @@ function spawnPtyResolved(
    *  once its PTY is registered. */
   inheritedTeardown?: () => void,
 ): void {
+  // P3.16a round 2 (Q5): a Restart's mark is for the exit of the process it
+  // ended before this spawn; this spawn's own process ends as any other does.
+  // Here, so every way a spawn starts clears it (spawnPty, a prepared spawn,
+  // the re-entry after a refresh wait; fixer 3, F2).
+  restartKills.delete(sessionId)
   logInfo(`[pty] Spawning PTY for session ${sessionId} (ssh=${!!options?.ssh}, shellOnly=${!!options?.shellOnly}, cwd=${options?.cwd ? describePathForLog(options.cwd) : 'default'})`)
 
   // T8b (bug #5): in-session Restart / Switch-account REUSE this sessionId and

@@ -118,9 +118,11 @@ vi.mock('../../../src/main/account-profiles', async (importOriginal) => ({
 }))
 
 const { PtyIntegrityMonitor, setPtyIntegrityMonitor } = await import('../../../src/main/services/pty-integrity-monitor')
-const { spawnPty, killPty } = await import('../../../src/main/pty-manager')
+const { spawnPty, killPty, beginSpawnPreparation } = await import('../../../src/main/pty-manager')
 
 const SID = 'ptyrestart1ptyrestart1pt'
+/** The session's partner terminal, as the renderer names its PTY. */
+const PID = `${SID}-partner`
 const fakeWin = {
   isDestroyed: () => false,
   webContents: { send: () => {} },
@@ -129,12 +131,14 @@ const fakeWin = {
 let monitor: InstanceType<typeof PtyIntegrityMonitor>
 beforeEach(() => {
   try { killPty(SID) } catch { /* none */ }
+  try { killPty(PID) } catch { /* none */ }
   monitor = new PtyIntegrityMonitor({ emit: () => {}, emitDebounceMs: 0 })
   setPtyIntegrityMonitor(monitor)
   h.procs.length = 0
 })
 afterAll(() => {
   try { killPty(SID) } catch { /* already gone */ }
+  try { killPty(PID) } catch { /* already gone */ }
   setPtyIntegrityMonitor(null)
   // Only the folder this file's mock made: its own prefix, directly in the temp folder.
   if (h.dir && path.dirname(h.dir) === os.tmpdir() && path.basename(h.dir).startsWith('ccc-test-pty-integrity-')) {
@@ -142,20 +146,22 @@ afterAll(() => {
   }
 })
 
-function spawn(): { data: (d: string) => void } {
+const spawnOptions = () => ({ cwd: os.tmpdir(), cols: 80, rows: 24 } as Parameters<typeof spawnPty>[2])
+/** Start `id`'s next process through `start` (spawnPty unless a case says). */
+function spawn(id = SID, start: () => void = () => spawnPty(fakeWin, id, spawnOptions())): { data: (d: string) => void } {
   const before = h.procs.length
   let threw = ''
   try {
-    spawnPty(fakeWin, SID, { cwd: os.tmpdir(), cols: 80, rows: 24 } as Parameters<typeof spawnPty>[2])
+    start()
   } catch (err) { threw = String((err as Error)?.stack ?? err) }
   const proc = h.procs[before]
   expect(threw, 'the spawn completed').toBe('')
   expect(proc?.data.length, 'the spawn armed its data hook').toBeGreaterThan(0)
   return { data: (d) => { for (const cb of proc.data) cb(d) } }
 }
-const report = (bytesReceived: number) =>
-  monitor.recordRendererReport({ sessionId: SID, bytesReceived, bytesWritten: 0, strippedBytes: 0, cols: 80, rows: 24, resizeCount: 0 })
-const row = () => monitor.snapshot().sessions.find((s) => s.sessionId === SID)
+const report = (bytesReceived: number, id = SID) =>
+  monitor.recordRendererReport({ sessionId: id, bytesReceived, bytesWritten: 0, strippedBytes: 0, cols: 80, rows: 24, resizeCount: 0 })
+const row = (id = SID) => monitor.snapshot().sessions.find((s) => s.sessionId === id)
 
 describe('the PTY byte count across a Restart (P3.16, M5)', () => {
   it('a Restart (kill, then spawn the id again) starts the count with the new process: no gap of the bytes before it', () => {
@@ -204,7 +210,7 @@ describe('the PTY byte count across a Restart (P3.16, M5)', () => {
 // the count quietly, with no "session ended" event. A close is the session's
 // end: one event, whether its process ends then or had ended before.
 describe('a Restart is not the session\'s end on the Services page (P3.16a round 2, Q5)', () => {
-  const ends = () => monitor.snapshot().recentEvents.filter((e) => e.kind === 'end' && e.sessionId === SID)
+  const ends = (id = SID) => monitor.snapshot().recentEvents.filter((e) => e.kind === 'end' && e.sessionId === id)
   const exitOf = (i: number) => { for (const cb of [...h.procs[i].exit]) cb({ exitCode: 0 }) }
 
   it('a Restart whose next process has not started yet (the partner view): the exit logs no "session ended", and the count waits at 0', () => {
@@ -262,5 +268,68 @@ describe('a Restart is not the session\'s end on the Services page (P3.16a round
     expect(ends()).toHaveLength(1)
     killPty(SID, { reason: 'close' })
     expect(ends()).toHaveLength(1)
+  })
+
+  // Fixer 3 (F2): a spawn main prepares first (beginSpawnPreparation: a Codex
+  // session, or a pinned Claude Code version installed first) clears the
+  // Restart's mark as spawnPty does, so the next process's own end is the
+  // session's end.
+  const prepared = () => () => beginSpawnPreparation(fakeWin, SID, null).spawn(spawnOptions())
+  it('a Restart whose next process starts through a preparation: that process\'s own end is the session\'s end', () => {
+    spawn()
+    report(0)
+    killPty(SID, { reason: 'restart' })
+    const prep = beginSpawnPreparation(fakeWin, SID, null)
+    // The ended process's exit while the next one is prepared: handed to the preparation.
+    exitOf(0)
+    expect(ends()).toEqual([])
+    spawn(SID, () => prep.spawn(spawnOptions()))
+    report(0)
+    exitOf(1)
+    expect(ends()).toHaveLength(1)
+  })
+
+  it('a Restart of a tab whose process had ended, its next process started through a preparation: that process\'s own end is the session\'s end', () => {
+    spawn()
+    report(0)
+    exitOf(0)
+    expect(ends()).toHaveLength(1)
+    killPty(SID, { reason: 'restart' })
+    spawn(SID, prepared())
+    report(0)
+    exitOf(1)
+    expect(ends()).toHaveLength(2)
+  })
+
+  // Fixer 3 (F1): a Restart (or a Recover) ends the hidden partner's process
+  // as a Restart's too, and the partner's next one starts only when its view
+  // is shown. A close before that ends the partner's record as well: the
+  // renderer's close always kills the partner (ptyTracker.killSessionPty),
+  // here through pty:kill as main's handler takes it (pty-handlers.ts: only
+  // the exact 'restart' is a Restart's).
+  it('a tab restarted, then closed before its partner view was shown again: the partner\'s record ends too, at the close', async () => {
+    const { killSessionPty, markSpawned } = await import('../../../src/renderer/ptyTracker')
+    const g = globalThis as { window?: unknown }
+    const before = g.window
+    g.window = { electronAPI: { pty: { kill: (id: string, reason?: unknown) => killPty(id, { reason: reason === 'restart' ? 'restart' : 'close' }) } } }
+    try {
+      spawn(SID); markSpawned(SID); report(0, SID)
+      spawn(PID); markSpawned(PID); report(0, PID)
+      killSessionPty(SID, { restart: true })
+      exitOf(0)
+      exitOf(1)
+      expect(ends(SID)).toEqual([])
+      expect(ends(PID)).toEqual([])
+      // The main view is shown: its next process starts. The tab is closed
+      // before the partner view is shown again.
+      spawn(SID); markSpawned(SID); report(0, SID)
+      killSessionPty(SID)
+      exitOf(2)
+      expect(ends(SID)).toHaveLength(1)
+      expect(ends(PID)).toHaveLength(1)
+      expect(row(PID)).toBeUndefined()
+    } finally {
+      g.window = before
+    }
   })
 })
