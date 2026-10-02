@@ -37,10 +37,12 @@ export interface SessionDurability {
    *  in it read back (P3.6: the uncertain claims). Null when none. */
   load: () => SessionState | null
   /** Re-enrich the cached state and persist it on an exit path. No-op until a
-   *  state has been saved this run; honest about a latch refusal. Never throws. */
+   *  state has been saved this run; honest about a latch refusal. Never throws.
+   *  After a clear (and no save since): main's running times only (P3.7). */
   flushOnExit: (reason: string) => void
   /** Drop the cache after a successful clear so the exit flush cannot resurrect a
-   *  set the user intentionally discarded (F1). */
+   *  set the user intentionally discarded (F1). Main's running times are not the
+   *  set: they are written back on their own (P3.7, keepRunningTimes). */
   noteCleared: () => void
   /** Test-only: read the cached state. */
   peek: () => SessionState | null
@@ -48,9 +50,12 @@ export interface SessionDurability {
 
 export function createSessionDurability(deps: DurabilityDeps): SessionDurability {
   let last: SessionState | null = null
+  /** P3.7: a clear this run, and no save since. */
+  let cleared = false
   const log = deps.log ?? (() => {})
 
   function saveEnriched(state: SessionState): boolean {
+    cleared = false
     const enriched = enrichSessionStateWithResumeTargets(state, deps.enrichDeps)
     last = enriched
     return deps.save(enriched)
@@ -64,7 +69,10 @@ export function createSessionDurability(deps: DurabilityDeps): SessionDurability
   // two exit hooks fire in one teardown (SIGTERM→before-quit) — negligible, and
   // saveSessionState's atomic write is idempotent — so correctness wins over it.
   function flushOnExit(reason: string): void {
-    if (!last) return
+    if (!last) {
+      if (cleared) keepRunningTimes(`exit flush on ${reason}`)
+      return
+    }
     try {
       const ok = saveEnriched(last)
       log(ok
@@ -75,8 +83,37 @@ export function createSessionDurability(deps: DurabilityDeps): SessionDurability
     }
   }
 
+  /**
+   * P3.7 (row 36; fixer 9 A1, the VM gate 6 FAIL): a clear discards the
+   * session set, never main's own record kept with it, each conversation's
+   * running time (conversation-running-time.ts). Claude Code keeps its
+   * Duration in the conversation's own transcript (a cost-state entry its CLI
+   * restores when it resumes), which no choice about the app's tabs removes;
+   * where the CLI records none (P3.1), main keeps it, saved only in this
+   * file. So after a clear ("Close sessions", "Don't open", the window closed
+   * with no tabs), and at each exit flush until the next save (a run settles
+   * as its process ends, after the clear), it is written back on its own: a
+   * state with no sessions (no Resume prompt, nothing of the discarded set)
+   * and main's list, never the renderer's. None kept: nothing is written, the
+   * file stays cleared, as before. Never throws.
+   */
+  function keepRunningTimes(why: string): void {
+    try {
+      const state = enrichSessionStateWithResumeTargets({ sessions: [], activeSessionId: null, savedAt: Date.now() }, deps.enrichDeps)
+      if (!Array.isArray(state.conversationRunningTimes) || state.conversationRunningTimes.length === 0) return
+      const ok = deps.save(state)
+      log(ok
+        ? `[session-state] the conversations' running times kept on their own (${why})`
+        : `[session-state] the conversations' running times REFUSED (read-failure latch) on ${why}; on-disk file kept`)
+    } catch (err) {
+      log(`[session-state] keeping the conversations' running times on ${why} failed: ${(err as Error)?.message ?? err}`)
+    }
+  }
+
   function noteCleared(): void {
     last = null
+    cleared = true
+    keepRunningTimes('clear')
   }
 
   function load(): SessionState | null {
