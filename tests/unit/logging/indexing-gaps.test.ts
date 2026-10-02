@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os'
 import {
   initIndexingGaps, openNotIndexedWindow, closeNotIndexedWindow, releaseNotIndexedWindow, notIndexedSnapshot, setNotIndexedListener, flushIndexingGaps,
   conversationKey, indexingGapsWritesForTests, resetIndexingGapsForTests, NOT_INDEXED_CONVERSATIONS_MAX, WINDOWS_PER_CONVERSATION_MAX,
+  keepNotIndexedWindow, closeHeldNotIndexedWindow, HELD_WINDOWS_PER_SESSION_MAX, HELD_COVER_WINDOWS_MAX,
   type NotIndexedUpdate,
 } from '../../../src/main/logging/indexing-gaps'
 
@@ -271,5 +272,75 @@ describe('when Codex conversations were written while not indexed (P3.12)', () =
     expect(JSON.parse(readFileSync(file, 'utf8')).conversations[ID]).toEqual([[10, 20]])
     expect(readdirSync(dir).filter((f) => f.endsWith('.tmp'))).toEqual([])
     expect(existsSync(file)).toBe(true)
+  })
+})
+
+// P3.16 rounds 1 and 2 (N1, N2, N4; Q2): the windows a session holds beside one
+// another (a Claude session: its projects folder's, one per transcript it
+// names), each from the moment it became not indexed, until it ends; at most
+// HELD_WINDOWS_PER_SESSION_MAX, and up to HELD_COVER_WINDOWS_MAX cover windows
+// past them, which only the session's end closes.
+describe('keepNotIndexedWindow: the windows one session holds beside one another (P3.16)', () => {
+  it('opens a window from the earlier of since and now on a key it does not hold, and says held on one it holds; each stays open beside the others', () => {
+    expect(keepNotIndexedWindow('c1', 'folder-key', 100, 150)).toBe('opened')
+    expect(keepNotIndexedWindow('c1', 'transcript-1', 300, 200)).toBe('opened')
+    expect(keepNotIndexedWindow('c1', 'folder-key', 100, 400)).toBe('held')
+    expect(of('folder-key')).toEqual([[100, null]])
+    expect(of('transcript-1')).toEqual([[200, null]])
+  })
+
+  it('takes nothing it is not given whole: no session or key, one too long, a time that is not a finite number', () => {
+    const cases: Array<[string, string, number, number]> = [
+      ['', 'k', 1, 1], ['c1', '', 1, 1], ['s'.repeat(201), 'k', 1, 1], ['c1', 'k'.repeat(201), 1, 1],
+      ['c1', 'k', Number.NaN, 1], ['c1', 'k', 1, Number.POSITIVE_INFINITY],
+    ]
+    for (const [sid, key, since, now] of cases) expect(keepNotIndexedWindow(sid, key, since, now), `${sid.length} ${key.length} ${since} ${now}`).toBe('invalid')
+    expect(notIndexedSnapshot().conversations).toEqual({})
+  })
+
+  it('holds at most 32 windows of names; past them a name is full and a cover takes up to 2 more: 34 at most, per session', () => {
+    expect([HELD_WINDOWS_PER_SESSION_MAX, HELD_COVER_WINDOWS_MAX]).toEqual([32, 2])
+    for (let i = 0; i < HELD_WINDOWS_PER_SESSION_MAX; i++) expect(keepNotIndexedWindow('c1', `t-${i}`, 100, 100 + i)).toBe('opened')
+    expect(keepNotIndexedWindow('c1', 't-late', 100, 500)).toBe('full')
+    expect(keepNotIndexedWindow('c1', 'folder-key', 100, 500, { cover: true })).toBe('opened')
+    expect(keepNotIndexedWindow('c1', 'root-key', 100, 500, { cover: true })).toBe('opened')
+    expect(keepNotIndexedWindow('c1', 'third-cover', 100, 500, { cover: true })).toBe('full')
+    expect(of('t-late')).toEqual([])
+    expect(of('third-cover')).toEqual([])
+    expect(of('root-key')).toEqual([[100, null]])
+    // Another session counts its own.
+    expect(keepNotIndexedWindow('c2', 't-late', 100, 500)).toBe('opened')
+    expect(of('t-late')).toEqual([[100, null]])
+  })
+
+  it('closeHeldNotIndexedWindow closes only that window and leaves a cover open; the session\'s end closes every one, the covers too', () => {
+    keepNotIndexedWindow('c1', 'folder-key', 100)
+    keepNotIndexedWindow('c1', 't-1', 100, 200)
+    closeHeldNotIndexedWindow('c1', 'folder-key', 200)
+    expect(of('folder-key')).toEqual([[100, 200]])
+    expect(of('t-1')).toEqual([[100, null]])
+    // A cover, asked for anew or on a key held already, stays open.
+    expect(keepNotIndexedWindow('c1', 'root-key', 100, 300, { cover: true })).toBe('opened')
+    expect(keepNotIndexedWindow('c1', 't-1', 100, 300, { cover: true })).toBe('held')
+    closeHeldNotIndexedWindow('c1', 'root-key', 400)
+    closeHeldNotIndexedWindow('c1', 't-1', 400)
+    expect(of('root-key')).toEqual([[100, null]])
+    expect(of('t-1')).toEqual([[100, null]])
+    closeNotIndexedWindow('c1', 900)
+    expect(of('root-key')).toEqual([[100, 900]])
+    expect(of('t-1')).toEqual([[100, 900]])
+    expect(of('folder-key')).toEqual([[100, 200]])
+  })
+
+  it('a window asked to be written now is written at once; the rest with the coalesced write', () => {
+    vi.useFakeTimers()
+    initIndexingGaps(join(dir, 'logging-gaps.json'), 1)
+    const writes0 = indexingGapsWritesForTests()
+    keepNotIndexedWindow('c1', 'folder-key', 10, 10, { writeNow: true })
+    expect(indexingGapsWritesForTests()).toBe(writes0 + 1)
+    keepNotIndexedWindow('c1', 't-1', 10, 20)
+    expect(indexingGapsWritesForTests()).toBe(writes0 + 1)
+    vi.advanceTimersByTime(5000)
+    expect(indexingGapsWritesForTests()).toBe(writes0 + 2)
   })
 })
