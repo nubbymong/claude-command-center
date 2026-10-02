@@ -27,8 +27,8 @@ import { logInfo, logError } from './debug-logger'
 import { getConductorMcpPort } from './conductor-mcp-server'
 import { getBrowserPaths } from './browser-paths'
 import {
-  VisionPortHeldError, findAppVisionBrowsers, factsOfPid, endVerified, endOwnChild, endOwnChildSync,
-  defaultOwnerPorts, type OwnerPorts, type OwnChild, type ProcessFacts,
+  VisionPortHeldError, scanAppVisionBrowsers, factsOfPid, endVerified, endOwnChild, endOwnChildSync,
+  defaultOwnerPorts, type OwnerPorts, type OwnChild, type ProcessFacts, type ProfileLockState,
 } from './vision-browser-owner'
 import type { GlobalVisionConfig } from '../shared/types'
 
@@ -739,28 +739,39 @@ function isPortListening(port: number, timeoutMs = 300): Promise<boolean> {
  *  Each is ended only once identified, through the verified path (the kill
  *  re-reads its creation time).
  *
- *  Fast path: nothing listening and no leftover found means no further work.
- *  Otherwise the port and the ended leftovers get PORT_FREE_WAIT_MS. A port
- *  still in use after that is held by a program not identified as the app's
- *  vision browser: it is left running and the launch stops with
- *  VisionPortHeldError. A leftover that has not ended stops the launch too. */
+ *  Fast path (P3.16a round 2, Q5): nothing listening and neither profile
+ *  folder locked (a browser holds its profile's lock for as long as it runs)
+ *  means no leftover can be there: no process query, no further work.
+ *  Otherwise the query runs, and the port and the ended leftovers get
+ *  PORT_FREE_WAIT_MS. A port still in use after that is held by a program not
+ *  identified as the app's vision browser: it is left running and the launch
+ *  stops with VisionPortHeldError. A leftover that has not ended stops the
+ *  launch too. Round 2 (Q4): a query that fails or times out identifies
+ *  nothing, so nothing is ended; then, as while ended leftovers wind down, a
+ *  profile folder still locked (with no answer, or a lock that cannot be read)
+ *  stops the launch, since a new browser on a locked profile would hand off to
+ *  whatever holds it. */
 async function freeDebugPort(debugPort: number, tmpDir: string): Promise<void> {
   const ports = ownerPorts()
   const profileDirs = (['chrome', 'edge'] as const).map((b) => path.join(tmpDir, `${b}-debug-${debugPort}`))
-  const [listening, leftovers] = await Promise.all([
-    isPortListening(debugPort),
-    findAppVisionBrowsers(debugPort, profileDirs, ports),
-  ])
-  if (!listening && leftovers.length === 0) return
+  const locks = (): ProfileLockState[] => profileDirs.map((d) => profileLockState(d, ports))
+  const listening = await isPortListening(debugPort)
+  if (!listening && locks().every((s) => s === 'free')) return
+  const found = await scanAppVisionBrowsers(debugPort, profileDirs, ports)
+  const answered = found !== null
+  if (!answered) logInfo(`[vision] The check of the browsers on port ${debugPort} did not answer; nothing is ended`)
+  const leftovers = found ?? []
   for (const facts of leftovers) {
     logInfo(`[vision] Ending the app's vision browser left from an earlier run (pid ${facts.pid}) on port ${debugPort}`)
     await endVerified(facts, ports)
   }
   const deadline = Date.now() + PORT_FREE_WAIT_MS
-  let profileHeld = leftovers.length > 0
+  let leftoversRunning = leftovers.length > 0
   for (let polls = 0; ; polls++) {
     const portHeld = await isPortListening(debugPort)
-    if (profileHeld) profileHeld = await anyStillRunning(leftovers, ports)
+    if (leftoversRunning) leftoversRunning = await anyStillRunning(leftovers, ports)
+    const lockHeld = (leftovers.length > 0 || !answered) && locks().some((s) => s === 'held' || (!answered && s === 'unknown'))
+    const profileHeld = leftoversRunning || lockHeld
     if (!portHeld && !profileHeld) return
     if (polls >= PORT_FREE_MAX_POLLS || Date.now() >= deadline) {
       const err = portHeld
@@ -771,6 +782,12 @@ async function freeDebugPort(debugPort: number, tmpDir: string): Promise<void> {
     }
     await ports.sleep(PORT_FREE_POLL_MS)
   }
+}
+
+/** P3.16a round 2 (Q4, Q5): a profile folder's lock as the OS reads it; any
+ *  failure, or no way to read it, is 'unknown'. */
+function profileLockState(dir: string, ports: OwnerPorts): ProfileLockState {
+  try { return ports.profileLock?.(dir) ?? 'unknown' } catch { return 'unknown' }
 }
 
 /** Whether any of `ended` still runs: the same pid with the same creation time. */
@@ -785,7 +802,9 @@ async function anyStillRunning(ended: ProcessFacts[], ports: OwnerPorts): Promis
 /** Awaited counterpart to killSpawnedBrowser, used on the launch/relaunch path
  *  so the previous browser is gone (port and profile free) before the respawn.
  *  It is the app's own child: while its exit has not been observed it is ended
- *  by its pid, and its exit is awaited (bounded); once observed, nothing. */
+ *  (on Windows through its own kill, its process handle, P3.16a round 2, Q5;
+ *  elsewhere by its process group), and its exit is awaited (bounded); once
+ *  observed, nothing. */
 async function killSpawnedBrowserForRelaunch(): Promise<void> {
   const t = spawnedBrowser
   spawnedBrowser = null
@@ -850,7 +869,7 @@ export async function launchBrowser(browser: 'chrome' | 'edge', debugPort: numbe
   const tmpDir = process.env.TEMP || process.env.TMP || os.tmpdir()
   const profileDir = path.join(tmpDir, `${browser}-debug-${debugPort}`)
   // Relaunch path: end the previous app-started browser first (its own child,
-  // by pid while its exit is not observed), so browsers never stack up (the
+  // while its exit is not observed), so browsers never stack up (the
   // --user-data-dir singleton means a stale one would also take over the new
   // launch). Then end the app's vision browsers left by an earlier run (found
   // by profile, identified) and wait for the port and the profile, or stop

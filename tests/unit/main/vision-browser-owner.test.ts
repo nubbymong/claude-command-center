@@ -55,6 +55,7 @@ vi.mock('../../../src/main/update-watcher', () => ({
 
 import {
   isAppVisionBrowser, splitWindowsCommandLine, parseWindowsFacts, parsePsPidArgs, findAppVisionBrowsers,
+  scanAppVisionBrowsers, profileLockOf,
   factsOfPid, endVerified, endOwnChild, endOwnChildSync, ownChildRunning, runAwait, defaultOwnerPorts,
   VisionPortHeldError, WINDOWS_BROWSERS_SCRIPT, OWNER_QUERY_TIMEOUT_MS, OWNER_SYNC_KILL_TIMEOUT_MS,
   POSIX_TERM_GRACE_MS, OWN_QUIT_GRACE_MS,
@@ -526,8 +527,8 @@ describe('ending a verified process on Linux and macOS', () => {
 
 /** A ChildProcess stand-in: exitCode/signalCode stay null until its exit is
  *  observed (emitted), as libuv does. */
-function fakeOwnChild(pid = 4242) {
-  const c = new EventEmitter() as EventEmitter & { pid?: number; exitCode: number | null; signalCode: NodeJS.Signals | null }
+function fakeOwnChild(pid = 4242, onKill: (exit: (sig?: NodeJS.Signals | null) => void) => void = () => {}) {
+  const c = new EventEmitter() as EventEmitter & { pid?: number; exitCode: number | null; signalCode: NodeJS.Signals | null; kill: (sig?: NodeJS.Signals | number) => boolean }
   c.pid = pid
   c.exitCode = null
   c.signalCode = null
@@ -535,7 +536,10 @@ function fakeOwnChild(pid = 4242) {
     if (sig) c.signalCode = sig; else c.exitCode = 1
     c.emit('exit', c.exitCode, c.signalCode)
   })
-  return { child: c as unknown as OwnChild & EventEmitter, exit, raw: c }
+  // P3.16a round 2 (Q5): ChildProcess.kill ends the process through its handle.
+  const kills: Array<NodeJS.Signals | number | undefined> = []
+  c.kill = (sig) => { kills.push(sig); onKill(exit); return true }
+  return { child: c as unknown as OwnChild & EventEmitter, exit, raw: c, kills }
 }
 
 describe("ending the app's own browser by its pid", () => {
@@ -555,12 +559,25 @@ describe("ending the app's own browser by its pid", () => {
     expect(calls).toEqual([{ file: TASKKILL, args: ['/PID', '4242', '/T', '/F'], timeoutMs: OWNER_SYNC_KILL_TIMEOUT_MS, sync: true }])
   })
 
-  it('Windows, async: the kill itself is the same bounded call (no turn between the check and the kill), then it waits for the exit', async () => {
-    const { child, exit } = fakeOwnChild()
-    const { ports, calls } = fakePorts('win32', () => { exit(); return 'SUCCESS' })
+  it('Windows, async (the relaunch, round 2, Q5): the child\'s own kill, through its process handle, nothing run and nothing blocking; then it waits for the exit', async () => {
+    const { child, kills } = fakeOwnChild(4242, (exit) => exit('SIGTERM'))
+    const { ports, calls } = fakePorts('win32', () => 'SUCCESS')
     expect(await endOwnChild(child, ports)).toBe(true)
-    expect(calls).toEqual([{ file: TASKKILL, args: ['/PID', '4242', '/T', '/F'], timeoutMs: OWNER_SYNC_KILL_TIMEOUT_MS, sync: true }])
+    expect(kills).toEqual([undefined])
+    expect(calls).toEqual([])
     expect(ownChildRunning(child)).toBe(false)
+  })
+
+  it('Windows, async: a child whose kill throws, or whose exit is not observed within the wait, reads as not ended', async () => {
+    const throwing = fakeOwnChild()
+    throwing.raw.kill = () => { throw new Error('EPERM') }
+    const a = fakePorts('win32', () => 'SUCCESS')
+    expect(await endOwnChild(throwing.child, a.ports)).toBe(false)
+    const silent = fakeOwnChild()
+    const b = fakePorts('win32', () => 'SUCCESS')
+    expect(await endOwnChild(silent.child, b.ports)).toBe(false)
+    expect(silent.kills).toEqual([undefined])
+    expect(b.calls).toEqual([])
   })
 
   it('does nothing once its exit was observed, or with no pid', async () => {
@@ -613,6 +630,80 @@ describe("ending the app's own browser by its pid", () => {
     expect(syncSleeps).toEqual([OWN_QUIT_GRACE_MS])
     expect(OWN_QUIT_GRACE_MS).toBeLessThanOrEqual(1000)
     expect(calls).toHaveLength(0)
+  })
+})
+
+// P3.16a round 2 (Q4): the launch must tell "the query found none" from "the
+// query could not answer": only the first lets a launch go ahead while a
+// profile folder is locked.
+describe('the browser query: none found, or no answer', () => {
+  it('Windows: an answer naming no browser is none found; a failed or timed-out run, a malformed answer, an empty answer or no system folder is no answer', async () => {
+    const none = fakePorts('win32', () => b64([]))
+    expect(await scanAppVisionBrowsers(9222, [WIN_DIR], none.ports)).toEqual([])
+    for (const [label, answer, extra] of [
+      ['timed out', () => new Error('timed out'), {}],
+      ['malformed', () => 'not base64 !!', {}],
+      ['an object of the wrong shape', () => b64([{ pid: 'x' }]), {}],
+      ['empty', () => '', {}],
+      ['no system folder', () => b64([]), { systemRoot: undefined }],
+    ] as Array<[string, () => string | Error, { systemRoot?: string | undefined }]>) {
+      const f = fakePorts('win32', answer, extra)
+      expect(await scanAppVisionBrowsers(9222, [WIN_DIR], f.ports), label).toBeNull()
+      // The older question still reads "no answer" as nothing to end.
+      expect(await findAppVisionBrowsers(9222, [WIN_DIR], f.ports), label).toEqual([])
+    }
+  })
+
+  it('Linux and macOS: no process naming the port is none found; no ps, or a failed ps, is no answer', async () => {
+    const none = fakePorts('linux', () => '    1 /sbin/init\n')
+    expect(await scanAppVisionBrowsers(9222, [NIX_DIR], none.ports)).toEqual([])
+    const noPs = fakePorts('linux', () => '', { exists: () => false })
+    expect(await scanAppVisionBrowsers(9222, [NIX_DIR], noPs.ports)).toBeNull()
+    const failed = fakePorts('linux', () => new Error('timed out'))
+    expect(await scanAppVisionBrowsers(9222, [NIX_DIR], failed.ports)).toBeNull()
+  })
+})
+
+// P3.16a round 2 (Q4, Q5): whether a browser profile folder is locked, read
+// the way the browser locks it. Windows: the browser keeps `lockfile` open for
+// writing while it runs, sharing it with readers only (a crash closes it, and
+// it is deleted on close), so it can be opened for writing only when no
+// browser holds it. Linux and macOS: `SingletonLock` is a link naming the
+// host and the browser's pid; it is left behind by a crash.
+describe('profileLockOf', () => {
+  const win = (open: 'ok' | 'missing' | 'busy' | 'error') => {
+    const opened: string[] = []
+    return { opened, deps: { platform: 'win32' as const, tryOpenForWrite: (f: string) => { opened.push(f); return open }, readlink: () => { throw new Error('not on Windows') }, alive: () => { throw new Error('not on Windows') }, hostname: () => 'h' } }
+  }
+  it('Windows: no lockfile is free; one open for writing elsewhere is held; one that opens is a stale file (free); any other error is unknown', () => {
+    for (const [open, state] of [['missing', 'free'], ['busy', 'held'], ['ok', 'free'], ['error', 'unknown']] as const) {
+      const { opened, deps } = win(open)
+      expect(profileLockOf(WIN_DIR, deps), open).toBe(state)
+      expect(opened, open).toEqual([path.win32.join(WIN_DIR, 'lockfile')])
+    }
+  })
+
+  const nix = (link: string | null | Error, alive: (pid: number) => boolean = () => true, host = 'box') => ({
+    platform: 'linux' as const,
+    tryOpenForWrite: () => { throw new Error('not on POSIX') },
+    readlink: (f: string) => { expect(f).toBe(path.posix.join(NIX_DIR, 'SingletonLock')); if (link instanceof Error) throw link; return link },
+    alive,
+    hostname: () => host,
+  })
+  it('Linux and macOS: no SingletonLock is free; one naming this host and a live pid is held; a dead pid is a crash\'s (free); another host is held; anything else is unknown', () => {
+    expect(profileLockOf(NIX_DIR, nix(null))).toBe('free')
+    expect(profileLockOf(NIX_DIR, nix('box-4242', (p) => p === 4242))).toBe('held')
+    expect(profileLockOf(NIX_DIR, nix('box-4242', () => false))).toBe('free')
+    expect(profileLockOf(NIX_DIR, nix('my-box-1-4242', (p) => p === 4242, 'my-box-1'))).toBe('held')
+    expect(profileLockOf(NIX_DIR, nix('other-4242', () => false))).toBe('held')
+    expect(profileLockOf(NIX_DIR, nix('box-notapid', () => false))).toBe('unknown')
+    expect(profileLockOf(NIX_DIR, nix('box-0', () => false))).toBe('unknown')
+    expect(profileLockOf(NIX_DIR, nix(new Error('EACCES')))).toBe('unknown')
+    expect(profileLockOf(NIX_DIR, nix('box-4242', () => { throw new Error('EINVAL') }))).toBe('unknown')
+  })
+  it('an empty folder name, or a dependency that throws, is unknown', () => {
+    expect(profileLockOf('', win('missing').deps)).toBe('unknown')
+    expect(profileLockOf(WIN_DIR, { ...win('missing').deps, tryOpenForWrite: () => { throw new Error('boom') } })).toBe('unknown')
   })
 })
 

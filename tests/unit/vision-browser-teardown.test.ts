@@ -31,6 +31,10 @@ const sys = vi.hoisted(() => {
     nextPid: 1000,
     nextCreated: 1,
     failReads: false,
+    /** What every profile lock reads as, when a case sets it (round 2, Q4); null: from the table. */
+    lockReads: null as null | 'free' | 'held' | 'unknown',
+    /** Every read after the first browser query fails (round 2, Q4). */
+    failReadsAfterQuery: false,
     /** How long the OS takes to answer a query; a query whose bound is shorter fails. */
     queryLatencyMs: 0,
     /** Pids that do not end on SIGTERM. */
@@ -92,7 +96,11 @@ vi.mock('child_process', async () => {
         port: portArg ? Number(portArg.split('=')[1]) : null,
         group: pid,
       })
-      const child = Object.assign(new EE(), { pid, exitCode: null, signalCode: null, unref: () => {} })
+      // kill: ChildProcess.kill, through the process handle (P3.16a round 2, Q5).
+      const child = Object.assign(new EE(), {
+        pid, exitCode: null, signalCode: null, unref: () => {},
+        kill: () => { sys.events.push(`child-kill:${pid}`); if (sys.procs.has(pid)) sys.end(pid, 'SIGTERM'); return true },
+      })
       sys.children.set(pid, child)
       return child
     },
@@ -135,6 +143,7 @@ const isBrowser = (name: string) => ['chrome.exe', 'msedge.exe'].includes(name.t
  *  the pid only when its creation-time comparison holds, as the real one does. */
 function answer(file: string, args: string[], timeoutMs: number): string {
   if (sys.failReads && !file.endsWith('taskkill.exe')) throw new Error('timed out')
+  if (sys.failReadsAfterQuery && sys.events.includes('query') && !file.endsWith('taskkill.exe')) throw new Error('timed out')
   if (sys.queryLatencyMs > timeoutMs && !file.endsWith('taskkill.exe')) throw new Error('timed out')
   if (sys.platform === 'win32') {
     if (file.endsWith('taskkill.exe')) {
@@ -199,6 +208,20 @@ const fakePorts: OwnerPorts = {
   },
   exists: (f) => !f.endsWith('lsof'),
   realpath: (p) => sys.realpaths.get(p) ?? null,
+  // P3.16a round 2 (Q4, Q5): a profile folder is locked while a main browser
+  // process that runs names it, as the browser's own lock is held; or what a
+  // case says the lock reads as.
+  profileLock: (dir) => {
+    if (sys.lockReads !== null) return sys.lockReads
+    // The same folder in any spelling (a short or other-case TEMP on Windows).
+    const canon = (p: string) => { const r = sys.realpaths.get(p) ?? p; return sys.platform === 'win32' ? r.toLowerCase() : r }
+    const held = [...sys.procs.values()].some((p) => {
+      if (/--type=/.test(p.commandLine)) return false
+      const m = /--user-data-dir=(\S+)/.exec(p.commandLine)
+      return !!m && canon(m[1].replace(/"/g, '')) === canon(dir)
+    })
+    return held ? 'held' : 'free'
+  },
   // A long wait (a grace, an exit wait) takes a little real time; a poll none.
   sleep: async (ms) => { sys.sleeps++; await new Promise((r) => setTimeout(r, ms >= 1000 ? 10 : 0)) },
   sleepSync: (ms) => { sys.events.push(`sleepSync:${ms}`) },
@@ -240,6 +263,8 @@ describe.each(['win32', 'linux'] as const)('vision browser teardown and launch (
     sys.children.clear()
     sys.nextPid = 1000
     sys.failReads = false
+    sys.lockReads = null
+    sys.failReadsAfterQuery = false
     sys.queryLatencyMs = 0
     sys.ignoreTerm.clear()
     sys.unkillable.clear()
@@ -340,8 +365,12 @@ describe.each(['win32', 'linux'] as const)('vision browser teardown and launch (
     expect(sys.browserSpawns).toHaveLength(2)
     expect(sys.events.indexOf('end:1000')).toBeLessThan(sys.events.indexOf('spawn:1001'))
     expect(sys.children.get(1000).exitCode !== null || sys.children.get(1000).signalCode !== null).toBe(true)
-    if (platform === 'win32') expect(directKills().map((r) => r.args)).toEqual([['/PID', '1000', '/T', '/F']])
-    else expect(sys.signals).toEqual([[-1000, 'SIGTERM']])
+    // Round 2 (Q5): on Windows through the child's own kill (its process
+    // handle): no taskkill, nothing blocking the main thread.
+    if (platform === 'win32') {
+      expect(directKills()).toHaveLength(0)
+      expect(sys.events.filter((e) => e.startsWith('child-kill:'))).toEqual(['child-kill:1000'])
+    } else expect(sys.signals).toEqual([[-1000, 'SIGTERM']])
   })
 
   it('a relaunch waits until the previous browser exit is observed before it spawns', async () => {
@@ -509,13 +538,63 @@ describe.each(['win32', 'linux'] as const)('vision browser teardown and launch (
     expect(sys.signals).toHaveLength(0)
   })
 
-  it('fast path: nothing listening and no leftover found, one query and no further work', async () => {
+  it('fast path (round 2, Q5): nothing listening and neither profile folder locked: no process query and no further work', async () => {
     addProc(700, { port: null, profile: path.join(tmp(), 'MyOwnProfile') }) // a browser that is not the app's
     await launchBrowser('chrome', 9222, undefined, true)
-    expect(queries()).toHaveLength(1)
+    expect(queries()).toHaveLength(0)
+    expect(sys.runs).toHaveLength(0)
     expect(sys.sleeps).toBe(0)
     expect(sys.procs.has(700)).toBe(true)
     expect(sys.browserSpawns).toHaveLength(1)
+  })
+
+  it('a profile lock that cannot be read takes no fast path: the query runs, and with nothing found the launch goes ahead', async () => {
+    sys.lockReads = 'unknown'
+    await launchBrowser('chrome', 9222, undefined, true)
+    expect(queries()).toHaveLength(1)
+    expect(sys.browserSpawns).toHaveLength(1)
+  })
+
+  // Round 2 (Q4, lens B B-M8-4r): a query that fails or times out identifies
+  // nothing, so nothing is ended; a profile folder that is locked (or whose
+  // lock cannot be read) then keeps vision from starting, since a new browser
+  // on a locked profile hands off to whatever holds it.
+  it('Q4: the query fails while a leftover holds only the profile: nothing is ended, and the launch stops and spawns nothing', async () => {
+    addProc(500, { port: null })
+    sys.failReads = true
+    const err = await launchBrowser('chrome', 9222, undefined, true).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(Error)
+    expect(err).not.toBeInstanceOf(VisionPortHeldError)
+    expect((err as Error).message).toBe("the vision browser's profile folder is still in use; vision was not started")
+    expect(sys.procs.has(500)).toBe(true)
+    expect(sys.browserSpawns).toHaveLength(0)
+    expect(directKills()).toHaveLength(0)
+    expect(verifiedKills()).toHaveLength(0)
+    expect(sys.signals).toHaveLength(0)
+  })
+
+  it('Q4: the query times out and the profile lock cannot be read: the launch stops too', async () => {
+    if (platform === 'win32') sys.queryLatencyMs = 60_000
+    else sys.failReads = true
+    sys.lockReads = 'unknown'
+    const err = await launchBrowser('chrome', 9222, undefined, true).catch((e: unknown) => e)
+    expect((err as Error)?.message).toBe("the vision browser's profile folder is still in use; vision was not started")
+    expect(sys.browserSpawns).toHaveLength(0)
+  })
+
+  it('Q4: the query fails but nothing listens and neither profile is locked: the launch goes ahead (nothing to hand off to)', async () => {
+    sys.failReads = true
+    await launchBrowser('chrome', 9222, undefined, true)
+    expect(sys.browserSpawns).toHaveLength(1)
+  })
+
+  it('Q4: a leftover found, then every read after the query fails (its kill and whether it still runs): its profile lock is waited for, and the launch stops', async () => {
+    addProc(500, { port: null })
+    sys.failReadsAfterQuery = true
+    const err = await launchBrowser('chrome', 9222, undefined, true).catch((e: unknown) => e)
+    expect((err as Error)?.message).toBe("the vision browser's profile folder is still in use; vision was not started")
+    expect(sys.procs.has(500)).toBe(true)
+    expect(sys.browserSpawns).toHaveLength(0)
   })
 
   it('logs the browser exit with its code or signal', async () => {
