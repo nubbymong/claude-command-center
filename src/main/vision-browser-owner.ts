@@ -5,10 +5,12 @@
  *
  * - The browser the app spawned in this run is its own child. Until its exit
  *   has been observed (exitCode and signalCode both null), libuv still holds
- *   that process, so its pid cannot name another one. It is ended by that pid
- *   with no read-back: `taskkill /PID <pid> /T /F` on Windows, its process
- *   group on Linux and macOS (SIGTERM, then SIGKILL after a grace). Once its
- *   exit was observed, nothing is done with that pid.
+ *   that process, so its pid cannot name another one. It is ended with no
+ *   read-back: on Windows at stop and quit by `taskkill /PID <pid> /T /F`, and
+ *   before a relaunch by the child's own kill (its process handle, nothing
+ *   blocking; P3.16a round 2, Q5); on Linux and macOS by its process group
+ *   (SIGTERM, then SIGKILL after a grace). Once its exit was observed, nothing
+ *   is done with that pid.
  *
  * - A browser left by an earlier run of the app is found by its profile,
  *   whether or not it listens on the debug port, and ended only once it is
@@ -20,16 +22,20 @@
  *
  * Every OS call goes through OwnerPorts: absolute program paths, no shell, a
  * timeout on every call, and any failure or timeout reads as "cannot
- * identify", which ends nothing. The queries run asynchronously; the only
- * synchronous call is the taskkill of the app's own browser. Nothing is put
- * into a PowerShell script except a pid and a creation time, both checked as
- * plain digits first; command lines are matched here in TypeScript.
+ * identify", which ends nothing (and, round 2, Q4: the launch then tells it
+ * from "none found", scanAppVisionBrowsers, and does not start a browser on a
+ * profile folder that is locked, profileLockOf). The queries run
+ * asynchronously; the only synchronous call is the quit-time taskkill of the
+ * app's own browser. Nothing is put into a PowerShell script except a pid and
+ * a creation time, both checked as plain digits first; command lines are
+ * matched here in TypeScript.
  *
  * No Electron import, so the unit tests load it without a window.
  */
 
 import * as path from 'path'
 import * as fs from 'fs'
+import * as os from 'os'
 import { spawn, execFileSync } from 'child_process'
 
 /** What the OS reports about one process. */
@@ -73,7 +79,14 @@ export interface OwnerPorts {
   sleep(ms: number): Promise<void>
   /** Block for `ms` (bounded; the quit path only). */
   sleepSync(ms: number): void
+  /** P3.16a round 2 (Q4, Q5): whether the browser profile folder `dir` is
+   *  locked by a running browser (profileLockOf). Absent: 'unknown'. */
+  profileLock?(dir: string): ProfileLockState
 }
+
+/** Whether a browser profile folder is locked: by a running browser
+ *  ('held'), by none ('free'), or it cannot be told ('unknown'). */
+export type ProfileLockState = 'free' | 'held' | 'unknown'
 
 /** Every async query and the awaited verified kill: a cold PowerShell on a
  *  busy machine can take well over 4 s to answer. */
@@ -367,17 +380,23 @@ export function windowsEndScript(pid: number, created: string): string {
 /** Parse the base64 JSON the facts scripts print: one object or an array.
  *  Anything malformed is no facts at all. */
 export function parseWindowsFacts(stdout: string): ProcessFacts[] {
+  return parseWindowsFactsOrNull(stdout) ?? []
+}
+
+/** P3.16a round 2 (Q4): the same, with an answer that is not one (empty, or
+ *  malformed) told from an answer naming no process: null. */
+function parseWindowsFactsOrNull(stdout: string): ProcessFacts[] | null {
   const b64 = String(stdout ?? '').trim()
-  if (b64 === '' || !/^[A-Za-z0-9+/]+={0,2}$/.test(b64)) return []
+  if (b64 === '' || !/^[A-Za-z0-9+/]+={0,2}$/.test(b64)) return null
   let parsed: unknown
-  try { parsed = JSON.parse(Buffer.from(b64, 'base64').toString('utf8')) } catch { return [] }
+  try { parsed = JSON.parse(Buffer.from(b64, 'base64').toString('utf8')) } catch { return null }
   const items = Array.isArray(parsed) ? parsed : [parsed]
   const out: ProcessFacts[] = []
   for (const it of items) {
-    if (!it || typeof it !== 'object' || Array.isArray(it)) return []
+    if (!it || typeof it !== 'object' || Array.isArray(it)) return null
     const { pid, name, commandLine, created } = it as Record<string, unknown>
-    if (!validPid(pid) || typeof name !== 'string' || typeof commandLine !== 'string') return []
-    if (typeof created !== 'string' || !WINDOWS_CREATED_RE.test(created)) return []
+    if (!validPid(pid) || typeof name !== 'string' || typeof commandLine !== 'string') return null
+    if (typeof created !== 'string' || !WINDOWS_CREATED_RE.test(created)) return null
     out.push({ pid, name, commandLine, created })
   }
   return out
@@ -435,6 +454,21 @@ export async function findAppVisionBrowsers(
   profileDirs: string[],
   ports: OwnerPorts = defaultOwnerPorts(),
 ): Promise<ProcessFacts[]> {
+  return (await scanAppVisionBrowsers(port, profileDirs, ports)) ?? []
+}
+
+/**
+ * P3.16a round 2 (Q4): findAppVisionBrowsers, with "the query could not
+ * answer" told from "it found none": null when the query fails, times out or
+ * answers with something that is not an answer (Windows: no system folder, an
+ * empty or malformed answer; elsewhere: no ps, or a process naming this port
+ * whose facts cannot be read). [] when it answered and none is the app's.
+ */
+export async function scanAppVisionBrowsers(
+  port: number,
+  profileDirs: string[],
+  ports: OwnerPorts = defaultOwnerPorts(),
+): Promise<ProcessFacts[] | null> {
   if (!validPort(port)) return []
   const dirs = (Array.isArray(profileDirs) ? profileDirs : []).filter((d) => typeof d === 'string' && d !== '')
   if (dirs.length === 0) return []
@@ -443,21 +477,24 @@ export async function findAppVisionBrowsers(
   try {
     if (ports.platform === 'win32') {
       const ps = powershellPath(ports)
-      if (!ps) return []
-      return parseWindowsFacts(await ports.run(ps, [...POWERSHELL_ARGS, WINDOWS_BROWSERS_SCRIPT], OWNER_QUERY_TIMEOUT_MS)).filter(isApp)
+      if (!ps) return null
+      const facts = parseWindowsFactsOrNull(await ports.run(ps, [...POWERSHELL_ARGS, WINDOWS_BROWSERS_SCRIPT], OWNER_QUERY_TIMEOUT_MS))
+      return facts === null ? null : facts.filter(isApp)
     }
     const ps = posixTool(ports, POSIX_PS)
-    if (!ps) return []
+    if (!ps) return null
     const rows = parsePsPidArgs(await ports.run(ps, ['-A', '-ww', '-o', 'pid=', '-o', 'args='], OWNER_QUERY_TIMEOUT_MS))
     const out: ProcessFacts[] = []
     for (const row of rows) {
       // Only a process naming this port is read further; the full check is isApp.
       if (!posixOnlyValue(row.args, 'remote-debugging-port', String(port))) continue
       const f = await posixFactsOfPid(row.pid, ports)
-      if (f && isApp(f)) out.push(f)
+      // One that names this port and cannot be read cannot be told apart.
+      if (!f) return null
+      if (isApp(f)) out.push(f)
     }
     return out
-  } catch { return [] }
+  } catch { return null }
 }
 
 /** The facts of one pid, or null when it cannot be read (or has exited). */
@@ -531,6 +568,9 @@ export interface OwnChild {
   readonly signalCode: NodeJS.Signals | null
   once(event: 'exit', listener: () => void): unknown
   removeListener(event: 'exit', listener: () => void): unknown
+  /** ChildProcess.kill: ends the process through libuv's handle of it (not
+   *  its pid), so it cannot reach another process. */
+  kill(signal?: NodeJS.Signals | number): boolean
 }
 
 /** True while the child's exit has not been observed: libuv still holds the
@@ -581,10 +621,12 @@ export function endOwnChildSync(child: OwnChild, ports: OwnerPorts = defaultOwne
 }
 
 /**
- * End the app's own browser by its pid and wait (bounded) for its exit to be
- * observed (the relaunch path, so the port and the profile are free before
- * the next spawn). Only while its exit has not been observed. Windows: the
- * same bounded taskkill. Linux and macOS: SIGTERM to its process group, and
+ * End the app's own browser and wait (bounded) for its exit to be observed
+ * (the relaunch path, so the port and the profile are free before the next
+ * spawn). Only while its exit has not been observed. Windows (P3.16a round 2,
+ * Q5): the child's own kill, through libuv's handle of the process, so it
+ * cannot reach another process and blocks nothing (the browser's own child
+ * processes end with it). Linux and macOS: SIGTERM to its process group, and
  * SIGKILL to the group if its exit is not observed within
  * POSIX_TERM_GRACE_MS. Resolves whether its exit was observed.
  */
@@ -592,7 +634,7 @@ export async function endOwnChild(child: OwnChild, ports: OwnerPorts = defaultOw
   if (!ownChildRunning(child) || !validPid(child.pid)) return false
   const pid = child.pid
   if (ports.platform === 'win32') {
-    taskkillOwnChild(pid, ports)
+    try { child.kill() } catch { return false }
     return exitWithin(child, OWN_EXIT_WAIT_MS, ports)
   }
   if (!signalTree(pid, 'SIGTERM', ports)) return false
@@ -601,6 +643,85 @@ export async function endOwnChild(child: OwnChild, ports: OwnerPorts = defaultOw
   // only), so the exit is still not observed and the pid is still the child's.
   signalTree(pid, 'SIGKILL', ports)
   return exitWithin(child, OWN_EXIT_WAIT_MS, ports)
+}
+
+// === A profile folder's lock (P3.16a round 2, Q4, Q5) ===
+
+/** How profileLockOf reads the OS. */
+export interface ProfileLockDeps {
+  platform: NodeJS.Platform
+  /** Windows: open `file` for reading and writing, and close it. 'missing'
+   *  when there is none, 'busy' when another process holds it in a way that
+   *  allows no other writer (a sharing violation), 'error' otherwise. */
+  tryOpenForWrite(file: string): 'ok' | 'missing' | 'busy' | 'error'
+  /** Linux and macOS: the target of the symbolic link `file`, or null when
+   *  there is none; throws on any other error. */
+  readlink(file: string): string | null
+  /** Linux and macOS: whether a process with this pid runs (signal 0; a
+   *  process of another user counts). */
+  alive(pid: number): boolean
+  hostname(): string
+}
+
+/**
+ * Whether the browser profile folder `dir` is locked by a running browser,
+ * read the way the browser locks it, without starting a program.
+ * - Windows: the browser holds `<dir>\lockfile` open for writing, sharing it
+ *   with readers only, for as long as it runs; the file is deleted when the
+ *   handle closes (an exit or a crash). No file: free. A file that cannot be
+ *   opened for writing because of that sharing: held. One that opens: left by
+ *   something else, free.
+ * - Linux and macOS: `<dir>/SingletonLock` is a link to `<host>-<pid>`, left
+ *   behind by a crash. None: free. This host and a live pid: held; a pid that
+ *   no longer runs: free (the browser takes such a lock over). Another host:
+ *   held (the browser will not take it).
+ * Anything else, or any error: unknown.
+ */
+export function profileLockOf(dir: string, deps: ProfileLockDeps): ProfileLockState {
+  if (typeof dir !== 'string' || dir === '') return 'unknown'
+  try {
+    if (deps.platform === 'win32') {
+      const open = deps.tryOpenForWrite(path.win32.join(dir, 'lockfile'))
+      return open === 'busy' ? 'held' : open === 'error' ? 'unknown' : 'free'
+    }
+    const link = deps.readlink(path.posix.join(dir, 'SingletonLock'))
+    if (link === null) return 'free'
+    const at = link.lastIndexOf('-')
+    const host = at > 0 ? link.slice(0, at) : ''
+    const pidText = at > 0 ? link.slice(at + 1) : ''
+    if (!host || !/^\d{1,10}$/.test(pidText) || !validPid(Number(pidText))) return 'unknown'
+    if (host !== deps.hostname()) return 'held'
+    return deps.alive(Number(pidText)) ? 'held' : 'free'
+  } catch { return 'unknown' }
+}
+
+/** The real OS for profileLockOf. */
+function realProfileLockDeps(platform: NodeJS.Platform): ProfileLockDeps {
+  return {
+    platform,
+    tryOpenForWrite: (file) => {
+      let fd: number | null = null
+      try {
+        fd = fs.openSync(file, 'r+')
+        return 'ok'
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException)?.code
+        return code === 'ENOENT' ? 'missing' : code === 'EBUSY' ? 'busy' : 'error'
+      } finally {
+        if (fd !== null) { try { fs.closeSync(fd) } catch { /* closed */ } }
+      }
+    },
+    readlink: (file) => {
+      try { return fs.readlinkSync(file) } catch (e) {
+        if ((e as NodeJS.ErrnoException)?.code === 'ENOENT') return null
+        throw e
+      }
+    },
+    alive: (pid) => {
+      try { process.kill(pid, 0); return true } catch (e) { return (e as NodeJS.ErrnoException)?.code === 'EPERM' }
+    },
+    hostname: () => os.hostname(),
+  }
 }
 
 // === The real OS ===
@@ -679,5 +800,6 @@ export function defaultOwnerPorts(): OwnerPorts {
       if (typeof t.unref === 'function') t.unref()
     }),
     sleepSync: (ms) => blockFor(ms),
+    profileLock: (dir) => profileLockOf(dir, realProfileLockDeps(platform)),
   }
 }
