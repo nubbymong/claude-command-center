@@ -3371,10 +3371,14 @@ folder name longer than 200 characters at 200 and add `-` and the base-36
 absolute value of a 32-bit hash of the whole launch folder; the shared rule
 does the same, byte for byte (`src/shared/project-key.ts`, and its copy in
 `scripts/resume-picker.js`), and main names the real path of the launch folder
-(on Linux and macOS; fixer 3, F6: on Windows too), as Claude Code takes it (`claudeProjectDirName`,
-`transcript-discovery.ts`). So the folder a session not indexed marks, the
-names it takes, the exact resume's transcript and its bind, the heuristic bind
-and the resume picker name the folder Claude Code writes to. Q2 (lens A CAP,
+(on Linux and macOS; fixer 3, F6: on Windows too), as Claude Code takes it
+(`claudeProjectDirName`, `transcript-discovery.ts`). So the folder a session
+not indexed marks, the names it takes, the exact resume's transcript and its
+bind and the heuristic bind name the folder Claude Code writes to. The resume
+picker names a folder by the same rule from the path as given (a worktree's
+path, or its own working folder), with no real path (`scripts/resume-picker.js`
+resolveProjectDir), so for a launch folder reached through a junction (a
+Windows working folder keeps one) it can miss that folder. Q2 (lens A CAP,
 lens B B2-2): past the 32 names a session holds windows for, a name gets no
 window of its own, and none is left in no window: its own projects folder's
 window opens again, from the moment the session became not indexed until it
@@ -3419,14 +3423,21 @@ fixer 3, D8); for a folder name longer than 200 characters, Claude Code
 real path of the launch folder (Node's JS `realpathSync`, the function Claude
 Code applies: a junction is resolved, a subst drive kept; fixer 3, F6), but
 Claude Code applies it to the folder its own process starts in, after the
-shells the app starts it through have rewritten that folder (the VM probe at
-Claude Code 2.1.280: PowerShell writes the drive letter in upper case and
-expands 8.3 names, cmd.exe gives each name its case on disk), which the app
-does not reproduce: of the probe's 34 runs the app names 23 as Claude Code
-does (named as given, 14), and the other 11 are a launch folder typed in
-another case than on disk or with a lower-case drive letter (a name that
-differs only in case, and past 200 characters another hash) or given by its
-8.3 short name; one copy of
+shells the app starts it through have rewritten that folder (PowerShell writes
+the drive letter in upper case and expands 8.3 names, cmd.exe gives each name
+its case on disk), which the app does not reproduce: in the VM probe's 34 runs
+(Claude Code 2.1.280 with `-p`, signed out, Windows PowerShell 5.1; not
+covered: a PTY, pwsh 7, a mapped drive) the app names as Claude Code does 11
+of the 20 through the chain the app's tabs use (PowerShell, then claude.cmd
+through cmd.exe, or claude.exe), 7 of 7 with claude.exe started directly and 5
+of 7 through cmd.exe (23 of 34; named as given, 14), and the other 11 are a
+launch folder typed in another case than on disk or with a lower-case drive
+letter (a name that differs only in case, and past 200 characters another
+hash) or given by its 8.3 short name; each local Claude spawn reads the
+launch folder's real path 2 to 4 times, synchronously on the main thread and
+with no cache (the folder mark, the exact resume, the orphan recovery, each
+bind), on Windows too since F6, which is slow on a network share: accepted,
+no change (fixer 4, Q2); one copy of
 the app per vision debug port: two copies on the same port (a development copy
 beside the installed one) share one vision browser profile folder, so they are
 run on different vision ports (lens B B-M8-1).
@@ -3434,7 +3445,8 @@ Every local Claude launch has a launch folder (the configured one, or the home
 folder), so a session with none (round 1, spec nit 3) does not occur.
 Mutants: round 2, Q1 to Q3 18, Q4 to Q7 23; all red and restored.
 Checks: typecheck, tsc of the touched tests, 193 affected and scanner
-files, the WP1 files (manifest rebound at 2aef62a0, path digest fa175eaf unchanged).
+files, the WP1 files (manifest rebound at 2aef62a0, path digest fa175eaf
+unchanged at that rebind; fixer 3 moved it, below).
 Owed on the VM for round 2: vision on WINDOWS_1 (its cause, Q6 above); a
 launch with nothing on the port and no profile locked runs no PowerShell, and
 a relaunch ends the browser with no taskkill; a Restart pressed in the partner
@@ -3482,9 +3494,17 @@ real path gives it: not every local Claude Code launch reaches it through
 PowerShell (the Insights run and the CLI setup terminal start it directly,
 headless runs and Cloud Agents through cmd.exe, and the resume picker starts
 it in another folder when it moves to one), and writing the letter in upper
-case would name 2 of the probe's runs otherwise. Of the probe's 34 runs, 23
-named as Claude Code names them (named as given, 14); the others are a limit
-(above). Tests, red first on 91e2aac2 (2 of 47); mutation: 5 of 5 red.
+case would name 2 of the probe's runs otherwise. Of the probe's 34 runs (its
+scope: the limits above), 11 of 20 through the chain the app's tabs use
+(PowerShell, then claude.cmd or claude.exe), 7 of 7 with claude.exe started
+directly and 5 of 7 through cmd.exe are named as Claude Code names them (23;
+named as given, 14); the others are a limit (above). Tests, red first on
+91e2aac2 (2 of 47); mutation: 5 of 5 red.
+Checks: typecheck, tsc of the touched tests, the affected and scanner files
+(F1 to F5 and D5, 137; F6, 127), the WP1 files: `pty-input-guard.ts` entered
+the manifest (P14, a ledger row `added`), so the path digest moved from
+fa175eaf to d9a7de51 at the rebind at f9604882, unchanged at the rebinds at
+62c03b32 and bb4936b2.
 Owed on the VM at the final head: F1 (a Restart, then a close before the
 partner view is shown again: the partner's Services row ends), F2 (a Codex
 session Restarted, then its next process's own end: one "session ended") and

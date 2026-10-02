@@ -200,7 +200,11 @@ export interface ClaudeLaunchFolderOptions {
  * spelling. The real path is Node's JS realpathSync, which the VM probe at
  * Claude Code 2.1.280 matched on Windows (a junction resolved; the case, the
  * drive letter, a subst drive and an 8.3 name kept as written), not the
- * native one. The name is then the shared rule's (mangleCwdToProjectDir: the
+ * native one. The probe matched it on the folder Claude Code's own process
+ * started in, after the shell the app starts it through had rewritten that
+ * folder (the drive letter, the case, an 8.3 name), which this function does
+ * not reproduce: see the Windows limit in docs/wp2/completion-plan.md (P3.16).
+ * The name is then the shared rule's (mangleCwdToProjectDir: the
  * 200-character cut and hash included).
  */
 export function claudeProjectDirName(cwd: string, opts: ClaudeLaunchFolderOptions = {}): string {
