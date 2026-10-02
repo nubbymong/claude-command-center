@@ -49,7 +49,7 @@ describe('createSessionDurability', () => {
   it('F1: flushOnExit does NOT resurrect a set after noteCleared()', () => {
     const { d, save } = make()
     d.saveEnriched(state())
-    d.noteCleared()
+    d.noteCleared(true)
     save.mockClear()
     d.flushOnExit('before-quit')
     expect(save).not.toHaveBeenCalled()

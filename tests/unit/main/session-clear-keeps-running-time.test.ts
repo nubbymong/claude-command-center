@@ -13,33 +13,46 @@
 // Fixer 10 (ADR-009 C2): a clear that could not remove the discarded set's
 // .bak keeps nothing until the next save, so no current file sits in front of
 // that copy (a damaged one would bring the set back); session:hasSaved
-// answers true only for a saved session.
+// answers true only for a saved session. Fixer 11 (ADR-009 round 2): the
+// session:clear path is the core's clear, which drops the cache whatever the
+// clear did; a save whose copy over the .bak fails removes the older .bak.
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from 'vitest'
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname, basename } from 'node:path'
 import type { SessionState } from '../../../src/main/session-state'
 
-const h = vi.hoisted(() => ({ resourcesDir: '' }))
+const h = vi.hoisted(() => ({ resourcesDir: '', logs: [] as string[] }))
 
 // Fixer 10 (ADR-009 C2): a .bak held by another program (a scanner, a sync
 // tool) cannot be removed or written over while `bakLocked` is on; with
 // `bakGone`, it is gone by the time it is removed (ENOENT); otherwise the
-// real fs.
-const fault = vi.hoisted(() => ({ bakLocked: false, bakGone: false }))
+// real fs. Fixer 11: `bakUnlink` fails its removal with that code (EPERM and
+// EACCES are what Windows gives for a held file); `bakCopy` fails only the
+// copy over it (held for writing, but removable); `mainUnlink` fails the
+// session file's own removal; `readBusy` fails reading the session file.
+const fault = vi.hoisted(() => ({ bakLocked: false, bakGone: false, bakUnlink: null as null | string, bakCopy: false, mainUnlink: false, readBusy: false }))
 vi.mock('fs', async (orig) => {
   const real = await orig<typeof import('fs')>()
-  const busy = () => Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' })
+  const failing = (code: string) => Object.assign(new Error(`${code}: the file is held`), { code })
+  const busy = () => failing('EBUSY')
+  const isMain = (p: unknown) => String(p).endsWith('session-state.json')
   const unlinkSync = ((p: Parameters<typeof real.unlinkSync>[0]) => {
     if (fault.bakLocked && String(p).endsWith('.bak')) throw busy()
     if (fault.bakGone && String(p).endsWith('.bak')) throw Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' })
+    if (fault.bakUnlink && String(p).endsWith('.bak')) throw failing(fault.bakUnlink)
+    if (fault.mainUnlink && isMain(p)) throw busy()
     return real.unlinkSync(p)
   }) as typeof real.unlinkSync
   const copyFileSync = ((s: Parameters<typeof real.copyFileSync>[0], d: Parameters<typeof real.copyFileSync>[1], m?: number) => {
-    if (fault.bakLocked && String(d).endsWith('.bak')) throw busy()
+    if ((fault.bakLocked || fault.bakCopy) && String(d).endsWith('.bak')) throw busy()
     return real.copyFileSync(s, d, m)
   }) as typeof real.copyFileSync
-  return { ...real, unlinkSync, copyFileSync, default: { ...real, unlinkSync, copyFileSync } }
+  const readFileSync = ((p: Parameters<typeof real.readFileSync>[0], o?: Parameters<typeof real.readFileSync>[1]) => {
+    if (fault.readBusy && isMain(p)) throw busy()
+    return real.readFileSync(p, o)
+  }) as typeof real.readFileSync
+  return { ...real, unlinkSync, copyFileSync, readFileSync, default: { ...real, unlinkSync, copyFileSync, readFileSync } }
 })
 
 // The real session file, in this file's temp folder (no folder hardening).
@@ -52,7 +65,7 @@ vi.mock('../../../src/main/config-manager', async () => {
     migrateConfigToProviderShape: (s: unknown) => s,
   }
 })
-vi.mock('../../../src/main/debug-logger', () => ({ logInfo: () => {}, logError: () => {}, logWarn: () => {} }))
+vi.mock('../../../src/main/debug-logger', () => ({ logInfo: (m: string) => { h.logs.push(String(m)) }, logError: (m: string) => { h.logs.push(String(m)) }, logWarn: () => {} }))
 // main's other live sources, as app-session-durability.test.ts replaces them.
 vi.mock('../../../src/main/pty-manager', () => ({
   getKeptCodexConversation: () => undefined,
@@ -77,10 +90,14 @@ const CONV = '019dd000-0001-7000-8000-0000000000a1'
 /** The saved set: one Codex tab, with what a clear must not keep. */
 const theSet = (): SessionState =>
   ({ sessions: [{ id: 's1', provider: 'codex', name: 'Orchard', cwd: 'C:/work/orchard' }], activeSessionId: 's1', savedAt: 1 } as unknown as SessionState)
+/** Fixer 11: a set saved after a clear. */
+const freshSet = (): SessionState =>
+  ({ sessions: [{ id: 's2', provider: 'codex', name: 'Quarry', cwd: 'C:/work/quarry' }], activeSessionId: 's2', savedAt: 2 } as unknown as SessionState)
 
 describe('the durability core: a clear keeps main\'s running times (fixer 9 A1)', () => {
   type Times = Array<{ id: string; ms: number; until: number }>
-  function core(times: () => Times, save: (s: SessionState) => boolean = () => true) {
+  type Cleared = { ok: boolean; bakRemoved: boolean }
+  function core(times: () => Times, save: (s: SessionState) => boolean = () => true, clear?: () => Cleared) {
     const saveFn = vi.fn(save)
     const log = vi.fn()
     const d = createSessionDurability({
@@ -94,17 +111,57 @@ describe('the durability core: a clear keeps main\'s running times (fixer 9 A1)'
         getConversationRunningTimes: times,
       },
       save: saveFn,
+      ...(clear ? { clear } : {}),
       log,
     })
     return { d, save: saveFn, log, logged: () => log.mock.calls.map((c) => String(c[0])).join('\n') }
   }
+
+  // Fixer 11 (ADR-009 lens D round 2, finding 4; pre-existing): the
+  // session:clear path drops the cache whatever the clear did. A clear that
+  // failed (the file could not be removed) or was refused leaves a copy of
+  // the set on disk, so, as for a .bak left, nothing is written until the
+  // next save: before, the exit flush wrote the discarded set back.
+  for (const [what, report] of [
+    ['failed (the file could not be removed)', { ok: false, bakRemoved: false }],
+    ['removed the file but not its .bak', { ok: true, bakRemoved: false }],
+  ] as const) {
+    it(`a clear that ${what}: the cache is dropped and nothing is written until the next save`, () => {
+      const t: Times = [{ id: CONV, ms: 149_000, until: 1_000 }]
+      const { d, save, logged } = core(() => t, () => true, () => report)
+      d.saveEnriched(theSet())
+      save.mockClear()
+      expect(d.clear()).toBe(report.ok)
+      expect(d.peek()).toBeNull()
+      d.flushOnExit('before-quit')
+      expect(save).not.toHaveBeenCalled()
+      expect(logged()).toMatch(/still on disk/)
+    })
+  }
+
+  it('a clear that removed every copy keeps main\'s running times, and one that throws counts as failed', () => {
+    const t: Times = [{ id: CONV, ms: 149_000, until: 1_000 }]
+    const done = core(() => t, () => true, () => ({ ok: true, bakRemoved: true }))
+    done.d.saveEnriched(theSet())
+    done.save.mockClear()
+    expect(done.d.clear()).toBe(true)
+    expect(done.save).toHaveBeenCalledTimes(1)
+    expect(done.save.mock.calls[0][0]).toEqual({ sessions: [], activeSessionId: null, savedAt: expect.any(Number), conversationRunningTimes: t })
+    const broken = core(() => t, () => true, () => { throw new Error('disk gone') })
+    broken.d.saveEnriched(theSet())
+    broken.save.mockClear()
+    expect(broken.d.clear()).toBe(false)
+    broken.d.flushOnExit('before-quit')
+    expect(broken.save).not.toHaveBeenCalled()
+    expect(broken.logged()).toMatch(/clear[^\n]*failed: disk gone/)
+  })
 
   it('a clear writes main\'s running times back on their own: no sessions, nothing of the discarded set', () => {
     const t: Times = [{ id: CONV, ms: 149_000, until: 1_000 }]
     const { d, save } = core(() => t)
     d.saveEnriched(theSet())
     save.mockClear()
-    d.noteCleared()
+    d.noteCleared(true)
     expect(save).toHaveBeenCalledTimes(1)
     const written = save.mock.calls[0][0]
     expect(written).toEqual({ sessions: [], activeSessionId: null, savedAt: expect.any(Number), conversationRunningTimes: t })
@@ -118,7 +175,7 @@ describe('the durability core: a clear keeps main\'s running times (fixer 9 A1)'
     let t: Times = [{ id: CONV, ms: 149_000, until: 1_000 }]
     const { d, save } = core(() => t)
     d.saveEnriched(theSet())
-    d.noteCleared()
+    d.noteCleared(true)
     save.mockClear()
     // "Close sessions" ends the sessions after the clear: the run settles then.
     t = [{ id: CONV, ms: 155_000, until: 7_000 }]
@@ -132,7 +189,7 @@ describe('the durability core: a clear keeps main\'s running times (fixer 9 A1)'
     const { d, save } = core(() => [])
     d.saveEnriched(theSet())
     save.mockClear()
-    d.noteCleared()
+    d.noteCleared(true)
     d.flushOnExit('before-quit')
     expect(save).not.toHaveBeenCalled()
   })
@@ -147,7 +204,7 @@ describe('the durability core: a clear keeps main\'s running times (fixer 9 A1)'
     const { d, save } = core(() => { throw new Error('store gone') })
     d.saveEnriched(theSet())
     save.mockClear()
-    expect(() => d.noteCleared()).not.toThrow()
+    expect(() => d.noteCleared(true)).not.toThrow()
     expect(() => d.flushOnExit('before-quit')).not.toThrow()
     expect(save).not.toHaveBeenCalled()
   })
@@ -155,11 +212,11 @@ describe('the durability core: a clear keeps main\'s running times (fixer 9 A1)'
   it('a write that fails or is refused (the read-failure latch) is logged and never throws', () => {
     const t: Times = [{ id: CONV, ms: 149_000, until: 1_000 }]
     const failing = core(() => t, () => { throw new Error('disk gone') })
-    expect(() => failing.d.noteCleared()).not.toThrow()
+    expect(() => failing.d.noteCleared(true)).not.toThrow()
     expect(() => failing.d.flushOnExit('before-quit')).not.toThrow()
     expect(failing.logged()).toMatch(/running times[^\n]*failed: disk gone/)
     const refused = core(() => t, () => false)
-    refused.d.noteCleared()
+    refused.d.noteCleared(true)
     expect(refused.logged()).toMatch(/running times[^\n]*REFUSED/)
   })
 
@@ -167,7 +224,7 @@ describe('the durability core: a clear keeps main\'s running times (fixer 9 A1)'
     const t: Times = [{ id: CONV, ms: 149_000, until: 1_000 }]
     const { d, save } = core(() => t)
     d.saveEnriched(theSet())
-    d.noteCleared()
+    d.noteCleared(true)
     d.saveEnriched(theSet())
     save.mockClear()
     d.flushOnExit('before-quit')
@@ -188,7 +245,7 @@ describe('the durability core: a clear keeps main\'s running times (fixer 9 A1)'
     d.flushOnExit('before-quit')
     d.flushOnExit('will-quit')
     expect(save).not.toHaveBeenCalled()
-    expect(log.mock.calls.filter((c) => /could not be removed/.test(String(c[0])))).toHaveLength(1)
+    expect(log.mock.calls.filter((c) => /still on disk/.test(String(c[0])))).toHaveLength(1)
     expect(d.peek()).toBeNull()
     // The next save is a set again, and the exit flush writes it whole.
     d.saveEnriched(theSet())
@@ -202,6 +259,19 @@ describe('the durability core: a clear keeps main\'s running times (fixer 9 A1)'
     expect(save).toHaveBeenCalledTimes(2)
     for (const c of save.mock.calls) expect(c[0]).toEqual({ sessions: [], activeSessionId: null, savedAt: expect.any(Number), conversationRunningTimes: t })
   })
+
+  // Fixer 11 (gate 3 quality nit 3, ADR-009 lens C nit): the report is
+  // required; a call without one (possible only around the types) counts as
+  // a copy left, never as a clear that removed everything.
+  it('noteCleared without a report writes nothing', () => {
+    const t: Times = [{ id: CONV, ms: 149_000, until: 1_000 }]
+    const { d, save } = core(() => t)
+    d.saveEnriched(theSet())
+    save.mockClear()
+    ;(d.noteCleared as (bakRemoved?: boolean) => void)()
+    d.flushOnExit('before-quit')
+    expect(save).not.toHaveBeenCalled()
+  })
 })
 
 describe('the VM repro as a round trip through the real session file (fixer 9 A1)', () => {
@@ -214,8 +284,8 @@ describe('the VM repro as a round trip through the real session file (fixer 9 A1
     h.resourcesDir = tmp
   })
   beforeEach(() => {
-    fault.bakLocked = false
-    fault.bakGone = false
+    Object.assign(fault, { bakLocked: false, bakGone: false, bakUnlink: null, bakCopy: false, mainUnlink: false, readBusy: false })
+    h.logs.length = 0
     rmSync(file(), { force: true })
     rmSync(file() + '.bak', { force: true })
     __resetConversationRunningTimesForTests()
@@ -233,16 +303,15 @@ describe('the VM repro as a round trip through the real session file (fixer 9 A1
     const d = createAppSessionDurability()
     return { d, loaded: d.load() }
   }
+  const names = (s: SessionState | null) => (s?.sessions ?? []).map((x) => (x as unknown as { name: string }).name)
 
   it('"Close sessions": the next run has the conversation\'s running time, including the run that ended after the clear', () => {
     const now = Date.now()
     noteConversationRunningTime(CONV, 149_000, now - 6_000)
     const d = createAppSessionDurability()
     expect(d.saveEnriched(theSet())).toBe(true)
-    // index.ts's session:clear handler.
-    const cleared = clearSessionState()
-    expect(cleared).toEqual({ ok: true, bakRemoved: true })
-    d.noteCleared(cleared.bakRemoved)
+    // index.ts's session:clear handler (fixer 11: the core's clear).
+    expect(d.clear()).toBe(true)
     // The session is ended after the clear; its run settles as its process ends.
     noteConversationRunningTime(CONV, 155_000, now)
     d.flushOnExit('before-quit')
@@ -260,9 +329,7 @@ describe('the VM repro as a round trip through the real session file (fixer 9 A1
 
     const run2 = nextRun()
     expect(run2.loaded?.sessions).toHaveLength(1)
-    const cleared = clearSessionState()
-    expect(cleared).toEqual({ ok: true, bakRemoved: true })
-    run2.d.noteCleared(cleared.bakRemoved)
+    expect(run2.d.clear()).toBe(true)
     // No exit flush: the app is stopped hard.
 
     const run3 = nextRun()
@@ -274,8 +341,7 @@ describe('the VM repro as a round trip through the real session file (fixer 9 A1
     const d = createAppSessionDurability()
     d.saveEnriched(theSet())
     expect(existsSync(file())).toBe(true)
-    expect(clearSessionState().ok).toBe(true)
-    d.noteCleared(true)
+    expect(d.clear()).toBe(true)
     d.flushOnExit('before-quit')
     expect(existsSync(file())).toBe(false)
     expect(existsSync(file() + '.bak')).toBe(false)
@@ -289,10 +355,8 @@ describe('the VM repro as a round trip through the real session file (fixer 9 A1
     const d = createAppSessionDurability()
     expect(d.saveEnriched(theSet())).toBe(true)
     fault.bakLocked = true
-    let cleared: ReturnType<typeof clearSessionState>
     try {
-      cleared = clearSessionState()
-      d.noteCleared(cleared.bakRemoved)
+      expect(d.clear()).toBe(true)
       d.flushOnExit('before-quit')
     } finally {
       fault.bakLocked = false
@@ -300,11 +364,31 @@ describe('the VM repro as a round trip through the real session file (fixer 9 A1
     if (existsSync(file())) writeFileSync(file(), '{"sessions": [')
     const { loaded } = nextRun()
     expect(loaded?.sessions ?? []).toEqual([])
-    expect(cleared).toEqual({ ok: true, bakRemoved: false })
     // The copy is still there, behind no file: never read without one.
     expect(readFileSync(file() + '.bak', 'utf8')).toMatch(/Orchard/)
     expect(hasSavedSessionState()).toBe(false)
   })
+
+  // Fixer 11 (ADR-009 lens D round 2, finding 2): any error but ENOENT on the
+  // .bak's removal counts as a .bak left; EPERM and EACCES are what Windows
+  // gives for a file another program holds.
+  for (const code of ['EBUSY', 'EPERM', 'EACCES']) {
+    it(`a .bak whose removal fails with ${code} counts as left: the clear says so and nothing is written in front of it`, () => {
+      noteConversationRunningTime(CONV, 149_000, Date.now())
+      const d = createAppSessionDurability()
+      d.saveEnriched(theSet())
+      fault.bakUnlink = code
+      try {
+        expect(clearSessionState()).toEqual({ ok: true, bakRemoved: false })
+        expect(d.clear()).toBe(true)
+        d.flushOnExit('before-quit')
+      } finally {
+        fault.bakUnlink = null
+      }
+      expect(existsSync(file())).toBe(false)
+      expect(readFileSync(file() + '.bak', 'utf8')).toMatch(/Orchard/)
+    })
+  }
 
   it('a .bak gone by the time it is removed, or never there, counts as removed', () => {
     const d = createAppSessionDurability()
@@ -319,6 +403,69 @@ describe('the VM repro as a round trip through the real session file (fixer 9 A1
     expect(clearSessionState()).toEqual({ ok: true, bakRemoved: true })
   })
 
+  // Fixer 11 (ADR-009 lens D round 2, finding 4; pre-existing): a session file
+  // that cannot be removed is a failed clear (ok false), and the discarded
+  // set is still not written back by the exit flush: the file on disk is left
+  // as it was.
+  it('a session file that cannot be removed: the clear fails, and the exit flush never writes the discarded set back', () => {
+    const now = Date.now()
+    noteConversationRunningTime(CONV, 149_000, now - 6_000)
+    const d = createAppSessionDurability()
+    d.saveEnriched(theSet())
+    const before = readFileSync(file(), 'utf8')
+    fault.mainUnlink = true
+    try {
+      expect(clearSessionState()).toEqual({ ok: false, bakRemoved: false })
+      expect(d.clear()).toBe(false)
+    } finally {
+      fault.mainUnlink = false
+    }
+    expect(d.peek()).toBeNull()
+    // A run settles after the clear; the flush must still write nothing.
+    noteConversationRunningTime(CONV, 155_000, now)
+    d.flushOnExit('before-quit')
+    expect(readFileSync(file(), 'utf8')).toBe(before)
+  })
+
+  // Fixer 11 (ADR-009 R2-3, pre-existing since #397): a save whose copy over
+  // the .bak fails used to leave the older .bak, which a damaged file then
+  // brought back: a set cleared since among them. It is removed now.
+  it('a save whose .bak copy fails removes the older .bak, so a damaged file never brings back a set cleared before it', () => {
+    noteConversationRunningTime(CONV, 149_000, Date.now())
+    const d = createAppSessionDurability()
+    d.saveEnriched(theSet())
+    fault.bakLocked = true
+    try {
+      expect(d.clear()).toBe(true)
+    } finally {
+      fault.bakLocked = false
+    }
+    // At the next save the .bak is still held for writing, but can be removed.
+    fault.bakCopy = true
+    try {
+      expect(d.saveEnriched(freshSet())).toBe(true)
+    } finally {
+      fault.bakCopy = false
+    }
+    expect(existsSync(file() + '.bak')).toBe(false)
+    expect(h.logs.some((l) => /mirror copy failed/.test(l))).toBe(true)
+    writeFileSync(file(), '{"sessions": [')
+    expect(names(nextRun().loaded)).not.toContain('Orchard')
+  })
+
+  it('a .bak that can be neither copied over nor removed at a save is left, and the log says what it holds', () => {
+    const d = createAppSessionDurability()
+    d.saveEnriched(theSet())
+    fault.bakLocked = true
+    try {
+      expect(d.saveEnriched(freshSet())).toBe(true)
+    } finally {
+      fault.bakLocked = false
+    }
+    expect(readFileSync(file() + '.bak', 'utf8')).toMatch(/Orchard/)
+    expect(h.logs.some((l) => /could not be removed either/.test(l))).toBe(true)
+  })
+
   // Fixer 10 (gate 3 quality nit 2): session:hasSaved says whether there is a
   // saved session to restore, as a load would offer it; a file that keeps only
   // the conversations' running times holds none.
@@ -328,8 +475,15 @@ describe('the VM repro as a round trip through the real session file (fixer 9 A1
     const d = createAppSessionDurability()
     d.saveEnriched(theSet())
     expect(hasSavedSessionState()).toBe(true)
-    expect(clearSessionState().ok).toBe(true)
-    d.noteCleared(true)
+    // Fixer 11 (ADR-009 lens D round 2, finding 3): a file that cannot be
+    // read holds no session to restore, as the load then offers none.
+    fault.readBusy = true
+    try {
+      expect(hasSavedSessionState()).toBe(false)
+    } finally {
+      fault.readBusy = false
+    }
+    expect(d.clear()).toBe(true)
     expect(existsSync(file())).toBe(true)
     expect(hasSavedSessionState()).toBe(false)
     // A damaged file: what its .bak holds, as a load would recover it.
@@ -344,8 +498,11 @@ describe('the VM repro as a round trip through the real session file (fixer 9 A1
     expect(readFileSync(file(), 'utf8')).toBe('{"sessions": [')
   })
 
-  it('index.ts tells the core of every successful clear, and whether a copy of the set was left (the wiring the fix rides on)', () => {
+  it('index.ts hands session:clear to the core, which clears and drops the cache whatever the clear did (the wiring the fix rides on)', () => {
     const index = readFileSync(join(__dirname, '../../../src/main/index.ts'), 'utf8')
-    expect(index).toMatch(/ipcMain\.handle\('session:clear', async \(\) => \{\s*const cleared = clearSessionState\(\)[\s\S]{0,600}?if \(cleared\.ok\) sessionDurability\.noteCleared\(cleared\.bakRemoved\)\s*return cleared\.ok\s*\}\)/)
+    expect(index).toMatch(/ipcMain\.handle\('session:clear', async \(\) => sessionDurability\.clear\(\)\)/)
+    expect(index).not.toMatch(/clearSessionState/)
+    const app = readFileSync(join(__dirname, '../../../src/main/app-session-durability.ts'), 'utf8')
+    expect(app).toMatch(/\bclear: \(\) => clearSessionState\(\),/)
   })
 })

@@ -98,7 +98,7 @@ import { killAllAgents } from './cloud-agent-manager'
 import { startServiceStatusPoller, stopServiceStatusPoller, registerServiceStatusHandlers, refreshServiceStatus } from './service-status'
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
 import { startUpdateServer, stopUpdateServer } from './update-server'
-import { loadSessionState, clearSessionState, hasSavedSessionState, SessionState } from './session-state'
+import { loadSessionState, hasSavedSessionState, SessionState } from './session-state'
 import { createAppSessionDurability } from './app-session-durability'
 import { getConfigDir, snapshotConfig, readConfig } from './config-manager'
 import { stopGlobalVision, killSpawnedBrowser, cleanupLegacyVisionMarkers } from './vision-manager'
@@ -301,15 +301,12 @@ function registerMainWindowIpc(): void {
     return sessionDurability.load()
   })
 
-  ipcMain.handle('session:clear', async () => {
-    const cleared = clearSessionState()
-    // #397 F1: a successful clear is the user intentionally discarding the saved set
-    // (Don't-open / Close-without-saving). Drop the cache so the exit-time flush
-    // cannot resurrect it on the next launch. Fixer 10 (ADR-009 C2): told whether a
-    // .bak of the set was left, in front of which nothing may be written.
-    if (cleared.ok) sessionDurability.noteCleared(cleared.bakRemoved)
-    return cleared.ok
-  })
+  // #397 F1: a clear is the user intentionally discarding the saved set (Don't-open /
+  // Close-without-saving). The core removes the file and its .bak and drops its cache
+  // so the exit-time flush cannot resurrect the set on the next launch: whatever the
+  // removal did (fixer 11; before, a clear that failed kept the cache), and with
+  // nothing written in front of a copy of the set left on disk (fixer 10, ADR-009 C2).
+  ipcMain.handle('session:clear', async () => sessionDurability.clear())
 
   ipcMain.handle('session:hasSaved', async () => {
     return hasSavedSessionState()

@@ -8,12 +8,13 @@
  * saveEnriched enriches each Claude session's exact resume target from the
  * live transcript binder, so every persisted file is resumable, not only the
  * graceful close (Group 1). flushOnExit persists the cached state on any
- * non-graceful exit (Group 2); noteCleared drops the cache on an intentional
- * clear so the flush never resurrects a discarded set (F1). The binder is read
+ * non-graceful exit (Group 2); clear (fixer 11) removes the saved file and
+ * drops the cache on an intentional clear, whatever the removal did, so the
+ * flush never resurrects a discarded set (F1). The binder is read
  * lazily per call: it may init after this module loads.
  */
 import { createSessionDurability, type SessionDurability } from './session-durability'
-import { saveSessionState, loadSessionState } from './session-state'
+import { saveSessionState, loadSessionState, clearSessionState } from './session-state'
 import { isExactBindSourceActive } from './hooks'
 import { getTranscriptBinder } from './logging/logging-service'
 import { resolveResumeTargetFromTranscript } from './logging/transcript-discovery'
@@ -42,6 +43,9 @@ export function createAppSessionDurability(): SessionDurability {
     },
     save: saveSessionState,
     load: loadSessionState,
+    // Fixer 11: the session:clear path (index.ts) clears through the core,
+    // which drops the cache whatever the clear did. Looked up when called.
+    clear: () => clearSessionState(),
     // P3.6: read back before any restored session respawns. P3.7: the running
     // times too, even when the uncertain list cannot be read back.
     readBack: (state) => {

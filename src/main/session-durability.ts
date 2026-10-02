@@ -12,7 +12,7 @@
  * read-failure latch and refuses when appropriate), `enrichDeps` reaches the live
  * transcript binder. Pure logic otherwise; one instance per app.
  */
-import type { SessionState } from './session-state'
+import type { SessionState, SessionStateCleared } from './session-state'
 import { enrichSessionStateWithResumeTargets, type ResumeEnrichDeps } from './session-resume-enrich'
 
 export interface DurabilityDeps {
@@ -22,6 +22,10 @@ export interface DurabilityDeps {
   save: (state: SessionState) => boolean
   /** session-state.loadSessionState: the `session:load` path. */
   load?: () => SessionState | null
+  /** Fixer 11: session-state.clearSessionState, the `session:clear` path's
+   *  removal of the saved file and its .bak, with what it removed. None: the
+   *  clear counts as failed. */
+  clear?: () => SessionStateCleared
   /** P3.6: main's own records read back from the loaded state (the
    *  conversations whose claim was not certain; pty-manager), before any
    *  restored session respawns. Handed null when nothing was saved. A throw
@@ -40,13 +44,20 @@ export interface SessionDurability {
    *  state has been saved this run; honest about a latch refusal. Never throws.
    *  After a clear (and no save since): main's running times only (P3.7). */
   flushOnExit: (reason: string) => void
-  /** Drop the cache after a successful clear so the exit flush cannot resurrect a
-   *  set the user intentionally discarded (F1). Main's running times are not the
-   *  set: they are written back on their own (P3.7, keepRunningTimes).
-   *  `bakRemoved` (fixer 10, ADR-009 C2; clearSessionState's report): false
-   *  when a .bak of the discarded set could not be removed; nothing is then
-   *  written until the next save, at the clear or at any exit flush. */
-  noteCleared: (bakRemoved?: boolean) => void
+  /** The single `session:clear` path (fixer 11): remove the saved file and
+   *  its .bak (deps.clear), then drop the cache whatever that did, so no exit
+   *  flush writes the discarded set back (F1; before fixer 11, a clear that
+   *  failed left the cache, and the flush wrote the set back). True when the
+   *  saved file is cleared. Never throws. */
+  clear: () => boolean
+  /** Drop the cache after a clear so the exit flush cannot resurrect a set the
+   *  user intentionally discarded (F1). Main's running times are not the set:
+   *  they are written back on their own (P3.7, keepRunningTimes).
+   *  `bakRemoved` (fixer 10, ADR-009 C2; required since fixer 11): true only
+   *  when no copy of the discarded set is left on disk (the file and its .bak
+   *  both removed). Otherwise nothing is written until the next save, at the
+   *  clear or at any exit flush; anything but true counts as a copy left. */
+  noteCleared: (bakRemoved: boolean) => void
   /** Test-only: read the cached state. */
   peek: () => SessionState | null
 }
@@ -55,7 +66,8 @@ export function createSessionDurability(deps: DurabilityDeps): SessionDurability
   let last: SessionState | null = null
   /** P3.7: a clear this run, and no save since. */
   let cleared = false
-  /** Fixer 10 (ADR-009 C2): that clear left a .bak of the discarded set. */
+  /** Fixer 10 (ADR-009 C2): that clear left a copy of the discarded set on
+   *  disk (its .bak; fixer 11: or the file itself). */
   let bakLeft = false
   const log = deps.log ?? (() => {})
 
@@ -100,8 +112,8 @@ export function createSessionDurability(deps: DurabilityDeps): SessionDurability
    * as its process ends, after the clear), it is written back on its own: a
    * state with no sessions (no Resume prompt, nothing of the discarded set)
    * and main's list, never the renderer's. None kept: nothing is written, the
-   * file stays cleared, as before. Not while the clear left a .bak of the set
-   * (fixer 10, noteCleared). Never throws.
+   * file stays cleared, as before. Not while the clear left a copy of the set
+   * on disk (fixers 10 and 11, noteCleared). Never throws.
    */
   function keepRunningTimes(why: string): void {
     try {
@@ -117,25 +129,41 @@ export function createSessionDurability(deps: DurabilityDeps): SessionDurability
   }
 
   /**
-   * Fixer 10 (ADR-009 C2, with #397 N1): a clear whose .bak of the discarded
-   * set could not be removed (held by a scanner or a sync tool) keeps no
-   * running times until the next save. A file written now would sit in front
-   * of that copy, and a load that finds the file damaged recovers the .bak:
-   * the discarded set would come back. With no file the .bak is never read,
-   * and the next save copies its own state over it (main's running times in
-   * it, as in every save). If no save comes before the app stops, the running
-   * times are lost, as every clear lost them before fixer 9 (A1); said once,
-   * here.
+   * Fixer 10 (ADR-009 C2, with #397 N1): a clear that left a copy of the
+   * discarded set on disk keeps no running times until the next save: its
+   * .bak that could not be removed (held by a scanner or a sync tool) or,
+   * since fixer 11, the file itself when the clear failed or was refused. A
+   * file written now would sit in front of a .bak left, and a load that finds
+   * the file damaged recovers the .bak: the discarded set would come back.
+   * With no file the .bak is never read; the next save copies its own state
+   * over it or, when that copy fails, removes it (saveSessionState, fixer 11),
+   * and only a .bak that can be neither written nor removed then is left,
+   * logged. If no save comes before the app stops, the running times are
+   * lost, as every clear lost them before fixer 9 (A1); said once, here.
    */
-  function noteCleared(bakRemoved = true): void {
+  function noteCleared(bakRemoved: boolean): void {
     last = null
     cleared = true
-    bakLeft = !bakRemoved
+    bakLeft = bakRemoved !== true
     if (bakLeft) {
-      log("[session-state] a .bak copy of the cleared sessions could not be removed, so the conversations' running times are not kept until the next save (a file written in front of it could bring the cleared set back)")
+      log("[session-state] a copy of the cleared sessions is still on disk (its .bak, or the file when the clear failed), so the conversations' running times are not kept until the next save (a file written in front of it could bring the cleared set back)")
       return
     }
     keepRunningTimes('clear')
+  }
+
+  function clear(): boolean {
+    let done: SessionStateCleared = { ok: false, bakRemoved: false }
+    try {
+      if (deps.clear) done = deps.clear()
+    } catch (err) {
+      log(`[session-state] the clear of the saved sessions failed: ${(err as Error)?.message ?? err}`)
+    }
+    // Fixer 11 (ADR-009 lens D round 2, finding 4): whatever the clear did,
+    // the user discarded the set, so the cache goes; a copy left on disk (the
+    // file, or its .bak) means nothing is written until the next save.
+    noteCleared(done.ok === true && done.bakRemoved === true)
+    return done.ok === true
   }
 
   function load(): SessionState | null {
@@ -148,5 +176,5 @@ export function createSessionDurability(deps: DurabilityDeps): SessionDurability
     return state
   }
 
-  return { saveEnriched, flushOnExit, noteCleared, load, peek: () => last }
+  return { saveEnriched, flushOnExit, clear, noteCleared, load, peek: () => last }
 }
