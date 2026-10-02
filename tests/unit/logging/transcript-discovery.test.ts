@@ -495,15 +495,12 @@ describe('makeHeuristicBinder', () => {
       expect(reads).toEqual([path.join(ROOT, name)])
       expect(binding?.path).toBe(path.normalize(path.join(ROOT, name, 'conv.jsonl')))
     })
-    it('on Linux and macOS a launch folder reached through a symbolic link: the folder it points to (Claude Code names its real path)', () => {
+    it('a launch folder reached through a link: the folder it points to (Claude Code names its real path, on every platform)', () => {
       const realpath = (p: string) => (p === '/home/u/link' ? '/data/proj' : p)
       const { reads, fsImpl } = fakeFs('-data-proj', 'conv.jsonl', 1_000_000)
-      for (const platform of ['linux', 'darwin'] as const) {
-        reads.length = 0
-        const binding = makeHeuristicBinder({ projectsRoot: ROOT, fsImpl, launchFolder: { platform, realpath } }).bindOnce('sess-link', '/home/u/link', 1_000_000)
-        expect(reads, platform).toEqual([path.join(ROOT, '-data-proj')])
-        expect(binding, platform).not.toBeNull()
-      }
+      const binding = makeHeuristicBinder({ projectsRoot: ROOT, fsImpl, launchFolder: { realpath } }).bindOnce('sess-link', '/home/u/link', 1_000_000)
+      expect(reads).toEqual([path.join(ROOT, '-data-proj')])
+      expect(binding).not.toBeNull()
     })
   })
 })
@@ -511,19 +508,40 @@ describe('makeHeuristicBinder', () => {
 describe('claudeProjectDirName (Q1)', () => {
   it('Linux and macOS: the real path of the launch folder, named by the shared rule', () => {
     const realpath = (p: string) => (p === '/home/u/link' ? '/data/proj' : p)
-    for (const platform of ['linux', 'darwin'] as const) {
-      expect(claudeProjectDirName('/home/u/link', { platform, realpath }), platform).toBe('-data-proj')
-    }
+    expect(claudeProjectDirName('/home/u/link', { realpath })).toBe('-data-proj')
   })
   it('a launch folder that cannot be resolved (gone, or no access): named as given', () => {
     const realpath = (_p: string): string => { throw new Error('ENOENT') }
-    expect(claudeProjectDirName('/gone/folder', { platform: 'linux', realpath })).toBe('-gone-folder')
+    expect(claudeProjectDirName('/gone/folder', { realpath })).toBe('-gone-folder')
   })
-  it('Windows: named as given, the real path is not read', () => {
-    let read = 0
-    const realpath = (p: string) => { read++; return p }
-    expect(claudeProjectDirName('C:\\w\\proj', { platform: 'win32', realpath })).toBe('C--w-proj')
-    expect(read).toBe(0)
+  // Fixer 3 (F6): Claude Code takes the real path on every platform; the VM
+  // probe at 2.1.280 found it is Node's JS realpathSync (a junction resolved,
+  // the case and the drive letter kept as written). The drive letter is not
+  // changed here: not every local launch reaches Claude Code through
+  // PowerShell, which writes it in upper case.
+  it('Windows: the real path of the launch folder too, its case and drive letter as the real path keeps them', () => {
+    const realpath = (p: string) => (p === 'C:\\w\\link' ? 'C:\\w\\Target Real' : p)
+    expect(claudeProjectDirName('C:\\w\\link', { realpath })).toBe('C--w-Target-Real')
+    expect(claudeProjectDirName('c:\\w\\proj', { realpath })).toBe('c--w-proj')
+    const gone = (_p: string): string => { throw new Error('ENOENT') }
+    expect(claudeProjectDirName('C:\\gone\\folder', { realpath: gone })).toBe('C--gone-folder')
+  })
+  it.skipIf(process.platform !== 'win32')('Windows, the real file system: a junction is resolved and a name keeps the case it was given (JS realpathSync, not the native one)', () => {
+    const PREFIX = 'ccc-f6-realpath-'
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), PREFIX))
+    try {
+      const real = path.join(base, 'Target Real')
+      fs.mkdirSync(path.join(real, 'CaseDir'), { recursive: true })
+      const link = path.join(base, 'link')
+      fs.symlinkSync(real, link, 'junction')
+      const given = path.join(link, 'casedir')
+      const name = claudeProjectDirName(given)
+      expect(name).toBe(mangleCwdToProjectDir(path.join(fs.realpathSync(real), 'casedir')))
+      expect(name).not.toBe(mangleCwdToProjectDir(fs.realpathSync.native(given)))
+      expect(name).not.toBe(mangleCwdToProjectDir(given))
+    } finally {
+      if (path.basename(base).startsWith(PREFIX) && path.dirname(base) === os.tmpdir()) fs.rmSync(base, { recursive: true, force: true })
+    }
   })
 })
 
