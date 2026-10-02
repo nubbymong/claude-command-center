@@ -53,19 +53,34 @@ hooks review.
 own bounded rounds, covered); the VM checks at PR 3's earlier heads
 b3937173 and 1e14b611, where the listed checks (section 8, P3.16) PASS at
 b3937173 and the run found D1 to D3, re-checked PASS at 1e14b611 (fixer 8;
-fixer 8b unit-tested only); and gate 6's e2e suite on the VM (WINDOWS_1)
-at 525a00ac on 2026-10-02: 81 of 81 tests in 22 spec files passed, the
-real home's assistant folders untouched (the commits after it change
-records only).
+fixer 8b unit-tested there); gate 6 on the VM (WINDOWS_1) at 525a00ac on
+2026-10-02 (P3.16): the e2e suite, 81 of 81 tests in 22 spec files, the
+real home's assistant folders untouched, and the row checks on a packaged
+build with the real CLIs 0.155.1 and 0.153.4 (a loopback fake model,
+fictional accounts, nothing signed in), every one PASS but row 36's
+Duration after a cleared session file (FAIL: the running time kept in the
+app lived only in that file; a parity gap, fixed in fixer 9), with row
+38's midnight UTC check not run (time-bound), the popover's left-edge
+clamp not reachable there, and the checks only the owner can run listed
+there; and gate 3's owed reviews: every PR 3 commit swept
+against the review records, and each missing spec or code-quality review
+run (2026-10-02, independent, read-only; P3.16 lists each commit, its
+range and verdict). Their records findings are answered in the plan and
+the checklist; their code findings and the gate-6 FAIL are fixed in fixer
+9 (`<fixer-9>`), each red first.
 
-**Owed before #626 leaves draft**: the phase reviews still owed (gate 3:
-P3.9's spec review of round 4 and both reviews of its round 5; P3.10's
-spec and code-quality reviews of round 5 and of 4ba85a3a), the SSH live
-matrix at PR 3's head (pty-manager.ts changed, and statusline-watcher.ts
-in P3.2), the VM checks the rows list (gate 6; rows 10, 14, 17, 63, 70 and
-72 among them), the owner's screenshot review, the Desktop test gate
-(owner), CI at the final head with the native SQL tests, the real-Mac and
-real-account checks the rows list, and the PR body and the ADR-009 verdict
-comment with its marker line (gate 4) for the final head. Findings about
-pre-existing behaviour raised by the adversarial passes were routed
-privately.
+**Owed before #626 leaves draft**: gate 3, fixer 9's own spec and
+code-quality reviews (the gate closes when they pass); gate 4, the ADR-009
+re-attack of fixer 9's changes, the attackers' confirmation of P3.8's
+launched answer on `pty:spawn` (never probed), and the verdict comment
+with its marker line regenerated for the final head; gate 6, the VM
+re-check of row 36's Duration after a cleared session file, row 38's
+midnight UTC check, the VM read of a leftover kill's log line on the npm
+route (row 42), and the e2e suite again at the final head (fixer 9 changes
+code); the SSH live matrix at PR 3's head (pty-manager.ts changed, and
+statusline-watcher.ts in P3.2), the owner's screenshot review and the
+Desktop test gate (owner-owed); CI at the final head with the native SQL
+tests (they pass on the VM at 525a00ac); the owner-only checks gate 6
+lists (real accounts, a working model, macOS and Linux); and the PR body
+for the final head. Findings about pre-existing behaviour raised by the
+adversarial passes were routed privately.
