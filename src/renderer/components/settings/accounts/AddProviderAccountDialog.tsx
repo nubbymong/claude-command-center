@@ -604,8 +604,11 @@ export function AddProviderAccountDialog({ provider, resume, initialMethod, over
 export interface SignInAgainDialogProps {
   provider: ProviderInstallationView
   account: AccountView
-  /** The account's name as its row shows it. */
+  /** The account's name as its row shows it: the account card's heading. */
   name: string
+  /** The same name inside a sentence (this computer's own sign-in in lower
+   *  case): used only in the dialog's title. */
+  nameInSentence: string
   onClose: () => void
   /** "Different or unsure" (the box not ticked): nothing runs here; the
    *  sign-in is added as a new account (Add account, with this method). */
@@ -629,7 +632,7 @@ type AgainStep = 'method' | 'key' | 'signing-in' | 'failed' | 'left'
  * and one main found to be someone else hands over to naming that new
  * account (onSeparate).
  */
-export function SignInAgainDialog({ provider, account, name, onClose, onNewAccount, onSeparate }: SignInAgainDialogProps) {
+export function SignInAgainDialog({ provider, account, name, nameInSentence, onClose, onNewAccount, onSeparate }: SignInAgainDialogProps) {
   const { methods, preselected } = signInAgainMethods(provider, account)
   const [step, setStep] = useState<AgainStep>('method')
   const [method, setMethod] = useState<SignInMethod | null>(preselected)
@@ -701,7 +704,7 @@ export function SignInAgainDialog({ provider, account, name, onClose, onNewAccou
 
   return (
     <AccountsModal labelledBy="sign-in-again-title" width="w-[520px]" testId="sign-in-again-dialog" overlayTestId="sign-in-again-overlay" focusKey={runner.leaving ? 'leaving' : step}>
-      <DialogHeader title={`Sign in to ${name} again`} titleId="sign-in-again-title" onClose={() => { void runner.exit() }} closeTestId="sign-in-again-close" />
+      <DialogHeader title={`Sign in to ${nameInSentence} again`} titleId="sign-in-again-title" onClose={() => { void runner.exit() }} closeTestId="sign-in-again-close" />
       <DialogBody>
         {runner.leaving ? (
           <div className="text-[12.5px]" style={{ color: 'var(--text-secondary)' }}>Stopping...</div>

@@ -1098,6 +1098,10 @@ describe('Sign in again', () => {
     await click('external-ack-confirm')
     expect(q('sign-in-again-dialog')).toBeTruthy()
     expect(document.getElementById('sign-in-again-title')?.textContent).toBe("Sign in to this computer's Codex (~/.codex) again")
+    // The account card under the title is a heading of its own: the name as
+    // its row shows it, capitalised (gate 3, S1 F1).
+    expect(q('sign-in-again-who')?.firstElementChild?.textContent).toBe("This computer's Codex (~/.codex)")
+    expect(q('sign-in-again-who')?.textContent).toContain("This computer's Codex (~/.codex)")
     // Its row's actions name it the same way; a managed account keeps its own name.
     expect(q('account-menu-btn-acc-local')?.getAttribute('aria-label')).toBe("Actions for this computer's Codex (~/.codex)")
     expect(q('account-menu-btn-acc-work')?.getAttribute('aria-label')).toBe('Actions for Work')

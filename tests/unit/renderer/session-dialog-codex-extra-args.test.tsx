@@ -177,7 +177,13 @@ describe('a refused value is said under the field, and Save waits (round 1, B2)'
     expect(inline()).toBeNull()
     setInput(f.input, '--search --model=gpt-5')
     expect(inline()?.textContent).toMatch(/Extra CLI arguments: "--model=gpt-5" is set by the app/)
-    expect(inline()?.getAttribute('aria-live')).toBe('polite')
+    // Gate 3 (quality item 7): the message is tied to the input (invalid, and
+    // described by it), so a screen reader says it with the field; the
+    // footer's status line, always in the page, is the one announcer.
+    expect(f.input.getAttribute('aria-invalid')).toBe('true')
+    expect(inline()?.id).toBeTruthy()
+    expect(f.input.getAttribute('aria-describedby')).toBe(inline()?.id)
+    expect(inline()?.getAttribute('aria-live')).toBeNull()
     expect(inline()?.getAttribute('role')).toBeNull()
     expect(footer()).toMatch(/Extra CLI arguments: "--model=gpt-5"/)
     expect(saveButton().disabled).toBe(true)
@@ -190,6 +196,8 @@ describe('a refused value is said under the field, and Save waits (round 1, B2)'
     }
     setInput(f.input, '--search --add-dir ./docs')
     expect(inline()).toBeNull()
+    expect(f.input.getAttribute('aria-invalid')).toBeNull()
+    expect(f.input.getAttribute('aria-describedby')).toBeNull()
     expect(saveButton().disabled).toBe(false)
     submit()
     expect(saved(onConfirm).codexOptions.extraArgs).toBe('--search --add-dir ./docs')
@@ -217,5 +225,24 @@ describe('a refused value is said under the field, and Save waits (round 1, B2)'
     expect(inline()).toBeNull()
     submit()
     expect(saved(onConfirm).claudeOptions.extraArgs).toBe('--verbose --add-dir F:\\shared_libs')
+  })
+
+  // Gate 3 (quality item 7, nit): what the changelog says, pinned. A Claude
+  // Code config that already carries a saved value its rule refuses says so on
+  // opening, and Save waits until it is fixed.
+  it('Claude Code: an edit whose stored value is refused says so on opening, and Save waits until it is fixed', () => {
+    const onConfirm = render({ initial: { id: 'c5', provider: 'claude', sessionType: 'local', label: 'x', workingDirectory: 'C:\\proj', color: '', claudeOptions: { extraArgs: '--settings x.json' } } })
+    const f = field()
+    expect(f.input.value).toBe('--settings x.json')
+    expect(inline()?.textContent).toMatch(/^Extra CLI arguments: /)
+    expect(footer()).toMatch(/Extra CLI arguments: /)
+    expect(saveButton().disabled).toBe(true)
+    submit()
+    expect(onConfirm).not.toHaveBeenCalled()
+    setInput(f.input, '--verbose')
+    expect(inline()).toBeNull()
+    expect(saveButton().disabled).toBe(false)
+    submit()
+    expect(saved(onConfirm).claudeOptions.extraArgs).toBe('--verbose')
   })
 })
