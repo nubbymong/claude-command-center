@@ -181,10 +181,10 @@ for Codex and says why.
 - To change an identity later, click the round chip at the left of any account
   row in Settings, Accounts, Claude or Codex. Its editor holds the **Name**,
   the **Colour** and the **Group**, and **Link another account** ties the
-  account to your account of the other assistant (**Unlink** undoes it). The
-  name, colour and group show on every linked account, and the colour on the
-  account's chips everywhere. (This computer's own sign-in has no name field
-  and cannot be linked.)
+  account to another of your accounts, Claude or Codex (**Unlink** undoes
+  it). The name, colour and group show on every linked account, and the
+  colour on the account's chips everywhere. (This computer's own sign-in has
+  no name field and cannot be linked.)
 - A row with sessions running on it says how many (*2 running*). When an
   account cannot be made inactive, archived or removed because sessions use
   it, the row names each one with **Go to**.
@@ -243,7 +243,8 @@ Codex section of Settings → Accounts, or on the Set up Codex page):
 To start a Codex session, open **New saved config** (the sidebar's + New, then
 Config), choose the **Codex** card and an account. The default account is
 listed first, an account you confirm at each launch says so, and an account
-that needs attention cannot be picked.
+signed in a different way than before cannot be picked until you confirm it
+(see *Sign-in recovery* below).
 
 - **Model and effort.** The model list is the one the supported Codex versions
   offer in their own picker; each model offers only the effort levels it runs,
@@ -291,10 +292,11 @@ that needs attention cannot be picked.
     moves there only once the new sign-in is verified, with its earlier
     conversations carried over (*Carrying your earlier conversations over...*;
     with a long history this can take a few minutes). A sign-in that fails or
-    is cancelled leaves the account with the sign-in it had. The row then reads
-    *Needs attention: the old sign-in is kept*: the account works on its new
-    sign-in, and the old one stays until CCC can remove it without signing out
-    the new one; archiving the account removes it.
+    is cancelled leaves the account with the sign-in it had. Once the account
+    has moved, its row reads *Needs attention: the old sign-in is kept*: the
+    account works on its new sign-in and can still be picked for sessions, and
+    the old one stays until CCC can remove it without signing out the new one;
+    archiving the account removes it.
   - Earlier conversation files that are also linked from somewhere else on
     this computer are not carried over; the dialog says how many, and they
     stay in the account's old folder. An account with more earlier conversation

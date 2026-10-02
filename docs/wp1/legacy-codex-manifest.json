@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-02T04:38:30.726Z",
-  "head": "feb8846fd98ceba4beacb0cbaf81ca2adc1c0943",
-  "tree": "a56bb2f8f5f98c952f8cfd3755a75bf591f4bc0f",
+  "generatedAt": "2026-10-02T05:17:08.410Z",
+  "head": "a047def825981fe0b531d936b387bec245a53ef0",
+  "tree": "1c925469e524d1dfa2e7941065be1ddb6e9bac96",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -161,7 +161,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 54
+      "lineCount": 55
     },
     {
       "path": "README.md",
@@ -182,7 +182,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 132
+      "lineCount": 133
     },
     {
       "path": "docs/wp2/completion-plan.md",
@@ -2051,7 +2051,7 @@
       "predicates": [
         "P11"
       ],
-      "lineCount": 60
+      "lineCount": 61
     },
     {
       "path": "src/renderer/types/electron.d.ts",
@@ -5268,7 +5268,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 106
+      "lineCount": 124
     },
     {
       "path": "tests/unit/status-ingest.test.ts",
