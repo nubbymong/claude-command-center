@@ -121,6 +121,9 @@ interface TailState {
    *  its run ends), and only a file that was there and is gone fails it. A
    *  Codex tail's file was seen by the watcher that claimed it. */
   seen: boolean
+  /** Fixer 8b: whether the log said once that this unseen file could not be
+   *  read for another reason than not being written yet. */
+  waitNoted?: boolean
 }
 
 export interface TranscriptsWorker {
@@ -233,8 +236,16 @@ export function createTranscriptsWorker(
     let size: number
     try {
       size = fsi.statSync(tail.path).size
-    } catch {
-      return tail.seen ? 'missing' : 'absent' // gone, or not written yet
+    } catch (err) {
+      if (tail.seen) return 'missing' // gone
+      // Not written yet. Fixer 8b: any other reason it cannot be read (no
+      // right to it, a scanner briefly holding a new file) waits too, said once.
+      const code = (err as NodeJS.ErrnoException | null)?.code
+      if (code !== 'ENOENT' && !tail.waitNoted) {
+        tail.waitNoted = true
+        log('info', `[tail] transcript file not readable yet (${code ?? 'unknown'}); waiting for it: ${tail.path}`)
+      }
+      return 'absent'
     }
     tail.seen = true
     // Append-only assumption: the file only ever grows; a strict shrink means an
