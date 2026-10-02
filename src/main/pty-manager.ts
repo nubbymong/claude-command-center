@@ -667,8 +667,9 @@ function noteClaudeTranscript(sessionId: string, transcriptPath: string): void {
 
 /** P3.16 round 1 (N1): a local Claude session's projects folder, from the
  *  folder it is launched in (as the transcript binder binds it). Round 2
- *  (Q1): the folder Claude Code names for it (its real path on Linux and
- *  macOS; past 200 characters, the name cut with the folder's hash). */
+ *  (Q1): the folder Claude Code names for it (its real path, on Windows too
+ *  since fixer 3, F6; past 200 characters, the name cut with the folder's
+ *  hash). */
 function noteClaudeFolder(sessionId: string, launchCwd: string): void {
   if (typeof launchCwd !== 'string' || !launchCwd) return
   claudeFolders.delete(sessionId)
@@ -5407,8 +5408,9 @@ function spawnPtyResolved(
           existsSync: fs.existsSync,
           statSync: (p) => fs.statSync(p),
           homedir: os.homedir,
-          // P3.16a round 2 (Q1): the folder Claude Code names (its real path on
-          // Linux and macOS; past 200 characters, cut with the folder's hash).
+          // P3.16a round 2 (Q1): the folder Claude Code names (its real path,
+          // on Windows too since fixer 3, F6; past 200 characters, cut with
+          // the folder's hash).
           mangleCwdToProjectDir: (cwd) => claudeProjectDirName(cwd),
           projectsRoot: path.join(os.homedir(), '.claude', 'projects'),
           // Best-effort: ensure a direct-work conversation (no subagent/workflow,

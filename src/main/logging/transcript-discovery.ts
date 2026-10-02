@@ -20,8 +20,8 @@
  *
  * P3.16a round 2 (Q1): a name longer than 200 characters is cut at 200 and the
  * folder's hash follows it, and the folder is the real path of the launch
- * folder on Linux and macOS (src/shared/project-key.ts, claudeProjectDirName
- * below), as the pinned Claude Code binaries name it. Their sanitiser is the
+ * folder (src/shared/project-key.ts, claudeProjectDirName below; fixer 3, F6:
+ * on Windows too), as the pinned Claude Code binaries name it. Their sanitiser is the
  * same per-UTF-16-code-unit rule, so a non-ASCII character becomes `-` too.
  *
  * Real examples verified against the developer machine's ~/.claude/projects (2026-06-06).
@@ -187,7 +187,6 @@ export function canonicalizeTranscriptPath(p: string): string | null {
 
 /** How claudeProjectDirName reads the launch folder (injectable for tests). */
 export interface ClaudeLaunchFolderOptions {
-  platform?: NodeJS.Platform
   /** The real path of a folder; throws when it cannot be read. */
   realpath?: (p: string) => string
 }
@@ -195,18 +194,18 @@ export interface ClaudeLaunchFolderOptions {
 /**
  * The projects folder name Claude Code gives a session launched in `cwd`.
  * Claude Code takes its launch folder as the real path of its working folder
- * (`realpathSync(process.cwd())` in the pinned binaries), so on Linux and macOS
- * a folder reached through a symbolic link is named by the folder it points
- * to; a folder whose real path cannot be read keeps its own spelling. The name
- * is then the shared rule's (mangleCwdToProjectDir: the 200-character cut and
- * hash included). On Windows the folder is named as given.
+ * (`realpathSync(process.cwd())` in the pinned binaries, on every platform),
+ * so a folder reached through a symbolic link or a junction is named by the
+ * folder it points to; a folder whose real path cannot be read keeps its own
+ * spelling. The real path is Node's JS realpathSync, which the VM probe at
+ * Claude Code 2.1.280 matched on Windows (a junction resolved; the case, the
+ * drive letter, a subst drive and an 8.3 name kept as written), not the
+ * native one. The name is then the shared rule's (mangleCwdToProjectDir: the
+ * 200-character cut and hash included).
  */
 export function claudeProjectDirName(cwd: string, opts: ClaudeLaunchFolderOptions = {}): string {
-  const platform = opts.platform ?? process.platform
   let folder = cwd
-  if (platform !== 'win32') {
-    try { folder = (opts.realpath ?? fs.realpathSync)(cwd) } catch { /* named as given */ }
-  }
+  try { folder = (opts.realpath ?? fs.realpathSync)(cwd) } catch { /* named as given */ }
   return mangleCwdToProjectDir(folder)
 }
 
