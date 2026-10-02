@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "d9a7de512177c1b45d3154790385c8966cbc89517c2f97502437def4e5023fd2",
-  "manifestHead": "08a12adab4af7d590664fb6fbbf701a240ef4356",
+  "manifestPathDigest": "f7e751be96faa477261c4b87a42e57e23cbc12948b85398b181e83fdfdcc98b2",
+  "manifestHead": "feb8846fd98ceba4beacb0cbaf81ca2adc1c0943",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -1758,9 +1758,9 @@
         "P11"
       ],
       "category": "UI-ONLY",
-      "disposition": "retain",
-      "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled (the saved Codex switch, which main also reads as the Codex package's enablement key) and the provider labels",
-      "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
+      "disposition": "replace",
+      "evidence": "WP2 PR 3 P3.16b follow-up (parity row 14; OD27 M1 D5, docs/wp1/owner-decisions-2026-09-27.md): the AI usage popover reads the Account usage page's on/off (useClaudeOff, usesCodex), so its Codex section shows only once Codex is answered on, and with Claude Code off the one muted D5 line (CLAUDE_OFF_ACCOUNTS_LINE) stands in place of its Claude section; both on unchanged (WP1.2, WP1.60 enable/disable); tests/unit/renderer/ai-usage-popover-provider-off.test.tsx",
+      "note": "the P05 hit is isCodex, the session test that picks each section's session; the P11 hits are the Codex section and the usesCodex read; provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
       "path": "src/renderer/components/CanvasCompleteButton.tsx",
@@ -6007,6 +6007,17 @@
       "disposition": "retain",
       "evidence": "existing test retained unchanged; must stay green on the merge candidate (WP1.33); listed in docs/wp1/baseline-test-inventory.json",
       "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/ai-usage-popover-provider-off.test.tsx",
+      "predicates": [
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 3 P3.16b follow-up test (parity row 14; OD27 M1 D5): the AI usage popover has no Codex section while Codex is off or not set up, shows the one muted D5 line in place of its Claude section while Claude Code is off, keeps both sections with both on, and re-renders when a switch flips while it is open (WP1.2, WP1.60 enable/disable); tests/unit/renderer/ai-usage-popover-provider-off.test.tsx",
+      "note": "created by WP2 PR 3 P3.16b follow-up; the P05 hits are the settings fixture (codexEnabled)"
     },
     {
       "path": "tests/unit/renderer/alt-v-image-route.test.tsx",

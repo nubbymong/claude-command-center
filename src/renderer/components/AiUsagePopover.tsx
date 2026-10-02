@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useGitHubStore } from '../stores/githubStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useSessionStore, type Session } from '../stores/sessionStore'
+import { useClaudeOff, CLAUDE_OFF_ACCOUNTS_LINE } from '../lib/claudeOff'
+import { usesCodex } from '../onboarding/provider-choice'
 import { formatCredits, formatBilledUsd, selectUsagePool } from '../lib/ai-usage-format'
 import { formatResetTime } from '../utils/terminalFormatting'
 import { DialogButton } from './ui/Dialog'
@@ -92,6 +94,9 @@ function SectionHeader({ title, note }: { title: string; note?: string }) {
  *   - Codex   : the active/most-recent Codex session's statusline rate-limit
  *               windows (5h / 7d), already captured per session.
  *   - Claude  : the active Claude session's statusline rate-limit windows.
+ * OD27 M1 D5 (row 14), as the Account usage page reads it: an assistant that
+ * is off has no section. Codex off or not set up shows nothing; Claude Code
+ * off shows the one muted D5 line where its section would be.
  * A Refresh button re-pulls GitHub usage. No settings live here; a quiet link
  * points at Settings for the cap.
  */
@@ -126,6 +131,10 @@ function AiUsagePopoverBody({
   const planName = useSettingsStore((s) => s.settings.copilotPlanName)
   const sessions = useSessionStore((s) => s.sessions)
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
+  // D5: the same on/off the Account usage page reads, subscribed so a switch
+  // flipped in Settings re-renders an open popover.
+  const claudeOff = useClaudeOff()
+  const codexOn = useSettingsStore((s) => usesCodex(s.settings))
 
   const [entered, setEntered] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
@@ -376,17 +385,25 @@ function AiUsagePopoverBody({
         )}
       </div>
 
-      {/* Codex section */}
-      <div className={CARD_CLASS} style={CARD_STYLE}>
-        <SectionHeader title="Codex" note={codexSession ? undefined : 'no Codex session this run'} />
-        <RateWindows session={codexSession} />
-      </div>
+      {/* Codex section: only once Codex is answered on (D5: nothing otherwise). */}
+      {codexOn && (
+        <div className={CARD_CLASS} style={CARD_STYLE}>
+          <SectionHeader title="Codex" note={codexSession ? undefined : 'no Codex session this run'} />
+          <RateWindows session={codexSession} />
+        </div>
+      )}
 
-      {/* Claude section */}
-      <div className={CARD_CLASS} style={CARD_STYLE}>
-        <SectionHeader title="Claude" note={claudeSession ? undefined : 'no Claude session this run'} />
-        <RateWindows session={claudeSession} />
-      </div>
+      {/* Claude section, or the one muted D5 line while Claude Code is off. */}
+      {claudeOff ? (
+        <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+          {CLAUDE_OFF_ACCOUNTS_LINE}
+        </div>
+      ) : (
+        <div className={CARD_CLASS} style={CARD_STYLE}>
+          <SectionHeader title="Claude" note={claudeSession ? undefined : 'no Claude session this run'} />
+          <RateWindows session={claudeSession} />
+        </div>
+      )}
 
       <div className="flex items-center justify-between pt-0.5">
         <button

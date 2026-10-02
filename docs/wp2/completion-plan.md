@@ -121,7 +121,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 11 | Staged re-authentication (WP1.52) | PARTIAL (P3.3): Sign in again is offered while signed in too, staged in a new journalled folder with the conversation history carried over, and the account moves only once the new sign-in is verified | Parity: Claude's "Refresh sign-in" works while signed in; WP1.52; PLAN "Out of this PR" | verification (owner action): a second real sign-in on the VM, file and keyring stores, proving the old folder's sign-out never signs the new one out | 3 |
 | 12 | Upgrade question and the read-only sign-in check | DONE | OD26 U1, U2 | verification: real 0.153.4 and 0.155.1 | 2, v4 |
 | 13 | Hello Codex | DONE | Canvas 2026-09-24 (v1) and the commit 6 canvas; HCS | verification: per OS | 2, v4 |
-| 14 | Codex-only mode, no Claude noise | PARTIAL (P3.2, P3.4; mocked): with Claude Code off no Claude pills, no Claude status reads and no Claude sign-in prompts; the owner approved the P3.4 screens 2026-09-28. Left: Ask (row 53) and the guide cards each later phase unlocks | Design section 2 (Claude is not a prerequisite); OD27 M1 D5 (a provider that is off shows one muted line or nothing); parity | implementation (Ask with row 53; each card with its phase); verification: the cards on the VM | 3 (Ask part: 4) |
+| 14 | Codex-only mode, no Claude noise | PARTIAL (P3.2, P3.4; mocked): with Claude Code off no Claude pills, no Claude status reads and no Claude sign-in prompts; the owner approved the P3.4 screens 2026-09-28; the AI usage popover follows D5 too (P3.16b follow-up, unit-tested). Left: Ask (row 53) and the guide cards each later phase unlocks | Design section 2 (Claude is not a prerequisite); OD27 M1 D5 (a provider that is off shows one muted line or nothing); parity | implementation (Ask with row 53; each card with its phase); verification: the cards and the AI usage popover on the VM | 3 (Ask part: 4) |
 | 15 | Owner-run gates (native keyring, sign-ins with real accounts, packaged smoke) | OPEN | OD20 D8 (blocks merge, not implementation); WP1.11, WP1.64, WP1.72 | owner: hosts, disposable test identities, timing; then verification | 4 |
 | 16 | WP1 traceability | PARTIAL: items still `planned` | OD20 D9; WP1.70, WP1.73 | verification: items move to evidenced as the evidence lands | 4 |
 
@@ -3540,6 +3540,15 @@ the P3.12 changelog test moved to both assistants. Found, not changed here:
 the AI usage popover shows its Claude and Codex sections whichever provider
 is on (row 14). The README screenshots and the Codex "Beta" labels are
 P4.11's.
+
+P3.16b follow-up, the AI usage popover (row 14; OD27 M1 D5). The popover
+under the Copilot chip reads the same on/off as the Account usage page
+(`useClaudeOff`, `usesCodex`): no Codex section while Codex is off or not set
+up, and the one muted D5 line in place of its Claude section while Claude Code
+is off; both on unchanged. Pinned by `ai-usage-popover-provider-off.test.tsx`
+(4 of its 5 tests red on the old popover, the fifth the both-on case; 5
+mutants red). Unit-tested only so far. Owed: the popover in the VM screenshot
+check (Codex only, Claude Code only, both on).
 
 ## 9. PR 4 outline
 
