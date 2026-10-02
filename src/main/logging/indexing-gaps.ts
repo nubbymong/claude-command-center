@@ -320,8 +320,9 @@ export function openNotIndexedWindow(sessionId: string, rolloutPath: string, sin
  * PR-level ADR-009 round 1 (C2): a window that is not a cover is 'full' too
  * when the conversations' cap is reached and every conversation kept has a
  * window still open; its caller covers it then, as past the session's own
- * cap. A cover is taken past the conversations' cap (at most
- * HELD_COVER_WINDOWS_MAX a session).
+ * cap. A cover is taken past the conversations' cap; a session holds at most
+ * HELD_WINDOWS_PER_SESSION_MAX + HELD_COVER_WINDOWS_MAX windows in all (one
+ * may open up to three covers at launch, one per spelling of its folder).
  */
 export function keepNotIndexedWindow(sessionId: string, key: string, since: number, now: number = since, opts: { writeNow?: boolean; cover?: boolean } = {}): KeepNotIndexedResult {
   if (typeof sessionId !== 'string' || !sessionId || sessionId.length > SESSION_MAX || typeof key !== 'string' || !key || key.length > KEY_MAX || !Number.isFinite(since) || !Number.isFinite(now)) return 'invalid'
