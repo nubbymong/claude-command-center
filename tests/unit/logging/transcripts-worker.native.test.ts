@@ -360,6 +360,47 @@ describe('transcripts-worker', () => {
     expect(warns).toHaveLength(1)
   })
 
+  // P3.16 final-head VM finding D1 (row 31): Claude Code names a new
+  // conversation's transcript before it writes the file (at the first message).
+  it('a transcript bound before its file is written waits for it (still tailing, no warn) and reads it from the first message', () => {
+    const h = makeWorker()
+    bootWithRun(h)
+    const tPath = join(dir, 'fresh.jsonl')
+    h.send({ type: 'transcript-bind', sessionId: 's1', path: tPath, confidence: 'exact' })
+    h.worker.tickNow()
+    h.worker.tickNow()
+    let t = inspect((raw) => raw.prepare('SELECT status FROM transcripts').get()) as { status: string }
+    expect(t.status).toBe('tailing')
+
+    writeFileSync(tPath, jl('user', 'first'))
+    h.worker.tickNow()
+    t = inspect((raw) => raw.prepare('SELECT status FROM transcripts').get()) as { status: string }
+    expect(t.status).toBe('tailing')
+    const rows = inspect((raw) => raw.prepare('SELECT content FROM messages ORDER BY idx').all()) as { content: string }[]
+    expect(rows.map((r) => r.content)).toEqual(['first'])
+    const warns = h.out.filter((m) => m.type === 'log' && m.entry.level === 'warn' && /missing/.test(m.entry.message))
+    expect(warns).toHaveLength(0)
+  })
+
+  it('a worker restart while a tail waits for its file resumes the wait, and the file is read when it comes', () => {
+    const h1 = makeWorker()
+    bootWithRun(h1)
+    const tPath = join(dir, 'fresh.jsonl')
+    h1.send({ type: 'transcript-bind', sessionId: 's1', path: tPath, confidence: 'exact' })
+    h1.worker.tickNow()
+    h1.worker.stop() // worker-only death, no shutdown handshake
+
+    const h2 = makeWorker()
+    h2.send({ type: 'open', dbPath })
+    h2.worker.tickNow()
+    writeFileSync(tPath, jl('user', 'first'))
+    h2.worker.tickNow()
+
+    const rows = inspect((raw) => raw.prepare('SELECT content FROM messages ORDER BY idx').all()) as { content: string }[]
+    expect(rows.map((r) => r.content)).toEqual(['first'])
+    expect(h2.newMessages()).toEqual([{ type: 'new-messages', sessionId: 's1', configId: 'cfg1', count: 1 }])
+  })
+
   it('malformed lines are skipped (counted, not fatal); valid lines around them still ingest', () => {
     const h = makeWorker()
     bootWithRun(h)

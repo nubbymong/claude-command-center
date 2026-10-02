@@ -115,6 +115,12 @@ interface TailState {
   /** P3.16 (M1): whether this tail stores the digest of what it read with its
    *  cursor (a Codex tail with its claimed identity, and a Claude tail). */
   vouches?: boolean
+  /** P3.16 final-head VM finding D1: whether the file has been there. Claude
+   *  Code names a new conversation's transcript before it writes the file (at
+   *  the first message); until the file is seen the tail waits for it (until
+   *  its run ends), and only a file that was there and is gone fails it. A
+   *  Codex tail's file was seen by the watcher that claimed it. */
+  seen: boolean
 }
 
 export interface TranscriptsWorker {
@@ -213,7 +219,9 @@ export function createTranscriptsWorker(
    * Drain appended bytes for one tailed transcript. Synchronous (bounded by
    * MAX_TICK_BYTES). Returns:
    *  - 'ok'      — drained (or nothing new); keep tailing.
-   *  - 'missing' — the file is gone; caller marks failed + drops the tail.
+   *  - 'absent'  - the file has not been written yet (never seen); keep
+   *    tailing and wait for it (P3.16 final-head VM finding D1).
+   *  - 'missing' - the file was there and is gone; caller marks failed + drops the tail.
    *  - 'shrank'  — the file shrank below the cursor (unexpected: Claude transcripts
    *    are APPEND-ONLY, and rotation is a NEW file handled by re-bind). This drain
    *    already marked the transcript 'failed' + dropped it; caller just stops.
@@ -221,13 +229,14 @@ export function createTranscriptsWorker(
    *    file than the one its watcher claimed; nothing is read, and this drain
    *    already marked the transcript 'failed' and dropped it.
    */
-  function drainTail(tail: TailState): 'ok' | 'missing' | 'shrank' | 'replaced' {
+  function drainTail(tail: TailState): 'ok' | 'absent' | 'missing' | 'shrank' | 'replaced' {
     let size: number
     try {
       size = fsi.statSync(tail.path).size
     } catch {
-      return 'missing' // missing file
+      return tail.seen ? 'missing' : 'absent' // gone, or not written yet
     }
+    tail.seen = true
     // Append-only assumption: the file only ever grows; a strict shrink means an
     // unexpected in-place truncation. Rather than silently stalling forever (the
     // cursor would never catch up), warn ONCE and fail the tail.
@@ -429,6 +438,7 @@ export function createTranscriptsWorker(
             tails.delete(tail.transcriptId)
           }
           // 'shrank' and 'replaced' already marked failed + dropped the tail inside drainTail.
+          // 'absent' (D1): the file is not written yet; the tail stays and waits.
         } catch (err) {
           // A DB/read error on this transcript must never kill the loop. Mark it
           // failed (a deterministic error would otherwise re-fire every tick).
@@ -523,6 +533,9 @@ export function createTranscriptsWorker(
         : makeNormalizer({ ...seed, skip, skippedLabel: NOT_INDEXED_DIVIDER }),
       ...(codex && identity ? { identity } : {}),
       vouches,
+      // D1: a tail that read some of its file, or a Codex rollout its watcher
+      // claimed, has seen it; any other waits for its file to be written.
+      seen: codex || meta.cursor > 0,
       // P3.12 (X4): a tail from the file's start reads it all; one that goes
       // on from a cursor vouches for its bytes only with the digest of what
       // was read before it.

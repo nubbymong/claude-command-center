@@ -1061,6 +1061,131 @@ describe('Claude\'s resume continues from what was indexed, with Codex\'s record
   })
 })
 
+// P3.16 final-head VM finding D1 (row 31): Claude Code names a new
+// conversation's transcript (its status line at startup, its hooks) before it
+// writes the file, which it creates at the first message; the exact bind comes
+// first. A tail whose file was never there waits for it until its run ends; a
+// file that was there and is gone still fails the tail.
+describe('a new Claude conversation bound before Claude Code writes its file (P3.16 final-head VM finding D1, row 31)', () => {
+  const BASE = Date.now() - 600_000
+  const at = (ms: number) => new Date(BASE + ms).toISOString()
+  const uuid = (n: number) => `7f3e0c1a-0000-4000-8000-0000000003${String(n).padStart(2, '0')}`
+  const tfile = (n: number, sub = '') => { const d = sub ? join(dir, sub) : dir; mkdirSync(d, { recursive: true }); return join(d, `${uuid(n)}.jsonl`) }
+  const say = (text: string, ms: number) => JSON.stringify({ type: 'user', timestamp: at(ms), message: { role: 'user', content: text } }) + '\n'
+  const runC = (sid: string, startedAt: number): In => ({ type: 'run-start', meta: { sessionId: sid, configLabel: 'Claude', provider: 'claude', startedAt } } as In)
+  const bindC = (sid: string, f: string): In => ({ type: 'transcript-bind', sessionId: sid, path: f, confidence: 'exact' } as In)
+  const windowsFor = (key: string, list: Array<[number, number]>): In =>
+    ({ type: 'not-indexed-windows', conversations: { [key]: list.map(([s0, e0]) => [BASE + s0, BASE + e0]) }, before: null } as unknown as In)
+  const shown = (runId?: number) => fake.msgs.filter((m) => runId === undefined || m.runId === runId).map((m) => m.kind === 'clear' ? (m.content ? '-- off --' : '--') : m.content)
+  const runOf = (sid: string) => fake.runs.find((r) => r.sessionId === sid)!.runId
+  const statusOf = (f: string) => fake.trs.find((t) => t.path === f)!.status
+  const missingWarns = (out: Out[]) => out.filter((m) => m.type === 'log' && m.entry.level === 'warn' && /missing/.test(m.entry.message))
+
+  it('the file written after the bind is read from its first message, and the tail goes on', () => {
+    const { w, out, send } = boot()
+    const f = tfile(1)
+    send(runC('s1', BASE)); send(bindC('s1', f))
+    w.tickNow(); w.tickNow()
+    expect(statusOf(f)).toBe('tailing')
+    writeFileSync(f, say('FIRST', 1000)); w.tickNow()
+    appendFileSync(f, say('SECOND', 2000)); w.tickNow()
+    expect(shown()).toEqual(['FIRST', 'SECOND'])
+    expect(statusOf(f)).toBe('tailing')
+    expect(missingWarns(out)).toEqual([])
+  })
+
+  it('a file that was read and is then gone still fails the tail, with one warning; so does one first written after the bind', () => {
+    const { w, out, send } = boot()
+    const f = tfile(2)
+    writeFileSync(f, say('KEPT', 1000))
+    send(runC('s1', BASE)); send(bindC('s1', f)); w.tickNow()
+    unlinkSync(f); w.tickNow(); w.tickNow()
+    expect(statusOf(f)).toBe('failed')
+    expect(shown(runOf('s1'))).toEqual(['KEPT'])
+    expect(missingWarns(out)).toHaveLength(1)
+    const g = tfile(3)
+    send(runC('s2', BASE + 100)); send(bindC('s2', g)); w.tickNow()
+    writeFileSync(g, say('LATE', 1500)); w.tickNow()
+    unlinkSync(g); w.tickNow()
+    expect(statusOf(g)).toBe('failed')
+    expect(shown(runOf('s2'))).toEqual(['LATE'])
+    expect(missingWarns(out)).toHaveLength(2)
+  })
+
+  it('a window on the conversation, kept before the bind: what the file holds in it is left out when the file comes', () => {
+    const { w, send } = boot()
+    const f = tfile(4)
+    send(windowsFor(uuid(4), [[2000, 4000]]))
+    send(runC('s1', BASE)); send(bindC('s1', f)); w.tickNow()
+    writeFileSync(f, say('WRITTEN-WHILE-NOT-INDEXED', 3000) + say('AFTER', 5000)); w.tickNow()
+    expect(shown()).toEqual(['-- off --', 'AFTER'])
+  })
+
+  it('a window on the projects folder, kept before the bind: what the file holds in it is left out when the file comes', () => {
+    const { w, send } = boot()
+    const f = tfile(5, 'proj-a')
+    send(windowsFor(claudeFolderKey(dirname(f)), [[2000, 4000]]))
+    send(runC('s1', BASE)); send(bindC('s1', f)); w.tickNow()
+    writeFileSync(f, say('WRITTEN-WHILE-NOT-INDEXED', 3000) + say('AFTER', 5000)); w.tickNow()
+    expect(shown()).toEqual(['-- off --', 'AFTER'])
+  })
+
+  it('a window kept while the tail waits (after the bind, before the file): what the file holds in it is left out too', () => {
+    const { w, send } = boot()
+    const f = tfile(6)
+    send(runC('s1', BASE)); send(bindC('s1', f)); w.tickNow()
+    send(windowsFor(uuid(6), [[2000, 4000]])); w.tickNow()
+    writeFileSync(f, say('WRITTEN-WHILE-NOT-INDEXED', 3000) + say('AFTER', 5000)); w.tickNow()
+    expect(shown()).toEqual(['-- off --', 'AFTER'])
+  })
+
+  it('a worker restart while the tail waits: the new worker waits too, and reads the file when it comes', () => {
+    const f = tfile(7)
+    const first = boot()
+    first.send(runC('s1', BASE)); first.send(bindC('s1', f)); first.w.tickNow()
+    first.w.stop()
+    const second = boot()
+    second.w.tickNow()
+    writeFileSync(f, say('FIRST', 1000)); second.w.tickNow()
+    expect(shown()).toEqual(['FIRST'])
+    expect(statusOf(f)).toBe('tailing')
+  })
+
+  it('the run ends while the tail waits: it is retired complete, and a file written after is not read', () => {
+    const { w, send } = boot()
+    const f = tfile(8)
+    send(runC('s1', BASE)); send(bindC('s1', f)); w.tickNow()
+    send({ type: 'run-end', sessionId: 's1', ts: BASE + 500, status: 'exited' } as In)
+    writeFileSync(f, say('AFTER-THE-END', 1000)); w.tickNow()
+    expect(statusOf(f)).toBe('complete')
+    expect(shown()).toEqual([])
+  })
+
+  it('/clear: the next conversation\'s file, named before it is written, is read after the divider', () => {
+    const { w, send } = boot()
+    const a = tfile(9)
+    const b = tfile(10)
+    writeFileSync(a, say('A-1', 1000))
+    send(runC('s1', BASE)); send(bindC('s1', a)); w.tickNow()
+    send(bindC('s1', b)); w.tickNow(); w.tickNow()
+    writeFileSync(b, say('B-1', 2000)); w.tickNow()
+    expect(shown()).toEqual(['A-1', '--', 'B-1'])
+    expect([statusOf(a), statusOf(b)]).toEqual(['complete', 'tailing'])
+  })
+
+  it('Codex unchanged: a claimed rollout gone before its first read fails the tail (its watcher saw the file)', () => {
+    const { w, out, send } = boot()
+    const f = join(dir, 'rollout-2026-09-27T10-00-00-019dd000-0001-7000-8000-00000000003f.jsonl')
+    writeFileSync(f, cx.meta + cx.user('own'))
+    const st = statSync(f, { bigint: true })
+    send({ type: 'run-start', meta: { sessionId: 's1', configLabel: 'Codex', provider: 'codex', startedAt: 1 } })
+    send({ type: 'transcript-bind', sessionId: 's1', path: f, confidence: 'exact', sourceFormat: 'codex-rollout', sourceIdentity: `${st.dev}:${st.ino}` })
+    unlinkSync(f); w.tickNow()
+    expect(statusOf(f)).toBe('failed')
+    expect(missingWarns(out)).toHaveLength(1)
+  })
+})
+
 // PR-level ADR-009 round 1 (C1): a Codex session not indexed also marks the
 // folder it was launched in from the moment it became not indexed until it
 // ends, as a Claude session marks its projects folder. A reader of any rollout
