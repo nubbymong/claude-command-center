@@ -603,17 +603,26 @@ const claudeFolders = new Map<string, string>()
  *  bounded. Round 2 (K1): with the folder's real path when it differs (a
  *  folder reached through a link), the one a session_meta records off Windows
  *  (Codex records its working folder with the links resolved). Round 2 (K2):
- *  the folder alone, whatever the realm (codex-folder-key.ts). */
-const codexFolders = new Map<string, { cwd: string; realCwd?: string }>()
+ *  the folder alone, whatever the realm (codex-folder-key.ts). Fixer 7b
+ *  (N1): and the folder as the OS names it on disk, when that is another key
+ *  (on a macOS volume that ignores case, a session_meta records the folder's
+ *  own case). Each spelling with a key of its own, the launch one first. */
+const codexFolders = new Map<string, { folders: string[] }>()
 
 function noteCodexFolder(sessionId: string, cwd: string): void {
   codexFolders.delete(sessionId)
   if (typeof cwd !== 'string' || !cwd) return
   // The real path as the app names a Claude projects folder from it (since
-  // fixer 3, F6): Node's JS realpathSync, the folder as given when it cannot be read.
-  let realCwd = cwd
-  try { realCwd = fs.realpathSync(cwd) } catch { /* named as given */ }
-  codexFolders.set(sessionId, normaliseClaudeFolder(realCwd) === normaliseClaudeFolder(cwd) ? { cwd } : { cwd, realCwd })
+  // fixer 3, F6): Node's JS realpathSync; and the one realpathSync.native
+  // gives (the OS's own name, its case included; the case is not folded off
+  // Windows, since a volume can tell case apart). Each is the folder as given
+  // when it cannot be read.
+  const realOr = (read: () => string): string => { try { return read() } catch { return cwd } }
+  const folders = [cwd]
+  for (const real of [realOr(() => fs.realpathSync(cwd)), realOr(() => fs.realpathSync.native(cwd))]) {
+    if (!folders.some((f) => normaliseClaudeFolder(f) === normaliseClaudeFolder(real))) folders.push(real)
+  }
+  codexFolders.set(sessionId, { folders })
   while (codexFolders.size > CLAUDE_TRANSCRIPTS_MAX) {
     const oldest = codexFolders.keys().next().value
     if (oldest === undefined) break
@@ -634,14 +643,11 @@ function markSessionNotIndexed(sessionId: string, provider: 'claude' | 'codex', 
     // Round 2 (K2): the folder in every realm, so a Sign in again's copy of
     // such a rollout is left out too. Fails closed: an indexed Codex session
     // of any account in the same folder has its turns left out meanwhile (a
-    // recorded limit). Round 2 (K1): a folder reached through a link is
-    // marked by both spellings, as launched and its real path, whichever one a
-    // rival session's rollout records.
-    const at = codexFolders.get(sessionId)
-    if (at) {
-      for (const folder of at.realCwd ? [at.cwd, at.realCwd] : [at.cwd]) {
-        try { keepNotIndexedWindow(sessionId, codexFolderKey(folder), since, now, { writeNow: true, cover: true }) } catch { /* best-effort */ }
-      }
+    // recorded limit). Round 2 (K1) and fixer 7b (N1): a folder spelled more
+    // than one way (as launched, its real path, its name on disk) is marked
+    // by each spelling, whichever one a rival session's rollout records.
+    for (const folder of codexFolders.get(sessionId)?.folders ?? []) {
+      try { keepNotIndexedWindow(sessionId, codexFolderKey(folder), since, now, { writeNow: true, cover: true }) } catch { /* best-effort */ }
     }
     const held = codexContextRollouts.get(sessionId)?.path
     if (held) { try { openNotIndexedWindow(sessionId, held, since, now) } catch { /* best-effort */ } }

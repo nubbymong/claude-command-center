@@ -12,6 +12,21 @@ import * as os from 'os'
 import * as fs from 'fs'
 import * as path from 'path'
 
+// Fixer 7b (N1): realpathSync.native's answer for the paths listed here (a
+// spelling, or an error to throw); every other path, and the JS realpathSync,
+// answer as they really do.
+const nativeAs = vi.hoisted(() => new Map<string, string | Error>())
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>()
+  const native = ((p: unknown, o?: unknown) => {
+    const as = nativeAs.get(String(p))
+    if (as instanceof Error) throw as
+    return as ?? (actual.realpathSync.native as (p: unknown, o?: unknown) => string)(p, o)
+  }) as typeof actual.realpathSync.native
+  const realpathSync = Object.assign(((p: unknown, o?: unknown) => (actual.realpathSync as (p: unknown, o?: unknown) => string)(p, o)) as typeof actual.realpathSync, { native })
+  return { ...actual, realpathSync, default: { ...actual, realpathSync } }
+})
+
 interface FakePty { cmd: string; exit: Array<(e: { exitCode: number }) => void>; kill: ReturnType<typeof vi.fn> }
 interface FakeSource { sid: string; opts: Record<string, any>; stop: ReturnType<typeof vi.fn>; noteExactRollout: ReturnType<typeof vi.fn>; refuteInferredClaim: ReturnType<typeof vi.fn> }
 const TOKEN = '0f8b6a2c-1d3e-4f50-9a61-7b2c3d4e5f60'
@@ -713,6 +728,45 @@ describe('PR-level ADR-009 round 1 (C1): a Codex session not indexed marks its l
       expect(folderOf(S)).toEqual([[T0, T0 + 9000]])
       expect(notIndexedSnapshot().conversations[realKey]).toEqual([[T0, T0 + 9000]])
     } finally {
+      // TEST CLEANUP GUARD: the link first (never followed), then only the folder this test made.
+      try { if (fs.lstatSync(link).isSymbolicLink()) { try { fs.unlinkSync(link) } catch { fs.rmdirSync(link) } } } catch { /* never made */ }
+      if (path.basename(base).startsWith(PREFIX) && path.dirname(base) === os.tmpdir()) fs.rmSync(base, { recursive: true, force: true })
+    }
+  })
+
+  it('fixer 7b (N1, lens C K1-case): the folder as the OS names it on disk (native realpath; on a Mac volume that ignores case, the case a session_meta records) is marked too, beside the folder as launched and its JS real path; one that cannot be read adds nothing', (ctx) => {
+    const PREFIX = 'ccc-test-n1-native-'
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), PREFIX))
+    const link = path.join(base, 'via-link')
+    try {
+      const real = path.join(base, 'real')
+      fs.mkdirSync(real)
+      try { fs.symlinkSync(real, link, process.platform === 'win32' ? 'junction' : 'dir') } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'EPERM') throw err
+        ctx.skip()
+        return
+      }
+      // Injected: the on-disk spelling, a key of its own on every platform (on a real Mac
+      // volume it differs from the typed one by case only, which the key does not fold there).
+      const onDisk = path.join(base, 'Real-On-Disk')
+      nativeAs.set(link, onDisk)
+      const S = fresh()
+      h.settings = { ...CONSENT, loggingEnabled: false }
+      start(S, { cwd: link })
+      const keys = [codexFolderKey(link), codexFolderKey(fs.realpathSync(link)), codexFolderKey(onDisk)]
+      expect(new Set(keys).size).toBe(3)
+      for (const k of keys) expect(notIndexedSnapshot().conversations[k], k).toEqual([[T0, null]])
+      expect(folderKeys().sort()).toEqual([...keys].sort())
+      clock(9000)
+      exitOf(h.ptys.at(-1)!)
+      for (const k of keys) expect(notIndexedSnapshot().conversations[k], k).toEqual([[T0, T0 + 9000]])
+      // A native realpath that throws: the folder as launched and its JS real path only.
+      nativeAs.set(link, new Error('EIO'))
+      const S2 = fresh()
+      start(S2, { cwd: link })
+      expect(folderKeys().filter((k) => notIndexedSnapshot().conversations[k].some((w) => w[1] === null)).sort()).toEqual(keys.slice(0, 2).sort())
+    } finally {
+      nativeAs.clear()
       // TEST CLEANUP GUARD: the link first (never followed), then only the folder this test made.
       try { if (fs.lstatSync(link).isSymbolicLink()) { try { fs.unlinkSync(link) } catch { fs.rmdirSync(link) } } } catch { /* never made */ }
       if (path.basename(base).startsWith(PREFIX) && path.dirname(base) === os.tmpdir()) fs.rmSync(base, { recursive: true, force: true })
