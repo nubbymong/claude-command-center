@@ -317,6 +317,14 @@ describe('the PR 3 user-facing sweep (P3.16)', () => {
   // The pins match the facts by key phrases, so a copy edit that keeps the fact
   // keeps them green.
 
+  // Gate 3 (spec item 3, F2): the count includes the first analysis, so an
+  // update is analysed at most three times in all, not three times again.
+  it('Sentinel (P3.9 round 4): an update whose findings cannot be matched is analysed at most three times in all', () => {
+    const s = body('sentinel')
+    expect(s).toMatch(/analysed again at the next start, at most three analyses in all, after which it is recorded as checked with a note saying so/)
+    expect(s).not.toMatch(/up to three times/)
+  })
+
   it('accounts (P3.2, P3.3): the chip opens the identity editor; Sign in again works while signed in, and what it leaves', () => {
     const a = body('accounts')
     expect(a).toMatch(/round chip to open its editor/)

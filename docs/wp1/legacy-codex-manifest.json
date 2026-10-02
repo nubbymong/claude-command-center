@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-02T05:48:26.509Z",
-  "head": "d4458ace482c91fd12b72e544b6768071b24ee99",
-  "tree": "ed645752d7799f762c42fbb06deaad3ce70eb701",
+  "generatedAt": "2026-10-02T18:18:24.060Z",
+  "head": "aac1b46e4613b9b1954c011103eb57ca67a4694d",
+  "tree": "b60fb3005f296b43d9ab083655f5f8e43cb8114c",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2608,
+  "trackedFileCount": 2610,
   "excludedFileCount": 386,
-  "scannedFileCount": 2222,
+  "scannedFileCount": 2224,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 661,
-  "pathDigest": "cd5634b7a35e42b52167298c6e3d6ca37cb703f0470f7fd9d610a36dbbf9acb9",
+  "matchedPathCount": 662,
+  "pathDigest": "4b1cd3099a35cb44941a4e0c7f9afe921e5714cc192d63b682fcddce619d92f8",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 676,
+      "lineCount": 690,
       "truncated": true
     },
     {
@@ -431,7 +431,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 29
+      "lineCount": 31
     },
     {
       "path": "src/main/codex-idle-attention.ts",
@@ -582,7 +582,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 9
+      "lineCount": 7
     },
     {
       "path": "src/main/logging/codex-log-binder.ts",
@@ -946,7 +946,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 34
+      "lineCount": 33
     },
     {
       "path": "src/main/providers/codex/spawn.ts",
@@ -1047,7 +1047,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 383
+      "lineCount": 385
     },
     {
       "path": "src/main/sanitize-restored-spawn-options.ts",
@@ -3119,7 +3119,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 94
+      "lineCount": 102
     },
     {
       "path": "tests/unit/logging/codex-rollout-normalizer.test.ts",
@@ -3515,7 +3515,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 76
+      "lineCount": 78
     },
     {
       "path": "tests/unit/main/pty-conpty-per-provider.test.ts",
@@ -3586,7 +3586,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 47
+      "lineCount": 50
     },
     {
       "path": "tests/unit/main/pty-spawn-restart-pending.test.ts",
@@ -3642,6 +3642,13 @@
         "P13"
       ],
       "lineCount": 113
+    },
+    {
+      "path": "tests/unit/main/session-clear-keeps-running-time.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 6
     },
     {
       "path": "tests/unit/main/session-resume-enrich.test.ts",
@@ -3910,7 +3917,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 183
+      "lineCount": 189
     },
     {
       "path": "tests/unit/providers/codex/mcp-config.test.ts",
@@ -4108,7 +4115,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 7
+      "lineCount": 9
     },
     {
       "path": "tests/unit/providers/codex/telemetry.test.ts",
@@ -4227,7 +4234,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 166
+      "lineCount": 170
     },
     {
       "path": "tests/unit/renderer/active-indicator.test.tsx",
@@ -4251,7 +4258,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 26
+      "lineCount": 35
     },
     {
       "path": "tests/unit/renderer/alt-v-image-route.test.tsx",
@@ -4322,7 +4329,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 156
+      "lineCount": 159
     },
     {
       "path": "tests/unit/renderer/codex-image-paste.test.ts",
@@ -5278,7 +5285,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 17
+      "lineCount": 24
     },
     {
       "path": "tests/unit/shared/app-knowledge.test.ts",
