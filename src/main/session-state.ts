@@ -117,10 +117,21 @@ export function saveSessionState(state: SessionState): boolean {
     // #397 round-2: log a copy failure. A silently-lagged .bak (the copy loses the
     // same EBUSY/AV race the primary write can hit) would let a later recovery
     // reinstate an OLDER set with no trace; the log gives that a trail.
+    // Fixer 11 (ADR-009 R2-3): and the older .bak is removed. A damaged file
+    // would otherwise bring that older set back, a set the user has since cleared
+    // among them; with no .bak, a damaged file is moved aside and nothing returns.
+    // One that can be neither written nor removed (held by a scanner or a sync
+    // tool) is left, and the log says what it holds.
+    const bak = getSessionStateBakFile()
     try {
-      copyFileSync(file, getSessionStateBakFile())
+      copyFileSync(file, bak)
     } catch (bakErr) {
       logError(`[session-state] .bak mirror copy failed (previous-good may be stale): ${(bakErr as Error)?.message ?? bakErr}`)
+      try {
+        if (existsSync(bak)) unlinkSync(bak)
+      } catch (rmErr) {
+        if ((rmErr as NodeJS.ErrnoException)?.code !== 'ENOENT') logError(`[session-state] the older .bak could not be removed either; until a save copies over it, a damaged session-state.json would recover that older state: ${(rmErr as Error)?.message ?? rmErr}`)
+      }
     }
     logInfo(`[session-state] Saved ${state.sessions.length} sessions`)
     return true
