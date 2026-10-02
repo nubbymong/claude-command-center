@@ -13,8 +13,8 @@
 //
 // On Windows it also asserts node-pty's bundled ConPTY files, conpty.dll and
 // OpenConsole.exe, beside the conpty.node node-pty loads
-// (verify-bundled-conpty.mjs): without them a local Codex session falls back to
-// the system ConPTY.
+// (verify-bundled-conpty.mjs): without them a PTY that asks for the bundled
+// ConPTY falls back to the system one.
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { bundledConptyProblems } from './verify-bundled-conpty.mjs'

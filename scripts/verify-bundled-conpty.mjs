@@ -1,12 +1,12 @@
 // P3.15 (row 71), PR-level ADR-009 round 1 (D5): a Windows package must ship the
-// ConPTY a local Codex session runs under: node-pty's conpty.dll and the
-// OpenConsole.exe beside it, in the `conpty` folder next to the conpty.node
-// node-pty loads. src/main/bundled-conpty.ts looks for them there, in
-// node-pty's loader order (build/Release, build/Debug, then the prebuild for
-// the platform and arch; each beside node-pty's lib folder, then inside it),
-// and falls back to the system ConPTY when either is missing, which brings back
-// the Codex scrolling the bundled one fixes. verify-native-unpack.mjs fails the
-// package on any problem this returns. Off Windows there is nothing to check.
+// ConPTY a PTY runs under when it asks for node-pty's bundled one: node-pty's
+// conpty.dll and the OpenConsole.exe beside it, in the `conpty` folder next to
+// the conpty.node node-pty loads. src/main/bundled-conpty.ts looks for them
+// there, in node-pty's loader order (build/Release, build/Debug, then the
+// prebuild for the platform and arch; each beside node-pty's lib folder, then
+// inside it), and falls back to the system ConPTY when either is missing, which
+// keeps no scrollback for a full-screen program. verify-native-unpack.mjs fails
+// the package on any problem this returns. Off Windows there is nothing to check.
 //
 // Pure: `isFile` is the only file system access (injectable for the unit test).
 import { statSync } from 'node:fs'

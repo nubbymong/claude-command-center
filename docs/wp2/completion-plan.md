@@ -360,7 +360,7 @@ from P3.1, and then only that row.
 | P3.13 Multi Spawn and Quick Start | 72 | Y | N | APPROVED |
 | P3.14 Usage follow-up: Codex credits | 17 | Y (the read keeps three more fields; ADR-023) | N | APPROVED |
 | P3.15 Terminal verification | 44, 70, 71, 73 | Y (the scrollback fix builds the Codex PTY with a new option and starts OpenConsole.exe): PASS at pass 2; round 3's input guard covered by the P3.16a pass (lens A and B minors only); rounds 4 and 5 owed | Y (SSH sessions' PTY input and output are guarded, and the End and liveness-probe helper PTYs): the live SSH matrix owed, End with a password and the liveness probe included | APPROVED |
-| P3.16 PR 3 records and user-facing sweep | none | N (docs) | N | APPROVED |
+| P3.16 PR 3 records and user-facing sweep | none (the PR-level ADR-009 round 1 fixes touch 31, 70, 71, 72) | N (docs); the PR-level pass on PR 3: round 1 FINDINGS, fixed in this phase, the re-attack owed | N (docs); the round 1 fixes change `pty-manager.ts` (the Codex not-indexed record only, no SSH path): the live SSH matrix at PR 3's head, owed as before | APPROVED |
 
 The 35 rows: 7, 8, 10, 11, 14, 17, 20, 22, 24, 28, 31, 32, 34, 35, 36, 37,
 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 61, 62, 63, 65, 69, 70, 71, 72, 73.
@@ -1369,7 +1369,11 @@ are taken at the run's start, at its first output and on a bounded
 schedule (eight at most, two at once), so a run that exits within a
 second can still be proved; the process group on POSIX is signalled only
 while a recorded member still runs with its recorded start time (macOS's
-ps now reports start times). The Windows sandbox appears to start Codex's
+ps now reports start times). Limit (PR-level ADR-009 round 1, A4): on Windows
+the start times come from CIM in local time, which is ambiguous in the hour
+repeated when the clocks go back in autumn; a run in that hour may have a
+leftover left running (the proof fails), never a process ended that is not
+the run's. The Windows sandbox appears to start Codex's
 own helpers suspended and a helper can be left that way when Codex exits
 at once (an upstream behaviour); no setting in the 0.153.4 binary stops
 Codex collecting git information in exec. Claude Code's analysis keeps no
@@ -1858,7 +1862,8 @@ folder per resources folder path under `ai-code-conductor`; the app never
 removes another's (another install or a dev build may use it), so one is left
 behind after the resources folder moves. The forwarder's "never reads through a
 file link" test skips on a Windows host without the right to make one; it runs
-where links can be made (CI on macOS and Linux), and the junction cases run
+where links can be made (the CI unit jobs, Test (windows-2025) and Test
+(macos-latest); CI has no Linux unit job), and the junction cases run
 everywhere.
 ADR-009: yes. Pass 1 at 6d576634 FINDINGS (lens A two major, three minor; lens
 B PASS with minor findings), all fixed in round 1; the re-attacks of rounds 1
@@ -3549,6 +3554,83 @@ is off; both on unchanged. Pinned by `ai-usage-popover-provider-off.test.tsx`
 (4 of its 5 tests red on the old popover, the fifth the both-on case; 5
 mutants red). Unit-tested only so far. Owed: the popover in the VM screenshot
 check (Codex only, Claude Code only, both on).
+
+P3.16, the PR-level ADR-009 pass, round 1 (PR 3's own commits, e0d4ddbc to
+08a12ada, four lenses): FINDINGS (one major, C1; minors A1, A3, A4, B1, C2;
+coverage D1 to D6), all fixed or recorded in this pass; the re-attack is owed
+(bound: two fix and re-attack rounds). Built on 24574276.
+C1 (major; row 31): a Codex session that is not indexed also marks the
+folder it runs in, inside its realm, from the moment it became not indexed
+until it ends, as a Claude session marks its projects folder
+(`src/main/logging/codex-folder-key.ts`; a cover window in `indexing-gaps.ts`,
+which its claims and a claim let go leave open, and a kill leaves open until
+the process has ended, as its conversation's; `pty-manager.ts` records each
+Codex launch's realm and folder). The transcripts worker leaves a rollout's
+records out where the folder its session_meta records was marked in the realm
+it lies in (worked out once per tail, from its first line); a rollout whose
+first line records no folder is left out wherever any Codex folder window
+covers the record's time. So the rollouts the session's own watcher never
+claimed are left out too: one another tab took by folder and time (two new
+sessions in one folder), one Codex began inside the session with no hook to
+say so (its /new, a backtrack, a /resume of a conversation of that folder).
+Limits, recorded (toward not indexing): while such a session runs, an indexed
+Codex session of the same account in the same folder has its turns left out
+for that stretch, as Claude's folder window does; a conversation of another
+folder taken up inside the session with its hooks off is outside that window
+(with its hooks on, the hook names it and its own window opens).
+C2 (minor): the record of windows never drops a conversation whose window is
+still open; past its cap it drops the least recently changed one whose windows
+are all closed (`before` raised past them, as before). Past the cap with every
+conversation open, a Claude session's name is covered by its folder's window
+(or the projects root's), as past its own cap; a cover and a Codex session's
+one conversation are still opened (bounded by the sessions holding them).
+B1 (minor; row 72): a pending spawn whose preparation was cancelled or
+superseded (a close, a newer Restart) no longer counts toward the spawns one
+session may have under way, so Restart pressed again and again while a Codex
+account preparation is slow starts the session, never refused as already
+running (`launch-one-at-a-time.ts`, `pty-handlers.ts`).
+A1 (minor; row 70): off Windows, Alt+V types an image path into a plain
+terminal or a partner shell only when main says the shell it spawns them with
+is of the sh family by its name (sh, bash, zsh, dash, ksh: the saved image's
+answer, worked out in `login-shell.ts`), and only
+when the path holds no control character; otherwise nothing is typed and the
+hint says where the image was saved. Windows is unchanged.
+A3 (minor; Claude's own picker, the parity reference for row 32): the Claude
+resume picker names the projects folder from
+the real path of the folder (Node's JS `realpathSync`, the function the app
+uses since fixer 3, F6; the folder as given when that cannot be read), so a
+launch folder reached through a link or a junction finds its conversations.
+A4 (minor): recorded as a limit under P3.9.
+D1: a test row for the leftover walk (a pid the records hold with another
+start time, below a process the walk names, is never named; mutant S6 now
+red). D5 (row 71): `npm run verify:package` also fails a Windows package
+without node-pty's conpty.dll or OpenConsole.exe beside the conpty.node it
+loads (`scripts/verify-bundled-conpty.mjs`; CI runs the verify step on
+release/* branches only). D6: a clipboard path that is not a plain file is no
+image and nothing is copied (mutant cf.C4 now red). D2: the six file-link
+refusal tests (`rollout-lookup.test.ts`, `telemetry-bounded-reads.test.ts`,
+`telemetry-claim-anywhere.test.ts` (the pick file), `telemetry-exact-claim.test.ts`,
+`codex-hook-forwarder.test.ts`, `codex-resume-picker-worktrees.test.ts`) skip
+on a host without the right to make a file link (the exact-claim one returns
+without asserting) and assert in the CI unit jobs, Test (windows-2025) and
+Test (macos-latest). D3: the forwarder's proxy test needs Node's agent proxy
+settings (Node 24), so it asserts on a host with Node 24 and skips in both CI
+unit jobs (Node 20). D4: corrected in P3.10's record.
+Tests, red first on the code before the fixes (a047def8; 24574276 changed text
+only): C1, C2, B1 14 (the two probe cases C1-1
+and C1-2 among them, with the real watchers and binder); A1 7; A3 2 (the real
+junction case ran on the host); D5 the new check's import; D1 and D6 cover
+code that was right, so their proof is their mutant. Mutation: 38 mutants, all
+red (C1 11, C2 5, B1 3, A1 11, A3 2, D5 4, S6, cf.C4); 35 served from copies,
+three placed in the tree and restored, every source checked byte-identical
+after. Checks: typecheck; tsc of the touched tests (only the four type errors
+`resume-picker.test.ts` had before); the affected and scanner files (164 files,
+3,009 passed, 2 host skips that are not these changes'); the WP1 files.
+CI only: `transcripts-worker.native.test.ts` (the SQL layer the worker's fake
+stands in for). Owed: the re-attack of these fixes (ADR-009 round 2 of 2); on
+the VM, a Codex session not indexed beside an indexed one in the same folder
+and a /new inside it; Alt+V into a plain terminal on macOS and Linux (a zsh
+and a fish login shell); the SSH live matrix at PR 3's head (as before).
 
 ## 9. PR 4 outline
 
