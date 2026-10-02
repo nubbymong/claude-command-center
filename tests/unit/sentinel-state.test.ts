@@ -52,6 +52,51 @@ describe('SentinelState for Codex (P3.9)', () => {
     s.setLastSeenCodexVersion('0.155.1')
     expect(new SentinelState(dir).snapshot()).toMatchObject({ lastSeenCodexVersion: '0.155.1', lastSeenCcVersion: null })
   })
+  // Fixer 11 (ADR-009 R2-1): a recorded version that is not a string (a
+  // damaged or hand-edited file) loads as none, so the next start takes the
+  // installed version as its baseline again instead of failing for good.
+  for (const [what, bad] of [['a number', 155], ['an object', { v: '0.155.1' }]] as const) {
+    it(`a recorded version that is ${what} loads as none, for both providers`, () => {
+      fs.mkdirSync(path.join(dir, 'sentinel'), { recursive: true })
+      fs.writeFileSync(path.join(dir, 'sentinel', 'sentinel-state.json'), JSON.stringify({
+        lastSeenCcVersion: bad, lastSeenCodexVersion: bad, highestCheckedCcVersion: bad, highestCheckedCodexVersion: bad,
+        analyzing: false, lastAnalysisAt: null, lastAnalysisError: null, findings: [],
+      }))
+      const s = new SentinelState(dir)
+      expect(s.snapshot()).toMatchObject({ lastSeenCcVersion: null, lastSeenCodexVersion: null, highestCheckedCcVersion: null, highestCheckedCodexVersion: null })
+      expect([s.highestChecked('claude'), s.highestChecked('codex')]).toEqual([null, null])
+    })
+  }
+
+  // Fixer 11 (gate 3 F10, ADR-009 D1 round 2): the highest version checked,
+  // which the start-up rule and the cap go by, is kept apart from the version
+  // the panel names (lastSeen*). It never goes down: a check of a lower
+  // version (a Re-run, or a downgrade seen at start) moves only the one shown.
+  it('the highest version checked follows a higher version and never goes down; the version shown follows each check', () => {
+    const s = new SentinelState(dir)
+    expect([s.highestChecked('claude'), s.highestChecked('codex')]).toEqual([null, null])
+    s.setLastSeenCodexVersion('0.156.0')
+    s.setLastSeenCcVersion('2.1.300')
+    s.setLastSeenCodexVersion('0.155.1')
+    s.setLastSeenCcVersion('2.1.299')
+    expect(s.snapshot()).toMatchObject({ lastSeenCodexVersion: '0.155.1', highestCheckedCodexVersion: '0.156.0', lastSeenCcVersion: '2.1.299', highestCheckedCcVersion: '2.1.300' })
+    expect([s.highestChecked('claude'), s.highestChecked('codex')]).toEqual(['2.1.300', '0.156.0'])
+    s.setLastSeenCodexVersion('0.157.0')
+    expect(s.highestChecked('codex')).toBe('0.157.0')
+    expect(new SentinelState(dir).snapshot()).toMatchObject({ lastSeenCodexVersion: '0.157.0', highestCheckedCodexVersion: '0.157.0', lastSeenCcVersion: '2.1.299', highestCheckedCcVersion: '2.1.300' })
+  })
+
+  it('a state file from before fixer 11 (no highest version checked) takes its recorded version as the highest checked', () => {
+    fs.mkdirSync(path.join(dir, 'sentinel'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'sentinel', 'sentinel-state.json'), JSON.stringify({ lastSeenCcVersion: '2.1.300', lastSeenCodexVersion: '0.155.1', analyzing: false, lastAnalysisAt: null, lastAnalysisError: null, findings: [] }))
+    const s = new SentinelState(dir)
+    expect([s.highestChecked('claude'), s.highestChecked('codex')]).toEqual(['2.1.300', '0.155.1'])
+    expect(s.snapshot()).toMatchObject({ lastSeenCcVersion: '2.1.300', lastSeenCodexVersion: '0.155.1' })
+    // A file whose shown version is above its highest (edited by hand): the higher one counts.
+    fs.writeFileSync(path.join(dir, 'sentinel', 'sentinel-state.json'), JSON.stringify({ lastSeenCodexVersion: '0.157.0', highestCheckedCodexVersion: '0.156.0', lastSeenCcVersion: null, analyzing: false, lastAnalysisAt: null, lastAnalysisError: null, findings: [] }))
+    expect(new SentinelState(dir).highestChecked('codex')).toBe('0.157.0')
+  })
+
   it('setAnalyzing names whose update runs, and clears it when it stops; a reload never starts analysing', () => {
     const s = new SentinelState(dir)
     s.setAnalyzing(true, null, 'codex')
@@ -160,7 +205,10 @@ describe('SentinelState: unmatched-analysis counts (round 4, fixer 10)', () => {
     expect(s.snapshot().unverifiedTries).toEqual({ 'codex:0.156.0': 3, 'claude:2.1.299': 1 })
   })
 
-  it(`the file keeps the counts of a provider's ${UNVERIFIED_VERSIONS_KEPT} highest versions, always the one counted now`, () => {
+  // Fixer 11 (gate 3 F13): what the code keeps, said exactly: the count made
+  // now and the provider's other counts of its highest versions, at most
+  // UNVERIFIED_VERSIONS_KEPT in all.
+  it(`the file keeps a provider's count made now and the counts of its ${UNVERIFIED_VERSIONS_KEPT - 1} highest other versions`, () => {
     const s = new SentinelState(dir)
     s.countUnverified('claude:2.1.300')
     const versions = Array.from({ length: UNVERIFIED_VERSIONS_KEPT + 2 }, (_, i) => `0.${150 + i}.0`)

@@ -63,7 +63,9 @@ function shown(scope: SentinelScope): SentinelScope {
 /** The separator the panel's subtitle and the report's header use. */
 export const SENTINEL_SEPARATOR = ' \u00b7 '
 
-/** Each assistant in use and the version Sentinel last saw of it. */
+/** Each assistant in use and the version the panel names for it: the one
+ *  installed at its last completed check (an update not analysed to the end
+ *  yet is not named; a downgrade is, with no analysis; fixer 11). */
 export function sentinelVersionParts(snap: SentinelStateSnapshot | null, scope: SentinelScope = CLAUDE_ONLY_SCOPE): string[] {
   const s = shown(scope)
   const out: string[] = []

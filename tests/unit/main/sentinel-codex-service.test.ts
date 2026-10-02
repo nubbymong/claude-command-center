@@ -24,6 +24,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
+import type { SentinelStateSnapshot } from '../../../src/shared/sentinel-types'
+import { sentinelVersionParts, sentinelCompatibleSubject, CLAUDE_ONLY_SCOPE } from '../../../src/renderer/components/sentinel/sentinel-report-text'
 
 // P3.9 round 2 (F2): a hook run once just before the next mkdtemp, to move
 // the runs folder between the check and the make.
@@ -632,13 +634,18 @@ describe('a Re-run (P3.9)', () => {
 // Fixer 10 (gate 3 F9, ADR-009 C1 and D1, row 42): the cap of
 // UNVERIFIED_MAX_TRIES analyses holds for versions installed in turn (two
 // installs, or two machines sharing one resources folder), for both
-// providers. A start analyses only a version higher than the last one
-// recorded, and a version's count of unmatched analyses is dropped only once
-// a version at or above it is recorded. Each start below is a relaunch:
-// Sentinel is read again from its file, the real start-up check runs.
+// providers. A start analyses only a version higher than the highest one
+// checked, and a version's count of unmatched analyses is dropped only once
+// a version at or above it is recorded. Fixer 11 (gate 3 F10, ADR-009 D1
+// round 2, R2-1): the highest version checked never goes down (a Re-run of a
+// lower install moves only the version shown), the panel names the version
+// installed at the last completed check, and a recorded version that is not
+// a string loads as none. Each start below is a relaunch: Sentinel is read
+// again from its file, the real start-up check runs.
 for (const p of ['codex', 'claude'] as const) {
   const name = p === 'codex' ? 'Codex' : 'Claude Code'
   const [LAST, A, B, C] = p === 'codex' ? ['0.153.4', '0.155.1', '0.156.0', '0.157.0'] : ['2.1.300', '2.1.301', '2.1.302', '2.1.303']
+  const scope = p === 'codex' ? { claudeOn: false, codexOn: true } : CLAUDE_ONLY_SCOPE
   /** Only `p` is on; its notes cover every version used here. */
   function only(): void {
     svc.pref = p === 'codex' ? { claude: 'off', codex: 'on' } : { claude: 'on', codex: 'off' }
@@ -650,77 +657,145 @@ for (const p of ['codex', 'claude'] as const) {
     if (p === 'codex') review.answer = () => ({ ok: true, text })
     else claude.answer = text
   }
-  const analyses = () => (p === 'codex' ? review.runs.length : claudeAnalyses().length)
-  /** One start of the app with `version` installed: whether it ran an
-   *  analysis, and the version then recorded as checked. */
-  async function startOn(version: string): Promise<{ version: string; analysed: number; last: string | null }> {
+  /** From now on every analysis's findings match its notes (it finds none). */
+  function matched(): void {
+    if (p === 'codex') review.answer = null
+    else claude.answer = null
+  }
+  const install = (version: string) => {
     if (p === 'codex') svc.installation = { discoveryState: 'found', version, compatibility: 'supported' }
     else claude.version = version
+  }
+  const analyses = () => (p === 'codex' ? review.runs.length : claudeAnalyses().length)
+  type Start = { version: string; analysed: number; shown: string | null; checked: string | null }
+  const shownOf = (snap: SentinelStateSnapshot) => (p === 'codex' ? snap.lastSeenCodexVersion : snap.lastSeenCcVersion) ?? null
+  const checkedOf = (snap: SentinelStateSnapshot) => (p === 'codex' ? snap.highestCheckedCodexVersion : snap.highestCheckedCcVersion) ?? null
+  /** One start of the app with `version` installed: whether it ran an
+   *  analysis, the version the panel then names, and the highest checked. */
+  async function startOn(version: string): Promise<Start> {
+    install(version)
     const before = analyses()
     const s = await sentinel()
     await s.sentinelStartupCheck()
     const snap = s.getSentinelState()!.snapshot()
-    return { version, analysed: analyses() - before, last: (p === 'codex' ? snap.lastSeenCodexVersion : snap.lastSeenCcVersion) ?? null }
+    return { version, analysed: analyses() - before, shown: shownOf(snap), checked: checkedOf(snap) }
   }
-  const seed = (last: string) => sentinel(p === 'codex' ? { lastSeenCodexVersion: last } : { lastSeenCcVersion: last })
+  const seed = (last: unknown) => sentinel(p === 'codex' ? { lastSeenCodexVersion: last } : { lastSeenCcVersion: last })
 
   describe(`fixer 10: ${name} versions installed in turn stay within the cap`, () => {
     it('40 starts taking two versions in turn, findings never matched: each is analysed three times, recorded at its third, then never again', async () => {
       only()
       unmatched()
       await seed(LAST)
-      const trace: Array<{ version: string; analysed: number; last: string | null }> = []
+      const trace: Start[] = []
       for (let i = 0; i < 40; i++) trace.push(await startOn(i % 2 === 0 ? A : B))
       const runs = (v: string) => trace.filter((t) => t.version === v && t.analysed > 0).length
       expect(trace.every((t) => t.analysed <= 1)).toBe(true)
       expect([runs(A), runs(B)]).toEqual([3, 3])
       // Each recorded at its own third analysis: A at start 5, B at start 6.
-      expect(trace.slice(0, 6).map((t) => t.last)).toEqual([LAST, LAST, LAST, LAST, A, B])
-      expect(trace.at(-1)!.last).toBe(B)
+      expect(trace.slice(0, 6).map((t) => t.checked)).toEqual([LAST, LAST, LAST, LAST, A, B])
+      expect(trace.at(-1)!.checked).toBe(B)
+      // Once both are checked, the panel names the version installed.
+      expect(trace.slice(6).every((t) => t.shown === t.version)).toBe(true)
     })
 
     it('the same 40 starts with findings that match: each version analysed once, two in all', async () => {
       only()
       await seed(LAST)
-      const trace: Array<{ version: string; analysed: number; last: string | null }> = []
+      const trace: Start[] = []
       for (let i = 0; i < 40; i++) trace.push(await startOn(i % 2 === 0 ? A : B))
       expect(trace.filter((t) => t.analysed > 0).map((t) => t.version)).toEqual([A, B])
-      expect(trace.at(-1)!.last).toBe(B)
+      expect(trace.at(-1)!.checked).toBe(B)
+      expect(trace.every((t) => t.shown === t.version)).toBe(true)
     })
 
     it('A, A, B taken in turn (ADR-009 D1): A is recorded at its third analysis, B at its third, six in all', async () => {
       only()
       unmatched()
       await seed(LAST)
-      const trace: Array<{ version: string; analysed: number; last: string | null }> = []
+      const trace: Start[] = []
       for (const v of [A, A, B, A, A, B, A, A, B, A, A, B]) trace.push(await startOn(v))
       expect(trace.map((t) => t.analysed)).toEqual([1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 0])
       // A's third analysis (start 4) records it; B's third (start 9) records B.
-      expect(trace.map((t) => t.last)).toEqual([LAST, LAST, LAST, A, A, A, A, A, B, B, B, B])
+      expect(trace.map((t) => t.checked)).toEqual([LAST, LAST, LAST, A, A, A, A, A, B, B, B, B])
+      // The panel names the installed version once it is checked; B, while
+      // its analysis has not finished (starts 3 and 6), is not named yet.
+      expect(trace.map((t) => t.shown)).toEqual([LAST, LAST, LAST, A, A, A, A, A, B, A, A, B])
     })
 
     it('real updates are still analysed: the same version again, a lower one never recorded, then a newer one', async () => {
       only()
       unmatched()
       await seed(LAST)
-      const trace: Array<{ version: string; analysed: number; last: string | null }> = []
+      const trace: Start[] = []
       for (const v of [B, B, A, B, C]) trace.push(await startOn(v))
       expect(trace.map((t) => t.analysed)).toEqual([1, 1, 1, 1, 1])
       // B recorded at its third analysis (start 4); C, newer, analysed after it.
-      expect(trace.map((t) => t.last)).toEqual([LAST, LAST, LAST, B, B])
+      expect(trace.map((t) => t.checked)).toEqual([LAST, LAST, LAST, B, B])
+      expect(trace.map((t) => t.shown)).toEqual([LAST, LAST, LAST, B, B])
     })
 
-    it('a downgrade, even to a version never seen, is not analysed or recorded at start; a Re-run still analyses it; the next higher one is analysed', async () => {
+    it('a downgrade, even to a version never seen, is not analysed at start; the panel names the version installed (gate 3 F10); a Re-run still analyses it; the next higher one is analysed', async () => {
       only()
       await seed(B)
-      expect(await startOn(A)).toEqual({ version: A, analysed: 0, last: B })
-      expect(await startOn(LAST)).toEqual({ version: LAST, analysed: 0, last: B })
+      expect(await startOn(A)).toEqual({ version: A, analysed: 0, shown: A, checked: B })
+      const snap = (await sentinel()).getSentinelState()!.snapshot()
+      expect(sentinelVersionParts(snap, scope)).toEqual([p === 'codex' ? `Codex ${A}` : `CC ${A}`])
+      expect(sentinelCompatibleSubject(snap, scope).text).toBe(`${name} ${A}`)
+      expect(await startOn(LAST)).toEqual({ version: LAST, analysed: 0, shown: LAST, checked: B })
       const s = await sentinel()
       const before = analyses()
       await s.sentinelRerun()
       expect(analyses() - before).toBe(1)
-      expect(await startOn(C)).toMatchObject({ analysed: 1, last: C })
+      // The Re-run of the lower version moves only the version shown.
+      expect(shownOf(s.getSentinelState()!.snapshot())).toBe(LAST)
+      expect(checkedOf(s.getSentinelState()!.snapshot())).toBe(B)
+      expect(await startOn(C)).toEqual({ version: C, analysed: 1, shown: C, checked: C })
+      // The update is analysed from the highest version checked, not the one
+      // shown: the notes after B up to C, nothing of B or below.
+      if (p === 'codex') expect(fetchCodexReleaseNotes).toHaveBeenLastCalledWith(B, C)
+      else {
+        const prompt = String(claudeAnalyses().at(-1)![2])
+        expect(prompt).toMatch(/- c change/)
+        expect(prompt).not.toMatch(/- b change/)
+      }
     })
+
+    // Fixer 11 (ADR-009 D1 round 2, lens D finding 1): a Re-run of the lower
+    // install never lowers the highest version checked, so the higher one is
+    // not analysed again at start, past its cap.
+    it('two installs at the cap, then a Re-run of the lower one that matches: six more starts analyse nothing', async () => {
+      only()
+      unmatched()
+      await seed(LAST)
+      for (const v of [A, B, A, B, A, B]) await startOn(v)
+      expect(checkedOf((await sentinel()).getSentinelState()!.snapshot())).toBe(B)
+      matched()
+      install(A)
+      const s = await sentinel()
+      const before = analyses()
+      await s.sentinelRerun()
+      expect(analyses() - before).toBe(1)
+      const trace: Start[] = []
+      for (const v of [B, A, B, A, B, A]) trace.push(await startOn(v))
+      expect(trace.map((t) => t.analysed)).toEqual([0, 0, 0, 0, 0, 0])
+      expect(trace.map((t) => t.checked)).toEqual([B, B, B, B, B, B])
+      expect(trace.map((t) => t.shown)).toEqual([B, A, B, A, B, A])
+    })
+
+    // Fixer 11 (ADR-009 R2-1): a recorded version that is not a string (a
+    // damaged or hand-edited file) no longer stops the check for good: it
+    // loads as none, the next start takes the installed version as its
+    // baseline, and a newer one is analysed after it.
+    for (const [what, bad] of [['a number', 155], ['an object', { v: '1.0.0' }]] as const) {
+      it(`a recorded version that is ${what}: the next start takes a new baseline, says nothing wrong, and a newer version is analysed`, async () => {
+        only()
+        await seed(bad)
+        expect(await startOn(A)).toEqual({ version: A, analysed: 0, shown: A, checked: A })
+        expect((await sentinel()).getSentinelState()!.snapshot().lastAnalysisError ?? null).toBeNull()
+        expect(await startOn(B)).toEqual({ version: B, analysed: 1, shown: B, checked: B })
+      })
+    }
   })
 }
 
@@ -733,6 +808,7 @@ describe('fixer 10: a Codex downgrade still raises its version finding', () => {
     expect(ids(s)).toContain('codex-version:too-old:0.150.0')
     expect(review.runs).toHaveLength(0)
     expect(fetchCodexReleaseNotes).not.toHaveBeenCalled()
-    expect(s.getSentinelState()!.snapshot().lastSeenCodexVersion).toBe('0.155.1')
+    // Fixer 11: the panel names what is installed; the highest checked stays.
+    expect(s.getSentinelState()!.snapshot()).toMatchObject({ lastSeenCodexVersion: '0.150.0', highestCheckedCodexVersion: '0.155.1' })
   })
 })

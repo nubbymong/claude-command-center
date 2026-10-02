@@ -31,10 +31,22 @@ export interface SentinelFinding {
 }
 
 export interface SentinelStateSnapshot {
+  /** The Claude Code version the panel names: the one installed at the last
+   *  completed check (fixer 11). An update not analysed to the end yet is not
+   *  named; a version at or below the highest one checked is, with no
+   *  analysis (a downgrade has nothing newer to check). */
   lastSeenCcVersion: string | null
-  /** P3.9: the Codex version the last completed check saw; absent in a
-   *  state file written before Codex had one. */
+  /** P3.9: the same for Codex; absent in a state file written before Codex
+   *  had one. */
   lastSeenCodexVersion?: string | null
+  /** Fixer 11 (gate 3 F10, ADR-009 D1 round 2): the highest Claude Code
+   *  version recorded as checked, which the start-up rule and the cap go by
+   *  (only a version above it is analysed at start). It never goes down, not
+   *  even for a Re-run of a lower version. Absent in a file written before
+   *  it: the recorded version (lastSeen*) is taken then. */
+  highestCheckedCcVersion?: string | null
+  /** Fixer 11: the same for Codex. */
+  highestCheckedCodexVersion?: string | null
   analyzing: boolean
   /** P3.9: whose update the analysis in flight is about (while `analyzing`). */
   analyzingProvider?: SentinelProvider | null
