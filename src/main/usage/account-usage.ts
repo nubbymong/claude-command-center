@@ -364,12 +364,6 @@ function isLiveBucket(v: unknown): v is UsageBucket {
     && typeof b.percent === 'number' && Number.isFinite(b.percent) && typeof b.resetsAt === 'string'
 }
 
-/**
- * Record the usage a live session just delivered, keyed by the PROFILE it runs
- * under. An empty or all-malformed set is ignored (nothing to serve), and an SSH
- * or default-home session has no local profile id so it stores nothing -- both
- * leave the account on the GET path, which is correct.
- */
 /** Which profile's folder a transcript lies in (the Tokenomics folder rule,
  *  profileOfTranscript), set by main; unset, nothing is recorded. */
 let transcriptProfileOf: ((transcriptPath: string) => string | undefined) | null = null
@@ -377,6 +371,13 @@ export function setLiveUsageTranscriptProfile(resolve: ((transcriptPath: string)
   transcriptProfileOf = resolve
 }
 
+/**
+ * Record the usage a live session just delivered, keyed by the PROFILE it runs
+ * under, and only when the session's transcript lies in that profile's folder
+ * (profileOfTranscript). An empty or all-malformed set is ignored (nothing to
+ * serve), and an SSH or default-home session has no local profile id so it
+ * stores nothing -- both leave the account on the GET path, which is correct.
+ */
 export function recordLiveUsageForSession(sessionId: string, buckets: unknown, hasCredits: boolean, transcriptPath?: unknown, now: number = Date.now()): void {
   const profileId = getClaudeProfileId(sessionId)
   if (!profileId) return

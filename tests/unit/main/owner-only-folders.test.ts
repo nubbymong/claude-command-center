@@ -196,6 +196,19 @@ describe('secureFoldersWindows: any Unicode folder name (round 5)', () => {
     ['spaces', 'a b  c'],
     ['brackets and braces', 'w[ab]{0}'],
     ['percent, hash, tilde, bang', 'p%x%#h~t!b'],
+    // Gate 3 (spec item 1, F1): the rest of the ASCII set the round-5 verifier
+    // used, each a literal folder name: what PowerShell would read as a
+    // variable, a subexpression, a statement break, an escape, a call, an
+    // array, a quote break, a wildcard range or a parameter.
+    ['semicolon', 'sem;i'],
+    ['dollar variables', 'dollar$pwd$HOME'],
+    ['dollar subexpression', 'sub$(x)'],
+    ['backtick escape', 'tick`n'],
+    ['ampersand call', 'amp&(x)'],
+    ['quote break', "'+(x)+'"],
+    ['wildcard range', 'rng[a-z]x'],
+    ['array subexpression', 'at@(x)'],
+    ['a leading dash', '-Recurse'],
   ]
   /** An answer as the script writes it: JSON with every character past ASCII escaped. */
   const asciiJson = (v: unknown): string => JSON.stringify(v).replace(/[\u007f-\uffff]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'))

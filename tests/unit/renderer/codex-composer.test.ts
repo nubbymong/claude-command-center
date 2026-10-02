@@ -604,4 +604,20 @@ describe('the runs past their start-up are bounded', () => {
     typeIntoCodexComposer('s1', '/compact', h.deps) // the run ended
     expect(h.deps.startupDone!.size).toBe(0)
   })
+
+  // Gate 3 (quality item 4): the Plan mode wait lets the session go too when
+  // the run it waits on ends (not only the typing path above).
+  it('the Plan mode wait forgets the session when its run ends', () => {
+    const h = harness(S.LOADING)
+    h.deps.startupDone!.add('s1', 'k')
+    const onGiveUp = vi.fn()
+    typeWhenCodexComposerReady('s1', '/plan', { timeoutMs: 60_000, onGiveUp }, h.deps)
+    h.advance(CODEX_READY_POLL_MS)
+    expect(h.deps.startupDone!.size).toBe(1)
+    h.state.run = null
+    h.advance(CODEX_READY_POLL_MS)
+    expect(h.deps.startupDone!.size).toBe(0)
+    expect(onGiveUp).not.toHaveBeenCalled()
+    expect(h.writes).toEqual([])
+  })
 })
