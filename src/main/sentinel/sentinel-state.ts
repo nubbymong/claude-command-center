@@ -4,6 +4,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { atomicWriteFileSync } from '../atomic-write'
 import { analysisFindingKey } from './sentinel-quote'
+import { compareVersions } from '../../shared/version-order'
 import type { SentinelFinding, SentinelStateSnapshot, FindingStatus, SentinelProvider } from '../../shared/sentinel-types'
 
 export class SentinelState {
@@ -61,12 +62,16 @@ export class SentinelState {
   setLastSeenCodexVersion(v: string): void { this.state = { ...this.state, lastSeenCodexVersion: v }; this.persist() }
   /** Round 4: one more analysis of `key` (`<provider>:<version>`) whose
    *  findings could not all be matched to its notes; the count so far.
-   *  Round 5: the counts of that provider's other versions (superseded
-   *  before their last try) are dropped. */
+   *  Round 5: the counts of that provider's earlier versions (superseded
+   *  before their last try) are dropped. Only LOWER versions: a higher one
+   *  keeps its count, so two versions taken in turn (two installs, or a
+   *  downgrade and re-upgrade) never reset each other, and the cap
+   *  (UNVERIFIED_MAX_TRIES) still bounds the analyses. */
   countUnverified(key: string): number {
     const tries: Record<string, number> = {}
     const provider = key.slice(0, key.indexOf(':') + 1)
-    for (const [k, v] of Object.entries(this.state.unverifiedTries ?? {})) if (k === key || !provider || !k.startsWith(provider)) tries[k] = v
+    const version = key.slice(provider.length)
+    for (const [k, v] of Object.entries(this.state.unverifiedTries ?? {})) if (k === key || !provider || !k.startsWith(provider) || compareVersions(version, k.slice(provider.length)) <= 0) tries[k] = v
     const now = (typeof tries[key] === 'number' && Number.isFinite(tries[key]) ? tries[key] : 0) + 1
     tries[key] = now
     this.state = { ...this.state, unverifiedTries: tries }

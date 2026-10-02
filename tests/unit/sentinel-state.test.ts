@@ -126,4 +126,18 @@ describe('SentinelState: unmatched-analysis counts (rounds 4 and 5)', () => {
     s.clearUnverified('codex:0.157.0')
     expect(s.snapshot().unverifiedTries).toEqual({ 'claude:2.1.300': 1 })
   })
+
+  // Gate 3 (quality item 3): only a LOWER version's count is dropped, so two
+  // versions taken in turn (two installs, or a downgrade and re-upgrade) never
+  // reset each other: the newer one still reaches the cap.
+  it('two versions taken in turn: the newer one keeps its count and reaches three', () => {
+    const s = new SentinelState(dir)
+    expect(s.countUnverified('codex:0.156.0')).toBe(1)
+    expect(s.countUnverified('codex:0.155.1')).toBe(1)
+    expect(s.snapshot().unverifiedTries).toEqual({ 'codex:0.156.0': 1, 'codex:0.155.1': 1 })
+    expect(s.countUnverified('codex:0.156.0')).toBe(2)
+    expect(s.countUnverified('codex:0.155.1')).toBe(1)
+    expect(s.countUnverified('codex:0.156.0')).toBe(3)
+    expect(s.snapshot().unverifiedTries).toEqual({ 'codex:0.156.0': 3 })
+  })
 })
