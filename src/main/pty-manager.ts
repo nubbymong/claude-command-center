@@ -1940,6 +1940,9 @@ export function beginSpawnPreparation(win: BrowserWindow, sessionId: string, age
 }
 
 export function spawnPty(win: BrowserWindow, sessionId: string, options?: SpawnPtyOptions): void {
+  // P3.16a round 2 (Q5): a Restart's mark is for the exit of the process it
+  // ended before this spawn; this spawn's own process ends as any other does.
+  restartKills.delete(sessionId)
   const supersededWait = refreshWaitSpawns.get(sessionId)
   const inheritedTeardown = supersededWait?.abandonedTeardown
   if (supersededWait) {
@@ -6027,7 +6030,12 @@ function spawnPtyResolved(
       // #536: retire any remembered CCC name so a renamed-but-never-bound session
       // does not leak an entry in the pending-name registry for the process life.
       forgetSessionName(sessionId)
-      getPtyIntegrityMonitor()?.endSession(sessionId)
+      // P3.16a round 2 (Q5): the exit of a process a Restart ended, with its
+      // next process not started yet (a Restart pressed in the partner view
+      // starts the main's next one when its view is shown), restarts the
+      // count quietly; any other end is the session's end, with its event.
+      if (restartKills.delete(sessionId)) getPtyIntegrityMonitor()?.resetSession(sessionId)
+      else getPtyIntegrityMonitor()?.endSession(sessionId)
       // (watchdog teardown now lives UNCONDITIONALLY in cleanupSessionResources
       //  below — see FINDING 1 — so the restart-race stale exit tears it down too)
       // (P3.10 round 1, B1: with the record that a Codex launch minted it.)
@@ -6447,7 +6455,31 @@ function cleanupSessionResources(sessionId: string): void {
 // time to reach the remote shell and run before we tear the tunnel down.
 const REMOTE_CLEANUP_GRACE_MS = 400
 
-export function killPty(sessionId: string): void {
+/** P3.16a round 2 (Q5): the sessions a Restart killed whose next process has
+ *  not started yet. The exit of the process it ended restarts the Services
+ *  count quietly instead of ending the session there. Set by a Restart's kill,
+ *  cleared by the next spawn of the id or a close, taken by that exit; bounded
+ *  (an id past the bound just ends as a close would). */
+const restartKills = new Set<string>()
+export const RESTART_KILLS_MAX = 512
+
+/** Why a kill came (the `pty:kill` IPC): a Restart's (its next process
+ *  follows) or a close (the session's end). Absent: neither (a spawn's own
+ *  kill of the process it replaces, a quit). */
+export interface KillPtyOptions { reason?: 'restart' | 'close' }
+
+export function killPty(sessionId: string, opts: KillPtyOptions = {}): void {
+  if (opts.reason === 'restart') {
+    restartKills.delete(sessionId)
+    restartKills.add(sessionId)
+    while (restartKills.size > RESTART_KILLS_MAX) {
+      const oldest = restartKills.values().next().value
+      if (oldest === undefined) break
+      restartKills.delete(oldest)
+    }
+  } else if (opts.reason === 'close') {
+    restartKills.delete(sessionId)
+  }
   // rc.15 review R3: a spawn still waiting for its profile's refresh has no PTY
   // yet -- cancel the wait (its hold goes with it); there is nothing else to kill.
   const waiting = refreshWaitSpawns.get(sessionId)
@@ -6530,6 +6562,11 @@ export function killPty(sessionId: string): void {
     ptySessions.delete(sessionId)
   }
   cleanupSessionResources(sessionId)
+  // P3.16a round 2 (Q5): a close with no process left to report its end (it
+  // ended before, or a Restart's exit restarted its count quietly and no next
+  // process started) is the session's end on the Services page now. A no-op
+  // when the record already went with the process's end.
+  if (!entry && opts.reason === 'close') getPtyIntegrityMonitor()?.endSession(sessionId)
   // Deliberate close: NOW drop the end-target + persistence flag (see the maps'
   // doc). A natural exit reaches cleanupSessionResources but not here, so the
   // target survives a transient drop for a later End.

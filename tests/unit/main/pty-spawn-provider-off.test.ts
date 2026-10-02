@@ -323,3 +323,21 @@ describe('P3.10 round 4: a local Codex launch waits for its hook folders', () =>
     expect(spawnPty).toHaveBeenCalledTimes(1)
   })
 })
+
+// P3.16a round 2 (Q5): pty:kill tells pty-manager whether a Restart made the
+// kill (its next process follows, so the exit is not the session's end) or it
+// is a close. Only the exact string 'restart' is a Restart's.
+describe('pty:kill says whether it is a Restart\'s kill (P3.16a round 2, Q5)', () => {
+  it('the exact string \'restart\' is a Restart\'s kill; anything else, or nothing, is a close', async () => {
+    const { killPty } = await import('../../../src/main/pty-manager')
+    const killed = killPty as unknown as ReturnType<typeof vi.fn>
+    const kill = handlers.get('pty:kill')!
+    const cases: Array<[unknown, 'restart' | 'close']> = [[undefined, 'close'], ['restart', 'restart'], ['Restart', 'close'], ['restart ', 'close'], [{ reason: 'restart' }, 'close'], [1, 'close'], [null, 'close']]
+    for (const [arg, reason] of cases) {
+      killed.mockClear()
+      if (arg === undefined) kill({}, SID)
+      else kill({}, SID, arg)
+      expect(killed, JSON.stringify(arg)).toHaveBeenCalledWith(SID, { reason })
+    }
+  })
+})

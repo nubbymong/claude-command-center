@@ -119,15 +119,14 @@ describe('PtyIntegrityMonitor: a new renderer mount restarts the count (N8)', ()
     expect(gapLogs(m)).toHaveLength(1)
   })
 
-  it('a late report of the previous mount, after the new mount\'s first report, shows no gap; the new mount goes on from there', () => {
+  it('a late report of the previous mount, after the new mount\'s first report, is ignored (round 2, Q5): no gap, and the new mount goes on from there', () => {
     const { m } = makeMonitor({ eventCap: 100 })
     m.recordPtyData(S, 10_000); rep(m, 'mountA', 10_000)
     m.recordPtyData(S, 500); rep(m, 'mountB', 500)
-    // A late report of mount A: a change of mount like any other, so it is
-    // compared from itself (no gap), never against mount B's count.
+    // A late report of mount A: a mount that was replaced counts no more.
     rep(m, 'mountA', 10_200)
+    expect(row(m).bytesReceived).toBe(500)
     expect(row(m).byteGap).toBe(0)
-    // Mount B's next report changes the mount back, and is compared from itself.
     m.recordPtyData(S, 200); rep(m, 'mountB', 700)
     expect(row(m).byteGap).toBe(0)
     expect(m.snapshot().recentEvents).toEqual([])
@@ -136,6 +135,36 @@ describe('PtyIntegrityMonitor: a new renderer mount restarts the count (N8)', ()
     m.recordPtyData(S, 9_000); rep(m, 'mountB', 900)
     expect(row(m).byteGap).toBe(8_800)
     expect(gapLogs(m)).toHaveLength(1)
+  })
+
+  it('round 2 (Q5): reports of a replaced mount that keep coming do not re-base the count, so the live mount\'s real gap still shows', () => {
+    const { m } = makeMonitor({ eventCap: 100 })
+    m.recordPtyData(S, 10_000); rep(m, 'mountA', 10_000)
+    m.recordPtyData(S, 500); rep(m, 'mountB', 500)
+    // Mount B misses 8,600 bytes while mount A's reports keep arriving between B's.
+    m.recordPtyData(S, 9_000)
+    rep(m, 'mountA', 19_000)
+    rep(m, 'mountB', 900)
+    rep(m, 'mountA', 19_000)
+    expect(row(m).bytesFromPty).toBe(9_500)
+    expect(row(m).byteGap).toBe(8_600)
+    expect(gapLogs(m)).toHaveLength(1)
+    // A reset (a respawn) keeps them replaced: mount A's late report still counts no more.
+    m.resetSession(S)
+    rep(m, 'mountA', 19_000)
+    expect(row(m)).toMatchObject({ bytesReceived: 0, bytesFromPty: 0 })
+  })
+
+  it('round 2 (Q5): the replaced mounts a record keeps are bounded; the newest are kept', () => {
+    const { m } = makeMonitor({ eventCap: 100 })
+    for (let i = 0; i < 40; i++) { m.recordPtyData(S, 10); rep(m, `mount${i}`, 10) }
+    // The one just replaced is still known as replaced.
+    rep(m, 'mount38', 99_999)
+    expect(row(m).bytesReceived).toBe(10)
+    // The oldest is forgotten: its report is a mount again (compared from itself, no gap).
+    rep(m, 'mount0', 5)
+    expect(row(m).bytesReceived).toBe(5)
+    expect(row(m).byteGap).toBe(0)
   })
 
   it('a quiet reset (a respawn) zeroes the counts and the mount with no event and no log; the session\'s end still logs one', () => {
