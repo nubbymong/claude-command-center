@@ -88,14 +88,17 @@ export class SentinelState {
   }
   /** A completed check of Claude Code `v`: the panel names it, and (fixer
    *  11) the highest version checked rises to it when it is higher, never
-   *  going down (a Re-run of a lower version, a downgrade seen at start). */
-  setLastSeenCcVersion(v: string): void {
-    this.state = { ...this.state, lastSeenCcVersion: v, highestCheckedCcVersion: higher(this.state.highestCheckedCcVersion ?? null, v) }
+   *  going down for a start (a downgrade seen there) or an analysis. Fixer 12
+   *  (ADR-009 R3-1): a Re-run's record (`rerun`), the user's own act, sets it
+   *  to `v`, down as well as up, so a highest stuck far ahead (a hand-edited
+   *  file, a prerelease once installed) can be undone. */
+  setLastSeenCcVersion(v: string, opts: { rerun?: boolean } = {}): void {
+    this.state = { ...this.state, lastSeenCcVersion: v, highestCheckedCcVersion: opts.rerun === true ? v : higher(this.state.highestCheckedCcVersion ?? null, v) }
     this.persist()
   }
   /** P3.9: the same for Codex `v`. */
-  setLastSeenCodexVersion(v: string): void {
-    this.state = { ...this.state, lastSeenCodexVersion: v, highestCheckedCodexVersion: higher(this.state.highestCheckedCodexVersion ?? null, v) }
+  setLastSeenCodexVersion(v: string, opts: { rerun?: boolean } = {}): void {
+    this.state = { ...this.state, lastSeenCodexVersion: v, highestCheckedCodexVersion: opts.rerun === true ? v : higher(this.state.highestCheckedCodexVersion ?? null, v) }
     this.persist()
   }
   /** Fixer 11: the highest version of `provider` recorded as checked (none
@@ -112,8 +115,11 @@ export class SentinelState {
    *  findings could not all be matched to its notes; the count so far.
    *  Fixer 10 (the cap for versions installed in turn): no other version's
    *  count is dropped here. A start analyses only a version higher than the
-   *  highest one checked (sentinel/index.ts, isUpdateAtStart; fixer 11: that
-   *  never goes down, not even for a Re-run of a lower version), so a count
+   *  highest one checked (sentinel/index.ts, isUpdateAtStart; fixer 11: no
+   *  start and no analysis lowers it; fixer 12: a Re-run's record sets it to
+   *  the version the Re-run checked, so after a Re-run of a lower version a
+   *  higher one taken in turn is an update again, at most
+   *  UNVERIFIED_MAX_TRIES analyses, a cost of that Re-run), so a count
    *  kept is of a version that may still be analysed, another install's taken
    *  in turn with this one; dropping it (as round 5 and fixer 9 did, for a
    *  lower version) let that version be analysed again from one, past the
@@ -124,7 +130,7 @@ export class SentinelState {
    *  before its third analysis, go from the lowest); only more versions than
    *  UNVERIFIED_VERSIONS_KEPT, all above the highest one checked, taken in
    *  turn with every analysis unmatched, could each be analysed more than
-   *  UNVERIFIED_MAX_TRIES times at start. */
+   *  UNVERIFIED_MAX_TRIES times at start between two Re-runs. */
   countUnverified(key: string): number {
     const tries: Record<string, number> = { ...(this.state.unverifiedTries ?? {}) }
     const now = (typeof tries[key] === 'number' && Number.isFinite(tries[key]) ? tries[key] : 0) + 1

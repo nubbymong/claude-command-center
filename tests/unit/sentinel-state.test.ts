@@ -70,8 +70,9 @@ describe('SentinelState for Codex (P3.9)', () => {
 
   // Fixer 11 (gate 3 F10, ADR-009 D1 round 2): the highest version checked,
   // which the start-up rule and the cap go by, is kept apart from the version
-  // the panel names (lastSeen*). It never goes down: a check of a lower
-  // version (a Re-run, or a downgrade seen at start) moves only the one shown.
+  // the panel names (lastSeen*). A check of a lower version (a downgrade seen
+  // at start, an analysis) moves only the one shown; fixer 12: only a Re-run's
+  // record, the user's own act, sets it to its version (below).
   it('the highest version checked follows a higher version and never goes down; the version shown follows each check', () => {
     const s = new SentinelState(dir)
     expect([s.highestChecked('claude'), s.highestChecked('codex')]).toEqual([null, null])
@@ -84,6 +85,20 @@ describe('SentinelState for Codex (P3.9)', () => {
     s.setLastSeenCodexVersion('0.157.0')
     expect(s.highestChecked('codex')).toBe('0.157.0')
     expect(new SentinelState(dir).snapshot()).toMatchObject({ lastSeenCodexVersion: '0.157.0', highestCheckedCodexVersion: '0.157.0', lastSeenCcVersion: '2.1.299', highestCheckedCcVersion: '2.1.300' })
+  })
+
+  // Fixer 12 (ADR-009 R3-1): a highest version stuck far ahead (a hand-edited
+  // file, a prerelease once installed) would block every real update at
+  // start; a Re-run's record sets it to the version the Re-run checked.
+  it('a Re-run\'s record sets the highest version checked to its version, down as well as up, for both providers', () => {
+    const s = new SentinelState(dir)
+    s.setLastSeenCodexVersion('9999.0.0')
+    s.setLastSeenCcVersion('2.9.0-alpha.1')
+    s.setLastSeenCodexVersion('0.156.0', { rerun: true })
+    s.setLastSeenCcVersion('2.1.300', { rerun: true })
+    expect([s.highestChecked('claude'), s.highestChecked('codex')]).toEqual(['2.1.300', '0.156.0'])
+    s.setLastSeenCodexVersion('0.157.0', { rerun: true })
+    expect(new SentinelState(dir).snapshot()).toMatchObject({ lastSeenCodexVersion: '0.157.0', highestCheckedCodexVersion: '0.157.0', highestCheckedCcVersion: '2.1.300' })
   })
 
   it('a state file from before fixer 11 (no highest version checked) takes its recorded version as the highest checked', () => {

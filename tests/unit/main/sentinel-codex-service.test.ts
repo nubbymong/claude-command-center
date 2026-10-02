@@ -637,11 +637,12 @@ describe('a Re-run (P3.9)', () => {
 // providers. A start analyses only a version higher than the highest one
 // checked, and a version's count of unmatched analyses is dropped only once
 // a version at or above it is recorded. Fixer 11 (gate 3 F10, ADR-009 D1
-// round 2, R2-1): the highest version checked never goes down (a Re-run of a
-// lower install moves only the version shown), the panel names the version
-// installed at the last completed check, and a recorded version that is not
-// a string loads as none. Each start below is a relaunch: Sentinel is read
-// again from its file, the real start-up check runs.
+// round 2, R2-1): no start and no analysis of a lower version lowers the
+// highest version checked, the panel names the version installed at the last
+// completed check, and a recorded version that is not a string loads as none.
+// Fixer 12 (ADR-009 R3-1): a Re-run's record, the user's own act, sets the
+// highest version checked to its version. Each start below is a relaunch:
+// Sentinel is read again from its file, the real start-up check runs.
 for (const p of ['codex', 'claude'] as const) {
   const name = p === 'codex' ? 'Codex' : 'Claude Code'
   const [LAST, A, B, C] = p === 'codex' ? ['0.153.4', '0.155.1', '0.156.0', '0.157.0'] : ['2.1.300', '2.1.301', '2.1.302', '2.1.303']
@@ -735,7 +736,7 @@ for (const p of ['codex', 'claude'] as const) {
       expect(trace.map((t) => t.shown)).toEqual([LAST, LAST, LAST, B, B])
     })
 
-    it('a downgrade, even to a version never seen, is not analysed at start; the panel names the version installed (gate 3 F10); a Re-run still analyses it; the next higher one is analysed', async () => {
+    it('a downgrade, even to a version never seen, is not analysed at start; the panel names the version installed (gate 3 F10); the next higher one is analysed from the highest version checked', async () => {
       only()
       await seed(B)
       expect(await startOn(A)).toEqual({ version: A, analysed: 0, shown: A, checked: B })
@@ -743,13 +744,6 @@ for (const p of ['codex', 'claude'] as const) {
       expect(sentinelVersionParts(snap, scope)).toEqual([p === 'codex' ? `Codex ${A}` : `CC ${A}`])
       expect(sentinelCompatibleSubject(snap, scope).text).toBe(`${name} ${A}`)
       expect(await startOn(LAST)).toEqual({ version: LAST, analysed: 0, shown: LAST, checked: B })
-      const s = await sentinel()
-      const before = analyses()
-      await s.sentinelRerun()
-      expect(analyses() - before).toBe(1)
-      // The Re-run of the lower version moves only the version shown.
-      expect(shownOf(s.getSentinelState()!.snapshot())).toBe(LAST)
-      expect(checkedOf(s.getSentinelState()!.snapshot())).toBe(B)
       expect(await startOn(C)).toEqual({ version: C, analysed: 1, shown: C, checked: C })
       // The update is analysed from the highest version checked, not the one
       // shown: the notes after B up to C, nothing of B or below.
@@ -761,10 +755,12 @@ for (const p of ['codex', 'claude'] as const) {
       }
     })
 
-    // Fixer 11 (ADR-009 D1 round 2, lens D finding 1): a Re-run of the lower
-    // install never lowers the highest version checked, so the higher one is
-    // not analysed again at start, past its cap.
-    it('two installs at the cap, then a Re-run of the lower one that matches: six more starts analyse nothing', async () => {
+    // Fixer 11 (ADR-009 D1 round 2, lens D finding 1) and fixer 12 (R3-1): a
+    // Re-run of the lower install, the user's own act, makes it the highest
+    // version checked. The higher one is then an update again at start, at
+    // most UNVERIFIED_MAX_TRIES analyses, and recorded; no start re-opens it
+    // after that. That cost comes only from the Re-run.
+    it('two installs at the cap, then a Re-run of the lower one: the higher one is analysed again at start at most three times, then never again', async () => {
       only()
       unmatched()
       await seed(LAST)
@@ -776,11 +772,45 @@ for (const p of ['codex', 'claude'] as const) {
       const before = analyses()
       await s.sentinelRerun()
       expect(analyses() - before).toBe(1)
+      expect(checkedOf(s.getSentinelState()!.snapshot())).toBe(A)
+      unmatched()
       const trace: Start[] = []
-      for (const v of [B, A, B, A, B, A]) trace.push(await startOn(v))
-      expect(trace.map((t) => t.analysed)).toEqual([0, 0, 0, 0, 0, 0])
-      expect(trace.map((t) => t.checked)).toEqual([B, B, B, B, B, B])
-      expect(trace.map((t) => t.shown)).toEqual([B, A, B, A, B, A])
+      for (const v of [B, A, B, A, B, A, B, A, B, A, B, A, B, A]) trace.push(await startOn(v))
+      expect(trace.map((t) => t.analysed)).toEqual([1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+      expect(trace.map((t) => t.checked)).toEqual([A, A, A, A, B, B, B, B, B, B, B, B, B, B])
+      expect(trace.slice(4).every((t) => t.shown === t.version)).toBe(true)
+    })
+
+    // Fixer 12 (ADR-009 R3-1): a highest version checked stuck far ahead (a
+    // hand-edited file, or a prerelease once installed and gone back from)
+    // keeps every real update from being analysed at start; a Re-run sets it
+    // to the installed version, and the next update is analysed again.
+    for (const [what, stuck] of [['far ahead', '9999.0.0'], ['a prerelease far ahead', p === 'codex' ? '0.200.0-alpha.1' : '2.9.0-alpha.1']] as const) {
+      it(`a highest version checked stuck ${what}: no update is analysed at start until a Re-run sets it to the installed version`, async () => {
+        only()
+        await sentinel(p === 'codex' ? { lastSeenCodexVersion: A, highestCheckedCodexVersion: stuck } : { lastSeenCcVersion: A, highestCheckedCcVersion: stuck })
+        expect(await startOn(B)).toEqual({ version: B, analysed: 0, shown: B, checked: stuck })
+        const s = await sentinel()
+        const before = analyses()
+        await s.sentinelRerun()
+        expect(analyses() - before).toBe(1)
+        expect(checkedOf(s.getSentinelState()!.snapshot())).toBe(B)
+        expect(await startOn(C)).toEqual({ version: C, analysed: 1, shown: C, checked: C })
+      })
+    }
+
+    it('a Re-run whose findings never match records the installed version at its third analysis, as the highest checked too', async () => {
+      only()
+      await sentinel(p === 'codex' ? { lastSeenCodexVersion: A, highestCheckedCodexVersion: '9999.0.0' } : { lastSeenCcVersion: A, highestCheckedCcVersion: '9999.0.0' })
+      unmatched()
+      install(B)
+      const s = await sentinel()
+      for (let i = 1; i <= 3; i++) {
+        await s.sentinelRerun()
+        expect(checkedOf(s.getSentinelState()!.snapshot()), `Re-run ${i}`).toBe(i < 3 ? '9999.0.0' : B)
+      }
+      matched()
+      expect(await startOn(C)).toEqual({ version: C, analysed: 1, shown: C, checked: C })
     })
 
     // Fixer 11 (ADR-009 R2-1): a recorded version that is not a string (a

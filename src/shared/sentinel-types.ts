@@ -41,9 +41,10 @@ export interface SentinelStateSnapshot {
   lastSeenCodexVersion?: string | null
   /** Fixer 11 (gate 3 F10, ADR-009 D1 round 2): the highest Claude Code
    *  version recorded as checked, which the start-up rule and the cap go by
-   *  (only a version above it is analysed at start). It never goes down, not
-   *  even for a Re-run of a lower version. Absent in a file written before
-   *  it: the recorded version (lastSeen*) is taken then. */
+   *  (only a version above it is analysed at start). No start and no analysis
+   *  lowers it; a Re-run's record, the user's own act, sets it to the version
+   *  the Re-run checked (fixer 12). Absent in a file written before it: the
+   *  recorded version (lastSeen*) is taken then. */
   highestCheckedCcVersion?: string | null
   /** Fixer 11: the same for Codex. */
   highestCheckedCodexVersion?: string | null
