@@ -3,8 +3,9 @@ import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 // P3.15 (row 71), PR-level ADR-009 round 1 (D5): a Windows package must ship
-// the conpty.dll and OpenConsole.exe a local Codex session runs under, in the
-// `conpty` folder beside the conpty.node node-pty loads (src/main/bundled-conpty.ts
+// the conpty.dll and OpenConsole.exe a PTY runs under when it asks for
+// node-pty's bundled ConPTY, in the `conpty` folder beside the conpty.node
+// node-pty loads (src/main/bundled-conpty.ts
 // looks there, in node-pty's loader order). `npm run verify:package`
 // (scripts/verify-native-unpack.mjs) fails when either is missing. The check
 // is a pure function of the unpacked node_modules folder and a file test, so

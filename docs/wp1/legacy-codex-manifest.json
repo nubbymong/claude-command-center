@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-02T05:17:08.410Z",
-  "head": "a047def825981fe0b531d936b387bec245a53ef0",
-  "tree": "1c925469e524d1dfa2e7941065be1ddb6e9bac96",
+  "generatedAt": "2026-10-02T05:48:26.509Z",
+  "head": "d4458ace482c91fd12b72e544b6768071b24ee99",
+  "tree": "ed645752d7799f762c42fbb06deaad3ce70eb701",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2602,
+  "trackedFileCount": 2608,
   "excludedFileCount": 386,
-  "scannedFileCount": 2216,
+  "scannedFileCount": 2222,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 659,
-  "pathDigest": "f7e751be96faa477261c4b87a42e57e23cbc12948b85398b181e83fdfdcc98b2",
+  "matchedPathCount": 661,
+  "pathDigest": "cd5634b7a35e42b52167298c6e3d6ca37cb703f0470f7fd9d610a36dbbf9acb9",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 665,
+      "lineCount": 676,
       "truncated": true
     },
     {
@@ -577,6 +577,14 @@
       "lineCount": 1
     },
     {
+      "path": "src/main/logging/codex-folder-key.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "lineCount": 9
+    },
+    {
       "path": "src/main/logging/codex-log-binder.ts",
       "predicates": [
         "P01",
@@ -597,7 +605,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 11
+      "lineCount": 16
     },
     {
       "path": "src/main/logging/log-supervisor.ts",
@@ -662,7 +670,7 @@
         "P05",
         "P14"
       ],
-      "lineCount": 41
+      "lineCount": 59
     },
     {
       "path": "src/main/model-registry-service.ts",
@@ -1039,7 +1047,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 366
+      "lineCount": 383
     },
     {
       "path": "src/main/sanitize-restored-spawn-options.ts",
@@ -3108,9 +3116,10 @@
       "path": "tests/unit/logging/codex-logs-worker.test.ts",
       "predicates": [
         "P01",
+        "P07",
         "P13"
       ],
-      "lineCount": 73
+      "lineCount": 94
     },
     {
       "path": "tests/unit/logging/codex-rollout-normalizer.test.ts",
@@ -3125,7 +3134,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 3
+      "lineCount": 7
     },
     {
       "path": "tests/unit/logging/search-dedupe.test.ts",
@@ -3506,7 +3515,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 71
+      "lineCount": 76
     },
     {
       "path": "tests/unit/main/pty-conpty-per-provider.test.ts",
@@ -3578,6 +3587,14 @@
         "P13"
       ],
       "lineCount": 47
+    },
+    {
+      "path": "tests/unit/main/pty-spawn-restart-pending.test.ts",
+      "predicates": [
+        "P07",
+        "P13"
+      ],
+      "lineCount": 18
     },
     {
       "path": "tests/unit/main/pty-spawn-waits-for-refresh.test.ts",
