@@ -10,8 +10,14 @@
 // Run AFTER a package build (e.g. `npm run package` or `npm run package:win`,
 // which emit dist/win-unpacked/...). Cross-platform: searches dist/ for the
 // app.asar.unpacked tree so it also works for the macOS layout.
+//
+// On Windows it also asserts node-pty's bundled ConPTY files, conpty.dll and
+// OpenConsole.exe, beside the conpty.node node-pty loads
+// (verify-bundled-conpty.mjs): without them a local Codex session falls back to
+// the system ConPTY.
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { bundledConptyProblems } from './verify-bundled-conpty.mjs'
 
 const distDir = resolve(process.cwd(), 'dist')
 
@@ -93,6 +99,12 @@ for (const nm of nmDirs) {
       ok = false
       console.log(`[verify-native-unpack] ${label}: MISSING  (looked at: ${candidates.map((rel) => join(nm, rel)).join(' | ')})`)
     }
+  }
+  // PR-level ADR-009 round 1 (D5): on Windows, node-pty's bundled ConPTY files
+  // (conpty.dll, OpenConsole.exe) beside the conpty.node it loads.
+  for (const problem of bundledConptyProblems(nm)) {
+    ok = false
+    console.log(`[verify-native-unpack] node-pty bundled ConPTY: MISSING  (${problem})`)
   }
 }
 
