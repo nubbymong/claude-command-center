@@ -36,7 +36,14 @@
  * written while not indexed (`before`); a conversation's windows past
  * WINDOWS_PER_CONVERSATION_MAX are merged (the two oldest into one spanning
  * both), and past NOT_INDEXED_CONVERSATIONS_MAX conversations the least
- * recently changed goes after `before` is raised past its windows.
+ * recently changed one with no window still open goes after `before` is raised
+ * past its windows (PR-level ADR-009 round 1, C2: one still open never goes).
+ *
+ * PR-level ADR-009 round 1 (C1): a Codex session not indexed also holds a
+ * cover window on its realm's launch folder (codex-folder-key.ts), beside the
+ * one conversation it is on, from the moment it became not indexed until it
+ * ends, as a Claude session holds its projects folder's: the rollouts its own
+ * watcher never claims are left out by that folder.
  *
  * Kept in the app's data folder; a newly opened window is written at once,
  * other changes coalesced from a timer, atomically, and at quit (which
@@ -60,6 +67,8 @@ export interface NotIndexedUpdate {
 }
 
 export const NOT_INDEXED_CONVERSATIONS_MAX = 50000
+/** The cap in force (tests set a small one). */
+let conversationsMax = NOT_INDEXED_CONVERSATIONS_MAX
 export const WINDOWS_PER_CONVERSATION_MAX = 64
 const KEY_MAX = 200
 const SESSION_MAX = 200
@@ -130,8 +139,19 @@ function raiseBefore(to: number): void {
   if (Number.isFinite(to)) before = before === null ? to : Math.max(before, to)
 }
 
+/** PR-level ADR-009 round 1 (C2): the least recently changed conversation,
+ *  other than `except`, whose windows are all closed; none when every one has
+ *  a window still open. */
+function oldestClosed(except: string | null): string | undefined {
+  for (const [k, list] of windows) if (k !== except && list.every((w) => w[1] !== null)) return k
+  return undefined
+}
+
 /** Keep a conversation's windows and the conversations within their caps,
- *  always toward not indexing. */
+ *  always toward not indexing. Round 1 (C2): a conversation with a window
+ *  still open (a session not indexed is on it, or a killed one winds down) is
+ *  never dropped, so what it writes after is never in no window; past the cap
+ *  only those are kept (bounded by the sessions holding them). */
 function bound(key: string, now: number): void {
   const list = windows.get(key)
   if (list && list.length > WINDOWS_PER_CONVERSATION_MAX) {
@@ -142,13 +162,19 @@ function bound(key: string, now: number): void {
       list.unshift([Math.min(a[0], b[0]), end])
     }
   }
-  while (windows.size > NOT_INDEXED_CONVERSATIONS_MAX) {
-    const oldest = windows.keys().next().value as string
-    if (oldest === key) break
+  while (windows.size > conversationsMax) {
+    const oldest = oldestClosed(key)
+    if (oldest === undefined) break
     const dropped = windows.get(oldest) ?? []
     windows.delete(oldest)
     raiseBefore(dropped.reduce((m, w) => Math.max(m, w[1] ?? now), 0))
   }
+}
+
+/** Round 1 (C2): whether a window on `key` can be kept within the cap: the
+ *  conversation is kept already, there is room, or a closed one can go. */
+function roomFor(key: string): boolean {
+  return windows.has(key) || windows.size < conversationsMax || oldestClosed(null) !== undefined
 }
 
 function touch(key: string): NotIndexedWindow[] {
@@ -249,17 +275,21 @@ function closeHeld(held: { key: string; win: NotIndexedWindow }, ts: number): vo
 /** `sessionId`, not indexed since `since` (its launch, or the switch-off),
  *  holds the conversation at `rolloutPath` as of `now` (the claim; by default
  *  `since`): a window opens at `since`, and the window the session held on
- *  another conversation closes at `now`. */
+ *  another conversation closes at `now`. PR-level ADR-009 round 1 (C1): a
+ *  cover the session holds (a Codex session's realm folder) stays open and
+ *  held. Round 1 (C2): taken past the conversations' cap too (a Codex session
+ *  is on one conversation at a time, and its folder covers only rollouts that
+ *  record its launch folder). */
 export function openNotIndexedWindow(sessionId: string, rolloutPath: string, since: number, now: number = since): void {
   if (typeof sessionId !== 'string' || !sessionId || sessionId.length > SESSION_MAX || typeof rolloutPath !== 'string' || !rolloutPath || !Number.isFinite(since) || !Number.isFinite(now)) return
   const key = conversationKey(rolloutPath)
   const held = openBy.get(sessionId) ?? []
   if (held.some((h) => h.key === key)) return
   const changed: string[] = []
-  for (const h of held) { closeHeld(h, now); changed.push(h.key) }
+  for (const h of held) { if (!h.cover) { closeHeld(h, now); changed.push(h.key) } }
   const win: NotIndexedWindow = [Math.min(since, now), null]
   touch(key).push(win)
-  openBy.set(sessionId, [{ key, win }])
+  openBy.set(sessionId, [...held.filter((h) => h.cover), { key, win }])
   bound(key, now)
   changed.push(key)
   // A newly opened window is written at once.
@@ -278,6 +308,11 @@ export function openNotIndexedWindow(sessionId: string, rolloutPath: string, sin
  * may be held past it, up to HELD_COVER_WINDOWS_MAX more, and stays open until
  * the session ends (closeHeldNotIndexedWindow leaves it). Written at once when
  * `writeNow` (a session's first window), else with the coalesced write.
+ * PR-level ADR-009 round 1 (C2): a window that is not a cover is 'full' too
+ * when the conversations' cap is reached and every conversation kept has a
+ * window still open; its caller covers it then, as past the session's own
+ * cap. A cover is taken past the conversations' cap (at most
+ * HELD_COVER_WINDOWS_MAX a session).
  */
 export function keepNotIndexedWindow(sessionId: string, key: string, since: number, now: number = since, opts: { writeNow?: boolean; cover?: boolean } = {}): KeepNotIndexedResult {
   if (typeof sessionId !== 'string' || !sessionId || sessionId.length > SESSION_MAX || typeof key !== 'string' || !key || key.length > KEY_MAX || !Number.isFinite(since) || !Number.isFinite(now)) return 'invalid'
@@ -289,6 +324,7 @@ export function keepNotIndexedWindow(sessionId: string, key: string, since: numb
     return 'held'
   }
   if (held.length >= HELD_WINDOWS_PER_SESSION_MAX + (opts.cover ? HELD_COVER_WINDOWS_MAX : 0)) return 'full'
+  if (!opts.cover && !roomFor(key)) return 'full'
   const win: NotIndexedWindow = [Math.min(since, now), null]
   touch(key).push(win)
   held.push(opts.cover ? { key, win, cover: true } : { key, win })
@@ -315,16 +351,22 @@ export function closeHeldNotIndexedWindow(sessionId: string, key: string, ts: nu
 }
 
 /** `sessionId` stops holding its conversations while not indexed (it ends,
- *  relaunches, lets the claim go, or is indexed): every window it holds closes. */
-export function closeNotIndexedWindow(sessionId: string, ts: number): void {
+ *  relaunches, lets the claim go, or is indexed): every window it holds closes.
+ *  PR-level ADR-009 round 1 (C1): with `coversStay` (a Codex session that let
+ *  its claim go and runs on), its cover windows stay open and held. */
+export function closeNotIndexedWindow(sessionId: string, ts: number, opts: { coversStay?: boolean } = {}): void {
   // Stopping: Codex's last writes land after this, so the window stays open (the next start closes it).
   if (stopping) return
   const held = openBy.get(sessionId)
   if (held === undefined) return
-  openBy.delete(sessionId)
-  if (Number.isFinite(ts)) for (const h of held) closeHeld(h, ts)
+  const covers = opts.coversStay ? held.filter((h) => h.cover) : []
+  const closing = opts.coversStay ? held.filter((h) => !h.cover) : held
+  if (covers.length > 0) openBy.set(sessionId, covers)
+  else openBy.delete(sessionId)
+  if (closing.length === 0) return
+  if (Number.isFinite(ts)) for (const h of closing) closeHeld(h, ts)
   schedule()
-  tell(held.map((h) => h.key))
+  tell(closing.map((h) => h.key))
 }
 
 /** `sessionId` is killed (a tab closed, a Restart, a Switch): it holds its
@@ -377,6 +419,12 @@ export function indexingGapsWritesForTests(): number {
   return writes
 }
 
+/** Tests only: the conversations kept before the oldest goes (null: the
+ *  shipped cap). */
+export function setNotIndexedConversationsMaxForTests(max: number | null): void {
+  conversationsMax = max ?? NOT_INDEXED_CONVERSATIONS_MAX
+}
+
 /** Tests only. */
 export function resetIndexingGapsForTests(): void {
   if (timer) { clearTimeout(timer); timer = null }
@@ -387,4 +435,5 @@ export function resetIndexingGapsForTests(): void {
   file = null
   dirty = false
   listener = null
+  conversationsMax = NOT_INDEXED_CONVERSATIONS_MAX
 }

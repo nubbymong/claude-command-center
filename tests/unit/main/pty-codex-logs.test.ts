@@ -156,7 +156,8 @@ const { spawnPty, killPty, codexRolloutForSessionContext, CODEX_CONTEXT_ROLLOUTS
 const { getCodexLogBinder } = await import('../../../src/main/logging/codex-log-binder')
 const { claudeFolderKey, claudeProjectsRootKey } = await import('../../../src/main/logging/claude-folder-key')
 const { mangleCwdToProjectDir } = await import('../../../src/shared/project-key')
-const { notIndexedSnapshot, conversationKey, resetIndexingGapsForTests, flushIndexingGaps, initIndexingGaps, indexingGapsWritesForTests, HELD_WINDOWS_PER_SESSION_MAX } = await import('../../../src/main/logging/indexing-gaps')
+const { notIndexedSnapshot, conversationKey, resetIndexingGapsForTests, flushIndexingGaps, initIndexingGaps, indexingGapsWritesForTests, HELD_WINDOWS_PER_SESSION_MAX, keepNotIndexedWindow, setNotIndexedConversationsMaxForTests } = await import('../../../src/main/logging/indexing-gaps')
+const { codexFolderKey } = await import('../../../src/main/logging/codex-folder-key')
 /** A conversation's not-indexed windows (as main keeps them). */
 const windowsOf = (id: string) => notIndexedSnapshot().conversations[conversationKey(rolloutOfId(id))] ?? []
 const rolloutOfId = (id: string) => `/res/codex-realms/a/sessions/2026/09/29/rollout-2026-09-29T10-00-00-${id}.jsonl`
@@ -610,6 +611,91 @@ describe('P3.12 round 7 (K1): a killed session\'s window closes when its process
     killPty(S)
     exitOf(proc)
     expect(windowsOf(ID_A)).toEqual([])
+  })
+})
+
+describe('PR-level ADR-009 round 1 (C1): a Codex session not indexed marks its realm\'s launch folder until it ends', () => {
+  // The parity of a Claude session's projects-folder window: the rollouts its
+  // own watcher never claims (another tab took one by folder and time, Codex
+  // began one inside it with no hook to say so) are left out by the folder of
+  // its realm their session_meta records (transcripts worker).
+  const T0 = Date.parse('2026-09-30T10:00:00.000Z')
+  const used: string[] = []
+  let next = 60
+  const fresh = () => { const sid = `cx${'0'.repeat(20)}${next++}`; used.push(sid); return sid }
+  const clock = (ms: number) => vi.setSystemTime(T0 + ms)
+  /** The folder window the session's launch holds: its realm and the folder its watcher matches rollouts by. */
+  const folderOf = (sid: string) => {
+    const o = source(sid).opts
+    return notIndexedSnapshot().conversations[codexFolderKey(o.sessionsDir, o.cwd)] ?? []
+  }
+  const folderKeys = () => Object.keys(notIndexedSnapshot().conversations).filter((k) => k.startsWith('codex-folder:'))
+  const exitOf = (proc: { exit: Array<(e: { exitCode: number }) => void> }) => { for (const cb of [...proc.exit]) cb({ exitCode: 0 }) }
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] }); clock(0) })
+  afterEach(() => { for (const sid of used.splice(0)) { try { killPty(sid) } catch { /* gone */ } } vi.useRealTimers() })
+
+  it('a launch not indexed: the folder is marked from the launch; a claim, another claim and a claim let go leave it open; its own exit closes it', () => {
+    const S = fresh()
+    h.settings = { ...CONSENT, loggingEnabled: false }
+    h.duringStart = () => clock(1500)
+    start(S)
+    const proc = h.ptys.at(-1)!
+    expect(source(S).opts.sessionsDir).toBe(SESSIONS)
+    expect(folderOf(S)).toEqual([[T0, null]])
+    clock(3000)
+    ;(source(S).opts.onRollout as (r: unknown) => void)({ ...report(ID_A, false), identity: '7:1' })
+    clock(4000)
+    ;(source(S).opts.onRollout as (r: unknown) => void)({ ...report(ID_B, true), identity: '7:2' })
+    clock(5000)
+    ;(source(S).opts.onRollout as (r: unknown) => void)(null)
+    expect(windowsOf(ID_B)).toEqual([[T0, T0 + 5000]])
+    expect(folderOf(S)).toEqual([[T0, null]])
+    clock(9000)
+    exitOf(proc)
+    expect(folderOf(S)).toEqual([[T0, T0 + 9000]])
+  })
+
+  it('switched off while running: the folder is marked from the switch-off; an indexed launch marks none', () => {
+    const S = fresh()
+    start(S)
+    expect(folderKeys()).toEqual([])
+    clock(3000)
+    h.settings = { ...CONSENT, loggingEnabled: false }
+    applyLoggingSwitches()
+    expect(folderOf(S)).toEqual([[T0 + 3000, null]])
+  })
+
+  it('a tab closed: the folder window stays open through the wind-down and closes when the exit is reported; a Restart\'s new launch marks its own', () => {
+    const S = fresh()
+    h.settings = { ...CONSENT, loggingEnabled: false }
+    start(S)
+    const old = h.ptys.at(-1)!
+    clock(2000)
+    start(S)
+    expect(folderOf(S)).toEqual([[T0, null], [T0 + 2000, null]])
+    clock(4000)
+    exitOf(old)
+    expect(folderOf(S)).toEqual([[T0, T0 + 4000], [T0 + 2000, null]])
+    const now = h.ptys.at(-1)!
+    clock(5000)
+    killPty(S)
+    expect(folderOf(S)).toEqual([[T0, T0 + 4000], [T0 + 2000, null]])
+    clock(6000)
+    exitOf(now)
+    expect(folderOf(S)).toEqual([[T0, T0 + 4000], [T0 + 2000, T0 + 6000]])
+  })
+})
+
+describe('PR-level ADR-009 round 1 (C2): past the conversations kept, a Claude session not indexed is covered by its folder', () => {
+  it('every conversation open at the cap: a launch not indexed still marks its projects folder (a cover, open until it ends)', () => {
+    setNotIndexedConversationsMaxForTests(1)
+    keepNotIndexedWindow('someone-else', 'held-open', 1)
+    h.settings = { ...CONSENT, loggingEnabled: false }
+    spawnPty(fakeWin, CLAUDE_SID, { cwd: os.tmpdir(), provider: 'claude' } as never)
+    const folder = claudeFolderKey(path.join(os.homedir(), '.claude', 'projects', mangleCwdToProjectDir(process.platform === 'win32' ? os.tmpdir() : fs.realpathSync(os.tmpdir()))))
+    expect(notIndexedSnapshot().conversations[folder]).toEqual([[expect.any(Number), null]])
+    expect(notIndexedSnapshot().conversations['held-open']).toEqual([[1, null]])
+    try { killPty(CLAUDE_SID) } catch { /* gone */ }
   })
 })
 
