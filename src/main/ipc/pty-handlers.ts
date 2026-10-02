@@ -6,7 +6,7 @@ import { getAccountsService } from '../provider-accounts'
 import { awaitCodexHookFolders } from '../codex-hook-folders'
 import { getGateway } from '../hooks'
 import { providerLaunchRefusal } from '../provider-launch-gate'
-import { claimConfigLaunch, settleConfigLaunch, discardConfigLaunch, type ConfigLaunchTicket } from '../launch-one-at-a-time'
+import { claimConfigLaunch, settleConfigLaunch, discardConfigLaunch, noteConfigLaunchPreparation, type ConfigLaunchTicket } from '../launch-one-at-a-time'
 import type { AccountLease, AccountsService } from '../providers/core'
 import type { ConversationCarryNotice } from '../../shared/providers'
 import { forgetCanvasMarkers } from '../canvas/canvas-marker-delivery'
@@ -800,6 +800,9 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     // the gate above let through, never for a shell or a Codex session.
     const legacyInstall = launchProvider === 'claude' && !!(options?.legacyVersion?.enabled && options.legacyVersion.version && !isVersionInstalled(options.legacyVersion.version))
     const preparation = codexSession || legacyInstall ? beginSpawnPreparation(win, sessionId, options?.shellOnly ? null : (options?.provider ?? 'claude')) : null
+    // PR-level ADR-009 round 1 (B1): once that preparation is cancelled or
+    // superseded, this spawn's ticket stops counting as one under way.
+    if (preparation) noteConfigLaunchPreparation(configClaim.ticket, () => preparation.current)
     let codexLease: AccountLease | undefined
     let carry: RespawnCarry | undefined
     try {
