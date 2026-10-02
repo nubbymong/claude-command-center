@@ -57,7 +57,8 @@ export interface ResumeEnrichDeps {
    * P3.7: each conversation's running time, as main keeps it
    * (conversation-running-time.ts), saved with the state at every save,
    * whichever tabs are open (a closed tab's conversation can be resumed
-   * later), so a session's Duration carries on across a relaunch.
+   * later), so a session's Duration carries on across a relaunch. After a
+   * clear they are written on their own (session-durability.ts, fixer 9 A1).
    */
   getConversationRunningTimes?: () => Array<{ id: string; ms: number; until: number; gaps?: Array<{ from: number; to: number }>; gapMs?: number }>
 }
@@ -138,8 +139,10 @@ export function enrichSessionStateWithResumeTargets(
     }
   }
   if (deps.getConversationRunningTimes) {
-    // Main's own list, never what the renderer sent (as C8 for the uncertain
-    // list): when main cannot give one, none is written.
+    // Main's own list, never what the renderer sent: when main cannot give
+    // one (its getter throws or answers with no list), none is written and
+    // the renderer's is dropped. Unlike the uncertain list above, which keeps
+    // the state's own copy when its getter throws.
     let times: unknown = null
     try {
       times = deps.getConversationRunningTimes()

@@ -212,8 +212,9 @@ describe('enrichSessionStateWithResumeTargets saves the conversations\' running 
     expect(s.conversationRunningTimes).toEqual(MAIN)
   })
 
-  // Review fix 5 (as P3.6's C8 for the uncertain list): the list is main's
-  // own; when main cannot give it, none is written, never the renderer's.
+  // Review fix 5: the list is main's own; when main cannot give it, none is
+  // written, never the renderer's (unlike the uncertain list, which keeps the
+  // state's own copy when its getter throws: the test above).
   it('a source that throws or gives no list: the list the renderer sent is removed', () => {
     const s = state([{ id: 's1', provider: 'codex' }])
     s.conversationRunningTimes = MAIN
