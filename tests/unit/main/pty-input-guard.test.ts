@@ -4,7 +4,7 @@
 // (the VM run at 98455d52: "write EAGAIN" right after the program in the PTY
 // ended, under node-pty's bundled ConPTY) was an uncaught exception, and the
 // app quit. guardPtyInput gives that socket its listener.
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { EventEmitter } from 'events'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -114,5 +114,91 @@ describe('guardPtyOutput (round 4, P4)', () => {
     expect(windows).toMatch(/if \(_this\.listeners\('error'\)\.length < 2\) \{\s*throw err;/)
     expect(terminal).toMatch(/Terminal\.prototype\.on = function \(eventName, listener\) \{[\s\S]*?this\._socket\.on\(eventName, listener\);/)
     expect(terminal).toMatch(/Terminal\.prototype\.listeners = function \(eventName\) \{\s*return this\._socket\.listeners\(eventName\);/)
+  })
+})
+
+// Round 5 (R1): node-pty's unix handler (unixTerminal.js, macOS and Linux)
+// returns on an EAGAIN on the output socket and reads on; reporting it would end
+// a healthy session after the grace. Its Windows handler closes the PTY on one,
+// so there it stays a failure. The guard follows node-pty on each platform.
+describe('an EAGAIN on a PTY\'s output (round 5, R1)', () => {
+  const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  const onPlatform = (p: NodeJS.Platform) => Object.defineProperty(process, 'platform', { value: p, configurable: true })
+  afterEach(() => { Object.defineProperty(process, 'platform', realPlatform) })
+  const lib = path.resolve(__dirname, '..', '..', '..', 'node_modules', 'node-pty', 'lib')
+
+  /** A PTY as node-pty builds it on each platform: every event but 'close' on
+   *  its output socket, with node-pty's own handler there (unixTerminal.js or
+   *  windowsTerminal.js); `closed` counts its _close(). */
+  const ptyOn = (handler: 'unix' | 'windows') => {
+    const outSocket = new EventEmitter()
+    const closed = vi.fn()
+    outSocket.on('error', (err: NodeJS.ErrnoException) => {
+      if (handler === 'unix' && err.code && err.code.includes('EAGAIN')) return
+      closed()
+      if (err.code && (err.code.includes('errno 5') || err.code.includes('EIO'))) return
+      if (outSocket.listeners('error').length < 2) throw err
+    })
+    return { pty: { on: (ev: string, l: (...a: unknown[]) => void) => { outSocket.on(ev, l) } }, outSocket, closed }
+  }
+
+  it('node-pty\'s unix handler reads on after an EAGAIN (no close, no throw); its Windows handler closes the PTY on one', () => {
+    const unix = ptyOn('unix')
+    expect(() => unix.outSocket.emit('error', failure('EAGAIN'))).not.toThrow()
+    expect(unix.closed).not.toHaveBeenCalled()
+    const windows = ptyOn('windows')
+    expect(() => windows.outSocket.emit('error', failure('EAGAIN'))).toThrow('write EAGAIN')
+    expect(windows.closed).toHaveBeenCalledTimes(1)
+  })
+
+  it('off Windows an EAGAIN is not reported (the session reads on); any other error but EIO still is, once', () => {
+    for (const platform of ['linux', 'darwin'] as const) {
+      onPlatform(platform)
+      const { pty, outSocket } = ptyOn('unix')
+      const seen = vi.fn()
+      expect(guardPtyOutput(pty, seen), platform).toBe(true)
+      expect(() => outSocket.emit('error', failure('EAGAIN')), platform).not.toThrow()
+      expect(() => outSocket.emit('error', failure('EAGAIN')), platform).not.toThrow()
+      outSocket.emit('error', failure('EIO'))
+      expect(seen, platform).not.toHaveBeenCalled()
+      expect(() => outSocket.emit('error', failure('ECONNRESET')), platform).not.toThrow()
+      expect(seen, platform).toHaveBeenCalledTimes(1)
+      expect(seen.mock.calls[0][0].code, platform).toBe('ECONNRESET')
+    }
+  })
+
+  it('on Windows an EAGAIN on the output is still reported once (node-pty has closed the PTY), and never thrown', () => {
+    onPlatform('win32')
+    const { pty, outSocket } = ptyOn('windows')
+    const seen = vi.fn()
+    expect(guardPtyOutput(pty, seen)).toBe(true)
+    expect(() => outSocket.emit('error', failure('EAGAIN'))).not.toThrow()
+    expect(() => outSocket.emit('error', failure('EAGAIN'))).not.toThrow()
+    expect(seen).toHaveBeenCalledTimes(1)
+    expect(seen.mock.calls[0][0].code).toBe('EAGAIN')
+  })
+
+  it('the input side is unchanged: an EAGAIN on a Windows PTY\'s input is reported whatever the platform', () => {
+    for (const platform of ['win32', 'linux'] as const) {
+      onPlatform(platform)
+      const { pty, inSocket } = windowsPty()
+      const seen = vi.fn()
+      guardPtyInput(pty, seen)
+      inSocket.emit('error', failure('EAGAIN'))
+      expect(seen, platform).toHaveBeenCalledTimes(1)
+    }
+  })
+
+  it('the installed node-pty: its unix handler returns on an EAGAIN before it closes the PTY, its Windows handler has no such return, and the Windows one is used only on win32', () => {
+    const unix = fs.readFileSync(path.join(lib, 'unixTerminal.js'), 'utf8')
+    const windows = fs.readFileSync(path.join(lib, 'windowsTerminal.js'), 'utf8')
+    const index = fs.readFileSync(path.join(lib, 'index.js'), 'utf8')
+    expect(unix).toMatch(/_this\._socket\.on\('error', function \(err\) \{\s*\/\/[^\n]*\n\s*if \(err\.code\) \{\s*if \(~err\.code\.indexOf\('EAGAIN'\)\) \{\s*return;\s*\}\s*\}\s*\/\/ close\s*_this\._close\(\);/)
+    const handlerStart = windows.indexOf("_this._socket.on('error', function (err) {")
+    expect(handlerStart).toBeGreaterThan(-1)
+    const windowsHandler = windows.slice(handlerStart, windows.indexOf("_this._socket.on('close'", handlerStart))
+    expect(windowsHandler).toMatch(/_this\._close\(\);/)
+    expect(windowsHandler).not.toMatch(/EAGAIN/)
+    expect(index).toMatch(/if \(process\.platform === 'win32'\) \{\s*terminalCtor = require\('\.\/windowsTerminal'\)\.WindowsTerminal;\s*\}\s*else \{\s*terminalCtor = require\('\.\/unixTerminal'\)\.UnixTerminal;/)
   })
 })
