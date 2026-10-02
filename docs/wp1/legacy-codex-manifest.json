@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-01T21:26:12.578Z",
-  "head": "8278c740c2c90fc9abe0ef380a43570b6a5cb438",
-  "tree": "93ff640669760c245eec255a0bd4623687742444",
+  "generatedAt": "2026-10-02T00:50:02.118Z",
+  "head": "2aef62a063d3938a67cec644d354e5b3202dfb76",
+  "tree": "2db519c81627c4c7208597683b7349dbb369625a",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 643,
+      "lineCount": 648,
       "truncated": true
     },
     {
@@ -3506,7 +3506,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 45
+      "lineCount": 46
     },
     {
       "path": "tests/unit/main/pty-handlers-codex-review.test.ts",
@@ -4226,7 +4226,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 41
+      "lineCount": 44
     },
     {
       "path": "tests/unit/renderer/app-lifecycle-wiring.test.ts",

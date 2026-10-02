@@ -3261,14 +3261,16 @@ search lists a turn once whichever sessions indexed it, a Claude turn as a
 Codex one. Main marks what a local Claude session writes while its run is one
 the logging switches and rules leave out (not one whose log service is missing
 that time): while it has named no transcript, its projects folder (the
-canonical folder its transcripts are bound under, from its launch folder), and
-each transcript it names (only a `<uuid>.jsonl` directly in that folder, from
-its hooks and status line, or its exact resume at launch), each from the
-moment it became not indexed (its launch, or the switch-off), the folder until
-its first name, each name until the session ends. A killed session's windows
-close when its exit is reported (its exit handler) or the account lease's
-grace passes. A session holds at most 32 windows; its first is written at once,
-the rest in the coalesced write. Shells and SSH sessions mark nothing.
+canonical folder its transcripts are bound under, the one Claude Code names
+for its launch folder), and each transcript it names (only a `<uuid>.jsonl`
+directly in that folder or, round 2, in another project's folder under the
+projects root, from its hooks and status line, or its exact resume at launch),
+each from the moment it became not indexed (its launch, or the switch-off), the
+folder until its first name, each name until the session ends. A killed
+session's windows close when its exit is reported (its exit handler) or the
+account lease's grace passes. A session holds at most 32 windows of names, and
+past them the windows that cover the names (round 2, Q2); its first is written
+at once, the rest in the coalesced write. Shells and SSH sessions mark nothing.
 M2 (19b26919; round 1 N10, ASCII source): the Claude Code overload and
 safeguard detectors read only the current turn, the rows below the newest user
 message in the 12-row tail, as Codex's do (`patterns.ts`); a draft in the input
@@ -3318,7 +3320,8 @@ window, and a later reader indexes it, for both assistants; a Claude projects
 folder's window covers every transcript in that folder for its stretch, so
 what another session indexed there in that stretch is left out of a later
 reader's read (toward not indexing); the folder is worked out from the launch
-folder as the transcript binder's discovery works it out.
+folder as the transcript binder's discovery works it out (round 2: as Claude
+Code names it, below).
 Mutants: round 0, M1 29 of 30 red (one equivalent, unreachable), M2 4, M3 5,
 M4 11, M5 2, M7 7, M8 21; round 1, N1 to N4 19, N6 and N10 7, N7 44, N8 20, N9
 11; all red and restored. Checks: typecheck, tsc of the touched tests, the
@@ -3339,6 +3342,85 @@ session whose hooks and status line are off (N1); an e2e Claude session with
 the isolated home. Left to the sweep: a changelog line names Codex only; the
 Alt+V tip and `training-steps.ts` line 695
 do not mention the partner view.
+VM re-check of round 1 at f2b1cf65 (WINDOWS_1): PASS the Attention Pulse after
+a turn of two minutes or more of each assistant; Alt+V in the partner view of a
+Codex and a Claude tab (the quoted path into the partner shell, nothing to the
+session behind it); Services gaps 0 after Restarts from the partner and the
+main view and at a close; the record-time windows of a Claude session with
+hooks, status line and the index off, and a later indexed run indexing its
+own; a crash's vision browser found by its profile and ended at the next
+start; with the debug port in use at start, vision not started;
+e2e (5 passed, the real home untouched).
+Judge: one "session ended" event at a Restart pressed in the partner view
+(round 2, Q5); vision never became reachable on WINDOWS_1 (round 2, Q6).
+Round 2 (Q1 to Q8; the round 1 spec and code-quality reviews, ADR-009 pass 2
+lens A and B, the VM re-check above). Q1 (lens A and B): Claude Code 2.1.285 to
+2.1.287 (their own function, read from the pinned binaries) cut a projects
+folder name longer than 200 characters at 200 and add `-` and the base-36
+absolute value of a 32-bit hash of the whole launch folder; the shared rule
+does the same, byte for byte (`src/shared/project-key.ts`, and its copy in
+`scripts/resume-picker.js`), and main names the real path of the launch folder
+on Linux and macOS, as Claude Code takes it (`claudeProjectDirName`,
+`transcript-discovery.ts`). So the folder a session not indexed marks, the
+names it takes, the exact resume's transcript and its bind, the heuristic bind
+and the resume picker name the folder Claude Code writes to. Q2 (lens A CAP,
+lens B B2-2): past the 32 names a session holds windows for, a name gets no
+window of its own, and none is left in no window: its own projects folder's
+window opens again, from the moment the session became not indexed until it
+ends, and a name in another project's folder opens one on the projects root
+(a Claude tail leaves out what is stamped in its folder's root window too); a
+session holds at most 34. Q3: a `<uuid>.jsonl` directly in another project's
+folder under the projects root (a /resume across projects) is taken, within
+the cap. Q4 (lens B): when the query of the browsers on the debug port fails or
+times out, nothing is ended, and a profile folder that is still locked (or
+whose lock cannot be read) keeps vision from starting, as does one an ended
+leftover still holds; the lock is read as the browser keeps it (`lockfile` held
+open on Windows, `SingletonLock` on Linux and macOS; `vision-browser-owner.ts`
+profileLockOf). Q5: with nothing on the debug port and neither profile folder
+locked, a launch runs no process query; on Windows a relaunch ends the app's
+own browser through its own process handle (no taskkill, nothing blocking);
+the Services count ignores the reports of a terminal mount a later mount
+replaced; a Restart's kill says so (`pty:kill`), and the exit of the process it
+ended restarts the count quietly, so a Restart pressed in the partner view
+logs no "session ended", while a close logs one, also for a tab whose process
+had ended before. Q6: on WINDOWS_1 the browser the app starts never opens its
+debug port, while the same command line started there by hand does; the same
+relaunch cadence shows in P3.15's VM runs of 2026-10-01, before P3.16a changed
+vision, so it is not from P3.16a; on the owner's machine the app's browser
+listens. Nothing in the app's logs or code tells why (the browser runs until a
+relaunch ends it, exit code 1): recorded, owed on the VM below. Q7: Alt+V in the
+partner view with the partner shell not running types nothing, and the hint
+says so and where the image was saved; the route comment names each route; the
+attention card's muted-text scan pins its count exactly.
+Limits (round 2, Q8): while a session that is not indexed runs, a transcript
+it named stays marked, so an indexed tab that resumes it in that stretch has
+those turns left out (toward not indexing); a window on the projects root (a
+session past its cap that named another project's transcript) leaves out what
+any session wrote in any project's folder in that stretch; on Windows the
+folder is named from the launch folder as given, so a launch folder reached
+through a junction, or written in another case than on disk, may be named
+otherwise by Claude Code (not verified: it takes the real path); one copy of
+the app per vision debug port: two copies on the same port (a development copy
+beside the installed one) share one vision browser profile folder, so they are
+run on different vision ports (lens B B-M8-1).
+Every local Claude launch has a launch folder (the configured one, or the home
+folder), so a session with none (round 1, spec nit 3) does not occur.
+Mutants: round 2, Q1 to Q3 18, Q4 to Q7 23; all red and restored.
+Checks: typecheck, tsc of the touched tests, 193 affected and scanner
+files, the WP1 files (manifest rebound at 2aef62a0, path digest fa175eaf unchanged).
+Owed on the VM for round 2: vision on WINDOWS_1, whose heartbeat relaunch loop
+has no known cause (while the app's browser runs: whether its profile folder
+holds `DevToolsActivePort` and what its pid listens on; the same command line
+by hand with the app's own profile folder; the same command line started the
+way the harness starts the app; the app started from the VM's desktop session
+rather than the harness); a launch with nothing on the port and no profile
+locked runs no PowerShell, and a relaunch ends the browser with no taskkill; a
+Restart pressed in the partner view logs no "session ended", a close one; a
+launch folder longer than 200 characters, not indexed, then resumed in an
+indexed tab (its windows and the exact resume's bind); a /resume across
+projects in a session not indexed; Alt+V in the
+partner view after the partner shell exited; the round 1 items not yet seen (an
+e2e Claude session with the isolated home, Linux without lsof, macOS).
 
 ## 9. PR 4 outline
 
