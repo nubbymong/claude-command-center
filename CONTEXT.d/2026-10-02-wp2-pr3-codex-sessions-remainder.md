@@ -48,7 +48,24 @@ source at a time; a Codex tab kept open by a background command; Codex's Windows
 sandbox setup; a Codex name dropping out of the picker; Codex's one-time
 hooks review.
 
-**Owed before #626 leaves draft** (section 6): the VM run at the final head
-(gate 6), the owner's screenshot review, the PR-level ADR-009 pass, the SSH
-live matrix (pty-manager.ts changed), CI. Findings about pre-existing
-behaviour raised by the adversarial passes were routed privately.
+**Done for the package** (section 6): the PR-level ADR-009 pass, PASS at
+525a00ac (its round 1 major fixed; P3.9 and P3.12, quarantined after their
+own bounded rounds, covered); the VM checks at PR 3's earlier heads
+b3937173 and 1e14b611, where the listed checks (section 8, P3.16) PASS at
+b3937173 and the run found D1 to D3, re-checked PASS at 1e14b611 (fixer 8;
+fixer 8b unit-tested only); and gate 6's e2e suite on the VM (WINDOWS_1)
+at 525a00ac on 2026-10-02: 81 of 81 tests in 22 spec files passed, the
+real home's assistant folders untouched (the commits after it change
+records only).
+
+**Owed before #626 leaves draft**: the phase reviews still owed (gate 3:
+P3.9's spec review of round 4 and both reviews of its round 5; P3.10's
+spec and code-quality reviews of round 5 and of 4ba85a3a), the SSH live
+matrix at PR 3's head (pty-manager.ts changed, and statusline-watcher.ts
+in P3.2), the VM checks the rows list (gate 6; rows 10, 14, 17, 63, 70 and
+72 among them), the owner's screenshot review, the Desktop test gate
+(owner), CI at the final head with the native SQL tests, the real-Mac and
+real-account checks the rows list, and the PR body and the ADR-009 verdict
+comment with its marker line (gate 4) for the final head. Findings about
+pre-existing behaviour raised by the adversarial passes were routed
+privately.
