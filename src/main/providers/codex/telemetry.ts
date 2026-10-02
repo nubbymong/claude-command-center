@@ -872,8 +872,10 @@ export function watchAndClaimRollout(
    *  spans of time whose completed turns are not in that (`windows`): the
    *  time main did not see before this run, and any gaps main kept; and
    *  (`floor`, P3.16 M4) the part of the gaps' turns a run already counted,
-   *  the least the windows' turns add. */
-  let run: { id: string; start: number; before: number; windows: TurnWindow[]; floor: number } | null = null
+   *  the least the windows' turns add; and (`keepFailing`, fixer 9 A2)
+   *  whether a failure to keep its time was said and no keep has worked
+   *  since. */
+  let run: { id: string; start: number; before: number; windows: TurnWindow[]; floor: number; keepFailing: boolean } | null = null
   /** Read states whose proven turns are not all counted: a background count
    *  of the part between the head and the tail is running, or gave none. */
   const turnsIncomplete = new WeakSet<RolloutReadState>()
@@ -990,6 +992,7 @@ export function watchAndClaimRollout(
       before: kept ? kept.ms : 0,
       windows: [...(kept ? kept.gaps : []), { from: kept ? kept.until : 0, to: start }],
       floor: kept?.gapMs ?? 0,
+      keepFailing: false,
     }
   }
 
@@ -1012,12 +1015,17 @@ export function watchAndClaimRollout(
    *  rollout's background count is running, or gave none), without them, and
    *  the run's windows are kept as gaps for the next run to count (CI at
    *  427807fb: a run no longer waits on its count once it is over, so the
-   *  count lets go of the rollout at once). */
+   *  count lets go of the rollout at once). A keep runs on every status line
+   *  update, so a store that keeps failing is said once per run (fixer 9 A2);
+   *  a keep that works clears that, and the next failure is said again. */
   function keepRun(r: NonNullable<typeof run>, state: RolloutReadState, now: number): void {
     try {
       if (turnsIncomplete.has(state)) noteConversationRunningTime(r.id, r.before + Math.max(0, now - r.start), now, r.windows, windowTurnsMs(r, state))
       else noteConversationRunningTime(r.id, runningMs(r, state, now), now)
+      r.keepFailing = false
     } catch (err) {
+      if (r.keepFailing) return
+      r.keepFailing = true
       console.warn(`[codex/telemetry] the running time of session ${sessionId} could not be kept: ${(err as Error)?.message ?? err}`)
     }
   }

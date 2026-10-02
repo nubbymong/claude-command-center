@@ -41,17 +41,23 @@ const iso = (t: number) => new Date(t).toISOString()
 const metaLine = (t: number) => JSON.stringify({ timestamp: iso(t), type: 'session_meta', payload: { id: ID, timestamp: iso(t), cwd: '/p/demo', cli_version: '0.155.1' } })
 const tokenLine = (t: number, input: number) => JSON.stringify({ timestamp: iso(t), type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: input, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0, total_tokens: input + 1 } }, rate_limits: null } })
 
+/** A rollout of conversation ID in a temp folder this file made. */
+function rollout(): { sessions: string; file: string } {
+  const base = mkdtempSync(join(tmpdir(), 'ccc-test-codex-settle-'))
+  temps.push(base)
+  const sessions = join(base, 'sessions')
+  const now = new Date()
+  const day = join(sessions, String(now.getUTCFullYear()), pad(now.getUTCMonth() + 1), pad(now.getUTCDate()))
+  mkdirSync(day, { recursive: true })
+  const file = join(day, `rollout-x-${ID}.jsonl`)
+  writeFileSync(file, metaLine(Date.now()) + '\n' + tokenLine(Date.now(), 5) + '\n')
+  return { sessions, file }
+}
+
 describe('a run\'s time that cannot be kept', () => {
-  it('is logged; the status line still updates, and neither the watch nor its end throws', async () => {
+  it('is logged once; the status line still updates, and neither the watch nor its end throws', async () => {
     vi.useFakeTimers()
-    const base = mkdtempSync(join(tmpdir(), 'ccc-test-codex-settle-'))
-    temps.push(base)
-    const sessions = join(base, 'sessions')
-    const now = new Date()
-    const day = join(sessions, String(now.getUTCFullYear()), pad(now.getUTCMonth() + 1), pad(now.getUTCDate()))
-    mkdirSync(day, { recursive: true })
-    const file = join(day, `rollout-x-${ID}.jsonl`)
-    writeFileSync(file, metaLine(Date.now()) + '\n' + tokenLine(Date.now(), 5) + '\n')
+    const { sessions, file } = rollout()
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     h.throwOnKeep = true
     const updates: StatuslineData[] = []
@@ -61,6 +67,39 @@ describe('a run\'s time that cannot be kept', () => {
     await vi.advanceTimersByTimeAsync(500)
     expect(updates.at(-1)).toMatchObject({ inputTokens: 9, totalDurationMs: 500 })
     expect(() => src.stop()).not.toThrow()
-    expect(warn.mock.calls.filter((c) => String(c[0]).includes('could not be kept')).length).toBeGreaterThanOrEqual(3)
+    // Three keeps failed (the claim, the update, the end): one warning.
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('could not be kept')).length).toBe(1)
+  })
+
+  // Fixer 9 A2: one warning per run while the store keeps failing (a keep runs
+  // on every status line update); a keep that works clears it, so the next
+  // failure is said again. A new run starts with none said.
+  it('warns once per run while it keeps failing, again after a keep that works, and again for a new run', async () => {
+    vi.useFakeTimers()
+    const { sessions, file } = rollout()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const warned = () => warn.mock.calls.filter((c) => String(c[0]).includes('could not be kept')).length
+    h.throwOnKeep = true
+    const src = watchAndClaimRollout('sess-y', '/p/demo', Date.now(), () => {}, sessions, undefined, { resumeId: ID })
+    for (const n of [6, 7, 8]) {
+      appendFileSync(file, tokenLine(Date.now(), n) + '\n')
+      await vi.advanceTimersByTimeAsync(500)
+    }
+    expect(warned()).toBe(1)
+    h.throwOnKeep = false
+    appendFileSync(file, tokenLine(Date.now(), 10) + '\n')
+    await vi.advanceTimersByTimeAsync(500)
+    expect(warned()).toBe(1)
+    h.throwOnKeep = true
+    appendFileSync(file, tokenLine(Date.now(), 11) + '\n')
+    await vi.advanceTimersByTimeAsync(500)
+    expect(warned()).toBe(2)
+    src.stop()
+    expect(warned()).toBe(2)
+    // A new run of the conversation (another launch): its first failure is said.
+    const next = watchAndClaimRollout('sess-z', '/p/demo', Date.now(), () => {}, sessions, undefined, { resumeId: ID })
+    expect(warned()).toBe(3)
+    next.stop()
+    expect(warned()).toBe(3)
   })
 })
