@@ -7,6 +7,10 @@ import { analysisFindingKey } from './sentinel-quote'
 import { compareVersions } from '../../shared/version-order'
 import type { SentinelFinding, SentinelStateSnapshot, FindingStatus, SentinelProvider } from '../../shared/sentinel-types'
 
+/** Fixer 10: the most versions of one provider whose counts of unmatched
+ *  analyses the file keeps (countUnverified). */
+export const UNVERIFIED_VERSIONS_KEPT = 8
+
 export class SentinelState {
   private file: string
   private state: SentinelStateSnapshot = {
@@ -62,30 +66,47 @@ export class SentinelState {
   setLastSeenCodexVersion(v: string): void { this.state = { ...this.state, lastSeenCodexVersion: v }; this.persist() }
   /** Round 4: one more analysis of `key` (`<provider>:<version>`) whose
    *  findings could not all be matched to its notes; the count so far.
-   *  Round 5: the counts of that provider's earlier versions (superseded
-   *  before their last try) are dropped. Only LOWER versions: a higher one
-   *  keeps its count, so two versions taken in turn (two installs, or a
-   *  downgrade and re-upgrade) never reset each other, and the cap
-   *  (UNVERIFIED_MAX_TRIES) still bounds the analyses. */
+   *  Fixer 10 (the cap for versions installed in turn): no other version's
+   *  count is dropped here. A start analyses only a version higher than the
+   *  last one recorded (sentinel/index.ts, isUpdateAtStart), so a count kept
+   *  is of a version that may still be analysed, another install's taken in
+   *  turn with this one; dropping it (as round 5 and fixer 9 did, for a
+   *  lower version) let that version be analysed again from one, past the
+   *  cap. Recording a version drops the counts it makes moot
+   *  (clearUnverified). So the file stays small, a provider keeps the counts
+   *  of its UNVERIFIED_VERSIONS_KEPT highest versions, always the one
+   *  counted now (versions installed one after another, each superseded
+   *  before its third analysis, go from the lowest); only more versions than
+   *  that, all above the last one recorded, taken in turn with every analysis
+   *  unmatched, could each be analysed more than UNVERIFIED_MAX_TRIES
+   *  times. */
   countUnverified(key: string): number {
-    const tries: Record<string, number> = {}
-    const provider = key.slice(0, key.indexOf(':') + 1)
-    const version = key.slice(provider.length)
-    for (const [k, v] of Object.entries(this.state.unverifiedTries ?? {})) if (k === key || !provider || !k.startsWith(provider) || compareVersions(version, k.slice(provider.length)) <= 0) tries[k] = v
+    const tries: Record<string, number> = { ...(this.state.unverifiedTries ?? {}) }
     const now = (typeof tries[key] === 'number' && Number.isFinite(tries[key]) ? tries[key] : 0) + 1
     tries[key] = now
+    const provider = key.slice(0, key.indexOf(':') + 1)
+    if (provider) {
+      const versionOf = (k: string) => k.slice(provider.length)
+      const others = Object.keys(tries).filter((k) => k !== key && k.startsWith(provider))
+      others.sort((a, b) => compareVersions(versionOf(b), versionOf(a)))
+      for (const k of others.slice(UNVERIFIED_VERSIONS_KEPT - 1)) delete tries[k]
+    }
     this.state = { ...this.state, unverifiedTries: tries }
     this.persist()
     return now
   }
-  /** Round 4: forget `key`'s count (its version is recorded); round 5:
-   *  and every other count of the same provider. */
+  /** Round 4: forget `key`'s count (its version is recorded). Fixer 10: and
+   *  the same provider's counts of versions at or below it, which a start no
+   *  longer analyses; a higher version's count is kept, so a version taken
+   *  in turn with the one recorded still stops at the cap. */
   clearUnverified(key: string): void {
     const tries = this.state.unverifiedTries
     const provider = key.slice(0, key.indexOf(':') + 1)
-    if (!tries || !Object.keys(tries).some((k) => k === key || (provider && k.startsWith(provider)))) return
+    const version = key.slice(provider.length)
+    const moot = (k: string): boolean => k === key || (!!provider && k.startsWith(provider) && compareVersions(k.slice(provider.length), version) <= 0)
+    if (!tries || !Object.keys(tries).some(moot)) return
     const rest: Record<string, number> = {}
-    for (const [k, v] of Object.entries(tries)) if (k !== key && !(provider && k.startsWith(provider))) rest[k] = v
+    for (const [k, v] of Object.entries(tries)) if (!moot(k)) rest[k] = v
     this.state = { ...this.state, unverifiedTries: rest }
     this.persist()
   }

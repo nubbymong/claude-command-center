@@ -4,8 +4,10 @@
  *  - While Codex is on, the start-up check and a Re-run check the installed
  *    Codex's version against the supported range, compare the model registry
  *    with the list that CLI offers (the live read), and analyse Codex's
- *    release notes when its version changed since the last check. While it
- *    is off or not set up, nothing of it runs and nothing about it is said.
+ *    release notes when its version is newer than the last one checked
+ *    (fixer 10: a lower one is not analysed at start, for both providers, so
+ *    versions installed in turn stay within the cap). While it is off or not
+ *    set up, nothing of it runs and nothing about it is said.
  *  - The analysis runs on the provider that is on: with both on, the one Ask
  *    Conductor runs on (Claude Code by default); Codex only, on Codex, as a
  *    prepared reviewer launch running a text-only analysis in a fresh empty
@@ -133,13 +135,15 @@ const claudeRuns: Array<{ cwd: string; listing: string[]; env: Record<string, st
 /** Round 3: the Claude package's transport picker (none unless a case sets it). */
 const transport = vi.hoisted(() => ({ pick: null as null | ((raw: string) => Record<string, string>) }))
 const versionThrows = vi.hoisted(() => ({ on: false }))
+/** Fixer 10: the Claude Code version installed, and its analysis's reply (none: no findings). */
+const claude = vi.hoisted(() => ({ version: '2.1.300', answer: null as null | string }))
 const spawnClaudeHeadless = vi.fn(async (args: string[], _t?: number, _stdin?: string, _home?: string | null, _signal?: AbortSignal, opts?: { cwd?: string; env?: Record<string, string>; transportEnv?: Record<string, string> }) => {
   if (args[0] === '--version') {
     if (versionThrows.on) throw new Error('the version check broke')
-    return { code: 0, stdout: '2.1.300 (Claude Code)', stderr: '' }
+    return { code: 0, stdout: `${claude.version} (Claude Code)`, stderr: '' }
   }
   if (opts?.cwd) claudeRuns.push({ cwd: opts.cwd, listing: fs.readdirSync(opts.cwd), env: opts.env, transportEnv: opts.transportEnv })
-  return { code: 0, stdout: JSON.stringify({ type: 'result', result: JSON.stringify({ breakingChanges: [] }) }), stderr: '' }
+  return { code: 0, stdout: JSON.stringify({ type: 'result', result: claude.answer ?? JSON.stringify({ breakingChanges: [] }) }), stderr: '' }
 })
 vi.mock('../../../src/main/claude-headless', () => ({ spawnClaudeHeadless: (...a: unknown[]) => spawnClaudeHeadless(...(a as [string[], number, string])) }))
 vi.mock('../../../src/main/sentinel/sentinel-model-article', () => ({ fetchArticleModelIds: async () => null }))
@@ -181,8 +185,11 @@ beforeEach(() => {
   claudeRuns.length = 0
   transport.pick = null
   versionThrows.on = false
+  claude.version = '2.1.300'
+  claude.answer = null
   fsHooks.beforeMkdtemp = null
   fetchChangelog.mockClear()
+  fetchChangelog.mockImplementation(async () => null)
   fetchCodexReleaseNotes.mockClear()
 })
 afterEach(() => {
@@ -619,5 +626,113 @@ describe('a Re-run (P3.9)', () => {
     expect(claudeAnalyses()).toHaveLength(1)
     // A provider that is off shows nothing: not even why it was not checked.
     expect(s.getSentinelState()!.snapshot()).toMatchObject({ analyzing: false, lastAnalysisError: null })
+  })
+})
+
+// Fixer 10 (gate 3 F9, ADR-009 C1 and D1, row 42): the cap of
+// UNVERIFIED_MAX_TRIES analyses holds for versions installed in turn (two
+// installs, or two machines sharing one resources folder), for both
+// providers. A start analyses only a version higher than the last one
+// recorded, and a version's count of unmatched analyses is dropped only once
+// a version at or above it is recorded. Each start below is a relaunch:
+// Sentinel is read again from its file, the real start-up check runs.
+for (const p of ['codex', 'claude'] as const) {
+  const name = p === 'codex' ? 'Codex' : 'Claude Code'
+  const [LAST, A, B, C] = p === 'codex' ? ['0.153.4', '0.155.1', '0.156.0', '0.157.0'] : ['2.1.300', '2.1.301', '2.1.302', '2.1.303']
+  /** Only `p` is on; its notes cover every version used here. */
+  function only(): void {
+    svc.pref = p === 'codex' ? { claude: 'off', codex: 'on' } : { claude: 'on', codex: 'off' }
+    fetchChangelog.mockImplementation(async () => `## ${C}\n- c change\n\n## ${B}\n- b change\n\n## ${A}\n- a change\n`)
+  }
+  /** Every analysis from now on has a finding that quotes nothing in its notes. */
+  function unmatched(): void {
+    const text = JSON.stringify({ breakingChanges: [{ title: 'Rollout format changed', evidence: '{"tokens":{"refresh_token":"FAKE"}}', surface: 3, whatBreaks: 'status line readouts die' }] })
+    if (p === 'codex') review.answer = () => ({ ok: true, text })
+    else claude.answer = text
+  }
+  const analyses = () => (p === 'codex' ? review.runs.length : claudeAnalyses().length)
+  /** One start of the app with `version` installed: whether it ran an
+   *  analysis, and the version then recorded as checked. */
+  async function startOn(version: string): Promise<{ version: string; analysed: number; last: string | null }> {
+    if (p === 'codex') svc.installation = { discoveryState: 'found', version, compatibility: 'supported' }
+    else claude.version = version
+    const before = analyses()
+    const s = await sentinel()
+    await s.sentinelStartupCheck()
+    const snap = s.getSentinelState()!.snapshot()
+    return { version, analysed: analyses() - before, last: (p === 'codex' ? snap.lastSeenCodexVersion : snap.lastSeenCcVersion) ?? null }
+  }
+  const seed = (last: string) => sentinel(p === 'codex' ? { lastSeenCodexVersion: last } : { lastSeenCcVersion: last })
+
+  describe(`fixer 10: ${name} versions installed in turn stay within the cap`, () => {
+    it('40 starts taking two versions in turn, findings never matched: each is analysed three times, recorded at its third, then never again', async () => {
+      only()
+      unmatched()
+      await seed(LAST)
+      const trace: Array<{ version: string; analysed: number; last: string | null }> = []
+      for (let i = 0; i < 40; i++) trace.push(await startOn(i % 2 === 0 ? A : B))
+      const runs = (v: string) => trace.filter((t) => t.version === v && t.analysed > 0).length
+      expect(trace.every((t) => t.analysed <= 1)).toBe(true)
+      expect([runs(A), runs(B)]).toEqual([3, 3])
+      // Each recorded at its own third analysis: A at start 5, B at start 6.
+      expect(trace.slice(0, 6).map((t) => t.last)).toEqual([LAST, LAST, LAST, LAST, A, B])
+      expect(trace.at(-1)!.last).toBe(B)
+    })
+
+    it('the same 40 starts with findings that match: each version analysed once, two in all', async () => {
+      only()
+      await seed(LAST)
+      const trace: Array<{ version: string; analysed: number; last: string | null }> = []
+      for (let i = 0; i < 40; i++) trace.push(await startOn(i % 2 === 0 ? A : B))
+      expect(trace.filter((t) => t.analysed > 0).map((t) => t.version)).toEqual([A, B])
+      expect(trace.at(-1)!.last).toBe(B)
+    })
+
+    it('A, A, B taken in turn (ADR-009 D1): A is recorded at its third analysis, B at its third, six in all', async () => {
+      only()
+      unmatched()
+      await seed(LAST)
+      const trace: Array<{ version: string; analysed: number; last: string | null }> = []
+      for (const v of [A, A, B, A, A, B, A, A, B, A, A, B]) trace.push(await startOn(v))
+      expect(trace.map((t) => t.analysed)).toEqual([1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 0])
+      // A's third analysis (start 4) records it; B's third (start 9) records B.
+      expect(trace.map((t) => t.last)).toEqual([LAST, LAST, LAST, A, A, A, A, A, B, B, B, B])
+    })
+
+    it('real updates are still analysed: the same version again, a lower one never recorded, then a newer one', async () => {
+      only()
+      unmatched()
+      await seed(LAST)
+      const trace: Array<{ version: string; analysed: number; last: string | null }> = []
+      for (const v of [B, B, A, B, C]) trace.push(await startOn(v))
+      expect(trace.map((t) => t.analysed)).toEqual([1, 1, 1, 1, 1])
+      // B recorded at its third analysis (start 4); C, newer, analysed after it.
+      expect(trace.map((t) => t.last)).toEqual([LAST, LAST, LAST, B, B])
+    })
+
+    it('a downgrade, even to a version never seen, is not analysed or recorded at start; a Re-run still analyses it; the next higher one is analysed', async () => {
+      only()
+      await seed(B)
+      expect(await startOn(A)).toEqual({ version: A, analysed: 0, last: B })
+      expect(await startOn(LAST)).toEqual({ version: LAST, analysed: 0, last: B })
+      const s = await sentinel()
+      const before = analyses()
+      await s.sentinelRerun()
+      expect(analyses() - before).toBe(1)
+      expect(await startOn(C)).toMatchObject({ analysed: 1, last: C })
+    })
+  })
+}
+
+describe('fixer 10: a Codex downgrade still raises its version finding', () => {
+  it('a version older than the app supports, lower than the last checked: the finding, and no analysis', async () => {
+    svc.pref.claude = 'off'
+    const s = await sentinel({ lastSeenCodexVersion: '0.155.1' })
+    svc.installation = { discoveryState: 'found', version: '0.150.0', compatibility: 'too-old' }
+    await s.sentinelStartupCheck()
+    expect(ids(s)).toContain('codex-version:too-old:0.150.0')
+    expect(review.runs).toHaveLength(0)
+    expect(fetchCodexReleaseNotes).not.toHaveBeenCalled()
+    expect(s.getSentinelState()!.snapshot().lastSeenCodexVersion).toBe('0.155.1')
   })
 })

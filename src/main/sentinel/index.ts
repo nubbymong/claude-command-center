@@ -5,7 +5,8 @@
 // check and a Re-run check the installed Codex CLI's version against the range
 // the app supports (a finding when it is outside), compare the model registry
 // with the model list that CLI offers (read from it: row 39), and, when the
-// version changed since the last check, analyse Codex's release notes against
+// version is newer than the last one checked (fixer 10: a lower one is not
+// analysed at start, isUpdateAtStart), analyse Codex's release notes against
 // the four surfaces the app relies on (its launch flags and its session files
 // among them). Each analysis runs on the provider that is on; with both on, on
 // the one Ask Conductor runs on (OD27 M4; Claude Code until that setting is
@@ -27,6 +28,7 @@ import { getRegistry, getBaseline, applyOverlayEntry, removeOverlayEntry, loadOv
 import { reconcileOverlay } from '../../shared/model-registry'
 import { sentinelAnalysisProvider } from '../../shared/ask-conductor-provider'
 import { stripSpoofableText } from '../../shared/safe-text'
+import { compareVersions } from '../../shared/version-order'
 import type { SentinelFinding, SentinelProvider } from '../../shared/sentinel-types'
 import type { ProviderInstallationView } from '../../shared/providers'
 import manifestJson from '../../../resources/sentinel-assumption-manifest.json'
@@ -719,24 +721,56 @@ export async function sentinelStartupCheck(): Promise<void> {
   }
 }
 
+/**
+ * Fixer 10 (gate 3 F9, ADR-009 C1 and D1, row 42): whether the version
+ * installed now is an update the start-up check analyses, for both
+ * providers: only one HIGHER than the last version recorded as checked.
+ *
+ * The downgrade case, decided by what the check is for: it analyses what
+ * changed since the last version checked, the changelog's entries after it
+ * up to the one installed (sliceChangelog) or, for Codex, the release notes
+ * of the versions since it. A lower version brings nothing past the last one
+ * checked: Claude Code's slice is then empty and falls back to the newest
+ * sections, a fallback meant for a Re-run the user asked for (sentinelRerun),
+ * and Codex's read gives the installed version's own notes only, a release
+ * older than the one checked. So a downgrade, even to a version never seen,
+ * is not analysed at start and not recorded (the last version stays the
+ * highest checked); what can break with it is still said at every start (a
+ * Codex version outside the supported range, Claude Code's minimum-version
+ * findings), and a Re-run still analyses it. It is also what keeps versions
+ * installed in turn (two installs, or two machines sharing one resources
+ * folder) within the cap: once the higher one is recorded the lower one is
+ * never an update, and a version's count of unmatched analyses is kept until
+ * a version at or above it is recorded (sentinel-state.ts, which states the
+ * file's bound on how many it keeps), so each is analysed at most
+ * UNVERIFIED_MAX_TRIES times. Before, any other version was an update, and
+ * two installs taken in turn were each analysed again after the other was
+ * recorded, without end.
+ */
+function isUpdateAtStart(version: string, last: string): boolean {
+  return compareVersions(version, last) > 0
+}
+
 /** P3.9: Codex's version and model list at start, while Codex is on
- *  (silently skipped when it is not), and its update when its version
- *  changed. The first check is a baseline, as Claude Code's is. Never throws. */
+ *  (silently skipped when it is not), and its update when its version is
+ *  newer than the last one checked (isUpdateAtStart). The first check is a
+ *  baseline, as Claude Code's is. Never throws. */
 async function codexUpdateAtStart(): Promise<Update | null> {
   try {
     const codex = await runCodexChecks({ probe: true, fresh: false })
     if ('refused' in codex || !codex.version || !state) return null
     const last = state.snapshot().lastSeenCodexVersion ?? null
     if (last === null) { state.setLastSeenCodexVersion(codex.version); return null }
-    return last !== codex.version ? { provider: 'codex', last, version: codex.version } : null
+    return isUpdateAtStart(codex.version, last) ? { provider: 'codex', last, version: codex.version } : null
   } catch (err) {
     logInfo(`[sentinel] the Codex check at start failed: ${(err as Error)?.message ?? err}`)
     return null
   }
 }
 
-/** Claude Code's version check at start and its update when its version
- *  changed. The run it starts stays counted as Claude Code in use until the
+/** Claude Code's version check at start and its update when its version is
+ *  newer than the last one checked (isUpdateAtStart, fixer 10; before, any
+ *  other version). The run it starts stays counted as Claude Code in use until the
  *  caller ends it (after the analysis). Claude Code switched off: nothing
  *  runs for it, not even the --version probe (no one asked for it, and a
  *  probe never runs for a provider that is off). */
@@ -757,7 +791,7 @@ async function claudeUpdateAtStart(): Promise<{ update: Update | null; run: { en
     for (const f of minVersionFindings(version, manifest)) state.upsertFinding(f)
     const last = state.snapshot().lastSeenCcVersion
     if (last === null) { state.setLastSeenCcVersion(version); return { update: null, run: begun } }   // first run: baseline, no analysis
-    return { update: last !== version ? { provider: 'claude', last, version } : null, run: begun }
+    return { update: isUpdateAtStart(version, last) ? { provider: 'claude', last, version } : null, run: begun }
   } catch (err) {
     begun.end()
     throw err
