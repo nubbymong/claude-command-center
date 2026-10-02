@@ -743,9 +743,8 @@ function isPortListening(port: number, timeoutMs = 300): Promise<boolean> {
  *  folder locked (a browser holds its profile's lock for as long as it runs)
  *  means no leftover can be there: no process query, no further work.
  *  Otherwise the query runs, and the port and the ended leftovers get
- *  PORT_FREE_WAIT_MS. A port still in use after that is held by a program not
- *  identified as the app's vision browser: it is left running and the launch
- *  stops with VisionPortHeldError. A leftover that has not ended stops the
+ *  PORT_FREE_WAIT_MS. A port still in use after that stops the launch with
+ *  VisionPortHeldError. A leftover that has not ended stops the
  *  launch too. Round 2 (Q4): a query that fails or times out identifies
  *  nothing, so nothing is ended; then, as while ended leftovers wind down, a
  *  profile folder still locked (with no answer, or a lock that cannot be read)

@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-02T02:17:43.128Z",
-  "head": "62c03b321bdc37d8cc977830590eeb0063a20132",
-  "tree": "d6616e6db2c27ac6611b17b224917b041f26462b",
+  "generatedAt": "2026-10-02T02:55:50.958Z",
+  "head": "bb4936b2fad387795dd6a138b5d496d320b357b5",
+  "tree": "8cadbf7e77bb015237257141ebb00019f1ad08aa",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 652,
+      "lineCount": 653,
       "truncated": true
     },
     {

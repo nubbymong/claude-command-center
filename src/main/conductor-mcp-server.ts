@@ -1685,8 +1685,7 @@ export async function startBrowserAtBoot(
   try {
     await launchBrowser(browser, debugPort, visionConfig.url, headless)
   } catch (err) {
-    // The debug port stays in use by a program not identified as the app's
-    // vision browser: it is left running and vision is not started.
+    // The debug port stays in use: vision is not started (VisionPortHeldError).
     if (err instanceof VisionPortHeldError) {
       logError(`[vision] Vision was not started at boot: ${err.message}`)
       return
