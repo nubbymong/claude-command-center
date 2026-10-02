@@ -37,14 +37,15 @@ Your session transcripts may contain personal information, because they contain
 whatever you typed. The app indexes them locally so it can show your history and
 costs, and that indexing can be switched off (see below).
 
-With the Hooks gateway on (Settings), your Claude Code sessions' hooks, and,
-once you trust them in Codex's own review, the hooks the app gives a Codex
-session, send the app the details of each session event over this computer's
-local connection only: for example the text of a message you send, or a
-tool's input and what it returned. The app uses them for the attention dot,
-its notification rules and to follow which conversation a session is on. It
-keeps them in memory, at most 1,000 per session, with secrets it recognises
-(such as keys and passwords) masked, and drops them when the session closes.
+With the Hooks gateway on (Settings; it is on by default), your Claude Code
+sessions' hooks, and, once you trust them in Codex's own review, the hooks the
+app gives a Codex session, send the app the details of each session event over
+this computer's local connection only: for example the text of a message you
+send, or a tool's input and what it returned. The app uses them for the
+attention dot, its notification rules and to follow which conversation a
+session is on. It keeps them in memory, at most 1,000 per session, with secrets
+it recognises (such as keys and passwords) masked, and drops them when the
+session closes.
 
 None of this is transmitted anywhere except to the provider it already belongs
 to, and none of it ever reaches the developer of this app.
@@ -146,8 +147,9 @@ The Tokenomics cost index is separate and is not affected by that switch.
 - **A name you give a Codex session is written beside its conversation.** Once
   the app knows for certain which conversation the session is on, it writes
   the name, and the time it was set, in a small file next to that
-  conversation's file in the account's `sessions` folder (`<conversation
-  file>.ccc-name.json`), where the app's own conversation list reads it. Clearing the name deletes the file. This applies
+  conversation's file in the account's `sessions` folder (the conversation
+  file's name with `.ccc-name.json` in place of `.jsonl`), where the app's own
+  conversation list reads it. Clearing the name deletes the file. This applies
   to a session on your own Codex folder too.
 - **Sign in again on a signed-in Codex account uses a new folder.** The new
   sign-in happens in a new folder under `codex-realms/`, and the account's

@@ -18,19 +18,20 @@ that make a Codex session work as a Claude session does
   relaunch, Restart resumes, the picker across worktrees with names) and
   Switch Account carries it into another Codex account.
 - P3.7 to P3.9: Lines changed and Duration on the strip; models and efforts
-  from the CLI's own catalogue, prices from the LiteLLM fetch, Compact, Plan
-  mode and the live model pill typed only at Codex's ready prompt; Sentinel
-  for Codex.
+  from the supported CLIs' catalogue in the model registry, prices from the
+  LiteLLM fetch, Compact, Plan mode and the live model pill typed only at
+  Codex's ready prompt; Sentinel for Codex.
 - P3.10, P3.11: Codex hooks to the Hooks gateway (attention dot, rules), the
   busy sweep and moon, the Watchdog for Codex; Extra CLI arguments with a
   refusal rule.
 - P3.12 to P3.15: Logs, search and GitHub context for Codex; Multi Spawn and
   Quick Start held in main; the Codex credits row (ADR-023); the terminal
   checks (the bundled ConPTY for scrollback, Alt+V, channel rules).
-- P3.16a: pre-existing bugs queued during the PR, each red first with
-  mutation proof (U1 to U7, M1 to M9 and their rounds), including Claude's
+- P3.16a: pre-existing bugs queued during the PR (U1 to U7, M1 to M9 and
+  their rounds), each fix red first with mutation proof, including Claude's
   resume continuing from what was indexed (M1) and the projects folder named
-  as Claude Code names it (Q1, F6).
+  as Claude Code names it (Q1, F6); M6 was already fixed by P3.10, and M9
+  waits on an owner decision.
 - P3.16b: the user-facing sweep (What's New and CHANGELOG.md, app knowledge
   with three new known issues, tips, the guide cards, Hello Codex's table, the
   user guide, PRIVACY.md, one README line), pinned by
@@ -42,8 +43,8 @@ is asked (section 10: rows 22, 41 and 63).
 
 **Shipping with workarounds (app knowledge, Known issues).** Codex's own lock
 screen on a second tab of a conversation (0.155.1); a Windows Claude config
-whose working folder is not spelled as on disk; vision in one copy of the app
-at a time; a Codex tab kept open by a background command; Codex's Windows
+whose working folder is not spelled as on disk; vision in one copy run from
+source at a time; a Codex tab kept open by a background command; Codex's Windows
 sandbox setup; a Codex name dropping out of the picker; Codex's one-time
 hooks review.
 

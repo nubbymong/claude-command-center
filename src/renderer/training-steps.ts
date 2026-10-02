@@ -92,7 +92,7 @@ export const trainingSteps: TrainingStep[] = [
     howToTrigger: [
       { label: 'Choose at launch', value: 'Start a session → account dialog' },
       { label: 'Add an account', value: 'run /login in a session, or Settings → Accounts → Add' },
-      { label: 'Manage', value: 'Settings -> Accounts (click an account\'s chip for its name, colour and group)' },
+      { label: 'Manage', value: 'Settings, Accounts (click an account\'s chip for its name, colour and group)' },
       { label: 'Usage', value: 'Click the person icon on the left rail' },
     ],
     proTip:
@@ -132,12 +132,12 @@ export const trainingSteps: TrainingStep[] = [
       'One place for both assistants. Settings, Accounts starts with a Providers card: turn Claude Code and Codex on or off, and see whether each is installed and which version. Below it are your Claude accounts, then your Codex accounts, each Codex account with its own sign-in. An assistant that is off keeps its accounts listed, with a line saying to turn it on to manage them.',
     highlights: [
       'Turn **Claude Code** or **Codex** on or off; at least one stays on, and a provider cannot be turned off while anything of it is running',
-      'Click an account\'s round **chip** to edit its name, colour and group, or to link it to your account of the other assistant; a row says how many sessions run on it',
+      'Click an account\'s round **chip** to edit its name, colour and group, or to link it to another of your accounts, Claude or Codex; a row says how many sessions run on it',
       'A provider that is off starts nowhere: its configs say why, and a tab restored for it reads **Not started** until you turn it back on and Restart the tab',
       'Codex missing or too old? Its row shows the install or update commands to copy, then **Check again**',
       '**Add Codex account**: sign in with ChatGPT or an API key, then give it a name, or say it is the same person as an account you already have',
       'Each Codex account has a menu: **Make default**, **Make reviewer**, **Sign in again** (signed in or not), **Check sign-in**, **Sign out**, **Make inactive**, **Archive**; archived accounts wait under **Archived**, each with **Restore**',
-      'A row reading **Needs attention** is now signed in a different way than before (say, an API key where it had a ChatGPT sign-in); **This is still my account** checks it again and confirms it',
+      'A row reading **Needs attention: signed in a different way than before** has a new kind of sign-in (say, an API key where it had a ChatGPT sign-in); **This is still my account** checks it again and confirms it',
     ],
     howToTrigger: [
       { label: 'Open', value: 'Settings -> Accounts' },
@@ -214,7 +214,7 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '1.5.0',
     section: 'integrations',
     summary:
-      "OpenAI's Codex CLI runs beside Claude, or on its own. A saved config picks Codex and the Codex account it runs under; the models the installed Codex offers, permission presets with Plan mode, the resume picker, Logs, Switch Account and Tokenomics by account are all wired in.",
+      "OpenAI's Codex CLI runs beside Claude, or on its own. A saved config picks Codex and the Codex account it runs under; the models the supported Codex versions offer, permission presets with Plan mode, the resume picker, Logs, Switch Account and Tokenomics by account are all wired in.",
     highlights: [
       'In this release, Codex sessions and Codex reviews run on this computer only, not over SSH -- the SSH options are off for Codex, and the dialog says why',
       'Each Codex account has its **own sign-in folder**. New sessions use the default account. Code reviews use the reviewer default, or the default if none is set',
@@ -237,7 +237,7 @@ export const trainingSteps: TrainingStep[] = [
     bullets: [
       '**Provider per config** -- Claude Code, Codex or Terminal only, with the Codex account it runs under',
       '**Several Codex accounts**, each with its own sign-in, a default and a reviewer',
-      'Codex\'s own **model list** plus **permission presets**, Plan mode included, on the Codex config',
+      'The supported Codex versions\' **model list** plus **permission presets**, Plan mode included, on the Codex config',
       '**Restart and pick a conversation** to resume a recent Codex conversation',
       '**Tokenomics** shows Codex spend by account beside Claude, and the **Usage page** each account\'s allowance',
     ],
