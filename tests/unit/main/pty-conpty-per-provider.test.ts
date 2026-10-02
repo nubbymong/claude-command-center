@@ -46,7 +46,7 @@ vi.mock('node-pty', () => ({
     const p: Spawned = { cmd, args, opts, exit: [], emitData: (d) => { for (const cb of dataCbs) cb(d) }, inSocket: new EventEmitter(), outSocket: new EventEmitter(), kill: vi.fn() }
     // Round 4 (P4): node-pty's own handler on the output socket (windowsTerminal.js):
     // EIO is ignored; any other error is thrown unless something else listens.
-    // Round 5 (R1): unixTerminal.js returns on an EAGAIN first, and reads on.
+    // Round 5 (R1): unixTerminal.js returns on an EAGAIN first, ignoring it.
     const unix = h.unixHandler
     p.outSocket.on('error', (err: NodeJS.ErrnoException) => {
       if (unix && err.code && err.code.includes('EAGAIN')) return
@@ -532,10 +532,11 @@ describe('an error on a PTY\'s output (round 4, P4)', () => {
 })
 
 // Round 5 (R1): node-pty's unix handler (unixTerminal.js, macOS and Linux)
-// returns on an EAGAIN on the output socket and reads on, so the session is
-// healthy: the round 4 guard logged it as a failure and ended the session after
-// the grace. Off Windows an output EAGAIN is now not a failure. On Windows
-// node-pty closes the PTY on one, so there it stays one (logged, the grace end).
+// returns on an EAGAIN on the output socket, ignoring it; the round 4 guard
+// logged it as a failure and ended the session after the grace. Off Windows an
+// output EAGAIN is now ignored, as node-pty's unix handler ignores it. On
+// Windows node-pty closes the PTY on one, so there it stays a failure (logged,
+// the grace end).
 describe('an EAGAIN on a PTY\'s output (round 5, R1)', () => {
   const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
   const onPlatform = (p: NodeJS.Platform) => Object.defineProperty(process, 'platform', { value: p, configurable: true })
@@ -548,7 +549,7 @@ describe('an EAGAIN on a PTY\'s output (round 5, R1)', () => {
     ['plain terminal', SH, () => spawnPty(fakeWin, SH, { cwd: os.tmpdir(), shellOnly: true } as never)],
   ]
 
-  it('off Windows (node-pty\'s unix handler) every kind of session reads on: nothing logged, nothing thrown, never ended', () => {
+  it('off Windows (node-pty\'s unix handler) every kind of session ignores an output EAGAIN: nothing logged, nothing thrown, never ended', () => {
     for (const platform of ['linux', 'darwin'] as const) {
       for (const [name, id, start] of kinds) {
         onPlatform(platform)

@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-02T00:50:02.118Z",
-  "head": "2aef62a063d3938a67cec644d354e5b3202dfb76",
-  "tree": "2db519c81627c4c7208597683b7349dbb369625a",
+  "generatedAt": "2026-10-02T02:07:16.322Z",
+  "head": "f9604882243c4ef9f69dce7112f459ee7f165b12",
+  "tree": "7436305e7f0e2557922706ea9f044472e87e71ce",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 657,
-  "pathDigest": "fa175eaf9673e4c89bdce3eb2836241ca5cf9b9c9acef688518df1c947ee8c80",
+  "matchedPathCount": 658,
+  "pathDigest": "d9a7de512177c1b45d3154790385c8966cbc89517c2f97502437def4e5023fd2",
   "entries": [
     {
       "path": "AGENTS.md",
@@ -189,7 +189,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 648,
+      "lineCount": 652,
       "truncated": true
     },
     {
@@ -1023,6 +1023,13 @@
         "P14"
       ],
       "lineCount": 29
+    },
+    {
+      "path": "src/main/pty-input-guard.ts",
+      "predicates": [
+        "P14"
+      ],
+      "lineCount": 3
     },
     {
       "path": "src/main/pty-manager.ts",
@@ -3530,7 +3537,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 2
+      "lineCount": 3
     },
     {
       "path": "tests/unit/main/pty-managed-deferral-carries-launch.test.ts",

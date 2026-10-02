@@ -118,9 +118,10 @@ describe('guardPtyOutput (round 4, P4)', () => {
 })
 
 // Round 5 (R1): node-pty's unix handler (unixTerminal.js, macOS and Linux)
-// returns on an EAGAIN on the output socket and reads on; reporting it would end
-// a healthy session after the grace. Its Windows handler closes the PTY on one,
-// so there it stays a failure. The guard follows node-pty on each platform.
+// returns on an EAGAIN on the output socket, ignoring it; reporting it would end
+// the session after the grace. Its Windows handler closes the PTY on one, so
+// there it stays a failure. The guard follows node-pty on each platform (the
+// installed handlers are pinned by the last case here).
 describe('an EAGAIN on a PTY\'s output (round 5, R1)', () => {
   const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
   const onPlatform = (p: NodeJS.Platform) => Object.defineProperty(process, 'platform', { value: p, configurable: true })
@@ -129,29 +130,18 @@ describe('an EAGAIN on a PTY\'s output (round 5, R1)', () => {
 
   /** A PTY as node-pty builds it on each platform: every event but 'close' on
    *  its output socket, with node-pty's own handler there (unixTerminal.js or
-   *  windowsTerminal.js); `closed` counts its _close(). */
+   *  windowsTerminal.js). */
   const ptyOn = (handler: 'unix' | 'windows') => {
     const outSocket = new EventEmitter()
-    const closed = vi.fn()
     outSocket.on('error', (err: NodeJS.ErrnoException) => {
       if (handler === 'unix' && err.code && err.code.includes('EAGAIN')) return
-      closed()
       if (err.code && (err.code.includes('errno 5') || err.code.includes('EIO'))) return
       if (outSocket.listeners('error').length < 2) throw err
     })
-    return { pty: { on: (ev: string, l: (...a: unknown[]) => void) => { outSocket.on(ev, l) } }, outSocket, closed }
+    return { pty: { on: (ev: string, l: (...a: unknown[]) => void) => { outSocket.on(ev, l) } }, outSocket }
   }
 
-  it('node-pty\'s unix handler reads on after an EAGAIN (no close, no throw); its Windows handler closes the PTY on one', () => {
-    const unix = ptyOn('unix')
-    expect(() => unix.outSocket.emit('error', failure('EAGAIN'))).not.toThrow()
-    expect(unix.closed).not.toHaveBeenCalled()
-    const windows = ptyOn('windows')
-    expect(() => windows.outSocket.emit('error', failure('EAGAIN'))).toThrow('write EAGAIN')
-    expect(windows.closed).toHaveBeenCalledTimes(1)
-  })
-
-  it('off Windows an EAGAIN is not reported (the session reads on); any other error but EIO still is, once', () => {
+  it('off Windows an EAGAIN is not reported (ignored, as node-pty\'s unix handler ignores it); any other error but EIO still is, once', () => {
     for (const platform of ['linux', 'darwin'] as const) {
       onPlatform(platform)
       const { pty, outSocket } = ptyOn('unix')
