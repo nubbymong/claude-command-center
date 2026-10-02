@@ -489,6 +489,10 @@ describe('the PR 3 user-facing sweep (P3.16)', () => {
       /Alt\+V with focus outside the terminal types only the image's path into a plain terminal/,
       /On macOS and Linux it types it only into an sh, bash, zsh, dash or ksh shell; with any other shell there, or over SSH, it types nothing/,
       /the app now finds its conversation for Logs/,
+      // P3.16 final-head VM findings D1 to D3.
+      /A new Claude conversation now appears in Logs and in search from its first message/,
+      /The AI usage popover now opens above its chip in the session status strip/,
+      /The Services panel no longer lists an ended session again/,
     ]) expect(all).toMatch(said)
     expect(all).not.toMatch(/come from Codex itself|your account of the other assistant|retries a Claude session again/)
     for (const text of [top.highlights ?? '', ...top.changes.map((c) => c.description)]) expect(text, text.slice(0, 40)).not.toMatch(/\u2014/)
