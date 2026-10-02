@@ -325,6 +325,15 @@ describe('the PR 3 user-facing sweep (P3.16)', () => {
     expect(s).not.toMatch(/up to three times/)
   })
 
+  // Fixer 11 (ADR-009 lens D round 2 finding 5, gate 3 F11): the start-up
+  // check no longer analyses a downgrade, for either assistant; a Re-run does.
+  it('Sentinel (fixer 11): at start only a newer version is analysed; a downgrade runs no analysis, Re-run still does', () => {
+    const s = body('sentinel')
+    expect(s).toMatch(/At start it analyses only a version newer than the last one it checked, so going back to an older version runs no analysis and the panel names the version installed; Re-run still analyses it\./)
+    const all = top.changes.map((c) => c.description).join('\n')
+    expect(all).toMatch(/Sentinel no longer runs an analysis at start when you go back to an older Claude Code or Codex version/)
+  })
+
   it('accounts (P3.2, P3.3): the chip opens the identity editor; Sign in again works while signed in, and what it leaves', () => {
     const a = body('accounts')
     expect(a).toMatch(/round chip to open its editor/)

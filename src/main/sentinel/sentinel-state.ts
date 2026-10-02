@@ -11,10 +11,21 @@ import type { SentinelFinding, SentinelStateSnapshot, FindingStatus, SentinelPro
  *  analyses the file keeps (countUnverified). */
 export const UNVERIFIED_VERSIONS_KEPT = 8
 
+/** Fixer 11 (ADR-009 R2-1): a stored version, only when it is a string;
+ *  anything else (a damaged or hand-edited file) is none, so the next start
+ *  takes the installed version as its baseline again. */
+const storedVersion = (v: unknown): string | null => (typeof v === 'string' ? v : null)
+/** The higher of two versions, either of which may be none. */
+const higher = (a: string | null, b: string | null): string | null => (a === null ? b : b === null ? a : compareVersions(b, a) > 0 ? b : a)
+/** Fixer 11: each provider's version the panel names, and its highest
+ *  version checked, by field. */
+const SHOWN_FIELD = { claude: 'lastSeenCcVersion', codex: 'lastSeenCodexVersion' } as const satisfies Record<SentinelProvider, keyof SentinelStateSnapshot>
+const CHECKED_FIELD = { claude: 'highestCheckedCcVersion', codex: 'highestCheckedCodexVersion' } as const satisfies Record<SentinelProvider, keyof SentinelStateSnapshot>
+
 export class SentinelState {
   private file: string
   private state: SentinelStateSnapshot = {
-    lastSeenCcVersion: null, lastSeenCodexVersion: null, analyzing: false, analyzingProvider: null, lastAnalysisAt: null, lastAnalysisError: null, findings: [],
+    lastSeenCcVersion: null, lastSeenCodexVersion: null, highestCheckedCcVersion: null, highestCheckedCodexVersion: null, analyzing: false, analyzingProvider: null, lastAnalysisAt: null, lastAnalysisError: null, findings: [],
   }
   private subs = new Set<(s: SentinelStateSnapshot) => void>()
 
@@ -23,7 +34,21 @@ export class SentinelState {
     try {
       if (fs.existsSync(this.file)) {
         const loaded = JSON.parse(fs.readFileSync(this.file, 'utf-8'))
-        if (loaded && Array.isArray(loaded.findings)) this.state = { ...this.state, ...loaded, analyzing: false, analyzingProvider: null }
+        if (loaded && Array.isArray(loaded.findings)) {
+          // Fixer 11: the versions are kept only when they are strings, and a
+          // file from before fixer 11 has no highest version checked: its
+          // recorded version is that (before, every check recorded the
+          // version it saw). Neither is ever below the version shown.
+          const cc = storedVersion(loaded.lastSeenCcVersion)
+          const codex = storedVersion(loaded.lastSeenCodexVersion)
+          this.state = {
+            ...this.state, ...loaded, analyzing: false, analyzingProvider: null,
+            lastSeenCcVersion: cc,
+            lastSeenCodexVersion: codex,
+            highestCheckedCcVersion: higher(storedVersion(loaded.highestCheckedCcVersion), cc),
+            highestCheckedCodexVersion: higher(storedVersion(loaded.highestCheckedCodexVersion), codex),
+          }
+        }
       }
     } catch { /* corrupt -> empty (fail-open) */ }
   }
@@ -61,25 +86,45 @@ export class SentinelState {
     this.state = { ...this.state, findings: this.state.findings.map((f) => f.id === id ? { ...f, status } : f) }
     this.persist()
   }
-  setLastSeenCcVersion(v: string): void { this.state = { ...this.state, lastSeenCcVersion: v }; this.persist() }
-  /** P3.9: the Codex version the last completed check saw. */
-  setLastSeenCodexVersion(v: string): void { this.state = { ...this.state, lastSeenCodexVersion: v }; this.persist() }
+  /** A completed check of Claude Code `v`: the panel names it, and (fixer
+   *  11) the highest version checked rises to it when it is higher, never
+   *  going down (a Re-run of a lower version, a downgrade seen at start). */
+  setLastSeenCcVersion(v: string): void {
+    this.state = { ...this.state, lastSeenCcVersion: v, highestCheckedCcVersion: higher(this.state.highestCheckedCcVersion ?? null, v) }
+    this.persist()
+  }
+  /** P3.9: the same for Codex `v`. */
+  setLastSeenCodexVersion(v: string): void {
+    this.state = { ...this.state, lastSeenCodexVersion: v, highestCheckedCodexVersion: higher(this.state.highestCheckedCodexVersion ?? null, v) }
+    this.persist()
+  }
+  /** Fixer 11: the highest version of `provider` recorded as checked (none
+   *  before its first check), which the start-up rule and the cap go by. */
+  highestChecked(provider: SentinelProvider): string | null {
+    return this.state[CHECKED_FIELD[provider]] ?? null
+  }
+  /** Fixer 11: the version of `provider` the panel names (none before its
+   *  first check). */
+  shownVersion(provider: SentinelProvider): string | null {
+    return this.state[SHOWN_FIELD[provider]] ?? null
+  }
   /** Round 4: one more analysis of `key` (`<provider>:<version>`) whose
    *  findings could not all be matched to its notes; the count so far.
    *  Fixer 10 (the cap for versions installed in turn): no other version's
    *  count is dropped here. A start analyses only a version higher than the
-   *  last one recorded (sentinel/index.ts, isUpdateAtStart), so a count kept
-   *  is of a version that may still be analysed, another install's taken in
-   *  turn with this one; dropping it (as round 5 and fixer 9 did, for a
+   *  highest one checked (sentinel/index.ts, isUpdateAtStart; fixer 11: that
+   *  never goes down, not even for a Re-run of a lower version), so a count
+   *  kept is of a version that may still be analysed, another install's taken
+   *  in turn with this one; dropping it (as round 5 and fixer 9 did, for a
    *  lower version) let that version be analysed again from one, past the
    *  cap. Recording a version drops the counts it makes moot
-   *  (clearUnverified). So the file stays small, a provider keeps the counts
-   *  of its UNVERIFIED_VERSIONS_KEPT highest versions, always the one
-   *  counted now (versions installed one after another, each superseded
+   *  (clearUnverified). So the file stays small, a provider keeps the count
+   *  made now and the counts of its UNVERIFIED_VERSIONS_KEPT - 1 highest
+   *  other versions (versions installed one after another, each superseded
    *  before its third analysis, go from the lowest); only more versions than
-   *  that, all above the last one recorded, taken in turn with every analysis
-   *  unmatched, could each be analysed more than UNVERIFIED_MAX_TRIES
-   *  times. */
+   *  UNVERIFIED_VERSIONS_KEPT, all above the highest one checked, taken in
+   *  turn with every analysis unmatched, could each be analysed more than
+   *  UNVERIFIED_MAX_TRIES times at start. */
   countUnverified(key: string): number {
     const tries: Record<string, number> = { ...(this.state.unverifiedTries ?? {}) }
     const now = (typeof tries[key] === 'number' && Number.isFinite(tries[key]) ? tries[key] : 0) + 1
