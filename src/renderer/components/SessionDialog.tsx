@@ -752,7 +752,10 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
 
   // P3.11 (row 62): the one Extra CLI arguments field, in the Claude Code
   // section and in Codex's: the same label, help button, input and hint, and
-  // (round 1, B2) the rule's message under it while the value is refused.
+  // (round 1, B2) the rule's message under it while the value is refused. The
+  // message is tied to the input (invalid, described by it), so a screen
+  // reader says it with the field; the footer's status line, always in the
+  // page, is the one that announces it.
   const extraArgsField = (f: { value: string; onChange: (v: string) => void; helpKey: string; placeholder: string; hint: React.ReactNode; problem: string | null }) => (
     <div>
       <div className="flex items-center gap-1.5 mb-1">
@@ -765,10 +768,12 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
         onChange={(e) => f.onChange(e.target.value)}
         placeholder={f.placeholder}
         spellCheck={false}
+        aria-invalid={f.problem ? true : undefined}
+        aria-describedby={f.problem ? `${f.helpKey}-problem` : undefined}
         className={inputCls + ' font-mono text-xs'}
       />
       {f.problem && (
-        <p aria-live="polite" data-testid="extra-args-problem" className="text-[11px] mt-1 leading-snug text-[var(--status-warning)]">{f.problem}</p>
+        <p id={`${f.helpKey}-problem`} data-testid="extra-args-problem" className="text-[11px] mt-1 leading-snug text-[var(--status-warning)]">{f.problem}</p>
       )}
       <Hint k={f.helpKey}>{f.hint}</Hint>
     </div>

@@ -280,7 +280,8 @@ function ManagedAccountRow({ account, provider, snapshot, onAddAccount }: {
         <SignInAgainDialog
           provider={provider}
           account={account}
-          name={inSentence}
+          name={name}
+          nameInSentence={inSentence}
           onClose={() => setSigningInAgain(false)}
           onNewAccount={(initialMethod) => { setSigningInAgain(false); onAddAccount({ initialMethod }) }}
           onSeparate={(resume) => onAddAccount({ resume })}
