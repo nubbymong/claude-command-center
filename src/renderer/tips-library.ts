@@ -372,7 +372,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Paste clipboard images with Alt+V',
         title: 'Paste Image from Clipboard',
-        body: 'Image on your clipboard? Click into a session on this computer and press **Alt+V**: the key goes to the assistant, which pastes the image itself (Codex shows it as [Image #1]).\n\nWith focus elsewhere in the app, **Alt+V** saves the image and types a line with its path into the session, for the assistant to open. On a Codex session the app types it only into an empty Codex prompt, and says why when it cannot. On an SSH session, press **Alt+V** with focus outside the terminal: the app saves the image on this computer and asks Claude to fetch it over the connection.\n\nWorks with screenshots, images copied from a browser, diagrams from Excalidraw: anything in clipboard image format. No more "let me save this to disk first and drag it in".',
+        body: 'Image on your clipboard? Click into a session on this computer and press **Alt+V**: the key goes to the assistant, which pastes the image itself (Codex shows it as [Image #1]).\n\nWith focus elsewhere in the app, **Alt+V** saves the image and types a line with its path into the session, for the assistant to open. On a Codex session the app types it only into an empty Codex prompt, and says why when it cannot. On an SSH session, press **Alt+V** with focus outside the terminal: the app saves the image on this computer and asks Claude to fetch it over the connection.\n\nWith focus elsewhere, a plain terminal, or the partner shell while a session\'s partner view is shown, gets only the image\'s path, quoted for the shell, with no Enter, ready for a command of your own; over SSH a plain terminal gets nothing, and the hint says where the image was saved.\n\nWorks with screenshots, images copied from a browser, diagrams from Excalidraw, or an image file you copied in your file manager. No more "let me save this to disk first and drag it in".',
       },
     },
   },
@@ -901,7 +901,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Run several copies of one config at once',
         title: 'Allow Multi Spawn',
-        body: 'A saved config runs **one session at a time** unless you say otherwise, so a stray second click cannot start another Claude on the same project by accident.\n\nTick **Allow Multi Spawn** in the config, just under the connection cards, and its row swaps the play button for a **copy count**: set it to 3, press once, and three sessions start together. It remembers the number for next time.\n\nWithout it, clicking a config that is already running does not launch a second one. A small note says exactly that, and offers **Enable Multi Spawn & launch** if that is what you meant.\n\nAfter an update the app turns Multi Spawn on by itself for any config it already finds several copies of -- sessions left running on a remote host included -- and shows a one-time page so you can change any of it. A config you switch off stays off.',
+        body: 'A saved config runs **one session at a time** unless you say otherwise, so a stray second click cannot start another Claude or Codex session on the same project by accident.\n\nTick **Allow Multi Spawn** in the config, just under the connection cards, and its row swaps the play button for a **copy count**: set it to 3, press once, and three sessions start together. It remembers the number for next time.\n\nWithout it, clicking a config that is already running does not launch a second one. A small note says exactly that, and offers **Enable Multi Spawn & launch** if that is what you meant.\n\nAfter an update the app turns Multi Spawn on by itself for any config it already finds several copies of -- sessions left running on a remote host included -- and shows a one-time page so you can change any of it. A config you switch off stays off.',
         focusHint: 'Session config -- the Allow Multi Spawn tick, below the connection cards',
       },
     },
@@ -1035,10 +1035,63 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Is that Codex account still signed in?',
         title: 'Check Sign-in and Sign In Again',
-        body: 'Each Codex account in **Settings, Accounts** has a menu:\n\n• **Check sign-in** asks Codex right now and shows the answer on the row\n• **Sign in again** signs a signed-out or expired account back in, after you confirm it is the same account as before (close its sessions first)\n\nA check also notices when an account is now signed in a different way than before (an API key where it had a ChatGPT sign-in, for example): the row reads **Needs attention: signed in a different way than before**, and nothing runs on it until you confirm it with **This is still my account**.\n\nFor the Codex sign-in already on this computer, run `codex login` in a terminal, then **Check sign-in**.',
+        body: 'Each Codex account in **Settings, Accounts** has a menu:\n\n• **Check sign-in** asks Codex right now and shows the answer on the row\n• **Sign in again** signs the account in again, after you confirm it is the same account as before (close its sessions first). An account that is still signed in signs in inside a new folder and moves there only once that sign-in works, with its earlier conversations carried over, so a sign-in that fails or is cancelled leaves it as it was\n\nA check also notices when an account is now signed in a different way than before (an API key where it had a ChatGPT sign-in, for example): the row reads **Needs attention: signed in a different way than before**, and nothing runs on it until you confirm it with **This is still my account**.\n\nFor the Codex sign-in already on this computer, run `codex login` in a terminal, then **Check sign-in**; or use **Sign in again** on its row, which first signs out every app that uses that sign-in, after a warning.',
         actionLabel: 'Open Settings',
         actionTarget: 'settings',
         focusHint: 'Settings, Accounts -- the menu on a Codex account row',
+      },
+    },
+  },
+
+  // P3.16 sweep: what PR 3 added that a user would not find alone -- the
+  // identity editor behind an account row's chip (P3.2), Switch Account on a
+  // Codex session (P3.6), and Codex's own Plan mode, Compact and model picker
+  // from the app (P3.8).
+  {
+    id: 'tip.account-identity-editor',
+    category: 'sessions',
+    complexity: 'simple',
+    priority: 50,
+    variants: {
+      primary: {
+        shortText: 'Click an account chip to name, colour and link it',
+        title: 'Edit an Account From Its Chip',
+        body: 'In **Settings, Accounts**, click the round chip at the left of an account row, Claude or Codex, to open its editor. It holds the account\'s **Name**, its **Colour**, which follows the account onto its chips everywhere, and its **Group**.\n\n**Link another account** ties it to your account of the other assistant, so both show one name, colour and group; **Unlink** undoes it.\n\nThe row also says how many sessions are running on the account, and when it cannot be made inactive or archived because sessions use it, it names each one with **Go to**.',
+        actionLabel: 'Open Settings',
+        actionTarget: 'settings',
+        focusHint: 'Settings, Accounts -- the round chip at the left of an account row',
+      },
+    },
+  },
+
+  {
+    id: 'tip.codex-switch-account',
+    category: 'sessions',
+    complexity: 'intermediate',
+    priority: 54,
+    requires: ['sessions.codex-config'],
+    variants: {
+      primary: {
+        shortText: 'Move a Codex session to another Codex account',
+        title: 'Switch a Codex Session\'s Account',
+        body: 'With two or more Codex accounts, a running Codex session can move to another one and keep its conversation, as a Claude session can: click the **account pill** at the far left of its status line, or right-click the session and choose **Switch Account**.\n\nThe session restarts on that account, and the app copies the conversation into that account\'s folder and carries on in it. When the conversation cannot come along whole, a note above the terminal says why, and whether the session carries on from a copy already in that account or starts a new conversation. An account that is inactive or needs attention is greyed in the list.',
+        focusHint: 'A Codex session\'s status line -- the account pill at the far left',
+      },
+    },
+  },
+
+  {
+    id: 'tip.codex-plan-compact',
+    category: 'sessions',
+    complexity: 'intermediate',
+    priority: 53,
+    requires: ['sessions.codex-config'],
+    variants: {
+      primary: {
+        shortText: 'Plan mode, Compact and the model pill on Codex',
+        title: 'Codex\'s Own Commands, From the App',
+        body: 'A Codex config can start in **Plan mode**, a permission choice in the session dialog: the session starts read-only and the app turns on Codex\'s own Plan mode once Codex is ready. If it cannot, a note says so: type **/plan**, or **/permissions** to change what Codex may do.\n\nOn a running Codex session, **Compact** on the status line types Codex\'s own **/compact**, and the **model pill** opens Codex\'s own model and effort picker. Each types only while Codex waits at an empty prompt, and says why when it cannot, so it never types over what you are writing.',
+        focusHint: 'A Codex session -- the model pill in the command bar, and Compact on its status line',
       },
     },
   },
@@ -1089,7 +1142,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Run more than one Claude account, session by session',
         title: 'Multi-Account',
-        body: 'Each session runs as **one account**, and different sessions can run as different ones -- work on one, personal on another, a spare for when the first hits its weekly limit.\n\n**Right-click a session** and pick an account to move it. The footer strip shows every live account with its usage, one pill per person grouped by provider, so you can see which one has room before you choose.\n\nEach account keeps its own credentials, its own browser session and its own limits -- switching a session is not switching your whole app.',
+        body: 'Each session runs as **one account**, and different sessions can run as different ones -- work on one, personal on another, a spare for when the first hits its weekly limit.\n\n**Right-click a session** and pick an account to move it. The footer strip shows every live account with its usage, one pill per person grouped by provider, so you can see which one has room before you choose.\n\nEach account keeps its own credentials, its own browser session and its own limits -- switching a session is not switching your whole app.\n\nA Codex session moves between your Codex accounts the same way, from the account pill on its status line or **Switch Account** in its right-click menu, and keeps its conversation.',
         focusHint: 'Right-click a session in the sidebar -- the account list is in the menu',
       },
     },
@@ -1189,7 +1242,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Auto-resume sessions after a rate limit resets',
         title: 'Session Watchdog',
-        body: 'Hit a usage limit at 4pm and the session just sits there until you notice. The **Session Watchdog** notices for you: it reads the limit banner, waits out the reset time, and types the retry itself -- so an overnight session picks itself back up instead of losing the hours.\n\nIt is careful about WHEN it types. Nothing is sent while a permission prompt or picker is open, or while your own unsubmitted draft is in the input box -- the retry defers rather than corrupting either. It also backs off on API overload errors, with capped attempts.\n\n**Off by default.** Turn it on under **Settings > General > Session Watchdog**, where you can also change the retry message. Works for Claude sessions whether they run locally or over SSH, and for Codex sessions on this computer: the one switch covers both. On a remote session it only ever types when Claude\'s own prompt is on screen, never into a shell or an auth prompt; on a Codex session, only into Codex\'s empty input box.',
+        body: 'Hit a usage limit at 4pm and the session just sits there until you notice. The **Session Watchdog** notices for you: it reads the limit banner, waits out the reset time, and types the retry itself -- so an overnight session picks itself back up instead of losing the hours.\n\nIt is careful about WHEN it types. Nothing is sent while a permission prompt or picker is open, or while your own unsubmitted draft is in the input box -- the retry defers rather than corrupting either. On API overload errors it waits longer before each retry, from 30 seconds up to 5 minutes, and gives up after two hours of waiting in all.\n\n**Off by default.** Turn it on under **Settings > General > Session Watchdog**, where you can also change the retry message. Works for Claude sessions whether they run locally or over SSH, and for Codex sessions on this computer: the one switch covers both. On a remote session it only ever types when Claude\'s own prompt is on screen, never into a shell or an auth prompt; on a Codex session, only into Codex\'s empty input box.',
         actionLabel: 'Open Settings',
         actionTarget: 'settings',
       },
@@ -1219,7 +1272,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'The Usage page reuses what your sessions already know',
         title: 'Account Usage, Without the Extra Calls',
-        body: 'The **Usage page** (the person icon on the left rail, once you have two or more accounts) shows the 5-hour and weekly limits for every account. It is cheaper than it looks: an account with an **open session** shows the figures that session already reported on its status line, so it makes no request at all; the primary account is the exception and is always fetched. Accounts with no session open are fetched one at a time, each row filling in as its answer arrives.\n\nThat is also why the page never refreshes a signed-in account\'s token while anything is using it: sessions, shells, Insights runs and cloud agents all count.\n\nOne more exception: an account on extra usage (paid credits) still makes a single request for its credits figure, which the status line cannot carry.\n\n**Codex accounts** work the same way: an open session\'s figures first. For an account signed in with ChatGPT and no session open, opening the page (or Refresh, or Retry) asks Codex to run its own usage check once in that account\'s folder; otherwise the card shows the last reading from its latest session, marked **As of**.',
+        body: 'The **Usage page** (the person icon on the left rail, once you have two or more accounts) shows the 5-hour and weekly limits for every account. It is cheaper than it looks: an account with an **open session** shows the figures that session already reported on its status line, so it makes no request at all; the primary account is the exception and is always fetched. Accounts with no session open are fetched one at a time, each row filling in as its answer arrives.\n\nThat is also why the page never refreshes a signed-in account\'s token while anything is using it: sessions, shells, Insights runs and cloud agents all count.\n\nOne more exception: an account on extra usage (paid credits) still makes a single request for its credits figure, which the status line cannot carry.\n\n**Codex accounts** work the same way: an open session\'s figures first. For an account signed in with ChatGPT and no session open, opening the page (or Refresh, or Retry) asks Codex to run its own usage check once in that account\'s folder; otherwise the card shows the last reading from its latest session, marked **As of**. A Codex account on paid credits shows its credits under its bars, in Codex credits (a count, not money).',
         actionLabel: 'Open the Usage page',
         actionTarget: 'account-usage',
       },
@@ -1250,7 +1303,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'What the app sends over the network',
         title: 'Network Activity',
-        body: 'In the interest of transparency, here\'s every network call the app makes:\n\n• **Rate limits** (`api.anthropic.com/api/oauth/usage`) -- once per Claude Code command, only when statusline is enabled. Uses YOUR Claude OAuth token (read from `~/.claude/.credentials.json`).\n\n• **Update check** (`api.github.com`) -- via `gh` CLI, checks for new releases when you explicitly trigger an update check or on app start.\n\n• **Model pricing** (`raw.githubusercontent.com/BerriAI/litellm`) -- once per 24 hours, to get current Claude model pricing for cost calculations. Cached locally.\n\n• **Vision MCP server** -- listens on `127.0.0.1:19333` only. Localhost-only, never exposed to the network.\n\n**The app sends NO telemetry, analytics, or usage data.** Everything else stays on your machine.',
+        body: 'In the interest of transparency, here\'s every network call the app makes:\n\n• **Rate limits** (`api.anthropic.com/api/oauth/usage`) -- once per Claude Code command, only when statusline is enabled. Uses YOUR Claude OAuth token (read from `~/.claude/.credentials.json`).\n\n• **Update check** (`api.github.com`) -- via `gh` CLI, checks for new releases when you explicitly trigger an update check or on app start.\n\n• **Model pricing** (`raw.githubusercontent.com/BerriAI/litellm`) -- once per 24 hours, to get current Claude and Codex model pricing for cost calculations. Cached locally.\n\n• **Service status** (`status.claude.com` while Claude Code is on, `status.openai.com` while Codex is on) -- the public status pages behind the title bar\'s status pills.\n\n• **Vision MCP server** -- listens on `127.0.0.1:19333` only. Localhost-only, never exposed to the network.\n\n**The app sends NO telemetry, analytics, or usage data.** Everything else stays on your machine.',
       },
     },
   },

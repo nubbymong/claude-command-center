@@ -2,7 +2,7 @@
 
 **AI Code Conductor** (the "app")
 
-Last updated: 1 October 2026
+Last updated: 2 October 2026
 
 ## The short version
 
@@ -37,6 +37,15 @@ Your session transcripts may contain personal information, because they contain
 whatever you typed. The app indexes them locally so it can show your history and
 costs, and that indexing can be switched off (see below).
 
+With the Hooks gateway on (Settings), your Claude Code sessions' hooks, and,
+once you trust them in Codex's own review, the hooks the app gives a Codex
+session, send the app the details of each session event over this computer's
+local connection only: for example the text of a message you send, or a
+tool's input and what it returned. The app uses them for the attention dot,
+its notification rules and to follow which conversation a session is on. It
+keeps them in memory, at most 1,000 per session, with secrets it recognises
+(such as keys and passwords) masked, and drops them when the session closes.
+
 None of this is transmitted anywhere except to the provider it already belongs
 to, and none of it ever reaches the developer of this app.
 
@@ -46,8 +55,9 @@ All of it is ordinary files on your own machine, in a data directory you choose
 during installation (and can change later in Settings):
 
 - your saved session configurations, command buttons, and app settings
-- the list of your Claude and Codex accounts: the names and colours you give
-  them, and which account is the default and which the reviewer
+- the list of your Claude and Codex accounts: the names, colours and groups
+  you give them, which of them you linked as one person, and which account is
+  the default and which the reviewer
 - one sign-in folder for each Codex account you add (see "Codex accounts and
   sign-ins" below)
 - a small note for each Codex conversation you move to another Codex account
@@ -71,6 +81,12 @@ during installation (and can change later in Settings):
 - an index of your Claude Code and Codex session transcripts, used to power
   the Logs view and the Memory page's recent sessions (the Logs index reads a
   Codex session's transcript from that session's own Codex account folder)
+- a record of when sessions ran with conversation indexing off, so that what
+  a session wrote then is never indexed later: start and end times, each kept
+  under a conversation's id, a Claude transcript's file name, or a one-way
+  hash of a Claude project folder's name, and never any text of a
+  conversation. It holds at most 50,000 conversations' times; a copy the app
+  cannot read is set aside beside it, and the newest 3 such copies are kept
 - cost and usage figures calculated locally from those transcripts, with the
   account each Claude and Codex session ran under (Tokenomics keeps an index
   of its own for this, which the conversation indexing switch does not change)
@@ -127,6 +143,20 @@ The Tokenomics cost index is separate and is not affected by that switch.
   installed runs it against a new, empty folder, never your own, and so does
   Sentinel's read of the models the installed Codex offers (`codex debug
   models --bundled`, the list built into Codex, with no sign-in).
+- **A name you give a Codex session is written beside its conversation.** Once
+  the app knows for certain which conversation the session is on, it writes
+  the name, and the time it was set, in a small file next to that
+  conversation's file in the account's `sessions` folder (`<conversation
+  file>.ccc-name.json`), where the app's own conversation list reads it. Clearing the name deletes the file. This applies
+  to a session on your own Codex folder too.
+- **Sign in again on a signed-in Codex account uses a new folder.** The new
+  sign-in happens in a new folder under `codex-realms/`, and the account's
+  earlier conversations (its `sessions` folder and `history.jsonl`, never a
+  sign-in) are carried into it, each file linked where the computer allows it
+  and copied where it does not. The old folder stays, and so does its sign-in
+  until the app can sign it out without signing out the new one; archiving the
+  account signs it out. Signing your own Codex folder in again happens in
+  place, after a warning.
 
 ## Every network request the app makes
 

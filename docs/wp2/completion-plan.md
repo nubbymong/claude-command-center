@@ -3515,6 +3515,32 @@ Claude session with
 the isolated home, Linux without lsof, macOS); on macOS and Linux, the real
 path Claude Code names the folder from (the case on disk, NFD names).
 
+P3.16b, the user-facing sweep (text only, no behaviour change). Each surface
+for every PR 3 change, written from the code as it is: What's New (the
+2.1.1-beta.2 entry: a Codex Restart keeps its conversation, the Logs line for
+both assistants, and lines for P3.2 to P3.9 and P3.13 to P3.16a) and
+`CHANGELOG.md`; app knowledge (the identity editor, Sign in again while
+signed in, Codex models, Plan mode, Compact and the model pill, the Codex
+status line, Multi Spawn, the Watchdog's current turn, Alt+V's routes,
+privacy, and three known issues with their workarounds: Codex's lock screen
+on a second tab, a Windows Claude config's folder spelling, vision in one
+copy of the app); the tips (Alt+V, Sign in again, the Watchdog's backoff,
+Switch Account, network activity, Multi Spawn, credits, and three new tips:
+the identity editor, Switch Account on a Codex session, and Codex's Plan
+mode, Compact and model pill); the guide cards (the Codex card's model list
+and Logs line, the Logs card, Alt+V, and the cards that name both assistants
+reworded to read true with either on alone, since this phase changes text
+only, not the cards' rendering); Hello Codex's table (Plan mode; the spec's
+"Copy changed for truth"); the user guide; `PRIVACY.md` (the not-indexed
+record, the Codex name file, Sign in again's carry-over, the hooks' event
+details); one README line (the model list, Plan mode, Switch Account); the
+`CONTEXT.d/` fragment. Pinned by `app-knowledge.test.ts` ("the PR 3
+user-facing sweep", 8 tests red on the old text), the Hello Codex table and
+the P3.12 changelog test moved to both assistants. Found, not changed here:
+the AI usage popover shows its Claude and Codex sections whichever provider
+is on (row 14). The README screenshots and the Codex "Beta" labels are
+P4.11's.
+
 ## 9. PR 4 outline
 
 After PR 3, one PR at a time. Less detail here; PR 4 gets its own phase plan

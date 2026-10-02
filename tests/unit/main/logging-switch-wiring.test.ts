@@ -113,8 +113,11 @@ describe('the logging switches reach running sessions (P3.12 round 1, V1)', () =
     for (const [name, src] of Object.entries(surfaces)) expect(powersTokenomics(src), name).toBe(false)
   })
 
-  it('P3.12 (T1): the changelog says what is never indexed for a Codex session only', () => {
-    expect(changelogSource).toContain('For a Codex session, what it wrote while indexing was off is never indexed.')
-    expect(changelogSource).not.toMatch(/what a session wrote while it was off is never indexed/)
+  // The changelog says it once, of both assistants.
+  it('P3.12 (T1), P3.16 sweep: the changelog says what is never indexed, once, for Claude and Codex alike', () => {
+    expect(changelogSource).toContain('What a session wrote while indexing was off is never indexed, and a conversation you resume carries on in the index where it left off, for Claude and Codex alike.')
+    const said = (s: string) => changelogSource.split(s).length - 1
+    expect(said('while indexing was off is never indexed')).toBe(1)
+    expect(said('carries on in the index where it left off')).toBe(1)
   })
 })

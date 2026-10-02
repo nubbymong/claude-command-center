@@ -791,6 +791,11 @@ describe('Hello Codex: review round 1', () => {
     expect(pages[3].points.map((p) => p.lead)).toEqual(['It needs Claude Code too.', 'A separate reviewer, not another session.'])
     expect(pages[3].where).toBe('Settings, Accounts')
     expect(helloCodexComparison(off).find(([w]) => w === 'Code review')![2]).toBe('Needs Claude Code on')
+    // P3.16 sweep: the table names every Codex permission choice the session
+    // dialog offers, Plan mode (P3.8) included, in the dialog's order.
+    for (const opts of [off, { claudeReview: true, claudeOn: true }]) {
+      expect(helloCodexComparison(opts).find(([w]) => w === 'Permissions')![2]).toBe('Read-only, Standard, Plan mode, Auto, Unrestricted')
+    }
     // The Claude-review line needs BOTH the build and Claude Code on.
     for (const [claudeReview, claudeOn, shown] of [[true, true, true], [true, false, false], [false, true, false], [false, false, false]] as const) {
       const leads = helloCodexPages({ claudeReview, claudeOn })[3].points.map((p) => p.lead)
