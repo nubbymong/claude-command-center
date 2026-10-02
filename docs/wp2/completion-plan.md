@@ -3371,7 +3371,7 @@ folder name longer than 200 characters at 200 and add `-` and the base-36
 absolute value of a 32-bit hash of the whole launch folder; the shared rule
 does the same, byte for byte (`src/shared/project-key.ts`, and its copy in
 `scripts/resume-picker.js`), and main names the real path of the launch folder
-on Linux and macOS, as Claude Code takes it (`claudeProjectDirName`,
+(on Linux and macOS; fixer 3, F6: on Windows too), as Claude Code takes it (`claudeProjectDirName`,
 `transcript-discovery.ts`). So the folder a session not indexed marks, the
 names it takes, the exact resume's transcript and its bind, the heuristic bind
 and the resume picker name the folder Claude Code writes to. Q2 (lens A CAP,
@@ -3415,15 +3415,18 @@ the turns of other sessions that are indexed meanwhile (toward not indexing,
 fixer 3, D8); for a folder name longer than 200 characters, Claude Code
 2.1.287 also finds a folder named with the same first 200 characters and a
 `-` (any hash), while the app binds only the folder with the exact hash
-(fixer 3, D6); on Windows the folder is named from the launch folder as given,
-while Claude Code names it from the real path (Node's JS `realpathSync`) of the
-folder its own process starts in, after the shells the app starts it through
-have rewritten that folder (the VM probe at Claude Code 2.1.280: PowerShell
-writes the drive letter in upper case and expands 8.3 names, cmd.exe gives
-each name its case on disk, Claude Code resolves a junction, and a subst drive
-stays as it is), so a launch folder reached through a junction, given by an
-8.3 name, or longer than 200 characters and typed in another case than the
-shells pass on, is named otherwise by Claude Code; one copy of
+(fixer 3, D6); on Windows, as on Linux and macOS, the folder is named from the
+real path of the launch folder (Node's JS `realpathSync`, the function Claude
+Code applies: a junction is resolved, a subst drive kept; fixer 3, F6), but
+Claude Code applies it to the folder its own process starts in, after the
+shells the app starts it through have rewritten that folder (the VM probe at
+Claude Code 2.1.280: PowerShell writes the drive letter in upper case and
+expands 8.3 names, cmd.exe gives each name its case on disk), which the app
+does not reproduce: of the probe's 34 runs the app names 23 as Claude Code
+does (named as given, 14), and the other 11 are a launch folder typed in
+another case than on disk or with a lower-case drive letter (a name that
+differs only in case, and past 200 characters another hash) or given by its
+8.3 short name; one copy of
 the app per vision debug port: two copies on the same port (a development copy
 beside the installed one) share one vision browser profile folder, so they are
 run on different vision ports (lens B B-M8-1).
@@ -3471,13 +3474,24 @@ free (the launch goes ahead). F5: a test of the preload passing a Restart's
 `keepNotIndexedWindow` (opened, held, full, invalid, the 34-window bound, a
 cover left open by `closeHeldNotIndexedWindow`). Tests, red first on d536ca5d
 (7 of 156 in 4 files); mutation: 22 of 22 red, restored with a sha check.
-F6 (the Windows folder named from the real path) is not made: the VM probe
-found no single real path function that gives Claude Code's folder from the
-launch folder the app has (limits above).
+F6: on Windows too the projects folder is named from the JS real path of the
+launch folder (`claudeProjectDirName`, one rule on every platform), the
+function the VM probe found Claude Code applies, so a launch folder reached
+through a junction is named by its target. The drive letter is left as the
+real path gives it: not every local Claude Code launch reaches it through
+PowerShell (the Insights run and the CLI setup terminal start it directly,
+headless runs and Cloud Agents through cmd.exe, and the resume picker starts
+it in another folder when it moves to one), and writing the letter in upper
+case would name 2 of the probe's runs otherwise. Of the probe's 34 runs, 23
+named as Claude Code names them (named as given, 14); the others are a limit
+(above). Tests, red first on 91e2aac2 (2 of 47); mutation: 5 of 5 red.
 Owed on the VM at the final head: F1 (a Restart, then a close before the
-partner view is shown again: the partner's Services row ends) and F2 (a Codex
-session Restarted, then its next process's own end: one "session ended"); the
-round 1 items not yet seen (an e2e Claude session with
+partner view is shown again: the partner's Services row ends), F2 (a Codex
+session Restarted, then its next process's own end: one "session ended") and
+F6 (a Claude session launched in a folder reached through a junction, not
+indexed, then resumed in an indexed tab: its windows and the exact resume's
+bind); the round 1 items not yet seen (an e2e
+Claude session with
 the isolated home, Linux without lsof, macOS); on macOS and Linux, the real
 path Claude Code names the folder from (the case on disk, NFD names).
 
