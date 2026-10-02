@@ -87,6 +87,9 @@ const { claudeFolderKey, claudeProjectsRootKey } = await import('../../../src/ma
 const { FakeTranscriptsWorkerTransport } = await import('../../../src/main/logging/log-worker-transport')
 const { CODEX_PARSER_VERSION } = await import('../../../src/main/logging/codex-rollout-normalizer')
 const { PARSER_VERSION } = await import('../../../src/main/logging/transcript-normalizer')
+const { codexFolderKey } = await import('../../../src/main/logging/codex-folder-key')
+const { watchAndClaimRollout } = await import('../../../src/main/providers/codex/telemetry')
+const { makeCodexLogBinder } = await import('../../../src/main/logging/codex-log-binder')
 type Out = import('../../../src/main/logging/log-worker-transport').FromTranscriptsWorker
 type In = import('../../../src/main/logging/log-worker-transport').ToTranscriptsWorker
 
@@ -1055,5 +1058,152 @@ describe('Claude\'s resume continues from what was indexed, with Codex\'s record
     expect(shown(runOf('U'))).toEqual(['BEFORE', 'WRITTEN-WHILE-NOT-INDEXED', 'AFTER'])
     send(runC('V', BASE + 6300)); send(bindC('V', deeper)); w.tickNow()
     expect(shown(runOf('V'))).toEqual(['BEFORE', 'WRITTEN-WHILE-NOT-INDEXED', 'AFTER'])
+  })
+})
+
+// PR-level ADR-009 round 1 (C1): a Codex session not indexed also marks the
+// folder it was launched in, inside its realm, from the moment it became not
+// indexed until it ends, as a Claude session marks its projects folder. A
+// reader of any rollout of that realm whose session_meta records that folder
+// leaves out what is stamped in that window: the rollouts the session's own
+// watcher never claimed (another tab took one by folder and time; Codex began
+// one inside the session with no hook to say so). Fails closed: an indexed
+// tab's own turns in that folder of that realm meanwhile are left out too.
+describe('a Codex realm folder marked while a session not indexed ran (PR-level ADR-009 round 1, C1)', () => {
+  const BASE = Date.now() - 600_000
+  const at = (ms: number) => new Date(BASE + ms).toISOString()
+  const cid = (n: number) => `019dd000-0001-7000-8000-0000000003${String(n).padStart(2, '0')}`
+  const realmOf = (realm: string) => join(dir, realm, 'sessions')
+  const dayOf = (sessions: string, d = new Date()) => {
+    const p = (n: number) => String(n).padStart(2, '0')
+    const day = join(sessions, String(d.getFullYear()), p(d.getMonth() + 1), p(d.getDate()))
+    mkdirSync(day, { recursive: true })
+    return day
+  }
+  const rolloutIn = (sessions: string, n: number) => join(dayOf(sessions), `rollout-2026-10-02T10-00-00-${cid(n)}.jsonl`)
+  const metaFor = (n: number, cwd: string, iso = at(0)) => JSON.stringify({ timestamp: iso, type: 'session_meta', payload: { id: cid(n), cwd, cli_version: '0.155.1' } }) + '\n'
+  const turn = (text: string, iso: string) => JSON.stringify({ timestamp: iso, type: 'event_msg', payload: { type: 'item_completed', item: { type: 'UserMessage', id: 'u', content: [{ type: 'text', text }] } } }) + '\n'
+  const idOf = (f: string) => { const st = statSync(f, { bigint: true }); return `${st.dev}:${st.ino}` }
+  const runX = (sid: string, startedAt: number): In => ({ type: 'run-start', meta: { sessionId: sid, configLabel: 'Codex', provider: 'codex', startedAt } } as In)
+  const bindX = (sid: string, f: string): In => ({ type: 'transcript-bind', sessionId: sid, path: f, confidence: 'heuristic', sourceFormat: 'codex-rollout', sourceIdentity: idOf(f) } as In)
+  const words = (sid: string) => fake.msgs.filter((m) => m.runId === fake.runs.find((r) => r.sessionId === sid)?.runId && m.kind === 'message').map((m) => m.content)
+  const wire = (send: (m: In) => void) => {
+    resetIndexingGapsForTests()
+    setNotIndexedListener((u) => send({ type: 'not-indexed-windows', ...u } as unknown as In))
+  }
+  /** The Codex log binder as main wires it, its binds sent to the worker as the supervisor sends them. */
+  const binderTo = (send: (m: In) => void) => makeCodexLogBinder({
+    supervisor: {
+      bindTranscript: (sessionId, path, confidence, sourceVersion, sourceFormat, sourceIdentity) =>
+        send({ type: 'transcript-bind', sessionId, path, confidence, sourceVersion, sourceFormat, ...(sourceIdentity ? { sourceIdentity } : {}) } as In),
+      unbindTranscript: (sessionId, path) => send({ type: 'transcript-unbind', sessionId, path } as In),
+    },
+    writeName: () => {}, rememberedName: () => null, forgetName: () => {},
+  })
+  /** A session not indexed from `since`: its folder window, opened as pty-manager opens it. */
+  const notIndexedFolder = (sid: string, sessions: string, cwd: string, since: number) =>
+    keepNotIndexedWindow(sid, codexFolderKey(sessions, cwd), since, since, { cover: true, writeNow: true })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('C1: every rollout of the realm recording that folder (an indexed tab\'s own too: the known limit) leaves out its records in the window; another folder of the realm, and that folder in another realm, do not', () => {
+    const { w, send } = boot()
+    wire(send)
+    const mine = rolloutIn(realmOf('realm-a'), 1)
+    const otherFolder = rolloutIn(realmOf('realm-a'), 2)
+    const otherRealm = rolloutIn(realmOf('realm-b'), 3)
+    writeFileSync(mine, metaFor(1, '/p/demo') + turn('BEFORE', at(100)) + turn('WRITTEN-WHILE-NOT-INDEXED', at(1000)) + turn('AFTER', at(5000)))
+    writeFileSync(otherFolder, metaFor(2, '/p/other') + turn('BEFORE', at(100)) + turn('WRITTEN-WHILE-NOT-INDEXED', at(1000)) + turn('AFTER', at(5000)))
+    writeFileSync(otherRealm, metaFor(3, '/p/demo') + turn('BEFORE', at(100)) + turn('WRITTEN-WHILE-NOT-INDEXED', at(1000)) + turn('AFTER', at(5000)))
+    notIndexedFolder('S', realmOf('realm-a'), '/p/demo', BASE + 500)
+    closeNotIndexedWindow('S', BASE + 4000)
+    send(runX('R', BASE + 6000)); send(bindX('R', mine)); w.tickNow()
+    send(runX('T', BASE + 6100)); send(bindX('T', otherFolder)); w.tickNow()
+    send(runX('U', BASE + 6200)); send(bindX('U', otherRealm)); w.tickNow()
+    expect(words('R')).toEqual(['BEFORE', 'AFTER'])
+    expect(words('T')).toEqual(['BEFORE', 'WRITTEN-WHILE-NOT-INDEXED', 'AFTER'])
+    expect(words('U')).toEqual(['BEFORE', 'WRITTEN-WHILE-NOT-INDEXED', 'AFTER'])
+  })
+
+  it('C1: a rollout whose first line records no folder is left out wherever a Codex folder window covers the time; with none kept it is read whole', () => {
+    const { w, send } = boot()
+    wire(send)
+    const noMeta = rolloutIn(realmOf('realm-a'), 4)
+    writeFileSync(noMeta, turn('BEFORE', at(100)) + turn('WRITTEN-WHILE-NOT-INDEXED', at(1000)) + turn('AFTER', at(5000)))
+    send(runX('R', BASE + 6000)); send(bindX('R', noMeta)); w.tickNow()
+    expect(words('R')).toEqual(['BEFORE', 'WRITTEN-WHILE-NOT-INDEXED', 'AFTER'])
+    notIndexedFolder('S', realmOf('realm-z'), '/elsewhere', BASE + 500)
+    closeNotIndexedWindow('S', BASE + 4000)
+    send(runX('T', BASE + 6100)); send(bindX('T', noMeta)); w.tickNow()
+    expect(words('T')).toEqual(['BEFORE', 'AFTER'])
+  })
+
+  it('C1-1: two new sessions in one folder, the one not indexed launched second: the indexed tab that took its rollout by folder and time leaves out what was written while it ran', async () => {
+    vi.useFakeTimers()
+    const { w, send } = boot()
+    wire(send)
+    const sessions = realmOf('realm-c1')
+    const binder = binderTo(send)
+    const t0 = Date.now()
+    send(runX('A', t0)); binder.beginLaunch('A'); binder.startRun('A', true)
+    const a = watchAndClaimRollout('A', '/p/demo', t0, () => {}, sessions, undefined, { onRollout: (r) => binder.noteRollout('A', r) })
+    await vi.advanceTimersByTimeAsync(100)
+    const sinceB = Date.now()
+    notIndexedFolder('B', sessions, '/p/demo', sinceB)
+    const b = watchAndClaimRollout('B', '/p/demo', sinceB, () => {}, sessions, undefined, { onRollout: (r) => { if (r) openNotIndexedWindow('B', r.path, sinceB, Date.now()) } })
+    try {
+      // B's Codex writes its rollout first; A's a moment later.
+      const rB = rolloutIn(sessions, 11)
+      writeFileSync(rB, metaFor(11, '/p/demo', new Date(Date.now() + 50).toISOString()) + turn('B-PROMPT', new Date(Date.now() + 60).toISOString()))
+      await vi.advanceTimersByTimeAsync(600)
+      const rA = rolloutIn(sessions, 10)
+      writeFileSync(rA, metaFor(10, '/p/demo', new Date(Date.now() + 50).toISOString()) + turn('A-PROMPT', new Date(Date.now() + 60).toISOString()))
+      await vi.advanceTimersByTimeAsync(600)
+      // The swap: A took B's rollout by folder and time.
+      expect(fake.trs.filter((t) => t.runId === fake.runs.find((r) => r.sessionId === 'A')!.runId).map((t) => basename(t.path))).toEqual([basename(rB)])
+      appendFileSync(rB, turn('B-LATER', new Date(Date.now()).toISOString()))
+      w.tickNow()
+      expect(words('A')).toEqual([])
+      // B ends: what is stamped after is read.
+      closeNotIndexedWindow('B', Date.now())
+      await vi.advanceTimersByTimeAsync(1000)
+      appendFileSync(rB, turn('AFTER-B-ENDED', new Date(Date.now()).toISOString()))
+      w.tickNow()
+      expect(words('A')).toEqual(['AFTER-B-ENDED'])
+    } finally {
+      a.stop(); b.stop()
+    }
+  })
+
+  it('C1-2: a new conversation Codex began inside a session not indexed with no hook (its /new): the rollout it never claimed, taken by an indexed tab in the folder, leaves out what was written while it ran', async () => {
+    vi.useFakeTimers()
+    const { w, send } = boot()
+    wire(send)
+    const sessions = realmOf('realm-c2')
+    const binder = binderTo(send)
+    const sinceB = Date.now()
+    notIndexedFolder('B', sessions, '/p/demo', sinceB)
+    const b = watchAndClaimRollout('B', '/p/demo', sinceB, () => {}, sessions, undefined, { onRollout: (r) => { if (r) openNotIndexedWindow('B', r.path, sinceB, Date.now()) } })
+    let a: { stop(): void } | null = null
+    try {
+      const r1 = rolloutIn(sessions, 20)
+      writeFileSync(r1, metaFor(20, '/p/demo', new Date(Date.now() + 50).toISOString()) + turn('B-FIRST', new Date(Date.now() + 60).toISOString()))
+      await vi.advanceTimersByTimeAsync(600)
+      // A: an indexed tab launched later in the same folder, its Codex yet to write a rollout.
+      const tA = Date.now()
+      send(runX('A', tA)); binder.beginLaunch('A'); binder.startRun('A', true)
+      a = watchAndClaimRollout('A', '/p/demo', tA, () => {}, sessions, undefined, { onRollout: (r) => binder.noteRollout('A', r) })
+      await vi.advanceTimersByTimeAsync(100)
+      // B types /new: its Codex starts another conversation in a new rollout, and no hook says so.
+      const r2 = rolloutIn(sessions, 21)
+      writeFileSync(r2, metaFor(21, '/p/demo', new Date(Date.now() + 50).toISOString()) + turn('B-AFTER-NEW', new Date(Date.now() + 60).toISOString()))
+      await vi.advanceTimersByTimeAsync(600)
+      expect(fake.trs.filter((t) => t.runId === fake.runs.find((r) => r.sessionId === 'A')!.runId).map((t) => basename(t.path))).toEqual([basename(r2)])
+      w.tickNow()
+      expect(words('A')).toEqual([])
+      expect(fake.msgs.map((m) => m.content)).not.toContain('B-AFTER-NEW')
+      void r1
+    } finally {
+      a?.stop(); b.stop()
+    }
   })
 })

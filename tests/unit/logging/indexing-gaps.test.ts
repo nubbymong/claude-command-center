@@ -15,6 +15,7 @@ import {
   initIndexingGaps, openNotIndexedWindow, closeNotIndexedWindow, releaseNotIndexedWindow, notIndexedSnapshot, setNotIndexedListener, flushIndexingGaps,
   conversationKey, indexingGapsWritesForTests, resetIndexingGapsForTests, NOT_INDEXED_CONVERSATIONS_MAX, WINDOWS_PER_CONVERSATION_MAX,
   keepNotIndexedWindow, closeHeldNotIndexedWindow, HELD_WINDOWS_PER_SESSION_MAX, HELD_COVER_WINDOWS_MAX,
+  setNotIndexedConversationsMaxForTests,
   type NotIndexedUpdate,
 } from '../../../src/main/logging/indexing-gaps'
 
@@ -342,5 +343,102 @@ describe('keepNotIndexedWindow: the windows one session holds beside one another
     expect(indexingGapsWritesForTests()).toBe(writes0 + 1)
     vi.advanceTimersByTime(5000)
     expect(indexingGapsWritesForTests()).toBe(writes0 + 2)
+  })
+})
+
+// PR-level ADR-009 round 1 (C1): a Codex session not indexed holds a cover
+// window on its realm's launch folder beside the one conversation it is on.
+// A claim of a conversation, a claim of another and a claim let go close the
+// conversation's window only; the cover stays open, and held, until the
+// session ends (or, killed, until its process has ended).
+describe('a Codex session\'s folder window beside its conversation (PR-level ADR-009 round 1, C1)', () => {
+  const FOLDER = 'codex-folder:x'
+  it('stays open and held across a claim, another claim and a claim let go; the session\'s end closes it with the rest', () => {
+    expect(keepNotIndexedWindow('cx', FOLDER, 100, 100, { cover: true, writeNow: true })).toBe('opened')
+    openNotIndexedWindow('cx', A, 100, 200)
+    openNotIndexedWindow('cx', OTHER, 100, 300)
+    expect(of(FOLDER)).toEqual([[100, null]])
+    expect(of(ID)).toEqual([[100, 300]])
+    // The claim let go: its conversation's window closes, the folder's stays.
+    closeNotIndexedWindow('cx', 400, { coversStay: true })
+    expect(of(OTHER_ID)).toEqual([[100, 400]])
+    expect(of(FOLDER)).toEqual([[100, null]])
+    openNotIndexedWindow('cx', A, 100, 500)
+    expect(of(ID)).toEqual([[100, 300], [100, null]])
+    closeNotIndexedWindow('cx', 600)
+    expect(of(FOLDER)).toEqual([[100, 600]])
+    expect(of(ID)).toEqual([[100, 300], [100, 600]])
+  })
+
+  it('a killed session\'s folder window stays open with its conversation\'s until the closer runs', () => {
+    keepNotIndexedWindow('cx', FOLDER, 100, 100, { cover: true })
+    openNotIndexedWindow('cx', A, 100, 200)
+    const close = releaseNotIndexedWindow('cx')!
+    expect(of(FOLDER)).toEqual([[100, null]])
+    close(700)
+    expect(of(FOLDER)).toEqual([[100, 700]])
+    expect(of(ID)).toEqual([[100, 700]])
+  })
+})
+
+// PR-level ADR-009 round 1 (C2): past the conversations kept, the least
+// recently changed one with no window open goes (after `before` is raised past
+// its windows); one whose window is still open (a session not indexed is on it,
+// or a killed one winds down) never does, so what it writes after is never in
+// no window. Past the cap with every conversation open, a name of a Claude
+// session is refused ('full': its caller covers it with its folder's window, as
+// past a session's own cap); a cover, and a Codex session's one conversation,
+// are still opened. A small cap is set for the test.
+describe('the conversations kept past the cap (PR-level ADR-009 round 1, C2)', () => {
+  const rollout = (n: number) => `/r/a/sessions/2026/10/02/rollout-2026-10-02T00-00-00-019dd000-0001-7000-8000-${n.toString(16).padStart(12, '0')}.jsonl`
+  const key = (n: number) => conversationKey(rollout(n))
+
+  it('C2a: a conversation whose window is open is never dropped; the oldest closed one goes, before raised past it', () => {
+    setNotIndexedConversationsMaxForTests(3)
+    openNotIndexedWindow('held', rollout(0), 1000)
+    openNotIndexedWindow('s1', rollout(1), 1100); closeNotIndexedWindow('s1', 1150)
+    openNotIndexedWindow('s2', rollout(2), 1200); closeNotIndexedWindow('s2', 1250)
+    openNotIndexedWindow('s3', rollout(3), 1300)
+    expect(of(key(0))).toEqual([[1000, null]])
+    expect(of(key(1))).toEqual([])
+    expect(notIndexedSnapshot().before).toBe(1150)
+    closeNotIndexedWindow('held', 9000)
+    expect(of(key(0))).toEqual([[1000, 9000]])
+  })
+
+  it('C2b (the probe): every conversation open past the cap: none is dropped, the held one included; once one closes, the next new one makes room by it', () => {
+    setNotIndexedConversationsMaxForTests(3)
+    const told: NotIndexedUpdate[] = []
+    setNotIndexedListener((u) => told.push(u))
+    openNotIndexedWindow('held', rollout(0), 1000)
+    for (let i = 1; i <= 3; i++) openNotIndexedWindow(`s${i}`, rollout(i), 1000 + i)
+    expect(Object.keys(notIndexedSnapshot().conversations)).toHaveLength(4)
+    expect(of(key(0))).toEqual([[1000, null]])
+    expect(notIndexedSnapshot().before).toBeNull()
+    closeNotIndexedWindow('s1', 1500)
+    openNotIndexedWindow('s4', rollout(4), 1600)
+    expect(of(key(1))).toEqual([])
+    expect(of(key(0))).toEqual([[1000, null]])
+    expect(notIndexedSnapshot().before).toBe(1500)
+    // The held session ends later: the worker is told its window, closed, never an empty list.
+    told.length = 0
+    closeNotIndexedWindow('held', 60_000)
+    expect(told[0].conversations[key(0)]).toEqual([[1000, 60_000]])
+  })
+
+  it('C2c: past the cap with every conversation open, a Claude name is refused and a cover is opened instead; a conversation kept already takes another window; a closed one makes room', () => {
+    setNotIndexedConversationsMaxForTests(2)
+    expect(keepNotIndexedWindow('a', 'name-a', 100)).toBe('opened')
+    expect(keepNotIndexedWindow('b', 'name-b', 100)).toBe('opened')
+    expect(keepNotIndexedWindow('c', 'name-c', 100, 200)).toBe('full')
+    expect(of('name-c')).toEqual([])
+    expect(of('name-a')).toEqual([[100, null]])
+    expect(keepNotIndexedWindow('c', 'folder-c', 100, 200, { cover: true })).toBe('opened')
+    expect(of('folder-c')).toEqual([[100, null]])
+    expect(keepNotIndexedWindow('d', 'name-a', 100, 300)).toBe('opened')
+    closeNotIndexedWindow('b', 400)
+    expect(keepNotIndexedWindow('e', 'name-e', 100, 500)).toBe('opened')
+    expect(of('name-b')).toEqual([])
+    expect(of('name-e')).toEqual([[100, null]])
   })
 })

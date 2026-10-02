@@ -29,6 +29,7 @@ import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { shouldRegisterRun } from './logging/should-register-run'
 import { openNotIndexedWindow, closeNotIndexedWindow, releaseNotIndexedWindow, keepNotIndexedWindow, closeHeldNotIndexedWindow, conversationKey } from './logging/indexing-gaps'
 import { claudeFolderKey, claudeProjectsRootKey, normaliseClaudeFolder } from './logging/claude-folder-key'
+import { codexFolderKey } from './logging/codex-folder-key'
 import { getLogSupervisor, getTranscriptBinder } from './logging/logging-service'
 import { getCodexLogBinder } from './logging/codex-log-binder'
 import { resolveResumeTargetFromTranscript, claudeProjectDirName, UUID_RE, canonicalizeTranscriptPath } from './logging/transcript-discovery'
@@ -596,10 +597,37 @@ export const CLAUDE_TRANSCRIPTS_MAX = 512
  *  Set at its launch, gone at its teardown; bounded. */
 const claudeFolders = new Map<string, string>()
 
+/** PR-level ADR-009 round 1 (C1): each local Codex session's realm (its
+ *  sessions folder) and the folder its watcher matches a new rollout by (the
+ *  one it runs in), from its launch, for the folder window below. Set at each
+ *  Codex launch, gone at its teardown; bounded. */
+const codexFolders = new Map<string, { sessionsDir: string; cwd: string }>()
+
+function noteCodexFolder(sessionId: string, sessionsDir: string, cwd: string): void {
+  codexFolders.delete(sessionId)
+  if (typeof sessionsDir !== 'string' || !sessionsDir || typeof cwd !== 'string' || !cwd) return
+  codexFolders.set(sessionId, { sessionsDir, cwd })
+  while (codexFolders.size > CLAUDE_TRANSCRIPTS_MAX) {
+    const oldest = codexFolders.keys().next().value
+    if (oldest === undefined) break
+    codexFolders.delete(oldest)
+  }
+}
+
 /** `since`: the moment the session became not indexed; `now`: this moment. */
 function markSessionNotIndexed(sessionId: string, provider: 'claude' | 'codex', since: number, now: number = since): void {
   notIndexedSessions.set(sessionId, { since, provider })
   if (provider === 'codex') {
+    // PR-level ADR-009 round 1 (C1): the folder it runs in, inside its realm,
+    // is marked from this moment until the session ends (a cover: its claims
+    // and a claim let go leave it open), so a rollout its own watcher never
+    // claims (another tab took it by folder and time; Codex began it inside
+    // the session, its /new or a backtrack, with no hook to say so) is left
+    // out by that folder, as a Claude session's projects folder is. Written
+    // at once. Fails closed: an indexed Codex session of the same realm in the
+    // same folder has its turns left out meanwhile (a recorded limit).
+    const at = codexFolders.get(sessionId)
+    if (at) { try { keepNotIndexedWindow(sessionId, codexFolderKey(at.sessionsDir, at.cwd), since, now, { writeNow: true, cover: true }) } catch { /* best-effort */ } }
     const held = codexContextRollouts.get(sessionId)?.path
     if (held) { try { openNotIndexedWindow(sessionId, held, since, now) } catch { /* best-effort */ } }
     return
@@ -609,13 +637,30 @@ function markSessionNotIndexed(sessionId: string, provider: 'claude' | 'codex', 
   const named = claudeTranscripts.get(sessionId)
   const folder = claudeFolders.get(sessionId)
   const key = named ? conversationKey(named) : folder ? claudeFolderKey(folder) : null
-  if (key) { try { keepNotIndexedWindow(sessionId, key, since, now, { writeNow: true }) } catch { /* best-effort */ } }
+  let kept: ReturnType<typeof keepNotIndexedWindow> = 'invalid'
+  if (key) { try { kept = keepNotIndexedWindow(sessionId, key, since, now, { writeNow: true }) } catch { /* best-effort */ } }
+  // PR-level ADR-009 round 1 (C2): past the record's cap with every
+  // conversation open, it is covered as past its own cap (noteClaudeTranscript).
+  if (kept === 'full' && folder) {
+    const cover = named ? claudeCoverKey(folder, named) : claudeFolderKey(folder)
+    try { keepNotIndexedWindow(sessionId, cover, since, now, { writeNow: true, cover: true }) } catch { /* best-effort */ }
+  }
+}
+
+/** P3.16a round 2 (Q2, Q3): the window that covers a transcript a Claude
+ *  session named when it can have none of its own: its own folder's, or for a
+ *  transcript of another project's folder the projects folders' root's. */
+function claudeCoverKey(folder: string, canonical: string): string {
+  const ownFolder = normaliseClaudeFolder(path.dirname(canonical)) === normaliseClaudeFolder(folder)
+  return ownFolder ? claudeFolderKey(folder) : claudeProjectsRootKey(path.join(os.homedir(), '.claude', 'projects'))
 }
 
 /** P3.12 (Y1): the session no longer holds a conversation while not indexed
- *  (it ends, relaunches or lets the claim go): its windows close. */
-function endSessionNotIndexed(sessionId: string, now: number): void {
-  try { closeNotIndexedWindow(sessionId, now) } catch { /* best-effort */ }
+ *  (it ends, relaunches or lets the claim go): its windows close.
+ *  PR-level ADR-009 round 1 (C1): `coversStay` for a Codex session that let
+ *  its claim go and runs on: its folder window stays open. */
+function endSessionNotIndexed(sessionId: string, now: number, opts: { coversStay?: boolean } = {}): void {
+  try { closeNotIndexedWindow(sessionId, now, opts) } catch { /* best-effort */ }
 }
 
 /** P3.16 (M1), round 1 (N2, N4): a Claude session is on the transcript at
@@ -656,7 +701,7 @@ function noteClaudeTranscript(sessionId: string, transcriptPath: string): void {
     let kept: ReturnType<typeof keepNotIndexedWindow> = 'invalid'
     try { kept = keepNotIndexedWindow(sessionId, conversationKey(canonical), notIndexed.since, now) } catch { /* best-effort */ }
     if (kept === 'full') {
-      const cover = ownFolder ? claudeFolderKey(folder) : claudeProjectsRootKey(projectsRoot)
+      const cover = claudeCoverKey(folder, canonical)
       try { keepNotIndexedWindow(sessionId, cover, notIndexed.since, now, { cover: true }) } catch { /* best-effort */ }
     } else {
       // A cover window is left open (indexing-gaps closes only the folder's first one).
@@ -4990,6 +5035,10 @@ function spawnPtyResolved(
       // P3.12 (X1): this launch is not yet known as not indexed (its own run
       // block says, below); a claim it makes before that is not marked.
       notIndexedSessions.delete(sessionId)
+      // PR-level ADR-009 round 1 (C1): the realm and the folder this launch
+      // runs in (its watcher matches a new rollout by it), for its folder
+      // window when it is not indexed.
+      noteCodexFolder(sessionId, launch.sessionsDir, codexCwd)
       // P3.12 round 1 (B2): a launch on another account (Switch Account) is on
       // another account's folder: the rollout recorded for the Session
       // Context goes until this launch claims one.
@@ -5042,10 +5091,12 @@ function spawnPtyResolved(
             noteCodexContextRollout(sessionId, rollout)
             // P3.12 (X1, Z1): a conversation a session not indexed is on: its
             // window opens when the session became not indexed, not now.
+            // PR-level ADR-009 round 1 (C1): a claim let go closes the
+            // conversation's window only; the folder's stays open.
             const notIndexed = notIndexedSessions.get(sessionId)
             if (notIndexed?.provider === 'codex') {
               if (rollout) { try { openNotIndexedWindow(sessionId, rollout.path, notIndexed.since, Date.now()) } catch { /* best-effort */ } }
-              else endSessionNotIndexed(sessionId, Date.now())
+              else endSessionNotIndexed(sessionId, Date.now(), { coversStay: true })
             }
             getCodexLogBinder()?.noteRollout(sessionId, rollout)
           },
@@ -6370,6 +6421,7 @@ function cleanupSessionResources(sessionId: string): void {
   notIndexedSessions.delete(sessionId)
   claudeTranscripts.delete(sessionId)
   claudeFolders.delete(sessionId)
+  codexFolders.delete(sessionId)
   endSessionNotIndexed(sessionId, Date.now())
   if (codexTel) {
     try { codexTel.stop() } catch { /* noop */ }
