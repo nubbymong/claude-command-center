@@ -533,9 +533,17 @@ describe('claudeProjectDirName (Q1)', () => {
       const real = path.join(base, 'Target Real')
       fs.mkdirSync(path.join(real, 'CaseDir'), { recursive: true })
       const link = path.join(base, 'link')
-      // A temp volume that cannot hold a junction (FAT or exFAT): skipped, never passed.
+      // A temp volume that cannot hold a junction (FAT or exFAT): skipped, never
+      // passed. ENOENT and EEXIST are this test's own setup going wrong, so they
+      // fail it; it catches any other symlinkSync error.
       let linked = false
-      try { fs.symlinkSync(real, link, 'junction'); linked = true } catch { /* no junction here */ }
+      try {
+        fs.symlinkSync(real, link, 'junction')
+        linked = true
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code
+        if (code === 'ENOENT' || code === 'EEXIST') throw err
+      }
       if (!linked) return ctx.skip()
       const given = path.join(link, 'casedir')
       const name = claudeProjectDirName(given)
