@@ -231,6 +231,11 @@ jobs:
           # the local build.
           npx electron-builder --win --publish never --config.npmRebuild=false @extra
 
+      # The native modules (and node-pty's bundled ConPTY files) are unpacked in
+      # the package that ships (scripts/verify-native-unpack.mjs).
+      - name: Verify native modules unpacked
+        run: npm run verify:package
+
       # Fail loudly rather than ever ship unsigned again: a stable/beta release
       # with signing secrets missing is an error, not a fallback.
       # Template values (installer name, channel) are passed via env: rather than
@@ -399,6 +404,9 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: npx electron-builder --mac dmg --publish never
 
+      - name: Verify native modules unpacked
+        run: npm run verify:package
+
       - name: Determine DMG filename
         id: dmg
         run: |
@@ -482,6 +490,9 @@ jobs:
 
       - name: Package Linux AppImage
         run: npx electron-builder --linux --publish never
+
+      - name: Verify native modules unpacked
+        run: npm run verify:package
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v7
