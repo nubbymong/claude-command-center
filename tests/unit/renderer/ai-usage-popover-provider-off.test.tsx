@@ -87,6 +87,12 @@ describe('AI usage popover: a provider that is off has no section (row 14, OD27 
     const lines = d5Lines()
     expect(lines).toHaveLength(1)
     expect(lines[0].style.color).toBe('var(--text-muted)')
+    // Where the Claude section was: after the Codex card, before the footer.
+    const parts = Array.from(container.querySelector('[role="dialog"]')!.children)
+    const at = parts.indexOf(lines[0])
+    expect(parts[at - 1].textContent).toMatch(/^Codex/)
+    expect(parts[at + 1].textContent).toContain('Copilot meter settings')
+    expect(at).toBe(parts.length - 2)
     // Nothing else names Claude: no section, no "no Claude session" note.
     expect(text().replace(D5_LINE, '')).not.toMatch(/claude/i)
   })
@@ -103,6 +109,15 @@ describe('AI usage popover: a provider that is off has no section (row 14, OD27 
   it('a switch flipped in Settings while the popover is open re-renders it', async () => {
     setSwitches({ claudeEnabled: true, codexEnabled: true })
     await render()
+    // The Codex switch alone: its section goes and comes back; Claude's stays.
+    await act(async () => { setSwitches({ codexEnabled: false }) })
+    expect(text()).not.toMatch(/codex/i)
+    expect(text()).not.toContain('77%')
+    expect(text()).toContain('42%')
+    await act(async () => { setSwitches({ codexEnabled: true }) })
+    expect(text()).toContain('Codex')
+    expect(text()).toContain('77%')
+    expect(text()).toContain('42%')
     await act(async () => { setSwitches({ claudeEnabled: false }) })
     expect(text()).not.toContain('42%')
     expect(d5Lines()).toHaveLength(1)
