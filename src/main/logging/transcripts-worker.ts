@@ -37,7 +37,7 @@ import * as nodeFs from 'fs'
 import { createHash, type Hash } from 'crypto'
 import { basename as pathBasename, dirname as pathDirname } from 'path'
 import { claudeFolderKey, claudeProjectsRootKey } from './claude-folder-key'
-import { CODEX_FOLDER_KEY_PREFIX, codexFolderKey, codexRolloutSessionsDir, codexSessionMetaCwd } from './codex-folder-key'
+import { CODEX_FOLDER_KEY_PREFIX, codexFolderKey, codexSessionMetaCwd } from './codex-folder-key'
 import { readBoundedFirstLine } from './bounded-first-line'
 import { openTranscriptsDb } from './transcripts-db'
 import type { TranscriptsDb, NewMessage, TranscriptScope } from './transcripts-db'
@@ -147,12 +147,12 @@ export function createTranscriptsWorker(
    *  open; and `before`, every record stamped earlier. */
   const notIndexedWindows = new Map<string, Array<[number, number | null]>>()
   let notIndexedBefore: number | null = null
-  /** PR-level ADR-009 round 1 (C1): the Codex realm folders main has windows
+  /** PR-level ADR-009 round 1 (C1): the Codex launch folders main has windows
    *  for (codex-folder-key.ts), for a rollout whose folder cannot be read. */
   const codexFolderKeys = new Set<string>()
   /** Whether a record written at `ts` under any of `keys` (its conversation,
    *  and for a Claude transcript its projects folder, P3.16 round 1 N1; for a
-   *  Codex rollout its realm folder, PR-level ADR-009 round 1 C1) is
+   *  Codex rollout the folder it records, PR-level ADR-009 round 1 C1) is
    *  left out. A record with no time (none of its own, none before it in the
    *  read) is left out whenever any of them has such a rule. A record at a
    *  window's start is inside it; one at its end is not. */
@@ -165,15 +165,15 @@ export function createTranscriptsWorker(
     return lists.some((list) => list.some(([start, end]) => ts >= start && (end === null || ts < end)))
   }
   /** PR-level ADR-009 round 1 (C1): the key of the folder a rollout's first
-   *  line (its session_meta) records, in the realm the rollout lies in; null
-   *  when that line cannot be read, or records no folder. Round 2 (K5): read
-   *  with the rollout lookup's own reader and bound, through this worker's
-   *  file port. */
+   *  line (its session_meta) records (round 2, K2: whichever realm the
+   *  rollout lies in); null when that line cannot be read, or records no
+   *  folder. Round 2 (K5): read with the rollout lookup's own reader and
+   *  bound, through this worker's file port. */
   function codexFolderOf(path: string): string | null {
     const head = readBoundedFirstLine(path, fsi)
     if (!head || head.kind !== 'line') return null
     const cwd = codexSessionMetaCwd(head.line)
-    return cwd ? codexFolderKey(codexRolloutSessionsDir(path), cwd) : null
+    return cwd ? codexFolderKey(cwd) : null
   }
   /** P3.12 (X4): the running digest of the first `cursor` bytes of `path`,
    *  when they are what a tail read (their SHA-256 is `stored`, the digest
@@ -497,9 +497,10 @@ export function createTranscriptsWorker(
     // was marked (a session past its cap that named another project's file).
     const folder = pathDirname(meta.path)
     // PR-level ADR-009 round 1 (C1): a Codex rollout is also left out where
-    // the folder its session_meta records was marked in its realm (a session
-    // not indexed launched there, from the moment it became not indexed until
-    // it ended), as a Claude transcript is where its projects folder was;
+    // the folder its session_meta records was marked (a session not indexed
+    // launched there, from the moment it became not indexed until it ended;
+    // round 2, K2: in any realm, so a Sign in again's copy is left out too),
+    // as a Claude transcript is where its projects folder was;
     // worked out once, from the rollout's first line. One whose first line
     // records no folder is left out wherever any Codex folder window covers
     // the record's time. Round 2 (K5): the key list is built once per tail;

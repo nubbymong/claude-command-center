@@ -597,23 +597,23 @@ export const CLAUDE_TRANSCRIPTS_MAX = 512
  *  Set at its launch, gone at its teardown; bounded. */
 const claudeFolders = new Map<string, string>()
 
-/** PR-level ADR-009 round 1 (C1): each local Codex session's realm (its
- *  sessions folder) and the folder its watcher matches a new rollout by (the
- *  one it runs in), from its launch, for the folder window below. Set at each
- *  Codex launch, gone at its teardown; bounded. Round 2 (K1): with the
- *  folder's real path when it differs (a folder reached through a link), the
- *  one a session_meta records off Windows (Codex records its working folder
- *  with the links resolved). */
-const codexFolders = new Map<string, { sessionsDir: string; cwd: string; realCwd?: string }>()
+/** PR-level ADR-009 round 1 (C1): each local Codex session's folder its
+ *  watcher matches a new rollout by (the one it runs in), from its launch, for
+ *  the folder window below. Set at each Codex launch, gone at its teardown;
+ *  bounded. Round 2 (K1): with the folder's real path when it differs (a
+ *  folder reached through a link), the one a session_meta records off Windows
+ *  (Codex records its working folder with the links resolved). Round 2 (K2):
+ *  the folder alone, whatever the realm (codex-folder-key.ts). */
+const codexFolders = new Map<string, { cwd: string; realCwd?: string }>()
 
-function noteCodexFolder(sessionId: string, sessionsDir: string, cwd: string): void {
+function noteCodexFolder(sessionId: string, cwd: string): void {
   codexFolders.delete(sessionId)
-  if (typeof sessionsDir !== 'string' || !sessionsDir || typeof cwd !== 'string' || !cwd) return
+  if (typeof cwd !== 'string' || !cwd) return
   // The real path as the app names a Claude projects folder from it (since
   // fixer 3, F6): Node's JS realpathSync, the folder as given when it cannot be read.
   let realCwd = cwd
   try { realCwd = fs.realpathSync(cwd) } catch { /* named as given */ }
-  codexFolders.set(sessionId, normaliseClaudeFolder(realCwd) === normaliseClaudeFolder(cwd) ? { sessionsDir, cwd } : { sessionsDir, cwd, realCwd })
+  codexFolders.set(sessionId, normaliseClaudeFolder(realCwd) === normaliseClaudeFolder(cwd) ? { cwd } : { cwd, realCwd })
   while (codexFolders.size > CLAUDE_TRANSCRIPTS_MAX) {
     const oldest = codexFolders.keys().next().value
     if (oldest === undefined) break
@@ -625,21 +625,22 @@ function noteCodexFolder(sessionId: string, sessionsDir: string, cwd: string): v
 function markSessionNotIndexed(sessionId: string, provider: 'claude' | 'codex', since: number, now: number = since): void {
   notIndexedSessions.set(sessionId, { since, provider })
   if (provider === 'codex') {
-    // PR-level ADR-009 round 1 (C1): the folder it runs in, inside its realm,
-    // is marked from this moment until the session ends (a cover: its claims
-    // and a claim let go leave it open), so a rollout its own watcher never
-    // claims (another tab took it by folder and time; Codex began it inside
-    // the session, its /new or a backtrack, with no hook to say so) is left
-    // out by that folder, as a Claude session's projects folder is. Written
-    // at once. Fails closed: an indexed Codex session of the same realm in the
-    // same folder has its turns left out meanwhile (a recorded limit).
-    // Round 2 (K1): a folder reached through a link is marked by both
-    // spellings, as launched and its real path, whichever one a rival
-    // session's rollout records.
+    // PR-level ADR-009 round 1 (C1): the folder it runs in is marked from
+    // this moment until the session ends (a cover: its claims and a claim let
+    // go leave it open), so a rollout its own watcher never claims (another
+    // tab took it by folder and time; Codex began it inside the session, its
+    // /new or a backtrack, with no hook to say so) is left out by that
+    // folder, as a Claude session's projects folder is. Written at once.
+    // Round 2 (K2): the folder in every realm, so a Sign in again's copy of
+    // such a rollout is left out too. Fails closed: an indexed Codex session
+    // of any account in the same folder has its turns left out meanwhile (a
+    // recorded limit). Round 2 (K1): a folder reached through a link is
+    // marked by both spellings, as launched and its real path, whichever one a
+    // rival session's rollout records.
     const at = codexFolders.get(sessionId)
     if (at) {
       for (const folder of at.realCwd ? [at.cwd, at.realCwd] : [at.cwd]) {
-        try { keepNotIndexedWindow(sessionId, codexFolderKey(at.sessionsDir, folder), since, now, { writeNow: true, cover: true }) } catch { /* best-effort */ }
+        try { keepNotIndexedWindow(sessionId, codexFolderKey(folder), since, now, { writeNow: true, cover: true }) } catch { /* best-effort */ }
       }
     }
     const held = codexContextRollouts.get(sessionId)?.path
@@ -5049,10 +5050,10 @@ function spawnPtyResolved(
       // P3.12 (X1): this launch is not yet known as not indexed (its own run
       // block says, below); a claim it makes before that is not marked.
       notIndexedSessions.delete(sessionId)
-      // PR-level ADR-009 round 1 (C1): the realm and the folder this launch
-      // runs in (its watcher matches a new rollout by it), for its folder
-      // window when it is not indexed.
-      noteCodexFolder(sessionId, launch.sessionsDir, codexCwd)
+      // PR-level ADR-009 round 1 (C1): the folder this launch runs in (its
+      // watcher matches a new rollout by it), for its folder window when it is
+      // not indexed.
+      noteCodexFolder(sessionId, codexCwd)
       // P3.12 round 1 (B2): a launch on another account (Switch Account) is on
       // another account's folder: the rollout recorded for the Session
       // Context goes until this launch claims one.

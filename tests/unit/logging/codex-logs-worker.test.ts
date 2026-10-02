@@ -1101,11 +1101,11 @@ describe('a Codex realm folder marked while a session not indexed ran (PR-level 
     writeName: () => {}, rememberedName: () => null, forgetName: () => {},
   })
   /** A session not indexed from `since`: its folder window, opened as pty-manager opens it. */
-  const notIndexedFolder = (sid: string, sessions: string, cwd: string, since: number) =>
-    keepNotIndexedWindow(sid, codexFolderKey(sessions, cwd), since, since, { cover: true, writeNow: true })
+  const notIndexedFolder = (sid: string, cwd: string, since: number) =>
+    keepNotIndexedWindow(sid, codexFolderKey(cwd), since, since, { cover: true, writeNow: true })
   afterEach(() => { vi.useRealTimers() })
 
-  it('C1: every rollout of the realm recording that folder (an indexed tab\'s own too: the known limit) leaves out its records in the window; another folder of the realm, and that folder in another realm, do not', () => {
+  it('C1: every rollout recording that folder (an indexed tab\'s own too: the known limit; round 2, K2: in any realm) leaves out its records in the window; another folder does not', () => {
     const { w, send } = boot()
     wire(send)
     const mine = rolloutIn(realmOf('realm-a'), 1)
@@ -1114,14 +1114,14 @@ describe('a Codex realm folder marked while a session not indexed ran (PR-level 
     writeFileSync(mine, metaFor(1, '/p/demo') + turn('BEFORE', at(100)) + turn('WRITTEN-WHILE-NOT-INDEXED', at(1000)) + turn('AFTER', at(5000)))
     writeFileSync(otherFolder, metaFor(2, '/p/other') + turn('BEFORE', at(100)) + turn('WRITTEN-WHILE-NOT-INDEXED', at(1000)) + turn('AFTER', at(5000)))
     writeFileSync(otherRealm, metaFor(3, '/p/demo') + turn('BEFORE', at(100)) + turn('WRITTEN-WHILE-NOT-INDEXED', at(1000)) + turn('AFTER', at(5000)))
-    notIndexedFolder('S', realmOf('realm-a'), '/p/demo', BASE + 500)
+    notIndexedFolder('S', '/p/demo', BASE + 500)
     closeNotIndexedWindow('S', BASE + 4000)
     send(runX('R', BASE + 6000)); send(bindX('R', mine)); w.tickNow()
     send(runX('T', BASE + 6100)); send(bindX('T', otherFolder)); w.tickNow()
     send(runX('U', BASE + 6200)); send(bindX('U', otherRealm)); w.tickNow()
     expect(words('R')).toEqual(['BEFORE', 'AFTER'])
     expect(words('T')).toEqual(['BEFORE', 'WRITTEN-WHILE-NOT-INDEXED', 'AFTER'])
-    expect(words('U')).toEqual(['BEFORE', 'WRITTEN-WHILE-NOT-INDEXED', 'AFTER'])
+    expect(words('U')).toEqual(['BEFORE', 'AFTER'])
   })
 
   it('C1: a rollout whose first line records no folder is left out wherever a Codex folder window covers the time; with none kept it is read whole', () => {
@@ -1131,7 +1131,7 @@ describe('a Codex realm folder marked while a session not indexed ran (PR-level 
     writeFileSync(noMeta, turn('BEFORE', at(100)) + turn('WRITTEN-WHILE-NOT-INDEXED', at(1000)) + turn('AFTER', at(5000)))
     send(runX('R', BASE + 6000)); send(bindX('R', noMeta)); w.tickNow()
     expect(words('R')).toEqual(['BEFORE', 'WRITTEN-WHILE-NOT-INDEXED', 'AFTER'])
-    notIndexedFolder('S', realmOf('realm-z'), '/elsewhere', BASE + 500)
+    notIndexedFolder('S', '/elsewhere', BASE + 500)
     closeNotIndexedWindow('S', BASE + 4000)
     send(runX('T', BASE + 6100)); send(bindX('T', noMeta)); w.tickNow()
     expect(words('T')).toEqual(['BEFORE', 'AFTER'])
@@ -1144,7 +1144,7 @@ describe('a Codex realm folder marked while a session not indexed ran (PR-level 
     writeFileSync(noMeta, turn('BEFORE', at(100)))
     send(runX('R', BASE + 6000)); send(bindX('R', noMeta)); w.tickNow()
     expect(words('R')).toEqual(['BEFORE'])
-    notIndexedFolder('S', realmOf('realm-z'), '/elsewhere', BASE + 500)
+    notIndexedFolder('S', '/elsewhere', BASE + 500)
     appendFileSync(noMeta, turn('WRITTEN-WHILE-NOT-INDEXED', at(1000)))
     closeNotIndexedWindow('S', BASE + 4000)
     appendFileSync(noMeta, turn('AFTER', at(5000)))
@@ -1152,19 +1152,34 @@ describe('a Codex realm folder marked while a session not indexed ran (PR-level 
     expect(words('R')).toEqual(['BEFORE', 'AFTER'])
   })
 
-  it('C1 (round 2, F1 F2 F6): on Windows, main\'s key and the worker\'s are one however each side spells the realm or the folder (case, slashes, a trailing separator)', () => {
-    const key = codexFolderKey('C:\\Users\\U\\AppData\\realms\\a\\sessions', 'C:\\Work\\Demo', 'win32')
-    for (const [realm, folder] of [
-      ['c:/users/u/appdata/realms/a/sessions', 'c:/work/demo'],
-      ['C:\\Users\\U\\AppData\\realms\\a\\sessions\\', 'C:\\Work\\Demo\\'],
-      ['C:/USERS/U/APPDATA/REALMS/A/SESSIONS/', 'c:\\WORK\\demo'],
-    ]) expect(codexFolderKey(realm, folder, 'win32'), `${realm} | ${folder}`).toBe(key)
-    // Another folder of the realm, or the folder in another realm, is another key.
-    expect(codexFolderKey('C:\\Users\\U\\AppData\\realms\\a\\sessions', 'C:\\Work\\Other', 'win32')).not.toBe(key)
-    expect(codexFolderKey('C:\\Users\\U\\AppData\\realms\\b\\sessions', 'C:\\Work\\Demo', 'win32')).not.toBe(key)
+  it('round 2 (K2, lens C G2): a Sign in again copies the history into a new realm; resumed there, a rollout read from its start leaves out what was written while its folder was marked, as the original does', () => {
+    const { w, send } = boot()
+    wire(send)
+    const oldRealm = realmOf('realm-old')
+    const newRealm = realmOf('realm-new')
+    const body = metaFor(6, '/p/demo') + turn('BEFORE', at(100)) + turn('WRITTEN-WHILE-NOT-INDEXED', at(1000)) + turn('AFTER', at(5000))
+    const orig = rolloutIn(oldRealm, 6)
+    writeFileSync(orig, body)
+    notIndexedFolder('B', '/p/demo', BASE + 500)
+    closeNotIndexedWindow('B', BASE + 4000)
+    // Sign in again: the replacement's sessions folder gets the same day folders and files.
+    const copy = rolloutIn(newRealm, 6)
+    writeFileSync(copy, body)
+    const resume = (sid: string, f: string): In => ({ ...bindX(sid, f), confidence: 'exact' } as In)
+    send(runX('O', BASE + 6000)); send(resume('O', orig)); w.tickNow()
+    send(runX('N', BASE + 6100)); send(resume('N', copy)); w.tickNow()
+    expect(words('O')).toEqual(['BEFORE', 'AFTER'])
+    expect(words('N')).toEqual(['BEFORE', 'AFTER'])
+  })
+
+  it('C1 (round 2, F1 F6): on Windows, main\'s key and the worker\'s are one however each side spells the folder (case, slashes, a trailing separator)', () => {
+    const key = codexFolderKey('C:\\Work\\Demo', 'win32')
+    for (const folder of ['c:/work/demo', 'C:\\Work\\Demo\\', 'c:\\WORK\\demo', 'C:/WORK/DEMO/']) expect(codexFolderKey(folder, 'win32'), folder).toBe(key)
+    // Another folder is another key.
+    expect(codexFolderKey('C:\\Work\\Other', 'win32')).not.toBe(key)
     // Off Windows a folder's case is its own; a trailing separator is not.
-    expect(codexFolderKey('/home/u/realms/a/sessions', '/work/Demo', 'linux')).not.toBe(codexFolderKey('/home/u/realms/a/sessions', '/work/demo', 'linux'))
-    expect(codexFolderKey('/home/u/realms/a/sessions/', '/work/demo/', 'linux')).toBe(codexFolderKey('/home/u/realms/a/sessions', '/work/demo', 'linux'))
+    expect(codexFolderKey('/work/Demo', 'linux')).not.toBe(codexFolderKey('/work/demo', 'linux'))
+    expect(codexFolderKey('/work/demo/', 'linux')).toBe(codexFolderKey('/work/demo', 'linux'))
   })
 
   it('C1-1: two new sessions in one folder, the one not indexed launched second: the indexed tab that took its rollout by folder and time leaves out what was written while it ran', async () => {
@@ -1178,7 +1193,7 @@ describe('a Codex realm folder marked while a session not indexed ran (PR-level 
     const a = watchAndClaimRollout('A', '/p/demo', t0, () => {}, sessions, undefined, { onRollout: (r) => binder.noteRollout('A', r) })
     await vi.advanceTimersByTimeAsync(100)
     const sinceB = Date.now()
-    notIndexedFolder('B', sessions, '/p/demo', sinceB)
+    notIndexedFolder('B', '/p/demo', sinceB)
     const b = watchAndClaimRollout('B', '/p/demo', sinceB, () => {}, sessions, undefined, { onRollout: (r) => { if (r) openNotIndexedWindow('B', r.path, sinceB, Date.now()) } })
     try {
       // B's Codex writes its rollout first; A's a moment later.
@@ -1211,7 +1226,7 @@ describe('a Codex realm folder marked while a session not indexed ran (PR-level 
     const sessions = realmOf('realm-c2')
     const binder = binderTo(send)
     const sinceB = Date.now()
-    notIndexedFolder('B', sessions, '/p/demo', sinceB)
+    notIndexedFolder('B', '/p/demo', sinceB)
     const b = watchAndClaimRollout('B', '/p/demo', sinceB, () => {}, sessions, undefined, { onRollout: (r) => { if (r) openNotIndexedWindow('B', r.path, sinceB, Date.now()) } })
     let a: { stop(): void } | null = null
     try {

@@ -41,7 +41,8 @@
  * past its windows (PR-level ADR-009 round 1, C2: one still open never goes).
  *
  * PR-level ADR-009 round 1 (C1): a Codex session not indexed also holds a
- * cover window on its realm's launch folder (codex-folder-key.ts), beside the
+ * cover window on its launch folder (codex-folder-key.ts; round 2, K2: in
+ * every realm), beside the
  * one conversation it is on, from the moment it became not indexed until it
  * ends, as a Claude session holds its projects folder's: the rollouts its own
  * watcher never claims are left out by that folder.
@@ -284,7 +285,7 @@ function closeHeld(held: { key: string; win: NotIndexedWindow }, ts: number): vo
  *  holds the conversation at `rolloutPath` as of `now` (the claim; by default
  *  `since`): a window opens at `since`, and the window the session held on
  *  another conversation closes at `now`. PR-level ADR-009 round 1 (C1): a
- *  cover the session holds (a Codex session's realm folder) stays open and
+ *  cover the session holds (a Codex session's launch folder) stays open and
  *  held. Round 1 (C2): taken past the conversations' cap too (a Codex session
  *  is on one conversation at a time, and its folder covers only rollouts that
  *  record its launch folder). */
