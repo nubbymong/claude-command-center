@@ -136,7 +136,7 @@ describe('bundledConptyChoice (the app\'s own, worked out once)', () => {
 // Round 2 (J4): Node loads a .node file through its \\?\ namespaced path
 // (path.toNamespacedPath), so the module name Windows records, and node-pty
 // reads back, is 4 characters longer than the path the app measures (the
-// lens A probe: the loaded conpty.node is listed as \\?\D:\...): 255 at most.
+// lens A probe: the loaded conpty.node is listed as \\?\<drive>:\...): 255 at most.
 describe('a conpty.dll path too long for node-pty (round 1, F2)', () => {
   const SUFFIX = path.join(path.sep, 'node_modules', 'node-pty', 'prebuilds', 'win32-x64', 'conpty', 'conpty.dll').length
   /** A lib folder whose conpty.dll path is exactly `n` characters long. */
