@@ -118,7 +118,7 @@ vi.mock('../../../src/main/account-profiles', async (importOriginal) => ({
 }))
 
 const { PtyIntegrityMonitor, setPtyIntegrityMonitor } = await import('../../../src/main/services/pty-integrity-monitor')
-const { spawnPty, killPty, beginSpawnPreparation } = await import('../../../src/main/pty-manager')
+const { spawnPty, killPty, beginSpawnPreparation, resizePty } = await import('../../../src/main/pty-manager')
 
 const SID = 'ptyrestart1ptyrestart1pt'
 /** The session's partner terminal, as the renderer names its PTY. */
@@ -270,6 +270,41 @@ describe('a Restart is not the session\'s end on the Services page (P3.16a round
     expect(ends()).toHaveLength(1)
   })
 
+  // P3.16 final-head VM finding D3: the renderer's report about 1 s after the
+  // process's last bytes, and a resize of the ended tab's view, reach main
+  // after the end. They list the session no more ("fromPty 0, gap -N"), and
+  // the close logs no second end.
+  it('an ended tab left open: its late report and a resize of its view list it no more; the close logs no second "session ended"', () => {
+    const first = spawn()
+    first.data('x'.repeat(6_553))
+    report(6_553)
+    exitOf(0)
+    expect(ends()).toHaveLength(1)
+    report(6_553)
+    resizePty(SID, 100, 30)
+    expect(row()).toBeUndefined()
+    const events = monitor.snapshot().recentEvents.filter((e) => e.sessionId === SID)
+    expect(events.slice(events.findIndex((e) => e.kind === 'end')).map((e) => e.kind)).toEqual(['end'])
+    killPty(SID, { reason: 'close' })
+    expect(ends()).toHaveLength(1)
+    expect(row()).toBeUndefined()
+  })
+
+  it('a Restart of an ended tab lists its new process, counted from 0', () => {
+    const first = spawn()
+    first.data('x'.repeat(6_553))
+    report(6_553)
+    exitOf(0)
+    report(6_553)
+    killPty(SID, { reason: 'restart' })
+    const second = spawn()
+    second.data('z'.repeat(40))
+    report(40)
+    expect(row()).toMatchObject({ bytesFromPty: 40, bytesReceived: 40, byteGap: 0 })
+    exitOf(1)
+    expect(ends()).toHaveLength(2)
+  })
+
   // Fixer 3 (F2): a spawn main prepares first (beginSpawnPreparation: a Codex
   // session, or a pinned Claude Code version installed first) clears the
   // Restart's mark as spawnPty does, so the next process's own end is the
@@ -295,8 +330,10 @@ describe('a Restart is not the session\'s end on the Services page (P3.16a round
     exitOf(0)
     expect(ends()).toHaveLength(1)
     killPty(SID, { reason: 'restart' })
-    spawn(SID, prepared())
-    report(0)
+    // (P3.16 final-head VM finding D3: an ended tab is listed again from its
+    // next process's first output.)
+    spawn(SID, prepared()).data('z')
+    report(1)
     exitOf(1)
     expect(ends()).toHaveLength(2)
   })

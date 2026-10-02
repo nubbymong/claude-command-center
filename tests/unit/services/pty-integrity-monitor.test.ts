@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { PtyIntegrityMonitor } from '../../../src/main/services/pty-integrity-monitor'
+import { PtyIntegrityMonitor, ENDED_SESSIONS_MAX } from '../../../src/main/services/pty-integrity-monitor'
 import type { PtyIntegrityReport } from '../../../src/shared/service-health'
 
 function makeMonitor(over = {}) {
@@ -247,5 +247,79 @@ describe('PtyIntegrityMonitor: a new renderer mount restarts the count (N8)', ()
     rep(m, 'mountB', 500)
     expect(row(m).bytesFromPty).toBe(500)
     expect(row(m).byteGap).toBe(0)
+  })
+})
+
+// P3.16 final-head VM finding D3: the renderer reports about 1 s after a
+// terminal's last bytes, and a resize of its view is recorded with or without
+// a PTY, so both reach main after the session's end for a tab left open. They
+// made a new record (main's count 0, the renderer's N: "gap -N"), and the
+// close then logged a second end. An ended session's late reports and resizes
+// are ignored until its next process's first output.
+describe('PtyIntegrityMonitor: an ended session is not listed again by a late report or resize (P3.16 final-head VM finding D3)', () => {
+  const S = 'clended00000000000000001'
+  const rep = (m: PtyIntegrityMonitor, generation: string, bytesReceived: number, sessionId = S): void =>
+    m.recordRendererReport({
+      sessionId, bytesReceived, bytesWritten: 0, strippedBytes: 0, cols: 100, rows: 30, resizeCount: 0, generation,
+    } as unknown as PtyIntegrityReport)
+  const row = (m: PtyIntegrityMonitor, id = S) => m.snapshot().sessions.find((s) => s.sessionId === id)
+  const kinds = (m: PtyIntegrityMonitor) => m.snapshot().recentEvents.filter((e) => e.sessionId === S).map((e) => e.kind)
+
+  it('a late report and a resize after the end make no row and no event; a close then logs no second end', () => {
+    const { m } = makeMonitor({ eventCap: 100 })
+    m.recordPtyData(S, 6_553); rep(m, 'mountA', 6_553)
+    m.endSession(S)
+    rep(m, 'mountA', 6_553)
+    m.recordResizeApplied(S, 100, 30)
+    expect(m.snapshot().sessions).toEqual([])
+    expect(kinds(m)).toEqual(['end'])
+    m.endSession(S)
+    expect(kinds(m)).toEqual(['end'])
+    expect(m.diagnostics().logs).toEqual([])
+  })
+
+  it('the next process\'s first output lists the session again, counted from 0; its reports and resizes count again', () => {
+    const { m } = makeMonitor({ eventCap: 100 })
+    m.recordPtyData(S, 6_553); rep(m, 'mountA', 6_553)
+    m.endSession(S)
+    rep(m, 'mountA', 6_553)
+    m.recordPtyData(S, 40); rep(m, 'mountB', 40)
+    expect(row(m)).toMatchObject({ bytesFromPty: 40, bytesReceived: 40, byteGap: 0 })
+    m.recordResizeApplied(S, 100, 30)
+    expect(row(m)).toMatchObject({ resizeCount: 1, appliedCols: 100 })
+    expect(kinds(m)).toEqual(['end', 'resize'])
+    // Its own end is the session's end again: one more event.
+    m.endSession(S)
+    expect(kinds(m)).toEqual(['end', 'resize', 'end'])
+  })
+
+  it('another session is not affected by one that ended', () => {
+    const { m } = makeMonitor({ eventCap: 100 })
+    m.endSession(S)
+    rep(m, 'mountX', 10, 'clother00000000000000001')
+    expect(row(m, 'clother00000000000000001')).toMatchObject({ bytesReceived: 10 })
+  })
+
+  it('the ended sessions it keeps are bounded (ENDED_SESSIONS_MAX, the oldest dropped first); a dropped one\'s late report makes a row again', () => {
+    const { m } = makeMonitor({ eventCap: 10 })
+    expect(ENDED_SESSIONS_MAX).toBe(256)
+    for (let i = 0; i <= ENDED_SESSIONS_MAX; i++) m.endSession(`ended-${i}`)
+    rep(m, 'mountA', 5, 'ended-0')
+    expect(row(m, 'ended-0')).toMatchObject({ bytesReceived: 5 })
+    rep(m, 'mountA', 5, 'ended-1')
+    expect(row(m, 'ended-1')).toBeUndefined()
+    rep(m, 'mountA', 5, `ended-${ENDED_SESSIONS_MAX}`)
+    expect(row(m, `ended-${ENDED_SESSIONS_MAX}`)).toBeUndefined()
+  })
+
+  it('a session that ends again is kept as the newest ended one', () => {
+    const { m } = makeMonitor({ eventCap: 10 })
+    for (let i = 0; i < ENDED_SESSIONS_MAX; i++) m.endSession(`ended-${i}`)
+    m.endSession('ended-0')
+    m.endSession('ended-new')
+    rep(m, 'mountA', 5, 'ended-0')
+    expect(row(m, 'ended-0')).toBeUndefined()
+    rep(m, 'mountA', 5, 'ended-1')
+    expect(row(m, 'ended-1')).toMatchObject({ bytesReceived: 5 })
   })
 })
