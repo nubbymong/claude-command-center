@@ -215,6 +215,26 @@ describe('when Codex conversations were written while not indexed (P3.12)', () =
     expect(of(ID)[1]).toEqual([200, 9000])
   })
 
+  it('round 2 (lens D M3): past the windows kept, a closed window merged with one inside it keeps the later end', () => {
+    openNotIndexedWindow('s1', A, 1000)
+    openNotIndexedWindow('s2', A, 1010); closeNotIndexedWindow('s2', 1015)
+    for (let i = 0; i < WINDOWS_PER_CONVERSATION_MAX - 2; i++) { openNotIndexedWindow('s3', A, 2000 + i * 10); closeNotIndexedWindow('s3', 2005 + i * 10) }
+    closeNotIndexedWindow('s1', 9000)
+    openNotIndexedWindow('late', A, 20_000)
+    expect(of(ID)).toHaveLength(WINDOWS_PER_CONVERSATION_MAX)
+    expect(of(ID)[0]).toEqual([1000, 9000])
+  })
+
+  it('round 2 (lens D M4): past the windows kept, the oldest closed windows by start are merged, whatever order they were opened in', () => {
+    for (let i = 0; i < WINDOWS_PER_CONVERSATION_MAX - 1; i++) { openNotIndexedWindow('s3', A, 1000 + i * 10); closeNotIndexedWindow('s3', 1005 + i * 10) }
+    // Not indexed since 100, it holds the conversation only now: its window starts before every other.
+    openNotIndexedWindow('early', A, 100, 5000); closeNotIndexedWindow('early', 5100)
+    openNotIndexedWindow('late', A, 20_000)
+    expect(of(ID)).toHaveLength(WINDOWS_PER_CONVERSATION_MAX)
+    expect(of(ID)[0]).toEqual([100, 5100])
+    expect(of(ID)[1]).toEqual([1010, 1015])
+  })
+
   it('K3: a flush that is not final writes what is pending but does not latch: a close after it still closes; a final flush latches', () => {
     vi.useFakeTimers()
     const file = join(dir, 'logging-gaps.json')
@@ -371,7 +391,7 @@ describe('keepNotIndexedWindow: the windows one session holds beside one another
 })
 
 // PR-level ADR-009 round 1 (C1): a Codex session not indexed holds a cover
-// window on its realm's launch folder beside the one conversation it is on.
+// window on its launch folder beside the one conversation it is on.
 // A claim of a conversation, a claim of another and a claim let go close the
 // conversation's window only; the cover stays open, and held, until the
 // session ends (or, killed, until its process has ended).

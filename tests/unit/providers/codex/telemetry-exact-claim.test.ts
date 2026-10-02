@@ -173,7 +173,13 @@ describe('the exact claim from the session\'s own hook (P3.10)', () => {
     const dayMoved = join(sessions, '..', 'day-moved')
     renameSync(dir, dayMoved)
     const viaJunction = rollout(dayMoved, ID_C, '/p/demo', new Date().toISOString(), 1)
-    try { symlinkSync(dayMoved, dir, 'junction') } catch { w.src.stop(); ctx.skip(); return }
+    // Fixer 7b (N4): skipped only for a missing right, as the file link below; any other error fails the test.
+    try { symlinkSync(dayMoved, dir, 'junction') } catch (err) {
+      w.src.stop()
+      if ((err as NodeJS.ErrnoException).code !== 'EPERM') throw err
+      ctx.skip()
+      return
+    }
     try {
       expect(w.src.noteExactRollout!(join(dir, basename(viaJunction)))).toBeNull()
       expect(w.claims).toEqual([])

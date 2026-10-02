@@ -52,10 +52,13 @@ describe('verify:package checks the bundled ConPTY files (PR-level ADR-009 round
     for (const pkg of [/npx electron-builder --win --publish never/, /npx electron-builder --mac dmg --publish never/, /npx electron-builder --linux --publish never/]) {
       const at = yml.search(pkg)
       expect(at, String(pkg)).toBeGreaterThan(0)
-      // The very next step after the package step is the verify step.
+      // The very next step after the package step is the verify step, whole
+      // (fixer 7b, N3): its name and the exact run line, and no other key (no
+      // condition, no continue-on-error). Comments and blank lines aside.
       const next = yml.slice(at).match(/\n\s+- name: ([^\n]+)((?:\n(?!\s+- )[^\n]*)*)/)
       expect(next?.[1], String(pkg)).toBe('Verify native modules unpacked')
-      expect(next?.[2], String(pkg)).toMatch(/^\n\s+run: npm run verify:package(\n|$)/)
+      const body = (next?.[2] ?? '').split('\n').map((l) => l.trim()).filter((l) => l !== '' && !l.startsWith('#'))
+      expect(body, String(pkg)).toEqual(['run: npm run verify:package'])
     }
   })
 })
