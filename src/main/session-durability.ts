@@ -50,7 +50,9 @@ export interface SessionDurability {
    *  failed left the cache, and the flush wrote the set back). True when the
    *  saved file is cleared. Never throws. */
   clear: () => boolean
-  /** Drop the cache after a clear so the exit flush cannot resurrect a set the
+  /** clear()'s internal step, kept on the interface as a test seam (fixer 12):
+   *  callers clear through clear(), never this alone. Drop the cache after a
+   *  clear so the exit flush cannot resurrect a set the
    *  user intentionally discarded (F1). Main's running times are not the set:
    *  they are written back on their own (P3.7, keepRunningTimes).
    *  `bakRemoved` (fixer 10, ADR-009 C2; required since fixer 11): true only

@@ -563,7 +563,9 @@ interface UpdateNotes { text: string; cut: string | null }
 interface UpdateSubject {
   notes: (u: Update) => Promise<UpdateNotes | null>
   unavailable: string
-  recordSeen: (s: SentinelState, version: string) => void
+  /** Fixer 12: `rerun`, the version was checked by a Re-run, the user's
+   *  own act: it becomes the highest version checked, down as well as up. */
+  recordSeen: (s: SentinelState, version: string, rerun: boolean) => void
   /** Round 3: the assistant's name and its notes' name, for what is said. */
   name: string
   notesName: string
@@ -574,7 +576,7 @@ const CLAUDE_UPDATE: UpdateSubject = {
     return md ? { text: sliceChangelog(md, u.last, u.version), cut: null } : null
   },
   unavailable: CLAUDE_CHANGELOG_UNAVAILABLE,
-  recordSeen: (s, v) => s.setLastSeenCcVersion(v),
+  recordSeen: (s, v, rerun) => s.setLastSeenCcVersion(v, { rerun }),
   name: 'Claude Code',
   notesName: 'changelog',
 }
@@ -584,7 +586,7 @@ const CODEX_UPDATE: UpdateSubject = {
     return n ? { text: n.text, cut: n.cut } : null
   },
   unavailable: CODEX_NOTES_UNAVAILABLE,
-  recordSeen: (s, v) => s.setLastSeenCodexVersion(v),
+  recordSeen: (s, v, rerun) => s.setLastSeenCodexVersion(v, { rerun }),
   name: 'Codex',
   notesName: 'release notes',
 }
@@ -643,7 +645,7 @@ export function unverifiedRecordedMessage(u: Update, count: number, tries: numbe
  *  (kills its process tree) so a stale analysis can't finish late and
  *  clobber state or leave `analyzing` stuck. `carried`: problems met before
  *  the analysis (a provider that could not be checked), said with its own. */
-async function analyzeUpdates(updates: Update[], carried: string[] = []): Promise<void> {
+async function analyzeUpdates(updates: Update[], carried: string[] = [], opts: { rerun?: boolean } = {}): Promise<void> {
   if (!state || updates.length === 0) return
   currentAnalysis?.abort()
   const ac = new AbortController()
@@ -668,14 +670,14 @@ async function analyzeUpdates(updates: Update[], carried: string[] = []): Promis
       if (r.unverified > 0) {
         const tries = state.countUnverified(key)
         if (tries >= UNVERIFIED_MAX_TRIES) {
-          SUBJECTS[u.provider].recordSeen(state, u.version)
+          SUBJECTS[u.provider].recordSeen(state, u.version, opts.rerun === true)
           state.clearUnverified(key)
           notes.push(unverifiedRecordedMessage(u, r.unverified, tries))
         } else {
           errors.push(unverifiedMessage(u, r.unverified))
         }
       } else {
-        SUBJECTS[u.provider].recordSeen(state, u.version)
+        SUBJECTS[u.provider].recordSeen(state, u.version, opts.rerun === true)
         state.clearUnverified(key)
       }
     } else if (r.error) {
@@ -725,8 +727,13 @@ export async function sentinelStartupCheck(): Promise<void> {
  * Fixer 10 (gate 3 F9, ADR-009 C1 and D1, row 42): whether the version
  * installed now is an update the start-up check analyses, for both
  * providers: only one HIGHER than the highest version recorded as checked
- * (fixer 11: kept apart from the version the panel names, and never lowered,
- * not even by a Re-run of a lower version; sentinel-state.ts).
+ * (fixer 11: kept apart from the version the panel names, and lowered by no
+ * start and no analysis; sentinel-state.ts). Fixer 12 (ADR-009 R3-1): a
+ * Re-run's record, the user's own act, sets it to the version the Re-run
+ * checked, so a highest stuck far ahead (a hand-edited file, a prerelease
+ * once installed) can be undone; after a Re-run of a lower version, a higher
+ * one taken in turn is an update again, at most UNVERIFIED_MAX_TRIES
+ * analyses at start, a cost that comes only from that Re-run.
  *
  * The downgrade case, decided by what the check is for: it analyses what
  * changed since the last version checked, the changelog's entries after it
@@ -746,7 +753,8 @@ export async function sentinelStartupCheck(): Promise<void> {
  * and a version's count of unmatched analyses is kept until a version at or
  * above it is recorded (sentinel-state.ts, which states the file's bound on
  * how many it keeps), so each is analysed at most UNVERIFIED_MAX_TRIES times
- * at start. Before, any other version was an update, and two installs taken
+ * at start, until a Re-run of a lower version (above). Before, any other
+ * version was an update at every start, and two installs taken
  * in turn were each analysed again after the other was recorded, without end.
  */
 function isUpdateAtStart(version: string, checked: string): boolean {
@@ -761,9 +769,9 @@ function isUpdateAtStart(version: string, checked: string): boolean {
 function updateAtStart(s: SentinelState, provider: SentinelProvider, version: string): Update | null {
   const checked = s.highestChecked(provider)
   const record = SUBJECTS[provider].recordSeen
-  if (checked === null) { record(s, version); return null }
+  if (checked === null) { record(s, version, false); return null }
   if (isUpdateAtStart(version, checked)) return { provider, last: checked, version }
-  if (s.shownVersion(provider) !== version) record(s, version)
+  if (s.shownVersion(provider) !== version) record(s, version, false)
   return null
 }
 
@@ -856,7 +864,9 @@ export async function sentinelRerun(): Promise<void> {
       else updates.push({ provider: 'codex', last: state.snapshot().lastSeenCodexVersion ?? codex.version, version: codex.version })
     }
     if (updates.length === 0) { state.setAnalyzing(false, problems.join(' ') || null); return }
-    await analyzeUpdates(updates, problems)
+    // Fixer 12 (ADR-009 R3-1): what this Re-run records becomes the highest
+    // version checked (the user's own act; sentinel-state.ts).
+    await analyzeUpdates(updates, problems, { rerun: true })
   } catch (err) {
     state?.setAnalyzing(false, (err as Error).message)
   } finally {

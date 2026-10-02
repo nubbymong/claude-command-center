@@ -327,11 +327,18 @@ describe('the PR 3 user-facing sweep (P3.16)', () => {
 
   // Fixer 11 (ADR-009 lens D round 2 finding 5, gate 3 F11): the start-up
   // check no longer analyses a downgrade, for either assistant; a Re-run does.
-  it('Sentinel (fixer 11): at start only a newer version is analysed; a downgrade runs no analysis, Re-run still does', () => {
+  // Fixer 12 (gate 3 F14 and F15, ADR-009 lens D round 3 NIT 1, R3-1): the rule
+  // goes by the newest version checked, and a Re-run makes the installed
+  // version the newest one checked; the changelog says it of Claude Code, the
+  // assistant that had Sentinel before this release.
+  it('Sentinel (fixers 11 and 12): at start only a version newer than the newest checked is analysed; a downgrade runs no analysis; Re-run resets the newest checked', () => {
     const s = body('sentinel')
-    expect(s).toMatch(/At start it analyses only a version newer than the last one it checked, so going back to an older version runs no analysis and the panel names the version installed; Re-run still analyses it\./)
+    expect(s).toMatch(/At start it analyses only a version newer than the newest one it has checked, so going back to an older version runs no analysis and the panel names the version installed\. Re-run analyses the installed version and makes it the newest one checked, so a newer version you go back to afterwards is an update again, with the same limit of three analyses\./)
+    expect(s).not.toMatch(/the last one it checked/)
     const all = top.changes.map((c) => c.description).join('\n')
-    expect(all).toMatch(/Sentinel no longer runs an analysis at start when you go back to an older Claude Code or Codex version/)
+    expect(all).toMatch(/Sentinel no longer runs an analysis at start when you go back to an older Claude Code version \(Codex works the same way\): it analyses only a version newer than the newest one it has checked/)
+    expect(all).toMatch(/Re-run in the Sentinel panel analyses the installed version and makes it the newest one checked\./)
+    expect(all).not.toMatch(/the last one it checked|older Claude Code or Codex version/)
   })
 
   it('accounts (P3.2, P3.3): the chip opens the identity editor; Sign in again works while signed in, and what it leaves', () => {

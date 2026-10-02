@@ -122,8 +122,9 @@ installGlobalErrorHandlers()
 // saveEnriched — enriching each Claude session's exact resume target from the live
 // transcript binder — so EVERY persisted file is resumable, not only the graceful
 // close (Group 1), and the old autosave-clobber race dissolves. flushOnExit persists
-// the cached state on any non-graceful exit (Group 2); noteCleared drops the cache
-// on an intentional clear so the flush never resurrects a discarded set (F1). The
+// the cached state on any non-graceful exit (Group 2); `session:clear` goes through
+// the core's clear, which removes the saved file and drops the cache whatever the
+// removal did, so the flush never resurrects a discarded set (F1; fixer 11). The
 // binder is read lazily per call — it may init after this module loads.
 // Composed from main's live sources in app-session-durability.ts (tested there).
 const sessionDurability = createAppSessionDurability()

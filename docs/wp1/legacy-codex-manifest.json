@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-02T22:41:38.719Z",
-  "head": "67b3b9a87f834e2a5851b688cade526a8397ff06",
-  "tree": "0f639f490a39cbb81b10e496ccc21fb70e1dae37",
+  "generatedAt": "2026-10-02T23:45:43.623Z",
+  "head": "a30cf55b16ce935a6c94c77de43ae3581e23b94b",
+  "tree": "809c78e22a428f238e3e9a7a08c3a5f4ff1df8ca",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -3633,7 +3633,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 151
+      "lineCount": 154
     },
     {
       "path": "tests/unit/main/service-status-providers.test.ts",
@@ -5285,14 +5285,14 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 54
+      "lineCount": 59
     },
     {
       "path": "tests/unit/shared/app-knowledge.test.ts",
       "predicates": [
         "P13"
       ],
-      "lineCount": 125
+      "lineCount": 126
     },
     {
       "path": "tests/unit/status-ingest.test.ts",
