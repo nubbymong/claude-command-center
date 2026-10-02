@@ -360,7 +360,7 @@ from P3.1, and then only that row.
 | P3.13 Multi Spawn and Quick Start | 72 | Y | N | APPROVED |
 | P3.14 Usage follow-up: Codex credits | 17 | Y (the read keeps three more fields; ADR-023) | N | APPROVED |
 | P3.15 Terminal verification | 44, 70, 71, 73 | Y (the scrollback fix builds the Codex PTY with a new option and starts OpenConsole.exe): PASS at pass 2; round 3's input guard covered by the P3.16a pass (lens A and B minors only); rounds 4 and 5 owed | Y (SSH sessions' PTY input and output are guarded, and the End and liveness-probe helper PTYs): the live SSH matrix owed, End with a password and the liveness probe included | APPROVED |
-| P3.16 PR 3 records and user-facing sweep | none (the PR-level ADR-009 round 1 fixes touch 31, 70, 71, 72) | N (docs); the PR-level pass on PR 3: round 1 FINDINGS, fixed in this phase, the re-attack owed | N (docs); the round 1 fixes change `pty-manager.ts` (the Codex not-indexed record only, no SSH path): the live SSH matrix at PR 3's head, owed as before | APPROVED |
+| P3.16 PR 3 records and user-facing sweep | none (the PR-level ADR-009 round 1 fixes touch 31, 70, 71, 72) | Y (PR-level pass: round 1 FINDINGS fixed, round 2 PASS at 0aec9705, fixer-7 minors) | N (docs); the round 1 fixes and fixer 7 change `pty-manager.ts` (the not-indexed record (Codex folder window, Claude's past-cap cover), no SSH path): the live SSH matrix at PR 3's head, owed as before | APPROVED |
 
 The 35 rows: 7, 8, 10, 11, 14, 17, 20, 22, 24, 28, 31, 32, 34, 35, 36, 37,
 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 61, 62, 63, 65, 69, 70, 71, 72, 73.
@@ -3574,10 +3574,14 @@ claimed are left out too: one another tab took by folder and time (two new
 sessions in one folder), one Codex began inside the session with no hook to
 say so (its /new, a backtrack, a /resume of a conversation of that folder).
 Limits, recorded (toward not indexing): while such a session runs, an indexed
-Codex session of the same account in the same folder has its turns left out
-for that stretch, as Claude's folder window does; a conversation of another
+Codex session of the same account in the same folder (a folder reached through
+a link: by either spelling, round 2 K1) has its turns left out
+for that stretch, as Claude's folder window does in kind, but for the whole
+session; a conversation of another
 folder taken up inside the session with its hooks off is outside that window
-(with its hooks on, the hook names it and its own window opens).
+(with its hooks on, the hook names it and its own window opens). The folder
+windows are not yet carried into a Sign in again's history copy (round 2,
+owed: below).
 C2 (minor): the record of windows never drops a conversation whose window is
 still open; past its cap it drops the least recently changed one whose windows
 are all closed (`before` raised past them, as before). Past the cap with every
@@ -3605,14 +3609,16 @@ D1: a test row for the leftover walk (a pid the records hold with another
 start time, below a process the walk names, is never named; mutant S6 now
 red). D5 (row 71): `npm run verify:package` also fails a Windows package
 without node-pty's conpty.dll or OpenConsole.exe beside the conpty.node it
-loads (`scripts/verify-bundled-conpty.mjs`; CI runs the verify step on
-release/* branches only). D6: a clipboard path that is not a plain file is no
+loads (`scripts/verify-bundled-conpty.mjs`; since fixer 7 (K6) the release
+workflow runs the verify step right after each package it ships, Windows, macOS
+and Linux, and CI on release/* branches). D6: a clipboard path that is not a plain file is no
 image and nothing is copied (mutant cf.C4 now red). D2: the six file-link
 refusal tests (`rollout-lookup.test.ts`, `telemetry-bounded-reads.test.ts`,
 `telemetry-claim-anywhere.test.ts` (the pick file), `telemetry-exact-claim.test.ts`,
 `codex-hook-forwarder.test.ts`, `codex-resume-picker-worktrees.test.ts`) skip
-on a host without the right to make a file link (the exact-claim one returns
-without asserting) and assert in the CI unit jobs, Test (windows-2025) and
+on a host without the right to make a file link (the exact-claim one returned
+without asserting; since fixer 7 it skips only for that missing right, and a
+twin with an injected lstat answer asserts on every host) and assert in the CI unit jobs, Test (windows-2025) and
 Test (macos-latest). D3: the forwarder's proxy test needs Node's agent proxy
 settings (Node 24), so it asserts on a host with Node 24 and skips in both CI
 unit jobs (Node 20). D4: corrected in P3.10's record.
@@ -3627,10 +3633,57 @@ after. Checks: typecheck; tsc of the touched tests (only the four type errors
 `resume-picker.test.ts` had before); the affected and scanner files (164 files,
 3,009 passed, 2 host skips that are not these changes'); the WP1 files.
 CI only: `transcripts-worker.native.test.ts` (the SQL layer the worker's fake
-stands in for). Owed: the re-attack of these fixes (ADR-009 round 2 of 2); on
+stands in for). Owed: the re-attack of these fixes (ADR-009 round 2 of 2,
+done: below); on
 the VM, a Codex session not indexed beside an indexed one in the same folder
 and a /new inside it; Alt+V into a plain terminal on macOS and Linux (a zsh
 and a fish login shell); the SSH live matrix at PR 3's head (as before).
+
+P3.16, the PR-level ADR-009 pass, round 2 (the re-attack of a047def8 to
+0aec9705, the same four lenses): PASS at 0aec9705, no blocker or major. Lens A
+PASS (A1 and A3 closed), lens B PASS (B1 closed), lens C two minors, K1 and K2
+below (C1 and C2 closed), lens D PASS (33 mutants; the survivors are pinned
+below). Its minors
+and the reviews' are fixed by fixer 7 (built on 0aec9705):
+K1 (lens C; row 31): a Codex launch folder reached through a link is marked by
+both spellings, as launched and its real path (Node's JS `realpathSync`, as
+since fixer 3, F6; the folder as given when that cannot be read), since off
+Windows a session_meta records the folder with the links resolved
+(`pty-manager.ts`). K3 (review): past 64 windows on one conversation only
+closed windows are merged, so a window still open is always the one its
+holder closes (`indexing-gaps.ts`). K5 (review): one bounded first-line reader
+for the rollout lookup and the transcripts worker
+(`src/main/logging/bounded-first-line.ts`), and the worker's fallback key list
+is built once per tail (the folder windows main keeps are read as they are, so
+one kept after the tail started counts). K6 (review): the release workflow
+runs `npm run verify:package` after the Windows, macOS and Linux package steps.
+K4 (lens D): tests pin the eviction rule (a conversation with one window still
+open is kept past the cap), the folder key on Windows however either side
+spells it (case, slashes, a trailing separator), the two fail-closed catches (a
+pending spawn whose preparation check throws still counts; a shell check that
+throws types nothing) and the exact claim's plain-file check on every host. Row
+14: the popover tests flip the Codex switch alone and check that the D5 line
+sits after the Codex card, before the footer; the AI usage meter card and its
+tip say the Claude and Codex windows are side by side when both are on. Row
+70: the Alt+V text in the Feature Guide and the tip says that on macOS and
+Linux the path is typed only into an sh, bash, zsh, dash or ksh shell.
+Owed, for a decision: K2 (lens C), the folder windows in a Sign in again's
+history copy (the copy runs only while no session uses the account, so none
+of that account's folder windows is open then).
+Limits, recorded: the sh-family check is by the shell's name, not by what the
+program is; a path holding U+2028 is typed as it is (the shells do not take it
+as the end of a line).
+Tests, red first: the four K3 tests on 0aec9705's `indexing-gaps.ts`, the K1
+junction test on the unchanged `pty-manager.ts`, the K6 pin on 0aec9705's
+`release.yml`, and the new text pins on the text before; the others pin code
+that was right, so their proof is their mutant. Mutation: 16 mutants, all red
+(K3 2, E1, K1 2, F1, F2, F6, K5 3, B2, A3, X1, the popover 2; two after a test
+was added for a survivor), all served from copies; the K6 red-first placed
+0aec9705's `release.yml` in the tree and restored it byte-identical. Checks:
+typecheck; tsc of the touched tests; the affected and scanner files (155
+files, 2,969 passed, 32 host skips, one Claude test timing out under load that
+passes alone); the WP1 files (the legacy Codex manifest unmoved). Owed as
+before: the VM checks and the SSH live matrix at PR 3's head.
 
 ## 9. PR 4 outline
 

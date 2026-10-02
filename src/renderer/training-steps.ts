@@ -749,11 +749,11 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '2.0.0',
     section: 'integrations',
     summary:
-      'A unified usage meter for your AI spend. A compact chip on the session status strip shows GitHub Copilot AI-credit usage at a glance; click it for a popover that breaks down GitHub usage per model and shows the Claude and Codex rate-limit windows of this run\'s sessions side by side. It turns a warning colour the moment GitHub bills you past your included credits.',
+      'A unified usage meter for your AI spend. A compact chip on the session status strip shows GitHub Copilot AI-credit usage at a glance; click it for a popover that breaks down GitHub usage per model and shows the Claude and Codex rate-limit windows of this run\'s sessions side by side when both are on. It turns a warning colour the moment GitHub bills you past your included credits.',
     highlights: [
       'A compact chip in the **repo strip** shows credits used (and your cap, when set) without opening anything',
       'When GitHub bills past your included credits the chip shifts to a **warning** and shows the billed amount (for example +$11.69)',
-      'Click the chip for a **popover** with per-model GitHub rows, covered and billed totals, plus Claude and Codex 5h / 7d windows',
+      'Click the chip for a **popover** with per-model GitHub rows, covered and billed totals, plus Claude and Codex 5h / 7d windows side by side when both are on',
       'Read-only and best-effort -- it never changes anything, and it fails quietly when a token lacks billing scope',
       'Set your **included-credit cap** in Settings, Status Line so the chip can show a used-of-cap ratio',
     ],
@@ -767,7 +767,7 @@ export const trainingSteps: TrainingStep[] = [
     bullets: [
       'Compact **AI-usage chip** in the repo strip -- credits used, and your cap when set',
       'Goes to a **warning** with the billed amount once GitHub bills past your included credits',
-      'Click for a popover: **per-model GitHub rows** plus **Claude and Codex** 5h / 7d windows',
+      'Click for a popover: **per-model GitHub rows** plus **Claude and Codex** 5h / 7d windows, side by side when both are on',
       'Enable it and set your cap in **Settings, GitHub**; it is read-only and best-effort',
     ],
     // No dedicated AI-usage capture exists yet; the GitHub panel shot stands in
