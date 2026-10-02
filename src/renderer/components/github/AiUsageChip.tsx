@@ -1,4 +1,5 @@
-import React, { useState } from 'react'
+import React, { useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useGitHubStore } from '../../stores/githubStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { selectAiChip, selectUsagePool, formatCredits } from '../../lib/ai-usage-format'
@@ -68,6 +69,24 @@ function AiUsageChip({ onOpenSettings }: { onOpenSettings?: (tab?: 'github' | 's
   const aiUsageCycle = useGitHubStore((s) => s.aiUsageCycle)
   const cap = useSettingsStore((s) => s.settings.copilotIncludedCredits)
   const [popoverOpen, setPopoverOpen] = useState(false)
+  const [anchor, setAnchor] = useState<{ right: number; bottom: number } | null>(null)
+  const chipRef = useRef<HTMLButtonElement>(null)
+
+  // P3.16 final-head VM finding D2: the chip sits in the status strip's
+  // overflow-hidden telemetry zone at the bottom of the window, so the popover
+  // is portalled onto document.body and fixed off the chip's on-screen rect,
+  // opening upward (IdentityOverflow's formula, right-aligned to the chip).
+  // Outside the strip it is clipped by nothing, and the strip's region zoom
+  // (the Status bars scale) does not scale its offsets.
+  const togglePopover = () => {
+    if (popoverOpen) {
+      setPopoverOpen(false)
+      return
+    }
+    const r = chipRef.current?.getBoundingClientRect()
+    setAnchor(r ? { right: window.innerWidth - r.right, bottom: Math.max(8, window.innerHeight - r.top + 6) } : null)
+    setPopoverOpen(true)
+  }
 
   // Feature off = invisible.
   if (!enabled) return null
@@ -128,11 +147,12 @@ function AiUsageChip({ onOpenSettings }: { onOpenSettings?: (tab?: 'github' | 's
   return (
     <span className="relative flex items-center shrink-0">
       <button
+        ref={chipRef}
         type="button"
         data-ai-usage-chip
         aria-label={ariaLabel}
         title={chip ? buildAiTooltip(aiUsage!, aiUsageCycle) : placeholderTooltip(aiUsageStatus)}
-        onClick={() => setPopoverOpen((v) => !v)}
+        onClick={togglePopover}
         className="flex items-center gap-1 rounded px-1.5 py-0.5 tabular-nums transition-colors duration-150 focus-ring"
         style={{
           color,
@@ -143,11 +163,15 @@ function AiUsageChip({ onOpenSettings }: { onOpenSettings?: (tab?: 'github' | 's
       >
         {content}
       </button>
-      <AiUsagePopover
-        open={popoverOpen}
-        onClose={() => setPopoverOpen(false)}
-        onOpenSettings={onOpenSettings}
-      />
+      {createPortal(
+        <AiUsagePopover
+          open={popoverOpen}
+          anchor={anchor}
+          onClose={() => setPopoverOpen(false)}
+          onOpenSettings={onOpenSettings}
+        />,
+        document.body,
+      )}
     </span>
   )
 }
