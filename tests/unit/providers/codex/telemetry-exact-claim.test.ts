@@ -10,6 +10,21 @@
 // Another session's hook proves an inferred claim here wrong. Real files in a
 // temp folder; fake timers.
 import { describe, it, expect, vi, afterEach } from 'vitest'
+
+// Round 2 (X1): lstat's answer for the paths listed here is what it says of a
+// file link (not a plain file), so the plain-file check is exercised on a host
+// that cannot make a file link. Every other path is the real lstat's answer.
+const injected = vi.hoisted(() => ({ notPlain: new Set<string>() }))
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>()
+  const lstatSync = ((p: unknown, o?: unknown) => {
+    const st = (actual.lstatSync as (p: unknown, o?: unknown) => object | undefined)(p, o)
+    if (!st || !injected.notPlain.has(String(p))) return st
+    return Object.assign(Object.create(Object.getPrototypeOf(st)), st, { isFile: () => false, isSymbolicLink: () => true })
+  }) as typeof actual.lstatSync
+  return { ...actual, default: { ...actual, lstatSync }, lstatSync }
+})
+
 import { appendFileSync, lstatSync, mkdirSync, mkdtempSync, renameSync, rmSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'fs'
 import { join, dirname, basename } from 'path'
 import { tmpdir } from 'os'
@@ -166,11 +181,31 @@ describe('the exact claim from the session\'s own hook (P3.10)', () => {
     // A file link inside a real day folder (a privilege on Windows: skipped there without it).
     mkdirSync(dir)
     const fileLink = join(dir, basename(target))
-    try { symlinkSync(target, fileLink) } catch { w.src.stop(); return }
+    // Round 2 (X1): skipped only for the missing privilege; any other error fails the test.
+    try { symlinkSync(target, fileLink) } catch (err) {
+      w.src.stop()
+      if ((err as NodeJS.ErrnoException).code !== 'EPERM') throw err
+      ctx.skip()
+      return
+    }
     try {
       expect(w.src.noteExactRollout!(fileLink)).toBeNull()
       expect(w.claims).toEqual([])
     } finally { unlinkSync(fileLink) }
+    w.src.stop()
+  })
+
+  it('round 2 (X1): a rollout lstat says is not a plain file (what it says of a file link, injected) is refused on every host; the same file, plain, is claimed', async () => {
+    vi.useFakeTimers()
+    const sessions = realm()
+    const w = watch(sessions, '/p/demo')
+    const file = rollout(today(sessions), ID_B, '/p/demo', new Date().toISOString(), 1)
+    injected.notPlain.add(file)
+    try {
+      expect(w.src.noteExactRollout!(file)).toBeNull()
+      expect(w.claims).toEqual([])
+    } finally { injected.notPlain.delete(file) }
+    expect(w.src.noteExactRollout!(file)?.id).toBe(ID_B)
     w.src.stop()
   })
 
