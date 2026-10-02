@@ -242,14 +242,24 @@ export function loadSessionState(): SessionState | null {
   }
 }
 
+/** What a clear did: `ok`, the saved state is cleared; `bakRemoved`, no
+ *  previous-good copy of it (the .bak) is left: false only when one was there
+ *  and could not be removed (or the clear was refused or failed). */
+export interface SessionStateCleared {
+  ok: boolean
+  bakRemoved: boolean
+}
+
 /**
  * Clear saved session state (called after successful restore). Refused while
  * the last load was a read failure -- never delete what could not be read.
+ * Fixer 10 (ADR-009 C2): says whether the .bak was removed, so the caller
+ * writes nothing in front of a copy of the set that is still there.
  */
-export function clearSessionState(): boolean {
+export function clearSessionState(): SessionStateCleared {
   if (lastLoadFailed) {
     logError('[session-state] refusing to clear: the last load of session-state.json FAILED (not absent)')
-    return false
+    return { ok: false, bakRemoved: false }
   }
   try {
     const file = getSessionStateFile()
@@ -260,20 +270,43 @@ export function clearSessionState(): boolean {
     // #397 N1: remove the previous-good mirror too. Leaving it behind would keep a
     // copy of the discarded set (cwds, machine names, GitHub config) on disk, and a
     // later corrupt-primary load could recover the PRE-clear set the user discarded.
+    // Best effort: one that is held (a scanner, a sync tool) is left, logged and
+    // said to the caller; with no primary file it is never read.
+    let bakRemoved = true
+    const bak = getSessionStateBakFile()
     try {
-      const bak = getSessionStateBakFile()
       if (existsSync(bak)) unlinkSync(bak)
-    } catch { /* best effort; recovery also re-parses + re-sanitizes before any use */ }
-    return true
+    } catch (bakErr) {
+      bakRemoved = (bakErr as NodeJS.ErrnoException)?.code === 'ENOENT'
+      if (!bakRemoved) logError(`[session-state] the .bak copy of the cleared state could not be removed: ${(bakErr as Error)?.message ?? bakErr}`)
+    }
+    return { ok: true, bakRemoved }
   } catch (err) {
     console.error('[session-state] Failed to clear:', err)
-    return false
+    return { ok: false, bakRemoved: false }
   }
 }
 
 /**
- * Check if there's a saved session state to restore
+ * Whether there is a saved session to restore (fixer 10, gate 3 quality nit
+ * 2): true only when the saved state holds at least one session, as a load
+ * would offer it (the file's sessions, or its .bak's when the file does not
+ * parse). A file with none (the conversations' running times kept after a
+ * clear, or only remotes left running) is nothing to restore, and neither is
+ * one that is absent or cannot be read. Only reads: no latch, nothing moved
+ * aside (loadSessionState is the load).
  */
 export function hasSavedSessionState(): boolean {
-  return existsSync(getSessionStateFile())
+  const restorable = (state: SessionState | null): boolean =>
+    !!state && state.sessions.some((s) => !!s && typeof s === 'object')
+  try {
+    const file = getSessionStateFile()
+    if (!existsSync(file)) return false
+    const state = parseSessionStateText(readFileSync(file, 'utf-8'))
+    if (state) return restorable(state)
+    const bak = getSessionStateBakFile()
+    return existsSync(bak) && restorable(parseSessionStateText(readFileSync(bak, 'utf-8')))
+  } catch {
+    return false
+  }
 }

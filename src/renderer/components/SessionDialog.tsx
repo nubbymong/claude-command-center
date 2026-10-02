@@ -755,14 +755,16 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
   // (round 1, B2) the rule's message under it while the value is refused. The
   // message is tied to the input (invalid, described by it), so a screen
   // reader says it with the field; the footer's status line, always in the
-  // page, is the one that announces it.
+  // page, is the one that announces it. Fixer 10 (gate 3 quality nit 1): the
+  // label names the input (its id from the help key), not its placeholder.
   const extraArgsField = (f: { value: string; onChange: (v: string) => void; helpKey: string; placeholder: string; hint: React.ReactNode; problem: string | null }) => (
     <div>
       <div className="flex items-center gap-1.5 mb-1">
-        <label className="text-xs text-[var(--text-secondary)]">Extra CLI arguments</label>
+        <label htmlFor={`${f.helpKey}-input`} className="text-xs text-[var(--text-secondary)]">Extra CLI arguments</label>
         <HelpBtn k={f.helpKey} label="About extra CLI arguments" />
       </div>
       <input
+        id={`${f.helpKey}-input`}
         type="text"
         value={f.value}
         onChange={(e) => f.onChange(e.target.value)}
