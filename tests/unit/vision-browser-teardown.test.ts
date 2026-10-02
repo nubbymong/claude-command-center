@@ -8,9 +8,8 @@
 // profile (this port's chrome-debug-<port> or edge-debug-<port> folder),
 // whether or not they listen, and ended only once identified as the app's
 // vision browser by name, command line and creation time. Then the launch
-// waits for the port and the profile to be free. A program on the debug port
-// that is not identified as the app's vision browser is left running and the
-// launch stops with VisionPortHeldError.
+// waits for the port and the profile to be free. While the debug port stays
+// in use, the launch stops with VisionPortHeldError.
 //
 // The OS here is a fake process table behind the injected OwnerPorts, and
 // child_process / net are replaced: no test in this file starts a program.
@@ -540,7 +539,7 @@ describe.each(['win32', 'linux'] as const)('vision browser teardown and launch (
     sys.onEnd = (pid) => { if (pid === 500) { sys.onEnd = null; addProc(500, { port: null, profile: path.join(tmp(), 'MyOwnProfile') }) } }
     await launchBrowser('chrome', 9222, undefined, true)
     expect(sys.browserSpawns).toHaveLength(1)
-    expect(sys.procs.has(500)).toBe(true) // the other process is left running
+    expect(sys.procs.has(500)).toBe(true) // the other process is still there
   })
 
   it('a leftover that does not end in time stops the launch, which spawns nothing', async () => {
@@ -553,7 +552,7 @@ describe.each(['win32', 'linux'] as const)('vision browser teardown and launch (
     expect(sys.browserSpawns).toHaveLength(0)
   })
 
-  it('a program on the port that is not identified as the app vision browser is left running; the launch throws and spawns nothing', async () => {
+  it('a program on the port that is not the app vision browser: the launch throws and spawns nothing', async () => {
     addProc(600, { profile: path.join(tmp(), 'MyOwnProfile') })                    // another profile
     addProc(601, { name: platform === 'win32' ? 'node.exe' : 'node' })            // not a browser
     addProc(602, { extra: ['--type=renderer'] })                                   // not a main browser process
