@@ -279,7 +279,9 @@ export interface ElectronAPI {
     }) => Promise<void | { started: false } | ({ started: false } & import('../../shared/providers').SpawnRefused) | { started: true; carry?: import('../../shared/providers').ConversationCarryNotice; launched?: { codexPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted' | 'plan' } }>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void
-    kill: (sessionId: string) => void
+    /** P3.16a round 2 (Q5): `'restart'` when a Restart ends the process (its
+     *  next one follows), so its exit is not the session's end. */
+    kill: (sessionId: string, reason?: 'restart') => void
     onData: (sessionId: string, callback: (data: string) => void) => () => void
     onExit: (sessionId: string, callback: (exitCode: number) => void) => () => void
   }

@@ -21,18 +21,25 @@ interface SessionRec {
   /** The renderer mount (PtyIntegrityReport.generation) whose counts the
    *  record holds: null until a report names one, and again after a reset. */
   mountGeneration: string | null
+  /** P3.16a round 2 (Q5): the mounts a later mount replaced, newest last, at
+   *  most RETIRED_GENERATIONS_MAX; their reports are ignored. Kept through a
+   *  reset. */
+  retiredGenerations: string[]
 }
 
-function freshRec(sessionId: string): SessionRec {
+function freshRec(sessionId: string, retiredGenerations: string[] = []): SessionRec {
   return {
     sessionId, bytesFromPty: 0, chunksFromPty: 0, resizeCount: 0,
     lastAppliedCols: null, lastAppliedRows: null,
     bytesReceived: 0, bytesWritten: 0, strippedBytes: 0,
     lastRendererCols: null, lastRendererRows: null, rendererResizeCount: 0,
     widthDesyncCount: 0, byteGapFlagged: false, desyncFlagged: false,
-    mountGeneration: null,
+    mountGeneration: null, retiredGenerations,
   }
 }
+
+/** P3.16a round 2 (Q5): how many replaced mounts a record remembers. */
+export const RETIRED_GENERATIONS_MAX = 8
 
 // A renderer mount's generation as main takes it from a report: 1 to 64 of
 // [A-Za-z0-9_-] (TerminalView sends a randomId). Any other value is no
@@ -127,7 +134,7 @@ export class PtyIntegrityMonitor {
 
   recordRendererReport(report: PtyIntegrityReport): void {
     const r = this.rec(report.sessionId)
-    this.noteMount(r, report)
+    if (!this.noteMount(r, report)) return
     r.bytesReceived = report.bytesReceived
     r.bytesWritten = report.bytesWritten
     r.strippedBytes = report.strippedBytes
@@ -145,29 +152,39 @@ export class PtyIntegrityMonitor {
    * respawn: a Restart pressed from the partner view re-keys the main view)
    * restarts main's count there: the bytes main read are set to the mount's
    * count, so the gap is measured from this report on, and checkByteGap then
-   * finds none (it clears the flag). Quiet: no event, no log. Any change of
-   * mount does this, a late report of an earlier mount too, so neither one
-   * shows a gap. A record with no mount yet (a new one, or one reset: the next
-   * process and its mount start from 0 together) takes the mount as it is. A
-   * report without a valid generation or byte count changes nothing here.
+   * finds none (it clears the flag). Quiet: no event, no log. The mount it
+   * replaced is retired (round 2, Q5): a late report of it is ignored whole,
+   * so reports of two mounts that keep coming cannot keep re-basing the count
+   * and hide a real gap of the live one. A record with no mount yet (a new
+   * one, or one reset: the next process and its mount start from 0 together)
+   * takes the mount as it is. A report without a valid generation or byte
+   * count changes nothing here. False: the report is a retired mount's.
    */
-  private noteMount(r: SessionRec, report: PtyIntegrityReport): void {
+  private noteMount(r: SessionRec, report: PtyIntegrityReport): boolean {
     const generation = mountGenerationOf(report.generation)
-    if (generation === null || generation === r.mountGeneration || !isByteCount(report.bytesReceived)) return
-    if (r.mountGeneration !== null) r.bytesFromPty = report.bytesReceived
+    if (generation !== null && r.retiredGenerations.includes(generation)) return false
+    if (generation === null || generation === r.mountGeneration || !isByteCount(report.bytesReceived)) return true
+    if (r.mountGeneration !== null) {
+      r.bytesFromPty = report.bytesReceived
+      r.retiredGenerations.push(r.mountGeneration)
+      if (r.retiredGenerations.length > RETIRED_GENERATIONS_MAX) r.retiredGenerations.splice(0, r.retiredGenerations.length - RETIRED_GENERATIONS_MAX)
+    }
     r.mountGeneration = generation
+    return true
   }
 
   /**
    * The session's PTY process ended and its id may spawn again (pty-manager's
    * per-spawn teardown, which a Restart and every respawn run). The record's
    * counts and mount start again from 0, quietly: the record stays, with no
-   * event and no log. endSession is the session's end (its event, and the
-   * record goes). A session with no record has nothing to reset.
+   * event and no log; the mounts it retired stay retired. endSession is the
+   * session's end (its event, and the record goes). A session with no record
+   * has nothing to reset.
    */
   resetSession(sessionId: string): void {
-    if (!this.sessions.has(sessionId)) return
-    this.sessions.set(sessionId, freshRec(sessionId))
+    const r = this.sessions.get(sessionId)
+    if (!r) return
+    this.sessions.set(sessionId, freshRec(sessionId, r.retiredGenerations))
     this.scheduleEmit()
   }
 

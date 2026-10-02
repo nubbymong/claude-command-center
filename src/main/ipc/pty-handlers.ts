@@ -1056,8 +1056,11 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     resizePty(sessionId, cols, rows)
   })
 
-  ipcMain.on('pty:kill', (_event, sessionId: string) => {
-    killPty(sessionId)
+  ipcMain.on('pty:kill', (_event, sessionId: string, reason?: unknown) => {
+    // P3.16a round 2 (Q5): a Restart's kill (its next process follows) is not
+    // the session's end; any other kill is a close. Only the exact string
+    // 'restart' is a Restart's.
+    killPty(sessionId, { reason: reason === 'restart' ? 'restart' : 'close' })
     sshClaudeLaunches.delete(sessionId)
     sshShellSessions.delete(sessionId)
     // #580: nothing left to deliver a queued canvas marker to. Logged loudly if

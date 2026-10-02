@@ -37,16 +37,20 @@ export function clearSpawned(sessionId: string): void {
   spawnedPtys.delete(sessionId)
 }
 
-export function killSessionPty(sessionId: string): void {
+/** `restart`: a Restart ends the session's processes (their next ones
+ *  follow, the hidden one when its view is shown), so main does not take
+ *  their exits as the session's end (P3.16a round 2, Q5). Absent: a close. */
+export function killSessionPty(sessionId: string, opts: { restart?: boolean } = {}): void {
   spawnedPtys.delete(sessionId)
   // Closed, or restarted afresh: a start-ended report kept for a view that
   // never listened belongs to the run that is going (utils/spawnEndNotice).
   forgetSpawnEnd(sessionId)
-  window.electronAPI.pty.kill(sessionId)
+  const kill = (id: string) => (opts.restart ? window.electronAPI.pty.kill(id, 'restart') : window.electronAPI.pty.kill(id))
+  kill(sessionId)
   // Also kill partner PTY if it was spawned
   const partnerId = sessionId + '-partner'
   if (spawnedPtys.has(partnerId)) {
     spawnedPtys.delete(partnerId)
-    window.electronAPI.pty.kill(partnerId)
+    kill(partnerId)
   }
 }

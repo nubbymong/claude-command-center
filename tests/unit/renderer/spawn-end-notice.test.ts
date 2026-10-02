@@ -74,4 +74,20 @@ describe('closing or restarting the session drops a kept report', () => {
     listenForSpawnEnd('s-1', heard)()
     expect(heard).not.toHaveBeenCalled()
   })
+
+  // P3.16a round 2 (Q5): a Restart's kills say so (main does not take their
+  // exits as the session's end); a close's do not.
+  it('killSessionPty kills the session and its spawned partner, as a Restart\'s kills only when asked', async () => {
+    const kill = vi.fn()
+    ;(globalThis as any).window = (globalThis as any).window ?? {}
+    ;(globalThis as any).window.electronAPI = { ...((globalThis as any).window.electronAPI ?? {}), pty: { kill } }
+    const { killSessionPty, markSpawned } = await import('../../../src/renderer/ptyTracker')
+    markSpawned('s-2-partner')
+    killSessionPty('s-2', { restart: true })
+    expect(kill.mock.calls).toEqual([['s-2', 'restart'], ['s-2-partner', 'restart']])
+    kill.mockClear()
+    markSpawned('s-2-partner')
+    killSessionPty('s-2')
+    expect(kill.mock.calls).toEqual([['s-2'], ['s-2-partner']])
+  })
 })

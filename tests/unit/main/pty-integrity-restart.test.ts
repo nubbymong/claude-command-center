@@ -16,19 +16,20 @@ import * as os from 'os'
 import * as path from 'path'
 
 const h = vi.hoisted(() => ({
-  procs: [] as Array<{ data: Array<(d: string) => void>; killed: boolean }>,
+  procs: [] as Array<{ data: Array<(d: string) => void>; exit: Array<(e: { exitCode: number }) => void>; killed: boolean }>,
   dir: '',
 }))
 
 vi.mock('node-pty', () => ({
   spawn: () => {
-    const rec = { data: [] as Array<(d: string) => void>, killed: false }
+    const rec = { data: [] as Array<(d: string) => void>, exit: [] as Array<(e: { exitCode: number }) => void>, killed: false }
     h.procs.push(rec)
     return {
       pid: 5000 + h.procs.length,
       process: 'pwsh',
       onData: (cb: (d: string) => void) => { rec.data.push(cb); return { dispose: () => {} } },
-      onExit: () => ({ dispose: () => {} }),
+      // Round 2 (Q5): kept, so a case can report the process's exit.
+      onExit: (cb: (e: { exitCode: number }) => void) => { rec.exit.push(cb); return { dispose: () => {} } },
       write: () => {},
       resize: () => {},
       kill: () => { rec.killed = true },
@@ -193,5 +194,73 @@ describe('the PTY byte count across a Restart (P3.16, M5)', () => {
     report(2_000)
     expect(row()?.byteGap).toBe(8_000)
     expect(monitor.diagnostics().logs.map((l) => l.code)).toContain('pty-byte-gap')
+  })
+})
+
+// P3.16a round 2 (Q5, the VM Judge item): a Restart pressed while the partner
+// view is shown ends the main process, and its next process starts only when
+// the main view is shown, so that process's exit arrives with no new spawn
+// after it. The renderer says the kill is a Restart's: the exit then restarts
+// the count quietly, with no "session ended" event. A close is the session's
+// end: one event, whether its process ends then or had ended before.
+describe('a Restart is not the session\'s end on the Services page (P3.16a round 2, Q5)', () => {
+  const ends = () => monitor.snapshot().recentEvents.filter((e) => e.kind === 'end' && e.sessionId === SID)
+  const exitOf = (i: number) => { for (const cb of [...h.procs[i].exit]) cb({ exitCode: 0 }) }
+
+  it('a Restart whose next process has not started yet (the partner view): the exit logs no "session ended", and the count waits at 0', () => {
+    const first = spawn()
+    first.data('x'.repeat(4_000))
+    report(4_000)
+    killPty(SID, { reason: 'restart' })
+    exitOf(0)
+    expect(ends()).toEqual([])
+    expect(row()).toMatchObject({ bytesFromPty: 0, bytesReceived: 0, byteGap: 0 })
+    // Shown at last: the next process counts from 0.
+    const second = spawn()
+    second.data('z'.repeat(700))
+    report(700)
+    expect(row()?.byteGap).toBe(0)
+    expect(ends()).toEqual([])
+  })
+
+  // (Each case gives the monitor a record first, as the terminal's first report does.)
+  it('a close: one "session ended" when its process ends', () => {
+    spawn()
+    report(0)
+    killPty(SID, { reason: 'close' })
+    exitOf(0)
+    expect(ends()).toHaveLength(1)
+  })
+
+  it('a tab restarted from the partner view and closed before its main view was shown: one "session ended", at the close', () => {
+    spawn()
+    report(0)
+    killPty(SID, { reason: 'restart' })
+    exitOf(0)
+    expect(ends()).toEqual([])
+    killPty(SID, { reason: 'close' })
+    expect(ends()).toHaveLength(1)
+    expect(row()).toBeUndefined()
+  })
+
+  it('a Restart\'s mark is for that exit only: once the next process has started, that process\'s own end is the session\'s end', () => {
+    spawn()
+    killPty(SID, { reason: 'restart' })
+    spawn()
+    report(0)
+    // The old process's late exit: a newer spawn owns the session.
+    exitOf(0)
+    expect(ends()).toEqual([])
+    exitOf(1)
+    expect(ends()).toHaveLength(1)
+  })
+
+  it('a process that ended by itself, then a close: one "session ended", at the exit', () => {
+    spawn()
+    report(0)
+    exitOf(0)
+    expect(ends()).toHaveLength(1)
+    killPty(SID, { reason: 'close' })
+    expect(ends()).toHaveLength(1)
   })
 })

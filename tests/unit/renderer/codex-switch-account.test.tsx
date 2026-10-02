@@ -148,7 +148,7 @@ describe('switching a Codex session\'s account', () => {
     switchFn!('sess-x', personal.id)
     await settle()
     expect(saveMock).toHaveBeenCalled()
-    expect(killSessionPtyMock).toHaveBeenCalledWith('sess-x')
+    expect(killSessionPtyMock).toHaveBeenCalledWith('sess-x', { restart: true })
     expect(saveMock.mock.invocationCallOrder[0]).toBeLessThan(killSessionPtyMock.mock.invocationCallOrder[0])
     expect(stored().providerAccountId).toBe(personal.id)
     // Codex's plain Restart carries on with the conversation (P3.5): no picker.
@@ -228,7 +228,7 @@ describe('switching a Codex session\'s account', () => {
     switchFn!('sess-x', personal.id)
     await settle()
     expect(stored().providerAccountId).toBe(personal.id)
-    expect(killSessionPtyMock).toHaveBeenCalledWith('sess-x')
+    expect(killSessionPtyMock).toHaveBeenCalledWith('sess-x', { restart: true })
   })
 
   it('refused before anything changes: the current account, one that is inactive, blocked, archived, another provider\'s or unknown; over SSH; a terminal-only tab', async () => {

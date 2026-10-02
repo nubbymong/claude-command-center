@@ -136,8 +136,9 @@ export function useRestartSession(
       // partner always restarts and the main tab never becomes a second copy.
       // Partner terminal: just kill partner PTY, leave main Claude untouched
       const partnerPtyId = session.id + '-partner'
-      // Only kill the partner -- don't use killSessionPty which also kills main+partner
-      window.electronAPI.pty.kill(partnerPtyId)
+      // Only kill the partner -- don't use killSessionPty which also kills main+partner.
+      // A Restart's kill (P3.16a round 2, Q5): its exit is not the session's end.
+      window.electronAPI.pty.kill(partnerPtyId, 'restart')
       // Clear partner from spawn tracker so it respawns on remount
       clearSpawned(partnerPtyId)
       // Force re-mount by bumping createdAt. Merge the live store record +
@@ -149,8 +150,11 @@ export function useRestartSession(
       return true
     }
     if (refuseRestart(session.id)) return false
-    // Kill the old PTY (also clears spawn tracker so new one will spawn)
-    killSessionPty(session.id)
+    // Kill the old PTY (also clears spawn tracker so new one will spawn). A
+    // Restart's kill (P3.16a round 2, Q5): main does not take the exit as the
+    // session's end, so a Restart pressed in the partner view, whose main
+    // starts again only when its view is shown, logs no "session ended".
+    killSessionPty(session.id, { restart: true })
     // Mark the resume picker, unless this provider's plain "Restart" does not
     // open it (canvas F7). Either way main resumes the conversation the
     // session is on when it knows it -- over a picker a plain Restart marked,
@@ -173,9 +177,10 @@ export function useRestartSession(
     if (!session) return
     if (refuseRestart(session.id)) return
     const partnerPtyId = session.id + '-partner'
-    // Kill both main and partner PTYs (ignore errors -- process may already be dead)
-    window.electronAPI.pty.kill(session.id)
-    window.electronAPI.pty.kill(partnerPtyId)
+    // Kill both main and partner PTYs (ignore errors -- process may already be
+    // dead), as a Restart's kills (P3.16a round 2, Q5).
+    window.electronAPI.pty.kill(session.id, 'restart')
+    window.electronAPI.pty.kill(partnerPtyId, 'restart')
     clearSpawned(session.id)
     clearSpawned(partnerPtyId)
     // Show resume picker for Claude sessions
