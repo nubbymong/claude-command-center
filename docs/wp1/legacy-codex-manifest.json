@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-02T18:18:24.060Z",
-  "head": "aac1b46e4613b9b1954c011103eb57ca67a4694d",
-  "tree": "b60fb3005f296b43d9ab083655f5f8e43cb8114c",
+  "generatedAt": "2026-10-02T21:37:52.694Z",
+  "head": "ab1fbcc59efcd93acd9bb38f9dabd94d7789b913",
+  "tree": "ce4ded002443e9bf64312c57127d79423706765a",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -1063,7 +1063,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 102
+      "lineCount": 105
     },
     {
       "path": "src/main/sentinel/sentinel-analysis.ts",
@@ -3633,7 +3633,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 132
+      "lineCount": 146
     },
     {
       "path": "tests/unit/main/service-status-providers.test.ts",
@@ -4115,7 +4115,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 9
+      "lineCount": 12
     },
     {
       "path": "tests/unit/providers/codex/telemetry.test.ts",
@@ -4856,7 +4856,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 40
+      "lineCount": 45
     },
     {
       "path": "tests/unit/renderer/session-dialog-codex-logging.test.tsx",
@@ -5285,7 +5285,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 24
+      "lineCount": 38
     },
     {
       "path": "tests/unit/shared/app-knowledge.test.ts",

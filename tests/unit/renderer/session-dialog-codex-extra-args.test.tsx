@@ -13,6 +13,7 @@ import React from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
+import { computeAccessibleName } from 'dom-accessibility-api'
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
 vi.mock('../../../src/renderer/stores/configStore', () => ({
@@ -162,6 +163,18 @@ describe('Claude Code\'s field is the same field', () => {
     // What was typed for one assistant stays with it.
     expect(codex.input.value).toBe('')
   })
+
+  // Fixer 10 (gate 3 quality nit 1): the label names its input, in both
+  // sections, so the field is not known by its placeholder.
+  it('the label names the input: its accessible name is "Extra CLI arguments" in both sections', () => {
+    newConfig('Claude Code')
+    expect(computeAccessibleName(field().input)).toBe('Extra CLI arguments')
+    act(() => { card('Provider', 'Codex').click() })
+    const codex = field()
+    expect(computeAccessibleName(codex.input)).toBe('Extra CLI arguments')
+    expect(codex.input.id).toBeTruthy()
+    expect(container.querySelectorAll(`#${codex.input.id}`)).toHaveLength(1)
+  })
 })
 
 // Round 1 (B2): the rule's message under the field, and Save held back, while
@@ -175,7 +188,14 @@ describe('a refused value is said under the field, and Save waits (round 1, B2)'
     const onConfirm = newConfig('Codex')
     const f = field()
     expect(inline()).toBeNull()
+    // Fixer 10 (ADR-009 D3): the footer's status line is the one announcer, so
+    // it is a status region, in the page and empty before the bad value, and
+    // the same element says it after.
+    const status = container.querySelector('[data-testid="session-dialog-validation"]')!
+    expect(status.getAttribute('role')).toBe('status')
+    expect(status.textContent).toBe('')
     setInput(f.input, '--search --model=gpt-5')
+    expect(container.querySelector('[data-testid="session-dialog-validation"]')).toBe(status)
     expect(inline()?.textContent).toMatch(/Extra CLI arguments: "--model=gpt-5" is set by the app/)
     // Gate 3 (quality item 7): the message is tied to the input (invalid, and
     // described by it), so a screen reader says it with the field; the

@@ -302,12 +302,13 @@ function registerMainWindowIpc(): void {
   })
 
   ipcMain.handle('session:clear', async () => {
-    const ok = clearSessionState()
+    const cleared = clearSessionState()
     // #397 F1: a successful clear is the user intentionally discarding the saved set
     // (Don't-open / Close-without-saving). Drop the cache so the exit-time flush
-    // cannot resurrect it on the next launch.
-    if (ok) sessionDurability.noteCleared()
-    return ok
+    // cannot resurrect it on the next launch. Fixer 10 (ADR-009 C2): told whether a
+    // .bak of the set was left, in front of which nothing may be written.
+    if (cleared.ok) sessionDurability.noteCleared(cleared.bakRemoved)
+    return cleared.ok
   })
 
   ipcMain.handle('session:hasSaved', async () => {
