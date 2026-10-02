@@ -1682,6 +1682,20 @@ describe('an exec run settles after its root exits (P3.9 round 2)', () => {
     expect(codexLeftoverPids(1000, odd, members, { since: T0, until: T0 + 60_000 })).toEqual([])
   })
 
+  // PR-level ADR-009 round 1 (D1): the walk below a process it names takes no
+  // pid the records hold with another start time either, though it started
+  // after that process and says it is that process's child.
+  it("K1: below a process the walk names, a pid the records hold with another start time is never named; one they do not hold is", () => {
+    const members = records(primedK1, T0 + 1_200)
+    const now: CodexProcessEntry[] = [
+      { pid: 900, ppid: 1000, name: 'git.exe', created: at(T0 + 2_000) },       // the root's own child, inside its lifetime
+      { pid: 1012, ppid: 900, name: 'node.exe', created: at(T0 + 30_000) },    // git's old pid, now held by another process
+      { pid: 2030, ppid: 1012, name: 'conhost.exe', created: at(T0 + 30_100) },
+      { pid: 901, ppid: 900, name: 'conhost.exe', created: at(T0 + 2_010) },   // a pid the records do not hold
+    ]
+    expect(codexLeftoverPids(1000, now, members, { since: T0, until: T0 + 60_000 })).toEqual([901, 900])
+  })
+
   it("the root's own children: started inside its lifetime only, with no read at all; nothing when its pid is in use again", () => {
     const w = { since: T0, until: T0 + 5_000 }
     const now: CodexProcessEntry[] = [
