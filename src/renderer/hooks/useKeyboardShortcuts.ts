@@ -12,6 +12,7 @@ import { useAppMetaStore } from '../stores/appMetaStore'
 import { deriveOnboarding } from '../onboarding/gate'
 import { useHelloCodexStore } from '../onboarding/hello-codex-open'
 import { PARTNER_PTY_SUFFIX } from '../../shared/multi-spawn-rule'
+import { hasSpawned } from '../ptyTracker'
 import type { ViewType } from '../types/views'
 
 /**
@@ -118,9 +119,12 @@ export function useKeyboardShortcuts(
       // written into the prompt (Claude's Read tool ingests it directly), an SSH
       // one, which can't reach the host filesystem, the Conductor MCP fetch over
       // the reverse tunnel. A Codex session: its line through the Codex typing
-      // rule. A plain terminal, and the partner shell in the partner view: only
-      // the quoted path, with no Enter (nothing over SSH, or for a terminal that
-      // is not running, with a hint saying where the image is).
+      // rule. A plain terminal: only the quoted path, with no Enter; over SSH
+      // nothing, with a hint saying where the image is. The partner shell in
+      // the partner view (a shell on this computer for every tab, an SSH tab's
+      // too): only the quoted path, with no Enter. A plain terminal or a partner
+      // shell that is not running gets nothing, with a hint saying so and where
+      // the image is.
       if (matchesShortcut(e, shortcuts.pasteImage)) {
         e.preventDefault()
         const state = useSessionStore.getState()
@@ -143,8 +147,17 @@ export function useKeyboardShortcuts(
               // partner is a plain shell on this computer for every tab (an SSH
               // tab's too: it opens at home here), so it gets what a plain
               // terminal on this computer gets: the image's path, quoted for its
-              // shell, with no sentence and no Enter.
-              typeImagePathIntoShell(sessionId + PARTNER_PTY_SUFFIX, res.path, window.electronPlatform === 'win32')
+              // shell, with no sentence and no Enter. Round 2 (Q7): a partner
+              // shell that is not running (no spawn of it is current: its
+              // process ended, or a Restart's next one has not started) has no
+              // shell to type into: nothing is typed, and the hint says so, as
+              // for a plain terminal that is not running.
+              const partnerId = sessionId + PARTNER_PTY_SUFFIX
+              if (!hasSpawned(partnerId)) {
+                usePasteHintStore.getState().show(sessionId, `This terminal is not running, so nothing was typed; the image was saved on this computer at ${res.path}.`)
+              } else {
+                typeImagePathIntoShell(partnerId, res.path, window.electronPlatform === 'win32')
+              }
             } else if (session?.shellOnly) {
               // P3.16a (U6): a plain terminal has no assistant to tell, so it
               // gets the image's path, quoted for its shell, and no sentence or

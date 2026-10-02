@@ -31,6 +31,7 @@ const { useSessionStore } = await import('../../../src/renderer/stores/sessionSt
 const { useSettingsStore } = await import('../../../src/renderer/stores/settingsStore')
 const { usePasteHintStore } = await import('../../../src/renderer/stores/pasteHintStore')
 const { DEFAULT_SHORTCUTS } = await import('../../../src/renderer/utils/shortcuts')
+const { markSpawned, clearSpawned } = await import('../../../src/renderer/ptyTracker')
 import type { Session } from '../../../src/renderer/stores/sessionStore'
 
 const IMG = 'C:\\res\\screenshots\\clipboard-1.jpg'
@@ -167,19 +168,52 @@ describe('Alt+V with focus outside the terminal (P3.15, row 70)', () => {
  */
 describe('Alt+V in the partner view goes to the partner shell on screen (P3.16a, N9)', () => {
   let paneEls: HTMLElement[] = []
-  function mountPanes(panes: Array<[string, boolean]>) {
+  // A mounted partner pane's shell is running (its spawn is the tab's current
+  // one, ptyTracker), unless a case says it is not (round 2, Q7).
+  function mountPanes(panes: Array<[string, boolean]>, opts: { partnerRunning?: boolean } = {}) {
     for (const [id, onScreen] of panes) {
       const el = document.createElement('div')
       el.setAttribute('data-terminal-session', id)
       if (onScreen) el.setAttribute('data-terminal-active', '')
       document.body.appendChild(el)
       paneEls.push(el)
+      if (id.endsWith('-partner') && opts.partnerRunning !== false) markSpawned(id)
     }
   }
   afterEach(() => {
-    for (const el of paneEls) el.remove()
+    for (const el of paneEls) { clearSpawned(el.getAttribute('data-terminal-session') ?? ''); el.remove() }
     paneEls = []
     delete (window as any).electronPlatform
+  })
+
+  // P3.16a round 2 (Q7): a partner shell that is not running (its process
+  // ended, or a Restart's next one has not started) has no shell to type into.
+  it('a partner shell that is not running: nothing is typed into either terminal, and the hint says so and where the image is', async () => {
+    for (const extra of [{}, { provider: 'codex' }, { shellOnly: true }, { sessionType: 'ssh' }] as Array<Partial<Session>>) {
+      const label = JSON.stringify(extra)
+      h.typeImagePathIntoShell.mockReset(); h.sendImageToSession.mockReset(); h.sendImagePathToCodex.mockReset()
+      usePasteHintStore.setState({ hints: {} })
+      for (const el of paneEls) { clearSpawned(el.getAttribute('data-terminal-session') ?? ''); el.remove() }
+      paneEls = []
+      mountPanes([['px1', false], ['px1-partner', true]], { partnerRunning: false })
+      await altV([session('px1', extra)], 'px1')
+      expect(h.typeImagePathIntoShell, label).not.toHaveBeenCalled()
+      expect(h.sendImageToSession, label).not.toHaveBeenCalled()
+      expect(h.sendImagePathToCodex, label).not.toHaveBeenCalled()
+      expect(usePasteHintStore.getState().hints.px1, label).toBe(`This terminal is not running, so nothing was typed; the image was saved on this computer at ${IMG}.`)
+    }
+  })
+
+  it('a partner shell whose process ended (its spawn cleared) is not running either; once it is spawned again, the path is typed into it', async () => {
+    mountPanes([['px2', false], ['px2-partner', true]])
+    clearSpawned('px2-partner')
+    await altV([session('px2')], 'px2')
+    expect(h.typeImagePathIntoShell).not.toHaveBeenCalled()
+    expect(usePasteHintStore.getState().hints.px2).toMatch(/not running/)
+    usePasteHintStore.setState({ hints: {} })
+    markSpawned('px2-partner')
+    await altV([session('px2')], 'px2')
+    expect(h.typeImagePathIntoShell.mock.calls[0].slice(0, 2)).toEqual(['px2-partner', IMG])
   })
 
   it('a Codex tab showing its partner shell: only the quoted path, typed into the partner PTY, and nothing to the hidden Codex session', async () => {
