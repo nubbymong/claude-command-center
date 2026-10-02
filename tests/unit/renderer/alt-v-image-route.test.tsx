@@ -18,7 +18,8 @@ import { act } from 'react'
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
-const h = vi.hoisted(() => ({ sendImageToSession: vi.fn(), sendImagePathToCodex: vi.fn(), typeImagePathIntoShell: vi.fn() }))
+// typeImagePathIntoShell says whether it typed (PR-level ADR-009 round 1, A1): it does, unless a case says not.
+const h = vi.hoisted(() => ({ sendImageToSession: vi.fn(), sendImagePathToCodex: vi.fn(), typeImagePathIntoShell: vi.fn((..._a: unknown[]) => true) }))
 vi.mock('../../../src/renderer/onboarding/gate', () => ({ deriveOnboarding: () => ({ due: false, steps: [] }) }))
 vi.mock('../../../src/renderer/utils/imageTransfer', () => ({ sendImageToSession: h.sendImageToSession, typeImagePathIntoShell: h.typeImagePathIntoShell }))
 vi.mock('../../../src/renderer/lib/codexComposer', async (importOriginal) => ({
@@ -145,6 +146,32 @@ describe('Alt+V with focus outside the terminal (P3.15, row 70)', () => {
     const hint = usePasteHintStore.getState().hints.sh2
     expect(hint).toContain('remote shell cannot read')
     expect(hint).toContain(IMG)
+  })
+
+  // PR-level ADR-009 round 1 (A1): main says, with the saved image, whether the
+  // shell it spawns a plain terminal with is of the sh family; that word goes to
+  // the typing rule, and a path the rule does not type shows where it was saved.
+  it('macOS and Linux: main\'s word on the shell goes to the typing rule; a path it does not type shows where the image was saved', async () => {
+    for (const posixShell of ['sh', 'other'] as const) {
+      ;(window as any).electronPlatform = 'linux'
+      saveImage.mockResolvedValue({ path: '/res/screenshots/clipboard-1.jpg', posixShell })
+      h.typeImagePathIntoShell.mockReset()
+      if (posixShell === 'other') h.typeImagePathIntoShell.mockReturnValueOnce(false)
+      usePasteHintStore.setState({ hints: {} })
+      await altV([session('sh4', { shellOnly: true } as Partial<Session>)], 'sh4')
+      expect(h.typeImagePathIntoShell.mock.calls[0], posixShell).toEqual(['sh4', '/res/screenshots/clipboard-1.jpg', false, posixShell])
+      const hint = usePasteHintStore.getState().hints.sh4
+      if (posixShell === 'sh') expect(hint, posixShell).toBeUndefined()
+      else expect(hint, posixShell).toBe('The image was saved on this computer at /res/screenshots/clipboard-1.jpg; nothing was typed into this terminal.')
+    }
+  })
+
+  it('Windows: unchanged, the path typed for PowerShell whatever main says of a POSIX shell', async () => {
+    ;(window as any).electronPlatform = 'win32'
+    saveImage.mockResolvedValue({ path: IMG })
+    await altV([session('sh5', { shellOnly: true } as Partial<Session>)], 'sh5')
+    expect(h.typeImagePathIntoShell.mock.calls[0].slice(0, 3)).toEqual(['sh5', IMG, true])
+    expect(usePasteHintStore.getState().hints.sh5).toBeUndefined()
   })
 
   it('no image on the clipboard: the same hint as before, and nothing typed', async () => {
@@ -308,5 +335,17 @@ describe('Alt+V in the partner view goes to the partner shell on screen (P3.16a,
     expect(h.typeImagePathIntoShell).not.toHaveBeenCalled()
     expect(h.sendImagePathToCodex).not.toHaveBeenCalled()
     expect(usePasteHintStore.getState().hints.cx1).toMatch(/No image in clipboard/)
+  })
+
+  // PR-level ADR-009 round 1 (A1): the partner shell is a plain shell main spawns the same way.
+  it('macOS and Linux: the partner shell gets the same rule; a path it does not type shows where the image was saved, and the hidden session gets nothing', async () => {
+    ;(window as any).electronPlatform = 'darwin'
+    mountPanes([['cl6', false], ['cl6-partner', true]])
+    saveImage.mockResolvedValue({ path: '/res/screenshots/clipboard-2.jpg', posixShell: 'other' })
+    h.typeImagePathIntoShell.mockReturnValueOnce(false)
+    await altV([session('cl6')], 'cl6')
+    expect(h.typeImagePathIntoShell.mock.calls[0]).toEqual(['cl6-partner', '/res/screenshots/clipboard-2.jpg', false, 'other'])
+    expect(h.sendImageToSession).not.toHaveBeenCalled()
+    expect(usePasteHintStore.getState().hints.cl6).toBe('The image was saved on this computer at /res/screenshots/clipboard-2.jpg; nothing was typed into this terminal.')
   })
 })
