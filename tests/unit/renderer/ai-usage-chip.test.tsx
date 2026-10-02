@@ -240,16 +240,20 @@ describe('AI-usage popover placement (P3.16 final-head VM finding D2)', () => {
 
   /** The chip as the strip holds it: inside an overflow-hidden zone, under
    *  the strip root (zoomed when the Status bars scale is not 1). */
-  async function renderInStrip(zoom?: number): Promise<HTMLElement> {
+  async function renderInStrip(opts: {
+    zoom?: number
+    rect?: Partial<typeof CHIP_RECT>
+    onOpenSettings?: (tab?: 'github' | 'statusline') => void
+  } = {}): Promise<HTMLElement> {
     await act(async () => {
       root.render(
-        React.createElement('div', { 'data-strip-root': '', style: zoom ? { zoom } : undefined },
+        React.createElement('div', { 'data-strip-root': '', style: opts.zoom ? { zoom: opts.zoom } : undefined },
           React.createElement('div', { className: 'flex items-center gap-3 flex-1 min-w-0 overflow-hidden' },
-            React.createElement(AiUsageChip))),
+            React.createElement(AiUsageChip, { onOpenSettings: opts.onOpenSettings }))),
       )
     })
     const chip = container.querySelector('[data-ai-usage-chip]') as HTMLElement
-    chip.getBoundingClientRect = () => ({ ...CHIP_RECT, toJSON: () => ({}) }) as DOMRect
+    chip.getBoundingClientRect = () => ({ ...CHIP_RECT, ...opts.rect, toJSON: () => ({}) }) as DOMRect
     return chip
   }
   const dialog = () => document.querySelector('[role="dialog"][aria-label="AI usage"]') as HTMLElement | null
@@ -275,7 +279,8 @@ describe('AI-usage popover placement (P3.16 final-head VM finding D2)', () => {
   })
 
   it('under a Status bars scale (the strip zoomed) it is placed outside the zoom, from the chip\'s on-screen rect', async () => {
-    const chip = await renderInStrip(1.25)
+    // 1.2 is the most the Status bars scale goes to (clampRegionScale).
+    const chip = await renderInStrip({ zoom: 1.2 })
     await act(async () => { chip.click() })
     const d = dialog()!
     expect(d.closest('[data-strip-root]')).toBeNull()
@@ -298,5 +303,77 @@ describe('AI-usage popover placement (P3.16 final-head VM finding D2)', () => {
     expect(dialog()).not.toBeNull()
     await act(async () => { chip.click() })
     expect(dialog()).toBeNull()
+  })
+
+  // Fixer 8b (review Q1): the sessions view stays mounted, hidden, under
+  // Settings; a portalled popover would float over Settings if a link left it open.
+  it.each([
+    ['Open Settings', 'github', () => useGitHubStore.setState({ aiUsage: null, aiUsageStatus: 'no-auth' })],
+    ['Set your included-credit allowance in Settings', 'statusline', () => useSettingsStore.setState((s) => ({ settings: { ...s.settings, copilotIncludedCredits: null } }))],
+    ['Copilot meter settings', 'statusline', () => {}],
+  ] as const)('its "%s" link closes it, then opens Settings (%s)', async (label, tab, setup) => {
+    setup()
+    const opened: Array<string | undefined> = []
+    const chip = await renderInStrip({ onOpenSettings: (t) => { opened.push(t) } })
+    await act(async () => { chip.click() })
+    const link = [...dialog()!.querySelectorAll('button')].find((b) => b.textContent === label)
+    expect(link, label).toBeDefined()
+    await act(async () => { link!.click() })
+    expect(dialog()).toBeNull()
+    expect(opened).toEqual([tab])
+  })
+
+  // Fixer 8b (review Q2): IdentityOverflow's keyboard handling.
+  it('keyboard: the chip says whether it is open; focus moves into the popover, and Escape hands it back to the chip (an outside click does not take it)', async () => {
+    const chip = await renderInStrip()
+    expect(chip.getAttribute('aria-haspopup')).toBe('dialog')
+    expect(chip.getAttribute('aria-expanded')).toBe('false')
+    await act(async () => { chip.click() })
+    expect(chip.getAttribute('aria-expanded')).toBe('true')
+    expect(document.activeElement).toBe(dialog())
+    await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
+    expect(dialog()).toBeNull()
+    expect(chip.getAttribute('aria-expanded')).toBe('false')
+    expect(document.activeElement).toBe(chip)
+    await act(async () => { chip.click() })
+    await act(async () => { document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })) })
+    expect(dialog()).toBeNull()
+    expect(document.activeElement).not.toBe(chip)
+  })
+
+  it('focus moves in once, on open: focus on one of its buttons stays there when it re-renders', async () => {
+    const chip = await renderInStrip()
+    await act(async () => { chip.click() })
+    const button = dialog()!.querySelector('button') as HTMLButtonElement
+    button.focus()
+    await act(async () => { useGitHubStore.setState({ aiUsage: makeReport({ fetchedAt: 1_700_000_100_000 }) }) })
+    expect(document.activeElement).toBe(button)
+  })
+
+  // Fixer 8b (review Q3): placed once, so a resize closes it (RowMenu's rule).
+  it('a window resize closes it', async () => {
+    const chip = await renderInStrip()
+    await act(async () => { chip.click() })
+    expect(dialog()).not.toBeNull()
+    await act(async () => { window.dispatchEvent(new Event('resize')) })
+    expect(dialog()).toBeNull()
+  })
+
+  it('a chip near the left edge: the popover (20rem wide) is kept 8px inside the window, at the root font size the app sets', async () => {
+    const before = document.documentElement.style.fontSize
+    try {
+      document.documentElement.style.fontSize = '16px'
+      let chip = await renderInStrip({ rect: { left: 20, right: 74 } })
+      await act(async () => { chip.click() })
+      expect(dialog()!.style.right).toBe('1272px') // 1600 - 320 - 8
+      await act(async () => { chip.click() })
+      // A global UI scale of 1.25 (20px root): the popover is 400px wide.
+      document.documentElement.style.fontSize = '20px'
+      chip = await renderInStrip({ rect: { left: 20, right: 74 } })
+      await act(async () => { chip.click() })
+      expect(dialog()!.style.right).toBe('1192px') // 1600 - 400 - 8
+    } finally {
+      document.documentElement.style.fontSize = before
+    }
   })
 })

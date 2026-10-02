@@ -108,7 +108,8 @@ function SectionHeader({ title, note }: { title: string; note?: string }) {
 // the previous inline `if (!open) return null` already skipped it.
 export default function AiUsagePopover(props: {
   open: boolean
-  onClose: () => void
+  /** `refocus`: Escape closed it, so focus goes back to its opener. */
+  onClose: (refocus?: boolean) => void
   onOpenSettings?: (tab?: 'github' | 'statusline') => void
   /** P3.16 final-head VM finding D2: where it is fixed, from the chip's
    *  on-screen rect (the chip portals it onto document.body). */
@@ -125,7 +126,7 @@ function AiUsagePopoverBody({
   anchor,
 }: {
   open: boolean
-  onClose: () => void
+  onClose: (refocus?: boolean) => void
   onOpenSettings?: (tab?: 'github' | 'statusline') => void
   anchor?: { right: number; bottom: number } | null
 }) {
@@ -165,17 +166,30 @@ function AiUsagePopoverBody({
       if (target.closest?.('[data-ai-usage-chip]')) return
       if (ref.current && !ref.current.contains(target)) onClose()
     }
-    // D2: Escape closes it too (IdentityOverflow's handler).
+    // D2: Escape closes it too, handing focus back (IdentityOverflow's handler).
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') onClose(true)
     }
+    // Fixer 8b: it is placed once, from the chip's rect when it opened, so a
+    // resize closes it rather than leaving it away from the chip (RowMenu's rule).
+    const onResize = () => onClose()
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
+    window.addEventListener('resize', onResize)
     return () => {
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey)
+      window.removeEventListener('resize', onResize)
     }
   }, [open, onClose])
+
+  // Fixer 8b (IdentityOverflow's keyboard handling): focus moves into the
+  // popover when it opens, so its buttons are reachable from the keyboard (it
+  // is portalled to the end of the document, away from the chip). Once, on
+  // open: the body mounts only while it is open.
+  useEffect(() => {
+    ref.current?.focus()
+  }, [])
 
   // Provider session sourcing. Claude = the active session when it is a Claude
   // session, else the most-recent Claude session. Codex = the active session
@@ -222,9 +236,11 @@ function AiUsagePopoverBody({
       ref={ref}
       role="dialog"
       aria-label="AI usage"
+      tabIndex={-1}
       // D2: fixed at the chip and rising from it (the chip sits at the
-      // window's bottom edge), so it enters from below.
-      className={`fixed z-50 w-80 rounded-lg border shadow-xl p-3 flex flex-col gap-3 transition-all duration-200 ease-out ${
+      // window's bottom edge), so it enters from below. (Its width, w-80,
+      // is the chip's POPOVER_WIDTH_REM.)
+      className={`fixed z-50 w-80 rounded-lg border shadow-xl p-3 flex flex-col gap-3 transition-all duration-200 ease-out focus-ring ${
         entered ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-1'
       }`}
       style={{
