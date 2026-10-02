@@ -360,7 +360,7 @@ from P3.1, and then only that row.
 | P3.13 Multi Spawn and Quick Start | 72 | Y | N | APPROVED |
 | P3.14 Usage follow-up: Codex credits | 17 | Y (the read keeps three more fields; ADR-023) | N | APPROVED |
 | P3.15 Terminal verification | 44, 70, 71, 73 | Y (the scrollback fix builds the Codex PTY with a new option and starts OpenConsole.exe): PASS at pass 2; round 3's input guard covered by the P3.16a pass (lens A and B minors only); rounds 4 and 5 owed | Y (SSH sessions' PTY input and output are guarded, and the End and liveness-probe helper PTYs): the live SSH matrix owed, End with a password and the liveness probe included | APPROVED |
-| P3.16 PR 3 records and user-facing sweep | none (the PR-level ADR-009 round 1 fixes touch 31, 70, 71, 72) | Y (PR-level pass: round 1 FINDINGS fixed, round 2 PASS at 0aec9705, fixer-7 minors) | N (docs); the round 1 fixes and fixer 7 change `pty-manager.ts` (the not-indexed record (Codex folder window, Claude's past-cap cover), no SSH path): the live SSH matrix at PR 3's head, owed as before | APPROVED |
+| P3.16 PR 3 records and user-facing sweep | none (the PR-level ADR-009 round 1 fixes and fixers 7 and 7b touch 14, 31, 70, 71, 72) | Y (PR-level pass: round 1 FINDINGS (C1 MAJOR) fixed, round 2 PASS at 0aec9705, minors fixed in fixer 7 and 7b; 7b's confirmation owed) | Y (pty-manager.ts: the not-indexed record (Codex folder window, Claude's past-cap cover), no SSH path): the live SSH matrix at PR 3's head, owed as before | APPROVED |
 
 The 35 rows: 7, 8, 10, 11, 14, 17, 20, 22, 24, 28, 31, 32, 34, 35, 36, 37,
 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 61, 62, 63, 65, 69, 70, 71, 72, 73.
@@ -3690,8 +3690,37 @@ red-first placed
 0aec9705's `release.yml` in the tree and restored it byte-identical. Checks:
 typecheck; tsc of the touched tests; the affected and scanner files (155
 files; with K2, 2,971 passed and 32 host skips); the WP1 files (the legacy
-Codex manifest unmoved). Owed as
-before: the VM checks and the SSH live matrix at PR 3's head.
+Codex manifest unmoved).
+Lens C and D confirmed fixer 7 at e33c9ba8 (C: G1 and G2 closed; D: the
+survivors killed), with the minors fixer 7b fixes:
+N1 (lens C; row 31): a Codex launch folder is also marked by the name the OS
+gives it on disk (Node's `realpathSync.native`; the folder as given when that
+cannot be read) when that is a key of its own: on a macOS volume that ignores
+case, JS `realpathSync` keeps the case typed while a session_meta records the
+folder's own case. The key still does not fold case off Windows (a volume can
+tell case apart). Tested with an injected native answer (which also pins JS
+`realpathSync` for the real path); a real Mac is owed. N2 (lens D): tests pin
+the closed-window merge's later end (one window inside the other) and its
+order by start (windows opened out of order). N3 (lens D): each release
+verify step is pinned whole (its name, the exact run line, no other key). N4
+(review): the exact-claim test's junction step skips only for a missing
+right. N5 (reviews): "any other shell there" in the Feature Guide and the tip,
+and the off-Windows shell rule in the Alt+V guide line and the 2.1.1-beta.2
+What's New entry. N6 and N7: these records, the P3.16 row and the ledger's
+`codex-folder-key.ts` evidence. Tests, red first: N1 on e33c9ba8's
+`pty-manager.ts` and the N5 pins on e33c9ba8's text; N2 to N4 pin code that
+was right. Mutation: lens D's C4 (the JS real path read natively), no native
+cover, an unguarded native read, M3, M4, and lens D's release copies Y1 to Y4
+(placed in the tree, run, and restored byte-identical): 9 of 9 red. Checks:
+typecheck; tsc of the touched tests; 158 affected and scanner files (3,000
+passed, 32 host skips); changelog:check; the WP1 files (the manifest
+unmoved).
+PR-level ADR-009 verdict for PR 3: round 1 FINDINGS (C1 MAJOR) fixed; round 2
+PASS at 0aec9705; its minors fixed in fixers 7 and 7b.
+Owed: lens C and D's confirmation of fixer 7b's N1 to N3; on a Mac, a Codex
+launch folder typed in another case on a volume that ignores case (N1); the
+first real release run of the verify steps on macOS and Linux (checked here
+on fake trees only); the VM checks and the SSH live matrix at PR 3's head.
 
 ## 9. PR 4 outline
 

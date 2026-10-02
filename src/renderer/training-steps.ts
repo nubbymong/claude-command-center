@@ -696,7 +696,7 @@ export const trainingSteps: TrainingStep[] = [
     highlights: [
       'Ctrl+Tab / Ctrl+Shift+Tab -- cycle between sessions',
       'Ctrl+1–9 -- jump directly to session N',
-      'Alt+V -- paste a clipboard image: in a local session, the assistant pastes it itself; with focus elsewhere, the app saves it and types its path (over SSH, it asks Claude to fetch it); a plain terminal, or the partner shell in a partner view, gets only the quoted path, with no Enter',
+      'Alt+V -- paste a clipboard image: in a local session, the assistant pastes it itself; with focus elsewhere, the app saves it and types its path (over SSH, it asks Claude to fetch it); a plain terminal, or the partner shell in a partner view, gets only the quoted path, with no Enter (on macOS and Linux, only an sh, bash, zsh, dash or ksh shell)',
       'Esc -- close browser pane / dismiss tour / cancel context menu',
       'Status bar -- live tokens, cost, rate limits',
     ],
