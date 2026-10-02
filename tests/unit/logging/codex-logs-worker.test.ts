@@ -13,7 +13,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync, appendFileSync, readFileSync } from 'node:fs'
 import { join, dirname, basename } from 'node:path'
-import { statSync, unlinkSync, mkdirSync, utimesSync } from 'node:fs'
+import { statSync, unlinkSync, mkdirSync, utimesSync, openSync, readSync, closeSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 
 interface Run { runId: number; sessionId: string; configId: string | null; provider: string; projectCwd: string | null; status: string; startedAt: number; endedAt: number | null }
@@ -1183,6 +1183,43 @@ describe('a new Claude conversation bound before Claude Code writes its file (P3
     unlinkSync(f); w.tickNow()
     expect(statusOf(f)).toBe('failed')
     expect(missingWarns(out)).toHaveLength(1)
+  })
+
+  // Fixer 8b (review Q4): a file never seen that cannot be read for another
+  // reason than not being written yet (no right to it, say, or a scanner
+  // holding a new file) is waited for too, and the log says so once.
+  it('a file never seen that cannot be read for another reason: the tail waits, and logs that once (info); one not written yet logs nothing', () => {
+    let blocked = true
+    const f = tfile(11)
+    const port = {
+      statSync: (p: string) => {
+        if (blocked && p === f) throw Object.assign(new Error('denied'), { code: 'EACCES' })
+        return statSync(p)
+      },
+      openSync: (p: string, flags: string) => openSync(p, flags),
+      readSync: (fd: number, b: Buffer, o: number, l: number, pos: number) => readSync(fd, b, o, l, pos),
+      closeSync: (fd: number) => closeSync(fd),
+    }
+    const t = new FakeTranscriptsWorkerTransport()
+    const out: Out[] = []
+    t.onMessage((m) => out.push(m))
+    const w = createTranscriptsWorker(t.asWorkerSide(), port)
+    workers.push(w)
+    const send = (m: In) => t.post(m)
+    send({ type: 'open', dbPath: ':memory:' })
+    const waitNotes = () => out.filter((m): m is Extract<Out, { type: 'log' }> => m.type === 'log' && m.entry.level === 'info' && /not readable yet/.test(m.entry.message))
+    send(runC('s1', BASE)); send(bindC('s1', f))
+    w.tickNow(); w.tickNow(); w.tickNow()
+    expect(statusOf(f)).toBe('tailing')
+    expect(waitNotes()).toHaveLength(1)
+    expect(waitNotes()[0].entry.message).toMatch(/EACCES/)
+    blocked = false
+    writeFileSync(f, say('FIRST', 1000)); w.tickNow()
+    expect(shown()).toEqual(['FIRST'])
+    const g = tfile(12)
+    send(runC('s2', BASE + 100)); send(bindC('s2', g)); w.tickNow(); w.tickNow()
+    expect(waitNotes()).toHaveLength(1)
+    expect(missingWarns(out)).toEqual([])
   })
 })
 
