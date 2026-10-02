@@ -785,7 +785,7 @@
       ],
       "category": "TELEMETRY",
       "disposition": "added",
-      "evidence": "new WP2 PR 3 PR-level ADR-009 round 1 (C1, row 31) module (src/main/logging/codex-folder-key.ts): the key of a folder of one Codex realm in the record of what was written while not indexed, as main and the transcripts worker both work it out (the realm a rollout lies in, the folder its session_meta records), the parity of Claude's projects folder key; pure, no file read (WP1.68); tests/unit/logging/codex-logs-worker.test.ts, tests/unit/main/pty-codex-logs.test.ts",
+      "evidence": "new WP2 PR 3 PR-level ADR-009 round 1 (C1, row 31) module (src/main/logging/codex-folder-key.ts): the key of a Codex launch folder in the record of what was written while not indexed, as main and the transcripts worker both work it out (the folder its session_meta records: the folder alone, in every realm, round 2 K2), the parity of Claude's projects folder key; pure, no file read (WP1.68); tests/unit/logging/codex-logs-worker.test.ts, tests/unit/main/pty-codex-logs.test.ts",
       "note": "created by WP2 PR 3 PR-level ADR-009 round 1 (C1); pure"
     },
     {

@@ -364,7 +364,7 @@ describe('the PR 3 user-facing sweep (P3.16)', () => {
     expect(k).toMatch(/quoted for the shell, with no Enter/)
     // PR-level ADR-009 round 1 (A1): off Windows, a path is typed only into a shell of the sh family.
     expect(k).toMatch(/On macOS and Linux the path is typed only into an sh, bash, zsh, dash or ksh shell/)
-    expect(k).toMatch(/Any other shell, a plain terminal over SSH, or a terminal that is not running gets nothing/)
+    expect(k).toMatch(/Any other shell there, a plain terminal over SSH, or a terminal that is not running gets nothing/)
     expect(k).toMatch(/the hint says where the image was saved/)
     // The copied-file route reads File Explorer's and Finder's clipboard only.
     expect(k).toMatch(/an image file you copied in File Explorer or Finder/)
@@ -373,12 +373,14 @@ describe('the PR 3 user-facing sweep (P3.16)', () => {
     expect(t).toMatch(/\*\*Alt\+V\*\* types only the image's path into a plain terminal, or into the partner shell/)
     expect(t).toMatch(/quoted for the shell, with no Enter/)
     expect(t).toMatch(/On macOS and Linux the path is typed only into an sh, bash, zsh, dash or ksh shell/)
-    expect(t).toMatch(/Any other shell, or a plain terminal over SSH, gets nothing/)
+    expect(t).toMatch(/Any other shell there, or a plain terminal over SSH, gets nothing/)
     expect(t).toMatch(/an image file you copied in File Explorer or Finder/)
     expect(t).not.toMatch(/file manager/)
     const guide = trainingSteps.flatMap((s) => s.highlights ?? []).find((l) => l.startsWith('Alt+V'))!
     expect(guide).toMatch(/a plain terminal, or the partner shell in a partner view, gets only the quoted path/)
     expect(guide).toMatch(/with no Enter/)
+    // Fixer 7b (N5): off Windows, only a shell of the sh family gets the path.
+    expect(guide).toMatch(/on macOS and Linux, only an sh, bash, zsh, dash or ksh shell/)
   })
 
   it('known issues (P3.10, P3.16a): the Codex lock screen, the Windows folder spelling and vision in one copy, each with its workaround', () => {
@@ -485,6 +487,7 @@ describe('the PR 3 user-facing sweep (P3.16)', () => {
       /a Codex pill, read from OpenAI's public status page/,
       /a local Codex session keeps its scrollback/,
       /Alt\+V with focus outside the terminal types only the image's path into a plain terminal/,
+      /On macOS and Linux it types it only into an sh, bash, zsh, dash or ksh shell; with any other shell there, or over SSH, it types nothing/,
       /the app now finds its conversation for Logs/,
     ]) expect(all).toMatch(said)
     expect(all).not.toMatch(/come from Codex itself|your account of the other assistant|retries a Claude session again/)
