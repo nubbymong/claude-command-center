@@ -225,6 +225,8 @@ const fakePorts: OwnerPorts = {
   // A long wait (a grace, an exit wait) takes a little real time; a poll none.
   sleep: async (ms) => { sys.sleeps++; await new Promise((r) => setTimeout(r, ms >= 1000 ? 10 : 0)) },
   sleepSync: (ms) => { sys.events.push(`sleepSync:${ms}`) },
+  // Fixer 3 (F3): no process in the table has the pid.
+  pidGone: (pid) => !sys.procs.has(pid),
 }
 
 const flush = async () => { for (let i = 0; i < 3; i++) await new Promise((r) => setTimeout(r, 0)) }
@@ -492,6 +494,45 @@ describe.each(['win32', 'linux'] as const)('vision browser teardown and launch (
       expect(sys.runs.some((r) => r.file.endsWith('lsof'))).toBe(false)
       expect(sys.browserSpawns).toHaveLength(1)
     })
+
+    // Fixer 3 (F3, lens B VA2): a process naming the port that exits between
+    // the list and its own read is skipped; one that still runs and cannot be
+    // read makes the query no answer.
+    it('a process naming the port that exits between the list and its own read is skipped: the leftover is ended and the launch goes ahead', async () => {
+      addProc(500, { port: null })                              // the app's leftover, holding the profile only
+      addProc(501, { port: null, extra: ['--type=renderer'] }) // a child naming the port
+      _setVisionOwnerPortsForTest({
+        ...fakePorts,
+        platform,
+        run: async (file, args, timeoutMs) => {
+          const out = await fakePorts.run(file, args, timeoutMs)
+          if (args[0] === '-A') sys.end(501, null) // it ends right after the list
+          return out
+        },
+      })
+      await launchBrowser('chrome', 9222, undefined, true)
+      expect(sys.procs.has(500)).toBe(false)
+      expect(sys.browserSpawns).toHaveLength(1)
+    })
+
+    it('a process naming the port that still runs and cannot be read: nothing is ended, and the launch stops', async () => {
+      addProc(500, { port: null })
+      addProc(501, { port: null, extra: ['--type=renderer'] })
+      _setVisionOwnerPortsForTest({
+        ...fakePorts,
+        platform,
+        run: async (file, args, timeoutMs) => {
+          if (args.includes('-p') && args.includes('501')) throw new Error('timed out')
+          return fakePorts.run(file, args, timeoutMs)
+        },
+      })
+      const err = await launchBrowser('chrome', 9222, undefined, true).catch((e: unknown) => e)
+      expect((err as Error)?.message).toBe("the vision browser's profile folder is still in use; vision was not started")
+      expect(sys.procs.has(500)).toBe(true)
+      expect(sys.procs.has(501)).toBe(true)
+      expect(sys.browserSpawns).toHaveLength(0)
+      expect(sys.signals).toHaveLength(0)
+    })
   }
 
   it('an ended leftover whose pid at once names another process does not hold the launch', async () => {
@@ -585,6 +626,21 @@ describe.each(['win32', 'linux'] as const)('vision browser teardown and launch (
   it('Q4: the query fails but nothing listens and neither profile is locked: the launch goes ahead (nothing to hand off to)', async () => {
     sys.failReads = true
     await launchBrowser('chrome', 9222, undefined, true)
+    expect(sys.browserSpawns).toHaveLength(1)
+  })
+
+  // Fixer 3 (F4): no answer does not by itself stop a launch. Here the first
+  // look finds a profile folder locked (so no fast path: the query runs), the
+  // query gives no answer, and by the next look the lock is free: the launch
+  // goes ahead.
+  it('Q4: the query gives no answer, then the profile locks read free and nothing listens: the launch goes ahead', async () => {
+    let lockReads = 0
+    _setVisionOwnerPortsForTest({ ...fakePorts, platform, profileLock: () => (lockReads++ < 2 ? 'held' : 'free') })
+    sys.failReads = true
+    await launchBrowser('chrome', 9222, undefined, true)
+    expect(sys.runs.length).toBeGreaterThan(0)
+    expect(logged(/did not answer; nothing is ended/)).toBe(true)
+    expect(lockReads).toBeGreaterThan(2)
     expect(sys.browserSpawns).toHaveLength(1)
   })
 
