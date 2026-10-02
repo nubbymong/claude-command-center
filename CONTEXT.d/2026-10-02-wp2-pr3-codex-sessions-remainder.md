@@ -67,15 +67,19 @@ against the review records, and each missing spec or code-quality review
 run (2026-10-02, independent, read-only; P3.16 lists each commit, its
 range and verdict). Their records findings are answered in the plan and
 the checklist; their code findings and the gate-6 FAIL are fixed in fixer
-9 (`<fixer-9>`), each red first.
+9 (86ae88ac, f83026f8, f86727c5, 12b8049a, aac1b46e and aca63cc7), each
+red first with mutation proof; its assessment of gate 6's three
+observations changed no code (one goes to P4.11, two are pre-existing on
+beta and in the owner's queue).
 
 **Owed before #626 leaves draft**: gate 3, fixer 9's own spec and
 code-quality reviews (the gate closes when they pass); gate 4, the ADR-009
 re-attack of fixer 9's changes, the attackers' confirmation of P3.8's
 launched answer on `pty:spawn` (never probed), and the verdict comment
-with its marker line regenerated for the final head; gate 6, the VM
-re-check of row 36's Duration after a cleared session file, row 38's
-midnight UTC check, the VM read of a leftover kill's log line on the npm
+with its marker line regenerated for the final head; gate 6, at fixer 9's
+head the VM re-check of row 36's Duration after a cleared session file
+and the real owner-only test with the names fixer 9 added (CI and the
+VM), row 38's midnight UTC check, the VM read of a leftover kill's log line on the npm
 route (row 42), and the e2e suite again at the final head (fixer 9 changes
 code); the SSH live matrix at PR 3's head (pty-manager.ts changed, and
 statusline-watcher.ts in P3.2), the owner's screenshot review and the
