@@ -3157,8 +3157,8 @@ Insights run settled, with no error from the guard.
 P3.15 round 5 (the round 4 reviews: spec PASS with 2 nits, code quality PASS
 with 1 minor). Built in 9368d228 (mocked). R1: node-pty's unix handler
 (unixTerminal.js, macOS and Linux) returns on an EAGAIN on a PTY's output
-socket and reads on, where round 4's output guard reported it, so a session
-there would have been ended 3 s after a harmless EAGAIN. Off Windows an
+socket, ignoring it, where round 4's output guard reported it, so a session
+there would have been ended 3 s after it. Off Windows an
 output EAGAIN is now not a failure (`guardPtyOutput`, by the platform node-pty
 builds its PTY for); on Windows, where node-pty closes the PTY on one, it stays
 a failure (logged, the grace end). The input side is unchanged. R2: the
@@ -3176,6 +3176,17 @@ with no predicate change. ADR-009 delta: off
 Windows an output EAGAIN is no longer reported, so it neither logs nor ends a
 session; nothing else changed. Owed: a macOS and a Linux run (the unix
 handler is mocked here), with the earlier list.
+P3.15 fixer 3 (the round 5 reviews: spec PASS with 1 minor and 2 nits, code
+quality PASS with 2 nits; no behaviour change). The guard's header names
+Codex as what the failing tries ran (Codex, under the bundled ConPTY), and it,
+its comments and the test titles say that off Windows an output EAGAIN is
+ignored, as node-pty's unix handler ignores it; the test that checked only its
+own model of node-pty's handlers is dropped (the pin on the installed
+node-pty's sources is the check); row 71 names round 5's build; the WP1 ledger
+rows of the known issue, its test and the per-provider test carry round 5.
+Mutation: the round 5 guard mutants and P4b re-run on the reworded code, 6 of
+6 red. The VM run at d536ca5d (WINDOWS_1, check 8): no app exits in 20 fast
+typing tries (one void), every real end detected.
 
 **P3.16 PR 3 records and user-facing sweep.** App knowledge (with known
 issues), tips, tour and Feature Guide, the changelog entry, the user guide,
@@ -3383,23 +3394,36 @@ the Services count ignores the reports of a terminal mount a later mount
 replaced; a Restart's kill says so (`pty:kill`), and the exit of the process it
 ended restarts the count quietly, so a Restart pressed in the partner view
 logs no "session ended", while a close logs one, also for a tab whose process
-had ended before. Q6: on WINDOWS_1 the browser the app starts never opens its
-debug port, while the same command line started there by hand does; the same
+had ended before. Q6: on WINDOWS_1 the browser the app starts did not open its
+debug port, while the same command line started there by hand did; the same
 relaunch cadence shows in P3.15's VM runs of 2026-10-01, before P3.16a changed
-vision, so it is not from P3.16a; on the owner's machine the app's browser
-listens. Nothing in the app's logs or code tells why (the browser runs until a
-relaunch ends it, exit code 1): recorded, owed on the VM below. Q7: Alt+V in the
+vision, so it is not from P3.16a. The cause, found by the VM run at d536ca5d,
+is the test harness, not the app: the harness's stand-in home had no
+`AppData\Local`, so the browser refused its debug port ("requires a
+non-default data directory"); with that folder present, vision connects in
+the app. Q7: Alt+V in the
 partner view with the partner shell not running types nothing, and the hint
 says so and where the image was saved; the route comment names each route; the
 attention card's muted-text scan pins its count exactly.
 Limits (round 2, Q8): while a session that is not indexed runs, a transcript
 it named stays marked, so an indexed tab that resumes it in that stretch has
 those turns left out (toward not indexing); a window on the projects root (a
-session past its cap that named another project's transcript) leaves out what
-any session wrote in any project's folder in that stretch; on Windows the
-folder is named from the launch folder as given, so a launch folder reached
-through a junction, or written in another case than on disk, may be named
-otherwise by Claude Code (not verified: it takes the real path); one copy of
+session not indexed, past its cap, that named another project's transcript)
+runs from the moment that session became not indexed until it ends, and leaves
+out what any session wrote in any project's folder in that stretch, including
+the turns of other sessions that are indexed meanwhile (toward not indexing,
+fixer 3, D8); for a folder name longer than 200 characters, Claude Code
+2.1.287 also finds a folder named with the same first 200 characters and a
+`-` (any hash), while the app binds only the folder with the exact hash
+(fixer 3, D6); on Windows the folder is named from the launch folder as given,
+while Claude Code names it from the real path (Node's JS `realpathSync`) of the
+folder its own process starts in, after the shells the app starts it through
+have rewritten that folder (the VM probe at Claude Code 2.1.280: PowerShell
+writes the drive letter in upper case and expands 8.3 names, cmd.exe gives
+each name its case on disk, Claude Code resolves a junction, and a subst drive
+stays as it is), so a launch folder reached through a junction, given by an
+8.3 name, or longer than 200 characters and typed in another case than the
+shells pass on, is named otherwise by Claude Code; one copy of
 the app per vision debug port: two copies on the same port (a development copy
 beside the installed one) share one vision browser profile folder, so they are
 run on different vision ports (lens B B-M8-1).
@@ -3408,19 +3432,54 @@ folder), so a session with none (round 1, spec nit 3) does not occur.
 Mutants: round 2, Q1 to Q3 18, Q4 to Q7 23; all red and restored.
 Checks: typecheck, tsc of the touched tests, 193 affected and scanner
 files, the WP1 files (manifest rebound at 2aef62a0, path digest fa175eaf unchanged).
-Owed on the VM for round 2: vision on WINDOWS_1, whose heartbeat relaunch loop
-has no known cause (while the app's browser runs: whether its profile folder
-holds `DevToolsActivePort` and what its pid listens on; the same command line
-by hand with the app's own profile folder; the same command line started the
-way the harness starts the app; the app started from the VM's desktop session
-rather than the harness); a launch with nothing on the port and no profile
-locked runs no PowerShell, and a relaunch ends the browser with no taskkill; a
-Restart pressed in the partner view logs no "session ended", a close one; a
-launch folder longer than 200 characters, not indexed, then resumed in an
-indexed tab (its windows and the exact resume's bind); a /resume across
-projects in a session not indexed; Alt+V in the
-partner view after the partner shell exited; the round 1 items not yet seen (an
-e2e Claude session with the isolated home, Linux without lsof, macOS).
+Owed on the VM for round 2: vision on WINDOWS_1 (its cause, Q6 above); a
+launch with nothing on the port and no profile locked runs no PowerShell, and
+a relaunch ends the browser with no taskkill; a Restart pressed in the partner
+view logs no "session ended", a close one; a launch folder longer than 200
+characters, not indexed, then resumed in an indexed tab (its windows and the
+exact resume's bind); a /resume across projects in a
+session not indexed; Alt+V in the partner view after the partner shell exited;
+the round 1 items not yet seen (an e2e Claude session with the isolated home,
+Linux without lsof, macOS).
+VM at d536ca5d (WINDOWS_1, the packaged build): PASS 8 of 8. Q6's cause found
+(above). With the port free, no PowerShell runs (the process-creation log; with
+the port held, the query runs). Three relaunches, no taskkill. No "session
+ended" at a Restart in the partner view and Services gaps 0; a close logs its
+end. The real Claude Code 2.1.280, signed out, in a 222-character folder made a
+207-character folder name that the app's rule gives exactly, and the folder
+key, the exact bind, the resume bind and the heuristic bind use it. A /resume
+across projects got its own window, as the record-time windows give. Alt+V in
+the partner view after the
+partner shell exited types nothing and shows the hint, in a Codex and a Claude
+tab. P3.15: no app exits in 20 fast typing tries, every real end detected.
+Fixer 3 (the round 2 reviews: spec PASS with 2 minor and 2 nits, code quality
+PASS with 1 minor and 3 nits; ADR-009 pass 3, lens A PASS with 2 minor, lens B
+PASS with 4 minor; the VM run above). F1: a close always kills the session's
+partner terminal (`ptyTracker.ts`), so a tab whose Restart or Recover ended
+the partner's process, closed before the partner view was shown again, ends
+the partner's Services record too. F2: every spawn clears the session's
+Restart mark (`spawnPtyResolved`), so after a Restart the next process's own
+end is the session's end also when main prepares the launch first (a Codex
+session, or a pinned Claude Code version installed first). F3: on Linux and
+macOS a process
+naming the debug port that exits between the process list and its own read is
+skipped (no process has that pid any more), and the browsers identified are
+kept; one that may still run and cannot be read makes the query no answer, as
+before. F4: a test of a query with no answer whose profile locks then read
+free (the launch goes ahead). F5: a test of the preload passing a Restart's
+`pty:kill` reason on, and nothing else. D5: direct tests of
+`keepNotIndexedWindow` (opened, held, full, invalid, the 34-window bound, a
+cover left open by `closeHeldNotIndexedWindow`). Tests, red first on d536ca5d
+(7 of 156 in 4 files); mutation: 22 of 22 red, restored with a sha check.
+F6 (the Windows folder named from the real path) is not made: the VM probe
+found no single real path function that gives Claude Code's folder from the
+launch folder the app has (limits above).
+Owed on the VM at the final head: F1 (a Restart, then a close before the
+partner view is shown again: the partner's Services row ends) and F2 (a Codex
+session Restarted, then its next process's own end: one "session ended"); the
+round 1 items not yet seen (an e2e Claude session with
+the isolated home, Linux without lsof, macOS); on macOS and Linux, the real
+path Claude Code names the folder from (the case on disk, NFD names).
 
 ## 9. PR 4 outline
 
