@@ -123,7 +123,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 11 | Staged re-authentication (WP1.52) | PARTIAL (P3.3): Sign in again is offered while signed in too, staged in a new journalled folder with the conversation history carried over, and the account moves only once the new sign-in is verified | Parity: Claude's "Refresh sign-in" works while signed in; WP1.52; PLAN "Out of this PR" | verification (owner action): a second real sign-in on the VM, file and keyring stores, proving the old folder's sign-out never signs the new one out | 3 |
 | 12 | Upgrade question and the read-only sign-in check | DONE | OD26 U1, U2 | verification: real 0.153.4 and 0.155.1 | 2, v4 |
 | 13 | Hello Codex | DONE | Canvas 2026-09-24 (v1) and the commit 6 canvas; HCS | verification: per OS | 2, v4 |
-| 14 | Codex-only mode, no Claude noise | PARTIAL (P3.2, P3.4; mocked): with Claude Code off no Claude pills, no Claude status reads and no Claude sign-in prompts; the owner approved the P3.4 screens 2026-09-28; the AI usage popover follows D5 too (P3.16b follow-up, unit-tested), and opens above its chip, outside the status strip's clipped zone, where it never showed before (P3.16 final-head VM finding D2, pre-existing since June; unit-tested). Left: Ask (row 53) and the guide cards each later phase unlocks | Design section 2 (Claude is not a prerequisite); OD27 M1 D5 (a provider that is off shows one muted line or nothing); ADR-022 (the popover); parity | implementation (Ask with row 53; each card with its phase); verification: the cards on the VM, done: the guided tour's cards in each mode (Codex only, Claude Code only, both on) and the Feature Guide's productivity hero PASS at 525a00ac (PR 3 gate 6, P3.16), which also saw the Feature Guide's productivity cards name Claude in Codex-only mode (an observation, P3.16); the AI usage popover in the real strip at a Status bars scale of 1 and of 1.2 (the most it goes), done: PASS on the VM at 1e14b611 (P3.16), and fixer 8b's changes (focus, Escape, a Settings link, a resize) PASS at 525a00ac (gate 6; the left-edge clamp not reachable there, unit-tested only); the owner's screenshot review | 3 (Ask part: 4) |
+| 14 | Codex-only mode, no Claude noise | PARTIAL (P3.2, P3.4; mocked): with Claude Code off no Claude pills, no Claude status reads and no Claude sign-in prompts; the owner approved the P3.4 screens 2026-09-28; the AI usage popover follows D5 too (P3.16b follow-up, unit-tested), and opens above its chip, outside the status strip's clipped zone, where it never showed before (P3.16 final-head VM finding D2, pre-existing since June; unit-tested). Left: Ask (row 53) and the guide cards each later phase unlocks | Design section 2 (Claude is not a prerequisite); OD27 M1 D5 (a provider that is off shows one muted line or nothing); ADR-022 (the popover); parity | implementation (Ask with row 53; each card with its phase); verification: the cards on the VM, done: the guided tour's cards in each mode (Codex only, Claude Code only, both on) and the Feature Guide's productivity hero PASS at 525a00ac (PR 3 gate 6, P3.16), which also saw the Feature Guide's productivity cards name Claude in Codex-only mode (an observation, P3.16: not P3.16's text-only sweep; assigned to P4.11, which adds a provider filter to the guide's rendering); the AI usage popover in the real strip at a Status bars scale of 1 and of 1.2 (the most it goes), done: PASS on the VM at 1e14b611 (P3.16), and fixer 8b's changes (focus, Escape, a Settings link, a resize) PASS at 525a00ac (gate 6; the left-edge clamp not reachable there, unit-tested only); the owner's screenshot review | 3 (Ask part: 4) |
 | 15 | Owner-run gates (native keyring, sign-ins with real accounts, packaged smoke) | OPEN | OD20 D8 (blocks merge, not implementation); WP1.11, WP1.64, WP1.72 | owner: hosts, disposable test identities, timing; then verification | 4 |
 | 16 | WP1 traceability | PARTIAL: items still `planned` | OD20 D9; WP1.70, WP1.73 | verification: items move to evidenced as the evidence lands | 4 |
 
@@ -192,7 +192,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 60 | Real-CLI coverage in CI | OPEN: no workflow installs Codex | OD20 D7; WP1.71 | implementation | 4 |
 | 61 | Compact | DONE (P3.8, 260d4abc; round 1, caef0d42): the strip's Compact on a Codex session types Codex's own /compact only at its ready, empty prompt (otherwise it types nothing and says why) and presses Enter only in the same run; the real TUI submits it that way on 0.153.4 and 0.155.1 (VM) | Parity: Codex's own compact command (evidence first) | verification: round 1 on the VM, done: rounds 1 and 2 PASS on 0.155.1 and 0.153.4 at 525a00ac (PR 3 gate 6, a loopback fake model; P3.16); what a real /compact does to a conversation (a real sign-in, owner) | 3 |
 | 62 | Extra CLI arguments | DONE (P3.11, 28739b19; round 1, 057fa776; mocked): a Codex config has the Extra CLI arguments field (the one field, in the Codex section), saved as `codexOptions.extraArgs`; each word is one launch argument after every flag the app sets; one rule refuses, in any spelling and under every alias the supported CLIs give them, the flags the app sets (the working folder and `--worktree` included), the account, provider and endpoint settings, and a word Codex reads as one of its commands; the dialog says why under the field and Save waits; a saved value that is refused is dropped at launch (logged) and the session starts without it; done: the VM run at 919385af (WINDOWS_1, real Codex 0.153.4 and 0.155.1): all five checks PASS on both versions (extra arguments on the direct and npm `.cmd` routes, through the picker and on a resume by id; a refused value said in the dialog, Save waiting; refused saved values dropped at launch with a log line, the session starting without them; the Claude Code field with the same dialog check and its launch unchanged), e2e 81; the round-1 re-review (spec, code quality) and ADR-009 pass 2 at 919385af PASS, the P3.11 verdict PASS | Parity: the same field and IPC character guard, plus a block-list of the flags the app manages and of any setting that changes the account, provider or endpoint | verification: the owner's screenshot review of the field and its message, both assistants, both themes (gallery `.ccc-canvas/screens/p3.11-919385af/`); the SSH live matrix at PR 3's head (no Codex case: a Codex session over SSH is refused); ADR-009: done, P3.11's pass and PR 3's PR-level pass (P3.16), PASS at 525a00ac | 3 |
-| 63 | Hooks gateway and notification rules | PARTIAL, built as the default pending the owner's decision (P3.10, d8f538b1; mocked): each local Codex launch gets six command hooks running the app's forwarder, which posts each event to the Hooks gateway as a Claude http hook does (loopback, the session's token, the size cap, redaction); Codex asks the user to review them once per account. Notification rules: the one rule on a hook event (Attention Pulse, Claude's idle Notification, filter-only) gets from a Codex idle mark what Claude's idle_prompt gives it (round 1). Round 1 (afae03f7) fixes ADR-009 pass 1 (the forwarder never through an environment proxy; no PowerShell call of a path it reads as a wildcard or cmd.exe expands; the hook folders in the app's own data folder, owner-only, read only at their real path) and gives an npm-installed Codex its hooks from a resources folder with a space (a checked plain-path copy). VM at 6d576634: all six events at the gateway on both versions and routes, the review once per account; the round 1 re-check passed V3 (the plain-path copy through the npm shim from the default resources folder, reused across starts) and S6 (a user's own hooks still run). Round 2 (5b178c7a): both plain-copy folders owner-only, bigint file ids, the root hardened once a run; VM at 6b465aef: both plain-copy folders and the root owner-only (R4), the picker told only of tabs on the same account (R10). Round 3 (18029bb0): a hook folder the app did not make this run is used only once it belongs to the user, and the root is hardened again when made again in the run. VM at the round-3b build: a hook folder from an earlier run used once it is the user's (an admin account). Rounds 3b and 4: the hook wrapper and the picker resolve their helpers from fixed locations; the hook folders are prepared asynchronously and only while Codex is on, by one call of the owner-only rule (on Windows one PowerShell call), used only when read back as this user's alone, and checked again before first use; VM at the round-4 build: the wrapper, the folders' real rights, the app's start with Codex on and off, an early launch that waited and got its hooks. Round 5: any folder name makes the round trip exactly, a name ending in a dot or a space is refused, a failed preparation waits five minutes before the same folders are tried again, and a launch waits only while the Hooks gateway listens (and for the wiring) | Parity: route Codex `notify` and hook events. Codex reviews hooks given at launch, which Claude does not, so the trust step cannot carry over as it is | owner: the default (section 10, question 4); verification: the VM re-run of the rule's real round trip at the final build, done at 525a00ac (PR 3 gate 6, P3.16: `owner-only-folders-real.test.ts` 4 of 4, `hook-wrapper-start-folder.test.ts` 2 of 2, the hook root the user's and SYSTEM's alone with inheritance cut, the six events at the gateway; the names fixer 9 adds to the real test run in CI at the final head); a hook folder from an earlier run on a standard Windows account (owner); the POSIX hook runner; the SSH live matrix; ADR-009: done, P3.10's own pass (d8f538b1..4ba85a3a, PASS), its rounds 4 and 5 included, and PR 3's PR-level pass (P3.16), PASS at 525a00ac | 3 |
+| 63 | Hooks gateway and notification rules | PARTIAL, built as the default pending the owner's decision (P3.10, d8f538b1; mocked): each local Codex launch gets six command hooks running the app's forwarder, which posts each event to the Hooks gateway as a Claude http hook does (loopback, the session's token, the size cap, redaction); Codex asks the user to review them once per account. Notification rules: the one rule on a hook event (Attention Pulse, Claude's idle Notification, filter-only) gets from a Codex idle mark what Claude's idle_prompt gives it (round 1). Round 1 (afae03f7) fixes ADR-009 pass 1 (the forwarder never through an environment proxy; no PowerShell call of a path it reads as a wildcard or cmd.exe expands; the hook folders in the app's own data folder, owner-only, read only at their real path) and gives an npm-installed Codex its hooks from a resources folder with a space (a checked plain-path copy). VM at 6d576634: all six events at the gateway on both versions and routes, the review once per account; the round 1 re-check passed V3 (the plain-path copy through the npm shim from the default resources folder, reused across starts) and S6 (a user's own hooks still run). Round 2 (5b178c7a): both plain-copy folders owner-only, bigint file ids, the root hardened once a run; VM at 6b465aef: both plain-copy folders and the root owner-only (R4), the picker told only of tabs on the same account (R10). Round 3 (18029bb0): a hook folder the app did not make this run is used only once it belongs to the user, and the root is hardened again when made again in the run. VM at the round-3b build: a hook folder from an earlier run used once it is the user's (an admin account). Rounds 3b and 4: the hook wrapper and the picker resolve their helpers from fixed locations; the hook folders are prepared asynchronously and only while Codex is on, by one call of the owner-only rule (on Windows one PowerShell call), used only when read back as this user's alone, and checked again before first use; VM at the round-4 build: the wrapper, the folders' real rights, the app's start with Codex on and off, an early launch that waited and got its hooks. Round 5: any folder name makes the round trip exactly, a name ending in a dot or a space is refused, a failed preparation waits five minutes before the same folders are tried again, and a launch waits only while the Hooks gateway listens (and for the wiring) | Parity: route Codex `notify` and hook events. Codex reviews hooks given at launch, which Claude does not, so the trust step cannot carry over as it is | owner: the default (section 10, question 4); verification: the VM re-run of the rule's real round trip at the final build, done at 525a00ac (PR 3 gate 6, P3.16: `owner-only-folders-real.test.ts` 4 of 4, `hook-wrapper-start-folder.test.ts` 2 of 2, the hook root the user's and SYSTEM's alone with inheritance cut, the six events at the gateway; the real test with the names fixer 9 added, aac1b46e, owed on CI and the VM at fixer 9's head); a hook folder from an earlier run on a standard Windows account (owner); the POSIX hook runner; the SSH live matrix; ADR-009: done, P3.10's own pass (d8f538b1..4ba85a3a, PASS), its rounds 4 and 5 included, and PR 3's PR-level pass (P3.16), PASS at 525a00ac | 3 |
 | 64 | Partner terminal wording | DONE | P2 | verification: per OS | 2, v4 |
 | 65 | GitHub session context | DONE (P3.12, d86fd80f and its fixes; mocked; VM at ff7be273 (WINDOWS_1, real Codex 0.155.1 and 0.153.4), and its re-check with the fixes: a Codex session's commands and edited files, nothing before its first turn, the heading naming Codex, PASS): a Codex session reads the rollout its watcher holds, checked again inside its realm, with Claude's bounded tail, for the unchanged reference scanner and file-signal inspector (`src/main/github/session/codex-rollout-loader.ts`), read only from the realm's real day folder (a path check: see P3.12's limits); both assistants: a recent file shown as plain text, relative to the session's folder when inside it, once per file, under a heading that names the session's assistant; after Switch Account the earlier account's rollout is not read | Parity: read the session's realm rollouts | verification: done, the VM re-checks of P3.12's fixes (P3.12's record); ADR-009: done, PR 3's PR-level pass (P3.16), PASS at 525a00ac, which covers P3.12 (quarantined after its own bounded rounds); owed: the owner's screenshot review; the SSH live matrix at PR 3's head (no Codex case: a Codex session over SSH is refused) | 3 |
 | 66 | Packaged smoke | PARTIAL: Windows only, an unsigned candidate on a used VM | OD20 D8; WP1.63 | verification (release level; owner hosts) | 4 |
@@ -270,20 +270,21 @@ Per PR:
   home's assistant folders untouched, and the row checks on a packaged
   build of 525a00ac with the real CLIs 0.155.1 and 0.153.4 (P3.16), every
   one PASS but row 36's Duration after a cleared session file (FAIL, fixed
-  in fixer 9), with row 38's midnight UTC check not run (time-bound), the
+  in fixer 9, 86ae88ac), with row 38's midnight UTC check not run (time-bound), the
   popover's left-edge clamp not reachable there, and the checks only the
   owner can run listed there; and gate 3's owed
   reviews: every PR 3 commit swept against the review records and each
-  review found missing run (P3.16), their findings fixed in fixer 9 or in
-  these records.
+  review found missing run (P3.16), their findings fixed in fixer 9
+  (86ae88ac..aca63cc7, six commits) or in these records.
   Owed: gate 3 closes when fixer 9's own spec and code-quality reviews
   pass; gate 4, the ADR-009 re-attack of fixer 9's changes, the attackers'
   confirmation of P3.8's launched answer on `pty:spawn`, and the verdict
   comment with its marker line regenerated for the final head; gate 6, the
-  VM re-check of row 36's Duration after a cleared session file, row 38's
-  midnight UTC check, the VM read of a leftover kill's log line on the npm
-  route (row 42), and the e2e suite again at the final head (fixer 9
-  changes code after 525a00ac); the SSH live matrix at its head (PR 3
+  VM re-check of row 36's Duration after a cleared session file and the
+  real owner-only test with the names fixer 9 added (CI and the VM), both
+  at fixer 9's head, row 38's midnight UTC check, the VM read of a leftover
+  kill's log line on the npm route (row 42), and the e2e suite again at the
+  final head (fixer 9 changes code after 525a00ac); the SSH live matrix at its head (PR 3
   changes `pty-manager.ts` and, in P3.2, `statusline-watcher.ts`); the
   owner's screenshot review; the Desktop test gate (owner); the native SQL
   tests in CI (on the VM: PASS at 525a00ac); the real-Mac and real-account
@@ -431,7 +432,7 @@ transcript (the status line passes its transcript path on:
 `statusline-watcher.ts`, the SSH radius in the table above). Reviewed:
 code quality PASS on each commit; spec PASS on the code at the owed gate-3
 review (2026-10-02, P3.16), whose finding on these records is answered
-here and whose two comment nits are fixed in fixer 9 (`<fixer-9>`).
+here and whose two comment nits are fixed in fixer 9 (aac1b46e).
 
 **P3.3 Staged re-authentication.** Sign in again while still signed in, into a
 replacement realm: subject match, a mismatch becomes a separate account, an
@@ -477,7 +478,8 @@ The final round's spec review (of 58ad7e2e) ran late, at the owed gate-3
 review (2026-10-02, P3.16): PASS. That of the VM round's fixes (71f91c46)
 found one minor: the Sign in again dialog's account card, a heading, named
 this computer's own sign-in as it reads mid-sentence, in lower case; fixed
-in fixer 9 (`<fixer-9>`).
+in fixer 9 (12b8049a: the card is headed with the row's name, and the
+in-sentence name is used only in the dialog's title).
 
 **P3.4 Codex-only mode and provider status.** Each provider's status pills
 only while it is on, with an OpenAI status pill for Codex; no Claude prompts
@@ -523,7 +525,7 @@ unknown, with its read time kept (Claude's page too); a send to a closing
 window never escapes. Its spec review ran late, at the owed gate-3 review
 (2026-10-02, P3.16): two minors, this record (added here and to row 45) and
 the poller's subscription wiring in `index.ts`, which no test read (a
-source-scan test in fixer 9, `<fixer-9>`).
+source-scan test in fixer 9, aac1b46e).
 Follow-up (87ba9c2d and 9056e021; the quality review's minor and the VM
 walk's M1): the accounts-service changes of one turn of the event loop are
 acted on once, in the next turn, so each provider's on/off is read from the
@@ -555,7 +557,7 @@ claude-off-launch.test.tsx), on the one rule both read
 whole text, and scoped row 45's record; its reviews ran late, at the owed
 gate-3 review (2026-10-02, P3.16): spec PASS (row 45's "complete" scoped to
 Windows, there), code quality PASS (a nit: the test's walk returns both
-texts, fixed in fixer 9, `<fixer-9>`). Done on the VM at 525a00ac (PR 3
+texts, fixed in fixer 9, aac1b46e). Done on the VM at 525a00ac (PR 3
 gate 6, P3.16): those cards in each mode (Codex only, Claude Code only,
 both on) PASS, the hero switching with the mode. Owed: the owner's review
 of those screenshots; and the Desktop test gate. The Feature Guide catalogue cards that name both providers are
@@ -909,7 +911,7 @@ removed a symbolic link with rmdir, which fails there; 4045df81 removes a
 link as a link, and 97b3b864 has each re-point test record any throw in the
 re-point (test-only). Both reviewed: code quality PASS; spec PASS at the
 owed gate-3 review (2026-10-02, P3.16), with a test nit (one re-point test
-also asserts the re-point never ran) fixed in fixer 9 (`<fixer-9>`).
+also asserts the re-point never ran) fixed in fixer 9 (aac1b46e).
 W1: done, PASS on the VM at 427807fb (P3.7's run, MOCKED) and at 525a00ac
 (PR 3 gate 6, P3.16).
 Owed: the owner's decision on V3 (restore the previous account on a declined
@@ -1012,12 +1014,13 @@ that answered it, 7c91d1e0 (PASS with fixes) and 713061f8 (PASS, one
 nit, answered in 427807fb); 4f99955e (the CI root cause above) spec and
 code-quality PASS. The spec reviews of 7c91d1e0, 713061f8
 and 427807fb ran late, at the owed gate-3 review (2026-10-02, P3.16):
-PASS, with two nits fixed in fixer 9 (`<fixer-9>`): a comment in
+PASS, with two nits fixed in fixer 9: a comment in
 `session-resume-enrich.ts` that cited a precedent the code does not
-follow, and the ledger's P3.7 evidence. 427807fb's own reviews are
+follow (f83026f8), and the ledger's P3.7 evidence (aca63cc7). 427807fb's own reviews are
 subsumed by 4f99955e's, which replaced its code, and by that gate (its
 code-quality review PASS, with a nit on the guard that survives: a store
-that keeps failing warns once a run, fixed in fixer 9).
+that keeps failing now warns once a run, and again after a keep that
+works, fixed in fixer 9, f83026f8).
 The VM run at 427807fb (WINDOWS_1, MOCKED: the fake CLI; e2e 81 of 81)
 PASS: lines changed after each kind of edit, after a Restart and with two
 tabs on one conversation; Duration on a new conversation, after a
@@ -1038,20 +1041,27 @@ included) lived only in that file, which "Close sessions", "Don't open"
 and closing the last tab remove, so a conversation resumed after them
 showed only its rollout's completed turns ("2m 29s" became "2s"), where
 Claude Code restores its own from its transcript: a parity gap, not among
-the limits above. Fixed in fixer 9 (`<fixer-9>`), settled by parity: a
-clear discards the session set only, and main's running times are written
-back on their own (a saved state with no sessions: no Resume offer,
-nothing of the discarded set) at the clear and at each exit flush until
-the next save; with none kept nothing is written, as before
+the limits above. Fixed in fixer 9 (86ae88ac), settled by parity (Claude
+Code keeps a cost-state entry in the conversation's own transcript and
+restores its Duration from it at every resume, read in the pinned 2.1.287
+build): a clear discards the session set only, and main's running times
+are written back on their own (a saved state with no sessions: no Resume
+offer, nothing of the discarded set) at the clear and at each exit flush
+until the next save, so a run that settles as its process ends after the
+clear is kept too; with none kept nothing is written and the file stays
+cleared, as before; the read-back at load is the existing schema-checked
+one, and the list keeps its bound of 1000 conversations
 (`session-durability.ts`, `session-clear-keeps-running-time.test.ts`).
 Its limits: after a clear the session file stays, holding only those
 times, whenever any time is kept (main's "has saved sessions" answer then
-reads yes; nothing in the app asks it); a write at the clear that fails is
-logged and the exit flush tries again; the time is kept in the app's
-resources folder, not with the rollout, so a resume on another computer,
-from another resources folder or outside the app sees only the rollout's
-completed turns (Claude's travels with its transcript).
-Owed: the VM re-check of that case on both versions (on 0.153.4 a TUI
+reads yes; nothing in the app asks it); a write at the clear that fails or
+is refused is logged and the exit flush tries again; a hard stop after the
+clear loses each run's time since its last status line update, as before
+(above); the time is kept in the app's resources folder, not with the
+rollout, so a resume on another computer, from another resources folder or
+outside the app sees only the rollout's completed turns, as before
+(Claude's travels with its transcript).
+Owed: the VM re-check of that case on both versions at fixer 9's head (on 0.153.4 a TUI
 resume's Duration was seen only in it); the owner's review of the
 screenshots (the p3.7-427807fb gallery and gate 6's), both themes. The P3.7 VM finding (a second tab on a conversation another tab holds showed an empty status line, where Claude shows figures in both) is addressed in P3.10 (d8f538b1, mocked): both tabs show its figures. The P3.10 VM run showed Codex itself lets one live tab write a conversation (0.155.1 shows its own lock screen; 0.153.4 refuses the resume), so this shows the figures while that refusal is on screen and hands the running time over when the first tab closes; P3.10 round 1 (V2) has the picker say such a conversation is open in another tab (P3.10's entry).
 
@@ -1298,9 +1308,9 @@ live run let go, at most 256 sessions (`codex-composer.test.ts`; past
 that, a run let go reads its start-up row again until its next turn). Its
 reviews ran late, at the owed gate-3 review (2026-10-02): code quality
 PASS (a nit: a test that the Plan mode wait lets the record go when the
-run ends, fixed in fixer 9, `<fixer-9>`); spec FINDINGS on the records only
+run ends, fixed in fixer 9, aac1b46e); spec FINDINGS on the records only
 (this entry's owed list, corrected below; the ledger's round-5 evidence,
-fixed in fixer 9; the clause above). Residual
+fixed in fixer 9, aca63cc7; the clause above). Residual
 limits, recorded: a folder name with three or more spaces before "Plan
 mode", reaching the footer's right edge, can still make the pill read
 "plan" (the label only; the read-only launch bounds it); and if Codex's
@@ -1581,14 +1591,15 @@ round 5's spec and code-quality reviews ran late, at the owed gate-3
 review (2026-10-02, P3.16): round 4 FINDINGS, two minors (the count read
 as three more analyses, not three in all, here, in row 42, in app
 knowledge and in the ledger: corrected here and in row 42, and in fixer
-9, `<fixer-9>`, for app knowledge and the ledger; row 42's owed lists,
-completed); round 5 spec FINDINGS, one minor (the
-residual above, recorded now) and a nit on its message only, and code
+9, aca63cc7, for app knowledge ("at most three analyses in all") and the
+ledger; row 42's owed lists, completed); round 5 spec FINDINGS, one minor
+(the residual above, recorded now) and a nit on its message only, and code
 quality PASS with fixes: a count of unverified versions dropped every
 other version's count, not only lower ones, so two versions installed in
 turn reset each other's count and their analyses were no longer capped
-(fixer 9 drops only lower versions' counts), and a nit on the message
-only. Owed: the VM read of a leftover kill's log line on the npm route
+(fixer 9, f86727c5, drops only the provider's lower versions' counts;
+`sentinel-state.test.ts` alternates two versions up to the cap), and a
+nit on the message only. Owed: the VM read of a leftover kill's log line on the npm route
 (access denied or not); a completed real analysis (the owner, a real
 model); the owner's screenshot review.
 
@@ -2064,17 +2075,18 @@ its code before the collapse, 15e85aea..d6b427d0, byte-identical in
 37a1a62f) and of 4ba85a3a ran late, at the owed gate-3 review (2026-10-02,
 P3.16): round 5 spec PASS, with a minor (the verifier's ASCII names, such
 as `$`, `;`, a backtick, `&` and a leading `-`, were not in the tests' name
-lists: added to both in fixer 9, `<fixer-9>`), and code quality PASS with
+lists: added to both in fixer 9, aac1b46e), and code quality PASS with
 fixes (a minor: a test modelled a gateway that is not listening as none,
 where the app has one that says so; three nits on a comment and two tests;
-all fixed in fixer 9; and the limit above, recorded); 4ba85a3a spec PASS
-and code quality PASS. The VM re-run of the rule's real round trip at the
-final build: done at 525a00ac (PR 3 gate 6, P3.16:
+all fixed in fixer 9, aac1b46e; and the limit above, recorded); 4ba85a3a
+spec PASS and code quality PASS. The VM re-run of the rule's real round
+trip at the final build: done at 525a00ac (PR 3 gate 6, P3.16:
 `owner-only-folders-real.test.ts` 4 of 4 and
 `hook-wrapper-start-folder.test.ts` 2 of 2; the hook root the user's and
 SYSTEM's alone, inheritance cut; the six events at the gateway, the dot
-raised by an approval request from the loopback fake model); the names
-fixer 9 adds to the real test run in CI at the final head. Owed: a hook
+raised by an approval request from the loopback fake model). Owed: the
+real test with the names fixer 9 added (`owner-only-folders-real.test.ts`,
+never run on the host) on CI and the VM at fixer 9's head; a hook
 folder from an earlier run on a standard Windows account (owner); the Watchdog on an SSH Claude session (a persistent overload backing off), in the
 owner's live SSH matrix; a real paid-model turn (owner): an approval request
 raising the dot, and the Watchdog on a real usage limit and overload; the POSIX
@@ -2159,7 +2171,7 @@ ADR-009: yes (the IPC schema, the restore sanitizer, the launch argv, the
 dialog's check). SSH radius: yes; `pty-manager.ts` changes its inline
 `codexOptions` type only, and no SSH path changes (a Codex session over SSH
 is refused before anything is built), so the SSH live matrix at PR 3's head
-has no Codex case for it. Done: the VM run at 919385af (WINDOWS_1, real Codex 0.153.4 and 0.155.1): all five checks PASS on both versions (extra arguments on the direct and npm `.cmd` routes, through the picker and on a resume by id; a refused value said in the dialog, Save waiting; refused saved values dropped at launch with a log line, the session starting without them; the Claude Code field with the same dialog check and its launch unchanged), e2e 81; the round-1 re-review at 919385af, spec PASS and code quality PASS (its nits closed in 31387231, whose own reviews ran late, at the owed gate-3 review on 2026-10-02, P3.16: spec PASS with a changelog nit, and code quality PASS with fixes, a minor (the field's message was a live region added with its text, which a screen reader seldom announces) and a nit (no test of a Claude Code config saved with a refused value), all three fixed in fixer 9, `<fixer-9>`); ADR-009 pass 2 at 919385af, lens A PASS (no mismatch on any of the 12 routes over 644 values; nothing the first rule refused passes, over 61,998 values; the mutants that survived pass 1, S7, W1 to W4 and the picker pre-check, now red) and lens B PASS (the alias list re-derived from both tagged sources, only `yolo` and `not-so-yolo`, both refused; the schema, the rule, the restore and the builder agree on 6,000 values; the dialog can only hold Save; the Claude Code launch unchanged over 6,009 values); the ADR-009 verdict for P3.11 is PASS (the marker is the owner's to post). Owed: the owner's screenshot review of the field and its message, both assistants, both themes (gallery `.ccc-canvas/screens/p3.11-919385af/`); the SSH live matrix at PR 3's head (no Codex case: a Codex session over SSH is refused); the PR-level ADR-009 pass, done (PASS at 525a00ac, P3.16), and its re-attack of fixer 9's changes for the final head (gate 4).
+has no Codex case for it. Done: the VM run at 919385af (WINDOWS_1, real Codex 0.153.4 and 0.155.1): all five checks PASS on both versions (extra arguments on the direct and npm `.cmd` routes, through the picker and on a resume by id; a refused value said in the dialog, Save waiting; refused saved values dropped at launch with a log line, the session starting without them; the Claude Code field with the same dialog check and its launch unchanged), e2e 81; the round-1 re-review at 919385af, spec PASS and code quality PASS (its nits closed in 31387231, whose own reviews ran late, at the owed gate-3 review on 2026-10-02, P3.16: spec PASS with a changelog nit, and code quality PASS with fixes, a minor (the field's message was a live region added with its text, which a screen reader seldom announces) and a nit (no test of a Claude Code config saved with a refused value), all three fixed in fixer 9: the message tied to its field with aria-invalid and aria-describedby, the live region dropped, and the test added (12b8049a), and the changelog line (aca63cc7)); ADR-009 pass 2 at 919385af, lens A PASS (no mismatch on any of the 12 routes over 644 values; nothing the first rule refused passes, over 61,998 values; the mutants that survived pass 1, S7, W1 to W4 and the picker pre-check, now red) and lens B PASS (the alias list re-derived from both tagged sources, only `yolo` and `not-so-yolo`, both refused; the schema, the rule, the restore and the builder agree on 6,000 values; the dialog can only hold Save; the Claude Code launch unchanged over 6,009 values); the ADR-009 verdict for P3.11 is PASS (the marker is the owner's to post). Owed: the owner's screenshot review of the field and its message, both assistants, both themes (gallery `.ccc-canvas/screens/p3.11-919385af/`); the SSH live matrix at PR 3's head (no Codex case: a Codex session over SSH is refused); the PR-level ADR-009 pass, done (PASS at 525a00ac, P3.16), and its re-attack of fixer 9's changes for the final head (gate 4).
 
 **P3.12 Logs and GitHub context.** Each realm's rollouts indexed for Logs
 (history, search, transcript), realms never crossing; the Logs tool live on
@@ -4091,7 +4103,15 @@ Claude Code off the Feature Guide's productivity cards still name Claude
 open Account usage page keeps a card's "Updated just now" after its
 session ends, until the page is left or refreshed (both versions); a
 warning logged twice on saving a config dialog (both versions). Fixer 9
-assessed each (`<fixer-9>`). Left for the owner: the credits row on a
+assessed each, with no code change: the cards are not P3.16's (it
+reworded, in text only, the cards that name both assistants; the guide
+renders every card with no provider filter), so they go to P4.11, which
+adds that filter (section 9); the age line is pre-existing on beta and the
+same on Claude's cards (a card's age is read once per render,
+`AccountUsagePanel.tsx`), in the owner's queue and proposed for P4.11;
+the warning is pre-existing on beta and seen only for config ids the VM
+harness seeded (the app's own ids pass the check), in the owner's queue.
+Left for the owner: the credits row on a
 real account with credits (a fresh read, an open session, last-seen with
 its age; row 17); the real-account resume after a Switch (rows 22, 35);
 questions 2, 3 and 4 (section 10); a hook folder from an earlier run on a
@@ -4152,28 +4172,34 @@ finding is fixed in fixer 9 (below); the nits on commit messages alone
 (1fb3b6e7, 97f18bca, 4ba85a3a, 31387231's type) are history, no action.
 Gate 3 closes when fixer 9's own spec and code-quality reviews pass.
 
-Fixer 9 (`<fixer-9>`; 2026-10-02), one fix pass for gate 3's code findings
-and gate 6's FAIL, each fix red first. P3.7 (row 36): clearing the saved
-sessions no longer drops the running times main keeps (the FAIL); a store
-that keeps failing warns once a run; a comment says what the code does.
-P3.9: an unverified version's count drops only lower versions' counts, so
-the analyses stay at most three in all; app knowledge and the ledger
-count three analyses in all, not three more. P3.10: the launch-wait test's gateway that
-is not listening is one that says so, as in the app (and one case with
-none); the owner-only rule's name tests carry the verifier's ASCII names;
-a header comment, and tests of the five-minute wait on the same folders
-and of a clock gone back. P3.3: the Sign in again dialog's account card
-names this computer's own sign-in as a heading. P3.4: a source-scan test
-that main gives the status poller the accounts service's subscription;
-the tour test's walk returns both texts. P3.11: the extra-arguments
-field's message reaches a screen reader; a test of a Claude Code config
-saved with a refused value; the changelog's typed-value line names
-either assistant again. P3.8: a test that the Plan mode wait lets its record
-go when the run ends. P3.6: a re-point test asserts the re-point never
-ran. P3.2: two comments. The ledger: P3.7's and P3.8 round 5's evidence.
-Gate 6's three observations: assessed. Owed: its spec and code-quality
-reviews (they close gate 3), the ADR-009 re-attack of its changes (gate
-4), and row 36's VM re-check.
+Fixer 9 (2026-10-02), one fix pass for gate 3's code findings and gate
+6's FAIL, each fix red first with mutation proof, in six commits. P3.7
+(row 36): 86ae88ac, a clear of the saved sessions keeps the running times
+main keeps (the FAIL; P3.7 above); f83026f8, a store that keeps failing
+warns once a run, and a comment says what the code does. P3.9: f86727c5,
+an unverified version's count drops only the provider's lower versions'
+counts, so the analyses stay at most three in all; aca63cc7, app
+knowledge and the ledger count three analyses in all, not three more.
+P3.3 and P3.11: 12b8049a, the Sign in again dialog's account card is
+headed with the row's name; the extra-arguments field's message is tied
+to its field (aria-invalid, aria-describedby; the live region dropped),
+with a test of a Claude Code config saved with a refused value. Tests and
+comments, aac1b46e: P3.10, the launch-wait test's gateway that is not
+listening is one that says so, as in the app, with a case with none; the
+owner-only rule's name tests carry the verifier's ASCII names (the real
+test's run owed on CI and the VM); a header comment, and tests of the
+five-minute wait on the same folders and of a clock gone back; P3.4, a
+source-scan test that main gives the status poller the accounts service's
+subscription, and the tour test's walk returns both texts; P3.8, a test
+that the Plan mode wait lets its record go when the run ends; P3.6, a
+re-point test asserts the re-point never ran; P3.2, two comments.
+aca63cc7 also names either assistant again in the changelog's typed-value
+line and gives the ledger its rows (P3.7's and P3.8 round 5's evidence,
+fixer 9's new test). Gate 6's three observations: assessed, no code
+change (above). Owed: its spec and code-quality reviews (they close gate
+3); the ADR-009 re-attack of its changes (gate 4); at its head, row 36's
+VM re-check and the real owner-only test with its new names, on CI and
+the VM.
 
 ## 9. PR 4 outline
 
@@ -4225,6 +4251,14 @@ Notes that bind the build:
   "Open artifacts" (they predate P3.6, #216: the menu falls back to the
   primary Claude profile; P3.6 VM finding V5): P4.6 gives a Codex tab its
   own web-session item, and the artifacts record decides the other.
+- **P4.11.** From PR 3's gate 6 (P3.16): with Claude Code off the Feature
+  Guide still shows its productivity cards that name Claude (Excalidraw,
+  Snap) and the Claude-only Dynamic Workflows card, since the guide
+  renders every card with no provider filter (`FeatureGuidePage.tsx`;
+  P3.16b changed text only); P4.11 adds that filter, as row 14's "each
+  card with its phase" needs. Proposed for it as well, in the owner's
+  queue: an open Account usage page's age line that does not age while the
+  page stays open (pre-existing, Claude's cards too).
 
 ## 10. Unresolved UX decisions
 
