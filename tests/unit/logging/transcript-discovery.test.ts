@@ -526,14 +526,17 @@ describe('claudeProjectDirName (Q1)', () => {
     const gone = (_p: string): string => { throw new Error('ENOENT') }
     expect(claudeProjectDirName('C:\\gone\\folder', { realpath: gone })).toBe('C--gone-folder')
   })
-  it.skipIf(process.platform !== 'win32')('Windows, the real file system: a junction is resolved and a name keeps the case it was given (JS realpathSync, not the native one)', () => {
+  it.skipIf(process.platform !== 'win32')('Windows, the real file system: a junction is resolved and a name keeps the case it was given (JS realpathSync, not the native one)', (ctx) => {
     const PREFIX = 'ccc-f6-realpath-'
     const base = fs.mkdtempSync(path.join(os.tmpdir(), PREFIX))
     try {
       const real = path.join(base, 'Target Real')
       fs.mkdirSync(path.join(real, 'CaseDir'), { recursive: true })
       const link = path.join(base, 'link')
-      fs.symlinkSync(real, link, 'junction')
+      // A temp volume that cannot hold a junction (FAT or exFAT): skipped, never passed.
+      let linked = false
+      try { fs.symlinkSync(real, link, 'junction'); linked = true } catch { /* no junction here */ }
+      if (!linked) return ctx.skip()
       const given = path.join(link, 'casedir')
       const name = claudeProjectDirName(given)
       expect(name).toBe(mangleCwdToProjectDir(path.join(fs.realpathSync(real), 'casedir')))
