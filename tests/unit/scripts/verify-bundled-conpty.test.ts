@@ -45,4 +45,17 @@ describe('verify:package checks the bundled ConPTY files (PR-level ADR-009 round
     expect(src).toMatch(/import \{ bundledConptyProblems \} from '\.\/verify-bundled-conpty\.mjs'/)
     expect(src).toMatch(/for \(const problem of bundledConptyProblems\(nm\)\) \{\s*ok = false/)
   })
+
+  it('PR-level ADR-009 round 2 (K6): the release workflow runs verify:package right after each package it ships (Windows, macOS, Linux)', () => {
+    // A Windows checkout may have CRLF line ends.
+    const yml = readFileSync(resolve(__dirname, '..', '..', '..', '.github', 'workflows', 'release.yml'), 'utf8').replace(/\r\n/g, '\n')
+    for (const pkg of [/npx electron-builder --win --publish never/, /npx electron-builder --mac dmg --publish never/, /npx electron-builder --linux --publish never/]) {
+      const at = yml.search(pkg)
+      expect(at, String(pkg)).toBeGreaterThan(0)
+      // The very next step after the package step is the verify step.
+      const next = yml.slice(at).match(/\n\s+- name: ([^\n]+)((?:\n(?!\s+- )[^\n]*)*)/)
+      expect(next?.[1], String(pkg)).toBe('Verify native modules unpacked')
+      expect(next?.[2], String(pkg)).toMatch(/^\n\s+run: npm run verify:package(\n|$)/)
+    }
+  })
 })
