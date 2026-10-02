@@ -97,10 +97,26 @@ export function composeShellImagePath(hostFilePath: string, isWin32: boolean): s
   return quoteArgForShell(hostFilePath, isWin32)
 }
 
+/** Whether `text` holds a control character (C0, DEL or C1). */
+function hasControlChar(text: string): boolean {
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i)
+    if (c < 0x20 || (c >= 0x7f && c <= 0x9f)) return true
+  }
+  return false
+}
+
 /** Type the quoted path of a host-saved image at a plain terminal's prompt:
- *  not submitted (no Enter). */
-export function typeImagePathIntoShell(sessionId: string, hostFilePath: string, isWin32: boolean): void {
+ *  not submitted (no Enter). Returns whether it was typed.
+ *  PR-level ADR-009 round 1 (A1): off Windows the path is typed only when
+ *  main said the shell it spawns a plain terminal with is of the sh family
+ *  (`posixShell` 'sh', from the saved image's answer), and only when the path
+ *  holds no control character; otherwise nothing is typed and the caller says
+ *  where the image was saved. Windows (PowerShell) is unchanged. */
+export function typeImagePathIntoShell(sessionId: string, hostFilePath: string, isWin32: boolean, posixShell?: 'sh' | 'other'): boolean {
+  if (!isWin32 && (posixShell !== 'sh' || hasControlChar(hostFilePath))) return false
   writeSessionInput(sessionId, composeShellImagePath(hostFilePath, isWin32))
+  return true
 }
 
 /**

@@ -30,6 +30,13 @@ function partnerOnScreen(sessionId: string): boolean {
   )
 }
 
+/** PR-level ADR-009 round 1 (A1): the hint when a plain terminal or a partner
+ *  shell gets nothing typed (typeImagePathIntoShell): where the image was
+ *  saved. */
+function notTypedHint(path: string): string {
+  return `The image was saved on this computer at ${path}; nothing was typed into this terminal.`
+}
+
 /**
  * Global keyboard shortcuts (configurable via settings).
  */
@@ -124,7 +131,9 @@ export function useKeyboardShortcuts(
       // the partner view (a shell on this computer for every tab, an SSH tab's
       // too): only the quoted path, with no Enter. A plain terminal or a partner
       // shell that is not running gets nothing, with a hint saying so and where
-      // the image is.
+      // the image is. Off Windows (PR-level ADR-009 round 1, A1) the path is
+      // typed only into a shell of the sh family, and only with no control
+      // character in it; otherwise nothing, with the hint saying where it is.
       if (matchesShortcut(e, shortcuts.pasteImage)) {
         e.preventDefault()
         const state = useSessionStore.getState()
@@ -155,8 +164,9 @@ export function useKeyboardShortcuts(
               const partnerId = sessionId + PARTNER_PTY_SUFFIX
               if (!hasSpawned(partnerId)) {
                 usePasteHintStore.getState().show(sessionId, `This terminal is not running, so nothing was typed; the image was saved on this computer at ${res.path}.`)
-              } else {
-                typeImagePathIntoShell(partnerId, res.path, window.electronPlatform === 'win32')
+              } else if (!typeImagePathIntoShell(partnerId, res.path, window.electronPlatform === 'win32', res.posixShell)) {
+                // PR-level ADR-009 round 1 (A1): off Windows, not typed (as below).
+                usePasteHintStore.getState().show(sessionId, notTypedHint(res.path))
               }
             } else if (session?.shellOnly) {
               // P3.16a (U6): a plain terminal has no assistant to tell, so it
@@ -170,8 +180,11 @@ export function useKeyboardShortcuts(
                 usePasteHintStore.getState().show(sessionId, `This terminal is not running, so nothing was typed; the image was saved on this computer at ${res.path}.`)
               } else if (session.sessionType === 'ssh') {
                 usePasteHintStore.getState().show(sessionId, `The image was saved on this computer at ${res.path}; the remote shell cannot read it, so nothing was typed.`)
-              } else {
-                typeImagePathIntoShell(sessionId, res.path, window.electronPlatform === 'win32')
+              } else if (!typeImagePathIntoShell(sessionId, res.path, window.electronPlatform === 'win32', res.posixShell)) {
+                // PR-level ADR-009 round 1 (A1): off Windows, a shell main did not
+                // say is of the sh family, or a path with a control character:
+                // nothing is typed, and the hint says where the image is.
+                usePasteHintStore.getState().show(sessionId, notTypedHint(res.path))
               }
             } else if (session?.provider === 'codex') {
               sendImagePathToCodex(sessionId, res.path, (note) => usePasteHintStore.getState().show(sessionId, note))

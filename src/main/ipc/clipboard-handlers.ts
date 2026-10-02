@@ -13,6 +13,20 @@ import { readClipboardImageFilePath, type PasteableImage } from '../clipboard-fi
 import { getResourcesDirectory } from './setup-handlers'
 import { logInfo } from '../debug-logger'
 import { IPC } from '../../shared/ipc-channels'
+import { isShFamilyShell, localSessionShell } from '../login-shell'
+
+/** PR-level ADR-009 round 1 (A1): what a saved image's answer says, off
+ *  Windows, of the shell a local plain terminal and a partner shell run
+ *  (localSessionShell, the one their spawn runs): 'sh' when it is of the sh
+ *  family (Alt+V types a path only into one), else 'other'. */
+export type SavedImage = PasteableImage | { path: string; posixShell: 'sh' | 'other' }
+
+function withShell(saved: PasteableImage): SavedImage {
+  if (!('path' in saved) || process.platform === 'win32') return saved
+  let posixShell: 'sh' | 'other' = 'other'
+  try { posixShell = isShFamilyShell(localSessionShell()) ? 'sh' : 'other' } catch { /* 'other': nothing is typed */ }
+  return { ...saved, posixShell }
+}
 
 // Constrain to longest-edge max while preserving aspect ratio.
 // Passing both width and height to nativeImage.resize() distorts non-square images.
@@ -50,7 +64,9 @@ export function registerClipboardHandlers(): void {
   // bare filename so the renderer can use the conductor MCP fetch_host_screenshot tool.
   // Returns { filename, path } so callers have both the bare name (for the MCP tool)
   // and the absolute path (for local-only flows that bypass MCP).
-  ipcMain.handle(IPC.CLIPBOARD_SAVE_IMAGE, async (): Promise<PasteableImage> => {
+  // PR-level ADR-009 round 1 (A1): off Windows, with whether a plain
+  // terminal's shell is of the sh family (withShell), for Alt+V.
+  ipcMain.handle(IPC.CLIPBOARD_SAVE_IMAGE, async (): Promise<SavedImage> => {
     const screenshotsDir = join(getResourcesDirectory(), 'screenshots')
     // Retry the read so the FIRST Alt+V after copying an image reliably detects
     // it -- Windows' delayed-render clipboard can return empty on the first read
@@ -71,9 +87,9 @@ export function registerClipboardHandlers(): void {
       const filename = `clipboard-${Date.now()}-${randomBytes(4).toString('hex')}.jpg`
       const filePath = join(screenshotsDir, filename)
       writeFileSync(filePath, jpeg)
-      return { path: filePath }
+      return withShell({ path: filePath })
     }
     // No bitmap on the clipboard — fall back to a copied image FILE (BUG-8).
-    return readClipboardImageFilePath(screenshotsDir)
+    return withShell(readClipboardImageFilePath(screenshotsDir))
   })
 }
