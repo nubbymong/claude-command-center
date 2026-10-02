@@ -71,6 +71,9 @@ export const changelog: ChangelogEntry[] = [
       { type: 'fix', description: 'After a Restart, the Services panel no longer shows a gap for the session, and a Restart pressed in a tab\'s partner view no longer counts a Not started tab as running before it has started.' },
       { type: 'fix', description: 'A session card and tab that need your attention are readable again in both themes, the Close button of a session\'s Logs pane is no longer hidden under the floating GitHub button, and the Status Line settings\' Live Preview wraps instead of cutting off its last value.' },
       { type: 'fix', description: 'The Index conversation logs card in setup, and its tip, say what the index powers: the Logs page and the Memory page\'s recent sessions. Tokenomics has an index of its own, which that switch does not change.' },
+      { type: 'fix', description: 'A new Claude conversation now appears in Logs and in search from its first message. Claude Code names a new conversation\'s file before it writes it, and the app gave up on the file when it was not there yet, so a new conversation, and the next one after /clear, was missing from Logs and search.' },
+      { type: 'fix', description: 'The AI usage popover now opens above its chip in the session status strip. It used to open below the chip, where the strip cut it off, so it never showed.' },
+      { type: 'fix', description: 'The Services panel no longer lists an ended session again, with a negative byte gap, while its tab stays open, and closing that tab logs the session\'s end once.' },
     ],
   },
   {
