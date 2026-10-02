@@ -63,9 +63,18 @@ function encodeProjectPath(p) {
 // Mangle a cwd and case-insensitively match it against the on-disk
 // ~/.claude/projects folders (belt-and-braces on top of the now-correct
 // mangle). Returns the matched absolute folder path or null. FAIL-SAFE.
-function resolveProjectDir(claudeProjectsDir, cwd) {
+//
+// PR-level ADR-009 round 1 (A3): the folder is named from the cwd's REAL path,
+// as Claude Code names it and as the app does (src/main/logging/
+// transcript-discovery.ts claudeProjectDirName: fs.realpathSync, the JS one),
+// so a folder reached through a link or a junction finds its conversations; a
+// cwd whose real path cannot be read is named as given, as there. `realpath`
+// is injectable for the unit test.
+function resolveProjectDir(claudeProjectsDir, cwd, realpath = fs.realpathSync) {
   try {
-    const encoded = encodeProjectPath(cwd)
+    let folder = cwd
+    try { folder = realpath(cwd) } catch { /* named as given */ }
+    const encoded = encodeProjectPath(folder)
     let dirs
     try { dirs = fs.readdirSync(claudeProjectsDir) } catch { return null }
     for (const d of dirs) {
