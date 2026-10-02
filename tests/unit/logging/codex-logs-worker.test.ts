@@ -1062,14 +1062,14 @@ describe('Claude\'s resume continues from what was indexed, with Codex\'s record
 })
 
 // PR-level ADR-009 round 1 (C1): a Codex session not indexed also marks the
-// folder it was launched in, inside its realm, from the moment it became not
-// indexed until it ends, as a Claude session marks its projects folder. A
-// reader of any rollout of that realm whose session_meta records that folder
-// leaves out what is stamped in that window: the rollouts the session's own
-// watcher never claimed (another tab took one by folder and time; Codex began
-// one inside the session with no hook to say so). Fails closed: an indexed
-// tab's own turns in that folder of that realm meanwhile are left out too.
-describe('a Codex realm folder marked while a session not indexed ran (PR-level ADR-009 round 1, C1)', () => {
+// folder it was launched in from the moment it became not indexed until it
+// ends, as a Claude session marks its projects folder. A reader of any rollout
+// whose session_meta records that folder (round 2, K2: in any realm) leaves
+// out what is stamped in that window: the rollouts the session's own watcher
+// never claimed (another tab took one by folder and time; Codex began one
+// inside the session with no hook to say so). Fails closed: an indexed tab's
+// own turns in that folder meanwhile, of any account, are left out too.
+describe('a Codex launch folder marked while a session not indexed ran (PR-level ADR-009 round 1, C1)', () => {
   const BASE = Date.now() - 600_000
   const at = (ms: number) => new Date(BASE + ms).toISOString()
   const cid = (n: number) => `019dd000-0001-7000-8000-0000000003${String(n).padStart(2, '0')}`
