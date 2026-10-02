@@ -53,7 +53,7 @@ export const trainingSteps: TrainingStep[] = [
       'Every workspace starts as a saved config. First choose what it runs -- Claude Code, Codex, or Terminal only -- then how it connects: **Local**, **SSH**, or **SSH Persistent** (a remote session that survives a dropped link). The rest of the form unfolds from those two answers. A config carries its label, colour, working directory, starting model and starting effort, plus a permission mode and any extra CLI arguments.',
     highlights: [
       'Pick a **starting model** per config; the dropdown lists what is currently available, newest first',
-      '**Starting effort** is a config field (low, medium, high, xhigh, max, ultracode); change it live in Claude with `/effort`. The card shows the current level',
+      '**Starting effort** is a config field (low, medium, high, xhigh, max, ultracode; a Codex config offers the levels its model runs); change it live in Claude with `/effort`. The card shows the current level',
       'Connection is three cards, not a checkbox: **Local**, **SSH**, **SSH Persistent** -- one config form, full Claude support on all three',
       'An SSH config also has a **Runtime** section: run on the host, or **in a Docker container** the app execs into for you (engine, name, optional directory, sudo)',
       '**Allow Multi Spawn** decides whether the config can run more than one session at a time. Off by default: its row then gets a copy count you can launch several at once from, and without it a running config declines a second launch and says so',
@@ -87,22 +87,22 @@ export const trainingSteps: TrainingStep[] = [
       '**Per-session isolation** -- each session gets its own private home, so two sessions on different accounts never cross over',
       'Your **primary** account (the one captured on first run) is protected and can never be deleted',
       'Memory, settings, and history stay **shared** across all accounts',
-      'The **Usage page** (the person icon on the rail, once you have two or more accounts) shows every Claude and Codex account\'s 5-hour and weekly limits, grouped by assistant; the usage strip at the foot shows one pill per person, grouped by provider',
+      'The **Usage page** (the person icon on the rail, once you have two or more accounts) shows the 5-hour and weekly limits of every account of each assistant that is on, in a section per assistant when both are; the usage strip at the foot shows one pill per person, grouped by provider',
     ],
     howToTrigger: [
       { label: 'Choose at launch', value: 'Start a session → account dialog' },
       { label: 'Add an account', value: 'run /login in a session, or Settings → Accounts → Add' },
-      { label: 'Manage', value: 'Settings → Accounts (name + colour each one)' },
+      { label: 'Manage', value: 'Settings -> Accounts (click an account\'s chip for its name, colour and group)' },
       { label: 'Usage', value: 'Click the person icon on the left rail' },
     ],
     proTip:
-      'Give each account a friendly name and a distinct colour in Settings, Accounts. The colour follows the account onto the session card, the statusline, and the launch picker so you always know which login a session is on.',
+      'Give each account a friendly name and a distinct colour: click its round chip in Settings, Accounts. The colour follows the account onto the session card, the statusline, and the launch picker so you always know which login a session is on.',
     bullets: [
       'Run **multiple Claude accounts**; pick which one a session uses when it launches',
       'Add accounts by running **/login** in a session, or from Settings, Accounts',
       'Each session is **isolated** -- signing in to one never touches the others or your default',
       'Name and colour each account in **Settings, Accounts**; memory and history stay shared',
-      'Every account\'s limits on one **Usage page**, Claude Code and Codex side by side',
+      'Every account\'s limits on one **Usage page**, Claude Code and Codex side by side when both are on',
     ],
     // No dedicated account-picker capture exists yet. (Future capture:
     // step-accounts.jpg / the launch-time account picker.)
@@ -129,13 +129,14 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '2.1.1',
     section: 'getting-started',
     summary:
-      'One place for both assistants. Settings, Accounts starts with a Providers card: turn Claude Code and Codex on or off, and see whether each is installed and which version. Below it are your Claude accounts, then your Codex accounts, each Codex account with its own sign-in.',
+      'One place for both assistants. Settings, Accounts starts with a Providers card: turn Claude Code and Codex on or off, and see whether each is installed and which version. Below it are your Claude accounts, then your Codex accounts, each Codex account with its own sign-in. An assistant that is off keeps its accounts listed, with a line saying to turn it on to manage them.',
     highlights: [
       'Turn **Claude Code** or **Codex** on or off; at least one stays on, and a provider cannot be turned off while anything of it is running',
+      'Click an account\'s round **chip** to edit its name, colour and group, or to link it to your account of the other assistant; a row says how many sessions run on it',
       'A provider that is off starts nowhere: its configs say why, and a tab restored for it reads **Not started** until you turn it back on and Restart the tab',
       'Codex missing or too old? Its row shows the install or update commands to copy, then **Check again**',
       '**Add Codex account**: sign in with ChatGPT or an API key, then give it a name, or say it is the same person as an account you already have',
-      'Each Codex account has a menu: **Make default**, **Make reviewer**, **Sign in again**, **Check sign-in**, **Sign out**, **Make inactive**, **Archive**',
+      'Each Codex account has a menu: **Make default**, **Make reviewer**, **Sign in again** (signed in or not), **Check sign-in**, **Sign out**, **Make inactive**, **Archive**; archived accounts wait under **Archived**, each with **Restore**',
       'A row reading **Needs attention** is now signed in a different way than before (say, an API key where it had a ChatGPT sign-in); **This is still my account** checks it again and confirms it',
     ],
     howToTrigger: [
@@ -213,15 +214,17 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '1.5.0',
     section: 'integrations',
     summary:
-      "OpenAI's Codex CLI runs beside Claude, or on its own. A saved config picks Codex and the Codex account it runs under; gpt-5 series models, permission presets, the resume picker, and Tokenomics by account are all wired in.",
+      "OpenAI's Codex CLI runs beside Claude, or on its own. A saved config picks Codex and the Codex account it runs under; the models the installed Codex offers, permission presets with Plan mode, the resume picker, Logs, Switch Account and Tokenomics by account are all wired in.",
     highlights: [
       'In this release, Codex sessions and Codex reviews run on this computer only, not over SSH -- the SSH options are off for Codex, and the dialog says why',
       'Each Codex account has its **own sign-in folder**. New sessions use the default account. Code reviews use the reviewer default, or the default if none is set',
       'The Codex sign-in already on this computer can be used too, but it must be confirmed at each launch, and cannot run reviews',
       'Sign in with ChatGPT or an API key -- the key goes to Codex, and this app never stores it',
-      'The session header has a **Restart** menu: Restart carries on with the same conversation, or **Restart and pick a conversation** to resume a recent one',
-      'Six gpt-5 models in the dropdown: gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, gpt-5.3-codex-spark, gpt-5.2; permission presets, model and reasoning effort are set on the Codex config',
-      '**Tokenomics** shows Codex spend beside Claude, per account (the Provider and Account filters), per day and per model; each Codex account\'s allowance is on the **Usage page**; the Logs page does not index Codex conversations yet',
+      'The session header has a **Restart** menu: Restart carries on with the same conversation, or **Restart and pick a conversation** to resume a recent one; a session open when the app closed reopens in its conversation',
+      'The model dropdown lists the models the supported Codex versions offer in their own picker, each with only the effort levels it runs; permission presets (Plan mode among them), model and reasoning effort are set on the Codex config',
+      'With two or more Codex accounts, the **account pill** on a Codex session\'s status line, or **Switch Account** in its right-click menu, moves it to another account and keeps the conversation',
+      'On a running session, **Compact** and the **model pill** type Codex\'s own /compact and /model, only while Codex waits at an empty prompt',
+      '**Tokenomics** shows Codex spend beside Claude, per account (the Provider and Account filters), per day and per model; each Codex account\'s allowance is on the **Usage page**; the Logs page indexes Codex conversations as it does Claude\'s',
     ],
     howToTrigger: [
       { label: 'Spawn', value: '+ New -> Config -> provider card -> Codex -> account' },
@@ -234,7 +237,7 @@ export const trainingSteps: TrainingStep[] = [
     bullets: [
       '**Provider per config** -- Claude Code, Codex or Terminal only, with the Codex account it runs under',
       '**Several Codex accounts**, each with its own sign-in, a default and a reviewer',
-      '**gpt-5 series** model dropdown plus **permission presets** on the Codex config',
+      'Codex\'s own **model list** plus **permission presets**, Plan mode included, on the Codex config',
       '**Restart and pick a conversation** to resume a recent Codex conversation',
       '**Tokenomics** shows Codex spend by account beside Claude, and the **Usage page** each account\'s allowance',
     ],
@@ -592,13 +595,14 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '1.5.30',
     section: 'admin',
     summary:
-      "Logs is a chat-transcript viewer. The Conductor indexes Claude's own conversation transcripts (which live in ~/.claude/projects) and renders them back as a readable chat -- messages, tool calls, and thinking -- with a timeline rail for fast scrubbing and full-text search across everything.",
+      "Logs is a chat-transcript viewer. The Conductor indexes Claude's own conversation transcripts (which live in ~/.claude/projects), and a local Codex session's conversation (from its Codex account's sessions folder), and renders them back as a readable chat -- messages and tool calls -- with a timeline rail for fast scrubbing and full-text search across everything.",
     highlights: [
       'Browse conversations as a chat, grouped by config (filter by account)',
       'A timeline rail beside the transcript scrubs the whole conversation; click to jump',
       'Full-text search across all conversations; click a hit to open it at that turn',
       'Per-session Conversation tab that live-follows the running session',
-      "Deleting an index never touches your conversations -- those stay in ~/.claude/projects",
+      "Deleting an index never touches your conversations -- those stay in ~/.claude/projects, and in each Codex account's sessions folder",
+      'Index conversation logs, in Settings or in a config, turns indexing off at once; what a session writes while it is off is never indexed, Claude or Codex',
     ],
     howToTrigger: [
       { label: 'Open', value: 'Click the Logs icon in the sidebar nav' },
@@ -608,8 +612,8 @@ export const trainingSteps: TrainingStep[] = [
     proTip:
       "Reading back a long session? Use the timeline rail to jump straight to a tool call or a clear divider -- and search jumps you to the exact turn without scrolling.",
     bullets: [
-      "**Chat-transcript viewer** -- Claude's own transcripts, rendered as readable chat",
-      '**Grouped by config** with an account filter; conversations live in ~/.claude/projects',
+      "**Chat-transcript viewer** -- Claude's and Codex's own transcripts, rendered as readable chat",
+      '**Grouped by config** with an account filter; conversations live in ~/.claude/projects and each Codex account\'s sessions folder',
       '**Full-text search** across all conversations; jump straight to the matching turn',
       '**Timeline rail** to scrub the whole conversation, plus a per-session **Conversation** tab',
     ],
@@ -692,7 +696,7 @@ export const trainingSteps: TrainingStep[] = [
     highlights: [
       'Ctrl+Tab / Ctrl+Shift+Tab -- cycle between sessions',
       'Ctrl+1–9 -- jump directly to session N',
-      'Alt+V -- paste a clipboard image: in a local session, the assistant pastes it itself; with focus elsewhere, the app saves it and types its path (over SSH, it asks Claude to fetch it)',
+      'Alt+V -- paste a clipboard image: in a local session, the assistant pastes it itself; with focus elsewhere, the app saves it and types its path (over SSH, it asks Claude to fetch it); a plain terminal, or the partner shell in a partner view, gets only the quoted path, with no Enter',
       'Esc -- close browser pane / dismiss tour / cancel context menu',
       'Status bar -- live tokens, cost, rate limits',
     ],
@@ -745,7 +749,7 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '2.0.0',
     section: 'integrations',
     summary:
-      'A unified usage meter for your AI spend. A compact chip on the session status strip shows GitHub Copilot AI-credit usage at a glance; click it for a popover that breaks down GitHub usage per model and shows the Claude and Codex rate-limit windows side by side. It turns a warning colour the moment GitHub bills you past your included credits.',
+      'A unified usage meter for your AI spend. A compact chip on the session status strip shows GitHub Copilot AI-credit usage at a glance; click it for a popover that breaks down GitHub usage per model and shows the Claude and Codex rate-limit windows of this run\'s sessions side by side. It turns a warning colour the moment GitHub bills you past your included credits.',
     highlights: [
       'A compact chip in the **repo strip** shows credits used (and your cap, when set) without opening anything',
       'When GitHub bills past your included credits the chip shifts to a **warning** and shows the billed amount (for example +$11.69)',

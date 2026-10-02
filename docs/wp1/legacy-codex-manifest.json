@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-02T02:55:50.958Z",
-  "head": "bb4936b2fad387795dd6a138b5d496d320b357b5",
-  "tree": "8cadbf7e77bb015237257141ebb00019f1ad08aa",
+  "generatedAt": "2026-10-02T04:25:14.922Z",
+  "head": "08a12adab4af7d590664fb6fbbf701a240ef4356",
+  "tree": "b3c4b2a45d1a4e29cb9406befcbaa23ef0e577dc",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -161,7 +161,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 48
+      "lineCount": 54
     },
     {
       "path": "README.md",
@@ -182,14 +182,14 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 101
+      "lineCount": 132
     },
     {
       "path": "docs/wp2/completion-plan.md",
       "predicates": [
         "P12"
       ],
-      "lineCount": 653,
+      "lineCount": 663,
       "truncated": true
     },
     {
@@ -204,7 +204,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 102
+      "lineCount": 103
     },
     {
       "path": "docs/wp2/parity-checklist.md",
@@ -2044,14 +2044,14 @@
         "P11",
         "P12"
       ],
-      "lineCount": 125
+      "lineCount": 163
     },
     {
       "path": "src/renderer/training-steps.ts",
       "predicates": [
         "P11"
       ],
-      "lineCount": 53
+      "lineCount": 60
     },
     {
       "path": "src/renderer/types/electron.d.ts",
@@ -2115,7 +2115,7 @@
         "P12",
         "P14"
       ],
-      "lineCount": 77
+      "lineCount": 85
     },
     {
       "path": "src/shared/ask-conductor-provider.ts",
@@ -4472,7 +4472,7 @@
         "P10",
         "P13"
       ],
-      "lineCount": 291
+      "lineCount": 293
     },
     {
       "path": "tests/unit/renderer/insights-codex-empty.test.ts",
@@ -5260,7 +5260,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 59
+      "lineCount": 106
     },
     {
       "path": "tests/unit/status-ingest.test.ts",

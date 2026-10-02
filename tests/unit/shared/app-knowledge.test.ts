@@ -14,6 +14,7 @@ import * as path from 'path'
 import { APP_KNOWLEDGE_SECTIONS } from '../../../src/shared/app-knowledge'
 import { TIPS_LIBRARY } from '../../../src/renderer/tips-library'
 import { trainingSteps } from '../../../src/renderer/training-steps'
+import { changelog } from '../../../src/renderer/changelog'
 
 describe('app knowledge is publishable', () => {
   it('has unique, stable-looking ids and a title and body for every section', () => {
@@ -293,5 +294,127 @@ describe('app knowledge and tips after P3.15', () => {
     expect(p.body).toMatch(/After choosing 2, Codex also lists \*\*\/setup-default-sandbox\*\*: it asks for administrator permission, and Codex takes no input until you answer \(without a yes, close the tab\); whether it then lets Codex edit on its own is not yet confirmed/)
     expect(p.body).toMatch(/asks only when you trust a new folder\. After choosing 2, Codex also lists \*\*\/setup-default-sandbox\*\*[^.]*\. If it never asks you, approve each edit when Codex asks about it, and use \*\*Standard\*\* rather than \*\*Auto\*\*/)
     expect(`${p.title} ${p.body}`).not.toMatch(/\u2014/)
+  })
+})
+
+// P3.16 (the PR 3 user-facing sweep): what PR 3 made true is said where a user
+// looks (the Feature Guide, Ask Conductor, the tips, the guide cards and What's
+// New), the known issues it ships with have their workarounds, and nothing still
+// says what PR 3 made untrue (a Codex Restart starts a new conversation, the
+// Logs page does not index Codex, the gpt-5 list, the assistant-only Alt+V).
+describe('the PR 3 user-facing sweep (P3.16)', () => {
+  const body = (id: string) => APP_KNOWLEDGE_SECTIONS.find((s) => s.id === id)!.body
+  const tip = (id: string) => TIPS_LIBRARY.find((t) => t.id === id)!
+  // The Codex tips by title, as the P3.15 block finds them: their ids, and the
+  // feature id they wait on, would name a dotted codex path in this file.
+  const titled = (title: string) => TIPS_LIBRARY.find((t) => t.variants.primary.title === title)!
+  const codexTipGate = titled('Restart a Codex Session').requires
+  const stepText = (id: string) => JSON.stringify(trainingSteps.find((s) => s.id === id)!)
+  const top = changelog[0]
+
+  it('accounts (P3.2, P3.3): the chip opens the identity editor; Sign in again works while signed in, and what it leaves', () => {
+    expect(body('accounts')).toMatch(/Click an account's round chip to open its editor: its name, colour and group, and Link another account/)
+    expect(body('accounts')).toMatch(/the row names each of them with Go to/)
+    const c = body('codex')
+    expect(c).toMatch(/Archived accounts are listed under Archived, each with Restore/)
+    expect(c).toMatch(/An account that is still signed in signs in again inside a new folder, and the account moves there only once the new sign-in is verified, with its earlier conversations carried over/)
+    expect(c).toMatch(/Its row then reads Needs attention: the old sign-in is kept\./)
+    expect(c).toMatch(/archiving the account removes it/)
+    expect(c).toMatch(/or choose Sign in again in its menu, which signs it in again in place after a warning that this first signs out every app that uses it/)
+    expect(c).not.toMatch(/When a Codex account is signed out or expired, Sign in again/)
+    expect(c).not.toMatch(/The app never signs in to it for you/)
+    expect(titled('Check Sign-in and Sign In Again').variants.primary.body).toMatch(/An account that is still signed in signs in inside a new folder and moves there only once that sign-in works/)
+    expect(titled('Check Sign-in and Sign In Again').variants.primary.body).not.toMatch(/signs a signed-out or expired account back in/)
+  })
+
+  it('Codex sessions (P3.5 to P3.8, P3.13): models, Plan mode, Compact, the model pill, the status line and Multi Spawn', () => {
+    const c = body('codex')
+    expect(c).toMatch(/The model list is the one the supported Codex versions offer in their own picker; each model offers only the effort levels it runs/)
+    expect(c).toMatch(/The permission choices are Read-only, Standard, Plan mode, Auto and Unrestricted/)
+    expect(c).toMatch(/Compact on the status line types Codex's own \/compact, and the model pill opens Codex's own model and effort picker/)
+    expect(c).toMatch(/Restart carries on with the same conversation/)
+    expect(body('statusline')).toMatch(/lines changed \(counted from the edits Codex makes\), the duration \(the conversation's running time, carried on across restarts\)/)
+    expect(body('sessions')).toMatch(/All of this works the same for a Codex config/)
+    expect(body('session-watchdog')).toMatch(/It reads overload and safeguard errors in the current turn only/)
+  })
+
+  it('Alt+V (P3.15, P3.16a U6 and N9): the plain-terminal and partner-shell routes, in the Feature Guide, the tip and the guide card', () => {
+    expect(body('shortcuts')).toMatch(/With focus elsewhere, a plain terminal, or a session's partner shell while its partner view is shown, gets only the image's path, quoted for the shell, with no Enter/)
+    expect(body('shortcuts')).toMatch(/a plain terminal over SSH, or a terminal that is not running, gets nothing, and the hint says where the image was saved/)
+    const t = tip('tip.paste-image').variants.primary.body
+    expect(t).toMatch(/With focus elsewhere, a plain terminal, or the partner shell while a session's partner view is shown, gets only the image's path, quoted for the shell, with no Enter/)
+    expect(t).toMatch(/over SSH a plain terminal gets nothing, and the hint says where the image was saved/)
+    const guide = trainingSteps.flatMap((s) => s.highlights ?? []).find((l) => l.startsWith('Alt+V'))!
+    expect(guide).toMatch(/a plain terminal, or the partner shell in a partner view, gets only the quoted path, with no Enter/)
+  })
+
+  it('known issues (P3.10, P3.16a): the Codex lock screen, the Windows folder spelling and vision in one copy, each with its workaround', () => {
+    const k = body('known-issues')
+    expect(k).toMatch(/Codex lets one tab at a time write to a conversation/)
+    expect(k).toMatch(/with Codex 0\.155\.1, Codex shows its own lock screen instead and stays on it/)
+    expect(k).toMatch(/close the tab that shows the lock screen and carry on in the tab that has the conversation open/)
+    expect(k).toMatch(/On Windows, give a Claude config its working folder as Windows spells it/)
+    expect(k).toMatch(/choose the working folder with the folder picker, or type it exactly as File Explorer shows it, with the drive letter in upper case/)
+    expect(k).toMatch(/Vision works in one copy of the app at a time/)
+    expect(k).toMatch(/starting vision in one copy can close the browser the other copy opened/)
+    expect(k).toMatch(/Use vision in one copy only, or quit the other copy and press Start browser on the Conductor MCP page/)
+  })
+
+  it('privacy: what is written while indexing is off is never indexed, for both; the Codex name file', () => {
+    const p = body('privacy')
+    expect(p).toMatch(/What a session wrote while indexing was off is never indexed later, for Claude and Codex alike/)
+    expect(p).toMatch(/A name you give a Codex session is kept in a small file beside its conversation/)
+  })
+
+  it('the tips a user would not find alone (P3.2, P3.6, P3.8), and the corrected ones', () => {
+    expect(tip('tip.account-identity-editor').variants.primary.body).toMatch(/click the round chip at the left of an account row, Claude or Codex/)
+    // Shown to the users the other Codex tips are shown to.
+    expect(codexTipGate?.length).toBe(1)
+    expect(titled('Switch a Codex Session\'s Account').requires).toEqual(codexTipGate)
+    expect(titled('Switch a Codex Session\'s Account').variants.primary.body).toMatch(/click the \*\*account pill\*\* at the far left of its status line/)
+    expect(titled('Codex\'s Own Commands, From the App').requires).toEqual(codexTipGate)
+    expect(titled('Codex\'s Own Commands, From the App').variants.primary.body).toMatch(/A Codex config can start in \*\*Plan mode\*\*/)
+    // The overload backoff as the Watchdog has it since P3.10 round 3.
+    expect(tip('tip.session-watchdog').variants.primary.body).toMatch(/from 30 seconds up to 5 minutes, and gives up after two hours of waiting in all/)
+    expect(tip('tip.session-watchdog').variants.primary.body).not.toMatch(/with capped attempts/)
+    expect(tip('tip.transparency.network-activity').variants.primary.body).toMatch(/current Claude and Codex model pricing/)
+    expect(tip('tip.transparency.network-activity').variants.primary.body).toMatch(/`status\.openai\.com` while Codex is on/)
+    expect(tip('tip.multi-account').variants.primary.body).toMatch(/A Codex session moves between your Codex accounts the same way/)
+  })
+
+  it('the guide cards: the Codex card, the Logs card and the cards that name both assistants', () => {
+    const codex = stepText('codex-provider')
+    expect(codex).not.toMatch(/gpt-5\.4|gpt-5 series|Six gpt-5 models/)
+    expect(codex).not.toMatch(/does not index Codex conversations yet/)
+    expect(codex).toMatch(/the Logs page indexes Codex conversations as it does Claude/)
+    expect(codex).toMatch(/Switch Account/)
+    expect(codex).toMatch(/Plan mode/)
+    expect(stepText('logs')).toMatch(/a local Codex session's conversation \(from its Codex account's sessions folder\)/)
+    expect(stepText('logs')).not.toMatch(/tool calls, and thinking/)
+    expect(stepText('multi-account')).toMatch(/every account of each assistant that is on, in a section per assistant when both are/)
+    expect(stepText('multi-account')).not.toMatch(/shows every Claude and Codex account/)
+    expect(stepText('provider-accounts')).toMatch(/An assistant that is off keeps its accounts listed, with a line saying to turn it on to manage them/)
+    expect(stepText('ai-usage-meter')).toMatch(/rate-limit windows of this run's sessions/)
+  })
+
+  it('What\'s New (2.1.1-beta.2): a Codex Restart keeps its conversation, and PR 3\'s changes are listed', () => {
+    expect(top.version).toBe('2.1.1-beta.2')
+    const all = top.changes.map((c) => c.description).join('\n')
+    expect(all).not.toMatch(/Restart starts a new conversation/)
+    expect(all).toMatch(/Restart carries on with the same conversation/)
+    for (const said of [
+      /a Codex session moves to another one as a Claude session does/,
+      /A Codex session's status line shows Lines changed/,
+      /A Codex config can start in Plan mode/,
+      /Sentinel covers Codex/,
+      /Allow Multi Spawn and Quick Start work for Codex configs/,
+      /shows its credits under its bars on the Usage page/,
+      /Click an account's round chip to edit its name, colour and group/,
+      /Sign in again works on a Codex account that is still signed in/,
+      /a Codex pill, read from OpenAI's public status page/,
+      /a local Codex session keeps its scrollback/,
+      /Alt\+V with focus outside the terminal types only the image's path into a plain terminal/,
+    ]) expect(all).toMatch(said)
+    for (const c of top.changes) expect(c.description, c.description.slice(0, 40)).not.toMatch(/\u2014/)
   })
 })
