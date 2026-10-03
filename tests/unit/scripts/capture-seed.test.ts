@@ -154,11 +154,9 @@ describe('the README staging (P4.11 recapture of the README images)', () => {
     for (const s of C.SESSIONS.filter((x) => x.provider === 'codex')) expect(keys.has(s.codexAccountKey as string)).toBe(true)
   })
 
-  it('[host] seed.js refuses to run on real state, restores only the project folders it made, and the fake Claude has no real default', () => {
-    const seedSrc = readFileSync(join(stage, 'seed.js'), 'utf8')
-    expect(seedSrc).toMatch(/\['CCC_STAGE_HOME', 'CCC_STAGE_DATA', 'CCC_STAGE_NPM_BIN', 'CCC_STAGE_RUNNER'\]\.every/)
-    expect(seedSrc).not.toMatch(/^\s*rmrf\(DEV\)/m)
-    expect(seedSrc).toMatch(/dev-created\.json/)
+  // The seed's staging-root guard and its C:\dev rules are behaviour-tested in
+  // readme-stage.test.ts (P4.11 review C-5).
+  it('[host] the fake Claude has no real default folder', () => {
     const fake = readFileSync(join(stage, 'fake-claude.js'), 'utf8')
     expect(fake).not.toMatch(/AppData\/Local\/AI Code Conductor/)
     expect(fake).not.toMatch(/C:\/Users\/User/)

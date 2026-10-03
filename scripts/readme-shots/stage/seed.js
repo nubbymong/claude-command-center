@@ -1,70 +1,87 @@
-// README staging — seed the test VM with the fictional workspace in content.js.
+// README staging: seed a throwaway staging root with the fictional workspace
+// in content.js, for the installed app to run on (launch.js) and shoot.js to
+// capture. Runs ON the screenshot VM, from a checkout with node_modules.
 //
-//   node seed.js --app-version 2.1.0-beta.15      stage everything (app must be closed)
-//   node seed.js --restore                         put the pre-staging state back
+//   CCC_STAGE_ROOT=<root> node seed.js --app-version 2.1.1-beta.2   stage everything (app closed)
+//   CCC_STAGE_ROOT=<root> node seed.js --restore                    undo it (and the C:\dev projects)
 //
-// Runs ON the VM as the desktop user. Writes only under the app's data/resources
-// dirs, the user's ~/.claude and ~/.codex, C:\dev (the fake projects) and the
-// npm bin dir (the fake CLIs). The first run moves whatever was there into
-// <runner>/backup/ so --restore can undo all of it.
+// Everything is written inside CCC_STAGE_ROOT, one throwaway folder that
+// carries this tool's marker (stage-root.js: made only in an absent or empty
+// folder, checked before anything is written, renamed or deleted; the root may
+// never be or hold the real home, sit in the real ~/.claude or ~/.codex, the
+// app's or npm's app data folders, or the installed app's data folder). Every
+// other CCC_STAGE_* folder must be inside the root; by default the layout is
+// the one launch.js starts the app with (capture-env.ts). There is no mode
+// that writes over a real install: the VM user's own app data, ~/.claude,
+// ~/.codex and npm folder are never touched.
 //
-// Every path is forward-slash and absolute; nothing here is portable beyond the
-// screenshot VM and nothing here should ever run on a developer's machine.
+// The one place outside the root: the project folders the fictional configs
+// name, C:\dev\{web,platform,data,notes} (or CCC_STAGE_DEV inside the root).
+// The seed makes only folders that do not exist yet, marks and records each,
+// never overwrites a file, and stops before writing anything if one of them
+// exists without its mark. --restore removes only recorded entries that are
+// still exactly one of those marked folders.
 //
-// ISOLATED (2.1.1, the way to run it): point every root at a staging folder of
-// its own and run the installed app on it (CCC_E2E_DATA_DIR = CCC_STAGE_DATA,
-// USERPROFILE = CCC_STAGE_HOME, the fake CLIs' folder first on PATH), so the
-// VM user's own app data, ~/.claude and ~/.codex are never touched:
-//   CCC_STAGE_HOME, CCC_STAGE_DATA, CCC_STAGE_NPM_BIN (the fake CLIs' folder),
-//   CCC_STAGE_RUNNER (its backup), and CCC_STAGE_REPO (a checkout with
-//   node_modules: the Codex accounts are written by codex-registry.ts through
-//   the app's own registry code). Without all four roots it refuses to run
-//   unless --over-real-state is given (that mode destroyed real state once).
-// C:\dev keeps the fake projects (the configs' folders); --restore removes
-// only the project folders this seed made there.
+// The Codex accounts are written through the app's own registry code
+// (codex-registry.ts), bundled with the checkout's own esbuild (pinned by the
+// lockfile; no download at run time).
 
 'use strict'
 
 const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
-const { execFileSync, execSync } = require('child_process')
+const { execFileSync } = require('child_process')
 const C = require('./content')
+const S = require('./stage-root')
 
 const argv = process.argv.slice(2)
 const flag = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined }
 const RESTORE = argv.includes('--restore')
 const APP_VERSION = flag('--app-version') || '2.1.0-beta.15'
 
-const HOME = process.env.CCC_STAGE_HOME || 'C:/Users/User'
-const DATA = process.env.CCC_STAGE_DATA || 'C:/Users/User/AppData/Local/AI Code Conductor'
-const RES = process.env.CCC_STAGE_RES || `${DATA}/resources`
+// The guard, before anything else touches the file system (exit 2, fail closed).
+let STAGE
+try {
+  STAGE = S.resolveStage(process.env)
+  if (!RESTORE) S.checkDevTargets(STAGE.DEV)
+  S.ensureMarker(STAGE.ROOT, { create: !RESTORE })
+} catch (e) {
+  if (e instanceof S.StageRefusal) { console.error('refusing: ' + e.message); process.exit(2) }
+  throw e
+}
+
+const HOME = STAGE.HOME
+const DATA = STAGE.DATA
+const RES = STAGE.RES
 const CONFIG = `${RES}/CONFIG`
-const NPM_BIN = process.env.CCC_STAGE_NPM_BIN || 'C:/Users/User/AppData/Roaming/npm'
-const RUNNER = process.env.CCC_STAGE_RUNNER || 'C:/Users/user/ccc-cap'
+const NPM_BIN = STAGE.NPM_BIN
+const RUNNER = STAGE.RUNNER
 const BACKUP = `${RUNNER}/backup`
 const PROJECTS = `${HOME}/.claude/projects`
 const CODEX_SESSIONS = `${HOME}/.codex/sessions`
-const DEV = process.env.CCC_STAGE_DEV || 'C:/dev'
-const REPO = process.env.CCC_STAGE_REPO
+const DEV = STAGE.DEV
+const DEV_RECORD = `${RUNNER}/dev-created.json`
+// The checkout this script is in (scripts/readme-shots/stage).
+const REPO = path.resolve(__dirname, '..', '..', '..')
 const NOW = Date.now()
 
 const log = (m) => console.log(m)
-
-const ISOLATED = ['CCC_STAGE_HOME', 'CCC_STAGE_DATA', 'CCC_STAGE_NPM_BIN', 'CCC_STAGE_RUNNER'].every((k) => !!process.env[k])
-if (!ISOLATED && !argv.includes('--over-real-state')) {
-  console.error('refusing: set CCC_STAGE_HOME, CCC_STAGE_DATA, CCC_STAGE_NPM_BIN and CCC_STAGE_RUNNER to a staging folder (or pass --over-real-state)')
-  process.exit(2)
-}
 const codexAcct = (key) => C.CODEX_ACCOUNTS.find((a) => a.key === key)
 
 // ── small fs helpers ───────────────────────────────────────────────────────
-function mkdirp(p) { fs.mkdirSync(p, { recursive: true }) }
-function writeJson(p, v) { mkdirp(path.dirname(p)); fs.writeFileSync(p, JSON.stringify(v, null, 2) + '\n', 'utf8') }
-function writeText(p, s) { mkdirp(path.dirname(p)); fs.writeFileSync(p, s, 'utf8') }
+// Every write and delete below is held inside the staging root; the project
+// folders under DEV go through writeProjectFile and restore's own checks.
+function inRoot(p) {
+  if (!S.inside(p, STAGE.ROOT)) throw new Error(`[seed] ${p} is outside the staging root ${STAGE.ROOT}`)
+  return p
+}
+function mkdirp(p) { fs.mkdirSync(inRoot(p), { recursive: true }) }
+function writeJson(p, v) { mkdirp(path.dirname(p)); fs.writeFileSync(inRoot(p), JSON.stringify(v, null, 2) + '\n', 'utf8') }
+function writeText(p, s) { mkdirp(path.dirname(p)); fs.writeFileSync(inRoot(p), s, 'utf8') }
 function readJson(p, fallback) { try { return JSON.parse(fs.readFileSync(p, 'utf8')) } catch { return fallback } }
-function touch(p, ms) { const d = new Date(ms); fs.utimesSync(p, d, d) }
-function rmrf(p) { fs.rmSync(p, { recursive: true, force: true }) }
+function touch(p, ms) { const d = new Date(ms); fs.utimesSync(inRoot(p), d, d) }
+function rmrf(p) { S.removeNoFollow(inRoot(p)) }
 function moveInto(src, destDir) {
   if (!fs.existsSync(src)) return
   mkdirp(destDir)
@@ -132,8 +149,13 @@ function restore() {
   rmrf(CODEX_SESSIONS)
   if (fs.existsSync(`${BACKUP}/codex/sessions`)) fs.renameSync(`${BACKUP}/codex/sessions`, CODEX_SESSIONS)
   uninstallFakeClis()
-  // Only the project folders this seed made (seedProjects), never DEV itself.
-  for (const d of readJson(`${BACKUP}/dev-created.json`, [])) rmrf(`${DEV}/${d}`)
+  // Only the project folders this seed made (seedProjects), each still exactly
+  // DEV\<one of its names> and marked; any other entry is reported, not removed.
+  const record = readJson(DEV_RECORD, [])
+  for (const d of Array.isArray(record) ? record : []) {
+    if (S.validDevEntry(d, DEV)) { S.removeNoFollow(path.resolve(d)); log('removed project folder ' + d) }
+    else log('!! not removing recorded entry ' + JSON.stringify(d) + ': not one of this tool\'s marked project folders under ' + DEV)
+  }
   fs.renameSync(`${BACKUP}/.done`, `${BACKUP}/.restored-${Date.now()}`)
   log('restored')
 }
@@ -519,26 +541,48 @@ function seedProjects() {
     'data/pipeline': { 'pyproject.toml': '[project]\nname = "pipeline"\n' },
     'notes': { '2026-08-17.md': '# Monday\n' },
   }
-  // Record the top-level folders this seed makes, so --restore removes those
-  // and nothing else that lives in DEV.
-  const tops = [...new Set(Object.keys(files).map((rel) => rel.split('/')[0]))]
-  const made = readJson(`${BACKUP}/dev-created.json`, [])
-  for (const t of tops) if (!fs.existsSync(`${DEV}/${t}`) && !made.includes(t)) made.push(t)
-  writeJson(`${BACKUP}/dev-created.json`, made)
-  for (const [rel, fs_] of Object.entries(files)) for (const [name, body] of Object.entries(fs_)) writeText(`${DEV}/${rel}/${name}`, body)
-  log(`project dirs written (made here: ${made.join(', ') || 'none'})`)
+  // Each top-level folder is made here (and marked, and recorded so --restore
+  // removes it) or was made and marked by an earlier run: checkDevTargets
+  // stopped the run before any write when one exists without its mark.
+  const made = readJson(DEV_RECORD, [])
+  for (const t of S.DEV_TOPS) {
+    const top = path.join(DEV, t)
+    if (!fs.existsSync(top)) {
+      fs.mkdirSync(top, { recursive: true })
+      fs.writeFileSync(path.join(top, S.DEV_MARKER), 'made by scripts/readme-shots/stage/seed.js for README screenshots\n', { flag: 'wx' })
+      if (!made.includes(top)) made.push(top)
+    } else if (!fs.existsSync(path.join(top, S.DEV_MARKER))) {
+      throw new Error(`[seed] ${top} lost its mark during the run`)
+    }
+  }
+  writeJson(DEV_RECORD, made)
+  // Never overwrite: a file already there (from an earlier run) is kept.
+  let written = 0
+  for (const [rel, fs_] of Object.entries(files)) {
+    for (const [name, body] of Object.entries(fs_)) {
+      const file = path.join(DEV, ...rel.split('/'), name)
+      if (!S.DEV_TOPS.some((t) => S.inside(file, path.join(DEV, t)))) throw new Error(`[seed] ${file} is not in a project folder of this tool`)
+      fs.mkdirSync(path.dirname(file), { recursive: true })
+      try { fs.writeFileSync(file, body, { encoding: 'utf8', flag: 'wx' }); written++ } catch (e) { if (e.code !== 'EEXIST') throw e }
+    }
+  }
+  log(`project dirs written: ${written} files (folders made by this tool: ${made.join(', ') || 'none'})`)
 }
 
 // -- Codex accounts (2.1.1: the app's account registry) --
-// Written by codex-registry.ts through the app's own registry code, from a
-// checkout with node_modules (CCC_STAGE_REPO). Without one, Codex runs with
-// no account (its config shows the add-an-account state).
+// Written by codex-registry.ts through the app's own registry code, bundled
+// with this checkout's own esbuild (a devDependency pinned by the lockfile; no
+// download at run time) into the runner folder and run with this node.
 function seedCodexAccounts() {
-  if (!REPO) { log('!! CCC_STAGE_REPO not set: Codex accounts skipped'); return }
-  const q = (s) => `"${s}"`
-  const cmd = ['npx --yes tsx', q(`${REPO}/scripts/readme-shots/stage/codex-registry.ts`), q(RES), q(path.join(__dirname, 'content.js'))].join(' ')
-  const out = execSync(cmd, { cwd: REPO, encoding: 'utf8' })
-  log(out.trim())
+  let esbuild
+  try { esbuild = require(path.join(REPO, 'node_modules', 'esbuild')) } catch {
+    console.error(`refusing: no esbuild in ${REPO}\node_modules (run npm ci in the checkout first)`)
+    process.exit(2)
+  }
+  const out = path.join(RUNNER, 'codex-registry.cjs')
+  esbuild.buildSync({ entryPoints: [path.join(__dirname, 'codex-registry.ts')], bundle: true, platform: 'node', format: 'cjs', target: 'node20', outfile: inRoot(out), logLevel: 'silent' })
+  const text = execFileSync(process.execPath, [out, RES, path.join(__dirname, 'content.js')], { encoding: 'utf8' })
+  log(text.trim())
 }
 
 // ── Logs DB via python ─────────────────────────────────────────────────────
