@@ -47,6 +47,54 @@ export function changedPaths(git: Git, base: string): string[] {
   return r.stdout.split('\0').filter(Boolean)
 }
 
+/** What every release step that runs the suite gives WP1_PHASE: the candidate
+ *  phase on a stable release that is not a dry run, otherwise nothing
+ *  (./phase.ts then reads the manifest). */
+export const RELEASE_WP1_PHASE = "${{ inputs.channel == 'stable' && !inputs.dry_run && 'candidate' || '' }}"
+
+export type SuiteStep = { job: string; name: string; phase: string | null }
+
+/** The steps of a workflow that run the test suite (vitest, or an npm test
+ *  script), each with its job, its name and the WP1_PHASE its own `env:`
+ *  gives it (null: none). The manifest's `phase` is a neutral field, so a
+ *  manifest-only commit could switch the candidate check off; the stable
+ *  release declares the phase in its own steps' environment instead, which
+ *  ./phase.ts lets only raise it. Line-based, for the workflows' own layout:
+ *  jobs at two spaces; a step runs from its `- ` under `steps:` to the next
+ *  one or the end of the list; comments never count. */
+export function suiteSteps(yml: string): SuiteStep[] {
+  const out: SuiteStep[] = []
+  let job = ''
+  let stepsAt = -1
+  let itemAt = -1
+  let step: string[] | null = null
+  const close = () => {
+    if (!step) return
+    const code = step.filter((l) => !l.trim().startsWith('#')).join('\n')
+    if (/^\s*(?:- )?run:/m.test(code) && /\bvitest\b|\bnpm (?:run )?test\b/.test(code)) {
+      const name = /^\s*(?:- )?name:\s*(.+?)\s*$/m.exec(code)?.[1] ?? '(unnamed)'
+      const phase = /^\s+WP1_PHASE:\s*(.+?)\s*$/m.exec(code)?.[1] ?? null
+      out.push({ job, name, phase: phase === null ? null : phase.replace(/^(['"])(.*)\1$/, '$2') })
+    }
+    step = null
+  }
+  for (const line of yml.replace(/\r\n/g, '\n').split('\n')) {
+    if (line.trim() === '' || line.trim().startsWith('#')) { step?.push(line); continue }
+    const lead = /^ */.exec(line)![0].length
+    const top = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(line)
+    if (top) { close(); job = top[1]; stepsAt = -1; itemAt = -1; continue }
+    if (stepsAt >= 0 && lead <= stepsAt) { close(); stepsAt = -1; itemAt = -1 }
+    const steps = /^( +)steps:\s*$/.exec(line)
+    if (steps && stepsAt < 0) { stepsAt = steps[1].length; continue }
+    if (stepsAt < 0) continue
+    const item = /^( +)- /.exec(line)
+    if (item && (itemAt < 0 || item[1].length === itemAt)) { close(); itemAt = item[1].length; step = [line]; continue }
+    step?.push(line)
+  }
+  close()
+  return out
+}
+
 /** Evidence records not taken at boundHead. The manifest that declares
  *  boundHead is itself neutral, so boundHead alone could be moved past a
  *  source change with the evidence untouched; each record therefore names the
