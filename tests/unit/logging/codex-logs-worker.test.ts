@@ -13,7 +13,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync, appendFileSync, readFileSync } from 'node:fs'
 import { join, dirname, basename } from 'node:path'
-import { statSync, unlinkSync, mkdirSync, utimesSync, openSync, readSync, closeSync } from 'node:fs'
+import { statSync, unlinkSync, mkdirSync, utimesSync, openSync, readSync, closeSync, renameSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 
 interface Run { runId: number; sessionId: string; configId: string | null; provider: string; projectCwd: string | null; status: string; startedAt: number; endedAt: number | null }
@@ -200,6 +200,16 @@ describe('the transcripts worker and a Codex rollout (P3.12, row 31)', () => {
   // ---- P3.12 round 1 ----------------------------------------------------------------------------------------------
 
   const idOf = (f: string) => { const st = statSync(f, { bigint: true }); return `${st.dev}:${st.ino}` }
+  // Another file at f's path: made while the first still exists, then renamed
+  // over it, so it is another file on every file system. Removing the first and
+  // writing the path again is not: ext4 hands the freed inode number straight to
+  // the next file, so on Linux that file would carry the first one's identity.
+  const putAnotherFileAt = (f: string, content: string) => {
+    const before = idOf(f)
+    writeFileSync(`${f}.next`, content)
+    renameSync(`${f}.next`, f)
+    expect(idOf(f)).not.toBe(before)
+  }
   const texts = (runId: number) => fake.msgs.filter((m) => m.runId === runId).map((m) => m.content)
 
   it('V2: a new run binding a rollout the index already holds (the same file) continues from what was indexed: nothing twice', () => {
@@ -267,8 +277,7 @@ describe('the transcripts worker and a Codex rollout (P3.12, row 31)', () => {
     send({ type: 'run-start', meta: { sessionId: 's1', configLabel: 'Codex', provider: 'codex', startedAt: 1 } })
     send({ type: 'transcript-bind', sessionId: 's1', path: f, confidence: 'exact', sourceFormat: 'codex-rollout', sourceIdentity: idOf(f) })
     w.tickNow()
-    unlinkSync(f)
-    writeFileSync(f, cx.meta + cx.user('own') + cx.user('NOT THIS FILE'))
+    putAnotherFileAt(f, cx.meta + cx.user('own') + cx.user('NOT THIS FILE'))
     w.tickNow()
     expect(texts(fake.runs[0].runId)).toEqual(['own'])
     expect(fake.trs[0].status).toBe('failed')
@@ -284,8 +293,7 @@ describe('the transcripts worker and a Codex rollout (P3.12, row 31)', () => {
     send({ type: 'run-start', meta: { sessionId: 's1', configLabel: 'Claude', provider: 'claude', startedAt: 1 } })
     send({ type: 'transcript-bind', sessionId: 's1', path: f, confidence: 'exact', sourceIdentity: idOf(f) })
     w.tickNow()
-    unlinkSync(f)
-    writeFileSync(f, claudeLine('once') + claudeLine('twice'))
+    putAnotherFileAt(f, claudeLine('once') + claudeLine('twice'))
     w.tickNow()
     expect(texts(fake.runs[0].runId)).toEqual(['once', 'twice'])
     expect(fake.trs[0].status).not.toBe('failed')
@@ -298,8 +306,7 @@ describe('the transcripts worker and a Codex rollout (P3.12, row 31)', () => {
     send({ type: 'run-start', meta: { sessionId: 's1', configLabel: 'Codex', provider: 'codex', startedAt: 1 } })
     send({ type: 'transcript-bind', sessionId: 's1', path: f, confidence: 'exact', sourceFormat: 'codex-rollout', sourceIdentity: idOf(f) })
     w.tickNow()
-    unlinkSync(f)
-    writeFileSync(f, cx.meta + cx.user('the new one'))
+    putAnotherFileAt(f, cx.meta + cx.user('the new one'))
     send({ type: 'transcript-bind', sessionId: 's1', path: f, confidence: 'exact', sourceFormat: 'codex-rollout', sourceIdentity: idOf(f) })
     w.tickNow()
     expect(fake.msgs.map((m) => m.kind === 'clear' ? '--' : m.content)).toEqual(['own', '--', 'the new one'])
@@ -314,8 +321,7 @@ describe('the transcripts worker and a Codex rollout (P3.12, row 31)', () => {
     a.send({ type: 'transcript-bind', sessionId: 's1', path: f, confidence: 'exact', sourceFormat: 'codex-rollout', sourceIdentity: idOf(f) })
     a.w.tickNow()
     a.w.stop()
-    unlinkSync(f)
-    writeFileSync(f, cx.meta + cx.user('own') + cx.user('NOT THIS FILE'))
+    putAnotherFileAt(f, cx.meta + cx.user('own') + cx.user('NOT THIS FILE'))
     const b = boot()
     b.w.tickNow()
     expect(texts(fake.runs[0].runId)).toEqual(['own'])
@@ -370,8 +376,7 @@ describe('the transcripts worker and a Codex rollout (P3.12, row 31)', () => {
     send({ type: 'run-start', meta: { sessionId: 's1', configLabel: 'Codex', provider: 'codex', startedAt: 1 } })
     send({ type: 'transcript-bind', sessionId: 's1', path: f, confidence: 'exact', sourceFormat: 'codex-rollout', sourceIdentity: idOf(f) })
     w.tickNow()
-    unlinkSync(f)
-    writeFileSync(f, cx.meta + cx.user('NEW-FIRST-TURN-XXXX') + cx.user('NEW-SECOND-TURN'))
+    putAnotherFileAt(f, cx.meta + cx.user('NEW-FIRST-TURN-XXXX') + cx.user('NEW-SECOND-TURN'))
     send({ type: 'run-start', meta: { sessionId: 's1', configLabel: 'Codex', provider: 'codex', startedAt: 2 } })
     send({ type: 'transcript-bind', sessionId: 's1', path: f, confidence: 'exact', sourceFormat: 'codex-rollout', sourceIdentity: idOf(f) })
     w.tickNow()
