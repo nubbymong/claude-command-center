@@ -2,7 +2,7 @@
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "manifestPathDigest": "ede294c20b1b609bf33e9da63540ae0e4264bf333a50cdd513e14645cb7c7dcc",
-  "manifestHead": "227cd3000a7f769f43fcf51058b309945d7ba891",
+  "manifestHead": "1a51bb66769004e0edd1e6a2a30f8b3b6e7d19e1",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -1193,7 +1193,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "added",
-      "evidence": "new WP2 PR 4 P4.5 (row 57) module: a Cloud Agent's codex exec run (PB5's argv without -C, the task on stdin, the project as its working folder, question 7's default A, never a bypass) (WP1.38, WP1.42); tests/unit/providers/codex/agent-run.test.ts; WP2 PR 4 ADR-009 round 1 (ada39c8e), round 2 (83a2cce4), the residual fixes (f822fbbe): changed by the pass's fixes (WP1.42); tests/unit/providers/codex/agent-run.test.ts",
+      "evidence": "new WP2 PR 4 P4.5 (row 57) module: a Cloud Agent's codex exec run (PB5's argv without -C, the task on stdin, the project as its working folder, question 7's default A, never a bypass) (WP1.38, WP1.42); tests/unit/providers/codex/agent-run.test.ts; WP2 PR 4 ADR-009 round 1 (ada39c8e), round 2 (83a2cce4), the residual fixes (f822fbbe): changed by the pass's fixes (WP1.42); tests/unit/providers/codex/agent-run.test.ts; WP2 PR 4 ADR-009 the residual fixes (1a51bb66): changed by the pass's fixes (WP1.42); tests/unit/providers/codex/agent-run.test.ts",
       "note": ""
     },
     {
@@ -6318,7 +6318,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "new WP2 PR 4 P4.5 (row 57) test: the exec argv, the sandbox mapping and the event reader (WP1.33); tests/unit/providers/codex/agent-run.test.ts; WP2 PR 4 ADR-009 round 1 (ada39c8e), round 2 (83a2cce4), the residual fixes (f822fbbe): changed by the pass's fixes (WP1.33); tests/unit/providers/codex/agent-run.test.ts",
+      "evidence": "new WP2 PR 4 P4.5 (row 57) test: the exec argv, the sandbox mapping and the event reader (WP1.33); tests/unit/providers/codex/agent-run.test.ts; WP2 PR 4 ADR-009 round 1 (ada39c8e), round 2 (83a2cce4), the residual fixes (f822fbbe): changed by the pass's fixes (WP1.33); tests/unit/providers/codex/agent-run.test.ts; WP2 PR 4 ADR-009 the residual fixes (1a51bb66): changed by the pass's fixes (WP1.33); tests/unit/providers/codex/agent-run.test.ts",
       "note": ""
     },
     {
