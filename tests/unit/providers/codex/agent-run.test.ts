@@ -309,6 +309,87 @@ describe('the run', () => {
     }
   })
 
+  /** What the run hands on from stderr, read in these chunks. */
+  const diag = async (chunks: string[]): Promise<string[]> => {
+    const { deps, spawned } = fakeDeps()
+    const said: string[] = []
+    const p = createCodexBackgroundOperations({ platform: 'win32', runDeps: () => deps }).run(input({ onDiagnostic: (t: string) => said.push(t) }))
+    for (const c of chunks) spawned[0].child.stderr.emit('data', c)
+    spawned[0].child.emit('close', 0)
+    await p
+    return said
+  }
+
+  // [host] PR 4 ADR-009 residuals (round 4): a line past the window keeps its
+  // last LINE_TAIL for the next read, so a read that ends anywhere inside a
+  // credential (the Bearer word, its token, a field or its value) leaves it
+  // whole for the redactor.
+  it('a line past the window, split by a read at any offset across a credential (the Bearer word, its token, a JSON field and its value), comes out as one read of it would', async () => {
+    const tok = 'abcdefghijklmnopQRSTUVWX' + '12345'
+    const value = 'QwErTyUiOpAsDfGhJkLzXcVbNm'
+    const shapes = [
+      { full: 'x'.repeat(66_000) + ',Authorization:Bearer ' + tok + ' next\n', from: ',Authorization:', secret: tok },
+      { full: '{"blob":"' + 'x'.repeat(66_000) + '","api_key":"' + value + '","z":1}\n', from: ',"api_key"', secret: value },
+    ]
+    for (const { full, from, secret } of shapes) {
+      const want = redactFailure(full)
+      expect(want).not.toContain(secret)
+      const start = full.indexOf(from)
+      const stop = full.indexOf(secret) + secret.length + 1
+      for (let k = start; k <= stop; k++) {
+        const said = await diag([full.slice(0, k), full.slice(k)])
+        expect(said.join('') === want, `${from} split at ${k - start}`).toBe(true)
+      }
+    }
+  })
+
+  it('a space inside a credential is not taken for the cut: the cut keeps the redaction of the text around it', async () => {
+    const line = 'x'.repeat(50_000) + ' "password": "' + 'word '.repeat(10) + 'end"' + 'y'.repeat(30_000)
+    const said = await diag([line])
+    expect(said.length).toBe(2)
+    expect(said.join('')).not.toContain('word word')
+    expect(said.join('') === redactFailure(line)).toBe(true)
+  })
+
+  it('a bound that falls inside a credential steps back until the cut keeps the redaction', async () => {
+    // No whitespace; the line is cut at most LINE_TAIL (20 KiB) before its
+    // end, which here is 2500 characters into a 3000-character value.
+    const line = 'x'.repeat(50_000) + '"password":"' + 'p'.repeat(3000) + '"' + 'y'.repeat(19_979)
+    const said = await diag([line])
+    expect(said.length).toBe(2)
+    expect(said.join('')).not.toContain('p'.repeat(100))
+    expect(said.join('') === redactFailure(line)).toBe(true)
+  })
+
+  it('the cut never falls between the two halves of a surrogate pair', async () => {
+    const line = String.fromCodePoint(0x1f600).repeat(40_000) + 'y'
+    const said = await diag([line])
+    expect(said.length).toBe(2)
+    expect(said.join('') === line).toBe(true)
+    for (const s of said) {
+      expect(/[\uD800-\uDBFF]$/.test(s), 'ends in a high surrogate').toBe(false)
+      expect(/^[\uDC00-\uDFFF]/.test(s), 'starts with a low surrogate').toBe(false)
+    }
+  })
+
+  it('any chunking of a mixed stream (whole lines, held fields, long lines with credentials) comes out as one read of it would: nothing lost, repeated or moved', async () => {
+    const tok = 'abcdefghijklmnopQRSTUVWX' + '12345'
+    const value = 'QwErTyUiOpAsDfGhJkLzXcVbNm'
+    const corpus = ['warning: a', 'the token:', '  next-value-here', 'ok "password" :', '"pw-on-next"', 'plain line', 'x'.repeat(3000), 'secret=', 'later',
+      'x'.repeat(70_000) + ',Authorization:Bearer ' + tok + ' and {"api_key":"' + value + '"}',
+      '"password": "my long pass phrase" ' + 'y'.repeat(70_000), 'done'].join('\n') + '\n'
+    const want = redactFailure(corpus)
+    expect(want).not.toContain(tok)
+    let seed = 11
+    const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed }
+    // Reads of 1 to 40 characters a few times, of up to 6000 the rest.
+    for (let k = 0; k < 40; k++) {
+      const parts: string[] = []
+      for (let i = 0; i < corpus.length;) { const n = 1 + (rnd() % (k < 3 ? 40 : 6000)); parts.push(corpus.slice(i, i + n)); i += n }
+      expect((await diag(parts)).join('') === want, `chunking ${k}`).toBe(true)
+    }
+  })
+
   // [host] PR 4 ADR-009 round 1 (L4-4): the CLI-operation allowlist drops
   // RUST_LOG (verbose logs can print secrets); the agent run drops it too.
   it('RUST_LOG never reaches the run: any spelling on Windows, the exact name elsewhere', async () => {
