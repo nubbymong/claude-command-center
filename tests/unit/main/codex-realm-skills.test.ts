@@ -32,7 +32,7 @@ vi.mock('../../../src/main/account-profiles', async (importOriginal) => {
   }
 })
 
-const { stageCodexRealmSkills, removeCodexRealmSkills, STAGED_SKILL_MARK, STAGED_SKILL_MARK_BYTES } = await import('../../../src/main/canvas/codex-realm-skills')
+const { stageCodexRealmSkills, removeCodexRealmSkills, STAGED_SKILL_MARK, STAGED_SKILL_MARK_BYTES, STAGING_PREFIX } = await import('../../../src/main/canvas/codex-realm-skills')
 // The skills folder comes from the Codex package's path rule (realm-paths.ts),
 // which the launch reaches through the registered provider (stagedSkillsDir).
 const { codexManagedRealmSkillsDir } = await import('../../../src/main/providers/codex/realm-paths')
@@ -201,5 +201,69 @@ describe('removal when the built-in tools are off', () => {
 
   it('never throws, with no realm at all', () => {
     expect(() => remove(path.join(res, 'codex-realms', 'realm-ffffffffffffffff'), res)).not.toThrow()
+  })
+})
+
+describe('a staging folder left behind (ADR-009 round 2)', () => {
+  // Each skill folder is built in a `.ccc-staging-*` folder inside skills/
+  // and renamed into place; a crash can leave one behind. Every stage and
+  // every removal sweeps those that are the app's, whole, and leaves alone
+  // any that is not.
+  const skills = (): string => path.join(home, 'skills')
+  const staging = (suffix: string): string => path.join(skills(), STAGING_PREFIX + suffix)
+  const leftovers = (): string[] => fs.readdirSync(skills()).filter((n) => n.startsWith(STAGING_PREFIX)).sort()
+  const UUID = '0123abcd-4567-89ef-0123-456789abcdef'
+  /** What a crash can leave: a built skill folder, whole or half-written, or an empty staging folder. */
+  function crashLeftovers(): void {
+    const whole = path.join(staging('Ab12Cd'), SKILLS[0].name)
+    fs.mkdirSync(whole, { recursive: true })
+    fs.writeFileSync(path.join(whole, STAGED_SKILL_MARK), STAGED_SKILL_MARK_BYTES)
+    fs.writeFileSync(path.join(whole, 'SKILL.md'), SKILLS[0].bytes)
+    const half = path.join(staging('Ef34Gh'), SKILLS[1].name)
+    fs.mkdirSync(half, { recursive: true })
+    fs.writeFileSync(path.join(half, `${STAGED_SKILL_MARK}.${UUID}.tmp`), 'partial')
+    const markOnly = path.join(staging('Ij56Kl'), SKILLS[2].name)
+    fs.mkdirSync(markOnly, { recursive: true })
+    fs.writeFileSync(path.join(markOnly, STAGED_SKILL_MARK), STAGED_SKILL_MARK_BYTES)
+    fs.writeFileSync(path.join(markOnly, `SKILL.md.${UUID}.tmp`), 'partial')
+    fs.mkdirSync(staging('Mn78Op'))
+  }
+
+  it('[host] the next stage sweeps the app\'s leftovers and stages as before', () => {
+    fs.mkdirSync(skills(), { recursive: true })
+    crashLeftovers()
+    expect(leftovers()).toHaveLength(4)
+    expect(stage(home, res)).toEqual({ staged: true })
+    expect(leftovers()).toEqual([])
+    for (const skill of SKILLS) expect(fs.readFileSync(path.join(skillDir(skill.name), 'SKILL.md')).equals(skill.bytes)).toBe(true)
+  })
+
+  it('[host] the tools-off removal sweeps them too', () => {
+    fs.mkdirSync(skills(), { recursive: true })
+    crashLeftovers()
+    remove(home, res)
+    expect(leftovers()).toEqual([])
+  })
+
+  it.each([
+    ['a file the app never writes there', (dir: string) => { fs.mkdirSync(path.join(dir, SKILLS[0].name), { recursive: true }); fs.writeFileSync(path.join(dir, SKILLS[0].name, 'notes.md'), 'theirs') }],
+    ['a folder not named after a skill', (dir: string) => { fs.mkdirSync(path.join(dir, 'my-skill'), { recursive: true }) }],
+    ['a mark that is not exactly the app\'s', (dir: string) => { fs.mkdirSync(path.join(dir, SKILLS[0].name), { recursive: true }); fs.writeFileSync(path.join(dir, SKILLS[0].name, STAGED_SKILL_MARK), 'not the app\'s mark') }],
+    ['a file at its top', (dir: string) => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'SKILL.md'), 'theirs') }],
+  ])('[host] one that is not the app\'s (%s) is left alone, at stage and at removal', (_name, plant) => {
+    const theirs = staging('Zz99Zz')
+    plant(theirs)
+    const before = fs.readdirSync(theirs, { recursive: true }).map(String).sort()
+    expect(stage(home, res)).toEqual({ staged: true })
+    remove(home, res)
+    expect(fs.readdirSync(theirs, { recursive: true }).map(String).sort()).toEqual(before)
+  })
+
+  it('[host] a plain file with the staging name is left alone', () => {
+    fs.mkdirSync(skills(), { recursive: true })
+    fs.writeFileSync(staging('File00'), 'a file')
+    expect(stage(home, res)).toEqual({ staged: true })
+    remove(home, res)
+    expect(fs.readFileSync(staging('File00'), 'utf8')).toBe('a file')
   })
 })

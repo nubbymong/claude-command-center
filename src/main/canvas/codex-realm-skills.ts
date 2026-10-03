@@ -154,6 +154,50 @@ function removeStaging(io: RealmSkillsIo, staging: string, id: string | null): v
   }
 }
 
+/** A temporary file the app's atomic write leaves while writing one of the
+ *  two files (atomic-write.ts: `<file>.<uuid>.tmp`). */
+const HALF_WRITTEN_RE = /^(\.ai-code-conductor-skill|SKILL\.md)\.[0-9a-f-]{36}\.tmp$/
+
+/** A staging folder a crash left is the app's: a real folder holding nothing,
+ *  or only folders named after the app's skills, each one the app's (its exact
+ *  mark), or holding nothing but the app's half-written files. */
+function stagingIsOurs(io: RealmSkillsIo, staging: string): boolean {
+  const st = io.lstat(staging)
+  if (!st || !st.dir || st.link) return false
+  const skills = new Set(canvasSkillFiles().map((s) => s.name))
+  let names: string[]
+  try { names = io.readdir(staging) } catch { return false }
+  return names.every((name) => {
+    if (!skills.has(name)) return false
+    const built = path.join(staging, name)
+    const b = io.lstat(built)
+    if (!b || !b.dir || b.link) return false
+    if (isOurs(io, built)) return true
+    try { return io.readdir(built).every((n) => HALF_WRITTEN_RE.test(n)) } catch { return false }
+  })
+}
+
+/** ADR-009 round 2: the staging folders a crash left in `skills/` go at each
+ *  stage and each removal: one that is the app's, whole; a link at that name,
+ *  as the link itself (never followed); anything else is left alone. */
+function sweepStaging(io: RealmSkillsIo, skillsDir: string): void {
+  let names: string[]
+  try { names = io.readdir(skillsDir) } catch { return }
+  for (const name of names) {
+    if (!name.startsWith(STAGING_PREFIX)) continue
+    const p = path.join(skillsDir, name)
+    try {
+      const st = io.lstat(p)
+      if (!st) continue
+      if (st.link) io.removeEntry(p)
+      else if (stagingIsOurs(io, p)) io.removeTree(p)
+      else logInfo('[codex-skills] a staging folder in a managed Codex account is not the app\'s; left alone')
+    } catch (err) {
+      logWarn(`[codex-skills] a staging folder in a managed Codex account could not be removed: ${(err as Error)?.message ?? err}`)
+    }
+  }
+}
+
 /**
  * Stage the skills into a managed realm before a launch, while the built-in
  * tools are on: all of them, as Claude's --plugin-dir carries all of them
@@ -180,6 +224,7 @@ export function stageCodexRealmSkills(home: string, managedSkillsDir: string | n
     io.mkdirChecked(skillsDir)
     const skillsId = folderId(io, skillsDir)
     if (!skillsId) return { staged: false, reason: 'link' }
+    sweepStaging(io, skillsDir)
     for (const skill of canvasSkillFiles()) {
       const dir = path.join(skillsDir, skill.name)
       let staging: string | null = null
@@ -251,6 +296,7 @@ export function removeCodexRealmSkills(home: string, managedSkillsDir: string | 
   try {
     const checked = realmChecked(io, home, managedSkillsDir)
     if (!('skillsDir' in checked)) return
+    sweepStaging(io, checked.skillsDir)
     for (const skill of canvasSkillFiles()) {
       const dir = path.join(checked.skillsDir, skill.name)
       try {

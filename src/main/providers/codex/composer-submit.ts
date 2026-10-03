@@ -161,8 +161,9 @@ const notDelivered = (reason: SubmitNotDeliveredReason): SubmitTextResult => ({ 
  *    points, within SUBMIT_FOLDED_CONFIRM_MS. A prompt appearing meanwhile
  *    stops it with no further key.
  * 6. Neither mode confirmed: it takes the text back with Ctrl+U, only after
- *    the ingestion window, only in the same run and never while a prompt is
- *    up, waits for the composer to read ready and empty, and reports not
+ *    the ingestion window, only in the same run, only on a screen it can read
+ *    and never while a prompt is up (an unreadable screen: nothing taken back,
+ *    `not-drawn`), waits for the composer to read ready and empty, and reports not
  *    delivered (`too-tall` when the composer had grown to its full height,
  *    else `not-drawn`). Whether Ctrl+U clears Codex's rare held-text state
  *    (PB9, not reproduced) is unknown; the phase record carries it.
@@ -244,7 +245,14 @@ export async function submitToCodexComposer(text: string, deps: ComposerSubmitDe
   const ingested = wroteAt + submitIngestionWindowMs(codePoints)
   if (deps.now() < ingested) await deps.sleep(ingested - deps.now())
   if (!deps.live()) return notDelivered('session-gone')
-  if (readyState(await read(), models) === 'blocked') {
+  const before = await read()
+  // ADR-009 round 2: no reading is no proof that no prompt is up; nothing is
+  // taken back, and the text is reported not drawn.
+  if (before === null) {
+    log('the text was not confirmed and the screen cannot be read; nothing taken back')
+    return notDelivered('not-drawn')
+  }
+  if (readyState(before, models) === 'blocked') {
     log('the text was not confirmed and a prompt is up; nothing taken back')
     return notDelivered('prompt-on-screen')
   }
