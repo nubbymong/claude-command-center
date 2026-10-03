@@ -27,7 +27,9 @@
         "tests/wp1/mode-matrix.test.ts",
         "tests/wp1/launch-handoff.test.ts",
         "tests/wp1/tokenomics-realm-discovery.test.ts",
-        "tests/e2e/codex-real-launch.spec.ts"
+        "tests/e2e/codex-real-launch.spec.ts",
+        "tests/e2e/onboarding-provider-select.spec.ts",
+        "tests/e2e/codex-session-creation.spec.ts"
       ],
       "evidence": [
         "docs/wp1/evidence/real-cli-matrix.md"
