@@ -15,9 +15,9 @@
  *  4. `help:workspace` FAILS CLOSED to null. The old code returned silently
  *     there, so the button did nothing at all.
  *
- * And (WP2 commit 6e review fix) Ask is a Claude session: with Claude Code
- * switched off it starts nothing, revives nothing and types into nothing,
- * whichever entry point asked.
+ * And (WP2 commit 6e review fix; P4.3) Ask runs on the assistant that is on:
+ * with neither on it starts nothing, revives nothing and types into nothing,
+ * whichever entry point asked; with both on, on the Settings choice.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
@@ -39,9 +39,15 @@ import {
   askSessionIsLive,
   useAskErrorStore,
   ASK_LABEL,
+  ASK_CODEX_PRESET,
   _resetAskLaunchForTest,
+  useAskNoticeStore,
+  showAskNotice,
+  askNoticeText,
+  parseAskNotice,
+  _resetAskNoticesForTest,
 } from '../../../src/renderer/lib/askConductor'
-import { ASK_CLAUDE_OFF, isAskConductorBlocked } from '../../../src/renderer/lib/askConductorGate'
+import { ASK_CLAUDE_OFF, isAskConductorBlocked, askConductorProviderNow, askConductorChoiceShown } from '../../../src/renderer/lib/askConductorGate'
 import { useSettingsStore, DEFAULT_SETTINGS } from '../../../src/renderer/stores/settingsStore'
 
 const ptyWrite = vi.fn()
@@ -268,7 +274,7 @@ describe('launchAskConductor', () => {
   })
 })
 
-describe('launchAskConductor with Claude Code switched off', () => {
+describe('launchAskConductor with neither assistant on (Claude Code off, Codex not on)', () => {
   const workspace = vi.fn(() => Promise.resolve('C:/res/help'))
   beforeEach(() => {
     useSessionStore.setState({ sessions: [], activeSessionId: null, isRestoring: false })
@@ -283,10 +289,13 @@ describe('launchAskConductor with Claude Code switched off', () => {
     useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })
   })
 
-  it('the gate reads the saved switch: off blocks, on or never set does not', () => {
+  it('the gate opens for either assistant (P4.3): only neither on blocks', () => {
     expect(isAskConductorBlocked()).toBe(true)
     expect(isAskConductorBlocked({ claudeEnabled: false })).toBe(true)
+    expect(isAskConductorBlocked({ claudeEnabled: false, codexEnabled: false })).toBe(true)
+    expect(isAskConductorBlocked({ claudeEnabled: false, codexEnabled: true })).toBe(false)
     expect(isAskConductorBlocked({ claudeEnabled: true })).toBe(false)
+    expect(isAskConductorBlocked({ claudeEnabled: true, codexEnabled: true })).toBe(false)
     expect(isAskConductorBlocked({})).toBe(false)
   })
 
@@ -296,7 +305,7 @@ describe('launchAskConductor with Claude Code switched off', () => {
     expect(useSessionStore.getState().sessions).toEqual([])
     expect(workspace).not.toHaveBeenCalled()
     expect(useAskErrorStore.getState().error).toBe(ASK_CLAUDE_OFF)
-    expect(ASK_CLAUDE_OFF).toBe('Ask Conductor runs on Claude Code, which is off. Turn it on in Settings, Accounts.')
+    expect(ASK_CLAUDE_OFF).toBe('Ask Conductor runs on Claude Code or Codex, and both are off. Turn one on in Settings, Accounts.')
   })
 
   it('neither types into a live Ask session nor revives an exited one', async () => {
@@ -319,6 +328,161 @@ describe('launchAskConductor with Claude Code switched off', () => {
     expect(id).toBeTruthy()
     expect(useSessionStore.getState().sessions).toHaveLength(1)
     expect(useAskErrorStore.getState().error).toBeNull()
+  })
+
+  it('switches flipped off while the workspace stages: nothing starts, and it says why', async () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })
+    let release: (d: string) => void = () => {}
+    ;(globalThis as any).window.electronAPI.help.workspace = () => new Promise<string>((res) => { release = res })
+    const p = launchAskConductor('q')
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, claudeEnabled: false } })
+    release('C:/res/help')
+    expect(await p).toBe('')
+    expect(useSessionStore.getState().sessions).toEqual([])
+    expect(useAskErrorStore.getState().error).toBe(ASK_CLAUDE_OFF)
+  })
+})
+
+// [host] WP2 PR 4, P4.3: Ask runs on the assistant that is on; with both on,
+// on the Settings choice (OD27 M4, option B), Claude Code by default.
+describe('launchAskConductor picks the assistant (P4.3)', () => {
+  const workspace = vi.fn(() => Promise.resolve('C:/res/help'))
+  const CODEX_ONLY = { claudeEnabled: false, codexEnabled: true, codexAnswered: true }
+  const BOTH = { claudeEnabled: true, codexEnabled: true, codexAnswered: true }
+  beforeEach(() => {
+    useSessionStore.setState({ sessions: [], activeSessionId: null, isRestoring: false })
+    useAskErrorStore.setState({ error: null })
+    ptyWrite.mockClear()
+    workspace.mockClear()
+    _resetAskLaunchForTest()
+    ;(globalThis as any).window.electronAPI = { help: { workspace }, pty: { write: ptyWrite } }
+  })
+  afterEach(() => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })
+  })
+  const set = (s: Record<string, unknown>) => useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, ...s } as never })
+  const only = () => useSessionStore.getState().sessions[0]
+
+  it('Codex only: a Codex session, on the preset matching Claude\'s Ask launch, in the rebuilt help folder', async () => {
+    set(CODEX_ONLY)
+    const id = await launchAskConductor('how do I add an account?')
+    expect(id).toBeTruthy()
+    expect(workspace).toHaveBeenCalledTimes(1)
+    expect(only()).toMatchObject({ kind: 'ask', provider: 'codex', sessionType: 'local', workingDirectory: 'C:/res/help', askPrompt: 'how do I add an account?' })
+    expect(only().codexOptions).toEqual({ permissionsPreset: ASK_CODEX_PRESET })
+    expect(ASK_CODEX_PRESET).toBe('standard')
+    expect(only().configId).toBeUndefined()
+  })
+
+  it('Claude Code only, and both on with no choice saved: Claude Code, with no Codex options', async () => {
+    for (const s of [{}, BOTH]) {
+      useSessionStore.setState({ sessions: [], activeSessionId: null })
+      set(s)
+      await launchAskConductor()
+      expect(only().provider, JSON.stringify(s)).toBe('claude')
+      expect(only().codexOptions, JSON.stringify(s)).toBeUndefined()
+    }
+  })
+
+  it('both on, Codex chosen: Codex', async () => {
+    set({ ...BOTH, askConductorProvider: 'codex' })
+    await launchAskConductor()
+    expect(only().provider).toBe('codex')
+  })
+
+  it('a saved Codex choice with Codex then switched off: Claude Code, and the choice is not rewritten', async () => {
+    set({ ...BOTH, askConductorProvider: 'codex', codexEnabled: false })
+    await launchAskConductor()
+    expect(only().provider).toBe('claude')
+    expect(useSettingsStore.getState().settings.askConductorProvider).toBe('codex')
+  })
+
+  it('anything but exactly "codex" saved reads as Claude Code', async () => {
+    for (const v of ['Codex', 'CODEX', 'openai', 1, null]) {
+      useSessionStore.setState({ sessions: [], activeSessionId: null })
+      set({ ...BOTH, askConductorProvider: v })
+      await launchAskConductor()
+      expect(only().provider, String(v)).toBe('claude')
+    }
+  })
+
+  it('an open tab keeps its assistant: the question goes to it, whatever the choice says now', async () => {
+    set({ ...BOTH, askConductorProvider: 'codex' })
+    useSessionStore.setState({ sessions: [{ id: 'ask', kind: 'ask', label: ASK_LABEL, workingDirectory: 'C:/res/help', model: '', color: '', status: 'idle', createdAt: 1, sessionType: 'local', provider: 'claude' } as never] })
+    expect(await launchAskConductor('q')).toBe('ask')
+    expect(ptyWrite).toHaveBeenCalledWith('ask', 'q\r')
+    expect(only().provider).toBe('claude')
+    // A live tab is not a start: the folder is not rebuilt under it.
+    expect(workspace).not.toHaveBeenCalled()
+  })
+
+  it('an open tab on an assistant switched off since: nothing is typed into it, and the dock says why; going to it still works', async () => {
+    set(CODEX_ONLY)
+    useSessionStore.setState({ sessions: [{ id: 'ask', kind: 'ask', label: ASK_LABEL, workingDirectory: 'C:/res/help', model: '', color: '', status: 'idle', createdAt: 1, sessionType: 'local', provider: 'claude' } as never], activeSessionId: null })
+    expect(await launchAskConductor('typed?')).toBe('')
+    expect(ptyWrite).not.toHaveBeenCalled()
+    expect(useAskErrorStore.getState().error).toBe('The open Ask Conductor tab runs on Claude Code, which is off. Turn it on in Settings, Accounts, or close the tab and ask again.')
+    expect(useSessionStore.getState().activeSessionId).toBeNull()
+    // With no question, the pill still takes the user to the tab.
+    expect(await launchAskConductor()).toBe('ask')
+    expect(useSessionStore.getState().activeSessionId).toBe('ask')
+    expect(useAskErrorStore.getState().error).toBeNull()
+  })
+
+  it('the gate helpers: the provider now, and whether the choice is shown', () => {
+    expect(askConductorProviderNow({})).toBe('claude')
+    expect(askConductorProviderNow(CODEX_ONLY)).toBe('codex')
+    expect(askConductorProviderNow(BOTH)).toBe('claude')
+    expect(askConductorProviderNow({ ...BOTH, askConductorProvider: 'codex' })).toBe('codex')
+    expect(askConductorProviderNow({ claudeEnabled: false })).toBeNull()
+    expect(askConductorChoiceShown(BOTH)).toBe(true)
+    expect(askConductorChoiceShown({})).toBe(false)
+    expect(askConductorChoiceShown(CODEX_ONLY)).toBe(false)
+    expect(askConductorChoiceShown({ claudeEnabled: true, codexEnabled: false })).toBe(false)
+  })
+})
+
+// [host] P4.3: the question a not-delivered notice is about is kept, in memory.
+describe('the notice state (P4.3)', () => {
+  beforeEach(() => {
+    _resetAskNoticesForTest()
+    _resetAskLaunchForTest()
+    useSessionStore.setState({ sessions: [], activeSessionId: null, isRestoring: false })
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })
+    ;(globalThis as any).window.electronAPI = { help: { workspace: () => Promise.resolve('C:/res/help') }, pty: { write: ptyWrite } }
+  })
+
+  it('a first launch keeps its question against the new session; a new question replaces it and clears the last notice', async () => {
+    const id = await launchAskConductor('first?')
+    expect(useAskNoticeStore.getState().kept).toEqual({ sessionId: id, question: 'first?' })
+    showAskNotice({ sessionId: id, kind: 'not-delivered', reason: 'busy-timeout' })
+    expect(useAskNoticeStore.getState().notice).toEqual({ sessionId: id, kind: 'not-delivered', reason: 'busy-timeout' })
+    await launchAskConductor('second?')
+    expect(useAskNoticeStore.getState().kept).toEqual({ sessionId: id, question: 'second?' })
+    expect(useAskNoticeStore.getState().notice).toBeNull()
+  })
+
+  it('no question, nothing kept', async () => {
+    await launchAskConductor()
+    expect(useAskNoticeStore.getState().kept).toBeNull()
+  })
+
+  it('every reason has its own sentence', () => {
+    const reasons = ['busy-timeout', 'prompt-on-screen', 'too-tall', 'not-drawn', 'refused-text', 'session-gone'] as const
+    const lines = reasons.map((reason) => askNoticeText({ sessionId: 's', kind: 'not-delivered', reason }))
+    for (const l of lines) expect(l).toMatch(/^Your question was not sent: \S/)
+    expect(new Set(lines).size).toBe(reasons.length)
+    for (const l of lines) expect(l).toMatch(/^[\x20-\x7e]*$/)
+    expect(askNoticeText({ sessionId: 's', kind: 'removed', count: 1 })).toBe('Codex cannot take emoji or some rare characters typed into its prompt; 1 removed from your question.')
+  })
+
+  it('parseAskNotice takes only what main sends', () => {
+    expect(parseAskNotice({ sessionId: 's', kind: 'removed', count: 3 })).toEqual({ sessionId: 's', kind: 'removed', count: 3 })
+    expect(parseAskNotice({ sessionId: 's', kind: 'not-delivered', reason: 'too-tall', extra: 1 })).toEqual({ sessionId: 's', kind: 'not-delivered', reason: 'too-tall' })
+    for (const bad of [undefined, null, 1, 'x', {}, { sessionId: 's', kind: 'removed' }, { sessionId: 's', kind: 'removed', count: -1 }, { sessionId: 's', kind: 'removed', count: Number.NaN },
+      { sessionId: 's', kind: 'not-delivered', reason: '__proto__' }, { sessionId: 's', kind: 'not-delivered', reason: 'hasOwnProperty' }, { sessionId: 1, kind: 'removed', count: 1 }]) {
+      expect(parseAskNotice(bad), JSON.stringify(bad)).toBeNull()
+    }
   })
 })
 

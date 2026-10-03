@@ -13,7 +13,8 @@
  *   - the launch action itself refuses (buildLaunchSession, useLaunchConfig);
  *   - the launch surfaces show it: a config row, the empty-state cards and
  *     Quick Start (a terminal-only pin still starts);
- *   - the Feature Guide's Ask card is disabled and says why;
+ *   - the Feature Guide's Ask card is disabled and says why while neither
+ *     assistant is on, and live with Codex alone (P4.3: Ask runs on Codex);
  *   - the New session dialog: the Claude choice is disabled with the reason,
  *     and a new config starts on the provider that is on.
  */
@@ -262,15 +263,22 @@ describe('the launch surfaces show it', () => {
 })
 
 describe('the Feature Guide Ask card', () => {
-  const ASK_OFF = 'Ask Conductor runs on Claude Code, which is off. Turn it on in Settings, Accounts.'
+  const ASK_OFF = 'Ask Conductor runs on Claude Code or Codex, and both are off. Turn one on in Settings, Accounts.'
   const ask = () => container.querySelector('[data-ux-id="ask-card-button"]') as HTMLButtonElement
 
-  it('with Claude Code off: Ask is disabled and the card says why', async () => {
-    setProviders({ claudeEnabled: false, codexEnabled: true })
+  it('with neither assistant on: Ask is disabled and the card says why', async () => {
+    setProviders({ claudeEnabled: false, codexEnabled: false })
     await act(async () => { root.render(<FeatureGuidePage onNavigateToSessions={() => {}} onStartTour={() => {}} />) })
     expect(ask().disabled).toBe(true)
     expect(ask().title).toBe(ASK_OFF)
     expect(container.querySelector('[data-ux-id="ask-card-note"]')!.textContent).toBe(ASK_OFF)
+  })
+
+  it('P4.3: with Claude Code off and Codex on, Ask is live (it runs on Codex)', async () => {
+    setProviders({ claudeEnabled: false, codexEnabled: true })
+    await act(async () => { root.render(<FeatureGuidePage onNavigateToSessions={() => {}} onStartTour={() => {}} />) })
+    expect(ask().disabled).toBe(false)
+    expect(container.querySelector('[data-ux-id="ask-card-note"]')!.textContent).toContain('Opens the Ask Conductor session')
   })
 
   it('with Claude Code on: Ask is live and the card explains what it opens', async () => {

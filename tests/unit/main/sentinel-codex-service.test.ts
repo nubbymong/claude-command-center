@@ -479,6 +479,22 @@ describe("the analysis of a Codex update, on the provider that is on (row 42; OD
     expect(s.getSentinelState()!.snapshot().lastAnalysisError).toBe('Codex is off. Turn it on in Settings, Accounts.')
   })
 
+  // [host] WP2 PR 4, P4.3: Sentinel follows the Settings row "Ask Conductor
+  // runs on", and a provider switched off never rewrites the saved choice.
+  it('P4.3: the row says Codex but Codex is switched off: Claude Code\'s update is analysed on Claude Code, no Codex run, and the setting is left as it was', async () => {
+    settings.value = { askConductorProvider: 'codex' }
+    svc.pref.codex = 'off'
+    fetchChangelog.mockImplementation(async () => '## 2.1.300\n- claude change')
+    const s = await sentinel({ lastSeenCcVersion: '2.1.200', lastSeenCodexVersion: '0.153.4' })
+    await s.sentinelStartupCheck()
+    fetchChangelog.mockImplementation(async () => null)
+    expect(claudeAnalyses()).toHaveLength(1)
+    expect(String(claudeAnalyses()[0][2])).toMatch(/--- BEGIN CHANGELOG [0-9a-f]{16} ---/)
+    expect(review.runs).toHaveLength(0)
+    expect(svc.prepares).toEqual([])
+    expect(settings.value).toEqual({ askConductorProvider: 'codex' })
+  })
+
   it('both updated at once: each is analysed, Claude Code first, and each version is recorded', async () => {
     fetchChangelog.mockImplementation(async () => '## 2.1.300\n- claude change')
     const s = await sentinel({ lastSeenCcVersion: '2.1.200', lastSeenCodexVersion: '0.153.4' })

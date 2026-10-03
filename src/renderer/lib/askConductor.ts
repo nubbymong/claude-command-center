@@ -4,16 +4,23 @@ import { useSessionStore, type Session } from '../stores/sessionStore'
 import { useAccountGateStore } from '../stores/accountGateStore'
 import { clearSpawned } from '../ptyTracker'
 import { writeSessionInput } from '../components/terminal/tmuxWheelScroll'
-import { ASK_CLAUDE_OFF, isAskConductorBlocked } from './askConductorGate'
+import { ASK_CLAUDE_OFF, askConductorProviderNow, askProviderIsOn, askTabProviderOff, isAskConductorBlocked } from './askConductorGate'
+import type { AskConductorProvider } from '../../shared/ask-conductor-provider'
+import type { AskConductorNotice, CodexOptions, SubmitNotDeliveredReason } from '../../shared/types'
 
 /**
  * Ask Conductor — the in-app help session.
  *
- * It is a REAL interactive Claude session, not a modal: a modal has nowhere to
+ * It is a REAL interactive session, not a modal: a modal has nowhere to
  * host the TUI, so it would have to shell out to `claude -p`, which is one-shot
  * with no resume, no history and no account identity. A bare positional prompt
  * (`claude "…"`) starts the ordinary interactive session with that prompt
  * already submitted, so resume/history/account switching all come for free.
+ *
+ * It runs on the assistant that is on; with Claude Code and Codex both on, on
+ * the one Settings, General, "Ask Conductor runs on" names, Claude Code by
+ * default (askConductorGate.ts; WP2 PR 4, P4.3). An open tab keeps the
+ * assistant it started on; a revive of a closed one reads the choice again.
  *
  * What separates it from a project session is presentational and structural:
  *  - it carries `kind: 'ask'`, so the sidebar docks it at the bottom instead of
@@ -107,13 +114,122 @@ export const useAskErrorStore = create<AskErrorState>((set) => ({
 const WORKSPACE_FAILED =
   'Could not stage the help workspace. Check that the resources directory is writable.'
 
+/** The permission preset a Codex Ask session starts on: the one matching
+ *  Claude's Ask launch (parity, P4.3). Claude's Ask passes no permission mode,
+ *  so it starts on the mode a new Claude config gets; a new Codex config
+ *  starts on Standard (the session dialog's default, "Recommended"). Nothing
+ *  relies on it to keep the help folder read-only: that folder is rebuilt
+ *  before every Ask launch instead (help-workspace.ts). */
+export const ASK_CODEX_PRESET: CodexOptions['permissionsPreset'] = 'standard'
+
+/** The provider fields of an Ask session on `provider`. A Codex session needs
+ *  its `codexOptions` (main refuses a Codex spawn without them). */
+function askProviderFields(provider: AskConductorProvider): Pick<Session, 'provider' | 'codexOptions'> {
+  return provider === 'codex'
+    ? { provider: 'codex', codexOptions: { permissionsPreset: ASK_CODEX_PRESET } }
+    : { provider: 'claude', codexOptions: undefined }
+}
+
+// -- The notice lines (P4.3) --------------------------------------------------
+
+/**
+ * Ask Conductor's one-line notices, drawn in the dock (AskConductorDock), and
+ * the question they are about.
+ *
+ * Main raises them (askConductor:notice) when it hands a question to Codex's
+ * prompt: `removed`, the characters taken out first because the prompt would
+ * have dropped them (question 6, default A); `not-delivered`, the question was
+ * not sent, and why. The dock then KEEPS the question -- it is held here, the
+ * last one handed to the Ask session, in memory only and never saved -- so the
+ * user can send it again or copy it instead of losing it.
+ */
+interface AskNoticeState {
+  /** The last question handed to an Ask session. */
+  kept: { sessionId: string; question: string } | null
+  /** The notice on show, or none. */
+  notice: AskConductorNotice | null
+  keep: (sessionId: string, question: string) => void
+  show: (notice: AskConductorNotice) => void
+  dismiss: () => void
+}
+export const useAskNoticeStore = create<AskNoticeState>((set) => ({
+  kept: null,
+  notice: null,
+  // A new question replaces the last one, and what was said about the last
+  // one no longer applies to it.
+  keep: (sessionId, question) => set({ kept: { sessionId, question }, notice: null }),
+  show: (notice) => set({ notice }),
+  dismiss: () => set({ notice: null }),
+}))
+
+const NOT_DELIVERED: Record<SubmitNotDeliveredReason, string> = {
+  'busy-timeout': 'Codex was still working, and its prompt did not come free in time.',
+  'prompt-on-screen': 'Codex was showing a question of its own (folder trust, sandbox setup or an approval). Answer it in the Ask tab first.',
+  'too-tall': 'it is too long to check in Codex\'s prompt at this pane size. Make the pane taller, or the question shorter.',
+  'not-drawn': 'it never appeared in Codex\'s prompt.',
+  'refused-text': 'it holds characters Codex\'s prompt cannot take.',
+  'session-gone': 'the Ask session closed before it could be typed.',
+}
+
+function isNotDeliveredReason(v: unknown): v is SubmitNotDeliveredReason {
+  return typeof v === 'string' && Object.hasOwn(NOT_DELIVERED, v)
+}
+
+/** A notice as main sends it, checked: anything else is not drawn. */
+export function parseAskNotice(raw: unknown): AskConductorNotice | null {
+  if (!raw || typeof raw !== 'object') return null
+  const n = raw as Record<string, unknown>
+  if (typeof n.sessionId !== 'string' || !n.sessionId) return null
+  if (n.kind === 'removed' && typeof n.count === 'number' && Number.isInteger(n.count) && n.count > 0) {
+    return { sessionId: n.sessionId, kind: 'removed', count: n.count }
+  }
+  if (n.kind === 'not-delivered' && isNotDeliveredReason(n.reason)) {
+    return { sessionId: n.sessionId, kind: 'not-delivered', reason: n.reason }
+  }
+  return null
+}
+
+/** The line the dock shows for a notice. */
+export function askNoticeText(notice: AskConductorNotice): string {
+  if (notice.kind === 'removed') {
+    return `Codex cannot take emoji or some rare characters typed into its prompt; ${notice.count} removed from your question.`
+  }
+  return `Your question was not sent: ${NOT_DELIVERED[notice.reason]}`
+}
+
+/** Raise a notice for the dock (main's, through the listener below, or a
+ *  hand-off's own answer). */
+export function showAskNotice(raw: unknown): void {
+  const notice = parseAskNotice(raw)
+  if (notice) useAskNoticeStore.getState().show(notice)
+}
+
+let stopNotices: (() => void) | null = null
+
+/** Listen for main's notices, once for the renderer's life. Every Ask launch
+ *  starts it (a notice only ever follows a question handed to Ask), and so
+ *  does the dock. */
+export function listenForAskNotices(): void {
+  if (stopNotices) return
+  const subscribe = window.electronAPI?.askConductor?.onNotice
+  if (typeof subscribe !== 'function') return
+  stopNotices = subscribe((notice) => showAskNotice(notice))
+}
+
+/** Stop listening and forget the notice state. Tests only. */
+export function _resetAskNoticesForTest(): void {
+  stopNotices?.()
+  stopNotices = null
+  useAskNoticeStore.setState({ kept: null, notice: null })
+}
+
 /**
  * Open Ask Conductor, optionally with an opening question.
  *
  * If an Ask session is already open it is focused rather than duplicated — the
  * docked pill is a single affordance, not a session factory — and any question
  * is typed into that running session instead. Returns the session id, or '' if
- * the help workspace could not be staged or Claude Code is off (the reason
+ * the help workspace could not be staged or no assistant is on (the reason
  * lands in useAskErrorStore).
  */
 /**
@@ -132,11 +248,12 @@ const WORKSPACE_FAILED =
 let inFlightLaunch: Promise<string> | null = null
 
 export function launchAskConductor(question?: string): Promise<string> {
+  listenForAskNotices()
   // The backstop for every entry point (the dock, the command dialog, the
-  // Feature Guide, the tip card, anything added later): with Claude Code off,
-  // Ask starts nothing, revives nothing and types into nothing. Each entry
-  // point shows itself disabled with the reason (askConductorGate); the
-  // reason is also recorded here, for a caller that reads the error store.
+  // Feature Guide, the tip card, anything added later): with neither
+  // assistant on, Ask starts nothing, revives nothing and types into nothing.
+  // Each entry point shows itself disabled with the reason (askConductorGate);
+  // the reason is also recorded here, for a caller that reads the error store.
   if (isAskConductorBlocked()) {
     useAskErrorStore.getState().setError(ASK_CLAUDE_OFF)
     return Promise.resolve('')
@@ -148,7 +265,10 @@ export function launchAskConductor(question?: string): Promise<string> {
     // already-running branch does.
     const askPrompt = normaliseQuestion(question)
     return inFlightLaunch.then((id) => {
-      if (id && askPrompt) writeSessionInput(id, askPrompt + '\r')
+      if (id && askPrompt) {
+        useAskNoticeStore.getState().keep(id, askPrompt)
+        writeSessionInput(id, askPrompt + '\r')
+      }
       return id
     })
   }
@@ -162,33 +282,75 @@ export function _resetAskLaunchForTest(): void {
 }
 
 /**
- * Hand a question to the Ask session that already exists.
+ * Hand a question to the Ask session that is running: write it to the PTY,
+ * which is how a command button does it -- the spawn route is spawn-time only,
+ * so there is nothing else to use mid-session.
  *
- * Live: write it to the PTY, which is how a command button does it -- the env
- * route is spawn-time only, so there is nothing else to use mid-session.
- *
- * Dead: REVIVE it rather than write into the void. Bumping `createdAt` changes
- * the TerminalView key, so the pane remounts and respawns, and `askPrompt` then
- * rides that spawn as CCC_ASK_PROMPT -- the same mechanism a first launch uses,
- * so the question is delivered by the path that is already tested rather than
- * by a second one. The id is deliberately KEPT: the tab, its place in the strip
- * and anything holding a reference to it all survive, and the user gets their
- * question answered in the tab they asked it from.
+ * The tab keeps the assistant it started on. When that assistant has been
+ * switched off since, nothing is typed into it (nothing is typed into an
+ * assistant that is off) and the dock says why; going to the tab, with no
+ * question, still works.
  */
-function handOverTo(existing: Session, askPrompt: string | undefined): string {
+function handOverToLive(existing: Session, askPrompt: string | undefined): string {
   const store = useSessionStore.getState()
-  if (askSessionIsLive(existing)) {
-    store.setActiveSession(existing.id)
-    if (askPrompt) writeSessionInput(existing.id, askPrompt + '\r')
-    return existing.id
+  const provider: AskConductorProvider = existing.provider === 'codex' ? 'codex' : 'claude'
+  if (askPrompt && !askProviderIsOn(provider)) {
+    useAskErrorStore.getState().setError(askTabProviderOff(provider))
+    return ''
   }
+  useAskErrorStore.getState().setError(null)
+  store.setActiveSession(existing.id)
+  if (askPrompt) {
+    useAskNoticeStore.getState().keep(existing.id, askPrompt)
+    writeSessionInput(existing.id, askPrompt + '\r')
+  }
+  return existing.id
+}
 
+/**
+ * REVIVE an Ask session whose process has exited, rather than write into the
+ * void. Bumping `createdAt` changes the TerminalView key, so the pane remounts
+ * and respawns, and `askPrompt` then rides that spawn -- the same mechanism a
+ * first launch uses, so the question is delivered by the path that is already
+ * tested rather than by a second one. The id is deliberately KEPT: the tab,
+ * its place in the strip and anything holding a reference to it all survive,
+ * and the user gets their question answered in the tab they asked it from.
+ *
+ * A revive is a new start, so it reads the provider again (P4.3): when the
+ * choice, or which assistants are on, changed since the tab last ran, it
+ * starts on the assistant Ask starts on now. The previous assistant's account
+ * and conversation fields do not come along, and the new one's account is
+ * decided as on a first launch; on the same assistant the account was decided
+ * when the session was first opened, and the revive must not re-pop the
+ * picker over it, which is what restart does too. `dir` is the help folder
+ * just rebuilt for this start.
+ */
+function revive(existing: Session, askPrompt: string | undefined, dir: string, provider: AskConductorProvider): string {
+  const store = useSessionStore.getState()
+  const sameProvider = (existing.provider === 'codex' ? 'codex' : 'claude') === provider
+  const providerFields = sameProvider
+    ? (provider === 'codex' && !existing.codexOptions ? askProviderFields('codex') : {})
+    : {
+        ...askProviderFields(provider),
+        model: '',
+        profileId: undefined,
+        providerAccountId: undefined,
+        accountEmail: undefined,
+        accountColour: undefined,
+        resumeUuid: undefined,
+        resumeCwd: undefined,
+        launchedCodexPreset: undefined,
+        modelName: undefined,
+        reasoningEffort: undefined,
+      }
   clearSpawned(existing.id)
   store.removeSession(existing.id)
   store.addSession({
     ...existing,
+    ...providerFields,
     id: existing.id,
     askPrompt,
+    workingDirectory: dir,
     status: 'idle',
     createdAt: Date.now(),
     ptyExited: undefined,
@@ -200,20 +362,21 @@ function handOverTo(existing: Session, askPrompt: string | undefined): string {
     effortLive: undefined,
     fastMode: undefined,
   })
-  // The account was decided when this session was first opened; a revive must
-  // not re-pop the picker over it, which is what restart does too.
-  useAccountGateStore.getState().markPredetermined(existing.id)
+  if (sameProvider) useAccountGateStore.getState().markPredetermined(existing.id)
   store.setActiveSession(existing.id)
+  if (askPrompt) useAskNoticeStore.getState().keep(existing.id, askPrompt)
   return existing.id
 }
 
 async function doLaunchAskConductor(question?: string): Promise<string> {
   const askPrompt = normaliseQuestion(question)
-  const store = useSessionStore.getState()
 
-  const existing = findAskSession(store.sessions)
-  if (existing) return handOverTo(existing, askPrompt)
+  const existing = findAskSession(useSessionStore.getState().sessions)
+  if (existing && askSessionIsLive(existing)) return handOverToLive(existing, askPrompt)
 
+  // A first launch and a revive both start a process in the help folder, so
+  // both have it rebuilt to exactly the app's own files first: nothing a
+  // session wrote there may reach the next one (help-workspace.ts).
   let dir: string | null = null
   try {
     dir = await window.electronAPI.help.workspace()
@@ -224,15 +387,24 @@ async function doLaunchAskConductor(question?: string): Promise<string> {
     useAskErrorStore.getState().setError(WORKSPACE_FAILED)
     return ''
   }
+
+  // Read AFTER the await: the switches may have flipped meanwhile.
+  const provider = askConductorProviderNow()
+  if (!provider) {
+    useAskErrorStore.getState().setError(ASK_CLAUDE_OFF)
+    return ''
+  }
   useAskErrorStore.getState().setError(null)
 
   // Re-read AFTER the await. The latch above covers the ordinary double-click,
   // but the store is a live singleton and this function is not the only thing
-  // that can add a session while an mkdir is in flight. Cheap, and it makes the
-  // "one ask session" claim true by construction rather than by timing.
-  const raced = findAskSession(useSessionStore.getState().sessions)
-  if (raced) return handOverTo(raced, askPrompt)
+  // that can add (or restart) a session while an mkdir is in flight. Cheap, and
+  // it makes the "one ask session" claim true by construction rather than by
+  // timing.
+  const now = findAskSession(useSessionStore.getState().sessions)
+  if (now) return askSessionIsLive(now) ? handOverToLive(now, askPrompt) : revive(now, askPrompt, dir, provider)
 
+  const store = useSessionStore.getState()
   const id = generateId()
   store.addSession({
     id,
@@ -248,12 +420,11 @@ async function doLaunchAskConductor(question?: string): Promise<string> {
     identityColorKey: 'lavender',
     status: 'idle',
     createdAt: Date.now(),
-    // Pinned: CCC_ASK_PROMPT is set only on the local Claude spawn path. SSH
-    // never sets it and the Codex provider ignores it, so an Ask session that
-    // was any other shape would silently drop the question.
+    // Pinned local: SSH never carries the opening question.
     sessionType: 'local',
-    provider: 'claude',
+    ...askProviderFields(provider),
   })
+  if (askPrompt) useAskNoticeStore.getState().keep(id, askPrompt)
   // NOTE: markSessionForResumePicker is deliberately NOT called. Both resume-
   // picker branches of buildClaudeLaunchCommand return before the positional
   // prompt is appended, so routing a first launch through the picker would drop
