@@ -26,7 +26,8 @@
       "tests": [
         "tests/wp1/mode-matrix.test.ts",
         "tests/wp1/launch-handoff.test.ts",
-        "tests/wp1/tokenomics-realm-discovery.test.ts"
+        "tests/wp1/tokenomics-realm-discovery.test.ts",
+        "tests/e2e/codex-real-launch.spec.ts"
       ],
       "evidence": [
         "docs/wp1/evidence/real-cli-matrix.md"
@@ -42,7 +43,8 @@
       "kind": "automated",
       "tests": [
         "tests/wp1/mode-matrix.test.ts",
-        "tests/wp1/fault-isolation.test.ts"
+        "tests/wp1/fault-isolation.test.ts",
+        "tests/e2e/onboarding-provider-select.spec.ts"
       ],
       "evidence": [],
       "status": "planned",
@@ -879,7 +881,11 @@
       "title": "Full mode matrix passes fresh install, upgrade, restart, enable/disable and minimum launch smoke",
       "kind": "automated",
       "tests": [
-        "tests/wp1/mode-matrix.test.ts"
+        "tests/wp1/mode-matrix.test.ts",
+        "tests/e2e/codex-reconfirm-upgrade.spec.ts",
+        "tests/e2e/codex-mode-restart.spec.ts",
+        "tests/e2e/codex-mode-enable-disable.spec.ts",
+        "tests/e2e/codex-real-launch.spec.ts"
       ],
       "evidence": [
         "docs/wp1/evidence/mode-matrix.md"
