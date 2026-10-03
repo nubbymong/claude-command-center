@@ -25,8 +25,7 @@
     "exitCode": "A number. Absent: not asserted, and a citation says why.",
     "afterwards": "Then the named entry is run in the same realm and must hold too.",
     "kinds": "upstream: verbatim lines of the release source, held in the upstream fixture. observation: a capture or a recorded real run (docs/wp2/evidence/, tests/fixtures/codex/). app-assumption: this app's source or plans; every path under src/ and the docs/wp2 plans is one.",
-    "backing": "For each version an entry covers, an asserted exit code, its lines, the stream of its lines and its afterwards must each be backed by a capture or schema of that version or by an upstream or observation citation; an app assumption never backs one alone. Every citation that backs a value must carry the entry value (so an app assumption that disagrees with the CLI is red). An upstream citation is checked against the fixture line by line, and its exit code, stream and samples against what those lines print and exit with.",
-    "knownDivergences": "A fake answer that differs from the oracle, recorded with the fix proposed for the fake. The fake side accepts exactly that answer and fails once it no longer occurs, so the record must go with the fix."
+    "backing": "For each version an entry covers, an asserted exit code, its lines, the stream of its lines and its afterwards must each be backed by a capture or schema of that version or by an upstream or observation citation; an app assumption never backs one alone. Every citation that backs a value must carry the entry value (so an app assumption that disagrees with the CLI is red). An upstream citation is checked against the fixture line by line, and its exit code, stream and samples against what those lines print and exit with."
   },
   "fakes": {
     "wp1-fake-cli": {
@@ -2044,15 +2043,6 @@
       "fakes": [
         "wp1-fake-cli"
       ]
-    }
-  ],
-  "knownDivergences": [
-    {
-      "fake": "wp1-fake-cli",
-      "entry": "login-api-key-tty-refused",
-      "field": "exitCode",
-      "fakeAnswers": 2,
-      "why": "The FAKE refuses a terminal on stdin with exit 2; upstream login.rs exits 1 (read_stdin_secret). No test reads the FAKE code. Fix proposed to the integration owner: the FAKE exits 1 (fake-cli.test.ts, its login --with-api-key branch); then this record goes."
     }
   ],
   "notCovered": [

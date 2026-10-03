@@ -140,7 +140,7 @@ if (a === 'app-server') {
   return
 }
 if (a === 'login --with-api-key') {
-  if (process.stdin.isTTY) { process.stderr.write('refuses a TTY\\n'); process.exit(2) }
+  if (process.stdin.isTTY) { process.stderr.write('refuses a TTY\\n'); process.exit(1) }
   let d = ''
   process.stdin.on('data', (c) => { d += c })
   process.stdin.on('end', () => {
