@@ -220,7 +220,7 @@ const NOT_DELIVERED: Record<SubmitNotDeliveredReason, string> = {
   'busy-timeout': 'Codex was still working, and its prompt did not come free in time.',
   'prompt-on-screen': 'Codex was showing a question of its own (folder trust, sandbox setup or an approval). Answer it in the Ask tab first.',
   'too-tall': 'it is too long to check in Codex\'s prompt at this pane size. Make the pane taller, or the question shorter.',
-  'not-drawn': 'it never appeared in Codex\'s prompt.',
+  'not-drawn': 'the app could not confirm it in Codex\'s prompt, and it may still be there, unsent. Send it or clear it in the Ask tab.',
   'refused-text': 'it holds characters Codex\'s prompt cannot take.',
   'session-gone': 'the Ask session closed before it could be typed.',
 }
