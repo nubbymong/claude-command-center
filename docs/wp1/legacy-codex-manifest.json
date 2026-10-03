@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-03T15:35:26.841Z",
-  "head": "7d7deff1aa3f9ba7a16d7483e995e6e012af37a8",
-  "tree": "769fa6e2ad3d1b2d3c2720be46adcbe2fbf63db6",
+  "generatedAt": "2026-10-03T15:46:05.974Z",
+  "head": "e6722d37739d63e5180c741cd8b8ecf6711fb01c",
+  "tree": "53cc9538087e272856814ba07e48183cfdc7facd",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -226,7 +226,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 95
+      "lineCount": 96
     },
     {
       "path": "docs/wp2/plan.md",
@@ -464,7 +464,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 66
+      "lineCount": 67
     },
     {
       "path": "src/main/canvas/codex-realm-skills.ts",
@@ -1173,7 +1173,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 38
+      "lineCount": 39
     },
     {
       "path": "src/main/pty-input-guard.ts",
@@ -1190,7 +1190,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 448,
+      "lineCount": 449,
       "truncated": true
     },
     {
@@ -3649,7 +3649,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 43
+      "lineCount": 51
     },
     {
       "path": "tests/unit/main/canvas-codex-roots-spawn.test.ts",
@@ -4655,7 +4655,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 60
+      "lineCount": 63
     },
     {
       "path": "tests/unit/providers/codex/spawn-canvas.test.ts",
