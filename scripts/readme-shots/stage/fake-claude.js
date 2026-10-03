@@ -21,7 +21,18 @@ const argAfter = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[
 
 // Non-interactive probes the app may run (cli:version, /doctor). Answer and exit
 // so they never hang on the TUI. A plausible recent CC version keeps any gate happy.
-if (argv.includes('--version') || argv.includes('-v')) { process.stdout.write('2.1.198 (Claude Code)\n'); process.exit(0) }
+// 2.1.1 launches only a Claude at or above its managed-launch minimum
+// (CLAUDE_MIN_MANAGED_CLI_VERSION, 2.1.278), so the version is above it.
+if (argv.includes('--version') || argv.includes('-v')) { process.stdout.write('2.1.290 (Claude Code)\n'); process.exit(0) }
+// The Accounts panel asks each profile home (USERPROFILE) who is signed in:
+// the account in that home's .claude.json (seed.js seedAccounts).
+if (argv[0] === 'auth' && argv[1] === 'status') {
+  let a = null
+  try { a = JSON.parse(fs.readFileSync(path.join(process.env.USERPROFILE || process.env.HOME || '', '.claude.json'), 'utf8')).oauthAccount } catch { a = null }
+  if (!a || typeof a.emailAddress !== 'string') { process.stdout.write(JSON.stringify({ loggedIn: false }) + '\n'); process.exit(1) }
+  process.stdout.write(JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', email: a.emailAddress, orgName: a.organizationName, subscriptionType: 'max' }) + '\n')
+  process.exit(0)
+}
 if (argv[0] === 'mcp' || argv.includes('--help') || argv.includes('-h')) { process.stdout.write('Claude Code\n'); process.exit(0) }
 // Headless one-shot (`claude -p "…"`): print nothing useful, just exit cleanly.
 if (argv.includes('-p') || argv.includes('--print')) { process.stdout.write('{}\n'); process.exit(0) }
@@ -32,8 +43,12 @@ const session = C.SESSIONS.find((s) => s.resumeUuid && s.resumeUuid === resumeUu
 const scenario = C.SCENARIOS[session.scenario]
 const account = C.ACCOUNTS.find((a) => a.key === session.accountKey)
 
-const HOME = 'C:/Users/User'
-const STATUS_DIR = process.env.CCC_FAKE_STATUS_DIR || `${HOME}/AppData/Local/AI Code Conductor/resources/status`
+// The staging's home (where seed.js wrote the transcripts) and its status
+// folder, from the file seed.js wrote beside this one. No default: without it
+// no status file is written, never one into a real install's resources.
+const STAGE = (() => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'fake-stage.json'), 'utf8')) } catch { return {} } })()
+const HOME = typeof STAGE.home === 'string' ? STAGE.home : ''
+const STATUS_DIR = process.env.CCC_FAKE_STATUS_DIR || (typeof STAGE.statusDir === 'string' ? STAGE.statusDir : '')
 const CCC_SESSION = process.env.CLAUDE_MULTI_SESSION_ID || null
 
 // ── terminal geometry + palette ────────────────────────────────────────────
@@ -169,7 +184,7 @@ function spinnerBlock(word, tick, seconds, tokens) {
 // ── status file ────────────────────────────────────────────────────────────
 const t0 = Date.now()
 function writeStatus() {
-  if (!CCC_SESSION || !session.status) return
+  if (!CCC_SESSION || !session.status || !STATUS_DIR) return
   try {
     const seconds = Math.round((Date.now() - t0) / 1000)
     const data = C.statusFor(session, Date.now(), HOME, { seconds, ctxPlus: Math.floor(seconds / 45) })

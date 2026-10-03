@@ -8,6 +8,12 @@
 //
 // Usage on the VM:  node shoot.js <shot-list.json>
 // Every path is forward-slash; this file crosses machines.
+//
+// ATTACH (2.1.1, the isolated staging in stage/seed.js): with
+// CCC_SHOOT_ATTACH_PORT set, nothing is spawned: the app the caller already
+// launched on the staging data dir (CCC_E2E_DATA_DIR, its own home, the fake
+// CLIs first on PATH, --remote-debugging-port=<port>) is attached to instead.
+// CCC_SHOOT_OUT / CCC_SHOOT_LOG move the output folder and the log.
 
 const { chromium } = require('playwright-core')
 const { spawn } = require('child_process')
@@ -16,18 +22,24 @@ const path = require('path')
 const UPNG = require('upng-js')
 
 const EXE = 'C:/Users/user/AppData/Local/Programs/AI Code Conductor/AI Code Conductor.exe'
-const OUT = 'C:/Users/user/ccc-cap/out'
-const PORT = 9333
+const OUT = process.env.CCC_SHOOT_OUT || 'C:/Users/user/ccc-cap/out'
+const LOG = process.env.CCC_SHOOT_LOG || 'C:/Users/user/ccc-cap/shoot.log'
+const ATTACH_PORT = Number(process.env.CCC_SHOOT_ATTACH_PORT) || 0
+const PORT = ATTACH_PORT || 9333
 const W = 1600
 const H = 1100
-const log = (m) => { const l = new Date().toISOString() + ' ' + m; console.log(l); fs.appendFileSync('C:/Users/user/ccc-cap/shoot.log', l + '\n') }
+const log = (m) => { const l = new Date().toISOString() + ' ' + m; console.log(l); fs.appendFileSync(LOG, l + '\n') }
 
 fs.mkdirSync(OUT, { recursive: true })
 
 async function attach() {
-  log('spawning app')
-  const child = spawn(EXE, ['--remote-debugging-port=' + PORT], { detached: true, stdio: 'ignore' })
-  child.unref()
+  if (ATTACH_PORT) {
+    log('attaching to the app on port ' + PORT)
+  } else {
+    log('spawning app')
+    const child = spawn(EXE, ['--remote-debugging-port=' + PORT], { detached: true, stdio: 'ignore' })
+    child.unref()
+  }
   for (let i = 0; i < 90; i++) {
     await new Promise((r) => setTimeout(r, 1000))
     try { return await chromium.connectOverCDP('http://127.0.0.1:' + PORT) } catch { /* not up yet */ }

@@ -72,10 +72,24 @@ export const CAPTURE_CLAUDE_ACCOUNTS = Object.freeze([
   { id: 'profile-demo-oss', name: 'Open source', email: 'dev.oss@example.org', org: 'Example OSS', primary: false },
 ])
 
-/** The fictional Codex accounts: opaque ids (prefix + lowercase hex, as the
- *  app makes them). The first is the provider default (the first committed
- *  account becomes it), the second the reviewer. */
-export const CAPTURE_CODEX_ACCOUNTS = Object.freeze([
+/** One fictional Codex account to seed: opaque ids (prefix + 16 to 64
+ *  lowercase hex, as the app makes them), a palette colour, the address and
+ *  plan its row shows. */
+export interface CodexSeedAccount {
+  identityId: string
+  accountId: string
+  realmId: string
+  name: string
+  colourKey: string
+  label: string
+  plan: string
+  reviewer: boolean
+  memories: boolean
+}
+
+/** The fictional Codex accounts: the first is the provider default (the
+ *  first committed account becomes it), the second the reviewer. */
+export const CAPTURE_CODEX_ACCOUNTS: readonly CodexSeedAccount[] = Object.freeze([
   {
     identityId: 'idn-c0de5eed00000000000000a1', accountId: 'acct-c0de5eed00000000000000a1', realmId: 'realm-c0de5eed00000000000000a1',
     name: 'Codex work', colourKey: 'indigo', label: 'dev@example.com', plan: 'Plus', reviewer: false, memories: true,
@@ -99,13 +113,14 @@ function ok(r: RegistryResult, step: string): ProviderRegistryDoc {
   return r.doc
 }
 
-/** The registry the capture starts with: the two Codex accounts, signed in,
- *  the first the default and the second the reviewer. Claude's accounts are
- *  mirrored in by main at start from the legacy profiles. */
-export function buildCaptureRegistry(now: number): ProviderRegistryDoc {
+/** A registry holding `accounts` as signed-in Codex accounts, the first the
+ *  default and the one marked `reviewer` the reviewer. Claude's accounts are
+ *  mirrored in by main at start from the legacy profiles. Also used by the
+ *  README staging (scripts/readme-shots/stage/codex-registry.ts). */
+export function buildCodexRegistry(accounts: readonly CodexSeedAccount[], now: number): ProviderRegistryDoc {
   let doc = emptyRegistry()
   let t = now
-  for (const a of CAPTURE_CODEX_ACCOUNTS) {
+  for (const a of accounts) {
     doc = ok(createIdentity(doc, { id: a.identityId, friendlyName: a.name, colourKey: a.colourKey }, t++), 'createIdentity')
     doc = ok(beginAccountSetup(doc, {
       accountId: a.accountId, realmId: a.realmId, providerId: 'codex', method: 'browser',
@@ -116,13 +131,18 @@ export function buildCaptureRegistry(now: number): ProviderRegistryDoc {
       providerLabel: a.label, planLabel: a.plan,
     }, t++), 'commitAccountSetup')
   }
-  const reviewer = CAPTURE_CODEX_ACCOUNTS.find((a) => a.reviewer)
+  const reviewer = accounts.find((a) => a.reviewer)
   if (reviewer) doc = ok(setReviewerDefault(doc, 'codex', reviewer.accountId, t++), 'setReviewerDefault')
   const problems = checkRegistryInvariants(doc)
   if (problems.length) throw new Error(`[capture] the seeded registry breaks its invariants: ${problems.join('; ')}`)
   const parsed = parseRegistryDoc(JSON.parse(JSON.stringify(doc)))
   if (!parsed.ok) throw new Error(`[capture] the seeded registry does not parse back: ${JSON.stringify(parsed)}`)
   return doc
+}
+
+/** The registry the training capture starts with (CAPTURE_CODEX_ACCOUNTS). */
+export function buildCaptureRegistry(now: number): ProviderRegistryDoc {
+  return buildCodexRegistry(CAPTURE_CODEX_ACCOUNTS, now)
 }
 
 /** The stand-in Claude CLI (node), answering what the app asks a Claude it
