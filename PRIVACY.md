@@ -144,6 +144,25 @@ The Tokenomics cost index is separate and is not affected by that switch.
   installed runs it against a new, empty folder, never your own, and so does
   Sentinel's read of the models the installed Codex offers (`codex debug
   models --bundled`, the list built into Codex, with no sign-in).
+- **The Agent Canvas and Vision guidance.** For a Codex account you added, the
+  app writes its three instruction files (the canvas review loop, canvas plans
+  and the Conductor browser) into that account's own folder, under `skills/`,
+  while the matching built-in tool is on, and removes them when it is off; it
+  rewrites or removes only the files it marked as its own. For a session on your
+  own Codex folder, the app writes nothing there: before such a launch it reads,
+  as plain text and keeping nothing, the Codex settings files that could set
+  developer instructions (your `config.toml` and its profile files, the
+  project's `.codex/config.toml` files, and the system and managed settings
+  files), and only when none of them does, passes its guidance to that one
+  session as Codex developer instructions on its launch line.
+- **The Memory page and Debug Logging read each Codex account's own folders.**
+  The Memory page lists the memory files Codex keeps in each account's
+  `memories` folder (your own Codex folder included, once you use it), reading
+  the start of each for its description and a file you open in full, and
+  changes nothing there. Debug Logging reads the account's `config.toml` for
+  its `log_dir` setting, then opens the account's log folder, or shows the
+  `log_dir` folder selected in the folder that holds it. Nothing of either
+  leaves your machine.
 - **A name you give a Codex session is written beside its conversation.** Once
   the app knows for certain which conversation the session is on, it writes
   the name, and the time it was set, in a small file next to that
@@ -200,7 +219,10 @@ or OpenAI through those tools, exactly as they would if you ran them yourself in
 a terminal. A code review works the same way: a Codex review asked for from a
 Claude session sends the change under review to OpenAI through Codex, and a
 Claude review asked for from a Codex session sends it to Anthropic through
-Claude Code; each review direction can be switched off in Settings. Signing in
+Claude Code; each review direction can be switched off in Settings. A cloud
+agent works the same way: its task and the project it runs in go to the
+assistant it runs on, and a Codex agent is a `codex exec` run in its Codex
+account's folder, with that account's own sign-in. Signing in
 to a Codex account runs Codex's own sign-in, which talks to OpenAI directly. The app does not add to, intercept, or copy that traffic.
 See Anthropic's and OpenAI's privacy policies for how they handle it.
 

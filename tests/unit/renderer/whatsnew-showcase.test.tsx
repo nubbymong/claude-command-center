@@ -122,10 +122,11 @@ describe('showcase-pages — the curated set', () => {
     const claudeOnlyText = container.textContent
     act(() => root.unmount())
     root = createRoot(container)
-    // Both on: exactly what Claude Code alone shows.
+    // Both on: what Claude Code alone shows, but the heading over the canvas,
+    // Watchdog and Ask lines names both (P4.11, INT-7: each works for both).
     settingsState.settings = { updateChannel: 'stable', claudeEnabled: true, codexEnabled: true }
     render()
-    expect(container.textContent).toBe(claudeOnlyText)
+    expect(container.textContent).toBe(claudeOnlyText.replace('Working with Claude', 'Working with Claude and Codex'))
     act(() => root.unmount())
     root = createRoot(container)
     // Claude Code off: those items and pages go; a section left empty goes too.

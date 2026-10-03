@@ -153,8 +153,8 @@ for Codex and says why.
 
 - At least one provider always stays on.
 - A provider cannot be turned off while anything of it is running: its
-  sessions, a code review, a sign-in in progress, a Sentinel check or
-  analysis, and for Claude Code also cloud agents and Insights. The row says so (for example
+  sessions, its cloud agents, a code review, a sign-in in progress, a Sentinel
+  check or analysis, and for Claude Code also Insights. The row says so (for example
   *"Codex is in use (2)."*); close those and switch it off again.
 - Once a provider is off, nothing of it starts anywhere. Its saved configs say
   why instead of launching (*"Codex is off. Turn it on in Settings, Accounts to
@@ -162,8 +162,9 @@ for Codex and says why.
   *"Not started. Codex is off. Turn it on in Settings, Accounts, then Restart
   this tab."* The tab and its conversation are kept: turn the provider back
   on, then Restart the tab.
-- With Claude Code off, Ask Conductor, Cloud Agents and Insights are
-  unavailable and say so. **Terminal only** configs still run.
+- With Claude Code off, Insights is unavailable and says so, Ask Conductor runs on
+  Codex, and Cloud Agents runs Codex agents only. **Terminal only** configs still
+  run.
 
 ## Codex accounts
 
@@ -390,7 +391,28 @@ Linux may ask for administrator rights; CCC never elevates on its own.
   When Codex asks, choose *1. Set up default sandbox* (Codex says it needs
   administrator permission). With *2. Use non-admin sandbox*, or none, Codex
   asks before every edit on *Standard* and fails on *Auto*. Do not run CCC as
-  administrator.
+  administrator. A Codex cloud agent run with Auto is affected the same way: it
+  makes no edits until the sandbox has been set up for its account, and with the
+  non-admin sandbox its commands fail, because PowerShell does not start there.
+- **On the Auto preset, Codex refuses the app's own tools** other than the canvas
+  snapshot and review: the Agent Canvas render and its other tools, Vision, the
+  push to the in-app browser, the host screenshot fetch and the Claude review.
+  Auto starts Codex with no prompts, so it cannot ask before them. Use
+  *Standard*, where Codex asks before each one, or *Unrestricted*.
+- **A Codex session on the sign-in already on this computer may get the canvas
+  and Vision tools without the guidance on using them.** CCC never writes into
+  your own Codex folder, so it passes that guidance at launch only when Codex is
+  started directly (not through its npm command), the installed version is one
+  CCC has checked, and none of your own Codex settings sets
+  `developer_instructions`; the canvas page says when it could not. Run the
+  session on a Codex account you added in Settings, Accounts instead.
+- **Ask Conductor on Codex cannot pass on emoji typed into Codex's prompt.**
+  When the question has to be typed into Codex's prompt, CCC removes the
+  characters it cannot take first, and the Ask Conductor row says how many. Say
+  it in words.
+- **Ask Conductor starts nothing when its documentation folder cannot be
+  rebuilt**, usually because a program a Codex Ask session started is still
+  running. End that program and open Ask Conductor again.
 - **On Windows, a Codex session's tab can stay open after Codex quits** while a
   command Codex started in the background still runs. Close the tab: that ends
   the command too.
