@@ -24,8 +24,11 @@
 //      for the minimum and pinned versions (its own case, two soft checks);
 //   4. `codex features list` names every feature the analysis run turns off;
 //   5. help: every P3.1 capture made again and written to the run's artifacts,
-//      compared with the normalised fixture. Reported, not asserted, until
-//      those captures are reviewed per OS (CCC_CODEX_HELP_ASSERT=1 then).
+//      compared with the normalised fixture as this OS reads it: the
+//      fixtures were captured on Windows, and the differences reviewed per
+//      OS (P4.10, CI run 37134624406) are accepted by name and nothing else
+//      (REVIEWED_HELP_DIFFERENCES in codex-conformance-lib.ts). Asserted
+//      when CCC_CODEX_HELP_ASSERT=1.
 //
 // CCC_CODEX_CONFORMANCE_PROVE_RED=1 (a dispatch input) runs every check above
 // against a deliberately wrong expectation, so the job goes red once with
@@ -43,8 +46,8 @@ import type { CodexCliOperation, CodexRunResult, CodexFileStat } from '../../src
 import { evaluateCodexModelCoverage, type ModelRegistry } from '../../src/shared/model-registry'
 import registryJson from '../../resources/model-registry.json'
 import {
-  HELP_CAPTURES, formatCapture, compareCapture, parseCapture, parseFeaturesList, argvShape, flagsMissingFromHelp,
-  helpNamesSubcommand, disabledFeatures, expectedVersion,
+  HELP_CAPTURES, formatCapture, compareCapture, parseFeaturesList, argvShape, flagsMissingFromHelp,
+  helpNamesSubcommand, disabledFeatures, expectedVersion, expectedOnPlatform, withRunPaths, withoutLastStdoutLine,
 } from './codex-conformance-lib'
 
 const BIN = process.env.CCC_CODEX_CONFORMANCE_BIN ?? ''
@@ -79,11 +82,15 @@ const realStat = (p: string): CodexFileStat => {
 
 /** One no-sign-in run of the real CLI, through the app's runner and its
  *  command-line rules (on Windows the npm shim goes through an absolute
- *  cmd.exe), with the allowlisted environment and a fresh home. */
-async function run(args: readonly string[]): Promise<CodexRunResult> {
+ *  cmd.exe), with the allowlisted environment and a fresh home, which
+ *  `onHome` is told (the help comparison names it). */
+async function run(args: readonly string[], onHome?: (home: string) => void): Promise<CodexRunResult> {
   const cmd = cliCommandLine(BIN, args, process.platform, codexShellEnv(process.env, process.platform), 'Codex')
   if ('refused' in cmd) throw new Error(`the app refuses to run ${args.join(' ')}: ${cmd.refused}`)
-  return withHome((home) => runCodexCli(cmd, { env: codexCliEnv(process.env, home, process.platform), timeoutMs: RUN_MS }))
+  return withHome((home) => {
+    onHome?.(home)
+    return runCodexCli(cmd, { env: codexCliEnv(process.env, home, process.platform), timeoutMs: RUN_MS })
+  })
 }
 
 const argvOf = (op: CodexCliOperation): string[] => {
@@ -206,34 +213,35 @@ describe.skipIf(!LIVE)(`the real Codex CLI, no sign-in (${OS_TAG}, ${KIND || '?'
     expect(unknown, PROVE_RED ? WRONG : unknown.join(', ')).toEqual([])
   }, CASE_MS)
 
-  it('help: every P3.1 capture made again, written to the run artifacts and compared with the normalised fixture', async () => {
+  it('help: every P3.1 capture made again, written to the run artifacts and compared with the normalised fixture as this OS reads it', async () => {
     const rows: string[] = []
     const mismatches: string[] = []
     for (const c of HELP_CAPTURES) {
-      const r = await run(c.args)
-      const capture = { exit: r.exitCode, stdout: r.stdout, stderr: r.stderr }
-      fs.writeFileSync(path.join(OUT, 'help', `${c.name}.txt`), formatCapture(capture))
+      let home = ''
+      const r = await run(c.args, (h) => { home = h })
+      const raw = { exit: r.exitCode, stdout: r.stdout, stderr: r.stderr }
+      fs.writeFileSync(path.join(OUT, 'help', `${c.name}.txt`), formatCapture(raw))
       const file = path.join(FIXTURES, VERSION, 'help', `${c.name}.txt`)
-      if (!fs.existsSync(file)) { rows.push(`| ${c.name} | no fixture for ${VERSION} | captured |`); continue }
-      let text = fs.readFileSync(file, 'utf8')
-      if (PROVE_RED) {
-        // Drop the fixture's last non-empty stdout line.
-        const p = parseCapture(text)!
-        const lines = p.stdout.split('\n')
-        const last = lines.map((l) => l.trim() !== '').lastIndexOf(true)
-        text = formatCapture({ ...p, stdout: lines.filter((_, i) => i !== last).join('\n') })
-      }
-      const cmp = compareCapture(capture, text)
-      rows.push(`| ${c.name} | ${cmp.same ? 'same' : 'differs'} | ${cmp.why ?? ''} |`)
+      if (!fs.existsSync(file)) { rows.push(`| ${c.name} | no fixture for ${VERSION} | | captured |`); continue }
+      // The prove-red run drops the fixture's last non-empty stdout line.
+      const text = PROVE_RED ? withoutLastStdoutLine(fs.readFileSync(file, 'utf8')) : fs.readFileSync(file, 'utf8')
+      // The run's own home and temporary folder as names (a Linux stderr line
+      // names them), against the fixture as this OS reads it.
+      const capture = withRunPaths(raw, { home, tmp: os.tmpdir() })
+      const expected = expectedOnPlatform(text, process.platform, VERSION, c.name)
+      const cmp = 'error' in expected
+        ? { same: false, why: expected.error, onlyInRun: [] as string[], onlyInFixture: [] as string[] }
+        : compareCapture(capture, expected.text)
+      rows.push(`| ${c.name} | ${cmp.same ? 'same' : 'differs'} | ${'error' in expected ? '-' : expected.applied} | ${cmp.why ?? ''} |`)
       if (!cmp.same) {
         mismatches.push(`${c.name}: ${cmp.why}`)
         fs.writeFileSync(path.join(OUT, 'help', `${c.name}.diff.txt`), [
-          `# ${c.name}: Codex ${VERSION} on ${OS_TAG} against tests/fixtures/codex/cli/${VERSION}/help/${c.name}.txt`,
+          `# ${c.name}: Codex ${VERSION} on ${OS_TAG} against tests/fixtures/codex/cli/${VERSION}/help/${c.name}.txt, with the differences reviewed for ${process.platform} applied`,
           `# ${cmp.why}`, '', '## only in this run', ...cmp.onlyInRun, '', '## only in the fixture', ...cmp.onlyInFixture, '',
         ].join('\n'))
       }
     }
-    fs.writeFileSync(path.join(OUT, 'help-compare.md'), [`# Help against the P3.1 fixtures: Codex ${VERSION} on ${OS_TAG}`, '', '| Capture | Result | First difference |', '|---|---|---|', ...rows, ''].join('\n'))
+    fs.writeFileSync(path.join(OUT, 'help-compare.md'), [`# Help against the P3.1 fixtures: Codex ${VERSION} on ${OS_TAG}`, '', '| Capture | Result | Reviewed differences applied | First difference |', '|---|---|---|---|', ...rows, ''].join('\n'))
     note(`help: ${HELP_CAPTURES.length} captured; ${mismatches.length} differ from the fixture${HELP_ASSERT ? '' : ' (reported, not asserted, until reviewed per OS)'}`)
     if (HELP_ASSERT) expect(mismatches, PROVE_RED ? WRONG : mismatches.join('\n')).toEqual([])
   }, CASE_MS)
