@@ -452,7 +452,7 @@ function seedSampleData(): BackupInfo {
   if (fs.existsSync(projectsDir)) {
     fs.renameSync(projectsDir, projectsBackup)
     activeBackupInfo.projectsRenamed = true
-    console.log('[capture] Hid real projects directory')
+    console.log("[capture] Set aside the capture home's projects folder from an earlier run")
   }
   fs.mkdirSync(projectsDir, { recursive: true })
 
@@ -469,7 +469,7 @@ function seedSampleData(): BackupInfo {
   if (fs.existsSync(codexSessionsDir)) {
     fs.renameSync(codexSessionsDir, codexSessionsBackup)
     activeBackupInfo.codexSessionsRenamed = true
-    console.log('[capture] Hid real Codex sessions directory')
+    console.log("[capture] Set aside the capture home's Codex sessions folder from an earlier run")
   }
 
   // Insights reports live at <RESOURCES>/insights/ as one dir per run -- the
@@ -627,15 +627,15 @@ function cleanupSampleData(info: BackupInfo | null): void {
   if (info.projectsRenamed) {
     try {
       if (!fs.existsSync(projectsBackup)) {
-        console.warn('[capture] projects-real-bak directory missing; skipping restore to protect real data')
+        console.warn("[capture] the capture home's projects-real-bak folder is missing; skipping its restore")
       } else {
         fs.rmSync(projectsDir, { recursive: true, force: true })
         fs.renameSync(projectsBackup, projectsDir)
-        console.log('[capture] Restored real projects directory')
+        console.log("[capture] Restored the capture home's projects folder")
       }
     } catch (err) {
       console.error('[capture] WARNING: Failed to restore projects directory!', err)
-      console.error(`[capture] Your real projects are at: ${projectsBackup}`)
+      console.error(`[capture] The capture home's earlier projects folder is at: ${projectsBackup}`)
       console.error('[capture] Manually rename it back to: ' + projectsDir)
     }
   } else {
@@ -645,21 +645,21 @@ function cleanupSampleData(info: BackupInfo | null): void {
     }
   }
 
-  // Restore real Codex sessions directory
+  // Restore the capture home's Codex sessions folder
   if (info.codexSessionsRenamed) {
     const codexSessionsDir = path.join(CAPTURE_HOME, '.codex', 'sessions')
     const codexSessionsBackup = codexSessionsDir + '-real-bak'
     try {
       if (!fs.existsSync(codexSessionsBackup)) {
-        console.warn('[capture] codex sessions-real-bak missing; skipping restore to protect real data')
+        console.warn("[capture] the capture home's Codex sessions-real-bak folder is missing; skipping its restore")
       } else {
         if (fs.existsSync(codexSessionsDir)) fs.rmSync(codexSessionsDir, { recursive: true, force: true })
         fs.renameSync(codexSessionsBackup, codexSessionsDir)
-        console.log('[capture] Restored real Codex sessions directory')
+        console.log("[capture] Restored the capture home's Codex sessions folder")
       }
     } catch (err) {
       console.error('[capture] WARNING: Failed to restore Codex sessions directory!', err)
-      console.error(`[capture] Your real Codex sessions are at: ${codexSessionsBackup}`)
+      console.error(`[capture] The capture home's earlier Codex sessions folder is at: ${codexSessionsBackup}`)
     }
   }
 

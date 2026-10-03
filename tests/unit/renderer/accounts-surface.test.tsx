@@ -282,11 +282,15 @@ describe('Providers card', () => {
     _resetRendererProviderRegistryForTest()
     registerRendererProvider(claudeDescriptor)
     registerRendererProvider({ ...codexDescriptor, maturity: 'beta' })
-    render(snapshot())
-    expect(q('provider-beta-codex')?.textContent).toBe('Beta')
-    expect(q('provider-beta-claude')).toBeNull()
-    _resetRendererProviderRegistryForTest()
-    composeRendererProviders()
+    try {
+      render(snapshot())
+      expect(q('provider-beta-codex')?.textContent).toBe('Beta')
+      expect(q('provider-beta-claude')).toBeNull()
+    } finally {
+      // The composed registry again, so a failure here costs no other case.
+      _resetRendererProviderRegistryForTest()
+      composeRendererProviders()
+    }
   })
 
   it('says "At least one provider stays on." under the switch when the last one is turned off', async () => {
