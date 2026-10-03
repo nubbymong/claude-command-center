@@ -148,7 +148,7 @@ async function renderArmed(el: React.ReactElement) {
 // answers come from it, and the takeover renders on its own turn.
 const BASE = {
   configLoaded: true, logsWipeBytes: 0, showTraining: false, showTrainingAll: false, showGitHubOnboarding: false,
-  loggingConsentSeen: true, whatsNewDue: false, trainingDue: false, githubOnboardingDue: false,
+  loggingConsentSeen: true, whatsNewDue: false, githubOnboardingDue: false,
 }
 function AppLike({ over = {}, onStartSession }: { over?: Record<string, unknown>; onStartSession: () => void }) {
   const open = useHelloCodexStore((s) => s.open === 'takeover')

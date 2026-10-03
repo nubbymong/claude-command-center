@@ -153,10 +153,9 @@ export const trainingSteps: TrainingStep[] = [
     // onboarding's settle stamps lastTrainingVersion (onboarding/settle.ts),
     // and App opens the walkthrough only from the Feature Guide's Feature
     // tour, which shows every card. A sinceVersion above the 2.1.1 that
-    // existing profiles already hold would show them nothing; it would only
-    // make shouldShowTraining() true, and trainingDue holds the boot chain
-    // (utils/bootGates.ts) -- resume prompt included -- until a harness run
-    // stamps it again, which a same-version launch never does.
+    // existing profiles already hold would show them nothing. (It no longer
+    // holds the boot chain either: PR 4 VM final took the tour-due wait out of
+    // utils/bootGates.ts, since nothing opens the tour by itself.)
     id: 'provider-accounts',
     title: 'Providers and Accounts',
     sinceVersion: '2.1.1',
@@ -201,7 +200,7 @@ export const trainingSteps: TrainingStep[] = [
     // lastVersion, and TrainingWalkthrough stamps lastTrainingVersion =
     // currentTrainingVersion() on close, so every beta user who has already run
     // the 2.1 tour holds '2.1.0'. At 2.1.0 this card is filtered OUT for them
-    // and shouldShowTraining() returns false: the one cohort that already has
+    // and getNewSteps() returns nothing: the one cohort that already has
     // the feature and does not know what it does would never be shown it --
     // which is the discovery gap #372 was filed about. At 2.1.1 they are shown
     // exactly this one card; the other 2.1.0 cards are not > 2.1.0, so nothing
@@ -905,7 +904,7 @@ export function stepsForAssistants(steps: readonly TrainingStep[], only: OnlyAss
 export function currentTrainingVersion(): string {
   let max = '0.0.0'
   for (const step of trainingSteps) {
-    if (compareVersions(step.sinceVersion, max) > 0) {
+    if (compareTrainingVersions(step.sinceVersion, max) > 0) {
       max = step.sinceVersion
     }
   }
@@ -916,16 +915,26 @@ export function currentTrainingVersion(): string {
 export function getNewSteps(lastVersion?: string): TrainingStep[] {
   if (!lastVersion) return trainingSteps
   return trainingSteps.filter(
-    (step) => compareVersions(step.sinceVersion, lastVersion) > 0
+    (step) => compareTrainingVersions(step.sinceVersion, lastVersion) > 0
   )
 }
 
-/** Compare two semver strings: returns >0 if a > b, <0 if a < b, 0 if equal */
-function compareVersions(a: string, b: string): number {
-  const pa = a.split('.').map(Number)
-  const pb = b.split('.').map(Number)
+/** major.minor.patch of a version; what follows the numbers (a prerelease
+ *  such as -beta.2 or -rc.10) is not read, and an unreadable one is 0.0.0. */
+function versionCore(v: string): [number, number, number] {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(typeof v === 'string' ? v.trim() : '')
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : [0, 0, 0]
+}
+
+/** Compare two tour versions: >0 if a is newer, <0 if older, 0 if the same.
+ *  A prerelease is read as its release, since a 2.1.1 beta carries the 2.1.1
+ *  cards (PR 4 VM final: '2.1.1-beta.2' split on dots read as 2.1.0, so the
+ *  2.1.1 cards counted as unseen). */
+export function compareTrainingVersions(a: string, b: string): number {
+  const pa = versionCore(a)
+  const pb = versionCore(b)
   for (let i = 0; i < 3; i++) {
-    const diff = (pa[i] || 0) - (pb[i] || 0)
+    const diff = pa[i] - pb[i]
     if (diff !== 0) return diff
   }
   return 0

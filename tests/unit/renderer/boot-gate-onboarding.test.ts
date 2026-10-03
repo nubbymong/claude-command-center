@@ -11,7 +11,6 @@ const base: BootGateState = {
   loggingConsentSeen: true,
   resumePending: false,
   whatsNewDue: false,
-  trainingDue: false,
   githubOnboardingDue: false,
 }
 
