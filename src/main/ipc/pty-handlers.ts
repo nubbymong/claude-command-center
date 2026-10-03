@@ -1,7 +1,10 @@
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain, BrowserWindow, app } from 'electron'
 import { z } from 'zod'
 import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemoteDetailed, probeTmuxLive, holdsCodexLaunchLease, codexLaunchLeaseTaken, beginSpawnPreparation, isSessionWritable, isSessionLiveOrStarting, SSHOptions, SshEndTarget, getKeptCodexConversation, getKeptCodexConversationSource, codexRunEnded, codexConversationHeldElsewhere } from '../pty-manager'
 import type { CodexLaunch } from '../pty-manager'
+import { handOffAskQuestion } from '../pty-manager'
+import { ensureHelpWorkspace } from '../help-workspace'
+import { getResourcesDirectory } from './setup-handlers'
 import { getAccountsService } from '../provider-accounts'
 import { awaitCodexHookFolders } from '../codex-hook-folders'
 import { getGateway } from '../hooks'
@@ -22,7 +25,7 @@ import { logWarn } from '../debug-logger'
 import { IPC } from '../../shared/ipc-channels'
 import { getPtyIntegrityMonitor } from '../services/pty-integrity-monitor'
 import type { PtyIntegrityReport } from '../../shared/service-health'
-import type { SshRuntime, DetachedRemoteLiveness, HostPingResult, DetachedRemote, SshEndRemoteResult } from '../../shared/types'
+import type { SshRuntime, DetachedRemoteLiveness, HostPingResult, DetachedRemote, SshEndRemoteResult, SubmitTextResult } from '../../shared/types'
 import { detachedDestinationAgrees, type SshDestinationSource } from '../../shared/detached-destination'
 import { readDetachedRemotesRegistry } from '../session-state'
 import { pingHost } from '../host-ping'
@@ -685,6 +688,13 @@ function codexDiscoveredVersion(service: AccountsService): string | null {
 /** WP2 PR 4, P4.1: `canvas:sessionGuidance`'s payload: one session id. */
 const sessionGuidanceSchema = z.object({ sessionId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/) }).strict()
 
+/** WP2 PR 4, P4.3: `askConductor:handOff`'s payload: the Ask session and the
+ *  question, bounded as the pty:spawn schema bounds askPrompt. */
+const askHandOffSchema = z.object({
+  sessionId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+  question: z.string().min(1).max(8000),
+}).strict()
+
 export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void {
   // WP2 PR 4, P4.1 (row 51): whether a Codex session's launch carried the
   // canvas and vision skills' guidance with the tools, for the canvas page's
@@ -695,6 +705,19 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     const parsed = sessionGuidanceSchema.safeParse(args)
     if (!parsed.success) return null
     return codexSessionGuidance(parsed.data.sessionId)
+  })
+
+  // WP2 PR 4, P4.3 (row 53): a question for a LIVE Ask session on Codex,
+  // typed through the run's pane and its submit primitive (pty-manager
+  // handOffAskQuestion), never the raw question and Enter. Only a running
+  // Codex session that launched as Ask takes one; the app's window only.
+  ipcMain.handle(IPC.ASK_CONDUCTOR_HAND_OFF, async (e, args: unknown): Promise<SubmitTextResult> => {
+    if (!fromApp(e)) return { delivered: false, reason: 'session-gone' }
+    const parsed = askHandOffSchema.safeParse(args)
+    if (!parsed.success) return { delivered: false, reason: 'refused-text' }
+    const win = getWindow()
+    if (!win || win.isDestroyed()) return { delivered: false, reason: 'session-gone' }
+    return handOffAskQuestion(win, parsed.data.sessionId, parsed.data.question)
   })
 
   // The body of pty:spawn. `claim` holds the one-at-a-time gate's ticket for this
@@ -720,6 +743,8 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     configLabel?: string
     /** Ask Conductor's opening question (see spawnOptionsSchema.askPrompt). */
     askPrompt?: string
+    /** An Ask Conductor session (session.kind === 'ask'; spawnOptionsSchema.isAsk). */
+    isAsk?: boolean
     loggingEnabled?: boolean
     useResumePicker?: boolean
     legacyVersion?: { enabled: boolean; version: string }
@@ -1025,6 +1050,22 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
         })
       }
 
+      // WP2 PR 4, P4.3 (row 53): every Ask Conductor launch reads the help
+      // folder as exactly the app's own files. A Codex session may write there
+      // (Codex grants its sandbox the working folder, and the session that
+      // answers its first-launch screens holds no preset: PB8, 9.6 items 21
+      // and 22), so the folder is rebuilt here, in main, before EVERY Ask
+      // spawn of either assistant -- a first launch, a revive, a Restart,
+      // Past discussions, an account switch's remount, a restored tab -- and
+      // nothing a session wrote reaches the next. Fails closed: no rebuild, no
+      // launch. Last before the spawn, after every wait above.
+      if (options?.isAsk === true && !options.shellOnly) {
+        try {
+          ensureHelpWorkspace(getResourcesDirectory(), { appVersion: app.getVersion() })
+        } catch (err) {
+          throw new Error(`Ask Conductor was not started: its help folder could not be rebuilt (${err instanceof Error ? err.message : String(err)}).`)
+        }
+      }
       claim.spawnCalled = true
       if (preparation) preparation.spawn(resolvedOptions)
       else spawnPty(win, sessionId, resolvedOptions)

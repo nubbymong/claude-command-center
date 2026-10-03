@@ -243,12 +243,41 @@ function setOwned(env: Record<string, string>, name: string, value: string, win3
   env[name] = value
 }
 
+/** WP2 PR 4, P4.3: the most an Ask launch's `project_doc_max_bytes` may be
+ *  (the help folder's AGENTS.md is the user guide and a preamble, far below). */
+export const ASK_PROJECT_DOC_MAX_BYTES_CEILING = 16 * 1024 * 1024
+
+/** The Ask question's bound (askConductor.ts MAX_QUESTION, the pty:spawn
+ *  schema's askPrompt). */
+const ASK_QUESTION_MAX = 8_000
+
+/** WP2 PR 4, P4.3: whether an Ask question may ride argv. Argv keeps every
+ *  character (PB4); a control character never rides it (the renderer's
+ *  normaliseQuestion removes them; one that reaches main is typed through the
+ *  pane instead, whose rule refuses it visibly). */
+function askQuestionForArgv(q: unknown): q is string {
+  return typeof q === 'string' && q.trim().length > 0 && q.length <= ASK_QUESTION_MAX && !/[\u0000-\u001f\u007f-\u009f]/.test(q)
+}
+
 /** The Codex launch for `opts`, with the line the app's log may hold
- *  (`logLine`, codexLaunchLineForLog): the PTY manager logs that line, never
- *  the arguments themselves. */
+ *  (`logLine`): the developer instructions named by their length
+ *  (codexLaunchLineForLog), and an Ask question carried on argv named only by
+ *  its length, never its words (P4.3, as Claude's route keeps the question off
+ *  its logged line by environment reference). The PTY manager logs that line,
+ *  never the arguments themselves. */
 export function buildCodexSpawn(opts: SpawnOptions): ProviderSpawnCommand {
   const built = buildCodexSpawnCommand(opts)
-  return { ...built, logLine: codexLaunchLineForLog(built.commandLine ?? built.args.join(' ')) }
+  const q = opts.askPrompt
+  let shown: string[] = built.args
+  if (built.askPromptOnArgv) {
+    const n = built.args.length
+    // Always the last argument, right after `--` (built that way below).
+    if (typeof q !== 'string' || n < 2 || built.args[n - 2] !== '--' || built.args[n - 1] !== q) {
+      return { ...built, logLine: '(arguments not logged)' }
+    }
+    shown = [...built.args.slice(0, n - 1), `<question, ${[...q].length} characters>`]
+  }
+  return { ...built, logLine: codexLaunchLineForLog(built.commandLine ?? shown.join(' ')) }
 }
 
 function buildCodexSpawnCommand(opts: SpawnOptions): ProviderSpawnCommand {
@@ -274,6 +303,20 @@ function buildCodexSpawnCommand(opts: SpawnOptions): ProviderSpawnCommand {
   }
   flags.push('--sandbox', sandboxFor(co.permissionsPreset))
   flags.push('--ask-for-approval', approvalFor(co.permissionsPreset))
+  // WP2 PR 4, P4.3 (row 53): an Ask Conductor session reads the app's own
+  // AGENTS.md in the app's help folder whole (on Windows it carries the user
+  // guide inline) and no parent folder's beside it, as the `analysis`
+  // operation scopes its own (cli-runner.ts): the file's byte bound
+  // (help-workspace.ts askConductorProjectDocMaxBytes) and no root markers.
+  // Plain words, so both routes take them. They override what the user may
+  // have set, for the Ask session only, and change no file.
+  if (opts.askProjectDocMaxBytes !== undefined) {
+    const n = opts.askProjectDocMaxBytes
+    if (!Number.isSafeInteger(n) || n <= 0 || n > ASK_PROJECT_DOC_MAX_BYTES_CEILING) {
+      throw new Error('Cannot start Ask Conductor on Codex: the size of its instruction file is not a byte count.')
+    }
+    flags.push('-c', `project_doc_max_bytes=${n}`, '-c', 'project_root_markers=[]')
+  }
 
   // U6: deliver the conductor MCP config PER-SPAWN via `-c` overrides -- nothing
   // is written to the user's global ~/.codex/config.toml, so plain `codex` outside
@@ -503,8 +546,18 @@ function buildCodexSpawnCommand(opts: SpawnOptions): ProviderSpawnCommand {
 
   if (viaCmdExe) {
     // node-pty / ConPTY cannot directly invoke .cmd shims; route through cmd.exe.
+    // P4.3: an Ask question never rides this line (it refuses whitespace and
+    // every character cmd.exe interprets); main types it through the pane.
     const target = codexCmdExeTarget(executable, fitCmdLine([]), env)
     return { cmd: target.cmd, args: [], commandLine: target.commandLine, env, hooksInstalled }
+  }
+  // WP2 PR 4, P4.3 (PB4): on the direct route an Ask question is the launch's
+  // prompt, after `--`, so a question that starts with "-" is never read as a
+  // flag, and as ONE argument, whole (8,000 characters, an emoji included,
+  // arrived intact on both versions). Only on this fresh launch, the form PB4
+  // ran: an exact resume or the picker gets it through the pane instead.
+  if (askQuestionForArgv(opts.askPrompt)) {
+    return { cmd: executable, args: [...flags, '--', opts.askPrompt], env, hooksInstalled, askPromptOnArgv: true }
   }
   return { cmd: executable, args: flags, env, hooksInstalled }
 }
