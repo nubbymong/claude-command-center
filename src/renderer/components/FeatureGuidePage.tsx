@@ -237,7 +237,6 @@ export default function FeatureGuidePage({ onNavigateToSessions, onStartTour }: 
               launching={launching}
               askOff={askOff}
               askProvider={askProvider}
-              only={only}
               onStartTour={onStartTour}
               onGo={(id) => setActive(id)}
             />
@@ -374,7 +373,7 @@ type SectionBlurb = string | ((only: OnlyAssistant) => string)
 const SECTION_BLURB: Record<TrainingSection, { title: string; blurb: SectionBlurb }> = {
   'getting-started': { title: 'The first things to set up', blurb: 'A saved config is the unit of work — what runs, where, and as whom. Get these right and every other feature has something to hang off.' },
   productivity: { title: 'Move faster inside a session', blurb: (only) => `Panes, sketches and captures that live next to the terminal, so you never have to leave the session to show ${only === 'codex' ? 'Codex' : 'Claude'} something.` },
-  integrations: { title: 'Everything the Conductor plugs into', blurb: (only) => `${only === 'claude' ? 'Browser automation' : 'Codex, browser automation'}, agents, GitHub and the Agent Canvas — each wired into the same session model.` },
+  integrations: { title: 'Everything the Conductor plugs into', blurb: 'Codex, browser automation, agents, GitHub and the Agent Canvas — each wired into the same session model.' },
   admin: { title: 'See what your sessions are doing', blurb: 'The dashboards over your own usage: spend, memory, insights, transcripts and every preference in one place.' },
   tips: { title: 'Power moves and shortcuts', blurb: 'Small things you will start using on day two.' },
 }
@@ -415,7 +414,7 @@ function askCardLead(provider: AskConductorProvider | null): string {
 }
 
 function Overview({
-  question, setQuestion, askInputRef, onAsk, launching, askOff = false, askProvider = null, only = null, onStartTour, onGo,
+  question, setQuestion, askInputRef, onAsk, launching, askOff = false, askProvider = null, onStartTour, onGo,
 }: {
   question: string
   setQuestion: (v: string) => void
@@ -426,15 +425,13 @@ function Overview({
   askOff?: boolean
   /** The assistant Ask runs on now (null: it cannot open). */
   askProvider?: AskConductorProvider | null
-  /** The one assistant in use when only one is. */
-  only?: OnlyAssistant
   onStartTour: () => void
   onGo: (id: GuideSectionId) => void
 }) {
   const overview = APP_KNOWLEDGE_SECTIONS.find((s) => s.id === 'overview')
   const quick: { id: TrainingSection; label: string; desc: string }[] = [
     { id: 'getting-started', label: 'Getting started', desc: 'Configs, accounts' },
-    { id: 'integrations', label: 'Integrations', desc: only === 'claude' ? 'Agents, canvas, GitHub' : 'Codex, agents, canvas' },
+    { id: 'integrations', label: 'Integrations', desc: 'Codex, agents, canvas' },
     { id: 'admin', label: 'Admin & data', desc: 'Tokenomics, memory, logs' },
     { id: 'productivity', label: 'Productivity', desc: 'Panes, sketch, snap' },
   ]
