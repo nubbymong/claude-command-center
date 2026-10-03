@@ -1,12 +1,13 @@
 import { app, BrowserWindow, ipcMain, dialog, session, shell, powerMonitor } from 'electron'
 import { join } from 'path'
 import { homedir } from 'os'
-import { existsSync, mkdirSync, readdirSync, realpathSync } from 'fs'
+import { mkdirSync, realpathSync } from 'fs'
 import { registerPtyHandlers } from './ipc/pty-handlers'
 import { createSplashWindow, closeSplashWindow, SPLASH_MIN_MS, SPLASH_POST_READY_MS, splashShownAt } from './splash-window'
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerAccountWebHandlers } from './ipc/account-web-handlers'
 import { sweepAbandonedProfiles } from './account-web/sign-in'
+import { warnAboutOrphanedSharedPartitions } from './account-web/orphan-partitions'
 import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine, writeCanvasMarkerLine, routeHookTranscriptPath, noteCodexHookEvent, isCodexPtySession, codexRolloutForSessionContext, applyLoggingSwitches } from './pty-manager'
 import { registerResumeHandlers } from './ipc/resume-handlers'
 import { registerCliHandlers } from './ipc/cli-handlers'
@@ -166,41 +167,13 @@ if (devSessionDir) {
     // under a bare `npm run dev`. The failure mode here is invisible otherwise:
     // partitions just appear in the shared location and nothing says they did.
     logInfo(`[setup] Dev session data redirected to: ${devSessionDir}`)
-    warnAboutOrphanedSharedPartitions(devSessionDir)
+    // Both web-session partition prefixes (P4.6): account-web/orphan-partitions.ts.
+    warnAboutOrphanedSharedPartitions(() => app.getPath('userData'), devSessionDir)
   } catch (err) {
     // Not fatal: worst case partitions land in the default location, which is
     // exactly the pre-#261 behaviour. Say so rather than failing to boot.
     logError(`[setup] could not redirect dev sessionData to ${devSessionDir}: ${(err as Error)?.message ?? err}`)
   }
-}
-
-/**
- * Point out claude.ai partitions this dev instance left in the SHARED location
- * before the redirect existed (#261).
- *
- * WARN, NEVER DELETE. Those directories hold live `sessionKey` cookies and after
- * the redirect nothing references them: `ccc --clean` cannot reach them (wrong
- * root) and `sweepAbandonedProfiles` only walks `<dataDir>/account-web`. So they
- * would sit there forever, which is the very complaint the redirect is meant to
- * fix. But automatic removal is NOT safe: `ccc --seed-accounts` copies prod's
- * account profiles into dev, so a partition named for a dev profile id can be
- * the PROD install's live session. Deleting it would sign the user out of their
- * real account to tidy up a dev artifact. Naming the path and leaving the choice
- * to a human is the correct trade here.
- */
-function warnAboutOrphanedSharedPartitions(newLocation: string): void {
-  try {
-    const shared = join(app.getPath('userData'), 'Partitions')
-    if (shared === join(newLocation, 'Partitions') || !existsSync(shared)) return
-    const orphans = readdirSync(shared).filter((n) => n.startsWith('claude-web-'))
-    if (!orphans.length) return
-    logInfo(
-      `[setup] ${orphans.length} claude.ai web session partition(s) remain in the SHARED location `
-      + `and are no longer used by this dev instance: ${shared}. They hold live session cookies. `
-      + `Remove them by hand ONLY if you are sure they are not your production install's `
-      + `(see docs/dev-alongside-prod.md).`,
-    )
-  } catch { /* advisory only — never let a warning break boot */ }
 }
 
 // Migrate registry keys from old "Claude Conductor" → new "Claude Command Center"
