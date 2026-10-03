@@ -231,25 +231,26 @@ describe('the help folder is compared by its real path, then its exact spelling 
   // macOS) the same folder, whose real path comes back in the on-disk case;
   // on a case-sensitive one, another folder.
   const otherCase = (p: string): string => path.join(path.dirname(p), path.basename(p).toUpperCase())
-  /** This volume ignores case (the temporary folder answers in other letters). */
-  const caseless = (): boolean => {
+  /** This volume ignores case (the temporary folder answers in other letters),
+   *  probed when the tests are collected, so a skip shows in the report. */
+  const CASELESS = ((): boolean => {
     try {
       const t = fs.realpathSync.native(os.tmpdir())
       return t.toUpperCase() !== t && fs.realpathSync.native(t.toUpperCase()) === t
     } catch { return false }
-  }
+  })()
   const under = (p: string, root: string): boolean => p === root || p.startsWith(root + path.sep)
 
-  it('[host] the resources setting spelled in other letters (the same folder on this volume): Codex resumes, in the folder the rebuild returned', () => {
-    if (!caseless()) return // a case-sensitive volume: no other spelling of the same folder exists
+  // On a case-sensitive volume no other spelling of the same folder exists:
+  // skipped there (visibly), the stand-in case-sensitive case below runs.
+  it.skipIf(!CASELESS)('[host] the resources setting spelled in other letters (the same folder on this volume): Codex resumes, in the folder the rebuild returned', () => {
     const setting = otherCase(help)
     codex({ cwd: setting, isAsk: true, resume: { uuid: CODEX_ID, cwd: help } })
     expect(h.built[0].resume).toEqual({ uuid: CODEX_ID, cwd: setting })
     expect(h.spawns[0].cwd).toBe(setting)
   })
 
-  it('[host] Claude Code the same: a Restart resumes its conversation', async () => {
-    if (!caseless()) return
+  it.skipIf(!CASELESS)('[host] Claude Code the same: a Restart resumes its conversation', async () => {
     const setting = otherCase(help)
     claude({ cwd: setting, isAsk: true, resume: { uuid: UUID, cwd: help } })
     expect(h.spawns[0].cwd).toBe(setting)
