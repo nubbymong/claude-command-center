@@ -112,6 +112,9 @@ let getWindow: () => BrowserWindow | null = () => null
 /** Dispatches past the launch gate whose record does not exist yet (the
  *  project scan is awaited first), by provider. */
 const dispatching = new Map<ProviderId, number>()
+/** P4.5: agents (by id) holding an account lease from the accounts service,
+ *  which counts them in use itself while it is held. */
+const leasedAgents = new Set<string>()
 
 /** The provider an agent runs on: absent on every agent saved before PR 4,
  *  all of which ran Claude Code. */
@@ -119,10 +122,12 @@ export function agentProvider(agent: Pick<CloudAgentData, 'provider'>): Provider
   return agent.provider ?? 'claude'
 }
 
-/** One provider's cloud agents in use: every dispatch past its launch gate,
- *  from before its record exists, and every agent of it running or pending. */
+/** One provider's cloud agents in use without an account lease: every
+ *  dispatch past its launch gate, from before its record exists, and every
+ *  agent of it running or pending that holds no lease (a held lease is
+ *  counted by the accounts service, so an agent counts once). */
 function countAgentsInUse(providerId: ProviderId): number {
-  return (dispatching.get(providerId) ?? 0) + agents.filter((a) => agentProvider(a) === providerId && (a.status === 'running' || a.status === 'pending')).length
+  return (dispatching.get(providerId) ?? 0) + agents.filter((a) => agentProvider(a) === providerId && (a.status === 'running' || a.status === 'pending') && !leasedAgents.has(a.id)).length
 }
 
 function beginDispatch(providerId: ProviderId): () => void {
@@ -145,9 +150,11 @@ export function countClaudeAgentsInUse(): number {
   return countAgentsInUse('claude')
 }
 
-/** P4.5: cloud agents that are Codex in use, counted as Claude Code's are
- *  (and besides the account lease each holds while it runs, which counts on
- *  its own): from the dispatch past the launch gate until the record ends. */
+/** P4.5: cloud agents that are Codex in use and hold no account lease yet:
+ *  from the dispatch past the launch gate until the lease is held (its
+ *  launch being prepared), and again once it is let go if the record is
+ *  still open. While the lease is held the accounts service counts the
+ *  agent through it, so one running agent counts once. */
 export function countCodexAgentsInUse(): number {
   return countAgentsInUse('codex')
 }
@@ -627,7 +634,12 @@ async function dispatchBackgroundAgent(providerId: ProviderId, params: DispatchA
   }
   const launch = prepared
   const lease: AccountLease = launch.lease
-  const letGo = (): void => { try { lease.release() } catch { /* a release never throws the record away */ } }
+  // In use through the lease from here (countCodexAgentsInUse), not twice.
+  leasedAgents.add(agent.id)
+  const letGo = (): void => {
+    leasedAgents.delete(agent.id)
+    try { lease.release() } catch { /* a release never throws the record away */ }
+  }
   // Stamped with the account it actually runs on (the card, the filter, a
   // consistent Retry).
   agent.providerAccountId = launch.binding.providerAccountId
@@ -675,7 +687,10 @@ async function dispatchBackgroundAgent(providerId: ProviderId, params: DispatchA
       if (!r.ok && r.killSettled instanceof Promise) killSettled = r.killSettled
       const agentRef = agents.find((a) => a.id === agent.id)
       if (agentRef) {
-        if (agentRef.status !== 'cancelled') {
+        // A Stop that came after the CLI had exited on its own (the run's
+        // settle window) does not make a finished run a cancelled one: the
+        // run's own result stands.
+        if (agentRef.status !== 'cancelled' || r.ok || r.code !== 'cancelled') {
           agentRef.status = r.ok ? 'completed' : r.code === 'cancelled' ? 'cancelled' : 'failed'
           if (!r.ok && r.code !== 'cancelled') agentRef.error = r.message
         }
@@ -885,8 +900,8 @@ export function killAllAgents(): void {
 /** P4.5: stops every running agent of another provider through its runner,
  *  which ends the tree below the CLI. At quit main calls this BEFORE it
  *  flushes the runner's kills still reading a process table
- *  (flushPendingProviderCliKills), so the flush kills these runs' chains
- *  too. Idempotent. */
+ *  (flushPendingProviderCliKills), so the flush ends these runs' whole
+ *  trees too, as killAllAgents ends a Claude agent's. Idempotent. */
 export function stopBackgroundAgentRuns(): void {
   for (const run of backgroundRuns.values()) {
     try { run.abort() } catch { /* ignore */ }

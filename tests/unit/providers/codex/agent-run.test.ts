@@ -214,6 +214,63 @@ describe('the run', () => {
     expect(scopes).toEqual(['tree'])
   })
 
+  // [host] PR 4 review C-2: a Stop in the settle window after codex exited
+  // on its own read as cancelled, for a run that had finished.
+  it('a Stop that comes after codex has exited on its own (the settle window) keeps the run\'s own result: completed on 0, failed with its reason otherwise', async () => {
+    vi.useFakeTimers()
+    try {
+      const { deps, spawned, scopes } = fakeDeps()
+      const ac = new AbortController()
+      const p = createCodexBackgroundOperations({ platform: 'win32', runDeps: () => deps }).run(input({ signal: ac.signal }))
+      spawned[0].child.stdout.emit('data', fixture('0.155.1', 'exec-json.jsonl'))
+      spawned[0].child.emit('exit', 0)
+      ac.abort()
+      await vi.advanceTimersByTimeAsync(0)
+      const r = await p
+      expect(r.ok).toBe(true)
+      expect(r).not.toHaveProperty('code')
+      // Nothing was killed by pid: the root had exited.
+      expect(scopes).toEqual([])
+      const two = fakeDeps()
+      const ac2 = new AbortController()
+      const q = createCodexBackgroundOperations({ platform: 'win32', runDeps: () => two.deps }).run(input({ signal: ac2.signal }))
+      two.spawned[0].child.stderr.emit('data', 'Not inside a trusted directory\n')
+      two.spawned[0].child.emit('exit', 1)
+      ac2.abort()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(await q).toMatchObject({ ok: false, code: 'failed', message: 'Codex exited with code 1: Not inside a trusted directory.' })
+    } finally { vi.useRealTimers() }
+  })
+
+  // [host] PR 4 review C-5: exit 0 after a failed turn with no reply left no
+  // trace. The status still follows the exit code (Claude parity).
+  it('exit 0 after a failed turn with no reply: completed, with the reason kept in the output, redacted; a reply, or no error, adds nothing', async () => {
+    const { deps, spawned } = fakeDeps()
+    const said: string[] = []
+    const p = createCodexBackgroundOperations({ platform: 'win32', runDeps: () => deps }).run(input({ onDiagnostic: (t: string) => said.push(t) }))
+    spawned[0].child.stderr.emit('data', 'warn: retrying')
+    spawned[0].child.stdout.emit('data', JSON.stringify({ type: 'turn.failed', error: { message: 'quota for sk-proj-' + 'Q'.repeat(40) } }) + '\n')
+    spawned[0].child.emit('close', 0)
+    expect(await p).toEqual({ ok: true })
+    expect(said).toHaveLength(2)
+    expect(said[0]).toBe('warn: retrying')
+    expect(said[1]).toMatch(/^\nCodex reported an error and gave no reply: quota for .*\n$/)
+    expect(said[1]).not.toContain('Q'.repeat(40))
+    const replied = fakeDeps()
+    const told: string[] = []
+    const q = createCodexBackgroundOperations({ platform: 'win32', runDeps: () => replied.deps }).run(input({ onDiagnostic: (t: string) => told.push(t) }))
+    replied.spawned[0].child.stdout.emit('data', JSON.stringify({ type: 'error', message: 'reconnecting' }) + '\n' + JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'Done.' } }) + '\n')
+    replied.spawned[0].child.emit('close', 0)
+    expect(await q).toEqual({ ok: true })
+    expect(told).toEqual([])
+    const clean = fakeDeps()
+    const none: string[] = []
+    const c = createCodexBackgroundOperations({ platform: 'win32', runDeps: () => clean.deps }).run(input({ onDiagnostic: (t: string) => none.push(t) }))
+    clean.spawned[0].child.emit('close', 0)
+    expect(await c).toEqual({ ok: true })
+    expect(none).toEqual([])
+  })
+
   it('settles soon after codex exits while something it started holds the pipes', async () => {
     vi.useFakeTimers()
     try {
