@@ -61,9 +61,10 @@ still owes recorded in 4. "2; 3" means partly built in 2, the rest in 3.
 
 ## 2. Summary
 
-- 75 rows: **52 DONE, 12 PARTIAL, 11 OPEN** (recounted after P3.15, with section 4's P3.2 to P3.15 rows brought current from their phase records;
-  they agree with the parity checklist).
-- The 23 rows not DONE, by gap: **implementation 9, verification 6, owner 8** (rows 15 and 58, an owner action and a record to sign; rows 22, 41 and 63, each built as a default pending the owner's decision; rows 51, 53 and 57, implementation left and an owner question each, section 10, counted under owner as row 58 is). Row 53
+- 75 rows: **54 DONE, 17 PARTIAL, 4 OPEN** (recounted after PR 4's P4.1 to P4.6 records, with section 4's rows 51 to 58 brought current from them;
+  they agree with the parity checklist). At the recount after P3.15 it was 52 DONE, 12 PARTIAL and 11 OPEN. Rows 59, 60 and 67 are
+  built (P4.8, P4.9) and move when their CI and VM runs are recorded.
+- The 21 rows not DONE, by gap: **implementation 6, verification 7, owner 8** (rows 15 and 58, an owner action and a record to sign, row 58's sign-in window waiting on OR2a; rows 22, 41 and 63, each built as a default pending the owner's decision; rows 51, 53 and 57, built as the default pending an owner question each, section 10, counted under owner as row 58 is; row 55 counts under verification, its delete check). At the recount after P3.15: implementation 9, verification 6, owner 8. Row 53
   moved from owner to implementation when the owner decided it
   (`docs/wp1/owner-decisions-2026-09-27.md`, M4), and back under owner with question 6 (PB4, 2026-10-02).
 - By PR: **8 in PR 3, 15 in PR 4**. No row changes package. The Ask Conductor
@@ -177,14 +178,14 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 48 | Conductor MCP transport | DONE | PLAN commits 4 and 5b | verification: a live 0.155.1 tool listing | 2, v4 |
 | 49 | `codex_review` | DONE | PLAN commit 5a (its defaults stand unless the owner overturns them) | verification: a real run on a signed-in account | 2, v4 |
 | 50 | `claude_review` | DONE | PLAN commit 5b, owner decisions 1 to 3 (2026-09-24) | verification: a live wait past 300 s | 2, v4 |
-| 51 | Agent Canvas from Codex | OPEN: withheld (`src/main/conductor-mcp-server.ts:1106`) because a Codex session had no bound id; `/mcp` binds one since commit 5b | Parity: the tools, roots, instruction delivery and the live loop | implementation; owner (question 5, section 10) | 4 |
-| 52 | Browser and vision tools | OPEN: withheld (`conductor-mcp-server.ts:911-913`, `:1042`, a "Claude-only for now" call of 2026-07-02) | Parity; the later owner decisions (the 2.1.1 gate, OD26 P1) end a call worded "for now" (section 10) | implementation | 4 |
-| 53 | Ask Conductor on Codex | OPEN: pinned to Claude (`src/renderer/lib/askConductor.ts:255`) and blocked with Claude Code off (`askConductorGate.ts`) | Codex only: design section 2 and parity (Ask runs on the provider that is on). Both on: OD27 M4 (option B, canvas "Ask Conductor provider choice" v1): a Settings, General row "Ask Conductor runs on", shown only while both are on, Claude Code by default | implementation; owner (question 6, section 10) | 4 |
-| 54 | App knowledge, tour, tips | PARTIAL: the P2 fixes are done | The AGENTS.md surface sweep; recorded 2026-09-26: the Codex "Beta" labels come off in the release where parity lands | implementation (the final sweep) | 2; 4 |
-| 55 | Memory | OPEN: a banner only (`MemoryPage.tsx:204-206`) | Parity: each realm's Codex memories on the Memory page | implementation | 4 |
-| 56 | Codex logs | OPEN | Parity: each realm's `log` folder offered where the app offers its own log folder (Settings, Debug Logging) | implementation | 4 |
-| 57 | Cloud Agents | OPEN: Claude only (`src/main/cloud-agent-manager.ts:192`) | Parity: background agents run with `codex exec` in the account's realm, as Claude's run its headless CLI; not the experimental `codex cloud` (WP1.41) | implementation; owner (question 7, section 10) | 4 |
-| 58 | Web sign-in and artifacts | OPEN | Web session: parity (chatgpt.com is to a Codex account what claude.ai is to a Claude account: the browser pane's account surface). Artifacts: no Codex equivalent is known, so a section 19 record (section 10) | owner (the artifacts record); implementation (the web session) | 4 |
+| 51 | Agent Canvas from Codex | PARTIAL (P4.1, b98bc235 to b4413a24; mocked): built, this computer's sign-in as question 5's default A; was withheld (`src/main/conductor-mcp-server.ts:1106`) because a Codex session had no bound id | Parity: the tools, roots, instruction delivery and the live loop | owner (question 5, section 10); verification: the VM walk, OR4, OR5 | 4 |
+| 52 | Browser and vision tools | DONE (P4.2, 2eb403cf, 04ac6b96; mocked); was withheld (`conductor-mcp-server.ts:911-913`, `:1042`, a "Claude-only for now" call of 2026-07-02) | Parity; the later owner decisions (the 2.1.1 gate, OD26 P1) end a call worded "for now" (section 10) | verification: the VM (vision and the push with the fake model, the per-preset approvals); OR4 | 4 |
+| 53 | Ask Conductor on Codex | PARTIAL (P4.3, 995148ea to b4413a24; mocked): built, the characters outside the BMP as question 6's default A; was pinned to Claude (`src/renderer/lib/askConductor.ts:255`) and blocked with Claude Code off (`askConductorGate.ts`) | Codex only: design section 2 and parity (Ask runs on the provider that is on). Both on: OD27 M4 (option B, canvas "Ask Conductor provider choice" v1): a Settings, General row "Ask Conductor runs on", shown only while both are on, Claude Code by default | owner (question 6, section 10); verification: the VM (the first Ask in a fresh account folder), OR4, OR5 | 4 |
+| 54 | App knowledge, tour, tips | PARTIAL: the P2 fixes are done; P4.1 to P4.5's own copy landed with them (c4f1a62c, eecd1b75, 2be770ad) | The AGENTS.md surface sweep; recorded 2026-09-26: the Codex "Beta" labels come off in the release where parity lands | implementation (the final sweep) | 2; 4 |
+| 55 | Memory | PARTIAL (P4.4, 1a12160b to 41638f93; mocked): listing, guard and read built; delete built, hidden and refused in main until the VM check; frontmatter edit does not carry over (recorded) | Parity: each realm's Codex memories on the Memory page | verification: the delete check on the VM (else OR4); OR4: the real file format | 4 |
+| 56 | Codex logs | DONE (P4.4, 1a12160b, 8fb60652; mocked) | Parity: each realm's `log` folder offered where the app offers its own log folder (Settings, Debug Logging) | verification: the VM (each account's folders open, `log_dir` from `config.toml` included) | 4 |
+| 57 | Cloud Agents | PARTIAL (P4.5, 5d0187c6 to d41c4a8b; mocked): built, the skip-permissions choice as question 7's default A; was Claude only (`src/main/cloud-agent-manager.ts:192`) | Parity: background agents run with `codex exec` in the account's realm, as Claude's run its headless CLI; not the experimental `codex cloud` (WP1.41) | owner (question 7, section 10); verification: the VM run, OR4 | 4 |
+| 58 | Web sign-in and artifacts | PARTIAL (P4.6 first half, 27d62537 to 1064dbbf; mocked): a Codex account's own web partition, the orphan warning over both prefixes, Claude's items off a Codex tab's menu and pane | Web session: parity (chatgpt.com is to a Codex account what claude.ai is to a Claude account: the browser pane's account surface). Artifacts: no Codex equivalent is known, so a section 19 record (section 10) | owner (OR2a, then the artifacts record, OR3); implementation (the sign-in window and the pane's account surface, after OR2a) | 4 |
 
 ### E. Everything else
 
@@ -378,11 +379,16 @@ run):
 - the upgrade walk repeated on the signed release candidate (the 2026-09-26
   walk used an unsigned candidate on a used Windows VM);
 - the release-candidate Codex CLI version (D7);
-- real sign-in, status and sign-out per OS on disposable identities, the
-  native keyring smoke and a real two-account run (rows 4, 6 and 15; WP1.10,
-  WP1.11, WP1.20, WP1.64, WP1.72);
-- the macOS and Linux columns of the 20 DONE rows in section 2;
+- the macOS and Linux columns of the 20 DONE rows in section 2, apart from
+  rows 4 and 6 (below);
 - the owner's desktop attestation.
+
+Not on that list: real sign-in, status and sign-out per OS on disposable
+identities, the native keyring smoke and a real two-account run (rows 4, 6
+and 15; WP1.10, WP1.11, WP1.20, WP1.64, WP1.72). OR1 runs them in PR 4, on
+its final build and on every OS, before it merges (9.5, P4.10; the owner's
+request: "on each system"). The packaged smoke of the signed release build
+stays for release (row 66, above).
 
 ## 8. PR 3 phase plan
 
@@ -5304,6 +5310,129 @@ Claude session has them. Probes: PB1, PB2, PB3 (all reported).
   preset's approvals, Unrestricted included. A real model's own choice to use
   the canvas is the owner's (OR4).
 - *Owner.* Screenshot review (the canvas page and What's New); question 5.
+- *Record (2026-10-03; the code at b4413a24).*
+  - *Built.* b98bc235 (lane A); 7e83f08a (integration: the marker wiring
+    through main, the canvas each marker belongs to, the guidance reason
+    `skills-not-staged`); P4.1's part of c4f1a62c (the copy). 59e700bb, with
+    the types 2b6f78b5 brought, makes pty-manager reach the Codex package only
+    through the registered provider (its launch route, its staged skills
+    folder, its run screen and its logged launch line), with no behaviour
+    change: it closes the dependency-boundaries failure the integration review
+    found at 6d2c51fb (INT-2) and puts the skills-folder helper in
+    `realm-paths.ts`, where this entry put it. Every clause above is built,
+    question 5's default A included.
+  - *Reviews.* The P4.1 review (b98bc235, 7e83f08a, c4f1a62c): spec and
+    quality FAIL on A-1 only (a marker not sent was lost while the canvas page
+    was closed). The fix pass 04ac6b96, with lane A's patches fix-1
+    (`App.tsx`) and fix-2 (`app-knowledge.ts`) applied in eecd1b75: A-1 (a
+    renderer store keeps each marker not sent, by canvas, until dismissed; its
+    listener starts at app start); A-2 (managed or not follows the account's
+    ownership, with the path rule as a second guard against the resources
+    folder's real path); A-3 (`canvas-codex-launch-wiring.test.ts` pins the
+    launch wiring with the tools on); A-4 (the guidance test reads only its
+    own temporary tree, through an injected reader); A-8 (clearer page and log
+    lines). The re-review of 04ac6b96: spec and quality FAIL on RA-1 only; the
+    fix pass b4413a24 closes RA-1 to RA-5, and its verification is spec PASS,
+    quality PASS. The boundary review of 59e700bb: spec PASS with RBND-1
+    recorded, quality PASS.
+  - *A-6, superseded by the parity revert.* 04ac6b96 staged each realm skill
+    by its tool group (agent-canvas and canvas-plan on the Canvas switch,
+    conductor-vision on the Vision switch), a step stricter than Claude. The
+    re-review (RA-1) found that this reopens the settled parity rule and
+    strips guidance Claude keeps, and b4413a24 reverts it: the staging follows
+    the Built-in Tools master switch, as Claude's `--plugin-dir` does, all
+    three skills while it is on. Each skill is staged in its own try, so one
+    that cannot be written is logged, the outcome reads `failed`, and the
+    others are still staged; the ownership mark is written before `SKILL.md`,
+    and a folder the attempt made and could not mark is removed while empty,
+    so the next launch stages it.
+  - *A-7, declined.* Codex reads no `<CODEX_HOME>/requirements.toml`: its
+    requirements layers are the system ones, the cloud bundle, the legacy
+    `managed_config.toml` and the managed preferences (the codex-rs config
+    loader at rust-v0.153.4 and rust-v0.156.1), and question 5's scan already
+    reads each.
+  - *The pane.* Main keeps its own bounded headless pane per Codex run
+    (scrollback 0, its size clamped, the Watchdog's CSI clamp), fed from the
+    run's first byte, because the marker queue's flush and a held Ask question
+    are main's to deliver whether or not a renderer is looking; the renderer's
+    screen stays the renderer's.
+  - *The race window.* It lies between the second ready read and the write.
+    The primitive re-reads the screen once right after the write and sends no
+    further key if a prompt is up; an idle session does not open the window.
+  - *One write.* The text goes to the run's process in one write (PB9's form,
+    measured on the bundled ConPTY). On the system ConPTY fallback a single
+    long write is unproven; a failure there is unconfirmed text, taken back
+    and reported not delivered.
+  - *Too tall.* A visible text whose estimated rows exceed the pane's rows
+    minus 4 is refused untyped, and one that still reaches the composer's full
+    height is taken back; both are reported `too-tall`.
+  - *The ingestion window.* 1,000 ms plus 0.45 ms per code point (4,600 ms at
+    8,000; PB9 measured up to 2.9 s). With the confirmation bounds (5 s exact,
+    6 s folded) the take-back falls after it for texts up to about 11,000 code
+    points.
+  - *Approvals and A-5.* Unrestricted keys all 29 tools a Codex connection can
+    be offered (P4.1's 10 and P4.2's 19); Auto keeps asking. Claude Code's
+    documentation (permission modes) says that in auto mode an MCP tool call
+    not marked as needing the user goes to a classifier, neither always asked
+    nor always approved; Accept edits does not list MCP tools; the default
+    mode asks; bypassPermissions approves. The documentation therefore does
+    not settle a fixed per-tool key for Codex's Auto, which has no classifier,
+    so Auto asks until OR4 checks a real Claude session in Auto mode on the
+    canvas, vision and browser tools.
+  - *Question 5's layers,* the same in both binaries' strings and in tagged
+    source from rust-v0.153.4 to rust-v0.156.1: `<CODEX_HOME>/config.toml`
+    (its top level and every `[profiles.*]` table);
+    `<CODEX_HOME>/*.config.toml`; `<CODEX_HOME>/managed_config.toml` (read
+    although Codex ignores it on Windows); every `.codex/config.toml` from the
+    working folder up to the file-system root (more than Codex's own walk to
+    the root marker) and the working folder's `config.toml`; the system layer
+    (`config.toml` and `requirements.toml` under `%ProgramData%\OpenAI\Codex`,
+    and `config.toml`, `requirements.toml` and `managed_config.toml` under
+    `/etc/codex`); the enterprise cloud layer's
+    `<CODEX_HOME>/cloud-config-bundle-cache.json`; and on macOS the managed
+    preferences `com.openai.codex`. Each file is read as plain text, its
+    escapes undone, case ignored. Nothing is passed when a file cannot be read
+    as text, for the macOS managed preferences, when a home Codex never ran in
+    has no cloud cache, on any version but 0.153.4, 0.154.0, 0.155.0, 0.155.1,
+    0.156.0 and 0.156.1, and on the resume picker (its working folder is
+    unknown at launch).
+  - *The live loop (question 4's default A, a declared deviation).* Until an
+    account's hooks are trusted, the queue writes at once and the primitive
+    holds the marker for Codex's ready composer, bounded at 120 s; the canvas
+    page says so for a Codex session that has sent no hook event yet.
+  - *Residuals.* A-6's residual stands after the revert: a managed realm's
+    staged skills are also listed by a Codex review or background run started
+    in that realm while the built-in tools are on, and after the tools are
+    switched off they stay until that account's next interactive launch
+    removes them (whether `codex exec` lists realm skills is a VM item). A-9:
+    markers flushed at one boundary go to the primitive one at a time, and the
+    second's 120 s ready wait starts once the first is submitted, so of two
+    reviews filed in one turn the second usually reports busy-timeout; that is
+    within the bound and the user is told (A-1), and holding later markers
+    until the next turn's end once hooks are trusted is a possible follow-up.
+    Pre-existing and rare: when a rebuild's removal of a skill folder that is
+    not exactly the app's fails part-way after its ownership mark is gone, the
+    next launch reads the folder as not the app's and leaves it, so that skill
+    stays unstaged until the folder is cleared. PB9's held-text event (about 1
+    in 150 sessions, 0.153.4): whether Ctrl+U clears it is unknown; carried,
+    no question. The copy that still reads as Claude's alone (A42-6, F-9) is
+    in P4.11's inventory.
+  - *RBND-1 and RBND-2.* 59e700bb edited two integration-owned files directly,
+    `src/main/providers/codex/index.ts` (the CodexProvider members) and
+    `src/main/providers/codex/realm-paths.ts` (the moved helper), instead of
+    handing them over as patches; their content is verified, nothing was lost,
+    and both ledger rows carry the change. 59e700bb and f6e728b4 typecheck
+    only with 2b6f78b5, which brings the types they use (the lane and patch
+    model): harmless once PR 4 is squash-merged, though `git bisect` inside
+    the branch meets two commits that do not compile.
+  - *Owed.* The VM walk (the render, annotate and review loop on both versions
+    with the fake model, a marker filed mid-turn, the inline Windows text
+    reaching the developer message, the pointer's encoding with a plugin path
+    holding a space and backslashes, each preset's approvals with
+    Unrestricted; the quarantined link files on CI and the VM); OR4 (a real
+    model's own use; a real Claude session in Auto mode; the staged skill read
+    under the administrator sandbox, or OR6 part 2); OR5; the owner's
+    screenshot review; question 5. ADR-009: pending.
 
 **P4.2 Browser and vision tools (row 52).** Probes: PB1 (the vision skill),
 PB2.
@@ -5341,6 +5470,26 @@ PB2.
   model making the calls after a tool search; the per-preset approvals,
   Unrestricted included. A real model's own use is OR4.
 - *Owner.* The one-line notice in section 10. No question of its own.
+- *Record (2026-10-03; the code at b4413a24).*
+  - *Built.* 2eb403cf (lane A) and P4.2's part of c4f1a62c (the copy): both
+    `source !== 'codex'` gates and their comments are gone, the push still
+    goes through `decideAgentBrowserPush` with the Codex session's bound id,
+    nothing new is pre-allowed, and Unrestricted gets a per-tool key for each
+    of the 19 new tools; Auto, Standard, Read Only and Plan keep asking.
+  - *Reviews.* The P4.2 review (2eb403cf, c4f1a62c): spec PASS; its quality
+    findings are fixed in 04ac6b96 (among them, the routing and push cases run
+    over `/mcp` and `/sse`, with the Vision and Built-in Tools switches) and
+    fix-2 (the question 5 known issue names the Vision tools too). The
+    re-review closed every P4.2 finding (A42-1 to A42-4, A42-7). Recorded
+    deviations, accepted by the review: the Codex push test is a new
+    `conductor-mcp-codex-browser.test.ts`, and the `CLAUDE_ONLY` list was
+    re-pointed to `codex_review` instead of removed.
+  - *Owed.* The VM: under Unrestricted on both versions, the key for
+    `vision_setViewport` (the one tool name with a capital) honoured, and
+    `vision_screenshot`'s inline image drawn by Codex's client (A42-5); vision
+    on WINDOWS_1; a screenshot and a push by the fake model after a tool
+    search. OR4 (a real model's own use); the owner's screenshot review.
+    ADR-009: pending.
 
 **P4.3 Ask Conductor on Codex (row 53, the Ask part of 14).** Lane A2 builds
 everything but the carrier; lane A builds the carrier after P4.1's primitive
@@ -5522,6 +5671,103 @@ and lane A2's integration. Probes: PB3, PB4 (both reported).
   folder is gone at the next Ask launch, and `AGENTS.md` is the app's own.
   A real answer's quality is OR4.
 - *Owner.* Screenshot review; question 6.
+- *Record (2026-10-03; the code at b4413a24).*
+  - *Built.* Lane A2: 995148ea (the gate, the provider choice, the dock badge
+    and notice lines, the revive, `AGENTS.md` and the rebuilt help folder).
+    Integration: d809078d (the Settings row, the Codex Ask header mark, the
+    Claude-off wording) and c4f1a62c (the copy). Lane A, the carrier:
+    f6e728b4, with the types and app-knowledge patches 6 to 8 in 2b6f78b5.
+  - *The carrier per route, with PB4's evidence.* On the direct route's fresh
+    launch the question rides the launch line after `--`, whole (PB4: argv
+    carries the whole question on both versions), and the logged launch line
+    names only its length. On the npm `.cmd` route, an exact resume and the
+    picker, and for a question holding a control character or a lone
+    surrogate, main types it through P4.1's submit primitive at Codex's first
+    ready, empty composer, waiting up to 300 s through any trust, sandbox or
+    approval screen; the characters outside the BMP are removed first and
+    counted, and main raises the `removed` notice (PB4: the composer carries
+    every character in the BMP and loses the rest; question 6's default A); a
+    question not sent raises `not-delivered` with its reason, and the dock
+    keeps it with Send again. A live Ask tab on Codex gets its question
+    through `askConductor:handOff` (the app window's top frame, a strict
+    payload, only a Codex session launched as Ask) into the same primitive; a
+    Claude Ask tab keeps its PTY write. Argv on `codex resume` was never
+    probed, so a resume types the question.
+  - *The two `-c` values.* Every Codex Ask launch, on every route, passes
+    `-c project_doc_max_bytes=<n>` (`<n>` the UTF-8 byte size of the
+    `AGENTS.md` text written plus 4,096, refused unless a positive integer of
+    at most 16 MiB) and `-c project_root_markers=[]`. Both override a value
+    the user may have set, for the Ask session only.
+  - *The preset (A2-3).* A Codex Ask session runs on Read Only, by parity.
+    Claude's Ask session carries no permission mode, so it runs in Claude's
+    default mode, the session dialog's "Ask permissions", and P4.1's pairing
+    of the Codex presets with Claude's modes by their words pairs Read Only
+    with Ask permissions. Nothing relies on the preset to keep the help folder
+    read-only: the rebuild before every Ask spawn does (9.6 items 21 and 22).
+  - *The rebuild (A2-12).* The help folder is rebuilt before every Ask spawn
+    of either assistant (main, in `pty-handlers`, right before the spawn), by
+    `help:workspace`, and once at boot (best-effort). Running it for a Claude
+    Code Ask is the safer reading: a project settings file a Codex session
+    planted (`.claude/settings.local.json`, `.mcp.json`) would otherwise reach
+    the next Claude Ask; the cost is that a Claude Ask's own "don't ask again"
+    approvals written there do not outlive its session.
+  - *Reviews.* The P4.3 review of lane A2's half (995148ea, d809078d,
+    c4f1a62c): spec FAIL (A2-1, and A2-2, which lane A's carrier closed),
+    quality FAIL (minor fixes). The integration review (INT-1) found the copy
+    ahead of the carrier; the carrier and 2be770ad (the copy matched to the
+    code as built) close it. The fix pass 2a6e716b, with lane A2's patches
+    fix-1 to fix-3 applied in eecd1b75: A2-1 (Past discussions asks for the
+    picker on either assistant), A2-3, A2-4 (each fail-closed guard of the
+    rebuild has its own case and mutant), A2-5 (a failed rebuild logged by
+    code only), A2-6 (the helper skill reads for both assistants), A2-7 (a
+    revive clears what a restart clears), A2-8 (a not-delivered hand-off keeps
+    its own question). The re-review: f6e728b4 spec FAIL on RASK-1 only and
+    quality FAIL (small fixes), every carrier rule PASS; 2b6f78b5, 2a6e716b,
+    eecd1b75 and 2be770ad PASS. The fix pass b4413a24 closes RASK-1 to RASK-5
+    (RASK-6 was closed by 2be770ad); its verification is spec PASS, quality
+    PASS.
+  - *RASK-1's consequence.* An Ask launch of either assistant runs in the help
+    folder main has just rebuilt, on every route: `pty:spawn` sets the rebuilt
+    folder as the launch folder, and a resumed Ask conversation (a restored
+    tab's, a Restart's, Codex's kept one) is resumed only when it ran in that
+    folder. So after the resources folder moves, the next Ask start begins a
+    new conversation in the new help folder; the old one stays in Past
+    discussions only if it ran there. The tab's saved working folder still
+    shows the old path until the tab is reopened (display only; main does not
+    use it for an Ask).
+  - *Decisions inside the phase.* The question on the launch line only at the
+    fresh direct launch; typed through the primitive elsewhere; the 300 s
+    bound; the rebuild before every Ask spawn of either assistant and at boot.
+    RASK-5: a question handed to an Ask tab that is still starting is kept,
+    and the dock says the session was still starting. A2-8's other half is
+    deferred: main's notices carry no question id (a shared-type change), and
+    a notice that outlives its tab is harmless, since Send again revives.
+  - *Follow-up proposal (not built).* Past discussions runs the resume picker
+    in the help folder, and both pickers list the worktrees
+    `git worktree list` reports from there; when the resources folder lies
+    inside a git repository, the picker lists that repository's worktrees too
+    and can start a picked conversation in a sibling worktree, outside the
+    help folder, so the Ask session loses the app's framing there. It needs a
+    deliberately chosen resources folder and an explicit pick. The proposal:
+    set `GIT_CEILING_DIRECTORIES` to the resources folder on Ask spawns, or
+    hold each picker to the help folder (`CCC_GATED_DIRS` for Claude's, an
+    equivalent for Codex's); it touches the launch or the picker scripts, so
+    it waits for a decision.
+  - *Owed.* The VM: the argv question at a first launch in a fresh account
+    folder, behind its trust and sandbox screens (whether Codex holds it until
+    they are answered decides whether "opens with it already asked", in app
+    knowledge and the training card, holds there); the `.cmd` question typed
+    after those screens; the inline `AGENTS.md` read whole with both `-c`
+    values on both routes, and no parent folder's `AGENTS.md` joining it; the
+    rebuild after a real Ask session; a live hand-off mid-turn; a resumed Ask
+    with a question; the pointer skill's read of `help/app-knowledge.md` on
+    Windows under the non-admin sandbox, where PowerShell does not start
+    (A2-6); the quarantined `help-workspace-rebuild-links.test.ts`, with its
+    "follows the link" mutant, on CI or the VM. OR4 (a real answer); OR5; the
+    owner's screenshots (the Settings row, the dock badge, the notice lines,
+    the still-starting line, the Codex Ask header mark, the failure line in
+    the dock and after "Failed to launch session:" on a Restart); question 6.
+    ADR-009: pending.
 
 **P4.4 Memory and Codex logs (rows 55, 56).** Probe: PB6 (reported).
 - *Today: memory.* The banner is at `MemoryPage.tsx:204-207`.
@@ -5602,6 +5848,49 @@ and lane A2's integration. Probes: PB3, PB4 (both reported).
   `jobs` or `consolidation_progress` row advanced), else OR4. PB6 made the
   layout but not `MEMORY.md` or `memory_summary.md`: their real format is
   OR4.
+- *Record (2026-10-03; the code at b4413a24).*
+  - *Built.* 1a12160b (lane B); b3b1c2d4 (integration: the account folders
+    port beside `usageSessionsDir`, the main wiring, the Settings Debug
+    mount); lane B's part of c4f1a62c (the copy). Every clause above is built:
+    memories per account with the off state, the recursive walk that never
+    lists or opens `.git` and never follows a link, the guard beside
+    `validateMemoryPath`, read, delete built and hidden, the keyed log-folder
+    channel refusing by form before any call, the banner replaced.
+  - *Recorded, as this entry asks.* Frontmatter edit does not carry over
+    (Codex's memory files carry a heading, not frontmatter). Delete is hidden,
+    and refused in main, until P4.4's VM check; an inconclusive check goes to
+    OR4.
+  - *Reviews.* The P4.4 review (1a12160b, b3b1c2d4, c4f1a62c): spec PASS,
+    quality PASS with minors. The fix pass 8fb60652, with lane B's patch fix-6
+    (`auth-operations.ts` and its test) in eecd1b75: B-1 (a strict request
+    schema on the log-folder channel), B-2 (delete refused in main while
+    hidden), B-3 (one case rule for the same path in the account-folder
+    checks), B-4 (account cards that say only what the app knows), B-6, B-7.
+    The re-review of 8fb60652: spec PASS; its one quality finding, RDB-1, is
+    fixed in 41638f93 (containment compares the memories folder's exact
+    spelling on every platform; the case rule stays in the real-path test),
+    and its verification is quality PASS.
+  - *B-9 (parity).* The memory scan walks each account's memories whatever the
+    provider choice, as it reads Claude's store whatever the choice; the page
+    shows Codex's only while Codex is in use.
+  - *B-8 (left).* One private `checkedHome(realm)` in `auth-operations.ts`,
+    used by `usageSessionsDir` and `accountFolders`, would make "the same
+    check" true by construction rather than by copy; not done.
+  - *Pre-existing (not a PR 4 regression).*
+    `tests/unit/memory-path-symlink.test.ts` (50005dc5, 2026-06-15) plants
+    junctions without a HOST QUARANTINE header; it should carry one.
+  - *Owed.* The VM: a realm with memories on shows them; each account's log
+    folders open, `log_dir` set in `config.toml` included (PB6 saw
+    `codex-tui.log` move with `-c log_dir` only, so the copy saying it moves
+    with `config.toml` stays only if the VM confirms it); a mapped network
+    drive, an 8.3 short name and a subst drive refused through the real path
+    (the quarantined suite covers junctions only); a realm whose home path
+    holds a non-ASCII letter in another case than its `CODEX_HOME` lists its
+    memories and opens its log folder; the quarantined link cases; the delete
+    check (a run-made file deleted, a relaunch and a wait; it counts only if
+    consolidation ran). OR4: the real `MEMORY.md` and `memory_summary.md`
+    format, and the delete check if the VM's is inconclusive. The owner's
+    screenshot review. ADR-009: pending.
 
 **P4.5 Cloud Agents with `codex exec` (row 57).** Probe: PB5 (reported).
 - *Today: the runner.* The refusal is `cloud-agent-manager.ts:192`
@@ -5716,6 +6005,61 @@ and lane A2's integration. Probes: PB3, PB4 (both reported).
   2, and before OR6 part 1 (that setup resets the shared sandbox accounts, so
   the VM repair comes after it). This check gates the final head, not the
   build. A real model's output and cost are OR4.
+- *Record (2026-10-03; the code at b4413a24).*
+  - *Built.* 5d0187c6 (lane C); fac6afb9 (integration: the core background
+    port, the Codex package wiring, the accounts service's kind words and
+    remote refusal, `provider-in-use.ts`, the shared types, the preload
+    bridge, the quit stop, the fake CLI's `exec --json` mode, lane F's
+    conformance pin); lane C's part of c4f1a62c (the copy). Every clause above
+    is built, question 7's default A included: the tick is worded "Auto:
+    workspace writes, no prompts, for this run", the default runs
+    `-s read-only`, the tick `-s workspace-write`, and no flag that bypasses
+    the sandbox is ever used. A cost shows only when a Codex config names the
+    model (Codex's default model is not in `exec`'s JSON); tokens always show.
+  - *Reviews.* The P4.5 review (5d0187c6, fac6afb9, c4f1a62c): spec PASS;
+    quality FAIL on C-1 only (at quit a running Codex agent lost only its
+    wrapper line). The fix pass d41c4a8b, with lane C's comment patches fix-1
+    and fix-2 in eecd1b75: at quit a running Codex agent's whole tree is ended
+    as a Claude agent's is (`taskkill /T` on its root on Windows, its process
+    group elsewhere); a Stop after codex has exited still ends the run's
+    leftovers and does not record a finished run as cancelled; one running
+    agent counts once as Codex in use; exit 0 after a failed turn keeps its
+    reason in the output. The re-review of d41c4a8b: spec PASS, quality PASS,
+    with RCEF-1 recorded.
+  - *What a run writes.* By this entry's reading, a run's other writes in the
+    account's folder are Codex's own runtime state, the files any Codex
+    session the app launches writes, so P4.5 adds no new kind of write;
+    `config.toml` and `auth.json` unchanged by a run is a VM check (below).
+  - *Residuals.* A quit inside the 2 s settle window after codex has exited
+    does not run the leftovers step (it needs a fresh table read, which a
+    synchronous quit cannot take), so a command the model left running that
+    still holds the pipes can outlive a quit landing in exactly that window.
+    RCEF-1, the POSIX quit check (VM-pending): on macOS and on Linux, start a
+    Codex agent run whose model starts a long command (a dev server, or
+    `sleep 600`), quit the app while it runs, then read the process table
+    (`ps -eo pid,pgid,ppid,lstart,command`); it passes when no process of the
+    run outlives the app (node, codex or the model's command). If the model's
+    command survives in its own process group, the quit flush must also end
+    the run's observed members (start-time vouched), as the in-app Stop does.
+    Until it runs, the quit flush's comment in `cli-runner.ts` ("So a command
+    the model started does not outlive the app") is conditional on macOS and
+    Linux, as the `index.ts` ledger row now says; on Windows it rests on the
+    VM sizing below.
+  - *Owed.* The VM: an agent run on both versions and routes with the real CLI
+    and the fake model, dispatched from a config that names the model (without
+    `-m` the fake provider got no tools, PB5), `config.toml` and `auth.json`
+    hashes unchanged under each permission choice; the edit case under the
+    non-admin sandbox (OR6 part 2 only if it fails); whether Codex's Windows
+    sandbox starts the model's commands as descendants of codex at all (a
+    process-table read during an Auto agent's long command on both routes,
+    each command's parent chain and user), a quit during a long agent command
+    on both routes, and whether `taskkill /T` exits non-zero on a
+    sandbox-owned process; whether 0.153.4 or 0.155.1 ever exits 0 after a
+    failed turn; the e2e `cloud-agents.spec.ts`. RCEF-1's macOS and Linux
+    check (above). OR4 (a real agent's output and cost); question 7; the
+    owner's screenshot review. The P4.11 copy: `AgentHubOnboarding.tsx:59` ("A
+    headless Claude runs it") and LaunchAckConfirm's "Start session" title on
+    a Codex agent's Retry. ADR-009: pending.
 
 **P4.6 Codex web session; the artifacts record (row 58).** Owner: OR2 (the
 sign-in, before and after the build), OR3 (the record). PB7 sized OR2.
@@ -5777,6 +6121,39 @@ sign-in, before and after the build), OR3 (the record). PB7 sized OR2.
   clear the Codex partition.
 - *VM.* PB7 (no sign-in). The sign-in itself is OR2a, before the window is
   built, and OR2b, through the built window on the final build.
+- *Record (2026-10-03; the first half, at b4413a24).*
+  - *Built (the start-now half).* 27d62537 (lane D); 7c20c204 (integration:
+    the orphan sweep for both web partitions, and no Claude account on a Codex
+    pane); 0992e6de (the pane's claude.ai entry pinned off a Codex session);
+    the fix 1064dbbf. A Codex account's own web partition
+    (`webPartitionForCodexAccount`, `persist:codex-web-<registry account id>`,
+    checked against the registry's own id pattern), the dev start's
+    orphan-partition warning over both prefixes, and Claude's Open artifacts
+    and Authenticate claude.ai off a Codex tab's menu.
+  - *Scope addition, declared (D-2).* `WebviewPane.tsx`'s start page no longer
+    offers the primary Claude profile's claude.ai on a Codex session (lane D's
+    proposal, applied in 7c20c204, pinned in 0992e6de). The start-now list
+    names only the menu; this is the same #216 fallback on the pane, it only
+    removes a wrong-account offer, and it adds no Codex surface (the
+    chatgpt.com surface stays after OR2a).
+  - *Reviews.* The P4.6 review (27d62537, 7c20c204, 0992e6de): spec PASS,
+    quality PASS (D-1 a records item, D-2 to D-6 nits). The fix 1064dbbf: the
+    right-click prefetch resolves its account through
+    `claudeWebActionProfileId`, the menu's own helper (D-3), and the comment
+    fixes (D-4, D-5); D-1 is the row 58 note in the checklist, D-6 the ledger
+    wording in 6890deed. Its re-review: spec PASS, quality PASS. Not done,
+    optional: a source pin on the dev start's orphan-warning call in
+    `index.ts`.
+  - *For the second half (after OR2a).* `webPartitionForCodexAccount` checks
+    the id's form only, so each caller that makes a Codex web partition first
+    confirms from the provider registry that the account is a Codex account;
+    any removal (sign-out, archive, clean-up) checks the whole folder name
+    against its id class, never the listing warning's prefix match alone; new
+    account-keyed channels take strict schemas and trusted-sender checks.
+  - *Owed.* OR2a, then the sign-in window, the pane's account surface and the
+    Codex menu item; OR3, the artifacts record; OR2b on the final build.
+    ADR-009: pending (the first half's own round, and the second half's with
+    it).
 
 **P4.7 Insights for Codex (row 68).** After P4.5's runner and OR3's approval.
 Probe: PB5 (shared with P4.5).
@@ -5870,6 +6247,35 @@ Probe: PB5 (shared with P4.5).
 - *ADR-009: N. SSH radius: N* (for any product fix: by its paths).
 - *Tests.* [CI] The CI run on the PR 4 branch with `ci-run`; each new check
   shown red once against a deliberately wrong fixture, then green.
+- *Record (2026-10-03; the code at b4413a24).*
+  - *Built.* 6de24ac0 and 1939475b (lane E): `ubuntu-latest` in the `test`
+    matrix, non-blocking until its first green run; the `codex-conformance`
+    job per OS for the minimum and pinned versions (the release-candidate one
+    by dispatch), holding no secrets; the `release.yml` comment;
+    `docs/wp1/evidence/ci-matrix.md`, its results not recorded yet.
+  - *Reviews.* The lane E review (6de24ac0, 7f15e2ec, 1939475b, d31d4940):
+    spec and quality FAIL on E-1 (P4.8: the prove-red run could never show the
+    model-list check red) and E-5 (P4.9). The fix pass b26079e9: the model
+    list as its own case with two soft checks (E-1); each help read must name
+    its subcommand on its Usage line (E-2); a flag counts only on an option
+    line (E-3); every CLI run in the job gets a fresh `CODEX_HOME`, and a last
+    step proves the runner's own home untouched (E-4); the checkout keeps no
+    token, and the Codex install runs no scripts and uses its own cache
+    (E-12). The re-review of b26079e9: spec PASS, quality PASS, with RCEF-2
+    and RCEF-3; the fix 41638f93 moves the own-home picture and verdict to
+    `tests/integration/codex-own-home.mjs`, tested on every change
+    (`codex-own-home.test.ts`), a folder now part of the picture and a missing
+    record failing as such, and `ci-matrix.md` gains an "Own home untouched"
+    column; its verification is spec PASS, quality PASS.
+  - *Owed (CI, after the push with `ci-run`).* The first Linux run of the WP2
+    stack, read job by job (`continue-on-error` hides a red leg), then one
+    commit recording it and dropping `continue-on-error`; the six conformance
+    legs, whose likeliest first red is the Usage-line check of `app-server`,
+    `debug models`, `login status` and `logout`, which have no fixture; the
+    own-home steps on all six legs; the help captures reviewed per OS before
+    `CCC_CODEX_HELP_ASSERT` is turned on; then the prove-red dispatch, filling
+    the "Shown red once" table. The release-candidate version at release.
+    ADR-009: N (this entry); the PR-level pass at the final head: pending.
 
 **P4.9 E2E mode matrix (row 67).**
 - *Today.* `docs/wp1/evidence/mode-matrix.md` records WP1.1 and WP1.60 as
@@ -5894,6 +6300,42 @@ Probe: PB5 (shared with P4.5).
   citations re-pointed (with P4.10).
 - *ADR-009: N. SSH radius: N.*
 - *Tests.* [VM] The VM e2e run.
+- *Record (2026-10-03; the code at b4413a24).*
+  - *Built.* 7f15e2ec (lane E: the restart, enable and disable, and
+    real-launch specs, `tests/wp1/mode-matrix.test.ts` and
+    `tests/e2e/onboarding-provider-select.spec.ts`, the two files traceability
+    cited, and `mode-matrix.md` with the matrix and the upgrade spec);
+    d31d4940 (integration: the fake codex stands in for a session launch).
+  - *Reviews.* E-5 (in the lane E review above): the real launch's menu answer
+    could act on a screen that was no longer the live one. The fix b26079e9
+    reads Codex's first screens through a pure reader
+    (`tests/e2e/helpers/codex-first-screens.ts`): the live screen is the
+    lowest title on screen, Enter goes only on the verified selected row of
+    that screen's own menu, each screen is answered once, and ready needs the
+    composer's placeholder above the footer (it also found that the old ready
+    rule read Codex's disabled composer during sandbox set-up as ready). It is
+    checked in `mode-matrix.test.ts` on screens rendered from the 9.2 probe
+    captures. E-7: the matrix test compares the record's table cell by cell.
+    E-9 was declined (optional, already fail-closed). The re-review: spec
+    PASS, quality PASS.
+  - *Traceability (INT-6).* WP1.60 lists the four specs of its mode-matrix
+    cells (`codex-reconfirm-upgrade`, `codex-mode-restart`,
+    `codex-mode-enable-disable` and `codex-real-launch`), read as the matrix's
+    cells rather than lane E's four new files; the re-review agreed, since
+    `mode-matrix.md`'s table says so and `mode-matrix.test.ts` pins it. WP1.3
+    lists `onboarding-provider-select.spec.ts`; WP1.2 lists
+    `codex-real-launch.spec.ts`, and since 0a643a5e also the two specs of its
+    "Fresh install, Codex only" cell, `onboarding-provider-select.spec.ts` and
+    `codex-session-creation.spec.ts`. The items stay planned.
+  - *Owed (VM).* `codex-real-launch` at the final head with both versions
+    (`CCC_E2E_REAL_CODEX` names exactly 0.153.4 and 0.155.1) and the fake
+    model: the screens the renders show (trust, then the sandbox menu, each
+    replaced in place, one sandbox menu per launch) confirmed at the app's
+    pane size, "Setting up sandbox" waited out, and the annotations (the
+    screens, `config.toml`, the own Codex folders); the four new specs and
+    `codex-session-creation` as before; the results in a new `mode-matrix.md`
+    record. ADR-009: N (this entry); the PR-level pass at the final head:
+    pending.
 
 **P4.10 Qualification, owner-run gates, traceability (rows 15, 16, 66).**
 Owner: OR1, OR4.
@@ -5942,7 +6384,8 @@ Owner: OR1, OR4.
     at :148 feeds it), so that test injects its list and spawns no `git`.
   - Each item moves to evidenced as its evidence lands.
   - The verification owed by the 20 DONE rows, Windows column, split three
-    ways (macOS, Linux and packaged close at release, section 7):
+    ways (macOS, Linux and packaged close at release, section 7, apart from
+    OR1's rows 4 and 6, which close on every OS before merge):
     - the agent on the VM, no sign-in (throwaway homes, a fake key, the fake
       model or the stand-in Claude): rows 1, 2, 9, 12, 13, 21, 23, 25, 33, 48,
       64 and 74; and rows 27 (a 0.155.1 subagent rollout) and 50 (a
@@ -5950,8 +6393,13 @@ Owner: OR1, OR4.
       model can make their evidence. Row 2 per OS also from P4.8's real-CLI
       job. Row 25's real rollouts are copied read-only from the VM user's
       `~/.codex/sessions` into a throwaway home (9.2);
-    - OR1 (real accounts): rows 4 (a real API-key sign-in and sign-out) and 6
-      (a real two-account run; keyring scoping, WP1.10, WP1.11);
+    - OR1 (real accounts, on the owner's hosts, one per OS, on PR 4's final
+      build, before merge, as 9.5 and the owner's request ask: "on each
+      system"): rows 4 (a real sign-in with a disposable identity and with
+      the API key, status and sign-out) and 6 (a real two-account run and
+      the native keyring smoke; keyring scoping, WP1.10, WP1.11), each on
+      Windows, macOS and Linux (`docs/wp1/evidence/release-qualification.md`,
+      section 4);
     - OR4 (a real model): rows 18 (a 0.155.1 rollout fixture from a real
       session; OD27 M3) and 49 (a real `codex_review` run on a signed-in
       account), and rows 27 and 50 if the fake model cannot make their
@@ -5969,6 +6417,40 @@ Owner: OR1, OR4.
   injected changed-file list); each new
   `tests/wp1/*` file tagged by its header (a file that plants junctions or
   starts processes is headed HOST QUARANTINE: CI and VM only).
+- *Record (2026-10-03; the first part, at b4413a24).*
+  - *Built.* 554315e7 (lane F: the candidate check excludes the manifest's own
+    file, through a pure filter over the changed-file list) and d1d41d93 (lane
+    F: `docs/wp1/evidence/release-qualification.md` section 4, the map of the
+    checks the 20 DONE rows owe).
+  - *Reviews.* The lane F review (554315e7, d1d41d93): spec PASS; quality FAIL
+    on F-1 (the check could not pass on a depth-1 CI checkout) and F-2 (a
+    manifest-only commit could move the binding past a source change). The fix
+    6825975c, with lane F's patch fix-1 (the `traceability.json` note) in
+    eecd1b75: the fetch script reads a declared `boundHead` and deepens a
+    shallow checkout in bounded steps, failing loudly when the ancestry still
+    has no answer (F-1); each evidence record carries the head it was taken
+    at, and every record must equal `boundHead` (F-2); the git wiring is
+    injected and pinned (F-3); the binding's neutral paths are an allowlist
+    (the manifest, `docs/**`, `CONTEXT.d/**`, the ADRs, top-level Markdown),
+    everything else breaks it (F-4); the map's internal fixes (F-5, F-7, F-8).
+    The re-review: spec PASS, quality PASS; RCEF-4 (the fetch script's main
+    guard decides by real paths) is fixed in 41638f93.
+  - *F-6.* The map follows 9.5 and the owner's request ("on each system"): OR1
+    runs rows 4 and 6 on Windows, macOS and Linux before merge. This entry and
+    section 7 now say the same (above); the owner is asked to confirm row 6
+    per OS, since 9.5 names per OS only for rows 4 and 15. F-9 (a Codex Beta
+    label both the inventory and the plan missed) is in P4.11's inventory.
+  - *Notes for the binding at release.* On a pull_request run HEAD is GitHub's
+    merge commit, so a candidate declaration passes only on a head current
+    with its base, or at release on a real head. The version bump and the
+    release's `changelog.ts` entry are not neutral paths, so they land before
+    the evidence head; a `phase: candidate` manifest merged back into beta
+    turns beta's candidate check red on its next source change.
+  - *Owed.* OR1 (hosts per OS, two disposable identities, a throwaway API key,
+    a date), then row 15's owner-run gates on the final build; the items
+    moving to evidenced as their evidence lands; the 13 cited paths this entry
+    lists created or re-pointed; OR4's rows. ADR-009: N (this entry); the
+    PR-level pass at the final head: pending.
 
 **P4.11 Final sweep, Beta labels, screenshot recapture (row 54).**
 - *Today: the labels.* `src/renderer/providers/codex/index.ts:10`
