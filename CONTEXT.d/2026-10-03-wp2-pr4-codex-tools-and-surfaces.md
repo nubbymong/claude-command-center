@@ -23,7 +23,10 @@ vision instructions reach this computer's own Codex sign-in), 6 (row 53,
 characters outside the BMP on the npm `.cmd` route and a live Ask tab) and 7
 (row 57, what a Codex agent's skip-permissions choice runs as). Each is built
 as its default A meanwhile; PR 4 waits on the answers before its merge is
-recommended, as PR 3 does for questions 2, 3 and 4. Also to confirm: OR1 runs
+recommended, as PR 3 does for questions 2, 3 and 4. Question 8 (rows 51 and
+52, raised by the VM checkpoint): what Codex's Auto preset, which cannot ask,
+should do about the app's own tools; built as default B, no keys, so they are
+refused on Auto. Also to confirm: OR1 runs
 rows 4 and 6 on every OS before merge (the owner's request said "on each
 system"; plan 9.5 names per OS only for rows 4 and 15).
 
@@ -78,7 +81,7 @@ checklist):
 is the spec. Where it carries over it decides, as when the re-review sent
 the per-tool-group skill staging back to Claude's master-switch rule; where
 it cannot, the built default stands and the owner is asked (section 10,
-questions 5 to 7).
+questions 5 to 8).
 
 **Shipping with workarounds (app knowledge, Known issues).** A Codex session
 on this computer's own sign-in may get the canvas and vision tools without
@@ -101,5 +104,15 @@ VM confirmations owed. The SSH live matrix at PR 4's final head (OR5:
 lists, the e2e suite at the final head, CI with `ci-run` (the first Linux run
 of the WP2 stack),
 the owner's screenshot review, OR1 to OR4, the Desktop test gate, and
-questions 5 to 7. Findings about pre-existing behaviour raised by the reviews
+questions 5 to 8. Findings about pre-existing behaviour raised by the reviews
 were routed privately.
+
+**VM checkpoints and CI.** VM checkpoints 1 and 2 ran at 69c98042 and
+passed, apart from four findings fixed in 2ef1c892, 00b8da6d, 3bb58680 and
+e30aded1 (the plan's 9.7 record), with P4.5's non-admin edit case going to
+OR6 and the memory delete check to OR4. PR 4's first CI run failed on POSIX
+in tests only (b76e9f6c, 1eba3623); on ext4 a file deleted and made again at
+once keeps its inode, recorded as a limit of the identity checks. Still owed
+on the VM: a picker launch showing the inline guidance in a new
+conversation, the compat test leaving `~/.codex` untouched, and an Ask
+Restart resuming on both assistants.
