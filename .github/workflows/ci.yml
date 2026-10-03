@@ -233,10 +233,10 @@ jobs:
   # with no sign-in, each run in a fresh, empty Codex home: the app's discovery
   # (row 2's detection evidence per OS), the help of every command line the
   # app runs, the model list against the registry, the feature list, and the
-  # flag-drift suite. P3.1's help captures are made again and uploaded with a
-  # comparison against the normalised fixtures; that comparison is reported,
-  # not asserted, until the captures are reviewed per OS, and then
-  # CCC_CODEX_HELP_ASSERT turns to '1'. See
+  # flag-drift suite. P3.1's help captures are made again, uploaded, and
+  # asserted against the normalised fixtures as each OS reads them: the
+  # captures of each OS were reviewed (CI run 37134624406) and only the
+  # differences reviewed are accepted (CCC_CODEX_HELP_ASSERT). See
   # tests/integration/codex-real-cli-conformance.test.ts and
   # docs/wp1/evidence/ci-matrix.md.
   #
@@ -263,8 +263,9 @@ jobs:
     env:
       CCC_CODEX_CONFORMANCE_KIND: ${{ matrix.cli }}
       CCC_CODEX_CONFORMANCE_PROVE_RED: ${{ inputs.conformance_prove_red && '1' || '0' }}
-      # '0' until the help captures of each OS are reviewed (P4.8), then '1'.
-      CCC_CODEX_HELP_ASSERT: '0'
+      # '1' since the help captures of each OS were reviewed (P4.10; the
+      # differences accepted are in tests/integration/codex-conformance-lib.ts).
+      CCC_CODEX_HELP_ASSERT: '1'
     steps:
       # No git operation in this job needs the token, so it is not left on
       # disk for the third-party install below.
