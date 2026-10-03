@@ -6,7 +6,7 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { showcasesFor, ShowcasePage } from './showcase-pages'
 import { ShowcaseVignette } from './ShowcaseVignette'
 import { RenamePageView } from './RenamePage'
-import { usesClaude, claudeWasMissingAtSetup } from './provider-choice'
+import { usesClaude, usesCodex, claudeWasMissingAtSetup } from './provider-choice'
 
 declare const __APP_VERSION__: string
 
@@ -44,6 +44,9 @@ export interface WhatsNewSection {
   /** P3.10: the heading while Claude Code is off, for a section that names
    *  Claude and keeps a line that works with Codex (the Watchdog's). */
   headingWithoutClaude?: string
+  /** P4.11 (INT-7): the heading while Claude Code and Codex are both on, for
+   *  a section whose lines now work for both. */
+  headingWithCodex?: string
   items: WhatsNewItem[]
 }
 
@@ -104,6 +107,7 @@ const SECTIONS_21: WhatsNewSection[] = [
   {
     heading: 'Working with Claude',
     headingWithoutClaude: 'Working with Codex',
+    headingWithCodex: 'Working with Claude and Codex',
     items: [
       // WP2 PR 4, P4.1 (row 51): the canvas works in Codex sessions too.
       { title: 'Agent Canvas.', desc: "Your agent draws a mockup in the app. Mark up what's wrong; it picks the notes up.", seeIt: 'canvas' },
@@ -243,8 +247,11 @@ export function WhatsNewV2Step({
   // the run goes on with Codex only, as the Welcome page reads it) a line or
   // page about something that needs Claude Code is not shown.
   const withClaude = useSettingsStore((s) => usesClaude(s.settings)) && !claudeWasMissingAtSetup()
+  const withCodex = useSettingsStore((s) => usesCodex(s.settings))
+  const headingFor = (s: WhatsNewSection): string =>
+    !withClaude ? s.headingWithoutClaude ?? s.heading : withCodex ? s.headingWithCodex ?? s.heading : s.heading
   const sections = sectionsFor(lastSeen, LINE_SOURCE)
-    .map((s) => ({ ...s, heading: !withClaude && s.headingWithoutClaude ? s.headingWithoutClaude : s.heading, items: s.items.filter((it) => !(fresh && it.upgradeOnly) && (withClaude || !it.needsClaude)) }))
+    .map((s) => ({ ...s, heading: headingFor(s), items: s.items.filter((it) => !(fresh && it.upgradeOnly) && (withClaude || !it.needsClaude)) }))
     .filter((s) => s.items.length > 0)
   const count = sections.reduce((n, s) => n + s.items.length, 0)
   // The showcase (owner design 2026-08-24): the summary is page 0; each

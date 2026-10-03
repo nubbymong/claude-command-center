@@ -596,4 +596,76 @@ describe('the PR 4 user-facing sweep (P4.11)', () => {
     expect(readme).not.toMatch(/Still marked Beta/)
     expect(guide).not.toMatch(/\*\*Codex\*\* \(Beta\)/)
   })
+
+  const body = (id: string) => APP_KNOWLEDGE_SECTIONS.find((s) => s.id === id)!.body
+  const tip = (id: string) => TIPS_LIBRARY.find((t) => t.id === id)!.variants.primary
+  // The policy wraps its lines, so phrases are matched with the wrapping undone.
+  const privacy = fs.readFileSync(path.join(root, 'PRIVACY.md'), 'utf8').replace(/\s+/g, ' ')
+
+  it('Artifacts: shown for an SSH Claude session signed in as a local account too, not only a local one', () => {
+    expect(body('draw')).toMatch(/it appears for a Claude session signed into one of your accounts here, a local session or an SSH session signed in as an account you also use on this computer, and uses that account/)
+    expect(body('draw')).not.toMatch(/appears for a local Claude session signed into an account/)
+  })
+
+  it('the tips for features that now work for both say so (P4.1, P4.2, P4.4, P4.5)', () => {
+    expect(tip('tip.vision-system').shortText).toBe('Give your agent a browser to drive')
+    expect(tip('tip.vision-system').body).toMatch(/gives your Claude and Codex sessions a real browser they can control/)
+    expect(tip('tip.vision-system').body).not.toMatch(/gives Claude a real browser|that Claude can drive|showing Claude/)
+    expect(tip('tip.memory-visualiser').shortText).toBe('Browse what your assistants remember about your projects')
+    expect(tip('tip.cloud-agents').shortText).toBe('Dispatch an agent to work in the background')
+    expect(tip('tip.codex-sessions').body).toMatch(/The Agent Canvas, Vision and the push to the Browser pane work in Codex sessions too./)
+    expect(tip('tip.cloud-agents').body).toMatch(/runs headless agents on Claude Code or Codex in the background/)
+    expect(tip('tip.transparency.vision-mcp').body).toMatch(/is offered the same vision, browser push, host screenshot and canvas tools, with `claude_review` in place of `codex_review`/)
+  })
+
+  it('the README says what PR 3 and PR 4 made true', () => {
+    expect(readme).not.toMatch(/Ask Conductor, Cloud Agents and Insights are unavailable/)
+    expect(readme).toMatch(/With Claude Code off, Insights is unavailable and says so, Ask Conductor runs on Codex, Cloud Agents runs Codex agents only/)
+    expect(readme).toMatch(/Ask Conductor opens a real session, on Claude Code or Codex,/)
+    expect(readme).not.toMatch(/review what Claude built|giving Claude eighteen|dispatch headless Claude|notices when Claude Code updates|straight into Claude|sends a prompt to Claude|driven by Claude's own hooks/)
+    expect(readme).toMatch(/notices when Claude Code or Codex updates/)
+    expect(readme).toMatch(/each Codex account's own memories/)
+    expect(readme).toMatch(/Your agent, Claude or Codex, renders a design mockup/)
+  })
+
+  it('the user guide: what runs with Claude Code off, and the Codex known issues PR 4 ships with', () => {
+    expect(guide).not.toMatch(/Ask Conductor, Cloud Agents and Insights are\s+unavailable/)
+    expect(guide).toMatch(/With Claude Code off, Insights is unavailable and says so, Ask Conductor runs on\s+Codex, and Cloud Agents runs Codex agents only/)
+    expect(guide).not.toMatch(/for Claude Code also cloud agents and Insights/)
+    // The guide wraps its lines, so a phrase is matched across a line break.
+    const known = guide.slice(guide.indexOf('## Known issues with Codex'), guide.indexOf('## Logs & transcript viewer')).replace(/\s+/g, ' ')
+    for (const said of [/On the Auto preset, Codex refuses the app's own tools/, /without the guidance on using them/, /cannot pass on emoji/, /documentation folder cannot be rebuilt/, /A Codex cloud agent run with Auto/]) expect(known).toMatch(said)
+  })
+
+  it('privacy: the staged skills, the guidance read on your own Codex folder, the Memory page and log folders, and cloud agents', () => {
+    expect(privacy).toMatch(/under `skills\/`/)
+    expect(privacy).toMatch(/developer instructions/)
+    expect(privacy).toMatch(/the app writes nothing there/)
+    expect(privacy).toMatch(/\*\*The Memory page and Debug Logging read each Codex account's own folders\.\*\*/)
+    expect(privacy).toMatch(/A cloud agent works the same way/)
+  })
+})
+
+// [host] P4.11: the 2.1.1 entry lists what PR 4 and its sweep shipped, found
+// by its highlight as the P3.16 block finds it.
+describe('What\'s New after PR 4 (P4.11)', () => {
+  const top = changelog.find((e) => e.highlights?.startsWith('Codex becomes a full second assistant'))!
+  it('the 2.1.1 entry lists PR 4\'s features and the sweep\'s fixes, in plain ASCII', () => {
+    expect(top.highlights).toMatch(/The Agent Canvas, Vision and the in-app browser, Ask Conductor, Cloud Agents and the Memory page work for Codex too, and Codex is no longer marked Beta\./)
+    const all = top.changes.map((c) => c.description).join('\n')
+    for (const said of [
+      /The Agent Canvas works in Codex sessions as in Claude ones/,
+      /Vision and the push to the in-app browser work in Codex sessions too/,
+      /Cloud Agents run on Codex too/,
+      /The Memory page lists each Codex account's own memories/,
+      /A Codex tab's right-click menu no longer offers Claude's claude\.ai items/,
+      /Codex is no longer marked Beta/,
+      /The Feature Guide and its tour show the cards for the assistants you use/,
+      /Claude Opus 5\.5 and Claude Sonnet 5\.5 are in the model picker/,
+      /The Usage page's Updated line now ages while the page stays open/,
+      /now says 1 note, not 1 notes/,
+      /now says Retry agent, not Start session/,
+    ]) expect(all).toMatch(said)
+    for (const text of [top.highlights ?? '', ...top.changes.map((c) => c.description)]) expect(text, text.slice(0, 40)).toMatch(/^[\x20-\x7e]*$/)
+  })
 })

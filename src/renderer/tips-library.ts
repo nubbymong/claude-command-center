@@ -134,7 +134,7 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['memory.memory-page'],
     variants: {
       primary: {
-        shortText: 'Browse what Claude remembers about your projects',
+        shortText: 'Browse what your assistants remember about your projects',
         title: 'Memory',
         body: 'Claude Code writes **auto-memory** files to remember things across sessions: your preferences, past feedback, project context, references to external systems.\n\nClick the **Memory icon** in the sidebar to open the dashboard: a **KPI strip** (memories, projects, total size, stale entries, index health), an **activity chart** and **type donut** for the whole store, and a **ranked project list** with staleness dots and live-session chips.\n\nClick a project to drill in: a sortable memory table plus a sessions rail (live sessions jump straight to the terminal; recent sessions deep-link into Logs). Open any memory in the **reading drawer** to read it cleanly, write missing frontmatter, or delete it. Full-text search spans the whole store.\n\nWith Codex in use, each Codex account\'s own memories are listed below the projects under the account\'s name, read-only for now; search covers them too. Codex keeps memories off until you turn them on in Codex with **/memories**.',
         actionLabel: 'Open Memory',
@@ -316,9 +316,9 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['vision.toggle-vision'],
     variants: {
       primary: {
-        shortText: 'Give Claude a browser to drive',
+        shortText: 'Give your agent a browser to drive',
         title: 'Conductor MCP',
-        body: '**Conductor MCP** gives Claude a real browser it can control: screenshot, navigate, click, type, scroll, evaluate JS. Perfect for testing web apps, scraping docs, or just showing Claude what\'s on screen.\n\nOpen the **Conductor MCP** entry in the sidebar and click **Start Browser** under the Vision sub-tool card. The Conductor MCP server itself is always running, so the button just launches a headless Chrome/Edge that Claude can drive via CDP.\n\nEach Conductor-spawned session gets its own `~/.claude/mcp-<sid>.json`, passed via `--mcp-config`. Your global `~/.claude.json` is never modified (an entry written there by older versions is cleaned up at startup). When you stop the browser, the MCP server stays up so the other sub-tools (code review, host transfer) remain available.',
+        body: '**Conductor MCP** gives your Claude and Codex sessions a real browser they can control: screenshot, navigate, click, type, scroll, evaluate JS. Perfect for testing web apps, scraping docs, or just showing your agent what\'s on screen.\n\nOpen the **Conductor MCP** entry in the sidebar and click **Start Browser** under the Vision sub-tool card. The Conductor MCP server itself is always running, so the button just launches a headless Chrome/Edge that your sessions drive via CDP.\n\nEach Claude session the Conductor starts gets its own `~/.claude/mcp-<sid>.json`, passed via `--mcp-config`, and each local Codex session reaches the same server through its own launch setting. Your global `~/.claude.json` is never modified (an entry written there by older versions is cleaned up at startup). When you stop the browser, the MCP server stays up so the other sub-tools (code review, host transfer, the Agent Canvas) remain available.',
         actionLabel: 'Open Conductor MCP',
         actionTarget: 'vision',
         focusHint: 'Sidebar -- Conductor MCP',
@@ -497,9 +497,9 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['agents.cloud-agent-dispatch'],
     variants: {
       primary: {
-        shortText: 'Dispatch Claude to work in the background',
+        shortText: 'Dispatch an agent to work in the background',
         title: 'Cloud agents',
-        body: '**Cloud Agents** runs headless Claude sessions in the background. You give them a task, they run, you come back later for the result.\n\nPerfect for:\n• Running tests across a large codebase\n• Generating documentation for every file\n• Security audits\n• Long refactors\n\nClick the **Cloud Agents icon** in the sidebar and press "New Agent". Monitor progress from the dashboard: status, elapsed time, token usage, and output for each.',
+        body: '**Cloud Agents** runs headless agents on Claude Code or Codex in the background (with both on, **New agent** asks which). You give them a task, they run, you come back later for the result.\n\nPerfect for:\n• Running tests across a large codebase\n• Generating documentation for every file\n• Security audits\n• Long refactors\n\nClick the **Cloud Agents icon** in the sidebar and press "New Agent". Monitor progress from the dashboard: status, elapsed time, token usage, and output for each.',
         actionLabel: 'Open Cloud Agents',
         actionTarget: 'cloud-agents',
       },
@@ -550,7 +550,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'How the Conductor MCP server injects into Claude settings',
         title: 'Conductor MCP Registration',
-        body: 'The Conductor MCP server hosts five sub-tools (Vision, Codex review, Claude review, Host transfer, Agent Canvas) on a single local endpoint:\n\n1. Server is bound to `127.0.0.1` (**localhost only** -- not exposed to the network) and auto-starts at app boot\n2. Registration is per session only: each Conductor-spawned session gets `~/.claude/mcp-<sid>.json` passed via `--mcp-config`. Your global `~/.claude.json` is never modified (an entry written there by older versions is cleaned up at startup)\n3. Claude Code picks up the tool list automatically (18 browser-vision tools plus `codex_review`, `fetch_host_screenshot` and the `canvas_*` tools)\n\nA local Codex session reaches the same server through its own per-session setting, and is offered `claude_review` rather than `codex_review`, so each assistant can ask the other for a review.\n\nFor SSH sessions, the app sets up a reverse tunnel automatically so remote Claude can reach the local Conductor MCP server.',
+        body: 'The Conductor MCP server hosts five sub-tools (Vision, Codex review, Claude review, Host transfer, Agent Canvas) on a single local endpoint:\n\n1. Server is bound to `127.0.0.1` (**localhost only** -- not exposed to the network) and auto-starts at app boot\n2. Registration is per session only: each Conductor-spawned session gets `~/.claude/mcp-<sid>.json` passed via `--mcp-config`. Your global `~/.claude.json` is never modified (an entry written there by older versions is cleaned up at startup)\n3. Claude Code picks up the tool list automatically (18 browser-vision tools plus `codex_review`, `fetch_host_screenshot` and the `canvas_*` tools)\n\nA local Codex session reaches the same server through its own per-session setting, and is offered the same vision, browser push, host screenshot and canvas tools, with `claude_review` in place of `codex_review`, so each assistant can ask the other for a review.\n\nFor SSH sessions, the app sets up a reverse tunnel automatically so remote Claude can reach the local Conductor MCP server.',
       },
     },
   },
@@ -967,7 +967,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Run OpenAI Codex sessions beside Claude',
         title: 'Codex Sessions',
-        body: 'A saved config does not have to run Claude Code. Turn Codex on and add a Codex account in **Settings, Accounts**, and the session dialog lets a config pick **Codex** instead of **Claude Code**, with the Codex account it runs under and that account\'s own sign-in.\n\nA Codex session opens as a tab and sits in the sidebar next to a Claude one, with the same notes and command buttons. **Tokenomics counts Codex too**, so the spend comparison is in one place rather than two, and the Logs page indexes Codex conversations as it does Claude\'s. Local sessions only for now: SSH configs stay on Claude.',
+        body: 'A saved config does not have to run Claude Code. Turn Codex on and add a Codex account in **Settings, Accounts**, and the session dialog lets a config pick **Codex** instead of **Claude Code**, with the Codex account it runs under and that account\'s own sign-in.\n\nA Codex session opens as a tab and sits in the sidebar next to a Claude one, with the same notes and command buttons. **Tokenomics counts Codex too**, so the spend comparison is in one place rather than two, and the Logs page indexes Codex conversations as it does Claude\'s. The Agent Canvas, Vision and the push to the Browser pane work in Codex sessions too. Local sessions only for now: SSH configs stay on Claude.',
         actionLabel: 'Open Settings',
         actionTarget: 'settings',
       },

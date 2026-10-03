@@ -236,7 +236,7 @@ export function helloCodexComparison(opts: HelloCodexCopyInputs): Array<[string,
     ['Instructions file', '`CLAUDE.md`', '`AGENTS.md`'],
     ['Permissions', 'Claude permission settings', 'Read-only, Standard, Plan mode, Auto, Unrestricted'],
     ['Runs over SSH', 'Yes', 'Not in this release'],
-    ['Vision, browser, canvas', 'Yes', 'Not yet'],
+    ['Vision, browser, canvas', 'Yes', 'Yes'],
     ['Code review', 'Asks Codex', codexReviewCell(opts)],
     ['Usage shown', 'Rate limits', 'Tokens, and its limits when it sends them'],
   ]
