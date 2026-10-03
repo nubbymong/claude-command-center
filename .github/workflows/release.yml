@@ -474,11 +474,14 @@ jobs:
           }).then(() => console.log('rebuild done')).catch(e => { console.error(e); process.exit(1) })
           "
 
-      # The only place the vitest suite runs on Linux (CI's PR matrix is
-      # Win+macOS). Note this is the standard suite — the *.native.test.ts
-      # files (better-sqlite3 under Electron-as-Node) are excluded by
-      # vitest.config; the native rebuild above is what proves node-pty /
-      # better-sqlite3 link on linux-x64.
+      # The release build's own Linux run of the vitest suite. Since P4.8 the
+      # PR and push matrix in ci.yml runs Linux too (ubuntu-latest, with the
+      # native tests, and a real-CLI conformance job per OS), so this is no
+      # longer the only Linux run; it stays as the release candidate's record.
+      # Note this is the standard suite: the *.native.test.ts files
+      # (better-sqlite3 under Electron-as-Node) are excluded by vitest.config,
+      # and the native rebuild above is what proves node-pty / better-sqlite3
+      # link on linux-x64.
       - name: Fetch the WP1 ledger's bound commit
         run: node scripts/wp1/fetch-ledger-commit.mjs
 
