@@ -95,7 +95,7 @@ are in each phase's record: among them the Past discussions picker when the
 resources folder sits inside a git repository (a follow-up proposal) and the
 POSIX quit check of a Codex agent's commands (VM).
 
-**Gate status.** ADR-009 pass: PASS at 227cd300 (four lenses, two fix rounds);
+**Gate status.** ADR-009 pass: PASS at 1a51bb66 (four lenses, two fix rounds);
 VM confirmations owed. The SSH live matrix at PR 4's final head (OR5:
 `pty-manager.ts` changed outside the SSH branch). The VM walks each phase
 lists, the e2e suite at the final head, CI with `ci-run` (the first Linux run
