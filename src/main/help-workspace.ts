@@ -298,6 +298,23 @@ function holdsExactly(dir: string, files: ReadonlyArray<readonly [string, Buffer
   return files.every(([name, bytes]) => fileHasExactly(path.join(dir, name), bytes))
 }
 
+/** The reads and removals removeNoFollow makes: the disk's, or a test's own. */
+export interface NoFollowRemoveOps {
+  lstat(p: string): { isDirectory(): boolean; isSymbolicLink(): boolean }
+  readdir(p: string): string[]
+  rmdir(p: string): void
+  unlink(p: string): void
+  chmod(p: string, mode: number): void
+}
+
+const DISK_REMOVE_OPS: NoFollowRemoveOps = {
+  lstat: (p) => fs.lstatSync(p),
+  readdir: (p) => fs.readdirSync(p),
+  rmdir: (p) => fs.rmdirSync(p),
+  unlink: (p) => fs.unlinkSync(p),
+  chmod: (p, mode) => fs.chmodSync(p, mode),
+}
+
 /**
  * Remove `p` and everything below it WITHOUT following a link of any kind.
  *
@@ -309,32 +326,38 @@ function holdsExactly(dir: string, files: ReadonlyArray<readonly [string, Buffer
  * removes a link of either kind (file or directory) without touching its
  * target. A read-only attribute or a mode the owner can lift is lifted, on a
  * real file or folder only, and the removal tried once more.
+ *
+ * `ops`: the reads and removals it makes, and nothing else (the disk by
+ * default). A test hands in its own to hold the contract on every platform:
+ * for a link entry the one removal is `unlink` of the link (PR 4 VM
+ * checkpoint, F3: on Windows a recursive `fs.rmSync` also removes a junction
+ * as the link, so what is left on disk cannot tell the two apart there).
  */
-function removeNoFollow(p: string): void {
-  const st = fs.lstatSync(p)
+export function removeNoFollow(p: string, ops: NoFollowRemoveOps = DISK_REMOVE_OPS): void {
+  const st = ops.lstat(p)
   if (st.isDirectory() && !st.isSymbolicLink()) {
     let names: string[]
     try {
-      names = fs.readdirSync(p)
+      names = ops.readdir(p)
     } catch {
-      fs.chmodSync(p, 0o700)
-      names = fs.readdirSync(p)
+      ops.chmod(p, 0o700)
+      names = ops.readdir(p)
     }
-    for (const name of names) removeNoFollow(path.join(p, name))
+    for (const name of names) removeNoFollow(path.join(p, name), ops)
     try {
-      fs.rmdirSync(p)
+      ops.rmdir(p)
     } catch {
-      fs.chmodSync(p, 0o700)
-      fs.rmdirSync(p)
+      ops.chmod(p, 0o700)
+      ops.rmdir(p)
     }
     return
   }
   try {
-    fs.unlinkSync(p)
+    ops.unlink(p)
   } catch (err) {
     if (st.isSymbolicLink()) throw err
-    fs.chmodSync(p, 0o600)
-    fs.unlinkSync(p)
+    ops.chmod(p, 0o600)
+    ops.unlink(p)
   }
 }
 
