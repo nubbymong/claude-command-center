@@ -6,6 +6,7 @@
 // tests/helpers/fake-account-fs.ts.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import * as path from 'node:path'
+import { readFileSync } from 'node:fs'
 import { createFakeAccountFs } from '../../helpers/fake-account-fs'
 import type { FakeAccountFs } from '../../helpers/fake-account-fs'
 import { PB6_MEMORIES, PB6_LISTED_MD } from '../../fixtures/codex/memories-pb6'
@@ -169,5 +170,20 @@ describe('who may ask', () => {
   it('registered the old way (no window), the channels answer as before', async () => {
     register({ withWindow: false })
     expect(await handlers.get('memory:scan')!({}, )).toMatchObject({ accountMemories: expect.any(Array) })
+  })
+
+  // [host] PR 4 ADR-009 round 1 (L4-6): the window is optional here (the
+  // channels' old callers), so only the app's own registration decides
+  // whether the sender check exists. index.ts cannot be imported in a unit
+  // test (it boots the app); this pins its source, comments removed.
+  it("the app registers the memory channels once, with its window (the sender check) and the accounts' folders", () => {
+    const src = readFileSync(path.resolve(__dirname, '../../../src/main/index.ts'), 'utf8').replace(/\r\n/g, '\n')
+      .replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n')
+    expect(src.split('registerMemoryHandlers(').length - 1).toBe(1)
+    const calls = src.match(/registerMemoryHandlers\(\{[^}]*\}/g) ?? []
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toMatch(/[{,]\s*getWindow\s*[,}]/)
+    expect(calls[0]).toMatch(/[{,]\s*accountFolders\s*:/)
+    expect(src).toMatch(/import \{[^}]*\bregisterMemoryHandlers\b[^}]*\} from '\.\/ipc\/memory-handlers'/)
   })
 })

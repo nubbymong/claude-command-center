@@ -41,7 +41,8 @@ export function registerDebugHandlers(): void {
  * resolves the folder from `accounts` (asked afresh per request) and never
  * takes a path from the renderer. Both answer only the app's own window, its
  * main frame, checked before any argument is read; what a folder must pass
- * before the shell sees it is account-folders.ts's. `deps`: test seams.
+ * before the shell sees it, and which folder is opened and which only
+ * revealed, is account-folders.ts's. `deps`: test seams.
  */
 export function registerAccountLogFolderHandlers(
   getWindow: () => BrowserWindow | null,
@@ -52,6 +53,7 @@ export function registerAccountLogFolderHandlers(
   const d: LogFolderDeps = {
     fs: deps.fs ?? realAccountFileFs,
     openPath: deps.openPath ?? ((p) => shell.openPath(p)),
+    showItemInFolder: deps.showItemInFolder ?? ((p) => shell.showItemInFolder(p)),
     platform: deps.platform ?? process.platform,
     log: deps.log ?? ((m) => logInfo(m)),
   }

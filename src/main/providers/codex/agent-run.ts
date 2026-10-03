@@ -32,7 +32,15 @@
 // On Windows, Codex makes no edits under workspace-write until its sandbox is
 // set up for the account (PB5), and under the non-admin sandbox PowerShell
 // does not start (PB8). A refused edit exits 0 with the refusal only on
-// stderr and in the reply, so stderr is handed on with the output.
+// stderr and in the reply, so stderr is handed on with the output: whole
+// lines, redacted as a failure message is, since what is handed on is kept
+// in the agent's record and shown.
+//
+// The environment is the reviewer's (reviewerEnv: no Conductor variable, only
+// absolute PATH entries, and on Windows a cmd.exe that does not look in the
+// project for a program before PATH -- an npm shim starts in the project
+// here), less what the CLI-operation allowlist leaves out because verbose
+// logs can print secrets (CODEX_AGENT_DROPPED_ENV).
 //
 // Usage is summed over the run's `turn.completed` events. A run here is
 // always a fresh `exec`, never `exec resume`, so P3.1 answer 9's version
@@ -60,6 +68,61 @@ export const CODEX_AGENT_TIMEOUT_MS = 2_147_483_647
 /** stdout is read as it streams and stderr is handed on as it streams: the
  *  runner's own head-capped capture is not used. */
 const AGENT_MAX_CAPTURE = 64 * 1024
+
+/** Variables an agent run never inherits, beyond reviewerEnv's rule: those
+ *  the CLI-operation allowlist (cli-env.ts) leaves out because verbose logs
+ *  can print secrets. Any spelling on Windows, the exact name elsewhere. */
+export const CODEX_AGENT_DROPPED_ENV: readonly string[] = Object.freeze(['RUST_LOG'])
+
+/** The environment one agent run starts with (see the module comment). */
+export function codexAgentEnv(source: Readonly<Record<string, string>> | undefined, platform: NodeJS.Platform): Record<string, string> {
+  const env = reviewerEnv(source, platform)
+  for (const k of Object.keys(env)) {
+    if (CODEX_AGENT_DROPPED_ENV.includes(platform === 'win32' ? k.toUpperCase() : k)) delete env[k]
+  }
+  return env
+}
+
+/** A private key block's first and last lines, as the redactor matches the
+ *  block whole. */
+const KEY_EDGE = /-----(BEGIN|END) [A-Z ]{0,40}PRIVATE KEY-----/g
+
+/** Where a private key block that has not ended starts in `s`, or -1. */
+function openKeyBlock(s: string): number {
+  let open = -1
+  for (const m of s.matchAll(KEY_EDGE)) open = m[1] === 'BEGIN' ? (open < 0 ? m.index ?? -1 : open) : -1
+  return open
+}
+
+/** stderr as it is handed on: whole lines, each batch redacted as the
+ *  failure message is (review-support's redactFailure), so a credential a
+ *  pipe chunk split is still matched whole. A private key block is held
+ *  until its last line, up to MARGIN (past the redactor's own bound for
+ *  one); a line not ended within WINDOW goes at its last space (never right
+ *  after a Bearer or Basic). What is left goes at `end`. */
+function createDiagnosticStream(out: (text: string) => void): { push(t: string): void; end(): void } {
+  let pending = ''
+  const send = (n: number): void => {
+    if (n <= 0) return
+    const text = pending.slice(0, n)
+    pending = pending.slice(n)
+    out(redact(text))
+  }
+  return {
+    push(t) {
+      pending += t
+      let cut = pending.lastIndexOf('\n') + 1
+      const open = openKeyBlock(pending.slice(0, cut))
+      if (open >= 0 && pending.length - open <= MARGIN) cut = open
+      else if (cut === 0 && pending.length > WINDOW) {
+        const space = /[\s\S]*(?<!\b(?:Bearer|Basic)\s*)\s/i.exec(pending)
+        cut = space ? space[0].length : pending.length
+      }
+      send(cut)
+    },
+    end() { send(pending.length) },
+  }
+}
 
 /** Section 10, question 7, default A: the per-run skip-permissions choice
  *  runs as Codex's Auto sandbox; the default as read-only. */
@@ -117,7 +180,7 @@ export function createCodexBackgroundOperations(deps: { platform?: NodeJS.Platfo
         return { ok: false, code: 'not-started', message: 'Codex could not be started: the project folder is not a full path.' }
       }
       if (typeof input.prompt !== 'string') return { ok: false, code: 'not-started', message: 'Codex could not be started: no task was given.' }
-      const env = reviewerEnv(input.env, platform)
+      const env = codexAgentEnv(input.env, platform)
       const cmd = codexAgentCommandLine(input.executable, { model: input.model, effort: input.effort, sandbox: codexAgentSandbox(input.skipPermissions === true) }, platform, env)
       if ('refused' in cmd) return { ok: false, code: 'not-started', message: `Codex could not be started: ${cmd.refused}.` }
       // cmd.exe cannot use a network path as its current directory: it would
@@ -126,11 +189,12 @@ export function createCodexBackgroundOperations(deps: { platform?: NodeJS.Platfo
         return { ok: false, code: 'not-started', message: 'An npm-installed Codex cannot run an agent in a project on a network path (cmd.exe would start it in the Windows folder, not the project). Use a project on a local drive, or the standalone Codex executable.' }
       }
       const reader = createCodexExecEventReader({ onAgentMessage: (t) => emit(input.onText, t) })
+      const diagnostics = createDiagnosticStream((t) => emit(input.onDiagnostic, t))
       let errTail = ''
       let errCut = false
       const onChunk = (t: string, stream: 'stdout' | 'stderr') => {
         if (stream === 'stdout') { reader.push(t); return }
-        emit(input.onDiagnostic, t)
+        diagnostics.push(t)
         errTail += t
         if (errTail.length > WINDOW + MARGIN) { errTail = errTail.slice(-(WINDOW + MARGIN)); errCut = true }
       }
@@ -141,6 +205,7 @@ export function createCodexBackgroundOperations(deps: { platform?: NodeJS.Platfo
         { env, timeoutMs: CODEX_AGENT_TIMEOUT_MS, stdin: input.prompt, maxOutput: AGENT_MAX_CAPTURE, onChunk, settleAfterExitMs: CODEX_EXEC_EXIT_SETTLE_MS, killScope: 'tree', ...(input.signal ? { signal: input.signal } : {}) },
         ...(deps.runDeps ? [deps.runDeps()] : []),
       )
+      diagnostics.end()
       const out = reader.end()
       const cost = out.usage && typeof input.model === 'string' && input.model ? computeCodexCostUsd(input.model, out.usage) : null
       const figures = { ...(out.usage ? { usage: out.usage } : {}), ...(typeof cost === 'number' && Number.isFinite(cost) && cost >= 0 ? { costUsd: cost } : {}) }

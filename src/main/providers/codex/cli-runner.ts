@@ -24,11 +24,13 @@
 // (it never kills the root alone to meet the bound: that would leave the chain
 // below running), for at most CODEX_KILL_WORST_MS from the stop, and the
 // result says so (`killSettled`): a caller that holds a realm or a lease for
-// the run lets go only once that kill has finished. Nothing is killed once the
-// root has exited: its pid may have been reused. At app quit, kills still
-// reading kill what they know at once, an exec run's its whole tree
-// (flushPendingCodexKills). See
-// runCodexCli and makeCodexKillTree.
+// the run lets go only once that kill has finished. Nothing is killed by pid
+// once the root has exited: its pid may have been reused; an exec run stopped
+// as a tree (scope 'tree') then ends only what the records taken while it ran
+// prove is left of it, as its own exit does (CodexKillTree.leftovers). At app
+// quit, kills still reading kill what they know at once, an exec run's its
+// whole tree and, on Windows, what its records prove is left
+// (flushPendingCodexKills). See runCodexCli and makeCodexKillTree.
 import path from 'node:path'
 import fs from 'node:fs'
 import { spawn as nodeSpawn, execFile, execFileSync } from 'node:child_process'
@@ -476,8 +478,19 @@ interface PendingKill {
   killRoot(): void
   /** POSIX: signals the run's own process group (the run leads it). */
   killGroup(): void
+  /** Windows, a tree kill whose run has records: one synchronous table read
+   *  and what the records prove is left of the run in it; null otherwise. */
+  quitLeftovers(): QuitLeftovers | null
   /** Set by the flush: the kill does not kill again when its read lands. */
   flushed: boolean
+}
+
+/** The quit's leftovers step for one run (see flushPendingCodexKills). */
+interface QuitLeftovers {
+  /** Reads the process table now, synchronously and bounded. */
+  read(): CodexProcessEntry[]
+  /** What the run's records prove is left of it in `table`. */
+  pids(table: readonly CodexProcessEntry[]): number[]
 }
 
 /** Every kill still reading its table, for the app's quit. Module-wide:
@@ -495,18 +508,28 @@ const runSyncDefault: RunSync = (file, args, opts) => { execFileSync(file, args,
  *  a review) ends its root's whole tree instead, as a Claude agent is ended
  *  at quit: `taskkill /T` on its root, still running, on Windows; its process
  *  group elsewhere, which the run leads (runCodexCli starts it detached) and
- *  which is still the run's while its root runs. So a command the model
- *  started does not outlive the app. On Windows it is one synchronous
- *  taskkill per Windows root (in practice one) for the chains and one for
- *  the trees, each bounded by CODEX_TASKKILL_TIMEOUT_MS, as killSpawnedBrowser
- *  does, so the exit cannot cut it off. A taskkill that fails or times out
- *  makes sure of each root. Never throws; best effort, like the rest of the
- *  quit. `runSync` is for the test. */
+ *  which is still the run's while its root runs. On Windows `/T` follows
+ *  parent ids, so a process of the run whose parent had already exited is
+ *  not below the root: for a tree kill whose run has records, one
+ *  synchronous table read (bounded by CODEX_PROCESS_TABLE_TIMEOUT_MS) then
+ *  finds what they prove is left of the run, by the identity checks its own
+ *  exit uses (codexLeftoverPids), and one more taskkill ends it. So a command
+ *  the model started does not outlive the app while the run can still tell
+ *  it is its own: below its root, in its group, or named by its records. Not
+ *  reached: a process that left the run's group (POSIX), one no read saw,
+ *  one started outside the run's parent line, and a run whose root exited
+ *  on its own just before the quit (its settle window: no kill is pending
+ *  for it). On Windows it is
+ *  one synchronous taskkill per Windows root (in practice one) for the
+ *  chains and one for the trees, each bounded by CODEX_TASKKILL_TIMEOUT_MS,
+ *  as killSpawnedBrowser does, so the exit cannot cut it off. A taskkill that
+ *  fails or times out makes sure of each root. Never throws; best effort,
+ *  like the rest of the quit. `runSync` is for the test. */
 export function flushPendingCodexKills(runSync: RunSync = runSyncDefault): void {
   const now = [...pendingKills]
   pendingKills.clear()
   type Batch = { pids: number[]; kills: PendingKill[] }
-  const byRoot = new Map<string, { chain: Batch; tree: Batch }>()
+  const byRoot = new Map<string, { chain: Batch; tree: Batch; leftovers: QuitLeftovers[] }>()
   for (const k of now) {
     k.flushed = true
     try {
@@ -518,30 +541,65 @@ export function flushPendingCodexKills(runSync: RunSync = runSyncDefault): void 
         continue
       }
       if (!k.systemRoot || !isWindowsAbsolute(k.systemRoot)) { k.killRoot(); continue }
-      const group = byRoot.get(k.systemRoot) ?? { chain: { pids: [], kills: [] }, tree: { pids: [], kills: [] } }
+      const group = byRoot.get(k.systemRoot) ?? { chain: { pids: [], kills: [] }, tree: { pids: [], kills: [] }, leftovers: [] }
       // A tree is named by its root alone: /T takes everything below it.
       const batch = k.scope === 'tree' ? group.tree : group.chain
       batch.pids.push(...(k.scope === 'tree' ? [k.root] : pids))
       batch.kills.push(k)
+      if (k.scope === 'tree') { try { const step = k.quitLeftovers(); if (step) group.leftovers.push(step) } catch { /* the tree call still runs */ } }
       byRoot.set(k.systemRoot, group)
     } catch { /* best effort at quit */ }
   }
   for (const [root, group] of byRoot) {
+    const taskkill = path.win32.join(root, 'System32', 'taskkill.exe')
+    const opts = { stdio: 'ignore', windowsHide: true, cwd: root, timeout: CODEX_TASKKILL_TIMEOUT_MS }
     for (const [batch, tree] of [[group.tree, true], [group.chain, false]] as const) {
       if (!batch.pids.length) continue
       try {
-        runSync(path.win32.join(root, 'System32', 'taskkill.exe'), ['/F', ...(tree ? ['/T'] : []), ...batch.pids.flatMap((p) => ['/PID', String(p)])], { stdio: 'ignore', windowsHide: true, cwd: root, timeout: CODEX_TASKKILL_TIMEOUT_MS })
+        runSync(taskkill, ['/F', ...(tree ? ['/T'] : []), ...batch.pids.flatMap((p) => ['/PID', String(p)])], opts)
       } catch {
         // Non-zero (some pid already gone), a timeout or no taskkill.
         for (const k of batch.kills) { try { k.killRoot() } catch { /* best effort at quit */ } }
       }
     }
+    // The trees' leftovers: one read for all, after /T, then exactly the
+    // pids the records prove (no /T: each one's own descendants are named
+    // by codexLeftoverPids, by start time).
+    if (!group.leftovers.length) continue
+    try {
+      const table = group.leftovers[0].read()
+      if (!Array.isArray(table)) continue
+      const pids = [...new Set(group.leftovers.flatMap((step) => { try { return step.pids(table) } catch { return [] } }))]
+      if (pids.length) runSync(taskkill, ['/F', ...pids.flatMap((p) => ['/PID', String(p)])], opts)
+    } catch { /* an unreadable table or a failed taskkill: best effort at quit */ }
   }
+}
+
+/** The quit's own read of the process table (flushPendingCodexKills), on
+ *  Windows: synchronous, as the quit's kills are, bounded by
+ *  CODEX_PROCESS_TABLE_TIMEOUT_MS; makeCodexProcessLister's query from the
+ *  same absolute PowerShell. Null elsewhere, or with no usable Windows root.
+ *  `execSync` is for the test. */
+export function makeCodexProcessListerSync(
+  platform: NodeJS.Platform,
+  systemRoot: string | undefined,
+  execSync: (file: string, args: string[], opts: Record<string, unknown>) => string | Buffer = (file, args, opts) => execFileSync(file, args, opts),
+): (() => CodexProcessEntry[]) | null {
+  if (platform !== 'win32' || !systemRoot || !isWindowsAbsolute(systemRoot)) return null
+  const ps = path.win32.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+  return () => parseWindowsProcessTable(String(execSync(ps, ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_PROCESS_QUERY], {
+    encoding: 'utf8', timeout: CODEX_PROCESS_TABLE_TIMEOUT_MS, windowsHide: true, maxBuffer: 16 * 1024 * 1024, cwd: systemRoot, stdio: ['ignore', 'pipe', 'ignore'],
+  })))
 }
 
 /** Exported for the test: the kill with its guards. It kills the run's own
  *  chain and resolves when that is done -- never the whole tree, which may
- *  hold the user's browser -- and nothing once the root has exited.
+ *  hold the user's browser -- and nothing once the root has exited. A 'tree'
+ *  kill (an exec run, which starts no program of the user's) takes every
+ *  process below the root instead, and on POSIX signals the run's own
+ *  process group first, as the quit does (flushPendingCodexKills): the run
+ *  leads it and it is still the run's while the root runs, so a process
+ *  below the run whose parent has exited goes too.
  *
  *  Which pids, from which table:
  *  - An early read (prime) still running is awaited, up to its own timeout,
@@ -579,6 +637,9 @@ export function makeCodexKillTree(
   killGroup: (pgid: number) => void = (pgid) => { process.kill(-pgid, 'SIGKILL') },
   /** One line about a leftover kill's outcome (round 4); for the test. */
   log: (line: string) => void = (line) => { logInfo(line) },
+  /** The quit's synchronous table read (makeCodexProcessListerSync), for a
+   *  tree kill's leftovers at quit; null: the quit ends the tree alone. */
+  listProcessesSync: (() => CodexProcessEntry[]) | null = null,
 ): CodexKillTree {
   const running = (child: ChildProcess) => !!child.pid && child.exitCode === null && child.signalCode === null
   const killRoot = (child: ChildProcess) => { try { if (running(child)) child.kill('SIGKILL') } catch { /* already gone */ } }
@@ -623,8 +684,9 @@ export function makeCodexKillTree(
     const again = await read(primeListProcesses, CODEX_PRIME_TABLE_TIMEOUT_MS)
     return again ? pidsFrom(pid, again, scope) : [pid]
   }
-  /** taskkill (Windows) or a signal per pid (POSIX), for a root still running. */
-  const killPids = async (child: ChildProcess, pids: number[]): Promise<void> => {
+  /** taskkill (Windows) or a signal per pid (POSIX), for a root still
+   *  running; a POSIX tree kill signals the run's group first. */
+  const killPids = async (child: ChildProcess, pids: number[], scope: CodexKillScope): Promise<void> => {
     if (platform === 'win32') {
       // taskkill only from an absolute Windows root, run there, bounded; no
       // search of the current directory or PATH for a bare name. No /T: the
@@ -645,6 +707,7 @@ export function makeCodexKillTree(
         k.on('exit', (code) => { if (code !== 0) killRoot(child); resolve() })
       })
     } else {
+      if (scope === 'tree' && running(child) && child.pid) { try { killGroup(child.pid) } catch { /* the pids below still go */ } }
       for (const p of pids) { try { process.kill(p, 'SIGKILL') } catch { /* already gone */ } }
     }
   }
@@ -667,6 +730,17 @@ export function makeCodexKillTree(
       },
       killRoot: () => killRoot(child),
       killGroup: () => { if (running(child)) killGroup(pid) },
+      quitLeftovers: () => {
+        const rec = observed.get(child)
+        if (platform !== 'win32' || scope !== 'tree' || !listProcessesSync || !rec || !rec.members.size) return null
+        const readNow = listProcessesSync
+        return {
+          read: () => readNow(),
+          // The root's own row, by the start time recorded, is the run's: the
+          // quit has just ended it (taskkill /T), so it is set aside here.
+          pids: (table) => codexLeftoverPids(pid, table.filter((e) => !(e && e.pid === pid && typeof e.created === 'number' && rec.members.has(memberKey(pid, e.created)))), rec.members, { since: rec.since, until: Date.now() }),
+        }
+      },
     }
     pendingKills.add(pending)
     let pids: number[]
@@ -684,7 +758,7 @@ export function makeCodexKillTree(
     // for node, node for codex), so those pids may already belong to
     // strangers. Either way, kill nothing by pid.
     if (pending.flushed || !running(child)) return
-    await killPids(child, pids)
+    await killPids(child, pids, scope)
   }
   kill.prime = (child) => {
     const pid = child.pid
@@ -946,7 +1020,7 @@ export function defaultCodexRunDeps(platform: NodeJS.Platform = process.platform
   return {
     spawn: nodeSpawn,
     platform,
-    killTree: makeCodexKillTree(platform, nodeSpawn, systemRoot, makeCodexProcessLister(platform, systemRoot), makeCodexProcessLister(platform, systemRoot, { timeoutMs: CODEX_PRIME_TABLE_TIMEOUT_MS })),
+    killTree: makeCodexKillTree(platform, nodeSpawn, systemRoot, makeCodexProcessLister(platform, systemRoot), makeCodexProcessLister(platform, systemRoot, { timeoutMs: CODEX_PRIME_TABLE_TIMEOUT_MS }), undefined, undefined, makeCodexProcessListerSync(platform, systemRoot)),
   }
 }
 
@@ -1042,16 +1116,24 @@ export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: Code
         ? { exitCode: null, timedOut: true, stopped: 'deadline' as const }
         : { exitCode: null, timedOut: false, spawnError: 'cancelled', stopped: 'cancel' as const }
       const stoppedAt = Date.now()
+      const scope: CodexKillScope = opts.killScope === 'tree' ? 'tree' : 'chain'
       let killed: Promise<unknown>
-      try { killed = Promise.resolve(deps.killTree(c, { scope: opts.killScope === 'tree' ? 'tree' : 'chain' })) } catch { killed = Promise.resolve() }
+      try { killed = Promise.resolve(deps.killTree(c, { scope })) } catch { killed = Promise.resolve() }
       // Registered before the race below, so it has run by the time a kill
       // that finished in time lets the run settle.
       let killDone = false
       const killEnded = killed.then(() => { killDone = true }, () => { killDone = true })
       const rootGone = new Promise<void>((res) => { if (exited !== undefined) res(); else c.once('exit', () => res()) })
+      // A tree stop then ends what the records taken while the run ran prove
+      // is left of it, for the root's own lifetime, as the run's own exit
+      // does (settleExited): a process whose parent had exited is not below
+      // the root, so the kill above does not reach it. Within the same bound.
+      const ended: Promise<unknown> = scope === 'tree' && deps.killTree.leftovers
+        ? Promise.all([killEnded, rootGone]).then(() => deps.killTree.leftovers?.(c, { since: spawnedAt, until: exitedAt })).then(() => undefined, () => undefined)
+        : Promise.all([killEnded, rootGone])
       let bound: ReturnType<typeof setTimeout> | null = null
       const bounded = new Promise<void>((res) => { bound = setTimeout(res, CODEX_KILL_SETTLE_MS) })
-      void Promise.race([Promise.all([killEnded, rootGone]), bounded]).then(() => {
+      void Promise.race([ended, bounded]).then(() => {
         if (bound) clearTimeout(bound)
         release()
         // A kill still reading a slow table carries on past the bound: the

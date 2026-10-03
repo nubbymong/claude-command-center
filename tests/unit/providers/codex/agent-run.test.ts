@@ -179,6 +179,79 @@ describe('the run', () => {
     expect(said).toEqual(['patch rejected: writing is blocked by read-only sandbox\n'])
   })
 
+  // [host] PR 4 ADR-009 round 1 (L4-4): what stderr hands on is kept in the
+  // agent's record and shown, so it is redacted as the failure message is,
+  // a whole line (or a whole key block) at a time, so a credential a pipe
+  // chunk split is still matched.
+  it('stderr is handed on redacted, whole lines at a time: a credential split across chunks, or a key block across lines, never shows; what is left goes at the end', async () => {
+    const { deps, spawned } = fakeDeps()
+    const said: string[] = []
+    const p = createCodexBackgroundOperations({ platform: 'win32', runDeps: () => deps }).run(input({ onDiagnostic: (t: string) => said.push(t) }))
+    const token = 'sk-' + 'abcdefghij0123456789' + 'KLMNOP'
+    const err = spawned[0].child.stderr
+    err.emit('data', `TRACE refresh with Bearer ${token.slice(0, 9)}`)
+    err.emit('data', `${token.slice(9)}\nnext `)
+    const edge = (k: 'BEGIN' | 'END') => `-----${k} ` + 'PRIVATE KEY-----'
+    const body = 'MIIEv' + 'Q'.repeat(60)
+    err.emit('data', `line\n${edge('BEGIN')}\n${body.slice(0, 30)}`)
+    err.emit('data', `${body.slice(30)}\n${edge('END')}\ntail without end`)
+    spawned[0].child.emit('close', 0)
+    expect(await p).toEqual({ ok: true })
+    const all = said.join('')
+    expect(all).not.toContain(token.slice(3))
+    expect(all).not.toContain(token.slice(9))
+    expect(all).not.toContain('MIIEv')
+    expect(all).toContain('Bearer [REDACTED]')
+    expect(all).toContain('next line\n')
+    expect(said.at(-1)).toBe('tail without end')
+    // Each piece handed on ends a line, but the last.
+    for (const s of said.slice(0, -1)) expect(s.endsWith('\n'), s).toBe(true)
+  })
+
+  // [host] PR 4 ADR-009 round 1 (L4-4): the CLI-operation allowlist drops
+  // RUST_LOG (verbose logs can print secrets); the agent run drops it too.
+  it('RUST_LOG never reaches the run: any spelling on Windows, the exact name elsewhere', async () => {
+    const win = fakeDeps()
+    const p = createCodexBackgroundOperations({ platform: 'win32', runDeps: () => win.deps }).run(input({ env: { ...ENV, RUST_LOG: 'trace', rust_log: 'debug', Rust_Log: 'info', RUST_BACKTRACE: '1' } }))
+    const we = win.spawned[0].opts.env as Record<string, string>
+    expect(Object.keys(we).filter((k) => k.toUpperCase() === 'RUST_LOG')).toEqual([])
+    expect(we.RUST_BACKTRACE).toBe('1')
+    expect(we.CODEX_HOME).toBe(ENV.CODEX_HOME)
+    win.spawned[0].child.emit('close', 0)
+    await p
+    const posix = fakeDeps('linux')
+    const q = createCodexBackgroundOperations({ platform: 'linux', runDeps: () => posix.deps }).run(input({ executable: '/usr/bin/codex', cwd: '/home/me/proj', env: { PATH: '/usr/bin', CODEX_HOME: '/r', RUST_LOG: 'trace', rust_log: 'x' } }))
+    const pe = posix.spawned[0].opts.env as Record<string, string>
+    expect(pe.RUST_LOG).toBeUndefined()
+    expect(pe.rust_log).toBe('x')
+    posix.spawned[0].child.emit('close', 0)
+    await q
+  })
+
+  // [host] PR 4 ADR-009 round 1 (L4-1): on the npm `.cmd` route cmd.exe starts
+  // in the project, so the environment alone keeps cmd.exe from taking a
+  // program from the project before PATH: NoDefaultCurrentDirectoryInExePath
+  // set, and no PATH entry relative to the working folder.
+  it('on the npm .cmd route cmd.exe starts in the project with NoDefaultCurrentDirectoryInExePath=1 (one spelling, whatever the launch had) and only absolute PATH entries', async () => {
+    const { deps, spawned } = fakeDeps()
+    const env = { Path: '.;C:\\Windows;rel\\bin;;D:/tools;"C:\\Program Files\\nodejs"', SystemRoot: 'C:\\Windows', nodefaultcurrentdirectoryinexepath: '0', CODEX_HOME: ENV.CODEX_HOME }
+    const p = createCodexBackgroundOperations({ platform: 'win32', runDeps: () => deps }).run(input({ executable: 'C:\\npm\\codex.cmd', env }))
+    const s = spawned[0]
+    expect(s.file).toBe('C:\\Windows\\System32\\cmd.exe')
+    expect(s.opts.cwd).toBe('D:\\work\\proj')
+    const e = s.opts.env as Record<string, string>
+    expect(Object.entries(e).filter(([k]) => k.toUpperCase() === 'NODEFAULTCURRENTDIRECTORYINEXEPATH')).toEqual([['NoDefaultCurrentDirectoryInExePath', '1']])
+    expect(e.Path).toBe('C:\\Windows;D:/tools;"C:\\Program Files\\nodejs"')
+    s.child.emit('close', 0)
+    await p
+    // POSIX: the same PATH rule.
+    const posix = fakeDeps('linux')
+    const q = createCodexBackgroundOperations({ platform: 'linux', runDeps: () => posix.deps }).run(input({ executable: '/usr/bin/codex', cwd: '/home/me/proj', env: { PATH: '.:bin:/usr/bin::/opt/x', CODEX_HOME: '/r' } }))
+    expect((posix.spawned[0].opts.env as Record<string, string>).PATH).toBe('/usr/bin:/opt/x')
+    posix.spawned[0].child.emit('close', 0)
+    await q
+  })
+
   it('a callback that throws never breaks the run', async () => {
     const { deps, spawned } = fakeDeps()
     const p = createCodexBackgroundOperations({ platform: 'win32', runDeps: () => deps }).run(input({ onText: () => { throw new Error('boom') }, onDiagnostic: () => { throw new Error('boom') } }))
