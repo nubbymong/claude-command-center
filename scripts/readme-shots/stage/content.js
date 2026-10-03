@@ -52,7 +52,7 @@ const CONFIGS = [
     sessionType: 'local', provider: 'claude', pinned: true, sectionId: 'sec-web', profileKey: 'alex',
     claudeOptions: { model: 'fable', effortLevel: 'max', permissionMode: 'acceptEdits', loggingEnabled: true, agentIds: [] } },
   { id: 'cfg-docs', label: 'docs-site', workingDirectory: 'C:\\dev\\web\\docs-site', color: '#f5c2e7', identityColorKey: 'pink',
-    sessionType: 'local', provider: 'codex', sectionId: 'sec-web', profileKey: 'sam',
+    sessionType: 'local', provider: 'codex', sectionId: 'sec-web', codexAccountKey: 'website',
     codexOptions: { model: 'gpt-5.5', reasoningEffort: 'high', permissionsPreset: 'standard' } },
   { id: 'cfg-pipe', label: 'pipeline', workingDirectory: 'C:\\dev\\data\\pipeline', color: '#a6e3a1', identityColorKey: 'violet',
     sessionType: 'local', provider: 'claude', sectionId: 'sec-data', profileKey: 'jordan',
@@ -82,7 +82,7 @@ const SESSIONS = [
   { id: 'c9a2e4b51f0d3a68c4e2f6a7', configKey: 'cfg-pipe', label: 'pipeline', accountKey: 'jordan',
     provider: 'claude', model: 'opus', effort: 'max', scenario: 'dedupe', resumeUuid: '9f1c7e23-0a4b-4c58-b2d7-3e6f8a1c9d02',
     status: { model: 'Opus 4.8', modelId: 'claude-opus-4-8', ctxPct: 78, ctxWindow: 200000, inTok: 156311, outTok: 18402, cost: 5.63, durMs: 3 * HOUR + 41 * MIN, added: 731, removed: 264 } },
-  { id: 'd1b3f5a62e0c4b79d5f3a7b8', configKey: 'cfg-docs', label: 'docs-site', accountKey: 'sam',
+  { id: 'd1b3f5a62e0c4b79d5f3a7b8', configKey: 'cfg-docs', label: 'docs-site', codexAccountKey: 'website',
     provider: 'codex', model: 'gpt-5.5', scenario: 'codex' },
   { id: 'e2c4a6b73f1d5c80e6a4b8c9', configKey: 'cfg-infra', label: 'infra', accountKey: 'alex', shellOnly: true },
 ]
@@ -262,6 +262,24 @@ function history() {
 function histUuid(n) {
   const h = (n * 2654435761 % 4294967296).toString(16).padStart(8, '0')
   return `${h}-4a1b-4c2d-8e3f-${String(n).padStart(12, '0')}`
+}
+
+// -- Codex accounts (2.1.1: the app's account registry) --
+// Written by codex-registry.ts with the app's own registry transitions. Ids
+// are the app's opaque shape (prefix + lowercase hex). The first is the
+// default (the docs-site config runs under it) and keeps a few memories; the
+// second is the reviewer. Example domains only.
+const CODEX_ACCOUNTS = [
+  { key: 'website', identityId: 'idn-5ea51de0000000000000c0d1', accountId: 'acct-5ea51de0000000000000c0d1', realmId: 'realm-5ea51de0000000000000c0d1',
+    name: 'Website', colourKey: 'rose', label: 'sam.rivera@example.io', plan: 'Plus', reviewer: false, memories: true },
+  { key: 'reviews', identityId: 'idn-5ea51de0000000000000c0d2', accountId: 'acct-5ea51de0000000000000c0d2', realmId: 'realm-5ea51de0000000000000c0d2',
+    name: 'Reviews', colourKey: 'orchid', label: 'jordan@example.co', plan: 'Pro', reviewer: true, memories: false },
+]
+// Codex's own memory files (a heading, not frontmatter), for the first account.
+const CODEX_MEMORIES = {
+  'MEMORY.md': '# Memory\n\nThe docs site builds from openapi/gateway.yaml; reference pages are generated, never edited by hand.\nAnchors follow the operationId, lower-case with dashes.\n',
+  'raw_memories.md': '# Raw memories\n\nSam prefers one pull request per regenerated section.\nThe link checker runs after `npm run build`, not before.\n',
+  'rollout_summaries/2026-09-29-reference-anchors.md': '# Fixed broken anchors in the API reference\n\nRegenerated 14 reference pages and mapped the old anchors to the new operationIds.\n',
 }
 
 // ── Codex rollouts (tokenomics only) ───────────────────────────────────────
@@ -551,5 +569,5 @@ function statusFor(session, nowMs, homeDir, drift) {
 module.exports = {
   DAY, HOUR, MIN,
   ACCOUNTS, SECTIONS, GROUPS, CONFIGS, SESSIONS, ACTIVE_SESSION_ID,
-  SCENARIOS, CODEX, history, CODEX_HISTORY, MEMORY, PAD_TITLES, INSIGHTS, CANVAS, canvasHtml, statusFor,
+  SCENARIOS, CODEX, CODEX_ACCOUNTS, CODEX_MEMORIES, history, CODEX_HISTORY, MEMORY, PAD_TITLES, INSIGHTS, CANVAS, canvasHtml, statusFor,
 }

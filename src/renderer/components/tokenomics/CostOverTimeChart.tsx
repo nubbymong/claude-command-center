@@ -1,12 +1,19 @@
 import React, { useMemo } from 'react'
+import type { TkProvider } from '../../../shared/types'
+import { TK_PROVIDER_LABEL, TK_PROVIDER_COLOR } from './tk-labels'
 
 interface DataPoint {
   day: string
   costUsd: number
+  /** Usage track MP11/MP12: the day's cost per provider. */
+  byProvider?: Partial<Record<TkProvider, number>>
 }
 
 interface Props {
   data: DataPoint[]
+  /** MP12 (Q1.4): the providers drawn as their own series, when both have
+   *  usage in these figures. */
+  series?: TkProvider[]
 }
 
 function formatCostShort(usd: number): string {
@@ -24,7 +31,8 @@ function formatDayLabel(day: string): string {
  * Area + line chart of daily cost over time, built with inline SVG (matching
  * the existing DailyChart approach — no external charting library).
  */
-export function CostOverTimeChart({ data }: Props) {
+export function CostOverTimeChart({ data, series }: Props) {
+  const split = series && series.length > 1 ? series : null
   const CHART_W = 460
   const CHART_H = 110
   const LABEL_H = 16
@@ -40,6 +48,21 @@ export function CostOverTimeChart({ data }: Props) {
     }))
     return { points: pts, maxCost: max }
   }, [data])
+
+  // MP12: one line per provider, on the same scale as the total.
+  const seriesPaths = useMemo(() => {
+    if (!split || points.length === 0) return []
+    return split.map((p) => ({
+      provider: p,
+      d: points
+        .map((pt, i) => {
+          const v = pt.byProvider?.[p] ?? 0
+          const y = CHART_H - (v / maxCost) * CHART_H * 0.88 - 4
+          return `${i === 0 ? 'M' : 'L'} ${pt.x.toFixed(1)} ${y.toFixed(1)}`
+        })
+        .join(' '),
+    }))
+  }, [split, points, maxCost])
 
   if (!data || data.length === 0) {
     return (
@@ -74,8 +97,20 @@ export function CostOverTimeChart({ data }: Props) {
       className="rounded-xl p-4"
       style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
     >
-      <div className="text-[11px] text-overlay0 uppercase tracking-wider mb-3">
-        Cost over time
+      <div className="flex items-center gap-3 mb-3">
+        <div className="text-[11px] text-overlay0 uppercase tracking-wider">
+          Cost over time
+        </div>
+        {split && (
+          <div className="flex items-center gap-2 ml-auto" data-testid="tk-cost-series-legend">
+            {split.map((p) => (
+              <span key={p} className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                <span className="rounded-sm" style={{ width: 8, height: 2, background: TK_PROVIDER_COLOR[p] }} />
+                {TK_PROVIDER_LABEL[p]}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
       <div className="overflow-x-auto">
         <svg
@@ -92,15 +127,28 @@ export function CostOverTimeChart({ data }: Props) {
           </defs>
           {/* Area fill */}
           <path d={areaPath} fill="url(#tk-area-grad)" />
-          {/* Line */}
-          <path
-            d={linePath}
-            fill="none"
-            stroke="var(--accent)"
-            strokeWidth="1.5"
-            strokeLinejoin="round"
-            strokeLinecap="round"
-          />
+          {/* Line (the total), or one line per provider (MP12) */}
+          {split ? seriesPaths.map((s) => (
+            <path
+              key={s.provider}
+              d={s.d}
+              fill="none"
+              stroke={TK_PROVIDER_COLOR[s.provider]}
+              strokeWidth="1.5"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+              data-testid={`tk-cost-series-${s.provider}`}
+            />
+          )) : (
+            <path
+              d={linePath}
+              fill="none"
+              stroke="var(--accent)"
+              strokeWidth="1.5"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+          )}
           {/* Data point dots + tooltips */}
           {points.map((p, i) => {
             const showLabel = i % labelEvery === 0 || i === points.length - 1
@@ -115,7 +163,9 @@ export function CostOverTimeChart({ data }: Props) {
                     opacity={0.85}
                   />
                 )}
-                <title>{`${p.day}: ${formatCostShort(p.costUsd)}`}</title>
+                <title>{split
+                  ? `${p.day}: ${split.map((s) => `${TK_PROVIDER_LABEL[s]} ${formatCostShort(p.byProvider?.[s] ?? 0)}`).join(', ')}`
+                  : `${p.day}: ${formatCostShort(p.costUsd)}`}</title>
                 {showLabel && (
                   <text
                     x={p.x}

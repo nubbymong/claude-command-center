@@ -6,7 +6,7 @@ interface Props {
   value: ProviderId
   onChange: (next: ProviderId) => void
   sessionType: 'local' | 'ssh'
-  /** Codex master switch ("Do you use Codex?") is off — Settings → Codex. */
+  /** Codex is switched off (the Providers card in Settings, Accounts). */
   codexMasterOff?: boolean
 }
 
@@ -26,12 +26,6 @@ export function ProviderSegmentedControl({ value, onChange, sessionType, codexMa
     const target = next === 'claude' ? claudeBtnRef.current : codexBtnRef.current
     target?.focus()
   }
-
-  // The Beta pill tracks the chip it sits in: muted when Codex can't be picked,
-  // the brand when the chip is selected, otherwise the warning tone it always had.
-  const betaTone = codexDisabled
-    ? 'var(--text-muted)'
-    : value === 'codex' ? 'var(--brand)' : 'var(--status-warning)'
 
   return (
     <div className="flex flex-col gap-1 mb-4">
@@ -63,20 +57,14 @@ export function ProviderSegmentedControl({ value, onChange, sessionType, codexMa
           className={`${DIALOG_SEG_CHIP} flex-1 justify-center font-medium`}
           style={dialogSegStyle(value === 'codex', codexDisabled)}
         >
-          Codex{' '}
-          <span
-            className="text-[9px] uppercase tracking-wider border rounded-full px-1.5 py-px align-middle"
-            style={{ color: betaTone, borderColor: `color-mix(in srgb, ${betaTone} 40%, transparent)` }}
-          >
-            Beta
-          </span>
+          Codex
         </button>
       </div>
       <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
         {sessionType === 'ssh'
           ? 'Codex is not available for SSH sessions yet.'
           : codexMasterOff
-            ? "Codex is switched off: its configs won't launch and new ones can't use it. Enable it in Settings → Codex."
+            ? "Codex is switched off: its configs won't launch and new ones can't use it. Turn it on in Settings, Accounts."
             : "Which CLI this config runs: Anthropic's Claude Code, or OpenAI's Codex (its own account and sign-in)."}
       </p>
     </div>

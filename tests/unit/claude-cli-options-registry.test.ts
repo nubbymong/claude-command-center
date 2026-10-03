@@ -49,7 +49,7 @@ describe('registry-derived option lists', () => {
     expect(titles).toEqual(['Latest', 'Opus', 'Fable', 'Sonnet', 'Haiku'])
     const opus = groups.find((g) => g.title === 'Opus')!
     expect(opus.items.map((i) => i.value)).toEqual([
-      'claude-opus-5', 'claude-opus-4-8-fast', 'claude-opus-4-8',
+      'claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-8-fast', 'claude-opus-4-8',
       'claude-opus-4-7', 'claude-opus-4-6', 'claude-opus-4-5',
     ])
     expect(opus.items.find((i) => i.value === 'claude-opus-4-6')!.label).toBe('Opus 4.6')

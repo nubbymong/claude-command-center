@@ -97,7 +97,9 @@ The dev switch activates whenever the build is **unpackaged** (`app.isPackaged
   after the redirect. They hold live session cookies, and nothing will ever remove
   them — `ccc --clean` cannot reach them (wrong root) and the startup sweep only
   walks `<dataDir>\account-web`. Dev logs a one-time warning naming the path at
-  boot. **Delete them by hand only if you are sure they are not your production
+  boot; it counts a Codex account's web session partitions there too
+  (`codex-web-*`, left by a dev run whose redirect failed). **Delete them by
+  hand only if you are sure they are not your production
   install's**: `ccc --seed-accounts` copies prod's account profiles into dev, so a
   partition named for a dev profile id can be prod's live session. That is why the
   app warns instead of tidying up for you.

@@ -1,9 +1,13 @@
 import { useCallback } from 'react'
-import { Session } from '../stores/sessionStore'
-import { persistLastUsedAccount } from '../session-persistence'
+import { Session, useSessionStore } from '../stores/sessionStore'
+import { persistLastUsedAccount, persistSessionProviderAccount } from '../session-persistence'
 import { useRestartSession } from './useRestartSession'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { isAccountActive } from '../../shared/account-types'
+import { useProviderAccountsStore } from '../stores/providerAccountsStore'
+import { useLaunchAckStore } from '../stores/launchAckStore'
+import { sessionProviderAccount } from '../utils/accountChip'
+import { noteSwitchOrigin, switchOrigin, forgetSwitchOrigin } from '../utils/switchOrigin'
 
 /**
  * Guard for the mid-session account switch. A switch is only meaningful when
@@ -19,6 +23,11 @@ export function shouldSwitch(
   return (current ?? undefined) !== (next ?? undefined)
 }
 
+/** Sessions whose new account (P3.6) is still being saved: a second pick
+ *  meanwhile is ignored. The guard ends as the restart begins; a pick after
+ *  that is a switch of its own. */
+const switching = new Set<string>()
+
 /**
  * Mid-session account switch (locked design: switch = respawn + resume).
  *
@@ -33,6 +42,16 @@ export function shouldSwitch(
  * respawn sees the new id. We also pass `{ profileId }` through restart() as an
  * explicit override so the remove/re-add can never race the store update back
  * to the old value.
+ *
+ * P3.6 (row 22): a session of a provider whose sessions run under a registry
+ * account (Codex) switches the same way, by parity: pin the new account
+ * (`providerAccountId`) and save it, then Restart on it. Main's respawn of
+ * the session carries the conversation it is on into the new account once
+ * the old process has ended (kill, carry, spawn: pty:spawn, from main's own
+ * record of this session, both accounts held for the copy) and resumes it
+ * there by id (P3.5). When it did not come along whole, the section 5
+ * fallback: the terminal says why and what the session did instead
+ * (TerminalView, utils/launchNote).
  */
 export function useSwitchAccount(
   session: Session | null | undefined,
@@ -42,12 +61,15 @@ export function useSwitchAccount(
   return useCallback(
     (sessionId, newProfileId) => {
       if (!session || session.id !== sessionId) return
-      // Defense-in-depth (BUG-13): account profiles are LOCAL Claude only, so a
-      // Codex (its own login) or SSH (remote host's login) session must never
-      // switch a CCC profile -- the surfaces are already gated, this is a backstop.
-      // Shell-only panes are refused too: the add-account /login shell is pinned
-      // to its new profile, and a switch would redirect the /login elsewhere.
-      if ((session.provider ?? 'claude') !== 'claude' || session.sshConfig || session.shellOnly) return
+      // Defense-in-depth (BUG-13): an SSH session runs under the remote host's
+      // login, so it never switches a local account. Shell-only panes are
+      // refused too: the add-account /login shell is pinned to its new
+      // profile, and a switch would redirect the /login elsewhere.
+      if (session.sshConfig || session.shellOnly) return
+      if ((session.provider ?? 'claude') !== 'claude') {
+        switchProviderAccount(session, newProfileId, restart)
+        return
+      }
       // 1. No-op when the chosen account is already the active one.
       if (!shouldSwitch(session.profileId, newProfileId)) return
       // 1b. Backstop: never switch TO an account that has been marked inactive.
@@ -83,4 +105,57 @@ export function useSwitchAccount(
     },
     [session, restart],
   )
+}
+
+/**
+ * P3.6 (row 22): the switch for a session that runs under a registry account.
+ * Refused before anything changes unless the target is another account of
+ * the session's own provider that a launch could use now (active, not
+ * blocked); the surfaces grey the rest, and main checks again. No usage read
+ * is started for the pick: an account's allowance is read afresh only on the
+ * Usage page's own asks (ADR-022), and the session reports its own.
+ */
+function switchProviderAccount(
+  session: Session,
+  nextId: string | undefined,
+  restart: (overrides?: Partial<Session>) => boolean,
+): void {
+  const provider = session.provider ?? 'claude'
+  const snapshot = useProviderAccountsStore.getState().snapshot
+  if (!nextId || !snapshot || switching.has(session.id)) return
+  const current = sessionProviderAccount({ provider, providerAccountId: session.providerAccountId }, snapshot)
+  if (current && current.id === nextId) return
+  const target = snapshot.accounts.find((a) => a.id === nextId && a.providerId === provider)
+  if (!target || target.lifecycle !== 'active' || target.operationalState === 'blocked') return
+  const sessionId = session.id
+  switching.add(sessionId)
+  void (async () => {
+    try {
+      // The pin as it is now, read live (a captured session may be stale):
+      // what a refused restart puts back.
+      const pinned = useSessionStore.getState().getSession(sessionId)?.providerAccountId
+      // 1. Pin the new account and save it.
+      await persistSessionProviderAccount(sessionId, target.id)
+      // The account the tab is really on: an earlier switch's origin while
+      // that switch's launch is still unanswered (ADR-009 lens B), else the
+      // one it is on now. Taken before the restart, which forgets it.
+      const earlier = switchOrigin(sessionId)
+      const from = earlier ? earlier.from : session.providerAccountId
+      // 2. Restart there. Main's respawn carries the conversation into it
+      //    once the old process has ended, then resumes it by id (P3.5). A
+      //    launch there that asks and is declined takes the tab back (VM
+      //    finding V3; utils/switchOrigin).
+      if (restart({ providerAccountId: target.id })) {
+        noteSwitchOrigin(sessionId, from, target.id)
+      } else {
+        // Refused (the Multi Spawn rule): nothing moved, so the pin goes
+        // back to what it was. An earlier switch's origin stays while that
+        // switch's launch is still asking; any other is spent.
+        if (!(earlier && useLaunchAckStore.getState().isPending(sessionId))) forgetSwitchOrigin(sessionId)
+        await persistSessionProviderAccount(sessionId, pinned)
+      }
+    } finally {
+      switching.delete(sessionId)
+    }
+  })()
 }

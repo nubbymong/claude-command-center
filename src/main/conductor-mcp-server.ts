@@ -35,6 +35,9 @@ import { mimeForImage } from './clipboard-file'
 import { removeConductorVisionFromCodexConfig } from './providers/codex/mcp-config'
 import { getGlobalManager, startGlobalVision, launchBrowser } from './vision-manager'
 import type { VisionCommand, VisionResult } from './vision-manager'
+// From the owner module itself (vision-manager re-exports it): a caller that
+// mocks vision-manager still gets the real class to test against.
+import { VisionPortHeldError } from './vision-browser-owner'
 import { readConfig } from './config-manager'
 import { dispatchSSHStatuslineUpdate } from './statusline-watcher'
 import { getInstallSecret } from './install-secret'
@@ -43,7 +46,8 @@ import { resolveCdpPort, CDP_PORT_PROD } from '../shared/cdp-ports'
 import { isAllowedBrowserUrl } from '../shared/browser-url'
 import { pushAgentUrlToWebview } from './webview-manager'
 import type { GlobalVisionConfig } from '../shared/types'
-import { registerCodexReviewTool } from './codex-review-mcp-tool'
+import { registerCodexReviewTool, registerClaudeReviewTool, abortSessionReviews, cancelReviewRequest } from './codex-review-mcp-tool'
+import { getAccountsService } from './provider-accounts'
 import { registerCanvasTools } from './canvas-mcp-tool'
 import { canvasRootsForSession, canvasRootRefusalFor, getAgentCanvasStateForSession, getCanvasStateForSession, getLastCompletedCanvasStateForSession, renderVersion, reopenVersionForReview, resolveInsideCanvasRoot, setVersionVerdict } from './canvas/canvas-store'
 import { completeCanvasGuarded } from './canvas/canvas-completion'
@@ -59,23 +63,6 @@ import { requestCanvasSnapshot } from './canvas/canvas-snapshot-broker'
 import { readAttachmentChecked, readImageFileChecked } from './canvas/canvas-evidence'
 import { canvasConfigNameForSession } from './canvas/canvas-session-link'
 import { readCheckedFile } from './utils/safe-file-read'
-
-/** P6.9: Parse the `source` query string from the SSE request URL.
- *  The Codex TOML writer appends `?source=codex` so the server can skip
- *  registering the codex_review tool for Codex sessions (avoids
- *  Codex-self-review confusion). Unknown / missing source defaults to
- *  'unknown' which behaves like 'claude' (codex_review IS advertised). */
-export function parseSourceFromUrl(reqUrl: string): 'claude' | 'codex' | 'unknown' {
-  try {
-    const url = new URL(reqUrl, 'http://localhost')
-    const param = url.searchParams.get('source')
-    if (param === 'codex') return 'codex'
-    if (param === 'claude') return 'claude'
-    return 'unknown'
-  } catch {
-    return 'unknown'
-  }
-}
 
 /** P7.7.10: Parse the `cccSessionId` query string from the SSE request URL.
  *  The per-session --mcp-config writer bakes the CCC session id into the
@@ -134,6 +121,31 @@ export function getConductorMcpSecret(): string {
  */
 export function mcpSessionToken(sessionId: string): string {
   return crypto.createHmac('sha256', getConductorMcpSecret()).update(sessionId, 'utf8').digest('hex')
+}
+
+export type McpClientProvider = 'claude' | 'codex'
+
+/** The provider each session's credential was issued to this run, recorded
+ *  when the app hands the session its token and read back when the session
+ *  connects: a connection's tool set follows the session it authenticated as.
+ *  The latest issue for a session id stands, except that a Codex record is
+ *  kept for the run: a session's provider is fixed when it is created, so a
+ *  later Claude issue for a Codex session's id is not one to honour. One small
+ *  entry per session id. */
+const sessionProviders = new Map<string, McpClientProvider>()
+
+/** Hand a session its MCP credential, recording the provider it goes to.
+ *  Every writer of a session's MCP config, SSH shim or Codex environment
+ *  issues through here, never through `mcpSessionToken` directly. */
+export function issueMcpSessionToken(sessionId: string, provider: McpClientProvider): string {
+  if (sessionProviders.get(sessionId) !== 'codex') sessionProviders.set(sessionId, provider)
+  return mcpSessionToken(sessionId)
+}
+
+/** The provider a session's credential was issued to this run, or null when
+ *  none was: such a session is not offered a tool set on the SSE route. */
+export function mcpSessionProvider(sessionId: string): McpClientProvider | null {
+  return sessionProviders.get(sessionId) ?? null
 }
 
 const BEARER_SCHEME = 'bearer'
@@ -547,7 +559,28 @@ export function ingestStatusPayload(
 let McpServer: any = null
 let SSEServerTransport: any = null
 let StreamableHTTPServerTransport: any = null
+let CancelledNotificationSchema: any = null
 let z: any = null
+
+/** One stateless /mcp exchange. The close listener goes on BEFORE the request
+ *  is handled: a long tool call (a review) awaits inside handleRequest, and a
+ *  client that drops the request (an interrupt, its own tool timeout) must
+ *  close the server then -- which aborts the call's signal -- not after the
+ *  call has run to its own deadline. */
+export async function serveStatelessMcp(
+  server: { connect(t: unknown): Promise<void>; close(): unknown },
+  transport: { handleRequest(req: unknown, res: unknown): Promise<void>; close(): unknown },
+  req: unknown,
+  res: { on(event: 'close', fn: () => void): unknown },
+): Promise<void> {
+  await server.connect(transport)
+  res.on('close', () => {
+    try { transport.close() } catch { /* already closed */ }
+    try { server.close() } catch { /* already closed */ }
+  })
+  // handleRequest reads the body itself when not provided.
+  await transport.handleRequest(req, res)
+}
 
 function loadMcpDeps(): void {
   if (!McpServer) {
@@ -559,6 +592,7 @@ function loadMcpDeps(): void {
     // legacy SSE transport returns 202 + pushes the response down the event
     // stream, which the new client mis-reads as "missing-content-type".
     StreamableHTTPServerTransport = require('@modelcontextprotocol/sdk/server/streamableHttp.js').StreamableHTTPServerTransport
+    CancelledNotificationSchema = require('@modelcontextprotocol/sdk/types.js').CancelledNotificationSchema
     z = require('zod')
   }
 }
@@ -589,16 +623,67 @@ const authWarnedForPort = new Set<number>()
 // Claude spawn; cleared on dispose. Soft ACL (the LLM passes its own session
 // id; not a hard authorisation boundary -- see spec section 8 for rationale).
 const codexReviewOptedIn = new Set<string>()
+// WP2 commit 5b: the same for claude_review, populated by pty-manager on a
+// local Codex spawn. A session is in at most one of the two sets (each is
+// offered only the other provider's reviewer); the project folder map and
+// unregistering are shared.
+const claudeReviewOptedIn = new Set<string>()
 const sessionCwds = new Map<string, string>()
 
 export function registerCodexReviewSession(sessionId: string, cwd: string): void {
+  claudeReviewOptedIn.delete(sessionId)
   codexReviewOptedIn.add(sessionId)
   sessionCwds.set(sessionId, cwd)
 }
 
+/** A local Codex session with a real project folder may ask for a Claude
+ *  review (commit 5b); whether the tool is OFFERED is decided per connection
+ *  (createServer). */
+export function registerClaudeReviewSession(sessionId: string, cwd: string): void {
+  codexReviewOptedIn.delete(sessionId)
+  claudeReviewOptedIn.add(sessionId)
+  sessionCwds.set(sessionId, cwd)
+}
+
+/** Which review tool a connection is offered: each session only the OTHER
+ *  provider's reviewer.
+ *  - A Claude (or unknown) connection: codex_review, while the Conductor
+ *    tools and its own toggle are on, Codex is enabled, and a Codex review
+ *    could be prepared now (WP2 commit 6: the Settings card shows the switch
+ *    unavailable then, so the tool is not offered either). Never to a Codex
+ *    session, which would review itself (P6.9).
+ *  - A Codex connection (the /mcp route forces the source): claude_review
+ *    (WP2 commit 5b, owner decision 3), while the Conductor tools and its own
+ *    toggle are on and a Claude review could be prepared now -- Claude on, and a Claude account
+ *    that can review without a per-launch confirmation (on macOS the normal
+ *    sign-in). Asked per connection, so turning Claude off or losing the
+ *    reviewer account withdraws it from the next request.
+ *  Pure; each readiness is asked only for the connection it applies to. */
+export function offeredReviewTool(
+  source: 'claude' | 'codex' | 'unknown',
+  gates: { toolsMaster: boolean; codexReviewOn: boolean; codexEnabled: boolean; codexReviewReady: () => boolean; claudeReviewOn: boolean; claudeReviewReady: () => boolean },
+): 'codex_review' | 'claude_review' | null {
+  if (source === 'codex') return gates.toolsMaster && gates.claudeReviewOn && gates.claudeReviewReady() ? 'claude_review' : null
+  return gates.codexReviewOn && gates.codexEnabled && gates.codexReviewReady() ? 'codex_review' : null
+}
+
+/** Every review a session is registered for (at most one, by the rule above),
+ *  and its project folder: a read for diagnostics and tests. */
+export function reviewRegistrationOf(sessionId: string): { tools: Array<'codex_review' | 'claude_review'>; cwd: string | null } | null {
+  const tools: Array<'codex_review' | 'claude_review'> = []
+  if (codexReviewOptedIn.has(sessionId)) tools.push('codex_review')
+  if (claudeReviewOptedIn.has(sessionId)) tools.push('claude_review')
+  return tools.length || sessionCwds.has(sessionId) ? { tools, cwd: sessionCwds.get(sessionId) ?? null } : null
+}
+
+/** Clears either registration: every spawn re-establishes its own. */
 export function unregisterCodexReviewSession(sessionId: string): void {
   codexReviewOptedIn.delete(sessionId)
+  claudeReviewOptedIn.delete(sessionId)
   sessionCwds.delete(sessionId)
+  // A review never outlives the session it serves (WP2 5a), whichever tool
+  // started it.
+  abortSessionReviews(sessionId)
 }
 
 function resultToMcpContent(result: VisionResult) {
@@ -750,11 +835,12 @@ export async function startMcpServer(
     // off; this filter is belt-and-braces for stale session configs.
     const toolCfg = readConfig<{
       conductorToolsEnabled?: boolean
-      conductorTools?: { vision?: boolean; codexReview?: boolean; hostTransfer?: boolean; canvas?: boolean }
+      conductorTools?: { vision?: boolean; codexReview?: boolean; claudeReview?: boolean; hostTransfer?: boolean; canvas?: boolean }
       codexEnabled?: boolean
+      codexAnswered?: boolean
     }>('settings')
     const toolsMaster = toolCfg?.conductorToolsEnabled !== false
-    const toolOn = (k: 'vision' | 'codexReview' | 'hostTransfer' | 'canvas') =>
+    const toolOn = (k: 'vision' | 'codexReview' | 'claudeReview' | 'hostTransfer' | 'canvas') =>
       toolsMaster && toolCfg?.conductorTools?.[k] !== false
 
     // Diagnostics (opt-in, verbose-gated): wrap server.tool ONCE so every tool
@@ -825,9 +911,12 @@ export async function startMcpServer(
 
     // ── Vision tools (require connected browser) ────────────────────────────
     // Registered as one gated group; inner indentation intentionally unchanged.
-    // Not advertised to Codex sessions: vision is Claude-only for now (user
-    // call 2026-07-02) — the onboarding p6 card carries the same note.
-    if (toolOn('vision') && source !== 'codex') {
+    // WP2 PR 4, P4.2 (row 52): offered to a Codex session too, under the same
+    // switch (the "Claude-only for now" call of 2026-07-02 is lifted). Every
+    // call routes to the connection's bound session's own pinned target
+    // (withVision), and a Codex connection is bound to its session as a
+    // Claude one is.
+    if (toolOn('vision')) {
     // -- Status --
     server.tool('vision_status', 'Check the Conductor browser\'s connection status. The vision_* tools drive a real Chrome that can read pages a plain fetch cannot — call this first if a vision call fails or you are unsure the browser is up.', {}, async () => {
       const vm = getVisionManager()
@@ -952,11 +1041,11 @@ export async function startMcpServer(
     // session's Browser tool and NEVER navigates a page the user is viewing —
     // the page loads only when the user opens the pane / clicks the pill. No
     // approval, by design (owner's framing). Gated on the Conductor-tools master
-    // only (it is neither a vision nor a canvas sub-tool); not advertised to
-    // Codex, matching the vision/canvas Claude-only stance. Binds to the
-    // transport's authenticated session and refuses a mismatched model-supplied
-    // id — see decideAgentBrowserPush.
-    if (toolsMaster && source !== 'codex') server.tool(
+    // only (it is neither a vision nor a canvas sub-tool); WP2 PR 4, P4.2 (row
+    // 52): offered to a Codex session too. Binds to the transport's
+    // authenticated session (a Codex session's own, on its /mcp connection) and
+    // refuses a mismatched model-supplied id -- see decideAgentBrowserPush.
+    if (toolsMaster) server.tool(
       'open_in_app_browser',
       'Show the USER a web page in their in-app browser pane for this session (http/https only). Use it when you have a URL worth the user seeing — a preview, a PR, docs, a built site — the same as pasting the link in chat. A notification pill appears on their Browser tool; the page loads when they open the pane or click the pill, and it never interrupts a page they are already viewing. This is the user\'s VISIBLE browser, NOT the vision_* automation browser (which only you see).',
       {
@@ -979,9 +1068,20 @@ export async function startMcpServer(
     // P6.9: codex_review is intentionally NOT advertised to Codex sessions.
     // Codex calling itself would be confusing UX in v1.5; v1.5.x can
     // reconsider if reciprocal review demand surfaces.
-    // Also requires Codex itself to be enabled ("Do you use Codex?" — absent
-    // means yes for pre-onboarding installs): the tool runs the codex CLI.
-    if (source !== 'codex' && toolOn('codexReview') && toolCfg?.codexEnabled !== false) {
+    // Also requires the user's yes to "Do you use Codex?": the tool runs the
+    // codex CLI. The saved on counts only with its answer (owner decision
+    // 2026-09-26, the rule main reads the Codex setting by); absent, or not
+    // answered, is "not set up", never on.
+    const reviewTool = offeredReviewTool(source, {
+      toolsMaster,
+      codexReviewOn: toolOn('codexReview'),
+      claudeReviewOn: toolOn('claudeReview'),
+      codexEnabled: toolCfg?.codexEnabled === true && toolCfg?.codexAnswered === true,
+      // Never lets a readiness check take the other tools down with it.
+      codexReviewReady: () => { try { return getAccountsService()?.reviewReady('codex') === true } catch { return false } },
+      claudeReviewReady: () => { try { return getAccountsService()?.reviewReady('claude') === true } catch { return false } },
+    })
+    if (reviewTool === 'codex_review') {
       registerCodexReviewTool(
         server,
         z,
@@ -991,12 +1091,29 @@ export async function startMcpServer(
       )
     }
 
+    // WP2 commit 5b: claude_review (see offeredReviewTool). The session must
+    // also have registered (a local Codex spawn with a real project folder);
+    // the tool checks that per call.
+    if (reviewTool === 'claude_review') {
+      registerClaudeReviewTool(
+        server,
+        z,
+        () => claudeReviewOptedIn,
+        (sessionId: string) => (claudeReviewOptedIn.has(sessionId) ? sessionCwds.get(sessionId) ?? null : null),
+        () => boundSessionId,
+      )
+    }
+
     // Agent Canvas: both tools are about the session's OWN canvas — the
     // snapshot reads its rendered page and the render writes to it — so like
     // codex_review they bind to the transport's session id and refuse a
-    // model-supplied one (#188). Not advertised to Codex, which connects without
-    // a bound session id — every call would refuse, so offering it is a lie.
-    if (source !== 'codex' && toolOn('canvas')) {
+    // model-supplied one (#188). WP2 PR 4, P4.1 (row 51): offered to a Codex
+    // session too. Its /mcp connection is bound to its session by the same
+    // per-session credential a Claude connection presents (`boundSessionId =
+    // authedSession` on the /mcp route), and the serving rule is keyed on that
+    // session id and checks no provider (canvas-store, ADR-016, ADR-017), so a
+    // Codex session's canvas is its own exactly as a Claude session's is.
+    if (toolOn('canvas')) {
       registerCanvasTools(server, z, () => boundSessionId, {
         getCanvasState: (sessionId: string) => getCanvasStateForSession(sessionId),
         // canvas_snapshot only: follows the agent's drafting canvas while a
@@ -1137,10 +1254,17 @@ export async function startMcpServer(
       }
 
       if (req.method === 'GET' && req.url && req.url.startsWith('/sse')) {
-        const source = parseSourceFromUrl(req.url)
         // The bound session is the AUTHENTICATED one, not a re-parse of the
-        // query — the token proved it.
+        // query — the token proved it. Its provider is the one its credential
+        // was issued to (issueMcpSessionToken); the request does not say.
         const boundSessionId = authedSession
+        const source = mcpSessionProvider(boundSessionId)
+        if (!source) {
+          logWarn(`[vision-mcp] Refused SSE connection (sid=${boundSessionId}): no credential was issued to this session in this run`)
+          res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' })
+          res.end('Forbidden')
+          return
+        }
         logInfo(`[vision-mcp] New SSE connection (source=${source}, sid=${boundSessionId})`)
         const server = createServer(source, boundSessionId, 'sse')
         // Bake this session's OWN token + id into the /messages endpoint the SDK
@@ -1240,26 +1364,39 @@ export async function startMcpServer(
       // SSEServerTransport which is the only route their MCP client supports.
       if (req.url?.startsWith('/mcp') && (req.method === 'POST' || req.method === 'GET' || req.method === 'DELETE')) {
         try {
-          // The /mcp (Streamable HTTP) route is Codex-only — Claude clients use
-          // /sse. Force source='codex' here rather than reading ?source= so the
+          // The /mcp (Streamable HTTP) route is Codex-only -- Claude clients use
+          // /sse. The source is never read from the request (?source=), so the
           // Codex URL can carry cccSessionId as its ONLY query param (no `&` to
-          // trip the win32 cmd.exe spawn), and so the Codex tool set cannot be
-          // widened by spoofing ?source=claude (GHSA-q83v-phcc-hgv4).
-          const source = 'codex' as const
+          // trip the win32 cmd.exe spawn) and a request cannot choose its tool
+          // set (GHSA-q83v-phcc-hgv4).
           // Authenticated session, not a query re-parse (GHSA-q83v-phcc-hgv4).
           const boundSessionId = authedSession
+          // WP2 PR 4, P4.2 review (A42-1): served only to a session whose
+          // credential this run issued to Codex, as /sse refuses a session with
+          // none. The HMAC key outlives a run, so a credential from an earlier
+          // one still verifies, and since P4.2 this route also carries the
+          // vision and in-app browser tools. A Claude session's credential gets
+          // nothing here either: its tool set is the SSE route's.
+          if (mcpSessionProvider(boundSessionId) !== 'codex') {
+            logWarn(`[vision-mcp] Refused /mcp request (sid=${boundSessionId}): no Codex credential was issued to this session in this run`)
+            res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' })
+            res.end('Forbidden')
+            return
+          }
+          const source = 'codex' as const
           const server = createServer(source, boundSessionId, 'http')
+          // Stateless: a request's cancel arrives on a POST of its own, to a
+          // fresh server that never saw the request. Route it to the review
+          // that request is serving, by the session THIS connection
+          // authenticated (WP2 5b: claude_review is the first long call here).
+          server.server.setNotificationHandler(CancelledNotificationSchema, async (n: { params: { requestId: string | number } }) => {
+            if (boundSessionId) cancelReviewRequest(boundSessionId, n.params.requestId)
+          })
           const transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: undefined,  // stateless
             enableJsonResponse: true,       // prefer JSON for unary responses (what rmcp expects)
           })
-          // handleRequest reads the body itself when not provided.
-          await server.connect(transport)
-          await transport.handleRequest(req, res)
-          res.on('close', () => {
-            try { transport.close() } catch { /* already closed */ }
-            try { server.close() } catch { /* already closed */ }
-          })
+          await serveStatelessMcp(server, transport, req, res)
         } catch (err: any) {
           logError(`[vision-mcp] /mcp handler error: ${err?.message ?? err}`)
           if (!res.headersSent) {
@@ -1567,6 +1704,11 @@ export async function startBrowserAtBoot(
   try {
     await launchBrowser(browser, debugPort, visionConfig.url, headless)
   } catch (err) {
+    // The debug port stays in use: vision is not started (VisionPortHeldError).
+    if (err instanceof VisionPortHeldError) {
+      logError(`[vision] Vision was not started at boot: ${err.message}`)
+      return
+    }
     logError(`[vision] Browser spawn at boot failed: ${(err as Error)?.message}. Heartbeat will retry if browser becomes reachable.`)
   }
   await startGlobalVision({

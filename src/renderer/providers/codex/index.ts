@@ -7,7 +7,9 @@ export const codexDescriptor: RendererProviderDescriptor = {
   id: 'codex',
   displayName: 'Codex CLI',
   shortName: 'Codex',
-  maturity: 'beta',
+  // P4.11 (row 54): stable from the release where parity lands; the field
+  // stays and the Providers card reads it (WP1.21).
+  maturity: 'stable',
   accentToken: '--provider-accent-codex',
   copy: {
     enableQuestion: 'Do you use Codex?',

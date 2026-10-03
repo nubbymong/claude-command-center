@@ -42,6 +42,7 @@ export const CAPABILITY_KEYS = [
   'auth.apiKey',
   'auth.status',
   'auth.logout',
+  'auth.retireReplaced',
   'realm.isolated',
   'account.labelFields',
   'account.usage',
@@ -64,7 +65,7 @@ export type CapabilityKey = (typeof CAPABILITY_KEYS)[number]
  *  makes the rule bite, and a `null` backing now FORBIDS `supported` rather
  *  than waving it through. */
 export type CapabilityBacking =
-  | { readonly operations: 'setup' | 'auth' | 'realms' }
+  | { readonly operations: 'setup' | 'auth' | 'realms' | 'usage' }
   | { readonly sessionMethod: string }
   | null
 
@@ -76,11 +77,16 @@ export const CAPABILITY_OPERATION: Readonly<Record<CapabilityKey, CapabilityBack
   'auth.apiKey': { operations: 'auth' },
   'auth.status': { operations: 'auth' },
   'auth.logout': { operations: 'auth' },
+  // Signing out a realm an account moved off after a sign in again (design
+  // 9.2): the auth operations' sign-out, used there only once evidence shows
+  // it never signs the new realm out.
+  'auth.retireReplaced': { operations: 'auth' },
   'realm.isolated': { operations: 'realms' },
   'account.labelFields': { operations: 'auth' },
-  // Per-account usage is fetched today by src/main/usage/account-usage.ts,
-  // which is not on the package: nothing here backs the key yet.
-  'account.usage': null,
+  // Per-account usage through the package's usage port (usage track MP3).
+  // A provider whose usage stays outside the package (Claude's, in
+  // src/main/usage/account-usage.ts) has no port and cannot claim the key.
+  'account.usage': { operations: 'usage' },
   'session.launch': { sessionMethod: 'buildSpawnCommand' },
   'session.history': { sessionMethod: 'listHistorySessions' },
   // Cloud agents ship through cloud-agent-manager.ts, not through

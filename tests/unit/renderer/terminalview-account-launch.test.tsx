@@ -1,0 +1,1232 @@
+// @vitest-environment jsdom
+/**
+ * WP2 commit 6: a Codex session's launch, through the REAL TerminalView
+ * (xterm and IPC mocked, the accounts, launch-confirm and account-gate stores
+ * real).
+ *
+ *  - the session's saved providerAccountId reaches pty:spawn;
+ *  - a later launch of a session bound to this computer's own ~/.codex asks
+ *    first: declined -> nothing spawns; accepted -> the spawn carries
+ *    acknowledgeRealmOnly: true for THAT account (the New session dialog's
+ *    tick covers only the launch it started, and is used up by it);
+ *  - main's refusals are said in plain words in the terminal;
+ *  - the Restart pty:exit race (plan.md "For commit 6 (renderer)"): an exit
+ *    that arrives before this view's own pty:spawn has settled belongs to the
+ *    run it replaces and does not mark the live session exited; one after it
+ *    does; and when this view's spawn starts nothing, a held exit ends it.
+ */
+import React from 'react'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { createRoot, type Root } from 'react-dom/client'
+import { act } from 'react'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
+;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
+
+const H = vi.hoisted(() => {
+  class MockTerminal {
+    static last: any = null
+    options: any
+    cols = 80
+    rows = 24
+    element: HTMLElement | null = null
+    buffer = { active: { type: 'normal', viewportY: 0, baseY: 0, length: 0, cursorY: 0, getLine: (_y: number) => undefined } }
+    lines: string[] = []
+    focus = () => {}
+    scrollToBottom = () => {}
+    constructor(opts?: any) { this.options = { ...(opts ?? {}) }; MockTerminal.last = this }
+    open(el: HTMLElement) { this.element = el }
+    loadAddon() {}
+    onData() { return { dispose() {} } }
+    onScroll() { return { dispose() {} } }
+    attachCustomKeyEventHandler() {}
+    attachCustomWheelEventHandler() {}
+    registerLinkProvider() { return { dispose() {} } }
+    refresh() {}
+    paste() {}
+    clearSelection() {}
+    getSelection() { return '' }
+    // ED2 (erase the viewport), as xterm applies it: what was written goes.
+    write(s: unknown) { if (typeof s === 'string' && s.includes('\x1b[2J')) this.lines = [] }
+    writeln(s: string) { this.lines.push(s) }
+    dispose() {}
+  }
+  const updates: Array<{ id: string; patch: Record<string, unknown> }> = []
+  const sessionState: any = {
+    sessions: [] as any[],
+    activeSessionId: 's-1',
+    updateSession: (id: string, patch: Record<string, unknown>) => { updates.push({ id, patch }) },
+  }
+  const spawned = new Set<string>()
+  // The spawn tokens ptyTracker hands out (markSpawned) and checks (isCurrentSpawn).
+  const tokens = new Map<string, number>()
+  const counter = { last: 0 }
+  const cleared: string[] = []
+  /** persistSessionProviderAccount calls: [sessionId, providerAccountId]. */
+  const persisted: unknown[][] = []
+  return { MockTerminal, sessionState, updates, spawned, tokens, counter, cleared, persisted }
+})
+
+vi.mock('@xterm/xterm/css/xterm.css', () => ({ default: {} }))
+vi.mock('@xterm/xterm', () => ({ Terminal: H.MockTerminal }))
+vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} proposeDimensions() { return { cols: 80, rows: 24 } } } }))
+vi.mock('@xterm/addon-web-links', () => ({ WebLinksAddon: class {} }))
+vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: class {} }))
+vi.mock('../../../src/renderer/components/terminal/terminalWebgl', () => ({
+  installWebglWithRecovery: () => ({ dispose() {}, clearTextureAtlas: () => false, isActive: () => false }),
+  createAtlasResync: () => () => {},
+}))
+vi.mock('../../../src/renderer/components/terminal/atlasCoordinator', () => ({
+  atlasCoordinator: { register: () => () => {}, notifyCleared: () => {}, resyncIfBehind: () => {} },
+}))
+vi.mock('../../../src/renderer/components/terminal/staleGlyphRepaint', () => ({
+  createStaleGlyphRepainter: () => ({ schedule() {}, settle() {}, settleStrong() {}, strongIfStale() {}, dispose() {} }),
+  shouldRepaintOnOutput: () => false,
+  shouldSoftRepaintOnOutput: () => false,
+  outputRepaintIntervalMs: () => 1000,
+  ACTIVATION_MAX_STALE_MS: 1000,
+  WHEEL_ACTIVE_MS: 100,
+}))
+vi.mock('../../../src/renderer/components/terminal/terminalTheme', () => ({ getTerminalTheme: () => ({ background: '#000000' }) }))
+vi.mock('../../../src/renderer/components/terminal/terminalKeybindings', () => ({ installTerminalKeybindings: () => () => {} }))
+vi.mock('../../../src/renderer/components/terminal/repaintRegistry', () => ({
+  registerRepainter: () => () => {},
+  requestResync: () => {},
+  scheduleBleedRepaints: () => {},
+}))
+vi.mock('../../../src/renderer/components/terminal/geometryResync', () => ({
+  createGeometryResync: () => ({ fire() {}, dispose() {} }),
+}))
+vi.mock('../../../src/renderer/stores/sessionStore', () => ({
+  useSessionStore: Object.assign((sel: any) => sel(H.sessionState), { getState: () => H.sessionState }),
+}))
+vi.mock('../../../src/renderer/hooks/useRestartSession', () => ({ useRestartSession: () => ({ restart: () => {} }) }))
+vi.mock('../../../src/renderer/session-persistence', () => ({
+  persistLastUsedAccount: () => {},
+  persistSessionProviderAccount: (...a: unknown[]) => { H.persisted.push(a); return Promise.resolve() },
+}))
+vi.mock('../../../src/renderer/stores/accountProfilesStore', () => {
+  const st = { profiles: [] }
+  return { useAccountProfilesStore: Object.assign((sel: any) => sel(st), { getState: () => st }) }
+})
+vi.mock('../../../src/renderer/stores/sshCloseStore', () => ({ forgetSessionBrowserProfile: () => {} }))
+vi.mock('../../../src/renderer/ptyTracker', () => ({
+  hasSpawned: (id: string) => H.spawned.has(id),
+  markSpawned: (id: string) => { H.spawned.add(id); const t = ++H.counter.last; H.tokens.set(id, t); return t },
+  isCurrentSpawn: (id: string, t: number | undefined) => H.spawned.has(id) && t !== undefined && H.tokens.get(id) === t,
+  clearSpawned: (id: string) => { H.spawned.delete(id); H.tokens.delete(id); H.cleared.push(id) },
+  killSessionPty: () => {},
+}))
+// A marker, so a test can see whether an SSH tab shows its flow card.
+vi.mock('../../../src/renderer/components/SshFlowOverlay', async () => {
+  const R = await import('react')
+  return { default: () => R.createElement('div', { 'data-testid': 'ssh-flow-overlay' }) }
+})
+vi.mock('../../../src/renderer/utils/resumePicker', () => ({ shouldUseResumePicker: () => false }))
+// P3.8 round 1 (L2): the Plan mode wait, observed (its own behaviour is
+// tests/unit/renderer/codex-composer.test.ts).
+const planWait = vi.hoisted(() => ({ calls: [] as Array<{ id: string; cmd: string; opts: { timeoutMs: number; onGiveUp: (why: 'timeout' | 'interrupted' | 'not-sent') => void } }>, cancels: 0 }))
+vi.mock('../../../src/renderer/lib/codexComposer', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/renderer/lib/codexComposer')>()),
+  CODEX_PLAN_MODE_WAIT_MS: 120_000,
+  typeWhenCodexComposerReady: (id: string, cmd: string, opts: { timeoutMs: number; onGiveUp: (why: 'timeout' | 'interrupted' | 'not-sent') => void }) => {
+    planWait.calls.push({ id, cmd, opts })
+    return { cancel: () => { planWait.cancels++ } }
+  },
+}))
+vi.mock('../../../src/renderer/components/TerminalContextMenu', () => ({ default: () => null }))
+vi.mock('../../../src/renderer/stores/settingsStore', () => {
+  // The user said they use Codex: its sessions launch (a test turns a provider off).
+  const st = { settings: { terminal: {}, codexEnabled: true, codexAnswered: true } }
+  return {
+    useSettingsStore: Object.assign((sel: any) => sel(st), { getState: () => st }),
+    DEFAULT_TERMINAL_SETTINGS: {},
+    gpuRenderingEnabled: () => false,
+  }
+})
+vi.mock('../../../src/renderer/stores/pasteHintStore', () => {
+  const st = { show: () => {} }
+  return { usePasteHintStore: Object.assign((sel: any) => sel(st), { getState: () => st }) }
+})
+vi.mock('../../../src/renderer/utils/inputDiagnostics', () => ({ installInputDiagnostics: () => () => {}, describeBytes: () => '' }))
+vi.mock('../../../src/renderer/components/terminal', () => ({ ScrollToBottomButton: () => null }))
+vi.mock('../../../src/renderer/hooks/useStatuslineSubscription', () => ({ useStatuslineSubscription: () => {} }))
+vi.mock('../../../src/renderer/hooks/useEffortSubscription', () => ({ useEffortSubscription: () => {} }))
+vi.mock('../../../src/renderer/hooks/useWatchdogSubscription', () => ({ useWatchdogSubscription: () => {} }))
+vi.mock('../../../src/renderer/hooks/useAccountIdentitySubscription', () => ({ useAccountIdentitySubscription: () => {} }))
+vi.mock('../../../src/renderer/hooks/useActiveTabEffect', () => ({ useActiveTabEffect: () => {} }))
+vi.mock('../../../src/renderer/hooks/useCursorLayerVisibility', () => ({ useCursorLayerVisibility: () => {} }))
+
+// pty:spawn calls are deferreds the test settles, one per call; pty:exit is a
+// callback it fires at whichever view is listening now.
+type Settle = { resolve: (v?: unknown) => void; reject: (e: unknown) => void }
+const settles: Settle[] = []
+const spawn = vi.fn((_id: string, _opts: Record<string, unknown>) => new Promise((resolve, reject) => { settles.push({ resolve, reject }) }))
+let fireExit: ((code: number) => void) | null = null
+/** The session's output, as main sends it to the view listening now. */
+let sendData: ((data: string) => void) | null = null
+;(globalThis as any).window.electronAPI = {
+  ...(globalThis as any).window.electronAPI,
+  pty: {
+    write: vi.fn(),
+    resize: vi.fn(),
+    spawn,
+    onData: vi.fn((_id: string, cb: (data: string) => void) => { sendData = cb; return () => { if (sendData === cb) sendData = null } }),
+    onExit: vi.fn((_id: string, cb: (code: number) => void) => { fireExit = cb; return () => { if (fireExit === cb) fireExit = null } }),
+  },
+  inputDebug: { enabled: vi.fn(async () => false), log: vi.fn() },
+  clipboard: { readText: vi.fn(async () => '') },
+  ssh: { onSessionInfo: vi.fn(() => () => {}), onFlowState: vi.fn(() => () => {}) },
+}
+
+Element.prototype.getBoundingClientRect = function () {
+  return { width: 800, height: 600, top: 0, left: 0, right: 800, bottom: 600, x: 0, y: 0, toJSON() { return {} } } as DOMRect
+}
+class RO { observe() {} unobserve() {} disconnect() {} }
+;(globalThis as any).ResizeObserver = RO
+;(window as any).ResizeObserver = RO
+if (!(document as any).fonts) {
+  Object.defineProperty(document, 'fonts', { value: { ready: Promise.resolve(), load: () => Promise.resolve([]) }, configurable: true })
+}
+
+let rafQueue: FrameRequestCallback[] = []
+const installRaf = () => {
+  const req = (cb: FrameRequestCallback) => { rafQueue.push(cb); return rafQueue.length }
+  ;(window as any).requestAnimationFrame = req
+  ;(globalThis as any).requestAnimationFrame = req
+  ;(window as any).cancelAnimationFrame = () => {}
+  ;(globalThis as any).cancelAnimationFrame = () => {}
+}
+const flushRaf = () => { const q = rafQueue; rafQueue = []; q.forEach((cb) => cb(0)) }
+
+const { default: TerminalView } = await import('../../../src/renderer/components/TerminalView')
+const { useProviderAccountsStore } = await import('../../../src/renderer/stores/providerAccountsStore')
+const { useLaunchAckStore, grantLaunchAcknowledgement, consumeLaunchAcknowledgement } = await import('../../../src/renderer/stores/launchAckStore')
+const { useAccountGateStore } = await import('../../../src/renderer/stores/accountGateStore')
+const { snapshot, provider, account } = await import('./accounts-snapshot-harness')
+const { forgetSpawnEnd } = await import('../../../src/renderer/utils/spawnEndNotice')
+const { noteSwitchOrigin, switchOrigin, forgetSwitchOrigin } = await import('../../../src/renderer/utils/switchOrigin')
+const { useConfigStore } = await import('../../../src/renderer/stores/configStore')
+
+let container: HTMLDivElement
+let root: Root
+
+function codexSession(over: Record<string, unknown> = {}) {
+  return { id: 's-1', label: 'api-server', workingDirectory: 'C:/proj', color: '#89b4fa', sessionType: 'local', provider: 'codex', model: '', codexOptions: { permissionsPreset: 'standard' }, ...over }
+}
+
+/** Mount the view (a new `key` is a remount: what a Restart does) and run it
+ *  up to, not past, the frames that spawn. */
+const mount = (session: Record<string, unknown>, key = 'a') => {
+  H.sessionState.sessions = [session]
+  act(() => {
+    root.render(React.createElement(TerminalView as any, {
+      key, sessionId: 's-1', cwd: 'C:/proj', isActive: true, provider: session.provider, codexOptions: session.codexOptions,
+    }))
+  })
+}
+/** Drain frames and microtasks until the view has done what it will. */
+const settle = async () => {
+  for (let i = 0; i < 8; i++) await act(async () => { flushRaf(); await Promise.resolve(); await Promise.resolve() })
+}
+/** What a Restart does before the remount: killSessionPty clears the tracker. */
+const restartTo = async (session: Record<string, unknown>, key: string) => {
+  H.spawned.delete('s-1')
+  mount(session, key)
+  await settle()
+}
+const termLines = () => (H.MockTerminal.last?.lines ?? []).join('\n')
+/** The switch note above the terminal (P3.6), or null when none. */
+const switchNote = () => container.querySelector('[data-testid="switch-note"] span')?.textContent ?? null
+const exitedMarks = () => H.updates.filter((u) => u.patch.ptyExited === true)
+const answer = async (yes: boolean) => {
+  const q = useLaunchAckStore.getState().queue
+  await act(async () => { useLaunchAckStore.getState().answer(q[0].requestId, yes) })
+}
+const refused = (why: string) => new Error(`Error invoking remote method 'pty:spawn': Error: Codex session refused: ${why}`)
+
+beforeEach(() => {
+  rafQueue = []
+  installRaf()
+  spawn.mockClear()
+  settles.length = 0
+  fireExit = null
+  sendData = null
+  H.updates.length = 0
+  H.spawned.clear()
+  H.tokens.clear()
+  forgetSpawnEnd('s-1')
+  H.cleared.length = 0
+  H.persisted.length = 0
+  forgetSwitchOrigin('s-1')
+  H.MockTerminal.last = null
+  useProviderAccountsStore.setState({ snapshot: snapshot(), loaded: true })
+  useLaunchAckStore.setState({ queue: [] })
+  useAccountGateStore.setState({ queue: [], predetermined: [], restored: [] })
+  container = document.createElement('div')
+  document.body.appendChild(container)
+  root = createRoot(container)
+})
+afterEach(() => {
+  act(() => { root.unmount() })
+  container.remove()
+})
+
+describe("a Codex session's account reaches pty:spawn", () => {
+  it('sends the saved providerAccountId, with no acknowledgement for a managed account', async () => {
+    mount(codexSession({ providerAccountId: 'acc-work' }))
+    await settle()
+    expect(spawn).toHaveBeenCalledTimes(1)
+    const opts = spawn.mock.calls[0][1]
+    expect(opts.providerAccountId).toBe('acc-work')
+    expect(opts.acknowledgeRealmOnly).toBeUndefined()
+    expect(useLaunchAckStore.getState().queue).toHaveLength(0)
+  })
+
+  it('an unbound session names no account (the provider default, as before)', async () => {
+    mount(codexSession())
+    await settle()
+    expect(spawn.mock.calls[0][1].providerAccountId).toBeUndefined()
+  })
+
+  // P3.8 round 1 (L2): Plan mode is Claude's launch option; Codex has no
+  // launch flag for it, so a started Codex session on the Plan mode choice
+  // waits for its ready composer and types /plan, and says so if it cannot.
+  it('Plan mode: a started Codex session waits for its composer to type /plan; nothing for another choice or a start that started nothing', async () => {
+    planWait.calls.length = 0
+    mount(codexSession({ codexOptions: { permissionsPreset: 'plan' } }))
+    await settle()
+    expect(planWait.calls).toHaveLength(0)
+    await act(async () => { settles[0].resolve({ started: true }) })
+    await settle()
+    expect(planWait.calls.map((c) => [c.id, c.cmd, c.opts.timeoutMs])).toEqual([['s-1', '/plan', 120_000]])
+    // Round 2 (PM1): the note says Plan mode is not on and the session is read-only.
+    await act(async () => { planWait.calls[0].opts.onGiveUp('interrupted') })
+    const { planModeNote } = await import('../../../src/renderer/lib/codexComposer')
+    expect(switchNote()).toBe(planModeNote('interrupted'))
+    expect(switchNote()).toMatch(/Plan mode is not on.*read-only/)
+    await restartTo(codexSession({ codexOptions: { permissionsPreset: 'standard' } }), 'b')
+    await act(async () => { settles[1].resolve({ started: true }) })
+    await settle()
+    expect(planWait.calls).toHaveLength(1)
+    await restartTo(codexSession({ codexOptions: { permissionsPreset: 'plan' } }), 'c')
+    await act(async () => { settles[2].resolve({ started: false }) })
+    await settle()
+    expect(planWait.calls).toHaveLength(1)
+  })
+
+  // P3.8 round 3 (PB1): each run records the preset main says it launched
+  // with; the Plan mode wait follows it.
+  it('records the preset each Codex run launched with, as main reports it, and waits for /plan only on a Plan mode launch', async () => {
+    planWait.calls.length = 0
+    mount(codexSession({ codexOptions: { permissionsPreset: 'plan' } }))
+    await settle()
+    await act(async () => { settles[0].resolve({ started: true, launched: { codexPreset: 'standard' } }) })
+    await settle()
+    expect(H.updates.filter((u) => 'launchedCodexPreset' in u.patch).map((u) => u.patch.launchedCodexPreset)).toEqual(['standard'])
+    expect(planWait.calls).toHaveLength(0)
+    await restartTo(codexSession({ codexOptions: { permissionsPreset: 'plan' } }), 'b')
+    await act(async () => { settles[1].resolve({ started: true, launched: { codexPreset: 'plan' } }) })
+    await settle()
+    expect(H.updates.filter((u) => 'launchedCodexPreset' in u.patch).map((u) => u.patch.launchedCodexPreset)).toEqual(['standard', 'plan'])
+    expect(planWait.calls).toHaveLength(1)
+    // Round 4 (L1): a launch that started nothing has no launched preset.
+    await restartTo(codexSession({ codexOptions: { permissionsPreset: 'plan' } }), 'c')
+    await act(async () => { settles[2].resolve({ started: false }) })
+    await settle()
+    expect(H.updates.filter((u) => 'launchedCodexPreset' in u.patch).map((u) => u.patch.launchedCodexPreset)).toEqual(['standard', 'plan', undefined])
+  })
+
+  it('Plan mode: the view going away cancels the wait', async () => {
+    planWait.calls.length = 0
+    planWait.cancels = 0
+    mount(codexSession({ codexOptions: { permissionsPreset: 'plan' } }))
+    await settle()
+    await act(async () => { settles[0].resolve({ started: true }) })
+    await settle()
+    expect(planWait.calls).toHaveLength(1)
+    act(() => { root.unmount() })
+    root = createRoot(container)
+    expect(planWait.cancels).toBeGreaterThanOrEqual(1)
+  })
+
+  it('registers the terminal\'s live screen for the Codex command gate, and removes it with the view', async () => {
+    const { readSessionScreen } = await import('../../../src/renderer/components/terminal/screenRegistry')
+    mount(codexSession())
+    await settle()
+    const screen = readSessionScreen('s-1')
+    expect(Array.isArray(screen)).toBe(true)
+    expect(screen).toHaveLength(24)
+    act(() => { root.unmount() })
+    root = createRoot(container)
+    expect(readSessionScreen('s-1')).toBeNull()
+  })
+
+  it('a Claude session never sends one', async () => {
+    mount(codexSession({ provider: 'claude', providerAccountId: 'acc-work', codexOptions: undefined }))
+    await settle()
+    expect(spawn.mock.calls[0][1].providerAccountId).toBeUndefined()
+  })
+
+  it('P3.6: a respawn on another account whose conversation did not come along whole says so once, above the terminal, from main\'s answer, cleaned as the terminal\'s lines are', async () => {
+    mount(codexSession({ providerAccountId: 'acc-personal' }))
+    await settle()
+    expect(spawn).toHaveBeenCalledTimes(1)
+    const RLO = String.fromCharCode(0x202e)
+    await act(async () => { settles[0].resolve({ started: true, carry: { code: 'too-large', message: `Too large.${RLO}\u001b[2J`, resumed: false } }) })
+    await settle()
+    expect(switchNote()).toBe('Switched to Personal. Too large.  [2J This is a new conversation.')
+    expect(container.querySelectorAll('[data-testid="switch-note"]')).toHaveLength(1)
+    expect(termLines()).not.toContain('Switched to')
+    // Resumed from a copy already there: said as that, never a new conversation.
+    await restartTo(codexSession({ providerAccountId: 'acc-personal' }), 'b')
+    await act(async () => { settles[1].resolve({ started: true, carry: { code: 'conversation-differs', message: 'x', resumed: true } }) })
+    await settle()
+    expect(switchNote()).toContain('so the session carries on from that copy.')
+    expect(switchNote()).not.toContain('This is a new conversation.')
+    // Carried whole, or nothing to carry: nothing is said.
+    await restartTo(codexSession({ providerAccountId: 'acc-personal' }), 'c')
+    await act(async () => { settles[2].resolve(undefined) })
+    await settle()
+    expect(switchNote()).toBeNull()
+  })
+
+  // P3.6 VM finding V1: on Windows the new PTY's first output is ConPTY's
+  // first frame, which clears the screen; the note must outlive it.
+  it('P3.6: the note stays once the new session\'s first output clears the screen, until dismissed', async () => {
+    mount(codexSession({ providerAccountId: 'acc-personal' }))
+    await settle()
+    await act(async () => { settles[0].resolve({ started: true, carry: { code: 'in-use', message: 'Another open session is on this conversation, so it was not carried over.', resumed: false } }) })
+    await settle()
+    const said = 'Switched to Personal. Another open session is on this conversation, so it was not carried over. This is a new conversation.'
+    await act(async () => { sendData?.('\x1b[?25l\x1b[2J\x1b[m\x1b[2;1Hthe session\'s first screen') })
+    await settle()
+    expect(`${switchNote() ?? ''}\n${termLines()}`).toContain(said)
+    // Dismissed: gone.
+    const dismiss = container.querySelector('[data-testid="switch-note"] button') as HTMLButtonElement
+    await act(async () => { dismiss.click() })
+    expect(switchNote()).toBeNull()
+  })
+
+  // P3.8 round 3 (CM): Codex's footer says how much context is LEFT; the
+  // meter shows how much is used (the VM capture of 0.155.1's raw bytes).
+  it("reads Codex's \"100% context left\" as none used", async () => {
+    mount(codexSession())
+    await settle()
+    await act(async () => { settles[0].resolve({ started: true }) })
+    await settle()
+    const readings = () => H.updates.filter((u) => 'contextPercent' in u.patch).map((u) => u.patch.contextPercent)
+    await act(async () => { sendData?.('\x1b[2mtab to queue message\x1b[22m\x1b[145X\x1b[2m\x1b[145C100% context left\x1b[22m  \r\n') })
+    await act(async () => { await new Promise((r) => setTimeout(r, 400)) })
+    expect(readings()).toEqual([0])
+  })
+
+  // P3.6 VM finding V4: the note reads in the light theme too: the app's
+  // muted text on the panel surface, the pair token-contrast.test.ts holds
+  // to 4.5:1 in both themes.
+  it('P3.6: the note is the app\'s muted text on the panel surface', async () => {
+    mount(codexSession({ providerAccountId: 'acc-personal' }))
+    await settle()
+    await act(async () => { settles[0].resolve({ started: true, carry: { code: 'too-large', message: 'Too large.', resumed: false } }) })
+    await settle()
+    const el = container.querySelector('[data-testid="switch-note"]') as HTMLElement
+    expect(el.style.color).toBe('var(--text-muted)')
+    expect(el.style.background).toBe('var(--surface-panel)')
+  })
+
+  // VM re-check W1: the GitHub button floats over the terminal's top-right
+  // corner (GitHubPanel's gh-fab: absolute top-2 right-2, an 18px icon in
+  // p-1.5 with a 1px border, so 32px wide from 8px in). The bar keeps pr-12
+  // (48px) clear there, so its dismiss is never under that button. jsdom
+  // cannot hit-test, so both halves of the rule are pinned.
+  it('P3.6: the note bar keeps the floating GitHub button\'s corner clear, so its dismiss is never under it', async () => {
+    mount(codexSession({ providerAccountId: 'acc-personal' }))
+    await settle()
+    await act(async () => { settles[0].resolve({ started: true, carry: { code: 'too-large', message: 'Too large.', resumed: false } }) })
+    await settle()
+    const el = container.querySelector('[data-testid="switch-note"]') as HTMLElement
+    const classes = el.className.split(/\s+/)
+    expect(classes).toContain('pr-12')
+    expect(classes.filter((c) => /^(px|pr)-/.test(c))).toEqual(['pr-12'])
+    const gh = readFileSync(resolve(__dirname, '../../../src/renderer/components/github/GitHubPanel.tsx'), 'utf8')
+    // Each gh-fab button on its own: its place, its padding, no width of its
+    // own, and nothing inside it but its one 18px icon (no label).
+    const fabs = [...gh.matchAll(/<button\s+data-testid="gh-fab"([\s\S]*?)<\/button>/g)].map((m) => m[1])
+    expect(fabs.length).toBeGreaterThan(0)
+    for (const fab of fabs) {
+      const classes = (/className="(gh-fab [^"]*)"/.exec(fab)?.[1] ?? '').split(/\s+/)
+      expect(classes).toEqual(expect.arrayContaining(['absolute', 'top-2', 'right-2', 'p-1.5']))
+      expect(classes.filter((c) => /^(w|min-w|px|pl|pr)-/.test(c))).toEqual([])
+      const icons = fab.match(/<svg\b[\s\S]*?<\/svg>/g) ?? []
+      expect(icons).toHaveLength(1)
+      expect(icons[0]).toMatch(/^<svg width="18" height="18"/)
+      expect(fab.slice(0, fab.indexOf('<svg'))).toMatch(/>\s*$/)
+      expect(fab.slice(fab.indexOf('</svg>') + '</svg>'.length)).toMatch(/^\s*$/)
+    }
+  })
+})
+
+describe("a later launch on this computer's own sign-in asks first", () => {
+  // P3.6 VM finding V3: a Claude switch never asks at launch, so it has no
+  // such Cancel; a Codex switch declined there goes back to where it was.
+  it('a Switch account onto it, declined: the tab goes back to the account it was switched from, and says so; accepted or asked nothing, the origin is spent', async () => {
+    noteSwitchOrigin('s-1', 'acc-work', 'acc-local')
+    mount(codexSession({ providerAccountId: 'acc-local' }))
+    await settle()
+    expect(useLaunchAckStore.getState().queue).toHaveLength(1)
+    await answer(false)
+    await settle()
+    expect(spawn).not.toHaveBeenCalled()
+    expect(H.persisted).toEqual([['s-1', 'acc-work']])
+    expect(termLines()).toMatch(/Not started: the launch was not confirmed, so the session is back on Work\. Restart the session to start it there\./)
+    expect(switchOrigin('s-1')).toBeNull()
+    // A declined launch that was no switch changes no account.
+    await restartTo(codexSession({ providerAccountId: 'acc-local' }), 'b')
+    await answer(false)
+    await settle()
+    expect(H.persisted).toHaveLength(1)
+    // Accepted: the switch stands, and the origin is spent.
+    noteSwitchOrigin('s-1', 'acc-work', 'acc-local')
+    await restartTo(codexSession({ providerAccountId: 'acc-local' }), 'c')
+    await answer(true)
+    await settle()
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(switchOrigin('s-1')).toBeNull()
+    expect(H.persisted).toHaveLength(1)
+    // Onto an account that asks nothing: spent at once.
+    noteSwitchOrigin('s-1', 'acc-local', 'acc-work')
+    await restartTo(codexSession({ providerAccountId: 'acc-work' }), 'd')
+    expect(switchOrigin('s-1')).toBeNull()
+  })
+
+  // Review F1: an origin is honoured only by the launch its switch was to.
+  it('an origin left by a switch to another account: a declined launch here moves nothing, says the plain words, and spends it', async () => {
+    noteSwitchOrigin('s-1', 'acc-work', 'acc-personal')
+    mount(codexSession({ providerAccountId: 'acc-local' }))
+    await settle()
+    await answer(false)
+    await settle()
+    expect(H.persisted).toEqual([])
+    expect(termLines()).toContain('Not started: the launch was not confirmed. Restart the session to be asked again.')
+    expect(termLines()).not.toContain('back on')
+    expect(switchOrigin('s-1')).toBeNull()
+  })
+
+  // Review F2: only an account that can still launch is gone back to.
+  it('declined, and the account it came from can no longer be used (inactive, blocked, archived, gone): the default account instead, in words that say so', async () => {
+    for (const [from, key] of [['acc-parked', 'p'], ['acc-old', 'o'], ['acc-gone', 'g'], ['acc-nope', 'n'], ['acc-claude-main', 'c']] as const) {
+      H.persisted.length = 0
+      noteSwitchOrigin('s-1', from, 'acc-local')
+      await restartTo(codexSession({ providerAccountId: 'acc-local' }), key)
+      await answer(false)
+      await settle()
+      expect(H.persisted, from).toEqual([['s-1', undefined]])
+      expect(termLines(), from).toContain('Not started: the launch was not confirmed. The account the session was on can no longer be used, so it is on the default account, Work, now. Restart the session to start it there.')
+    }
+    // It came from the provider default: that is where it goes back.
+    H.persisted.length = 0
+    noteSwitchOrigin('s-1', undefined, 'acc-local')
+    await restartTo(codexSession({ providerAccountId: 'acc-local' }), 'd')
+    await answer(false)
+    await settle()
+    expect(H.persisted).toEqual([['s-1', undefined]])
+    expect(termLines()).toContain('so the session is back on Work.')
+  })
+
+  it('declined: nothing spawns, and the terminal says why', async () => {
+    mount(codexSession({ providerAccountId: 'acc-local' }))
+    await settle()
+    const q = useLaunchAckStore.getState().queue
+    expect(q).toHaveLength(1)
+    expect(q[0]).toMatchObject({ sessionId: 's-1', external: true, email: 'alex@example.com', unknown: false })
+    await answer(false)
+    await settle()
+    expect(spawn).not.toHaveBeenCalled()
+    expect(termLines()).toContain('Not started: the launch was not confirmed.')
+    expect(exitedMarks()).toHaveLength(1)
+    // Walk fix W3: a declined launch started nothing, so the tab is never
+    // started and does not count as running.
+    expect(H.updates.some((u) => u.patch.neverStarted === true)).toBe(true)
+  })
+
+  it("accepted: the spawn carries THIS launch's acknowledgement for that account", async () => {
+    mount(codexSession({ providerAccountId: 'acc-local' }))
+    await settle()
+    expect(spawn).not.toHaveBeenCalled()
+    await answer(true)
+    await settle()
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(spawn.mock.calls[0][1]).toMatchObject({ providerAccountId: 'acc-local', acknowledgeRealmOnly: true })
+  })
+
+  it("the New session dialog's tick covers its own launch without asking, and is used up", async () => {
+    grantLaunchAcknowledgement('s-1', 'acc-local')
+    mount(codexSession({ providerAccountId: 'acc-local' }))
+    await settle()
+    expect(useLaunchAckStore.getState().queue).toHaveLength(0)
+    expect(spawn.mock.calls[0][1]).toMatchObject({ providerAccountId: 'acc-local', acknowledgeRealmOnly: true })
+    expect(consumeLaunchAcknowledgement('s-1', 'acc-local')).toBe(false)
+  })
+
+  it('a tick given for another account does not count', async () => {
+    grantLaunchAcknowledgement('s-1', 'acc-work')
+    mount(codexSession({ providerAccountId: 'acc-local' }))
+    await settle()
+    expect(spawn).not.toHaveBeenCalled()
+    expect(useLaunchAckStore.getState().queue).toHaveLength(1)
+  })
+
+  it('with no account list (the snapshot fetch failed), a bound session still asks, and a yes names that account', async () => {
+    useProviderAccountsStore.setState({ snapshot: null, loaded: true })
+    mount(codexSession({ providerAccountId: 'acc-work' }))
+    await settle()
+    expect(spawn).not.toHaveBeenCalled()
+    expect(useLaunchAckStore.getState().queue[0]).toMatchObject({ sessionId: 's-1', unknown: true })
+    await answer(true)
+    await settle()
+    expect(spawn.mock.calls[0][1]).toMatchObject({ providerAccountId: 'acc-work', acknowledgeRealmOnly: true })
+  })
+
+  it('the account list arriving while that question is up: an account that needs nothing starts without asking', async () => {
+    useProviderAccountsStore.setState({ snapshot: null, loaded: true })
+    mount(codexSession({ providerAccountId: 'acc-work' }))
+    await settle()
+    expect(useLaunchAckStore.getState().queue[0]).toMatchObject({ unknown: true })
+    await act(async () => { useProviderAccountsStore.setState({ snapshot: snapshot(), loaded: true }) })
+    await settle()
+    expect(useLaunchAckStore.getState().queue).toHaveLength(0)
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(spawn.mock.calls[0][1].providerAccountId).toBe('acc-work')
+    expect(spawn.mock.calls[0][1].acknowledgeRealmOnly).toBeUndefined()
+    expect(exitedMarks()).toHaveLength(0)
+  })
+
+  it('the account list arriving while that question is up: an account that needs confirming is asked about in its own words', async () => {
+    useProviderAccountsStore.setState({ snapshot: null, loaded: true })
+    mount(codexSession({ providerAccountId: 'acc-local' }))
+    await settle()
+    const stale = useLaunchAckStore.getState().queue[0]
+    expect(stale).toMatchObject({ unknown: true })
+    await act(async () => { useProviderAccountsStore.setState({ snapshot: snapshot(), loaded: true }) })
+    await settle()
+    const q = useLaunchAckStore.getState().queue
+    expect(q).toHaveLength(1)
+    expect(q[0].requestId).not.toBe(stale.requestId)
+    expect(q[0]).toMatchObject({ unknown: false, external: true, email: 'alex@example.com' })
+    expect(spawn).not.toHaveBeenCalled()
+    await answer(true)
+    await settle()
+    expect(spawn.mock.calls[0][1]).toMatchObject({ providerAccountId: 'acc-local', acknowledgeRealmOnly: true })
+  })
+
+  it('a Restart while its confirm is up withdraws that question, and the new view asks afresh', async () => {
+    mount(codexSession({ providerAccountId: 'acc-local' }))
+    await settle()
+    const first = useLaunchAckStore.getState().queue[0]
+    await restartTo(codexSession({ providerAccountId: 'acc-local' }), 'b')
+    const q = useLaunchAckStore.getState().queue
+    expect(q).toHaveLength(1)
+    expect(q[0].requestId).not.toBe(first.requestId)
+    // The withdrawn question started nothing.
+    expect(spawn).not.toHaveBeenCalled()
+    await answer(true)
+    await settle()
+    expect(spawn).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("main's refusals, in plain words at the terminal", () => {
+  it('lifecycle', async () => {
+    mount(codexSession({ providerAccountId: 'acc-work' }))
+    await settle()
+    await act(async () => { settles[0].reject(refused('the account is inactive; activate it or choose another')) })
+    expect(termLines()).toContain('Not started: This account needs attention. Open Accounts.')
+    expect(termLines()).not.toContain('Process exited')
+  })
+
+  it("acknowledgement-required says 'on this computer' only for this computer's own sign-in", async () => {
+    grantLaunchAcknowledgement('s-1', 'acc-local')
+    mount(codexSession({ providerAccountId: 'acc-local' }))
+    await settle()
+    await act(async () => { settles[0].reject(refused('This sign-in is unverified: confirm that this launch may use it.')) })
+    expect(termLines()).toContain('the Codex sign-in already on this computer')
+  })
+
+  it("acknowledgement-required for a managed unverified account names that account's sign-in", async () => {
+    const managedUnverified = account({ id: 'acc-api', providerId: 'codex', identityId: 'id-work', unverified: true, identityAssurance: 'realm-only' })
+    useProviderAccountsStore.setState({ snapshot: snapshot({ accounts: [managedUnverified] }), loaded: true })
+    grantLaunchAcknowledgement('s-1', 'acc-api')
+    mount(codexSession({ providerAccountId: 'acc-api' }))
+    await settle()
+    await act(async () => { settles[0].reject(refused('This sign-in is unverified: confirm that this launch may use it.')) })
+    expect(termLines()).toContain("this account's unverified sign-in")
+    expect(termLines()).not.toContain('on this computer')
+  })
+
+  it('"too old" only when discovery judged the CLI too old; otherwise "could not check"', async () => {
+    const why = 'This Codex CLI version cannot be used for sign-in. Update it, then check it again in setup.'
+    useProviderAccountsStore.setState({ snapshot: snapshot({ providers: [provider({ providerId: 'codex', displayName: 'Codex', version: '0.150.2', compatibility: 'too-old' })] }), loaded: true })
+    mount(codexSession({ providerAccountId: 'acc-work' }))
+    await settle()
+    await act(async () => { settles[0].reject(refused(why)) })
+    expect(termLines()).toContain('Codex 0.150.2 is too old for this app. Update Codex, then Check again in Settings, Accounts.')
+    useProviderAccountsStore.setState({ snapshot: snapshot({ providers: [provider({ providerId: 'codex', displayName: 'Codex', compatibility: 'unknown' })] }), loaded: true })
+    await restartTo(codexSession({ providerAccountId: 'acc-work' }), 'b')
+    await act(async () => { settles[1].reject(refused(why)) })
+    expect(termLines()).toContain('This app could not check Codex. Open Accounts.')
+    expect(termLines()).not.toContain('too old')
+  })
+})
+
+describe('the Restart pty:exit race', () => {
+  it('an exit before this view has even called pty:spawn does not mark the session exited', async () => {
+    mount(codexSession({ providerAccountId: 'acc-work' }))
+    // One frame: the view is listening, its spawn is still frames away.
+    await act(async () => { flushRaf() })
+    expect(fireExit).not.toBeNull()
+    expect(spawn).not.toHaveBeenCalled()
+    fireExit!(-1)
+    await settle()
+    expect(spawn).toHaveBeenCalledTimes(1)
+    await act(async () => { settles[0].resolve(undefined) })
+    expect(exitedMarks()).toHaveLength(0)
+    expect(H.cleared).toHaveLength(0)
+    expect(termLines()).not.toContain('Process exited')
+  })
+
+  it('an exit while pty:spawn is in flight does not; one after it resolved does', async () => {
+    mount(codexSession({ providerAccountId: 'acc-work' }))
+    await settle()
+    expect(spawn).toHaveBeenCalledTimes(1)
+    fireExit!(1)
+    expect(exitedMarks()).toHaveLength(0)
+    await act(async () => { settles[0].resolve(undefined) })
+    expect(exitedMarks()).toHaveLength(0)
+    expect(H.spawned.has('s-1')).toBe(true)
+    // The new PTY's own exit.
+    act(() => { fireExit!(0) })
+    expect(exitedMarks()).toHaveLength(1)
+    expect(termLines()).toContain('[Process exited with code 0]')
+  })
+
+  // P3.15 round 1 (F3): under node-pty's bundled ConPTY a Codex session that
+  // quits by itself can end before its exit code is known (the VM printed
+  // "[Process exited with code undefined]"): the line then names no code.
+  it('an exit with no known code says the process exited, never "undefined"; a known code is said as before', async () => {
+    mount(codexSession({ providerAccountId: 'acc-work' }))
+    await settle()
+    await act(async () => { settles[0].resolve(undefined) })
+    act(() => { fireExit!(undefined as unknown as number) })
+    expect(exitedMarks()).toHaveLength(1)
+    expect(termLines()).toContain('[Process exited]')
+    expect(termLines()).not.toMatch(/exited with code (undefined|null)/)
+  })
+
+  it('a view that remounts onto a running PTY applies exits as they arrive', async () => {
+    H.spawned.add('s-1')
+    mount(codexSession({ providerAccountId: 'acc-work' }))
+    await settle()
+    expect(spawn).not.toHaveBeenCalled()
+    act(() => { fireExit!(0) })
+    expect(exitedMarks()).toHaveLength(1)
+  })
+
+  it('when main started nothing for this spawn, the held exit ends the session', async () => {
+    mount(codexSession({ providerAccountId: 'acc-work' }))
+    await settle()
+    fireExit!(-1)
+    await act(async () => { settles[0].resolve({ started: false }) })
+    expect(exitedMarks()).toHaveLength(1)
+    expect(termLines()).toContain('[The launch was cancelled before the session started]')
+  })
+
+  it('when this spawn was refused, the held exit ends the session', async () => {
+    mount(codexSession({ providerAccountId: 'acc-work' }))
+    await settle()
+    fireExit!(1)
+    await act(async () => { settles[0].reject(refused('This account is signing in again; try again when that finishes.')) })
+    expect(exitedMarks()).toHaveLength(1)
+    expect(termLines()).toContain('Not started: This account is signing in again.')
+  })
+})
+
+describe('a replaced view never settles the live session (Restart during a preparation)', () => {
+  it("the replaced view's { started: false } after the new PTY is live marks nothing", async () => {
+    mount(codexSession({ providerAccountId: 'acc-work' }))
+    await settle()
+    await restartTo(codexSession({ providerAccountId: 'acc-work' }), 'b')
+    expect(spawn).toHaveBeenCalledTimes(2)
+    await act(async () => { settles[1].resolve(undefined) })
+    await act(async () => { settles[0].resolve({ started: false }) })
+    expect(exitedMarks()).toHaveLength(0)
+    expect(H.cleared).toHaveLength(0)
+    expect(H.spawned.has('s-1')).toBe(true)
+  })
+
+  it("the replaced view's { started: false } while the new spawn is still in flight marks nothing", async () => {
+    mount(codexSession({ providerAccountId: 'acc-work' }))
+    await settle()
+    await restartTo(codexSession({ providerAccountId: 'acc-work' }), 'b')
+    await act(async () => { settles[0].resolve({ started: false }) })
+    expect(exitedMarks()).toHaveLength(0)
+    expect(H.cleared).toHaveLength(0)
+    await act(async () => { settles[1].resolve(undefined) })
+    expect(exitedMarks()).toHaveLength(0)
+    expect(H.spawned.has('s-1')).toBe(true)
+  })
+
+  it('a replaced view that held an exit and then fails marks nothing once the new PTY is live', async () => {
+    mount(codexSession({ providerAccountId: 'acc-work' }))
+    await settle()
+    fireExit!(1)
+    await restartTo(codexSession({ providerAccountId: 'acc-work' }), 'b')
+    await act(async () => { settles[1].resolve(undefined) })
+    await act(async () => { settles[0].reject(refused('This account is signing in again; try again when that finishes.')) })
+    expect(exitedMarks()).toHaveLength(0)
+    expect(H.cleared).toHaveLength(0)
+  })
+})
+
+describe('the branches where this view starts nothing', () => {
+  it('an account gate already up for the session: no spawn, and a held exit ends it', async () => {
+    void useAccountGateStore.getState().requestChoice('s-1', 'api-server', undefined)
+    mount(codexSession({ providerAccountId: 'acc-work' }))
+    await act(async () => { flushRaf() })
+    fireExit!(1)
+    await settle()
+    expect(spawn).not.toHaveBeenCalled()
+    expect(exitedMarks()).toHaveLength(1)
+  })
+
+  it('an account gate already up, and no exit held: nothing is marked', async () => {
+    void useAccountGateStore.getState().requestChoice('s-1', 'api-server', undefined)
+    mount(codexSession({ providerAccountId: 'acc-work' }))
+    await settle()
+    expect(spawn).not.toHaveBeenCalled()
+    expect(exitedMarks()).toHaveLength(0)
+    // Exits apply again: this view is not starting anything.
+    act(() => { fireExit!(0) })
+    expect(exitedMarks()).toHaveLength(1)
+  })
+
+  it('a launch confirm already queued for the session: no second question, no spawn, a held exit ends it', async () => {
+    void useLaunchAckStore.getState().request({ sessionId: 's-1', sessionLabel: 'x', accountName: 'y', external: true, unknown: false })
+    mount(codexSession({ providerAccountId: 'acc-local' }))
+    await act(async () => { flushRaf() })
+    fireExit!(1)
+    await settle()
+    expect(spawn).not.toHaveBeenCalled()
+    expect(useLaunchAckStore.getState().queue).toHaveLength(1)
+    expect(exitedMarks()).toHaveLength(1)
+  })
+
+  it('something else started the PTY between mount and spawn: no spawn, and a held exit ends it', async () => {
+    mount(codexSession({ providerAccountId: 'acc-work' }))
+    await act(async () => { flushRaf() })
+    fireExit!(1)
+    H.spawned.add('s-1')
+    await settle()
+    expect(spawn).not.toHaveBeenCalled()
+    expect(exitedMarks()).toHaveLength(1)
+  })
+})
+
+describe('a view remounted without a Restart (a partner-terminal restart re-keys the main view)', () => {
+  /** A remount that keeps the spawn tracker: the new view adopts the old
+   *  view's in-flight spawn instead of starting its own. */
+  const remountTo = async (key: string) => {
+    mount(codexSession({ providerAccountId: 'acc-work' }), key)
+    await settle()
+  }
+
+  it("the adopted spawn's refusal is said in the new view, and the session ends", async () => {
+    mount(codexSession({ providerAccountId: 'acc-work' }))
+    await settle()
+    await remountTo('b')
+    expect(spawn).toHaveBeenCalledTimes(1)
+    await act(async () => { settles[0].reject(refused('the account is inactive; activate it or choose another')) })
+    expect(termLines()).toContain('Not started: This account needs attention. Open Accounts.')
+    expect(exitedMarks()).toHaveLength(1)
+    expect(H.spawned.has('s-1')).toBe(false)
+  })
+
+  it("the adopted spawn's { started: false } ends the session in the new view", async () => {
+    mount(codexSession({ providerAccountId: 'acc-work' }))
+    await settle()
+    await remountTo('b')
+    await act(async () => { settles[0].resolve({ started: false }) })
+    expect(termLines()).toContain('[The launch was cancelled before the session started]')
+    expect(exitedMarks()).toHaveLength(1)
+  })
+
+  it('an adopted spawn that started a PTY ends nothing', async () => {
+    mount(codexSession({ providerAccountId: 'acc-work' }))
+    await settle()
+    await remountTo('b')
+    await act(async () => { settles[0].resolve(undefined) })
+    expect(exitedMarks()).toHaveLength(0)
+    expect(H.spawned.has('s-1')).toBe(true)
+    // The adopted PTY's own exit reaches the new view.
+    act(() => { fireExit!(0) })
+    expect(exitedMarks()).toHaveLength(1)
+  })
+})
+
+describe('a live session is never left flagged exited', () => {
+  it('a spawn that starts a PTY clears a stale ptyExited on the session', async () => {
+    mount(codexSession({ providerAccountId: 'acc-work', ptyExited: true }))
+    await settle()
+    await act(async () => { settles[0].resolve(undefined) })
+    expect(H.updates.some((u) => 'ptyExited' in u.patch && u.patch.ptyExited === undefined)).toBe(true)
+  })
+
+  it('a spawn that starts nothing leaves the flag alone (nothing to clear)', async () => {
+    mount(codexSession({ providerAccountId: 'acc-work' }))
+    await settle()
+    await act(async () => { settles[0].resolve(undefined) })
+    expect(H.updates.some((u) => 'ptyExited' in u.patch && u.patch.ptyExited === undefined)).toBe(false)
+  })
+
+  it('a view remounted while hidden hears the refusal when it is first shown, and does not spawn again', async () => {
+    mount(codexSession({ providerAccountId: 'acc-work' }))
+    await settle()
+    // Remounted without a Restart while its pane is hidden: it has not
+    // started (no frame yet), so nothing is listening when the refusal lands.
+    mount(codexSession({ providerAccountId: 'acc-work' }), 'b')
+    await act(async () => { settles[0].reject(refused('the account is inactive; activate it or choose another')) })
+    // Shown: it starts, hears the kept refusal, says it and ends the session.
+    await settle()
+    expect(termLines()).toContain('Not started: This account needs attention. Open Accounts.')
+    expect(exitedMarks().length).toBeGreaterThan(0)
+    expect(spawn).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('WP2 6e: a transient tab (Run in a terminal) runs its command once', () => {
+  const CMD = 'npm install -g @openai/codex'
+  const tab = (over: Record<string, unknown> = {}) => ({
+    id: 's-1', label: 'Install Codex', workingDirectory: '', color: '#89b4fa', sessionType: 'local', provider: 'claude', model: '',
+    shellOnly: true, transient: true, terminalOptions: { command: CMD, elevated: false }, ...over,
+  })
+  const mountShell = (session: Record<string, unknown>) => {
+    H.sessionState.sessions = [session]
+    act(() => {
+      root.render(React.createElement(TerminalView as any, {
+        key: 'shell', sessionId: 's-1', cwd: '', isActive: true, shellOnly: true, provider: 'claude', terminalOptions: session.terminalOptions,
+      }))
+    })
+  }
+  const optionPatches = () => H.updates.filter((u) => 'terminalOptions' in u.patch)
+
+  it('the first spawn carries the command, and the session record loses it at once', async () => {
+    mountShell(tab())
+    await settle()
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(spawn.mock.calls[0][1].terminalOptions).toEqual({ command: CMD, elevated: false })
+    expect(optionPatches()).toEqual([{ id: 's-1', patch: { terminalOptions: { elevated: false } } }])
+  })
+
+  it('a saved terminal-only config keeps its command (configuration, run on every launch)', async () => {
+    mountShell(tab({ transient: undefined, configId: 'cfg-1' }))
+    await settle()
+    expect(spawn.mock.calls[0][1].terminalOptions).toEqual({ command: CMD, elevated: false })
+    expect(optionPatches()).toEqual([])
+  })
+})
+
+// WP2: main refuses every launch of a provider that is switched off
+// (src/main/provider-launch-gate.ts). A restored session and a Restart both
+// reach main through this view's ONE pty:spawn (a restore mounts the view
+// with the saved exact-conversation target; a Restart remounts it), so a
+// refusal is said in the tab, in main's own words plus what to do: no crash,
+// no blank terminal, no retry loop, and the session is kept -- with its
+// restore target back on the record, so a Restart once the provider is on
+// resumes the same conversation. While the renderer already knows the
+// provider is off, nothing is asked first (no sign-in confirmation, no
+// account picker) and an SSH tab shows no "Connecting..." card.
+describe('main refuses a launch because its provider is off', () => {
+  const OFF = 'Claude Code is off. Turn it on in Settings, Accounts.'
+  const OFF_TAB = 'Not started. Claude Code is off. Turn it on in Settings, Accounts, then Restart this tab.'
+  const CODEX_OFF_TAB = 'Not started. Codex is off. Turn it on in Settings, Accounts, then Restart this tab.'
+  const claudeOff = { started: false, refused: { code: 'provider-off', providerId: 'claude', message: OFF } }
+  const codexOff = { started: false, refused: { code: 'provider-off', providerId: 'codex', message: 'Codex is off. Turn it on in Settings, Accounts.' } }
+  const UUID = '0f8fad5b-d9cb-469f-a165-70867728950e'
+  const claudeSession = (over: Record<string, unknown> = {}) => codexSession({ provider: 'claude', codexOptions: undefined, ...over })
+  const SSH = { host: 'build-box', port: 22, username: 'nick', remotePath: '~' }
+  const mountSsh = (key = 'ssh') => {
+    H.sessionState.sessions = [claudeSession({ sessionType: 'ssh' })]
+    act(() => {
+      root.render(React.createElement(TerminalView as any, { key, sessionId: 's-1', cwd: '~', isActive: true, provider: 'claude', ssh: SSH }))
+    })
+  }
+  const overlay = () => container.querySelector('[data-testid="ssh-flow-overlay"]')
+  let removeSession: ReturnType<typeof vi.fn>
+  let settingsState: { settings: Record<string, unknown> }
+  let profilesState: { profiles: unknown[] }
+  beforeEach(async () => {
+    removeSession = vi.fn()
+    H.sessionState.removeSession = removeSession
+    const { useSettingsStore } = await import('../../../src/renderer/stores/settingsStore')
+    const { useAccountProfilesStore } = await import('../../../src/renderer/stores/accountProfilesStore')
+    settingsState = (useSettingsStore as any).getState()
+    profilesState = (useAccountProfilesStore as any).getState()
+  })
+  afterEach(() => {
+    delete settingsState.settings.claudeEnabled
+    settingsState.settings.codexEnabled = true
+    profilesState.profiles = []
+  })
+
+  it('a restored session: pty:spawn carries its restore target; the refusal is said in the tab and the session is kept, target and all', async () => {
+    mount(claudeSession({ resumeUuid: UUID, resumeCwd: 'C:/proj' }))
+    await settle()
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(spawn.mock.calls[0][1].resume).toEqual({ uuid: UUID, cwd: 'C:/proj' })
+    await act(async () => { settles[0].resolve(claudeOff) })
+    await settle()
+    expect(termLines()).toContain(OFF_TAB)
+    expect(termLines()).not.toContain('Failed to launch')
+    expect(exitedMarks()).toHaveLength(1)
+    // Consumed for the spawn, then put back when main refused it.
+    const targets = H.updates.filter((u) => 'resumeUuid' in u.patch).map((u) => u.patch.resumeUuid)
+    expect(targets).toEqual([undefined, UUID])
+    expect(H.updates.find((u) => u.patch.resumeUuid === UUID)!.patch.resumeCwd).toBe('C:/proj')
+    expect(removeSession).not.toHaveBeenCalled()
+    // No retry loop: one refusal, one spawn.
+    expect(spawn).toHaveBeenCalledTimes(1)
+  })
+
+  it('a Restart: the new view spawns through the same pty:spawn, and its refusal is said the same way', async () => {
+    mount(claudeSession())
+    await settle()
+    await act(async () => { settles[0].resolve(undefined) })
+    await restartTo(claudeSession(), 'b')
+    expect(spawn).toHaveBeenCalledTimes(2)
+    await act(async () => { settles[1].resolve(claudeOff) })
+    await settle()
+    expect(termLines()).toContain(OFF_TAB)
+    expect(exitedMarks()).toHaveLength(1)
+    expect(removeSession).not.toHaveBeenCalled()
+    expect(spawn).toHaveBeenCalledTimes(2)
+  })
+
+  it("the state main could not read reads once, plainly, with what to do", async () => {
+    mount(claudeSession())
+    await settle()
+    await act(async () => { settles[0].resolve({ started: false, refused: { code: 'provider-state-unknown', providerId: 'claude', message: 'This app could not read whether Claude Code is on. Check Settings, Accounts.' } }) })
+    await settle()
+    expect(termLines()).toContain('Not started. This app could not read whether Claude Code is on. Check Settings, Accounts, then Restart this tab.')
+  })
+
+  it('a Codex session refused because Codex is off says so, in the same words', async () => {
+    mount(codexSession({ providerAccountId: 'acc-work' }))
+    await settle()
+    await act(async () => { settles[0].resolve(codexOff) })
+    await settle()
+    expect(termLines()).toContain(CODEX_OFF_TAB)
+    expect(exitedMarks()).toHaveLength(1)
+    expect(removeSession).not.toHaveBeenCalled()
+  })
+
+  // P3.13 round 1 (M7): main enforces the one-at-a-time rule from the SAVED config; when the
+  // screen's toggle says Multi Spawn is on but the saved config says it is not (a save that did
+  // not land), the refusal says "turn on Allow Multi Spawn" beside a toggle that is already on.
+  describe('a copy main refused because the config is not Multi Spawn (already-running)', () => {
+    const REFUSED = (label: string) => ({ started: false, refused: { code: 'already-running', providerId: 'claude', message: `${label} is already running. It isn't a Multi Spawn config, so it runs one at a time. Close the other copy, or turn on Allow Multi Spawn for it.` } })
+    const cfg = { id: 'cfg-1', label: 'api-server', workingDirectory: 'C:/proj', color: '', sessionType: 'local', provider: 'claude', allowMultiSpawn: true }
+    let loadAll: ReturnType<typeof vi.fn>
+    const mountConfig = () => {
+      H.sessionState.sessions = [claudeSession()]
+      act(() => {
+        root.render(React.createElement(TerminalView as any, { key: 'a', sessionId: 's-1', configId: 'cfg-1', cwd: 'C:/proj', isActive: true, provider: 'claude' }))
+      })
+    }
+    const saved = (flag: unknown) => { loadAll = vi.fn(async () => ({ data: { configs: [{ ...cfg, allowMultiSpawn: flag }] }, needsMigration: false })); (window as any).electronAPI.config = { loadAll } }
+    afterEach(() => { (useConfigStore as any).setState({ configs: [] }); delete (window as any).electronAPI.config })
+
+    it('the tab says why, and a toggle the screen shows on is made the saved one', async () => {
+      ;(useConfigStore as any).setState({ configs: [{ ...cfg }] })
+      saved(false)
+      mountConfig()
+      await settle()
+      await act(async () => { settles[0].resolve(REFUSED('api-server')) })
+      await settle()
+      expect(termLines()).toContain("Not started. api-server is already running. It isn't a Multi Spawn config, so it runs one at a time. Close the other copy, or turn on Allow Multi Spawn for it, then Restart this tab.")
+      expect(loadAll).toHaveBeenCalledTimes(1)
+      expect((useConfigStore as any).getState().configs[0].allowMultiSpawn).toBe(false)
+      expect(exitedMarks()).toHaveLength(1)
+    })
+
+    it('a screen that already says it is not Multi Spawn reads nothing: the refusal is simply true', async () => {
+      ;(useConfigStore as any).setState({ configs: [{ ...cfg, allowMultiSpawn: false }] })
+      saved(false)
+      mountConfig()
+      await settle()
+      await act(async () => { settles[0].resolve(REFUSED('api-server')) })
+      await settle()
+      expect(loadAll).not.toHaveBeenCalled()
+      expect((useConfigStore as any).getState().configs[0].allowMultiSpawn).toBe(false)
+    })
+
+    it('a saved config that agrees with the screen changes nothing', async () => {
+      ;(useConfigStore as any).setState({ configs: [{ ...cfg }] })
+      saved(true)
+      mountConfig()
+      await settle()
+      await act(async () => { settles[0].resolve(REFUSED('api-server')) })
+      await settle()
+      expect(loadAll).toHaveBeenCalledTimes(1)
+      expect((useConfigStore as any).getState().configs[0].allowMultiSpawn).toBe(true)
+    })
+
+    it('a provider refusal is not this: nothing is re-read', async () => {
+      ;(useConfigStore as any).setState({ configs: [{ ...cfg }] })
+      saved(false)
+      mountConfig()
+      await settle()
+      await act(async () => { settles[0].resolve(claudeOff) })
+      await settle()
+      expect(loadAll).not.toHaveBeenCalled()
+      expect((useConfigStore as any).getState().configs[0].allowMultiSpawn).toBe(true)
+    })
+  })
+
+  it('a refused launch marks its tab as never started, so it does not count as running; a later start clears it', async () => {
+    mount(codexSession({ providerAccountId: 'acc-work' }))
+    await settle()
+    await act(async () => { settles[0].resolve(codexOff) })
+    await settle()
+    expect(H.updates.some((u) => u.patch.neverStarted === true)).toBe(true)
+    // A Restart once Codex is on starts a PTY: the flag goes.
+    await restartTo(codexSession({ providerAccountId: 'acc-work', neverStarted: true }), 'k2')
+    await act(async () => { settles[1].resolve(undefined) })
+    expect(H.updates.some((u) => 'neverStarted' in u.patch && u.patch.neverStarted === undefined)).toBe(true)
+  })
+
+  it('walk fix X3: a partner restart re-keys a Not started main tab; the remounted main view passes the Multi Spawn rule before it spawns (no second live copy)', async () => {
+    const cfg = (over: Record<string, unknown> = {}) => ({ id: 'cfg-1', label: 'Web App', workingDirectory: 'C:/proj', color: '', sessionType: 'local', provider: 'claude', ...over })
+    // The main tab as the partner restart hands it back: the live record,
+    // Not started flag and all, with a new createdAt (so a new key); its own
+    // spawn tracking was cleared when its launch started nothing.
+    const stale = claudeSession({ configId: 'cfg-1', neverStarted: true, ptyExited: true, createdAt: 2 })
+    const other = { ...claudeSession({ configId: 'cfg-1' }), id: 's-2' }
+    try {
+      // Its config runs elsewhere and is not a Multi Spawn config: nothing
+      // spawns, and the tab stays Not started, saying why.
+      useConfigStore.setState({ configs: [cfg()] as never })
+      mount(stale, 's-1-main-2')
+      H.sessionState.sessions = [stale, other]
+      await settle()
+      expect(spawn).not.toHaveBeenCalled()
+      expect(termLines()).toContain("Not started: Web App is already running. It isn't a Multi Spawn config, so it runs one at a time.")
+      expect(H.updates.some((u) => 'neverStarted' in u.patch && u.patch.neverStarted === undefined)).toBe(false)
+      // A Multi Spawn config: it starts, and counts as running again.
+      useConfigStore.setState({ configs: [cfg({ allowMultiSpawn: true })] as never })
+      H.spawned.delete('s-1')
+      mount(stale, 'b')
+      H.sessionState.sessions = [stale, other]
+      await settle()
+      expect(spawn).toHaveBeenCalledTimes(1)
+      expect(H.updates.some((u) => 'neverStarted' in u.patch && u.patch.neverStarted === undefined)).toBe(true)
+    } finally {
+      useConfigStore.setState({ configs: [] })
+    }
+  })
+
+  it('a launch main threw on (nothing started) is never started too', async () => {
+    mount(claudeSession())
+    await settle()
+    await act(async () => { settles[0].reject(refused('no account')) })
+    await settle()
+    expect(H.updates.some((u) => u.patch.neverStarted === true)).toBe(true)
+  })
+
+  it('a restored Codex session while Codex is off asks no sign-in question: it goes to main, and the tab says Codex is off', async () => {
+    useProviderAccountsStore.setState({ snapshot: snapshot({ providers: [provider({ providerId: 'codex', displayName: 'Codex', enabled: false, preference: 'off' })] }), loaded: true })
+    mount(codexSession({ providerAccountId: 'acc-local' }))
+    await settle()
+    expect(useLaunchAckStore.getState().queue).toHaveLength(0)
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(spawn.mock.calls[0][1].acknowledgeRealmOnly).toBeUndefined()
+    // Its own account still rides along: should main have Codex on already,
+    // the bound session runs on it, never on the default.
+    expect(spawn.mock.calls[0][1].providerAccountId).toBe('acc-local')
+    await act(async () => { settles[0].resolve(codexOff) })
+    await settle()
+    expect(termLines()).toContain(CODEX_OFF_TAB)
+    expect(termLines()).not.toContain('not confirmed')
+  })
+
+  it('an unbound Codex session while Codex is off names no account (the provider default, as before)', async () => {
+    useProviderAccountsStore.setState({ snapshot: snapshot({ providers: [provider({ providerId: 'codex', displayName: 'Codex', enabled: false, preference: 'off' })] }), loaded: true })
+    mount(codexSession())
+    await settle()
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(spawn.mock.calls[0][1].providerAccountId).toBeUndefined()
+    expect(spawn.mock.calls[0][1].acknowledgeRealmOnly).toBeUndefined()
+  })
+
+  it('...while with Codex on, the same session asks first (the control)', async () => {
+    mount(codexSession({ providerAccountId: 'acc-local' }))
+    await settle()
+    expect(useLaunchAckStore.getState().queue).toHaveLength(1)
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('a Claude session while Claude Code is off opens no account picker, even with several accounts: it goes to main', async () => {
+    profilesState.profiles = [{ id: 'p1' }, { id: 'p2' }]
+    useProviderAccountsStore.setState({ snapshot: snapshot({ providers: [provider({ providerId: 'claude', displayName: 'Claude Code', enabled: false, preference: 'off' })] }), loaded: true })
+    mount(claudeSession())
+    await settle()
+    expect(useAccountGateStore.getState().queue).toHaveLength(0)
+    expect(spawn).toHaveBeenCalledTimes(1)
+    await act(async () => { settles[0].resolve(claudeOff) })
+    await settle()
+    expect(termLines()).toContain(OFF_TAB)
+  })
+
+  it('...while with Claude Code on, several accounts open the picker first (the control)', async () => {
+    profilesState.profiles = [{ id: 'p1' }, { id: 'p2' }]
+    mount(claudeSession())
+    await settle()
+    expect(useAccountGateStore.getState().queue).toHaveLength(1)
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('an SSH tab while Claude Code is off never shows the "Connecting..." card, before main answers or after', async () => {
+    settingsState.settings.claudeEnabled = false
+    mountSsh()
+    await settle()
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(overlay()).toBeNull()
+    await act(async () => { settles[0].resolve(claudeOff) })
+    await settle()
+    expect(termLines()).toContain(OFF_TAB)
+    expect(overlay()).toBeNull()
+    expect(removeSession).not.toHaveBeenCalled()
+  })
+
+  it('an SSH tab main refused while the renderer still thought Claude Code was on: the card goes once main answers', async () => {
+    mountSsh()
+    await settle()
+    await act(async () => { settles[0].resolve(claudeOff) })
+    await settle()
+    expect(termLines()).toContain(OFF_TAB)
+    expect(overlay()).toBeNull()
+  })
+
+  it('an SSH tab with Claude Code on shows its card as before (the control)', async () => {
+    mountSsh()
+    await settle()
+    expect(overlay()).not.toBeNull()
+  })
+
+  it('a nothing-started answer without a refusal still reads as a cancelled launch', async () => {
+    mount(claudeSession())
+    await settle()
+    await act(async () => { settles[0].resolve({ started: false }) })
+    expect(termLines()).toContain('[The launch was cancelled before the session started]')
+    expect(termLines()).not.toContain('Not started.')
+  })
+})

@@ -1,11 +1,20 @@
-import React from 'react'
+import React, { memo } from 'react'
 import { useTokenomicsStore } from '../../stores/tokenomicsStore'
 import type { TkSessionRow } from '../../../shared/types'
+import type { AccountsSnapshot } from '../../../shared/providers'
 import { getModelColor, getModelShort } from './modelColors'
+import { useProviderAccountsStore } from '../../stores/providerAccountsStore'
+import { ProviderMark } from '../sidebar/Badges'
+import { tkAccountLabel, tkAccountColourKey, tkCostTooltip, TK_PROVIDER_LABEL, TK_NOT_RECORDED, TK_THIS_COMPUTER } from './tk-labels'
+import { IdentityChip } from '../ui/IdentityChip'
+import { resolveIdentityColor } from '../../../shared/identity-colors'
+import { useResolvedTheme } from '../../hooks/useThemeController'
 
 // ── Format helpers ─────────────────────────────────────────────────────────────
 
-function formatCost(usd: number): string {
+function formatCost(usd: number | null): string {
+  // No price for its model (usage track MP11): never shown as $0.
+  if (usd === null) return 'no price'
   if (usd >= 100) return `$${usd.toFixed(0)}`
   if (usd >= 10) return `$${usd.toFixed(1)}`
   return `$${usd.toFixed(2)}`
@@ -30,13 +39,23 @@ function formatTs(ts: number): string {
 
 // ── Row renderer ───────────────────────────────────────────────────────────────
 
-function SessionRow({
+// Memoised (MP12 round 1): a row re-renders only when its own data does.
+const SessionRow = memo(function SessionRow({
   row,
   onSelect,
+  snapshot,
+  theme,
 }: {
   row: TkSessionRow
   onSelect: (id: string) => void
+  snapshot: AccountsSnapshot | null
+  theme: 'dark' | 'light'
 }) {
+  const account = tkAccountLabel(snapshot, row.accountKey ?? '')
+  // The account's identity chip, as the approved canvas draws it.
+  const colourKey = tkAccountColourKey(snapshot, row.accountKey ?? '')
+  // Muted as the canvas draws them: usage with no account in the app.
+  const muted = account === TK_NOT_RECORDED || account === TK_THIS_COMPUTER
   const color = getModelColor(row.model)
   return (
     <tr
@@ -52,22 +71,38 @@ function SessionRow({
       >
         {row.configLabel || <span style={{ color: 'var(--text-muted)' }}>External</span>}
       </td>
-      {/* Model */}
+      {/* Model, with its provider's mark (MP12) */}
       <td className="px-3 py-2">
-        <span
-          className="text-xs px-1.5 py-0.5 rounded"
-          style={{
-            backgroundColor: `color-mix(in srgb, ${color} 13%, transparent)`,
-            color,
-          }}
-        >
-          {getModelShort(row.model)}
+        <span className="inline-flex items-center gap-1.5">
+          <ProviderMark providerId={row.provider} size={14} title={TK_PROVIDER_LABEL[row.provider]} />
+          <span
+            className="text-xs px-1.5 py-0.5 rounded"
+            style={{
+              backgroundColor: `color-mix(in srgb, ${color} 13%, transparent)`,
+              color,
+            }}
+          >
+            {getModelShort(row.model)}
+          </span>
         </span>
       </td>
-      {/* Cost */}
+      {/* Account (MP12): its identity chip and name; "Not recorded" and
+          "This computer's sign-in" muted */}
+      <td
+        className="px-3 py-2 text-xs max-w-[160px]"
+        style={{ color: muted ? 'var(--text-muted)' : 'var(--text-secondary)' }}
+        title={account}
+      >
+        <span className="inline-flex items-center gap-1.5 min-w-0">
+          {colourKey && <IdentityChip color={resolveIdentityColor(colourKey, theme)} />}
+          <span className="truncate" data-testid="tk-session-account">{account}</span>
+        </span>
+      </td>
+      {/* Cost, with its wording per provider (Q1.5) */}
       <td
         className="px-3 py-2 font-mono text-xs"
-        style={{ color: 'var(--color-peach)' }}
+        style={{ color: row.costUsd === null ? 'var(--text-muted)' : 'var(--color-peach)', fontStyle: row.costUsd === null ? 'italic' : undefined }}
+        title={tkCostTooltip(row.provider, row.accountKey ?? '', snapshot, row.costUsd)}
       >
         {formatCost(row.costUsd)}
       </td>
@@ -108,13 +143,14 @@ function SessionRow({
       </td>
     </tr>
   )
-}
+})
 
 // ── Main component ─────────────────────────────────────────────────────────────
 
 const HEADER_CELLS: { label: string; className?: string }[] = [
   { label: 'Config' },
   { label: 'Model' },
+  { label: 'Account' },
   { label: 'Cost' },
   { label: 'In' },
   { label: 'Out' },
@@ -123,8 +159,12 @@ const HEADER_CELLS: { label: string; className?: string }[] = [
   { label: 'Date' },
 ]
 
-export function SessionsTable() {
+// Memoised (MP12 round 1): it reads the store itself, so a page re-render
+// passes it nothing new.
+export const SessionsTable = memo(function SessionsTable() {
+  const theme = useResolvedTheme()
   const sessions = useTokenomicsStore((s) => s.sessions)
+  const snapshot = useProviderAccountsStore((s) => s.snapshot)
   const nextCursor = useTokenomicsStore((s) => s.nextCursor)
   const loadingSessions = useTokenomicsStore((s) => s.loadingSessions)
   const loadMore = useTokenomicsStore((s) => s.loadMore)
@@ -172,7 +212,7 @@ export function SessionsTable() {
               </tr>
             ) : (
               sessions.map((row) => (
-                <SessionRow key={row.sessionId} row={row} onSelect={selectSession} />
+                <SessionRow key={row.sessionId} row={row} onSelect={selectSession} snapshot={snapshot} theme={theme} />
               ))
             )}
           </tbody>
@@ -198,4 +238,4 @@ export function SessionsTable() {
       )}
     </div>
   )
-}
+})

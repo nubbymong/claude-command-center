@@ -1,36 +1,57 @@
 // README capture runner — runs ON the test VM, in its interactive session.
 //
-// Launches the INSTALLED app with a debugging port, attaches over CDP, then for
-// each shot: navigates, lets the UI settle, and records N frames at a fixed
-// interval into an APNG (the reference README's format — animated, 1600x1100).
-// Frames are captured with page.screenshot(clip) so the output is exactly the
-// app window at exactly the size asked for, regardless of the desktop.
+// Attaches over CDP to the INSTALLED app that stage/launch.js started on a
+// seeded staging root, then for each shot: navigates, lets the UI settle, and
+// records N frames at a fixed interval into an APNG (the reference README's
+// format: animated, 1600x1100). Frames are captured with
+// page.screenshot(clip) so the output is exactly the app window at exactly the
+// size asked for, regardless of the desktop.
 //
-// Usage on the VM:  node shoot.js <shot-list.json>
-// Every path is forward-slash; this file crosses machines.
+// Usage on the VM, from the checkout (playwright-core and upng-js from the
+// runner's own install, e.g. NODE_PATH=C:/Users/user/ccc-cap/node_modules):
+//   CCC_STAGE_ROOT=<root> node scripts/readme-shots/shoot.js <shot-list.json>
+//
+// It starts nothing itself (P4.11 review C-4): it refuses unless the staging
+// root passes stage/stage-root.js's rules and launch.js's record for it names
+// the port of an app started on that root's data folder, so it can never
+// drive an app running on the operator's real environment. Before attaching
+// it checks that the recorded pid is still the app launch.js started and that
+// it holds the recorded port (P4.11 review). Images go to <root>/out, the log
+// to <root>/shoot.log (CCC_SHOOT_OUT / CCC_SHOOT_LOG move them, inside the
+// root only).
 
 const { chromium } = require('playwright-core')
-const { spawn } = require('child_process')
 const fs = require('fs')
-const path = require('path')
 const UPNG = require('upng-js')
+const path = require('path')
+const S = require('./stage/stage-root')
 
-const EXE = 'C:/Users/user/AppData/Local/Programs/AI Code Conductor/AI Code Conductor.exe'
-const OUT = 'C:/Users/user/ccc-cap/out'
-const PORT = 9333
+let STAGE, LAUNCH, PATHS
+try {
+  STAGE = S.resolveStage(process.env)
+  S.ensureMarker(STAGE.ROOT, { create: false })
+  LAUNCH = S.readLaunchRecord(STAGE)
+  PATHS = S.shootPaths(STAGE, process.env)
+  S.checkLaunchedApp(LAUNCH)
+} catch (e) {
+  if (e instanceof S.StageRefusal) { console.error('refusing: ' + e.message); process.exit(2) }
+  throw e
+}
+
+const OUT = PATHS.OUT
+const LOG = PATHS.LOG
+const PORT = LAUNCH.port
 const W = 1600
 const H = 1100
-const log = (m) => { const l = new Date().toISOString() + ' ' + m; console.log(l); fs.appendFileSync('C:/Users/user/ccc-cap/shoot.log', l + '\n') }
+const log = (m) => { const l = new Date().toISOString() + ' ' + m; console.log(l); fs.appendFileSync(LOG, l + '\n') }
 
 fs.mkdirSync(OUT, { recursive: true })
 
 async function attach() {
-  log('spawning app')
-  const child = spawn(EXE, ['--remote-debugging-port=' + PORT], { detached: true, stdio: 'ignore' })
-  child.unref()
+  log(`attaching to the app launch.js started on ${STAGE.DATA} (pid ${LAUNCH.pid}, port ${PORT})`)
   for (let i = 0; i < 90; i++) {
-    await new Promise((r) => setTimeout(r, 1000))
     try { return await chromium.connectOverCDP('http://127.0.0.1:' + PORT) } catch { /* not up yet */ }
+    await new Promise((r) => setTimeout(r, 1000))
   }
   throw new Error('app never came up on the debug port')
 }

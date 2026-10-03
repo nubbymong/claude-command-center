@@ -14,6 +14,10 @@ export interface ConfigHandlerHooks {
    *  behaviour is settings-gated can re-read them mid-run (#266 MAJOR-2: the
    *  watchdog must tear down when unticked, not only stop arming). */
   onSettingsSaved?: () => void
+  /** P3.12 round 1 (V1): fired after the 'configs' list persists, so a
+   *  config's own logging switch turned off stops indexing its running
+   *  session at once. */
+  onConfigsSaved?: () => void
 }
 
 export function registerConfigHandlers(hooks: ConfigHandlerHooks = {}): void {
@@ -75,6 +79,9 @@ export function registerConfigHandlers(hooks: ConfigHandlerHooks = {}): void {
     // config wouldn't attribute until the next app restart).
     if (key === 'configs') {
       try { refreshTokenomicsConfigs() } catch { /* non-fatal */ }
+    }
+    if (result && key === 'configs') {
+      try { hooks.onConfigsSaved?.() } catch { /* non-fatal */ }
     }
     if (result && key === 'settings') {
       try { hooks.onSettingsSaved?.() } catch { /* non-fatal */ }

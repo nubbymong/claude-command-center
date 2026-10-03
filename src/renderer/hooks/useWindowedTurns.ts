@@ -29,6 +29,8 @@ export interface Logs2Message {
   content: string
   toolName: string | null
   toolMeta: string | null
+  /** The run's provider (P3.12): names the assistant of the turn. */
+  provider?: string
 }
 
 /** Read-scope for a slot: a whole config, or a single session instance. */

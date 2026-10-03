@@ -70,10 +70,22 @@ describe('getClaudeProfileId', () => {
     captureClaudeAccount('s1', undefined)
     expect(getClaudeProfileId('s1')).toBeUndefined()
   })
-  it('is first-capture-wins (a later capture does not change it)', () => {
+  it('keeps the first reading within one profile; a capture under another profile is the session running there now (P3.2)', () => {
+    const writeEmail = (id: string, email: string) => {
+      const dir = getProfileConfigDirForTest(id)
+      fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(path.join(dir, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: email } }))
+    }
+    writeEmail('p1', 'first@x.com')
     captureClaudeAccount('s3', 'p1')
+    // The same profile again (a retry): its account changed on disk, the first reading stays.
+    writeEmail('p1', 'later@x.com')
+    captureClaudeAccount('s3', 'p1')
+    expect([getClaudeProfileId('s3'), getClaudeAccount('s3')]).toEqual(['p1', 'first@x.com'])
+    // Switch account restarts the same session id on another profile.
+    writeEmail('p2', 'other@x.com')
     captureClaudeAccount('s3', 'p2')
-    expect(getClaudeProfileId('s3')).toBe('p1')
+    expect([getClaudeProfileId('s3'), getClaudeAccount('s3')]).toEqual(['p2', 'other@x.com'])
   })
   it('clears on cleanup', () => {
     captureClaudeAccount('s2', 'p1'); clearClaudeAccount('s2')

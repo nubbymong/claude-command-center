@@ -12,9 +12,10 @@ const canvasIcon = (
 
 export default function AgentCanvasSubTool() {
   // Informational, like the Codex card: the canvas tools register for every
-  // CCC-spawned Claude session (transport-bound, one canvas per session) and
-  // are not offered to Codex sessions, which connect without a bound session
-  // id. The surface itself lives behind each session's Agent Canvas button.
+  // CCC-spawned Claude and Codex session (transport-bound, one canvas per
+  // session: each connection is bound to its session by its own credential;
+  // WP2 PR 4, P4.1). The surface itself lives behind each session's Agent
+  // Canvas button.
   return (
     <SubToolCard
       title="Agent Canvas"

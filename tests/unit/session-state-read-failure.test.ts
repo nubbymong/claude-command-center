@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'fs'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { join, dirname, basename } from 'path'
 
 // A failed READ of session-state.json is not an absence. Before this, an
 // AV scanner holding the file for a moment (EBUSY) made loadSessionState()
@@ -76,6 +76,8 @@ beforeEach(() => {
 })
 
 afterAll(() => {
+  // Only the folder this file made: its own prefix, directly in the temp folder.
+  if (!tmp || dirname(tmp) !== tmpdir() || !basename(tmp).startsWith('ss-latch-')) return
   try { rmSync(tmp, { recursive: true, force: true }) } catch { /* best effort */ }
 })
 
@@ -91,7 +93,7 @@ describe('a read failure latches save and clear off', () => {
     expect(readFileSync(file(), 'utf-8')).toBe(before)
     expect(JSON.parse(readFileSync(file(), 'utf-8')).sessions).toHaveLength(2)
 
-    expect(clearSessionState()).toBe(false)
+    expect(clearSessionState()).toEqual({ ok: false, bakRemoved: false })
     expect(existsSync(file())).toBe(true)
   })
 
@@ -178,7 +180,7 @@ describe('an absent file and an unparseable file are NOT read failures', () => {
   it('#397 N1: clear removes the .bak previous-good mirror as well as the primary', () => {
     expect(saveSessionState(saved)).toBe(true)
     expect(existsSync(file() + '.bak')).toBe(true)
-    expect(clearSessionState()).toBe(true)
+    expect(clearSessionState()).toEqual({ ok: true, bakRemoved: true })
     expect(existsSync(file())).toBe(false)
     expect(existsSync(file() + '.bak')).toBe(false)
   })

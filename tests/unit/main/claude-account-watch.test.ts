@@ -12,10 +12,12 @@ import { _setRootsForTest, getProfileConfigDir } from '../../../src/main/account
 import {
   captureClaudeAccount,
   getClaudeAccount,
+  getClaudeProfileId,
   recheckSessionIdentity,
   startWatchingAccountIdentity,
   stopWatchingAccountIdentity,
   isProfileInUseByLiveSession,
+  sessionsOnProfile,
   _resetClaudeAccounts,
 } from '../../../src/main/claude-account-identity'
 import { acquireProfileConsumer, _resetProfileConsumersForTest } from '../../../src/main/profile-consumers'
@@ -143,5 +145,99 @@ describe('isProfileInUseByLiveSession (R-006: refuse delete of an in-use profile
     expect(isProfileInUseByLiveSession('p9')).toBe(true) // the consumer still holds it
     release()
     expect(isProfileInUseByLiveSession('p9')).toBe(false)
+  })
+})
+
+describe('sessionsOnProfile (P3.2 review round 3: the sessions a lifecycle refusal names)', () => {
+  beforeEach(() => { _resetClaudeAccounts(); _resetProfileConsumersForTest() })
+  afterEach(() => { _resetClaudeAccounts(); _resetProfileConsumersForTest() })
+
+  it('lists the watched and spawn-captured sessions on a profile once each, and never a transient consumer', () => {
+    startWatchingAccountIdentity('s1', 'p1')
+    captureClaudeAccount('s1', 'p1')
+    captureClaudeAccount('s2', 'p1')
+    startWatchingAccountIdentity('s3', 'p2')
+    expect(sessionsOnProfile('p1').sort()).toEqual(['s1', 's2'])
+    const release = acquireProfileConsumer('p9', { maxAgeMs: Infinity })
+    expect(isProfileInUseByLiveSession('p9')).toBe(true)
+    expect(sessionsOnProfile('p9')).toEqual([])
+    release()
+    expect(sessionsOnProfile('')).toEqual([])
+  })
+})
+
+describe('sessionsOnProfile follows a session to the profile it runs on now (P3.2 ADR-009 pass, F2)', () => {
+  beforeEach(() => { _resetClaudeAccounts() })
+  afterEach(() => { _resetClaudeAccounts() })
+
+  it('a session restarted on another profile under the same id is on the new one only', () => {
+    captureClaudeAccount('s1', 'p-old')
+    startWatchingAccountIdentity('s1', 'p-old')
+    expect(sessionsOnProfile('p-old')).toEqual(['s1'])
+    // Switch account: the same session id respawns on another profile; the
+    // spawn-captured map keeps the first profile, the watcher moves.
+    stopWatchingAccountIdentity('s1')
+    captureClaudeAccount('s1', 'p-new')
+    startWatchingAccountIdentity('s1', 'p-new')
+    expect(sessionsOnProfile('p-old')).toEqual([])
+    expect(sessionsOnProfile('p-new')).toEqual(['s1'])
+  })
+})
+
+describe('a profile in use agrees with the sessions it names (P3.2 ADR-009 confirmation, R2)', () => {
+  beforeEach(() => { _resetClaudeAccounts(); _resetProfileConsumersForTest() })
+  afterEach(() => { _resetClaudeAccounts(); _resetProfileConsumersForTest() })
+
+  it('a session restarted onto the default account, or another profile, no longer holds its first profile', () => {
+    captureClaudeAccount('z', 'prof-c')
+    startWatchingAccountIdentity('z', undefined) // restarted on the default account
+    expect(sessionsOnProfile('prof-c')).toEqual([])
+    expect(isProfileInUseByLiveSession('prof-c')).toBe(false)
+    captureClaudeAccount('x', 'prof-a')
+    startWatchingAccountIdentity('x', 'prof-b') // restarted on another profile
+    expect(isProfileInUseByLiveSession('prof-a')).toBe(false)
+    expect(isProfileInUseByLiveSession('prof-b')).toBe(true)
+    // A transient consumer still holds a profile with no session on it.
+    const release = acquireProfileConsumer('prof-c', { maxAgeMs: Infinity })
+    expect(isProfileInUseByLiveSession('prof-c')).toBe(true)
+    release()
+  })
+})
+
+describe('a session captured again under another profile (P3.2 ADR-009 confirmation: Switch account keeps the session id)', () => {
+  let sandbox: string
+  beforeEach(() => {
+    sandbox = mkdtempSync(join(tmpdir(), 'claude-acct-switch-'))
+    _setRootsForTest({ resourcesDir: sandbox, sharedRoot: join(sandbox, '.claude') })
+    _resetClaudeAccounts()
+  })
+  afterEach(() => {
+    _setRootsForTest(null)
+    _resetClaudeAccounts()
+    rmSync(sandbox, { recursive: true, force: true })
+  })
+
+  it('runs on the new profile, with the new account, for every reader', () => {
+    writeProfileEmail('p-old', 'old@x.com', 1_000_000)
+    writeProfileEmail('p-new', 'new@x.com', 1_000_000)
+    captureClaudeAccount('s', 'p-old')
+    expect([getClaudeProfileId('s'), getClaudeAccount('s')]).toEqual(['p-old', 'old@x.com'])
+    // Restarted under another profile, with no clear between.
+    captureClaudeAccount('s', 'p-new')
+    expect([getClaudeProfileId('s'), getClaudeAccount('s')]).toEqual(['p-new', 'new@x.com'])
+    expect(sessionsOnProfile('p-old')).toEqual([])
+    expect(isProfileInUseByLiveSession('p-old')).toBe(false)
+    // Restarted on the default account: no profile of its own any more.
+    captureClaudeAccount('s', undefined)
+    expect(getClaudeProfileId('s')).toBeUndefined()
+    expect(isProfileInUseByLiveSession('p-new')).toBe(false)
+  })
+
+  it('a second capture under the same profile keeps the first reading (a retry, not a switch)', () => {
+    writeProfileEmail('p-old', 'first@x.com', 1_000_000)
+    captureClaudeAccount('s', 'p-old')
+    writeProfileEmail('p-old', 'later@x.com', 2_000_000)
+    captureClaudeAccount('s', 'p-old')
+    expect([getClaudeProfileId('s'), getClaudeAccount('s')]).toEqual(['p-old', 'first@x.com'])
   })
 })

@@ -74,6 +74,7 @@ const { useDetachedLivenessStore, resetDetachedLiveness } = await import('../../
 const { useHostReachabilityStore, isHostPingArmed, resetHostReachability } = await import('../../../src/renderer/stores/hostReachability')
 const { useConfigStore } = await import('../../../src/renderer/stores/configStore')
 const { useSettingsStore } = await import('../../../src/renderer/stores/settingsStore')
+const { useSshEndNoticeStore } = await import('../../../src/renderer/stores/sshEndNoticeStore')
 
 /* ── fixtures ─────────────────────────────────────────────────────────────── */
 
@@ -438,6 +439,47 @@ describe('Remote Resumable — context menu', () => {
     expect(useDetachedRemotesStore.getState().entries).toHaveLength(0)
   })
 
+  // Live T24 (2026-09-25): End can SAY that Claude may still be running in a
+  // rootful container (sudo wanted a password nobody saved). Remove raises the
+  // one End notice with the stop command, and does not wait for End to drop
+  // the card. Mutation to prove this can fail: call endRemote directly again
+  // instead of endRemoteAndReport in removeRemote.
+  it('an End that reports Claude may remain in a container raises the End notice', async () => {
+    useSshEndNoticeStore.setState({ notices: [] })
+    useDetachedRemotesStore.setState({ entries: [entry()] })
+    endRemote.mockResolvedValue({ outcome: 'container-needs-sudo', container: { engine: 'podman', name: 'ccc-test', host: 'box' } } as never)
+    await mountThen({ liveness: { 'det-1': 'live' } })
+    await rightClick(cards()[0])
+    await click(q('[data-testid="rr-ctx-remove"]'))
+    await act(async () => { await Promise.resolve() })
+    expect(useDetachedRemotesStore.getState().entries).toHaveLength(0)
+    expect(useSshEndNoticeStore.getState().notices.map((n) => n.command)).toEqual([
+      `sudo podman exec ccc-test sh -c '` +
+      String.raw`rm -f ~/.claude/settings-det-1.json ~/.claude/mcp-det-1.json ~/.claude/ccc-status-det-1.url 2>/dev/null; exec pkill -f "/settings-det-1\.json"` +
+      `'`,
+    ])
+    useSshEndNoticeStore.setState({ notices: [] })
+  })
+
+  // End is not awaited any more, so the ORDER is the contract: main reads the
+  // End target as the call arrives, so End must go out before the entry is
+  // dropped and the session state is saved. Mutation to prove this can fail:
+  // move the endRemoteAndReport call after dropEntry in removeRemote.
+  it('Remove calls End before it drops the entry and saves the session state', async () => {
+    useDetachedRemotesStore.setState({ entries: [entry()] })
+    let entriesAtEnd = -1
+    endRemote.mockImplementationOnce(async () => { entriesAtEnd = useDetachedRemotesStore.getState().entries.length })
+    await mountThen({ liveness: { 'det-1': 'live' } })
+    persistSessionState.mockClear()
+    await rightClick(cards()[0])
+    await click(q('[data-testid="rr-ctx-remove"]'))
+    expect(endRemote).toHaveBeenCalledTimes(1)
+    expect(entriesAtEnd).toBe(1)
+    expect(persistSessionState).toHaveBeenCalled()
+    expect(endRemote.mock.invocationCallOrder[0]).toBeLessThan(persistSessionState.mock.invocationCallOrder[0])
+    expect(useDetachedRemotesStore.getState().entries).toHaveLength(0)
+  })
+
   it('a CONFIRMED-dead entry is dropped without an end-remote call — nothing to kill', async () => {
     useDetachedRemotesStore.setState({ entries: [entry()] })
     await mountThen({ liveness: { 'det-1': 'dead' } })
@@ -601,10 +643,20 @@ describe('Remote Resumable — retargeted saved config (#54)', () => {
     expect(dialog).toBeTruthy()
     expect(dialog!.textContent).toMatch(/mong@pi\.local/)          // was
     expect(dialog!.textContent).toMatch(/mong@other\.box:2222/)    // now (non-default port shown)
-    expect(dialog!.textContent).toMatch(/tmux kill-session -t ccc-det-1/)
+    // The exact-match target, quoted for any shell (zsh expands an unquoted `=word`).
+    expect(dialog!.textContent).toContain("tmux kill-session -t '=ccc-det-1'")
     expect(q('[data-testid="rr-retargeted-remove"]')).toBeTruthy()
     expect(q('[data-testid="rr-dead-start-new"]')).toBeNull()      // no resume, no start-new
     expect(addSession).not.toHaveBeenCalled()
+  })
+
+  it('names the tmux session as main creates it: every character outside [A-Za-z0-9_-] becomes _', async () => {
+    useDetachedRemotesStore.setState({ entries: [entry({ sessionId: 'det 1;x$y', port: 22, runtime: { type: 'host' } })] })
+    await mountThen({})
+    await click(cards()[0])
+    const text = q('[data-testid="rr-retargeted-dialog"]')!.textContent ?? ''
+    expect(text).toContain("tmux kill-session -t '=ccc-det_1_x_y'")
+    expect(text).not.toContain('det 1;x$y)')
   })
 
   it('Remove from the dialog forgets the card WITHOUT ending through the edited config', async () => {

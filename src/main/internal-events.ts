@@ -8,6 +8,10 @@ export interface InternalEventMap {
   'tokenomics:anomaly': { sessionId: string; sessionLabel: string; headroom: number; tool?: string; spendDelta: number; baseline: number }
   'memory:added': { project: string; projectPath?: string; entryTitle: string; entryBody: string }
   'attention:pulse': { sessionId: string }
+  // P3.10 round 1 (S5): a session waits for the next prompt, as Claude Code's
+  // Notification idle_prompt says; raised for a Codex session by its 60 s
+  // idle mark (attention-source), which has no such notification.
+  'attention:idle-prompt': { sessionId: string }
 }
 type Handler<K extends keyof InternalEventMap> = (payload: InternalEventMap[K]) => void
 

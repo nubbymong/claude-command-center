@@ -1,5 +1,7 @@
 import React from 'react'
 import { AGENT_EXAMPLES, type AgentExample, type ExampleIcon } from './example-templates'
+import { useSettingsStore } from '../../stores/settingsStore'
+import { onlyAssistantInUse } from '../../onboarding/provider-choice'
 
 // --- icons -------------------------------------------------------------
 
@@ -38,6 +40,10 @@ function Step({ n, label }: { n: string; label: string }) {
 }
 
 export function AgentHubExplainer({ onDismiss }: { onDismiss: () => void }) {
+  // The assistant that runs an agent: Codex since P4.5 as well as Claude Code
+  // (P4.11, review C), named as the guided tour names the ones in use.
+  const only = useSettingsStore((s) => onlyAssistantInUse(s.settings))
+  const runner = only === 'codex' ? 'Codex' : only === 'claude' ? 'Claude Code' : 'Claude Code or Codex'
   return (
     <div
       className="mx-4 mt-3 mb-1 rounded-xl px-4 py-3 relative shrink-0"
@@ -56,7 +62,7 @@ export function AgentHubExplainer({ onDismiss }: { onDismiss: () => void }) {
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 pr-5">
         <Step n="1" label="Dispatch a task" />
         <span style={{ color: 'var(--text-muted)' }}>&rarr;</span>
-        <Step n="2" label="A headless Claude runs it in your project folder" />
+        <Step n="2" label={`${runner} runs it, headless, in your project folder`} />
         <span style={{ color: 'var(--text-muted)' }}>&rarr;</span>
         <Step n="3" label="Read the output here" />
       </div>

@@ -8,6 +8,7 @@ vi.mock('../../../../src/main/conductor-mcp-server', () => ({
   getConductorMcpPort: () => 19333, // the shared LOCAL server port
   getConductorMcpSecret: () => 'b'.repeat(64),
   mcpSessionToken: (sessionId: string) => `tok-${sessionId}`,
+  issueMcpSessionToken: (sessionId: string) => `tok-${sessionId}`,
 }))
 
 import { generateRemoteSetupScript, generateWindowsRemoteSetupScript } from '../../../../src/main/providers/claude/ssh-shim'

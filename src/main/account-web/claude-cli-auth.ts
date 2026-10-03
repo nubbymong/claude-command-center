@@ -2,10 +2,11 @@
  * claude-cli-auth.ts — the CODE-session half of #216, by delegation (not invention).
  *
  * CCC already solves this for the other provider and should not solve it twice:
- * it never implements Codex's OAuth. It shells out to `codex login` and then
- * READS `~/.codex/auth.json` for the result (`src/main/providers/codex/auth.ts`).
- * The vendor CLI opens the SYSTEM browser with a loopback redirect; CCC only
- * reads the credential file the CLI writes.
+ * it never implements Codex's OAuth. It shells out to `codex login` in the
+ * account's own realm and judges the result by `codex login status` alone
+ * (`src/main/providers/codex/auth-operations.ts`); it never opens the
+ * credential file the CLI writes. The vendor CLI opens the SYSTEM browser with
+ * a loopback redirect.
  *
  * The same seam exists for Claude — `claude auth` and `claude setup-token` — and
  * it is the right one for a managed environment for exactly the reason the
@@ -51,6 +52,9 @@ export interface ClaudeCliAuthStatus {
   source?: 'cli-status' | 'credential-file'
   /** Set when nothing could be determined. */
   error?: string
+  /** WP2: the CLI was not asked because Claude Code is switched off (or its
+   *  on/off could not be read): the reason, in plain words. */
+  notChecked?: string
 }
 
 /**

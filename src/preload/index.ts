@@ -1,8 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC, ptyDataChannel, ptyExitChannel } from '../shared/ipc-channels'
 import { randomId } from '../shared/id'
+import { isIpcStreamEnd, IPC_STREAM_END_WAIT_MS } from '../shared/ipc-stream'
 import type { HookEvent, HooksGatewayStatus } from '../shared/hook-types'
-import type { StatuslineData } from '../shared/types'
+import type { StatuslineData, SubmitTextResult, AskConductorNotice, CanvasMarkerUndelivered, CanvasSessionGuidance, AccountLogFolders, AccountLogFolderKind, AccountLogFolderOpenResult } from '../shared/types'
 import type { WebviewNavState } from '../shared/browser-url'
 import type { ModelRegistry } from '../shared/model-registry'
 import type { SentinelStateSnapshot } from '../shared/sentinel-types'
@@ -31,11 +32,58 @@ import type {
   Rect,
   TrailEntry,
 } from '../shared/canvas'
+import type {
+  AccountsSnapshot, AccountsResult, ProviderInstallationView, InstallRecipeView, SignInOutputEvent, BeginSetupRequest, SignInRequest, SignInAgainRequest, SignInAgainResult,
+  CompleteSetupRequest, LogoutRequest, SetLifecycleRequest, UpdateIdentityRequest, SecretDeposit, KnownAuthState, ProviderId,
+  ResolveConflictRequest, SetReviewerDefaultRequest, ProviderAccountUsageView, ProviderUsageStreamResult,
+} from '../shared/providers'
 
 function onChannel<T>(channel: string, cb: (data: T) => void): () => void {
   const handler = (_: unknown, data: T) => cb(data)
   ipcRenderer.on(channel, handler)
   return () => ipcRenderer.removeListener(channel, handler)
+}
+
+/**
+ * A stream on a private per-call channel (usage track MP8 round 2). Main
+ * sends the items with `webContents.send` and its result as the `invoke`
+ * reply, and Electron does not order the two routes against each other, so
+ * stopping at the reply dropped items still on their way (the VM lost 3 of 20
+ * Codex usage streams, 8 of 10 offline). Subscribed before the invoke; after
+ * a reply that says the stream ran (`streamed`), it keeps listening until
+ * main's end marker arrives on the same channel (after every item: one
+ * channel is delivered in order), or, failing that, IPC_STREAM_END_WAIT_MS.
+ * A reply that says it did not run, or a rejection, stops at once. The
+ * promise settles with the reply only once the listener is gone.
+ */
+function streamOnChannel<T, R>(channel: string, invoke: () => Promise<R>, onItem: (item: T) => void, streamed: (reply: R) => boolean): Promise<R> {
+  return new Promise<R>((resolve, reject) => {
+    let ended = false
+    let replied: { ok: true; value: R } | { ok: false; error: unknown } | null = null
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let done = false
+    const finish = (): void => {
+      if (done || !replied) return
+      done = true
+      ipcRenderer.removeListener(channel, handler)
+      if (timer) clearTimeout(timer)
+      if (replied.ok) resolve(replied.value)
+      else reject(replied.error)
+    }
+    const handler = (_e: unknown, message: unknown): void => {
+      if (done) return
+      if (isIpcStreamEnd(message)) { ended = true; finish(); return }
+      if (ended) return
+      try { onItem(message as T) } catch { /* a consumer never stops the stream */ }
+    }
+    ipcRenderer.on(channel, handler)
+    const onReply = (r: { ok: true; value: R } | { ok: false; error: unknown }): void => {
+      replied = r
+      if (ended || !r.ok || !streamed(r.value)) { finish(); return }
+      timer = setTimeout(finish, IPC_STREAM_END_WAIT_MS)
+    }
+    invoke().then((value) => onReply({ ok: true, value }), (error) => onReply({ ok: false, error }))
+  })
 }
 
 /** Mirrors src/main/watchdog/session-watchdog.ts's WatchdogPublicState — kept
@@ -54,6 +102,9 @@ export interface WatchdogPublicState {
   armed: boolean
   /** #605: which auto-retry checks are live for this session right now. */
   checks: WatchdogChecks
+  /** P3.10: checks this session's CLI has no patterns for (Codex: the
+   *  safeguard), off and not switchable; absent when there are none. */
+  unavailable?: Array<keyof WatchdogChecks>
   attempts: number
   overloadAttempts: number
   safeguardAttempts: number
@@ -79,8 +130,11 @@ export interface ElectronAPI {
     list: () => Promise<import('../shared/account-types').AccountProfile[]>
     create: (name?: string) => Promise<import('../shared/account-types').AccountProfile>
     rename: (id: string, name: string) => Promise<{ ok: boolean }>
-    setActive: (id: string, active: boolean) => Promise<{ ok: boolean; error?: string }>
-    delete: (id: string) => Promise<{ ok: boolean; error?: string }>
+    /** `code: 'in-use'`: a live session runs on the account; `sessions`
+     *  names them, `unnamed` counts other holders (P3.2). A removal refused
+     *  after its claude.ai sign-in was cleared says `in-use-cleared`. */
+    setActive: (id: string, active: boolean) => Promise<{ ok: boolean; error?: string; code?: 'in-use'; sessions?: string[] }>
+    delete: (id: string) => Promise<{ ok: boolean; error?: string; code?: 'in-use' | 'in-use-cleared'; sessions?: string[]; unnamed?: number }>
     refreshIdentity: (id: string) => Promise<{ ok: boolean; email: string | null; configDir?: string }>
     /** Credential generation (stat stamp + signed-in), never token contents. */
     credentialStamp: (id: string) => Promise<{ ok: boolean; stamp: string | null; signedIn: boolean }>
@@ -98,6 +152,9 @@ export interface ElectronAPI {
     fetchAll: () => Promise<import('../shared/usage-types').AccountUsage[]>
     fetchAllStream: (onResult: (usage: import('../shared/usage-types').AccountUsage) => void) => Promise<void>
     fetchOne: (id: string, opts?: { noRefresh?: boolean }) => Promise<import('../shared/usage-types').AccountUsage | null>
+    /** The bucket labels of the saved and live figures (Settings). Cached
+     *  data only: no network, no credential read. */
+    knownLabels: () => Promise<string[]>
   }
   window: {
     minimize: () => void
@@ -114,7 +171,9 @@ export interface ElectronAPI {
     openFolder: () => Promise<string | null>
   }
   clipboard: {
-    saveImage: () => Promise<{ path: string } | { error: 'no-image' | 'too-large' }>
+    /** PR-level ADR-009 round 1 (A1): off Windows, `posixShell` says whether
+     *  the shell a plain terminal runs is of the sh family ('sh') or not. */
+    saveImage: () => Promise<{ path: string; posixShell?: 'sh' | 'other' } | { error: 'no-image' | 'too-large' }>
     /** Focus-independent clipboard text read, retried for Windows delayed-render (#145). */
     readText: () => Promise<string>
   }
@@ -174,13 +233,22 @@ export interface ElectronAPI {
       provider?: 'claude' | 'codex'
       codexOptions?: {
         model?: string
-        reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
-        permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
+        reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
+        permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted' | 'plan'
+        /** P3.11 (row 62): extra CLI arguments; main checks them. */
+        extraArgs?: string
       }
-    }) => Promise<void>
+      /** WP2: the Codex account the session runs under (an opaque registry
+       *  id). Absent = the provider default. */
+      providerAccountId?: string
+      /** WP2: THIS launch's acknowledgement of an unverified sign-in. */
+      acknowledgeRealmOnly?: boolean
+    }) => Promise<{ started: false } | ({ started: false } & import('../shared/providers').SpawnRefused) | { started: true; carry?: import('../shared/providers').ConversationCarryNotice; launched?: { codexPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted' | 'plan' } } | void>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void
-    kill: (sessionId: string) => void
+    /** P3.16a round 2 (Q5): `'restart'` when a Restart ends the process (its
+     *  next one follows), so its exit is not the session's end. */
+    kill: (sessionId: string, reason?: 'restart') => void
     onData: (sessionId: string, callback: (data: string) => void) => () => void
     onExit: (sessionId: string, callback: (exitCode: number) => void) => () => void
   }
@@ -190,8 +258,9 @@ export interface ElectronAPI {
   ssh: {
     /** Manually trigger the post-connect command stage. */
     runPostCommand: (sessionId: string) => Promise<void>
-    /** Manually trigger the Claude launch stage. */
-    launchClaude: (sessionId: string) => Promise<void>
+    /** Manually trigger the Claude launch stage. Answers a refusal while
+     *  Claude Code is off. */
+    launchClaude: (sessionId: string) => Promise<void | import('../shared/providers').ProviderLaunchRefused>
     /** User opts out of any further auto-writes; PTY is theirs to drive. */
     skip: (sessionId: string) => Promise<void>
     /** One-shot query of the current flow state, used to recover from
@@ -211,8 +280,9 @@ export interface ElectronAPI {
      *  main has no captured target for it, so it rebuilds the connection from
      *  the SAVED config named by `configId` (host/user/port + that config's own
      *  keychain secrets). Passing ids is the whole of the caller's power — the
-     *  host is never named here, and neither is the tmux session. */
-    endRemote: (target: string | { sessionId: string; configId?: string }) => Promise<void>
+     *  host is never named here, and neither is the tmux session. Resolves
+     *  with what End did once its exec finishes (SshEndRemoteResult). */
+    endRemote: (target: string | { sessionId: string; configId?: string }) => Promise<import('../shared/types').SshEndRemoteResult>
     /** SSH Persistent (resume liveness): ask main whether a config's detached
      *  `ccc-<sessionId>` tmux sessions are still alive on the host. */
     checkDetachedLive: (payload: { configId: string; sessionIds: string[] }) => Promise<import('../shared/types').DetachedRemoteLiveness>
@@ -256,6 +326,11 @@ export interface ElectronAPI {
     disable: () => Promise<boolean>
     isEnabled: () => Promise<boolean>
     openFolder: () => Promise<string>
+    /** WP2 PR 4 (P4.4): each provider account's log folders, by kind; never paths. */
+    accountLogFolders: () => Promise<AccountLogFolders[]>
+    /** WP2 PR 4 (P4.4): open one of them. Main resolves the folder from the
+     *  account id; the renderer never names a path. */
+    openAccountLogFolder: (args: { accountId: string; folder: AccountLogFolderKind }) => Promise<AccountLogFolderOpenResult>
   }
   usage: {
     getSessionUsage: (sessionId: string) => Promise<unknown>
@@ -423,6 +498,12 @@ export interface ElectronAPI {
     versionVerdict: (args: { sessionId: string; versionId?: string; state: 'approved' | 'rejected' | 'dismissed'; note?: string }) => Promise<CanvasState | { error: string }>
     /** #580: the chat line that tells the agent a verdict/review was filed. Queued while the agent's turn is open. */
     agentMarker: (args: { sessionId: string; canvasId: string; line: string }) => Promise<{ delivery: 'sent' | 'queued' | 'unwired' | 'refused'; reason?: string }>
+    /** WP2 PR 4 (P4.1): a queued marker the submit primitive could not deliver,
+     *  for the review it belongs to. */
+    onAgentMarkerUndelivered: (cb: (e: CanvasMarkerUndelivered) => void) => () => void
+    /** WP2 PR 4 (P4.1): whether this session's launch carried the canvas and
+     *  vision skills' guidance with the tools, for the canvas page's one line. */
+    sessionGuidance: (args: { sessionId: string }) => Promise<CanvasSessionGuidance | null>
     /** C1: reopen a version for review; later ready versions become withdrawn.
      *  Wakes no ROUND — settled stays settled. */
     versionReopen: (args: { sessionId: string; versionId: string }) => Promise<CanvasState | { error: string }>
@@ -569,23 +650,47 @@ export interface ElectronAPI {
   shell: {
     openExternal: (url: string) => Promise<void>
   }
-  codex: {
-    status: () => Promise<{
-      installed: boolean
-      version: string | null
-      authMode: 'chatgpt' | 'api-key' | 'none'
-      planType?: string
-      accountId?: string
-      hasOpenAiApiKeyEnv: boolean
-    }>
-    login: (payload: { mode: 'chatgpt' | 'api-key' | 'device'; apiKey?: string }) => Promise<{
-      ok: boolean
-      browserUrl?: string
-      deviceCode?: string
-      error?: string
-    }>
-    logout: () => Promise<{ ok: boolean }>
-    testConnection: () => Promise<{ ok: boolean; message: string }>
+  /** WP2: the provider-neutral Accounts surface. Opaque ids in, views out;
+   *  an API key goes only through sendSecret, one way, bound to a handle. */
+  providerAccounts: {
+    snapshot: () => Promise<AccountsSnapshot | null>
+    onChanged: (cb: (snapshot: AccountsSnapshot) => void) => () => void
+    discover: (providerId: ProviderId) => Promise<AccountsResult<{ installation: ProviderInstallationView }>>
+    installRecipes: (providerId: ProviderId) => Promise<InstallRecipeView[] | AccountsResult>
+    setEnabled: (providerId: ProviderId, enabled: boolean) => Promise<AccountsResult>
+    beginSetup: (req: BeginSetupRequest) => Promise<AccountsResult<{ accountId: string }>>
+    issueSecretHandle: (accountId: string) => Promise<AccountsResult<{ handle: string }>>
+    sendSecret: (deposit: SecretDeposit) => void
+    signIn: (req: SignInRequest) => Promise<AccountsResult<{ state: KnownAuthState }>>
+    /** Sign an existing managed account in again, in its own realm. */
+    signInAgain: (req: SignInAgainRequest) => Promise<AccountsResult<SignInAgainResult>>
+    onSignInOutput: (cb: (event: SignInOutputEvent) => void) => () => void
+    cancelSignIn: (accountId: string) => Promise<AccountsResult>
+    completeSetup: (req: CompleteSetupRequest) => Promise<AccountsResult<{ accountId: string }>>
+    abandonSetup: (accountId: string) => Promise<AccountsResult>
+    refreshStatus: (accountId: string) => Promise<AccountsResult<{ state: KnownAuthState }>>
+    logout: (req: LogoutRequest) => Promise<AccountsResult<{ state: KnownAuthState }>>
+    setLifecycle: (req: SetLifecycleRequest) => Promise<AccountsResult>
+    setDefault: (accountId: string) => Promise<AccountsResult>
+    updateIdentity: (req: UpdateIdentityRequest) => Promise<AccountsResult>
+    createGroup: (name: string) => Promise<AccountsResult<{ groupId: string }>>
+    renameGroup: (groupId: string, name: string) => Promise<AccountsResult>
+    deleteGroup: (groupId: string) => Promise<AccountsResult>
+    linkIdentity: (accountId: string, identityId: string) => Promise<AccountsResult>
+    unlinkIdentity: (accountId: string) => Promise<AccountsResult<{ identityId: string }>>
+    adoptExternal: (providerId: ProviderId) => Promise<AccountsResult<{ accountId: string }>>
+    /** Whether this computer's own sign-in of the provider is signed in,
+     *  asked without taking it in (nothing is kept). */
+    probeExternal: (providerId: ProviderId) => Promise<AccountsResult<{ state: KnownAuthState }>>
+    /** "This is still my account": clears a blocked account after a fresh check. */
+    reconcileSignIn: (accountId: string) => Promise<AccountsResult<{ state: KnownAuthState }>>
+    resolveConflict: (req: ResolveConflictRequest) => Promise<AccountsResult>
+    setReviewerDefault: (req: SetReviewerDefaultRequest) => Promise<AccountsResult>
+    /** Usage track MP3: each listed account's allowance view as it is ready,
+     *  on a private per-call channel; nothing for a provider that is off. */
+    usageStream: (providerId: ProviderId, onResult: (view: ProviderAccountUsageView) => void, opts?: { read?: boolean }) => Promise<ProviderUsageStreamResult>
+    usageStreamStop: (providerId: ProviderId) => Promise<AccountsResult>
+    usageOne: (accountId: string, opts?: { read?: boolean }) => Promise<AccountsResult<{ usage: ProviderAccountUsageView }>>
   }
   github: GitHubBridge
   hooks: HooksBridge
@@ -628,12 +733,13 @@ export interface ElectronAPI {
     setResourcesDir: (dir: string) => Promise<boolean>
     isCliReady: () => Promise<boolean>
     probeCli: () => Promise<{ installed: boolean; path?: string; probe: string }>
-    spawnCliSetup: (cols: number, rows: number) => Promise<string>
+    spawnCliSetup: (cols: number, rows: number) => Promise<string | import('../shared/providers').ProviderLaunchRefused>
     killCliSetup: () => Promise<boolean>
   }
   insights: {
-    run: (opts?: { profileId?: string }) => Promise<string>
-    runAll: (opts?: { profileIds?: string[] }) => Promise<string>
+    /** `provider` (WP2 PR 4, P4.7): the assistant the run reports on; absent means Claude Code. */
+    run: (opts?: { profileId?: string; provider?: ProviderId }) => Promise<string | import('../shared/providers').ProviderLaunchRefused>
+    runAll: (opts?: { profileIds?: string[] }) => Promise<string | import('../shared/providers').ProviderLaunchRefused>
     getCatalogue: () => Promise<import('../shared/types').InsightsCatalogue>
     getReport: (runId: string) => Promise<string | null>
     getKpis: (runId: string) => Promise<import('../shared/types').KpiData | null>
@@ -667,11 +773,15 @@ export interface ElectronAPI {
     onInstallProgress: (cb: (data: { version: string; message: string }) => void) => () => void
   }
   cloudAgent: {
-    dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string }; skipPermissions?: boolean }) => Promise<import('../shared/types').CloudAgent>
+    /** `provider` (WP2 PR 4, P4.5): the assistant the agent runs on; absent
+     *  means Claude Code. Main holds the request to a strict schema: only that
+     *  provider's own fields (CloudAgentDispatchParams). */
+    dispatch: (agent: import('../shared/types').CloudAgentDispatchParams) => Promise<import('../shared/types').CloudAgent | import('../shared/providers').ProviderLaunchRefused | import('../shared/types').CloudAgentRequestRejected>
     cancel: (id: string) => Promise<boolean>
     /** #371: `ok:false` means the agent is STILL on disk — do not drop the row. */
     remove: (id: string) => Promise<{ ok: true; removed: boolean } | { ok: false; error: string }>
-    retry: (id: string) => Promise<import('../shared/types').CloudAgent | null>
+    /** `opts` (P4.5): this one retry may use the agent's unverified sign-in. */
+    retry: (id: string, opts?: import('../shared/types').CloudAgentRetryOptions) => Promise<import('../shared/types').CloudAgent | null | import('../shared/providers').ProviderLaunchRefused | import('../shared/types').CloudAgentRequestRejected>
     list: () => Promise<import('../shared/types').CloudAgent[]>
     getOutput: (id: string) => Promise<string>
     /** #371: `ok:false` means nothing was cleared — do not filter the list. */
@@ -691,16 +801,27 @@ export interface ElectronAPI {
   cli: {
     check: () => Promise<boolean>
     path: () => Promise<string | null>
-    version: () => Promise<string | null>
+    version: () => Promise<string | null | import('../shared/providers').ProviderLaunchRefused>
   }
   help: {
     workspace: () => Promise<string | null>
+  }
+  /** WP2 PR 4 (P4.3): Ask Conductor on a provider whose prompt takes a
+   *  question only as text typed at its ready composer. */
+  askConductor: {
+    /** Give a live Ask tab its next question through main's submit primitive
+     *  (never raw keystrokes and a carriage return). */
+    handOff: (args: { sessionId: string; question: string }) => Promise<SubmitTextResult>
+    /** Main's one-line notices for the dock: characters removed, or a question not delivered. */
+    onNotice: (cb: (notice: AskConductorNotice) => void) => () => void
   }
   tokenomics: {
     summary: (filter?: import('../shared/types').TkSummaryFilter) => Promise<import('../shared/types').TkSummary | null>
     sessions: (query?: import('../shared/types').TkSessionsQuery) => Promise<import('../shared/types').TkSessionsPage>
     sessionDetail: (sessionId: string) => Promise<import('../shared/types').TkSessionDetail | null>
     indexStatus: () => Promise<import('../shared/types').TkIndexStatus>
+    /** Usage track MP9: the providers and accounts the stored usage has. */
+    accounts: () => Promise<import('../shared/types').TkAccountPresent[]>
     onIndexStatus: (cb: (s: import('../shared/types').TkIndexStatus) => void) => () => void
     onIndexProgress: (cb: (p: import('../shared/types').TkIndexProgress) => void) => () => void
     onIndexComplete: (cb: (c: import('../shared/types').TkIndexCompleteEvent) => void) => () => void
@@ -832,14 +953,18 @@ const electronAPI: ElectronAPI = {
     // Streaming variant (plan P3): each account's usage arrives via `onResult` as
     // it resolves. A private per-call channel is subscribed before the invoke and
     // torn down when the stream completes, so overlapping calls never cross-talk.
-    fetchAllStream: (onResult: (usage: import('../shared/usage-types').AccountUsage) => void): Promise<void> => {
+    // MP8 round 2: the same end-of-stream rule as the Codex stream.
+    fetchAllStream: async (onResult: (usage: import('../shared/usage-types').AccountUsage) => void): Promise<void> => {
       const channel = `accountUsage:result:${randomId()}`
-      const handler = (_e: unknown, usage: import('../shared/usage-types').AccountUsage) => onResult(usage)
-      ipcRenderer.on(channel, handler)
-      return ipcRenderer.invoke(IPC.ACCOUNT_USAGE_FETCH_ALL_STREAM, { channel })
-        .finally(() => ipcRenderer.removeListener(channel, handler))
+      await streamOnChannel<import('../shared/usage-types').AccountUsage, unknown>(
+        channel,
+        () => ipcRenderer.invoke(IPC.ACCOUNT_USAGE_FETCH_ALL_STREAM, { channel }),
+        onResult,
+        (reply) => !!reply && typeof reply === 'object' && (reply as { ok?: unknown }).ok === true,
+      )
     },
     fetchOne: (id: string, opts?: { noRefresh?: boolean }) => ipcRenderer.invoke(IPC.ACCOUNT_USAGE_FETCH_ONE, { id, noRefresh: opts?.noRefresh }),
+    knownLabels: () => ipcRenderer.invoke(IPC.ACCOUNT_USAGE_KNOWN_LABELS),
   },
   window: {
     minimize: () => ipcRenderer.send(IPC.WINDOW_MINIMIZE),
@@ -881,7 +1006,7 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.send(IPC.PTY_WRITE, sessionId, data),
     resize: (sessionId, cols, rows) =>
       ipcRenderer.send(IPC.PTY_RESIZE, sessionId, cols, rows),
-    kill: (sessionId) => ipcRenderer.send(IPC.PTY_KILL, sessionId),
+    kill: (sessionId, reason) => (reason === 'restart' ? ipcRenderer.send(IPC.PTY_KILL, sessionId, 'restart') : ipcRenderer.send(IPC.PTY_KILL, sessionId)),
     onData: (sessionId, callback) => onChannel(ptyDataChannel(sessionId), callback),
     onExit: (sessionId, callback) => onChannel(ptyExitChannel(sessionId), callback)
   },
@@ -939,7 +1064,9 @@ const electronAPI: ElectronAPI = {
     enable: () => ipcRenderer.invoke(IPC.DEBUG_ENABLE),
     disable: () => ipcRenderer.invoke(IPC.DEBUG_DISABLE),
     isEnabled: () => ipcRenderer.invoke(IPC.DEBUG_IS_ENABLED),
-    openFolder: () => ipcRenderer.invoke(IPC.DEBUG_OPEN_FOLDER)
+    openFolder: () => ipcRenderer.invoke(IPC.DEBUG_OPEN_FOLDER),
+    accountLogFolders: () => ipcRenderer.invoke(IPC.DEBUG_ACCOUNT_LOG_FOLDERS),
+    openAccountLogFolder: (args: { accountId: string; folder: AccountLogFolderKind }) => ipcRenderer.invoke(IPC.DEBUG_OPEN_ACCOUNT_LOG_FOLDER, args)
   },
   usage: {
     getSessionUsage: (sessionId) =>
@@ -1045,6 +1172,8 @@ const electronAPI: ElectronAPI = {
     versionVerdict: (args: { sessionId: string; versionId?: string; state: 'approved' | 'rejected' | 'dismissed'; note?: string }) =>
       ipcRenderer.invoke(IPC.CANVAS_VERSION_VERDICT, args),
     agentMarker: (args: { sessionId: string; canvasId: string; line: string }) => ipcRenderer.invoke(IPC.CANVAS_AGENT_MARKER, args),
+    onAgentMarkerUndelivered: (cb: (e: CanvasMarkerUndelivered) => void) => onChannel(IPC.CANVAS_AGENT_MARKER_UNDELIVERED, cb),
+    sessionGuidance: (args: { sessionId: string }) => ipcRenderer.invoke(IPC.CANVAS_SESSION_GUIDANCE, args),
     versionReopen: (args: { sessionId: string; versionId: string }) =>
       ipcRenderer.invoke(IPC.CANVAS_VERSION_REOPEN, args),
     annotationReopen: (args: { sessionId: string; annotationId: string }) =>
@@ -1154,7 +1283,7 @@ const electronAPI: ElectronAPI = {
     gracefulExit: () => ipcRenderer.invoke(IPC.SESSION_GRACEFUL_EXIT)
   },
   insights: {
-    run: (opts?: { profileId?: string }) => ipcRenderer.invoke(IPC.INSIGHTS_RUN, opts),
+    run: (opts?: { profileId?: string; provider?: ProviderId }) => ipcRenderer.invoke(IPC.INSIGHTS_RUN, opts),
     runAll: (opts?: { profileIds?: string[] }) => ipcRenderer.invoke(IPC.INSIGHTS_RUN_ALL, opts),
     getCatalogue: () => ipcRenderer.invoke(IPC.INSIGHTS_GET_CATALOGUE),
     getReport: (runId: string) => ipcRenderer.invoke(IPC.INSIGHTS_GET_REPORT, runId),
@@ -1193,11 +1322,12 @@ const electronAPI: ElectronAPI = {
       onChannel(IPC.VISION_STATUS_CHANGED, callback)
   },
   cloudAgent: {
-    dispatch: (params: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string }; skipPermissions?: boolean }) =>
+    dispatch: (params: import('../shared/types').CloudAgentDispatchParams) =>
       ipcRenderer.invoke(IPC.CLOUD_AGENT_DISPATCH, params),
     cancel: (id: string) => ipcRenderer.invoke(IPC.CLOUD_AGENT_CANCEL, id),
     remove: (id: string) => ipcRenderer.invoke(IPC.CLOUD_AGENT_REMOVE, id),
-    retry: (id: string) => ipcRenderer.invoke(IPC.CLOUD_AGENT_RETRY, id),
+    retry: (id: string, opts?: import('../shared/types').CloudAgentRetryOptions) =>
+      opts === undefined ? ipcRenderer.invoke(IPC.CLOUD_AGENT_RETRY, id) : ipcRenderer.invoke(IPC.CLOUD_AGENT_RETRY, id, opts),
     list: () => ipcRenderer.invoke(IPC.CLOUD_AGENT_LIST),
     getOutput: (id: string) => ipcRenderer.invoke(IPC.CLOUD_AGENT_GET_OUTPUT, id),
     clearCompleted: () => ipcRenderer.invoke(IPC.CLOUD_AGENT_CLEAR_COMPLETED),
@@ -1225,11 +1355,16 @@ const electronAPI: ElectronAPI = {
   help: {
     workspace: () => ipcRenderer.invoke(IPC.HELP_WORKSPACE)
   },
+  askConductor: {
+    handOff: (args: { sessionId: string; question: string }) => ipcRenderer.invoke(IPC.ASK_CONDUCTOR_HAND_OFF, args),
+    onNotice: (cb: (notice: AskConductorNotice) => void) => onChannel(IPC.ASK_CONDUCTOR_NOTICE, cb),
+  },
   tokenomics: {
     summary: (filter?: import('../shared/types').TkSummaryFilter) => ipcRenderer.invoke(IPC.TOKENOMICS2_SUMMARY, filter ?? {}),
     sessions: (query?: import('../shared/types').TkSessionsQuery) => ipcRenderer.invoke(IPC.TOKENOMICS2_SESSIONS, query ?? {}),
     sessionDetail: (sessionId: string) => ipcRenderer.invoke(IPC.TOKENOMICS2_SESSION_DETAIL, { sessionId }),
     indexStatus: () => ipcRenderer.invoke(IPC.TOKENOMICS2_INDEX_STATUS),
+    accounts: () => ipcRenderer.invoke(IPC.TOKENOMICS2_ACCOUNTS, {}),
     onIndexStatus: (cb: (s: import('../shared/types').TkIndexStatus) => void) =>
       onChannel(IPC.TOKENOMICS2_INDEX_STATUS, cb),
     onIndexProgress: (cb: (p: import('../shared/types').TkIndexProgress) => void) =>
@@ -1248,11 +1383,63 @@ const electronAPI: ElectronAPI = {
   shell: {
     openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   },
-  codex: {
-    status: () => ipcRenderer.invoke(IPC.CODEX_STATUS),
-    login: (payload) => ipcRenderer.invoke(IPC.CODEX_LOGIN, payload),
-    logout: () => ipcRenderer.invoke(IPC.CODEX_LOGOUT),
-    testConnection: () => ipcRenderer.invoke(IPC.CODEX_TEST_CONNECTION),
+  providerAccounts: {
+    snapshot: () => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SNAPSHOT),
+    onChanged: (cb) => onChannel<AccountsSnapshot>(IPC.PROVIDER_ACCOUNTS_CHANGED, cb),
+    discover: (providerId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_DISCOVER, { providerId }),
+    installRecipes: (providerId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_INSTALL_RECIPES, { providerId }),
+    setEnabled: (providerId, enabled) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SET_ENABLED, { providerId, enabled }),
+    beginSetup: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_BEGIN_SETUP, { providerId: req.providerId, method: req.method }),
+    issueSecretHandle: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_ISSUE_SECRET_HANDLE, { accountId }),
+    // One way and fire-and-forget: the key is never in a request or a reply,
+    // and nothing here keeps or logs it.
+    sendSecret: (deposit) => ipcRenderer.send(IPC.PROVIDER_ACCOUNTS_SECRET, { handle: deposit.handle, secret: deposit.secret }),
+    signIn: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SIGN_IN, req.secretHandle !== undefined
+      ? { accountId: req.accountId, method: req.method, secretHandle: req.secretHandle }
+      : { accountId: req.accountId, method: req.method }),
+    signInAgain: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SIGN_IN_AGAIN, {
+      accountId: req.accountId, method: req.method,
+      ...(req.secretHandle !== undefined ? { secretHandle: req.secretHandle } : {}),
+      sameAccount: req.sameAccount,
+      ...(req.acknowledgeExternal !== undefined ? { acknowledgeExternal: req.acknowledgeExternal } : {}),
+    }),
+    onSignInOutput: (cb) => onChannel<SignInOutputEvent>(IPC.PROVIDER_ACCOUNTS_SIGN_IN_OUTPUT, cb),
+    cancelSignIn: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_CANCEL_SIGN_IN, { accountId }),
+    completeSetup: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_COMPLETE_SETUP, req),
+    abandonSetup: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_ABANDON_SETUP, { accountId }),
+    refreshStatus: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_REFRESH_STATUS, { accountId }),
+    logout: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_LOGOUT, req),
+    setLifecycle: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SET_LIFECYCLE, req),
+    setDefault: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SET_DEFAULT, { accountId }),
+    updateIdentity: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_UPDATE_IDENTITY, req),
+    createGroup: (name) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_CREATE_GROUP, { name }),
+    renameGroup: (groupId, name) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_RENAME_GROUP, { groupId, name }),
+    deleteGroup: (groupId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_DELETE_GROUP, { groupId }),
+    linkIdentity: (accountId, identityId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_LINK_IDENTITY, { accountId, identityId }),
+    unlinkIdentity: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_UNLINK_IDENTITY, { accountId }),
+    adoptExternal: (providerId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_ADOPT_EXTERNAL, { providerId }),
+    probeExternal: (providerId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_PROBE_EXTERNAL, { providerId }),
+    reconcileSignIn: (accountId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_RECONCILE_SIGN_IN, { accountId }),
+    resolveConflict: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_RESOLVE_CONFLICT, {
+      identityId: req.identityId, field: req.field, providerId: req.providerId, legacyId: req.legacyId, keep: req.keep,
+    }),
+    setReviewerDefault: (req) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_SET_REVIEWER_DEFAULT, { providerId: req.providerId, accountId: req.accountId }),
+    // A private per-call reply channel (main checks its exact shape,
+    // PROVIDER_USAGE_RESULT_RE), subscribed before the invoke and removed when
+    // the stream ends, so overlapping streams never cross.
+    // MP8 round 2: every view main sent arrives before the stream is done
+    // (streamOnChannel). `read` only for the page's own asks (ADR-022 bound 7).
+    usageStream: (providerId, onResult, opts) => {
+      const channel = `providerAccounts:usageResult:${randomId()}`
+      return streamOnChannel<ProviderAccountUsageView, ProviderUsageStreamResult>(
+        channel,
+        () => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM, { providerId, channel, ...(opts?.read === true ? { read: true } : {}) }),
+        onResult,
+        (reply) => !!reply && typeof reply === 'object' && (reply as { ok?: unknown }).ok === true,
+      )
+    },
+    usageStreamStop: (providerId) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_USAGE_STREAM_STOP, { providerId }),
+    usageOne: (accountId, opts) => ipcRenderer.invoke(IPC.PROVIDER_ACCOUNTS_USAGE_ONE, { accountId, ...(opts?.read === true ? { read: true } : {}) }),
   },
   github: {
     getConfig: () => ipcRenderer.invoke(IPC.GITHUB_CONFIG_GET),

@@ -11,15 +11,16 @@ import AgentCanvasPane from './components/AgentCanvasPane'
 import LogsPane from './components/LogsPane'
 import { PaneFade } from './components/PaneFade'
 import { useWebviewStore } from './stores/webviewStore'
-import { usePaneOcclusionStore } from './stores/paneOcclusionStore'
+import { usePaneOcclusionStore, useOccludesNativePanes } from './stores/paneOcclusionStore'
 import { useExcalidrawStore } from './stores/excalidrawStore'
 import { setupCanvasListener } from './stores/canvasStore'
+import { setupCodexMarkerNoticeListener } from './stores/codexMarkerNoticeStore'
 import { setupCanvasReviewListener } from './stores/canvasReviewStore'
 import { setupCanvasSnapshotHost } from './canvas/canvas-snapshot-host'
 import { useLogsStore } from './stores/useLogsStore'
 import BottomBar from './components/BottomBar'
 import UsageDashboard from './components/UsageDashboard'
-import SettingsPage, { SETTINGS_TAB_IDS, type SettingsTab } from './components/SettingsPage'
+import SettingsPage, { openSettingsHandler, type SettingsTab } from './components/SettingsPage'
 import GlobalLogsView from './components/GlobalLogsView'
 import InsightsPage from './components/InsightsPage'
 import CloudAgentsPage from './components/CloudAgentsPage'
@@ -29,10 +30,12 @@ import MemoryPage from './components/MemoryPage'
 import SetupDialog from './components/SetupDialog'
 import { shouldShowWhatsNew } from './onboarding/whats-new-gate'
 import AccountLaunchGate from './components/AccountLaunchGate'
+import LaunchAckConfirm from './components/LaunchAckConfirm'
+import { grantLaunchAcknowledgement } from './stores/launchAckStore'
 import NewAccountPrompt from './components/NewAccountPrompt'
 import SentinelPanel from './components/sentinel/SentinelPanel'
 import { useAddAccount } from './hooks/useAddAccount'
-import TrainingWalkthrough, { shouldShowTraining, isFirstInstall } from './components/TrainingWalkthrough'
+import TrainingWalkthrough from './components/TrainingWalkthrough'
 import SessionDialog from './components/SessionDialog'
 import GuidedTour from './components/GuidedTour'
 import FeatureGuidePage from './components/FeatureGuidePage'
@@ -42,15 +45,16 @@ import { useTipsStore, trackUsage, VIEW_FEATURE_IDS } from './stores/tipsStore'
 import ErrorBoundary from './components/ErrorBoundary'
 import CloseDialog from './components/CloseDialog'
 import SshCloseDialog from './components/SshCloseDialog'
+import SshEndNoticeDialog from './components/SshEndNoticeDialog'
 import SshReattachGoneNotice from './components/SshReattachGoneNotice'
 import { useDetachedRemotesStore } from './stores/detachedRemotesStore'
 import { pingAllDetachedHosts } from './stores/hostReachability'
 import { probeGoneSessions } from './stores/livenessStore'
-import { DialogOverlay } from './components/ui/Dialog'
+import { DialogOverlay, WINDOW_CLOSE_Z } from './components/ui/Dialog'
 import { useSessionStore, structuralSessionsEqual } from './stores/sessionStore'
 import { useStoreWithEqualityFn } from 'zustand/traditional'
 import { useConfigStore } from './stores/configStore'
-import { configsToEnableMultiSpawn } from './utils/multiSpawn'
+import { configsToEnableMultiSpawn, type RestoreCopyTally } from './utils/multiSpawn'
 import { MultiSpawnStartupPage } from './components/MultiSpawnStartupPage'
 import { decideMultiSpawnIntro, markMultiSpawnIntroSeen } from './onboarding/multi-spawn-intro-gate'
 import { useCommandBarStore } from './stores/commandBarStore'
@@ -60,15 +64,23 @@ import { useAppMetaStore } from './stores/appMetaStore'
 import { useConfigWriteLockStore } from './stores/configWriteLockStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { OnboardingHarness } from './onboarding/OnboardingHarness'
+import { CodexReconfirmPage } from './onboarding/CodexReconfirmPage'
+import { decideCodexReconfirm, codexAnswered, codexReconfirmDue } from './onboarding/codex-reconfirm-gate'
+import { noteCodexChosenOnUpgrade } from './onboarding/provider-choice'
+import { HelloCodexHost, helloCodexShowing, useHeldCodexSessionStart } from './onboarding/HelloCodex'
+import { useHelloCodexStore } from './onboarding/hello-codex'
 import { deriveOnboarding, shouldReonboardForVersion } from './onboarding/gate'
+import { finishSetup, harnessRun, cliSetupAtStart } from './onboarding/setup-handoff'
 import { bootWhatsNewSurface, lastRunVersionOf } from './onboarding/upgrade-flow'
 import { useAccountProfilesStore } from './stores/accountProfilesStore'
+import { useProviderAccountsStore } from './stores/providerAccountsStore'
 import { useRegistryStore } from './stores/registryStore'
 import { useSentinelStore } from './stores/sentinelStore'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { useThemeController } from './hooks/useThemeController'
 import { useTypographyController } from './hooks/useTypography'
 import { useLaunchConfig } from './hooks/useLaunchConfig'
+import { sessionAgentName } from './utils/sessionLaunch'
 import StageEmptyState from './components/StageEmptyState'
 import { flushPendingConfigSaves } from './utils/config-saver'
 import { gatherLocalStorageData, clearMigratedLocalStorage, hydrateStores, applyConfigColourMigration, retireAskConfig, readFailureLockReason } from './utils/configHydration'
@@ -82,16 +94,17 @@ import { setupSleepListeners } from './stores/sleepStore'
 import { setupActiveListeners } from './stores/activeStore'
 import LoggingConsentPrompt from './components/LoggingConsentPrompt'
 import LogsWipeModal from './components/LogsWipeModal'
-import { pickBootGate } from './utils/bootGates'
+import { bootChain, launchDialogsSuppressed } from './utils/bootGates'
 import ResumeSessionsPrompt from './components/ResumeSessionsPrompt'
-import { useCodexAccountStore } from './stores/codexAccountStore'
 import GitHubPanel from './components/github/GitHubPanel'
 import OnboardingModal from './components/github/onboarding/OnboardingModal'
 import AutoDetectBanner from './components/github/AutoDetectBanner'
 import { handleAutoDetectAccept } from './utils/githubAutoDetectAccept'
 import type { SessionState } from './types/electron'
-import { buildSessionState, buildSessionStateWithResumeTargets, persistDetachedOnlyOrClear, hydrateDetachedFromSavedState, loadSavedStateAtStartup, closeWithNoSessions, discardAndClose, restoreSavedSessions } from './session-persistence'
+import { buildSessionState, buildSessionStateWithResumeTargets, persistDetachedOnlyOrClear, hydrateDetachedFromSavedState, loadSavedStateAtStartup, closeWithNoSessions, discardAndClose, restoreSavedSessions, refreshRestoreOffer, setUnansweredRestore } from './session-persistence'
 import { useSessionAutosave, cancelSessionAutosave } from './hooks/useSessionAutosave'
+import { listenGoToSession } from './lib/goToSession'
+import { loggingConsentDue } from './utils/logging-consent'
 
 import type { ViewType } from './types/views'
 
@@ -148,11 +161,27 @@ export default function App() {
    *  completed the flow, but has not seen the notes for the build now running.
    *  Armed once in postConfigInit, cleared when the harness completes. */
   const [whatsNewOnly, setWhatsNewOnly] = useState(false)
+  /** WP2: a setup screen in this run (the first-run or the version-change
+   *  one) ended with "Use Codex only". Upgraders (including a new computer
+   *  pointed at an existing resources folder, on the first-run screen) never
+   *  see the fresh-install assistants and Codex setup pages, so the harness
+   *  hands them the Codex setup page once, now: alone when nothing else is
+   *  due, or inside the run that is; a fresh install meets it in the full
+   *  flow anyway. In memory only, so a later start never shows it again.
+   *  Cleared when the harness completes. */
+  const [codexSetupHandOff, setCodexSetupHandOff] = useState(false)
   /** The Allow Multi Spawn startup page is due this launch. Decided ONCE in
    *  postConfigInit from meta read before anything stamps — by the time the
    *  release-notes harness has closed, a first install is indistinguishable
    *  from an upgrade. Cleared by either of the page's buttons. */
   const [multiSpawnIntroDue, setMultiSpawnIntroDue] = useState(false)
+  /** "Do you use Codex?", asked once of everyone who updates (owner decision
+   *  2026-09-26; onboarding/codex-reconfirm-gate.ts). Armed ONCE in
+   *  postConfigInit from meta read before anything stamps (a fresh install
+   *  answers in its setup instead); due while unanswered (codexReconfirmDue).
+   *  `shown`: the page is on screen, so only its own answer closes it. */
+  const [codexReconfirmArmed, setCodexReconfirmArmed] = useState(false)
+  const [codexReconfirmShown, setCodexReconfirmShown] = useState(false)
   /** Config ids the grandfathering migration turned on THIS START — the rows
    *  the startup page marks "auto · N copies found". Accumulated because the
    *  page mounts after the migration has already written `true`, at which point
@@ -190,19 +219,14 @@ export default function App() {
     }
   }, [view, pendingLogsSessionId])
 
-  // Listen for app:openSettings dispatched by CodexFormFields "Open Settings" links.
-  // Switches the active view to Settings and deep-links to the requested tab.
-  // Validates the tab against the allow-list -- a malformed CustomEvent
-  // detail otherwise leaves SettingsPage with no matching tab content.
+  // Listen for app:openSettings (the session dialog's Settings, Accounts
+  // links, the command bar's menus, the status strip). Switches the active
+  // view to Settings and deep-links to the requested tab (openSettingsHandler:
+  // a retired tab id, the Codex settings tab's, opens the tab that replaced
+  // it, and a malformed CustomEvent detail opens none, since SettingsPage
+  // would otherwise have no matching tab content).
   useEffect(() => {
-    const onOpenSettings = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { tab?: string } | undefined
-      const tab = detail?.tab
-      if (tab && (SETTINGS_TAB_IDS as readonly string[]).includes(tab)) {
-        setPendingSettingsTab(tab as SettingsTab)
-      }
-      setView('settings')
-    }
+    const onOpenSettings = openSettingsHandler({ openTab: setPendingSettingsTab, showSettings: () => setView('settings') })
     window.addEventListener('app:openSettings', onOpenSettings)
     return () => window.removeEventListener('app:openSettings', onOpenSettings)
   }, [])
@@ -225,7 +249,20 @@ export default function App() {
     return () => window.removeEventListener('app:openAccountPane', onOpenAccountPane)
   }, [])
 
+  // Settings, Accounts "Go to <session>" (P3.2, design 5.3): a refused
+  // inactivate, archive or removal names the sessions holding the account;
+  // each one's button brings its tab forward. A stale id is a no-op.
+  useEffect(() => listenGoToSession(() => setView('sessions')), [])
+
   const [showGuidedConfig, setShowGuidedConfig] = useState(false)
+  /** The provider card the first-config dialog opens on. Set only by Hello
+   *  Codex's "Start a Codex session" (WP2 commit 6f); cleared when the
+   *  dialog closes, so every other way in opens it as before. */
+  const [guidedConfigProvider, setGuidedConfigProvider] = useState<'codex' | undefined>(undefined)
+  const startCodexSession = () => {
+    setGuidedConfigProvider('codex')
+    setShowGuidedConfig(true)
+  }
   // Live-app guided tour that follows the onboarding finish step (or the
   // Feature Guide button). Anchored coach-marks over the real UI, ending by
   // opening the first-config dialog.
@@ -239,8 +276,21 @@ export default function App() {
   // lazy mount of the partner TerminalView (see togglePartner).
   const [partnerEverActivated, setPartnerEverActivated] = useState<Set<string>>(new Set())
   // Saved sessions awaiting the user's Resume / Don't-open choice (startup gate —
-  // previously every boot force-resumed the whole saved set).
+  // previously every boot force-resumed the whole saved set). Boot-only: the
+  // startup load (postConfigInit, once) is the only thing that sets it, the
+  // prompt's Refresh only replaces it while it is still unanswered, and
+  // Resume / Don't open clear it, so once answered the gate never comes back
+  // this run. It is the whole saved set: a session whose provider cannot
+  // launch is restored too and reopens as Not started (the prompt tags it).
   const [pendingRestore, setPendingRestore] = useState<SessionState | null>(null)
+  // P3.5 (a C item): while the prompt is unanswered, every write of the
+  // session file keeps the set it offers (session-persistence), so a tab
+  // launched meanwhile never overwrites it on disk.
+  useEffect(() => { setUnansweredRestore(pendingRestore) }, [pendingRestore])
+  // What this start brought back, tallied once when the restore is decided
+  // (Resume, Don't open, or nothing saved to ask about): the Allow Multi Spawn
+  // grandfathering and its startup page count copies from it alone.
+  const [restoreTally, setRestoreTally] = useState<RestoreCopyTally | null>(null)
   const configs = useConfigStore((s) => s.configs)
   const launchConfig = useLaunchConfig()
   // Keep session-state.json in sync with the live session set so a non-graceful
@@ -251,12 +301,35 @@ export default function App() {
   // Sidebar receives onShowFirstRun={() => setShowGuidedConfig(true)}, so we use the
   // same setter here to open the real create dialog from the stage empty state.
   const onCreateConfigFromStage = () => setShowGuidedConfig(true)
-  const loggingConsentSeen = useSettingsStore((s) => s.settings.loggingConsentSeen)
+  // P3.12 round 1 (B5): the conversation-indexing notice is due (never seen,
+  // or once more for a Codex user who saw only the earlier notice).
+  const loggingConsentDueNow = useSettingsStore((s) => loggingConsentDue(s.settings))
+  // Whether "do you use Codex?" has been answered, live: an answer given
+  // before the one-time page's turn (a setup screen's "Use Codex only") means
+  // it never shows.
+  const codexAnsweredNow = useSettingsStore((s) => codexAnswered(s.settings))
   // Reactive onboarding-gate input. MUST be a top-level hook (above the
   // Loading/SetupDialog early returns) — the reactive subscription is what lets
   // the finish step's completion stamp dismiss the harness, but a hook placed
   // after a conditional return breaks the Rules of Hooks and blanks the app.
   const onboardingMeta = useAppMetaStore((s) => s.meta)
+  // WP2 commit 6f: the Codex introduction's takeover, once HelloCodexHost has
+  // latched it open, takes the last turn in the boot chain (pickBootGate).
+  const helloCodexTakeoverOpen = useHelloCodexStore((s) => s.open === 'takeover')
+  // What the introduction has open (the takeover or a replay), and whether
+  // the onboarding pages have stepped aside for a terminal they opened: the
+  // two things that decide whether the app behind the window-covering
+  // surfaces is inert (appCovered, below).
+  const helloCodexOpen = useHelloCodexStore((s) => s.open)
+  const [onboardingAside, setOnboardingAside] = useState(false)
+  // The "Closing..." overlay (rendered below) is on the top layer with the
+  // close dialogs; the native panes, which main paints above all HTML, hide
+  // while it shows. Its DialogOverlay is `absolute`, which holds no flag.
+  useOccludesNativePanes(isClosing)
+  // Its "Start a Codex session", held while the resume prompt is unanswered
+  // (New saved config outranks that prompt, and a launch would autosave over
+  // the restore set it is asking about).
+  const requestCodexSession = useHeldCodexSessionStart(pendingRestore !== null, startCodexSession)
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
   // Subscribe to sessions through a STRUCTURAL equality so the root shell does
   // NOT re-render on the statusline bridge's ~1-3×/s telemetry ticks (which only
@@ -480,24 +553,27 @@ export default function App() {
   // Configs created before Allow Multi Spawn existed had no such limit, and
   // some of them are legitimately running several copies right now. Turning the
   // one-at-a-time rule on for them would suddenly refuse a launch they have
-  // always been allowed — so any config that DEMONSTRABLY runs more than one
-  // copy (live sessions + detached remotes that would reattach to it) gets the
-  // setting turned on, once, and persisted with the config.
+  // always been allowed — so any config that DEMONSTRABLY ran more than one
+  // copy when the app last closed (the sessions this start restores + detached
+  // remotes that would reattach to it: restoreTally) gets the setting turned
+  // on, once, and persisted with the config.
   //
-  // ENABLE-ONLY and idempotent, so it needs no one-shot flag: it runs on every
-  // start (and again whenever the session set or the registry moves, which is
-  // when the answer could change), and finds nothing to do the moment every
-  // multi-copy config is marked. `updateConfig` writes through to disk, so the
-  // re-render this triggers sees the flag already set and stops.
+  // Counted from the restore-time tally, never from the live session set: a
+  // launch later in the run is under the one-at-a-time rule already, and a
+  // restored copy that is Not started (its provider cannot launch yet) beside
+  // a fresh launch is not two copies the config ever ran. ENABLE-ONLY and
+  // idempotent, so it needs no one-shot flag: it runs when the tally is taken
+  // (and again when the configs move), and finds nothing to do the moment
+  // every multi-copy config is marked. `updateConfig` writes through to disk,
+  // so the re-render this triggers sees the flag already set and stops.
   //
   // It only ever touches a config whose setting is UNDEFINED (phase 4.1). A
   // config the user explicitly turned OFF stores `false`, and running this on
   // every start would otherwise revert that decision each launch for as long as
   // two copies happened to be live.
-  const detachedRemoteEntries = useDetachedRemotesStore((s) => s.entries)
   useEffect(() => {
-    if (!configLoaded) return
-    const ids = configsToEnableMultiSpawn(configs, sessions, detachedRemoteEntries)
+    if (!configLoaded || !restoreTally) return
+    const ids = configsToEnableMultiSpawn(configs, restoreTally.sessions, restoreTally.detached)
     if (ids.length === 0) return
     const { updateConfig } = useConfigStore.getState()
     for (const id of ids) updateConfig(id, { allowMultiSpawn: true })
@@ -508,7 +584,7 @@ export default function App() {
     setMultiSpawnAutoEnabled((prev) =>
       ids.every((id) => prev.includes(id)) ? prev : [...new Set([...prev, ...ids])],
     )
-  }, [configLoaded, configs, sessions, detachedRemoteEntries])
+  }, [configLoaded, configs, restoreTally])
 
   // Post-config-load initialization
   useEffect(() => {
@@ -567,6 +643,20 @@ export default function App() {
       if (introDecision.markSeen) markMultiSpawnIntroSeen()
       if (introDecision.show) setMultiSpawnIntroDue(true)
 
+      // "Do you use Codex?" (owner decision 2026-09-26). From the same pre-stamp
+      // `appMeta` snapshot, for the same reason: a fresh install is told apart
+      // from an upgrade only before the harness stamps. Nothing is stamped here:
+      // the marker is the answer itself (settings.codexAnswered), written only
+      // when the user answers, so an app closed before that asks again.
+      const reconfirm = decideCodexReconfirm({
+        answered: codexAnswered(useSettingsStore.getState().settings),
+        lastSeenVersion: appMeta.lastSeenVersion,
+        lastRunVersion: lastRunVersionOf(appMeta),
+        currentVersion: __APP_VERSION__,
+        channel: useSettingsStore.getState().settings.updateChannel,
+      })
+      if (reconfirm.show) setCodexReconfirmArmed(true)
+
       // Record that THIS build ran — AFTER the decision above has read the
       // previous value, which is the whole point of it. It is the witness
       // against a lastSeenVersion that no build of that version ever wrote
@@ -580,16 +670,16 @@ export default function App() {
       if (appMeta.setupVersion !== __APP_VERSION__) {
         const hasExistingConfig = useConfigStore.getState().configs.length > 0 ||
           useCommandStore.getState().commands.length > 0
-        if (hasExistingConfig) {
-          useAppMetaStore.getState().update({ setupVersion: __APP_VERSION__ })
-        } else {
-          const cliReady = await window.electronAPI.setup.isCliReady()
-          if (cliReady) {
-            useAppMetaStore.getState().update({ setupVersion: __APP_VERSION__ })
-          } else {
-            setNeedsCliSetup(true)
-          }
-        }
+        // Claude Code turned off (a Codex-only install, WP2): there is no
+        // Claude CLI whose folder trust this step would set up, so it would
+        // only show the "not installed" screen again on every new version.
+        const cliStep = await cliSetupAtStart({
+          hasExistingConfig,
+          settings: useSettingsStore.getState().settings,
+          isCliReady: () => window.electronAPI.setup.isCliReady(),
+        })
+        if (cliStep === 'stamp') useAppMetaStore.getState().update({ setupVersion: __APP_VERSION__ })
+        else setNeedsCliSetup(true)
       }
 
       // Resume opt-out: LOAD the saved state but do not auto-restore — the
@@ -605,6 +695,9 @@ export default function App() {
           reconcile: () => useCommandBarStore.getState().reconcile(useSessionStore.getState().sessions.map((s) => s.id)),
         })
         if (savedState) setPendingRestore(savedState)
+        // Nothing to ask about: nothing is restored, and what this start
+        // brought back is the left-running registry just hydrated.
+        else setRestoreTally({ sessions: [], detached: useDetachedRemotesStore.getState().entries })
         // R7 (Codex finding 4): startup load + registry hydration completed. From
         // here a zero-session close is a real decision (the prompt, if any, is up
         // and covered by pendingRestore); the transient-empty window is over.
@@ -625,13 +718,18 @@ export default function App() {
       setupSleepListeners()
       setupActiveListeners()
       setupCanvasListener()
+      // WP2 PR 4, P4.1 (review A-1): canvas markers a Codex session did not get, kept
+      // while the canvas page is closed.
+      setupCodexMarkerNoticeListener()
       setupCanvasReviewListener()
       setupCanvasSnapshotHost()
       useGitHubStore.getState().loadConfig()
       useConductorMcpStore.getState().loadConfig()
       useConductorMcpStore.getState().fetchStatus()
-      useCodexAccountStore.getState().refresh()
       useAccountProfilesStore.getState().hydrate()
+      // WP2: the provider Accounts snapshot. Its change subscription is
+      // armed here once and lives for the renderer's lifetime.
+      useProviderAccountsStore.getState().hydrate().catch((err) => console.warn('[provider-accounts] hydrate failed:', err))
       useRegistryStore.getState().hydrate().catch((err) => console.warn('[registry] hydrate failed:', err))
       useSentinelStore.getState().hydrate().catch((err) => console.warn('[sentinel] hydrate failed:', err))
 
@@ -709,7 +807,9 @@ export default function App() {
     // onboarding completes.
     if (deriveOnboarding(useAppMetaStore.getState().meta, {}).due) return
     if (whatsNewOnly || showTraining || showTrainingAll) return
-    if (isFirstInstall() || shouldShowWhatsNew() || shouldShowTraining()) return
+    // Not on the tour: nothing opens it by itself, so waiting on an unseen
+    // card would never arm this page and hold the boot chain (PR 4 VM final).
+    if (shouldShowWhatsNew()) return
     const t = setTimeout(() => setShowGitHubOnboarding(true), 120)
     return () => clearTimeout(t)
   }, [githubConfig, logsWipeBytes, whatsNewOnly, showTraining, showTrainingAll, needsCliSetup])
@@ -848,7 +948,7 @@ export default function App() {
       onOpenSessionLogs={(sessionId) => { setPendingLogsSessionId(sessionId); setView('logs') }}
       onJumpToSession={(sessionId) => { useSessionStore.getState().setActiveSession(sessionId); setView('sessions') }}
     />
-    if (v === 'account-usage') return <AccountUsagePanel onClose={() => setView('sessions')} onReauthNavigate={() => setView('sessions')} />
+    if (v === 'account-usage') return <AccountUsagePanel onClose={() => setView('sessions')} onReauthNavigate={() => setView('sessions')} onOpenTokenomics={() => setView('tokenomics')} />
     if (v === 'help') return <FeatureGuidePage onNavigateToSessions={() => setView('sessions')} onStartTour={() => { setShowTrainingAll(true); setShowTraining(true) }} />
     return null
   }
@@ -964,6 +1064,8 @@ export default function App() {
               // front (adversarial review, #188); once opened it stays mounted.
               const hasPartner = partnerEverActivated.has(session.id)
               const partnerPtyId = session.id + '-partner'
+              // The assistant the partner strip names: the tab's own.
+              const agentName = sessionAgentName(session.provider)
               const isShowingWebview = !!webviewBySession[session.id]?.isOpen
               const isShowingExcalidraw = !!excalidrawBySession[session.id]?.isOpen
               const isShowingLogs = !!logsBySession[session.id]?.isOpen
@@ -1035,9 +1137,14 @@ export default function App() {
                           another terminal, so a user who switched could be
                           typing into a plain shell believing it was Claude, with
                           the only cue a label change on one button in the command
-                          bar. This strip states it and carries the way back. */}
+                          bar. This strip states it and carries the way back.
+                          P3.7 (the C item "narrow-window overlap", row 64):
+                          pr-12 keeps the way back clear of the GitHub button
+                          floating over this corner (GitHubPanel gh-fab:
+                          absolute top-2 right-2, 32px), as the switch note
+                          does; the note wraps, the button never shrinks. */}
                       <div
-                        className="flex-none flex items-center gap-2 px-3 py-1 text-[11px] border-b"
+                        className="flex-none flex items-center gap-2 pl-3 pr-12 py-1 text-[11px] border-b"
                         style={{
                           background: 'color-mix(in srgb, var(--color-green) 12%, transparent)',
                           borderColor: 'color-mix(in srgb, var(--color-green) 28%, transparent)',
@@ -1049,17 +1156,17 @@ export default function App() {
                           <polyline points="4 17 10 11 4 5" />
                           <line x1="12" y1="19" x2="20" y2="19" />
                         </svg>
-                        <span>Partner terminal &mdash; a plain shell, not Claude</span>
+                        <span className="min-w-0">Partner terminal &mdash; a plain shell, not {agentName}</span>
                         <button
                           onClick={() => togglePartner(session.id)}
-                          className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded focus-ring transition-colors hover:bg-surface1"
+                          className="ml-auto shrink-0 whitespace-nowrap flex items-center gap-1 px-2 py-0.5 rounded focus-ring transition-colors hover:bg-surface1"
                           style={{ color: 'var(--color-text)' }}
-                          title="Back to the Claude terminal"
+                          title={`Back to the ${agentName} terminal`}
                         >
                           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                             <path d="M19 12H5M11 18l-6-6 6-6" />
                           </svg>
-                          Back to Claude
+                          Back to {agentName}
                         </button>
                       </div>
                       <TerminalView
@@ -1159,17 +1266,26 @@ export default function App() {
 
   // Show setup dialog on first run
   if (!setupComplete) {
-    return <SetupDialog onComplete={async () => {
-      await loadAndHydrateConfig()
-      useAppMetaStore.getState().update({ setupVersion: __APP_VERSION__ })
-      setSetupComplete(true)
-      setNeedsCliSetup(false)
-    }} />
+    // "Use Codex only" is saved once the stores hold the loaded config, and
+    // hands this run to the Codex setup page (setup-handoff.ts): a fresh
+    // install meets it in the full flow anyway; a new computer pointed at an
+    // existing resources folder is an upgrader, who never sees the
+    // assistants page.
+    return <SetupDialog onComplete={(outcome) => finishSetup(outcome, {
+      loadConfig: loadAndHydrateConfig,
+      handOffCodexSetup: () => setCodexSetupHandOff(true),
+      stampSetupVersion: () => useAppMetaStore.getState().update({ setupVersion: __APP_VERSION__ }),
+      close: () => { setSetupComplete(true); setNeedsCliSetup(false) },
+    })} />
   }
 
   // Show setup dialog on version change — CLI not trusted
   if (needsCliSetup) {
-    return <SetupDialog initialStep={2} onComplete={() => { useAppMetaStore.getState().update({ setupVersion: __APP_VERSION__ }); setNeedsCliSetup(false) }} />
+    return <SetupDialog initialStep={2} onComplete={(outcome) => finishSetup(outcome, {
+      handOffCodexSetup: () => setCodexSetupHandOff(true),
+      stampSetupVersion: () => useAppMetaStore.getState().update({ setupVersion: __APP_VERSION__ }),
+      close: () => setNeedsCliSetup(false),
+    })} />
   }
 
   const handleTrainingClose = () => {
@@ -1186,12 +1302,16 @@ export default function App() {
   // Forced first-run harness gate. onboardingMeta is subscribed at the top of
   // the component (reactive) so the finish step's completion stamp
   // (settleOnboardingFinish) flips due->false and unmounts the harness on the
-  // next render. Settings view kept minimal — the codexSignIn when() only
-  // narrows the applicable set, never the due decision.
-  // `|| whatsNewOnly`: the harness is also the release-notes surface, so it is
-  // due when the notes are due even though no step is outstanding.
-  const onboardingDue = deriveOnboarding(onboardingMeta, {}).due || whatsNewOnly
-  const bootGate = pickBootGate({
+  // next render. Settings view kept minimal — the provider-choice when()s
+  // only narrow the applicable set, never the due decision.
+  // harnessRun: due for the full flow; or for the release notes (the harness
+  // is also the notes surface), even though no step is outstanding; or for
+  // this run's "Use Codex only", which hands the user to the Codex setup
+  // page: on its own (codexSetupOnly) only when neither of the others is
+  // due, otherwise the page joins that run.
+  const harness = harnessRun({ fullFlowDue: deriveOnboarding(onboardingMeta, {}).due, whatsNewOnly, codexSetupHandOff })
+  const onboardingDue = harness.due
+  const bootGateState = {
     configLoaded,
     onboardingDue,
     logsWipeBytes,
@@ -1200,13 +1320,25 @@ export default function App() {
     tourActive,
     showGuidedConfig,
     showGitHubOnboarding,
-    loggingConsentSeen: Boolean(loggingConsentSeen),
+    loggingConsentSeen: !loggingConsentDueNow,
+    codexReconfirmDue: codexReconfirmDue({ armed: codexReconfirmArmed, shown: codexReconfirmShown, answered: codexAnsweredNow }),
     resumePending: pendingRestore !== null,
     multiSpawnIntroDue,
+    helloCodexOpen: helloCodexTakeoverOpen,
     whatsNewDue: shouldShowWhatsNew(),
-    trainingDue: shouldShowTraining() || isFirstInstall(),
     githubOnboardingDue: isGitHubOnboardingDue(),
-  })
+  }
+  // bootChain: the gate that renders now, and for the Codex introduction
+  // whether every gate above it has had its turn and whether it is its turn.
+  const boot = bootChain(bootGateState)
+  const bootGate = boot.gate
+  // The onboarding pages (unless they stepped aside for a terminal they
+  // opened) and the introduction's takeover or replay cover the whole
+  // window. Behind them the app is inert: no Tab stop, click or screen
+  // reader reaches the title bar, sidebar or sessions they hide (VM audit,
+  // 2026-09-25: Tab walked out of the pages into hidden controls). The
+  // dialogs that open above them (the close dialogs) are outside it.
+  const appCovered = (bootGate === 'onboarding' && !onboardingAside) || bootGate === 'codexReconfirm' || helloCodexShowing(helloCodexOpen, boot.helloCodexTurn)
 
   return (
     <ErrorBoundary>
@@ -1217,14 +1349,23 @@ export default function App() {
         {bootGate === 'onboarding' && (
           <OnboardingHarness
             whatsNewOnly={whatsNewOnly}
-            onComplete={(startTour) => {
+            codexSetupOnly={harness.codexSetupOnly}
+            onAsideChange={setOnboardingAside}
+            onComplete={(startTour, extra) => {
               // The settle already stamped this run (the harness unmounts on
               // this render). Clear the notes-only arm explicitly: unlike the
               // full flow, nothing it writes is read back by deriveOnboarding,
               // so the gate would otherwise stay open on this state alone.
+              // The Codex setup hand-off is cleared the same way: shown once.
               setWhatsNewOnly(false)
+              setCodexSetupHandOff(false)
               // Launch the live-app tour if chosen.
               if (startTour) setTourActive(true)
+              // Hello Codex's "Start a Codex session": New saved config with
+              // Codex chosen, after the tour when one was chosen too (the
+              // tour outranks the dialog in pickBootGate), and after the
+              // resume prompt when saved sessions are waiting (held).
+              if (extra?.startCodexSession) requestCodexSession()
             }}
           />
         )}
@@ -1273,6 +1414,23 @@ export default function App() {
           />
         )}
 
+        {/* "Do you use Codex?" (bootGates: after the release notes and the
+            upgrade harness, before the rest). Yes hands the user to the Codex
+            setup page: the harness, alone, for that page (codexSetupOnly),
+            which outranks this gate once the answer is saved. */}
+        {bootGate === 'codexReconfirm' && (
+          <CodexReconfirmPage
+            onShown={() => setCodexReconfirmShown(true)}
+            onAnswered={(usesCodex) => {
+              if (usesCodex) {
+                noteCodexChosenOnUpgrade()
+                setCodexSetupHandOff(true)
+              }
+              setCodexReconfirmArmed(false)
+            }}
+          />
+        )}
+
         {bootGate === 'loggingConsent' && (
           <LoggingConsentPrompt />
         )}
@@ -1285,16 +1443,27 @@ export default function App() {
           <ResumeSessionsPrompt
             sessions={pendingRestore.sessions}
             onResume={() => {
+              // Every saved session, as before: one whose provider cannot
+              // launch reopens as Not started and keeps its conversation, so a
+              // Restart once the provider is on carries on.
               const saved = pendingRestore
+              // What this start brings back, from the saved set itself (every
+              // session in it reopens, Not started or not), before the restore
+              // lands and before anything else can launch.
+              setRestoreTally({ sessions: saved.sessions, detached: saved.detachedRemotes ?? [] })
               // ADR-009 (Lens C, R7): mark the restore in flight BEFORE clearing
               // the prompt, so a close before it lands keeps the saved file.
               restoreUnsettledRef.current = true
               setPendingRestore(null)
+              // P3.5: answered -- the file no longer keeps the offer (at once,
+              // before the restore's own write).
+              setUnansweredRestore(null)
               void restoreSavedSessions(saved, restoreUnsettledRef, { probeGoneSessions, pingAllDetachedHosts })
             }}
             onDontOpen={() => {
               const saved = pendingRestore
               setPendingRestore(null)
+              setUnansweredRestore(null)
               useCommandBarStore.getState().reconcile(useSessionStore.getState().sessions.map((s) => s.id))
               // Discard the saved cards so the next boot doesn't re-prompt; the
               // conversations themselves stay resumable from inside Claude.
@@ -1305,15 +1474,22 @@ export default function App() {
               // still running on their hosts -- hydrate the registry from the
               // declined state and persist it on its own.
               if (hydrateDetachedFromSavedState(saved) > 0) void pingAllDetachedHosts()
+              // Nothing reopens: what this start brought back is the
+              // left-running remotes just kept.
+              setRestoreTally({ sessions: [], detached: useDetachedRemotesStore.getState().entries })
               void persistDetachedOnlyOrClear()
             }}
             onRefresh={async () => {
               // The list is a boot-time snapshot; re-read the saved set so a
               // session restarted since launch shows up (#130). Keep the current
               // list on a transient empty read rather than dismissing the prompt.
+              // Boot-only: a read that lands after the prompt was answered
+              // (prev is null by then) never brings it back. P3.5: a tab
+              // launched while the prompt was open is never offered again.
               try {
                 const saved = await window.electronAPI.session.load() as SessionState | null
-                setPendingRestore((prev) => (saved && saved.sessions.length > 0 ? saved : prev))
+                const open = new Set(useSessionStore.getState().sessions.map((s) => s.id))
+                setPendingRestore((prev) => refreshRestoreOffer(prev, saved, open))
               } catch (err) {
                 console.error('[App] Resume refresh failed:', err)
               }
@@ -1327,9 +1503,24 @@ export default function App() {
         {bootGate === 'multiSpawnIntro' && (
           <MultiSpawnStartupPage
             autoEnabledIds={multiSpawnAutoEnabled}
+            tally={restoreTally}
             onDone={() => setMultiSpawnIntroDue(false)}
           />
         )}
+
+        {/* WP2 commit 6f: the Codex introduction outside onboarding. The
+            host opens the one-time takeover on the first accounts snapshot
+            that makes it due, once the boot gates are through and no dialog
+            is open; it renders on its own turn (bootGate 'helloCodex'). A
+            replay from the Feature Guide or Settings, Accounts shows here
+            too, and writes the seen stamp only if the page was still due.
+            Rendered BEFORE the close dialogs below, at z-50; they are on the
+            top layer (WINDOW_CLOSE_Z), so they paint above it. */}
+        <HelloCodexHost
+          gatesClear={boot.helloCodexGatesClear}
+          takeoverTurn={boot.helloCodexTurn}
+          onStartSession={requestCodexSession}
+        />
 
         <SshCloseDialog />
         {closeDialog && (
@@ -1341,9 +1532,17 @@ export default function App() {
             onCancel={() => { setCloseDialog(null); window.electronAPI.window.cancelClose() }}
           />
         )}
+        {/* What End could not do by itself (Claude left running in a rootful
+            container that needs a sudo password): the one surface for it. On
+            the same top layer (WINDOW_CLOSE_Z) and AFTER both close dialogs,
+            so it paints above them and has the keys (it can open while
+            either is showing). */}
+        <SshEndNoticeDialog />
 
+        {/* On the top layer with the close dialogs (WINDOW_CLOSE_Z), above
+            the onboarding pages and the introduction too. */}
         {isClosing && (
-          <DialogOverlay position="absolute" dim={0.9}>
+          <DialogOverlay position="absolute" z={WINDOW_CLOSE_Z} dim={0.9} testId="closing-overlay">
             <div className="text-center">
               <div className="text-2xl font-mono mb-4 animate-pulse" style={{ color: 'var(--brand)' }}>
                 {isUpdating ? 'Updating...' : 'Closing...'}
@@ -1354,43 +1553,49 @@ export default function App() {
             </div>
           </DialogOverlay>
         )}
-        <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
-        <div className="flex flex-1 overflow-hidden">
-          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowAccountUsage={() => setView('account-usage')} onShowTip={() => setShowTipCard((v) => !v)} />
-          <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
-            {/* One tab strip for the whole main window: session tabs + any open
-                page tabs (Tokenomics, Logs, Feature Guide, …). Always visible so
-                a page is a peer of a session, never a full-pane takeover. */}
-            <TabBar
-              activeView={view}
-              openPageTabs={openPageTabs}
-              onActivateSession={activateSessionTab}
-              onActivatePage={(v) => setView(v)}
-              onClosePage={closePageTab}
-            />
-            <div className="flex-1 flex flex-col overflow-hidden min-h-0 relative">
-              {/* The live app is always what's behind — the first-config flow is
-                  the REAL SessionDialog rendered as an overlay (below), so the
-                  user sees the workbench while creating their first session.
-                  (The old full-column GuidedConfigView is retired.) */}
-              {renderSessions()}
-              {/* Every open page tab is kept mounted and display-toggled, so
-                  switching to a session and back preserves its state — the same
-                  discipline the session list uses to keep PTYs alive. */}
-              {openPageTabs.map((v) => (
-                <div key={`page-pane:${v}`} className="flex-1 flex flex-col min-h-0" style={{ display: view === v ? 'flex' : 'none' }}>
-                  {renderPage(v)}
-                </div>
-              ))}
-            </div>
-          </main>
-        </div>
-        {/* Runtime footer spans the FULL app width (under the sidebar too) so
-            CLI/version sits at the absolute bottom-left of the app -- a global
-            status bar, distinct from the per-session statusline strip which
-            lives above the command rows inside the terminal column. */}
-        <div className="titlebar-no-drag shrink-0">
-          <BottomBar currentView={view} onViewChange={setView} onUpdateRequested={handleUpdateRequested} />
+        {/* The app behind the window-covering surfaces (appCovered): inert
+            while one of them shows. display: contents, so the layout is
+            exactly what it was; the dialogs above them are siblings, not
+            inside it. */}
+        <div className="contents" inert={appCovered} data-testid="app-behind">
+          <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
+          <div className="flex flex-1 overflow-hidden">
+            <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowAccountUsage={() => setView('account-usage')} onShowTip={() => setShowTipCard((v) => !v)} />
+            <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
+              {/* One tab strip for the whole main window: session tabs + any open
+                  page tabs (Tokenomics, Logs, Feature Guide, …). Always visible so
+                  a page is a peer of a session, never a full-pane takeover. */}
+              <TabBar
+                activeView={view}
+                openPageTabs={openPageTabs}
+                onActivateSession={activateSessionTab}
+                onActivatePage={(v) => setView(v)}
+                onClosePage={closePageTab}
+              />
+              <div className="flex-1 flex flex-col overflow-hidden min-h-0 relative">
+                {/* The live app is always what's behind — the first-config flow is
+                    the REAL SessionDialog rendered as an overlay (below), so the
+                    user sees the workbench while creating their first session.
+                    (The old full-column GuidedConfigView is retired.) */}
+                {renderSessions()}
+                {/* Every open page tab is kept mounted and display-toggled, so
+                    switching to a session and back preserves its state — the same
+                    discipline the session list uses to keep PTYs alive. */}
+                {openPageTabs.map((v) => (
+                  <div key={`page-pane:${v}`} className="flex-1 flex flex-col min-h-0" style={{ display: view === v ? 'flex' : 'none' }}>
+                    {renderPage(v)}
+                  </div>
+                ))}
+              </div>
+            </main>
+          </div>
+          {/* Runtime footer spans the FULL app width (under the sidebar too) so
+              CLI/version sits at the absolute bottom-left of the app -- a global
+              status bar, distinct from the per-session statusline strip which
+              lives above the command rows inside the terminal column. */}
+          <div className="titlebar-no-drag shrink-0">
+            <BottomBar currentView={view} onViewChange={setView} onUpdateRequested={handleUpdateRequested} />
+          </div>
         </div>
         {bootGate === 'training' && (
           <TrainingWalkthrough
@@ -1406,8 +1611,9 @@ export default function App() {
             GuidedConfigView). */}
         {bootGate === 'guidedConfig' && (
           <SessionDialog
-            onCancel={() => setShowGuidedConfig(false)}
-            onConfirm={async (data, password, sudoPassword, argSecret) => {
+            initialProvider={guidedConfigProvider}
+            onCancel={() => { setShowGuidedConfig(false); setGuidedConfigProvider(undefined) }}
+            onConfirm={async (data, password, sudoPassword, argSecret, launchAck) => {
               const { generateId } = await import('./utils/id')
               const config = { ...data, id: generateId() }
               useConfigStore.getState().addConfig(config)
@@ -1417,7 +1623,11 @@ export default function App() {
               useAppMetaStore.getState().update({ hasCreatedFirstConfig: true })
               trackUsage('sessions.create-config')
               setShowGuidedConfig(false)
-              launchConfig(config)
+              setGuidedConfigProvider(undefined)
+              const sessionId = launchConfig(config)
+              // The dialog's ticked "launch with the sign-in already on this
+              // computer" covers exactly this launch, never a later one.
+              if (sessionId && launchAck) grantLaunchAcknowledgement(sessionId, launchAck.accountId)
               setView('sessions')
             }}
           />
@@ -1426,12 +1636,19 @@ export default function App() {
             under on its first spawn (multi-account only). App-root so it
             overlays every view -- but NOT on top of a boot gate. Like
             SentinelPanel it owns no turn in the sequence, so it is suppressed
-            while any gate is up; unlike SentinelPanel it holds spawns awaiting
+            while a gate is up; unlike SentinelPanel it holds spawns awaiting
             a promise, and those simply keep waiting (no timeout on that path),
             so the queue surfaces intact once the chain clears. Without this a
             restore painted its per-session account pickers over the Multi Spawn
-            startup page, which by design comes AFTER resume. */}
-        <AccountLaunchGate suppressed={bootGate !== null} />
+            startup page, which by design comes AFTER resume. The resume offer
+            itself does not suppress it: a session launched while the offer is
+            up shows its dialog (launchDialogsSuppressed, P3.5 VM finding V1). */}
+        <AccountLaunchGate suppressed={launchDialogsSuppressed(bootGate)} />
+        {/* WP2: the per-launch confirm for an unverified sign-in (a
+            provider's own home shared with other apps on this computer).
+            Same placement and the same suppression rule as the account gate
+            above. */}
+        <LaunchAckConfirm suppressed={launchDialogsSuppressed(bootGate)} />
         {/* Sentinel findings panel: global overlay, driven by sentinelStore.
             Suppressed while ANY boot gate is up — it is not a gate itself (it
             owns no turn in the sequence and can arrive at any time), but it

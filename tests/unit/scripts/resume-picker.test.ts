@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, statSync, existsSync, rmSync } from 'fs'
-import { join } from 'path'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, statSync, existsSync, rmSync, symlinkSync, realpathSync } from 'fs'
+import { join, basename, dirname } from 'path'
 import { tmpdir } from 'os'
 
 // The picker is plain Node.js (CommonJS) and guards main() behind
@@ -9,6 +9,7 @@ import { tmpdir } from 'os'
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const picker = require('../../../scripts/resume-picker.js') as {
   encodeProjectPath: (p: string) => string
+  resolveProjectDir: (claudeProjectsDir: string, cwd: string, realpath?: (p: string) => string) => string | null
   parseWorktrees: (text: string) => Array<{ path: string; branch: string | null; isMain: boolean }>
   listWorktrees: (cwd: string) => Array<{ path: string; branch: string | null; isMain: boolean }>
   worktreeLabelFor: (wt: { path: string; branch: string | null; isMain: boolean }) => string | null
@@ -53,6 +54,64 @@ describe('resume-picker encodeProjectPath (mangle rule)', () => {
 
   it('does not collapse separator runs (\\\\ → --)', () => {
     expect(picker.encodeProjectPath('a\\\\b')).toBe('a--b')
+  })
+
+  // P3.16a round 2 (Q1): Claude Code cuts a name longer than 200 characters at
+  // 200 and adds a hash of the whole folder; the picker's copy of the rule
+  // matches the shared one (src/shared/project-key.ts) and Claude Code's.
+  it('a folder whose name is longer than 200 characters: cut at 200 with the hash Claude Code adds', () => {
+    expect(picker.encodeProjectPath('C:\\Users\\jane\\' + 'a'.repeat(190))).toBe('C--Users-jane-' + 'a'.repeat(186) + '-vwg8id')
+    expect(picker.encodeProjectPath('/tmp/' + 'x'.repeat(196))).toBe('-tmp-' + 'x'.repeat(195) + '-diaimx')
+    expect(picker.encodeProjectPath('/tmp/' + 'x'.repeat(195))).toBe('-tmp-' + 'x'.repeat(195))
+  })
+})
+
+// -- resolveProjectDir: the real path, as the app names it --
+// PR-level ADR-009 round 1 (A3): Claude Code names a projects folder from the
+// real path of the folder it runs in, and so does the app
+// (transcript-discovery.ts claudeProjectDirName: fs.realpathSync, the JS one,
+// and the folder as given when that cannot be read). The picker looks the
+// folder up the same way, so a launch folder reached through a link or a
+// junction finds the conversations Claude Code wrote.
+describe('resume-picker resolveProjectDir (the real path)', () => {
+  const PREFIX = 'ccc-rp-realpath-'
+  let base: string
+  beforeEach(() => { base = mkdtempSync(join(tmpdir(), PREFIX)) })
+  afterEach(() => {
+    // Only the folder this test made, by its own prefix, in the folder it was made in.
+    if (basename(base).startsWith(PREFIX) && dirname(base) === tmpdir()) rmSync(base, { recursive: true, force: true })
+  })
+
+  it('names the folder by its real path; one whose real path cannot be read keeps its own spelling', () => {
+    const projects = join(base, 'projects')
+    mkdirSync(join(projects, picker.encodeProjectPath('/work/real-project')), { recursive: true })
+    mkdirSync(join(projects, picker.encodeProjectPath('/work/gone')), { recursive: true })
+    const realOf = (p: string) => (p === '/work/linked-project' ? '/work/real-project' : p)
+    expect(picker.resolveProjectDir(projects, '/work/linked-project', realOf)).toBe(join(projects, picker.encodeProjectPath('/work/real-project')))
+    const unreadable = (_p: string): string => { throw new Error('ENOENT') }
+    expect(picker.resolveProjectDir(projects, '/work/gone', unreadable)).toBe(join(projects, picker.encodeProjectPath('/work/gone')))
+  })
+
+  it('the real file system: a launch folder through a junction (Windows) or a link finds the folder named for its target', (ctx) => {
+    const real = join(base, 'real-project')
+    const link = join(base, 'linked-project')
+    mkdirSync(real)
+    // A temp volume that cannot hold the link: skipped, never passed. ENOENT and
+    // EEXIST are this test's own setup going wrong, so they fail it.
+    let linked = false
+    try {
+      symlinkSync(real, link, process.platform === 'win32' ? 'junction' : 'dir')
+      linked = true
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code
+      if (code === 'ENOENT' || code === 'EEXIST') throw err
+    }
+    if (!linked) return ctx.skip()
+    const projects = join(base, 'projects')
+    const named = picker.encodeProjectPath(realpathSync(real))
+    mkdirSync(join(projects, named), { recursive: true })
+    expect(picker.encodeProjectPath(link).toLowerCase()).not.toBe(named.toLowerCase())
+    expect(picker.resolveProjectDir(projects, link)).toBe(join(projects, named))
   })
 })
 

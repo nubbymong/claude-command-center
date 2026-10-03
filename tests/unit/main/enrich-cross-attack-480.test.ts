@@ -7,7 +7,7 @@ import type { SessionState } from '../../../src/main/session-state'
 // with NO exact bind and ONLY a shared heuristic bind (the newest .jsonl in the
 // per-repo folder). The main enrich path must NOT stamp the same conversation
 // uuid on both cards — that was the same-repo cross that survived on the relaunch
-// (enrich) path. Deps are shaped EXACTLY as src/main/index.ts wires them.
+// (enrich) path. Deps are shaped EXACTLY as src/main/app-session-durability.ts wires them.
 
 function state(sessions: any[]): SessionState {
   return { sessions, activeSessionId: sessions[0]?.id, savedAt: 1 } as unknown as SessionState
@@ -18,7 +18,7 @@ function state(sessions: any[]): SessionState {
 const SHARED_HEUR = '/repo/proj/9f9f9f9f-1111-2222-3333-444444444444.jsonl'
 const CROSS_UUID = '9f9f9f9f-1111-2222-3333-444444444444'
 
-/** Deps mirroring src/main/index.ts createSessionDurability wiring:
+/** Deps mirroring src/main/app-session-durability.ts createSessionDurability wiring:
  *  getExactResumeTarget -> binder exact map (null: nothing authenticated yet),
  *  getLatestTranscriptPath -> binder heuristic newest-file scan (shared sibling),
  *  isExactBindSourceActive -> real hook gate (hooks ON => true),

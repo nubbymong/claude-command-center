@@ -136,11 +136,143 @@ describe('Transparency recap rows', () => {
     })
   })
 
+  describe('the Codex row', () => {
+    const codexValue = () => {
+      const c = [...container.querySelectorAll('.gh-card')].find((x) => x.querySelector('.gh-t')?.textContent === 'Codex')
+      return c?.querySelector('.gh-d')?.textContent
+    }
+
+    it('says On only once the user said yes', () => {
+      setSettings({ codexEnabled: true, codexAnswered: true })
+      render()
+      expect(codexValue()).toBe('On')
+    })
+
+    it('points at Settings, Accounts to turn Codex on when the answer was no', () => {
+      setSettings({ codexEnabled: false, codexAnswered: true })
+      render()
+      expect(codexValue()).toBe('Off (Settings, Accounts)')
+    })
+
+    it('says Not set up, with where to set it up, while the user has not answered', () => {
+      setSettings({})
+      render()
+      expect(codexValue()).toBe('Not set up (Settings, Accounts)')
+    })
+  })
+
   it('keeps the rest of the recap intact', () => {
     render()
     const text = container.textContent ?? ''
-    for (const label of ['Theme', 'Account', 'GitHub', 'Status line', 'Codex (Beta)', 'Built-in tools']) {
+    for (const label of ['Theme', 'Account', 'GitHub', 'Status line', 'Codex', 'Built-in Tools']) {
       expect(text).toContain(label)
     }
+    // P4.11 (row 54): the Codex row is no longer labelled Beta.
+    expect(text).not.toContain('Codex (Beta)')
+  })
+})
+
+// P3.9 (row 42; left by P3.4): the Sentinel card says what Sentinel watches
+// (the assistants in use) and what its analysis runs on and spends.
+describe('Transparency, the Sentinel card (P3.9)', () => {
+  let container: HTMLDivElement
+  let root: Root
+  beforeEach(() => {
+    ;(window as any).electronAPI.accountProfiles = { globalEmail: vi.fn(() => Promise.resolve(null)) }
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+  })
+  afterEach(() => {
+    act(() => { root.unmount() })
+    container.remove()
+  })
+  const cardText = (): string => {
+    const title = [...container.querySelectorAll('.tc-t')].find((e) => e.textContent === 'Sentinel')
+    expect(title, 'the Sentinel card').toBeTruthy()
+    return title!.parentElement!.querySelector('.tc-d')!.textContent ?? ''
+  }
+  const renderWith = (over: Partial<Settings>) => {
+    setSettings(over)
+    act(() => { root.render(React.createElement(TransparencyStep, { onNext: () => {}, onBack: () => {} })) })
+  }
+
+  it('Claude Code alone: as before', () => {
+    renderWith({})
+    expect(cardText()).toBe('Watches Claude Code updates for changes that could break your setup and proposes fixes. Off by default because it spends Claude tokens when Claude updates. Takes effect after a restart.')
+  })
+
+  it('Codex alone: Codex updates, Codex usage, nothing about Claude', () => {
+    renderWith({ claudeEnabled: false, codexEnabled: true, codexAnswered: true })
+    expect(cardText()).toBe('Watches Codex updates for changes that could break your setup and proposes fixes. Off by default because it spends Codex usage when Codex updates. Takes effect after a restart.')
+  })
+
+  it('both on: both are watched; the analysis spends the tokens of the one Ask Conductor runs on', () => {
+    renderWith({ claudeEnabled: true, codexEnabled: true, codexAnswered: true })
+    expect(cardText()).toContain('Watches Claude Code and Codex updates')
+    expect(cardText()).toContain('its analysis spends Claude tokens when either updates.')
+    renderWith({ claudeEnabled: true, codexEnabled: true, codexAnswered: true, askConductorProvider: 'codex' } as Partial<Settings>)
+    expect(cardText()).toContain('its analysis spends Codex usage when either updates.')
+  })
+})
+
+// P3.12 (row 31; left by P3.4): the "Index conversation logs" card names what
+// is indexed: Claude's transcripts, Codex's, or both, by the assistants in use.
+describe('Transparency, the log indexing card (P3.12)', () => {
+  let container: HTMLDivElement
+  let root: Root
+  beforeEach(() => {
+    ;(window as any).electronAPI.accountProfiles = { globalEmail: vi.fn(() => Promise.resolve(null)) }
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+  })
+  afterEach(() => {
+    act(() => { root.unmount() })
+    container.remove()
+  })
+  const cardText = (): string => {
+    const title = [...container.querySelectorAll('.tc-t')].find((e) => e.textContent === 'Index conversation logs')
+    expect(title, 'the log indexing card').toBeTruthy()
+    return title!.parentElement!.querySelector('.tc-d')!.textContent ?? ''
+  }
+  const renderWith = (over: Partial<Settings>) => {
+    setSettings(over)
+    act(() => { root.render(React.createElement(TransparencyStep, { onNext: () => {}, onBack: () => {} })) })
+  }
+
+  it('Claude Code alone: the Logs page and the Memory page\'s recent sessions, and Tokenomics has an index of its own', () => {
+    renderWith({})
+    expect(cardText().replace(/\s+/g, ' ')).toBe("Powers the Logs page, and the recent sessions on the Memory page, by indexing Claude's own transcripts (~/.claude/projects). Tokenomics reads them with an index of its own, which this switch does not change. Indexing is local; turning it off stops it at once, and turning it on applies to sessions started after. Your conversations stay in Claude's files either way.")
+  })
+
+  // P3.16a (U2): this index does not power Tokenomics: the Tokenomics cost index
+  // is a separate one that the switch does not stop (app knowledge, privacy;
+  // PRIVACY.md), and the Memory page's recent sessions are the only reader of
+  // this one besides the Logs page.
+  it('P3.16a (U2): in every mode the card says Tokenomics has its own index, never that this one powers it', () => {
+    for (const over of [{}, { claudeEnabled: false, codexEnabled: true, codexAnswered: true }, { claudeEnabled: true, codexEnabled: true, codexAnswered: true }] as Partial<Settings>[]) {
+      renderWith(over)
+      const t = cardText().replace(/\s+/g, ' ')
+      expect(t, JSON.stringify(over)).toContain('Tokenomics reads them with an index of its own, which this switch does not change.')
+      // By sentence (a full stop and a space): the dot in ~/.claude/projects
+      // does not end one, as `[^.]*` did (P3.16a UI round 1).
+      expect(t.split(/\.\s/).filter((s) => /Powers.*Tokenomics/.test(s)), JSON.stringify(over)).toEqual([])
+    }
+  })
+
+  it('Codex alone: Codex\'s transcripts, in each account\'s sessions folder, nothing about Claude', () => {
+    renderWith({ claudeEnabled: false, codexEnabled: true, codexAnswered: true })
+    const t = cardText()
+    expect(t).toContain("Codex's own transcripts (each Codex account's sessions folder)")
+    expect(t).toContain("Your conversations stay in Codex's files either way.")
+    expect(t).not.toMatch(/Claude|\.claude/)
+  })
+
+  it('both on: both are named', () => {
+    renderWith({ claudeEnabled: true, codexEnabled: true, codexAnswered: true })
+    const t = cardText()
+    expect(t).toContain("Claude's own transcripts (~/.claude/projects) and Codex's (each Codex account's sessions folder)")
+    expect(t).toContain('Your conversations stay in their own files either way.')
   })
 })

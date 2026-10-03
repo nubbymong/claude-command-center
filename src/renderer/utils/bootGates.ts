@@ -22,15 +22,27 @@
  *                          finishing with startTour.
  *   5. guidedConfig      — the first-config SessionDialog, opened from the
  *                          tour, the sidebar FirstRunCard or the empty state.
+ *                          It launches a session, so a due loggingConsent
+ *                          notice (8) is shown before it.
  *   6. githubOnboarding  — opened by its own effect 120ms after the gates
  *                          above clear.
- *   7. loggingConsent    — one-time notice. Waits on the *due* predicates so it
+ *   7. codexReconfirm    — "Do you use Codex?", asked once of everyone who
+ *                          updates (owner decision 2026-09-26; see
+ *                          onboarding/codex-reconfirm-gate.ts). After the
+ *                          release notes and the upgrade harness (the `*Due`
+ *                          short-circuit below holds it until they are done),
+ *                          and before everything that uses the app: the resume
+ *                          prompt restores sessions, and a Codex one would only
+ *                          be refused while the question is unanswered. A Yes
+ *                          hands the user to the Codex setup page, which is the
+ *                          harness again (the `onboarding` gate above).
+ *   8. loggingConsent    — one-time notice. Waits on the *due* predicates so it
  *                          doesn't flash for the few hundred ms before a higher
  *                          gate's timer fires and then get swapped out from
  *                          under the user.
- *   8. resume            — "restore your sessions?". Every boot, so it sits
+ *   9. resume            — "restore your sessions?". Every boot, so it sits
  *                          below the one-time surfaces above.
- *   9. multiSpawnIntro   — the Allow Multi Spawn startup page (phase 5). LAST,
+ *  10. multiSpawnIntro   — the Allow Multi Spawn startup page (phase 5). LAST,
  *                          and both halves of that are deliberate. It must come
  *                          after the release notes, because it is the second
  *                          page of one upgrade story — and the `*Due`
@@ -40,6 +52,13 @@
  *                          copy counts are read from the sessions this start
  *                          brought back; shown first it would count zero and
  *                          claim nothing was resumable.
+ *  11. helloCodex       — the one-time Codex introduction (WP2 commit 6f),
+ *                          outside onboarding. After everything above,
+ *                          including the `*Due` short-circuit: it must never
+ *                          cover a running setup. bootChain below asks this
+ *                          chain whether it would be next; only then does
+ *                          HelloCodexHost latch it open, and only once it is
+ *                          open is it an input here.
  *
  * `resume` joined the chain on 2026-08-21. It and the Sentinel panel were the
  * two boot surfaces still OUTSIDE it, each with its own render condition — the
@@ -47,7 +66,8 @@
  * at all — which is why a launch could paint release notes, a resume prompt and
  * a findings panel on top of one another. Sentinel is not a gate (it owns no
  * turn in the sequence); it is simply suppressed while any gate is up, as is the
- * pre-spawn account picker (#607) and the new-account prompt.
+ * new-account prompt, and the pre-spawn account picker (#607) and launch
+ * confirm are while any gate but the resume offer is (launchDialogsSuppressed).
  *
  * THE INVARIANT (#609): a gate this returns MUST render. Splitting the decision
  * — selecting a gate here while its render site ALSO tests something else — can
@@ -68,9 +88,11 @@ export type BootGate =
   | 'guidedTour'
   | 'guidedConfig'
   | 'githubOnboarding'
+  | 'codexReconfirm'
   | 'loggingConsent'
   | 'resume'
   | 'multiSpawnIntro'
+  | 'helloCodex'
 
 export interface BootGateState {
   configLoaded: boolean
@@ -87,16 +109,20 @@ export interface BootGateState {
   showGuidedConfig?: boolean
   showGitHubOnboarding: boolean
   loggingConsentSeen: boolean
+  /** The one-time "Do you use Codex?" page is due (codexReconfirmDue in
+   *  onboarding/codex-reconfirm-gate.ts). Optional: absent === false. */
+  codexReconfirmDue?: boolean
   /** Saved sessions are waiting on a restore decision. Optional: absent === false. */
   resumePending?: boolean
   /** The Allow Multi Spawn startup page is due this launch — decided once at
    *  boot (decideMultiSpawnIntro) from meta read before anything stamped.
    *  Optional: absent === false. */
   multiSpawnIntroDue?: boolean
+  /** The Codex introduction's one-time takeover is open (latched by App once
+   *  it was due and nothing was in its way). Optional: absent === false. */
+  helloCodexOpen?: boolean
   /** shouldShowWhatsNew() — true before postConfigInit has armed the harness. */
   whatsNewDue: boolean
-  /** shouldShowTraining() || isFirstInstall() — true before the tour opens. */
-  trainingDue: boolean
   /** isGitHubOnboardingDue() — true before the onboarding effect's 120ms timer fires. */
   githubOnboardingDue: boolean
 }
@@ -110,11 +136,54 @@ export function pickBootGate(s: BootGateState): BootGate | null {
   // Above the *Due short-circuit below: both are opened by a user action that
   // has already happened, so they must never be starved by a pending timer.
   if (s.tourActive) return 'guidedTour'
-  if (s.showGuidedConfig) return 'guidedConfig'
+  // P3.12 round 2 (W9): the first-config dialog launches a session, so a
+  // conversation indexing notice that is due comes first.
+  if (s.showGuidedConfig) return s.loggingConsentSeen ? 'guidedConfig' : 'loggingConsent'
   if (s.showGitHubOnboarding) return 'githubOnboarding'
-  if (s.whatsNewDue || s.trainingDue || s.githubOnboardingDue) return null
+  // No tour-due wait (PR 4 VM final): nothing opens the tour by itself since
+  // the onboarding page replaced its auto-open (2026-08-21), so waiting on an
+  // unseen tour card held every gate below, the resume prompt included, for
+  // good. The tour opens from the Feature Guide only, as the training gate.
+  if (s.whatsNewDue || s.githubOnboardingDue) return null
+  if (s.codexReconfirmDue) return 'codexReconfirm'
   if (!s.loggingConsentSeen) return 'loggingConsent'
   if (s.resumePending) return 'resume'
   if (s.multiSpawnIntroDue) return 'multiSpawnIntro'
+  if (s.helloCodexOpen) return 'helloCodex'
   return null
+}
+
+/**
+ * App's whole boot-chain decision, in one place so it can be tested as App
+ * uses it: the gate that renders now, and the two answers the Codex
+ * introduction's host needs. `helloCodexGatesClear`: every gate above the
+ * takeover has had its turn, the *Due waits included (would the takeover be
+ * next if it were open?). `helloCodexTurn`: the takeover is open and it is
+ * its turn, so it renders.
+ */
+export function bootChain(s: BootGateState): { gate: BootGate | null; helloCodexGatesClear: boolean; helloCodexTurn: boolean } {
+  const gate = pickBootGate(s)
+  return {
+    gate,
+    helloCodexGatesClear: pickBootGate({ ...s, helloCodexOpen: true }) === 'helloCodex',
+    helloCodexTurn: gate === 'helloCodex',
+  }
+}
+
+/**
+ * Whether the dialogs a launch can need before it starts -- the account
+ * choice (AccountLaunchGate) and the confirm for an unverified sign-in
+ * (LaunchAckConfirm) -- are held back by the gate on screen. They own no
+ * turn in the chain, so a gate holds them back (their queue waits, nothing
+ * is answered) and they surface once it clears: a restore starts its
+ * sessions the moment the resume offer is answered, and their dialogs must
+ * not paint over the page after it (the Multi Spawn startup page, #607).
+ * The resume offer itself does not hold them back (P3.5 VM finding V1): it
+ * is not modal, the user can launch a session while it is up, and no
+ * restore has started before it is answered, so a dialog then is for a
+ * launch the user just made; held back, that launch showed nothing and
+ * started nothing until the offer was answered.
+ */
+export function launchDialogsSuppressed(gate: BootGate | null): boolean {
+  return gate !== null && gate !== 'resume'
 }

@@ -1,0 +1,8 @@
+{"type":"thread.started","thread_id":"00000000-0000-7000-8000-000000000018"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"`--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this invocation."}}
+{"type":"item.completed","item":{"id":"item_1","type":"error","message":"`--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this invocation."}}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"item_2","type":"file_change","changes":[{"path":"C:\\Users\\alex\\projects\\edit-demo\\note.txt","kind":"update"}],"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_2","type":"file_change","changes":[{"path":"C:\\Users\\alex\\projects\\edit-demo\\note.txt","kind":"update"}],"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_3","type":"agent_message","text":"done"}}
+{"type":"turn.completed","usage":{"input_tokens":30757,"cached_input_tokens":27392,"cache_write_input_tokens":0,"output_tokens":62,"reasoning_output_tokens":0}}

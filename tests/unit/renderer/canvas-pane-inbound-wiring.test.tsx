@@ -211,3 +211,50 @@ describe('the hover readout is marked as the page’s own account of itself', ()
     await act(async () => root.unmount())
   })
 })
+
+// [host] P4.1 review RA-2: the page hands the notices the id of the canvas it
+// has open, at both of its mounts, so a review or verdict Codex did not get is
+// shown on the canvas it was filed on and on no other (review A-1).
+const { useSessionStore } = await import('../../../src/renderer/stores/sessionStore')
+const { useCodexMarkerNoticeStore, _resetCodexMarkerNoticesForTest } = await import('../../../src/renderer/stores/codexMarkerNoticeStore')
+
+describe('the not-delivered notices are told the open canvas (P4.1 review RA-2)', () => {
+  const MINE = 'Approved v1 on THIS canvas'
+  const OTHER = 'Approved v9 on ANOTHER canvas'
+  const seed = async (): Promise<void> => {
+    await act(async () => {
+      useSessionStore.setState({ sessions: [{ id: SID, provider: 'codex', createdAt: 1 } as never] })
+      useCodexMarkerNoticeStore.getState().add({ sessionId: SID, canvasId: STATE.canvasId, line: MINE, reason: 'busy-timeout' })
+      useCodexMarkerNoticeStore.getState().add({ sessionId: SID, canvasId: 'canvas-other', line: OTHER, reason: 'busy-timeout' })
+    })
+  }
+  afterEach(() => {
+    _resetCodexMarkerNoticesForTest()
+    useSessionStore.setState({ sessions: [] })
+  })
+
+  it('[host] a canvas on show: its own line is shown, another canvas\'s is not', async () => {
+    await seed()
+    const lines = Array.from(container.querySelectorAll('[data-testid="codex-canvas-undelivered"]')).map((el) => el.textContent ?? '')
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toContain(MINE)
+    expect(container.textContent).not.toContain(OTHER)
+    await act(async () => root.unmount())
+  })
+
+  it('[host] the canvas with no version on show yet (the empty state): the same', async () => {
+    await act(async () => {
+      useCanvasStore.setState({
+        bySessionId: {
+          [SID]: { canvasId: STATE.canvasId, versions: [], activeVersionId: null, interactionMode: 'browse', emptyView: 'intro', unseenRender: false, loaded: true },
+        },
+      } as never)
+    })
+    await seed()
+    const lines = Array.from(container.querySelectorAll('[data-testid="codex-canvas-undelivered"]')).map((el) => el.textContent ?? '')
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toContain(MINE)
+    expect(container.textContent).not.toContain(OTHER)
+    await act(async () => root.unmount())
+  })
+})

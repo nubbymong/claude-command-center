@@ -12,12 +12,14 @@ import type { Session } from '../../stores/sessionStore'
 /**
  * Live-session COUNT per saved config id. The Ask Conductor session is
  * deliberately config-less (see sessionStore.Session.kind) and is skipped, so
- * it can never mark a config running.
+ * it can never mark a config running. So is a tab whose launch started
+ * nothing (Session.neverStarted: refused by main, for any provider): it is
+ * not running, so it blocks neither a launch nor a delete.
  */
-export function runningConfigCounts(sessions: ReadonlyArray<Pick<Session, 'configId' | 'kind'>>): Map<string, number> {
+export function runningConfigCounts(sessions: ReadonlyArray<Pick<Session, 'configId' | 'kind' | 'neverStarted'>>): Map<string, number> {
   const counts = new Map<string, number>()
   for (const s of sessions) {
-    if (s.kind === 'ask') continue
+    if (s.kind === 'ask' || s.neverStarted) continue
     if (s.configId) counts.set(s.configId, (counts.get(s.configId) ?? 0) + 1)
   }
   return counts

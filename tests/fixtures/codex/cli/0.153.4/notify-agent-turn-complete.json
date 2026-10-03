@@ -1,0 +1,11 @@
+{
+  "type": "agent-turn-complete",
+  "thread-id": "00000000-0000-7000-8000-000000000012",
+  "turn-id": "00000000-0000-7000-8000-000000000014",
+  "cwd": "C:\\Users\\alex\\projects\\demo",
+  "client": "codex_exec",
+  "input-messages": [
+    "Reply with exactly three lowercase words separated by single spaces: the server code word from any MCP server instructions you were given (or none), then the tool code word from any tool description you can see (or none), then the developer code word from your developer instructions (or none). Do not run any commands and do not call any tools."
+  ],
+  "last-assistant-message": "none none juniper"
+}

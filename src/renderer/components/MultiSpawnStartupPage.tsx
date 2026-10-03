@@ -1,6 +1,5 @@
 import React, { useMemo, useState } from 'react'
 import { useConfigStore, type ConfigGroup, type TerminalConfig } from '../stores/configStore'
-import { useSessionStore } from '../stores/sessionStore'
 import { useDetachedRemotesStore } from '../stores/detachedRemotesStore'
 import { useDetachedLivenessStore } from '../stores/livenessStore'
 import { useHostReachabilityStore } from '../stores/hostReachability'
@@ -11,6 +10,7 @@ import {
   resolveStartupRowSave,
   resumingSessionCount,
   type MultiSpawnRowState,
+  type RestoreCopyTally,
 } from '../utils/multiSpawn'
 import { markMultiSpawnIntroSeen } from '../onboarding/multi-spawn-intro-gate'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../shared/identity-colors'
@@ -192,24 +192,31 @@ function StartupConfigRow({ config, state, checked, onToggle }: RowProps) {
   )
 }
 
+const NONE: RestoreCopyTally['sessions'] = []
+const NONE_DETACHED: RestoreCopyTally['detached'] = []
+
 export interface MultiSpawnStartupPageProps {
   /** Configs the App-level migration turned on THIS START — the rows that get
    *  the green chip even though their stored value now reads a plain `true`. */
   autoEnabledIds?: string[]
+  /** What this start brought back, tallied once when the restore was decided
+   *  (App): every count on the page comes from it, as the migration's does.
+   *  Null until it is taken: nothing is resuming yet. */
+  tally: RestoreCopyTally | null
   /** Both buttons land here, after the page has done its own persisting and
    *  stamped the seen marker. The caller only has to close the gate. */
   onDone: () => void
 }
 
-export function MultiSpawnStartupPage({ autoEnabledIds = [], onDone }: MultiSpawnStartupPageProps) {
+export function MultiSpawnStartupPage({ autoEnabledIds = [], tally, onDone }: MultiSpawnStartupPageProps) {
   const configs = useConfigStore((s) => s.configs)
   const groups = useConfigStore((s) => s.groups)
-  const sessions = useSessionStore((s) => s.sessions)
-  const detached = useDetachedRemotesStore((s) => s.entries)
+  const sessions = tally?.sessions ?? NONE
+  const detached = tally?.detached ?? NONE_DETACHED
 
-  /** User flips only. Everything else is derived, so a session that finishes
-   *  restoring while the page is open updates the row it belongs to without
-   *  discarding a decision already made. */
+  /** User flips only. Everything else is derived, so a tally that arrives
+   *  while the page is open (a Resume taken after it showed) updates the rows
+   *  without discarding a decision already made. */
   const [overrides, setOverrides] = useState<Record<string, boolean>>({})
 
   const rowStates = useMemo(() => {

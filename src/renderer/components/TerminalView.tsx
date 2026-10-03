@@ -18,14 +18,23 @@ import {
 } from './terminal/staleGlyphRepaint'
 import { useSessionStore } from '../stores/sessionStore'
 import { useRestartSession } from '../hooks/useRestartSession'
-import { persistLastUsedAccount } from '../session-persistence'
+import { persistLastUsedAccount, persistSessionProviderAccount } from '../session-persistence'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useAccountGateStore, GATE_CANCELLED } from '../stores/accountGateStore'
 import { forgetSessionBrowserProfile } from '../stores/sshCloseStore'
-import { hasSpawned, markSpawned, clearSpawned, killSessionPty } from '../ptyTracker'
+import { hasSpawned, markSpawned, clearSpawned, killSessionPty, isCurrentSpawn } from '../ptyTracker'
+import { spentCommand } from '../utils/commandTerminal'
+import { listenForSpawnEnd, reportSpawnEnd } from '../utils/spawnEndNotice'
+import { carryNote, terminalNoteLine } from '../utils/launchNote'
+import { sessionProviderAccount } from '../utils/accountChip'
+import { switchOrigin, forgetSwitchOrigin } from '../utils/switchOrigin'
 import SshFlowOverlay from './SshFlowOverlay'
 import { shouldUseResumePicker } from '../utils/resumePicker'
-import { shouldGateAccountChoice, formatSpawnError } from '../utils/sessionLaunch'
+import { shouldGateAccountChoice } from '../utils/sessionLaunch'
+import { resolveLaunchAccount, launchStep, accountsSnapshotWhenLoaded, describeLaunchFailure, providerOffForLaunch, type LaunchAccountFields, type LaunchAccountPlan, type LaunchFailureContext, type LaunchStep } from '../utils/launchAccount'
+import { createSpawnExitHold, processExitLine, type SpawnExitHold, type SpawnOutcome } from '../utils/spawnExitHold'
+import { useProviderAccountsStore, providerView, accountDisplayName } from '../stores/providerAccountsStore'
+import { useLaunchAckStore, consumeLaunchAcknowledgement } from '../stores/launchAckStore'
 import { stripCursorSequences } from '../utils/terminalFormatting'
 import { isControlReportOnly, resolveContextMenuIntent, blindPasteNeedsMenu, sanitizeClipboardForPaste, sanitizePasteIntoTerminal, isMouseTracking, isOrdinaryEditable } from '../utils/terminalInput'
 import TerminalContextMenu from './TerminalContextMenu'
@@ -33,6 +42,9 @@ import { decideFollow } from '../utils/terminalScroll'
 import { getTerminalTheme } from './terminal/terminalTheme'
 import { installTerminalKeybindings } from './terminal/terminalKeybindings'
 import { registerRepainter, requestResync } from './terminal/repaintRegistry'
+import { registerScreenReader, readXtermScreen } from './terminal/screenRegistry'
+import { readContextPercent, stripTerminalControls } from './terminal/contextPercent'
+import { typeWhenCodexComposerReady, planModeNote, CODEX_PLAN_MODE_WAIT_MS } from '../lib/codexComposer'
 import { createGeometryResync, type GeometryResync } from './terminal/geometryResync'
 import { createTmuxWheelScroll, registerTmuxWheelScroll, type TmuxWheelScroll } from './terminal/tmuxWheelScroll'
 import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS, gpuRenderingEnabled } from '../stores/settingsStore'
@@ -47,6 +59,11 @@ import { useActiveTabEffect } from '../hooks/useActiveTabEffect'
 import { useCursorLayerVisibility } from '../hooks/useCursorLayerVisibility'
 import { noteActivityGrace } from '../stores/activeStore'
 import type { ProviderId, CodexOptions, TerminalOptions } from '../../shared/types'
+import { spawnRefusalOf, refusedTabText } from '../../shared/providers'
+import { reconcileRefusedMultiSpawn } from '../utils/refusedMultiSpawn'
+import { isConfigLaunchBlocked, useLaunchGateSettings, restartLaunchRefusal } from '../hooks/useLaunchConfig'
+import { useConfigStore } from '../stores/configStore'
+import { generateId } from '../utils/id'
 
 // Re-export for consumers
 export { killSessionPty } from '../ptyTracker'
@@ -128,6 +145,19 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   const attentionAckedRef = useRef(false)
   const [isScrolledUp, setIsScrolledUp] = useState(false)
   const isScrolledUpRef = useRef(false)
+  /** Main refused this view's launch because its provider is off: an SSH
+   *  tab then shows the reason in its terminal, not a "Connecting..." card
+   *  for a connection that was never made. A Restart remounts the view. */
+  const [launchRefused, setLaunchRefused] = useState(false)
+  /** P3.6 (row 22): what a Switch account's respawn says when the
+   *  conversation did not come along whole (utils/launchNote), shown above
+   *  the terminal until dismissed. A Restart remounts the view. */
+  const [switchNote, setSwitchNote] = useState<string | null>(null)
+  /** The renderer's own launch rule says this tab's provider is off: an SSH
+   *  tab for it never shows the "Connecting..." card at all (main refuses
+   *  its launch, and the terminal says why), not even until main answers. */
+  const launchGateSettings = useLaunchGateSettings()
+  const providerOffHere = !shellOnly && isConfigLaunchBlocked({ provider: provider ?? 'claude', shellOnly }, launchGateSettings)
   /** The live repainter, so effects outside the init effect can ask for a
    *  repaint — see the tab-activation repaint below. */
   const repainterRef = useRef<StaleGlyphRepainter | null>(null)
@@ -478,11 +508,17 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     let resizeObserver: ResizeObserver | null = null
     let unsubData: (() => void) | null = null
     let unsubExit: (() => void) | null = null
+    let unsubSpawnEnd: (() => void) | null = null
     let disposeKeybindings: (() => void) | null = null
     let geometryResync: GeometryResync | null = null
     let handleContextMenu: ((e: MouseEvent) => void) | null = null
     let handlePaste: ((e: ClipboardEvent) => void) | null = null
     let disposed = false
+    // WP2 commit 6: which pty:exit events this view may act on while it is
+    // starting the session's PTY (the Restart race: an exit of the run it
+    // replaces must not mark the live session exited). The rule and why it
+    // holds: utils/spawnExitHold.ts. Replaced as the view starts listening.
+    let exitHold: SpawnExitHold = createSpawnExitHold(false)
     let parseTimer: ReturnType<typeof setTimeout> | null = null
     let pendingParseData = ''
     let refreshTimer: ReturnType<typeof setTimeout> | null = null
@@ -493,10 +529,19 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     let repainter: StaleGlyphRepainter | null = null
     /** Undo the #379 fix-E registration; see registerRepainter below. */
     let unregisterRepainter: (() => void) | null = null
+    /** P3.8 round 1: undo the screen reader registration (screenRegistry). */
+    let unregisterScreen: (() => void) | null = null
+    /** P3.8 round 1 (L2): a Plan mode launch's wait for the ready composer. */
+    let planModeWait: { cancel: () => void } | null = null
     let lastWheelAt = Number.NEGATIVE_INFINITY
 
     // PTY-integrity instrumentation (scoped to this session's mount; resets on
-    // sessionId change because the effect re-runs).
+    // sessionId change because the effect re-runs). The generation names this
+    // mount on every report: a re-key that does not respawn the PTY (a Restart
+    // from the partner view re-keys this view while main's PTY runs on) starts
+    // these counts again from 0, and main restarts its count for the session
+    // when the generation changes.
+    const integrityGeneration = generateId()
     let bytesReceived = 0, bytesWritten = 0, strippedBytes = 0, ptyResizeCount = 0
     let lastSentCols: number | null = null, lastSentRows: number | null = null
     let reportTimer: ReturnType<typeof setTimeout> | null = null
@@ -531,8 +576,66 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           bytesReceived, bytesWritten, strippedBytes,
           cols: lastSentCols ?? 0, rows: lastSentRows ?? 0,
           resizeCount: ptyResizeCount,
+          generation: integrityGeneration,
         })
       }, 1000)
+    }
+
+    // The session's PTY is gone (or never started). `line` is what the
+    // terminal says about it; null says nothing (a failed spawn has already
+    // written why).
+    //
+    // The session object outlives the process, and until the exit handler
+    // below existed nothing in the renderer recorded that. A caller that finds
+    // the session and writes to it -- Ask Conductor did exactly this -- has its
+    // bytes buffered into a pendingWrites map that only a spawn drains, and a
+    // spawn CLEARS that buffer before it fills it. So the write is not delayed,
+    // it is lost. clearSpawned too, so a remount is allowed to respawn this id.
+    const markExited = (line: string | null) => {
+      if (line) term?.writeln(`\r\n\x1b[90m${line}\x1b[0m`)
+      useSessionStore.getState().updateSession(sessionId, { ptyExited: true })
+      clearSpawned(sessionId)
+    }
+    /** This start ended with nothing started (main refused it, or it ended
+     *  before a process started): the tab is not a running session. */
+    const markNeverStarted = () => {
+      useSessionStore.getState().updateSession(sessionId, { neverStarted: true })
+    }
+    /** This view's own start ended: stop holding exits, and end the session
+     *  when the hold says so. `line` defaults to the held exit's code. */
+    const CANCELLED_TEXT = '[The launch was cancelled before the session started]'
+    /** This view is torn down, and its spawn ended with nothing started while
+     *  it is still the session's current spawn (a remount without a Restart:
+     *  the view showing the session adopted this spawn). Tell that view, which
+     *  says it and ends the session (utils/spawnEndNotice.ts); with no view
+     *  listening yet, record the end so the next view starts afresh. */
+    const endSpawnElsewhere = (token: number, line: string) => {
+      if (!isCurrentSpawn(sessionId, token)) return
+      markNeverStarted()
+      if (reportSpawnEnd(sessionId, line)) return
+      // Kept for the view that listens next (a hidden pane starts when it is
+      // shown). Meanwhile the session reads as ended; the tracker is left as
+      // it is, so that view adopts the ended start instead of spawning again.
+      useSessionStore.getState().updateSession(sessionId, { ptyExited: true })
+    }
+    /** A start this view adopted ended with nothing started (reported by the
+     *  torn-down view that made it): this view must not spawn in its place. */
+    let adoptedStartEnded = false
+    /** A spawn that started a PTY: the session is live, whatever a stale
+     *  flag from an earlier run or a kept report said. */
+    const markLive = () => {
+      const s = useSessionStore.getState().sessions.find((x) => x.id === sessionId)
+      if (s?.ptyExited || s?.neverStarted) {
+        useSessionStore.getState().updateSession(sessionId, { ptyExited: undefined, neverStarted: undefined })
+      }
+    }
+    const settleOwnStart = (outcome: SpawnOutcome, line?: string | null) => {
+      // Every start of this view's that ended with nothing started (main
+      // refused it or started nothing, or its launch confirmation was
+      // declined): the tab is not a running session.
+      if (outcome === 'nothing-started') markNeverStarted()
+      const r = exitHold.settle(outcome)
+      if (r.end) markExited(line !== undefined ? line : processExitLine(r.code))
     }
 
     const initTerminal = () => {
@@ -749,6 +852,9 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         settleStrong: (quietMs, intervalMs) => repainter?.settleStrong(quietMs, intervalMs),
         resync: () => { geometryResync?.fire() },
       })
+      // P3.8 round 1: the live screen, for the gate a Codex command (/compact,
+      // /model, /plan) is typed behind (lib/codexComposer.ts).
+      unregisterScreen = registerScreenReader(sessionId, () => (term ? readXtermScreen(term) : null))
 
       // #119: cursor options passed to the Terminal constructor do NOT reliably
       // initialize the WebGL renderer's cursor layer — the caret stays absent
@@ -823,21 +929,137 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         // so the ResizeObserver's "changed" guard has a correct baseline.
         if (term.cols > 0 && term.rows > 0) { lastSentCols = term.cols; lastSentRows = term.rows }
 
-        if (!hasSpawned(sessionId)) {
+        if (!hasSpawned(sessionId) && !adoptedStartEnded) {
           const gate = useAccountGateStore.getState()
           // Re-entry guard: a gate modal is already up for this session, so a
           // re-run of this effect must not open a second one or double-spawn.
-          if (gate.isPending(sessionId)) return
+          // This view starts nothing, so it stops holding exits.
+          if (gate.isPending(sessionId)) {
+            settleOwnStart('no-spawn-here')
+            return
+          }
+          // A tab whose last launch started nothing (neverStarted), remounted
+          // by a Restart (which keeps the flag: useRestartSession) or by
+          // anything else (a partner-terminal restart re-keys this view):
+          // starting it launches its config, so it passes the Multi Spawn rule
+          // like any launch (restartLaunchRefusal), here, when it actually
+          // starts. Refused: nothing spawns, and it stays Not started, saying
+          // why. Allowed: the flag is cleared here, before the spawn, so it
+          // counts as running from now; settleOwnStart sets it again if this
+          // start ends with nothing started, and markLive clears it when a PTY
+          // starts.
+          const record = useSessionStore.getState().sessions.find((s) => s.id === sessionId)
+          if (record?.neverStarted) {
+            const refusal = restartLaunchRefusal(record, useConfigStore.getState().configs)
+            if (refusal !== undefined) {
+              settleOwnStart('nothing-started', `Not started: ${refusal}`)
+              return
+            }
+            useSessionStore.getState().updateSession(sessionId, { neverStarted: undefined })
+          }
           const cols = term.cols
           const rows = term.rows
           // Prefer the custom work name so a restored/pre-named session's log
           // carries the name from its first run (#119 rename → logs durability).
           const configLabel = session?.customName?.trim() || session?.label || 'default'
           const useResumePicker = shouldUseResumePicker(sessionId)
+          // P3.6: the account a launch ran on, by the footer's label rule,
+          // for the line a Switch account's respawn may say.
+          const launchAccountName = (accountId: string | undefined): string => {
+            const snap = useProviderAccountsStore.getState().snapshot
+            const account = sessionProviderAccount({ provider, providerAccountId: accountId }, snap)
+            return account ? accountDisplayName(snap, account) : 'the new account'
+          }
+          // WP2 (plan A10, design 5.5): a Codex session names the account it
+          // runs under, and a launch on an unverified sign-in (this computer's
+          // own ~/.codex) carries THIS launch's acknowledgement -- the New
+          // session dialog's ticked box for the launch it started, else a
+          // confirm asked now. Declined: nothing spawns. Never stored.
+          const launchCodex = async (resolvedProfileId: string | undefined) => {
+            const snapshot = await accountsSnapshotWhenLoaded()
+            if (disposed) return
+            // WP2: Codex is off: no question about a sign-in for a launch main
+            // refuses anyway. It goes straight to main, whose refusal the tab
+            // then shows (a restored session asking first, then saying "not
+            // confirmed", hid the real reason).
+            // The session's own account still rides along (never an
+            // acknowledgement): should main already have Codex on, the bound
+            // session runs on its account, not the default.
+            if (providerOffForLaunch('codex', snapshot)) {
+              forgetSwitchOrigin(sessionId)
+              startSpawn(resolvedProfileId, session?.providerAccountId ? { providerAccountId: session.providerAccountId } : {}, {})
+              return
+            }
+            const plan = resolveLaunchAccount(snapshot, 'codex', session?.providerAccountId)
+            // Used up by this launch whatever it turns out to need, so a
+            // dialog's tick never lingers for a later one.
+            const granted = consumeLaunchAcknowledgement(sessionId, plan.accountId ?? '')
+            await runLaunchStep(resolvedProfileId, plan, launchStep(snapshot, plan, granted))
+          }
+          const runLaunchStep = async (resolvedProfileId: string | undefined, plan: LaunchAccountPlan, step: LaunchStep): Promise<void> => {
+            const failure: LaunchFailureContext = plan.account ? { external: plan.account.external } : {}
+            if (step.kind === 'spawn') { forgetSwitchOrigin(sessionId); startSpawn(resolvedProfileId, step.fields, failure); return }
+            const acks = useLaunchAckStore.getState()
+            // Already being asked (a torn-down view withdraws its question,
+            // so this is a double run of the effect): this run starts nothing.
+            if (acks.isPending(sessionId)) { settleOwnStart('no-spawn-here'); return }
+            // A question asked without the account list goes stale when the
+            // list arrives while it is up: re-resolve the launch then. Its
+            // account may need no confirmation (start without asking), or it
+            // may be one to ask about in its own words (ask that instead).
+            let fresh: { plan: LaunchAccountPlan; step: LaunchStep } | null = null
+            const unsubAccounts = step.question.unknown
+              ? useProviderAccountsStore.subscribe((s) => {
+                  if (fresh || !s.snapshot || !useLaunchAckStore.getState().isPending(sessionId)) return
+                  const next = resolveLaunchAccount(s.snapshot, 'codex', session?.providerAccountId)
+                  fresh = { plan: next, step: launchStep(s.snapshot, next, false) }
+                  useLaunchAckStore.getState().withdraw(sessionId)
+                })
+              : () => {}
+            let yes: boolean
+            try {
+              yes = await acks.request({ sessionId, sessionLabel: configLabel, ...step.question })
+            } finally {
+              unsubAccounts()
+            }
+            if (disposed) return
+            const replaced = fresh as { plan: LaunchAccountPlan; step: LaunchStep } | null
+            if (replaced) { await runLaunchStep(resolvedProfileId, replaced.plan, replaced.step); return }
+            const origin = switchOrigin(sessionId)
+            forgetSwitchOrigin(sessionId)
+            if (!yes && origin && origin.to === plan.accountId) {
+              // P3.6 (VM finding V3; the owner's call pending, a Claude switch
+              // never asks): the Switch account whose launch this is, not
+              // confirmed, takes the tab back to the account it came from,
+              // when that account can still launch (active, not blocked, of
+              // this provider), else to the provider's default account; a
+              // Restart starts it there.
+              const snap = useProviderAccountsStore.getState().snapshot
+              const usable = origin.from === undefined || !!snap?.accounts.some((a) => a.id === origin.from && a.providerId === provider && a.lifecycle === 'active' && a.operationalState !== 'blocked')
+              const back = usable ? origin.from : undefined
+              void persistSessionProviderAccount(sessionId, back)
+              const shown = sessionProviderAccount({ provider, providerAccountId: back }, snap)
+              const shownName = shown ? accountDisplayName(snap, shown) : null
+              const line = usable
+                ? `Not started: the launch was not confirmed, so the session is back on ${shownName ?? 'the account it was on'}. Restart the session to start it there.`
+                : `Not started: the launch was not confirmed. The account the session was on can no longer be used, so it is on ${shownName ? `the default account, ${shownName},` : 'the default account'} now. Restart the session to start it there.`
+              settleOwnStart('nothing-started', terminalNoteLine(line))
+              return
+            }
+            if (!yes) {
+              settleOwnStart('nothing-started', 'Not started: the launch was not confirmed. Restart the session to be asked again.')
+              return
+            }
+            startSpawn(resolvedProfileId, step.fields, failure)
+          }
+          const doSpawn = (resolvedProfileId: string | undefined) => {
+            if (provider === 'codex' && !shellOnly) { void launchCodex(resolvedProfileId); return }
+            startSpawn(resolvedProfileId, {}, {})
+          }
           // markSpawned only fires at the real spawn, so an unanswered/aborted
           // account gate leaves the session unspawned and re-gates on remount.
-          const doSpawn = (resolvedProfileId: string | undefined) => {
-            markSpawned(sessionId)
+          const startSpawn = (resolvedProfileId: string | undefined, account: LaunchAccountFields, failure: LaunchFailureContext) => {
+            const spawnToken = markSpawned(sessionId)
             // T8b (bug #5): app-relaunch ONLY. A restored session carries the
             // persisted exact-conversation target; pass it as `resume` so the
             // first spawn resumes THAT conversation (cwd-overridden in main).
@@ -853,10 +1075,20 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
             // the same reason `resume` is: it is one-shot launch state, not
             // configuration. Consumed immediately below so a later in-session
             // Restart (which re-runs this spawn) never re-submits it. Only ever
-            // set on a local, non-shell Claude session -- the SSH path does not
-            // set CCC_ASK_PROMPT and Codex ignores it.
+            // set on a local, non-shell session (the SSH path does not set
+            // CCC_ASK_PROMPT). WP2 PR 4, P4.3: a Codex Ask session takes it too --
+            // main carries it on argv after `--` on the direct route, or types it
+            // through its submit primitive at Codex's first ready prompt.
             const askPrompt = !shellOnly ? session?.askPrompt : undefined
             if (askPrompt) updateSession(sessionId, { askPrompt: undefined })
+            // A transient tab's command (commandTerminal: an install the user
+            // confirmed) runs once. Consumed the same way, so a Restart, which
+            // re-runs this spawn from the store record, opens a plain shell.
+            // A saved terminal-only config keeps its command: that one is
+            // configuration, run on every launch by design.
+            if (session?.transient && terminalOptions?.command !== undefined) {
+              updateSession(sessionId, { terminalOptions: spentCommand(terminalOptions) })
+            }
             if (resume) {
               updateSession(sessionId, { resumeUuid: undefined, resumeCwd: undefined })
               resumeNudgesLeft = 2
@@ -871,14 +1103,88 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
             // Merging it into a copy of `ssh` keeps that prop's shape a
             // pure reflection of the session's SAVED config.
             const sshWithReconnect = ssh ? { ...ssh, reconnect: !!session?.sshReachedClaudeRunning } : ssh
+            exitHold.begin()
             window.electronAPI.pty
-              .spawn(sessionId, { cwd, cols, rows, ssh: sshWithReconnect, shellOnly, elevated, terminalOptions, configId, configLabel, useResumePicker, legacyVersion, effortLevel, permissionMode, extraArgs, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, profileId: resolvedProfileId, resume, askPrompt, isAsk: session?.kind === 'ask' })
-              .catch((err: unknown) => {
+              .spawn(sessionId, { cwd, cols, rows, ssh: sshWithReconnect, shellOnly, elevated, terminalOptions, configId, configLabel, useResumePicker, legacyVersion, effortLevel, permissionMode, extraArgs, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, profileId: resolvedProfileId, resume, askPrompt, isAsk: session?.kind === 'ask', ...account })
+              .then((result) => {
+                const nothingStarted = !!result && typeof result === 'object' && result.started === false
+                // WP2: main refused the launch because its provider is off
+                // (provider-launch-gate.ts) -- a restored session, a Restart
+                // or a new launch alike, since all of them spawn here. It is
+                // said in this tab in main's own words, and the session is
+                // kept: its exact-conversation restore target, consumed above,
+                // goes back on the record, so a Restart once the provider is
+                // on resumes the same conversation.
+                const refusal = nothingStarted ? spawnRefusalOf(result) : null
+                // P3.13 (round 1, M7): main refused a copy of a config that is not Multi
+                // Spawn. If the screen says it is (a save that did not land), the toggle
+                // is made the saved one, so the tab's words are true beside it.
+                if (refusal?.code === 'already-running') void reconcileRefusedMultiSpawn(configId)
+                if (refusal && resume && (!disposed || isCurrentSpawn(sessionId, spawnToken))) {
+                  updateSession(sessionId, { resumeUuid: resume.uuid, resumeCwd: resume.cwd })
+                }
+                const endText = refusal ? refusedTabText(refusal) : CANCELLED_TEXT
+                if (refusal && !disposed) setLaunchRefused(true)
+                // A torn-down view settles nothing for a session a Restart
+                // gave to its replacement (the store record, the spawn tracker
+                // and the live PTY are the new view's). Only while this spawn
+                // is still the session's current one -- the view was remounted
+                // without a Restart and its replacement adopted this very
+                // spawn -- does it report a start that ended with nothing.
+                if (disposed) {
+                  if (!nothingStarted && isCurrentSpawn(sessionId, spawnToken)) markLive()
+                  if (nothingStarted) endSpawnElsewhere(spawnToken, `\r\n\x1b[90m${endText}\x1b[0m`)
+                  return
+                }
+                // P3.6 (row 22): a respawn on another account (a Switch
+                // account) whose conversation did not come along whole says
+                // so once: main's reason, and what the launch did
+                // (utils/launchNote). Above the terminal, never in it (VM
+                // finding V1): on Windows a new PTY's first frame (ConPTY's)
+                // clears the screen, which erased a line written there.
+                const carried = !nothingStarted && result && typeof result === 'object' && 'carry' in result ? result.carry : undefined
+                if (carried) setSwitchNote(terminalNoteLine(carryNote(carried, launchAccountName(account.providerAccountId))))
+                // Settled with a PTY: an exit held meanwhile was the replaced
+                // run's, and is dropped. Main starting nothing (a preparation
+                // closed or swept meanwhile) ends the start here instead.
+                if (!nothingStarted) markLive()
+                // P3.8 round 3 (PB1): the preset this run launched with, as
+                // main reports it, for the command bar's permissions pill.
+                const launchedPreset = !nothingStarted && result && typeof result === 'object' && 'launched' in result
+                  ? result.launched?.codexPreset : undefined
+                // A launch that started nothing (refused, cancelled) has none.
+                if (provider === 'codex' && !shellOnly) updateSession(sessionId, { launchedCodexPreset: nothingStarted ? undefined : launchedPreset })
+                // P3.8 (L2; round 2, PM1): Plan mode, Claude's launch option.
+                // Codex has no launch flag for it: the session starts read-only
+                // (main), and its own /plan is typed into its FIRST ready
+                // prompt only (never the folder-trust prompt, a picker, the
+                // user's typing or after a turn), within a bounded wait; a note
+                // above the terminal says so when it is not, and that the
+                // session is read-only.
+                if (!nothingStarted && provider === 'codex' && !shellOnly && (launchedPreset ?? codexOptions?.permissionsPreset) === 'plan') {
+                  planModeWait?.cancel()
+                  planModeWait = typeWhenCodexComposerReady(sessionId, '/plan', {
+                    timeoutMs: CODEX_PLAN_MODE_WAIT_MS,
+                    onGiveUp: (why) => { if (!disposed) setSwitchNote(terminalNoteLine(planModeNote(why))) },
+                  })
+                }
+                settleOwnStart(nothingStarted ? 'nothing-started' : 'started', endText)
+              }, (err: unknown) => {
                 // BUG-2: spawn was fire-and-forget, so a main-process throw (e.g.
                 // "Codex CLI not found on PATH") became a silent unhandled
-                // rejection + blank terminal. Surface the real cause in-terminal.
+                // rejection + blank terminal. Surface the real cause in-terminal,
+                // a refused Codex launch in plain words (utils/launchAccount).
+                const codex = providerView(useProviderAccountsStore.getState().snapshot, 'codex')
+                const line = `\r\n\x1b[31m${describeLaunchFailure(err, { ...failure, version: codex?.version, compatibility: codex?.compatibility })}\x1b[0m`
+                // Same rule as above for a torn-down view.
+                if (disposed) { endSpawnElsewhere(spawnToken, line); return }
                 console.error('[TerminalView] pty.spawn failed', err)
-                term?.writeln(`\r\n\x1b[31mFailed to launch session: ${formatSpawnError(err)}\x1b[0m`)
+                term?.writeln(line)
+                markNeverStarted()
+                // No PTY came of this spawn: an exit held meanwhile ends the
+                // session as it did before the hold (a refused launch that
+                // replaced a live run ends that run). The failure is written.
+                settleOwnStart('no-spawn-here', null)
               })
           }
           // Pre-spawn account gate: on a session's first spawn this run, ask which
@@ -898,7 +1204,9 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           // Consume the predetermined flag only for eligible sessions so a
           // restart/switch re-spawn skips the gate and uses its chosen account.
           const predetermined = eligible && gate.consumePredetermined(sessionId)
-          const needGate = eligible && !predetermined
+          // WP2: not while Claude Code is off either: no account question for
+          // a launch main refuses anyway; its refusal says why in the tab.
+          const needGate = eligible && !predetermined && !providerOffForLaunch('claude', useProviderAccountsStore.getState().snapshot)
           if (!needGate) {
             doSpawn(session?.profileId)
           } else {
@@ -943,6 +1251,10 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
               })
               .catch(() => doSpawn(session?.profileId))
           }
+        } else if (exitHold.state === 'pending') {
+          // Something else started this session's PTY between the mount and
+          // now: this view spawns nothing, so it stops holding exits.
+          settleOwnStart('no-spawn-here')
         }
       }
 
@@ -1009,25 +1321,20 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           pendingParseData = ''
           if (!data) return
 
-          const stripped = data
-            .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
-            .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
-            .replace(/\x1b[()][A-Z0-9]/g, '')
-            .replace(/\x1b[=>]/g, '')
+          const stripped = stripTerminalControls(data)
 
           contextBuffer += stripped
           if (contextBuffer.length > CONTEXT_BUFFER_MAX) {
             contextBuffer = contextBuffer.slice(-CONTEXT_BUFFER_MAX)
           }
 
-          const contextMatch = contextBuffer.match(/(\d+(?:\.\d+)?)%\s*(?:context|of context|used|remaining|ctx)/i)
-            || contextBuffer.match(/context[:\s]+(\d+(?:\.\d+)?)%/i)
-            || contextBuffer.match(/(\d+(?:\.\d+)?)%\s*\|\s*\$/i)
-          if (contextMatch) {
-            const pct = parseFloat(contextMatch[1])
+          // P3.8 round 3 (CM): "N% context left" is the share left, and the
+          // meter shows the share used (terminal/contextPercent.ts).
+          const contextReading = readContextPercent(contextBuffer)
+          if (contextReading) {
             const updates: Record<string, any> = {}
-            if (pct >= 0 && pct <= 100) {
-              updates.contextPercent = pct
+            if (contextReading.used !== null) {
+              updates.contextPercent = contextReading.used
             }
 
             const costMatch = contextBuffer.match(/\$(\d+(?:\.\d+)?)/)
@@ -1235,16 +1542,21 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         scheduleParse()
       })
 
+      // Whether THIS view will start the session's PTY, decided as it starts
+      // listening: a view that remounts onto a PTY that is already running
+      // acts on every exit; one that is about to spawn holds exits until its
+      // own start settles (utils/spawnExitHold.ts).
+      exitHold = createSpawnExitHold(!hasSpawned(sessionId))
+      // A start this view adopted (remounted without a Restart) that the torn-
+      // down view saw end with nothing started: say it here, and end the session.
+      unsubSpawnEnd = listenForSpawnEnd(sessionId, (line) => {
+        adoptedStartEnded = true
+        if (line) term?.writeln(line)
+        markExited(null)
+      })
       unsubExit = window.electronAPI.pty.onExit(sessionId, (exitCode) => {
-        term?.writeln(`\r\n\x1b[90m[Process exited with code ${exitCode}]\x1b[0m`)
-        // The session object outlives the process, and until now nothing in the
-        // renderer recorded that. A caller that finds the session and writes to
-        // it -- Ask Conductor did exactly this -- has its bytes buffered into a
-        // pendingWrites map that only a spawn drains, and a spawn CLEARS that
-        // buffer before it fills it. So the write is not delayed, it is lost.
-        // clearSpawned too, so a remount is allowed to respawn this id.
-        useSessionStore.getState().updateSession(sessionId, { ptyExited: true })
-        clearSpawned(sessionId)
+        if (!exitHold.exit(exitCode)) return
+        markExited(processExitLine(exitCode))
       })
 
       // Handle resize
@@ -1395,6 +1707,9 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
 
     return () => {
       disposed = true
+      // A launch confirm this view asked (an unverified sign-in) goes with it:
+      // nothing spawns from a torn-down view, and a remount asks afresh.
+      useLaunchAckStore.getState().withdraw(sessionId)
       if (attentionTimerRef.current) clearTimeout(attentionTimerRef.current)
       if (parseTimer) clearTimeout(parseTimer)
       if (refreshTimer) clearTimeout(refreshTimer)
@@ -1418,12 +1733,15 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // a copy-mode belief left over from this one must not survive the swap.
       tmuxWheelRef.current.reset()
       unregisterRepainter?.()
+      unregisterScreen?.()
+      planModeWait?.cancel()
       geometryResync?.dispose()
       repainter?.dispose()
       if (repainterRef.current === repainter) repainterRef.current = null
       resizeObserver?.disconnect()
       unsubData?.()
       unsubExit?.()
+      unsubSpawnEnd?.()
       // DON'T kill PTY here - it survives HMR remounts.
       term?.dispose()
       terminalRef.current = null
@@ -1499,6 +1817,31 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           Setting up a new account. Run claude, type /login, and choose the account. We&apos;ll detect it automatically.
         </div>
       )}
+      {switchNote && (
+        // P3.6 (VM findings V1 and V4): in the new-account notice's place
+        // above the terminal, outside its buffer, so no clear-screen from
+        // the session removes it; muted text in the app's tested treatment
+        // (--text-muted on --surface-panel, token-contrast.test.ts).
+        <div
+          role="status"
+          data-testid="switch-note"
+          // pr-12 (48px) keeps the dismiss clear of the GitHub button that
+          // floats over this corner (GitHubPanel gh-fab: absolute top-2
+          // right-2, 32px with its padding and border): 8 + 32 + 8 px.
+          className="border-b border-surface0 text-xs pl-3 pr-12 py-1.5 shrink-0 flex items-start gap-2"
+          style={{ background: 'var(--surface-panel)', color: 'var(--text-muted)' }}
+        >
+          <span className="flex-1 min-w-0">{switchNote}</span>
+          <button
+            type="button"
+            onClick={() => setSwitchNote(null)}
+            className="px-1 rounded hover:text-text focus-ring shrink-0"
+            style={{ color: 'var(--text-muted)' }}
+            title="Dismiss"
+            aria-label="Dismiss"
+          >{String.fromCodePoint(0x00d7)}</button>
+        </div>
+      )}
       <div
         ref={xtermContainerRef}
         className="flex-1 overflow-hidden"
@@ -1518,7 +1861,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           boxShadow: 'inset 16px 0 20px -16px rgba(0,0,0,.5)',
         }}
       />
-      {ssh && (
+      {ssh && !launchRefused && !providerOffHere && (
         <SshFlowOverlay
           sessionId={sessionId}
           hasPostCommand={!!ssh.postCommand || ssh.runtime?.type === 'container'}

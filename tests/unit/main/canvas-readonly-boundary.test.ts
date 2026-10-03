@@ -470,12 +470,17 @@ describe('the enumeration cannot rot', () => {
     IPC.CANVAS_REVIEW_GET_STATE,
     IPC.CANVAS_DESCRIBE_FORCE_CLOSURES,
     IPC.CANVAS_EVIDENCE_READ,
+    // WP2 PR 4 (P4.1): how a session's own launch delivered the canvas
+    // guidance, read from main's launch record. It names no canvas and writes
+    // nothing; its handler lands with P4.1 and is attacked there.
+    IPC.CANVAS_SESSION_GUIDANCE,
     // main -> renderer pushes. Not an ingress at all: nothing outside main can
     // invoke one.
     IPC.CANVAS_CHANGED,
     IPC.CANVAS_REVIEW_CHANGED,
     IPC.CANVAS_SNAPSHOT_REQUEST,
     IPC.CANVAS_FRAME_NAVIGATED,
+    IPC.CANVAS_AGENT_MARKER_UNDELIVERED,
     // renderer -> main REPLY to a main-initiated request, correlated by an
     // id main minted. It names no canvas and mutates nothing.
     IPC.CANVAS_SNAPSHOT_RESULT,

@@ -75,6 +75,13 @@ describe('the launch backstop', () => {
     expect(ids[0]).toBeTruthy()
   })
 
+  it('a tab of the config whose launch started nothing (refused by main) never blocks a launch', () => {
+    liveSessions = [{ id: 's-refused', configId: 'cfg-1', neverStarted: true }]
+    const ids = launchTimes(config(), 1)
+    expect(addSession).toHaveBeenCalledTimes(1)
+    expect(ids[0]).toBeTruthy()
+  })
+
   it('the Ask Conductor session never blocks a launch (it is config-less)', () => {
     liveSessions = [{ id: 'ask', configId: 'cfg-1', kind: 'ask' }]
     const ids = launchTimes(config(), 1)

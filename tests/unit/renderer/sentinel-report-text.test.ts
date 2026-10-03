@@ -4,6 +4,10 @@ import {
   surfaceLabel,
   formatFindingText,
   formatSentinelReportText,
+  sentinelAnalyzingText,
+  sentinelSettingsText,
+  sentinelTransparencyText,
+  sentinelWatchedNames,
 } from '../../../src/renderer/components/sentinel/sentinel-report-text'
 import type { SentinelFinding, SentinelStateSnapshot } from '../../../src/shared/sentinel-types'
 
@@ -110,5 +114,64 @@ describe('formatSentinelReportText', () => {
   it('handles a null snapshot without throwing', () => {
     expect(() => formatSentinelReportText(null)).not.toThrow()
     expect(formatSentinelReportText(null)).toContain('Sentinel: Breaking Changes')
+  })
+})
+
+// P3.9 (row 42): Sentinel watches each assistant in use. The version line,
+// the all-clear and the wording of what it watches and spends name only the
+// assistants in use; Claude Code alone reads exactly as before.
+describe('Sentinel for Codex: the lines that name the assistants (P3.9)', () => {
+  const both = { claudeOn: true, codexOn: true }
+  const codexOnly = { claudeOn: false, codexOn: true }
+  const claudeOnly = { claudeOn: true, codexOn: false }
+  const s = snap({ findings: [] })
+  const withCodex: SentinelStateSnapshot = { ...s, lastSeenCodexVersion: '0.155.1' }
+
+  it("a Codex surface 3 is its session files, not Claude's statusline hook", () => {
+    expect(surfaceLabel(3, 'codex')).toBe('session files')
+    expect(surfaceLabel(1, 'codex')).toBe('session launch')
+    expect(surfaceLabel(3)).toBe('statusline hook')
+    expect(surfaceLabel(3, 'claude')).toBe('statusline hook')
+    expect(surfaceLabel(undefined, 'codex')).toBeNull()
+  })
+
+  it("a Codex finding's copy says it is Codex's; Claude's copy is unchanged", () => {
+    const codex = { ...finding({ surface: 3, badgeText: 'status line readouts die' }), provider: 'codex' as const }
+    expect(formatFindingText(codex).split('\n')[0]).toBe('[BREAKING] Session spawn flag renamed (Codex, session files)')
+    const noSurface = { ...finding({ severity: 'warn', surface: undefined }), provider: 'codex' as const }
+    expect(formatFindingText(noSurface).split('\n')[0]).toBe('[NOTICE] Session spawn flag renamed (Codex)')
+    expect(formatFindingText(finding({ surface: 3 })).split('\n')[0]).toBe('[BREAKING] Session spawn flag renamed (statusline hook)')
+  })
+
+  it('the report names the version of each assistant in use, and the all-clear names them', () => {
+    const at = new Date(1700000000000).toISOString()
+    expect(formatSentinelReportText(withCodex).split('\n').slice(0, 4)).toEqual(['Sentinel: Breaking Changes', `CC 2.1.177 \u00b7 ${at}`, '', 'No breaking changes. Claude Code 2.1.177 is compatible.'])
+    expect(formatSentinelReportText(withCodex, claudeOnly)).toBe(formatSentinelReportText(withCodex))
+    expect(formatSentinelReportText(withCodex, both).split('\n').slice(1, 4)).toEqual([`CC 2.1.177 \u00b7 Codex 0.155.1 \u00b7 ${at}`, '', 'No breaking changes. Claude Code 2.1.177 and Codex 0.155.1 are compatible.'])
+    expect(formatSentinelReportText(withCodex, codexOnly).split('\n').slice(1, 4)).toEqual([`Codex 0.155.1 \u00b7 ${at}`, '', 'No breaking changes. Codex 0.155.1 is compatible.'])
+    expect(formatSentinelReportText(s, codexOnly)).toContain('Codex unknown')
+    // Neither in use (a state setup never leaves) reads as Claude Code alone.
+    expect(formatSentinelReportText(withCodex, { claudeOn: false, codexOn: false })).toBe(formatSentinelReportText(withCodex))
+  })
+
+  it('while an analysis runs, the line says whose update it is', () => {
+    expect(sentinelAnalyzingText({ ...s, analyzing: true, analyzingProvider: 'codex' })).toBe('Analyzing the Codex update... this can take a few minutes.')
+    expect(sentinelAnalyzingText({ ...s, analyzing: true, analyzingProvider: 'claude' })).toBe('Analyzing the Claude Code update\u2026 this can take a few minutes.')
+    expect(sentinelAnalyzingText({ ...s, analyzing: true })).toBe('Analyzing the Claude Code update\u2026 this can take a few minutes.')
+  })
+
+  it('Settings says what Sentinel watches and what its analysis spends; Claude Code alone reads as before', () => {
+    expect(sentinelSettingsText(claudeOnly, 'claude')).toBe('Detects Claude Code updates and proposes registry fixes. Off by default because it spends Claude tokens on a Claude update. Takes effect after restart.')
+    expect(sentinelSettingsText(codexOnly, 'codex')).toBe('Detects Codex updates and proposes registry fixes. Off by default because it spends Codex usage on a Codex update. Takes effect after restart.')
+    expect(sentinelSettingsText(both, 'claude')).toBe('Detects Claude Code and Codex updates and proposes registry fixes. Off by default because its analysis spends Claude tokens on an update. Takes effect after restart.')
+    expect(sentinelSettingsText(both, 'codex')).toBe('Detects Claude Code and Codex updates and proposes registry fixes. Off by default because its analysis spends Codex usage on an update. Takes effect after restart.')
+  })
+
+  it('the Transparency card says what Sentinel watches and runs on (left there by P3.4); Claude Code alone reads as before', () => {
+    expect(sentinelTransparencyText(claudeOnly, 'claude')).toBe('Watches Claude Code updates for changes that could break your setup and proposes fixes. Off by default because it spends Claude tokens when Claude updates. Takes effect after a restart.')
+    expect(sentinelTransparencyText(codexOnly, 'codex')).toBe('Watches Codex updates for changes that could break your setup and proposes fixes. Off by default because it spends Codex usage when Codex updates. Takes effect after a restart.')
+    expect(sentinelTransparencyText(both, 'codex')).toBe('Watches Claude Code and Codex updates for changes that could break your setup and proposes fixes. Off by default because its analysis spends Codex usage when either updates. Takes effect after a restart.')
+    for (const t of [sentinelTransparencyText(codexOnly, 'codex'), sentinelSettingsText(codexOnly, 'codex')]) expect(t).not.toMatch(/Claude/)
+    expect(sentinelWatchedNames(both)).toBe('Claude Code and Codex')
   })
 })

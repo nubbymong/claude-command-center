@@ -4,6 +4,9 @@
 // the profile from its first read to its `finally`, and waits out a rotation
 // that is already in flight before that first read.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+// Every provider is on here: main's launch rule has its own suites
+// (tests/unit/main/provider-launch-gate.test.ts and the provider-off tests).
+vi.mock('../../src/main/provider-launch-gate', () => ({ providerLaunchRefusal: () => null, providerProbeRefusal: () => null }))
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -15,6 +18,9 @@ const h = vi.hoisted(() => ({
   /** What the in-use guard said at the moment the /insights PTY exited. */
   heldDuringPty: null as boolean | null,
   ptySpawns: 0,
+  /** P3.15 round 4 (P2): raise an input and an output error on the PTY as it exits, and record whether either was thrown. */
+  raiseIoErrors: false,
+  ioErrorThrown: null as boolean | null,
   /** Set by the test: the probe the PTY mock consults. */
   probe: (() => false) as () => boolean,
 }))
@@ -38,15 +44,29 @@ vi.mock('../../src/main/pty-manager', () => ({
 vi.mock('node-pty', () => ({
   spawn: () => {
     h.ptySpawns++
+    // node-pty's Windows shape: the input socket on its agent; every other event on its output socket.
+    const { EventEmitter } = require('events') as typeof import('events')
+    const inSocket = new EventEmitter()
+    const outSocket = new EventEmitter()
+    outSocket.on('error', (err: NodeJS.ErrnoException) => { if (outSocket.listeners('error').length < 2) throw err })
     return {
       onData: () => {},
       onExit: (cb: (e: { exitCode: number }) => void) => {
         // Observe the guard WHILE the PTY step is alive, from inside the run.
         h.heldDuringPty = h.probe()
+        if (h.raiseIoErrors) {
+          try {
+            inSocket.emit('error', Object.assign(new Error('write EAGAIN'), { code: 'EAGAIN' }))
+            outSocket.emit('error', Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }))
+            h.ioErrorThrown = false
+          } catch { h.ioErrorThrown = true }
+        }
         cb({ exitCode: 0 })
       },
       write: () => {},
       kill: () => {},
+      _agent: { inSocket },
+      on: (ev: string, l: (...a: unknown[]) => void) => { outSocket.on(ev, l) },
     }
   },
 }))
@@ -86,11 +106,25 @@ beforeEach(() => {
   h.profiles = []
   h.heldDuringPty = null
   h.ptySpawns = 0
+  h.raiseIoErrors = false
+  h.ioErrorThrown = null
   h.probe = () => hasTransientProfileConsumer('a')
   _resetProfileConsumersForTest()
 })
 afterEach(() => {
   try { rmSync(tmpRoot, { recursive: true, force: true }) } catch { /* ignore */ }
+})
+
+// P3.15 round 4 (P2): the app types /insights into this PTY; an error on its
+// input or its output (node-pty's Windows sockets) never quits the app.
+describe('the /insights PTY and its input and output (P3.15 round 4, P2)', () => {
+  it('an input error and an output error are caught, and the run still settles', async () => {
+    seed('a', 'a@example.com', true)
+    h.raiseIoErrors = true
+    await runInsights(getWin, { profileId: 'a' })
+    expect(h.ptySpawns).toBe(1)
+    expect(h.ioErrorThrown).toBe(false)
+  })
 })
 
 describe('an Insights run holds its account as a profile consumer (#48)', () => {

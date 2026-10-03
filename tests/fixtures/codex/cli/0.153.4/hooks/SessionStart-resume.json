@@ -1,0 +1,9 @@
+{
+  "session_id": "00000000-0000-7000-8000-000000000012",
+  "transcript_path": "C:\\Users\\alex\\AppData\\Local\\AI Code Conductor\\resources\\codex-realms\\realm-00000000000000000000000000000001\\sessions\\2026\\09\\27\\rollout-2026-09-27T12-12-57-00000000-0000-7000-8000-000000000012.jsonl",
+  "cwd": "C:\\Users\\alex\\projects\\demo",
+  "hook_event_name": "SessionStart",
+  "model": "gpt-6-astra",
+  "permission_mode": "bypassPermissions",
+  "source": "resume"
+}

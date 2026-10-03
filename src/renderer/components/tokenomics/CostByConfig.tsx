@@ -6,7 +6,9 @@ interface Props {
   data: TkSummary['costByConfig']
 }
 
-function formatCostShort(usd: number): string {
+function formatCostShort(usd: number | null): string {
+  // No price for its usage (usage track MP11): never shown as $0.
+  if (usd === null) return 'no price'
   if (usd >= 1000) return `$${(usd / 1000).toFixed(1)}k`
   if (usd >= 100) return `$${usd.toFixed(0)}`
   if (usd >= 10) return `$${usd.toFixed(1)}`
@@ -31,7 +33,7 @@ export function CostByConfig({ data }: Props) {
     )
   }
 
-  const maxCost = Math.max(...data.map((d) => d.costUsd), 0.001)
+  const maxCost = Math.max(...data.map((d) => d.costUsd ?? 0), 0.001)
 
   return (
     <div
@@ -44,7 +46,7 @@ export function CostByConfig({ data }: Props) {
       <div className="space-y-2.5">
         {data.map((entry) => {
           const isExternal = entry.configId === null
-          const barPct = maxCost > 0 ? (entry.costUsd / maxCost) * 100 : 0
+          const barPct = maxCost > 0 ? ((entry.costUsd ?? 0) / maxCost) * 100 : 0
           // Determine active state: undefined = all configs selected (no filter)
           const isActive =
             activeConfigId === undefined

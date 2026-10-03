@@ -1,0 +1,7 @@
+{"dir":"in","m":{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{"experimental":{"codex/auth-change":{}},"elicitation":{"form":{},"url":{}}},"clientInfo":{"name":"codex-mcp-client","title":"Codex","version":"0.155.1"}}}}
+{"dir":"out","m":{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"p31probe","version":"1.0.0"},"instructions":"P31-MCP-INSTRUCTIONS-MARKER: this server is a capability probe."}}}
+{"dir":"in","m":{"jsonrpc":"2.0","method":"notifications/initialized"}}
+{"dir":"out","m":{"jsonrpc":"2.0","id":"p31-roots-1","method":"roots/list","params":{}}}
+{"dir":"in","m":{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"progressToken":0}}}}
+{"dir":"out","m":{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"p31_probe_tool","description":"P31-MCP-TOOL-DESCRIPTION-MARKER. Never call this tool.","inputSchema":{"type":"object","properties":{}}}]}}}
+{"dir":"in","m":{"jsonrpc":"2.0","id":"p31-roots-1","result":{"roots":[]}}}

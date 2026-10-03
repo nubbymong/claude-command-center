@@ -125,7 +125,14 @@ jobs:
       - name: Fetch the WP1 ledger's bound commit
         run: node scripts/wp1/fetch-ledger-commit.mjs
 
+      # A stable release runs the WP1 candidate check whatever the manifest
+      # declares: its `phase` is a field a neutral commit could set back to
+      # gate0, so the phase comes from here, and the environment can only
+      # raise it (tests/wp1/phase.ts; pinned by tests/wp1/traceability.test.ts).
+      # A dry run, or a beta or dev release, leaves it to the manifest.
       - name: Run tests
+        env:
+          WP1_PHASE: ${{ inputs.channel == 'stable' && !inputs.dry_run && 'candidate' || '' }}
         run: npx vitest run
 
       - name: Determine version
@@ -230,6 +237,11 @@ jobs:
           # required (short -c. treats the value as a config-file path); matches
           # the local build.
           npx electron-builder --win --publish never --config.npmRebuild=false @extra
+
+      # The native modules (and node-pty's bundled ConPTY files) are unpacked in
+      # the package that ships (scripts/verify-native-unpack.mjs).
+      - name: Verify native modules unpacked
+        run: npm run verify:package
 
       # Fail loudly rather than ever ship unsigned again: a stable/beta release
       # with signing secrets missing is an error, not a fallback.
@@ -399,6 +411,9 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: npx electron-builder --mac dmg --publish never
 
+      - name: Verify native modules unpacked
+        run: npm run verify:package
+
       - name: Determine DMG filename
         id: dmg
         run: |
@@ -466,15 +481,21 @@ jobs:
           }).then(() => console.log('rebuild done')).catch(e => { console.error(e); process.exit(1) })
           "
 
-      # The only place the vitest suite runs on Linux (CI's PR matrix is
-      # Win+macOS). Note this is the standard suite — the *.native.test.ts
-      # files (better-sqlite3 under Electron-as-Node) are excluded by
-      # vitest.config; the native rebuild above is what proves node-pty /
-      # better-sqlite3 link on linux-x64.
+      # The release build's own Linux run of the vitest suite. Since P4.8 the
+      # PR and push matrix in ci.yml runs Linux too (ubuntu-latest, with the
+      # native tests, and a real-CLI conformance job per OS), so this is no
+      # longer the only Linux run; it stays as the release candidate's record.
+      # Note this is the standard suite: the *.native.test.ts files
+      # (better-sqlite3 under Electron-as-Node) are excluded by vitest.config,
+      # and the native rebuild above is what proves node-pty / better-sqlite3
+      # link on linux-x64.
       - name: Fetch the WP1 ledger's bound commit
         run: node scripts/wp1/fetch-ledger-commit.mjs
 
+      # The stable release's WP1 candidate check, as in build-windows.
       - name: Run tests
+        env:
+          WP1_PHASE: ${{ inputs.channel == 'stable' && !inputs.dry_run && 'candidate' || '' }}
         run: npx vitest run
 
       - name: Build
@@ -482,6 +503,9 @@ jobs:
 
       - name: Package Linux AppImage
         run: npx electron-builder --linux --publish never
+
+      - name: Verify native modules unpacked
+        run: npm run verify:package
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v7

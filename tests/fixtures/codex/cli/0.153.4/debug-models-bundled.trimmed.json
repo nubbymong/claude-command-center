@@ -1,0 +1,272 @@
+{
+  "$comment": "P3.9 test fixture: the model catalogue bundled in the Codex CLI 0.153.4 binary (the JSON `codex debug models` renders; P3.1 evidence addendum 12, parsed from the binary bytes, never run), trimmed to slug, display_name, reasoning levels, visibility and priority, in its own order. No personal data.",
+  "models": [
+    {
+      "slug": "gpt-6-astra",
+      "display_name": "GPT-6-Astra",
+      "default_reasoning_level": "low",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low"
+        },
+        {
+          "effort": "medium"
+        },
+        {
+          "effort": "high"
+        },
+        {
+          "effort": "xhigh"
+        },
+        {
+          "effort": "max"
+        },
+        {
+          "effort": "ultra"
+        }
+      ],
+      "visibility": "list",
+      "priority": 1
+    },
+    {
+      "slug": "gpt-5.6-sol",
+      "display_name": "GPT-5.6-Sol",
+      "default_reasoning_level": "low",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low"
+        },
+        {
+          "effort": "medium"
+        },
+        {
+          "effort": "high"
+        },
+        {
+          "effort": "xhigh"
+        },
+        {
+          "effort": "max"
+        },
+        {
+          "effort": "ultra"
+        }
+      ],
+      "visibility": "list",
+      "priority": 6
+    },
+    {
+      "slug": "gpt-5.6-terra",
+      "display_name": "GPT-5.6-Terra",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low"
+        },
+        {
+          "effort": "medium"
+        },
+        {
+          "effort": "high"
+        },
+        {
+          "effort": "xhigh"
+        },
+        {
+          "effort": "max"
+        },
+        {
+          "effort": "ultra"
+        }
+      ],
+      "visibility": "list",
+      "priority": 7
+    },
+    {
+      "slug": "gpt-5.6-luna",
+      "display_name": "GPT-5.6-Luna",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low"
+        },
+        {
+          "effort": "medium"
+        },
+        {
+          "effort": "high"
+        },
+        {
+          "effort": "xhigh"
+        },
+        {
+          "effort": "max"
+        }
+      ],
+      "visibility": "list",
+      "priority": 8
+    },
+    {
+      "slug": "gpt-daybreak-blue-latest",
+      "display_name": "Daybreak Blue",
+      "default_reasoning_level": "low",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low"
+        },
+        {
+          "effort": "medium"
+        },
+        {
+          "effort": "high"
+        },
+        {
+          "effort": "xhigh"
+        },
+        {
+          "effort": "max"
+        },
+        {
+          "effort": "ultra"
+        }
+      ],
+      "visibility": "hide",
+      "priority": 10
+    },
+    {
+      "slug": "gpt-daybreak-red-latest",
+      "display_name": "Daybreak Red",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low"
+        },
+        {
+          "effort": "medium"
+        },
+        {
+          "effort": "high"
+        },
+        {
+          "effort": "xhigh"
+        },
+        {
+          "effort": "max"
+        },
+        {
+          "effort": "ultra"
+        }
+      ],
+      "visibility": "hide",
+      "priority": 11
+    },
+    {
+      "slug": "gpt-5.5",
+      "display_name": "GPT-5.5",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low"
+        },
+        {
+          "effort": "medium"
+        },
+        {
+          "effort": "high"
+        },
+        {
+          "effort": "xhigh"
+        }
+      ],
+      "visibility": "list",
+      "priority": 12
+    },
+    {
+      "slug": "gpt-5.4",
+      "display_name": "GPT-5.4",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low"
+        },
+        {
+          "effort": "medium"
+        },
+        {
+          "effort": "high"
+        },
+        {
+          "effort": "xhigh"
+        }
+      ],
+      "visibility": "hide",
+      "priority": 16
+    },
+    {
+      "slug": "gpt-5.4-mini",
+      "display_name": "GPT-5.4-Mini",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low"
+        },
+        {
+          "effort": "medium"
+        },
+        {
+          "effort": "high"
+        },
+        {
+          "effort": "xhigh"
+        }
+      ],
+      "visibility": "hide",
+      "priority": 23
+    },
+    {
+      "slug": "gpt-5.2",
+      "display_name": "GPT-5.2",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low"
+        },
+        {
+          "effort": "medium"
+        },
+        {
+          "effort": "high"
+        },
+        {
+          "effort": "xhigh"
+        }
+      ],
+      "visibility": "list",
+      "priority": 29
+    },
+    {
+      "slug": "codex-auto-review",
+      "display_name": "Codex Auto Review",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low"
+        },
+        {
+          "effort": "medium"
+        },
+        {
+          "effort": "high"
+        },
+        {
+          "effort": "xhigh"
+        },
+        {
+          "effort": "max"
+        }
+      ],
+      "visibility": "hide",
+      "priority": 43
+    }
+  ]
+}

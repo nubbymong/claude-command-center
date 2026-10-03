@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import {
   hosts, makeWin, makeLivePort, runSession, report, killRemoteTmux, sleep,
-  updates, misParsedStageFail, endSshRemote, killPty, settingsState,
+  claudeRan, misParsedStageFail, endSshRemote, killPty, settingsState,
   startConductorMcpServer, stopConductorMcpServer,
 } from './statusline-harness'
 
@@ -34,7 +34,7 @@ describe('SSH statusline matrix — rocky lane (LIVE, on-demand)', () => {
     killRemoteTmux(e, sid)
     expect(ended).toBe('completed')
     expect(misParsedStageFail(w.events, sid)).toEqual([])
-    expect(updates(w.events).some((u) => u.sessionId === sid)).toBe(true)
+    expect(claudeRan(w.events, sid)).toBe(true)
   }, 240_000)
 
   itIf(hosts.linuxRocky)('rocky password + NO tmux: statusline via /dev/tty-or-pts', async () => {
@@ -44,7 +44,7 @@ describe('SSH statusline matrix — rocky lane (LIVE, on-demand)', () => {
     report('T10 rocky pw no-tmux', w, sid)
     await endSshRemote(sid) // no tmux to kill; removes the remote sidecars
     killPty(sid)
-    expect(updates(w.events).some((u) => u.sessionId === sid)).toBe(true)
+    expect(claudeRan(w.events, sid)).toBe(true)
   }, 240_000)
 
   // The ONLY password-auth reattach in the matrix (T2 is key-auth): drop the
@@ -57,7 +57,7 @@ describe('SSH statusline matrix — rocky lane (LIVE, on-demand)', () => {
     const sid = `lv11${Date.now().toString(36)}`
     const w1 = await runSession(sid, e)
     report('T11a rocky first connect', w1, sid)
-    const firstOk = updates(w1.events).some((u) => u.sessionId === sid)
+    const firstOk = claudeRan(w1.events, sid)
     killPty(sid) // drop the local PTY; the remote staged-tmux session survives
     await sleep(3000)
     const w2 = await runSession(sid, e, { win: makeWin(), nudge: true })
@@ -66,7 +66,7 @@ describe('SSH statusline matrix — rocky lane (LIVE, on-demand)', () => {
     killPty(sid)
     killRemoteTmux(e, sid)
     expect(firstOk).toBe(true)
-    expect(updates(w2.events).some((u) => u.sessionId === sid)).toBe(true)
+    expect(claudeRan(w2.events, sid)).toBe(true)
   }, 480_000)
 
   // CSV coverage slots (2026-08-31): the matrix has keyless rows against the
@@ -80,7 +80,7 @@ describe('SSH statusline matrix — rocky lane (LIVE, on-demand)', () => {
     killPty(sid)
     killRemoteTmux(e, sid)
     expect(misParsedStageFail(w.events, sid)).toEqual([])
-    expect(updates(w.events).some((u) => u.sessionId === sid)).toBe(true)
+    expect(claudeRan(w.events, sid)).toBe(true)
   }, 240_000)
 
   itIf(hosts.linuxRockyKey)('rocky key + NO tmux: statusline updates', async () => {
@@ -90,6 +90,6 @@ describe('SSH statusline matrix — rocky lane (LIVE, on-demand)', () => {
     report('T13 rocky key no-tmux', w, sid)
     await endSshRemote(sid)
     killPty(sid)
-    expect(updates(w.events).some((u) => u.sessionId === sid)).toBe(true)
+    expect(claudeRan(w.events, sid)).toBe(true)
   }, 240_000)
 })

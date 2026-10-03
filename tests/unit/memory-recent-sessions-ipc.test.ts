@@ -52,7 +52,7 @@ describe('memory:recentSessions IPC handler', () => {
     const { registerLogs2Handlers } = await importHandlers()
     registerMemoryHandlers()
     // registerLogs2Handlers needs a getWindow fn
-    registerLogs2Handlers(() => null)
+    registerLogs2Handlers(() => null, () => false)
     const registered = handleCalls.map(([c]) => c)
     expect(registered).toContain('memory:recentSessions')
     expect(registered).toContain('logs2:sessionConfig')

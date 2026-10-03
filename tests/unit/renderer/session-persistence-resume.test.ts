@@ -162,4 +162,18 @@ describe('session-persistence — resumeUuid/resumeCwd (T8b)', () => {
     expect(co?.permissionMode).toBe('plan')
     expect(co?.extraArgs).toBe('--verbose')
   })
+
+  it('never persists neverStarted (walk fix W11): a launch that started nothing is this run\'s state, not the saved session\'s', async () => {
+    setApi(undefined)
+    useSessionStore.setState({
+      sessions: [makeSession({ neverStarted: true, ptyExited: true }), makeSession({ id: 'codex-1', provider: 'codex', neverStarted: true })],
+      activeSessionId: 'sess-resume-1',
+      isRestoring: false,
+    })
+    for (const state of [buildSessionState(), await buildSessionStateWithResumeTargets()]) {
+      expect(state.sessions).toHaveLength(2)
+      for (const s of state.sessions) expect(Object.keys(s)).not.toContain('neverStarted')
+      expect(JSON.stringify(state)).not.toContain('neverStarted')
+    }
+  })
 })

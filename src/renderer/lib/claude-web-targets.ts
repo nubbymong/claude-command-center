@@ -2,6 +2,8 @@ import { useSettingsStore, type AppSettings } from '../stores/settingsStore'
 import { useWebviewStore } from '../stores/webviewStore'
 import { useSessionStore } from '../stores/sessionStore'
 import { trackUsage } from '../stores/tipsStore'
+import { sshMappedProfileId } from '../utils/sessionLaunch'
+import type { ProviderId } from '../../shared/types'
 
 /**
  * The two "where does claude.ai open" knobs (owner call 2026-08-26): both
@@ -54,6 +56,34 @@ export function paneHostSession(preferredSessionId?: string, requirePreferred = 
   if (requirePreferred) return preferred?.id ?? null
   const active = eligible.find((s) => s.id === st.activeSessionId)
   return (preferred ?? active ?? eligible[0])?.id ?? null
+}
+
+/**
+ * The Claude account a session's claude.ai actions act on (Open artifacts,
+ * Authenticate claude.ai): a local Claude session's own profile, else the
+ * primary (#269); an SSH Claude session's email-mapped local profile
+ * (harmonise-remote). None for a shell-only session.
+ *
+ * None for a Codex session either (WP2 PR 4, P4.6, row 58): the primary
+ * fallback there made those actions act on ANOTHER account, the primary Claude
+ * profile (#216; P3.6 V5). A Codex account's own web session is keyed by its
+ * registry account id (webPartitionForCodexAccount), never by a Claude profile.
+ */
+export function claudeWebActionProfileId(
+  session: {
+    shellOnly?: boolean
+    sessionType?: string
+    provider?: ProviderId
+    profileId?: string
+    accountEmail?: string
+    sshRemoteAccount?: string
+  } | undefined,
+  primaryProfileId: string | undefined,
+  profiles: ReadonlyArray<{ id: string; accountEmail?: string }>,
+): string | undefined {
+  if (!session || session.shellOnly || (session.provider ?? 'claude') !== 'claude') return undefined
+  if (session.sessionType === 'local') return session.profileId ?? primaryProfileId
+  return sshMappedProfileId(session, profiles)
 }
 
 /**

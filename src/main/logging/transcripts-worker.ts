@@ -34,10 +34,17 @@
  *    as `error` (with the query id when one exists).
  */
 import * as nodeFs from 'fs'
+import { createHash, type Hash } from 'crypto'
+import { basename as pathBasename, dirname as pathDirname } from 'path'
+import { claudeFolderKey, claudeProjectsRootKey } from './claude-folder-key'
+import { CODEX_FOLDER_KEY_PREFIX, codexFolderKey, codexSessionMetaCwd } from './codex-folder-key'
+import { readBoundedFirstLine } from './bounded-first-line'
 import { openTranscriptsDb } from './transcripts-db'
 import type { TranscriptsDb, NewMessage, TranscriptScope } from './transcripts-db'
 import { makeNormalizer, PARSER_VERSION } from './transcript-normalizer'
+import { makeCodexRolloutNormalizer, CODEX_PARSER_VERSION } from './codex-rollout-normalizer'
 import { mangleCwdToProjectDir } from '../../shared/project-key'
+import { codexConversationKey } from '../../shared/codex-conversation-key'
 import type { Normalizer } from './transcript-normalizer'
 import type {
   ToTranscriptsWorker,
@@ -69,7 +76,19 @@ export interface TranscriptsWorkerFs {
   openSync(path: string, flags: string): number
   readSync(fd: number, buffer: Buffer, offset: number, length: number, position: number): number
   closeSync(fd: number): void
+  /** P3.12 round 1: an open file's identity, for a Codex tail. */
+  fstatSync?(fd: number, opts: { bigint: true }): { dev: bigint; ino: bigint }
 }
+
+/** P3.12 round 1 (V2): the most of a carried copy compared with the rollout
+ *  it came from, to continue where that was read. */
+const CONTINUE_COMPARE_MAX_BYTES = 64 * 1024 * 1024
+
+/** P3.12 round 2 (W4): the divider where a conversation's indexing resumes
+ *  after a stretch it was not indexed; that stretch is never indexed. */
+export const NOT_INDEXED_DIVIDER = 'Not indexed while logging was off'
+
+
 
 // ---------------------------------------------------------------------------
 // Worker factory
@@ -84,6 +103,27 @@ interface TailState {
   /** Byte offset of the consumed prefix (always just past a '\n'). */
   cursor: number
   normalizer: Normalizer
+  /** P3.12 round 1 (A1): a Codex rollout's file identity (dev:ino) as its
+   *  watcher claimed it; only that file is read at the path. */
+  identity?: string
+  /** P3.12 (X4): a Codex tail's running SHA-256 of every byte it consumed
+   *  from the file's start (absent when it did not read from there). */
+  digest?: Hash
+  /** P3.12 (Y3): the stored digest of what was read up to `cursor`, checked
+   *  (and the running digest built) only when the tail next reads. */
+  digestStored?: string
+  /** P3.16 (M1): whether this tail stores the digest of what it read with its
+   *  cursor (a Codex tail with its claimed identity, and a Claude tail). */
+  vouches?: boolean
+  /** P3.16 final-head VM finding D1: whether the file has been there. Claude
+   *  Code names a new conversation's transcript before it writes the file (at
+   *  the first message); until the file is seen the tail waits for it (until
+   *  its run ends), and only a file that was there and is gone fails it. A
+   *  Codex tail's file was seen by the watcher that claimed it. */
+  seen: boolean
+  /** Fixer 8b: whether the log said once that this unseen file could not be
+   *  read for another reason than not being written yet. */
+  waitNoted?: boolean
 }
 
 export interface TranscriptsWorker {
@@ -111,6 +151,48 @@ export function createTranscriptsWorker(
   const tails = new Map<number, TailState>()
   /** transcriptIds that have already emitted the "shrank below cursor" warn (once each). */
   const shrinkWarned = new Set<number>()
+  /** P3.12 (Y1): when each Codex conversation (its rollout id) was written
+   *  while not indexed, from main: windows [start, end), end null while
+   *  open; and `before`, every record stamped earlier. */
+  const notIndexedWindows = new Map<string, Array<[number, number | null]>>()
+  let notIndexedBefore: number | null = null
+  /** PR-level ADR-009 round 1 (C1): the Codex launch folders main has windows
+   *  for (codex-folder-key.ts), for a rollout whose folder cannot be read. */
+  const codexFolderKeys = new Set<string>()
+  /** Whether a record written at `ts` under any of `keys` (its conversation,
+   *  and for a Claude transcript its projects folder, P3.16 round 1 N1; for a
+   *  Codex rollout the folder it records, PR-level ADR-009 round 1 C1) is
+   *  left out. A record with no time (none of its own, none before it in the
+   *  read) is left out whenever any of them has such a rule. A record at a
+   *  window's start is inside it; one at its end is not. */
+  function notIndexedAt(keys: Iterable<string>, ts: number | null): boolean {
+    const lists: Array<Array<[number, number | null]>> = []
+    for (const k of keys) { const l = notIndexedWindows.get(k); if (l && l.length > 0) lists.push(l) }
+    if (lists.length === 0 && notIndexedBefore === null) return false
+    if (ts === null) return true
+    if (notIndexedBefore !== null && ts < notIndexedBefore) return true
+    return lists.some((list) => list.some(([start, end]) => ts >= start && (end === null || ts < end)))
+  }
+  /** PR-level ADR-009 round 1 (C1): the key of the folder a rollout's first
+   *  line (its session_meta) records (round 2, K2: whichever realm the
+   *  rollout lies in); null when that line cannot be read, or records no
+   *  folder. Round 2 (K5): read with the rollout lookup's own reader and
+   *  bound, through this worker's file port. */
+  function codexFolderOf(path: string): string | null {
+    const head = readBoundedFirstLine(path, fsi)
+    if (!head || head.kind !== 'line') return null
+    const cwd = codexSessionMetaCwd(head.line)
+    return cwd ? codexFolderKey(cwd) : null
+  }
+  /** P3.12 (X4): the running digest of the first `cursor` bytes of `path`,
+   *  when they are what a tail read (their SHA-256 is `stored`, the digest
+   *  kept with that cursor); else none. A carried copy continues only where
+   *  its own first bytes have that digest, whatever the earlier file holds now. */
+  function digestIfRead(path: string, cursor: number, stored: string | null | undefined): Hash | undefined {
+    if (!stored || cursor <= 0 || cursor > CONTINUE_COMPARE_MAX_BYTES) return undefined
+    const hash = prefixHash(path, cursor)
+    return hash && hash.copy().digest('hex') === stored ? hash : undefined
+  }
   let tailTimer: ReturnType<typeof setInterval> | null = null
   let healthTimer: ReturnType<typeof setInterval> | null = null
   let ticking = false
@@ -125,7 +207,10 @@ export function createTranscriptsWorker(
 
   /** Commit a batch (rows + cursor, one transaction) and post new-messages. */
   function flushBatch(tail: TailState, msgs: NewMessage[], newCursor: number): void {
-    db!.appendBatch(tail.runId, tail.transcriptId, msgs, newCursor)
+    // P3.12, P3.16 (M1): a tail stores the digest of what it read with its
+    // cursor (none when it cannot vouch for it), a Claude tail as a Codex one.
+    const readDigest = !tail.vouches ? undefined : tail.digest ? tail.digest.copy().digest('hex') : null
+    db!.appendBatch(tail.runId, tail.transcriptId, msgs, newCursor, readDigest)
     tail.cursor = newCursor
     if (msgs.length > 0) {
       messagesTotal += msgs.length
@@ -137,18 +222,32 @@ export function createTranscriptsWorker(
    * Drain appended bytes for one tailed transcript. Synchronous (bounded by
    * MAX_TICK_BYTES). Returns:
    *  - 'ok'      — drained (or nothing new); keep tailing.
-   *  - 'missing' — the file is gone; caller marks failed + drops the tail.
+   *  - 'absent'  - the file has not been written yet (never seen); keep
+   *    tailing and wait for it (P3.16 final-head VM finding D1).
+   *  - 'missing' - the file was there and is gone; caller marks failed + drops the tail.
    *  - 'shrank'  — the file shrank below the cursor (unexpected: Claude transcripts
    *    are APPEND-ONLY, and rotation is a NEW file handled by re-bind). This drain
    *    already marked the transcript 'failed' + dropped it; caller just stops.
+   *  - 'replaced' - P3.12 round 1 (A1): a Codex tail's path now holds another
+   *    file than the one its watcher claimed; nothing is read, and this drain
+   *    already marked the transcript 'failed' and dropped it.
    */
-  function drainTail(tail: TailState): 'ok' | 'missing' | 'shrank' {
+  function drainTail(tail: TailState): 'ok' | 'absent' | 'missing' | 'shrank' | 'replaced' {
     let size: number
     try {
       size = fsi.statSync(tail.path).size
-    } catch {
-      return 'missing' // missing file
+    } catch (err) {
+      if (tail.seen) return 'missing' // gone
+      // Not written yet. Fixer 8b: any other reason it cannot be read (no
+      // right to it, a scanner briefly holding a new file) waits too, said once.
+      const code = (err as NodeJS.ErrnoException | null)?.code
+      if (code !== 'ENOENT' && !tail.waitNoted) {
+        tail.waitNoted = true
+        log('info', `[tail] transcript file not readable yet (${code ?? 'unknown'}); waiting for it: ${tail.path}`)
+      }
+      return 'absent'
     }
+    tail.seen = true
     // Append-only assumption: the file only ever grows; a strict shrink means an
     // unexpected in-place truncation. Rather than silently stalling forever (the
     // cursor would never catch up), warn ONCE and fail the tail.
@@ -166,10 +265,26 @@ export function createTranscriptsWorker(
       return 'shrank'
     }
     if (size === tail.cursor) return 'ok' // normal no-op: nothing new appended
+    // P3.12 (Y3): the running digest of what was read, built when the tail
+    // next reads (never at the worker's start).
+    if (tail.digestStored !== undefined) {
+      tail.digest = digestIfRead(tail.path, tail.cursor, tail.digestStored)
+      tail.digestStored = undefined
+    }
 
     const end = Math.min(size, tail.cursor + MAX_TICK_BYTES)
     const fd = fsi.openSync(tail.path, 'r')
     try {
+      if (tail.identity !== undefined && !sameFile(fd, tail.identity)) {
+        log('warn', `[tail] another file is at a Codex rollout's path; not read, tail retired: ${tail.path}`)
+        try {
+          db!.setTranscriptStatus(tail.transcriptId, 'failed')
+        } catch {
+          /* db gone mid-shutdown */
+        }
+        tails.delete(tail.transcriptId)
+        return 'replaced'
+      }
       let pos = tail.cursor
       /** Bytes read but not yet line-terminated (partial line carry). */
       let carry: Buffer = Buffer.alloc(0)
@@ -196,6 +311,8 @@ export function createTranscriptsWorker(
             lineBuf = lineBuf.subarray(0, lineBuf.length - 1)
           }
           const consumed = nl - lineStart + 1 // line bytes incl. '\r', plus the '\n'
+          // P3.12 (X4): the digest of what a Codex tail consumed, line by line.
+          tail.digest?.update(chunk.subarray(lineStart, nl + 1))
           batch.push(...tail.normalizer.push(lineBuf.toString('utf8')))
           batchBytes += consumed
           consumedCursor += consumed
@@ -217,6 +334,10 @@ export function createTranscriptsWorker(
       // The partial trailing line (carry) is intentionally NOT consumed: the
       // cursor stays at the last '\n', so the completed line is read next tick.
       return 'ok'
+    } catch (err) {
+      // A drain that failed part-way: its digest no longer matches the cursor.
+      tail.digest = undefined
+      throw err
     } finally {
       try {
         fsi.closeSync(fd)
@@ -224,6 +345,89 @@ export function createTranscriptsWorker(
         /* best-effort */
       }
     }
+  }
+
+  /** Whether the open file `fd` is the one with `identity` (dev:ino). A file
+   *  system that cannot say is not the same file. */
+  function sameFile(fd: number, identity: string): boolean {
+    try {
+      const st = (fsi.fstatSync ?? ((f: number) => nodeFs.fstatSync(f, { bigint: true })))(fd, { bigint: true })
+      return `${st.dev}:${st.ino}` === identity
+    } catch {
+      return false
+    }
+  }
+
+  /** P3.12 (X4): the running SHA-256 of the first `n` bytes of `path`, or
+   *  null on any doubt. */
+  function prefixHash(path: string, n: number): Hash | null {
+    let fd: number | null = null
+    try {
+      if (fsi.statSync(path).size < n) return null
+      fd = fsi.openSync(path, 'r')
+      const hash = createHash('sha256')
+      const buf = Buffer.alloc(READ_BUF_SIZE)
+      for (let pos = 0; pos < n; ) {
+        const want = Math.min(READ_BUF_SIZE, n - pos)
+        const got = fsi.readSync(fd, buf, 0, want, pos)
+        if (got !== want) return null
+        hash.update(buf.subarray(0, want))
+        pos += want
+      }
+      return hash
+    } catch {
+      return null
+    } finally {
+      if (fd !== null) { try { fsi.closeSync(fd) } catch { /* best-effort */ } }
+    }
+  }
+
+  /**
+   * P3.12: where a new run's binding of a Codex rollout starts (and the read
+   * digest its tail goes on with), from the same session's earlier runs of
+   * this file name (the latest first): the same file at the same path (the
+   * same identity: a Restart, a relaunch) continues from what was read, and
+   * another file at that path is read from its start; the copy Switch
+   * Account made in another account's folder continues where its own first
+   * bytes have the digest of what the earlier binding read. Anything else
+   * starts at 0. Nothing is indexed twice. (What was written while the
+   * conversation was not indexed is left out by record time on every read,
+   * wherever it starts: notIndexedAt.)
+   *
+   * P3.16 (M1): a Claude transcript the same way (Claude's resume continues
+   * from what was indexed, as Codex's does), its earlier bindings of the same
+   * format. A Claude binding carries no file identity: at the same path the
+   * digest of what was read vouches for the file (a file whose first bytes
+   * are not what was read is read from its start); where it cannot (an
+   * earlier binding that kept none, or more than the compare limit read),
+   * the transcript continues from its cursor, as a Claude tail does across a
+   * worker restart.
+   */
+  function continuationStart(runId: number, sessionId: string, path: string, format: 'claude-jsonl' | 'codex-rollout', identity?: string): { cursor: number; digest?: Hash } {
+    let size: number
+    try {
+      size = fsi.statSync(path).size
+    } catch {
+      return { cursor: 0 }
+    }
+    for (const prior of db!.priorBindings(runId, pathBasename(path), sessionId, format)) {
+      const at = prior.ingestCursor
+      if (prior.path === path) {
+        if (format === 'codex-rollout') {
+          if (prior.sourceIdentity === identity && at > 0 && at <= size) return { cursor: at, digest: digestIfRead(path, at, prior.readDigest) }
+          return { cursor: 0 }
+        }
+        if (at <= 0 || at > size) return { cursor: 0 }
+        if (!prior.readDigest || at > CONTINUE_COMPARE_MAX_BYTES) return { cursor: at }
+        const read = digestIfRead(path, at, prior.readDigest)
+        return read ? { cursor: at, digest: read } : { cursor: 0 }
+      }
+      if (at > 0 && at <= size && at <= CONTINUE_COMPARE_MAX_BYTES) {
+        const read = digestIfRead(path, at, prior.readDigest)
+        if (read) return { cursor: at, digest: read }
+      }
+    }
+    return { cursor: 0 }
   }
 
   /** One pass over every tailed transcript. Re-entrancy-guarded. */
@@ -244,7 +448,8 @@ export function createTranscriptsWorker(
             }
             tails.delete(tail.transcriptId)
           }
-          // 'shrank' already marked failed + dropped the tail inside drainTail.
+          // 'shrank' and 'replaced' already marked failed + dropped the tail inside drainTail.
+          // 'absent' (D1): the file is not written yet; the tail stays and waits.
         } catch (err) {
           // A DB/read error on this transcript must never kill the loop. Mark it
           // failed (a deterministic error would otherwise re-fire every tick).
@@ -287,14 +492,66 @@ export function createTranscriptsWorker(
     configId: string | null
     path: string
     cursor: number
+    /** P3.12: the binding's stored format picks its normalizer. */
+    sourceFormat: string
+    /** P3.12 round 1 (A1): a Codex rollout's claimed file identity. */
+    identity?: string | null
+    /** P3.12 (X4): the read digest a Codex tail goes on with. */
+    digest?: Hash
+    /** P3.12 (Y3): or the stored one, checked when the tail next reads. */
+    digestStored?: string | null
   }): void {
+    const { sourceFormat, identity, digest, digestStored, ...state } = meta
+    // Seed idx/ts continuity from what the run already stored.
+    const seed = {
+      startIdx: db!.nextIdx(meta.runId),
+      startTs: db!.lastMessageTs(meta.runId) ?? 0,
+    }
+    const codex = sourceFormat === 'codex-rollout'
+    // P3.12 round 6 (Z4): the conversation's key, worked out once for this
+    // tail. P3.16 (M1): a Claude transcript's too (its file name is the
+    // conversation's id, as a rollout's ends with it).
+    const conversation = codexConversationKey(meta.path)
+    // P3.16 round 1 (N1): a Claude transcript is also left out where its
+    // projects folder was marked (a session not indexed that named none).
+    // Round 2 (Q2, Q3): and where the projects folders' root above that folder
+    // was marked (a session past its cap that named another project's file).
+    const folder = pathDirname(meta.path)
+    // PR-level ADR-009 round 1 (C1): a Codex rollout is also left out where
+    // the folder its session_meta records was marked (a session not indexed
+    // launched there, from the moment it became not indexed until it ended;
+    // round 2, K2: in any realm, so a Sign in again's copy is left out too),
+    // as a Claude transcript is where its projects folder was;
+    // worked out once, from the rollout's first line. One whose first line
+    // records no folder is left out wherever any Codex folder window covers
+    // the record's time. Round 2 (K5): the key list is built once per tail;
+    // the folders main has windows for are read as they are at each record
+    // (a window kept after the tail started counts too), not copied.
+    const codexFolder = codex ? codexFolderOf(meta.path) : null
+    const keys = codex ? (codexFolder ? [conversation, codexFolder] : [conversation]) : [conversation, claudeFolderKey(folder), claudeProjectsRootKey(pathDirname(folder))]
+    const skip = codex && !codexFolder
+      ? (ts: number | null): boolean => notIndexedAt(keys, ts) || notIndexedAt(codexFolderKeys, ts)
+      : (ts: number | null): boolean => notIndexedAt(keys, ts)
+    // P3.16 (M1): a Claude tail vouches for what it read, as a Codex tail
+    // with its claimed identity does.
+    const vouches = codex ? !!identity : true
     tails.set(meta.transcriptId, {
-      ...meta,
-      // Seed idx/ts continuity from what the run already stored.
-      normalizer: makeNormalizer({
-        startIdx: db!.nextIdx(meta.runId),
-        startTs: db!.lastMessageTs(meta.runId) ?? 0,
-      }),
+      ...state,
+      // P3.12 (Y1), P3.16 (M1): a tail leaves out the records written while
+      // its conversation was not indexed, by record time, whatever its offset.
+      normalizer: codex
+        ? makeCodexRolloutNormalizer({ ...seed, skip, skippedLabel: NOT_INDEXED_DIVIDER })
+        : makeNormalizer({ ...seed, skip, skippedLabel: NOT_INDEXED_DIVIDER }),
+      ...(codex && identity ? { identity } : {}),
+      vouches,
+      // D1: a tail that read some of its file, or a Codex rollout its watcher
+      // claimed, has seen it; any other waits for its file to be written.
+      seen: codex || meta.cursor > 0,
+      // P3.12 (X4): a tail from the file's start reads it all; one that goes
+      // on from a cursor vouches for its bytes only with the digest of what
+      // was read before it.
+      ...(vouches && (digest || meta.cursor === 0) ? { digest: digest ?? createHash('sha256') } : {}),
+      ...(vouches && !digest && meta.cursor > 0 && digestStored ? { digestStored } : {}),
     })
   }
 
@@ -339,6 +596,13 @@ export function createTranscriptsWorker(
     //    ordered while-down buffer must replay run-start FIRST so the map is seeded
     //    before any such message is processed.
     for (const r of db.listResumableTranscripts()) {
+      // P3.12 round 2 (W6): a Codex rollout without its claimed identity is
+      // not read again.
+      if (r.sourceFormat === 'codex-rollout' && !r.sourceIdentity) {
+        db.setTranscriptStatus(r.transcriptId, 'complete')
+        continue
+      }
+
       const scope = db.getRunScope(r.runId)
       if (!scope) continue
       db.reopenRun(r.runId)
@@ -349,6 +613,11 @@ export function createTranscriptsWorker(
         configId: scope.configId,
         path: r.path,
         cursor: r.ingestCursor,
+        sourceFormat: r.sourceFormat,
+        identity: r.sourceIdentity,
+        // P3.12 (Y3): a resumed tail goes on vouching for what it read, its
+        // stored digest checked when it next reads (P3.16 M1: Claude's too).
+        digestStored: r.readDigest,
       })
     }
 
@@ -463,8 +732,10 @@ export function createTranscriptsWorker(
       case 'recent-sessions': {
         const projectDir = typeof args.projectDir === 'string' ? args.projectDir : ''
         const limit = typeof args.limit === 'number' ? args.limit : 5
+        // The Memory page's rail for a Claude memory project (P3.12): Claude
+        // runs only, though a Codex session may share the folder.
         rows = db!.sessionActivity()
-          .filter((r) => r.projectCwd !== null && mangleCwdToProjectDir(r.projectCwd) === projectDir)
+          .filter((r) => r.provider === 'claude' && r.projectCwd !== null && mangleCwdToProjectDir(r.projectCwd) === projectDir)
           .slice(0, limit)
           .map((r) => ({ sessionId: r.sessionId, lastActive: r.lastActive }))
         break
@@ -577,17 +848,53 @@ export function createTranscriptsWorker(
           log('warn', `[bind] dropped transcript-bind for unknown session ${msg.sessionId}`)
           return
         }
+        // P3.12: a Codex rollout is tailed with the Codex normalizer; any
+        // other value is Claude's format, as before.
+        const codex = msg.sourceFormat === 'codex-rollout'
+        const identity = codex && typeof msg.sourceIdentity === 'string' && msg.sourceIdentity ? msg.sourceIdentity : undefined
+        // P3.12 round 2 (W6): a Codex rollout is read only as the file its
+        // watcher claimed; without that file's identity nothing is bound.
+        if (codex && !identity) {
+          log('warn', `[bind] a Codex rollout without its claimed identity is not indexed: ${msg.path}`)
+          return
+        }
         const bound = db.bindTranscript(runId, msg.path, {
           confidence: msg.confidence,
           sourceVersion: msg.sourceVersion,
-          parserVersion: PARSER_VERSION,
+          parserVersion: codex ? CODEX_PARSER_VERSION : PARSER_VERSION,
+          sourceFormat: codex ? 'codex-rollout' : 'claude-jsonl',
+          ...(identity ? { sourceIdentity: identity } : {}),
         })
-        if (bound.isNew && bound.ord > 0) {
-          // Rotation within a run (e.g. /clear): retire the previous tails FIRST
-          // (final drain) so the divider and the new tail's normalizer allocate
-          // idx strictly after everything already ingested — two live normalizers
-          // on one run would otherwise collide on idx.
+        let cursor = bound.cursor
+        // P3.12 round 1 (V2): where a new binding of a Codex rollout starts;
+        // P3.16 (M1): a Claude transcript's too.
+        let digest: Hash | undefined
+        let digestStored: string | null = null
+        // A rotation within a run: a new transcript (e.g. /clear), or (round 1,
+        // Q2) going back to one the run held before (A, B, A), or another file
+        // now at a Codex rollout's path. Retire the other tails FIRST (final
+        // drain) so the divider and the tail's normalizer allocate idx strictly
+        // after everything already ingested; two live normalizers on one run
+        // would otherwise collide on idx.
+        const backToEarlier = !bound.isNew && (bound.status === 'complete' || bound.status === 'failed' || bound.identityChanged)
+        if (bound.isNew) {
+          const start = continuationStart(runId, msg.sessionId, msg.path, codex ? 'codex-rollout' : 'claude-jsonl', identity)
+          if (start.cursor > 0) {
+            db.advanceCursor(bound.transcriptId, start.cursor, start.digest ? start.digest.copy().digest('hex') : null)
+            cursor = start.cursor
+          }
+          digest = start.digest
+        } else {
+          // A re-bind that (re)starts the tail goes on from its cursor,
+          // vouching for what it read (checked when it next reads).
+          digestStored = bound.readDigest
+        }
+        const rotation = (bound.isNew && bound.ord > 0) || backToEarlier
+        if (rotation) {
           stopTailsForRun(runId, 'complete', bound.transcriptId)
+          if (backToEarlier) tails.delete(bound.transcriptId)
+        }
+        if (rotation) {
           db.appendMessages(runId, [
             { idx: db.nextIdx(runId), ts: Date.now(), role: 'system', kind: 'clear', content: '' },
           ])
@@ -601,9 +908,48 @@ export function createTranscriptsWorker(
             sessionId: msg.sessionId,
             configId: scope?.configId ?? null,
             path: msg.path,
-            cursor: bound.cursor,
+            cursor,
+            sourceFormat: bound.sourceFormat,
+            identity: identity ?? null,
+            ...(digest ? { digest } : {}),
+            digestStored,
           })
         }
+        return
+      }
+
+      case 'not-indexed-windows': {
+        // P3.12 (Y1): from main; each listed conversation's windows, whole.
+        if (msg.replace === true) { notIndexedWindows.clear(); codexFolderKeys.clear() }
+        const conversations = msg.conversations && typeof msg.conversations === 'object' ? msg.conversations : {}
+        for (const [key, list] of Object.entries(conversations)) {
+          if (!Array.isArray(list)) continue
+          const kept = list.filter((w): w is [number, number | null] => Array.isArray(w) && typeof w[0] === 'number' && Number.isFinite(w[0]) && (w[1] === null || (typeof w[1] === 'number' && Number.isFinite(w[1]))))
+          notIndexedWindows.set(key, kept.map((w) => [w[0], w[1]]))
+          if (key.startsWith(CODEX_FOLDER_KEY_PREFIX)) codexFolderKeys.add(key)
+        }
+        if (typeof msg.before === 'number' && Number.isFinite(msg.before)) notIndexedBefore = notIndexedBefore === null ? msg.before : Math.max(notIndexedBefore, msg.before)
+        return
+      }
+
+      case 'transcript-unbind': {
+        // P3.12: the session let this transcript go (a Codex claim released).
+        // Final-drain it, mark it complete and stop tailing it; its rows stay.
+        // A later bind of the same path to the same run resumes at its cursor.
+        const runId = sessionToRun.get(msg.sessionId)
+        if (runId === undefined) return
+        const found = db.findTranscript(runId, msg.path)
+        if (!found) return
+        const tail = tails.get(found.transcriptId)
+        if (tail) {
+          try {
+            drainTail(tail)
+          } catch {
+            /* best-effort final drain */
+          }
+          tails.delete(found.transcriptId)
+        }
+        db.setTranscriptStatus(found.transcriptId, 'complete')
         return
       }
 

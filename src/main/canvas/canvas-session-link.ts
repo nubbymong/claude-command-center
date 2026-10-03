@@ -115,10 +115,21 @@ function accountDisplayNameFor(profileId: string | undefined): string | undefine
   }
 }
 
+/** WP2 PR 4, P4.1 (row 51): the conversation a Codex session is on (P3.5's
+ *  claim, kept by pty-manager), set there at the session's launch: injected
+ *  so this module keeps no import of pty-manager. */
+let codexConversationLookup: ((sessionId: string) => string | undefined) | null = null
+
+export function setCanvasCodexConversationLookup(lookup: ((sessionId: string) => string | undefined) | null): void {
+  codexConversationLookup = lookup
+}
+
 /** The conversation currently driving a session: the transcript the binder has
  *  bound (live truth — it follows an in-session `/resume` and is the ONLY
  *  source when the user resumed inside Claude rather than through a CCC tile),
- *  else the resume target the session was spawned with. */
+ *  else, for a Codex session, the conversation it is on (P4.1), else the
+ *  resume target the session was spawned with. A label either way: it orders
+ *  and names the resume list and authorizes nothing (ADR-017). */
 function conversationUuidFor(sessionId: string): string | undefined {
   try {
     const transcript = getTranscriptBinder()?.getLatestTranscriptPath(sessionId)
@@ -128,6 +139,12 @@ function conversationUuidFor(sessionId: string): string | undefined {
     }
   } catch {
     /* binder unavailable — fall through to the spawn-time resume target */
+  }
+  try {
+    const codex = codexConversationLookup?.(sessionId)
+    if (typeof codex === 'string' && CONVERSATION_UUID_RE.test(codex)) return codex
+  } catch {
+    /* no Codex record: fall through */
   }
   const resume = spawnInfo.get(sessionId)?.resumeUuid
   return resume && CONVERSATION_UUID_RE.test(resume) ? resume : undefined

@@ -43,6 +43,7 @@ const {
   insertImageMarker,
   renumberImageMarkers,
   submitLabel,
+  reviewMarkerLine,
   decisionLabels,
   nextVersionLabel,
   answeringVersion,
@@ -266,6 +267,14 @@ describe('the decision says what the user is deciding on (W11)', () => {
     expect(submitLabel(uatVersion(), 'approve', 0)).toBe('Submit test — Pass')
     // Singular reads as singular — a count that says "1 notes" is a machine talking.
     expect(submitLabel(designVersion(), 'reject', 1)).toBe('Submit — Reject v8, 1 note')
+  })
+
+  // [host] P4.11 (PR 4 VM checkpoint O3): the line the agent reads says "1 note",
+  // not "1 notes"; its shape is otherwise the one the canvas skills describe.
+  it('the review marker line counts its notes in the right number', () => {
+    expect(reviewMarkerLine('R1', 1)).toBe('Review #1 — 1 note · canvas_review R1')
+    expect(reviewMarkerLine('R3', 5)).toBe('Review #3 — 5 notes · canvas_review R3')
+    expect(reviewMarkerLine('R12', 0)).toBe('Review #12 — 0 notes · canvas_review R12')
   })
 
   it('predicts the next version from the canvas`s own monotonic ids', () => {

@@ -18,6 +18,7 @@ import os from 'os'
 import { STEPS, ONBOARDING_VERSION } from '../../src/renderer/onboarding/steps'
 import { emptyGitHubConfig } from '../../src/shared/github-constants'
 import { currentTrainingVersion } from '../../src/renderer/training-steps'
+import { isolatedHomeDir, isolatedLaunchEnv } from './helpers/isolated-env'
 
 const APP_PATH = path.resolve(__dirname, '../../out/main/index.js')
 const APP_VERSION = JSON.parse(
@@ -94,9 +95,15 @@ test.beforeAll(async () => {
     path.join(config, 'settings.json'),
     JSON.stringify({
       loggingConsentSeen: true,
+      // P3.12 round 1: the current indexing notice, so it is not shown again here.
+      loggingConsentVersion: 2,
       localMachineName: 'e2e-host',
       updateChannel: 'stable',
       updateChannelChosen: true,
+      // The one-time "Do you use Codex?" page (codex-reconfirm-gate) sits
+      // between the notes and resume; answered here, so the notes hand over to
+      // resume as this spec pins.
+      codexAnswered: true,
     }),
   )
   // Retire the legacy GitHub onboarding modal. It sits BETWEEN the harness and
@@ -114,7 +121,8 @@ test.beforeAll(async () => {
     path.join(config, 'session-state.json'),
     JSON.stringify({
       sessions: [
-        { id: 'e2e-a', label: 'alpha', workingDirectory: os.homedir(), color: '#89b4fa', sessionType: 'local' },
+        // P3.16 (M7): the instance's own home, not the runner's.
+        { id: 'e2e-a', label: 'alpha', workingDirectory: isolatedHomeDir(dataDir), color: '#89b4fa', sessionType: 'local' },
       ],
       activeSessionId: 'e2e-a',
       savedAt: 1755000000000,
@@ -123,13 +131,8 @@ test.beforeAll(async () => {
 
   app = await electron.launch({
     args: [APP_PATH, `--user-data-dir=${path.join(dataDir, 'electron-userdata')}`],
-    env: {
-      ...process.env,
-      NODE_ENV: 'test',
-      E2E_HEADLESS: '1',
-      CCC_E2E_DATA_DIR: dataDir,
-      CCC_FORCE_SPLASH: '0',
-    },
+    // P3.16 (M7): with a home inside dataDir, as the helper's launch.
+    env: isolatedLaunchEnv(dataDir),
   })
   page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')

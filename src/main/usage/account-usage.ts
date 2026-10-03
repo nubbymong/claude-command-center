@@ -364,15 +364,31 @@ function isLiveBucket(v: unknown): v is UsageBucket {
     && typeof b.percent === 'number' && Number.isFinite(b.percent) && typeof b.resetsAt === 'string'
 }
 
+/** Which profile's folder a transcript lies in (the Tokenomics folder rule,
+ *  profileOfTranscript), set by main; unset, nothing is recorded. */
+let transcriptProfileOf: ((transcriptPath: string) => string | undefined) | null = null
+export function setLiveUsageTranscriptProfile(resolve: ((transcriptPath: string) => string | undefined) | null): void {
+  transcriptProfileOf = resolve
+}
+
 /**
  * Record the usage a live session just delivered, keyed by the PROFILE it runs
- * under. An empty or all-malformed set is ignored (nothing to serve), and an SSH
- * or default-home session has no local profile id so it stores nothing -- both
- * leave the account on the GET path, which is correct.
+ * under, and only when the session's transcript lies in that profile's folder
+ * (profileOfTranscript). An empty or all-malformed set is ignored (nothing to
+ * serve), and an SSH or default-home session has no local profile id so it
+ * stores nothing -- both leave the account on the GET path, which is correct.
  */
-export function recordLiveUsageForSession(sessionId: string, buckets: unknown, hasCredits: boolean, now: number = Date.now()): void {
+export function recordLiveUsageForSession(sessionId: string, buckets: unknown, hasCredits: boolean, transcriptPath?: unknown, now: number = Date.now()): void {
   const profileId = getClaudeProfileId(sessionId)
   if (!profileId) return
+  // The figure is this profile's only when the session that wrote it keeps its
+  // transcript in this profile's folder: a write from the session's previous
+  // run under another profile (Switch account keeps the session id) is not
+  // filed here. With no transcript path nothing is recorded, as for a
+  // default-home session.
+  let owner: string | undefined
+  try { owner = typeof transcriptPath === 'string' && transcriptProfileOf ? transcriptProfileOf(transcriptPath) : undefined } catch { owner = undefined }
+  if (owner !== profileId) return
   if (!Array.isArray(buckets)) return
   const clean = buckets.filter(isLiveBucket)
   if (clean.length === 0) return
@@ -452,6 +468,63 @@ export function resolveUsageOutcome(
   return { ...base, status: 'ok', stale: false, buckets: parsed.buckets, credits: parsed.credits }
 }
 
+/** Usage track MP3, D5: whether Claude Code's usage may be read now. Set at
+ *  start from main's launch rule (provider-launch-gate.ts,
+ *  providerProbeRefusal), injected rather than imported for the same reason
+ *  as setClaudeCliProbeAllowed: that rule's accounts graph must not load
+ *  here. Set before the usage handlers are registered; until then usage is
+ *  read as it always was. An answer that throws is a no (fail closed). */
+let usageAllowed: () => boolean = () => true
+
+export function setClaudeAccountDataAllowed(allowed: () => boolean): void {
+  usageAllowed = allowed
+}
+
+/** Whether anything of Claude Code may be read for the usage surfaces now
+ *  (the Account usage page and the credential state it and Insights show). */
+export function claudeAccountDataAllowed(): boolean {
+  try { return usageAllowed() === true } catch { return false }
+}
+
+/** An account's `off` result: names from the profile list only, nothing read. */
+function offUsage(profile: AccountProfile | undefined, profileId: string): AccountUsage {
+  return {
+    profileId,
+    email: profile?.accountEmail || null,
+    name: profile?.name || 'Account',
+    isPrimary: !!profile?.isPrimary,
+    active: profile ? isAccountActive(profile) : true,
+    status: 'off',
+    buckets: [],
+    fetchedAt: Date.now(),
+  }
+}
+
+const KNOWN_LABELS_MAX = 64
+const KNOWN_LABEL_MAX_LENGTH = 64
+
+/**
+ * The bucket labels of the saved figures (usage-snapshots.json) and the live
+ * ones sessions delivered, once each, in first-seen order: what the Settings
+ * toggles list, with no network call and no credential read (usage track MP3).
+ * Bounded: at most 64 labels of at most 64 characters.
+ */
+export function knownUsageLabels(): string[] {
+  hydrateSnapshots()
+  const out: string[] = []
+  const add = (buckets: UsageBucket[]) => {
+    for (const b of buckets) {
+      const l = typeof b?.label === 'string' ? b.label : ''
+      if (!l || l.length > KNOWN_LABEL_MAX_LENGTH || out.includes(l)) continue
+      if (out.length >= KNOWN_LABELS_MAX) return
+      out.push(l)
+    }
+  }
+  for (const snap of lastGoodUsage.values()) add(snap.buckets)
+  for (const live of liveUsageByProfile.values()) add(live.buckets)
+  return out
+}
+
 /**
  * Fetch usage for one profile. Signed-out -> needs-login; signed-in but not
  * fetchable -> last-known (stale) or a soft refresh hint; success -> fresh.
@@ -466,9 +539,12 @@ export function resolveUsageOutcome(
  * fetches live. Never rotates, so it is always safe next to a spawn.
  */
 export async function fetchAccountUsage(profileId: string, opts?: { noRefresh?: boolean }): Promise<AccountUsage> {
-  hydrateSnapshots()
   const profiles = listProfiles()
   const profile = profiles.find((p) => p.id === profileId)
+  // D5: Claude Code switched off (or its setting unreadable) reads nothing:
+  // before the credential file is located, before any refresh, before any GET.
+  if (!claudeAccountDataAllowed()) return offUsage(profile, profileId)
+  hydrateSnapshots()
   const isPrimary = !!profile?.isPrimary
   const active = profile ? isAccountActive(profile) : true
   const base: AccountUsage = {
@@ -599,7 +675,10 @@ export async function fetchAllAccountsUsageStreaming(
     // An OPEN account served from its delivered figure (plan P2) makes no request,
     // so -- like a parked account -- it must not consume a stagger slot, or N open
     // accounts would add N*STAGGER_MS of dead wait before a closed one loads.
-    const willNetwork = accountUsageWillNetwork(p)
+    // D5: with Claude Code switched off an account makes none either (it
+    // comes back `off` from fetchAccountUsage, which asks the rule itself, so
+    // a switch-off during the stream holds for the rest of it).
+    const willNetwork = claudeAccountDataAllowed() && accountUsageWillNetwork(p)
     if (willNetwork && networkedCount > 0) await sleep(STAGGER_MS)
     if (!wanted()) return
     onResult(await fetchAccountUsage(p.id))

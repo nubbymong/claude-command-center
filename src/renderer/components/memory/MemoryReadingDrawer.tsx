@@ -9,8 +9,15 @@ interface Props {
   memory: MemoryFile
   content: string | null
   onClose: () => void
-  onDelete: () => void
-  onWriteFrontmatter: () => void
+  /** Absent: the drawer offers no Delete (an account's own memory until its
+   *  VM check, WP2 PR 4 P4.4). */
+  onDelete?: () => void
+  /** Absent: no "+ Metadata" (an account's memory carries a heading, not
+   *  frontmatter). */
+  onWriteFrontmatter?: () => void
+  /** What the memory belongs to, named in the metadata grid: a project for
+   *  Claude's store, an account for an account's own memories. */
+  placeLabel?: string
 }
 
 /**
@@ -24,7 +31,7 @@ interface Props {
  * click events, which used to eat dialogs (AGENTS.md). Escape and the close
  * glyph are the ways out.
  */
-export default function MemoryReadingDrawer({ memory, content, onClose, onDelete, onWriteFrontmatter }: Props) {
+export default function MemoryReadingDrawer({ memory, content, onClose, onDelete, onWriteFrontmatter, placeLabel = 'Project' }: Props) {
   const [confirmDelete, setConfirmDelete] = useState(false)
   useDialogEscape(onClose)
 
@@ -51,7 +58,7 @@ export default function MemoryReadingDrawer({ memory, content, onClose, onDelete
           <TypeBadge type={memory.type} />
           <span className="font-mono text-[13px] font-medium text-[var(--text-primary)] flex-1 truncate">{memory.name}</span>
           <div className="flex gap-1.5">
-            {!memory.hasFrontmatter && (
+            {!memory.hasFrontmatter && onWriteFrontmatter && (
               <button
                 onClick={onWriteFrontmatter}
                 className={`${chipClass} border-[var(--border-subtle)] bg-[var(--surface-raised)] text-[var(--text-secondary)] hover:border-[var(--text-muted)] hover:text-[var(--text-primary)]`}
@@ -59,7 +66,7 @@ export default function MemoryReadingDrawer({ memory, content, onClose, onDelete
                 + Metadata
               </button>
             )}
-            {!confirmDelete ? (
+            {onDelete && (!confirmDelete ? (
               <button
                 onClick={() => setConfirmDelete(true)}
                 className={`${chipClass} border-[var(--border-subtle)] bg-[var(--surface-raised)] text-[var(--text-secondary)] hover:border-[var(--status-danger)] hover:text-[var(--status-danger)]`}
@@ -73,7 +80,7 @@ export default function MemoryReadingDrawer({ memory, content, onClose, onDelete
               >
                 Confirm
               </button>
-            )}
+            ))}
           </div>
           <button
             onClick={onClose}
@@ -87,7 +94,7 @@ export default function MemoryReadingDrawer({ memory, content, onClose, onDelete
         <div className="px-4 py-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 shrink-0" style={ruleStyle}>
           <span className={labelClass}>Type</span>
           <span className={valueClass}>{memory.type} {memory.hasFrontmatter ? '(frontmatter)' : '(inferred)'}</span>
-          <span className={labelClass}>Project</span>
+          <span className={labelClass}>{placeLabel}</span>
           <span className={valueClass}>{memory.project}</span>
           <span className={labelClass}>Machine</span>
           <span className={valueClass}>Local</span>

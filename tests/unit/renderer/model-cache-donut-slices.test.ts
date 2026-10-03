@@ -41,6 +41,18 @@ describe('buildCostSlices', () => {
     expect(slices[5].label).toBe('Other')
   })
 
+  // Usage track MP11: a model with no price (null) has no slice and does not
+  // bend the percentages.
+  it('a model with no price has no slice', () => {
+    const slices = buildCostSlices([
+      { model: 'claude-opus-4-8', costUsd: 75, tokens: 1 },
+      { model: 'claude-new-9', costUsd: null, tokens: 5000 },
+      { model: 'gpt-5.5', costUsd: 25, tokens: 1 },
+    ], reg)
+    expect(slices.map((x) => x.label)).toEqual(['Opus 4.8', '5.5'])
+    expect(slices[0].pct).toBe(75)
+  })
+
   it('returns no slices when every row is zero-cost', () => {
     expect(buildCostSlices([{ model: '<synthetic>', costUsd: 0, tokens: 0 }], reg)).toEqual([])
   })

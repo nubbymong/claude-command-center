@@ -97,6 +97,13 @@ export const IPC = {
   DEBUG_DISABLE: 'debug:disable',
   DEBUG_IS_ENABLED: 'debug:isEnabled',
   DEBUG_OPEN_FOLDER: 'debug:openFolder',
+  // WP2 PR 4 (P4.4, row 56): a provider account's own log folders, beside the
+  // app's "Open log folder". Keyed by account id: main resolves every folder
+  // (the account's log folder, and the one its settings name when they name
+  // one) and never takes a path from the renderer; replies name folder kinds,
+  // never paths.
+  DEBUG_ACCOUNT_LOG_FOLDERS: 'debug:accountLogFolders',       // renderer -> main: () -> AccountLogFolders[]
+  DEBUG_OPEN_ACCOUNT_LOG_FOLDER: 'debug:openAccountLogFolder', // renderer -> main: { accountId, folder } -> AccountLogFolderOpenResult
 
   // Usage
   USAGE_SESSION: 'usage:session',
@@ -236,6 +243,14 @@ export const IPC = {
 
   // Ask Command Center help workspace
   HELP_WORKSPACE: 'help:workspace',
+  // WP2 PR 4 (P4.3, row 53): Ask Conductor on a provider whose prompt takes a
+  // question only as text typed at its ready composer. HAND_OFF gives a live
+  // Ask tab its next question through main's submit primitive (P4.1), never
+  // as raw keystrokes and a carriage return; NOTICE is main's one-line report
+  // for the dock: the characters removed before typing (question 6, default
+  // A), or a question not delivered and why.
+  ASK_CONDUCTOR_HAND_OFF: 'askConductor:handOff', // renderer -> main: { sessionId, question } -> SubmitTextResult
+  ASK_CONDUCTOR_NOTICE: 'askConductor:notice',    // push: main -> renderer: AskConductorNotice
 
   // Tokenomics v2 — SQLite-backed summary/sessions/detail + index push
   TOKENOMICS2_SUMMARY: 'tokenomics2:summary',
@@ -244,12 +259,51 @@ export const IPC = {
   TOKENOMICS2_INDEX_STATUS: 'tokenomics2:indexStatus',
   TOKENOMICS2_INDEX_PROGRESS: 'tokenomics2:indexProgress',
   TOKENOMICS2_INDEX_COMPLETE: 'tokenomics2:indexComplete',
+  // Usage track MP9: the providers and accounts the stored usage has (the
+  // Account filter's choices). No arguments; keys and provider names only.
+  TOKENOMICS2_ACCOUNTS: 'tokenomics2:accounts',
 
-  // Codex (OpenAI)
-  CODEX_STATUS: 'codex:status',
-  CODEX_LOGIN: 'codex:login',
-  CODEX_LOGOUT: 'codex:logout',
-  CODEX_TEST_CONNECTION: 'codex:testConnection',
+  // Provider accounts (WP2 commit 3): the one provider-neutral Accounts
+  // surface. Requests name opaque ids only; replies are views, never paths,
+  // tokens, keys or environment values. SECRET is one-way (send, no reply).
+  PROVIDER_ACCOUNTS_SNAPSHOT: 'providerAccounts:snapshot',
+  PROVIDER_ACCOUNTS_CHANGED: 'providerAccounts:changed', // main -> renderer: AccountsSnapshot
+  PROVIDER_ACCOUNTS_DISCOVER: 'providerAccounts:discover',
+  PROVIDER_ACCOUNTS_INSTALL_RECIPES: 'providerAccounts:installRecipes',
+  PROVIDER_ACCOUNTS_SET_ENABLED: 'providerAccounts:setEnabled',
+  PROVIDER_ACCOUNTS_BEGIN_SETUP: 'providerAccounts:beginSetup',
+  PROVIDER_ACCOUNTS_ISSUE_SECRET_HANDLE: 'providerAccounts:issueSecretHandle',
+  PROVIDER_ACCOUNTS_SECRET: 'providerAccounts:secret',
+  PROVIDER_ACCOUNTS_SIGN_IN: 'providerAccounts:signIn',
+  PROVIDER_ACCOUNTS_SIGN_IN_OUTPUT: 'providerAccounts:signInOutput', // main -> the renderer that started it: SignInOutputEvent
+  PROVIDER_ACCOUNTS_CANCEL_SIGN_IN: 'providerAccounts:cancelSignIn',
+  PROVIDER_ACCOUNTS_SIGN_IN_AGAIN: 'providerAccounts:signInAgain', // an existing managed account, in its own realm; output on SIGN_IN_OUTPUT
+  PROVIDER_ACCOUNTS_COMPLETE_SETUP: 'providerAccounts:completeSetup',
+  PROVIDER_ACCOUNTS_ABANDON_SETUP: 'providerAccounts:abandonSetup',
+  PROVIDER_ACCOUNTS_REFRESH_STATUS: 'providerAccounts:refreshStatus',
+  PROVIDER_ACCOUNTS_LOGOUT: 'providerAccounts:logout',
+  PROVIDER_ACCOUNTS_SET_LIFECYCLE: 'providerAccounts:setLifecycle',
+  PROVIDER_ACCOUNTS_SET_DEFAULT: 'providerAccounts:setDefault',
+  PROVIDER_ACCOUNTS_UPDATE_IDENTITY: 'providerAccounts:updateIdentity',
+  PROVIDER_ACCOUNTS_CREATE_GROUP: 'providerAccounts:createGroup',
+  PROVIDER_ACCOUNTS_RENAME_GROUP: 'providerAccounts:renameGroup',
+  PROVIDER_ACCOUNTS_DELETE_GROUP: 'providerAccounts:deleteGroup',
+  PROVIDER_ACCOUNTS_LINK_IDENTITY: 'providerAccounts:linkIdentity',
+  PROVIDER_ACCOUNTS_UNLINK_IDENTITY: 'providerAccounts:unlinkIdentity',
+  PROVIDER_ACCOUNTS_ADOPT_EXTERNAL: 'providerAccounts:adoptExternal',
+  PROVIDER_ACCOUNTS_PROBE_EXTERNAL: 'providerAccounts:probeExternal',
+  PROVIDER_ACCOUNTS_RECONCILE_SIGN_IN: 'providerAccounts:reconcileSignIn',
+  PROVIDER_ACCOUNTS_RESOLVE_CONFLICT: 'providerAccounts:resolveConflict',
+  PROVIDER_ACCOUNTS_SET_REVIEWER_DEFAULT: 'providerAccounts:setReviewerDefault',
+  // Usage track MP3: allowance views, provider-neutral. The stream sends each
+  // account's view on the caller's private reply channel
+  // (PROVIDER_USAGE_RESULT_PREFIX + 24 hex) as it is ready; nothing for a
+  // provider that is off. A closed account may be read afresh (MP8,
+  // ADR-022: one short-lived helper of the provider's own CLI); the page
+  // closing stops the caller's stream and its read (USAGE_STREAM_STOP).
+  PROVIDER_ACCOUNTS_USAGE_STREAM: 'providerAccounts:usageStream',
+  PROVIDER_ACCOUNTS_USAGE_STREAM_STOP: 'providerAccounts:usageStreamStop',
+  PROVIDER_ACCOUNTS_USAGE_ONE: 'providerAccounts:usageOne',
 
   // Memory
   MEMORY_SCAN: 'memory:scan',
@@ -406,6 +460,9 @@ export const IPC = {
   // per-account skeleton rows in load order instead of waiting for the whole set.
   ACCOUNT_USAGE_FETCH_ALL_STREAM: 'accountUsage:fetchAllStream',
   ACCOUNT_USAGE_FETCH_ONE: 'accountUsage:fetchOne',
+  // Usage track MP3: the bucket labels of the saved and live figures, for the
+  // Settings toggles. Cached data only: no network and no credential read.
+  ACCOUNT_USAGE_KNOWN_LABELS: 'accountUsage:knownLabels',
 
   // Reliable per-session account identity (main -> renderer push at spawn; renderer pull on mount)
   ACCOUNT_IDENTITY_UPDATE: 'identity:accountUpdate',
@@ -443,6 +500,8 @@ export const IPC = {
   CANVAS_REVIEW_SUBMIT: 'canvas:reviewSubmit',         // renderer -> main: freeze the draft (+ sketch PNG exports); carries the decision (approve/reject) — required
   CANVAS_VERSION_VERDICT: 'canvas:versionVerdict',     // renderer -> main: zero-note verdict on a version { sessionId, versionId?, state, note? }; approve/reject also settles that artefact's earlier rounds, approve auto-completes
   CANVAS_AGENT_MARKER: 'canvas:agentMarker',           // renderer -> main (#580): { sessionId, canvasId, line } -> the one chat line that TELLS the agent a verdict/review was filed; owner-only against the named canvas, control-stripped, queued while the agent's turn is open and flushed at the boundary, never written blind into a streaming TUI
+  CANVAS_AGENT_MARKER_UNDELIVERED: 'canvas:agentMarkerUndelivered', // push: main -> renderer (WP2 PR 4, P4.1): CanvasMarkerUndelivered -> a queued marker the submit primitive could not deliver (no ready prompt within the queue's bound, a prompt on screen, a write never drawn); the canvas shows it on the review it belongs to
+  CANVAS_SESSION_GUIDANCE: 'canvas:sessionGuidance',  // renderer -> main (WP2 PR 4, P4.1): { sessionId } -> CanvasSessionGuidance | null; whether that session's launch carried the canvas and vision skills' guidance with the tools, for the canvas page's one line. A pure read of the launch record
   CANVAS_VERSION_REOPEN: 'canvas:versionReopen',       // renderer -> main: C1 reopen a version for review (later ready versions -> withdrawn); wakes no round
   CANVAS_ANNOTATION_REOPEN: 'canvas:annotationReopen', // renderer -> main: the USER puts a closed note back in play
   CANVAS_REVIEW_REOPEN: 'canvas:reviewReopen',         // renderer -> main: { sessionId, canvasId, reviewId } -> the USER puts a whole settled ROUND back in play (the only other revival there is)

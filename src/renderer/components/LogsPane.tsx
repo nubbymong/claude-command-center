@@ -44,11 +44,11 @@ export default function LogsPane({ sessionId }: Props) {
   const isShell = !!session?.shellOnly
   const isSSH = session?.sessionType === 'ssh'
   const isCodex = provider === 'codex'
-  // Per-config opt-out. The toggle's persistence on claudeOptions lands with
-  // T16 (SessionDialog "Index conversation logs"); read it defensively so this
-  // already honours it once T16 adds the field — DEFAULT-TRUE (only false off).
-  const perConfigOff =
-    (config?.claudeOptions as { loggingEnabled?: boolean } | undefined)?.loggingEnabled === false
+  // Per-config opt-out (SessionDialog "Index conversation logs"): Claude's on
+  // claudeOptions, Codex's on codexOptions (P3.12); DEFAULT-TRUE (only false off).
+  const perConfigOff = isCodex
+    ? config?.codexOptions?.loggingEnabled === false
+    : (config?.claudeOptions as { loggingEnabled?: boolean } | undefined)?.loggingEnabled === false
   const loggingOff = globalLogging === false || perConfigOff
 
   // Precedence: structural reasons (can never index) before logging-off before
@@ -56,8 +56,9 @@ export default function LogsPane({ sessionId }: Props) {
   // ONE source of truth for "can this session have a transcript": the command
   // bar and the Logs button read the same function (lib/session-capabilities),
   // so the pane and the bar cannot drift. (ADR-018 D2)
-  const structuralReason: LogEmptyReason | null = sessionCapabilities(session).logsEmptyReason
-  void isShell; void isSSH; void isCodex
+  const caps = sessionCapabilities(session)
+  const structuralReason: LogEmptyReason | null = caps.logsEmptyReason
+  void isShell; void isSSH
 
   // ---- no-transcript-yet detection via ingestStatus -------------------------
   // Only relevant when the session COULD index (no structural reason, logging on).
@@ -100,8 +101,11 @@ export default function LogsPane({ sessionId }: Props) {
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-[var(--surface-stage)]">
-      {/* Pane chrome. */}
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-surface0 bg-crust shrink-0">
+      {/* Pane chrome. P3.16a (U1): pr-12 (48px) keeps Close clear of the GitHub
+          button that floats over this corner while the rail is collapsed or
+          not set up (GitHubPanel gh-fab: absolute top-2 right-2, 32px with its
+          padding and border): 8 + 32 + 8 px. */}
+      <div data-testid="logs-pane-chrome" className="flex items-center gap-2 pl-3 pr-12 py-1.5 border-b border-surface0 bg-crust shrink-0">
         <span className="text-[11px] font-medium text-subtext1">Conversation</span>
         <div className="flex-1" />
         {emptyReason === null && (
@@ -119,7 +123,7 @@ export default function LogsPane({ sessionId }: Props) {
         </button>
       </div>
       {emptyReason !== null ? (
-        <LogEmptyState reason={emptyReason} watchedCwd={emptyReason === 'no-transcript' ? watchedCwd : null} />
+        <LogEmptyState reason={emptyReason} watchedCwd={emptyReason === 'no-transcript' ? watchedCwd : null} agentName={caps.agentName || undefined} />
       ) : (
         <SessionTranscript scope={scope} />
       )}

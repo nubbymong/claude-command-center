@@ -11,12 +11,12 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 // Importing the Codex entry point loads its spawn module, which reads the
 // live MCP port and the resources directory at call time; keep both inert.
 vi.mock('../../src/main/ipc/setup-handlers', () => ({ getResourcesDirectory: () => '' }))
-vi.mock('../../src/main/conductor-mcp-server', () => ({ getConductorMcpPort: () => 0, mcpSessionToken: () => 'tok' }))
+vi.mock('../../src/main/conductor-mcp-server', () => ({ getConductorMcpPort: () => 0, mcpSessionToken: () => 'tok', issueMcpSessionToken: () => 'tok' }))
 
 import { CAPABILITY_KEYS, WP1_REQUIRED_CAPABILITIES, PROVIDER_IDS, missingCapabilityKeys, isNeverOwnedLaunchVariable, NEVER_OWNED_LAUNCH_VARIABLES } from '../../src/shared/providers'
 import type { CapabilityPlatform } from '../../src/shared/providers'
-import { createClaudePackage } from '../../src/main/providers/claude'
-import { createCodexPackage } from '../../src/main/providers/codex'
+import { createClaudePackage, claudeCapabilities } from '../../src/main/providers/claude'
+import { createCodexPackage, codexWiredCapabilities } from '../../src/main/providers/codex'
 import { claudeDescriptor } from '../../src/renderer/providers/claude'
 import { codexDescriptor } from '../../src/renderer/providers/codex'
 import { composeProviders, composedProviderIds } from '../../src/main/providers/compose'
@@ -34,6 +34,25 @@ const cases = [
 const SESSION_METHODS = ['resolveBinary', 'buildSpawnCommand', 'detectUiRunning', 'ingestSessionTelemetry', 'listHistorySessions', 'resumeCommand', 'configureMcpServer'] as const
 const phase = resolvePhase(undefined, { eager: false })
 
+/** The package whose declaration the candidate judges: the one the main
+ *  composition root registers, as the app runs it. A bare factory call has
+ *  no registry realms, so Codex declares its unwired table there. */
+function judgedPackage(id: 'claude' | 'codex') {
+  _resetProviderRegistryForTest()
+  try {
+    composeProviders()
+    const pkg = tryGetProviderPackage(id)
+    if (!pkg) throw new Error(`the composition root registered no ${id} package`)
+    return pkg
+  } finally {
+    _resetProviderRegistryForTest()
+  }
+}
+
+/** The WP1-required capabilities a declaration does not support. */
+const candidateGaps = (capabilities: ReturnType<typeof createCodexPackage>['capabilities']) =>
+  WP1_REQUIRED_CAPABILITIES.filter((k) => capabilities[k].state !== 'supported')
+
 describe.each(cases)('provider conformance: $id', ({ id, create, descriptor, ambientRealmVariable, ownedRealmVariable, offeredMethods }) => {
   const pkg = create()
 
@@ -42,7 +61,7 @@ describe.each(cases)('provider conformance: $id', ({ id, create, descriptor, amb
     expect(pkg.id).toBe(id)
     expect(pkg.displayName.length).toBeGreaterThan(0)
     expect(pkg.session.id).toBe(pkg.id)
-    for (const m of SESSION_METHODS) expect(typeof (pkg.session as Record<string, unknown>)[m], m).toBe('function')
+    for (const m of SESSION_METHODS) expect(typeof (pkg.session as unknown as Record<string, unknown>)[m], m).toBe('function')
     expect(packageRegistrationProblem(pkg)).toBeNull()
     expect(create()).not.toBe(pkg) // a factory, not a module-level singleton
   })
@@ -55,10 +74,21 @@ describe.each(cases)('provider conformance: $id', ({ id, create, descriptor, amb
       if (d.maxTestedVersion) expect(d.maxTestedVersion).toMatch(SEMVER)
       if (d.state !== 'supported') expect(d.note, `${k} (${d.state}) must carry a note`).toBeTruthy()
     }
-    for (const k of WP1_REQUIRED_CAPABILITIES) {
-      expect(pkg.capabilities[k].state, k).not.toBe('unsupported')
-      if (phase === 'candidate') expect(pkg.capabilities[k].state, `${k} must be supported at the candidate`).toBe('supported')
-    }
+    for (const k of WP1_REQUIRED_CAPABILITIES) expect(pkg.capabilities[k].state, k).not.toBe('unsupported')
+    if (phase === 'candidate') expect(candidateGaps(judgedPackage(id).capabilities), 'WP1-required capabilities not supported at the candidate, as the composition root registers the package').toEqual([])
+  })
+
+  // [host] PR 4 P4.10 review: the candidate judges the declaration the app
+  // registers. Codex's wired table (codexWiredCapabilities) supports every
+  // WP1-required key; its bare factory table never can, so a candidate that
+  // judged it could never pass. Claude's gaps are recorded, not fixed here:
+  // each is owed to the owner or a phase (completion plan 9.4 P4.10, 9.5).
+  it('main package as the composition root registers it: its declaration, and the WP1-required capabilities it does not support yet', () => {
+    const judged = judgedPackage(id)
+    expect(packageRegistrationProblem(judged)).toBeNull()
+    expect(missingCapabilityKeys(judged.capabilities)).toEqual([])
+    expect(judged.capabilities).toBe(id === 'codex' ? codexWiredCapabilities : claudeCapabilities)
+    expect(candidateGaps(judged.capabilities), `${id}: WP1-required capabilities the candidate would refuse today`).toEqual(id === 'codex' ? [] : ['cli.discovery', 'auth.status', 'auth.logout'])
   })
 
   it('main package: ambient authentication variables include the realm-overriding variable, owned variables include the realm selector (D1/D3)', () => {
@@ -166,10 +196,56 @@ describe('composition roots (WP1.66)', () => {
     composeRendererProviders()
     composeRendererProviders()
     expect(composedRendererProviderIds()).toEqual([...PROVIDER_IDS])
-    expect(listRendererProviders().map((d) => d.maturity)).toEqual(['stable', 'beta'])
+    // P4.11 (row 54): the Codex Beta label comes off in the release where parity
+    // lands; the maturity field stays, read by the Providers card (WP1.21).
+    expect(listRendererProviders().map((d) => d.maturity)).toEqual(['stable', 'stable'])
     expect(getRendererProvider('codex').shortName).toBe('Codex')
     _resetRendererProviderRegistryForTest()
     composeRendererProviders()
     expect(composedRendererProviderIds()).toEqual([...PROVIDER_IDS])
+  })
+})
+
+describe('Codex declares what it implements (WP1.17, WP1.18)', () => {
+  it('discovery and install recipes are supported on every package; realm isolation stays unknown while no realms operation backs it', () => {
+    const bare = createCodexPackage()
+    const wired = createCodexPackage({ realms: { lookup: async () => ({ ok: false }), mkdirSecure: () => {} } })
+    for (const pkg of [bare, wired]) {
+      expect(typeof pkg.setup?.discover).toBe('function')
+      expect(typeof pkg.setup?.installRecipes).toBe('function')
+      expect(pkg.capabilities['cli.discovery'].state).toBe('supported')
+      expect(pkg.capabilities['install.recipes'].state).toBe('supported')
+      // Isolation runs through the prepared launch and the realm folders; the
+      // contract backs the key with realms.realmEnvPatch, which Codex lacks.
+      expect(pkg.realms).toBeUndefined()
+      expect(pkg.capabilities['realm.isolated'].state).toBe('unknown')
+      expect(packageRegistrationProblem(pkg)).toBeNull()
+    }
+    expect(bare.realmFolders).toBeUndefined()
+    expect(wired.realmFolders).toBeDefined()
+    // WP2 PR 4, P4.5 (row 57): a Cloud Agent's run is a launch of its own kind.
+    expect(wired.launch?.kinds).toEqual(['session', 'review', 'background'])
+    expect(typeof wired.background?.run).toBe('function')
+  })
+
+  it('account usage is supported exactly when the usage port exists (usage track MP3); Claude keeps its own and declares unknown', () => {
+    const bare = createCodexPackage()
+    const wired = createCodexPackage({ realms: { lookup: async () => ({ ok: false }), mkdirSecure: () => {} } })
+    expect(bare.usage).toBeUndefined()
+    expect(bare.capabilities['account.usage'].state).toBe('unknown')
+    expect(typeof wired.usage?.live).toBe('function')
+    expect(typeof wired.usage?.lastSeen).toBe('function')
+    expect(wired.capabilities['account.usage'].state).toBe('supported')
+    const claude = createClaudePackage()
+    expect(claude.usage).toBeUndefined()
+    expect(claude.capabilities['account.usage'].state).toBe('unknown')
+    for (const pkg of [bare, wired, claude]) expect(packageRegistrationProblem(pkg)).toBeNull()
+  })
+
+  it('the usage port refuses a realm it cannot locate, reading nothing', async () => {
+    const wired = createCodexPackage({ realms: { lookup: async () => ({ ok: false }), mkdirSecure: () => {} } })
+    const realm = { authRealmId: 'realm-' + '1'.repeat(32) }
+    expect(await wired.usage!.live(realm)).toEqual({ ok: false })
+    expect(await wired.usage!.lastSeen(realm)).toEqual({ ok: false })
   })
 })

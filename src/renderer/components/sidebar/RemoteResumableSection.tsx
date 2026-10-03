@@ -10,11 +10,15 @@ import { useResolvedTheme } from '../../hooks/useThemeController'
 import { useLaunchConfig, useLaunchSessionAction } from '../../hooks/useLaunchConfig'
 import { useClickOutside } from '../../hooks/useClickOutside'
 import { persistSessionState } from '../../session-persistence'
+import { endRemoteAndReport } from '../../stores/sshEndNoticeStore'
 import { describeDetachedAge, filterLiveEntries, pairDetachedEntry } from '../../utils/detachedRemotes'
 import { describeDestination, effectiveRuntimeOf } from '../../../shared/detached-destination'
+import { tmuxExactTarget } from '../../../shared/ssh-tmux-persistence'
 import { displayLiveness, type EntryDisplayLiveness } from '../../utils/detachedRemotesLiveness'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/identity-colors'
-import { resolveAccountColourKey, resolveAccountNameByEmail } from '../../../shared/account-chip-color'
+import { resolveAccountNameByEmail } from '../../../shared/account-chip-color'
+import { chipColourKeyForEmail } from '../../utils/accountChip'
+import { useProviderAccountsStore } from '../../stores/providerAccountsStore'
 import { resolveRemoteResumableCollapsed } from './sessionsPanelState'
 import { DialogButton, DialogFooter, DialogHeader, DialogOverlay, DialogPanel, useDialogEscape } from '../ui/Dialog'
 
@@ -106,6 +110,9 @@ export default function RemoteResumableSection({ liveSessionIds, onRevealSession
   const profiles = useAccountProfilesStore((s) => s.profiles)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
+  // P3.6 (row 7): an entry's dot is its account's identity colour when the
+  // account list names it (utils/accountChip), else the override as before.
+  const accountsSnapshot = useProviderAccountsStore((s) => s.snapshot)
   // Two launch paths on purpose. `reattach` reuses the detached remote's id and
   // asks for reconnect (the resume). `launchFresh` is the ORDINARY launch every
   // other surface uses — gated (Codex off) and always a new id — so "Start new"
@@ -166,7 +173,7 @@ export default function RemoteResumableSection({ liveSessionIds, onRevealSession
   }, [removeEntry])
 
   /** Reattach: the ORIGINAL session id + reconnect, so the tmux target
-   *  `ccc-<sessionId>` matches again and TerminalView spawns a reconnect. The
+   *  `ccc-<safeSid>` matches again and TerminalView spawns a reconnect. The
    *  registry entry is consumed by the resume — it is live now, not detached. */
   const resume = useCallback((entry: DetachedRemote, config: TerminalConfig) => {
     const id = reattach(config, { sessionId: entry.sessionId, reconnect: true })
@@ -206,11 +213,10 @@ export default function RemoteResumableSection({ liveSessionIds, onRevealSession
     // where it is and how to end it there; Remove only forgets the card.
     if (mightBeLive && pairing.kind !== 'retargeted') {
       const configId = pairing.kind === 'paired' ? pairing.config.id : entry.configId
-      try {
-        await window.electronAPI?.ssh?.endRemote?.({ sessionId: entry.sessionId, configId })
-      } catch {
-        /* best-effort: the remote is at worst still detached, and the card goes */
-      }
+      // Not awaited: main reads the target as the call arrives, and the result
+      // only surfaces when it needs the user (the End notice). Best-effort: the
+      // remote is at worst still detached, and the card goes.
+      endRemoteAndReport(entry.sessionId, { sessionId: entry.sessionId, configId })
     }
     dropEntry(entry.sessionId)
   }, [dropEntry, configs])
@@ -308,7 +314,7 @@ export default function RemoteResumableSection({ liveSessionIds, onRevealSession
           ? resolveIdentityColor(config.identityColorKey ?? bucketLegacyColorToKey(config.color), theme)
           : 'var(--text-muted)'
         const accountDot = entry.accountEmail
-          ? resolveIdentityColor(resolveAccountColourKey(entry.accountEmail, accountColourOverrides, undefined), theme)
+          ? resolveIdentityColor(chipColourKeyForEmail(entry.accountEmail, { profiles, snapshot: accountsSnapshot, overrides: accountColourOverrides }, undefined), theme)
           : null
         const accountName = entry.accountEmail
           ? resolveAccountNameByEmail(entry.accountEmail, profiles, accountAliases)
@@ -464,7 +470,7 @@ export default function RemoteResumableSection({ liveSessionIds, onRevealSession
           label={modal.entry.label || modal.entry.sessionId}
           was={describeDestination(modal.entry)}
           now={describeConfigDestination(modal.config)}
-          tmuxTarget={`ccc-${modal.entry.sessionId}`}
+          tmuxTarget={tmuxExactTarget(modal.entry.sessionId)}
           onRemove={() => {
             const e = modal.entry
             setModal(null)

@@ -14,8 +14,12 @@
  *  3. ONE SESSION. The dock pill is a single affordance, not a session factory.
  *  4. `help:workspace` FAILS CLOSED to null. The old code returned silently
  *     there, so the button did nothing at all.
+ *
+ * And (WP2 commit 6e review fix; P4.3) Ask runs on the assistant that is on:
+ * with neither on it starts nothing, revives nothing and types into nothing,
+ * whichever entry point asked; with both on, on the Settings choice.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 const markSessionForResumePicker = vi.fn()
 const addConfig = vi.fn()
@@ -35,8 +39,16 @@ import {
   askSessionIsLive,
   useAskErrorStore,
   ASK_LABEL,
+  ASK_CODEX_PRESET,
   _resetAskLaunchForTest,
+  useAskNoticeStore,
+  showAskNotice,
+  askNoticeText,
+  parseAskNotice,
+  _resetAskNoticesForTest,
 } from '../../../src/renderer/lib/askConductor'
+import { ASK_CLAUDE_OFF, isAskConductorBlocked, askConductorProviderNow, askConductorChoiceShown } from '../../../src/renderer/lib/askConductorGate'
+import { useSettingsStore, DEFAULT_SETTINGS } from '../../../src/renderer/stores/settingsStore'
 
 const ptyWrite = vi.fn()
 function setApi(workspace: string | null | (() => Promise<never>)) {
@@ -165,6 +177,20 @@ describe('launchAskConductor', () => {
     expect(useAskErrorStore.getState().error).toMatch(/resources directory/i)
   })
 
+  // P4.3 review (A2-5): with the rebuild, the likely cause is an entry the app
+  // cannot remove (a file a leftover Codex process holds open), not an
+  // unwritable resources directory; the line names the folder and the way out.
+  it('the failure line names the help folder, the likely cause and the workaround', async () => {
+    setApi(null)
+    await launchAskConductor('q')
+    const line = useAskErrorStore.getState().error ?? ''
+    expect(line).toMatch(/help folder/)
+    expect(line).toMatch(/Codex/)
+    expect(line).toMatch(/then try again/)
+    expect(line).toMatch(/delete/)
+    expect(line).toMatch(/^[\x20-\x7e]*$/)
+  })
+
   it('treats a throwing help:workspace the same as a null one', async () => {
     setApi(() => Promise.reject(new Error('EACCES')))
     const id = await launchAskConductor('q')
@@ -262,6 +288,254 @@ describe('launchAskConductor', () => {
   })
 })
 
+describe('launchAskConductor with neither assistant on (Claude Code off, Codex not on)', () => {
+  const workspace = vi.fn(() => Promise.resolve('C:/res/help'))
+  beforeEach(() => {
+    useSessionStore.setState({ sessions: [], activeSessionId: null, isRestoring: false })
+    useAskErrorStore.setState({ error: null })
+    ptyWrite.mockClear()
+    workspace.mockClear()
+    _resetAskLaunchForTest()
+    ;(globalThis as any).window.electronAPI = { help: { workspace }, pty: { write: ptyWrite } }
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, claudeEnabled: false } })
+  })
+  afterEach(() => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })
+  })
+
+  it('the gate opens for either assistant (P4.3): only neither on blocks', () => {
+    expect(isAskConductorBlocked()).toBe(true)
+    expect(isAskConductorBlocked({ claudeEnabled: false })).toBe(true)
+    expect(isAskConductorBlocked({ claudeEnabled: false, codexEnabled: false })).toBe(true)
+    expect(isAskConductorBlocked({ claudeEnabled: false, codexEnabled: true })).toBe(false)
+    expect(isAskConductorBlocked({ claudeEnabled: true })).toBe(false)
+    expect(isAskConductorBlocked({ claudeEnabled: true, codexEnabled: true })).toBe(false)
+    expect(isAskConductorBlocked({})).toBe(false)
+  })
+
+  it('starts nothing, stages nothing, and says why', async () => {
+    const id = await launchAskConductor('How do I run two accounts at once?')
+    expect(id).toBe('')
+    expect(useSessionStore.getState().sessions).toEqual([])
+    expect(workspace).not.toHaveBeenCalled()
+    expect(useAskErrorStore.getState().error).toBe(ASK_CLAUDE_OFF)
+    expect(ASK_CLAUDE_OFF).toBe('Ask Conductor runs on Claude Code or Codex, and both are off. Turn one on in Settings, Accounts.')
+  })
+
+  it('neither types into a live Ask session nor revives an exited one', async () => {
+    const live = { id: 'ask-live', kind: 'ask', label: ASK_LABEL, workingDirectory: 'C:/res/help', model: '', color: '', status: 'idle', createdAt: 1, sessionType: 'local', provider: 'claude' } as any
+    useSessionStore.setState({ sessions: [live], activeSessionId: null })
+    expect(await launchAskConductor('typed?')).toBe('')
+    expect(ptyWrite).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().activeSessionId).toBeNull()
+
+    const dead = { ...live, id: 'ask-dead', ptyExited: true, createdAt: 5 }
+    useSessionStore.setState({ sessions: [dead], activeSessionId: null })
+    expect(await launchAskConductor('revive?')).toBe('')
+    expect(useSessionStore.getState().sessions).toEqual([dead])
+  })
+
+  it('launches again once Claude Code is back on', async () => {
+    expect(await launchAskConductor()).toBe('')
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, claudeEnabled: true } })
+    const id = await launchAskConductor()
+    expect(id).toBeTruthy()
+    expect(useSessionStore.getState().sessions).toHaveLength(1)
+    expect(useAskErrorStore.getState().error).toBeNull()
+  })
+
+  it('switches flipped off while the workspace stages: nothing starts, and it says why', async () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })
+    let release: (d: string) => void = () => {}
+    ;(globalThis as any).window.electronAPI.help.workspace = () => new Promise<string>((res) => { release = res })
+    const p = launchAskConductor('q')
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, claudeEnabled: false } })
+    release('C:/res/help')
+    expect(await p).toBe('')
+    expect(useSessionStore.getState().sessions).toEqual([])
+    expect(useAskErrorStore.getState().error).toBe(ASK_CLAUDE_OFF)
+  })
+})
+
+// [host] WP2 PR 4, P4.3: Ask runs on the assistant that is on; with both on,
+// on the Settings choice (OD27 M4, option B), Claude Code by default.
+describe('launchAskConductor picks the assistant (P4.3)', () => {
+  const workspace = vi.fn(() => Promise.resolve('C:/res/help'))
+  const CODEX_ONLY = { claudeEnabled: false, codexEnabled: true, codexAnswered: true }
+  const BOTH = { claudeEnabled: true, codexEnabled: true, codexAnswered: true }
+  beforeEach(() => {
+    useSessionStore.setState({ sessions: [], activeSessionId: null, isRestoring: false })
+    useAskErrorStore.setState({ error: null })
+    ptyWrite.mockClear()
+    workspace.mockClear()
+    _resetAskLaunchForTest()
+    ;(globalThis as any).window.electronAPI = { help: { workspace }, pty: { write: ptyWrite } }
+  })
+  afterEach(() => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })
+  })
+  const set = (s: Record<string, unknown>) => useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, ...s } as never })
+  const only = () => useSessionStore.getState().sessions[0]
+
+  it('Codex only: a Codex session, on the preset matching Claude\'s Ask launch, in the rebuilt help folder', async () => {
+    set(CODEX_ONLY)
+    const id = await launchAskConductor('how do I add an account?')
+    expect(id).toBeTruthy()
+    expect(workspace).toHaveBeenCalledTimes(1)
+    expect(only()).toMatchObject({ kind: 'ask', provider: 'codex', sessionType: 'local', workingDirectory: 'C:/res/help', askPrompt: 'how do I add an account?' })
+    expect(only().codexOptions).toEqual({ permissionsPreset: ASK_CODEX_PRESET })
+    // P4.3 review (A2-3), by parity: Claude's Ask passes no permission mode, so
+    // it runs in Claude's default mode, Ask permissions; P4.1's pairing of the
+    // presets with Claude's modes (codexPresetApprovedTools, providers/codex/
+    // spawn.ts) pairs Ask permissions with Read Only.
+    expect(ASK_CODEX_PRESET).toBe('read-only')
+    expect(only().configId).toBeUndefined()
+  })
+
+  it('Claude Code only, and both on with no choice saved: Claude Code, with no Codex options', async () => {
+    for (const s of [{}, BOTH]) {
+      useSessionStore.setState({ sessions: [], activeSessionId: null })
+      set(s)
+      await launchAskConductor()
+      expect(only().provider, JSON.stringify(s)).toBe('claude')
+      expect(only().codexOptions, JSON.stringify(s)).toBeUndefined()
+    }
+  })
+
+  it('both on, Codex chosen: Codex', async () => {
+    set({ ...BOTH, askConductorProvider: 'codex' })
+    await launchAskConductor()
+    expect(only().provider).toBe('codex')
+  })
+
+  it('a saved Codex choice with Codex then switched off: Claude Code, and the choice is not rewritten', async () => {
+    set({ ...BOTH, askConductorProvider: 'codex', codexEnabled: false })
+    await launchAskConductor()
+    expect(only().provider).toBe('claude')
+    expect(useSettingsStore.getState().settings.askConductorProvider).toBe('codex')
+  })
+
+  it('anything but exactly "codex" saved reads as Claude Code', async () => {
+    for (const v of ['Codex', 'CODEX', 'openai', 1, null]) {
+      useSessionStore.setState({ sessions: [], activeSessionId: null })
+      set({ ...BOTH, askConductorProvider: v })
+      await launchAskConductor()
+      expect(only().provider, String(v)).toBe('claude')
+    }
+  })
+
+  it('an open tab keeps its assistant: the question goes to it, whatever the choice says now', async () => {
+    set({ ...BOTH, askConductorProvider: 'codex' })
+    useSessionStore.setState({ sessions: [{ id: 'ask', kind: 'ask', label: ASK_LABEL, workingDirectory: 'C:/res/help', model: '', color: '', status: 'idle', createdAt: 1, sessionType: 'local', provider: 'claude' } as never] })
+    expect(await launchAskConductor('q')).toBe('ask')
+    expect(ptyWrite).toHaveBeenCalledWith('ask', 'q\r')
+    expect(only().provider).toBe('claude')
+    // A live tab is not a start: the folder is not rebuilt under it.
+    expect(workspace).not.toHaveBeenCalled()
+  })
+
+  it('an open tab on an assistant switched off since: nothing is typed into it, and the dock says why; going to it still works', async () => {
+    set(CODEX_ONLY)
+    useSessionStore.setState({ sessions: [{ id: 'ask', kind: 'ask', label: ASK_LABEL, workingDirectory: 'C:/res/help', model: '', color: '', status: 'idle', createdAt: 1, sessionType: 'local', provider: 'claude' } as never], activeSessionId: null })
+    expect(await launchAskConductor('typed?')).toBe('')
+    expect(ptyWrite).not.toHaveBeenCalled()
+    expect(useAskErrorStore.getState().error).toBe('The open Ask Conductor tab runs on Claude Code, which is off. Turn it on in Settings, Accounts, or close the tab and ask again.')
+    expect(useSessionStore.getState().activeSessionId).toBeNull()
+    // With no question, the pill still takes the user to the tab.
+    expect(await launchAskConductor()).toBe('ask')
+    expect(useSessionStore.getState().activeSessionId).toBe('ask')
+    expect(useAskErrorStore.getState().error).toBeNull()
+  })
+
+  it('the gate helpers: the provider now, and whether the choice is shown', () => {
+    expect(askConductorProviderNow({})).toBe('claude')
+    expect(askConductorProviderNow(CODEX_ONLY)).toBe('codex')
+    expect(askConductorProviderNow(BOTH)).toBe('claude')
+    expect(askConductorProviderNow({ ...BOTH, askConductorProvider: 'codex' })).toBe('codex')
+    expect(askConductorProviderNow({ claudeEnabled: false })).toBeNull()
+    expect(askConductorChoiceShown(BOTH)).toBe(true)
+    expect(askConductorChoiceShown({})).toBe(false)
+    expect(askConductorChoiceShown(CODEX_ONLY)).toBe(false)
+    expect(askConductorChoiceShown({ claudeEnabled: true, codexEnabled: false })).toBe(false)
+  })
+})
+
+// [host] P4.3: the question a not-delivered notice is about is kept, in memory.
+describe('the notice state (P4.3)', () => {
+  beforeEach(() => {
+    _resetAskNoticesForTest()
+    _resetAskLaunchForTest()
+    useSessionStore.setState({ sessions: [], activeSessionId: null, isRestoring: false })
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })
+    ;(globalThis as any).window.electronAPI = { help: { workspace: () => Promise.resolve('C:/res/help') }, pty: { write: ptyWrite } }
+  })
+
+  it('a first launch keeps its question against the new session; a new question replaces it and clears the last notice', async () => {
+    const id = await launchAskConductor('first?')
+    expect(useAskNoticeStore.getState().kept).toEqual({ sessionId: id, question: 'first?' })
+    showAskNotice({ sessionId: id, kind: 'not-delivered', reason: 'busy-timeout' })
+    expect(useAskNoticeStore.getState().notice).toEqual({ sessionId: id, kind: 'not-delivered', reason: 'busy-timeout' })
+    await launchAskConductor('second?')
+    expect(useAskNoticeStore.getState().kept).toEqual({ sessionId: id, question: 'second?' })
+    expect(useAskNoticeStore.getState().notice).toBeNull()
+  })
+
+  it('no question, nothing kept', async () => {
+    await launchAskConductor()
+    expect(useAskNoticeStore.getState().kept).toBeNull()
+  })
+
+  // P4.3 review (A2-8): a live Codex tab's hand-off answers for the question
+  // it was given, so a not-delivered answer keeps THAT question, even when
+  // another was handed over while the first was still being typed.
+  it('a hand-off that was not delivered keeps its own question, not one handed over since', async () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, claudeEnabled: false, codexEnabled: true, codexAnswered: true } as never })
+    ptyWrite.mockClear()
+    let answerFirst: (v: unknown) => void = () => {}
+    const handOff = vi.fn()
+      .mockImplementationOnce(() => new Promise((resolve) => { answerFirst = resolve }))
+      .mockImplementationOnce(() => Promise.resolve({ delivered: true }))
+    ;(globalThis as any).window.electronAPI.askConductor = { handOff }
+    useSessionStore.setState({ sessions: [{ id: 'ask', kind: 'ask', label: ASK_LABEL, workingDirectory: 'C:/res/help', model: '', color: '', status: 'idle', createdAt: 1, sessionType: 'local', provider: 'codex', codexOptions: { permissionsPreset: 'read-only' } } as never] })
+    await launchAskConductor('first?')
+    await launchAskConductor('second?')
+    await vi.waitFor(() => expect(handOff).toHaveBeenCalledTimes(2))
+    expect(useAskNoticeStore.getState().kept).toEqual({ sessionId: 'ask', question: 'second?' })
+    answerFirst({ delivered: false, reason: 'busy-timeout' })
+    await vi.waitFor(() => expect(useAskNoticeStore.getState().notice).not.toBeNull())
+    expect(useAskNoticeStore.getState().notice).toEqual({ sessionId: 'ask', kind: 'not-delivered', reason: 'busy-timeout' })
+    expect(useAskNoticeStore.getState().kept).toEqual({ sessionId: 'ask', question: 'first?' })
+    expect(ptyWrite).not.toHaveBeenCalled()
+  })
+
+  it('every reason has its own sentence', () => {
+    const reasons = ['busy-timeout', 'prompt-on-screen', 'too-tall', 'not-drawn', 'refused-text', 'session-gone'] as const
+    const lines = reasons.map((reason) => askNoticeText({ sessionId: 's', kind: 'not-delivered', reason }))
+    for (const l of lines) expect(l).toMatch(/^Your question was not sent: \S/)
+    expect(new Set(lines).size).toBe(reasons.length)
+    for (const l of lines) expect(l).toMatch(/^[\x20-\x7e]*$/)
+    expect(askNoticeText({ sessionId: 's', kind: 'removed', count: 1 })).toBe('Codex cannot take emoji or some rare characters typed into its prompt; 1 removed from your question.')
+  })
+
+  it('[host] not drawn: the question could not be confirmed, and if it is still in Codex\'s prompt the user sends or clears it (ADR-009 residuals, review R-8)', () => {
+    // Since the take-back needs a reading, an unconfirmed question can still be
+    // sitting in Codex's prompt; most often it was taken back, so the line
+    // never says either for certain.
+    const line = askNoticeText({ sessionId: 's', kind: 'not-delivered', reason: 'not-drawn' })
+    expect(line).toBe('Your question was not sent: the app could not confirm it in Codex\'s prompt. If it is still there, send it or clear it in the Ask tab.')
+    expect(line).not.toMatch(/never appeared/)
+  })
+
+  it('parseAskNotice takes only what main sends', () => {
+    expect(parseAskNotice({ sessionId: 's', kind: 'removed', count: 3 })).toEqual({ sessionId: 's', kind: 'removed', count: 3 })
+    expect(parseAskNotice({ sessionId: 's', kind: 'not-delivered', reason: 'too-tall', extra: 1 })).toEqual({ sessionId: 's', kind: 'not-delivered', reason: 'too-tall' })
+    for (const bad of [undefined, null, 1, 'x', {}, { sessionId: 's', kind: 'removed' }, { sessionId: 's', kind: 'removed', count: -1 }, { sessionId: 's', kind: 'removed', count: Number.NaN },
+      { sessionId: 's', kind: 'not-delivered', reason: '__proto__' }, { sessionId: 's', kind: 'not-delivered', reason: 'hasOwnProperty' }, { sessionId: 1, kind: 'removed', count: 1 }]) {
+      expect(parseAskNotice(bad), JSON.stringify(bad)).toBeNull()
+    }
+  })
+})
+
 describe('normaliseQuestion', () => {
   it('collapses newlines so a multi-line tip body is one submission', () => {
     expect(normaliseQuestion('line one\nline two\n\nline three')).toBe('line one line two line three')
@@ -276,6 +550,15 @@ describe('normaliseQuestion', () => {
   it('caps at the pty:spawn schema bound rather than letting main reject the spawn', () => {
     const out = normaliseQuestion('a'.repeat(9000))
     expect(out).toHaveLength(8000)
+  })
+
+  it('[host] cuts between two characters, never inside an emoji (review RASK-3)', () => {
+    const rocket = String.fromCodePoint(0x1f680)
+    // The bound falls between the emoji's two halves: the whole emoji goes.
+    const out = normaliseQuestion('a'.repeat(7999) + rocket + 'tail')!
+    expect(out).toBe('a'.repeat(7999))
+    // One that fits whole stays whole.
+    expect(normaliseQuestion('a'.repeat(7998) + rocket + 'tail')).toBe('a'.repeat(7998) + rocket)
   })
 
   it('leaves shell metacharacters alone -- the env reference is the boundary, not a charset', () => {

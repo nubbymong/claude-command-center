@@ -2,11 +2,13 @@ import React, { useState } from 'react'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useTipsStore, countUnseenTips } from '../../stores/tipsStore'
-import { launchAskConductor, useAskErrorStore, ASK_LABEL, askSessionIsLive } from '../../lib/askConductor'
+import { launchAskConductor, useAskErrorStore, ASK_LABEL, askSessionIsLive, useAskNoticeStore, askNoticeText, listenForAskNotices } from '../../lib/askConductor'
+import { ASK_CLAUDE_OFF, useAskConductorBlocked, useAskConductorChoiceShown, useAskConductorProvider } from '../../lib/askConductorGate'
 import { LightbulbMark } from '../ui/LightbulbMark'
 import askMarkUrl from '../../assets/aicc-code-conductor.svg'
 import DockRowMenu from './DockRowMenu'
 import HideDockFeatureDialog, { type DockFeature } from '../HideDockFeatureDialog'
+import { SessionTypeBadge } from './Badges'
 
 /**
  * The sidebar dock: Ask Conductor, and the tip of the day beneath it.
@@ -45,11 +47,31 @@ interface Props {
 
 export default function AskConductorDock({ collapsed, onOpened, isActive, onShowTip }: Props) {
   const askSession = useSessionStore((s) => s.sessions.find((sess) => sess.kind === 'ask'))
-  const error = useAskErrorStore((s) => s.error)
+  // Ask runs on the assistant that is on: with neither on it cannot open, and
+  // the row says so instead of doing nothing. Read live from the settings, so
+  // the launcher's own "off" error is not shown twice, nor left behind once a
+  // switch is back on.
+  const askBlocked = useAskConductorBlocked()
+  const storedError = useAskErrorStore((s) => s.error)
+  const error = storedError === ASK_CLAUDE_OFF ? null : storedError
   // Liveness, not existence: a session whose PTY has exited stays in the list,
   // so `!!askSession` painted the dot and promised "go to the open session"
   // for a tab showing nothing but [Process exited].
   const running = askSessionIsLive(askSession)
+  // P4.3 (OD27 M4, option B): while both assistants are on, the row wears the
+  // type badge of the one Ask runs on -- the open tab's, which keeps the
+  // assistant it started on, else the one the next start uses.
+  const choiceShown = useAskConductorChoiceShown()
+  const nextProvider = useAskConductorProvider()
+  const badgeProvider = !choiceShown ? null : running ? (askSession?.provider === 'codex' ? 'codex' : 'claude') : nextProvider
+  // The carrier's one-line notices (main raises them; P4.3), and the question
+  // a not-delivered one is about, kept so it is not lost.
+  const notice = useAskNoticeStore((s) => s.notice)
+  const kept = useAskNoticeStore((s) => s.kept)
+  const dismissNotice = useAskNoticeStore((s) => s.dismiss)
+  React.useEffect(() => { listenForAskNotices() }, [])
+  const keptForNotice = notice?.kind === 'not-delivered' && kept && kept.sessionId === notice.sessionId ? kept.question : null
+  const noticeLine = notice ? askNoticeText(notice) : null
 
   // Absent means shown: an install that predates the setting must not silently
   // lose either entry point on upgrade.
@@ -92,13 +114,35 @@ export default function AskConductorDock({ collapsed, onOpened, isActive, onShow
   // where there is no room for a subtitle. Owner wording, #372: "about this
   // app" undersold it -- Ask also changes settings and features for you.
   const askSubtitle = 'Ask about and customise app functionality'
-  const askTitle = running
-    ? `${ASK_LABEL} -- go to the open session`
-    : `${ASK_LABEL} -- ${askSubtitle.toLowerCase()}`
+  const askTitle = askBlocked
+    ? `${ASK_LABEL} -- ${ASK_CLAUDE_OFF}`
+    : running
+      ? `${ASK_LABEL} -- go to the open session`
+      : `${ASK_LABEL} -- ${askSubtitle.toLowerCase()}`
+  // The collapsed rail has no room for the notice line, so it rides the
+  // tooltip there.
+  const collapsedTitle = noticeLine ? `${askTitle}. ${noticeLine}` : askTitle
 
   const open = () => {
+    if (askBlocked) return
     void launchAskConductor().then((id) => { if (id) onOpened() })
   }
+  const sendAgain = () => {
+    if (!keptForNotice || askBlocked) return
+    dismissNotice()
+    void launchAskConductor(keptForNotice).then((id) => { if (id) onOpened() })
+  }
+  const copyKept = () => {
+    if (keptForNotice) void navigator.clipboard?.writeText(keptForNotice).catch(() => {})
+  }
+  const typeBadge = badgeProvider && (
+    <span data-ux-id="sidebar-ask-type-badge" className="shrink-0">
+      <SessionTypeBadge kind={badgeProvider} />
+    </span>
+  )
+  // aria-disabled, not `disabled`: a disabled button gets no right-click, and
+  // the row's right-click menu (hide the feature) must still work while off.
+  const offStyle = askBlocked ? ' opacity-60 cursor-not-allowed' : ''
 
   // The tip row needs somewhere to send the click, tips switched on, a tip that
   // has actually been picked, and content that still resolves. `silenced` is the
@@ -164,9 +208,10 @@ export default function AskConductorDock({ collapsed, onOpened, isActive, onShow
             data-ux-id="sidebar-ask-pill"
             onClick={open}
             onContextMenu={openMenu('ask')}
-            title={askTitle}
-            aria-label={askTitle}
-            className="w-8 h-8 flex items-center justify-center rounded-lg transition-colors focus-ring relative"
+            title={collapsedTitle}
+            aria-label={collapsedTitle}
+            aria-disabled={askBlocked || undefined}
+            className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors focus-ring relative${offStyle}`}
             style={{
               background: `color-mix(in srgb, var(--brand) ${isActive ? 22 : 13}%, transparent)`,
               border: '1px solid color-mix(in srgb, var(--brand) 42%, transparent)',
@@ -228,7 +273,8 @@ export default function AskConductorDock({ collapsed, onOpened, isActive, onShow
             onClick={open}
             onContextMenu={openMenu('ask')}
             title={askTitle}
-            className="w-full flex items-center gap-2 px-2 py-2 rounded-lg text-left transition-colors focus-ring"
+            aria-disabled={askBlocked || undefined}
+            className={`w-full flex items-center gap-2 px-2 py-2 rounded-lg text-left transition-colors focus-ring${offStyle}`}
             style={{
               background: `color-mix(in srgb, var(--brand) ${isActive ? 22 : 13}%, transparent)`,
               border: '1px solid color-mix(in srgb, var(--brand) 42%, transparent)',
@@ -243,6 +289,7 @@ export default function AskConductorDock({ collapsed, onOpened, isActive, onShow
                 {askSubtitle}
               </span>
             </span>
+            {typeBadge}
             {running && (
               <span
                 className="w-1.5 h-1.5 rounded-full shrink-0"
@@ -255,10 +302,45 @@ export default function AskConductorDock({ collapsed, onOpened, isActive, onShow
           {/* `help:workspace` fails closed to null when the resources directory
               cannot be written. Every entry point routes through this one dock, so
               this is the single place a silent no-op becomes visible. */}
+          {askBlocked && (
+            <p data-ux-id="sidebar-ask-off" className="px-1 text-[10px] leading-snug" style={{ color: 'var(--text-muted)' }}>
+              {ASK_CLAUDE_OFF}
+            </p>
+          )}
           {error && (
             <p data-ux-id="sidebar-ask-error" className="px-1 text-[10px] leading-snug" style={{ color: 'var(--status-danger)' }}>
               {error}
             </p>
+          )}
+          {noticeLine && (
+            <div data-ux-id="sidebar-ask-notice" className="px-1 text-[10px] leading-snug" style={{ color: 'var(--status-warning)' }}>
+              <p data-ux-id="sidebar-ask-notice-line">{noticeLine}</p>
+              {keptForNotice && (
+                <p
+                  data-ux-id="sidebar-ask-notice-question"
+                  className="truncate"
+                  style={{ color: 'var(--text-muted)' }}
+                  title={keptForNotice}
+                >
+                  &quot;{keptForNotice}&quot;
+                </p>
+              )}
+              <span className="flex gap-2 mt-0.5">
+                {keptForNotice && (
+                  <button type="button" data-ux-id="sidebar-ask-notice-send" onClick={sendAgain} disabled={askBlocked} className="underline focus-ring disabled:opacity-50" style={{ color: 'var(--text-secondary)' }}>
+                    Send again
+                  </button>
+                )}
+                {keptForNotice && (
+                  <button type="button" data-ux-id="sidebar-ask-notice-copy" onClick={copyKept} className="underline focus-ring" style={{ color: 'var(--text-secondary)' }}>
+                    Copy
+                  </button>
+                )}
+                <button type="button" data-ux-id="sidebar-ask-notice-dismiss" onClick={dismissNotice} className="underline focus-ring" style={{ color: 'var(--text-secondary)' }}>
+                  Dismiss
+                </button>
+              </span>
+            </div>
           )}
         </>
       )}

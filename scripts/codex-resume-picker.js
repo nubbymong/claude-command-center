@@ -1,13 +1,18 @@
 #!/usr/bin/env node
 // Claude Command Center -- Codex Resume Picker
 // Mirrors scripts/resume-picker.js for Codex sessions.
-// Walks ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl, filters to current cwd,
-// shows numbered list, execs `codex resume <uuid>` on pick or fresh `codex` on N.
+// Walks <CODEX_HOME>/sessions/YYYY/MM/DD/rollout-*.jsonl, lists the
+// conversations of every git worktree of the project (P3.5: the non-main ones
+// tagged, each named by its session's name where the app has one), shows a
+// numbered list, execs `codex resume <uuid>` on pick -- in the conversation's
+// own worktree -- or fresh `codex` on N. Every string it shows comes from
+// lib.buildPickerRows, as plain text. The pick is recorded in the file the app
+// named (CCC_CODEX_PICK_FILE) so the session follows that conversation.
 
 const fs = require('fs')
 const path = require('path')
 const os = require('os')
-const { spawnSync, execSync } = require('child_process')
+const { spawnSync } = require('child_process')
 const readline = require('readline')
 
 const lib = require('./lib/codex-resume-picker-lib.js')
@@ -15,20 +20,6 @@ const lib = require('./lib/codex-resume-picker-lib.js')
 // -- Codex home -----------------------------------------------------
 function getCodexHome() {
   return process.env.CODEX_HOME || path.join(os.homedir(), '.codex')
-}
-
-// -- Time formatting ------------------------------------------------
-function timeAgo(ms) {
-  const sec = Math.floor((Date.now() - ms) / 1000)
-  if (sec < 60) return 'just now'
-  const min = Math.floor(sec / 60)
-  if (min < 60) return `${min}m ago`
-  const hrs = Math.floor(min / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  const days = Math.floor(hrs / 24)
-  if (days === 1) return 'Yesterday'
-  if (days < 7) return `${days}d ago`
-  return `${Math.floor(days / 7)}w ago`
 }
 
 // -- ANSI helpers (Catppuccin Mocha) --------------------------------
@@ -47,6 +38,9 @@ const C = {
   surface: '\x1b[38;2;69;71;90m',
 }
 
+// The worktree tag, as Claude's picker draws it (the branch glyph).
+const FORK = String.fromCodePoint(0x2442)
+
 function truncate(str, maxLen) {
   if (str.length <= maxLen) return str
   return str.slice(0, maxLen - 1) + '…'
@@ -58,31 +52,23 @@ function getForwardedArgs() {
   return process.argv.slice(2)
 }
 
-// -- Codex binary discovery -----------------------------------------
+// -- Codex executable -----------------------------------------------
+// WP2: the executable the app's setup proved for this session, passed in
+// CCC_CODEX_EXECUTABLE. Never re-resolved here: a second lookup could find
+// a different codex. Null when the app gave none (the picker then stops).
 function resolveCodexCmd() {
-  if (os.platform() !== 'win32') return 'codex'
-  for (const bin of ['codex.exe', 'codex.cmd']) {
-    try {
-      // stdio pipe on stderr suppresses the "INFO: Could not find files
-      // for the given pattern(s)." that Windows `where` writes to stderr
-      // on a miss. Default execSync inherits stderr -- the message would
-      // surface inside the PTY where the picker is hosted, confusing
-      // the user after they pick a session.
-      return execSync(`where ${bin}`, {
-        encoding: 'utf-8',
-        timeout: 5000,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }).trim().split('\n')[0].trim()
-    } catch { /* try next */ }
-  }
-  return 'codex'
+  const proven = process.env.CCC_CODEX_EXECUTABLE
+  return proven && path.isAbsolute(proven) ? proven : null
 }
 
 // -- Main -----------------------------------------------------------
 async function main() {
   const cwd = process.cwd()
   const home = getCodexHome()
-  const conversations = lib.walkRollouts(home, 30, cwd)
+  // Every git worktree of the project, as Claude's picker lists them (P3.5).
+  const worktrees = lib.listWorktrees(cwd)
+  const hasWorktrees = worktrees.some((w) => !w.isMain)
+  const conversations = lib.walkRollouts(home, 30, worktrees)
 
   if (conversations.length === 0) {
     launchCodex(null)
@@ -92,26 +78,30 @@ async function main() {
   // -- Display ------------------------------------------------------
   const maxWidth = Math.min(process.stdout.columns || 80, 78)
   const innerWidth = maxWidth - 6
-  const dirDisplay = truncate(cwd, innerWidth)
+  const dirDisplay = truncate(lib.displayText(cwd), innerWidth)
+  // Each session's own name for the conversation it is on, from the app.
+  const names = lib.loadWorkNames(process.env.CCC_CONFIG_DIR)
+  // The one place every shown string is built, as plain text (lib). A
+  // conversation another open tab is on says so (P3.10 round 1).
+  const rows = lib.buildPickerRows(conversations, names, innerWidth - 6, undefined, lib.openElsewhereIds(process.env))
 
   console.log('')
   console.log(`  ${C.surface}╭─${C.peach} Resume Codex Conversation ${C.surface}─ ${C.subtext}${dirDisplay} ${C.surface}${'─'.repeat(Math.max(0, maxWidth - 32 - dirDisplay.length))}╮${C.reset}`)
+  if (hasWorktrees) {
+    console.log(`  ${C.surface}│${C.reset}  ${C.dim}${C.overlay}${truncate(`includes git worktrees; ${FORK} tags the worktree`, innerWidth)}${C.reset}`)
+  }
   console.log(`  ${C.surface}│${C.reset}`)
 
-  for (let i = 0; i < conversations.length; i++) {
-    const conv = conversations[i]
-    const num = String(i + 1).padStart(2)
-    const title = truncate(conv.label.replace(/[\r\n]+/g, ' '), innerWidth - 6)
-    const metaParts = [
-      conv.model || null,
-      conv.effort || null,
-      timeAgo(conv.mtime),
-    ].filter(Boolean)
-    const meta = metaParts.join(' · ')
-
-    console.log(`  ${C.surface}│${C.reset}  ${C.green}${num}${C.reset}  ${C.text}${title}${C.reset}`)
-    console.log(`  ${C.surface}│${C.reset}      ${C.overlay}${meta}${C.reset}`)
-    if (i < conversations.length - 1) {
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]
+    const title = row.named ? `${C.bold}${C.peach}${row.title}${C.reset}` : `${C.text}${row.title}${C.reset}`
+    const tag = row.tag ? `  ${C.mauve}${FORK} ${row.tag}${C.reset}` : ''
+    console.log(`  ${C.surface}│${C.reset}  ${C.green}${row.num}${C.reset}  ${title}${tag}`)
+    console.log(`  ${C.surface}│${C.reset}      ${C.overlay}${row.meta}${C.reset}`)
+    if (row.sub) {
+      console.log(`  ${C.surface}│${C.reset}      ${C.dim}${C.subtext}${row.sub}${C.reset}`)
+    }
+    if (i < rows.length - 1) {
       console.log(`  ${C.surface}│${C.reset}      ${C.surface}${'─'.repeat(Math.max(0, innerWidth - 6))}${C.reset}`)
     }
   }
@@ -133,23 +123,52 @@ async function main() {
     }
     const idx = parseInt(choice, 10)
     if (idx >= 1 && idx <= conversations.length) {
-      launchCodex(conversations[idx - 1].id)
+      const conv = conversations[idx - 1]
+      const id = lib.isResumeId(conv.id) ? conv.id : null
+      launchCodex(id, conv.sourceCwd)
       return
     }
     launchCodex(null)
   })
 }
 
+// A decision the app could not be told is said in the terminal (see
+// lib.recordPick); the launch goes on either way.
+function noteUnrecorded(notice) {
+  if (notice) console.error(notice)
+}
+
 // -- launchCodex ----------------------------------------------------
-function launchCodex(resumeUuid) {
+// Every start goes through here: a pick, New conversation, nothing to list,
+// a failed main(). It first tells the app what this session now runs (the
+// pick file, P3.5): the conversation it resumes, or a new one; the app
+// claims nothing until it is told. `sourceCwd`: the worktree git reported
+// for the chosen conversation. A conversation from another worktree starts
+// there, as Claude's picker does, and so does its fresh fallback; a new
+// conversation starts here.
+function launchCodex(resumeUuid, sourceCwd) {
   const forwarded = getForwardedArgs()
-  const args = lib.buildResumeArgs(resumeUuid, forwarded)
   const cmd = resolveCodexCmd()
-  const result = spawnSync(cmd, args, {
-    stdio: 'inherit',
-    shell: lib.shouldUseShell(cmd, os.platform()),
-    windowsHide: false,
-  })
+  if (!cmd) {
+    console.error('\n  Failed to launch codex: the app did not pass the Codex executable for this session.\n')
+    process.exit(1)
+  }
+  noteUnrecorded(lib.recordPick(process.env.CCC_CODEX_PICK_FILE, resumeUuid, process.env.CCC_CODEX_PICK_DIR_ID))
+  const retarget = lib.resolveRetargetCwd(resumeUuid, sourceCwd, process.cwd(), lib.isDirectory)
+  // The app's guidance for Codex was decided for this folder: a Codex started
+  // in another one gets the flags without it (lib.flagsForFolder).
+  const flags = lib.flagsForFolder(forwarded, retarget.cwd)
+  // Codex itself never gets the pick file's name.
+  const env = lib.childEnv(process.env)
+  const run = (args) => {
+    const target = lib.launchTarget(cmd, args, os.platform(), process.env)
+    if (!target) {
+      console.error('\n  Failed to launch codex: its path or arguments cannot be passed to cmd.exe safely.\n')
+      process.exit(1)
+    }
+    return spawnSync(target.file, target.args, { stdio: 'inherit', windowsHide: false, windowsVerbatimArguments: target.verbatim, env, ...(retarget.cwd ? { cwd: retarget.cwd } : {}) })
+  }
+  const result = run(lib.buildResumeArgs(resumeUuid, flags))
 
   // spawnSync failed to launch (ENOENT, EACCES, etc.). status is null when
   // this happens; result.error carries the cause. Surface and exit non-zero
@@ -161,12 +180,12 @@ function launchCodex(resumeUuid) {
 
   // If resume exited non-zero with a real status, fall back to fresh codex.
   if (lib.shouldFallback(resumeUuid, result.status)) {
-    console.log('\n  Conversation no longer available -- starting fresh session...\n')
-    const fresh = spawnSync(cmd, forwarded, {
-      stdio: 'inherit',
-      shell: lib.shouldUseShell(cmd, os.platform()),
-      windowsHide: false,
-    })
+    // Said as it is (P3.10 round 1): one another open tab is on (Codex lets
+    // one tab at a time write a conversation), or one that was not resumed.
+    console.log(`\n  ${lib.fallbackNotice(resumeUuid, lib.openElsewhereIds(process.env))}\n`)
+    // The session now runs a new conversation: the app follows that one.
+    noteUnrecorded(lib.recordPick(process.env.CCC_CODEX_PICK_FILE, null, process.env.CCC_CODEX_PICK_DIR_ID))
+    const fresh = run(flags)
     if (fresh.error) {
       console.error(`\n  Failed to launch codex: ${fresh.error.message}\n`)
       process.exit(1)

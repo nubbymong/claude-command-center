@@ -1,29 +1,15 @@
 import React from 'react'
 import { formatResetTime } from '../../utils/terminalFormatting'
+import { shortBucketLabel } from '../../../shared/usage-labels'
 
 // Slim contiguous bar instead of a row of dots. Easier to scan in
 // peripheral vision and uses less horizontal space — UX audit 2026-04-25
 // flagged the dot row as the hardest-to-parse element on the status line.
-/**
- * Short code for a bucket label, for the compact (multi-account footer) form.
- *
- * The footer shows one row per account, each with every bucket, so the words
- * repeat across the whole strip and crowd out the thing you actually read — the
- * coloured bar. Labels come from the API and are open-ended (5h, Weekly, then a
- * bucket per model), so this is a rule rather than a fixed list.
- *
- * Only the fixed TIME windows shorten. "5h" is already minimal and Weekly goes
- * to a single "W" — both are positional and unambiguous once seen. Model
- * buckets keep their full name: "Fable" is the label actually worth scanning
- * for, and truncating it ("Fab") saves a few pixels at the cost of the one
- * label that has to stay legible as new models are added.
- */
-export function shortBucketLabel(label: string): string {
-  const l = label.trim()
-  if (/^\d+\s*h$/i.test(l)) return l.replace(/\s+/g, '').toLowerCase()  // "5h", "5 H" -> 5h
-  if (/^week(ly)?$/i.test(l)) return 'W'
-  return l
-}
+
+// The compact label rule lives in src/shared/usage-labels.ts so main (which
+// builds the buckets) and the renderer share one rule; re-exported here so
+// existing imports keep working.
+export { shortBucketLabel }
 
 /**
  * Placeholder meter for a statusline that has not reported yet.
@@ -56,6 +42,37 @@ export function RateLimitBarPending({ label, compact }: { label: string; compact
         aria-valuemax={100}
         aria-valuetext="waiting for the status line"
         aria-label={`${label} rate limit utilisation, not yet reported`}
+      />
+      {!compact && <span className="text-subtext0 tabular-nums opacity-60">--%</span>}
+    </span>
+  )
+}
+
+/** The dash the meters' tooltips join their parts with. */
+const DASH = String.fromCharCode(0x2014)
+
+/**
+ * D2 of the usage UX: a window whose reset time has passed has no current
+ * figure. The pending meter's geometry (so nothing reflows when the next
+ * report fills it) without its shimmer, since nothing is known to be on its
+ * way, and with no colour and no number.
+ */
+export function RateLimitBarNoReading({ label, resetsAt, compact }: { label: string; resetsAt: string; compact?: boolean }) {
+  return (
+    <span
+      className="flex items-center gap-1.5"
+      title={`${label} window ${DASH} reset ${formatResetTime(resetsAt)}, no reading since`}
+      data-testid="rate-limit-no-reading"
+    >
+      <span className="text-subtext0 opacity-60">{compact ? shortBucketLabel(label) : `${label}:`}</span>
+      <span
+        className="inline-block bg-surface1 rounded-sm"
+        style={{ width: compact ? '46px' : '64px', height: '6px' }}
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuetext="no reading since its reset"
+        aria-label={`${label} rate limit utilisation, no reading since its reset`}
       />
       {!compact && <span className="text-subtext0 tabular-nums opacity-60">--%</span>}
     </span>

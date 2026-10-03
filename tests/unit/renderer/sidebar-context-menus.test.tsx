@@ -12,7 +12,8 @@ import { act } from 'react'
 
 const { default: ConfigContextMenu } = await import('../../../src/renderer/components/sidebar/ConfigContextMenu')
 const { default: SessionContextMenu } = await import('../../../src/renderer/components/sidebar/SessionContextMenu')
-const { PIN_WHILE_RUNNING_HINT, WATCHDOG_RUNTIME_HINT } = await import('../../../src/renderer/components/sidebar/sessionsPanelState')
+const { PIN_WHILE_RUNNING_HINT, WATCHDOG_RUNTIME_HINT, WATCHDOG_UNAVAILABLE_HINT } = await import('../../../src/renderer/components/sidebar/sessionsPanelState')
+const { default: SIDEBAR_SOURCE } = await import('../../../src/renderer/components/Sidebar.tsx?raw')
 
 describe('sidebar context menus — Quick Start + running lock', () => {
   let container: HTMLDivElement; let root: Root
@@ -111,5 +112,70 @@ describe('sidebar context menus — Quick Start + running lock', () => {
     act(() => { (container.querySelector('[data-testid="session-ctx-watchdog-safeguard"]') as HTMLButtonElement).click() })
     expect(onToggleWatchdogCheck).toHaveBeenCalledTimes(1)
     expect(onToggleWatchdogCheck).toHaveBeenCalledWith('safeguard')
+  })
+
+  // P3.10 (row 43): a Codex session's Watchdog has no safeguard check (Codex
+  // has no such message): shown off, not switchable, and says why.
+  it("session menu: a check the session's CLI has no patterns for is shown off, not switchable, with the reason", () => {
+    const onToggleWatchdogCheck = vi.fn()
+    renderSessionMenu({ watchdogChecks: { ...allOn, safeguard: false }, onToggleWatchdogCheck, watchdogUnavailable: ['safeguard'] })
+    const btn = container.querySelector('[data-testid="session-ctx-watchdog-safeguard"]') as HTMLButtonElement
+    expect(btn.disabled).toBe(true)
+    expect(btn.getAttribute('aria-disabled')).toBe('true')
+    expect(btn.getAttribute('title')).toBe(WATCHDOG_UNAVAILABLE_HINT)
+    expect(btn.textContent).toContain('(not available)')
+    act(() => { btn.click() })
+    expect(onToggleWatchdogCheck).not.toHaveBeenCalled()
+    const rate = container.querySelector('[data-testid="session-ctx-watchdog-rateLimit"]') as HTMLButtonElement
+    expect(rate.disabled).toBe(false)
+    act(() => { rate.click() })
+    expect(onToggleWatchdogCheck).toHaveBeenCalledWith('rateLimit')
+  })
+
+  // [host] WP2 PR 4 P4.6 (row 58): Claude's account items (Open artifacts,
+  // Authenticate claude.ai, Sign in to Claude Code) act on a Claude account's
+  // claude.ai session and CLI. On a Codex tab they acted on ANOTHER account,
+  // the primary Claude profile (the #216 fallback; P3.6 V5), so a Codex row
+  // never gets them, whatever its caller passes. Whether a Codex item takes
+  // Open artifacts' place is the signed artifacts record's to decide.
+  const claudeItems = {
+    onOpenArtifacts: vi.fn(), onAuthenticateWeb: vi.fn(), onSignInCode: vi.fn(), hasWebSession: true, codeSignedIn: false,
+  }
+  const accountItemTexts = () => Array.from(container.querySelectorAll('button, [data-testid="session-menu-claude-code-not-checked"]'))
+    .map((b) => b.textContent ?? '')
+    .filter((t) => /artifacts|claude\.ai|Claude Code/i.test(t))
+
+  it("session menu: a Codex row never gets Claude's account items, even when every callback is passed", () => {
+    renderSessionMenu({ session: { ...session, provider: 'codex' }, ...claudeItems })
+    expect(accountItemTexts()).toEqual([])
+    renderSessionMenu({ session: { ...session, provider: 'codex' }, ...claudeItems, hasWebSession: false, codeSignedIn: true })
+    expect(accountItemTexts()).toEqual([])
+    renderSessionMenu({ session: { ...session, provider: 'codex' }, ...claudeItems, codeNotChecked: { label: 'Claude Code is off', reason: 'off' } })
+    expect(accountItemTexts()).toEqual([])
+    // Nor a divider left behind for an empty block: only the one above Close.
+    expect(container.querySelectorAll('.my-1.border-t')).toHaveLength(1)
+  })
+
+  it("session menu: a Claude row keeps Claude's account items (the control)", () => {
+    renderSessionMenu({ ...claudeItems })
+    expect(accountItemTexts()).toEqual(['Open artifacts', 'Re-authenticate claude.ai...', 'Sign in to Claude Code'])
+    expect(container.querySelectorAll('.my-1.border-t')).toHaveLength(2)
+    // A session with no provider recorded is Claude.
+    renderSessionMenu({ session: { ...session, provider: undefined }, ...claudeItems })
+    expect(accountItemTexts()).toHaveLength(3)
+  })
+
+  it('the sidebar resolves the acting account with the provider check, and a Codex row prefetches no Claude status', () => {
+    // The acting profile comes from the one helper (claudeWebActionProfileId,
+    // tests/unit/renderer/claude-web-targets.test.ts), not the old local
+    // fallback to the primary profile.
+    expect(SIDEBAR_SOURCE).toContain('const actionProfileId = claudeWebActionProfileId(s, primaryProfileId, accountProfiles)')
+    expect(SIDEBAR_SOURCE).not.toMatch(/\(s\.profileId \?\? primaryProfileId\)\s*:\s*sshProfileId/)
+    // The right-click prefetch reads the same helper, so it refreshes only the
+    // account the menu acts on: none for a Codex row (the full read runs
+    // `claude auth status`), nor for a row whose menu has no account items.
+    // Both refresh helpers do nothing for an undefined id.
+    expect(SIDEBAR_SOURCE).toContain('const prefetchId = claudeWebActionProfileId(session, primaryProfileId, accountProfiles); refreshWebOnly(prefetchId); void refreshWebSessions(prefetchId)')
+    expect(SIDEBAR_SOURCE).not.toContain('?? (session.profileId ?? primaryProfileId)')
   })
 })

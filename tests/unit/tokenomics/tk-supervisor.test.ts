@@ -141,4 +141,85 @@ describe('TokenomicsSupervisor', () => {
     await expect(p).rejects.toThrow()
     expect(() => sup.shutdown()).not.toThrow()
   })
+
+  // WP2 plan A13: each Codex account writes its transcripts in its own realm.
+  // Usage track MP9: each folder goes with whose sessions it holds.
+  it('hands the worker the Codex account folders with their account keys at open, and every change after', () => {
+    const t = new FakeTkWorkerTransport()
+    const seen: any[] = []
+    t.onWorker((m) => {
+      seen.push(m)
+      if (m.type === 'open') t.emitToMain({ type: 'ready', firstIndexComplete: false, eventsTotal: 0 })
+    })
+    const A = { dir: '/r/a/sessions', accountKey: 'codex:acct-a' }
+    const B = { dir: '/r/b/sessions', accountKey: 'codex:acct-b' }
+    const sup = new TokenomicsSupervisor({ forkChild: (() => ({ transport: t, kill: () => {}, onExit: () => {} })) as any, ...baseOpts(), codexRealmSessionsDirs: [A] })
+    sup.start()
+    expect(seen.find((m) => m.type === 'open')).toMatchObject({ codexSessionsDir: '/x', codexRealmSessionsDirs: [A] })
+    const next = [A, B]
+    sup.setCodexRealmSessionsDirs(next)
+    expect(seen.at(-1)).toEqual({ type: 'set-codex-realm-dirs', dirs: [A, B] })
+    // A copy: the caller's array changing later changes nothing sent.
+    next[1].accountKey = 'codex:acct-z'
+    expect(seen.at(-1).dirs[1].accountKey).toBe('codex:acct-b')
+  })
+
+  it('a restarted worker is opened with the folders as they were set, whatever the caller changed since', async () => {
+    const t = new FakeTkWorkerTransport()
+    const seen: any[] = []
+    let exit: () => void = () => {}
+    t.onWorker((m) => {
+      seen.push(m)
+      if (m.type === 'open') t.emitToMain({ type: 'ready', firstIndexComplete: false, eventsTotal: 0 })
+    })
+    const sup = new TokenomicsSupervisor({ forkChild: (() => ({ transport: t, kill: () => {}, onExit: (cb: () => void) => { exit = cb } })) as any, ...baseOpts() })
+    sup.start()
+    const next = [{ dir: '/r/a/sessions', accountKey: 'codex:acct-a' }]
+    sup.setCodexRealmSessionsDirs(next)
+    next[0].accountKey = 'codex:acct-z'
+    exit()
+    for (let i = 0; i < 100 && seen.filter((m) => m.type === 'open').length < 2; i++) await new Promise((r) => setTimeout(r, 10))
+    expect(seen.filter((m) => m.type === 'open').at(-1).codexRealmSessionsDirs).toEqual([{ dir: '/r/a/sessions', accountKey: 'codex:acct-a' }])
+    sup.shutdown()
+  })
+
+  // MP9 round 1 (Q-4): the worker is told whether the account folders have
+  // been named, so it does not settle the one-off attribution before.
+  it('opens the worker saying whether the account folders are named yet, and a restarted one as they are now', async () => {
+    const t = new FakeTkWorkerTransport()
+    const seen: any[] = []
+    let exit: () => void = () => {}
+    t.onWorker((m) => {
+      seen.push(m)
+      if (m.type === 'open') t.emitToMain({ type: 'ready', firstIndexComplete: false, eventsTotal: 0 })
+    })
+    const sup = new TokenomicsSupervisor({ forkChild: (() => ({ transport: t, kill: () => {}, onExit: (cb: () => void) => { exit = cb } })) as any, ...baseOpts() })
+    sup.start()
+    expect(seen.find((m) => m.type === 'open').codexRealmDirsKnown).toBe(false)
+    sup.setCodexRealmSessionsDirs([])
+    exit()
+    for (let i = 0; i < 100 && seen.filter((m) => m.type === 'open').length < 2; i++) await new Promise((r) => setTimeout(r, 10))
+    expect(seen.filter((m) => m.type === 'open').at(-1).codexRealmDirsKnown).toBe(true)
+    sup.shutdown()
+    // Given at construction: named from the start.
+    const t2 = new FakeTkWorkerTransport()
+    const seen2: any[] = []
+    t2.onWorker((m) => { seen2.push(m) })
+    const sup2 = new TokenomicsSupervisor({ forkChild: (() => ({ transport: t2, kill: () => {}, onExit: () => {} })) as any, ...baseOpts(), codexRealmSessionsDirs: [] })
+    sup2.start()
+    expect(seen2.find((m) => m.type === 'open').codexRealmDirsKnown).toBe(true)
+    sup2.shutdown()
+  })
+
+  it('reports the one-off account attribution while the worker says it runs, and not after', () => {
+    const t = new FakeTkWorkerTransport()
+    t.onWorker((m) => { if (m.type === 'open') t.emitToMain({ type: 'ready', firstIndexComplete: true, eventsTotal: 3 }) })
+    const sup = new TokenomicsSupervisor({ forkChild: (() => ({ transport: t, kill: () => {}, onExit: () => {} })) as any, ...baseOpts() })
+    sup.start()
+    expect(sup.getIndexStatus().accountReread).toBeNull()
+    t.emitToMain({ type: 'index-progress', filesDone: 1, filesTotal: 4, eventsIngested: 0, phase: 'incremental', accountReread: { stage: 'reread', done: 1, total: 4 } })
+    expect(sup.getIndexStatus().accountReread).toEqual({ stage: 'reread', done: 1, total: 4 })
+    t.emitToMain({ type: 'index-progress', filesDone: 4, filesTotal: 4, eventsIngested: 0, phase: 'incremental', accountReread: null })
+    expect(sup.getIndexStatus().accountReread).toBeNull()
+  })
 })

@@ -473,7 +473,14 @@ export class HooksGateway {
       // is never flipped in production now, so every PreToolUse is fire-and-
       // forget and Claude's own settings fully decide -> no flood, no stalls.
       const isHeldOpenTool = this.gateActive && peekedEvent === 'PreToolUse'
-      if (peekedEvent === 'PermissionRequest' || isHeldOpenTool) {
+      // P3.10: a Codex hook (its forwarder says so) is never held open.
+      // Codex runs the app's hooks asynchronously and reads no answer, so a
+      // held request could only tie up a forwarder and register a responder
+      // no decision can reach. The header only takes a capability away (the
+      // token authenticated the request above); the event is ingested as
+      // any other.
+      const isCodexClient = headerValue(req.headers as Record<string, string | string[] | undefined>, 'x-ccc-hook-client') === 'codex'
+      if (!isCodexClient && (peekedEvent === 'PermissionRequest' || isHeldOpenTool)) {
         isPermissionRequest = true
         const payload = peeked.payload && typeof peeked.payload === 'object'
           ? (peeked.payload as Record<string, unknown>)

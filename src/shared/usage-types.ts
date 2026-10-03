@@ -39,10 +39,101 @@ export interface ParsedUsage {
   credits?: CreditsInfo
 }
 
+/**
+ * One allowance window of a provider reading, already validated: whatever
+ * produced it dropped anything it could not trust (usage track MP2).
+ */
+export interface AllowanceWindow {
+  /** Length in minutes (300 = 5 hours, 10080 = a week); null when not reported. */
+  windowMinutes: number | null
+  /** Share used, 0-100. */
+  usedPercent: number
+  /** When the window resets, epoch ms; null when not reported. */
+  resetsAt: number | null
+}
+
+/** One metered limit of an account and its windows (at least one is set). */
+export interface AllowanceLimit {
+  /** The provider's id for the limit; the account-wide default comes first. */
+  limitId: string
+  /** The display name the provider gives a separate limit, or null. */
+  limitName: string | null
+  /** When THIS limit was last reported, epoch ms; null when unknown. A
+   *  session that moved to another model's limit leaves this one's figure
+   *  behind, with its own, older time. */
+  readingAt: number | null
+  primary: AllowanceWindow | null
+  secondary: AllowanceWindow | null
+}
+
+/** An account's credits as one reading reports them: a count of the
+ *  provider's own credits, NOT money (P3.1 evidence answer 7; ADR-023), so it
+ *  is not a `CreditsInfo` and carries no currency. Validated: a flag that is
+ *  not a boolean drops the whole of it, a balance that is not a plain decimal
+ *  becomes null; nothing is repaired. `balance` is null when the reading
+ *  names none. */
+export interface AllowanceCredits {
+  hasCredits: boolean
+  unlimited: boolean
+  balance: number | null
+}
+
+/** An account's allowances as one reading, provider-neutral. */
+export interface AllowanceReading {
+  limits: AllowanceLimit[]
+  /** The plan as the provider reports it ('plus', 'pro', ...), from the known list only. */
+  planType: string | null
+  /** How old the reading is as a whole, epoch ms: the OLDEST of its limits'
+   *  times (the event time for a session's transcript, the read time for a
+   *  live read), so an "as of" built on it never looks fresher than any
+   *  figure it shows; null when unknown. */
+  readingAt: number | null
+  /** The account's credits count. Three states: a figure; `null`, "none now"
+   *  (the newest account-wide report says the account has none, or its credits
+   *  were unusable); and no key at all, no statement. The credits are the
+   *  newest account-wide report's, the one the main bars come from, so a null
+   *  clears an older figure in a merge and no statement leaves it. A merged
+   *  reading never carries null: it has a figure or no key. */
+  credits?: AllowanceCredits | null
+}
+
+// ChatGPT plans as a ChatGPT sign-in reports them: the PlanType list of the
+// app-server schema, identical in CLI 0.153.4, 0.155.1 and 0.157.1. 'unknown'
+// is left out on purpose: an unknown plan shows no pill rather than the word
+// "Unknown".
+const PLAN_LABELS: Readonly<Record<string, string>> = Object.freeze({
+  free: 'Free',
+  go: 'Go',
+  plus: 'Plus',
+  pro: 'Pro',
+  prolite: 'Pro Lite',
+  team: 'Team',
+  self_serve_business_prolite: 'Business',
+  self_serve_business_usage_based: 'Business',
+  business: 'Business',
+  ent26: 'Enterprise',
+  enterprise_cbp_automation: 'Enterprise',
+  enterprise_cbp_usage_based: 'Enterprise',
+  enterprise: 'Enterprise',
+  edu: 'Edu',
+  edu_plus: 'Edu Plus',
+  edu_pro: 'Edu Pro',
+})
+
+/** The plan pill's text for a reported plan type, or null when the plan is
+ *  missing or not one this build knows (unknown stays unknown). */
+export function planLabelFor(planType: unknown): string | null {
+  if (typeof planType !== 'string' || !Object.prototype.hasOwnProperty.call(PLAN_LABELS, planType)) return null
+  return PLAN_LABELS[planType]
+}
+
 // 'inactive' = the account is parked (isAccountActive false): the usage page
 // still lists it, greyed, but it is never network-polled or token-refreshed and
 // offers no sign-in. See fetchAccountUsage's early return.
-export type AccountUsageStatus = 'ok' | 'needs-login' | 'error' | 'inactive'
+// 'off' = the provider is switched off, or its setting could not be read
+// (D5 of the usage UX): nothing was read for the account, no credential, no
+// refresh and no request.
+export type AccountUsageStatus = 'ok' | 'needs-login' | 'error' | 'inactive' | 'off'
 
 export interface AccountUsage {
   profileId: string

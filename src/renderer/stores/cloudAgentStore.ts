@@ -1,7 +1,71 @@
 import { create } from 'zustand'
 import type { CloudAgent, CloudAgentStatus } from '../types/electron'
+import type { CloudAgentDispatchParams } from '../../shared/types'
+import { CLAUDE_OFF, isClaudeOff } from '../lib/claudeOff'
+import { codexPreference, type ProviderChoiceView } from '../onboarding/provider-choice'
+import { useSettingsStore } from './settingsStore'
+import { useLaunchAckStore } from './launchAckStore'
+import { launchRefusalOf, providerNotSetUpMessage, providerOffMessage } from '../../shared/providers'
+import type { ProviderId } from '../../shared/providers'
 
 type FilterType = 'all' | 'running' | 'completed' | 'failed'
+
+// WP2 PR 4, P4.5 (row 57): a cloud agent runs on Claude Code or on Codex.
+// Each is refused while its own provider is off, and only by its own
+// provider's switch.
+
+/** The provider an agent runs on: absent on every agent saved before PR 4,
+ *  all of which ran Claude Code. Any other value is returned as it is: main
+ *  starts no agent of a provider it has no package for (the record fails),
+ *  and agentLaunchBlockedReason gates anything but Codex by Claude Code's
+ *  switch. */
+export function agentProviderOf(agent: Pick<CloudAgent, 'provider'> | null | undefined): ProviderId {
+  return agent?.provider ?? 'claude'
+}
+
+/** Main's own sentences for a Codex agent that cannot start (launch-refusal.ts). */
+export const CODEX_AGENT_OFF = providerOffMessage('Codex')
+export const CODEX_AGENT_NOT_SET_UP = providerNotSetUpMessage('Codex')
+
+/** The New agent dialog's per-run choice for a Codex agent: it runs as
+ *  Codex's Auto preset (section 10, question 7, built as its default A). */
+export const CODEX_AUTO_LABEL = 'Auto: workspace writes, no prompts, for this run'
+/** Shown with that choice on Windows (the Feature Guide's known issue). */
+export const CODEX_AGENT_WINDOWS_NOTE = 'On Windows, Codex makes no edits until its sandbox is set up for this Codex account, and with the non-admin sandbox its commands fail (PowerShell does not start there).'
+/** Dispatch waits for the per-run confirmation of an unverified sign-in. */
+export const CONFIRM_SIGN_IN = 'Confirm the sign-in for this run to continue.'
+
+/** Why an agent of this provider cannot start now (its provider is off or,
+ *  for Codex, not set up), in main's words; null when it can. */
+export function agentLaunchBlockedReason(provider: ProviderId, settings: ProviderChoiceView = useSettingsStore.getState().settings): string | null {
+  if (provider === 'codex') {
+    const pref = codexPreference(settings)
+    return pref === 'on' ? null : pref === 'off' ? CODEX_AGENT_OFF : CODEX_AGENT_NOT_SET_UP
+  }
+  return isClaudeOff(settings) ? CLAUDE_OFF : null
+}
+
+/** A retry of an agent whose account needs each launch confirmed (the Codex
+ *  sign-in already on this computer, or an unverified one) asks first, with
+ *  the same confirm a restarted session gets; nothing stores the answer.
+ *  'go': nothing to ask; 'ack': confirmed for this one retry; 'cancel'. */
+async function confirmRetrySignIn(agent: CloudAgent, provider: ProviderId): Promise<'go' | 'ack' | 'cancel'> {
+  if (!agent.providerAccountId) return 'go'
+  const { accountsSnapshotWhenLoaded, resolveLaunchAccount, launchStep } = await import('../utils/launchAccount')
+  const snapshot = await accountsSnapshotWhenLoaded()
+  const step = launchStep(snapshot, resolveLaunchAccount(snapshot, provider, agent.providerAccountId), false)
+  if (step.kind === 'spawn') return 'go'
+  const yes = await useLaunchAckStore.getState().request({
+    sessionId: `cloud-agent:${agent.id}`,
+    sessionLabel: agent.name,
+    accountName: step.question.accountName,
+    ...(step.question.email ? { email: step.question.email } : {}),
+    external: step.question.external,
+    unknown: step.question.unknown,
+    retryAgent: true,
+  })
+  return yes ? 'ack' : 'cancel'
+}
 
 /**
  * Outcome of a persisting mutation. `ok:false` means main REFUSED or FAILED the
@@ -23,7 +87,7 @@ interface CloudAgentState {
   error: string | null
 
   hydrate: (agents: CloudAgent[]) => void
-  dispatch: (params: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string }; skipPermissions?: boolean }) => Promise<void>
+  dispatch: (params: CloudAgentDispatchParams) => Promise<void>
   cancel: (id: string) => Promise<void>
   remove: (id: string) => Promise<CloudAgentMutationResult>
   retry: (id: string) => Promise<void>
@@ -78,8 +142,20 @@ export const useCloudAgentStore = create<CloudAgentState>((set, get) => ({
   },
 
   dispatch: async (params) => {
+    // The backstop behind every way in: a cloud agent is a headless run of
+    // its provider (Claude Code unless it says otherwise), and none starts
+    // while that provider is switched off. The page's banner (this store's
+    // `error`) says why.
+    const blocked = agentLaunchBlockedReason(agentProviderOf(params))
+    if (blocked) { set({ error: blocked }); return }
     try {
       const agent = await window.electronAPI.cloudAgent.dispatch(params)
+      // Main refuses on its own while the provider is off (a switch flipped
+      // since this page last read the setting): the banner says why.
+      const refusal = launchRefusalOf(agent)
+      if (refusal) { set({ error: refusal.message }); return }
+      if (agent && typeof agent === 'object' && 'rejected' in agent) { set({ error: agent.rejected }); return }
+      if (!agent || !('id' in agent)) return
       // Don't add agent here — handleStatusChanged listener already added it
       // from the broadcastStatus() call in the main process. Just select it.
       set({ selectedAgentId: agent.id })
@@ -113,8 +189,25 @@ export const useCloudAgentStore = create<CloudAgentState>((set, get) => ({
   },
 
   retry: async (id: string) => {
-    const newAgent = await window.electronAPI.cloudAgent.retry(id)
-    if (newAgent) {
+    // A retry is a new run on the agent's own provider: the same backstop as
+    // dispatch.
+    const agent = get().agents.find((a) => a.id === id)
+    const provider = agentProviderOf(agent)
+    const blocked = agentLaunchBlockedReason(provider)
+    if (blocked) { set({ error: blocked }); return }
+    let ack = false
+    if (provider !== 'claude' && agent) {
+      const answer = await confirmRetrySignIn(agent, provider)
+      if (answer === 'cancel') return
+      ack = answer === 'ack'
+    }
+    const newAgent = ack
+      ? await window.electronAPI.cloudAgent.retry(id, { acknowledgeRealmOnly: true })
+      : await window.electronAPI.cloudAgent.retry(id)
+    const refusal = launchRefusalOf(newAgent)
+    if (refusal) { set({ error: refusal.message }); return }
+    if (newAgent && typeof newAgent === 'object' && 'rejected' in newAgent) { set({ error: newAgent.rejected }); return }
+    if (newAgent && 'id' in newAgent) {
       // Don't add — handleStatusChanged listener already added it from broadcast
       set({ selectedAgentId: newAgent.id })
     }

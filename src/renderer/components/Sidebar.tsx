@@ -10,8 +10,10 @@ import { useInsightsStore } from '../stores/insightsStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useCloudAgentStore } from '../stores/cloudAgentStore'
 import { useConductorMcpStore } from '../stores/conductorMcpStore'
-import { useAccountAuthStore } from '../stores/accountAuthStore'
-import SessionDialog from './SessionDialog'
+import { useAccountAuthStore, claudeCodeNotChecked } from '../stores/accountAuthStore'
+import { useClaudeOff } from '../lib/claudeOff'
+import SessionDialog, { type SessionDialogLaunchAck } from './SessionDialog'
+import { grantLaunchAcknowledgement } from '../stores/launchAckStore'
 import { requestCloseSession } from '../stores/sshCloseStore'
 import { ViewType } from '../types/views'
 import { trackUsage } from '../stores/tipsStore'
@@ -29,7 +31,7 @@ import ConfigContextMenu from './sidebar/ConfigContextMenu'
 import SessionContextMenu from './sidebar/SessionContextMenu'
 import ConfigEditGuardDialog from './sidebar/ConfigEditGuardDialog'
 import { configEditGuardState } from './sidebar/configEditGuard'
-import { openArtifactsPerSetting } from '../lib/claude-web-targets'
+import { openArtifactsPerSetting, claudeWebActionProfileId } from '../lib/claude-web-targets'
 import GroupContextMenu from './sidebar/GroupContextMenu'
 import SectionHeader from './sidebar/SectionHeader'
 import GroupHeader from './sidebar/GroupHeader'
@@ -50,8 +52,11 @@ import ConfigLoadFailedNotice from './ConfigLoadFailedNotice'
 import ConfigLoadFailedRailIndicator from './sidebar/ConfigLoadFailedRailIndicator'
 import { useAppMetaStore } from '../stores/appMetaStore'
 import { deriveOnboarding } from '../onboarding/gate'
+import { useHelloCodexStore } from '../onboarding/hello-codex-open'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSwitchAccount } from '../hooks/useSwitchAccount'
+import { switchAccountItems } from '../utils/switchAccountItems'
+import { useProviderAccountsStore } from '../stores/providerAccountsStore'
 import { useTokenomicsStore } from '../stores/tokenomicsStore'
 import { injectAttentionStyles } from '../utils/injectAttentionStyles'
 import { closeSessionBatch } from '../utils/closeSessionBatch'
@@ -141,6 +146,9 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   // refreshes both. Fetched when a session context menu opens — not polled, since
   // the Claude Code check is a heavy subprocess.
   const authByProfile = useAccountAuthStore((s) => s.byProfile)
+  // WP2: while Claude Code is off (or main did not check), the menu offers no
+  // Claude Code sign-in and says why (claudeCodeNotChecked).
+  const claudeOffForMenu = useClaudeOff()
   const refreshWebSessions = React.useCallback(async (profileId?: string, force = false) => {
     if (!profileId) return
     await useAccountAuthStore.getState().refresh(profileId, { force })
@@ -321,7 +329,11 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   const primaryProfileId = accountProfiles.find((p) => p.isPrimary)?.id
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   const menuSession = sessionContextMenu ? sessions.find((s) => s.id === sessionContextMenu.sessionId) ?? null : null
-  const canSwitchAccount = canSwitchAccountForSession({ provider: menuSession?.provider, isSsh: !!menuSession?.sshConfig, shellOnly: !!menuSession?.shellOnly, profileCount: accountProfiles.length })
+  // P3.6 (row 22): the menu's Switch Account lists the session provider's
+  // accounts, as the strip's pill does (utils/switchAccountItems).
+  const accountsSnapshot = useProviderAccountsStore((s) => s.snapshot)
+  const menuSwitchItems = switchAccountItems(menuSession, { profiles: accountProfiles, aliases: accountAliases, snapshot: accountsSnapshot })
+  const canSwitchAccount = canSwitchAccountForSession({ provider: menuSession?.provider, isSsh: !!menuSession?.sshConfig, shellOnly: !!menuSession?.shellOnly, profileCount: accountProfiles.length, providerAccountCount: menuSwitchItems.length })
   const switchMenuAccount = useSwitchAccount(menuSession)
 
   // Inject attention styles on mount
@@ -339,6 +351,8 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
       // Suppressed while onboarding overlays the shell — Ctrl+T here would
       // open the New Config dialog invisibly underneath it.
       if (deriveOnboarding(useAppMetaStore.getState().meta, {}).due) return
+      // And while the Codex introduction covers it (WP2 commit 6f).
+      if (useHelloCodexStore.getState().open !== null) return
       const sc = useSettingsStore.getState().settings.keyboardShortcuts || DEFAULT_SHORTCUTS
       if (matchesShortcut(e, sc.newConfig)) {
         e.preventDefault()
@@ -365,7 +379,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
-  const handleCreateConfig = async (data: Omit<TerminalConfig, 'id'>, password?: string, sudoPassword?: string, argSecret?: string) => {
+  const handleCreateConfig = async (data: Omit<TerminalConfig, 'id'>, password?: string, sudoPassword?: string, argSecret?: string, launchAck?: SessionDialogLaunchAck) => {
     const config: TerminalConfig = { ...data, id: generateId() }
     addConfig(config)
     // Same stamps as the guided first-config path (App.tsx): without them the
@@ -384,7 +398,10 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
       await window.electronAPI.credentials.save(config.id + '_argsecret', argSecret)
     }
     setShowNewDialog(false)
-    launchFromConfig(config)
+    const sessionId = launchFromConfig(config)
+    // The dialog's ticked "launch with the sign-in already on this computer"
+    // covers exactly this launch, never a later one (launchAckStore).
+    if (sessionId && launchAck) grantLaunchAcknowledgement(sessionId, launchAck.accountId)
   }
 
   const handleEditConfig = async (data: Omit<TerminalConfig, 'id'>, password?: string, sudoPassword?: string, argSecret?: string) => {
@@ -436,8 +453,9 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
     }
   }
 
-  const launchFromConfig = async (config: TerminalConfig) => {
-    launchConfig(config)
+  /** Returns the new session's id ('' when the launch was blocked). */
+  const launchFromConfig = (config: TerminalConfig): string => {
+    const sessionId = launchConfig(config)
     // The missed-copy guard: a launch from the SAVED tab used to switch the
     // main view to the new terminal while leaving the panel on Saved, so the
     // tile the user had just made was on a list they were not looking at —
@@ -445,6 +463,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
     // A no-op for the surfaces that already live on Running (Quick Start).
     selectPanelTab('running')
     onViewChange('sessions')
+    return sessionId
   }
 
   // ── Allow Multi Spawn (phase 4) ─────────────────────────────────────────
@@ -945,7 +964,11 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         onRenameFinish={handleFinishSessionRename}
         onRenameCancel={() => { setRenamingSessionId(null); setSessionRenameValue('') }}
         onClick={(e) => handleSessionClick(session.id, e)}
-        onContextMenu={(e) => { e.preventDefault(); const prefetchId = sshMappedProfileId(session, accountProfiles) ?? (session.profileId ?? primaryProfileId); refreshWebOnly(prefetchId); void refreshWebSessions(prefetchId); setSessionContextMenu({ sessionId: session.id, x: e.clientX, y: e.clientY }) }}
+        // P4.6 (row 58): prefetch the account the menu acts on, from the same
+        // helper as its actionProfileId. None for a Codex row, or for a row whose
+        // menu has no account items, so neither runs the primary Claude
+        // profile's `claude auth status` (both refreshes skip an undefined id).
+        onContextMenu={(e) => { e.preventDefault(); const prefetchId = claudeWebActionProfileId(session, primaryProfileId, accountProfiles); refreshWebOnly(prefetchId); void refreshWebSessions(prefetchId); setSessionContextMenu({ sessionId: session.id, x: e.clientX, y: e.clientY }) }}
         isSelected={selectedSessionIds.has(session.id)}
         isFocused={focusedSessionIndex === flatIndex}
         ordinal={sessionOrdinals.get(session.id)}
@@ -1581,9 +1604,9 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         // mapped profile for a mapped SSH session. Undefined for a shell-only
         // session, and for an SSH session with no matching local profile — which
         // keeps the profile-scoped items hidden/off there, exactly as before.
-        const actionProfileId = !s.shellOnly && s.sessionType === 'local'
-          ? (s.profileId ?? primaryProfileId)
-          : sshProfileId
+        // Undefined for a Codex session too (P4.6, row 58): the primary fallback
+        // made Claude's items act on another account there (claude-web-targets).
+        const actionProfileId = claudeWebActionProfileId(s, primaryProfileId, accountProfiles)
         return (
           <SessionContextMenu
             x={sessionContextMenu.x}
@@ -1603,6 +1626,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
             // toggle that would be a no-op. The menu stays open: these are
             // three independent switches and users flip more than one.
             watchdogChecks={s.watchdog?.checks}
+            watchdogUnavailable={s.watchdog?.unavailable}
             onToggleWatchdogCheck={(key) => {
               const current = s.watchdog?.checks
               if (!current) return
@@ -1620,12 +1644,11 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
             }}
             onDismiss={() => setSessionContextMenu(null)}
             canSwitchAccount={canSwitchAccount}
-            profiles={accountProfiles}
-            accountAliases={accountAliases}
-            onSwitchAccount={(profileId) => {
+            switchItems={menuSwitchItems}
+            onSwitchAccount={(accountId) => {
               // Gates the multi-account tip's "you already do this" variant.
               trackUsage('accounts.switch-session-account')
-              switchMenuAccount(s.id, profileId)
+              switchMenuAccount(s.id, accountId)
             }}
             // #216: account actions on the session itself. Gated to a local
             // session with a resolved account — an SSH session's browser and
@@ -1639,6 +1662,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
               !!actionProfileId && authByProfile[actionProfileId]?.web === 'active'
             }
             codeSignedIn={!!actionProfileId && (s.provider ?? 'claude') === 'claude' && authByProfile[actionProfileId]?.cliAuthed === true}
+            codeNotChecked={actionProfileId ? claudeCodeNotChecked(authByProfile[actionProfileId], claudeOffForMenu) ?? undefined : undefined}
             onOpenArtifacts={
               actionProfileId
                 ? () => {
