@@ -71,6 +71,18 @@ export default function SessionContextMenu({
 
   const showSwitch = !!canSwitchAccount && !!switchItems && switchItems.length > 1 && !!onSwitchAccount
 
+  // WP2 PR 4, P4.6 (row 58): Claude's account items act on a Claude account's
+  // claude.ai session and Claude Code sign-in. On a Codex tab they acted on
+  // ANOTHER account, the primary Claude profile (the #216 fallback; P3.6 V5),
+  // so a Codex row never shows them, whatever the caller passes. Open artifacts
+  // has no Codex replacement until the artifacts record (completion plan,
+  // P4.6, a section 19 record the owner signs) decides one: Codex has no
+  // artifacts equivalent on either supported version (P3.1 answer 11).
+  const claudeAccountItems = (session.provider ?? 'claude') === 'claude'
+  const openArtifactsItem = claudeAccountItems ? onOpenArtifacts : undefined
+  const authenticateWebItem = claudeAccountItems ? onAuthenticateWeb : undefined
+  const signInCodeItem = claudeAccountItems ? onSignInCode : undefined
+
   // Keep the menu inside the window. This one is the tallest in the app and
   // still grows -- the #605 Watchdog block, and Switch Account expanding to one
   // row per account -- so opened low in the sidebar its bottom items used to
@@ -224,12 +236,12 @@ export default function SessionContextMenu({
       {/* #216: account actions, reachable from the session itself. If artifacts
           will not open, the fix is the next item down rather than a trip to
           Settings — which is the whole reason these live here. */}
-      {(onOpenArtifacts || onAuthenticateWeb || onSignInCode) && (
+      {(openArtifactsItem || authenticateWebItem || signInCodeItem) && (
         <>
           <div className="my-1 border-t" style={{ borderColor: 'var(--border-subtle)' }} />
-          {onOpenArtifacts && (
+          {openArtifactsItem && (
             <button
-              onClick={() => { onOpenArtifacts(); onDismiss() }}
+              onClick={() => { openArtifactsItem(); onDismiss() }}
               disabled={!hasWebSession}
               title={hasWebSession ? 'Open this account’s artifacts on claude.ai' : 'Authenticate claude.ai first'}
               className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] disabled:opacity-40 disabled:hover:bg-transparent transition-colors flex items-center gap-2"
@@ -242,9 +254,9 @@ export default function SessionContextMenu({
               Open artifacts
             </button>
           )}
-          {onAuthenticateWeb && (
+          {authenticateWebItem && (
             <button
-              onClick={() => { onAuthenticateWeb(); onDismiss() }}
+              onClick={() => { authenticateWebItem(); onDismiss() }}
               className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
               style={{ color: 'var(--text-primary)' }}
             >
@@ -255,7 +267,7 @@ export default function SessionContextMenu({
               {hasWebSession ? 'Re-authenticate claude.ai...' : 'Authenticate claude.ai...'}
             </button>
           )}
-          {onSignInCode && codeNotChecked && (
+          {signInCodeItem && codeNotChecked && (
             <div
               className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 opacity-60"
               style={{ color: 'var(--text-primary)' }}
@@ -265,9 +277,9 @@ export default function SessionContextMenu({
               {codeNotChecked.label}
             </div>
           )}
-          {onSignInCode && !codeNotChecked && (
+          {signInCodeItem && !codeNotChecked && (
             <button
-              onClick={() => { if (codeSignedIn) return; onSignInCode(); onDismiss() }}
+              onClick={() => { if (codeSignedIn) return; signInCodeItem(); onDismiss() }}
               disabled={codeSignedIn}
               title={codeSignedIn ? 'Already signed in to Claude Code for this account' : 'Runs /login in this session’s terminal'}
               className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] disabled:opacity-40 disabled:hover:bg-transparent transition-colors flex items-center gap-2"

@@ -12,6 +12,7 @@ import {
   resolveSignInOpenTarget,
   paneHostSession,
   openArtifactsPerSetting,
+  claudeWebActionProfileId,
 } from '../../../src/renderer/lib/claude-web-targets'
 import { useSettingsStore } from '../../../src/renderer/stores/settingsStore'
 import { useSessionStore } from '../../../src/renderer/stores/sessionStore'
@@ -109,5 +110,42 @@ describe('openArtifactsPerSetting', () => {
     expect(paneHostSession('s-shell', true)).toBeNull()
     useSessionStore.setState({ sessions: [], activeSessionId: null } as never)
     expect(paneHostSession()).toBeNull()
+  })
+})
+
+// [host] WP2 PR 4 P4.6 (row 58): the Claude account a session's claude.ai
+// actions (Open artifacts, Authenticate claude.ai) act on. A Codex session has
+// none: falling back to the primary Claude profile there (the #216 fallback;
+// P3.6 V5) made those actions act on ANOTHER account.
+describe('claudeWebActionProfileId', () => {
+  const profiles = [
+    { id: 'profile-own', accountEmail: 'own@example.com' },
+    { id: 'profile-primary', accountEmail: 'primary@example.com' },
+  ]
+
+  it('a Codex session has no Claude account to act on, local or SSH, with or without a profile id', () => {
+    for (const s of [
+      { provider: 'codex', sessionType: 'local' },
+      { provider: 'codex', sessionType: 'local', profileId: 'profile-own' },
+      { provider: 'codex', sessionType: 'ssh', accountEmail: 'own@example.com' },
+      { provider: 'codex', sessionType: 'ssh', profileId: 'profile-own' },
+    ] as const) {
+      expect(claudeWebActionProfileId(s, 'profile-primary', profiles), JSON.stringify(s)).toBeUndefined()
+    }
+  })
+
+  it('a local Claude session acts on its own profile, else the primary (unchanged)', () => {
+    expect(claudeWebActionProfileId({ provider: 'claude', sessionType: 'local', profileId: 'profile-own' }, 'profile-primary', profiles)).toBe('profile-own')
+    expect(claudeWebActionProfileId({ sessionType: 'local' }, 'profile-primary', profiles)).toBe('profile-primary')
+  })
+
+  it('an SSH Claude session acts on the local profile its account maps to, never the primary (unchanged)', () => {
+    expect(claudeWebActionProfileId({ sessionType: 'ssh', accountEmail: 'own@example.com' }, 'profile-primary', profiles)).toBe('profile-own')
+    expect(claudeWebActionProfileId({ sessionType: 'ssh', accountEmail: 'nobody@example.com' }, 'profile-primary', profiles)).toBeUndefined()
+  })
+
+  it('a shell-only session, or no session, has none', () => {
+    expect(claudeWebActionProfileId({ sessionType: 'local', shellOnly: true }, 'profile-primary', profiles)).toBeUndefined()
+    expect(claudeWebActionProfileId(undefined, 'profile-primary', profiles)).toBeUndefined()
   })
 })
