@@ -125,7 +125,14 @@ jobs:
       - name: Fetch the WP1 ledger's bound commit
         run: node scripts/wp1/fetch-ledger-commit.mjs
 
+      # A stable release runs the WP1 candidate check whatever the manifest
+      # declares: its `phase` is a field a neutral commit could set back to
+      # gate0, so the phase comes from here, and the environment can only
+      # raise it (tests/wp1/phase.ts; pinned by tests/wp1/traceability.test.ts).
+      # A dry run, or a beta or dev release, leaves it to the manifest.
       - name: Run tests
+        env:
+          WP1_PHASE: ${{ inputs.channel == 'stable' && !inputs.dry_run && 'candidate' || '' }}
         run: npx vitest run
 
       - name: Determine version
@@ -485,7 +492,10 @@ jobs:
       - name: Fetch the WP1 ledger's bound commit
         run: node scripts/wp1/fetch-ledger-commit.mjs
 
+      # The stable release's WP1 candidate check, as in build-windows.
       - name: Run tests
+        env:
+          WP1_PHASE: ${{ inputs.channel == 'stable' && !inputs.dry_run && 'candidate' || '' }}
         run: npx vitest run
 
       - name: Build

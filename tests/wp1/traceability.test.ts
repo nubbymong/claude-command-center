@@ -10,7 +10,9 @@ import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { resolvePhaseDetailed } from './phase'
-import { MANIFEST_PATH, SHA_RE, ancestry, bindingBreaks, changedPaths, staleRecords, type EvidenceRecord, type Git } from './binding'
+import {
+  MANIFEST_PATH, RELEASE_WP1_PHASE, SHA_RE, ancestry, bindingBreaks, changedPaths, staleRecords, suiteSteps, type EvidenceRecord, type Git,
+} from './binding'
 import { DEEPEN_STEPS, deepenUntilDecidable, invocation, readBoundHead } from '../../scripts/wp1/fetch-ledger-commit.mjs'
 
 const ROOT = resolve(__dirname, '..', '..')
@@ -309,6 +311,67 @@ describe('WP1 traceability manifest', () => {
     expect(invocation(self, '/repo/node_modules/vitest/vitest.mjs', real)).toEqual({ as: 'imported' })
     for (const other of ['/elsewhere/fetch-ledger-commit.mjs', '/gone/scripts/wp1/fetch-ledger-commit.mjs']) {
       expect(invocation(self, other, real), other).toMatchObject({ as: 'unknown', error: expect.stringMatching(/does not resolve to this script/) })
+    }
+  })
+
+  // [host] suiteSteps reads a workflow's steps that run the suite, with the
+  // WP1_PHASE each one's own env gives it (injected text; nothing spawned).
+  it('[host] suiteSteps finds every step that runs the suite, with the WP1_PHASE its own env gives it', () => {
+    const yml = [
+      'jobs:',
+      '  a:',
+      '    strategy:',
+      '      matrix:',
+      '        include:',
+      '          - os: x',
+      '    steps:',
+      '      - uses: actions/checkout@v7',
+      '      # npx vitest run (a comment never counts)',
+      '      - name: Rebuild',
+      '        run: node -e "1"',
+      '      - name: Run tests',
+      '        env:',
+      `          WP1_PHASE: ${RELEASE_WP1_PHASE}`,
+      '        run: npx vitest run',
+      '  b:',
+      '    steps:',
+      '      - name: Native',
+      '        run: |',
+      '          npm run test:unit:native',
+      '      - run: npx vitest run --config x',
+      '        env:',
+      "          WP1_PHASE: 'candidate'",
+      '      - name: Build',
+      '        run: npm run build',
+    ].join('\n')
+    const want = [
+      { job: 'a', name: 'Run tests', phase: RELEASE_WP1_PHASE },
+      { job: 'b', name: 'Native', phase: null },
+      { job: 'b', name: '(unnamed)', phase: 'candidate' },
+    ]
+    expect(suiteSteps(yml)).toEqual(want)
+    expect(suiteSteps(yml.replace(/\n/g, '\r\n'))).toEqual(want)
+    expect(suiteSteps(yml.replace(`          WP1_PHASE: ${RELEASE_WP1_PHASE}\n`, ''))[0]).toEqual({ job: 'a', name: 'Run tests', phase: null })
+  })
+
+  // [host] The candidate check cannot be switched off by a neutral manifest
+  // edit where it must run (PR 4, P4.10 review): `phase` is a field of the
+  // manifest, a neutral path, so the stable release declares the candidate
+  // phase in the environment of every step that runs the suite, and
+  // ./phase.ts lets the environment only raise the phase.
+  it('[host] a stable release runs the candidate check whatever the manifest declares', () => {
+    const steps = suiteSteps(readFileSync(resolve(ROOT, '.github/workflows/release.yml'), 'utf8'))
+    expect(steps.map((s) => s.job)).toEqual(expect.arrayContaining(['build-windows', 'build-linux']))
+    for (const s of steps) expect(s.phase, `release.yml ${s.job}, "${s.name}"`).toBe(RELEASE_WP1_PHASE)
+    const saved = process.env.WP1_PHASE
+    try {
+      process.env.WP1_PHASE = 'candidate'
+      expect(resolvePhaseDetailed(undefined, { eager: false })).toEqual({ phase: 'candidate', reason: 'WP1_PHASE=candidate in the environment' })
+      process.env.WP1_PHASE = ''
+      expect(resolvePhaseDetailed(undefined, { eager: false }).reason).not.toMatch(/environment/)
+    } finally {
+      if (saved === undefined) delete process.env.WP1_PHASE
+      else process.env.WP1_PHASE = saved
     }
   })
 
