@@ -9,19 +9,19 @@ export const LOG_FOLDER_RESULT_TEXT: Readonly<Record<Exclude<AccountLogFolderOpe
   'unknown-account': 'This account is no longer listed.',
   'not-set': "This account's config.toml no longer sets log_dir.",
   'not-found': 'That folder does not exist yet. Codex makes it when it first writes a log there.',
-  refused: 'The app did not open that folder: it is not a plain local folder, or it could not be opened.',
+  refused: 'The app did not open or show that folder: it is not a plain local folder, or it could not be shown.',
 }
 
 const BUTTON_TEXT: Readonly<Record<AccountLogFolderKind, string>> = {
   log: 'Open log folder',
-  'log-dir': 'Open log_dir folder',
+  'log-dir': 'Show log_dir folder',
 }
 
 /**
  * WP2 PR 4, P4.4 (row 56): each Codex account's own log folders, beside the
  * app's "Open log folder" in Settings, General, Debug Logging. Main lists them
- * by account and KIND and opens one by the same key: no path ever passes
- * through here. Shown while Codex is in use and has an account.
+ * by account and KIND and opens one (a log_dir: shows it in the folder that
+ * holds it) by the same key: no path ever passes through here. Shown while Codex is in use and has an account.
  */
 export function AccountLogFoldersPanel() {
   const codexOn = useSettingsStore((s) => usesCodex(s.settings))
@@ -62,7 +62,7 @@ export function AccountLogFoldersPanel() {
     <div className="mt-3" data-testid="account-log-folders">
       <div className="text-[11px] font-medium text-[var(--text-secondary)]">Codex log folders</div>
       <p className="text-[11px] text-[var(--text-muted)] mt-0.5 leading-relaxed">
-        Each Codex account keeps its own logs: the sign-in log (codex-login.log) in its log folder, and the session log (codex-tui.log) there too unless the account's config.toml sets log_dir.
+        Each Codex account keeps its own logs: the sign-in log (codex-login.log) in its log folder, and the session log (codex-tui.log) there too unless the account's config.toml sets log_dir. A log_dir folder is shown selected in the folder that holds it, not opened.
       </p>
       <ul className="mt-1.5 space-y-1.5">
         {rows.map((row) => (

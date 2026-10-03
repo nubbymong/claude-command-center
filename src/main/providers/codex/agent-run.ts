@@ -94,12 +94,48 @@ function openKeyBlock(s: string): number {
   return open
 }
 
+const isSpace = (ch: string | undefined): boolean => ch !== undefined && /\s/.test(ch)
+
+/** Where a line not ended within WINDOW may be cut: just after its last run
+ *  of whitespace that does not follow a Bearer or Basic, or 0 for none. One
+ *  backward pass over `s` (each character looked at once, the word before a
+ *  run read in at most seven), so linear in its length. */
+function cutAtSpace(s: string): number {
+  let i = s.length - 1
+  while (i >= 0) {
+    if (!isSpace(s[i])) { i--; continue }
+    let j = i
+    while (j > 0 && isSpace(s[j - 1])) j--
+    if (!/(?:^|[^A-Za-z0-9_])(?:bearer|basic)$/i.test(s.slice(Math.max(0, j - 7), j))) return i + 1
+    i = j - 1
+  }
+  return 0
+}
+
+/** The names of the fields the redactor clears the value of (as a suffix:
+ *  access_token, client_secret, an API key's name). */
+const SECRET_FIELD = /(?:password|secret|token|api[_-]?key)$/i
+
+/** Whether a line ends in a secret field's name and its separator (`:` or
+ *  `=`), a quote and whitespace allowed between: its value may start the
+ *  next line. Trims and fixed-size reads only: linear in the line. */
+function endsWithSecretField(line: string): boolean {
+  let s = line.trimEnd()
+  if (!s.endsWith(':') && !s.endsWith('=')) return false
+  s = s.slice(0, -1).trimEnd()
+  if (s.endsWith('"') || s.endsWith("'")) s = s.slice(0, -1)
+  return SECRET_FIELD.test(s.slice(-16))
+}
+
 /** stderr as it is handed on: whole lines, each batch redacted as the
  *  failure message is (review-support's redactFailure), so a credential a
- *  pipe chunk split is still matched whole. A private key block is held
- *  until its last line, up to MARGIN (past the redactor's own bound for
- *  one); a line not ended within WINDOW goes at its last space (never right
- *  after a Bearer or Basic). What is left goes at `end`. */
+ *  pipe chunk split is still matched whole. A last line that ends in a
+ *  secret field's name and separator is held until the next line arrives
+ *  (its value may start it, and the redactor matches the two together); a
+ *  private key block until its last line; each hold up to MARGIN (past the
+ *  redactor's own bound for a key block). A line not ended within WINDOW
+ *  goes at its last space (never right after a Bearer or Basic). What is
+ *  left goes at `end`. Every step is linear in what is pending. */
 function createDiagnosticStream(out: (text: string) => void): { push(t: string): void; end(): void } {
   let pending = ''
   const send = (n: number): void => {
@@ -112,12 +148,13 @@ function createDiagnosticStream(out: (text: string) => void): { push(t: string):
     push(t) {
       pending += t
       let cut = pending.lastIndexOf('\n') + 1
+      if (cut > 0) {
+        const last = pending.lastIndexOf('\n', cut - 2) + 1
+        if (cut - last <= MARGIN && endsWithSecretField(pending.slice(last, cut))) cut = last
+      }
       const open = openKeyBlock(pending.slice(0, cut))
       if (open >= 0 && pending.length - open <= MARGIN) cut = open
-      else if (cut === 0 && pending.length > WINDOW) {
-        const space = /[\s\S]*(?<!\b(?:Bearer|Basic)\s*)\s/i.exec(pending)
-        cut = space ? space[0].length : pending.length
-      }
+      else if (cut === 0 && pending.length > WINDOW) cut = cutAtSpace(pending) || pending.length
       send(cut)
     },
     end() { send(pending.length) },

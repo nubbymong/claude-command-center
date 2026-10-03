@@ -2420,6 +2420,35 @@ describe('a tree stop and the quit: what they reach', () => {
     } finally { vi.useRealTimers() }
   })
 
+  // [host] PR 4 ADR-009 round 2: on POSIX the stop signalled the run's group
+  // while its root ran; once the root is reaped its id vouches for no group,
+  // so no leftovers step (which would signal one) runs after the stop.
+  it('POSIX: a tree stop runs no leftovers step once the root has exited; its own exit, unstopped, still does', async () => {
+    vi.useFakeTimers()
+    try {
+      const cmd = { file: '/usr/bin/codex', args: ['exec'], verbatim: false, cwd: '/home/me/p' }
+      for (const platform of ['linux', 'darwin'] as const) {
+        const { deps } = fakeDeps()
+        const leftovers = vi.fn(async () => {})
+        const killTree = Object.assign((c: EventEmitter) => { queueMicrotask(() => c.emit('exit', null, 'SIGKILL')) }, { leftovers })
+        const ac = new AbortController()
+        const p = runCodexCli(cmd, { env: {}, timeoutMs: 600_000, settleAfterExitMs: 2000, killScope: 'tree', signal: ac.signal }, { ...deps, platform, killTree: killTree as never })
+        await vi.advanceTimersByTimeAsync(100)
+        ac.abort()
+        await vi.advanceTimersByTimeAsync(0)
+        expect(await p, platform).toMatchObject({ stopped: 'cancel' })
+        expect(leftovers, platform).not.toHaveBeenCalled()
+        // Its own exit (no stop): the step runs, as before.
+        const own = fakeDeps()
+        const q = runCodexCli(cmd, { env: {}, timeoutMs: 600_000, settleAfterExitMs: 2000, killScope: 'tree' }, { ...own.deps, platform, killTree: killTree as never })
+        own.spawned[0].child.emit('exit', 0)
+        await vi.advanceTimersByTimeAsync(2010)
+        expect(await q, platform).toMatchObject({ exitCode: 0 })
+        expect(leftovers, platform).toHaveBeenCalledTimes(1)
+      }
+    } finally { vi.useRealTimers() }
+  })
+
   it('Windows: a tree stop ends a process of the run whose parent had exited (the records name it), never a stranger', async () => {
     const t0 = Date.now()
     const root: Entry = { pid: 900300, ppid: 777, name: 'codex.exe', created: FT + t0 }

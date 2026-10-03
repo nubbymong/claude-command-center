@@ -525,3 +525,14 @@ describe('the PR 3 user-facing sweep (P3.16)', () => {
     for (const text of [top.highlights ?? '', ...top.changes.map((c) => c.description)]) expect(text, text.slice(0, 40)).not.toMatch(/\u2014/)
   })
 })
+
+// [host] PR 4 ADR-009 round 2: a log_dir folder is shown selected in the
+// folder that holds it, never opened, so the Feature Guide says so.
+describe('app knowledge after PR 4 (ADR-009 round 2)', () => {
+  it('says the log_dir folder is shown in the folder that holds it, not opened', () => {
+    const body = APP_KNOWLEDGE_SECTIONS.find((x) => x.id === 'troubleshooting')!.body
+    expect(body).toMatch(/the log_dir folder when one is set, which the app shows selected in the folder that holds it rather than opening it/)
+    expect(body).toMatch(/the app says so when it will not open or show it/)
+    expect(body).not.toMatch(/The app opens only a plain folder/)
+  })
+})

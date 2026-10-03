@@ -62,7 +62,7 @@ describe('AccountLogFoldersPanel', () => {
     expect(container.querySelector('[data-account="acct-work"]')!.textContent).toContain('Work')
     expect(container.querySelector('[data-account="acct-home"]')!.textContent).toContain("This computer's Codex")
     expect(button('acct-work', 'log')!.textContent).toBe('Open log folder')
-    expect(button('acct-work', 'log-dir')!.textContent).toBe('Open log_dir folder')
+    expect(button('acct-work', 'log-dir')!.textContent).toBe('Show log_dir folder')
     expect(button('acct-home', 'log-dir')).toBeNull()
     await act(async () => { button('acct-work', 'log-dir')!.click() })
     expect(openFolder).toHaveBeenCalledWith({ accountId: 'acct-work', folder: 'log-dir' })
