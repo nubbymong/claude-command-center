@@ -74,14 +74,12 @@ interface Entry {
   }
   fakes: string[]
 }
-interface Divergence { fake: string; entry: string; field: 'exitCode'; fakeAnswers: number; why: string }
 interface Oracle {
   schema: string; item: string; cli: string; upstreamSource: string
   versions: { minimum: string; pinned: string; source: string }
   fakes: Record<string, { file: string; symbol: string; versions: string[] }>
   preconditions: Record<string, { means: string; citations: Citation[] }>
   entries: Entry[]
-  knownDivergences?: Divergence[]
 }
 interface SourceFixture {
   versions: Array<{
@@ -516,7 +514,6 @@ const stdinFor = (e: Entry, version: string): Stdin => e.preconditions.includes(
 
 function fakeSideProblems(o: Oracle, drivers: Record<string, FakeDriver>): string[] {
   const problems: string[] = []
-  const known = (o.knownDivergences ?? []).map((d) => ({ d, seen: false }))
   for (const e of o.entries) {
     for (const name of e.fakes) {
       const d = drivers[name]
@@ -536,10 +533,7 @@ function fakeSideProblems(o: Oracle, drivers: Record<string, FakeDriver>): strin
         if (!ready) continue
         const ctx: Ctx = { version: v, env: envOf(w) }
         const out = run(w, e.argv, stdinFor(e, v))
-        // A recorded divergence: exactly that answer is accepted, and noted as seen.
-        const k = known.find((x) => x.d.fake === name && x.d.entry === e.id && x.d.field === 'exitCode' && out.exitCode === x.d.fakeAnswers)
-        if (k) k.seen = true
-        problems.push(...outcomeProblems(k ? { ...e.expect, exitCode: k.d.fakeAnswers } : e.expect, out, ctx).map((p) => `${at}: ${p}`))
+        problems.push(...outcomeProblems(e.expect, out, ctx).map((p) => `${at}: ${p}`))
         if (e.expect.afterwards !== undefined) {
           const next = o.entries.find((x) => x.id === e.expect.afterwards)
           if (!next) { problems.push(`${at}: afterwards names no entry`); continue }
@@ -548,7 +542,6 @@ function fakeSideProblems(o: Oracle, drivers: Record<string, FakeDriver>): strin
       }
     }
   }
-  for (const k of known) if (!k.seen) problems.push(`the known divergence of ${k.d.fake} on ${k.d.entry} (${k.d.field} ${k.d.fakeAnswers}) no longer occurs: remove its record`)
   return problems
 }
 
@@ -594,9 +587,6 @@ describe('WP1.69 the fake Codex CLI oracle', () => {
           if (JSON.stringify(lines) !== JSON.stringify([msgs.initialize, msgs.initialized, msgs.read])) problems.push(`${e.id} ${v}: stdinLines are not the app's messages`)
         }
       }
-    }
-    for (const d of ORACLE.knownDivergences ?? []) {
-      if (d.field !== 'exitCode' || !ids.includes(d.entry) || !entryOf(ORACLE, d.entry).fakes.includes(d.fake) || d.why.length < 20) problems.push(`divergence ${JSON.stringify(d)}`)
     }
     expect(problems).toEqual([])
   })
@@ -672,7 +662,6 @@ describe('WP1.69 the fake Codex CLI oracle', () => {
       // Every citation moved to the wrong code too: the upstream lines still say 1.
       entryOf(o, 'login-api-key-tty-refused').expect.exitCode = 2
       for (const c of entryOf(o, 'login-api-key-tty-refused').sources.citations ?? []) if ((c.backs ?? []).includes('exitCode')) c.exitCode = 2
-      o.knownDivergences = []
     })
     expect(r.real).toMatch(/login-api-key-tty-refused: codex-rs\/cli\/src\/login\.rs exits 1, the citation says 2/)
     r = red((o) => { (entryOf(o, 'login-status-api-key').expect.streams[0].lines[0] as { regex: string }).regex = '^Logged in with an API key$' })
@@ -735,13 +724,11 @@ describe('WP1.69 the fake Codex CLI oracle', () => {
     expect(inject("process.stderr.write('Not logged in\\n')", "process.stdout.write('Not logged in\\n')")).toMatch(/login-status-signed-out on wp1-fake-cli 0\.155\.1: stderr \(inOrder\) does not hold/)
     expect(inject("'codex-cli 0.155.1\\n'", "'codex-cli 0.155.2\\n'")).toMatch(/version on wp1-fake-cli 0\.155\.1: stdout/)
     expect(inject("{ type: 'turn.started' }", "{ type: 'turn.begun' }")).toMatch(/exec-json-review on wp1-fake-cli 0\.155\.1: stdout/)
-    // The recorded TTY divergence: any other answer is red, and so is the fix without its record going.
-    const noTtyCheck = inject("if (process.stdin.isTTY) { process.stderr.write('refuses a TTY\\n'); process.exit(2) }", '')
-    expect(noTtyCheck).toMatch(/login-api-key-tty-refused on wp1-fake-cli 0\.155\.1: exit code null, the oracle says 1/)
-    expect(noTtyCheck).toMatch(/the known divergence of wp1-fake-cli on login-api-key-tty-refused \(exitCode 2\) no longer occurs/)
-    const fixed = inject("process.stderr.write('refuses a TTY\\n'); process.exit(2)", "process.stderr.write('refuses a TTY\\n'); process.exit(1)")
-    expect(fixed).toMatch(/no longer occurs: remove its record/)
-    expect(fixed).not.toMatch(/login-api-key-tty-refused on wp1-fake-cli 0\.155\.1: exit code/)
+    // The terminal refusal: dropped, or any code but upstream's 1, is red.
+    expect(inject("if (process.stdin.isTTY) { process.stderr.write('refuses a TTY\\n'); process.exit(1) }", ''))
+      .toMatch(/login-api-key-tty-refused on wp1-fake-cli 0\.155\.1: exit code null, the oracle says 1/)
+    expect(inject("process.stderr.write('refuses a TTY\\n'); process.exit(1)", "process.stderr.write('refuses a TTY\\n'); process.exit(2)"))
+      .toMatch(/login-api-key-tty-refused on wp1-fake-cli 0\.155\.1: exit code 2, the oracle says 1/)
     expect(inject("if (!d.trim()) process.exit(3)", "process.exit(3)")).toMatch(/login-api-key-pipe on wp1-fake-cli 0\.155\.1: exit code 3, the oracle says 0/)
     expect(inject("try { fs.unlinkSync(auth) } catch {}", '')).toMatch(/logout-signs-out on wp1-fake-cli 0\.155\.1, then login-status-signed-out/)
     expect(inject("codexHome: mode === 'wrong-home' ? path.dirname(home) : home", 'codexHome: path.dirname(home)')).toMatch(/app-server-usage-read on wp1-fake-cli 0\.155\.1: stdout/)

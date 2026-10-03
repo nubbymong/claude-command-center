@@ -61,7 +61,7 @@ describe.each(cases)('provider conformance: $id', ({ id, create, descriptor, amb
     expect(pkg.id).toBe(id)
     expect(pkg.displayName.length).toBeGreaterThan(0)
     expect(pkg.session.id).toBe(pkg.id)
-    for (const m of SESSION_METHODS) expect(typeof (pkg.session as Record<string, unknown>)[m], m).toBe('function')
+    for (const m of SESSION_METHODS) expect(typeof (pkg.session as unknown as Record<string, unknown>)[m], m).toBe('function')
     expect(packageRegistrationProblem(pkg)).toBeNull()
     expect(create()).not.toBe(pkg) // a factory, not a module-level singleton
   })
