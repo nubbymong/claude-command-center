@@ -246,6 +246,11 @@ export function seedCaptureProviders(o: CaptureProviderSeed): string[] {
       hasCompletedOnboarding: true,
       oauthAccount: { emailAddress: a.email, organizationName: a.org },
     }, null, 2))
+    // The profile home's own `.claude` folder: without it main reads the home
+    // as the old layout at start (migrateProfilesToHomeLayout), deletes the
+    // `.claude.json` above and clears the account's address (the first VM
+    // capture showed both rows as "setup incomplete").
+    fs.mkdirSync(path.join(profilesRoot, a.id, '.claude'), { recursive: true })
   }
 
   // Codex: the registry, each account's folder (signed in as far as the

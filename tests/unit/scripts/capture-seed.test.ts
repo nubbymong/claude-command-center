@@ -85,6 +85,9 @@ describe('the capture seed (P4.11)', () => {
       expect(cj.oauthAccount.emailAddress).toBe(a.email)
       // No credential file: the stand-in's `auth status` answers instead.
       expect(existsSync(join(r, 'resources', 'account-profiles', a.id, '.claude', '.credentials.json'))).toBe(false)
+      // But the home's own .claude folder, or main reads the old layout at
+      // start and clears the account (migrateProfilesToHomeLayout).
+      expect(existsSync(join(r, 'resources', 'account-profiles', a.id, '.claude'))).toBe(true)
     }
 
     const reg = parseRegistryDoc(JSON.parse(readFileSync(join(r, 'resources', 'providers', 'registry.json'), 'utf8')))
@@ -225,5 +228,17 @@ describe('the capture launch environment (P4.11, P411-3)', () => {
     expect(src).toMatch(/\.\.\.CAPTURE_PROVIDER_SETTINGS/)
     expect(src).toMatch(/\.\.\.captureAppMetaKeys\(APP_VERSION\)/)
     expect(src).not.toMatch(/lastSeenVersion: '99\.99\.99'/)
+  })
+
+  it('[host] the capture script edits and launches configs from the Saved tab, closes dialogs as a user does, and ends a hung app\'s whole tree', () => {
+    const src = readFileSync(resolve(__dirname, '..', '..', '..', 'scripts', 'capture-training-screenshots.ts'), 'utf8')
+    // The config rows live on the sidebar's Saved tab (it opens on Running).
+    expect(src).toMatch(/panel-tab-\$\{t\}/)
+    expect(src).toMatch(/\[data-testid="config-row"\]/)
+    // Deleting every `.fixed` element took the app's dialog layer with it.
+    expect(src).not.toMatch(/querySelectorAll\('\.fixed'\)/)
+    // A plain kill of the main process left the Electron tree running on Windows.
+    expect(src).toMatch(/execFileSync\('taskkill', \['\/pid', String\(pid\), '\/T', '\/F'\]/)
+    expect(src).not.toMatch(/child\.kill\('SIGKILL'\)/)
   })
 })
