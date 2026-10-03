@@ -579,3 +579,43 @@ describe('AccountUsagePanel by provider (usage track MP4)', () => {
     expect(container.textContent).toMatch(/no reading since/)
   })
 })
+
+// [host] P4.11 (owner queue, PR 3 gate 6 observation 2, pre-existing): an open
+// page's "Updated <age>" ages while the page stays open, on Claude's cards and
+// Codex's alike. The age was read once per render, and the page re-rendered
+// only on new data or at the next reset, so it kept "Updated just now".
+describe('AccountUsagePanel: the age line ages while the page stays open (P4.11)', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS }, isLoaded: true })
+    useProviderAccountsStore.setState({ snapshot: null, loaded: false })
+  })
+
+  it('[host] a Claude card: "Updated just now", then "Updated 2 min ago" two minutes on, with no new data', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
+    list.mockResolvedValue([profile('a')])
+    await mount()
+    latest().emit(usage('a', 41))
+    latest().done()
+    await flush()
+    expect(container.textContent).toContain('Updated just now')
+    await act(async () => { vi.advanceTimersByTime(2 * 60_000 + 1_000) })
+    expect(container.textContent).toContain('Updated 2 min ago')
+    expect(container.textContent).not.toContain('Updated just now')
+    expect(fetchAllStream).toHaveBeenCalledTimes(1)
+  })
+
+  it('[host] a Codex card: the same', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, claudeEnabled: false, codexEnabled: true, codexAnswered: true }, isLoaded: true })
+    useProviderAccountsStore.setState({ snapshot: snapshotOf([cxAccount('w')]), loaded: true })
+    await mount()
+    latestCx().emit(cxView('w', 18))
+    latestCx().done({ ok: true, provider: 'on', accounts: 1 })
+    await flush()
+    expect(container.textContent).toContain('Updated just now')
+    await act(async () => { vi.advanceTimersByTime(2 * 60_000 + 1_000) })
+    expect(container.textContent).toContain('Updated 2 min ago')
+    expect(usageStream).toHaveBeenCalledTimes(1)
+  })
+})
