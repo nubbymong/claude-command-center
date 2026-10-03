@@ -503,8 +503,10 @@ export const KEPT_CODEX_CONVERSATIONS_MAX = 512
 // tab of the same account chose).
 const keptCodexConversations = new Map<string, { uuid: string; cwd: string; accountId?: string; inferred?: boolean; hooksHeard?: boolean }>()
 /** WP2 PR 4, P4.1: the conversation a Codex session is on, for its canvas
- *  link (canvas-session-link.ts; set at the session's launch). */
+ *  link (canvas-session-link.ts, which keeps no import of this module): set
+ *  once, here (review A-8). */
 const codexConversationForCanvas = (sessionId: string): string | undefined => keptCodexConversations.get(sessionId)?.uuid
+setCanvasCodexConversationLookup(codexConversationForCanvas)
 
 // P3.12 (row 65): the rollout each Codex session's watcher holds (claimed, or
 // read beside another tab), for its GitHub Session Context, as Claude's reads
@@ -970,6 +972,24 @@ function codexRunScreen(): SessionRunScreen | undefined {
 /** WP2 PR 4, P4.3: the Codex sessions running as Ask Conductor (launched with
  *  isAsk), the only ones a question is handed to (handOffAskQuestion). */
 const codexAskSessions = new Set<string>()
+
+/**
+ * WP2 PR 4, P4.3 review RASK-1: an Ask launch runs in the help folder main has
+ * just rebuilt (pty:spawn makes it the launch's folder), on either assistant,
+ * never in a conversation's own folder elsewhere. Whether `folder` (where a
+ * resumed conversation ran) is that folder: by the real path when both exist,
+ * else resolved; case-folded on Windows and macOS. A conversation from another
+ * folder is not resumed: the launch starts fresh in the help folder.
+ */
+function askLaunchFolderHolds(folder: string | undefined, launchFolder: string): boolean {
+  if (typeof folder !== 'string' || !folder) return false
+  const canon = (p: string): string => {
+    let out: string
+    try { out = fs.realpathSync.native(p) } catch { out = path.resolve(p) }
+    return process.platform === 'win32' || process.platform === 'darwin' ? out.toLowerCase() : out
+  }
+  return canon(folder) === canon(launchFolder)
+}
 
 /** P3.10: a session's own hook named conversation `uuid`: P3.6's doubt
  *  about it goes -- unless a live launch resumed it by id (round 1, S4:
@@ -4963,15 +4983,21 @@ function spawnPtyResolved(
       // realm, checks the id again, and says where the CLI starts.
       // P3.6: a respawn onto another account from a conversation whose claim
       // was not certain resumes none (`freshConversation`, main only).
-      const resumeTarget = options?.resume ?? (options?.useResumePicker || launch.freshConversation === true ? undefined : keptCodexConversations.get(sessionId))
+      let resumeTarget = options?.resume ?? (options?.useResumePicker || launch.freshConversation === true ? undefined : keptCodexConversations.get(sessionId))
+      // P4.3 review RASK-1: an Ask launch resumes only a conversation of the
+      // help folder it starts in, and starts the CLI there (askLaunchFolderHolds).
+      if (options?.isAsk === true && resumeTarget) {
+        const held = askLaunchFolderHolds(resumeTarget.cwd, resolvedCwd)
+        if (!held) logInfo(`[pty-manager] Ask ${sessionId}: its conversation ran in another folder; started afresh in the help folder`)
+        resumeTarget = held ? { uuid: resumeTarget.uuid, cwd: resolvedCwd } : undefined
+      }
       // WP2 PR 4, P4.1 (row 51): the Agent Canvas for this launch, as a Claude
       // session has it (canvas/codex-canvas-launch.ts): the worktree CCC
       // designates from the CONFIGURED folder, and the skills' guidance (a
       // managed realm's staged skills, or question 5's default A). A resumed
       // conversation's folder is read only to pass less (its settings), never
       // to serve or designate anything.
-      const codexToolSettings = readConfig<{ conductorToolsEnabled?: boolean; conductorTools?: { canvas?: boolean; vision?: boolean } }>('settings')
-      const codexToolsOn = codexToolSettings?.conductorToolsEnabled !== false && getConductorMcpPort() > 0
+      const codexToolsOn = readConfig<{ conductorToolsEnabled?: boolean }>('settings')?.conductorToolsEnabled !== false && getConductorMcpPort() > 0
       const codexCanvas = prepareCodexCanvasLaunch({
         sessionId,
         configuredCwd: resolvedCwd,
@@ -4982,14 +5008,10 @@ function spawnPtyResolved(
         managedSkillsDirFor: (home, resourcesDir) => provider.stagedSkillsDir?.(home, resourcesDir) ?? null,
         cliVersion: launch.cliVersion ?? null,
         toolsOn: codexToolsOn,
-        // Review A-6: the realm's staged skills follow the groups this session
-        // is offered (a switch that is absent is on).
-        skillGroups: { canvas: codexToolSettings?.conductorTools?.canvas !== false, vision: codexToolSettings?.conductorTools?.vision !== false },
         ...(launch.ownership ? { ownership: launch.ownership } : {}),
         startFolders: options?.useResumePicker ? null : [resolvedCwd, ...(resumeTarget?.cwd ? [resumeTarget.cwd] : [])],
         env: launch.env,
       })
-      setCanvasCodexConversationLookup(codexConversationForCanvas)
       const codexSpawnOptions: SpawnOptions = {
         sessionId,
         provider: 'codex',
@@ -5628,6 +5650,19 @@ function spawnPtyResolved(
             logInfo(`[pty] T8b resume target dropped for ${sessionId} (fail-open existence check; no orphan recovery) — uuid=${effectiveTarget.uuid} cwd=${describePathForLog(effectiveTarget.cwd)}`)
           }
         }
+      }
+
+      // P4.3 review RASK-1: an Ask launch runs in the help folder just
+      // rebuilt; a conversation that ran in another folder is not resumed
+      // (claude --resume finds a conversation only from its own folder).
+      if (options?.isAsk === true && claudeCwd !== resolvedCwd) {
+        if (!askLaunchFolderHolds(claudeCwd, resolvedCwd)) {
+          logInfo(`[pty] Ask ${sessionId}: its conversation ran in another folder; started afresh in the help folder`)
+          resumeUuid = undefined
+          resumeUuidForBind = null
+        }
+        claudeCwd = resolvedCwd
+        effectiveLaunchCwd = resolvedCwd
       }
 
       // The directory the CLI will actually run in, after the resume decision.
@@ -6370,8 +6405,9 @@ function isSubmittedPayload(data: string): boolean {
  */
 export function writeCanvasMarkerLine(sessionId: string, line: string): void | Promise<SubmitTextResult> {
   if (isCodexPtySession(sessionId)) {
+    // The primitive answers a session with no pane itself (review A-8).
     const screen = codexRunScreen()
-    if (!screen?.has(sessionId)) return Promise.resolve({ delivered: false, reason: 'session-gone' })
+    if (!screen) return Promise.resolve({ delivered: false, reason: 'session-gone' })
     return screen.submit(sessionId, line, { readyWaitMs: MARKER_FALLBACK_FLUSH_MS })
   }
   writeSubmittedLine(sessionId, line)

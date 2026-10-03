@@ -6,11 +6,31 @@
 // exactly those; never a same-named folder the app does not own, overwritten
 // or deleted; removed (only the app's own folders) when the tools are off.
 // Links at the skills folder or a skill folder: codex-realm-skills-links.test.ts,
-// quarantined from the host (CI and VM only).
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+// quarantined from the host (CI and VM only). All three skills are staged
+// while the tools are on, as Claude's --plugin-dir carries all three (review
+// RA-1; the parity is pinned at the launch in canvas-codex-launch-wiring), and
+// one skill that cannot be written does not stop the others.
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
+
+// The app's own writer, with a hook that makes one skill's write fail as a
+// file held open does (EBUSY), so the others' staging can be watched.
+const h = vi.hoisted(() => ({ busy: null as string | null, busyFile: null as string | null }))
+vi.mock('../../../src/main/account-profiles', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/main/account-profiles')>()
+  return {
+    ...actual,
+    atomicWriteSecure: (file: string, data: string | Uint8Array, mode?: number) => {
+      const parts = file.split(/[\\/]/)
+      if (h.busy && parts.includes(h.busy) && (!h.busyFile || parts[parts.length - 1] === h.busyFile)) {
+        throw Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' })
+      }
+      return actual.atomicWriteSecure(file, data, mode)
+    },
+  }
+})
 
 const { stageCodexRealmSkills, removeCodexRealmSkills, STAGED_SKILL_MARK, STAGED_SKILL_MARK_BYTES } = await import('../../../src/main/canvas/codex-realm-skills')
 // The skills folder comes from the Codex package's path rule (realm-paths.ts),
@@ -25,6 +45,8 @@ let res: string
 let home: string
 
 beforeEach(() => {
+  h.busy = null
+  h.busyFile = null
   res = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-realm-skills-')))
   home = path.join(res, 'codex-realms', REALM)
   fs.mkdirSync(home, { recursive: true })
@@ -36,19 +58,23 @@ afterEach(() => {
 const skillDir = (name: string): string => path.join(home, 'skills', name)
 const SKILLS = canvasSkillFiles()
 
-describe('only the skills whose tools the session is offered (P4.1 review A-6)', () => {
-  it('[host] the others go when they are the app\'s; a same-named folder that is not the app\'s stays', () => {
-    const dir = path.join(home, 'skills')
+describe('one skill that cannot be written (P4.1 review RA-1)', () => {
+  it.each([
+    ['nothing in its folder can be written', null],
+    ['only its SKILL.md cannot be written', 'SKILL.md'],
+    ['only its ownership mark cannot be written', '.ai-code-conductor-skill'],
+  ])('[host] %s: reported as failed, the others are staged, and the next launch stages it', (_name, onlyFile) => {
+    const first = SKILLS[0].name
+    h.busy = first
+    h.busyFile = onlyFile
+    expect(stage(home, res)).toEqual({ staged: false, reason: 'failed' })
+    for (const skill of SKILLS.slice(1)) {
+      expect(fs.readFileSync(path.join(skillDir(skill.name), 'SKILL.md')).equals(skill.bytes)).toBe(true)
+    }
+    // Nothing left behind that the next launch would take for someone else's.
+    h.busy = null
     expect(stage(home, res)).toEqual({ staged: true })
-    const onlyVision = (name: string): boolean => name === 'conductor-vision'
-    expect(stageCodexRealmSkills(home, dir, onlyVision)).toEqual({ staged: true })
-    expect(fs.existsSync(skillDir('agent-canvas'))).toBe(false)
-    expect(fs.existsSync(skillDir('canvas-plan'))).toBe(false)
-    expect(fs.existsSync(path.join(skillDir('conductor-vision'), 'SKILL.md'))).toBe(true)
-    fs.mkdirSync(skillDir('agent-canvas'))
-    fs.writeFileSync(path.join(skillDir('agent-canvas'), 'SKILL.md'), 'my own skill')
-    expect(stageCodexRealmSkills(home, dir, onlyVision)).toEqual({ staged: true })
-    expect(fs.readFileSync(path.join(skillDir('agent-canvas'), 'SKILL.md'), 'utf8')).toBe('my own skill')
+    expect(fs.readFileSync(path.join(skillDir(first), 'SKILL.md')).equals(SKILLS[0].bytes)).toBe(true)
   })
 })
 

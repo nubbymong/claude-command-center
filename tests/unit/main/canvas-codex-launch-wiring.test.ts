@@ -1,4 +1,4 @@
-// [host] WP2 PR 4, P4.1 review (A-3, A-2, A-6): the Codex branch of the REAL
+// [host] WP2 PR 4, P4.1 review (A-3, A-2, RA-1): the Codex branch of the REAL
 // spawnPty wired to the REAL canvas launch (canvas/codex-canvas-launch.ts) and
 // the real realm skills staging, with the built-in tools reaching the launch
 // (the conductor server listening). The rest of main is mocked, as
@@ -8,7 +8,9 @@
 //    builder; with the tools off a managed realm's staged skills are removed.
 //  - A-2: the account's realm ownership decides managed or not; the path rule
 //    is only the second guard, against the resources folder's real path.
-//  - A-6: each staged skill follows the tool group the session is offered.
+//  - RA-1: the realm skills follow the Built-in Tools master switch only, as
+//    Claude's --plugin-dir carries all three while it is on; a tool group
+//    switched off removes none of them.
 // The decision for this computer's own sign-in is stubbed (its settings walk
 // would read folders above the temporary tree; codex-guidance.test.ts covers
 // it with a reader held to its own tree), so nothing outside the temporary
@@ -199,22 +201,16 @@ describe('managed or not follows the account\'s realm (A-2)', () => {
   })
 })
 
-describe('each staged skill follows its tool group (A-6)', () => {
-  it('[host] the Canvas switch off: the two canvas skills are removed, the vision skill stays', () => {
+describe('the realm skills follow the master switch only, as Claude\'s --plugin-dir (review RA-1)', () => {
+  it.each([
+    ['the Canvas switch off', { conductorTools: { canvas: false } }],
+    ['the Vision switch off', { conductorTools: { vision: false } }],
+    ['both tool groups off', { conductorTools: { canvas: false, vision: false } }],
+  ])('[host] %s, the built-in tools on: all three skills are staged and kept', (_name, settings) => {
     stageAll()
-    h.settings = { conductorTools: { canvas: false } }
+    h.settings = settings
     start(managedHome, 'conductor-managed')
-    expect(fs.existsSync(path.join(managedHome, 'skills', 'agent-canvas'))).toBe(false)
-    expect(fs.existsSync(path.join(managedHome, 'skills', 'canvas-plan'))).toBe(false)
-    expect(fs.existsSync(skill(managedHome, 'conductor-vision'))).toBe(true)
-  })
-
-  it('[host] the Vision switch off: the vision skill is removed, the canvas skills stay', () => {
-    stageAll()
-    h.settings = { conductorTools: { vision: false } }
-    start(managedHome, 'conductor-managed')
-    expect(fs.existsSync(path.join(managedHome, 'skills', 'conductor-vision'))).toBe(false)
-    expect(fs.existsSync(skill(managedHome, 'agent-canvas'))).toBe(true)
-    expect(fs.existsSync(skill(managedHome, 'canvas-plan'))).toBe(true)
+    for (const name of ['agent-canvas', 'canvas-plan', 'conductor-vision']) expect(fs.existsSync(skill(managedHome, name))).toBe(true)
+    expect(codexSessionGuidance(SID)).toEqual({ guidance: 'full' })
   })
 })

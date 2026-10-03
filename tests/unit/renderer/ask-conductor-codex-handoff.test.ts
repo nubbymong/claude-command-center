@@ -13,7 +13,7 @@ vi.mock('../../../src/renderer/stores/configStore', () => ({
 }))
 
 import { useSessionStore } from '../../../src/renderer/stores/sessionStore'
-import { launchAskConductor, useAskErrorStore, useAskNoticeStore, _resetAskLaunchForTest, _resetAskNoticesForTest } from '../../../src/renderer/lib/askConductor'
+import { launchAskConductor, useAskErrorStore, useAskNoticeStore, askNoticeText, _resetAskLaunchForTest, _resetAskNoticesForTest } from '../../../src/renderer/lib/askConductor'
 import { useSettingsStore, DEFAULT_SETTINGS } from '../../../src/renderer/stores/settingsStore'
 
 const ptyWrite = vi.fn()
@@ -99,6 +99,46 @@ describe('a running Codex Ask tab', () => {
     expect(useSessionStore.getState().sessions[0]).toMatchObject({ provider: 'codex', askPrompt: 'first question' })
     expect(handOff).toHaveBeenCalledWith({ sessionId: id, question: 'second question' })
     expect(ptyWrite).not.toHaveBeenCalled()
+  })
+})
+
+describe('a question for an Ask tab that is still starting (P4.3 review RASK-5)', () => {
+  it('[host] main has no running session yet while the tab is open: the dock says it is starting, not closed, and keeps the question', async () => {
+    useSessionStore.setState({ sessions: [askSession('codex') as never], activeSessionId: null })
+    handOff.mockResolvedValue({ delivered: false, reason: 'session-gone' })
+    await launchAskConductor('are you there?')
+    await flush()
+    const notice = useAskNoticeStore.getState().notice!
+    expect(notice).toMatchObject({ sessionId: ASK_ID, kind: 'not-delivered', reason: 'session-gone', starting: true })
+    expect(askNoticeText(notice)).toMatch(/still starting/)
+    expect(askNoticeText(notice)).not.toMatch(/closed/)
+    expect(useAskNoticeStore.getState().kept).toEqual({ sessionId: ASK_ID, question: 'are you there?' })
+  })
+
+  it('[host] the second click of a launch still being staged: the same', async () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, claudeEnabled: false, codexEnabled: true, codexAnswered: true } as never })
+    handOff.mockResolvedValue({ delivered: false, reason: 'session-gone' })
+    let release: (d: string) => void = () => {}
+    ;(globalThis as any).window.electronAPI.help.workspace = () => new Promise<string>((res) => { release = res })
+    const a = launchAskConductor('first question')
+    const b = launchAskConductor('second question')
+    release('C:/res/help')
+    await Promise.all([a, b])
+    await flush()
+    expect(askNoticeText(useAskNoticeStore.getState().notice!)).toMatch(/still starting/)
+  })
+
+  it('[host] the tab ended meanwhile: the dock says the session closed', async () => {
+    useSessionStore.setState({ sessions: [askSession('codex') as never], activeSessionId: null })
+    handOff.mockImplementation(async () => {
+      useSessionStore.setState({ sessions: [{ ...askSession('codex'), ptyExited: true } as never] })
+      return { delivered: false, reason: 'session-gone' }
+    })
+    await launchAskConductor('still there?')
+    await flush()
+    const notice = useAskNoticeStore.getState().notice!
+    expect(notice).toEqual({ sessionId: ASK_ID, kind: 'not-delivered', reason: 'session-gone' })
+    expect(askNoticeText(notice)).toMatch(/closed/)
   })
 })
 

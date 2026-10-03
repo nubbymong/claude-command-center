@@ -5,7 +5,7 @@ import { useAccountGateStore } from '../stores/accountGateStore'
 import { clearSpawned } from '../ptyTracker'
 import { writeSessionInput } from '../components/terminal/tmuxWheelScroll'
 import { ASK_CLAUDE_OFF, askConductorProviderNow, askProviderIsOn, askTabProviderOff, isAskConductorBlocked } from './askConductorGate'
-import type { AskConductorProvider } from '../../shared/ask-conductor-provider'
+import { ASK_HELP_FOLDER_FAILED, type AskConductorProvider } from '../../shared/ask-conductor-provider'
 import type { AskConductorNotice, CodexOptions, SubmitNotDeliveredReason } from '../../shared/types'
 
 /**
@@ -73,7 +73,11 @@ export function normaliseQuestion(raw: string | undefined): string | undefined {
   if (!raw) return undefined
   const one = raw.replace(CONTROLS_RE, ' ').replace(/\s+/g, ' ').trim()
   if (!one) return undefined
-  return one.length > MAX_QUESTION ? one.slice(0, MAX_QUESTION) : one
+  if (one.length <= MAX_QUESTION) return one
+  // Cut between two characters, never inside an emoji's surrogate pair: half
+  // of one is not Unicode, and Codex refuses it on argv (review RASK-3).
+  const last = one.charCodeAt(MAX_QUESTION - 1)
+  return one.slice(0, last >= 0xd800 && last <= 0xdbff ? MAX_QUESTION - 1 : MAX_QUESTION)
 }
 
 /** The live Ask session, if one is open. */
@@ -119,9 +123,9 @@ export const useAskErrorStore = create<AskErrorState>((set) => ({
 /** With the folder rebuilt before every start (help-workspace.ts), the likely
  *  failure is an entry the app cannot remove, such as a file a program Codex
  *  started there still holds open, rather than an unwritable resources
- *  directory; the line names both, and the way out. */
-const WORKSPACE_FAILED =
-  'Could not rebuild Ask Conductor\'s help folder. Usually something still has a file open in it, such as a program Codex started in an earlier Ask session that is still running: end it, then try again. If it keeps failing, delete the help folder in your resources directory, or check that the resources directory is writable.'
+ *  directory; the line names both, and the way out. The Ask tab says the same
+ *  when main refuses a Restart for it (ASK_HELP_FOLDER_FAILED). */
+const WORKSPACE_FAILED = ASK_HELP_FOLDER_FAILED
 
 /** The permission preset a Codex Ask session starts on: the one matching
  *  Claude's Ask launch (parity, P4.3). Claude's Ask passes no permission mode
@@ -177,6 +181,11 @@ function askProviderFields(provider: AskConductorProvider): Pick<Session, 'provi
 
 // -- The notice lines (P4.3) --------------------------------------------------
 
+/** A notice as the dock shows it. `starting`: main had no running Ask session
+ *  for the question while the tab was open and not ended, so the session was
+ *  still starting, not closed (review RASK-5). */
+export type ShownAskNotice = AskConductorNotice & { starting?: true }
+
 /**
  * Ask Conductor's one-line notices, drawn in the dock (AskConductorDock), and
  * the question they are about.
@@ -192,9 +201,9 @@ interface AskNoticeState {
   /** The last question handed to an Ask session. */
   kept: { sessionId: string; question: string } | null
   /** The notice on show, or none. */
-  notice: AskConductorNotice | null
+  notice: ShownAskNotice | null
   keep: (sessionId: string, question: string) => void
-  show: (notice: AskConductorNotice) => void
+  show: (notice: ShownAskNotice) => void
   dismiss: () => void
 }
 export const useAskNoticeStore = create<AskNoticeState>((set) => ({
@@ -234,12 +243,16 @@ export function parseAskNotice(raw: unknown): AskConductorNotice | null {
   return null
 }
 
+/** What a question handed to an Ask tab that is still starting is told
+ *  (review RASK-5): it is kept, and Send again then reaches the session. */
+const STILL_STARTING = 'the Ask session was still starting. Send it again in a moment.'
+
 /** The line the dock shows for a notice. */
-export function askNoticeText(notice: AskConductorNotice): string {
+export function askNoticeText(notice: ShownAskNotice): string {
   if (notice.kind === 'removed') {
     return `Codex cannot take emoji or some rare characters typed into its prompt; ${notice.count} removed from your question.`
   }
-  return `Your question was not sent: ${NOT_DELIVERED[notice.reason]}`
+  return `Your question was not sent: ${notice.starting === true && notice.reason === 'session-gone' ? STILL_STARTING : NOT_DELIVERED[notice.reason]}`
 }
 
 /** Raise a notice for the dock (main's, through the listener below, or a
@@ -288,15 +301,28 @@ function handQuestionToRunning(id: string, provider: Session['provider'] | undef
     writeSessionInput(id, question + '\r')
     return
   }
-  const notDelivered = (reason: SubmitNotDeliveredReason): void => {
+  const notDelivered = (reason: SubmitNotDeliveredReason, mainAnswered = false): void => {
     useAskNoticeStore.getState().keep(id, question)
+    // Main answered that it has no such running session while the tab is
+    // open and has not ended: its process is still starting (a second click,
+    // or a question handed over in its first moments), not closed (review
+    // RASK-5).
+    const tab = useSessionStore.getState().sessions.find((s) => s.id === id)
+    if (mainAnswered && reason === 'session-gone' && askSessionIsLive(tab)) {
+      useAskNoticeStore.getState().show({ sessionId: id, kind: 'not-delivered', reason, starting: true })
+      return
+    }
     showAskNotice({ sessionId: id, kind: 'not-delivered', reason })
   }
   const handOff = window.electronAPI?.askConductor?.handOff
   if (typeof handOff !== 'function') { notDelivered('session-gone'); return }
   void Promise.resolve()
     .then(() => handOff({ sessionId: id, question }))
-    .then((answer) => { if (!answer || answer.delivered !== true) notDelivered(answer && isNotDeliveredReason(answer.reason) ? answer.reason : 'session-gone') })
+    .then((answer) => {
+      if (answer?.delivered === true) return
+      const said = (answer as { reason?: unknown } | null | undefined)?.reason
+      notDelivered(isNotDeliveredReason(said) ? said : 'session-gone', isNotDeliveredReason(said))
+    })
     .catch(() => notDelivered('session-gone'))
 }
 

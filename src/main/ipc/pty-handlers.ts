@@ -4,6 +4,7 @@ import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemoteDetaile
 import type { CodexLaunch } from '../pty-manager'
 import { handOffAskQuestion } from '../pty-manager'
 import { ensureHelpWorkspace } from '../help-workspace'
+import { ASK_HELP_FOLDER_FAILED } from '../../shared/ask-conductor-provider'
 import { getResourcesDirectory } from './setup-handlers'
 import { getAccountsService } from '../provider-accounts'
 import { awaitCodexHookFolders } from '../codex-hook-folders'
@@ -675,7 +676,6 @@ function endTargetFromSavedConfig(configId: string, sessionId: string): SshEndTa
   }
 }
 
-/** WP2 PR 4, P4.1: the Codex version discovery proved, or null. */
 /** P4.1 review A-2: the realm ownership of the account a launch prepared, from
  *  the accounts snapshot (its `external` flag is the realm's ownership);
  *  undefined when it cannot be told. */
@@ -688,6 +688,7 @@ function codexAccountOwnership(service: AccountsService, accountId: string): 'co
   }
 }
 
+/** WP2 PR 4, P4.1: the Codex version discovery proved, or null. */
 function codexDiscoveredVersion(service: AccountsService): string | null {
   try {
     const v = service.snapshot().providers.find((p) => p.providerId === 'codex')?.version
@@ -1074,11 +1075,21 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
       // nothing a session wrote reaches the next. Fails closed: no rebuild, no
       // launch. Last before the spawn, after every wait above.
       if (options?.isAsk === true && !options.shellOnly) {
+        let helpDir: string
         try {
-          ensureHelpWorkspace(getResourcesDirectory(), { appVersion: app.getVersion() })
-        } catch (err) {
-          throw new Error(`Ask Conductor was not started: its help folder could not be rebuilt (${err instanceof Error ? err.message : String(err)}).`)
+          helpDir = ensureHelpWorkspace(getResourcesDirectory(), { appVersion: app.getVersion() })
+        } catch {
+          // A fixed sentence (review RASK-2): ensureHelpWorkspace has logged
+          // the cause by its code; the error's own message never reaches the
+          // tab or the log.
+          throw new Error(ASK_HELP_FOLDER_FAILED)
         }
+        // Review RASK-1: and it starts in the folder just rebuilt, whatever
+        // folder the tab kept (a Restart, Past discussions, a remount or a
+        // restored tab reuse the one it was opened in, which a move of the
+        // resources folder leaves behind, unrebuilt, or gone). pty-manager
+        // holds a resumed conversation to it too (askLaunchFolderHolds).
+        resolvedOptions = { ...resolvedOptions, cwd: helpDir }
       }
       claim.spawnCalled = true
       if (preparation) preparation.spawn(resolvedOptions)

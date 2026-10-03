@@ -23,7 +23,12 @@ export const MARKER_NOTICE_CANVASES = 50
 /** No marker line or id the app files is anywhere near this long. */
 const MAX_FIELD = 4_000
 
-const REASONS: ReadonlySet<SubmitNotDeliveredReason> = new Set<SubmitNotDeliveredReason>(['busy-timeout', 'prompt-on-screen', 'too-tall', 'not-drawn', 'refused-text', 'session-gone'])
+/** Every reason, by the union (review RA-3): a reason added there and not
+ *  here fails to compile instead of being dropped by the parse. */
+const REASON_KEYS = {
+  'busy-timeout': true, 'prompt-on-screen': true, 'too-tall': true, 'not-drawn': true, 'refused-text': true, 'session-gone': true,
+} as const satisfies Record<SubmitNotDeliveredReason, true>
+const REASONS: ReadonlySet<string> = new Set(Object.keys(REASON_KEYS))
 
 const field = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= MAX_FIELD
 
@@ -32,7 +37,7 @@ export function parseMarkerUndelivered(raw: unknown): CanvasMarkerUndelivered | 
   if (!raw || typeof raw !== 'object') return null
   const u = raw as Record<string, unknown>
   if (!field(u.sessionId) || !field(u.canvasId) || !field(u.line)) return null
-  if (typeof u.reason !== 'string' || !REASONS.has(u.reason as SubmitNotDeliveredReason)) return null
+  if (typeof u.reason !== 'string' || !REASONS.has(u.reason)) return null
   return { sessionId: u.sessionId, canvasId: u.canvasId, line: u.line, reason: u.reason as SubmitNotDeliveredReason }
 }
 

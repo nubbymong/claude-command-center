@@ -87,45 +87,53 @@ function realmChecked(home: string, skillsDir: string | null): { skillsDir: stri
 
 /**
  * Stage the skills into a managed realm before a launch, while the built-in
- * tools are on. Every skill folder `wanted` names ends up the app's and
- * exactly its bytes, or is left alone and reported: `staged` only when all
- * of them are. One it does not name (its tools are not offered to this
- * session: review A-6) is removed when it is the app's, as on removal.
+ * tools are on: all of them, as Claude's --plugin-dir carries all of them
+ * while the master switch is on (review RA-1). Every skill folder ends up the
+ * app's and exactly its bytes, or is left alone and reported: `staged` only
+ * when all of them are. One skill that cannot be written (a file held open,
+ * say) is reported and does not stop the others.
  */
-export function stageCodexRealmSkills(home: string, managedSkillsDir: string | null, wanted: (skill: string) => boolean = () => true): RealmSkillsOutcome {
+export function stageCodexRealmSkills(home: string, managedSkillsDir: string | null): RealmSkillsOutcome {
   const checked = realmChecked(home, managedSkillsDir)
   if (!('skillsDir' in checked)) return checked
   const { skillsDir } = checked
   let outcome: RealmSkillsOutcome = { staged: true }
   const worse = (o: RealmSkillsOutcome): void => { if (outcome.staged) outcome = o }
   try {
-    const skills = canvasSkillFiles()
-    if (!lstatOrNull(skillsDir) && skills.some((skill) => wanted(skill.name))) fs.mkdirSync(skillsDir)
-    for (const skill of skills) {
+    if (!lstatOrNull(skillsDir)) fs.mkdirSync(skillsDir)
+    for (const skill of canvasSkillFiles()) {
       const dir = path.join(skillsDir, skill.name)
-      if (!wanted(skill.name)) {
-        if (isOurs(dir)) fs.rmSync(dir, { recursive: true, force: true })
-        continue
+      let made = false
+      try {
+        const st = lstatOrNull(dir)
+        if (st && st.isSymbolicLink()) {
+          logWarn(`[codex-skills] a link stands at the ${skill.name} skill folder of a managed Codex account; left alone, the skill not staged`)
+          worse({ staged: false, reason: 'link' })
+          continue
+        }
+        if (st && !isOurs(dir)) {
+          logInfo(`[codex-skills] a ${skill.name} skill folder the app did not stage is in a managed Codex account; left alone`)
+          worse({ staged: false, reason: 'not-ours' })
+          continue
+        }
+        if (st && isPristine(dir, skill.bytes)) continue
+        // The app's own folder, not exactly its bytes (or none yet): rebuilt
+        // from nothing, as the plugin folder is.
+        if (st) fs.rmSync(dir, { recursive: true, force: true })
+        mkdirSecure(dir)
+        made = true
+        // The mark first: a folder whose SKILL.md could not be written is
+        // still the app's, so the next launch rebuilds it.
+        atomicWriteSecure(path.join(dir, STAGED_SKILL_MARK), STAGED_SKILL_MARK_BYTES, 0o600)
+        atomicWriteSecure(path.join(dir, 'SKILL.md'), skill.bytes, 0o600)
+        if (!isPristine(dir, skill.bytes)) worse({ staged: false, reason: 'failed' })
+      } catch (err) {
+        logWarn(`[codex-skills] the ${skill.name} skill could not be staged in a managed Codex account: ${(err as Error)?.message ?? err}`)
+        worse({ staged: false, reason: 'failed' })
+        // A folder this attempt made and could not mark goes while it is
+        // empty, so the next launch does not take it for someone else's.
+        if (made) { try { fs.rmdirSync(dir) } catch { /* not empty: left as it is */ } }
       }
-      const st = lstatOrNull(dir)
-      if (st && st.isSymbolicLink()) {
-        logWarn(`[codex-skills] a link stands at the ${skill.name} skill folder of a managed Codex account; left alone, the skill not staged`)
-        worse({ staged: false, reason: 'link' })
-        continue
-      }
-      if (st && !isOurs(dir)) {
-        logInfo(`[codex-skills] a ${skill.name} skill folder the app did not stage is in a managed Codex account; left alone`)
-        worse({ staged: false, reason: 'not-ours' })
-        continue
-      }
-      if (st && isPristine(dir, skill.bytes)) continue
-      // The app's own folder, not exactly its bytes (or none yet): rebuilt
-      // from nothing, as the plugin folder is.
-      if (st) fs.rmSync(dir, { recursive: true, force: true })
-      mkdirSecure(dir)
-      atomicWriteSecure(path.join(dir, 'SKILL.md'), skill.bytes, 0o600)
-      atomicWriteSecure(path.join(dir, STAGED_SKILL_MARK), STAGED_SKILL_MARK_BYTES, 0o600)
-      if (!isPristine(dir, skill.bytes)) worse({ staged: false, reason: 'failed' })
     }
   } catch (err) {
     logWarn(`[codex-skills] the canvas skills could not be staged in a managed Codex account: ${(err as Error)?.message ?? err}`)

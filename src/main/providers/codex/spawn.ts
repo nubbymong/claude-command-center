@@ -254,9 +254,13 @@ const ASK_QUESTION_MAX = 8_000
 /** WP2 PR 4, P4.3: whether an Ask question may ride argv. Argv keeps every
  *  character (PB4); a control character never rides it (the renderer's
  *  normaliseQuestion removes them; one that reaches main is typed through the
- *  pane instead, whose rule refuses it visibly). */
+ *  pane instead, whose rule refuses it visibly). Nor does a lone surrogate
+ *  (half of an emoji's pair, review RASK-3): argv on Windows would hand Codex
+ *  text that is not Unicode, which it refuses as an argument; through the pane
+ *  it is removed with the characters the prompt drops, and the dock told. */
+const LONE_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
 function askQuestionForArgv(q: unknown): q is string {
-  return typeof q === 'string' && q.trim().length > 0 && q.length <= ASK_QUESTION_MAX && !/[\u0000-\u001f\u007f-\u009f]/.test(q)
+  return typeof q === 'string' && q.trim().length > 0 && q.length <= ASK_QUESTION_MAX && !/[\u0000-\u001f\u007f-\u009f]/.test(q) && !LONE_SURROGATE_RE.test(q)
 }
 
 /** The Codex launch for `opts`, with the line the app's log may hold

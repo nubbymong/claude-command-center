@@ -6,15 +6,22 @@
 //  - the question as the launch's prompt on the direct route's fresh launch:
 //    after `--` (a question starting with "-" stays the question), as ONE
 //    argument, whole (8,000 characters, an emoji included), and said so
-//    (askPromptOnArgv); never on the npm .cmd route, an exact resume or the
-//    picker (main types it through the pane there);
+//    (askPromptOnArgv); never past 8,000 characters, with a lone surrogate
+//    (review RASK-3), on the npm .cmd route, an exact resume or the picker
+//    (main types it through the pane there);
 //  - the logged line names the question by its length only.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 
-vi.mock('../../../../src/main/ipc/setup-handlers', () => ({ getResourcesDirectory: () => '', getDataDirectory: () => '' }))
+// The resources folder: none, except where a case stages the picker script.
+vi.mock('../../../../src/main/ipc/setup-handlers', () => ({ getResourcesDirectory: () => (globalThis as any).__askResDir ?? '', getDataDirectory: () => '' }))
+// The picker's node lookup, answered without starting anything.
+vi.mock('child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('child_process')>()
+  return { ...actual, execSync: vi.fn(() => (process.platform === 'win32' ? 'C:\\node\\node.exe\r\n' : '/usr/local/bin/node\n')) }
+})
 vi.mock('../../../../src/main/conductor-mcp-server', () => ({
   getConductorMcpPort: () => (globalThis as any).__mockMcpPort ?? 0,
   issueMcpSessionToken: (sessionId: string) => `tok-${sessionId}`,
@@ -94,13 +101,34 @@ describe('the question on the direct route (PB4)', () => {
   })
 
   it('[host] 8,000 characters with an emoji arrive whole as ONE argument (a Windows codex.exe too)', () => {
-    const q = (EMOJI + ' ' + 'x'.repeat(7_000) + ' how?').slice(0, 7_999) + EMOJI
+    // Exactly the bound: 8,000 UTF-16 units, an emoji at each end.
+    const q = EMOJI + 'x'.repeat(7_996) + EMOJI
+    expect(q.length).toBe(8_000)
     withWin32(() => {
       const out = buildCodexSpawn({ sessionId: 'sid', realmLaunch: { ...linuxLaunch, executable: EXE, env: winEnv }, codexOptions: STANDARD, askPrompt: q })
       expect(out.commandLine).toBeUndefined()
       expect(out.args[out.args.length - 1]).toBe(q)
       expect(out.args.filter((a) => a === q)).toHaveLength(1)
+      expect(out.askPromptOnArgv).toBe(true)
     })
+  })
+
+  it('[host] one past the bound does not ride argv (main types it through the pane)', () => {
+    const q = 'x'.repeat(8_001)
+    const out = buildCodexSpawn({ sessionId: 'sid', realmLaunch: linuxLaunch, codexOptions: STANDARD, askPrompt: q })
+    expect(out.args).not.toContain(q)
+    expect(out.args).not.toContain('--')
+    expect(out.askPromptOnArgv).toBeUndefined()
+  })
+
+  it.each([
+    ['half of an emoji at the end', 'what is this ' + String.fromCharCode(0xd83d)],
+    ['half of an emoji at the start', String.fromCharCode(0xde80) + ' what is this'],
+  ])('[host] a lone surrogate (%s) never rides argv: through the pane it is removed, and the dock told (review RASK-3)', (_name, q) => {
+    const out = buildCodexSpawn({ sessionId: 'sid', realmLaunch: linuxLaunch, codexOptions: STANDARD, askPrompt: q })
+    expect(out.args).not.toContain(q)
+    expect(out.args).not.toContain('--')
+    expect(out.askPromptOnArgv).toBeUndefined()
   })
 
   it('[host] the logged line names the question by its length only', () => {
@@ -150,6 +178,32 @@ describe('where the question never rides argv', () => {
       expect(out.askPromptOnArgv).toBeUndefined()
     } finally {
       fs.rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it('[host] the picker (Past discussions): the picker runs with the flags only, and the question is left to the pane', () => {
+    const res = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-ask-picker-')))
+    let pickDir: string | null = null
+    try {
+      fs.mkdirSync(path.join(res, 'scripts'))
+      const script = path.join(res, 'scripts', 'codex-resume-picker.js')
+      fs.writeFileSync(script, '// staged for the test\n')
+      ;(globalThis as any).__askResDir = res
+      const q = 'how do I add an account?'
+      const out = buildCodexSpawn({ sessionId: 'sid', realmLaunch: linuxLaunch, codexOptions: STANDARD, useResumePicker: true, askPrompt: q, askProjectDocMaxBytes: askConductorProjectDocMaxBytes('linux') })
+      pickDir = out.pickFile ? path.dirname(out.pickFile) : null
+      expect(out.args[0]).toBe(script)
+      expect(out.args).not.toContain(q)
+      expect(out.args).not.toContain('--')
+      expect(out.askPromptOnArgv).toBeUndefined()
+      // The help folder's scope still rides the picker's flags.
+      expect(cValues(out.args)).toContain('project_root_markers=[]')
+    } finally {
+      delete (globalThis as any).__askResDir
+      if (pickDir) {
+        try { fs.rmSync(path.join(pickDir, 'pick.json'), { force: true }); fs.rmdirSync(pickDir) } catch { /* left for the OS */ }
+      }
+      fs.rmSync(res, { recursive: true, force: true })
     }
   })
 })
