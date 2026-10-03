@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-03T17:17:34.600Z",
-  "head": "1d7f251febb4e6251aa79975a500630f60c0ebd6",
-  "tree": "657d5ac8b5b487b38fbb51a38c2b55f377659036",
+  "generatedAt": "2026-10-03T21:20:38.591Z",
+  "head": "072023f4c9af459bc19a6b9958de6e2379bcea04",
+  "tree": "d00f2eceee374cea119bd271adffbbd8e220f42a",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2692,
-  "excludedFileCount": 390,
-  "scannedFileCount": 2302,
+  "trackedFileCount": 2709,
+  "excludedFileCount": 399,
+  "scannedFileCount": 2310,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 762,
-  "pathDigest": "d8bca10d994368fce0bedb97351cc6397b1402441660c6d7a008b4a0ed3422c5",
+  "matchedPathCount": 770,
+  "pathDigest": "d824cc9095f50497cacec007c0ef19a9775c47f7055030f839798ae113c85683",
   "entries": [
     {
       "path": ".github/workflows/ci.yml",
@@ -148,7 +148,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 50
+      "lineCount": 51
     },
     {
       "path": "AGENTS.md",
@@ -204,7 +204,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 1093,
+      "lineCount": 1112,
       "truncated": true
     },
     {
@@ -268,9 +268,19 @@
     {
       "path": "scripts/capture-env.ts",
       "predicates": [
+        "P04",
         "P14"
       ],
-      "lineCount": 2
+      "lineCount": 14
+    },
+    {
+      "path": "scripts/capture-seed.ts",
+      "predicates": [
+        "P04",
+        "P05",
+        "P14"
+      ],
+      "lineCount": 41
     },
     {
       "path": "scripts/capture-training-screenshots.ts",
@@ -279,7 +289,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 42
+      "lineCount": 55
     },
     {
       "path": "scripts/ccc-codex-hook.cmd",
@@ -315,20 +325,45 @@
       "lineCount": 31
     },
     {
+      "path": "scripts/readme-shots/README.md",
+      "predicates": [
+        "P04",
+        "P14"
+      ],
+      "lineCount": 6
+    },
+    {
+      "path": "scripts/readme-shots/stage/codex-registry.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "lineCount": 15
+    },
+    {
       "path": "scripts/readme-shots/stage/content.js",
       "predicates": [
         "P07",
         "P14"
       ],
-      "lineCount": 11
+      "lineCount": 17
     },
     {
       "path": "scripts/readme-shots/stage/fake-codex.js",
       "predicates": [
         "P01",
+        "P04",
         "P14"
       ],
-      "lineCount": 9
+      "lineCount": 17
+    },
+    {
+      "path": "scripts/readme-shots/stage/launch.js",
+      "predicates": [
+        "P04",
+        "P14"
+      ],
+      "lineCount": 2
     },
     {
       "path": "scripts/readme-shots/stage/seed.js",
@@ -336,10 +371,17 @@
         "P04",
         "P05",
         "P07",
-        "P10",
         "P14"
       ],
-      "lineCount": 34
+      "lineCount": 51
+    },
+    {
+      "path": "scripts/readme-shots/stage/stage-root.js",
+      "predicates": [
+        "P04",
+        "P14"
+      ],
+      "lineCount": 6
     },
     {
       "path": "scripts/release-gate.mjs",
@@ -471,7 +513,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 67
+      "lineCount": 68
     },
     {
       "path": "src/main/canvas/codex-realm-skills.ts",
@@ -1180,7 +1222,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 39
+      "lineCount": 40
     },
     {
       "path": "src/main/pty-input-guard.ts",
@@ -1197,7 +1239,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 449,
+      "lineCount": 450,
       "truncated": true
     },
     {
@@ -1457,7 +1499,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 42
+      "lineCount": 43
     },
     {
       "path": "src/renderer/components/CommandBar.tsx",
@@ -2526,7 +2568,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 49
+      "lineCount": 50
     },
     {
       "path": "tests/e2e/cloud-agents.spec.ts",
@@ -3366,7 +3408,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 23
+      "lineCount": 27
     },
     {
       "path": "tests/integration/codex-conformance-lib.ts",
@@ -3374,7 +3416,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 7
+      "lineCount": 12
     },
     {
       "path": "tests/integration/codex-own-home.mjs",
@@ -3400,7 +3442,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 57
+      "lineCount": 58
     },
     {
       "path": "tests/unit/account-web-codex-session.test.ts",
@@ -3645,7 +3687,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 29
+      "lineCount": 33
     },
     {
       "path": "tests/unit/main/attention-source-codex.test.ts",
@@ -3663,7 +3705,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 51
+      "lineCount": 52
     },
     {
       "path": "tests/unit/main/canvas-codex-roots-spawn.test.ts",
@@ -5001,7 +5043,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 11
+      "lineCount": 14
     },
     {
       "path": "tests/unit/renderer/canvas-pane-inbound-wiring.test.tsx",
@@ -5075,7 +5117,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 53
+      "lineCount": 55
     },
     {
       "path": "tests/unit/renderer/codex-composer-screens.ts",
@@ -5956,6 +5998,13 @@
       "lineCount": 2
     },
     {
+      "path": "tests/unit/renderer/training-walkthrough-empty.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 1
+    },
+    {
       "path": "tests/unit/renderer/transient-terminal.test.tsx",
       "predicates": [
         "P13"
@@ -6014,7 +6063,16 @@
         "P04",
         "P13"
       ],
-      "lineCount": 9
+      "lineCount": 10
+    },
+    {
+      "path": "tests/unit/scripts/capture-seed.test.ts",
+      "predicates": [
+        "P04",
+        "P05",
+        "P13"
+      ],
+      "lineCount": 54
     },
     {
       "path": "tests/unit/scripts/codex-hook-forwarder.test.ts",
@@ -6056,6 +6114,14 @@
         "P13"
       ],
       "lineCount": 40
+    },
+    {
+      "path": "tests/unit/scripts/readme-stage.test.ts",
+      "predicates": [
+        "P04",
+        "P13"
+      ],
+      "lineCount": 20
     },
     {
       "path": "tests/unit/scripts/release-gate.test.ts",
@@ -6116,7 +6182,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 182
+      "lineCount": 183
     },
     {
       "path": "tests/unit/status-ingest.test.ts",
