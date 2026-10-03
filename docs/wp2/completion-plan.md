@@ -61,10 +61,10 @@ still owes recorded in 4. "2; 3" means partly built in 2, the rest in 3.
 
 ## 2. Summary
 
-- 75 rows: **54 DONE, 17 PARTIAL, 4 OPEN** (recounted after PR 4's P4.1 to P4.6 records, with section 4's rows 51 to 58 brought current from them;
+- 75 rows: **53 DONE, 18 PARTIAL, 4 OPEN** (recounted after PR 4's P4.1 to P4.6 records and question 8, with section 4's rows 51 to 58 brought current from them;
   they agree with the parity checklist). At the recount after P3.15 it was 52 DONE, 12 PARTIAL and 11 OPEN. Rows 59, 60 and 67 are
   built (P4.8, P4.9) and move when their CI and VM runs are recorded.
-- The 21 rows not DONE, by gap: **implementation 6, verification 7, owner 8** (rows 15 and 58, an owner action and a record to sign, row 58's sign-in window waiting on OR2a; rows 22, 41 and 63, each built as a default pending the owner's decision; rows 51, 53 and 57, built as the default pending an owner question each, section 10, counted under owner as row 58 is; row 55 counts under verification, its delete check). At the recount after P3.15: implementation 9, verification 6, owner 8. Row 53
+- The 22 rows not DONE, by gap: **implementation 6, verification 7, owner 9** (rows 15 and 58, an owner action and a record to sign, row 58's sign-in window waiting on OR2a; rows 22, 41 and 63, each built as a default pending the owner's decision; rows 51, 52, 53 and 57, built as the default pending an owner question each (questions 5 to 8, section 10; row 51 has two), counted under owner as row 58 is; row 55 counts under verification, its delete check). At the recount after P3.15: implementation 9, verification 6, owner 8. Row 53
   moved from owner to implementation when the owner decided it
   (`docs/wp1/owner-decisions-2026-09-27.md`, M4), and back under owner with question 6 (PB4, 2026-10-02).
 - By PR: **8 in PR 3, 15 in PR 4**. No row changes package. The Ask Conductor
@@ -179,7 +179,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 49 | `codex_review` | DONE | PLAN commit 5a (its defaults stand unless the owner overturns them) | verification: a real run on a signed-in account | 2, v4 |
 | 50 | `claude_review` | DONE | PLAN commit 5b, owner decisions 1 to 3 (2026-09-24) | verification: a live wait past 300 s | 2, v4 |
 | 51 | Agent Canvas from Codex | PARTIAL (P4.1, b98bc235 to b4413a24; mocked): built, this computer's sign-in as question 5's default A; was withheld (`src/main/conductor-mcp-server.ts:1106`) because a Codex session had no bound id | Parity: the tools, roots, instruction delivery and the live loop | owner (question 5, section 10); verification: the VM walk, OR4, OR5 | 4 |
-| 52 | Browser and vision tools | DONE (P4.2, 2eb403cf, 04ac6b96; mocked); was withheld (`conductor-mcp-server.ts:911-913`, `:1042`, a "Claude-only for now" call of 2026-07-02) | Parity; the later owner decisions (the 2.1.1 gate, OD26 P1) end a call worded "for now" (section 10) | verification: the VM (vision and the push with the fake model, the per-preset approvals); OR4 | 4 |
+| 52 | Browser and vision tools | PARTIAL (P4.2, 2eb403cf, 04ac6b96; mocked): built, the Auto preset as question 8's default B; was withheld (`conductor-mcp-server.ts:911-913`, `:1042`, a "Claude-only for now" call of 2026-07-02) | Parity; the later owner decisions (the 2.1.1 gate, OD26 P1) end a call worded "for now" (section 10) | owner (question 8, section 10); verification: the VM (vision and the push with the fake model, the per-preset approvals); OR4 | 4 |
 | 53 | Ask Conductor on Codex | PARTIAL (P4.3, 995148ea to b4413a24; mocked): built, the characters outside the BMP as question 6's default A; was pinned to Claude (`src/renderer/lib/askConductor.ts:255`) and blocked with Claude Code off (`askConductorGate.ts`) | Codex only: design section 2 and parity (Ask runs on the provider that is on). Both on: OD27 M4 (option B, canvas "Ask Conductor provider choice" v1): a Settings, General row "Ask Conductor runs on", shown only while both are on, Claude Code by default | owner (question 6, section 10); verification: the VM (the first Ask in a fresh account folder), OR4, OR5 | 4 |
 | 54 | App knowledge, tour, tips | PARTIAL: the P2 fixes are done; P4.1 to P4.5's own copy landed with them (c4f1a62c, eecd1b75, 2be770ad) | The AGENTS.md surface sweep; recorded 2026-09-26: the Codex "Beta" labels come off in the release where parity lands | implementation (the final sweep) | 2; 4 |
 | 55 | Memory | PARTIAL (P4.4, 1a12160b to 41638f93; mocked): listing, guard and read built; delete built, hidden and refused in main until the VM check; frontmatter edit does not carry over (recorded) | Parity: each realm's Codex memories on the Memory page | verification: the delete check on the VM (else OR4); OR4: the real file format | 4 |
@@ -6572,8 +6572,8 @@ Questions for the owner (section 10): 5 (row 51), 6 (row 53) and 7 (row 57),
 each built as its default A, queued now; and 8 (rows 51, 52), raised by the
 VM checkpoint at 69c98042, built as its default B. PR 4 waits on the owner
 for them before merge is recommended, as PR 3 does for questions 2, 3 and 4; once P4.1,
-P4.3 and P4.5 land, rows 51, 53 and 57 read PARTIAL, built as the default
-pending the owner's decision, until the answers are in and any change they
+P4.3 and P4.5 land, rows 51, 53 and 57 read PARTIAL (and row 52, with
+question 8), built as the default pending the owner's decision, until the answers are in and any change they
 bring is built. The
 answers feed P4.11 (its lines re-checked) and P4.10 (its evidence taken after
 them); 9.3 says what runs again if an answer comes late.
