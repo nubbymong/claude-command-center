@@ -670,7 +670,7 @@ export interface CanvasMarkerUndelivered {
  *  - `unknown-settings`: where the assistant reads its settings could not be
  *    established for the installed version or this launch (a version whose
  *    settings layers are not established, a settings file that cannot be read
- *    as text, or a working folder the resume picker chooses), so nothing was
+ *    as text, or a working folder not known at launch), so nothing was
  *    passed;
  *  - `skills-not-staged`: the skills could not be put in place (a managed
  *    account's skills folder is a link, a same-named skill folder is not the

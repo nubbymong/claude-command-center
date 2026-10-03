@@ -677,6 +677,24 @@ function buildResumeArgs(uuid, flags) {
   return [...flags]
 }
 
+// -- flagsForFolder -------------------------------------------------
+// The app decides its guidance for Codex (`-c developer_instructions=...`,
+// src/main/canvas/codex-guidance.ts) for the folder this picker runs in, from
+// the settings files Codex reads there (PR 4 VM checkpoint, F2). A Codex the
+// picker starts in another folder (a conversation of another worktree, or the
+// new one it falls back to there) would read that folder's settings, which
+// were not checked, so it gets the flags without that pair. `retargetCwd`:
+// the other folder (resolveRetargetCwd), or null to start where it runs.
+function flagsForFolder(flags, retargetCwd) {
+  if (!retargetCwd) return [...flags]
+  const out = []
+  for (let i = 0; i < flags.length; i++) {
+    if ((flags[i] === '-c' || flags[i] === '--config') && /^developer_instructions=/i.test(String(flags[i + 1] ?? ''))) { i++; continue }
+    out.push(flags[i])
+  }
+  return out
+}
+
 // -- shouldFallback -------------------------------------------------
 // Decides whether `launchCodex` should retry as a fresh `codex` session.
 // Only retries when (a) we tried a `codex resume <uuid>` (resumeUuid is set)
@@ -744,5 +762,5 @@ function isResumeId(id) {
 module.exports = {
   parseRollout, walkRollouts, buildResumeArgs, shouldFallback, shouldUseShell, launchTarget, isResumeId,
   samePath, parseWorktrees, listWorktrees, worktreeLabelFor, displayText, buildPickerRows, loadWorkNames, readRolloutName, pickDecision, writePick, recordPick, folderIdOf, childEnv, isDirectory, resolveRetargetCwd, timeAgo,
-  openElsewhereIds, fallbackNotice,
+  openElsewhereIds, fallbackNotice, flagsForFolder,
 }

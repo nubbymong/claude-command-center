@@ -5106,7 +5106,12 @@ function spawnPtyResolved(
         cliVersion: launch.cliVersion ?? null,
         toolsOn: codexToolsOn,
         ...(launch.ownership ? { ownership: launch.ownership } : {}),
-        startFolders: options?.useResumePicker ? null : [resolvedCwd, ...(resumeTarget?.cwd ? [resumeTarget.cwd] : [])],
+        // The resume picker runs in the configured folder (the launch's cwd
+        // below) and passes the guidance on only to a Codex it starts there
+        // (the PR 4 VM checkpoint, F2; codex-resume-picker-lib.js
+        // flagsForFolder), so a picker launch is decided for that folder, as
+        // a direct one is.
+        startFolders: [resolvedCwd, ...(resumeTarget?.cwd ? [resumeTarget.cwd] : [])],
         env: launch.env,
       })
       const codexSpawnOptions: SpawnOptions = {

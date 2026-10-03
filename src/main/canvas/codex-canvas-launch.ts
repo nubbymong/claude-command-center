@@ -39,7 +39,10 @@ export interface CodexCanvasLaunchInput {
   /** The account's realm, as the launch prepared it: an app-managed one or
    *  this computer's own sign-in (review A-2). Absent: told by path alone. */
   ownership?: RealmOwnership
-  /** The folders Codex may start in, or null when the resume picker chooses. */
+  /** The folders Codex may start in with the guidance: the configured one
+   *  (where the resume picker runs too; it passes the guidance on only to a
+   *  Codex it starts there) and a resumed conversation's own. Null when they
+   *  are not known: nothing is passed. */
   startFolders: readonly string[] | null
   env: Readonly<Record<string, string | undefined>>
   platform?: NodeJS.Platform

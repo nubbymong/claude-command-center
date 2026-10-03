@@ -155,6 +155,9 @@ function launchCodex(resumeUuid, sourceCwd) {
   }
   noteUnrecorded(lib.recordPick(process.env.CCC_CODEX_PICK_FILE, resumeUuid, process.env.CCC_CODEX_PICK_DIR_ID))
   const retarget = lib.resolveRetargetCwd(resumeUuid, sourceCwd, process.cwd(), lib.isDirectory)
+  // The app's guidance for Codex was decided for this folder: a Codex started
+  // in another one gets the flags without it (lib.flagsForFolder).
+  const flags = lib.flagsForFolder(forwarded, retarget.cwd)
   // Codex itself never gets the pick file's name.
   const env = lib.childEnv(process.env)
   const run = (args) => {
@@ -165,7 +168,7 @@ function launchCodex(resumeUuid, sourceCwd) {
     }
     return spawnSync(target.file, target.args, { stdio: 'inherit', windowsHide: false, windowsVerbatimArguments: target.verbatim, env, ...(retarget.cwd ? { cwd: retarget.cwd } : {}) })
   }
-  const result = run(lib.buildResumeArgs(resumeUuid, forwarded))
+  const result = run(lib.buildResumeArgs(resumeUuid, flags))
 
   // spawnSync failed to launch (ENOENT, EACCES, etc.). status is null when
   // this happens; result.error carries the cause. Surface and exit non-zero
@@ -182,7 +185,7 @@ function launchCodex(resumeUuid, sourceCwd) {
     console.log(`\n  ${lib.fallbackNotice(resumeUuid, lib.openElsewhereIds(process.env))}\n`)
     // The session now runs a new conversation: the app follows that one.
     noteUnrecorded(lib.recordPick(process.env.CCC_CODEX_PICK_FILE, null, process.env.CCC_CODEX_PICK_DIR_ID))
-    const fresh = run(forwarded)
+    const fresh = run(flags)
     if (fresh.error) {
       console.error(`\n  Failed to launch codex: ${fresh.error.message}\n`)
       process.exit(1)

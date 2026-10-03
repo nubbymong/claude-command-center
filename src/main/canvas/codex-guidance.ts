@@ -251,9 +251,9 @@ export interface CodexGuidanceInput {
   /** The installed Codex version discovery proved. */
   cliVersion: string | null
   home: string
-  /** The folders Codex may start in (the configured one, and a resumed
-   *  conversation's own); null when that is not known at launch (the resume
-   *  picker chooses it). */
+  /** The folders Codex may start in (the configured one, where the resume
+   *  picker runs too, and a resumed conversation's own); null when that is
+   *  not known at launch. */
   cwds: readonly string[] | null
   /** The app's plugin skills folder (macOS and Linux), when it is in place. */
   pluginSkillsDir: string | null
