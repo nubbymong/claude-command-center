@@ -911,9 +911,12 @@ export async function startMcpServer(
 
     // ── Vision tools (require connected browser) ────────────────────────────
     // Registered as one gated group; inner indentation intentionally unchanged.
-    // Not advertised to Codex sessions: vision is Claude-only for now (user
-    // call 2026-07-02) — the onboarding p6 card carries the same note.
-    if (toolOn('vision') && source !== 'codex') {
+    // WP2 PR 4, P4.2 (row 52): offered to a Codex session too, under the same
+    // switch (the "Claude-only for now" call of 2026-07-02 is lifted). Every
+    // call routes to the connection's bound session's own pinned target
+    // (withVision), and a Codex connection is bound to its session as a
+    // Claude one is.
+    if (toolOn('vision')) {
     // -- Status --
     server.tool('vision_status', 'Check the Conductor browser\'s connection status. The vision_* tools drive a real Chrome that can read pages a plain fetch cannot — call this first if a vision call fails or you are unsure the browser is up.', {}, async () => {
       const vm = getVisionManager()
@@ -1038,11 +1041,11 @@ export async function startMcpServer(
     // session's Browser tool and NEVER navigates a page the user is viewing —
     // the page loads only when the user opens the pane / clicks the pill. No
     // approval, by design (owner's framing). Gated on the Conductor-tools master
-    // only (it is neither a vision nor a canvas sub-tool); not advertised to
-    // Codex, matching the vision/canvas Claude-only stance. Binds to the
-    // transport's authenticated session and refuses a mismatched model-supplied
-    // id — see decideAgentBrowserPush.
-    if (toolsMaster && source !== 'codex') server.tool(
+    // only (it is neither a vision nor a canvas sub-tool); WP2 PR 4, P4.2 (row
+    // 52): offered to a Codex session too. Binds to the transport's
+    // authenticated session (a Codex session's own, on its /mcp connection) and
+    // refuses a mismatched model-supplied id — see decideAgentBrowserPush.
+    if (toolsMaster) server.tool(
       'open_in_app_browser',
       'Show the USER a web page in their in-app browser pane for this session (http/https only). Use it when you have a URL worth the user seeing — a preview, a PR, docs, a built site — the same as pasting the link in chat. A notification pill appears on their Browser tool; the page loads when they open the pane or click the pill, and it never interrupts a page they are already viewing. This is the user\'s VISIBLE browser, NOT the vision_* automation browser (which only you see).',
       {

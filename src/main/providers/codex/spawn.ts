@@ -198,7 +198,7 @@ export const CODEX_PREALLOWED_TOOLS: readonly string[] = ['canvas_snapshot', 'ca
  *  (PB2: `approve` lifts it per tool on both supported versions; `auto` does
  *  not). Tool names are plain words, so the value rides the .cmd route. */
 export function codexToolApprovalArg(tool: string): string {
-  if (!/^[a-z][a-z0-9_]{0,63}$/.test(tool)) throw new Error(`not a conductor tool name: ${tool}`)
+  if (!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(tool)) throw new Error(`not a conductor tool name: ${tool}`)
   return `mcp_servers.conductor.tools.${tool}.approval_mode=approve`
 }
 

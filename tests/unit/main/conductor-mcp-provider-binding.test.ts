@@ -20,9 +20,17 @@ vi.mock('../../../src/main/vision-manager', () => ({
   launchBrowser: vi.fn(),
 }))
 
+// Codex is set up and both reviews can run, so each connection is offered
+// its provider's own review tool: what tells the two tool sets apart now that
+// a Codex session is offered the canvas, vision and browser tools too (P4.1,
+// P4.2).
 vi.mock('../../../src/main/config-manager', () => ({
-  readConfig: vi.fn(() => null),
+  readConfig: vi.fn(() => ({ codexEnabled: true, codexAnswered: true })),
   saveConfig: vi.fn(),
+}))
+
+vi.mock('../../../src/main/provider-accounts', () => ({
+  getAccountsService: () => ({ reviewReady: () => true }),
 }))
 
 vi.mock('../../../src/main/update-watcher', () => ({
@@ -40,7 +48,7 @@ vi.mock('../../../src/main/ipc/setup-handlers', () => {
 })
 
 const server = await import('../../../src/main/conductor-mcp-server')
-const { CODEX_CONDUCTOR_TOOLS, CANVAS_TOOL_NAMES } = await import('../../../src/main/providers/codex/conductor-tools')
+const { CODEX_CONDUCTOR_TOOLS, CANVAS_TOOL_NAMES, VISION_TOOL_NAMES } = await import('../../../src/main/providers/codex/conductor-tools')
 
 let port = 0
 beforeAll(async () => {
@@ -75,9 +83,14 @@ function sseStatus(sessionId: string, token: string): Promise<number> {
   })
 }
 
-// Present only to a Claude connection; the host-transfer tool is offered to both.
-const CLAUDE_ONLY = ['vision_status', 'open_in_app_browser']
+// Each provider is offered the other's review (codex_review to a Claude
+// connection, claude_review to a Codex one); the rest is offered to both.
+// WP2 PR 4, P4.2 (row 52): the vision tools and the in-app browser push are
+// no longer Claude's alone.
+const CLAUDE_ONLY = ['codex_review']
+const CODEX_ONLY = ['claude_review']
 const SHARED = 'fetch_host_screenshot'
+const NOW_BOTH = ['vision_status', 'vision_text', 'vision_screenshot', 'open_in_app_browser', 'canvas_render']
 
 describe('issueMcpSessionToken', () => {
   it('returns the session token and records the provider it was issued to', () => {
@@ -122,6 +135,8 @@ describe('SSE route: the tool set follows the issued provider', () => {
     const tools = await toolsOffered('pb-claude', token)
     expect(tools).toContain(SHARED)
     for (const name of CLAUDE_ONLY) expect(tools).toContain(name)
+    for (const name of CODEX_ONLY) expect(tools).not.toContain(name)
+    for (const name of NOW_BOTH) expect(tools).toContain(name)
   })
 
   it.each(['', '&source=claude', '&source=unknown', '&source='])(
@@ -131,6 +146,7 @@ describe('SSE route: the tool set follows the issued provider', () => {
       const tools = await toolsOffered('pb-codex', token, extra)
       expect(tools).toContain(SHARED)
       for (const name of CLAUDE_ONLY) expect(tools).not.toContain(name)
+      for (const name of CODEX_ONLY) expect(tools).toContain(name)
     },
   )
 
@@ -151,9 +167,18 @@ describe('SSE route: the tool set follows the issued provider', () => {
     const tools = await toolsOffered('pb-codex-table', token)
     const table = CODEX_CONDUCTOR_TOOLS.map((t) => t.name)
     expect(tools.filter((t) => !table.includes(t))).toEqual([])
-    // ...and, with every switch on, it names nothing the connection lacks
-    // but claude_review, which also waits on a ready Claude review.
-    expect(table.filter((t) => !tools.includes(t) && t !== 'claude_review')).toEqual([])
+    // ...and, with every switch on and a Claude review ready, it names
+    // nothing the connection lacks.
+    expect(table.filter((t) => !tools.includes(t))).toEqual([])
+  })
+
+  // WP2 PR 4, P4.2 (row 52): the vision tools and the push to the user's
+  // in-app browser reach a Codex session under the same switches.
+  it('serves a Codex session the vision tools and the in-app browser push', async () => {
+    const token = server.issueMcpSessionToken('pb-codex-vision', 'codex')
+    const tools = await toolsOffered('pb-codex-vision', token)
+    for (const name of VISION_TOOL_NAMES) expect(tools).toContain(name)
+    expect(tools).toContain('open_in_app_browser')
   })
 
   it('serves the latest issue: a session re-issued as Codex gets the Codex set', async () => {
@@ -161,6 +186,7 @@ describe('SSE route: the tool set follows the issued provider', () => {
     const token = server.issueMcpSessionToken('pb-reissued', 'codex')
     const tools = await toolsOffered('pb-reissued', token)
     for (const name of CLAUDE_ONLY) expect(tools).not.toContain(name)
+    for (const name of CODEX_ONLY) expect(tools).toContain(name)
   })
 
   it('serves a Codex session the Codex set after a later Claude issue for its id', async () => {
@@ -169,6 +195,7 @@ describe('SSE route: the tool set follows the issued provider', () => {
     const tools = await toolsOffered('pb-sticky-sse', token)
     expect(tools).toContain(SHARED)
     for (const name of CLAUDE_ONLY) expect(tools).not.toContain(name)
+    for (const name of CODEX_ONLY) expect(tools).toContain(name)
   })
 
   it('refuses a session with a valid token that was never issued this run', async () => {

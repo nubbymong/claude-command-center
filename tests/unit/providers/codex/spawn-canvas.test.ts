@@ -38,7 +38,7 @@ const logWarn = vi.fn()
 vi.mock('../../../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: (...a: unknown[]) => logWarn(...a), logError: vi.fn() }))
 
 const { buildCodexSpawn, codexToolApprovalArg, codexPresetApprovedTools, codexLaunchRoute, codexLaunchLineForLog, CODEX_PREALLOWED_TOOLS, CMD_EXE_LINE_MAX } = await import('../../../../src/main/providers/codex/spawn')
-const { CODEX_CONDUCTOR_TOOLS } = await import('../../../../src/main/providers/codex/conductor-tools')
+const { CODEX_CONDUCTOR_TOOLS, VISION_TOOL_NAMES } = await import('../../../../src/main/providers/codex/conductor-tools')
 const { codexInlineGuidance, codexPointerGuidance, CODEX_INLINE_GUIDANCE_MAX } = await import('../../../../src/main/canvas/codex-guidance')
 const { tomlString } = await import('../../../../src/main/providers/codex/hooks')
 const { EXTRA_ARGS_MAX, codexExtraArgsProblem } = await import('../../../../src/shared/extra-args')
@@ -132,7 +132,23 @@ describe('approvals (PB2), by parity per preset', () => {
     expect(codexPresetApprovedTools(preset, {})).toEqual([])
   })
 
+  // WP2 PR 4, P4.2 (row 52): Claude pre-allows none of the vision or browser
+  // tools, so no preset but Unrestricted runs them without asking; under
+  // Unrestricted each has its own key.
+  it.each(PRESETS)('P4.2: the vision tools and the browser push under %s', (preset) => {
+    const out = buildCodexSpawn({ sessionId: 'sid', realmLaunch: linuxLaunch, codexOptions: { model: 'gpt-5.5', permissionsPreset: preset } })
+    const keys = keysOf(out.args)
+    const browserish = keys.filter((k) => /\.tools\.(vision_[A-Za-z]+|open_in_app_browser)\./.test(k))
+    if (preset === 'unrestricted') {
+      expect(browserish.sort()).toEqual([...VISION_TOOL_NAMES, 'open_in_app_browser'].map(codexToolApprovalArg).sort())
+    } else {
+      expect(browserish).toEqual([])
+    }
+  })
+
   it('a switched-off group gets no key under Unrestricted', () => {
+    expect(codexPresetApprovedTools('unrestricted', { conductorTools: { vision: false } }).some((t) => t.startsWith('vision_'))).toBe(false)
+    expect(codexPresetApprovedTools('unrestricted', { conductorTools: { vision: false } })).toContain('open_in_app_browser')
     expect(codexPresetApprovedTools('unrestricted', { conductorTools: { canvas: false } }).some((t) => t.startsWith('canvas_'))).toBe(false)
     expect(codexPresetApprovedTools('unrestricted', { conductorToolsEnabled: false })).toEqual([])
   })
@@ -143,7 +159,7 @@ describe('approvals (PB2), by parity per preset', () => {
     expect(line).not.toMatch(/default_tools_approval_mode/)
     expect(line).not.toMatch(/enabled_tools|disabled_tools/)
     for (const a of out.args.filter((x) => x.includes('approval_mode'))) {
-      expect(a).toMatch(/^mcp_servers\.conductor\.tools\.[a-z][a-z0-9_]*\.approval_mode=approve$/)
+      expect(a).toMatch(/^mcp_servers\.conductor\.tools\.[A-Za-z][A-Za-z0-9_]*\.approval_mode=approve$/)
     }
   })
 
