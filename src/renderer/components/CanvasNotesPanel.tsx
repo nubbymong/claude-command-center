@@ -351,6 +351,13 @@ export function submitLabel(version: CanvasVersion, decision: 'approve' | 'rejec
   return `Submit — ${word} ${subject}, ${noteCount} ${noteCount === 1 ? 'note' : 'notes'}`
 }
 
+/** The one line a submitted review writes into the session: the agent fetches
+ *  the review by the id it carries (canvas_review). Its shape is the one the
+ *  canvas skills describe; one note reads "1 note" (P4.11). */
+export function reviewMarkerLine(reviewId: string, noteCount: number): string {
+  return 'Review #' + reviewId.slice(1) + ' — ' + noteCount + ' ' + (noteCount === 1 ? 'note' : 'notes') + ' · canvas_review ' + reviewId
+}
+
 /**
  * The outcome a SETTLED round wears in History.
  *
@@ -1686,7 +1693,7 @@ export default function CanvasNotesPanel({
       // agent's turn is open — the RECORD survives either way here (unlike a
       // clean approval), but a marker lost mid-turn still means the agent never
       // learns there is one to fetch.
-      deliverAgentMarker(sessionId, mountedCanvasIdRef.current, 'Review #' + review.id.slice(1) + ' — ' + count + ' notes · canvas_review ' + review.id)
+      deliverAgentMarker(sessionId, mountedCanvasIdRef.current, reviewMarkerLine(review.id, count))
       setFiled({ decision, reviewId: review.id })
       setDecision(null)
       // Hand back to the session automatically (#478): submitting is the moment
