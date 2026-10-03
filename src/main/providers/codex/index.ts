@@ -1,13 +1,14 @@
 // Codex provider package: public entry point (WP1, design 7.1). Everything
 // outside this directory imports from here; the dependency-boundary test
 // ratchets the remaining deep imports down to zero.
-import type { SessionProvider, SpawnOptions, TelemetrySource, HistorySession, ProviderSpawnCommand, TelemetryOptions } from '../types'
+import type { SessionProvider, SessionRunScreen, SpawnOptions, TelemetrySource, HistorySession, ProviderSpawnCommand, TelemetryOptions } from '../types'
 import type { LegacyVersion, StatuslineData } from '../../../shared/types'
 import type { AllowanceReading } from '../../../shared/usage-types'
 import type { ProviderCapabilities, AuthRealm, RealmUse } from '../../../shared/providers'
 import type { ProviderPackage, RealmRef } from '../core'
 import { CODEX_ENABLEMENT } from './enablement'
-import { resolveCodexBinary, buildCodexSpawn, codexHookDataDir } from './spawn'
+import { resolveCodexBinary, buildCodexSpawn, codexHookDataDir, codexLaunchRoute } from './spawn'
+import { openCodexScreen, feedCodexScreen, resizeCodexScreen, closeCodexScreen, hasCodexScreen, submitCodexText } from './session-screen'
 import { detectCodexUi } from './ui-detection'
 import { watchAndClaimRollout } from './telemetry'
 import { deployCodexResumePickerScript } from './resume-picker'
@@ -28,7 +29,7 @@ import type { CodexAuthDeps, CodexAuthOperations } from './auth-operations'
 import { createCodexRealmFolders, createCodexRealmLocks, resolveCodexRealmRoots } from './realm-folders'
 import { carryCodexRollout } from './conversation-carry'
 import type { CodexConversationCarry } from './conversation-carry'
-import { codexExternalDefaultHome, codexHomeDisplay } from './realm-paths'
+import { codexExternalDefaultHome, codexHomeDisplay, codexManagedRealmSkillsDir } from './realm-paths'
 import { createCodexLiveUsage, createCodexUsageOperations, createCodexCarryMarks, codexRolloutIdFromName, newestCarriedStamp, realCodexUsageFsPort } from './usage'
 import type { CodexLiveUsage, CodexUsageFsPort, CodexCarryMarks, CodexCarryMarksPort } from './usage'
 import type { CodexFolderLookup, CodexFsEntry, CodexRealmFsPort, CodexRealmFolderLimits } from './realm-folders'
@@ -78,6 +79,7 @@ export type { AppServerVerdict, AppServerFailure, AppServerClientDeps, AppServer
 export { codexCliEnv, codexCliEnvAllowlist } from './cli-env'
 export {
   codexRealmHome, codexExternalDefaultHome, codexExternalHomeCandidate, codexManagedRealmsRoot, codexHomesOverlap, isFullyQualifiedPath, codexHomeDisplay, CODEX_REALMS_DIRNAME,
+  codexManagedRealmSkillsDir,
 } from './realm-paths'
 export type { CodexRealmRoots, CodexRealmHome, CodexExternalCandidate } from './realm-paths'
 export {
@@ -109,6 +111,18 @@ export type { CodexUsageFsPort, CodexUsageEntry, CodexUsageFsApi, CodexLiveUsage
  *  accounts service's prepared launch), never one looked up on PATH here. */
 const CODEX_MANAGED_LAUNCH_ONLY = 'not used for Codex: launches go through the managed launch'
 
+/** WP2 PR 4, P4.1: main's pane of each Codex run and the submit primitive
+ *  (session-screen.ts drives composer-submit.ts), offered through the
+ *  registered provider: the PTY manager reaches this package only that way. */
+const CODEX_RUN_SCREEN: SessionRunScreen = {
+  open: (sessionId, opts) => openCodexScreen(sessionId, opts),
+  feed: (sessionId, data) => feedCodexScreen(sessionId, data),
+  resize: (sessionId, cols, rows) => resizeCodexScreen(sessionId, cols, rows),
+  close: (sessionId) => closeCodexScreen(sessionId),
+  has: (sessionId) => hasCodexScreen(sessionId),
+  submit: (sessionId, text, opts) => submitCodexText(sessionId, text, opts),
+}
+
 export class CodexProvider implements SessionProvider {
   readonly id = 'codex' as const
   readonly displayName = 'Codex'
@@ -125,6 +139,19 @@ export class CodexProvider implements SessionProvider {
   buildSpawnCommand(opts: SpawnOptions): ProviderSpawnCommand {
     return buildCodexSpawn(opts)
   }
+
+  /** WP2 PR 4, P4.1: the npm .cmd shim runs through cmd.exe (spawn.ts). */
+  launchRoute(executable: string): 'direct' | 'cmd' {
+    return codexLaunchRoute(executable)
+  }
+
+  /** WP2 PR 4, P4.1: a managed account's own skills folder, by the managed
+   *  home's path rule (realm-paths.ts); null for this computer's own sign-in. */
+  stagedSkillsDir(home: string, resourcesDir: string): string | null {
+    return codexManagedRealmSkillsDir(home, resourcesDir)
+  }
+
+  readonly runScreen: SessionRunScreen = CODEX_RUN_SCREEN
 
   detectUiRunning(data: string): boolean {
     return detectCodexUi(data)

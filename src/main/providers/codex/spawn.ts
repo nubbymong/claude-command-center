@@ -233,15 +233,6 @@ export function codexLaunchLineForLog(line: string): string {
   return line.replace(/developer_instructions=("(?:[^"\\]|\\.)*"|'[^']*')/g, (_m, value: string) => `developer_instructions=<${value.length} characters>`)
 }
 
-/** WP2 PR 4, P4.1: what main adds to a Codex launch beyond SpawnOptions. */
-export interface CodexSpawnExtras {
-  /** The app's canvas and browser guidance as Codex developer instructions
-   *  (section 10 question 5, default A): main decides whether this launch
-   *  carries it (src/main/canvas/codex-guidance.ts); the builder passes it on
-   *  the direct route only, never through cmd.exe. */
-  developerInstructions?: string
-}
-export type CodexSpawnOptions = SpawnOptions & CodexSpawnExtras
 
 /** Set a variable main owns, removing every other spelling of it first: on
  *  Windows names are case-insensitive and a child reads the FIRST match in
@@ -252,7 +243,15 @@ function setOwned(env: Record<string, string>, name: string, value: string, win3
   env[name] = value
 }
 
-export function buildCodexSpawn(opts: CodexSpawnOptions): ProviderSpawnCommand {
+/** The Codex launch for `opts`, with the line the app's log may hold
+ *  (`logLine`, codexLaunchLineForLog): the PTY manager logs that line, never
+ *  the arguments themselves. */
+export function buildCodexSpawn(opts: SpawnOptions): ProviderSpawnCommand {
+  const built = buildCodexSpawnCommand(opts)
+  return { ...built, logLine: codexLaunchLineForLog(built.commandLine ?? built.args.join(' ')) }
+}
+
+function buildCodexSpawnCommand(opts: SpawnOptions): ProviderSpawnCommand {
   const co = opts.codexOptions
   if (!co) throw new Error('codexOptions required for Codex spawn')
 

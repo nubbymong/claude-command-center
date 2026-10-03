@@ -15,10 +15,14 @@
 // ONE RUN. A pane belongs to the process it was opened for: a respawn opens a
 // new one, and every key the primitive sends checks first that its run is
 // still the session's, so nothing is typed into a later process.
+//
+// The CSI clamp is the caller's (the PTY manager hands in the Watchdog's,
+// clampAnsiChunk), so both of main's panes clamp alike and this package
+// imports no shared module that reaches the other provider's package. It is
+// required: a pane is never fed unclamped output.
 import { Terminal } from '@xterm/headless'
 import { readXtermScreen, type ScreenLine } from '../../../shared/codex-screen'
 import type { SubmitTextResult } from '../../../shared/types'
-import { clampAnsiChunk, type AnsiClampState } from '../../watchdog/watchdog-manager'
 import { submitToCodexComposer, type ComposerSubmitOptions } from './composer-submit'
 import { logInfo, logWarn } from '../../debug-logger'
 
@@ -26,9 +30,18 @@ import { logInfo, logWarn } from '../../debug-logger'
 const MAX_PANE_COLS = 1000
 const MAX_PANE_ROWS = 1000
 
+/** The clamp's state across chunks: a trailing partial CSI held back. */
+interface ClampState {
+  residual: string
+}
+
+/** What every chunk goes through before the pane parses it. */
+export type PaneClamp = (data: string, state: ClampState) => string
+
 interface Pane {
   term: Terminal
-  clamp: AnsiClampState
+  clamp: PaneClamp
+  clampState: ClampState
   /** A raw write into this pane's own process. */
   write: (data: string) => void
   /** Whether this pane's process is still the session's. */
@@ -45,19 +58,20 @@ const sane = (cols: number, rows: number): boolean =>
 /** Open the pane for a Codex session's new run (replacing any earlier one).
  *  `write` writes into that run's process as one write; `current` says
  *  whether that process is still the session's. */
-export function openCodexScreen(sessionId: string, opts: { cols: number; rows: number; write: (data: string) => void; current: () => boolean }): void {
+export function openCodexScreen(sessionId: string, opts: { cols: number; rows: number; write: (data: string) => void; current: () => boolean; clamp: PaneClamp }): void {
   closeCodexScreen(sessionId)
+  if (typeof opts.clamp !== 'function') throw new Error('a Codex session pane needs its CSI clamp')
   const cols = sane(opts.cols, opts.rows) ? opts.cols : 120
   const rows = sane(opts.cols, opts.rows) ? opts.rows : 40
   const term = new Terminal({ cols, rows, scrollback: 0, allowProposedApi: true })
-  panes.set(sessionId, { term, clamp: { residual: '' }, write: opts.write, current: opts.current, chain: Promise.resolve() })
+  panes.set(sessionId, { term, clamp: opts.clamp, clampState: { residual: '' }, write: opts.write, current: opts.current, chain: Promise.resolve() })
 }
 
 /** The session's output, as its terminal receives it. */
 export function feedCodexScreen(sessionId: string, data: string): void {
   const pane = panes.get(sessionId)
   if (!pane) return
-  try { pane.term.write(clampAnsiChunk(data, pane.clamp)) } catch { /* a pane never breaks the data path */ }
+  try { pane.term.write(pane.clamp(data, pane.clampState)) } catch { /* a pane never breaks the data path */ }
 }
 
 /** Keep the pane at the real pane's size, so wrapping and the composer's

@@ -21,10 +21,13 @@
 // computer's own sign-in, the external default, is the user's own Codex
 // folder: question 5); a link or junction at the home, at its `skills/` or at
 // a skill folder; anything at a skill's name that is not the app's folder.
+//
+// Which homes are managed is the Codex package's path rule (realm-paths.ts
+// codexManagedRealmSkillsDir), reached through the registered provider
+// (SessionProvider.stagedSkillsDir): the caller hands each function the
+// skills folder it gave, or null for a home that has none.
 import * as fs from 'fs'
 import * as path from 'path'
-import { isOpaqueId } from '../../shared/providers'
-import { codexManagedRealmsRoot } from '../providers/codex/realm-paths'
 import { atomicWriteSecure, mkdirSecure } from '../account-profiles'
 import { canvasSkillFiles } from './canvas-plugin'
 import { logInfo, logWarn } from '../debug-logger'
@@ -40,21 +43,6 @@ export const STAGED_SKILL_MARK_BYTES = Buffer.from(
 export type RealmSkillsOutcome =
   | { staged: true }
   | { staged: false; reason: 'not-managed' | 'link' | 'not-ours' | 'failed' }
-
-/** The skills folder of a MANAGED realm's home: `<home>/skills` when `home`
- *  sits directly under the managed realms root as a realm id, else null.
- *  Pure path arithmetic (realm-paths.ts's rule for a managed home): this
- *  computer's own sign-in, the external default, never has one. */
-export function codexManagedRealmSkillsDir(home: string, resourcesDir: string, pathApi: typeof path = path): string | null {
-  if (typeof home !== 'string' || !home || typeof resourcesDir !== 'string' || !resourcesDir) return null
-  if (!pathApi.isAbsolute(home) || !pathApi.isAbsolute(resourcesDir)) return null
-  const root = codexManagedRealmsRoot(resourcesDir, pathApi)
-  const resolved = pathApi.resolve(home)
-  const parent = pathApi.dirname(resolved)
-  const same = pathApi.sep === '\\' ? parent.toLowerCase() === root.toLowerCase() : parent === root
-  if (!same || !isOpaqueId(pathApi.basename(resolved), 'realm')) return null
-  return pathApi.join(resolved, 'skills')
-}
 
 /** lstat, or null when there is nothing there. */
 function lstatOrNull(p: string): fs.Stats | null {
@@ -82,10 +70,13 @@ function isPristine(dir: string, skill: Buffer): boolean {
   return fileIsExactly(path.join(dir, 'SKILL.md'), skill) && fileIsExactly(path.join(dir, STAGED_SKILL_MARK), STAGED_SKILL_MARK_BYTES)
 }
 
-/** The realm's home and its skills folder, checked: real folders, no link. */
-function realmChecked(home: string, resourcesDir: string): { skillsDir: string } | RealmSkillsOutcome {
-  const skillsDir = codexManagedRealmSkillsDir(home, resourcesDir)
-  if (!skillsDir) return { staged: false, reason: 'not-managed' }
+/** The realm's home and its skills folder, checked: real folders, no link.
+ *  `skillsDir` is the one the Codex package gave for `home` (null: not a
+ *  managed realm's), and only ever `<home>/skills`. */
+function realmChecked(home: string, skillsDir: string | null): { skillsDir: string } | RealmSkillsOutcome {
+  if (!skillsDir || typeof home !== 'string' || !path.isAbsolute(home) || path.resolve(skillsDir) !== path.join(path.resolve(home), 'skills')) {
+    return { staged: false, reason: 'not-managed' }
+  }
   const homeSt = lstatOrNull(path.resolve(home))
   if (!homeSt) return { staged: false, reason: 'failed' }
   if (homeSt.isSymbolicLink() || !homeSt.isDirectory()) return { staged: false, reason: 'link' }
@@ -99,8 +90,8 @@ function realmChecked(home: string, resourcesDir: string): { skillsDir: string }
  * tools are on. Every skill folder ends up the app's and exactly its bytes,
  * or is left alone and reported: `staged` only when all of them are.
  */
-export function stageCodexRealmSkills(home: string, resourcesDir: string): RealmSkillsOutcome {
-  const checked = realmChecked(home, resourcesDir)
+export function stageCodexRealmSkills(home: string, managedSkillsDir: string | null): RealmSkillsOutcome {
+  const checked = realmChecked(home, managedSkillsDir)
   if (!('skillsDir' in checked)) return checked
   const { skillsDir } = checked
   let outcome: RealmSkillsOutcome = { staged: true }
@@ -141,9 +132,9 @@ export function stageCodexRealmSkills(home: string, resourcesDir: string): Realm
  * are off): only folders holding the app's exact mark, never through a link,
  * never a folder that is not the app's. Never throws.
  */
-export function removeCodexRealmSkills(home: string, resourcesDir: string): void {
+export function removeCodexRealmSkills(home: string, managedSkillsDir: string | null): void {
   try {
-    const checked = realmChecked(home, resourcesDir)
+    const checked = realmChecked(home, managedSkillsDir)
     if (!('skillsDir' in checked)) return
     for (const skill of canvasSkillFiles()) {
       const dir = path.join(checked.skillsDir, skill.name)

@@ -51,7 +51,7 @@ import { legacyCliPin } from './legacy-version-manager'
 import { detectClaudeUi, lastPromptLineForClaude, looksLikeShellPromptTail } from './providers/claude/ui-detection'
 import { getProvider } from './providers'
 import { isSshCapable } from './providers/types'
-import type { TelemetrySource } from './providers/types'
+import type { TelemetrySource, SessionRunScreen, SpawnOptions } from './providers/types'
 import { resolveCwd, isHomeOrAncestor } from './path-utils'
 import { buildTerminalLaunchLine } from './terminal-launch-line'
 import { dispatchSSHStatuslineUpdate, cleanupStatusFile } from './statusline-watcher'
@@ -76,8 +76,6 @@ import { MARKER_FALLBACK_FLUSH_MS } from './canvas/canvas-marker-queue'
 import { prepareCodexCanvasLaunch } from './canvas/codex-canvas-launch'
 import { registerCodexCanvasRoots } from './canvas/codex-canvas-roots'
 import { noteCodexSessionGuidance, forgetCodexSessionGuidance } from './canvas/codex-guidance'
-import { openCodexScreen, feedCodexScreen, resizeCodexScreen, closeCodexScreen, hasCodexScreen, submitCodexText } from './providers/codex/session-screen'
-import { codexLaunchRoute, codexLaunchLineForLog, type CodexSpawnOptions } from './providers/codex/spawn'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal, withProfileHome, MANAGED_LAUNCH_REFUSAL } from './account-profiles'
 export { withProfileHome } from './account-profiles'
@@ -89,7 +87,7 @@ import { acquireProfileConsumer, pendingProfileRefresh } from './profile-consume
 import { updateSessionMeta, clearSessionMeta, markPtySessionAlive, markPtySessionGone } from './session-registry'
 import { readConfig, getConfigDir } from './config-manager'
 import { getPtyIntegrityMonitor } from './services/pty-integrity-monitor'
-import { getWatchdogManager } from './watchdog/watchdog-manager'
+import { getWatchdogManager, clampAnsiChunk } from './watchdog/watchdog-manager'
 import { clearCodexIdleAttention } from './codex-idle-attention'
 
 import * as path from 'path'
@@ -951,6 +949,14 @@ export function routeHookTranscriptPath(sessionId: string, transcriptPath: strin
  *  session). The attention source maps Codex's own hook events with it. */
 export function isCodexPtySession(sessionId: string): boolean {
   return ptySessions.get(sessionId)?.agent === 'codex'
+}
+
+/** WP2 PR 4, P4.1: the Codex package's pane of each run and its submit
+ *  primitive (providers/codex/session-screen.ts), from the registered
+ *  provider: this module reaches a provider package only through the
+ *  registry, never by importing it. Undefined when none is registered. */
+function codexRunScreen(): SessionRunScreen | undefined {
+  try { return getProvider('codex').runScreen } catch { return undefined }
 }
 
 /** P3.10: a session's own hook named conversation `uuid`: P3.6's doubt
@@ -4957,14 +4963,17 @@ function spawnPtyResolved(
         sessionId,
         configuredCwd: resolvedCwd,
         home: launch.home ?? launch.env.CODEX_HOME ?? '',
-        route: codexLaunchRoute(launch.executable),
+        // The package says which way this executable starts; one that cannot
+        // say is taken as cmd.exe, the route that carries less.
+        route: provider.launchRoute?.(launch.executable) ?? 'cmd',
+        managedSkillsDirFor: (home, resourcesDir) => provider.stagedSkillsDir?.(home, resourcesDir) ?? null,
         cliVersion: launch.cliVersion ?? null,
         toolsOn: codexToolsOn,
         startFolders: options?.useResumePicker ? null : [resolvedCwd, ...(resumeTarget?.cwd ? [resumeTarget.cwd] : [])],
         env: launch.env,
       })
       setCanvasCodexConversationLookup(codexConversationForCanvas)
-      const codexSpawnOptions: CodexSpawnOptions = {
+      const codexSpawnOptions: SpawnOptions = {
         sessionId,
         provider: 'codex',
         // The configured directory, resolved: where an exact resume falls
@@ -5030,7 +5039,9 @@ function spawnPtyResolved(
       const conpty = bundledConptyChoice()
       const conptyNote = conpty.kind === 'bundled' ? ` conpty=bundled (${describePathForLog(conpty.dir)})`
         : conpty.kind === 'system' ? ` conpty=system (${describePathForLog(conpty.reason)})` : ''
-      logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${codexLaunchLineForLog(commandLine ?? spawnArgs.join(' '))} cwd=${describePathForLog(codexCwd)} (resume=${built.resumeId ?? 'none'})${conptyNote}`)
+      // The builder's log line (long or private values named by length); a
+      // builder that gives none: no argument is logged.
+      logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${built.logLine ?? '(arguments not logged)'} cwd=${describePathForLog(codexCwd)} (resume=${built.resumeId ?? 'none'})${conptyNote}`)
       // WP2 PR 4, P4.1: the worktree CCC designates for the session, told to
       // its guard as a Claude session's is (ADR-016). Any inherited hint goes
       // first, in every spelling (Windows names are case-insensitive), and
@@ -5077,9 +5088,11 @@ function spawnPtyResolved(
       }
       if (onBundledConpty) watchBundledConptyEarlyExit(sessionId, started)
       // WP2 PR 4, P4.1: main's own reading of this run's screen, for the
-      // submit primitive (providers/codex/session-screen.ts), fed below.
+      // submit primitive (the package's runScreen), fed below through the
+      // Watchdog's CSI clamp.
       const codexRun = started
-      if (codexRun) openCodexScreen(sessionId, { cols, rows, write: (data) => codexRun.write(data), current: () => ptySessions.get(sessionId)?.ptyProcess === codexRun })
+      const runScreen = provider.runScreen
+      if (codexRun && runScreen) runScreen.open(sessionId, { cols, rows, write: (data) => codexRun.write(data), current: () => ptySessions.get(sessionId)?.ptyProcess === codexRun, clamp: clampAnsiChunk })
       ptyProcess.onData((data) => {
         if (win.isDestroyed()) return
         if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) return // rc.15 review R9
@@ -5087,7 +5100,7 @@ function spawnPtyResolved(
         // P3.10 (rows 43, 46): the Watchdog's pane and silence clock, as a
         // Claude session's; a no-op until the session arms one (off by default).
         getWatchdogManager()?.feedData(sessionId, data)
-        feedCodexScreen(sessionId, data)
+        runScreen?.feed(sessionId, data)
         win.webContents.send(`pty:data:${sessionId}`, data)
       })
       // P3.12 (row 31): whatever an earlier launch of this session claimed is
@@ -5200,7 +5213,7 @@ function spawnPtyResolved(
     } catch (err) {
       // P3.10: a launch that failed keeps no hook file or hooked mark, and
       // (round 1, B2) no gateway token it minted.
-      closeCodexScreen(sessionId)
+      codexRunScreen()?.close(sessionId)
       if (hookFile) { try { hookFile.dispose() } catch { /* best-effort */ } }
       forgetCodexHooks(sessionId)
       if (tokenMinted) dropGatewayToken(sessionId)
@@ -6323,8 +6336,9 @@ function isSubmittedPayload(data: string): boolean {
  */
 export function writeCanvasMarkerLine(sessionId: string, line: string): void | Promise<SubmitTextResult> {
   if (isCodexPtySession(sessionId)) {
-    if (!hasCodexScreen(sessionId)) return Promise.resolve({ delivered: false, reason: 'session-gone' })
-    return submitCodexText(sessionId, line, { readyWaitMs: MARKER_FALLBACK_FLUSH_MS })
+    const screen = codexRunScreen()
+    if (!screen?.has(sessionId)) return Promise.resolve({ delivered: false, reason: 'session-gone' })
+    return screen.submit(sessionId, line, { readyWaitMs: MARKER_FALLBACK_FLUSH_MS })
   }
   writeSubmittedLine(sessionId, line)
 }
@@ -6429,7 +6443,7 @@ export function resizePty(sessionId: string, cols: number, rows: number): void {
     // Keep the watchdog's rendered pane wrapping like the real one (#266).
     getWatchdogManager()?.noteResize(sessionId, cols, rows)
     // WP2 PR 4, P4.1: and the submit primitive's pane of a Codex session.
-    resizeCodexScreen(sessionId, cols, rows)
+    codexRunScreen()?.resize(sessionId, cols, rows)
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException)?.code
     if (code === 'EPIPE' || code === 'EIO') {
@@ -6588,7 +6602,7 @@ function cleanupSessionResources(sessionId: string): void {
   // WP2 PR 4, P4.1: the submit primitive's pane of a Codex run goes with it
   // (a submission still waiting on it reports the session gone, and types
   // nothing into the next run), and so does the launch's guidance record.
-  closeCodexScreen(sessionId)
+  codexRunScreen()?.close(sessionId)
   forgetCodexSessionGuidance(sessionId)
   // SECURITY (adversarial review, FINDING 1): tear the session watchdog down
   // here too, for the identical per-spawn isolation invariant. This runs from
