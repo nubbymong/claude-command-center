@@ -3,6 +3,7 @@ import {
   trainingSteps,
   currentTrainingVersion,
   getNewSteps,
+  compareTrainingVersions,
   type TrainingStep,
 } from '../../src/renderer/training-steps'
 
@@ -125,6 +126,26 @@ describe('training-steps', () => {
       for (const step of trainingSteps) {
         expect(compareSemver(ver, step.sinceVersion)).toBeGreaterThanOrEqual(0)
       }
+    })
+  })
+
+  // [host] PR 4 VM final: a tour stamp of a prerelease (2.1.1-beta.2) read as
+  // 2.1.0 (Number('1-beta') is NaN, then 0), so the 2.1.1 cards counted as
+  // unseen. A prerelease is read as its release: a 2.1.1 beta carries the
+  // 2.1.1 cards.
+  describe('the tour version compare reads a prerelease as its release', () => {
+    it('a stamp of 2.1.1-beta.2 has seen the 2.1.1 cards; a 2.1.0 one has not', () => {
+      expect(getNewSteps('2.1.1-beta.2')).toEqual([])
+      expect(getNewSteps('2.1.0').map((s) => s.sinceVersion)).toContain('2.1.1')
+      expect(getNewSteps('2.1.0-rc.10').map((s) => s.sinceVersion)).toContain('2.1.1')
+    })
+    it('orders by the numbers, whatever follows them', () => {
+      expect(compareTrainingVersions('2.1.1-beta.2', '2.1.1')).toBe(0)
+      expect(compareTrainingVersions('2.1.2-beta.1', '2.1.1')).toBeGreaterThan(0)
+      expect(compareTrainingVersions('2.1.0-rc.10', '2.1.1')).toBeLessThan(0)
+      expect(compareTrainingVersions('v2.1.1', '2.1.1')).toBe(0)
+      expect(compareTrainingVersions('2.10.0', '2.9.9')).toBeGreaterThan(0)
+      expect(compareTrainingVersions('garbage', '0.0.0')).toBe(0)
     })
   })
 

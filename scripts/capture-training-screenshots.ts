@@ -1213,7 +1213,7 @@ async function main() {
     // Snap — click Snap button to surface the dropdown menu (Rectangle /
     // Window). Capture the dropdown, NOT the rectangle overlay (which is
     // a separate Electron window).
-    const snapClicked = await clickToolbarButton(window, 'Take Screenshot')
+    const snapClicked = await clickToolbarButton(window, 'Take a screenshot')
     if (snapClicked) {
       await window.waitForTimeout(500)
       await capture(window, 'step-snap.jpg', 'Snap dropdown menu')

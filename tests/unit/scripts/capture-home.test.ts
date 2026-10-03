@@ -63,6 +63,15 @@ describe('the capture tool\'s home', () => {
     expect(existsSync(join(home, '.claude'))).toBe(true)
   })
 
+  it('[host] the script finds the Snap button by the title the button has (PR 4 VM final: step-snap.jpg was not taken)', () => {
+    const root = resolve(__dirname, '..', '..', '..')
+    const button = readFileSync(join(root, 'src', 'renderer', 'components', 'ScreenshotButton.tsx'), 'utf8')
+    const title = /title="([^"]+)"/.exec(button)![1]
+    const src = readFileSync(join(root, 'scripts', 'capture-training-screenshots.ts'), 'utf8')
+    const lookup = /const snapClicked = await clickToolbarButton\(window, '([^']+)'\)/.exec(src)![1]
+    expect(title.startsWith(lookup), `"${lookup}" is not the start of "${title}"`).toBe(true)
+  })
+
   it('[host] the script resolves no path from the real home and launches the app with that environment', () => {
     const src = readFileSync(resolve(__dirname, '..', '..', '..', 'scripts', 'capture-training-screenshots.ts'), 'utf8')
     expect(src).not.toMatch(/os\.homedir\(/)

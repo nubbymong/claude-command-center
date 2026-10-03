@@ -136,6 +136,19 @@ export default function TrainingWalkthrough({ onClose, showAll = false, mode = '
     onClose()
   }, [onClose])
 
+  // No card to draw (none new to this user for the assistants in use): close
+  // at once, stamping as a close does. Drawing nothing and staying open kept
+  // the training gate up over an empty screen, so nothing below it took a
+  // turn (#609: a gate the chain returns must render; PR 4 VM final, review
+  // P411-4).
+  const closedEmpty = useRef(false)
+  const empty = steps.length === 0
+  useEffect(() => {
+    if (!empty || closedEmpty.current) return
+    closedEmpty.current = true
+    handleClose()
+  }, [empty, handleClose])
+
   const handleNext = () => {
     if (isLast) {
       handleClose()
@@ -470,22 +483,3 @@ export default function TrainingWalkthrough({ onClose, showAll = false, mode = '
   )
 }
 
-/** Check if training walkthrough should be shown (new steps available) */
-export function shouldShowTraining(): boolean {
-  try {
-    const lastVer = useAppMetaStore.getState().meta.lastTrainingVersion
-    if (!lastVer) return true
-    return getNewSteps(lastVer).length > 0
-  } catch {
-    return false
-  }
-}
-
-/** Check if this is a first install (no training version recorded) */
-export function isFirstInstall(): boolean {
-  try {
-    return !useAppMetaStore.getState().meta.lastTrainingVersion
-  } catch {
-    return false
-  }
-}

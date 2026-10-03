@@ -123,8 +123,6 @@ export interface BootGateState {
   helloCodexOpen?: boolean
   /** shouldShowWhatsNew() — true before postConfigInit has armed the harness. */
   whatsNewDue: boolean
-  /** shouldShowTraining() || isFirstInstall() — true before the tour opens. */
-  trainingDue: boolean
   /** isGitHubOnboardingDue() — true before the onboarding effect's 120ms timer fires. */
   githubOnboardingDue: boolean
 }
@@ -142,7 +140,11 @@ export function pickBootGate(s: BootGateState): BootGate | null {
   // conversation indexing notice that is due comes first.
   if (s.showGuidedConfig) return s.loggingConsentSeen ? 'guidedConfig' : 'loggingConsent'
   if (s.showGitHubOnboarding) return 'githubOnboarding'
-  if (s.whatsNewDue || s.trainingDue || s.githubOnboardingDue) return null
+  // No tour-due wait (PR 4 VM final): nothing opens the tour by itself since
+  // the onboarding page replaced its auto-open (2026-08-21), so waiting on an
+  // unseen tour card held every gate below, the resume prompt included, for
+  // good. The tour opens from the Feature Guide only, as the training gate.
+  if (s.whatsNewDue || s.githubOnboardingDue) return null
   if (s.codexReconfirmDue) return 'codexReconfirm'
   if (!s.loggingConsentSeen) return 'loggingConsent'
   if (s.resumePending) return 'resume'

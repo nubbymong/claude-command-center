@@ -44,10 +44,10 @@ export function settleOnboardingFinish(): void {
  * `lastTrainingVersion` IS stamped, for the same reason the full finish stamps
  * it: the legacy guided tour's auto-trigger has to be retired by whichever
  * surface delivered this release, or it stays armed forever. That matters more
- * than it looks — `trainingDue` holds the boot chain open (bootGates), so an
- * un-retired trigger with nothing left to auto-open it would sit above the
- * resume prompt and stop it from ever appearing. The tour itself stays
- * available on demand from the Feature Guide.
+ * than it looks: the stamp is what the tour's first-run mode reads. (An
+ * unseen tour card no longer holds the boot chain: PR 4 VM final took that
+ * wait out of bootGates, since nothing opens the tour by itself.) The tour
+ * itself stays available on demand from the Feature Guide.
  */
 export function settleWhatsNewOnly(): void {
   useAppMetaStore.getState().update({
