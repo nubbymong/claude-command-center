@@ -242,9 +242,9 @@ describe('a launch through the resume picker (the VM checkpoint, F2)', () => {
     expect(h.decided[0]).toMatchObject({ external: true, route: 'direct', cliVersion: '0.155.1', home: externalHome, cwds: [project] })
     expect(h.built[0].useResumePicker).toBe(true)
     expect(h.built[0].developerInstructions).toBe('THE-DECIDED-GUIDANCE')
-    // Review RVMFIX-3: recorded as the picker delivers it, not as full: a new
-    // conversation it starts in this folder gets the guidance, a picked one
-    // keeps what it started with, one in another worktree gets none.
+    // Review RVMFIX-3: recorded as the picker delivers it, not as full: passed
+    // when Codex starts in this folder, kept out of another worktree, and a
+    // resumed conversation that already has instructions keeps its own.
     expect(codexSessionGuidance(SID)).toEqual({ guidance: 'picker' })
   })
 

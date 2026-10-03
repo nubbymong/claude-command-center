@@ -130,7 +130,7 @@ export interface ProviderSpawnCommand {
   askPromptOnArgv?: boolean
   /** Codex (WP2 PR 4, review): the launch runs the resume picker (asked for,
    *  in place, and no conversation resumed exactly), so the guidance it
-   *  carries reaches only a new conversation started in the session's folder. */
+   *  carries is passed only when Codex starts in the session's own folder. */
   viaPicker?: boolean
 }
 

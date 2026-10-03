@@ -31,9 +31,11 @@ const GUIDANCE_WORDS: Record<Extract<CanvasSessionGuidance, { guidance: 'tools-o
   'skills-not-staged': 'the skills could not be put in place for this Codex account',
 }
 
-/** A launch through the resume picker (review RVMFIX-3): the guidance rides
- *  only a new conversation the picker starts in the session's own folder. */
-const PICKER_GUIDANCE_LINE = 'This Codex session was started through the resume picker: the canvas tools have their skills\' guidance only in a new conversation started in this session\'s folder (a resumed conversation keeps the instructions it started with).'
+/** A launch through the resume picker (review RVMFIX-3, the PR 4 final VM
+ *  run): the guidance is passed when Codex starts in the session's own
+ *  folder, a new conversation or a resumed one without instructions of its
+ *  own; one that already has instructions keeps them. */
+const PICKER_GUIDANCE_LINE = 'This Codex session was started through the resume picker: its skills\' guidance is passed when Codex starts in this session\'s own folder; a resumed conversation that already has instructions keeps its own.'
 
 const UNDELIVERED_WORDS: Record<SubmitNotDeliveredReason, string> = {
   'busy-timeout': 'Codex stayed busy, or its prompt was not ready, for two minutes',
