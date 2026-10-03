@@ -2,13 +2,14 @@
 // written into the app's account registry with the app's own registry
 // transitions (scripts/capture-seed.ts buildCodexRegistry), plus each
 // account's folder and, for an account that keeps them, Codex's own memory
-// files (content.js CODEX_MEMORIES). seed.js runs it when CCC_STAGE_REPO
-// names a checkout with node_modules:
+// files (content.js CODEX_MEMORIES). seed.js bundles it with the checkout's
+// own esbuild (pinned by the lockfile) into the staging root's runner folder
+// and runs it with node:
 //
-//   npx tsx scripts/readme-shots/stage/codex-registry.ts <resources dir> <content.js>
+//   node <root>/runner/codex-registry.cjs <resources dir> <content.js>
 //
-// Writes only under <resources dir>/providers and <resources dir>/codex-realms.
-// Runs ON the screenshot VM against a staging data dir, never the owner's.
+// Writes only under <resources dir>/providers and <resources dir>/codex-realms,
+// which seed.js has checked are inside the staging root (stage-root.js).
 import fs from 'fs'
 import path from 'path'
 import { createRequire } from 'module'
