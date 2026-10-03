@@ -4,8 +4,6 @@
  * Exports:
  *  - registryFallbackPricing(): registry-derived Claude pricing (per 1M tokens)
  *  - fetchModelPricing(): fetches/caches live pricing from LiteLLM
- *  - getPricing(model): resolves per-model pricing at runtime
- *  - getPricingWithSource(model): resolves pricing with a source tag
  *  - normalizeModelForPricing(model, keys): longest-prefix key match
  *  - getAllPricing(): merged Claude + Codex map for query-time cost CTE
  */
@@ -31,8 +29,6 @@ export interface ModelPricing {
   cacheRead: number
   cacheWrite: number
 }
-
-export type PricingSource = 'live' | 'fallback' | 'prefix' | 'guess'
 
 // ── Registry-derived fallback pricing (per 1M tokens) ──
 // Replaces the old hardcoded FALLBACK_PRICING literal. Derived from the
@@ -211,63 +207,13 @@ async function fetchModelPricingOnce(): Promise<void> {
   }
 }
 
-// Safe terminal default for the guess branch: sonnet-tier rates. Literal, not a
-// registry lookup, so a future baseline rename can never make costs NaN.
-const GUESS_DEFAULT: ModelPricing = { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 }
+// P4.11 review (P411-1): getPricing / getPricingWithSource, which nothing in
+// the app called, are gone. Tokenomics prices a Claude turn by the keys of
+// getAllPricing() (tk-parse.ts toPriceModel: its own key, else the longest key
+// it starts with), so a family whose members differ in price (Opus 5.5 and
+// Sonnet 5.5 below the versions before them) prices each dated id as its own
+// version.
 
-const guessedModels = new Set<string>()
-
-/**
- * The key whose price a model id with no key of its own takes.
- *
- * 1. The longest key that is the model's own id with something after it (a
- *    date, `claude-opus-4-5-20251101`, or a variant, `claude-opus-4-8-fast-...`),
- *    never a longer number (`claude-opus-4-8` does not price `claude-opus-4-80`).
- *    Version-faithful, so a sibling's price or the registry's order cannot move
- *    it: since Opus 5.5 and Sonnet 5.5 cost less than the versions before them,
- *    a collapsed family base alone would price a dated Opus 4.5 at Opus 5.5's
- *    rate (P4.11).
- * 2. Else the LONGEST base wins, not the first one that happens to match. Keys
- *    collapse to a base by dropping the trailing version (`claude-opus-4-8` ->
- *    `claude-opus`), so a short generic base can shadow a specific one purely
- *    by sitting earlier in the registry. Registry order is a UI concern (#385):
- *    it decides only which member of a family prices a version no key knows (the
- *    registry lists each family newest first, so the newest).
- */
-export function prefixPricingKey(keys: readonly string[], model: string): string | null {
-  let own: string | null = null
-  for (const key of keys) {
-    if (key.length < model.length && model.startsWith(key) && !/\d/.test(model.charAt(key.length)) && (!own || key.length > own.length)) own = key
-  }
-  if (own) return own
-  let bestKey: string | null = null
-  let bestBase = ''
-  for (const key of keys) {
-    const base = key.replace(/-\d+[-\d]*$/, '')
-    if (model.startsWith(base) && base.length > bestBase.length) { bestBase = base; bestKey = key }
-  }
-  return bestKey
-}
-
-export function getPricingWithSource(model: string): { pricing: ModelPricing; source: PricingSource } {
-  const fallback = registryFallbackPricing()
-  const sources: Array<[Record<string, ModelPricing>, PricingSource]> =
-    livePricing ? [[livePricing, 'live'], [fallback, 'fallback']] : [[fallback, 'fallback']]
-  for (const [db, src] of sources) {
-    if (db[model]) return { pricing: db[model], source: src }
-    const key = prefixPricingKey(Object.keys(db), model)
-    if (key) return { pricing: db[key], source: 'prefix' }
-  }
-  // Novel family: WARN + guess (spec §4) — same terminal numbers as before
-  // (sonnet rates) so totals don't shift, but tagged + logged, never silent.
-  if (!guessedModels.has(model)) {
-    guessedModels.add(model)
-    logInfo(`[tokenomics] no pricing for "${model}" — using guess (sonnet rates); Sentinel will propose a registry entry`)
-  }
-  return { pricing: fallback['claude-sonnet-4-6'] ?? GUESS_DEFAULT, source: 'guess' }
-}
-
-export function getPricing(model: string): ModelPricing { return getPricingWithSource(model).pricing }
 
 // ── normalizeModelForPricing ──
 
