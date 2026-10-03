@@ -28,7 +28,7 @@
 const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
-const { execFileSync } = require('child_process')
+const { execFileSync, execSync } = require('child_process')
 const C = require('./content')
 
 const argv = process.argv.slice(2)
@@ -143,6 +143,8 @@ function restore() {
 // real file's place and the real one is parked beside it as claude.real.cmd.
 function installFakeClis() {
   const here = __dirname
+  // A staging fake-CLI folder does not exist yet (the npm bin always did).
+  mkdirp(NPM_BIN)
   const real = `${NPM_BIN}/claude.cmd`
   if (fs.existsSync(real) && !fs.readFileSync(real, 'utf8').includes('fake-claude.js')) {
     fs.renameSync(real, `${NPM_BIN}/claude.real.cmd`)
@@ -215,7 +217,11 @@ function seedConfig() {
   const completedSteps = {}
   for (const s of steps) completedSteps[s] = APP_VERSION
   writeJson(`${CONFIG}/app-meta.json`, {
-    setupVersion: APP_VERSION, lastSeenVersion: APP_VERSION, lastRunVersion: APP_VERSION, lastTrainingVersion: APP_VERSION,
+    // lastTrainingVersion above every card: the app stamps the newest card's
+    // version, and its compare reads a prerelease like 2.1.1-beta.2 as 2.1.0,
+    // so the 2.1.1 cards would count as new and the boot chain would wait on
+    // a tour nothing opens (no resume prompt; VM run at f73f1785).
+    setupVersion: APP_VERSION, lastSeenVersion: APP_VERSION, lastRunVersion: APP_VERSION, lastTrainingVersion: '99.99.99',
     // 2.1.1's one-time pages: Hello Codex and the multi-spawn intro, seen.
     helloCodexSeenVersion: APP_VERSION, multiSpawnIntroVersion: APP_VERSION,
     onboardingCompletedVersion: '3', onboardingAppVersion: APP_VERSION, completedSteps,
@@ -457,8 +463,17 @@ function canonicalize(value) {
 }
 function seedCanvas() {
   const secretFile = `${CONFIG}/conductor-secret.json`
-  const secret = readJson(secretFile, null)?.secret
-  if (!secret) { log('!! no conductor-secret.json — start the app once first; skipping canvas'); return }
+  let secret = readJson(secretFile, null)?.secret
+  if (!secret) {
+    // 2.1.1 makes its install secret lazily (the first session token), so a
+    // first start alone leaves none. Mint it as the app does
+    // (src/main/install-secret.ts: 32 random bytes as hex, CONDUCTOR_SECRET_VERSION
+    // 3), owner-only; the app then loads this one.
+    secret = crypto.randomBytes(32).toString('hex')
+    mkdirp(CONFIG)
+    fs.writeFileSync(secretFile, JSON.stringify({ secret, v: 3 }), { encoding: 'utf8', mode: 0o600 })
+    log('conductor-secret.json minted for the staging')
+  }
   const key = crypto.createHmac('sha256', secret).update('ccc:canvas-record-v1', 'utf8').digest()
   const mac = (record) => crypto.createHmac('sha256', key).update(`canvas-record-v1\n${canonicalize(record)}`, 'utf8').digest('hex')
 
@@ -521,7 +536,8 @@ function seedProjects() {
 function seedCodexAccounts() {
   if (!REPO) { log('!! CCC_STAGE_REPO not set: Codex accounts skipped'); return }
   const q = (s) => `"${s}"`
-  const out = execFileSync('npx', ['--yes', 'tsx', q(`${REPO}/scripts/readme-shots/stage/codex-registry.ts`), q(RES), q(path.join(__dirname, 'content.js'))], { cwd: REPO, encoding: 'utf8', shell: true })
+  const cmd = ['npx --yes tsx', q(`${REPO}/scripts/readme-shots/stage/codex-registry.ts`), q(RES), q(path.join(__dirname, 'content.js'))].join(' ')
+  const out = execSync(cmd, { cwd: REPO, encoding: 'utf8' })
   log(out.trim())
 }
 
