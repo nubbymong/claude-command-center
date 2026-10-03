@@ -20,7 +20,7 @@
 // can show it on the review it belongs to. Claude's markers keep their
 // synchronous write and answer nothing.
 
-import { CanvasMarkerQueue, MARKER_QUEUE_MAX } from './canvas-marker-queue'
+import { CanvasMarkerQueue } from './canvas-marker-queue'
 import { logInfo, logWarn } from '../debug-logger'
 import type { CanvasMarkerUndelivered, SubmitTextResult } from '../../shared/types'
 
@@ -43,68 +43,49 @@ export interface CanvasMarkerWiring {
 
 let queue: CanvasMarkerQueue | null = null
 
-/** The canvas each pending marker line was filed on, per session, so a
- *  marker the primitive could not deliver can name it. Bounded like the
- *  queue; a session's entries go with the session. */
-const canvasOfLine = new Map<string, Map<string, string>>()
-
-function noteCanvasOfLine(sessionId: string, line: string, canvasId: string): void {
-  let lines = canvasOfLine.get(sessionId)
-  if (!lines) {
-    lines = new Map()
-    canvasOfLine.set(sessionId, lines)
-  }
-  lines.delete(line)
-  lines.set(line, canvasId)
-  while (lines.size > MARKER_QUEUE_MAX * 2) {
-    const oldest = lines.keys().next().value
-    if (oldest === undefined) break
-    lines.delete(oldest)
-  }
-}
-
-function takeCanvasOfLine(sessionId: string, line: string): string | undefined {
-  const lines = canvasOfLine.get(sessionId)
-  const canvasId = lines?.get(line)
-  if (lines && canvasId !== undefined) {
-    lines.delete(line)
-    if (lines.size === 0) canvasOfLine.delete(sessionId)
-  }
-  return canvasId
-}
+/** The marker writes still awaiting an answer, per session. The canvas a
+ *  marker was filed on travels with its own write (ADR-009 round 1: never
+ *  looked up by the line, which two canvases of one session can share); this
+ *  only says the session has not ended since, so a late answer for a session
+ *  that ended tells no canvas. Each entry goes with its answer. */
+const awaiting = new Map<string, Set<object>>()
 
 /** The queue's write: the wiring's, with a later answer followed up. */
-function writeThrough(wiring: CanvasMarkerWiring, sessionId: string, line: string): void {
-  let answer: void | Promise<SubmitTextResult>
-  try {
-    answer = wiring.write(sessionId, line)
-  } catch (err) {
-    takeCanvasOfLine(sessionId, line)
-    throw err
+function writeThrough(wiring: CanvasMarkerWiring, sessionId: string, line: string, canvasId: string | undefined): void {
+  const answer = wiring.write(sessionId, line)
+  if (!answer || typeof (answer as Promise<SubmitTextResult>).then !== 'function') return
+  const token = {}
+  let tokens = awaiting.get(sessionId)
+  if (!tokens) {
+    tokens = new Set()
+    awaiting.set(sessionId, tokens)
   }
-  if (!answer || typeof (answer as Promise<SubmitTextResult>).then !== 'function') {
-    takeCanvasOfLine(sessionId, line)
-    return
+  tokens.add(token)
+  const settle = (): boolean => {
+    const current = awaiting.get(sessionId)
+    const held = !!current?.delete(token)
+    if (current && current.size === 0) awaiting.delete(sessionId)
+    return held
   }
   void (answer as Promise<SubmitTextResult>).then(
     (result) => {
-      const canvasId = takeCanvasOfLine(sessionId, line)
+      const stillHeld = settle()
       if (!result || result.delivered !== false) return
-      if (!canvasId) {
-        logWarn(`[canvas-marker] a marker for ${sessionId} was not delivered (${result.reason}); no canvas is recorded for it any more (the session ended or its markers were cleared), so no canvas is told`)
+      if (!canvasId || !stillHeld) {
+        logWarn(`[canvas-marker] a marker for ${sessionId} was not delivered (${result.reason}); ${canvasId ? 'the session ended or its markers were cleared since' : 'no canvas was named for it'}, so no canvas is told`)
         return
       }
       logInfo(`[canvas-marker] a marker for ${sessionId} was not delivered (${result.reason})`)
       try { wiring.onUndelivered?.({ sessionId, canvasId, line, reason: result.reason }) } catch { /* the window is gone */ }
     },
-    () => { takeCanvasOfLine(sessionId, line) },
+    () => { settle() },
   )
 }
 
 /** Wire the queue to the PTY and the hook stream. Called once, at boot. */
 export function startCanvasMarkerQueue(wiring: CanvasMarkerWiring): void {
   if (queue) return
-  queue = new CanvasMarkerQueue({ write: (sessionId, line) => writeThrough(wiring, sessionId, line) })
+  queue = new CanvasMarkerQueue({ write: (sessionId, line, canvasId) => writeThrough(wiring, sessionId, line, canvasId) })
   if (wiring.subscribe) {
     wiring.subscribe((sessionId, event) => queue?.noteHookEvent(sessionId, event))
     logInfo('[canvas-marker] watching the hook stream for agent turn boundaries')
@@ -124,18 +105,17 @@ export function startCanvasMarkerQueue(wiring: CanvasMarkerWiring): void {
  */
 export function deliverCanvasMarker(sessionId: string, line: string, canvasId?: string): 'sent' | 'queued' | 'unwired' {
   if (!queue) return 'unwired'
-  if (typeof canvasId === 'string' && canvasId) noteCanvasOfLine(sessionId, line, canvasId)
-  return queue.deliver(sessionId, line)
+  return queue.deliver(sessionId, line, typeof canvasId === 'string' && canvasId ? canvasId : undefined)
 }
 
 /** A session's PTY is gone; drop anything still held for it. */
 export function forgetCanvasMarkers(sessionId: string): void {
   queue?.forget(sessionId)
-  canvasOfLine.delete(sessionId)
+  awaiting.delete(sessionId)
 }
 
 /** Test seam. */
 export function _resetCanvasMarkerQueueForTest(): void {
   queue = null
-  canvasOfLine.clear()
+  awaiting.clear()
 }

@@ -209,3 +209,36 @@ describe('Codex: a resumed Ask conversation is held to the help folder', () => {
     expect(h.spawns[0].cwd).toBe(old)
   })
 })
+
+describe('the help folder is compared by its exact spelling (ADR-009 round 1, U4.11)', () => {
+  // The help folder's last part in other letters: on Windows and macOS the
+  // same folder on disk, and still not the folder the launch runs in.
+  const otherCase = (): string => path.join(path.dirname(help), 'HELP')
+
+  it('[host] Codex: a conversation recorded under another case of the help folder is not resumed; the launch starts fresh there', () => {
+    codex({ cwd: help, isAsk: true, resume: { uuid: CODEX_ID, cwd: otherCase() } })
+    expect(h.built[0].resume).toBeUndefined()
+    expect(h.spawns[0].cwd).toBe(help)
+  })
+
+  it('[host] Claude Code: the same, no --resume', async () => {
+    claude({ cwd: help, isAsk: true, resume: { uuid: UUID, cwd: otherCase() } })
+    expect(h.spawns[0].cwd).toBe(help)
+    expect(await launchLine()).not.toContain('--resume')
+  })
+
+  it('[host] separators are normalised and a trailing one dropped: the same spelling is resumed', () => {
+    const spellings = [help + path.sep, help + path.sep + path.sep, ...(process.platform === 'win32' ? [help.replace(/\\/g, '/'), help.replace(/\\/g, '/') + '/'] : [])]
+    for (const spelled of spellings) {
+      h.built = []
+      codex({ cwd: help, isAsk: true, resume: { uuid: CODEX_ID, cwd: spelled } })
+      expect(h.built[0].resume, spelled).toEqual({ uuid: CODEX_ID, cwd: help })
+    }
+  })
+
+  it('[host] a spelling through `..` is not the same spelling: started fresh', () => {
+    const roundabout = path.join(path.dirname(help), 'x') + path.sep + '..' + path.sep + 'help'
+    codex({ cwd: help, isAsk: true, resume: { uuid: CODEX_ID, cwd: roundabout } })
+    expect(h.built[0].resume).toBeUndefined()
+  })
+})

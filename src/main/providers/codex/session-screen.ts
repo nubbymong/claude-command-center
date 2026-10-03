@@ -108,6 +108,33 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => {
   ;(t as { unref?: () => void }).unref?.()
 })
 
+/** The longest a read waits for the pane to draw what it was fed. */
+export const PANE_DRAW_WAIT_MS = 1_000
+
+/** Resolves true once the pane has parsed everything fed to it so far (xterm
+ *  parses a write a moment later; an empty write's callback runs after every
+ *  write before it), false when that does not happen in time or the pane is
+ *  gone (ADR-009 round 1). */
+function paneDrawn(pane: Pane): Promise<boolean> {
+  return new Promise((resolve) => {
+    const t = setTimeout(() => resolve(false), PANE_DRAW_WAIT_MS)
+    ;(t as { unref?: () => void }).unref?.()
+    try {
+      pane.term.write('', () => { clearTimeout(t); resolve(true) })
+    } catch {
+      clearTimeout(t)
+      resolve(false)
+    }
+  })
+}
+
+/** Whether the session's pane has drawn everything it was fed (see paneDrawn);
+ *  false for a session with no pane. */
+export function settleCodexScreen(sessionId: string): Promise<boolean> {
+  const pane = panes.get(sessionId)
+  return pane ? paneDrawn(pane) : Promise.resolve(false)
+}
+
 /**
  * Submit `text` into the session's Codex composer by the primitive's rule,
  * after anything already in flight for this run (one at a time, in order).
@@ -122,6 +149,7 @@ export function submitCodexText(sessionId: string, text: string, opts: ComposerS
     try {
       const result = await submitToCodexComposer(text, {
         readScreen: () => (live() ? readXtermScreen(pane.term) : null),
+        settle: () => (live() ? paneDrawn(pane) : Promise.resolve(false)),
         size: () => ({ cols: pane.term.cols, rows: pane.term.rows }),
         write: (data) => { if (live()) pane.write(data) },
         live,

@@ -153,3 +153,38 @@ describe('submitting through the pane', () => {
     expect(fresh.sent).toEqual([])
   })
 })
+
+describe('the pane is drawn before it is read (ADR-009 round 1)', () => {
+  const TRUST = CLEAR + ['  Tip: New Build faster with Codex.', '', '  Do you trust the contents of this directory?', `${P} 1. Yes, continue`, '  Press enter to continue'].join('\r\n')
+  const shows = (needle: string): boolean => (screen.readCodexSessionScreen(SID) ?? []).some((l) => l.text.includes(needle))
+
+  it('[host] a chunk just fed is not on the screen the same moment, and is once the pane is settled', async () => {
+    fakeCodex(SID)
+    await new Promise((r) => setTimeout(r, 30))
+    screen.feedCodexScreen(SID, TRUST)
+    expect(shows('Do you trust')).toBe(false)
+    expect(await screen.settleCodexScreen(SID)).toBe(true)
+    expect(shows('Do you trust')).toBe(true)
+  })
+
+  it('[host] a session with no pane is never settled', async () => {
+    expect(await screen.settleCodexScreen('none00000000none0000')).toBe(false)
+  })
+
+  it('[host] a prompt that arrived as the text was typed is read right after the write: no further key', async () => {
+    const { logInfo } = await import('../../../src/main/debug-logger')
+    vi.mocked(logInfo).mockClear()
+    const sent: string[] = []
+    screen.openCodexScreen(SID, {
+      cols: 100, rows: 30, current: () => true, clamp: clampAnsiChunk,
+      // The prompt's bytes reach main in the same moment the text is written.
+      write: (data) => { sent.push(data); screen.feedCodexScreen(SID, TRUST) },
+    })
+    screen.feedCodexScreen(SID, READY)
+    await new Promise((r) => setTimeout(r, 30))
+    const r = await screen.submitCodexText(SID, MARKER, { readyWaitMs: 5_000 })
+    expect(r).toEqual({ delivered: false, reason: 'prompt-on-screen' })
+    expect(sent).toEqual([MARKER])
+    expect(vi.mocked(logInfo).mock.calls.map((c) => String(c[0]))).toContain(`[codex-submit] ${SID}: a prompt came up as the text was typed; no further key sent`)
+  })
+})

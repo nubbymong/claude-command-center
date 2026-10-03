@@ -263,6 +263,112 @@ function askQuestionForArgv(q: unknown): q is string {
   return typeof q === 'string' && q.trim().length > 0 && q.length <= ASK_QUESTION_MAX && !/[\u0000-\u001f\u007f-\u009f]/.test(q) && !LONE_SURROGATE_RE.test(q)
 }
 
+/** The Windows command line node-pty builds from a file and its arguments
+ *  (its lib/windowsPtyAgent.js argsToCommandLine, node-pty 1.2.0-beta.15):
+ *  an argument holding a space or a tab is quoted unless it already starts
+ *  AND ends with a double quote, and every double quote is escaped. Mirrored
+ *  here so a launch can check what the process will read; the tests pin it to
+ *  node-pty's own function. */
+export function nodePtyWindowsCommandLine(file: string, args: readonly string[]): string {
+  return [file, ...args].map((arg) => {
+    const opens = arg[0] === '"'
+    const closes = arg[arg.length - 1] === '"'
+    const quote = arg === '' || ((arg.includes(' ') || arg.includes('\t')) && arg.length > 1 && !(opens && closes))
+    let out = quote ? '"' : ''
+    let backslashes = 0
+    for (const c of arg) {
+      if (c === '\\') { backslashes++; continue }
+      out += c === '"' ? '\\'.repeat(backslashes * 2 + 1) + '"' : '\\'.repeat(backslashes) + c
+      backslashes = 0
+    }
+    return out + (quote ? '\\'.repeat(backslashes * 2) + '"' : '\\'.repeat(backslashes))
+  }).join(' ')
+}
+
+/** A Windows command line split into arguments as a Microsoft C or Rust
+ *  program splits it (the CommandLineToArgvW rules): the program name up to
+ *  its closing quote or the first space or tab; after it, 2n backslashes and
+ *  a quote are n backslashes and a quote that opens or closes, 2n+1 and a
+ *  quote are n backslashes and a literal quote, other backslashes are
+ *  literal. Two quotes inside a quoted part, which the parsers in use read
+ *  differently, give null: the line cannot be vouched for. */
+export function splitWindowsCommandLine(line: string): string[] | null {
+  const out: string[] = []
+  const blank = (c: string | undefined): boolean => c === ' ' || c === '\t'
+  let i = 0
+  let name = ''
+  if (line[0] === '"') {
+    const end = line.indexOf('"', 1)
+    name = end < 0 ? line.slice(1) : line.slice(1, end)
+    i = end < 0 ? line.length : end + 1
+  } else {
+    while (i < line.length && !blank(line[i])) name += line[i++]
+  }
+  out.push(name)
+  let cur = ''
+  let started = false
+  let quoted = false
+  while (i < line.length) {
+    const c = line[i]
+    if (blank(c) && !quoted) {
+      if (started) out.push(cur)
+      cur = ''
+      started = false
+      i++
+      continue
+    }
+    started = true
+    if (c === '\\') {
+      let n = 0
+      while (line[i] === '\\') { n++; i++ }
+      if (line[i] === '"') {
+        cur += '\\'.repeat(Math.floor(n / 2))
+        if (n % 2 === 1) { cur += '"'; i++ }
+      } else {
+        cur += '\\'.repeat(n)
+      }
+      continue
+    }
+    if (c === '"') {
+      if (quoted && line[i + 1] === '"') return null
+      quoted = !quoted
+      i++
+      continue
+    }
+    cur += c
+    i++
+  }
+  if (started) out.push(cur)
+  return out
+}
+
+/** Whether node-pty's Windows command line for `file` and `args` splits back
+ *  into exactly those arguments. */
+export function windowsArgvRoundTrips(file: string, args: readonly string[]): boolean {
+  const split = splitWindowsCommandLine(nodePtyWindowsCommandLine(file, args))
+  return split !== null && split.length === args.length + 1 && args.every((a, i) => split[i + 1] === a)
+}
+
+/** A file Windows runs through cmd.exe: a batch file, its name read as
+ *  Windows reads it (trailing dots and spaces dropped). */
+const WIN_BATCH_NAME_RE = /\.(bat|cmd)[. ]*$/i
+
+/** ADR-009 round 1 (PR 4): whether the question survives the launch as ONE
+ *  argument. Elsewhere node-pty hands the process its arguments as they are;
+ *  on Windows it joins them into one command line that codex.exe splits again,
+ *  so there the question rides argv only when it holds no double quote, the
+ *  executable is started directly (never a batch file, which Windows hands to
+ *  cmd.exe to read the line again), and the line splits back into exactly
+ *  these arguments. A question that does not is typed through the pane
+ *  instead, as one holding a control character is. */
+function askArgvSurvives(executable: string, args: readonly string[], win32: boolean): boolean {
+  if (!win32) return true
+  const question = args[args.length - 1]
+  if (typeof question !== 'string' || question.includes('"')) return false
+  if (WIN_BATCH_NAME_RE.test(executable)) return false
+  return windowsArgvRoundTrips(executable, args)
+}
+
 /** The Codex launch for `opts`, with the line the app's log may hold
  *  (`logLine`): the developer instructions named by their length
  *  (codexLaunchLineForLog), and an Ask question carried on argv named only by
@@ -559,9 +665,12 @@ function buildCodexSpawnCommand(opts: SpawnOptions): ProviderSpawnCommand {
   // prompt, after `--`, so a question that starts with "-" is never read as a
   // flag, and as ONE argument, whole (8,000 characters, an emoji included,
   // arrived intact on both versions). Only on this fresh launch, the form PB4
-  // ran: an exact resume or the picker gets it through the pane instead.
+  // ran: an exact resume or the picker gets it through the pane instead, and
+  // so does a question the Windows command line would not keep as one
+  // argument (askArgvSurvives).
   if (askQuestionForArgv(opts.askPrompt)) {
-    return { cmd: executable, args: [...flags, '--', opts.askPrompt], env, hooksInstalled, askPromptOnArgv: true }
+    const args = [...flags, '--', opts.askPrompt]
+    if (askArgvSurvives(executable, args, win32)) return { cmd: executable, args, env, hooksInstalled, askPromptOnArgv: true }
   }
   return { cmd: executable, args: flags, env, hooksInstalled }
 }

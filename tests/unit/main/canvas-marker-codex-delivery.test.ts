@@ -87,3 +87,52 @@ describe('a Codex marker the primitive did not deliver is shown on its canvas', 
     expect(undelivered).toEqual([])
   })
 })
+
+describe('two canvases of one session filing the same line (ADR-009 round 1, L2-1)', () => {
+  // Version and review numbers are counted per canvas, so two canvases of one
+  // session can file the very same marker line. Each marker carries its own
+  // canvas with its write, never looked up by the line.
+  const CANVAS_A = 'cnv-aaaaaaaaaaaaaaaa'
+  const CANVAS_B = 'cnv-bbbbbbbbbbbbbbbb'
+  const APPROVAL = `Approved v1 on the canvas ${String.fromCharCode(0xb7)} canvas_version_verdict recorded`
+
+  it('[host] canvas A\'s undelivered marker is raised on canvas A only, while B\'s same line was delivered', async () => {
+    const results: Array<(r: SubmitTextResult) => void> = []
+    answer = () => new Promise((resolve) => { results.push(resolve) })
+    marker.deliverCanvasMarker(SID, APPROVAL, CANVAS_A)
+    marker.deliverCanvasMarker(SID, APPROVAL, CANVAS_B)
+    expect(results).toHaveLength(2)
+    results[0]({ delivered: false, reason: 'busy-timeout' })
+    await flush()
+    results[1]({ delivered: true })
+    await flush()
+    expect(undelivered).toEqual([{ sessionId: SID, canvasId: CANVAS_A, line: APPROVAL, reason: 'busy-timeout' }])
+  })
+
+  it('[host] and the other way round: B\'s is raised on B', async () => {
+    const results: Array<(r: SubmitTextResult) => void> = []
+    answer = () => new Promise((resolve) => { results.push(resolve) })
+    marker.deliverCanvasMarker(SID, APPROVAL, CANVAS_A)
+    marker.deliverCanvasMarker(SID, APPROVAL, CANVAS_B)
+    results[1]({ delivered: false, reason: 'prompt-on-screen' })
+    results[0]({ delivered: true })
+    await flush()
+    expect(undelivered).toEqual([{ sessionId: SID, canvasId: CANVAS_B, line: APPROVAL, reason: 'prompt-on-screen' }])
+  })
+
+  it('[host] held over an open turn: neither is folded into the other, and each is answered for its own canvas', async () => {
+    const results: Array<(r: SubmitTextResult) => void> = []
+    answer = () => new Promise((resolve) => { results.push(resolve) })
+    emit(SID, 'UserPromptSubmit')
+    expect(marker.deliverCanvasMarker(SID, APPROVAL, CANVAS_A)).toBe('queued')
+    expect(marker.deliverCanvasMarker(SID, APPROVAL, CANVAS_B)).toBe('queued')
+    // The same line about the SAME canvas again is still folded into the first.
+    expect(marker.deliverCanvasMarker(SID, APPROVAL, CANVAS_A)).toBe('queued')
+    emit(SID, 'Stop')
+    expect(results).toHaveLength(2)
+    results[0]({ delivered: true })
+    results[1]({ delivered: false, reason: 'not-drawn' })
+    await flush()
+    expect(undelivered.map((u) => u.canvasId)).toEqual([CANVAS_B])
+  })
+})

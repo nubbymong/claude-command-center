@@ -9,11 +9,18 @@
 //    (askPromptOnArgv); never past 8,000 characters, with a lone surrogate
 //    (review RASK-3), on the npm .cmd route, an exact resume or the picker
 //    (main types it through the pane there);
-//  - the logged line names the question by its length only.
+//  - the logged line names the question by its length only;
+//  - ADR-009 round 1: on Windows node-pty joins the arguments into one command
+//    line that codex.exe splits again, so the question rides argv only when
+//    that line gives it back as ONE argument, whole (never with a double
+//    quote, and only to a .exe started directly); otherwise it is typed
+//    through the pane. Checked against node-pty's own quoting and a separate
+//    parser of the Windows rules.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
+import { createRequire } from 'module'
 
 // The resources folder: none, except where a case stages the picker script.
 vi.mock('../../../../src/main/ipc/setup-handlers', () => ({ getResourcesDirectory: () => (globalThis as any).__askResDir ?? '', getDataDirectory: () => '' }))
@@ -29,7 +36,9 @@ vi.mock('../../../../src/main/conductor-mcp-server', () => ({
 vi.mock('../../../../src/main/config-manager', () => ({ readConfig: () => ({}), getConfigDir: () => '/cfg' }))
 vi.mock('../../../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }))
 
-const { buildCodexSpawn, ASK_PROJECT_DOC_MAX_BYTES_CEILING } = await import('../../../../src/main/providers/codex/spawn')
+const { buildCodexSpawn, ASK_PROJECT_DOC_MAX_BYTES_CEILING, nodePtyWindowsCommandLine, splitWindowsCommandLine } = await import('../../../../src/main/providers/codex/spawn')
+// node-pty's own Windows quoting (pure JS; nothing native is loaded by it).
+const { argsToCommandLine } = createRequire(path.join(process.cwd(), 'package.json'))('node-pty/lib/windowsPtyAgent.js') as { argsToCommandLine: (file: string, args: string[]) => string }
 const { askConductorProjectDocMaxBytes } = await import('../../../../src/main/help-workspace')
 
 const linuxLaunch = { executable: '/mock/path/codex', env: { PATH: '/usr/bin', CODEX_HOME: '/home/u/.codex' }, sessionsDir: '/home/u/.codex/sessions' }
@@ -205,5 +214,163 @@ describe('where the question never rides argv', () => {
       }
       fs.rmSync(res, { recursive: true, force: true })
     }
+  })
+})
+
+/** A separate reading of a Windows command line by the rules codex.exe (a
+ *  Rust program: std's Windows argument parser) splits it with. */
+function splitLikeCodex(line: string): string[] {
+  const out: string[] = []
+  let i = 0
+  let cur = ''
+  let inQ = false
+  for (; i < line.length; i++) {
+    const c = line[i]
+    if (c === '"') { inQ = !inQ; continue }
+    if ((c === ' ' || c === '\t') && !inQ) break
+    cur += c
+  }
+  out.push(cur)
+  while (i < line.length && (line[i] === ' ' || line[i] === '\t')) i++
+  cur = ''
+  inQ = false
+  let any = false
+  while (i < line.length) {
+    const c = line[i]
+    if ((c === ' ' || c === '\t') && !inQ) {
+      out.push(cur); cur = ''; any = false
+      while (i < line.length && (line[i] === ' ' || line[i] === '\t')) i++
+      continue
+    }
+    if (c === '\\') {
+      let n = 0
+      while (i < line.length && line[i] === '\\') { n++; i++ }
+      if (line[i] === '"') {
+        cur += '\\'.repeat(Math.floor(n / 2))
+        if (n % 2 === 1) { cur += '"'; i++ }
+      } else cur += '\\'.repeat(n)
+      any = true
+      continue
+    }
+    if (c === '"' && inQ) {
+      if (line[i + 1] === '"') { cur += '"'; i += 2 } else { inQ = false; i++ }
+      any = true
+      continue
+    }
+    if (c === '"') { inQ = true; i++; any = true; continue }
+    cur += c; i++; any = true
+  }
+  if (cur !== '' || inQ || any) out.push(cur)
+  return out
+}
+
+describe('the question and the Windows command line (ADR-009 round 1)', () => {
+  const Q = '"'
+  const B = '\\'
+  const win = { ...linuxLaunch, executable: EXE, env: winEnv }
+  const buildWin = (q: string, launch: typeof linuxLaunch = win) => withWin32(() => buildCodexSpawn({ sessionId: 'sid', realmLaunch: launch, codexOptions: STANDARD, askPrompt: q }))
+  // Quotes, backslashes before a quote and at the end, spaces, tabs, and the
+  // characters cmd.exe gives a meaning.
+  const CORPUS = [
+    'how do I add an account?',
+    'what does 100% mean',
+    'a ^ b & c | d < e > f',
+    '%PATH% and ^& and && and ||',
+    `C:${B}dir${B} with a trailing backslash${B}`,
+    `ends in two backslashes${B}${B}`,
+    `no-spaces-trailing${B}`,
+    `${B}${B}server${B}share x`,
+    'tab\there',
+    '-m gpt-4 what is this?',
+    '--',
+    `${Q}How do I add an SSH host?${Q}`,
+    `${Q}Cannot start Codex${Q} -- what does that error mean?${Q}`,
+    `${Q} ${Q}`,
+    `what does ${Q}Restart${Q} do?`,
+    `${Q}no-spaces-quoted${Q}`,
+    `back${B}${Q}slash quote`,
+    `two${B}${B}${Q} backslashes then a quote`,
+    `ends with a quote${Q}`,
+    `${Q}starts with a quote`,
+    `x ${B}${B}${Q} y ${B}`,
+  ]
+
+  it('[host] the mirror of node-pty\'s quoting is node-pty\'s own, for every case', () => {
+    for (const file of [EXE, `C:${B}Program Files${B}codex${B}codex.exe`]) {
+      for (const q of CORPUS) {
+        const args = ['-m', 'gpt-5.5', '-c', `developer_instructions=${Q}a ${B}${Q}b${B}${Q} c${Q}`, '--', q]
+        expect(nodePtyWindowsCommandLine(file, args), JSON.stringify(q)).toBe(argsToCommandLine(file, args))
+      }
+    }
+  })
+
+  it('[host] a question rides argv only when node-pty\'s line gives it back as ONE argument, whole; otherwise it is typed', () => {
+    for (const q of CORPUS) {
+      const out = buildWin(q)
+      if (out.askPromptOnArgv) {
+        const split = splitLikeCodex(argsToCommandLine(out.cmd, out.args))
+        expect(split.slice(1), JSON.stringify(q)).toEqual(out.args)
+        expect(split[split.length - 1]).toBe(q)
+        expect(split[split.length - 2]).toBe('--')
+      } else {
+        expect(out.args, JSON.stringify(q)).not.toContain(q)
+        expect(out.args).not.toContain('--')
+      }
+    }
+  })
+
+  it('[host] a question that starts and ends with a double quote and holds a space is typed, not split (finding L1-1)', () => {
+    for (const q of [`${Q}How do I add an SSH host?${Q}`, `${Q}Cannot start Codex${Q} -- what does that error mean?${Q}`, `${Q} ${Q}`]) {
+      const out = buildWin(q)
+      expect(out.askPromptOnArgv, JSON.stringify(q)).toBeUndefined()
+      expect(out.args).not.toContain('--')
+    }
+  })
+
+  it('[host] on Windows every question holding a double quote is typed, even one the line would keep', () => {
+    for (const q of CORPUS.filter((c) => c.includes(Q))) expect(buildWin(q).askPromptOnArgv, JSON.stringify(q)).toBeUndefined()
+  })
+
+  it('[host] the plain ones, the characters cmd.exe reads included, still ride argv', () => {
+    for (const q of ['how do I add an account?', 'what does 100% mean', 'a ^ b & c | d < e > f', '%PATH% and ^& and && and ||', `C:${B}dir${B} with a trailing backslash${B}`, `ends in two backslashes${B}${B}`, `no-spaces-trailing${B}`, '-m gpt-4 what is this?']) {
+      expect(buildWin(q).askPromptOnArgv, JSON.stringify(q)).toBe(true)
+    }
+  })
+
+  it('[host] the direct route starts codex.exe itself, never cmd.exe, so nothing re-reads % ^ & on the way', () => {
+    const out = buildWin('100% ^ & | < >')
+    expect(out.askPromptOnArgv).toBe(true)
+    expect(out.cmd).toBe(EXE)
+    expect(out.commandLine).toBeUndefined()
+    expect(out.cmd.toLowerCase()).not.toContain('cmd.exe')
+  })
+
+  it('[host] a batch file as Windows reads its name (trailing dots or spaces dropped) takes no question on argv: Windows would hand it to cmd.exe', () => {
+    for (const exe of [`C:${B}tools${B}codex.cmd.`, `C:${B}tools${B}codex.bat `, `C:${B}tools${B}codex.CMD. .`]) {
+      const out = buildWin('how do I add an account?', { ...win, executable: exe })
+      expect(out.askPromptOnArgv, exe).toBeUndefined()
+      expect(out.args).not.toContain('how do I add an account?')
+    }
+  })
+
+  it('[host] on macOS and Linux the arguments reach the process as they are: a quoted question still rides argv', () => {
+    const q = `${Q}How do I add an SSH host?${Q}`
+    const orig = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+    try {
+      const out = buildCodexSpawn({ sessionId: 'sid', realmLaunch: linuxLaunch, codexOptions: STANDARD, askPrompt: q })
+      expect(out.askPromptOnArgv).toBe(true)
+      expect(out.args.slice(-2)).toEqual(['--', q])
+    } finally {
+      if (orig) Object.defineProperty(process, 'platform', orig)
+    }
+  })
+
+  it('[host] the app\'s own reading of a line agrees with codex.exe\'s, and refuses two quotes inside a quoted part', () => {
+    for (const q of CORPUS) {
+      const line = argsToCommandLine(EXE, ['-m', 'gpt-5.5', '--', q])
+      expect(splitWindowsCommandLine(line), JSON.stringify(q)).toEqual(splitLikeCodex(line))
+    }
+    expect(splitWindowsCommandLine(`codex.exe ${Q}a${Q}${Q}b${Q}`)).toBeNull()
   })
 })
