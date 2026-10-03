@@ -375,8 +375,8 @@ describe('the two channels: who may ask, and what', () => {
     expect(await list()).toEqual([])
     expect(await open({ accountId: 'acct-1', folder: 'log' })).toEqual({ ok: false, code: 'unknown-account' })
     source.mockRejectedValueOnce(new Error('boom'))
-    expect(await listAccountLogFolders(source as never, { fs: fake as never, openPath, platform: 'win32' })).toEqual([])
-    expect(await openAccountLogFolder({ accountId: 'acct-1', folder: 'log' }, async () => { throw new Error('x') }, { fs: fake as never, openPath, platform: 'win32' })).toEqual({ ok: false, code: 'unknown-account' })
+    expect(await listAccountLogFolders(source as never, { fs: fake as never, openPath, showItemInFolder: reveal, platform: 'win32' })).toEqual([])
+    expect(await openAccountLogFolder({ accountId: 'acct-1', folder: 'log' }, async () => { throw new Error('x') }, { fs: fake as never, openPath, showItemInFolder: reveal, platform: 'win32' })).toEqual({ ok: false, code: 'unknown-account' })
   })
 })
 
