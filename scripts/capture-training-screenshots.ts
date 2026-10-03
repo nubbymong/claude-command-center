@@ -22,6 +22,7 @@ import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
 import { STEPS, ONBOARDING_VERSION } from '../src/renderer/onboarding/steps'
+import { captureHomeDir, captureLaunchEnv } from './capture-env'
 
 const SCREENSHOT_DIR = path.join(__dirname, '..', 'src', 'renderer', 'assets', 'training')
 // Must match the build's __APP_VERSION__ exactly — the Claude CLI-setup gate
@@ -66,6 +67,12 @@ function redactAccountInStatusline(sl: any) {
 // resources dir = <root>/resources — mirror that shape here so the seed
 // writes exactly where the app reads.
 const CAPTURE_DATA_ROOT = path.join(os.tmpdir(), `ccc-capture-${process.pid}`)
+
+// The app's home, and every home path this script seeds, are inside the data
+// root too (P4.11, capture-env.ts): the user's real ~/.claude and ~/.codex are
+// never read, renamed or written. The launch below passes it as USERPROFILE
+// and HOME, so the app's own home directory is this folder.
+const CAPTURE_HOME = captureHomeDir(CAPTURE_DATA_ROOT)
 
 function getResourcesDir(): string {
   return path.join(CAPTURE_DATA_ROOT, 'resources')
@@ -431,11 +438,10 @@ function seedSampleData(): BackupInfo {
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8')
   }
 
-  // Temporarily hide real projects so only demo ones appear in screenshots.
-  // Rename ~/.claude/projects/ → ~/.claude/projects-real-bak/ during capture.
-  // Fail loudly if a leftover backup exists -- silently continuing would let
-  // real session data leak into screenshots (and confuse the cleanup step).
-  const projectsDir = path.join(os.homedir(), '.claude', 'projects')
+  // The capture home's projects folder (P4.11: never the real one). A folder
+  // there from an earlier run is set aside, as before, so only demo projects
+  // appear; a leftover backup still stops the run.
+  const projectsDir = path.join(CAPTURE_HOME, '.claude', 'projects')
   const projectsBackup = projectsDir + '-real-bak'
   if (fs.existsSync(projectsBackup)) {
     throw new Error(
@@ -450,9 +456,9 @@ function seedSampleData(): BackupInfo {
   }
   fs.mkdirSync(projectsDir, { recursive: true })
 
-  // Same treatment for Codex history -- seedTokenomics scans ~/.codex/sessions/
-  // and would otherwise pull all real Codex transcripts into screenshots.
-  const codexSessionsDir = path.join(os.homedir(), '.codex', 'sessions')
+  // Same treatment for Codex history in the capture home (seedTokenomics scans
+  // <home>/.codex/sessions/).
+  const codexSessionsDir = path.join(CAPTURE_HOME, '.codex', 'sessions')
   const codexSessionsBackup = codexSessionsDir + '-real-bak'
   if (fs.existsSync(codexSessionsBackup)) {
     throw new Error(
@@ -615,8 +621,8 @@ function cleanupSampleData(info: BackupInfo | null): void {
     }
   }
 
-  // Restore real projects directory
-  const projectsDir = path.join(os.homedir(), '.claude', 'projects')
+  // Restore the capture home's projects directory
+  const projectsDir = path.join(CAPTURE_HOME, '.claude', 'projects')
   const projectsBackup = projectsDir + '-real-bak'
   if (info.projectsRenamed) {
     try {
@@ -641,7 +647,7 @@ function cleanupSampleData(info: BackupInfo | null): void {
 
   // Restore real Codex sessions directory
   if (info.codexSessionsRenamed) {
-    const codexSessionsDir = path.join(os.homedir(), '.codex', 'sessions')
+    const codexSessionsDir = path.join(CAPTURE_HOME, '.codex', 'sessions')
     const codexSessionsBackup = codexSessionsDir + '-real-bak'
     try {
       if (!fs.existsSync(codexSessionsBackup)) {
@@ -900,7 +906,9 @@ async function main() {
       args: [BUILT_APP],
       // CCC_FORCE_SPLASH pinned off: the capture assumes the first window is
       // the main window, so a stray export must not surface the splash.
-      env: { ...process.env, NODE_ENV: 'production', CCC_E2E_DATA_DIR: dataRoot, CCC_FORCE_SPLASH: '0' },
+      // P4.11: the isolated home with the capture's switches (capture-env.ts):
+      // NODE_ENV production, CCC_E2E_DATA_DIR, CCC_FORCE_SPLASH off.
+      env: captureLaunchEnv(dataRoot),
     })
     const window = await app.firstWindow()
     await window.setViewportSize({ width: WIDTH, height: HEIGHT })
