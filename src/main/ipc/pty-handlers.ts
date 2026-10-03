@@ -676,6 +676,18 @@ function endTargetFromSavedConfig(configId: string, sessionId: string): SshEndTa
 }
 
 /** WP2 PR 4, P4.1: the Codex version discovery proved, or null. */
+/** P4.1 review A-2: the realm ownership of the account a launch prepared, from
+ *  the accounts snapshot (its `external` flag is the realm's ownership);
+ *  undefined when it cannot be told. */
+function codexAccountOwnership(service: AccountsService, accountId: string): 'conductor-managed' | 'external-default' | undefined {
+  try {
+    const account = service.snapshot().accounts.find((a) => a.id === accountId)
+    return account ? (account.external ? 'external-default' : 'conductor-managed') : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function codexDiscoveredVersion(service: AccountsService): string | null {
   try {
     const v = service.snapshot().providers.find((p) => p.providerId === 'codex')?.version
@@ -975,6 +987,8 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
             // WP2 PR 4, P4.1: the account's Codex folder and the version
             // discovery proved, for the launch's canvas guidance (question 5).
             home: prepared.home, cliVersion: codexDiscoveredVersion(service),
+            // Review A-2: app-managed or this computer's own sign-in.
+            ownership: codexAccountOwnership(service, prepared.lease.accountId),
           },
         }
         // P3.6 (row 22): a respawn of this session on another account

@@ -20,6 +20,7 @@ import {
 } from '../shared/container-command'
 import { SSH_ENTRY, type SshEntryFailureReason } from '../shared/ssh-entry'
 import type { SshRuntime, DetachedRemoteLiveness, SshEndRemoteOutcome, SshEndRemoteResult, SubmitTextResult, AskConductorNotice } from '../shared/types'
+import type { RealmOwnership } from '../shared/providers'
 import { IPC } from '../shared/ipc-channels'
 import { codexPromptKeeps } from '../shared/codex-screen'
 import { askConductorProjectDocMaxBytes } from './help-workspace'
@@ -319,6 +320,10 @@ export interface CodexLaunch {
    *  and the Codex version discovery proved (for the canvas guidance). */
   home?: string
   cliVersion?: string | null
+  /** P4.1 review A-2: the account's realm, app-managed or this computer's own
+   *  sign-in, so the canvas skills follow the account, not a path compared
+   *  against the resources folder's spelling. */
+  ownership?: RealmOwnership
 }
 
 // WP2 (plan A10): the account lease of each running Codex session, so a
@@ -4965,7 +4970,8 @@ function spawnPtyResolved(
       // managed realm's staged skills, or question 5's default A). A resumed
       // conversation's folder is read only to pass less (its settings), never
       // to serve or designate anything.
-      const codexToolsOn = readConfig<{ conductorToolsEnabled?: boolean }>('settings')?.conductorToolsEnabled !== false && getConductorMcpPort() > 0
+      const codexToolSettings = readConfig<{ conductorToolsEnabled?: boolean; conductorTools?: { canvas?: boolean; vision?: boolean } }>('settings')
+      const codexToolsOn = codexToolSettings?.conductorToolsEnabled !== false && getConductorMcpPort() > 0
       const codexCanvas = prepareCodexCanvasLaunch({
         sessionId,
         configuredCwd: resolvedCwd,
@@ -4976,6 +4982,10 @@ function spawnPtyResolved(
         managedSkillsDirFor: (home, resourcesDir) => provider.stagedSkillsDir?.(home, resourcesDir) ?? null,
         cliVersion: launch.cliVersion ?? null,
         toolsOn: codexToolsOn,
+        // Review A-6: the realm's staged skills follow the groups this session
+        // is offered (a switch that is absent is on).
+        skillGroups: { canvas: codexToolSettings?.conductorTools?.canvas !== false, vision: codexToolSettings?.conductorTools?.vision !== false },
+        ...(launch.ownership ? { ownership: launch.ownership } : {}),
         startFolders: options?.useResumePicker ? null : [resolvedCwd, ...(resumeTarget?.cwd ? [resumeTarget.cwd] : [])],
         env: launch.env,
       })

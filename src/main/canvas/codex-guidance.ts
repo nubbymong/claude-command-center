@@ -119,16 +119,35 @@ export function namesDeveloperInstructions(text: string): boolean {
 
 type LayerRead = 'clear' | 'names' | 'unknown'
 
+/** The reads the settings-layer scan makes, and nothing else. Launches read
+ *  the disk (NODE_LAYER_FS); a caller may hand in its own, held to a folder it
+ *  owns, as the tests do, so that nothing outside their temporary tree (this
+ *  user's own ~/.codex, ProgramData) is ever read. */
+export interface CodexLayerFs {
+  /** fs.statSync's answer, or its throw (ENOENT: nothing there). */
+  stat(file: string): fs.Stats
+  /** The file's text. */
+  readText(file: string): string
+  /** A folder's entry names. */
+  list(dir: string): string[]
+}
+
+export const NODE_LAYER_FS: CodexLayerFs = {
+  stat: (file) => fs.statSync(file),
+  readText: (file) => fs.readFileSync(file, 'utf8'),
+  list: (dir) => fs.readdirSync(dir),
+}
+
 /** One file: absent is clear; present and readable as text is checked;
  *  anything else (unreadable, too large, not a file) is unknown. */
-function readLayer(file: string): LayerRead {
+function readLayer(file: string, lfs: CodexLayerFs): LayerRead {
   let st: fs.Stats
-  try { st = fs.statSync(file) } catch (err) {
+  try { st = lfs.stat(file) } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code
     return code === 'ENOENT' || code === 'ENOTDIR' ? 'clear' : 'unknown'
   }
   if (!st.isFile() || st.size > LAYER_READ_MAX) return 'unknown'
-  try { return namesDeveloperInstructions(fs.readFileSync(file, 'utf8')) ? 'names' : 'clear' } catch { return 'unknown' }
+  try { return namesDeveloperInstructions(lfs.readText(file)) ? 'names' : 'clear' } catch { return 'unknown' }
 }
 
 /** A variable from an environment, by Windows's case-insensitive names. */
@@ -147,6 +166,8 @@ export interface CodexLayerScanInput {
   env: Readonly<Record<string, string | undefined>>
   /** The user's name, for the macOS per-user managed preferences. */
   userName?: string
+  /** The reads (default: the disk). */
+  fs?: CodexLayerFs
 }
 
 /** The settings files Codex may read for this launch (a superset). The
@@ -155,9 +176,10 @@ export interface CodexLayerScanInput {
 export function codexSettingsLayerFiles(input: CodexLayerScanInput): string[] {
   const win32 = input.platform === 'win32'
   const p = path
+  const lfs = input.fs ?? NODE_LAYER_FS
   const files: string[] = [p.join(input.home, 'config.toml'), p.join(input.home, 'managed_config.toml')]
   try {
-    for (const name of fs.readdirSync(input.home)) if (/\.config\.toml$/i.test(name)) files.push(p.join(input.home, name))
+    for (const name of lfs.list(input.home)) if (/\.config\.toml$/i.test(name)) files.push(p.join(input.home, name))
   } catch { /* an unreadable folder: its config.toml read says so */ }
   for (const start of input.cwds) {
     const cwd = p.resolve(start)
@@ -191,18 +213,19 @@ export function scanCodexSettingsLayers(input: CodexLayerScanInput): LayerRead {
     if (r === 'names') result = 'names'
     else if (r === 'unknown' && result === 'clear') result = 'unknown'
   }
-  for (const file of codexSettingsLayerFiles(input)) fold(readLayer(file))
+  const lfs = input.fs ?? NODE_LAYER_FS
+  for (const file of codexSettingsLayerFiles(input)) fold(readLayer(file, lfs))
   // The enterprise cloud layer: its cache, when Codex keeps one; a folder
   // Codex has never run in may still fetch one at this launch.
   const p = path
   const cache = p.join(input.home, 'cloud-config-bundle-cache.json')
-  const cacheRead = readLayer(cache)
+  const cacheRead = readLayer(cache, lfs)
   let cached = true
-  try { fs.statSync(cache) } catch { cached = false }
+  try { lfs.stat(cache) } catch { cached = false }
   if (cached) fold(cacheRead)
   else {
     let ranHere = false
-    try { ranHere = fs.statSync(p.join(input.home, 'sessions')).isDirectory() } catch { ranHere = false }
+    try { ranHere = lfs.stat(p.join(input.home, 'sessions')).isDirectory() } catch { ranHere = false }
     if (!ranHere) fold('unknown')
   }
   // macOS managed preferences: a binary property list holding base64 TOML,
@@ -210,7 +233,7 @@ export function scanCodexSettingsLayers(input: CodexLayerScanInput): LayerRead {
   if (input.platform === 'darwin') {
     const prefs = ['/Library/Managed Preferences/com.openai.codex.plist']
     if (input.userName && !/[/\\]/.test(input.userName)) prefs.push(`/Library/Managed Preferences/${input.userName}/com.openai.codex.plist`)
-    for (const f of prefs) { try { fs.statSync(f); fold('unknown') } catch { /* none */ } }
+    for (const f of prefs) { try { lfs.stat(f); fold('unknown') } catch { /* none */ } }
   }
   return result
 }
@@ -235,6 +258,8 @@ export interface CodexGuidanceInput {
   /** The app's plugin skills folder (macOS and Linux), when it is in place. */
   pluginSkillsDir: string | null
   env: Readonly<Record<string, string | undefined>>
+  /** The settings layers' reads (default: the disk). */
+  layerFs?: CodexLayerFs
 }
 
 export interface CodexGuidanceDecision {
@@ -256,7 +281,7 @@ export function decideCodexGuidance(input: CodexGuidanceInput): CodexGuidanceDec
   if (!input.cwds || input.cwds.length === 0) return toolsOnly('unknown-settings')
   let userName: string | undefined
   try { userName = os.userInfo().username } catch { userName = undefined }
-  const layers = scanCodexSettingsLayers({ platform: input.platform, home: input.home, cwds: input.cwds, env: input.env, userName })
+  const layers = scanCodexSettingsLayers({ platform: input.platform, home: input.home, cwds: input.cwds, env: input.env, userName, ...(input.layerFs ? { fs: input.layerFs } : {}) })
   if (layers === 'names') return toolsOnly('user-instructions')
   if (layers === 'unknown') return toolsOnly('unknown-settings')
   if (input.platform === 'win32') return { guidance: { guidance: 'full' }, developerInstructions: codexInlineGuidance() }

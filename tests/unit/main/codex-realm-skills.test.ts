@@ -36,6 +36,22 @@ afterEach(() => {
 const skillDir = (name: string): string => path.join(home, 'skills', name)
 const SKILLS = canvasSkillFiles()
 
+describe('only the skills whose tools the session is offered (P4.1 review A-6)', () => {
+  it('[host] the others go when they are the app\'s; a same-named folder that is not the app\'s stays', () => {
+    const dir = path.join(home, 'skills')
+    expect(stage(home, res)).toEqual({ staged: true })
+    const onlyVision = (name: string): boolean => name === 'conductor-vision'
+    expect(stageCodexRealmSkills(home, dir, onlyVision)).toEqual({ staged: true })
+    expect(fs.existsSync(skillDir('agent-canvas'))).toBe(false)
+    expect(fs.existsSync(skillDir('canvas-plan'))).toBe(false)
+    expect(fs.existsSync(path.join(skillDir('conductor-vision'), 'SKILL.md'))).toBe(true)
+    fs.mkdirSync(skillDir('agent-canvas'))
+    fs.writeFileSync(path.join(skillDir('agent-canvas'), 'SKILL.md'), 'my own skill')
+    expect(stageCodexRealmSkills(home, dir, onlyVision)).toEqual({ staged: true })
+    expect(fs.readFileSync(path.join(skillDir('agent-canvas'), 'SKILL.md'), 'utf8')).toBe('my own skill')
+  })
+})
+
 describe('which homes are a managed realm\'s', () => {
   it('a home directly under the managed realms root, named by a realm id', () => {
     expect(codexManagedRealmSkillsDir(home, res)).toBe(path.join(home, 'skills'))

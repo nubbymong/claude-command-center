@@ -467,7 +467,7 @@ export default function AgentCanvasPane({ sessionId, isActive = false }: Props) 
       // because the element is created BY the swap — mounting is the trigger.
       <div className="flex-1 flex flex-col min-h-0 pane-fade-in" data-testid="canvas-pane-root">
         <CanvasFiledStrip sessionId={sessionId} />
-        <CodexCanvasNotices sessionId={sessionId} />
+        <CodexCanvasNotices sessionId={sessionId} canvasId={canvasState?.canvasId} />
         {draftPending && (
           <div
             className="shrink-0 px-3 py-1.5 text-[11px] border-b"
@@ -493,7 +493,7 @@ export default function AgentCanvasPane({ sessionId, isActive = false }: Props) 
       {/* Above the surface, so the one thing that happened without asking is
           the first thing read. */}
       <CanvasFiledStrip sessionId={sessionId} />
-      <CodexCanvasNotices sessionId={sessionId} />
+      <CodexCanvasNotices sessionId={sessionId} canvasId={canvasState.canvasId} />
       <CanvasSurface
         // Keyed by CANVAS (quality MED-2): a Library "open here" swaps the
         // canvas under a mounted surface, and every per-version mechanism

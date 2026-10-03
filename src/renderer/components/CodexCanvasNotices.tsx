@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
+import { useCodexMarkerNoticeStore, setupCodexMarkerNoticeListener } from '../stores/codexMarkerNoticeStore'
 import { DismissButton } from './ui/DismissButton'
-import type { CanvasMarkerUndelivered, CanvasSessionGuidance, SubmitNotDeliveredReason } from '../../shared/types'
+import type { CanvasSessionGuidance, SubmitNotDeliveredReason } from '../../shared/types'
 
 /**
  * The Agent Canvas page's one-line notices for a Codex session (WP2 PR 4,
@@ -16,7 +17,10 @@ import type { CanvasMarkerUndelivered, CanvasSessionGuidance, SubmitNotDelivered
  *    from the hook stream (no event seen for this session), never from
  *    Codex's own trust record.
  *  - A filed review or verdict Codex did not get (the submit primitive's
- *    "not delivered"), with the line it was and why, until dismissed.
+ *    "not delivered"), with the line it was and why, shown with the canvas it
+ *    was filed on, until dismissed. Kept in codexMarkerNoticeStore for the
+ *    renderer's life, so one that fails while this page is closed is shown
+ *    when the canvas is open again (review A-1).
  */
 
 const GUIDANCE_WORDS: Record<Extract<CanvasSessionGuidance, { guidance: 'tools-only' }>['reason'], string> = {
@@ -32,11 +36,9 @@ const UNDELIVERED_WORDS: Record<SubmitNotDeliveredReason, string> = {
   'too-tall': 'the line is taller than the Codex prompt at this pane size',
   'not-drawn': 'Codex did not show the line once it was typed, so it was taken back',
   'refused-text': 'the line holds characters the Codex prompt cannot take',
-  'session-gone': 'the session ended or restarted first',
+  'session-gone': 'the session ended or restarted first, or the line could not be typed into it',
 }
 
-/** At most this many undelivered lines are kept on the page. */
-const MAX_UNDELIVERED = 5
 /** How often, and how many times, a missing launch record is asked again
  *  (the page can mount before the session's launch has finished). */
 const GUIDANCE_RETRY_MS = 5_000
@@ -48,7 +50,8 @@ const strip: React.CSSProperties = {
   color: 'var(--text-secondary)',
 }
 
-export default function CodexCanvasNotices({ sessionId }: { sessionId: string }) {
+/** `canvasId`: the canvas the page has open, whose undelivered lines show. */
+export default function CodexCanvasNotices({ sessionId, canvasId }: { sessionId: string; canvasId?: string | null }) {
   const isCodex = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId)?.provider === 'codex')
   const runKey = useSessionStore((s) => {
     const x = s.sessions.find((y) => y.id === sessionId)
@@ -56,7 +59,9 @@ export default function CodexCanvasNotices({ sessionId }: { sessionId: string })
   })
   const [guidance, setGuidance] = useState<CanvasSessionGuidance | null>(null)
   const [turnEvents, setTurnEvents] = useState<boolean | null>(null)
-  const [undelivered, setUndelivered] = useState<CanvasMarkerUndelivered[]>([])
+  const forCanvas = useCodexMarkerNoticeStore((s) => (canvasId ? s.byCanvasId[canvasId] : undefined))
+  const dismissUndelivered = useCodexMarkerNoticeStore((s) => s.dismiss)
+  const undelivered = useMemo(() => (forCanvas ?? []).filter((u) => u.sessionId === sessionId), [forCanvas, sessionId])
 
   useEffect(() => {
     setGuidance(null)
@@ -95,14 +100,9 @@ export default function CodexCanvasNotices({ sessionId }: { sessionId: string })
     }
   }, [sessionId, isCodex, runKey])
 
-  useEffect(() => {
-    if (!isCodex) return
-    const off = window.electronAPI?.canvas?.onAgentMarkerUndelivered?.((u) => {
-      if (!u || u.sessionId !== sessionId) return
-      setUndelivered((list) => [...list.filter((x) => x.line !== u.line), u].slice(-MAX_UNDELIVERED))
-    })
-    return () => { try { off?.() } catch { /* already gone */ } }
-  }, [sessionId, isCodex])
+  // Started at app start (App.tsx); asked again here, idempotently, so the
+  // page never depends on that order.
+  useEffect(() => { setupCodexMarkerNoticeListener() }, [])
 
   if (!isCodex) return null
   const toolsOnly = guidance && guidance.guidance === 'tools-only' ? guidance : null
@@ -118,7 +118,7 @@ export default function CodexCanvasNotices({ sessionId }: { sessionId: string })
       )}
       {noTurnEvents && (
         <div data-testid="codex-canvas-no-turn-events" className="px-3.5 py-1.5 text-[12px]" style={strip}>
-          Codex has sent this session no turn events yet (its hooks are not trusted for this account), so a review you file reaches it once its prompt is ready on screen.
+          Codex has sent this session no turn events yet (its hooks are not trusted for this account, or the app's Hooks gateway is off), so a review you file reaches it once its prompt is ready on screen.
         </div>
       )}
       {undelivered.map((u) => (
@@ -128,7 +128,7 @@ export default function CodexCanvasNotices({ sessionId }: { sessionId: string })
           </span>
           <DismissButton
             className="ml-auto"
-            onClick={() => setUndelivered((list) => list.filter((x) => x !== u))}
+            onClick={() => dismissUndelivered(u)}
             label="Dismiss"
             data-testid="codex-canvas-undelivered-dismiss"
           />

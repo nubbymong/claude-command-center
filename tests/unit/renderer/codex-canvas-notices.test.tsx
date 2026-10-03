@@ -6,7 +6,9 @@
 //    5's default A), from main's launch record;
 //  - no turn events yet (its hooks not trusted), so a filed review reaches
 //    Codex when its prompt is ready, read from the hook stream;
-//  - a filed review or verdict Codex did not get, with the line and why.
+//  - a filed review or verdict Codex did not get, with the line and why, on
+//    the canvas it was filed on, kept while the page is closed (review A-1:
+//    src/renderer/stores/codexMarkerNoticeStore.ts) until dismissed.
 // Nothing for a Claude session.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import React from 'react'
@@ -14,6 +16,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
 import { useSessionStore } from '../../../src/renderer/stores/sessionStore'
 import CodexCanvasNotices from '../../../src/renderer/components/CodexCanvasNotices'
+import { useCodexMarkerNoticeStore, setupCodexMarkerNoticeListener, parseMarkerUndelivered, _resetCodexMarkerNoticesForTest, MARKER_NOTICES_PER_CANVAS, MARKER_NOTICE_CANVASES } from '../../../src/renderer/stores/codexMarkerNoticeStore'
 import type { CanvasMarkerUndelivered, CanvasSessionGuidance } from '../../../src/shared/types'
 import type { HookEvent } from '../../../src/shared/hook-types'
 
@@ -31,9 +34,12 @@ function setProvider(provider: 'claude' | 'codex'): void {
   useSessionStore.setState({ sessions: [{ id: SID, provider, createdAt: 1, ptyExited: false } as never] } as never)
 }
 
-async function mount(): Promise<void> {
-  await act(async () => { root.render(<CodexCanvasNotices sessionId={SID} />) })
+async function mount(canvasId: string | null = 'c'): Promise<void> {
+  await act(async () => { root.render(<CodexCanvasNotices sessionId={SID} canvasId={canvasId} />) })
   await act(async () => { await new Promise((r) => setTimeout(r, 0)) })
+}
+const push = async (u: unknown): Promise<void> => {
+  await act(async () => { undeliveredListeners.forEach((cb) => cb(u as CanvasMarkerUndelivered)) })
 }
 
 beforeEach(() => {
@@ -51,6 +57,7 @@ beforeEach(() => {
       onEvent: (cb: (e: HookEvent) => void) => { hookListeners.push(cb); return () => {} },
     },
   }
+  _resetCodexMarkerNoticesForTest()
   host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
@@ -102,13 +109,55 @@ describe('a Codex session\'s canvas notices', () => {
     buffer = [{ sessionId: SID, event: 'Stop', payload: {}, ts: 1 }]
     await mount()
     const line = `Review #3 ${String.fromCharCode(0x2014)} 5 notes ${String.fromCharCode(0xb7)} canvas_review R3`
-    await act(async () => { undeliveredListeners.forEach((cb) => cb({ sessionId: 'another', canvasId: 'c', line: 'x', reason: 'busy-timeout' })) })
+    await push({ sessionId: 'another', canvasId: 'c', line: 'x', reason: 'busy-timeout' })
     expect(text('codex-canvas-undelivered')).toBeNull()
-    await act(async () => { undeliveredListeners.forEach((cb) => cb({ sessionId: SID, canvasId: 'c', line, reason: 'busy-timeout' })) })
+    await push({ sessionId: SID, canvasId: 'c', line, reason: 'busy-timeout' })
     expect(text('codex-canvas-undelivered')).toContain(line)
     expect(text('codex-canvas-undelivered')).toMatch(/stayed busy/)
     await act(async () => { (host.querySelector('[data-testid="codex-canvas-undelivered-dismiss"]') as HTMLButtonElement).click() })
     expect(text('codex-canvas-undelivered')).toBeNull()
+  })
+
+  it('[host] one that fails while the page is closed is kept, and shown when the canvas is open again', async () => {
+    setProvider('codex')
+    guidance = { guidance: 'full' }
+    buffer = [{ sessionId: SID, event: 'Stop', payload: {}, ts: 1 }]
+    setupCodexMarkerNoticeListener()
+    await push({ sessionId: SID, canvasId: 'c', line: 'Approved v4 on the canvas', reason: 'busy-timeout' })
+    expect(host.innerHTML).toBe('')
+    await mount('c')
+    expect(text('codex-canvas-undelivered')).toContain('Approved v4 on the canvas')
+    // Closing the page and opening it again keeps it.
+    await act(async () => { root.render(<></>) })
+    expect(text('codex-canvas-undelivered')).toBeNull()
+    await mount('c')
+    expect(text('codex-canvas-undelivered')).toContain('Approved v4 on the canvas')
+  })
+
+  it('[host] shown on the canvas it was filed on, not on another one the page has open', async () => {
+    setProvider('codex')
+    guidance = { guidance: 'full' }
+    buffer = [{ sessionId: SID, event: 'Stop', payload: {}, ts: 1 }]
+    await mount('other-canvas')
+    await push({ sessionId: SID, canvasId: 'c', line: 'Review #2 filed', reason: 'prompt-on-screen' })
+    expect(text('codex-canvas-undelivered')).toBeNull()
+    await mount(null)
+    expect(text('codex-canvas-undelivered')).toBeNull()
+    await mount('c')
+    expect(text('codex-canvas-undelivered')).toContain('Review #2 filed')
+  })
+
+  it('[host] dismissed stays dismissed when the page is opened again', async () => {
+    setProvider('codex')
+    guidance = { guidance: 'full' }
+    buffer = [{ sessionId: SID, event: 'Stop', payload: {}, ts: 1 }]
+    await mount('c')
+    await push({ sessionId: SID, canvasId: 'c', line: 'Approved v5 on the canvas', reason: 'not-drawn' })
+    await act(async () => { (host.querySelector('[data-testid="codex-canvas-undelivered-dismiss"]') as HTMLButtonElement).click() })
+    await act(async () => { root.render(<></>) })
+    await mount('c')
+    expect(text('codex-canvas-undelivered')).toBeNull()
+    expect(useCodexMarkerNoticeStore.getState().byCanvasId).toEqual({})
   })
 
   it('nothing at all for a Claude session', async () => {
@@ -116,5 +165,39 @@ describe('a Codex session\'s canvas notices', () => {
     guidance = { guidance: 'tools-only', reason: 'npm-route' }
     await mount()
     expect(host.innerHTML).toBe('')
+  })
+})
+
+describe('the undelivered-marker store (review A-1)', () => {
+  it('[host] listens once for the renderer\'s life', () => {
+    setupCodexMarkerNoticeListener()
+    setupCodexMarkerNoticeListener()
+    expect(undeliveredListeners).toHaveLength(1)
+  })
+
+  it.each([
+    ['nothing', undefined],
+    ['no canvas', { sessionId: SID, line: 'x', reason: 'busy-timeout' }],
+    ['an empty line', { sessionId: SID, canvasId: 'c', line: '', reason: 'busy-timeout' }],
+    ['a reason main never sends', { sessionId: SID, canvasId: 'c', line: 'x', reason: 'made-up' }],
+    ['a field of the wrong type', { sessionId: SID, canvasId: 7, line: 'x', reason: 'busy-timeout' }],
+  ])('[host] keeps no push with %s', async (_name, raw) => {
+    expect(parseMarkerUndelivered(raw)).toBeNull()
+    setupCodexMarkerNoticeListener()
+    await push(raw)
+    expect(useCodexMarkerNoticeStore.getState().byCanvasId).toEqual({})
+  })
+
+  it('[host] bounded per canvas and in canvases, the oldest let go first', () => {
+    const add = useCodexMarkerNoticeStore.getState().add
+    for (let i = 0; i < MARKER_NOTICES_PER_CANVAS + 3; i++) add({ sessionId: SID, canvasId: 'c', line: `line ${i}`, reason: 'busy-timeout' })
+    const lines = useCodexMarkerNoticeStore.getState().byCanvasId.c.map((u) => u.line)
+    expect(lines).toHaveLength(MARKER_NOTICES_PER_CANVAS)
+    expect(lines[lines.length - 1]).toBe(`line ${MARKER_NOTICES_PER_CANVAS + 2}`)
+    for (let i = 0; i < MARKER_NOTICE_CANVASES + 2; i++) add({ sessionId: SID, canvasId: `k${i}`, line: 'x', reason: 'busy-timeout' })
+    const ids = Object.keys(useCodexMarkerNoticeStore.getState().byCanvasId)
+    expect(ids).toHaveLength(MARKER_NOTICE_CANVASES)
+    expect(ids).not.toContain('c')
+    expect(ids).toContain(`k${MARKER_NOTICE_CANVASES + 1}`)
   })
 })

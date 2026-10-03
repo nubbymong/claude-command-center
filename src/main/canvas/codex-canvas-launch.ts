@@ -8,8 +8,10 @@
 //    (codex-guidance.ts);
 //  - with the built-in tools off: no guidance, and a managed realm's staged
 //    skills removed, as Claude gets --plugin-dir only while they are on.
+import * as fs from 'fs'
 import * as path from 'path'
 import type { CanvasSessionGuidance } from '../../shared/types'
+import type { RealmOwnership } from '../../shared/providers'
 import { getResourcesDirectory } from '../ipc/setup-handlers'
 import { ensureCanvasPlugin } from './canvas-plugin'
 import { codexDesignatedWorktree } from './codex-canvas-roots'
@@ -34,10 +36,39 @@ export interface CodexCanvasLaunchInput {
   cliVersion: string | null
   /** The built-in tools reach this launch (on, and the server listening). */
   toolsOn: boolean
+  /** The tool groups this session is offered (Settings, Built-in Tools):
+   *  each staged skill follows its group (review A-6). Absent: both on. */
+  skillGroups?: { canvas: boolean; vision: boolean }
+  /** The account's realm, as the launch prepared it: an app-managed one or
+   *  this computer's own sign-in (review A-2). Absent: told by path alone. */
+  ownership?: RealmOwnership
   /** The folders Codex may start in, or null when the resume picker chooses. */
   startFolders: readonly string[] | null
   env: Readonly<Record<string, string | undefined>>
   platform?: NodeJS.Platform
+}
+
+/** The tool group each staged skill belongs to; any other is the canvas's. */
+const SKILL_GROUP: Readonly<Record<string, 'canvas' | 'vision'>> = { 'agent-canvas': 'canvas', 'canvas-plan': 'canvas', 'conductor-vision': 'vision' }
+
+/**
+ * Whether the launch's account is an app-managed one, and its skills folder
+ * (review A-2). The realm's ownership decides when the launch carries it; the
+ * path rule (the Codex package's stagedSkillsDir) is the second guard, held
+ * against the resources folder's REAL path, because the account's home is a
+ * real path and the resources folder may be reached through a junction or a
+ * mapped path. A managed account whose folder the rule does not find gets no
+ * skills (said as not staged); this computer's own sign-in never does.
+ */
+export function codexManagedSkillsFolder(
+  input: { ownership?: RealmOwnership; home: string; resourcesDir: string; managedSkillsDirFor: (home: string, resourcesDir: string) => string | null },
+  realpath: (p: string) => string = (p) => fs.realpathSync.native(p),
+): { managed: boolean; skillsDir: string | null } {
+  let real = ''
+  if (input.resourcesDir) { try { real = realpath(input.resourcesDir) } catch { real = input.resourcesDir } }
+  const skillsDir = real ? input.managedSkillsDirFor(input.home, real) : null
+  const managed = input.ownership === 'conductor-managed' ? true : input.ownership === 'external-default' ? false : skillsDir !== null
+  return { managed, skillsDir: managed ? skillsDir : null }
 }
 
 export interface CodexCanvasLaunch {
@@ -63,16 +94,13 @@ function guidanceFor(input: CodexCanvasLaunchInput): Omit<CodexCanvasLaunch, 'de
   const platform = input.platform ?? process.platform
   let resourcesDir = ''
   try { resourcesDir = getResourcesDirectory() || '' } catch { resourcesDir = '' }
-  // A managed realm's home sits directly under the managed realms root, and
-  // this computer's own sign-in never can (realm-paths.ts refuses an overlap
-  // either way), so the path alone tells the two apart.
-  const managedSkillsDir = resourcesDir ? input.managedSkillsDirFor(input.home, resourcesDir) : null
-  const managed = managedSkillsDir !== null
+  const { managed, skillsDir: managedSkillsDir } = codexManagedSkillsFolder({ ownership: input.ownership, home: input.home, resourcesDir, managedSkillsDirFor: input.managedSkillsDirFor })
   if (!input.toolsOn) {
     if (managed) removeCodexRealmSkills(input.home, managedSkillsDir)
     return { guidance: null }
   }
-  const managedSkills = managed ? stageCodexRealmSkills(input.home, managedSkillsDir) : undefined
+  const groups = input.skillGroups ?? { canvas: true, vision: true }
+  const managedSkills = managed ? stageCodexRealmSkills(input.home, managedSkillsDir, (skill) => groups[SKILL_GROUP[skill] ?? 'canvas']) : undefined
   let pluginSkillsDir: string | null = null
   if (!managed && platform !== 'win32' && input.route === 'direct') {
     const pluginDir = ensureCanvasPlugin()
