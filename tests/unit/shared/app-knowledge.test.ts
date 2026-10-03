@@ -536,3 +536,18 @@ describe('app knowledge after PR 4 (ADR-009 round 2)', () => {
     expect(body).not.toMatch(/The app opens only a plain folder/)
   })
 })
+
+// [host] PR 4 VM checkpoint (F1): under the Auto preset Codex runs with
+// `--ask-for-approval never`, so it cannot ask before a conductor tool that
+// needs approval and refuses the call. Claude's Auto mode gets no per-tool
+// approval for these tools from the app either, so Auto gets no keys (fail
+// closed, OR4 decides) and the Feature Guide says so, with the workaround.
+describe('app knowledge after the PR 4 VM checkpoint (F1)', () => {
+  it('says Codex on Auto cannot ask before the canvas render, the Vision tools or the in-app browser, and names Standard or Unrestricted', () => {
+    const k = APP_KNOWLEDGE_SECTIONS.find((x) => x.id === 'known-issues')!.body
+    expect(k).toMatch(/On the Auto preset, Codex cannot use the Agent Canvas render, the Vision tools or the push to the in-app browser/)
+    expect(k).toMatch(/Auto starts Codex with no prompts at all, so it cannot ask before these tools and refuses each call instead/)
+    expect(k).toMatch(/The canvas snapshot and review tools still run on Auto/)
+    expect(k).toMatch(/The workaround: use the Standard preset, where Codex asks before each of these tools, or Unrestricted, where they run without asking/)
+  })
+})

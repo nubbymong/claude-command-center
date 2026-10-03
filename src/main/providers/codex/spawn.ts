@@ -207,11 +207,16 @@ export function codexToolApprovalArg(tool: string): string {
  *  ask before. Matched by the presets' own words: Unrestricted ("Full
  *  machine access") with Claude's Bypass ("Skip every permission prompt"),
  *  which asks before nothing, so every conductor tool the connection is
- *  offered; Auto ("Workspace writes, no prompts") with Claude's Auto, whose
- *  handling of these tools waits on OR4's check of a real Claude session,
- *  so Auto keeps asking as today; Read Only, Standard and Plan keep Codex's
- *  prompt, as Claude's Ask, Accept edits and Plan mode ask. Nothing wider:
- *  never a server-wide default, never a session or always approval. */
+ *  offered; Auto ("Workspace writes, no prompts") with Claude's Auto, for
+ *  which the app approves none of these tools (a Claude session's allow list
+ *  is the same two in every mode; Claude Code's own auto mode decides each
+ *  call), so Auto gets no key until OR4's check of a real Claude session in
+ *  Auto mode: there Codex runs with `--ask-for-approval never`, cannot ask,
+ *  and refuses these calls (the PR 4 VM checkpoint, both versions; the
+ *  Feature Guide's known issues say so, with the workaround). Read Only,
+ *  Standard and Plan keep Codex's prompt, as Claude's Ask, Accept edits and
+ *  Plan mode ask. Nothing wider: never a server-wide default, never a session
+ *  or always approval. */
 export function codexPresetApprovedTools(preset: string, switches: ConductorToolSwitches): string[] {
   if (preset !== 'unrestricted') return []
   return CODEX_CONDUCTOR_TOOLS
@@ -466,8 +471,9 @@ function buildCodexSpawnCommand(opts: SpawnOptions): ProviderSpawnCommand {
     // on a longer review first; seconds, read as a float.
     flags.push('-c', `mcp_servers.conductor.tool_timeout_sec=${CONDUCTOR_TOOL_TIMEOUT_SEC}`)
     // WP2 PR 4, P4.1 (PB2): Codex asks before every call of a tool without
-    // annotations, under every preset probed, Auto's `--ask-for-approval
-    // never` included. The two Claude pre-allows in every mode run without
+    // annotations under Read Only, Standard and Plan; under Auto
+    // (`--ask-for-approval never`) it cannot ask and refuses such a call (the
+    // PR 4 VM checkpoint). The two Claude pre-allows in every mode run without
     // asking on every preset; under a preset whose matching Claude mode asks
     // before nothing, every tool the connection is offered does too
     // (codexPresetApprovedTools). Per tool, never server-wide.
