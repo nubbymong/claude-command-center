@@ -1,4 +1,4 @@
-import type { CodexOptions, LegacyVersion, ProviderId, SshConfig, StatuslineData } from '../../shared/types'
+import type { CodexOptions, LegacyVersion, ProviderId, SshConfig, StatuslineData, SubmitTextResult } from '../../shared/types'
 
 export interface SpawnOptions {
   sessionId: string
@@ -78,6 +78,19 @@ export interface SpawnOptions {
    *  app are on (ids), for the resume picker to say one is open in another
    *  tab. Set by main only. */
   codexOpenElsewhere?: string[]
+  /** Codex (WP2 PR 4, P4.1): the app's canvas and browser guidance as Codex
+   *  developer instructions (section 10 question 5, default A). Main decides
+   *  whether this launch carries it (src/main/canvas/codex-guidance.ts); the
+   *  builder passes it on the direct route only, never through cmd.exe. Set
+   *  by main only. */
+  developerInstructions?: string
+  /** Codex (WP2 PR 4, P4.3): this launch is an Ask Conductor session in the
+   *  app's help folder; the byte bound of the AGENTS.md written there
+   *  (help-workspace.ts askConductorProjectDocMaxBytes). The builder passes
+   *  `-c project_doc_max_bytes=<n>` and `-c project_root_markers=[]`, so
+   *  Codex reads that file whole and no parent folder's joins it. Set by main
+   *  only. */
+  askProjectDocMaxBytes?: number
 }
 
 /** What a provider's builder hands the PTY. `commandLine` (Windows only): the
@@ -105,6 +118,16 @@ export interface ProviderSpawnCommand {
   /** Codex (P3.10): the launch carries the app's hooks (see
    *  SpawnOptions.codexHooks). */
   hooksInstalled?: boolean
+  /** Codex (WP2 PR 4, P4.1): the launch line as the app's log may hold it,
+   *  built by the builder, which knows the long or private values (the
+   *  developer instructions) and names them by length. Absent: main logs no
+   *  argument. */
+  logLine?: string
+  /** Codex (WP2 PR 4, P4.3): the launch carries `askPrompt` as its prompt on
+   *  argv, after `--` (the direct route's fresh launch, PB4). Otherwise main
+   *  holds the question and types it through the run's pane at the first
+   *  ready, empty composer. */
+  askPromptOnArgv?: boolean
 }
 
 /** A folder as it was when made: what it is (its device and file id, exact)
@@ -217,6 +240,20 @@ export interface SessionProvider {
    *  hook folders were not prepared (round 4, prepareHookFolders): nothing is
    *  started here. */
   prepareSessionHooks?(sessionId: string, port: number, secret: string): { hookFile: string; dispose(): void } | null
+  /** Optional -- Codex (WP2 PR 4, P4.1): how a launch from `executable` is
+   *  started: `cmd` through cmd.exe (the npm .cmd shim, where no argument may
+   *  hold whitespace or a character cmd.exe interprets), else `direct`. Main
+   *  reads it before the launch is built, to decide what rides argv. Absent:
+   *  main assumes `cmd`, the route that carries less. */
+  launchRoute?(executable: string): 'direct' | 'cmd'
+  /** Optional -- Codex (P4.1): the skills folder of the provider home a
+   *  launch runs in when the app may stage its skills there (a managed
+   *  account's own folder, by path), else null: the user's own home is never
+   *  written. Path arithmetic only. */
+  stagedSkillsDir?(home: string, resourcesDir: string): string | null
+  /** Optional -- Codex (P4.1, PB9): main's own reading of each run's screen
+   *  and the submit primitive that types into its composer. */
+  readonly runScreen?: SessionRunScreen
   /** Subscribe to live telemetry for a spawned session (see TelemetryOptions). */
   ingestSessionTelemetry(
     sessionId: string,
@@ -226,6 +263,32 @@ export interface SessionProvider {
   listHistorySessions(): Promise<HistorySession[]>
   resumeCommand(sessionId: string): { cmd: string; args: string[] }
   configureMcpServer(serverConfig: { name: string; url: string }): Promise<void>
+}
+
+/** WP2 PR 4, P4.1: main's own pane of a session's run (bounded, headless, fed
+ *  the run's output from its first byte) and the submit primitive, the one
+ *  door through which main types a text into the session's composer. Every
+ *  method is keyed by the app's session id; a respawn opens a new pane. */
+export interface SessionRunScreen {
+  /** Open the pane for a session's new run, replacing any earlier one.
+   *  `write`: one raw write into that run's process. `current`: whether that
+   *  process is still the session's. `clamp`: what every chunk goes through
+   *  before the pane parses it (the Watchdog's CSI clamp), with the pane's
+   *  own state across chunks. */
+  open(sessionId: string, opts: { cols: number; rows: number; write: (data: string) => void; current: () => boolean; clamp: (data: string, state: { residual: string }) => string }): void
+  /** The run's output, as its terminal receives it. */
+  feed(sessionId: string, data: string): void
+  /** Keep the pane at the real pane's size. */
+  resize(sessionId: string, cols: number, rows: number): void
+  /** The run ended or the session went: a submission still waiting reports
+   *  the session gone and types nothing more. */
+  close(sessionId: string): void
+  /** Whether main reads this session's screen now. */
+  has(sessionId: string): boolean
+  /** Type `text` into the composer and submit it, confirmed on screen, after
+   *  anything already in flight for the run; waits up to `readyWaitMs` for
+   *  the ready, empty composer. Never rejects. */
+  submit(sessionId: string, text: string, opts: { readyWaitMs: number }): Promise<SubmitTextResult>
 }
 
 export interface SshCapableProvider extends SessionProvider {
