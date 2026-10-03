@@ -85,7 +85,7 @@
     "hono": "^4.12.34",
     "@hono/node-server": "^2.0.5",
     "lodash-es": "^4.18.1",
-    "ip-address": "^10.5.1",
+    "ip-address": "^10.7.1",
     "@xmldom/xmldom": "^0.8.13",
     "minimatch": "^10.2.3",
     "tar": "^7.5.21",
@@ -106,11 +106,11 @@
     "body-parser": "^2.3.0",
     "immutable": "^4.3.9",
     "js-yaml": "^4.3.1",
-    "brace-expansion": "^5.0.7",
+    "brace-expansion": "^5.0.12",
     "dompurify": "^3.4.16",
     "undici": "^7.30.0",
     "node-gyp": {
-      "undici": "^6.28.0"
+      "undici": "^6.28.1"
     }
   },
   "build": {
