@@ -25,6 +25,7 @@
 // call by someone who can write beside it; the check is made immediately
 // before the call, and the shell is given the checked real path.
 import * as fs from 'fs'
+import { z } from 'zod'
 import type { AccountLogFolderKind, AccountLogFolderOpenResult, AccountLogFolders, ProviderId } from '../shared/types'
 import { localPathFormProblem, samePathForm } from './utils/path-validator'
 import type { FolderCheckFs } from './utils/path-validator'
@@ -315,7 +316,13 @@ export interface LogFolderDeps {
   log?(message: string): void
 }
 
-const KINDS: readonly AccountLogFolderKind[] = ['log', 'log-dir']
+const KINDS = ['log', 'log-dir'] as const satisfies readonly AccountLogFolderKind[]
+
+/** debug:openAccountLogFolder's request: exactly these two keys. */
+const openRequestSchema = z.object({
+  accountId: z.string().min(1).max(200),
+  folder: z.enum(KINDS),
+}).strict()
 
 async function foldersNow(source: AccountFoldersSource): Promise<readonly AccountFolderSet[]> {
   try {
@@ -349,12 +356,13 @@ const refused = (code: Exclude<AccountLogFolderOpenResult, { ok: true }>['code']
  *  what it must pass before the shell sees it. */
 export async function openAccountLogFolder(input: unknown, source: AccountFoldersSource, deps: LogFolderDeps): Promise<AccountLogFolderOpenResult> {
   const log = (m: string) => { try { deps.log?.(`[account-logs] ${m}`) } catch { /* logging never fails the call */ } }
-  if (!input || typeof input !== 'object' || Array.isArray(input)) return refused('refused')
-  const keys = Object.keys(input)
-  if (keys.length !== 2 || !keys.includes('accountId') || !keys.includes('folder')) return refused('refused')
-  const { accountId, folder } = input as { accountId: unknown; folder: unknown }
-  if (typeof accountId !== 'string' || accountId.length === 0 || accountId.length > 200) return refused('unknown-account')
-  if (typeof folder !== 'string' || !KINDS.includes(folder as AccountLogFolderKind)) return refused('refused')
+  const req = openRequestSchema.safeParse(input)
+  if (!req.success) {
+    // A request whose only fault is its account id names no account main
+    // knows; any other fault is refused.
+    return refused(req.error.issues.every((i) => i.path.length === 1 && i.path[0] === 'accountId') ? 'unknown-account' : 'refused')
+  }
+  const { accountId, folder } = req.data
 
   const set = (await foldersNow(source)).find((s) => s && s.accountId === accountId)
   if (!set) return refused('unknown-account')

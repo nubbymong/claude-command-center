@@ -57,12 +57,15 @@ export function AccountMemoriesSection({ providerName, providerId, accounts, sel
                 No memories in this account. {TURN_ON_HINT[providerId] ?? ''}
               </div>
             ) : entry.state === 'unreadable' ? (
+              // Main does not say why (a link, an access error, a path it
+              // would not use): the card says only that it could not.
               <div className="text-[11px] text-overlay0" data-memory-state="unreadable">
-                This account's memories folder could not be read: it is not a plain folder.
+                This account's memories folder could not be read.
               </div>
             ) : entry.files.length === 0 ? (
+              // The folder is there; whether memories are on is not known here.
               <div className="text-[11px] text-overlay0" data-memory-state="empty">
-                Memories are on, and none have been written yet.
+                No memory files in this account's memories folder.
               </div>
             ) : (
               <div>

@@ -21,6 +21,7 @@ const ACCOUNTS: AccountMemories[] = [
   { providerId: 'codex', accountId: 'acct-work', external: false, state: 'present', truncated: false, files: [file('acct-work', 'MEMORY.md'), file('acct-work', 'extensions/ad_hoc/instructions.md')] },
   { providerId: 'codex', accountId: 'acct-home', external: true, state: 'none', truncated: false, files: [] },
   { providerId: 'codex', accountId: 'acct-odd', external: false, state: 'unreadable', truncated: false, files: [] },
+  { providerId: 'codex', accountId: 'acct-empty', external: false, state: 'present', truncated: false, files: [] },
 ]
 
 const state = vi.hoisted(() => ({ value: {} as Record<string, unknown> }))
@@ -92,9 +93,18 @@ describe('MemoryPage: each Codex account\'s own memories', () => {
     expect(card('acct-home')!.querySelector('[data-memory-state="none"]')!.textContent).toBe(
       'No memories in this account. Codex keeps memories off by default; turn them on in Codex with /memories.',
     )
-    expect(card('acct-odd')!.querySelector('[data-memory-state="unreadable"]')).toBeTruthy()
-    // Claude's empty store still says so, above them.
-    expect(container.textContent).toContain('No memory directories found')
+    // B-4: only what the app knows -- it could not read the folder (not why),
+    // and a folder with no memory files (not whether memories are on).
+    expect(card('acct-odd')!.querySelector('[data-memory-state="unreadable"]')!.textContent).toBe(
+      "This account's memories folder could not be read.",
+    )
+    expect(card('acct-empty')!.querySelector('[data-memory-state="empty"]')!.textContent).toBe(
+      "No memory files in this account's memories folder.",
+    )
+    expect(container.textContent).not.toMatch(/not a plain folder|Memories are on/)
+    // B-7: Claude's empty store says whose it is, above them.
+    expect(container.textContent).toContain('No Claude Code memories found')
+    expect(container.textContent).not.toContain('No memory directories found')
   })
 
   it('opening a file selects it', () => {

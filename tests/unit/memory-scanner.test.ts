@@ -442,6 +442,14 @@ describe('scanAccountMemories (a provider account\'s own memories folder)', () =
     expect(acct.files.length).toBe(ACCOUNT_MEMORY_LIMITS.maxFiles)
   })
 
+  it('B-3: a memories folder main names in another non-ASCII case than the disk is listed, not unreadable', async () => {
+    fake = createFakeAccountFs('win32')
+    plant('C:\\Users\\\u00d6zil\\codex-home\\memories')
+    const [acct] = await scanAccountMemories([set({ memoriesDir: 'c:\\users\\\u00f6zil\\codex-home\\memories' })], deps())
+    expect(acct.state).toBe('present')
+    expect(acct.files.map((f) => f.relPath)).toEqual([...PB6_LISTED_MD])
+  })
+
   it('one account failing never hides the others; no accounts lists none', async () => {
     expect(await scanAccountMemories(null, deps())).toEqual([])
     const out = await scanAccountMemories([set({ accountId: 'acct-bad', memoriesDir: 'C:\\nowhere\\memories' }), set()], deps())

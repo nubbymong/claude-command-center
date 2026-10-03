@@ -32,6 +32,7 @@ vi.mock('../../../src/main/memory-scanner', async (importOriginal) => {
 })
 
 const { registerMemoryHandlers } = await import('../../../src/main/ipc/memory-handlers')
+const { ACCOUNT_MEMORY_DELETE_SHOWN } = await import('../../../src/shared/account-memories')
 
 const HOME = 'C:\\Users\\me\\res\\codex-realms\\r1'
 const MEM = `${HOME}\\memories`
@@ -111,10 +112,15 @@ describe('memory:read and memory:delete on an account memory path', () => {
     expect(fake.exists(`${MEM}\\.git\\HEAD`)).toBe(true)
   })
 
-  it('deletes a file under memories (built; the page does not offer it yet)', async () => {
+  it('B-2: main refuses the delete too while it is not offered (ACCOUNT_MEMORY_DELETE_SHOWN): nothing is looked at or unlinked', async () => {
+    // The built delete itself is account-memory-guard.test.ts's (deleteAccountMemory).
+    expect(ACCOUNT_MEMORY_DELETE_SHOWN).toBe(false)
     register()
-    await call('memory:delete', `${MEM}\\phase2_workspace_diff.md`)
-    expect(fake.exists(`${MEM}\\phase2_workspace_diff.md`)).toBe(false)
+    const target = `${MEM}\\phase2_workspace_diff.md`
+    await expect(call('memory:delete', target)).rejects.toThrow(/not offered/)
+    expect(fake.exists(target)).toBe(true)
+    expect(fake.calls.unlink).toEqual([])
+    expect(fake.calls.lstat.filter((p) => p.toLowerCase() === target.toLowerCase())).toEqual([])
     expect(claude.del).not.toHaveBeenCalled()
   })
 
