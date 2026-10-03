@@ -14,8 +14,9 @@
 // Codex, besides its sessions and what an account lease covers (reviews,
 // sign-ins, operations), runs as Sentinel's version check, model list read
 // and an analysis on Codex (P3.9), counted the same way, and as cloud agents
-// (WP2 PR 4, P4.5): counted from the dispatch past the launch gate until the
-// record ends, before and besides the lease each holds while it runs.
+// (WP2 PR 4, P4.5): counted here from the dispatch past the launch gate until
+// the agent's lease is held, and through that lease from then on, so a
+// running agent counts once.
 import { countUnleasedAgentSessions } from './pty-manager'
 import { countClaudeAgentsInUse, countCodexAgentsInUse } from './cloud-agent-manager'
 import { countInsightsRunsInFlight } from './insights-runner'

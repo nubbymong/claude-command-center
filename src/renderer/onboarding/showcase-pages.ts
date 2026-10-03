@@ -181,8 +181,8 @@ export const SHOWCASES_21: ShowcasePage[] = [
     tagline: 'A session that has read the manual. Ask how the app works — settings, accounts, remote sessions — in plain English.',
     points: [
       { lead: 'Always there.', rest: 'Docked at the foot of the sidebar; opens as a tab and behaves like any session.' },
-      { lead: 'Knows the app, not your code.', rest: "It answers for the Conductor and for the assistant it runs on, Claude Code or Codex — and says which one you're asking about." },
-      { lead: 'It can install a helper skill.', rest: 'Say "install the skill" and your other sessions of that assistant on this machine can answer Conductor questions themselves — which settings file wins, how accounts share settings — without opening this tab.' },
+      { lead: 'Knows the app, not your code.', rest: "It answers for the Conductor and for the assistant it runs on, Claude Code or Codex, and says which one you're asking about." },
+      { lead: 'It can install a helper skill.', rest: 'Say "install the skill" and your other sessions of that assistant on this machine (on Codex, those of that account) can answer Conductor questions themselves, such as which settings file wins or how accounts share settings, without opening this tab.' },
       { lead: 'Nothing happens without you.', rest: 'It explains and proposes; the one file the skill install writes goes through your approval, and so would any remote install.' },
     ],
     where: { pre: 'Where: the ', em: 'Ask Conductor', post: ' pill at the foot of the sidebar.' },
