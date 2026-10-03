@@ -5,9 +5,11 @@ import {
   trainingSteps,
   getNewSteps,
   currentTrainingVersion,
+  stepsForAssistants,
   SECTION_LABELS,
   type TrainingStep,
 } from '../training-steps'
+import { useSettingsStore } from '../stores/settingsStore'
 import { DialogOverlay, DialogButton } from './ui/Dialog'
 
 // Vite glob import for training screenshots — automatically picks up all JPGs in the directory
@@ -77,9 +79,13 @@ const ICON_BTN_CLASS =
   'text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors'
 
 export default function TrainingWalkthrough({ onClose, showAll = false, mode = 'first-run' }: Props) {
-  const steps = showAll
-    ? trainingSteps
-    : getNewSteps(useAppMetaStore.getState().meta.lastTrainingVersion)
+  // The cards for the assistants in use (P4.11, row 14), as the Feature Guide shows them.
+  const claudeEnabled = useSettingsStore((s) => s.settings.claudeEnabled)
+  const codexEnabled = useSettingsStore((s) => s.settings.codexEnabled)
+  const steps = stepsForAssistants(
+    showAll ? trainingSteps : getNewSteps(useAppMetaStore.getState().meta.lastTrainingVersion),
+    { claudeEnabled, codexEnabled },
+  )
 
   const [currentIndex, setCurrentIndex] = useState(0)
   const [imgBad, setImgBad] = useState<Set<number>>(new Set())

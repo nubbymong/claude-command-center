@@ -441,6 +441,9 @@ describe('Hello Codex: seen once, replayable', () => {
     // The links are offered only once Codex is set up: page 1 says the
     // account is ready.
     const guideLink = () => container.querySelector('[data-ux-id="card-codex-provider"] [data-ux-id="show-codex-intro"]') as HTMLElement | null
+    // P4.11 (row 14): the guide shows its Codex card while Codex is on, as the
+    // saved setting says it (and as the snapshot's answer does).
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, codexEnabled: true }, isLoaded: true })
     useProviderAccountsStore.setState({ snapshot: withCodex({}, []), loaded: true })
     await render(h(FeatureGuidePage, { onNavigateToSessions: vi.fn(), onStartTour: vi.fn() }))
     await act(async () => { (container.querySelector('[data-ux-id="rail-integrations"]') as HTMLElement).click() })
@@ -768,7 +771,9 @@ describe('Hello Codex: presentation and copy', () => {
     expect(codex, 'app-knowledge has a codex entry').toBeDefined()
     for (const [what, s] of STATEMENTS) expect(flat(codex!.body), `app-knowledge: ${what}`).toContain(s)
 
-    // The Feature Guide: the Codex card under Integrations, as it renders.
+    // The Feature Guide: the Codex card under Integrations, as it renders while
+    // Codex is on (P4.11: the guide shows the cards for the assistants in use).
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, codexEnabled: true }, isLoaded: true })
     await render(h(FeatureGuidePage, { onNavigateToSessions: vi.fn(), onStartTour: vi.fn() }))
     await act(async () => { (container.querySelector('[data-ux-id="rail-integrations"]') as HTMLElement).click() })
     const card = flat(container.querySelector('[data-ux-id="card-codex-provider"]')?.textContent ?? '')
