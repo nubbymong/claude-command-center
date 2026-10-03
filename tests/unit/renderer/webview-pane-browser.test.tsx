@@ -446,6 +446,26 @@ describe('the account surface (#439/#475) — claude.ai as this session’s acco
     expect(byTest('browser-start-claudeai')).not.toBeNull()
   })
 
+  // WP2 PR 4, P4.6 (row 58): a Codex session has no Claude account, and the
+  // primary fallback would have offered ANOTHER account's claude.ai (#216;
+  // P3.6 V5), as the session menu's items did.
+  it('a local Codex session never carries the claude.ai entry, whatever Claude profile is primary', async () => {
+    localSession()
+    SESSIONS = [{ id: 's1', configId: 'cfg1', sessionType: 'local', provider: 'codex' }, { id: 's2' }]
+    open()
+    render()
+    await flush()
+    expect(byTest('browser-start-claudeai')).toBeNull()
+    // The same session as Claude's gets it: the provider alone decides.
+    act(() => { root.unmount() })
+    root = createRoot(container)
+    SESSIONS = [{ id: 's1', configId: 'cfg1', sessionType: 'local', provider: 'claude' }, { id: 's2' }]
+    open()
+    render()
+    await flush()
+    expect(byTest('browser-start-claudeai')).not.toBeNull()
+  })
+
   it('opening it swaps the pane to the account view: ordinary view closed, account view opened as the profile', async () => {
     localSession()
     act(() => { useWebviewStore.getState().navigate('s1', 'http://localhost:5173/') })
