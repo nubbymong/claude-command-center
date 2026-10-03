@@ -24,7 +24,6 @@
 // No file is written, no process started, no keyring touched.
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
-import { createHash } from 'node:crypto'
 import path from 'node:path'
 import {
   CODEX_PINNED_CLI_VERSION, CODEX_MIN_SUPPORTED_VERSION, codexCliEnv, codexRealmHome, codexManagedRealmsRoot, resolveCodexRealmRoots,
@@ -117,11 +116,6 @@ const RB = `realm-${'b'.repeat(16)}`
 const managed = (id: string) => ({ id, providerId: 'codex' as const, kind: 'codex-home' as const, ownership: 'conductor-managed' as const, pathRef: `managed:${id}` })
 const external = { ...managed(RA), ownership: 'external-default' as const, pathRef: 'external-default' }
 
-/** The pinned derivation as the excerpts above show it, over a path that is
- *  already canonical. It shows two homes get two entries; it is not the
- *  CLI's literal entry name (on Windows Rust's canonicalize adds `\\?\`). */
-const entryFor = (prefix: 'cli' | 'secrets', canonicalHome: string) => `${prefix}|${createHash('sha256').update(canonicalHome, 'utf8').digest('hex').slice(0, 16)}`
-
 /** An in-memory filesystem with one alias (a SUBST drive, a symlinked
  *  folder): realpath and lstat see through it, as the real ones do. */
 function aliasFs(platform: NodeJS.Platform, alias: [string, string], dirs: string[]): CodexRealmFsPort {
@@ -182,7 +176,10 @@ describe('the app side of the contract: one realm, one CODEX_HOME (WP1.11)', () 
     }
   })
 
-  it('[host] two managed realms resolve to two different homes under the canonical managed root, so the pinned CLI keys them to two keyring entries', () => {
+  // The guarantee is the two homes: the pinned CLI keys each entry by its
+  // canonical home (above), and these are canonical and distinct. Two keyring
+  // entries driven through the app are tests/wp1/fake-keyring.test.ts.
+  it('[host] two managed realms resolve to two different homes under the canonical managed root, each a CLI run\'s CODEX_HOME', () => {
     for (const w of WORLDS) {
       const r = resolveCodexRealmRoots({ resourcesDir: w.configured, env: {}, homeDir: '' }, worldFs(w))
       expect(r, w.platform).toMatchObject({ ok: true, roots: { resourcesDir: w.canonical } })
@@ -195,7 +192,6 @@ describe('the app side of the contract: one realm, one CODEX_HOME (WP1.11)', () 
       expect(a!.toLowerCase(), w.platform).not.toBe(b!.toLowerCase())
       const env = { PATH: '/usr/bin', CODEX_HOME: w.ownHome }
       expect([codexCliEnv(env, a!, w.platform).CODEX_HOME, codexCliEnv(env, b!, w.platform).CODEX_HOME], w.platform).toEqual([a, b])
-      for (const prefix of ['cli', 'secrets'] as const) expect(entryFor(prefix, a!), `${w.platform} ${prefix}`).not.toBe(entryFor(prefix, b!))
     }
   })
 

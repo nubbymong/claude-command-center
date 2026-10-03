@@ -16,7 +16,7 @@
           "role": "direct-keyring-key",
           "path": "codex-rs/login/src/auth/storage.rs",
           "sha256": "2e95a8998687e926675d41b5d941c3c3546a652c03d9680e6c7385e59bf459af",
-          "what": "The Direct keyring backend: the entry (service \"Codex Auth\") is keyed by sha256 of the canonicalised codex_home; load, save and delete all use it. The file store is codex_home/auth.json. The Secrets backend is built on the same codex_home.",
+          "what": "The Direct keyring backend: the entry (service \"Codex Auth\") is keyed by sha256 of the canonicalised codex_home; load, save and delete all use it. The file store is codex_home/auth.json. The Secrets backend is built on the same codex_home, and its delete also removes the Direct entry.",
           "excerpt": [
             {
               "line": 154,
@@ -109,6 +109,30 @@
             {
               "line": 349,
               "text": "        );"
+            },
+            {
+              "line": 393,
+              "text": "    fn delete(&self) -> std::io::Result<bool> {"
+            },
+            {
+              "line": 394,
+              "text": "        let keyring_removed = self"
+            },
+            {
+              "line": 395,
+              "text": "            .secrets_manager"
+            },
+            {
+              "line": 396,
+              "text": "            .delete(&SecretScope::Global, &CODEX_AUTH_SECRET_NAME)"
+            },
+            {
+              "line": 402,
+              "text": "        let file_removed = delete_file_if_exists(&self.codex_home)?;"
+            },
+            {
+              "line": 403,
+              "text": "        let direct_removed = self.direct_storage.delete()?;"
             }
           ]
         },
@@ -180,11 +204,43 @@
           "role": "secrets-file-and-key-lookup",
           "path": "codex-rs/secrets/src/local.rs",
           "sha256": "d43996c83710542696da20117c6413a16615858a78c59bb9be3fafaee565bf2b",
-          "what": "The Secrets backend keeps the encrypted auth file under codex_home/secrets and looks its key up by compute_keyring_account(codex_home).",
+          "what": "The Secrets backend keeps the encrypted auth file under codex_home/secrets and looks its key up by compute_keyring_account(codex_home). Its delete removes the secret from that file only: the key entry in the OS keyring stays.",
           "excerpt": [
             {
               "line": 42,
               "text": "const CODEX_AUTH_SECRETS_FILENAME: &str = \"codex_auth.age\";"
+            },
+            {
+              "line": 122,
+              "text": "    pub fn delete(&self, scope: &SecretScope, name: &SecretName) -> Result<bool> {"
+            },
+            {
+              "line": 123,
+              "text": "        let canonical_key = scope.canonical_key(name);"
+            },
+            {
+              "line": 124,
+              "text": "        let mut file = self.load_file()?;"
+            },
+            {
+              "line": 125,
+              "text": "        let removed = file.secrets.remove(&canonical_key).is_some();"
+            },
+            {
+              "line": 126,
+              "text": "        if removed {"
+            },
+            {
+              "line": 127,
+              "text": "            self.save_file(&file)?;"
+            },
+            {
+              "line": 128,
+              "text": "        }"
+            },
+            {
+              "line": 129,
+              "text": "        Ok(removed)"
             },
             {
               "line": 150,
@@ -317,7 +373,7 @@
           "role": "direct-keyring-key",
           "path": "codex-rs/login/src/auth/storage.rs",
           "sha256": "2e95a8998687e926675d41b5d941c3c3546a652c03d9680e6c7385e59bf459af",
-          "what": "The Direct keyring backend: the entry (service \"Codex Auth\") is keyed by sha256 of the canonicalised codex_home; load, save and delete all use it. The file store is codex_home/auth.json. The Secrets backend is built on the same codex_home.",
+          "what": "The Direct keyring backend: the entry (service \"Codex Auth\") is keyed by sha256 of the canonicalised codex_home; load, save and delete all use it. The file store is codex_home/auth.json. The Secrets backend is built on the same codex_home, and its delete also removes the Direct entry.",
           "excerpt": [
             {
               "line": 154,
@@ -410,6 +466,30 @@
             {
               "line": 349,
               "text": "        );"
+            },
+            {
+              "line": 393,
+              "text": "    fn delete(&self) -> std::io::Result<bool> {"
+            },
+            {
+              "line": 394,
+              "text": "        let keyring_removed = self"
+            },
+            {
+              "line": 395,
+              "text": "            .secrets_manager"
+            },
+            {
+              "line": 396,
+              "text": "            .delete(&SecretScope::Global, &CODEX_AUTH_SECRET_NAME)"
+            },
+            {
+              "line": 402,
+              "text": "        let file_removed = delete_file_if_exists(&self.codex_home)?;"
+            },
+            {
+              "line": 403,
+              "text": "        let direct_removed = self.direct_storage.delete()?;"
             }
           ]
         },
@@ -481,11 +561,43 @@
           "role": "secrets-file-and-key-lookup",
           "path": "codex-rs/secrets/src/local.rs",
           "sha256": "d43996c83710542696da20117c6413a16615858a78c59bb9be3fafaee565bf2b",
-          "what": "The Secrets backend keeps the encrypted auth file under codex_home/secrets and looks its key up by compute_keyring_account(codex_home).",
+          "what": "The Secrets backend keeps the encrypted auth file under codex_home/secrets and looks its key up by compute_keyring_account(codex_home). Its delete removes the secret from that file only: the key entry in the OS keyring stays.",
           "excerpt": [
             {
               "line": 42,
               "text": "const CODEX_AUTH_SECRETS_FILENAME: &str = \"codex_auth.age\";"
+            },
+            {
+              "line": 122,
+              "text": "    pub fn delete(&self, scope: &SecretScope, name: &SecretName) -> Result<bool> {"
+            },
+            {
+              "line": 123,
+              "text": "        let canonical_key = scope.canonical_key(name);"
+            },
+            {
+              "line": 124,
+              "text": "        let mut file = self.load_file()?;"
+            },
+            {
+              "line": 125,
+              "text": "        let removed = file.secrets.remove(&canonical_key).is_some();"
+            },
+            {
+              "line": 126,
+              "text": "        if removed {"
+            },
+            {
+              "line": 127,
+              "text": "            self.save_file(&file)?;"
+            },
+            {
+              "line": 128,
+              "text": "        }"
+            },
+            {
+              "line": 129,
+              "text": "        Ok(removed)"
             },
             {
               "line": 150,
