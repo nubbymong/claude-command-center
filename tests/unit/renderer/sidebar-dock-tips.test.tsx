@@ -236,8 +236,8 @@ describe('sidebar dock -- the Ask row copy (#372)', () => {
   })
 })
 
-describe('sidebar dock -- Ask with Claude Code switched off (WP2 commit 6e review fix)', () => {
-  const OFF = 'Ask Conductor runs on Claude Code, which is off. Turn it on in Settings, Accounts.'
+describe('sidebar dock -- Ask with Claude Code switched off and Codex not on (WP2 commit 6e review fix; P4.3)', () => {
+  const OFF = 'Ask Conductor runs on Claude Code or Codex, and both are off. Turn one on in Settings, Accounts.'
   const setClaude = (claudeEnabled: boolean | undefined) =>
     useSettingsStore.setState({ settings: { ...useSettingsStore.getState().settings, claudeEnabled } } as any)
   afterEach(() => { setClaude(undefined) })
