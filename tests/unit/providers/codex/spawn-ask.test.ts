@@ -268,7 +268,7 @@ describe('the question and the Windows command line (ADR-009 round 1)', () => {
   const Q = '"'
   const B = '\\'
   const win = { ...linuxLaunch, executable: EXE, env: winEnv }
-  const buildWin = (q: string, launch: typeof linuxLaunch = win) => withWin32(() => buildCodexSpawn({ sessionId: 'sid', realmLaunch: launch, codexOptions: STANDARD, askPrompt: q }))
+  const buildWin = (q: string, launch: typeof win = win) => withWin32(() => buildCodexSpawn({ sessionId: 'sid', realmLaunch: launch, codexOptions: STANDARD, askPrompt: q }))
   // Quotes, backslashes before a quote and at the end, spaces, tabs, and the
   // characters cmd.exe gives a meaning.
   const CORPUS = [
