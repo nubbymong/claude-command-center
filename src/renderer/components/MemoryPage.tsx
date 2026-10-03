@@ -4,7 +4,7 @@ import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSessionStore } from '../stores/sessionStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useProviderAccountsStore, accountDisplayName, providerView, ACCOUNT_NAME_FALLBACK } from '../stores/providerAccountsStore'
-import { usesClaude, usesCodex } from '../onboarding/provider-choice'
+import { usesCodex } from '../onboarding/provider-choice'
 import { ACCOUNT_MEMORY_DELETE_SHOWN, isAccountMemoryFile } from '../../shared/account-memories'
 import type { AccountMemories, AccountMemoryFile } from '../../shared/account-memories'
 import type { AccountsSnapshot } from '../../shared/providers'
@@ -94,13 +94,13 @@ export default function MemoryPage({ onClose, onOpenSessionLogs, onJumpToSession
     return () => clearTimeout(t)
   }, [searchInput])
 
-  // WP2 PR 4, P4.4 (row 55): each account's own memories, for the providers
-  // in use, grouped by provider, each file named by its account.
-  const claudeOn = useSettingsStore((s) => usesClaude(s.settings))
+  // WP2 PR 4, P4.4 (row 55): each account's own memories, grouped by
+  // provider, each file named by its account; Codex's only while Codex is in
+  // use (only the Codex package names account memories folders).
   const codexOn = useSettingsStore((s) => usesCodex(s.settings))
   const providerSnapshot = useProviderAccountsStore((s) => s.snapshot)
   const accountGroups = useMemo(() => {
-    const inUse = (p: ProviderId): boolean => (p === 'codex' ? codexOn : claudeOn)
+    const inUse = (p: ProviderId): boolean => p !== 'codex' || codexOn
     const groups = new Map<ProviderId, LabelledAccountMemories[]>()
     for (const entry of accountMemories ?? []) {
       if (!inUse(entry.providerId)) continue
@@ -113,7 +113,7 @@ export default function MemoryPage({ onClose, onOpenSessionLogs, onJumpToSession
       providerName: providerView(providerSnapshot, providerId)?.displayName ?? PROVIDER_NAME_FALLBACK[providerId],
       accounts,
     }))
-  }, [accountMemories, providerSnapshot, claudeOn, codexOn])
+  }, [accountMemories, providerSnapshot, codexOn])
   // The accounts' files as search and the drawer see them: `project` names
   // the account.
   const accountFiles = useMemo<AccountMemoryFile[]>(
@@ -306,7 +306,7 @@ export default function MemoryPage({ onClose, onOpenSessionLogs, onJumpToSession
           <>
             {projects.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-10 text-overlay0 gap-2">
-                <span className="font-mono text-xs">No memory directories found</span>
+                <span className="font-mono text-xs">No Claude Code memories found</span>
                 <span className="text-[11px] text-overlay0">Claude Code stores memories in ~/.claude/projects/*/memory/</span>
               </div>
             ) : (

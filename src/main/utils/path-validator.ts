@@ -69,8 +69,6 @@ export function validateMemoryPath(userPath: string, opts?: { destructive?: bool
 
 type PathPlatform = NodeJS.Platform
 
-const pathFor = (platform: PathPlatform): typeof path => (platform === 'win32' ? path.win32 : path.posix)
-
 /** Device names Windows resolves in any folder (`C:\logs\CON` is the console). */
 const WIN_DEVICE_NAME = /^(con|prn|aux|nul|conin\$|conout\$|com[0-9\u00b9\u00b2\u00b3]|lpt[0-9\u00b9\u00b2\u00b3])(\..*)?$/i
 
@@ -129,19 +127,60 @@ export function localPathFormProblem(p: unknown, platform: PathPlatform = proces
 }
 
 /**
- * Two spellings of one path as the platform compares them: on Windows either
- * separator and ASCII letters folded (full Unicode folding would match the
- * Kelvin sign to `k`, which NTFS keeps apart); on macOS ASCII letters folded;
- * elsewhere exact. A trailing separator is ignored, a root's is kept.
+ * The one case rule for "the same path" in the account-folder checks: the
+ * containment test and the real-path test alike (Node's path.relative folds
+ * with toLowerCase, which this replaces). Chosen to follow how Windows
+ * compares names: NTFS upper-cases each UTF-16 unit through a one-to-one
+ * upcase table. So a unit is folded only to an upper case that is itself one
+ * unit and lowers back to it (a plain letter pair, o and O with umlauts
+ * included); anything else is kept as written: the Kelvin sign is not k,
+ * dotless i is not I, sharp s never becomes two letters, a surrogate is never
+ * folded. A pair this cannot be sure of reads as two names, and each check
+ * refuses on a mismatch, so it fails closed.
+ */
+export function foldPathCase(s: string): string {
+  return s.replace(/[a-z]|[^\x00-\x7f]/g, (c) => {
+    // Lowering back to the one unit `c` also means `u` is one unit.
+    const u = c.toUpperCase()
+    return u.toLowerCase() === c ? u : c
+  })
+}
+
+/** A path as the checks compare it: on Windows either separator, and a
+ *  trailing separator dropped (a root's kept). Case is not touched here. */
+function spelled(p: string, platform: PathPlatform): string {
+  const sep = platform === 'win32' ? '\\' : '/'
+  let s = platform === 'win32' ? p.replace(/\//g, '\\') : p
+  while (s.length > 1 && s.endsWith(sep) && !(platform === 'win32' && /^[A-Za-z]:\\$/.test(s))) s = s.slice(0, -1)
+  return s
+}
+
+const caseKey = (s: string, platform: PathPlatform): string => (platform === 'win32' || platform === 'darwin' ? foldPathCase(s) : s)
+
+/**
+ * Two spellings of one path as the platform compares them: on Windows and
+ * macOS by foldPathCase (Windows also takes either separator); elsewhere
+ * exact. A trailing separator is ignored, a root's is kept.
  */
 export function samePathForm(a: string, b: string, platform: PathPlatform = process.platform): boolean {
+  return caseKey(spelled(a, platform), platform) === caseKey(spelled(b, platform), platform)
+}
+
+/**
+ * `target`'s path below `root` (as `target` writes it), when it is strictly
+ * inside it by samePathForm's rule; else null. Both must already have a local
+ * form (localPathFormProblem): no `.` or `..` segment is resolved here, so a
+ * name that merely starts with two dots is inside.
+ */
+export function pathInside(root: string, target: string, platform: PathPlatform = process.platform): string | null {
   const sep = platform === 'win32' ? '\\' : '/'
-  const norm = (p: string): string => {
-    let s = platform === 'win32' ? p.replace(/\//g, '\\') : p
-    while (s.length > 1 && s.endsWith(sep) && !(platform === 'win32' && /^[A-Za-z]:\\$/.test(s))) s = s.slice(0, -1)
-    return platform === 'win32' || platform === 'darwin' ? s.replace(/[A-Z]/g, (c) => c.toLowerCase()) : s
-  }
-  return norm(a) === norm(b)
+  const r = spelled(root, platform)
+  const t = spelled(target, platform)
+  const prefix = r.endsWith(sep) ? r : r + sep
+  // foldPathCase keeps every unit in its place, so the prefix's length cuts
+  // the target as written.
+  if (t.length <= prefix.length || !caseKey(t, platform).startsWith(caseKey(prefix, platform))) return null
+  return t.slice(prefix.length)
 }
 
 /** The file calls the folder checks make (fs.promises' own; a test passes
@@ -206,7 +245,6 @@ export async function validateAccountMemoryPath(
 ): Promise<AccountMemoryTarget> {
   const platform = opts.platform ?? process.platform
   const files = opts.fs ?? realFolderCheckFs
-  const p = pathFor(platform)
   const form = localPathFormProblem(userPath, platform)
   if (form) throw new AccountPathRefused('refused', `not a local path (${form})`)
   const target = userPath as string
@@ -214,8 +252,8 @@ export async function validateAccountMemoryPath(
   let rel = ''
   for (const r of roots) {
     if (localPathFormProblem(r, platform)) continue
-    const candidate = p.relative(r, target)
-    if (candidate !== '' && !candidate.startsWith('..') && !p.isAbsolute(candidate)) {
+    const candidate = pathInside(r, target, platform)
+    if (candidate !== null) {
       root = r
       rel = candidate
       break

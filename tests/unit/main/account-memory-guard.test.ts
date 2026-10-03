@@ -10,7 +10,7 @@ import { createFakeAccountFs } from '../../helpers/fake-account-fs'
 import type { FakeAccountFs } from '../../helpers/fake-account-fs'
 import { PB6_MEMORIES } from '../../fixtures/codex/memories-pb6'
 import {
-  validateAccountMemoryPath, localPathFormProblem, samePathForm, isGitSegment, AccountPathRefused,
+  validateAccountMemoryPath, localPathFormProblem, samePathForm, pathInside, isGitSegment, AccountPathRefused,
 } from '../../../src/main/utils/path-validator'
 import { readAccountMemory, deleteAccountMemory, isUnderAccountMemories } from '../../../src/main/account-memories'
 import { readCheckedFile } from '../../../src/main/account-folders'
@@ -68,13 +68,40 @@ describe('localPathFormProblem: the form alone, before any file call', () => {
   })
 })
 
-describe('samePathForm and isGitSegment', () => {
-  it('Windows: either separator, ASCII case, a trailing separator; never Unicode folding', () => {
+describe('samePathForm, pathInside and isGitSegment', () => {
+  it('Windows: either separator, a trailing separator, and the case Windows folds; never the Kelvin sign, dotless i, sharp s or a surrogate', () => {
     expect(samePathForm('C:\\A\\b', 'c:/a/B/', 'win32')).toBe(true)
     expect(samePathForm('C:\\', 'c:\\', 'win32')).toBe(true)
+    // A non-ASCII letter pair is one name to NTFS (B-3: a home spelled in another case).
+    expect(samePathForm('C:\\Users\\\u00d6zil\\codex-home', 'c:\\users\\\u00f6zil\\codex-home', 'win32')).toBe(true)
     expect(samePathForm('C:\\x\\\u212a', 'C:\\x\\k', 'win32')).toBe(false) // the Kelvin sign is not k
+    expect(samePathForm('C:\\x\\\u0131', 'C:\\x\\I', 'win32')).toBe(false) // dotless i is not I
+    expect(samePathForm('C:\\x\\\u0131', 'C:\\x\\i', 'win32')).toBe(false)
+    expect(samePathForm('C:\\x\\stra\u00dfe', 'C:\\x\\STRASSE', 'win32')).toBe(false) // one unit is never two
+    expect(samePathForm('C:\\x\\\u017f', 'C:\\x\\s', 'win32')).toBe(false) // long s
+    expect(samePathForm('C:\\x\\\ud801\udc28', 'C:\\x\\\ud801\udc00', 'win32')).toBe(false) // a surrogate pair is never folded
     expect(samePathForm('/a/B', '/a/b', 'linux')).toBe(false)
+    expect(samePathForm('/a/\u00d6', '/a/\u00f6', 'linux')).toBe(false)
     expect(samePathForm('/a/B/', '/a/b', 'darwin')).toBe(true)
+    expect(samePathForm('/a/\u00d6', '/a/\u00f6', 'darwin')).toBe(true)
+  })
+  it('pathInside: strictly inside the root, by the same case rule, the rest as written', () => {
+    expect(pathInside(MEM, `${MEM}\\extensions\\x.md`, 'win32')).toBe('extensions\\x.md')
+    expect(pathInside('C:/m/', 'c:\\M\\x.md', 'win32')).toBe('x.md')
+    expect(pathInside('C:\\', 'C:\\x', 'win32')).toBe('x')
+    expect(pathInside('c:\\users\\\u00f6zil\\m', 'C:\\Users\\\u00d6zil\\m\\x.md', 'win32')).toBe('x.md')
+    // B-6: a name that starts with two dots is inside.
+    expect(pathInside(MEM, `${MEM}\\..notes.md`, 'win32')).toBe('..notes.md')
+    for (const outside of [MEM, `${MEM}\\`, `${MEM}x\\a.md`, 'D:\\Users\\me\\res\\codex-realms\\r1\\memories\\a.md', `${HOME}\\auth.json`]) {
+      expect(pathInside(MEM, outside, 'win32'), outside).toBeNull()
+    }
+    expect(pathInside('C:\\Users\\Nik\\m', 'C:\\Users\\Ni\u212a\\m\\x.md', 'win32')).toBeNull()
+    expect(pathInside('/h/m', '/h/m/a/b.md', 'linux')).toBe('a/b.md')
+    expect(pathInside('/h/m', '/h/M/a', 'linux')).toBeNull()
+    expect(pathInside('/h/m', '/h/M/a', 'darwin')).toBe('a')
+    expect(pathInside('/', '/a', 'linux')).toBe('a')
+    expect(pathInside('C:\\', 'c:\\', 'win32')).toBeNull()
+    expect(pathInside('/', '/', 'linux')).toBeNull()
   })
   it('.git in any case, and as Windows reads a trailing dot or space', () => {
     for (const n of ['.git', '.GIT', '.Git', '.git.', '.git ', '.git. .']) expect(isGitSegment(n), n).toBe(true)
@@ -152,6 +179,31 @@ describe('validateAccountMemoryPath', () => {
   it('a missing file is not found', async () => {
     await refusedWith(guard(`${MEM}\\gone.md`), 'not-found')
   })
+
+  it('B-3: a folder main names in another non-ASCII case than the disk is the same folder', async () => {
+    const disk = 'C:\\Users\\\u00d6zil\\codex-home\\memories'
+    const named = 'c:\\users\\\u00f6zil\\codex-home\\memories'
+    const z = createFakeAccountFs('win32')
+    plantPb6(z, disk, '\\')
+    const t = await guard(`${named}\\extensions\\ad_hoc\\instructions.md`, [named], z)
+    expect(t.root).toBe(named)
+    const zset = { ...set, memoriesDir: named }
+    expect(await readAccountMemory(`${named}\\MEMORY.md`, [zset], { fs: z as never, platform: 'win32' })).toContain('# Memory')
+  })
+
+  it('B-3: the Kelvin sign is another name to Windows: outside the folder, refused before any file call', async () => {
+    const k = createFakeAccountFs('win32')
+    plantPb6(k, 'C:\\Users\\Nik\\codex-home\\memories', '\\')
+    const before = k.fileCalls()
+    await refusedWith(guard('C:\\Users\\Ni\u212a\\codex-home\\memories\\MEMORY.md', ['C:\\Users\\Nik\\codex-home\\memories'], k), 'refused')
+    expect(k.fileCalls() - before).toBe(0)
+  })
+
+  it('B-6: a file whose name starts with two dots, at the memories root, is inside it', async () => {
+    fake.writeFile(`${MEM}\\..notes.md`, '# Notes\n\nkept')
+    expect((await guard(`${MEM}\\..notes.md`)).path).toBe(`${MEM}\\..notes.md`)
+    expect(await readAccountMemory(`${MEM}\\..notes.md`, [set], { fs: fake as never, platform: 'win32' })).toContain('kept')
+  })
 })
 
 describe('the read and delete behind memory:read and memory:delete', () => {
@@ -220,5 +272,11 @@ describe('the read and delete behind memory:read and memory:delete', () => {
     expect(isUnderAccountMemories(`${HOME}\\auth.json`, [set], 'win32')).toBe(false)
     expect(isUnderAccountMemories('\\\\host\\share\\memories\\x.md', [set], 'win32')).toBe(false)
     expect(isUnderAccountMemories(`${MEM}\\MEMORY.md`, null, 'win32')).toBe(false)
+    // The same rule as the guard: two leading dots inside, a non-ASCII case
+    // pair the same folder, the Kelvin sign another.
+    expect(isUnderAccountMemories(`${MEM}\\..notes.md`, [set], 'win32')).toBe(true)
+    const k = { ...set, memoriesDir: 'C:\\Users\\Nik\\\u00d6\\memories' }
+    expect(isUnderAccountMemories('c:\\users\\nik\\\u00f6\\memories\\MEMORY.md', [k], 'win32')).toBe(true)
+    expect(isUnderAccountMemories('C:\\Users\\Ni\u212a\\\u00d6\\memories\\MEMORY.md', [k], 'win32')).toBe(false)
   })
 })

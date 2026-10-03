@@ -4,9 +4,10 @@ import * as os from 'os'
 import * as path from 'path'
 import { z } from 'zod'
 import { scanLocalMemory, readMemoryContent, deleteMemoryFile, writeMemoryFrontmatter } from '../memory-scanner'
-import { validateMemoryPath } from '../utils/path-validator'
+import { AccountPathRefused, validateMemoryPath } from '../utils/path-validator'
 import { getLogSupervisor } from '../logging/logging-service'
 import { IPC } from '../../shared/ipc-channels'
+import { ACCOUNT_MEMORY_DELETE_SHOWN } from '../../shared/account-memories'
 import type { MemoryScanWithAccounts } from '../../shared/account-memories'
 import { appWindowSender } from './trusted-sender'
 import { realAccountFileFs } from '../account-folders'
@@ -28,7 +29,9 @@ const frontmatterSchema = z.object({
  *    service), asked afresh per request; memory:scan then lists each
  *    account's memories, and memory:read and memory:delete take a path inside
  *    an account's memories folder through validateAccountMemoryPath (never
- *    `.git`, never through a link). memory:writeFrontmatter stays Claude's.
+ *    `.git`, never through a link; memory:delete refuses it while
+ *    ACCOUNT_MEMORY_DELETE_SHOWN is false). memory:writeFrontmatter stays
+ *    Claude's.
  *  - `accountFs`, `platform`: test seams. */
 export interface MemoryHandlerDeps {
   getWindow?: () => BrowserWindow | null
@@ -97,6 +100,9 @@ export function registerMemoryHandlers(deps: MemoryHandlerDeps = {}): void {
     }
     const sets = await accountBranch(filePath)
     if (sets) {
+      // Not offered until P4.4's VM check, and refused here too, before any
+      // file call: no caller deletes in an account's memories folder first.
+      if (!ACCOUNT_MEMORY_DELETE_SHOWN) throw new AccountPathRefused('refused', 'deleting an account memory is not offered yet')
       await deleteAccountMemory(filePath, sets, accountDeps())
       return
     }

@@ -26,7 +26,7 @@ import type { BigIntStats } from 'fs'
 import type { AccountMemories, AccountMemoryFile } from '../shared/account-memories'
 import { readCheckedFile } from './account-folders'
 import type { AccountFileFs, AccountFolderSet } from './account-folders'
-import { AccountPathRefused, isGitSegment, samePathForm, validateAccountMemoryPath, localPathFormProblem } from './utils/path-validator'
+import { AccountPathRefused, isGitSegment, pathInside, samePathForm, validateAccountMemoryPath, localPathFormProblem } from './utils/path-validator'
 import { extractDescription, inferTypeFromFilename, parseFrontmatter } from './memory-scanner'
 
 /** The walk's bounds. A folder past them is listed in part (`truncated`). */
@@ -170,15 +170,11 @@ export async function scanAccountMemories(sets: readonly AccountFolderSet[] | nu
 const rootsOf = (sets: readonly AccountFolderSet[] | null): string[] => (sets ?? []).map((s) => s.memoriesDir).filter((r) => typeof r === 'string' && r !== '')
 
 /** True when `filePath` is, by its spelling, inside one of the accounts'
- *  memories folders: which channel branch checks it. The check itself is
- *  validateAccountMemoryPath. */
+ *  memories folders (pathInside, the guard's own rule): which channel branch
+ *  checks it. The check itself is validateAccountMemoryPath. */
 export function isUnderAccountMemories(filePath: string, sets: readonly AccountFolderSet[] | null, platform: NodeJS.Platform): boolean {
   if (typeof filePath !== 'string' || localPathFormProblem(filePath, platform)) return false
-  const p = pathFor(platform)
-  return rootsOf(sets).some((r) => {
-    const rel = p.relative(r, filePath)
-    return rel !== '' && !rel.startsWith('..') && !p.isAbsolute(rel)
-  })
+  return rootsOf(sets).some((r) => pathInside(r, filePath, platform) !== null)
 }
 
 /** memory:read for an account's memory file. */

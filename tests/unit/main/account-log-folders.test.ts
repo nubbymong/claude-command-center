@@ -199,6 +199,13 @@ describe('debug:openAccountLogFolder -- what a folder must be', () => {
     expect(openPath).not.toHaveBeenCalled()
   })
 
+  it('B-3: a log folder main names in another non-ASCII case than the disk opens, at its real path', async () => {
+    fake.mkdir('C:\\Users\\\u00d6zil\\codex-home\\log')
+    register([winSet({ logDir: 'c:\\users\\\u00f6zil\\codex-home\\log' })])
+    expect(await open({ accountId: 'acct-1', folder: 'log' })).toEqual({ ok: true })
+    expect(openPath.mock.calls[0][0]).toBe('C:\\Users\\\u00d6zil\\codex-home\\log')
+  })
+
   it('a shell that cannot open the folder is reported, not thrown', async () => {
     openPath.mockImplementation(async () => 'Failed to open path')
     register([winSet()])
@@ -237,13 +244,24 @@ describe('the two channels: who may ask, and what', () => {
 
   it('only { accountId, folder } with a known kind: a path, an extra key or an odd shape is refused before the accounts are asked', async () => {
     register([winSet()])
-    for (const bad of [null, 'acct-1', ['acct-1', 'log'], { accountId: 'acct-1' }, { accountId: 'acct-1', folder: 'log', path: 'C:\\x' },
-      { accountId: 'acct-1', folder: 'C:\\Windows' }, { accountId: 'acct-1', folder: 'sessions' }, { accountId: 7, folder: 'log' }]) {
-      const r = await open(bad)
-      expect(r, JSON.stringify(bad)).toMatchObject({ ok: false })
+    // B-1: the strict schema. A request whose only fault is its account id
+    // answers as an unknown account; any other fault is refused.
+    const cases: Array<[unknown, 'refused' | 'unknown-account']> = [
+      [null, 'refused'], [undefined, 'refused'], ['acct-1', 'refused'], [['acct-1', 'log'], 'refused'], [{}, 'refused'],
+      [{ accountId: 'acct-1' }, 'refused'], [{ accountId: 'acct-1', folder: 'log', path: 'C:\\x' }, 'refused'],
+      [{ accountId: 'acct-1', folder: 'C:\\Windows' }, 'refused'], [{ accountId: 'acct-1', folder: 'sessions' }, 'refused'],
+      [{ accountId: 'acct-1', folder: ['log'] }, 'refused'], [{ accountId: 7, folder: 'sessions' }, 'refused'],
+      [{ accountId: 7, folder: 'log' }, 'unknown-account'], [{ accountId: '', folder: 'log' }, 'unknown-account'],
+      [{ accountId: 'a'.repeat(201), folder: 'log' }, 'unknown-account'], [{ folder: 'log' }, 'unknown-account'],
+    ]
+    for (const [bad, code] of cases) {
+      expect(await open(bad), JSON.stringify(bad) ?? String(bad)).toEqual({ ok: false, code })
     }
     expect(source).not.toHaveBeenCalled()
     expect(openPath).not.toHaveBeenCalled()
+    // The longest id the schema takes reaches the accounts (and is not one).
+    expect(await open({ accountId: 'a'.repeat(200), folder: 'log' })).toEqual({ ok: false, code: 'unknown-account' })
+    expect(source).toHaveBeenCalledTimes(1)
   })
 
   it('debug:accountLogFolders names kinds, never paths: log always, log-dir when set', async () => {

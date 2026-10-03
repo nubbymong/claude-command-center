@@ -52,8 +52,10 @@ export interface MemoryScanWithAccounts extends MemoryScanResult {
  *  keeps a git repository and a database there) does not restore or
  *  re-commit a deleted file at its next start. The check counts only if
  *  consolidation is seen to run after the delete; otherwise it stays hidden
- *  and the check joins the owner's real-model checks (P4.4, OR4). */
-export const ACCOUNT_MEMORY_DELETE_SHOWN = false
+ *  and the check joins the owner's real-model checks (P4.4, OR4). The one
+ *  flag for both sides: the page shows no Delete and main's memory:delete
+ *  refuses an account path while it is false. */
+export const ACCOUNT_MEMORY_DELETE_SHOWN: boolean = false
 
 /** True for a memory that belongs to an account's own folder. */
 export function isAccountMemoryFile(m: MemoryFile): m is AccountMemoryFile {
