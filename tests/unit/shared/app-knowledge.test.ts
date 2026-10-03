@@ -536,6 +536,11 @@ describe('app knowledge after PR 4 (ADR-009 round 2)', () => {
     expect(body).toMatch(/the app says so when it will not open or show it/)
     expect(body).not.toMatch(/The app opens only a plain folder/)
   })
+
+  it('[host] says, in one clause, what the guidance reaches through the resume picker (review)', () => {
+    const all = APP_KNOWLEDGE_SECTIONS.map((x) => x.body).join('\n')
+    expect(all).toMatch(/Through the resume picker, the guidance reaches only a new conversation started in the session's own folder\./)
+  })
 })
 
 // [host] PR 4 VM checkpoint (F1): under the Auto preset Codex runs with

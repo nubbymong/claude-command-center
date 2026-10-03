@@ -79,7 +79,7 @@ import { forgetCanvasMarkers } from './canvas/canvas-marker-delivery'
 import { MARKER_FALLBACK_FLUSH_MS } from './canvas/canvas-marker-queue'
 import { prepareCodexCanvasLaunch } from './canvas/codex-canvas-launch'
 import { registerCodexCanvasRoots } from './canvas/codex-canvas-roots'
-import { noteCodexSessionGuidance, forgetCodexSessionGuidance } from './canvas/codex-guidance'
+import { noteCodexSessionGuidance, forgetCodexSessionGuidance, codexGuidanceAsLaunched } from './canvas/codex-guidance'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal, withProfileHome, MANAGED_LAUNCH_REFUSAL } from './account-profiles'
 export { withProfileHome } from './account-profiles'
@@ -5112,9 +5112,6 @@ function spawnPtyResolved(
         // flagsForFolder), so a picker launch is decided for that folder, as
         // a direct one is.
         startFolders: [resolvedCwd, ...(resumeTarget?.cwd ? [resumeTarget.cwd] : [])],
-        // Review RVMFIX-3: and the canvas page is told which conversations
-        // the picker's guidance reaches.
-        picker: options?.useResumePicker === true,
         env: launch.env,
       })
       const codexSpawnOptions: SpawnOptions = {
@@ -5367,9 +5364,11 @@ function spawnPtyResolved(
       // project directory and the designated worktree, never `codexCwd` or any
       // folder a rollout recorded. killPty's revoke (run before every spawn)
       // and the session's cleanup clear them. And what this launch carried of
-      // the skills' guidance, for the canvas page's line.
+      // the skills' guidance, for the canvas page's line, by the route the
+      // builder actually took (the picker, or not: review).
       registerCodexCanvasRoots(sessionId, resolvedCwd, codexCanvas.designatedWorktree)
-      if (codexCanvas.guidance) noteCodexSessionGuidance(sessionId, codexCanvas.guidance)
+      const carried = codexGuidanceAsLaunched(codexCanvas, { viaPicker: built.viaPicker === true })
+      if (carried) noteCodexSessionGuidance(sessionId, carried)
       else forgetCodexSessionGuidance(sessionId)
     } catch (err) {
       // P3.10: a launch that failed keeps no hook file or hooked mark, and
