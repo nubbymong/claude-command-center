@@ -369,7 +369,11 @@ released from it until section 7 holds.
 12. Then, in order: the merges, the version bump on beta (the beta-bump
     model), `release.yml` watched to green; promotion to stable afterwards, as
     AGENTS.md describes. aicc_planning#84 (adding the Desktop test gate to the
-    beta ruleset) is an owner action, not a condition of this list.
+    beta ruleset) is an owner action, not a condition of this list. The
+    version in that bump is the final `2.1.1` and the changelog entry is
+    final, before the signed cut whose build carries the WP1.63 smoke; the
+    stable promotion moves the same tree (below, "The WP1 candidate at a
+    stable release").
 
 **Verification that only the release can close** (not inside a PR's own VM
 run):
@@ -389,6 +393,53 @@ and 15; WP1.10, WP1.11, WP1.20, WP1.64, WP1.72). OR1 runs them in PR 4, on
 its final build and on every OS, before it merges (9.5, P4.10; the owner's
 request: "on each system"). The packaged smoke of the signed release build
 stays for release (row 66, above).
+
+**The WP1 candidate at a stable release (P4.10, 90be62a6).** A stable,
+non-dry-run `release.yml` run gives `WP1_PHASE=candidate` to both steps that
+run the suite, and `tests/wp1/phase.ts` lets the environment only raise the
+phase. That raises every WP1 gate, not only traceability's binding check:
+traceability's completeness rules (nothing planned, every record taken at
+`boundHead`, nothing but neutral paths changed since), dependency-boundaries
+R4 (each deep-import allowlist entry needs an `owner-approved` exemption),
+provider-conformance (every WP1-required capability `supported` in the
+declaration the composition root registers, cf42972b), and the legacy gate,
+which is at the candidate already (all 13 `delete` paths are gone). Run at
+cf42972b with `WP1_PHASE=candidate`, it refuses:
+
+- the 9 entries of `tests/wp1/deep-import-allowlist.json` (6 marked
+  `pending-owner`: `conductor-mcp-server.ts` to `codex/mcp-config.ts`,
+  `per-session-settings.ts` to `claude/statusline-command.ts` and
+  `claude/ssh-shim.ts`, `statusline-watcher.ts` to `claude/telemetry.ts` and
+  `claude/statusline.ts`, `tk-pricing.ts` to `codex/pricing.ts`; 3 with no
+  exemption, held by `pty-manager.ts`'s ledger disposition: to
+  `claude/ssh-shim.ts`, `claude/spawn.ts` and `claude/ui-detection.ts`): an
+  owner decision on each (section 10);
+- Claude's `cli.discovery`, `auth.status` and `auth.logout`, declared
+  `unknown` ("wired in the Claude adapter slice"): wired in a recorded change,
+  or the requirement decided by the owner (section 10). Codex passes on the
+  table it registers;
+- the 73 items still `planned`, each moving as its evidence lands (P4.10).
+
+Two consequences, written down before the cut is planned:
+
+- **The beta-channel build is not candidate-gated.** Only a stable,
+  non-dry-run release declares the candidate from the workflow. The 2.1.1
+  beta-channel cut runs with the manifest deciding the phase; it says
+  `gate0` there, and a neutral edit can set it. Stable-only is deliberate:
+  the signed build that carries the WP1.63 packaged smoke comes from that
+  beta-channel cut (item 12), so forcing the candidate on it would make it
+  red every time.
+- **The version string must be final before the signed cut.**
+  `package.json` and `changelog.ts` are not neutral paths
+  (`tests/wp1/binding.ts`), so a `2.1.1-beta.N` cut whose signed build
+  carries the smoke, followed by a bump to `2.1.1` for stable, can never
+  pass: with `boundHead` at the beta head the bump breaks the binding, and
+  with it at the bump head the smoke's record was not taken at `boundHead`.
+  The one route that passes: the final `2.1.1` in `package.json` and the
+  final changelog entry land before the signed beta-channel cut (tagged
+  `v2.1.1-beta` under `release.yml`'s bare-version rule), the evidence is
+  taken at that head, a manifest-only commit declares the candidate, and the
+  same tree is promoted to stable.
 
 ## 8. PR 3 phase plan
 
@@ -6491,19 +6542,24 @@ Owner: OR1, OR4.
     job's `continue-on-error` dropped. f6f43f7a: its six conformance legs
     recorded, and their help captures reviewed per OS line by line: Windows
     matches the fixtures; macOS differs in 2 captures and Linux in 4, plus one
-    stderr line on every Linux capture (Codex makes no PATH helper binaries in
-    a home under the temporary folder); each an OS difference or the run's
+    stderr line on every Linux capture (Codex refuses its PATH helper binaries
+    when its canonical home starts with the temporary folder, on every OS;
+    only Linux spells the two alike); each an OS difference or the run's
     own set-up, none a fixture to refresh. aad49d69: those differences
     accepted by name and nothing else (red first, seven mutants killed; on the
     run's 90 real captures all the same, and all red under prove-red's
     fixture). 4f8f78b7: `CCC_CODEX_HELP_ASSERT` is `1`.
-  - *The candidate check at release (re-review note).* 90be62a6: `phase` is a
-    field of a neutral path, so a manifest-only commit could switch the check
-    off; both `release.yml` steps that run the suite now give
-    `WP1_PHASE=candidate` on a stable release that is not a dry run, and
-    `phase.ts` lets the environment only raise the phase. A beta, dev or dry
-    run reads the manifest, so beta cuts with planned items still run. Red
-    first; six mutants killed.
+  - *The WP1 candidate at a stable release (re-review note).* 90be62a6:
+    `phase` is a field of a neutral path, so a manifest-only commit could
+    switch the candidate off; both `release.yml` steps that run the suite
+    now give `WP1_PHASE=candidate` on a stable release that is not a dry
+    run, and `phase.ts` lets the environment only raise the phase. That
+    raises every WP1 gate (traceability, dependency-boundaries R4,
+    provider-conformance; the legacy gate is at the candidate already), not
+    only the binding check: what it refuses today is listed in section 7 and
+    put to the owner in section 10. A beta, dev or dry run reads the
+    manifest, so beta cuts with planned items still run. Red first; six
+    mutants killed.
   - *The 13 cited paths.* Made by P4.9: `mode-matrix.test.ts`,
     `onboarding-provider-select.spec.ts`. Recorded: `ci-matrix.md`. Created:
     `migration-interruption.test.ts` (WP1.26, WP1.61; every interruption of
@@ -6525,21 +6581,52 @@ Owner: OR1, OR4.
     `packaged-smoke.md` (OR1; WP1.63 at the signed release run),
     `rollback.md` (a VM rollback run: whether the pre-WP1 build can still use
     a Claude credential this build refreshed).
-  - *Open, for the integration owner.* `fake-keyring.test.ts` (WP1.11,
-    WP1.72): the app has no keyring of its own to inject a fake into (the
-    Codex CLI owns it; the app sets `CODEX_HOME`), so the cited test cannot
-    be written as described. Either re-point it to
-    `codex-pinned-source-contract.test.ts` and the realm-isolation tests, or
-    give the fake CLI a fake keyring keyed by the canonical home (a HOST
-    QUARANTINE test).
-  - *Findings.* On Windows Codex's default credential store is its Secrets
-    backend (keyring service `codex`, account `secrets|<16 hex>`), not the
-    Direct one, so OR1's native keyring smoke on Windows checks that entry.
-    The fake CLI's `turn.completed` lacks two usage fields both real versions
-    print; the app reads neither. No item moved to evidenced in this part.
+  - *Open, for the integration owner.* None from the 13 paths: see the
+    review fixes below.
+  - *Findings.* Codex's credential store is a file in `CODEX_HOME` by
+    default (`AuthCredentialsStoreMode`, `codex-rs/config/src/types.rs:109-112`
+    at rust-v0.155.1); the keyring is used only when configured, and nothing
+    in the app configures it. When it is, the backend is Secrets on Windows
+    and Direct elsewhere (9.5, OR1). The fake CLI's `turn.completed` lacks two
+    usage fields both real versions print; the app reads neither. No item
+    moved to evidenced in this part.
+  - *Review (P410b, 2026-10-03; 2723b1ed..d695c4bf).* Every commit spec PASS
+    and quality PASS; findings: one MAJOR on the record (the stable release
+    raises every WP1 gate, not only the binding check), five MINOR, three NIT.
+    The fixes:
+    - P410b-1: section 7 ("The WP1 candidate at a stable release") lists what
+      the candidate refuses today, and section 10 puts the R4 entries and
+      Claude's three capability keys to the owner; cf42972b makes
+      provider-conformance judge the package the composition root registers
+      (red first on the bare factory's table), so Codex passes on its wired
+      table.
+    - P410b-2: the beta-channel build and the version-string trap, in
+      section 7 and in `release-qualification.md` section 3.
+    - P410b-3, P410b-5: 2fd49dd0 backs the oracle with the upstream source
+      (`tests/wp1/fixtures/codex-cli-source.json`, the tag commits, file
+      digests and verbatim lines of `login.rs`, `main.rs` and the app-server
+      files), refuses an app-source citation as a claim's only backing, and
+      tightens the terminal refusal to exit 1 and the status lines to stderr;
+      the FAKE's exit 2 there is a recorded divergence (no test reads it).
+      `fake-cli.test.ts` names WP1.69.
+    - P410b-6: c8a238c3 builds `fake-keyring.test.ts` (WP1.11, WP1.72): an
+      injected run whose store is an in-memory keyring keyed as upstream,
+      through the app's Codex auth operations and the archive, which signs
+      out first and leaves no credential behind; five mutants killed. The
+      native smoke stays OR1's.
+    - P410b-4: df46c5ca, the Linux warning's reason from
+      `codex-rs/arg0/src/lib.rs:345-350`: the refusal is on every OS when the
+      canonical home starts with the temporary folder; only Linux spells the
+      two alike.
+    - P410b-7, P410b-8: the tautological hash check dropped (c8a238c3); the
+      real port's write cited under WP1.26 (a3872d99); the OR1 keyring names
+      for every OS in 9.5. P410b-9: d695c4bf's message counts "seven made";
+      8 of the 13 paths existed there (5 created), and with c8a238c3 9 exist
+      and 4 stay owner- or VM-gated.
   - *Owed.* The prove-red dispatch, filling `ci-matrix.md`'s "Shown red
-    once"; the next CI run with the help asserted on all six legs; the spec
-    and quality reviews of this part; OR1 and OR4 as above. ADR-009: N (this
+    once"; the next CI run with the help asserted on all six legs, and the
+    first macOS and Linux runs of the new [host] files; the re-review of the
+    P410b fixes; the owner's decisions in section 10; OR1 and OR4 as above. ADR-009: N (this
     part: tests, CI and evidence; no path on the ADR-009 list).
 
 **P4.11 Final sweep, Beta labels, screenshot recapture (row 54).**
@@ -6584,7 +6671,17 @@ Queued now (none blocks the start; each blocks one later step):
   timing; then the owner-run gates on the final build, done before merge (OD20
   D8): real sign-in, status and sign-out per OS (rows 4 and 15), the native
   keyring smoke, a real two-account run (row 6), the packaged smoke of the PR
-  4 build.
+  4 build. The keyring smoke needs the store configured: Codex keeps
+  credentials in a file in `CODEX_HOME` by default, and uses the keyring only
+  when the realm's `config.toml` sets `cli_auth_credentials_store` to
+  `keyring` (or `auto` where a keyring is available). The entries to check
+  and clear (`tests/wp1/fixtures/codex-keyring-source.json`): on macOS and
+  Linux (Direct) service `Codex Auth`, account `cli|<16 hex>` (sha256 of the
+  canonical `CODEX_HOME`); on Windows (Secrets) service `codex`, account
+  `secrets|<16 hex>`, holding the key of `<CODEX_HOME>/secrets/codex_auth.age`.
+  Sign-out removes the credential (and on Windows also any Direct entry), but
+  the Secrets key entry stays by design, with no credential behind it; the
+  residue check looks for both names and expects only that one.
 - **OR2 (P4.6), in two parts.** OR2a, before the sign-in window is built: a
   real chatgpt.com sign-in in an Electron window on a disposable identity,
   recording which sign-in methods complete (PB7 saw email, Google, Apple and
@@ -6768,7 +6865,10 @@ account's hooks are trusted, a marker waits on Codex's screen, P4.1).
    `-t`; `npm run typecheck` plus a test typecheck (it does not cover
    `tests/`); the WP1 gate (legacy-codex, traceability, boundary,
    conformance). The full suite and every file headed HOST QUARANTINE run on
-   CI and the Windows test VM, never on the owner's machine.
+   CI and the Windows test VM, never on the owner's machine. The WP1 gates run
+   at the manifest's phase (`gate0`; the legacy gate is at the candidate
+   already); the full candidate is a stable release's, and what it refuses
+   today is listed in section 7.
 3. **Reviewed.** Spec and quality reviews for each phase; fixes re-reviewed;
    the sha each verdict covers recorded.
 4. **ADR-009.** P4.1 to P4.7: one bounded round and a confirmation by the same
@@ -7168,6 +7268,17 @@ the answer: only the Auto preset's keys and the known issue's wording.
   model, the SSH live matrix, the screenshot review, macOS and Linux, the Desktop test gate).
 - Section 7: a disposition for each C defect not fixed; the security report;
   the desktop attestation; the word to merge each PR.
+- The WP1 candidate at a stable release (section 7, P4.10): for each of the 9
+  deep-import allowlist entries, an `owner-approved` exemption (its decision
+  recorded in `tests/wp1/deep-import-allowlist.json`) or routing through the
+  package entry point in a recorded change; and for Claude's `cli.discovery`,
+  `auth.status` and `auth.logout`, still `unknown`, either wiring them in a
+  recorded change before the stable cut or a decision that changes what the
+  candidate requires of Claude. Until both are settled a stable release's test
+  steps are red by design.
+- The release order (section 7, item 12): the final `2.1.1` version and
+  changelog entry before the signed beta-channel cut whose build carries the
+  WP1.63 smoke, and that tree promoted to stable.
 
 ## 11. Nothing silently deferred
 

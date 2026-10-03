@@ -107,6 +107,15 @@ the real-CLI smoke and the known limitations. Until then WP1.37 and WP1.73
 stay `planned`, and the e2e mode matrix lives in its own record
 (`docs/wp1/evidence/mode-matrix.md`, from the VM run).
 
+Before the run is planned (completion plan section 7, "The WP1 candidate at a
+stable release"): only a stable release that is not a dry run declares the
+WP1 candidate from the workflow, so the beta-channel cut runs at the
+manifest's phase; and since `package.json` and `changelog.ts` are not
+neutral paths, the final `2.1.1` version and changelog entry land before the
+signed cut whose build carries the WP1.63 smoke, the evidence is taken at that
+head, a manifest-only commit declares the candidate, and the same tree is
+promoted. A bump after the signed cut can never pass the binding.
+
 ## 4. Verification owed by the 20 DONE rows (PR 4, P4.10)
 
 20 of the 52 DONE parity rows (75 rows in all; of the other DONE rows, 27 owe
