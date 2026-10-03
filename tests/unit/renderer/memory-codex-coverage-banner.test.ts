@@ -1,12 +1,15 @@
 // @vitest-environment jsdom
 /**
- * P5.9 regression: Memory page shows an informational banner clarifying
- * that the page shows Claude Code memories only. WP2 P2 reworded it under
- * the P1 parity rule (docs/wp2/parity-checklist.md, row 54): Codex memories
- * are not shown here yet,
- * and Codex reads its project instructions from AGENTS.md files. The earlier
- * claim that Codex keeps user rules in ~/.codex/rules/ is gone and must not
- * come back.
+ * P5.9 regression: the Memory page says where what it shows comes from. WP2
+ * P2 reworded it under the P1 parity rule (docs/wp2/parity-checklist.md, row
+ * 54), and WP2 PR 4 P4.4 (row 55) replaced it once the page lists each Codex
+ * account's own memories: while Codex is in use, the note says Claude Code's
+ * come from ~/.claude/projects/*\/memory/ (shared by every Claude account),
+ * each Codex account keeps its own, listed by account and read-only for now,
+ * and Codex reads project instructions from AGENTS.md files. With Codex not
+ * in use there is nothing to explain, and no note. The earlier claim that
+ * Codex keeps user rules in ~/.codex/rules/ is gone and must not come back,
+ * and neither may "not shown here yet".
  */
 import React from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -52,9 +55,10 @@ const mockMemoryState = {
   setSort: vi.fn(),
 }
 
-vi.mock('../../../src/renderer/stores/memoryStore', () => ({
-  useMemoryStore: (sel?: any) => (sel ? sel(mockMemoryState) : mockMemoryState),
-}))
+vi.mock('../../../src/renderer/stores/memoryStore', async (orig) => {
+  const real = await orig<typeof import('../../../src/renderer/stores/memoryStore')>()
+  return { ...real, useMemoryStore: (sel?: any) => (sel ? sel(mockMemoryState) : mockMemoryState) }
+})
 
 vi.mock('../../../src/renderer/stores/accountProfilesStore', () => ({
   useAccountProfilesStore: (sel?: any) => sel ? sel({ profiles: [] }) : { profiles: [] },
@@ -66,10 +70,14 @@ vi.mock('../../../src/renderer/stores/sessionStore', () => ({
 
 // Import after mock is registered
 const { default: MemoryPage } = await import('../../../src/renderer/components/MemoryPage')
+const { useSettingsStore } = await import('../../../src/renderer/stores/settingsStore')
+
+const NOTE = 'Claude Code memories come from ~/.claude/projects/*/memory/, shared by every Claude account. Each Codex account keeps its own, listed by account below, read-only for now. Codex also reads project instructions from AGENTS.md files.'
 
 describe('MemoryPage -- Codex coverage banner (P5.9)', () => {
   let container: HTMLDivElement
   let root: Root
+  const base = useSettingsStore.getState().settings
 
   beforeEach(() => {
     container = document.createElement('div')
@@ -80,24 +88,34 @@ describe('MemoryPage -- Codex coverage banner (P5.9)', () => {
   afterEach(() => {
     act(() => { root.unmount() })
     container.remove()
+    useSettingsStore.setState({ settings: base })
   })
 
+  const banners = () => Array.from(container.querySelectorAll('div')).filter((d) => d.className.split(/\s+/).includes('border-blue/30'))
+
   it('renders the Codex coverage banner at the top of the page', () => {
+    useSettingsStore.setState({ settings: { ...base, codexEnabled: true } })
     act(() => { root.render(React.createElement(MemoryPage)) })
 
     // The banner: the blue/30 note (sanity check on styling), in full.
-    const banners = Array.from(container.querySelectorAll('div')).filter((d) => d.className.split(/\s+/).includes('border-blue/30'))
-    expect(banners).toHaveLength(1)
-    const banner = banners[0]
-    // What IS covered, and where it is read from
-    expect(banner.textContent).toBe(
-      'This page shows Claude Code memories from ~/.claude/projects/*/memory/. Codex memories are not shown here yet. Codex reads its project instructions from AGENTS.md files.',
-    )
-    // The retired claim about Codex user rules is not made anywhere on the page
+    expect(banners()).toHaveLength(1)
+    const banner = banners()[0]
+    // What IS covered, and where each part is read from
+    expect(banner.textContent).toBe(NOTE)
+    // The retired claims are not made anywhere on the page
     expect(container.textContent).not.toContain('~/.codex/rules/')
+    expect(container.textContent).not.toContain('not shown here yet')
     // At the top of the page: before the page body (here, its empty state)
     const body = Array.from(container.querySelectorAll('span')).find((s) => s.textContent === 'No memory directories found')
     expect(body).toBeTruthy()
     expect(banner.compareDocumentPosition(body!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('with Codex not in use there is nothing to explain: no note, the page as before', () => {
+    useSettingsStore.setState({ settings: { ...base, codexEnabled: false } })
+    act(() => { root.render(React.createElement(MemoryPage)) })
+    expect(banners()).toHaveLength(0)
+    expect(container.textContent).not.toMatch(/codex/i)
+    expect(Array.from(container.querySelectorAll('span')).some((s) => s.textContent === 'No memory directories found')).toBe(true)
   })
 })

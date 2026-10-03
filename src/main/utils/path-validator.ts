@@ -60,3 +60,188 @@ export function validateMemoryPath(userPath: string, opts?: { destructive?: bool
 
   return resolved
 }
+
+// ---------------------------------------------------------------------------
+// WP2 PR 4, P4.4 (rows 55, 56): a provider account's own folders -- its
+// memories folder and its log folders. The path forms and the checks a folder
+// must pass before main reads in it or hands it to the shell.
+// ---------------------------------------------------------------------------
+
+type PathPlatform = NodeJS.Platform
+
+const pathFor = (platform: PathPlatform): typeof path => (platform === 'win32' ? path.win32 : path.posix)
+
+/** Device names Windows resolves in any folder (`C:\logs\CON` is the console). */
+const WIN_DEVICE_NAME = /^(con|prn|aux|nul|conin\$|conout\$|com[0-9\u00b9\u00b2\u00b3]|lpt[0-9\u00b9\u00b2\u00b3])(\..*)?$/i
+
+/**
+ * Why a path is not a fully qualified LOCAL path, judged by its form alone,
+ * before any file or shell call; null when its form is acceptable.
+ *
+ * On Windows only a drive path (`C:\...`) passes: never a UNC share
+ * (`\\host\share`, `//host/share`: `shell.openPath` on a share opens a network
+ * connection), a device or verbatim path (`\\.\`, `\\?\`, `\??\`), a drive-
+ * or root-relative path (`C:x`, `\x`), a colon after the drive (an alternate
+ * data stream), a reserved character or device name, or a name ending in a
+ * dot or a space (Win32 drops those, so the shell and Node could reach
+ * different folders). Everywhere: no control character, no empty, `.` or `..`
+ * segment (no spelling that resolves elsewhere), and on POSIX an absolute
+ * path that does not start with `//`.
+ */
+export function localPathFormProblem(p: unknown, platform: PathPlatform = process.platform): string | null {
+  if (typeof p !== 'string' || p.length === 0) return 'empty'
+  if (p.length > 4096) return 'too-long'
+  if (/[\u0000-\u001f\u007f]/.test(p)) return 'control-character'
+  if (platform === 'win32') {
+    if (/^[\\/]{2}/.test(p)) return 'unc-or-device'
+    if (/^[\\/]\?\?[\\/]/.test(p)) return 'device'
+    if (!/^[A-Za-z]:[\\/]/.test(p)) return 'not-fully-qualified'
+    const rest = p.slice(3)
+    if (rest.includes(':')) return 'stream'
+    if (/[<>"|?*]/.test(rest)) return 'reserved-character'
+    if (rest === '') return null
+    const segs = rest.split(/[\\/]/)
+    for (let i = 0; i < segs.length; i++) {
+      const s = segs[i]
+      if (s === '') {
+        // One trailing separator is a folder written as such; any other gap is not.
+        if (i === segs.length - 1) continue
+        return 'empty-segment'
+      }
+      if (s === '.' || s === '..') return 'dot-segment'
+      if (/[. ]$/.test(s)) return 'trailing-dot-or-space'
+      if (WIN_DEVICE_NAME.test(s)) return 'device-name'
+    }
+    return null
+  }
+  if (!p.startsWith('/')) return 'not-fully-qualified'
+  if (p.startsWith('//')) return 'unc-or-device'
+  const segs = p.slice(1).split('/')
+  for (let i = 0; i < segs.length; i++) {
+    const s = segs[i]
+    if (s === '') {
+      if (i === segs.length - 1) continue
+      return 'empty-segment'
+    }
+    if (s === '.' || s === '..') return 'dot-segment'
+  }
+  return null
+}
+
+/**
+ * Two spellings of one path as the platform compares them: on Windows either
+ * separator and ASCII letters folded (full Unicode folding would match the
+ * Kelvin sign to `k`, which NTFS keeps apart); on macOS ASCII letters folded;
+ * elsewhere exact. A trailing separator is ignored, a root's is kept.
+ */
+export function samePathForm(a: string, b: string, platform: PathPlatform = process.platform): boolean {
+  const sep = platform === 'win32' ? '\\' : '/'
+  const norm = (p: string): string => {
+    let s = platform === 'win32' ? p.replace(/\//g, '\\') : p
+    while (s.length > 1 && s.endsWith(sep) && !(platform === 'win32' && /^[A-Za-z]:\\$/.test(s))) s = s.slice(0, -1)
+    return platform === 'win32' || platform === 'darwin' ? s.replace(/[A-Z]/g, (c) => c.toLowerCase()) : s
+  }
+  return norm(a) === norm(b)
+}
+
+/** The file calls the folder checks make (fs.promises' own; a test passes
+ *  its own). Stats are asked for as bigint, so a 64-bit file id compares
+ *  exactly. */
+export interface FolderCheckFs {
+  lstat(p: string, opts: { bigint: true }): Promise<fs.BigIntStats>
+  realpath(p: string): Promise<string>
+}
+
+export const realFolderCheckFs: FolderCheckFs = {
+  lstat: (p, opts) => fs.promises.lstat(p, opts),
+  realpath: (p) => fs.promises.realpath(p),
+}
+
+/** A refusal from the account-folder checks: why, as the caller's own answer
+ *  code. The message names no path. */
+export class AccountPathRefused extends Error {
+  constructor(public readonly code: 'refused' | 'not-found', reason: string) {
+    super(`Refused: ${reason}`)
+    this.name = 'AccountPathRefused'
+  }
+}
+
+/** True for a name that is, or that Windows would read as, `.git`. */
+export function isGitSegment(name: string): boolean {
+  return /^\.git$/i.test(name.replace(/[. ]+$/, ''))
+}
+
+/** A file an account-memory check let through: its path, the memories folder
+ *  it is in, and the identity it had, which a read or delete compares again
+ *  on what it opens. */
+export interface AccountMemoryTarget {
+  path: string
+  root: string
+  dev: bigint
+  ino: bigint
+  size: bigint
+}
+
+/**
+ * P4.4: a provider account's memory file, by the path the Memory page's
+ * listing gave the renderer, checked against the memories folders main names
+ * NOW (`roots`, from the account folders, never from the renderer). Beside
+ * validateMemoryPath, which keeps Claude's store.
+ *
+ * Refused (AccountPathRefused): a path whose form is not a fully qualified
+ * local path (localPathFormProblem: a UNC or device path never reaches a file
+ * call); one not strictly inside one of the roots; one with a `.git` segment
+ * (a provider may keep its memories folder as a git repository: nothing in
+ * `.git` is listed, read or deleted); a root or file whose real path is not its own (a
+ * link or junction anywhere on the way, an 8.3 short name, a substituted
+ * drive); a file that is a link, not a plain file, or has a second name (a
+ * hard link could be another folder's file). Every check already refuses a
+ * link, so `destructive` asks for nothing more; it is kept for the call
+ * sites' symmetry with validateMemoryPath.
+ */
+export async function validateAccountMemoryPath(
+  userPath: unknown,
+  roots: readonly string[],
+  opts: { destructive?: boolean; platform?: PathPlatform; fs?: FolderCheckFs } = {},
+): Promise<AccountMemoryTarget> {
+  const platform = opts.platform ?? process.platform
+  const files = opts.fs ?? realFolderCheckFs
+  const p = pathFor(platform)
+  const form = localPathFormProblem(userPath, platform)
+  if (form) throw new AccountPathRefused('refused', `not a local path (${form})`)
+  const target = userPath as string
+  let root: string | null = null
+  let rel = ''
+  for (const r of roots) {
+    if (localPathFormProblem(r, platform)) continue
+    const candidate = p.relative(r, target)
+    if (candidate !== '' && !candidate.startsWith('..') && !p.isAbsolute(candidate)) {
+      root = r
+      rel = candidate
+      break
+    }
+  }
+  if (root === null) throw new AccountPathRefused('refused', 'outside every account memories folder')
+  if (rel.split(/[\\/]/).some(isGitSegment)) throw new AccountPathRefused('refused', 'inside .git')
+
+  // lstat looks at the last name itself: a link there is not a plain file.
+  let st: fs.BigIntStats
+  try {
+    st = await files.lstat(target, { bigint: true })
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException | undefined)?.code
+    throw new AccountPathRefused(code === 'ENOENT' || code === 'ENOTDIR' ? 'not-found' : 'refused', 'the file could not be checked')
+  }
+  if (!st.isFile()) throw new AccountPathRefused('refused', 'not a plain file (a folder, a link or a device)')
+  if (st.nlink !== 1n) throw new AccountPathRefused('refused', 'a file with another name')
+  // Its real path is its own: no link or junction anywhere on the way, the
+  // memories folder itself included.
+  let realTarget: string
+  try {
+    realTarget = await files.realpath(target)
+  } catch {
+    throw new AccountPathRefused('refused', 'the file could not be resolved')
+  }
+  if (!samePathForm(realTarget, target, platform)) throw new AccountPathRefused('refused', 'reached through a link')
+  return { path: target, root, dev: st.dev, ino: st.ino, size: st.size }
+}
