@@ -27,6 +27,8 @@ const h = vi.hoisted(() => ({
   route: 'direct' as 'direct' | 'cmd',
   built: [] as Array<Record<string, unknown>>,
   decided: [] as Array<Record<string, unknown>>,
+  // The resume picker's script is not in place (the builder starts Codex itself).
+  pickerMissing: false,
 }))
 
 vi.mock('node-pty', () => ({
@@ -48,7 +50,15 @@ vi.mock('../../../src/main/providers', async () => {
   const paths = await import('../../../src/main/providers/codex/realm-paths')
   return {
     getProvider: () => ({
-      buildSpawnCommand: (opts: Record<string, unknown>) => { h.built.push(opts); return { cmd: '/proven/codex', args: [], env: {}, logLine: '' } },
+      // Takes the route the real builder would: a named conversation is resumed
+      // exactly, else the picker runs when it is in place, else Codex itself.
+      buildSpawnCommand: (opts: Record<string, unknown>) => {
+        h.built.push(opts)
+        const resume = opts.resume as { uuid: string; cwd: string } | undefined
+        if (resume) return { cmd: '/proven/codex', args: [], env: {}, logLine: '', resumeId: resume.uuid }
+        if (opts.useResumePicker === true && !h.pickerMissing) return { cmd: '/node', args: ['picker.js'], env: {}, logLine: '', viaPicker: true }
+        return { cmd: '/proven/codex', args: [], env: {}, logLine: '' }
+      },
       ingestSessionTelemetry: () => ({ stop: () => {} }),
       launchRoute: () => h.route,
       stagedSkillsDir: (home: string, resourcesDir: string) => paths.codexManagedRealmSkillsDir(home, resourcesDir),
@@ -129,6 +139,7 @@ beforeEach(() => {
   h.route = 'direct'
   h.built = []
   h.decided = []
+  h.pickerMissing = false
   _resetCodexGuidanceForTest()
 })
 afterEach(() => {
@@ -254,5 +265,21 @@ describe('a launch through the resume picker (the VM checkpoint, F2)', () => {
     fs.mkdirSync(other, { recursive: true })
     spawnPty(fakeWin, SID, { cwd: project, cols: 100, rows: 30, provider: 'codex', useResumePicker: true, resume: { uuid: '019dd000-0001-7000-8000-000000000101', cwd: other }, codexOptions: { permissionsPreset: 'standard' }, codexLaunch: launch(externalHome, 'external-default') })
     expect(h.decided[0]).toMatchObject({ cwds: [project, other] })
+  })
+
+  // Review (ADRFIX verification): the record follows the route the launch took, not the option asked for.
+  it('[host] a picker launch that resumed its named conversation exactly: recorded as full, not as the picker', () => {
+    const other = path.join(tmp, 'other-worktree')
+    fs.mkdirSync(other, { recursive: true })
+    spawnPty(fakeWin, SID, { cwd: project, cols: 100, rows: 30, provider: 'codex', useResumePicker: true, resume: { uuid: '019dd000-0001-7000-8000-000000000101', cwd: other }, codexOptions: { permissionsPreset: 'standard' }, codexLaunch: launch(externalHome, 'external-default') })
+    expect(h.built[0].developerInstructions).toBe('THE-DECIDED-GUIDANCE')
+    expect(codexSessionGuidance(SID)).toEqual({ guidance: 'full' })
+  })
+
+  it('[host] the picker not in place, so Codex was started directly: recorded as full, not as the picker', () => {
+    h.pickerMissing = true
+    startPicker(externalHome, 'external-default')
+    expect(h.built[0].developerInstructions).toBe('THE-DECIDED-GUIDANCE')
+    expect(codexSessionGuidance(SID)).toEqual({ guidance: 'full' })
   })
 })

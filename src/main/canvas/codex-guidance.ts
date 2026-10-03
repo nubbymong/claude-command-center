@@ -296,6 +296,24 @@ export const CODEX_GUIDANCE_RECORDS_MAX = 512
 
 const records = new Map<string, CanvasSessionGuidance>()
 
+/**
+ * What a launch carried, by the route it actually took, for the record below
+ * (review RVMFIX-3 and its verification). Guidance riding the developer
+ * instructions through the resume picker reaches only a new conversation the
+ * picker starts in the session's own folder (a picked one keeps what it
+ * started with; one in another worktree gets none), so it is recorded as
+ * such. Not for an exact resume or a direct start, whatever was asked for,
+ * and not for staged skills (a managed account), which reach every
+ * conversation.
+ */
+export function codexGuidanceAsLaunched(
+  launch: { guidance: CanvasSessionGuidance | null; developerInstructions?: string },
+  route: { viaPicker: boolean },
+): CanvasSessionGuidance | null {
+  if (route.viaPicker && launch.developerInstructions && launch.guidance?.guidance === 'full') return { guidance: 'picker' }
+  return launch.guidance
+}
+
 /** What a Codex session's launch carried, for the canvas page's line. */
 export function noteCodexSessionGuidance(sessionId: string, guidance: CanvasSessionGuidance): void {
   records.delete(sessionId)

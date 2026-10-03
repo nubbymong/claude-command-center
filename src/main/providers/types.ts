@@ -128,6 +128,10 @@ export interface ProviderSpawnCommand {
    *  holds the question and types it through the run's pane at the first
    *  ready, empty composer. */
   askPromptOnArgv?: boolean
+  /** Codex (WP2 PR 4, review): the launch runs the resume picker (asked for,
+   *  in place, and no conversation resumed exactly), so the guidance it
+   *  carries reaches only a new conversation started in the session's folder. */
+  viaPicker?: boolean
 }
 
 /** A folder as it was when made: what it is (its device and file id, exact)
