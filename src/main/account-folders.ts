@@ -16,7 +16,8 @@
 //   1. its FORM is a fully qualified local path (localPathFormProblem): a
 //      relative `log_dir`, a UNC share and a device path are refused before
 //      any file or shell call (the shell on a share opens a network
-//      connection);
+//      connection); on Windows a `log_dir` with a folder name ending in
+//      `.{...}` anywhere on its path is refused too (hasShellObjectName);
 //   2. it is a folder, not a link or junction, and its real path is its own
 //      (no link anywhere on the way, which also refuses a mapped network drive,
 //      whose real path is a share).
@@ -314,6 +315,20 @@ export async function readLogDirSetting(configFile: string, files: AccountFileFs
 // The two log-folder channels
 // ---------------------------------------------------------------------------
 
+/** Windows: whether any folder name on `p` ends in `.{...}` (trailing dots
+ *  and spaces, which Windows drops, set aside). Explorer may take a folder so
+ *  named for a shell object rather than a plain folder, so a log_dir with
+ *  one anywhere on its path is refused, never shown. Linear in `p`. */
+export function hasShellObjectName(p: string): boolean {
+  for (const name of p.split(/[\\/]/)) {
+    let end = name.length
+    while (end > 0 && (name[end - 1] === '.' || name[end - 1] === ' ')) end--
+    const s = name.slice(0, end)
+    if (s.endsWith('}') && s.includes('.{')) return true
+  }
+  return false
+}
+
 export interface LogFolderDeps {
   fs: AccountFileFs
   /** shell.openPath: '' on success, else an error text. The account's own
@@ -387,9 +402,11 @@ export async function openAccountLogFolder(input: unknown, source: AccountFolder
     target = setting.value
   }
 
-  // 1. The form alone, before any file or shell call.
+  // 1. The form alone, before any file or shell call; on Windows, a
+  // log_dir with a folder name the shell may take for an object of its own.
   const form = localPathFormProblem(target, deps.platform)
   if (form) { log(`${folder} refused by its form (${form})`); return refused('refused') }
+  if (folder === 'log-dir' && deps.platform === 'win32' && hasShellObjectName(target)) { log(`${folder} refused by a folder name`); return refused('refused') }
 
   // 2. A folder, not a link, at its own real path.
   let st: fs.BigIntStats

@@ -31,7 +31,7 @@ vi.mock('../../../src/main/debug-capture', () => ({
 }))
 
 const { registerAccountLogFolderHandlers } = await import('../../../src/main/ipc/debug-handlers')
-const { parseLogDirSetting, listAccountLogFolders, openAccountLogFolder } = await import('../../../src/main/account-folders')
+const { parseLogDirSetting, listAccountLogFolders, openAccountLogFolder, hasShellObjectName } = await import('../../../src/main/account-folders')
 type Set = import('../../../src/main/account-folders').AccountFolderSet
 
 const frame = { id: 'main-frame' }
@@ -161,11 +161,11 @@ describe('debug:openAccountLogFolder -- what a folder must be', () => {
   // name is revealed on every OS, never opened: whatever it is named or
   // holds, the shell only shows it in the folder that holds it. The
   // account's own log folder (a path main names) is still opened.
-  it('a log_dir is revealed, never opened, on every OS and whatever its name; the account\'s own log folder is opened', async () => {
+  it('a log_dir is revealed, never opened, on every OS and whatever its name (on Windows, one not refused by name); the account\'s own log folder is opened', async () => {
     const cases: Array<{ platform: 'win32' | 'linux' | 'darwin'; home: string; sep: string; names: string[] }> = [
-      { platform: 'darwin', home: '/Users/me/codex-home', sep: '/', names: ['/Users/me/work/Tool.app', '/Users/me/work/Flow.workflow', '/Users/me/work/Pane.prefPane', '/Users/me/work/logs'] },
-      { platform: 'win32', home: 'C:\\Users\\me\\codex-home', sep: '\\', names: ['C:\\Users\\me\\work\\logs.{00000000-0000-0000-0000-000000000000}', 'C:\\Users\\me\\work\\logs'] },
-      { platform: 'linux', home: '/home/me/codex-home', sep: '/', names: ['/home/me/work/logs'] },
+      { platform: 'darwin', home: '/Users/me/codex-home', sep: '/', names: ['/Users/me/work/Tool.app', '/Users/me/work/Flow.workflow', '/Users/me/work/Pane.prefPane', '/Users/me/work/logs', '/Users/me/work/x.{abc}/logs'] },
+      { platform: 'win32', home: 'C:\\Users\\me\\codex-home', sep: '\\', names: ['C:\\Users\\me\\work\\logs', 'C:\\Users\\me\\work\\logs{1}', 'C:\\Users\\me\\work\\a.b\\{c}'] },
+      { platform: 'linux', home: '/home/me/codex-home', sep: '/', names: ['/home/me/work/logs', '/home/me/work/logs.{00000000-0000-0000-0000-000000000000}'] },
     ]
     for (const c of cases) {
       for (const target of c.names) {
@@ -185,6 +185,35 @@ describe('debug:openAccountLogFolder -- what a folder must be', () => {
         expect(reveal, target).toHaveBeenCalledTimes(1)
       }
     }
+  })
+
+  // [host] PR 4 ADR-009 round 2 (L3 r2): on Windows a folder name ending in
+  // `.{...}` may be taken for a shell object rather than a plain folder; a
+  // log_dir with one anywhere on its path is refused by name, before any
+  // file call on it, and neither shown nor opened.
+  it('Windows: a log_dir with a folder name ending in .{...} anywhere on its path is refused, before any file call on it, and never shown', async () => {
+    const guid = '{00000000-0000-0000-0000-000000000000}'
+    for (const target of [`C:\\Users\\me\\work\\logs.${guid}`, `C:\\Users\\me\\work\\x.${guid}\\logs`, `C:\\Users\\me\\x.${guid}\\a\\b`, 'D:\\x.{anything}\\logs', 'D:/x.{y}/logs/']) {
+      fake.mkdir(target)
+      fake.writeFile(`${W}\\config.toml`, `log_dir = '${target}'\n`)
+      register([winSet()])
+      expect(await open({ accountId: 'acct-1', folder: 'log-dir' }), target).toEqual({ ok: false, code: 'refused' })
+      expect(callsOn(target), target).toBe(0)
+    }
+    expectShellUntouched()
+    // The account's own log folder (a path main names) is not held to it.
+    fake.mkdir(`C:\\Users\\me\\x.${guid}\\log`)
+    register([winSet({ logDir: `C:\\Users\\me\\x.${guid}\\log` })])
+    expect(await open({ accountId: 'acct-1', folder: 'log' })).toEqual({ ok: true })
+  })
+
+  it('the name rule: any folder name ending in .{...}, trailing dots and spaces set aside; nothing else', () => {
+    for (const p of ['C:\\a\\x.{g}', 'C:\\x.{g}\\a', 'C:\\a\\x.{g}.', 'C:\\a\\x.{g} . \\b', 'C:/a/x.{}/b', 'x.{g}']) expect(hasShellObjectName(p), p).toBe(true)
+    for (const p of ['C:\\a\\x{g}', 'C:\\a\\{g}', 'C:\\a\\x.{g}y', 'C:\\a\\x.g}', 'C:\\a\\logs', 'C:\\a.{b\\c}']) expect(hasShellObjectName(p), p).toBe(false)
+    // One pass: a long name is decided at once.
+    const t0 = performance.now()
+    expect(hasShellObjectName(`C:\\${'.{'.repeat(200_000)}x`)).toBe(false)
+    expect(performance.now() - t0).toBeLessThan(500)
   })
 
   it('a log_dir with no way to reveal it, or whose reveal throws, is refused and never opened', async () => {

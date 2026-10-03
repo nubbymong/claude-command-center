@@ -27,7 +27,8 @@
 // the run lets go only once that kill has finished. Nothing is killed by pid
 // once the root has exited: its pid may have been reused; an exec run stopped
 // as a tree (scope 'tree') then ends only what the records taken while it ran
-// prove is left of it, as its own exit does (CodexKillTree.leftovers). At app
+// prove is left of it, as its own exit does (CodexKillTree.leftovers; on
+// Windows, since on POSIX the stop has signalled the run's group). At app
 // quit, kills still reading kill what they know at once, an exec run's its
 // whole tree and, on Windows, what its records prove is left
 // (flushPendingCodexKills). See runCodexCli and makeCodexKillTree.
@@ -1124,11 +1125,14 @@ export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: Code
       let killDone = false
       const killEnded = killed.then(() => { killDone = true }, () => { killDone = true })
       const rootGone = new Promise<void>((res) => { if (exited !== undefined) res(); else c.once('exit', () => res()) })
-      // A tree stop then ends what the records taken while the run ran prove
-      // is left of it, for the root's own lifetime, as the run's own exit
-      // does (settleExited): a process whose parent had exited is not below
-      // the root, so the kill above does not reach it. Within the same bound.
-      const ended: Promise<unknown> = scope === 'tree' && deps.killTree.leftovers
+      // A tree stop on Windows then ends what the records taken while the run
+      // ran prove is left of it, for the root's own lifetime, as the run's
+      // own exit does (settleExited): a process whose parent had exited is
+      // not below the root, so the kill above does not reach it. Within the
+      // same bound. Not on POSIX: there the stop has signalled the run's
+      // group while its root ran, and once the root is reaped its id no
+      // longer vouches for a group.
+      const ended: Promise<unknown> = scope === 'tree' && deps.platform === 'win32' && deps.killTree.leftovers
         ? Promise.all([killEnded, rootGone]).then(() => deps.killTree.leftovers?.(c, { since: spawnedAt, until: exitedAt })).then(() => undefined, () => undefined)
         : Promise.all([killEnded, rootGone])
       let bound: ReturnType<typeof setTimeout> | null = null

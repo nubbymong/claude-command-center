@@ -208,6 +208,80 @@ describe('the run', () => {
     for (const s of said.slice(0, -1)) expect(s.endsWith('\n'), s).toBe(true)
   })
 
+  // [host] PR 4 ADR-009 round 2: a line with no newline is cut at a space once
+  // past the redaction window; finding that space is one pass whatever the
+  // line holds (no space at all, a Bearer before a long run of spaces), so a
+  // large stderr read never holds the main process.
+  it('a long unterminated stderr line is handed on in time linear in its length, whatever it holds, and nothing is lost', async () => {
+    // Each past WINDOW (64 KiB), so the cut is looked for; a search that is
+    // not linear fails the first bound it meets (the code under test runs
+    // synchronously, so these are kept to seconds even then).
+    const shapes = [
+      'z'.repeat(100_000),
+      'z'.repeat(10_000) + ' Basic' + ' '.repeat(100_000) + 'end',
+      ('x Bearer' + ' '.repeat(8000)).repeat(12),
+      ('z'.repeat(996) + ' Bearer  !').repeat(130),
+    ]
+    let total = 0
+    for (const shape of shapes) {
+      const { deps, spawned } = fakeDeps()
+      const said: string[] = []
+      const p = createCodexBackgroundOperations({ platform: 'win32', runDeps: () => deps }).run(input({ onDiagnostic: (t: string) => said.push(t) }))
+      const t0 = performance.now()
+      spawned[0].child.stderr.emit('data', shape)
+      const ms = performance.now() - t0
+      total += ms
+      expect(ms, shape.slice(0, 12)).toBeLessThan(250)
+      spawned[0].child.emit('close', 0)
+      expect(await p).toEqual({ ok: true })
+      expect(said.join('') === shape, shape.slice(0, 12)).toBe(true)
+    }
+    expect(total).toBeLessThan(500)
+    // The cut never falls between a Bearer and its token.
+    const { deps, spawned } = fakeDeps()
+    const said: string[] = []
+    const p = createCodexBackgroundOperations({ platform: 'win32', runDeps: () => deps }).run(input({ onDiagnostic: (t: string) => said.push(t) }))
+    const token = 'abcdefghijklmnop' + '0123456789'
+    spawned[0].child.stderr.emit('data', 'z'.repeat(70_000) + ' Bearer ' + token)
+    spawned[0].child.emit('close', 0)
+    await p
+    expect(said.length).toBe(2)
+    expect(said.join('')).not.toContain(token)
+    expect(said.join('')).toContain('Bearer [REDACTED]')
+  })
+
+  // [host] PR 4 ADR-009 round 2: a secret field's name and separator ending
+  // one line, its value starting the next: the redactor matches the two
+  // together, so the first line is held until the next one arrives.
+  it('a secret field whose value starts the next line is redacted with it, however the pipe splits them; the held line still goes at the end', async () => {
+    const value = 'hunter2-correct-horse'
+    for (const chunks of [
+      ['codex: request failed "password":\n', `"${value}"\n`],
+      ['retry with api_key =  \n', `${value}\n`],
+      ['x\n"access_token": \n', `"${value}", "next": 1\n`],
+      ['client_secret=', `\n${value}\n`],
+    ]) {
+      const { deps, spawned } = fakeDeps()
+      const said: string[] = []
+      const p = createCodexBackgroundOperations({ platform: 'win32', runDeps: () => deps }).run(input({ onDiagnostic: (t: string) => said.push(t) }))
+      spawned[0].child.stderr.emit('data', chunks[0])
+      expect(said.join(''), chunks[0]).not.toMatch(/password|api_key|access_token|client_secret/)
+      spawned[0].child.stderr.emit('data', chunks[1])
+      spawned[0].child.emit('close', 0)
+      await p
+      expect(said.join(''), chunks[0]).not.toContain(value)
+      expect(said.join(''), chunks[0]).toContain('[REDACTED]')
+    }
+    const { deps, spawned } = fakeDeps()
+    const said: string[] = []
+    const p = createCodexBackgroundOperations({ platform: 'win32', runDeps: () => deps }).run(input({ onDiagnostic: (t: string) => said.push(t) }))
+    spawned[0].child.stderr.emit('data', 'an ordinary line\nthe last line says token:\n')
+    expect(said).toEqual(['an ordinary line\n'])
+    spawned[0].child.emit('close', 0)
+    await p
+    expect(said.join('')).toBe('an ordinary line\nthe last line says token:\n')
+  })
+
   // [host] PR 4 ADR-009 round 1 (L4-4): the CLI-operation allowlist drops
   // RUST_LOG (verbose logs can print secrets); the agent run drops it too.
   it('RUST_LOG never reaches the run: any spelling on Windows, the exact name elsewhere', async () => {
