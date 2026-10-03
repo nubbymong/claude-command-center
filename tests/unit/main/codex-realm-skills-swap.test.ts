@@ -16,7 +16,7 @@ import * as path from 'path'
 
 vi.mock('../../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }))
 
-const { stageCodexRealmSkills, realRealmSkillsIo, STAGING_PREFIX } = await import('../../../src/main/canvas/codex-realm-skills')
+const { stageCodexRealmSkills, removeCodexRealmSkills, realRealmSkillsIo, STAGING_PREFIX } = await import('../../../src/main/canvas/codex-realm-skills')
 type RealmSkillsIo = typeof realRealmSkillsIo
 const { codexManagedRealmSkillsDir } = await import('../../../src/main/providers/codex/realm-paths')
 const { canvasSkillFiles } = await import('../../../src/main/canvas/canvas-plugin')
@@ -65,7 +65,8 @@ function swappingIo(when: (op: Op, p: string) => boolean, at: (p: string) => str
   }
   const io: RealmSkillsIo = {
     lstat: (p) => (links.has(norm(p)) ? { dir: false, file: false, link: true, size: 0, id: `link:${norm(p)}` } : realRealmSkillsIo.lstat(through(p))),
-    readdir: (p) => fs.readdirSync(through(p)),
+    // A folder lists the links standing in it, as a real one does.
+    readdir: (p) => [...fs.readdirSync(through(p)), ...[...links.keys()].filter((l) => path.dirname(l) === norm(p)).map((l) => path.basename(l))],
     readFile: (p) => fs.readFileSync(through(p)),
     mkdirChecked: (p) => {
       if (links.has(norm(p))) throw new Error('refusing: a link')
@@ -155,5 +156,22 @@ describe('a path swapped for a link between the check and the write', () => {
     expect(stage(s.io)).toEqual({ staged: true })
     for (const skill of canvasSkillFiles()) expect(fs.readFileSync(path.join(skills, skill.name, 'SKILL.md')).equals(skill.bytes)).toBe(true)
     expect(stagingLeft()).toEqual([])
+  })
+})
+
+describe('a link with the staging name (ADR-009 round 2)', () => {
+  it.each(['stage', 'removal'] as const)('[host] at %s it is removed as the link itself; its target is never followed', (op) => {
+    fs.mkdirSync(skills, { recursive: true })
+    fs.writeFileSync(path.join(outside, 'precious.txt'), 'keep me')
+    fs.mkdirSync(path.join(outside, FIRST))
+    fs.writeFileSync(path.join(outside, FIRST, 'SKILL.md'), 'theirs')
+    const s = swappingIo(() => false, (p) => p, () => outside)
+    const link = path.join(skills, `${STAGING_PREFIX}Qr12St`)
+    s.links.set(link, outside)
+    if (op === 'stage') expect(stage(s.io)).toEqual({ staged: true })
+    else removeCodexRealmSkills(home, codexManagedRealmSkillsDir(home, res), s.io)
+    expect(s.links.has(link)).toBe(false)
+    expect(fs.readdirSync(outside).sort()).toEqual([FIRST, 'precious.txt'])
+    expect(fs.readFileSync(path.join(outside, FIRST, 'SKILL.md'), 'utf8')).toBe('theirs')
   })
 })

@@ -385,3 +385,56 @@ describe('every read waits for the screen to draw what the session has sent (ADR
     expect(s.writes).toEqual([])
   })
 })
+
+describe('the take-back key needs a reading of the screen (ADR-009 round 2)', () => {
+  // The pane stops drawing once the text is written (an output flood, or a
+  // prompt drawn meanwhile): with no reading nothing says no prompt is up, so
+  // nothing is taken back, and the text is reported not drawn.
+  const head = [plain('  Tip: New Build faster with Codex.')]
+  const footer = plain(`  gpt-5.5 medium ${DOT} C:\\dev\\demo`)
+  const READY_SCREEN: ScreenLine[] = [...head, { text: `${P} Ask Codex to do anything`, typed: P }, footer]
+  const TRUST_SCREEN: ScreenLine[] = [...head, plain('  Do you trust the contents of this directory?'), plain(`${P} 1. Yes, continue`), plain('  Press enter to continue')]
+
+  function stalled(how: 'not-drawn' | 'unreadable') {
+    let t = 0
+    let written = false
+    const writes: string[] = []
+    const logs: string[] = []
+    const deps: ComposerSubmitDeps = {
+      // The real screen shows the trust prompt from the moment the text is written.
+      readScreen: () => (written ? (how === 'unreadable' ? null : TRUST_SCREEN) : READY_SCREEN),
+      settle: async () => (how === 'not-drawn' ? !written : true),
+      size: () => ({ cols: 120, rows: 40 }),
+      write: (data) => { writes.push(data); written = true },
+      live: () => true,
+      now: () => t,
+      sleep: async (ms) => { t += Math.max(0, ms) },
+      log: (msg) => { logs.push(msg) },
+    }
+    return { deps, writes, logs }
+  }
+
+  it.each(['not-drawn', 'unreadable'] as const)('[host] the screen %s after the write: no take-back key, no Enter, reported not drawn', async (how) => {
+    const s = stalled(how)
+    const r = await submitToCodexComposer('1 how do I add an account', s.deps, { readyWaitMs: 5_000 })
+    expect(r).toEqual({ delivered: false, reason: 'not-drawn' })
+    expect(s.writes).toEqual(['1 how do I add an account'])
+    expect(s.writes).not.toContain(TAKE_BACK_KEY)
+    expect(s.logs).toContain('the text was not confirmed and the screen cannot be read; nothing taken back')
+  })
+
+  it('[host] a composer grown to its full height, then a screen that cannot be read at the take-back: nothing taken back, reported not drawn', async () => {
+    const s = sim({ cols: 80, rows: 24, wrapCols: 20 })
+    const text = ascii(600)
+    let wroteAt = -1
+    const deps: ComposerSubmitDeps = {
+      ...s.deps,
+      write: (data) => { if (wroteAt < 0) wroteAt = s.now; s.deps.write(data) },
+      // Drawn until the exact mode's bound has run out, never after.
+      settle: async () => wroteAt < 0 || s.now < wroteAt + SUBMIT_EXACT_CONFIRM_MS,
+    }
+    const r = await submitToCodexComposer(text, deps, { readyWaitMs: 10_000 })
+    expect(r).toEqual({ delivered: false, reason: 'not-drawn' })
+    expect(s.writes.map((w) => w.data)).toEqual([text])
+  })
+})

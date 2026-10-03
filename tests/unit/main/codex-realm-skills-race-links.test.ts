@@ -87,3 +87,22 @@ describe('a real link put in place mid-stage', () => {
     expect(fs.lstatSync(first).isSymbolicLink()).toBe(true)
   })
 })
+
+describe('a real link with the staging name (ADR-009 round 2)', () => {
+  it.each(['stage', 'removal'])('at %s it is removed as the link itself, its target untouched', async (op) => {
+    const { removeCodexRealmSkills, STAGING_PREFIX } = await import('../../../src/main/canvas/codex-realm-skills')
+    const { home, skills } = realm()
+    fs.mkdirSync(skills)
+    const theirs = path.join(hook.outside, canvasSkillFiles()[0].name)
+    fs.mkdirSync(theirs)
+    fs.writeFileSync(path.join(theirs, 'SKILL.md'), 'theirs')
+    const link = path.join(skills, `${STAGING_PREFIX}Qr12St`)
+    links.push(link)
+    fs.symlinkSync(hook.outside, link, process.platform === 'win32' ? 'junction' : 'dir')
+    if (op === 'stage') expect(stageCodexRealmSkills(home, codexManagedRealmSkillsDir(home, tmp))).toEqual({ staged: true })
+    else removeCodexRealmSkills(home, codexManagedRealmSkillsDir(home, tmp))
+    expect(fs.existsSync(link)).toBe(false)
+    expect(fs.readdirSync(hook.outside).sort()).toEqual([canvasSkillFiles()[0].name, 'precious.txt'])
+    expect(fs.readFileSync(path.join(theirs, 'SKILL.md'), 'utf8')).toBe('theirs')
+  })
+})
