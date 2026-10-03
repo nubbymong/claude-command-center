@@ -62,9 +62,9 @@ export interface ShowcasePage {
   /** P3.4 (row 14): the page is about something that needs Claude Code in
    *  this release (Claude sessions only), so it is not shown while Claude
    *  Code is off. The phase that brings the feature to Codex lifts it (named
-   *  in that phase's entry of docs/wp2/completion-plan.md: canvas P4.1,
-   *  askConductor P4.3; P3.6 lifted it from accounts, whose Insights point
-   *  keeps it, and P3.10 from watchdog); remoteResume keeps it, since Codex
+   *  in that phase's entry of docs/wp2/completion-plan.md: askConductor
+   *  P4.3; P3.6 lifted it from accounts, whose Insights point keeps it, P3.10
+   *  from watchdog, and P4.1 from canvas); remoteResume keeps it, since Codex
    *  over SSH is outside this release. */
   needsClaude?: boolean
 }
@@ -72,9 +72,8 @@ export interface ShowcasePage {
 export const SHOWCASES_21: ShowcasePage[] = [
   {
     id: 'canvas',
-    needsClaude: true,
     heading: 'The Agent Canvas — new to this line',
-    tagline: "Claude renders its work as a real page inside the app. You point at what's wrong; it reads every note and fixes it all in one pass.",
+    tagline: "Your agent renders its work as a real page inside the app. You point at what's wrong; it reads every note and fixes it all in one pass.",
     points: [
       { lead: 'Mockups, plans, your build.', rest: 'Ask for something visual and it appears on the canvas, versioned.' },
       { lead: 'Review needed, counted.', rest: 'The button turns amber with one number for every round owed.' },
@@ -178,13 +177,12 @@ export const SHOWCASES_21: ShowcasePage[] = [
   },
   {
     id: 'askConductor',
-    needsClaude: true,
     heading: 'Ask Conductor',
     tagline: 'A session that has read the manual. Ask how the app works — settings, accounts, remote sessions — in plain English.',
     points: [
       { lead: 'Always there.', rest: 'Docked at the foot of the sidebar; opens as a tab and behaves like any session.' },
-      { lead: 'Knows the app, not your code.', rest: "It answers for the Conductor and for Claude Code itself — and says which one you're asking about." },
-      { lead: 'It can install a helper skill.', rest: 'Say "install the skill" and every Claude session on this machine can answer Conductor questions itself — which settings file wins, how accounts share settings — without opening this tab.' },
+      { lead: 'Knows the app, not your code.', rest: "It answers for the Conductor and for the assistant it runs on, Claude Code or Codex — and says which one you're asking about." },
+      { lead: 'It can install a helper skill.', rest: 'Say "install the skill" and your other sessions of that assistant on this machine can answer Conductor questions themselves — which settings file wins, how accounts share settings — without opening this tab.' },
       { lead: 'Nothing happens without you.', rest: 'It explains and proposes; the one file the skill install writes goes through your approval, and so would any remote install.' },
     ],
     where: { pre: 'Where: the ', em: 'Ask Conductor', post: ' pill at the foot of the sidebar.' },

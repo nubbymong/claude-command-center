@@ -181,10 +181,11 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '2.1.1',
     section: 'getting-started',
     summary:
-      'Ask Conductor is the help session: a real Claude session that has already read this app\'s documentation, so you can ask how something works in plain English instead of hunting through Settings. It answers questions about the Conductor and about Claude Code itself, and tells you which of the two it is answering.',
+      'Ask Conductor is the help session: a real session, on Claude Code or Codex, that has already read this app\'s documentation, so you can ask how something works in plain English instead of hunting through Settings. It answers questions about the Conductor and about the assistant it runs on, and tells you which of the two it is answering.',
     highlights: [
       'Ask in **plain English** -- "how do I run two accounts?" beats hunting through Settings',
-      'Covers **both** the Conductor and **Claude Code** itself, and says which one it is answering',
+      'Covers **both** the Conductor and the assistant it runs on, **Claude Code** or **Codex**, and says which one it is answering',
+      'With both on, **Settings > General > Ask Conductor runs on** picks the assistant -- Claude Code by default',
       'Type your question into the Feature Guide first and the session opens with it **already asked**',
       'Gets its **own tab** and behaves like any other session -- leave it open and come back to it',
       'Use **Past discussions** in its header to reopen an earlier conversation',
@@ -198,8 +199,8 @@ export const trainingSteps: TrainingStep[] = [
     proTip:
       'It runs in its own documentation folder rather than your project, which is exactly why it cannot see your repository. For a question about your own code, ask in that project\'s session instead. It is not a saved config and never appears in your Saved Configs list.',
     bullets: [
-      'A **Claude session primed with this app\'s docs** -- ask about the Conductor in plain English',
-      'Also answers **Claude Code** questions, and tells you which of the two it is answering',
+      'A **session primed with this app\'s docs**, on Claude Code or Codex -- ask about the Conductor in plain English',
+      'Also answers questions about the assistant it runs on, and tells you which of the two it is answering',
       'Open it from the **sidebar pill**, the **Feature Guide** Ask box, or **Discuss** on any tip',
       'Reads the **documentation only** -- not your code',
     ],

@@ -72,7 +72,7 @@ export default function SessionContextMenu({
   const showSwitch = !!canSwitchAccount && !!switchItems && switchItems.length > 1 && !!onSwitchAccount
 
   // WP2 PR 4, P4.6 (row 58): Claude's account items act on a Claude account's
-  // claude.ai session and Claude Code sign-in. On a Codex tab they acted on
+  // claude.ai session and Claude Code sign-in. In a Codex session they acted on
   // ANOTHER account, the primary Claude profile (the #216 fallback; P3.6 V5),
   // so a Codex row never shows them, whatever the caller passes. Open artifacts
   // has no Codex replacement until the artifacts record (completion plan,

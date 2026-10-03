@@ -12,8 +12,8 @@ type ToolKey = keyof ConductorToolsSettings
 
 // Every switch drives a real settings.conductorTools.* flag: the conductor MCP
 // server filters its tool groups by them per connection, and the master gates
-// the attach at every spawn path (local Claude / SSH / Codex). Vision is
-// Claude-only (the server never advertises it to Codex). Codex review runs
+// the attach at every spawn path (local Claude / SSH / Codex). Vision reaches
+// Claude and Codex sessions alike (WP2 PR 4, P4.2). Codex review runs
 // the codex CLI, so it is blocked while Codex is off. Claude review answers
 // Codex sessions: with Codex off nothing asks for it, so it stays a live
 // switch with a note rather than a blocked card (the same rule as Settings).
@@ -22,8 +22,7 @@ const TOOLS: { k: ToolKey; icon: string; title: string; desc: string; tag?: stri
     k: 'vision',
     icon: GLOBE,
     title: 'Vision: see & drive a browser',
-    tag: 'Claude only',
-    desc: 'Claude can open a real browser, take screenshots, click, type, scroll and run JavaScript. Ideal for testing UIs and reproducing bugs. Not yet available in Codex sessions.',
+    desc: 'Your agent can open a real browser, take screenshots, click, type, scroll and run JavaScript. Ideal for testing UIs and reproducing bugs.',
   },
   {
     k: 'codexReview',
@@ -49,7 +48,7 @@ const TOOLS: { k: ToolKey; icon: string; title: string; desc: string; tag?: stri
     k: 'canvas',
     icon: FRAME,
     title: 'Agent Canvas: read the rendered page',
-    desc: 'When a page is open in the Canvas pane, Claude can read what it actually looks like once laid out: element names, sizes, form state, and measured problems such as clipped text, targets too small to hit, and unreadable contrast. It can also render files from the project folders you open sessions in — nothing outside those folders. To check its own work it may lay a page out off-screen even when the Canvas pane is closed, but only ever from those same folders.',
+    desc: 'When a page is open in the Canvas pane, your agent can read what it actually looks like once laid out: element names, sizes, form state, and measured problems such as clipped text, targets too small to hit, and unreadable contrast. It can also render files from the project folders you open sessions in — nothing outside those folders. To check its own work it may lay a page out off-screen even when the Canvas pane is closed, but only ever from those same folders.',
   },
 ]
 

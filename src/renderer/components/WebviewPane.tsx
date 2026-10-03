@@ -70,8 +70,8 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
   const configId = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId)?.configId)
   // The account behind the pane's claude.ai surface (#475): the session's own
   // profile, else the primary — the same resolution the Artifacts tool uses.
-  // Only a local, non-shell Claude session has an account to speak of: on a
-  // Codex tab the primary fallback offered ANOTHER account's claude.ai (the
+  // Only a local, non-shell Claude session has an account to speak of: in a
+  // Codex session the primary fallback offered ANOTHER account's claude.ai (the
   // #216 fallback; P3.6 V5), as the session menu's items did (P4.6, row 58).
   const paneAccountApplicable = useSessionStore((s) => {
     const sess = s.sessions.find((x) => x.id === sessionId)

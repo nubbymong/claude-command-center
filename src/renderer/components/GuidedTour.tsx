@@ -30,20 +30,17 @@ function whereSessionsRun(only: OnlyAssistant): string {
   return `Claude or Codex here, or Claude on another machine ${SSH_KINDS}`
 }
 
-/** What the canvas does. A Codex agent cannot put work on it yet (P4.1
- *  brings it), so with Codex alone the card says that instead. */
+/** What the canvas does: the same card whichever assistants are in use (WP2
+ *  PR 4, P4.1 brought the Agent Canvas to Codex sessions). */
 const CANVAS_REVIEW = 'Your agent renders a mockup, a plan, or the site it just built, and you review it by pointing: click an element to leave a note, draw over it, then decide — approve that version, or send it back for another round. Testing mode goes further — click through a running build and every note saves the screen, the page state and how you got there. A small dot on the button means there is unfinished canvas work anyone here can pick up.'
-function canvasCard(only: OnlyAssistant): string {
-  if (only === 'codex') return 'Every session has a Canvas button beside Snap. It opens the Agent Canvas, where an agent\'s mockups, plans and builds are reviewed by pointing at them. A Codex agent cannot put work there yet.'
-  if (only === 'claude') return `Every session has a Canvas button beside Snap. ${CANVAS_REVIEW}`
-  return `Every session has a Canvas button beside Snap. ${CANVAS_REVIEW} Claude sessions draw on it; a Codex agent cannot put work there yet.`
-}
+const CANVAS_CARD = `Every session has a Canvas button beside Snap. ${CANVAS_REVIEW}`
 
-/** Ask Conductor is a Claude session (Codex's is PR 4, row 53), so with
- *  Codex alone the card does not offer it. */
+/** Ask Conductor runs on the assistant in use (WP2 PR 4, P4.3, row 53): the
+ *  card names that assistant when only one is on; with both on it runs on the
+ *  one chosen in Settings, so the card names neither. */
 function helpCard(only: OnlyAssistant): string {
-  if (only === 'codex') return 'The Feature Guide explains every feature in depth whenever you want it.'
-  return 'The Feature Guide explains every feature in depth whenever you want it and, with Claude Code on, can hand your question to Ask Conductor, a Claude session that knows the app.'
+  const session = only === 'codex' ? 'a Codex session' : only === 'claude' ? 'a Claude session' : 'a session'
+  return `The Feature Guide explains every feature in depth whenever you want it and can hand your question to Ask Conductor, ${session} that knows the app.`
 }
 
 const STEPS: TourStep[] = [
@@ -74,7 +71,7 @@ const STEPS: TourStep[] = [
     // anchored step relies on. It earns its place the moment a session exists.
     selector: '[data-tour="canvas-button"]',
     title: 'Review what your agent builds',
-    body: canvasCard,
+    body: CANVAS_CARD,
   },
   {
     // Anchored on data-tour, not aria-label: the nav button's label is dynamic

@@ -136,7 +136,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Browse what Claude remembers about your projects',
         title: 'Memory',
-        body: 'Claude Code writes **auto-memory** files to remember things across sessions: your preferences, past feedback, project context, references to external systems.\n\nClick the **Memory icon** in the sidebar to open the dashboard: a **KPI strip** (memories, projects, total size, stale entries, index health), an **activity chart** and **type donut** for the whole store, and a **ranked project list** with staleness dots and live-session chips.\n\nClick a project to drill in: a sortable memory table plus a sessions rail (live sessions jump straight to the terminal; recent sessions deep-link into Logs). Open any memory in the **reading drawer** to read it cleanly, write missing frontmatter, or delete it. Full-text search spans the whole store.',
+        body: 'Claude Code writes **auto-memory** files to remember things across sessions: your preferences, past feedback, project context, references to external systems.\n\nClick the **Memory icon** in the sidebar to open the dashboard: a **KPI strip** (memories, projects, total size, stale entries, index health), an **activity chart** and **type donut** for the whole store, and a **ranked project list** with staleness dots and live-session chips.\n\nClick a project to drill in: a sortable memory table plus a sessions rail (live sessions jump straight to the terminal; recent sessions deep-link into Logs). Open any memory in the **reading drawer** to read it cleanly, write missing frontmatter, or delete it. Full-text search spans the whole store.\n\nWith Codex in use, each Codex account\'s own memories are listed below the projects under the account\'s name, read-only for now; search covers them too. Codex keeps memories off until you turn them on in Codex with **/memories**.',
         actionLabel: 'Open Memory',
         actionTarget: 'memory',
         focusHint: 'Sidebar -- Memory icon (between Conductor MCP and Logs)',
@@ -420,7 +420,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Teach every session about this app',
         title: 'The Ask Conductor Helper Skill',
-        body: 'Your ordinary sessions can\'t answer questions about this app -- why a setting didn\'t apply, which settings file wins, how accounts share settings. **Ask Conductor** can fix that: open it and say **"install the helper skill"**.\n\nIt copies one ready-made skill file into your Claude configuration (you approve the write), and from then on **any Claude session on this machine** can answer Conductor questions itself -- no need to switch to the Ask tab.\n\n• Always current: the skill reads the app\'s own regenerated docs.\n• Working over SSH? Ask about the **portable copy** for the remote machine.\n• Say "remove the helper skill" to uninstall it.',
+        body: 'Your ordinary sessions can\'t answer questions about this app -- why a setting didn\'t apply, which settings file wins, how accounts share settings. **Ask Conductor** can fix that: open it and say **"install the helper skill"**.\n\nIt copies one ready-made skill file into your Claude configuration, or on Codex into the skills folder of the Codex account it runs as (you approve the write), and from then on **any session of that assistant on this machine** can answer Conductor questions itself -- no need to switch to the Ask tab.\n\n• Always current: the skill reads the app\'s own regenerated docs.\n• Working over SSH? Ask about the **portable copy** for the remote machine.\n• Say "remove the helper skill" to uninstall it.',
         actionLabel: 'Open Ask Conductor',
         actionTarget: 'ask-conductor',
       },
@@ -434,9 +434,9 @@ export const TIPS_LIBRARY: Tip[] = [
     priority: 48,
     variants: {
       primary: {
-        shortText: 'Claude can hand you a page to look at',
+        shortText: 'Your agent can hand you a page to look at',
         title: 'Agent Pushes to Your Browser',
-        body: 'Claude can send you a link worth seeing -- a dev-server preview, a PR, a built site -- straight to the session\'s **Browser** pane. A small pill appears on the **Browser** button; nothing loads until you act.\n\n• Button closed? Click it and the pane opens straight onto the waiting page.\n• Pane already open on your own page? The pushed page waits behind the pill -- it never yanks what you\'re viewing.\n\nThis is your visible browser, not the Vision browser only Claude sees. Try: "show me the preview in my browser". Needs the built-in Conductor tools on (Settings, General); Claude sessions only.',
+        body: 'Your agent can send you a link worth seeing -- a dev-server preview, a PR, a built site -- straight to the session\'s **Browser** pane. A small pill appears on the **Browser** button; nothing loads until you act.\n\n• Button closed? Click it and the pane opens straight onto the waiting page.\n• Pane already open on your own page? The pushed page waits behind the pill -- it never yanks what you\'re viewing.\n\nThis is your visible browser, not the Vision browser only the agent sees. Try: "show me the preview in my browser". Needs the built-in Conductor tools on (Settings, General).',
       },
     },
   },
@@ -826,6 +826,24 @@ export const TIPS_LIBRARY: Tip[] = [
         title: 'Ask Conductor',
         body: '**Ask Conductor** sits at the foot of the sidebar. It opens a real session -- its own tab, its own history, resumable like any other -- whose subject is this app rather than your code.\n\nIt is the right place for "how do I...", "what does this button do" and "why did that happen". It is not a saved config and it does not clutter your project list: it is docked below the divider, apart from your work.\n\nThe same session is what **Discuss** opens from any tip, and what the Feature Guide links to -- one conversation, not three.',
         focusHint: 'Bottom of the sidebar -- the Ask Conductor pill, under the session list',
+      },
+    },
+  },
+
+  // WP2 PR 4, P4.3 (OD27 M4, option B): which assistant Ask Conductor runs
+  // on while both are on.
+  {
+    id: 'tip.ask-conductor-runs-on',
+    category: 'ui-navigation',
+    complexity: 'simple',
+    priority: 46,
+    requires: ['sessions.codex-config'],
+    variants: {
+      primary: {
+        shortText: 'Choose which assistant answers Ask Conductor',
+        title: 'Ask Conductor on Codex',
+        body: 'Ask Conductor runs on the assistant you use. With Claude Code and Codex both on, **Settings > General** has **Ask Conductor runs on**: Claude Code (the default) or Codex. It decides which assistant answers your Ask Conductor questions, and so whose allowance they use; Sentinel\'s analysis follows the same choice, and turning an assistant off never changes it.\n\nWhile both are on, the **Ask Conductor** row at the foot of the sidebar wears the mark of the assistant it runs on. A tab that is already open keeps its assistant; the choice applies the next time Ask Conductor starts.',
+        focusHint: 'Settings > General -- under Show Ask Conductor',
       },
     },
   },
