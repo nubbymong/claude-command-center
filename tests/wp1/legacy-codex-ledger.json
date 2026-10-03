@@ -132,7 +132,7 @@
       ],
       "category": "OTHER",
       "disposition": "replace",
-      "evidence": "WP2 PR 4 P4.8 (rows 59, 60; OD20 D5, D7): ubuntu-latest in the test matrix; the codex-conformance job installs the minimum and pinned Codex CLI (a release candidate by dispatch) per OS and runs the no-sign-in checks, no secrets (WP1.30, WP1.71); tests/integration/codex-real-cli-conformance.test.ts; docs/wp1/evidence/ci-matrix.md; WP2 PR 4 P4.8 review (E-4, b26079e9): every CLI run in the codex-conformance job gets a fresh CODEX_HOME, and the runner's own home is proven untouched (WP1.71); tests/integration/codex-conformance-ci.mjs; docs/wp1/evidence/ci-matrix.md",
+      "evidence": "WP2 PR 4 P4.8 (rows 59, 60; OD20 D5, D7): ubuntu-latest in the test matrix; the codex-conformance job installs the minimum and pinned Codex CLI (a release candidate by dispatch) per OS and runs the no-sign-in checks, no secrets (WP1.30, WP1.71); tests/integration/codex-real-cli-conformance.test.ts; docs/wp1/evidence/ci-matrix.md; WP2 PR 4 P4.8 review (E-4, b26079e9): every CLI run in the codex-conformance job gets a fresh CODEX_HOME, and the runner's own home is proven untouched (WP1.71); tests/integration/codex-conformance-ci.mjs; docs/wp1/evidence/ci-matrix.md; WP2 PR 4 P4.10 (2723b1ed, 4f8f78b7): the Linux test job blocks after its first green run (CI run 37134624406), and the help captures are asserted on every OS once each OS was reviewed (WP1.30, WP1.71); docs/wp1/evidence/ci-matrix.md",
       "note": "the job's name, comments and test paths; no Codex code path; P04 (P4.8 review): CODEX_HOME set to fresh empty folders made by codex-conformance-ci.mjs homes for the PATH check and the flag-drift suite; no global home resolver"
     },
     {
@@ -4765,7 +4765,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "new WP2 PR 4 P4.8: each comparison proven red on a deliberately wrong fixture, host-safe (WP1.71); tests/integration/codex-conformance-lib.test.ts",
+      "evidence": "new WP2 PR 4 P4.8: each comparison proven red on a deliberately wrong fixture, host-safe (WP1.71); tests/integration/codex-conformance-lib.test.ts; WP2 PR 4 P4.10 (aad49d69): the reviewed differences accept only themselves, on captures made by hand per OS, and prove-red stays red on every OS (WP1.71); tests/integration/codex-conformance-lib.test.ts",
       "note": ""
     },
     {
@@ -4776,7 +4776,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "new WP2 PR 4 P4.8: the conformance run's pure comparisons (help captures against the P3.1 fixtures, flags in help, features, the version class from cli-contract) (WP1.71); tests/integration/codex-conformance-lib.test.ts",
+      "evidence": "new WP2 PR 4 P4.8: the conformance run's pure comparisons (help captures against the P3.1 fixtures, flags in help, features, the version class from cli-contract) (WP1.71); tests/integration/codex-conformance-lib.test.ts; WP2 PR 4 P4.10 (aad49d69): the help differences reviewed per OS accepted by name, each failing when its fixture line is not there exactly once, and the run's own folders compared as names (WP1.71); tests/integration/codex-conformance-lib.test.ts",
       "note": ""
     },
     {
@@ -4811,7 +4811,7 @@
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "new WP2 PR 4 P4.8: real-CLI conformance with no sign-in per OS, CI only: discovery (row 2), flags, model list against the registry, features, help captures (WP1.71, WP1.30); docs/wp1/evidence/ci-matrix.md",
+      "evidence": "new WP2 PR 4 P4.8: real-CLI conformance with no sign-in per OS, CI only: discovery (row 2), flags, model list against the registry, features, help captures (WP1.71, WP1.30); docs/wp1/evidence/ci-matrix.md; WP2 PR 4 P4.10 (aad49d69): each help capture compared with the fixture as the run's OS reads it, asserted in CI (WP1.71); docs/wp1/evidence/ci-matrix.md",
       "note": "P04: each run's CODEX_HOME is a fresh empty temp folder, never a user's"
     },
     {
