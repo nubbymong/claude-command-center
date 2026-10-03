@@ -517,6 +517,14 @@ describe('the notice state (P4.3)', () => {
     expect(askNoticeText({ sessionId: 's', kind: 'removed', count: 1 })).toBe('Codex cannot take emoji or some rare characters typed into its prompt; 1 removed from your question.')
   })
 
+  it('[host] not drawn: the question could not be confirmed and may still be in Codex\'s prompt, unsent (ADR-009 residuals)', () => {
+    // Since the take-back needs a reading, an unconfirmed question can still be
+    // sitting in Codex's prompt; the line never says it is not there.
+    const line = askNoticeText({ sessionId: 's', kind: 'not-delivered', reason: 'not-drawn' })
+    expect(line).toBe('Your question was not sent: the app could not confirm it in Codex\'s prompt, and it may still be there, unsent. Send it or clear it in the Ask tab.')
+    expect(line).not.toMatch(/never appeared/)
+  })
+
   it('parseAskNotice takes only what main sends', () => {
     expect(parseAskNotice({ sessionId: 's', kind: 'removed', count: 3 })).toEqual({ sessionId: 's', kind: 'removed', count: 3 })
     expect(parseAskNotice({ sessionId: 's', kind: 'not-delivered', reason: 'too-tall', extra: 1 })).toEqual({ sessionId: 's', kind: 'not-delivered', reason: 'too-tall' })
