@@ -1,0 +1,962 @@
+{
+  "schema": "ccc-wp1-fake-cli-oracle/1",
+  "item": "WP1.69",
+  "cli": "codex",
+  "versions": {
+    "minimum": "0.153.4",
+    "pinned": "0.155.1",
+    "source": "src/main/providers/codex/cli-contract.ts"
+  },
+  "about": [
+    "What the app relies on the Codex CLI doing, that a fake Codex CLI reproduces, for the minimum and pinned versions the",
+    "contract names. Each entry is sourced: a sanitised real capture (P3.1, tests/fixtures/codex/cli/<version>/, see",
+    "ANONYMISED.txt there), the app-server schema the CLI itself generated (tests/fixtures/codex/app-server/<version>/),",
+    "or a pinned-source/doc citation (a file of this repo, the versions it speaks for, a quote it contains). Nothing",
+    "here is taken from a fake. tests/wp1/fake-cli-oracle.test.ts checks every entry against its sources (the real side)",
+    "and every fake against every entry it claims (the fake side)."
+  ],
+  "rules": {
+    "lines": "A stream is split on line feeds (carriage returns dropped); blank lines are ignored.",
+    "modes": "exactly: the stream has exactly these lines, in order. inOrder: these lines occur in this order, other lines may sit between them. document: the whole stream is one JSON value.",
+    "streams": "either: the lines hold on stdout or on stderr (the app reads both).",
+    "matchers": "exact: the line itself. regex: an anchored regular expression. rpcResult: a JSON-RPC answer with this id whose result has these fields. json: the document has these fields. {version} stands for the entry version (escaped inside a regex).",
+    "exitCode": "A number, or \"nonzero\". Absent: not asserted, and a citation says why.",
+    "afterwards": "Then the named entry is run in the same realm and must hold too.",
+    "backing": "For each version an entry covers, its exit code, its lines, an either stream and its afterwards must each be backed by a capture or schema of that version or by a citation that says so; a citation carries the value it backs (exitCode, afterwards) and the samples its quote holds, which the entry lines must accept."
+  },
+  "fakes": {
+    "wp1-fake-cli": {
+      "file": "tests/wp1/fake-cli.test.ts",
+      "symbol": "FAKE",
+      "versions": [
+        "0.155.1"
+      ],
+      "note": "the script that suite runs through a real shim, in CI and on the VM only; it prints 0.155.1 only"
+    },
+    "e2e-fake-codex": {
+      "file": "tests/e2e/helpers/fake-codex.ts",
+      "symbol": "installFakeCodex",
+      "versions": [
+        "0.153.4",
+        "0.155.1"
+      ],
+      "note": "the e2e stand-in, installed at a given version; signInFakeRealm signs a realm in"
+    }
+  },
+  "preconditions": {
+    "empty-home": {
+      "means": "CODEX_HOME names an existing, empty folder (a fresh realm); no credential or NODE_OPTIONS in the environment",
+      "citations": []
+    },
+    "signed-in": {
+      "means": "the realm is signed in, by either method (the exec captures were taken in a realm signed in with ChatGPT)",
+      "citations": [
+        {
+          "path": "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+          "versions": [
+            "0.153.4",
+            "0.155.1"
+          ],
+          "quote": "The app-managed realm of a managed ChatGPT account (browser sign-in, Pro plan)"
+        }
+      ]
+    },
+    "signed-in-api-key": {
+      "means": "the realm was signed in with an API key read from a stdin pipe (codex login --with-api-key)",
+      "citations": [
+        {
+          "path": "tests/fixtures/codex/cli/0.153.4/help/login-help.txt",
+          "versions": [
+            "0.153.4"
+          ],
+          "quote": "Read the API key from stdin"
+        },
+        {
+          "path": "tests/fixtures/codex/cli/0.155.1/help/login-help.txt",
+          "versions": [
+            "0.155.1"
+          ],
+          "quote": "Read the API key from stdin"
+        }
+      ]
+    },
+    "signed-in-chatgpt": {
+      "means": "the realm was signed in through the browser (codex login)",
+      "citations": [
+        {
+          "path": "src/main/providers/codex/cli-contract.ts",
+          "versions": [
+            "0.153.4",
+            "0.155.1"
+          ],
+          "quote": "if (/^Logged in using ChatGPT\\b/.test(line)) return { state: 'signed-in', via: 'chatgpt' }"
+        }
+      ]
+    },
+    "stdin-pipe": {
+      "means": "stdin is a pipe carrying the entry's stdinLines, each ended by a line feed, then closed",
+      "citations": []
+    },
+    "stdin-tty": {
+      "means": "stdin is a terminal",
+      "citations": []
+    }
+  },
+  "entries": [
+    {
+      "id": "version",
+      "versions": [
+        "0.153.4",
+        "0.155.1"
+      ],
+      "argv": [
+        "--version"
+      ],
+      "app": {
+        "operation": "version"
+      },
+      "preconditions": [
+        "empty-home"
+      ],
+      "expect": {
+        "exitCode": 0,
+        "streams": [
+          {
+            "stream": "stdout",
+            "mode": "exactly",
+            "lines": [
+              {
+                "exact": "codex-cli {version}"
+              }
+            ]
+          },
+          {
+            "stream": "stderr",
+            "mode": "exactly",
+            "lines": []
+          }
+        ]
+      },
+      "sources": {
+        "captures": [
+          {
+            "version": "0.153.4",
+            "path": "tests/fixtures/codex/cli/0.153.4/help/version.txt",
+            "format": "exit-stdout-stderr"
+          },
+          {
+            "version": "0.155.1",
+            "path": "tests/fixtures/codex/cli/0.155.1/help/version.txt",
+            "format": "exit-stdout-stderr"
+          }
+        ],
+        "citations": []
+      },
+      "reliedOnBy": "discovery proves the version (parseCodexVersion, cli-contract.ts)",
+      "fakes": [
+        "wp1-fake-cli",
+        "e2e-fake-codex"
+      ]
+    },
+    {
+      "id": "login-status-signed-out",
+      "versions": [
+        "0.153.4",
+        "0.155.1"
+      ],
+      "argv": [
+        "login",
+        "status"
+      ],
+      "app": {
+        "operation": "status"
+      },
+      "preconditions": [
+        "empty-home"
+      ],
+      "expect": {
+        "exitCode": 1,
+        "streams": [
+          {
+            "stream": "either",
+            "mode": "inOrder",
+            "lines": [
+              {
+                "exact": "Not logged in"
+              }
+            ]
+          }
+        ]
+      },
+      "sources": {
+        "captures": [],
+        "citations": [
+          {
+            "path": "src/main/providers/codex/cli-contract.ts",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "an API key - <redacted key>`, or `Not logged in` with exit 1.",
+            "backs": [
+              "exitCode",
+              "lines"
+            ],
+            "exitCode": 1,
+            "samples": [
+              "Not logged in"
+            ]
+          },
+          {
+            "path": "docs/wp2/plan.md",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "exit 1 `Not logged in`",
+            "backs": [
+              "exitCode",
+              "lines"
+            ],
+            "exitCode": 1,
+            "samples": [
+              "Not logged in"
+            ]
+          },
+          {
+            "path": "src/main/providers/codex/cli-contract.ts",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "export function parseCodexLoginStatus(exitCode: number | null, stdout: string, stderr: string)",
+            "backs": [
+              "stream"
+            ]
+          }
+        ]
+      },
+      "reliedOnBy": "parseCodexLoginStatus (cli-contract.ts): signed-out only on exit 1 with this line",
+      "fakes": [
+        "wp1-fake-cli",
+        "e2e-fake-codex"
+      ]
+    },
+    {
+      "id": "login-status-api-key",
+      "versions": [
+        "0.153.4",
+        "0.155.1"
+      ],
+      "argv": [
+        "login",
+        "status"
+      ],
+      "app": {
+        "operation": "status"
+      },
+      "preconditions": [
+        "signed-in-api-key"
+      ],
+      "expect": {
+        "exitCode": 0,
+        "streams": [
+          {
+            "stream": "either",
+            "mode": "inOrder",
+            "lines": [
+              {
+                "regex": "^Logged in using an API key(?: - .+)?$"
+              }
+            ]
+          }
+        ]
+      },
+      "sources": {
+        "captures": [],
+        "citations": [
+          {
+            "path": "docs/wp2/plan.md",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "`Logged in using an API key`",
+            "backs": [
+              "lines"
+            ],
+            "samples": [
+              "Logged in using an API key"
+            ]
+          },
+          {
+            "path": "src/main/providers/codex/cli-contract.ts",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "if (exitCode === 0) { if (/^Logged in using ChatGPT\\b/.test(line)) return { state: 'signed-in', via: 'chatgpt' } if (/^Logged in using an API key\\b/.test(line)) return { state: 'signed-in', via: 'api-key' }",
+            "backs": [
+              "exitCode"
+            ],
+            "exitCode": 0
+          },
+          {
+            "path": "src/main/providers/codex/cli-contract.ts",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "export function parseCodexLoginStatus(exitCode: number | null, stdout: string, stderr: string)",
+            "backs": [
+              "stream"
+            ]
+          }
+        ]
+      },
+      "reliedOnBy": "parseCodexLoginStatus: signed-in via api-key",
+      "fakes": [
+        "wp1-fake-cli",
+        "e2e-fake-codex"
+      ]
+    },
+    {
+      "id": "login-status-chatgpt",
+      "versions": [
+        "0.153.4",
+        "0.155.1"
+      ],
+      "argv": [
+        "login",
+        "status"
+      ],
+      "app": {
+        "operation": "status"
+      },
+      "preconditions": [
+        "signed-in-chatgpt"
+      ],
+      "expect": {
+        "exitCode": 0,
+        "streams": [
+          {
+            "stream": "either",
+            "mode": "inOrder",
+            "lines": [
+              {
+                "exact": "Logged in using ChatGPT"
+              }
+            ]
+          }
+        ]
+      },
+      "sources": {
+        "captures": [],
+        "citations": [
+          {
+            "path": "src/main/providers/codex/cli-contract.ts",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "The pinned CLI prints one line: `Logged in using ChatGPT`, `Logged in using",
+            "backs": [
+              "lines"
+            ],
+            "samples": [
+              "Logged in using ChatGPT"
+            ]
+          },
+          {
+            "path": "src/main/providers/codex/cli-contract.ts",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "if (exitCode === 0) { if (/^Logged in using ChatGPT\\b/.test(line)) return { state: 'signed-in', via: 'chatgpt' }",
+            "backs": [
+              "exitCode"
+            ],
+            "exitCode": 0
+          },
+          {
+            "path": "src/main/providers/codex/cli-contract.ts",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "export function parseCodexLoginStatus(exitCode: number | null, stdout: string, stderr: string)",
+            "backs": [
+              "stream"
+            ]
+          }
+        ]
+      },
+      "reliedOnBy": "parseCodexLoginStatus: signed-in via chatgpt",
+      "fakes": [
+        "wp1-fake-cli"
+      ]
+    },
+    {
+      "id": "login-api-key-tty-refused",
+      "versions": [
+        "0.153.4",
+        "0.155.1"
+      ],
+      "argv": [
+        "login",
+        "--with-api-key"
+      ],
+      "app": {
+        "operation": "login-api-key"
+      },
+      "preconditions": [
+        "empty-home",
+        "stdin-tty"
+      ],
+      "expect": {
+        "exitCode": "nonzero",
+        "streams": [],
+        "afterwards": "login-status-signed-out"
+      },
+      "sources": {
+        "captures": [],
+        "citations": [
+          {
+            "path": "src/main/providers/codex/cli-runner.ts",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "the pinned CLI refuses a TTY stdin",
+            "backs": [
+              "exitCode",
+              "afterwards"
+            ],
+            "exitCode": "nonzero",
+            "afterwards": "login-status-signed-out"
+          }
+        ]
+      },
+      "reliedOnBy": "the API key is written to a stdin pipe, never a terminal (cli-runner.ts, auth-operations.ts)",
+      "fakes": [
+        "wp1-fake-cli"
+      ]
+    },
+    {
+      "id": "logout-signs-out",
+      "versions": [
+        "0.153.4",
+        "0.155.1"
+      ],
+      "argv": [
+        "logout"
+      ],
+      "app": {
+        "operation": "logout"
+      },
+      "preconditions": [
+        "signed-in-api-key"
+      ],
+      "expect": {
+        "streams": [],
+        "afterwards": "login-status-signed-out"
+      },
+      "sources": {
+        "captures": [],
+        "citations": [
+          {
+            "path": "tests/fixtures/codex/cli/0.153.4/help/help.txt",
+            "versions": [
+              "0.153.4"
+            ],
+            "quote": "logout Remove stored authentication credentials",
+            "backs": [
+              "afterwards"
+            ],
+            "afterwards": "login-status-signed-out"
+          },
+          {
+            "path": "tests/fixtures/codex/cli/0.155.1/help/help.txt",
+            "versions": [
+              "0.155.1"
+            ],
+            "quote": "logout Remove stored authentication credentials",
+            "backs": [
+              "afterwards"
+            ],
+            "afterwards": "login-status-signed-out"
+          },
+          {
+            "path": "src/main/providers/codex/auth-operations.ts",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "The verdict is the realm's state afterwards, not logout's exit code.",
+            "backs": [
+              "exitCode"
+            ],
+            "exitCode": null
+          }
+        ]
+      },
+      "reliedOnBy": "logout succeeds only when a status run agrees afterwards (auth-operations.ts)",
+      "fakes": [
+        "wp1-fake-cli"
+      ]
+    },
+    {
+      "id": "exec-json-review",
+      "versions": [
+        "0.153.4",
+        "0.155.1"
+      ],
+      "argv": [
+        "exec",
+        "--json",
+        "--ephemeral",
+        "--skip-git-repo-check",
+        "--sandbox",
+        "read-only",
+        "-m",
+        "gpt-5.5",
+        "-"
+      ],
+      "app": {
+        "operation": "review"
+      },
+      "preconditions": [
+        "signed-in",
+        "stdin-pipe"
+      ],
+      "stdinLines": [
+        "Review the change."
+      ],
+      "expect": {
+        "exitCode": 0,
+        "streams": [
+          {
+            "stream": "stdout",
+            "mode": "inOrder",
+            "lines": [
+              {
+                "regex": "^\\{\"type\":\"thread\\.started\",\"thread_id\":\"[^\"]+\"\\}$"
+              },
+              {
+                "exact": "{\"type\":\"turn.started\"}"
+              },
+              {
+                "regex": "^\\{\"type\":\"item\\.completed\",\"item\":\\{\"id\":\"[^\"]+\",\"type\":\"agent_message\",\"text\":\"(?:[^\"\\\\]|\\\\.)*\"\\}\\}$"
+              },
+              {
+                "regex": "^\\{\"type\":\"turn\\.completed\",\"usage\":\\{\"input_tokens\":\\d+,\"cached_input_tokens\":\\d+,(?:\"[a-z_]+\":\\d+,)*\"output_tokens\":\\d+(?:,\"[a-z_]+\":\\d+)*\\}\\}$"
+              }
+            ]
+          }
+        ]
+      },
+      "sources": {
+        "captures": [
+          {
+            "version": "0.153.4",
+            "path": "tests/fixtures/codex/cli/0.153.4/exec-json.jsonl",
+            "format": "stdout-jsonl",
+            "note": "P3.1 runs 1 (0.155.1) and 3 (0.153.4): codex exec --json --skip-git-repo-check -C <folder> -c notify=... -c hooks...; the hook-trust warning items between the events are not part of the oracle (inOrder)"
+          },
+          {
+            "version": "0.155.1",
+            "path": "tests/fixtures/codex/cli/0.155.1/exec-json.jsonl",
+            "format": "stdout-jsonl",
+            "note": "P3.1 runs 1 (0.155.1) and 3 (0.153.4): codex exec --json --skip-git-repo-check -C <folder> -c notify=... -c hooks...; the hook-trust warning items between the events are not part of the oracle (inOrder)"
+          },
+          {
+            "version": "0.155.1",
+            "path": "tests/fixtures/codex/cli/0.155.1/exec-ephemeral-developer-instructions-json.jsonl",
+            "format": "stdout-jsonl",
+            "note": "P3.1 run 5: codex exec --ephemeral --json ... -c developer_instructions=..."
+          }
+        ],
+        "citations": [
+          {
+            "path": "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "Exit 0 on success",
+            "backs": [
+              "exitCode"
+            ],
+            "exitCode": 0
+          },
+          {
+            "path": "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "JSONL on stdout: `thread.started {thread_id}`, `turn.started`, `item.started` and `item.completed` with `item:",
+            "backs": [
+              "lines"
+            ],
+            "note": "the event types; the lines themselves are held by the captures"
+          }
+        ]
+      },
+      "reliedOnBy": "createCodexExecEventReader (review.ts): the last agent_message is the review; usage from turn.completed (input_tokens, cached_input_tokens, output_tokens)",
+      "fakes": [
+        "wp1-fake-cli"
+      ]
+    },
+    {
+      "id": "exec-json-cloud-agent",
+      "versions": [
+        "0.153.4",
+        "0.155.1"
+      ],
+      "argv": [
+        "exec",
+        "--json",
+        "-s",
+        "read-only",
+        "--skip-git-repo-check",
+        "-"
+      ],
+      "app": {
+        "agentSandbox": "read-only"
+      },
+      "preconditions": [
+        "signed-in",
+        "stdin-pipe"
+      ],
+      "stdinLines": [
+        "Fix the typo in README.md."
+      ],
+      "expect": {
+        "exitCode": 0,
+        "streams": [
+          {
+            "stream": "stdout",
+            "mode": "inOrder",
+            "lines": [
+              {
+                "regex": "^\\{\"type\":\"thread\\.started\",\"thread_id\":\"[^\"]+\"\\}$"
+              },
+              {
+                "exact": "{\"type\":\"turn.started\"}"
+              },
+              {
+                "regex": "^\\{\"type\":\"item\\.completed\",\"item\":\\{\"id\":\"[^\"]+\",\"type\":\"agent_message\",\"text\":\"(?:[^\"\\\\]|\\\\.)*\"\\}\\}$"
+              },
+              {
+                "regex": "^\\{\"type\":\"turn\\.completed\",\"usage\":\\{\"input_tokens\":\\d+,\"cached_input_tokens\":\\d+,(?:\"[a-z_]+\":\\d+,)*\"output_tokens\":\\d+(?:,\"[a-z_]+\":\\d+)*\\}\\}$"
+              }
+            ]
+          }
+        ]
+      },
+      "sources": {
+        "captures": [
+          {
+            "version": "0.153.4",
+            "path": "tests/fixtures/codex/cli/0.153.4/exec-json.jsonl",
+            "format": "stdout-jsonl",
+            "note": "P3.1 runs 1 (0.155.1) and 3 (0.153.4): codex exec --json --skip-git-repo-check -C <folder> -c notify=... -c hooks...; the hook-trust warning items between the events are not part of the oracle (inOrder)"
+          },
+          {
+            "version": "0.155.1",
+            "path": "tests/fixtures/codex/cli/0.155.1/exec-json.jsonl",
+            "format": "stdout-jsonl",
+            "note": "P3.1 runs 1 (0.155.1) and 3 (0.153.4): codex exec --json --skip-git-repo-check -C <folder> -c notify=... -c hooks...; the hook-trust warning items between the events are not part of the oracle (inOrder)"
+          }
+        ],
+        "citations": [
+          {
+            "path": "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "Exit 0 on success",
+            "backs": [
+              "exitCode"
+            ],
+            "exitCode": 0
+          },
+          {
+            "path": "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "JSONL on stdout: `thread.started {thread_id}`, `turn.started`, `item.started` and `item.completed` with `item:",
+            "backs": [
+              "lines"
+            ],
+            "note": "the event types; the lines themselves are held by the captures"
+          }
+        ]
+      },
+      "reliedOnBy": "a Cloud Agent's run (agent-run.ts) reads the same events through createCodexExecEventReader",
+      "fakes": [
+        "e2e-fake-codex"
+      ]
+    },
+    {
+      "id": "app-server-usage-read",
+      "versions": [
+        "0.153.4",
+        "0.155.1"
+      ],
+      "argv": [
+        "app-server"
+      ],
+      "app": {
+        "operation": "app-server",
+        "stdin": "appServerMessages"
+      },
+      "preconditions": [
+        "signed-in",
+        "stdin-pipe"
+      ],
+      "stdinLines": [
+        "{\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"codex_cli_rs\",\"title\":null,\"version\":\"{version}\"},\"capabilities\":null}}",
+        "{\"method\":\"initialized\"}",
+        "{\"id\":2,\"method\":\"account/rateLimits/read\"}"
+      ],
+      "expect": {
+        "streams": [
+          {
+            "stream": "stdout",
+            "mode": "inOrder",
+            "lines": [
+              {
+                "rpcResult": {
+                  "id": 1,
+                  "schema": "initializeResponse",
+                  "fields": {
+                    "codexHome": {
+                      "type": "string",
+                      "equalsEnv": "CODEX_HOME"
+                    },
+                    "platformFamily": {
+                      "type": "string"
+                    },
+                    "platformOs": {
+                      "type": "string"
+                    },
+                    "userAgent": {
+                      "type": "string",
+                      "regex": "^[^\\s/]+/{version}(?: .*)?$"
+                    }
+                  }
+                }
+              },
+              {
+                "rpcResult": {
+                  "id": 2,
+                  "schema": "rateLimitsReadResponse",
+                  "fields": {
+                    "rateLimits": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "sources": {
+        "captures": [],
+        "schemas": [
+          {
+            "version": "0.153.4",
+            "path": "tests/fixtures/codex/app-server/0.153.4/usage-schema.json"
+          },
+          {
+            "version": "0.155.1",
+            "path": "tests/fixtures/codex/app-server/0.155.1/usage-schema.json"
+          }
+        ],
+        "citations": [
+          {
+            "path": "tests/fixtures/codex/app-server/0.153.4/usage-schema.json",
+            "versions": [
+              "0.153.4"
+            ],
+            "quote": "Absolute path to the server's $CODEX_HOME directory.",
+            "backs": [
+              "lines"
+            ]
+          },
+          {
+            "path": "tests/fixtures/codex/app-server/0.155.1/usage-schema.json",
+            "versions": [
+              "0.155.1"
+            ],
+            "quote": "Absolute path to the server's $CODEX_HOME directory.",
+            "backs": [
+              "lines"
+            ]
+          },
+          {
+            "path": "src/main/providers/codex/app-server-client.ts",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "answer must name the realm the helper was started in",
+            "backs": [
+              "lines"
+            ]
+          },
+          {
+            "path": "src/main/providers/codex/app-server-client.ts",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "The helper names its own version first in its user agent",
+            "backs": [
+              "lines"
+            ]
+          },
+          {
+            "path": "src/main/providers/codex/app-server-client.ts",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "only its two responses by id",
+            "backs": [
+              "lines"
+            ]
+          },
+          {
+            "path": "src/main/providers/codex/app-server-client.ts",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "closes the helper's stdin (`finish`), and the caller ends the process chain.",
+            "backs": [
+              "exitCode"
+            ],
+            "exitCode": null
+          }
+        ]
+      },
+      "reliedOnBy": "the usage read (app-server-client.ts): initialize must name the realm and the proven version; the read must carry rateLimits",
+      "fakes": [
+        "wp1-fake-cli",
+        "e2e-fake-codex"
+      ]
+    },
+    {
+      "id": "debug-models-bundled",
+      "versions": [
+        "0.153.4",
+        "0.155.1"
+      ],
+      "argv": [
+        "debug",
+        "models",
+        "--bundled"
+      ],
+      "app": {
+        "operation": "models"
+      },
+      "preconditions": [
+        "empty-home"
+      ],
+      "expect": {
+        "exitCode": 0,
+        "streams": [
+          {
+            "stream": "stdout",
+            "mode": "document",
+            "lines": [
+              {
+                "json": {
+                  "models": {
+                    "type": "array",
+                    "minItems": 1,
+                    "each": {
+                      "slug": {
+                        "type": "string"
+                      },
+                      "display_name": {
+                        "type": "string"
+                      },
+                      "visibility": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "sources": {
+        "captures": [
+          {
+            "version": "0.153.4",
+            "path": "tests/fixtures/codex/cli/0.153.4/debug-models-bundled.trimmed.json",
+            "format": "json-document",
+            "note": "the catalogue bundled in the 0.153.4 binary, parsed from its bytes and trimmed (the fixture $comment); not a run"
+          }
+        ],
+        "citations": [
+          {
+            "path": "docs/wp2/evidence/codex-cli-capabilities-2026-09-27.md",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "`codex debug models` prints the catalogue as JSON (slug, display name, default and supported",
+            "backs": [
+              "lines"
+            ]
+          },
+          {
+            "path": "docs/wp2/completion-plan.md",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "run (`codex debug models --bundled` on 0.153.4 and 0.155.1: accepted, the",
+            "backs": [
+              "exitCode"
+            ],
+            "exitCode": 0,
+            "note": "the reader accepts only exit 0 (model-catalogue.ts)"
+          },
+          {
+            "path": "src/main/providers/codex/model-catalogue.ts",
+            "versions": [
+              "0.153.4",
+              "0.155.1"
+            ],
+            "quote": "if (r.exitCode !== 0) return fail('failed',",
+            "backs": [
+              "exitCode"
+            ],
+            "exitCode": 0
+          }
+        ]
+      },
+      "reliedOnBy": "parseCodexModelCatalogue (model-catalogue.ts): one JSON object with a models list",
+      "fakes": [
+        "wp1-fake-cli"
+      ]
+    }
+  ],
+  "notCovered": [
+    "Fake behaviour with no capture or citation, so no entry: the browser and device sign-in output (wp1-fake-cli login, login --device-auth and its HANG flow), the success lines of login --with-api-key and logout, the sleep helper, the analysis exec argv, the app-server modes chosen by an APP_SERVER file, the e2e session stand-in, and the guards each fake adds of its own (an ambient credential or NODE_OPTIONS: exit 9; no CODEX_HOME: exit 8; an unknown argv: exit 64; the e2e exec refusals: exit 65).",
+    "Real behaviour with a source but no fake: the read error a signed-out realm gets from app-server (-32600, app-server-client.ts), the refused-edit run (exec-edit-sandbox-refused-json.jsonl), exec resume."
+  ]
+}
