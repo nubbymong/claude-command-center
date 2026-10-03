@@ -5,10 +5,14 @@
 //
 // The rules, all checked before anything is written, renamed or deleted, and
 // failing closed (a StageRefusal; the scripts exit 2):
-//  - CCC_STAGE_ROOT names the root. It is a real folder (no link anywhere on
-//    its path), and it carries this tool's marker file: the seed makes the
-//    marker only in a folder that is absent or empty, so a folder with other
-//    content is never taken as a root.
+//  - CCC_STAGE_ROOT names the root. It is resolved to its real path first
+//    (fs.realpathSync.native of its deepest existing part: system links above
+//    it, such as macOS's /var -> /private/var, 8.3 short names, subst and
+//    mapped drives are resolved), and from then on only that real path is
+//    used. The root itself may not be a link, nor UNC or a device path, and no
+//    folder below it that the scripts use may be a link. It carries this
+//    tool's marker file: the seed makes the marker only in a folder that is
+//    absent or empty, so a folder with other content is never taken as a root.
 //  - The root is never the real home, nor a folder holding it, nor inside the
 //    real ~/.claude or ~/.codex, the app data folders under %LOCALAPPDATA% and
 //    %APPDATA% (the app's, the npm prefix, Anthropic's), the installed app's
@@ -66,16 +70,21 @@ function isLink(p) {
   return false
 }
 
-/** No link on the path from the drive root down to `p` (the parts that exist). */
-function noLinkOnPath(p, platform = process.platform) {
+/** No link at `p` or on the way down to it from `root` (`root` itself
+ *  included), for the parts that exist. Links ABOVE `root` are not looked
+ *  at: the root is already its real path (resolveStage). */
+function noLinkBelow(root, p, platform = process.platform, deps = {}) {
   const P = pathApi(platform)
-  const abs = P.resolve(p)
-  const root = P.parse(abs).root
-  let cur = root
-  for (const part of abs.slice(root.length).split(/[\\/]/).filter(Boolean)) {
+  const linked = deps.isLink || isLink
+  const exists = deps.exists || fs.existsSync
+  const rel = P.relative(P.resolve(root), P.resolve(p))
+  if (rel.startsWith('..') || P.isAbsolute(rel)) return false
+  let cur = P.resolve(root)
+  if (exists(cur) && linked(cur)) return false
+  for (const part of rel.split(/[\\/]/).filter(Boolean)) {
     cur = P.join(cur, part)
-    if (!fs.existsSync(cur)) return true
-    if (isLink(cur)) return false
+    if (!exists(cur)) return true
+    if (linked(cur)) return false
   }
   return true
 }
@@ -155,30 +164,41 @@ function resolveStage(env = process.env, platform = process.platform, deps = {})
   const raw = env.CCC_STAGE_ROOT
   if (typeof raw !== 'string' || !raw || !P.isAbsolute(raw)) refuse('CCC_STAGE_ROOT must name the staging root (an absolute path)')
   if (uncOrDevice(raw, platform)) refuse(`the staging root ${raw} is a UNC or device path: give a local folder`)
-  const ROOT = P.resolve(raw)
-  if (same(ROOT, P.parse(ROOT).root, platform)) refuse(`the staging root ${ROOT} is a drive root`)
-  if (!(deps.noLinkOnPath || noLinkOnPath)(ROOT, platform)) refuse(`the staging root ${ROOT} has a link on its path`)
-  // V-1: every check on both spellings, the given one and the real path, of
-  // the root and of each protected folder.
+  const GIVEN = P.resolve(raw)
+  const linked = deps.isLink || isLink
+  const exists = deps.exists || fs.existsSync
+  // A root that is itself a link stays refused, wherever it points.
+  if (exists(GIVEN) && linked(GIVEN)) refuse(`the staging root ${GIVEN} is a link`)
+  // From here on, only the real path of the root (links above it resolved).
   const canon = (p) => canonicalPath(p, platform, deps)
-  const REAL_ROOT = canon(ROOT)
-  if (uncOrDevice(REAL_ROOT, platform)) refuse(`the staging root ${ROOT} is on a UNC or device path (${REAL_ROOT}): give a local folder`)
-  if (same(REAL_ROOT, P.parse(REAL_ROOT).root, platform)) refuse(`the staging root ${ROOT} is a drive root (${REAL_ROOT})`)
-  const roots = [ROOT, REAL_ROOT]
+  const ROOT = canon(GIVEN)
+  if (uncOrDevice(ROOT, platform)) refuse(`the staging root ${GIVEN} is on a UNC or device path (${ROOT}): give a local folder`)
+  if (same(ROOT, P.parse(ROOT).root, platform) || same(GIVEN, P.parse(GIVEN).root, platform)) refuse(`the staging root ${GIVEN} is a drive root`)
+  // V-1: the protected folders in both spellings (as given and real); the
+  // root in its given spelling too (it only adds refusals).
+  const roots = [ROOT, GIVEN]
   const both = (list) => list.flatMap((x) => [x, canon(x)])
   const prot = protectedFolders(env, platform, deps)
-  for (const h of both(prot.homes)) for (const r of roots) if (sameOrInside(h, r, platform)) refuse(`the staging root ${ROOT} is or holds the home folder ${h}`)
-  for (const a of both(prot.appRoots)) for (const r of roots) if (sameOrInside(a, r, platform)) refuse(`the staging root ${ROOT} is or holds the app data folder ${a}`)
-  for (const w of both(prot.within)) for (const r of roots) if (sameOrInside(r, w, platform) || inside(w, r, platform)) refuse(`the staging root ${ROOT} overlaps ${w}`)
+  for (const h of both(prot.homes)) for (const r of roots) if (sameOrInside(h, r, platform)) refuse(`the staging root ${GIVEN} is or holds the home folder ${h}`)
+  for (const a of both(prot.appRoots)) for (const r of roots) if (sameOrInside(a, r, platform)) refuse(`the staging root ${GIVEN} is or holds the app data folder ${a}`)
+  for (const w of both(prot.within)) for (const r of roots) if (sameOrInside(r, w, platform) || inside(w, r, platform)) refuse(`the staging root ${GIVEN} overlaps ${w}`)
 
+  // A staging folder: given in either spelling of the root, it is mapped onto
+  // the real root (the same folder), must be strictly inside it, and no folder
+  // from the root down to it may be a link.
   const sub = (name, fallback) => {
     const v = env[name]
-    const p = v ? P.resolve(v) : fallback
     if (v && !P.isAbsolute(v)) refuse(`${name} must be an absolute path`)
     if (v && uncOrDevice(v, platform)) refuse(`${name} (${v}) is a UNC or device path`)
-    if (!inside(p, ROOT, platform)) refuse(`${name} (${p}) is not inside the staging root ${ROOT}`)
-    if (!inside(canon(p), REAL_ROOT, platform)) refuse(`${name} (${p}) is not inside the staging root ${ROOT} by its real path`)
-    if (!(deps.noLinkOnPath || noLinkOnPath)(p, platform)) refuse(`${name} (${p}) has a link on its path`)
+    let p = fallback
+    if (v) {
+      const given = P.resolve(v)
+      if (inside(given, ROOT, platform)) p = given
+      else if (inside(given, GIVEN, platform)) p = P.join(ROOT, P.relative(P.resolve(GIVEN), given))
+      else refuse(`${name} (${given}) is not inside the staging root ${ROOT}`)
+    }
+    if (!noLinkBelow(ROOT, p, platform, deps)) refuse(`${name} (${p}) has a link on its path`)
+    if (!inside(canon(p), ROOT, platform)) refuse(`${name} (${p}) is not inside the staging root ${ROOT} by its real path`)
     return p
   }
   const DATA = sub('CCC_STAGE_DATA', P.join(ROOT, 'data'))
@@ -221,12 +241,15 @@ function ensureMarker(ROOT, { create }) {
 
 /** Before the seed writes anything: each project folder it would make under
  *  DEV is either absent or one this tool made (marked). */
-function checkDevTargets(DEV) {
-  if (isLink(DEV) || !noLinkOnPath(DEV)) refuse(`the projects folder ${DEV} has a link on its path`)
+function checkDevTargets(DEV, deps = {}) {
+  const linked = deps.isLink || isLink
+  // The projects folder itself may not be a link (links above it are its
+  // real path's business, as for the root); nor may a project folder.
+  if (fs.existsSync(DEV) && linked(DEV)) refuse(`the projects folder ${DEV} is a link`)
   for (const t of DEV_TOPS) {
     const p = path.join(DEV, t)
     if (!fs.existsSync(p)) continue
-    if (isLink(p) || !fs.lstatSync(p).isDirectory() || !fs.existsSync(path.join(p, DEV_MARKER))) {
+    if (linked(p) || !fs.lstatSync(p).isDirectory() || !fs.existsSync(path.join(p, DEV_MARKER))) {
       refuse(`${p} already exists and was not made by this tool: refusing to write into it`)
     }
   }
@@ -277,8 +300,9 @@ function shootPaths(stage, env = process.env) {
     if (!v) return fallback
     if (!path.isAbsolute(v)) refuse(`${name} must be an absolute path`)
     const p = path.resolve(v)
-    if (!inside(p, stage.ROOT) || !inside(canonicalPath(p), canonicalPath(stage.ROOT))) refuse(`${name} (${p}) is not inside the staging root ${stage.ROOT}`)
-    if (!noLinkOnPath(p)) refuse(`${name} (${p}) has a link on its path`)
+    if (!inside(p, stage.ROOT)) refuse(`${name} (${p}) is not inside the staging root ${stage.ROOT}`)
+    if (!noLinkBelow(stage.ROOT, p)) refuse(`${name} (${p}) has a link on its path`)
+    if (!inside(canonicalPath(p), stage.ROOT)) refuse(`${name} (${p}) is not inside the staging root ${stage.ROOT} by its real path`)
     return p
   }
   return { OUT: pick('CCC_SHOOT_OUT', path.join(stage.ROOT, 'out')), LOG: pick('CCC_SHOOT_LOG', path.join(stage.ROOT, 'shoot.log')) }
@@ -347,6 +371,6 @@ function checkLaunchedApp(rec, deps = {}) {
 module.exports = {
   canonicalPath, shootPaths, processIdentity, isRecordedProcess, portOwnerPid, checkLaunchedApp,
   MARKER, MARKER_TEXT, DEV_MARKER, DEV_TOPS, REAL_DEV, StageRefusal,
-  inside, same, sameOrInside, isLink, noLinkOnPath, protectedFolders, registryFolders,
+  inside, same, sameOrInside, isLink, noLinkBelow, protectedFolders, registryFolders,
   resolveStage, ensureMarker, checkDevTargets, validDevEntry, removeNoFollow, launchRecordPath, readLaunchRecord,
 }

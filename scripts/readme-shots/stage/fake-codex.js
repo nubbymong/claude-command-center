@@ -18,7 +18,8 @@ const NL = '\n'
 const args = process.argv.slice(2)
 if (args.join(' ') === '--version') { process.stdout.write(`codex-cli ${VERSION}${NL}`); process.exit(0) }
 if (args.join(' ') === 'login status') { process.stderr.write(`Logged in using ChatGPT${NL}`); process.exit(0) }
-if (args[0] === 'app-server') {
+// The usage helper: one JSON reply per request line, until its input ends.
+function serveAppServer() {
   let buf = ''
   process.stdin.setEncoding('utf8')
   process.stdin.on('data', (c) => {
@@ -35,32 +36,38 @@ if (args[0] === 'app-server') {
   })
   process.stdin.on('end', () => process.exit(0))
   setInterval(() => {}, 1000)
-  return
 }
 
-const ESC = '\x1b['
-const RESET = `${ESC}0m`, DIM = `${ESC}2m`, BOLD = `${ESC}1m`
-const TEXT = `${ESC}38;2;205;214;244m`
-const CYAN = `${ESC}38;2;137;220;235m`
-const out = (s) => process.stdout.write(s)
 
-try { if (process.stdin.isTTY) process.stdin.setRawMode(true) } catch { /* not a tty */ }
-process.stdin.resume()
-process.stdin.on('data', (d) => { const s = String(d); if (s.includes('\x03') || s === 'q') process.exit(0) })
+// Anything else is a session: draw the stand-in TUI and keep a spinner going.
+function drawSession() {
+  const ESC = '\x1b['
+  const RESET = `${ESC}0m`, DIM = `${ESC}2m`, BOLD = `${ESC}1m`
+  const TEXT = `${ESC}38;2;205;214;244m`
+  const CYAN = `${ESC}38;2;137;220;235m`
+  const out = (s) => process.stdout.write(s)
 
-out(`${ESC}2J${ESC}H`)
-out(`${DIM}╭──────────────────────────────────────────────────────╮${RESET}\n`)
-out(`${DIM}│${RESET} ${BOLD}OpenAI Codex${RESET} ${DIM}(v${VERSION})${RESET}                                ${DIM}│${RESET}\n`)
-out(`${DIM}│${RESET}                                                      ${DIM}│${RESET}\n`)
-out(`${DIM}│${RESET} ${DIM}model:${RESET}     ${TEXT}${C.CODEX.model}${RESET}                                  ${DIM}│${RESET}\n`)
-out(`${DIM}│${RESET} ${DIM}directory:${RESET} ${TEXT}${C.CODEX.cwd}${RESET}                     ${DIM}│${RESET}\n`)
-out(`${DIM}╰──────────────────────────────────────────────────────╯${RESET}\n\n`)
-out(`${CYAN}›${RESET} ${TEXT}${C.CODEX.lines[0]}${RESET}\n\n`)
-for (const l of C.CODEX.lines.slice(1)) out(`${DIM}${l}${RESET}\n`)
-out('\n')
-const GLYPHS = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-let tick = 0
-setInterval(() => {
-  tick++
-  out(`\r${CYAN}${GLYPHS[tick % GLYPHS.length]}${RESET} ${DIM}Working (${Math.floor(tick / 8) + 12}s · esc to interrupt)${RESET}   `)
-}, 125)
+  try { if (process.stdin.isTTY) process.stdin.setRawMode(true) } catch { /* not a tty */ }
+  process.stdin.resume()
+  process.stdin.on('data', (d) => { const s = String(d); if (s.includes('\x03') || s === 'q') process.exit(0) })
+
+  out(`${ESC}2J${ESC}H`)
+  out(`${DIM}╭──────────────────────────────────────────────────────╮${RESET}\n`)
+  out(`${DIM}│${RESET} ${BOLD}OpenAI Codex${RESET} ${DIM}(v${VERSION})${RESET}                                ${DIM}│${RESET}\n`)
+  out(`${DIM}│${RESET}                                                      ${DIM}│${RESET}\n`)
+  out(`${DIM}│${RESET} ${DIM}model:${RESET}     ${TEXT}${C.CODEX.model}${RESET}                                  ${DIM}│${RESET}\n`)
+  out(`${DIM}│${RESET} ${DIM}directory:${RESET} ${TEXT}${C.CODEX.cwd}${RESET}                     ${DIM}│${RESET}\n`)
+  out(`${DIM}╰──────────────────────────────────────────────────────╯${RESET}\n\n`)
+  out(`${CYAN}›${RESET} ${TEXT}${C.CODEX.lines[0]}${RESET}\n\n`)
+  for (const l of C.CODEX.lines.slice(1)) out(`${DIM}${l}${RESET}\n`)
+  out('\n')
+  const GLYPHS = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+  let tick = 0
+  setInterval(() => {
+    tick++
+    out(`\r${CYAN}${GLYPHS[tick % GLYPHS.length]}${RESET} ${DIM}Working (${Math.floor(tick / 8) + 12}s · esc to interrupt)${RESET}   `)
+  }, 125)
+}
+
+if (args[0] === 'app-server') serveAppServer()
+else drawSession()

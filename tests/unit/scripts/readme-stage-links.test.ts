@@ -7,7 +7,7 @@
  * prefix and parent alone; a link is removed as a link before the tree.
  */
 import { describe, it, expect, afterEach } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync, existsSync, readdirSync, unlinkSync, rmdirSync, lstatSync } from 'fs'
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync, existsSync, readdirSync, unlinkSync, rmdirSync, lstatSync, realpathSync } from 'fs'
 import { basename, dirname, join, resolve } from 'path'
 import { tmpdir } from 'os'
 import { createRequire } from 'module'
@@ -27,16 +27,17 @@ afterEach(() => {
   for (const l of links.splice(0)) { try { lstatSync(l); try { unlinkSync(l) } catch { rmdirSync(l) } } catch { /* gone */ } }
   for (const d of made.splice(0)) if (dirname(d) === tmpdir() && basename(d).startsWith(PREFIX)) rmSync(d, { recursive: true, force: true })
 })
-const base = (): string => { const d = mkdtempSync(join(tmpdir(), PREFIX)); made.push(d); return d }
+// The temp folder's real path: the guard works on real paths (macOS /var -> /private/var).
+const base = (): string => { const d = mkdtempSync(join(tmpdir(), PREFIX)); made.push(d); return realpathSync.native(d) }
 const link = (target: string, at: string) => { mkdirSync(dirname(at), { recursive: true }); symlinkSync(target, at, 'junction'); links.push(at) }
 const noReg = { registryFolders: () => [] as string[] }
 
 describe('the README staging guard and links', () => {
-  it('[CI] [VM] refuses a staging root reached through a link', () => {
+  it('[CI] [VM] refuses a staging root that is itself a link', () => {
     const b = base()
     const decoyHome = join(b, 'decoy-home'); mkdirSync(join(decoyHome, '.claude'), { recursive: true })
     link(decoyHome, join(b, 'root-link'))
-    expect(() => S.resolveStage({ CCC_STAGE_ROOT: join(b, 'root-link'), CCC_STAGE_DEV: join(b, 'root-link', 'dev') }, process.platform, noReg)).toThrow(/link on its path/)
+    expect(() => S.resolveStage({ CCC_STAGE_ROOT: join(b, 'root-link'), CCC_STAGE_DEV: join(b, 'root-link', 'dev') }, process.platform, noReg)).toThrow(/the staging root .*root-link is a link/)
   })
 
   it('[CI] [VM] refuses a staging folder that is a link out of the root', () => {
