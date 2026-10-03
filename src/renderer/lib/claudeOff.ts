@@ -5,8 +5,9 @@ import { providerOffMessage } from '../../shared/providers'
 /**
  * Claude Code switched off in Settings, Accounts: the one place the renderer
  * decides it, and the one place it says so. Everything that would start
- * Claude asks this: a config launch (isConfigLaunchBlocked), Ask Conductor,
- * the SSH flow's "Launch Claude", a cloud agent, an insights run.
+ * Claude asks this: a config launch (isConfigLaunchBlocked), the SSH flow's
+ * "Launch Claude", a cloud agent, an insights run. (Ask Conductor runs on
+ * whichever assistant is on, so it asks askConductorGate instead.)
  *
  * The on/off itself has one definition (usesClaude: absent means on). This
  * module imports no launch hooks or stores beyond the settings, so any
@@ -24,9 +25,6 @@ export const CLAUDE_OFF_LAUNCH_REASON = providerOffMessage('Claude Code', 'to la
  *  Code accounts section would be while it is switched off (the Account
  *  usage page, the AI usage popover, the onboarding recap's Account row). */
 export const CLAUDE_OFF_ACCOUNTS_LINE = 'Claude Code is off. Turn it on in Settings, Accounts to see its accounts.'
-
-/** The reason Ask Conductor cannot open: it is a Claude session. */
-export const ASK_CLAUDE_OFF = 'Ask Conductor runs on Claude Code, which is off. Turn it on in Settings, Accounts.'
 
 /** The reason the session dialog's SSH Persistent card is off for a
  *  terminal-only config while Claude Code is off: what persists is the remote

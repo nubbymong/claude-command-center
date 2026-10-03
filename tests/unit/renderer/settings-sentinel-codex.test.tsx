@@ -129,4 +129,55 @@ describe('Settings, Sentinel for Codex (P3.9)', () => {
     expect(container.textContent).toContain('its analysis spends Codex usage on an update.')
     expect(options(analysisSelect())[0]).toBe('=Codex review account (default)')
   })
+
+  // [host] WP2 PR 4, P4.3 (OD27 M4, option B): the Settings, General row
+  // "Ask Conductor runs on", beside Show Ask Conductor.
+  const runsOnRow = () => container.querySelector('[data-ux-id="settings-ask-conductor-runs-on"]')
+  const runsOnSelect = () => container.querySelector('[data-ux-id="settings-ask-conductor-runs-on-select"]') as HTMLSelectElement | null
+
+  it('P4.3: "Ask Conductor runs on" shows only while both assistants are on', () => {
+    for (const s of [{}, { claudeEnabled: true, codexEnabled: false, codexAnswered: true }, { claudeEnabled: false, codexEnabled: true, codexAnswered: true }]) {
+      store.settings = { ...s }
+      render()
+      expect(runsOnRow(), JSON.stringify(s)).toBeNull()
+    }
+    store.settings = { claudeEnabled: true, codexEnabled: true, codexAnswered: true }
+    render()
+    expect(runsOnRow()).not.toBeNull()
+    expect(runsOnRow()!.textContent).toContain('Ask Conductor runs on')
+    expect(runsOnRow()!.textContent).toContain('Which assistant answers your Ask Conductor questions, and so whose allowance they use. Applies the next time Ask Conductor starts.')
+    expect(options(runsOnSelect()!)).toEqual(['claude=Claude Code (default)', 'codex=Codex'])
+  })
+
+  it('P4.3: Claude Code by default; choosing Codex saves exactly that, and Sentinel follows the row', () => {
+    store.settings = { sentinelEnabled: true, claudeEnabled: true, codexEnabled: true, codexAnswered: true }
+    render()
+    expect(runsOnSelect()!.value).toBe('claude')
+    act(() => {
+      runsOnSelect()!.value = 'codex'
+      runsOnSelect()!.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    expect(saved).toEqual([{ askConductorProvider: 'codex' }])
+    // What the row wrote is what Sentinel's analysis reads (the same key, the same reading).
+    store.settings = { ...store.settings, ...saved[0] }
+    render()
+    expect(runsOnSelect()!.value).toBe('codex')
+    expect(container.textContent).toContain('its analysis spends Codex usage on an update.')
+    act(() => {
+      runsOnSelect()!.value = 'claude'
+      runsOnSelect()!.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    expect(saved[1]).toEqual({ askConductorProvider: 'claude' })
+  })
+
+  it('P4.3: never rewritten when an assistant is switched off; the saved choice shows again when both are on', () => {
+    store.settings = { claudeEnabled: true, codexEnabled: false, codexAnswered: true, askConductorProvider: 'codex' }
+    render()
+    expect(runsOnRow()).toBeNull()
+    expect(saved).toEqual([])
+    store.settings = { ...store.settings, codexEnabled: true }
+    render()
+    expect(runsOnSelect()!.value).toBe('codex')
+    expect(saved).toEqual([])
+  })
 })
