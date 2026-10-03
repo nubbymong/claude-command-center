@@ -62,6 +62,7 @@ async function confirmRetrySignIn(agent: CloudAgent, provider: ProviderId): Prom
     ...(step.question.email ? { email: step.question.email } : {}),
     external: step.question.external,
     unknown: step.question.unknown,
+    retryAgent: true,
   })
   return yes ? 'ack' : 'cancel'
 }
