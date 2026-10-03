@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { getPricingWithSource, getPricing, registryFallbackPricing } from '../../src/main/tokenomics/tk-pricing'
+import { getPricingWithSource, getPricing, registryFallbackPricing, prefixPricingKey } from '../../src/main/tokenomics/tk-pricing'
 
 // livePricing is null in unit tests (no fetch), so resolution exercises the
 // registry-fallback chain. The registry service self-initializes on import
@@ -54,6 +54,9 @@ describe('getPricingWithSource', () => {
   //
   // Therefore old and new produce identical numbers for the three NON-FAST cases.
   // The -fast date-suffixed case is intentionally DIFFERENT — see pinned test below.
+  // P4.11: a dated id now takes its OWN key first (prefixPricingKey step 1), so
+  // these three read 5/25 from claude-opus-4-8, 4-7 and 4-6 themselves; the
+  // numbers are the ones pinned above.
   it('claude-opus-4-8-20260601 -> prefix hit on opus-4-8 key -> 5/25 (old & new identical)', () => {
     const r = getPricingWithSource('claude-opus-4-8-20260601')
     expect(r.source).toBe('prefix')
@@ -92,29 +95,35 @@ describe('getPricingWithSource', () => {
   // UNCONDITIONAL since #411: the one documented exception (opus-4-6 at the
   // wrong 15/75) was corrected to the published rate, so nothing may hide
   // behind an exception list any more.
-  it('every base-length tie is price-identical, so registry order cannot move a price', () => {
+  // [host] P4.11: Opus 5.5 and Sonnet 5.5 cost less than the versions before
+  // them, so a family's members no longer share one price, and pricing a dated
+  // id by its collapsed family base would move it with registry order (#385
+  // Q7). A dated or variant id of every registry model is priced by its OWN
+  // key, whatever the order of the keys.
+  it('a dated id of every registry model takes its own price, in any key order', () => {
     const fallback = registryFallbackPricing()
-    const byBase = new Map<string, string[]>()
-    for (const key of Object.keys(fallback)) {
-      const base = key.replace(/-\d+[-\d]*$/, '')
-      byBase.set(base, [...(byBase.get(base) ?? []), key])
+    const keys = Object.keys(fallback)
+    const reversed = [...keys].reverse()
+    for (const key of keys) {
+      const dated = `${key}-20991231`
+      expect(prefixPricingKey(keys, dated), dated).toBe(key)
+      expect(prefixPricingKey(reversed, dated), dated).toBe(key)
+      expect(getPricingWithSource(dated).pricing, dated).toEqual(fallback[key])
     }
-    const offenders: string[] = []
-    for (const [base, keys] of byBase) {
-      if (keys.length < 2) continue
-      const reference = keys[0]
-      for (const k of keys) {
-        if (k === reference) continue
-        if (JSON.stringify(fallback[k]) !== JSON.stringify(fallback[reference])) {
-          offenders.push(`${reference} vs ${k} (base "${base}")`)
-        }
-      }
-    }
-    expect(
-      offenders,
-      'these keys collapse to the same base but price differently, so the prefix match would depend on ' +
-      'registry order. Give one a more specific key or align the prices.',
-    ).toEqual([])
+    // A key never prices a longer version number as its own: 4-8 is not 4-80.
+    expect(prefixPricingKey(['claude-opus-4-8', 'claude-opus-4'], 'claude-opus-4-80')).toBe('claude-opus-4')
+    expect(prefixPricingKey(['claude-opus-4-8', 'claude-opus-4'], 'claude-opus-4-8-20991231')).toBe('claude-opus-4-8')
+    // The real dated ids Claude Code reports.
+    expect(getPricingWithSource('claude-opus-4-5-20251101').pricing).toEqual(fallback['claude-opus-4-5'])
+    expect(getPricingWithSource('claude-sonnet-4-5-20250929').pricing).toEqual(fallback['claude-sonnet-4-5'])
+    expect(getPricingWithSource('claude-haiku-4-5-20251001').pricing).toEqual(fallback['claude-haiku-4-5'])
+  })
+
+  it('[host] P4.11: Opus 5.5 and Sonnet 5.5 carry their published rates, exact and dated', () => {
+    expect(getPricingWithSource('claude-opus-5-5')).toEqual({ pricing: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 }, source: 'fallback' })
+    expect(getPricingWithSource('claude-sonnet-5-5')).toEqual({ pricing: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 }, source: 'fallback' })
+    expect(getPricingWithSource('claude-opus-5-5-20261001').pricing.input).toBe(4)
+    expect(getPricingWithSource('claude-opus-5-20260601').pricing.input).toBe(5)
   })
 
   it('the #411 corrections hold: opus-4-6 and haiku-4-5 carry the published rates', () => {
