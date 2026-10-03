@@ -1044,7 +1044,7 @@ export async function startMcpServer(
     // only (it is neither a vision nor a canvas sub-tool); WP2 PR 4, P4.2 (row
     // 52): offered to a Codex session too. Binds to the transport's
     // authenticated session (a Codex session's own, on its /mcp connection) and
-    // refuses a mismatched model-supplied id — see decideAgentBrowserPush.
+    // refuses a mismatched model-supplied id -- see decideAgentBrowserPush.
     if (toolsMaster) server.tool(
       'open_in_app_browser',
       'Show the USER a web page in their in-app browser pane for this session (http/https only). Use it when you have a URL worth the user seeing — a preview, a PR, docs, a built site — the same as pasting the link in chat. A notification pill appears on their Browser tool; the page loads when they open the pane or click the pill, and it never interrupts a page they are already viewing. This is the user\'s VISIBLE browser, NOT the vision_* automation browser (which only you see).',
@@ -1364,14 +1364,26 @@ export async function startMcpServer(
       // SSEServerTransport which is the only route their MCP client supports.
       if (req.url?.startsWith('/mcp') && (req.method === 'POST' || req.method === 'GET' || req.method === 'DELETE')) {
         try {
-          // The /mcp (Streamable HTTP) route is Codex-only — Claude clients use
-          // /sse. Force source='codex' here rather than reading ?source= so the
+          // The /mcp (Streamable HTTP) route is Codex-only -- Claude clients use
+          // /sse. The source is never read from the request (?source=), so the
           // Codex URL can carry cccSessionId as its ONLY query param (no `&` to
-          // trip the win32 cmd.exe spawn), and so the Codex tool set cannot be
-          // widened by spoofing ?source=claude (GHSA-q83v-phcc-hgv4).
-          const source = 'codex' as const
+          // trip the win32 cmd.exe spawn) and a request cannot choose its tool
+          // set (GHSA-q83v-phcc-hgv4).
           // Authenticated session, not a query re-parse (GHSA-q83v-phcc-hgv4).
           const boundSessionId = authedSession
+          // WP2 PR 4, P4.2 review (A42-1): served only to a session whose
+          // credential this run issued to Codex, as /sse refuses a session with
+          // none. The HMAC key outlives a run, so a credential from an earlier
+          // one still verifies, and since P4.2 this route also carries the
+          // vision and in-app browser tools. A Claude session's credential gets
+          // nothing here either: its tool set is the SSE route's.
+          if (mcpSessionProvider(boundSessionId) !== 'codex') {
+            logWarn(`[vision-mcp] Refused /mcp request (sid=${boundSessionId}): no Codex credential was issued to this session in this run`)
+            res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' })
+            res.end('Forbidden')
+            return
+          }
+          const source = 'codex' as const
           const server = createServer(source, boundSessionId, 'http')
           // Stateless: a request's cancel arrives on a POST of its own, to a
           // fresh server that never saw the request. Route it to the review

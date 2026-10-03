@@ -87,19 +87,26 @@ function realmChecked(home: string, skillsDir: string | null): { skillsDir: stri
 
 /**
  * Stage the skills into a managed realm before a launch, while the built-in
- * tools are on. Every skill folder ends up the app's and exactly its bytes,
- * or is left alone and reported: `staged` only when all of them are.
+ * tools are on. Every skill folder `wanted` names ends up the app's and
+ * exactly its bytes, or is left alone and reported: `staged` only when all
+ * of them are. One it does not name (its tools are not offered to this
+ * session: review A-6) is removed when it is the app's, as on removal.
  */
-export function stageCodexRealmSkills(home: string, managedSkillsDir: string | null): RealmSkillsOutcome {
+export function stageCodexRealmSkills(home: string, managedSkillsDir: string | null, wanted: (skill: string) => boolean = () => true): RealmSkillsOutcome {
   const checked = realmChecked(home, managedSkillsDir)
   if (!('skillsDir' in checked)) return checked
   const { skillsDir } = checked
   let outcome: RealmSkillsOutcome = { staged: true }
   const worse = (o: RealmSkillsOutcome): void => { if (outcome.staged) outcome = o }
   try {
-    if (!lstatOrNull(skillsDir)) fs.mkdirSync(skillsDir)
-    for (const skill of canvasSkillFiles()) {
+    const skills = canvasSkillFiles()
+    if (!lstatOrNull(skillsDir) && skills.some((skill) => wanted(skill.name))) fs.mkdirSync(skillsDir)
+    for (const skill of skills) {
       const dir = path.join(skillsDir, skill.name)
+      if (!wanted(skill.name)) {
+        if (isOurs(dir)) fs.rmSync(dir, { recursive: true, force: true })
+        continue
+      }
       const st = lstatOrNull(dir)
       if (st && st.isSymbolicLink()) {
         logWarn(`[codex-skills] a link stands at the ${skill.name} skill folder of a managed Codex account; left alone, the skill not staged`)

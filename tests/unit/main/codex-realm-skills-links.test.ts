@@ -21,6 +21,7 @@ const { codexManagedRealmSkillsDir } = await import('../../../src/main/providers
 const stage = (h: string, r: string) => stageCodexRealmSkills(h, codexManagedRealmSkillsDir(h, r))
 const remove = (h: string, r: string) => removeCodexRealmSkills(h, codexManagedRealmSkillsDir(h, r))
 const { canvasSkillFiles } = await import('../../../src/main/canvas/canvas-plugin')
+const { codexManagedSkillsFolder } = await import('../../../src/main/canvas/codex-canvas-launch')
 
 const REALM = 'realm-fedcba9876543210fedc'
 const LINK_KIND = process.platform === 'win32' ? 'junction' : 'dir'
@@ -36,7 +37,7 @@ beforeEach(() => {
   fs.writeFileSync(path.join(outside, 'precious.txt'), 'keep me')
 })
 afterEach(() => {
-  for (const dir of [path.join(home, 'skills'), path.join(home, 'skills', 'agent-canvas')]) {
+  for (const dir of [home, path.join(res, 'res-link'), path.join(home, 'skills'), path.join(home, 'skills', 'agent-canvas')]) {
     try { if (fs.lstatSync(dir).isSymbolicLink()) fs.unlinkSync(dir) } catch { /* not a link */ }
   }
   fs.rmSync(res, { recursive: true, force: true })
@@ -67,6 +68,21 @@ describe('links in a managed realm', () => {
     expect(fs.lstatSync(path.join(home, 'skills', 'agent-canvas')).isSymbolicLink()).toBe(true)
     remove(home, res)
     expect(fs.readFileSync(path.join(outside, 'precious.txt'), 'utf8')).toBe('keep me')
+  })
+
+  it('[CI] [VM] a link at the realm home itself: nothing staged, nothing written through it (P4.1 review A-8)', () => {
+    fs.rmSync(home, { recursive: true, force: true })
+    fs.symlinkSync(outside, home, LINK_KIND)
+    expect(stageCodexRealmSkills(home, path.join(home, 'skills'))).toEqual({ staged: false, reason: 'link' })
+    expect(fs.readdirSync(outside)).toEqual(['precious.txt'])
+  })
+
+  it('[CI] [VM] the resources folder reached through a junction: a managed realm\'s skills folder is still found (P4.1 review A-2)', () => {
+    const link = path.join(res, 'res-link')
+    fs.symlinkSync(res, link, LINK_KIND)
+    const found = codexManagedSkillsFolder({ ownership: 'conductor-managed', home, resourcesDir: link, managedSkillsDirFor: codexManagedRealmSkillsDir })
+    expect(found).toEqual({ managed: true, skillsDir: path.join(home, 'skills') })
+    expect(stageCodexRealmSkills(home, found.skillsDir)).toEqual({ staged: true })
   })
 
   it('a link planted INSIDE the app\'s own folder: the rebuild removes the link, never its target', () => {

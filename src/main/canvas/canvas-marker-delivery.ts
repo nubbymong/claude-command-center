@@ -91,7 +91,7 @@ function writeThrough(wiring: CanvasMarkerWiring, sessionId: string, line: strin
       const canvasId = takeCanvasOfLine(sessionId, line)
       if (!result || result.delivered !== false) return
       if (!canvasId) {
-        logWarn(`[canvas-marker] a marker for ${sessionId} was not delivered (${result.reason}); its canvas is not known, so the canvas is not told`)
+        logWarn(`[canvas-marker] a marker for ${sessionId} was not delivered (${result.reason}); no canvas is recorded for it any more (the session ended or its markers were cleared), so no canvas is told`)
         return
       }
       logInfo(`[canvas-marker] a marker for ${sessionId} was not delivered (${result.reason})`)

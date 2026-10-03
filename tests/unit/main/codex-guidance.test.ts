@@ -8,20 +8,67 @@
 //    (one case per layer), failing toward passing nothing; inline on Windows
 //    (at most 6,000 characters), a pointer to the plugin's skills elsewhere;
 //  - otherwise the tools alone, and why, for the canvas page's line.
-// Temporary folders stand in for the account's Codex folder and the project;
-// nothing reads a real ~/.codex.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+// Temporary folders stand in for the account's Codex folder and the project,
+// and the scan is handed a reader held to that temporary tree: the walk still
+// names every folder above it and the system layer, but anything outside the
+// tree is answered as absent without a read. The fs module is watched too:
+// while a test body runs, any read outside the tree is refused before it
+// reaches the disk and recorded, and every test fails if one was asked for.
+// So nothing here reads this user's own ~/.codex or ProgramData (review A-4).
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 
+const watch = vi.hoisted(() => ({ root: '', armed: false, outside: [] as string[] }))
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>()
+  const nodePath = await import('path')
+  const inside = (p: unknown): boolean => {
+    if (!watch.armed) return true
+    const rel = nodePath.relative(watch.root, nodePath.resolve(String(p)))
+    return rel === '' || (!rel.startsWith('..') && !nodePath.isAbsolute(rel))
+  }
+  const refuse = (p: unknown): never => {
+    watch.outside.push(String(p))
+    throw Object.assign(new Error(`refused: outside the test tree: ${String(p)}`), { code: 'ENOENT' })
+  }
+  const guard = <F extends (...a: any[]) => any>(fn: F): F => ((p: unknown, ...rest: unknown[]) => (inside(p) ? fn(p, ...rest) : refuse(p))) as F
+  const watched = {
+    ...actual,
+    statSync: guard(actual.statSync), lstatSync: guard(actual.lstatSync), readFileSync: guard(actual.readFileSync),
+    readdirSync: guard(actual.readdirSync), openSync: guard(actual.openSync),
+    existsSync: (p: Parameters<typeof actual.existsSync>[0]) => (inside(p) ? actual.existsSync(p) : (watch.outside.push(String(p)), false)),
+  }
+  return { ...watched, default: watched }
+})
+
 const g = await import('../../../src/main/canvas/codex-guidance')
+type LayerFs = NonNullable<Parameters<typeof g.decideCodexGuidance>[0]['layerFs']>
 const { canvasSkillFiles } = await import('../../../src/main/canvas/canvas-plugin')
 
 let root: string
 let home: string
 let project: string
 let programData: string
+
+/** A reader held to the temporary tree: what lies outside it is answered as
+ *  absent, never read, and the path is noted (the walk still asks for it). */
+function jailedReader(): LayerFs & { asked: string[] } {
+  const asked: string[] = []
+  const inRoot = (p: string): boolean => {
+    const rel = path.relative(root, path.resolve(p))
+    return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))
+  }
+  const absent = (p: string): never => { asked.push(p); throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' }) }
+  return {
+    asked,
+    stat: (file) => (inRoot(file) ? fs.statSync(file) : absent(file)),
+    readText: (file) => (inRoot(file) ? fs.readFileSync(file, 'utf8') : absent(file)),
+    list: (dir) => (inRoot(dir) ? fs.readdirSync(dir) : absent(dir)),
+  }
+}
+let reader: ReturnType<typeof jailedReader>
 
 beforeEach(() => {
   root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-guidance-')))
@@ -31,9 +78,16 @@ beforeEach(() => {
   for (const d of [home, path.join(home, 'sessions'), project, programData]) fs.mkdirSync(d, { recursive: true })
   fs.writeFileSync(path.join(home, 'config.toml'), 'model = "gpt-5.5"\n[projects."C:\\\\repo"]\ntrust_level = "trusted"\n')
   g._resetCodexGuidanceForTest()
+  reader = jailedReader()
+  watch.root = root
+  watch.outside = []
+  watch.armed = true
 })
 afterEach(() => {
+  watch.armed = false
   fs.rmSync(root, { recursive: true, force: true })
+  // No test read anything outside its temporary tree.
+  expect(watch.outside).toEqual([])
 })
 
 const input = (over: Partial<Parameters<typeof g.decideCodexGuidance>[0]> = {}): Parameters<typeof g.decideCodexGuidance>[0] => ({
@@ -45,6 +99,7 @@ const input = (over: Partial<Parameters<typeof g.decideCodexGuidance>[0]> = {}):
   cwds: [project],
   pluginSkillsDir: path.join(root, 'res', 'canvas-plugin', 'skills'),
   env: { ProgramData: programData },
+  layerFs: reader,
   ...over,
 })
 const write = (file: string, text: string): void => {
@@ -144,15 +199,43 @@ describe('a settings layer that names developer_instructions: nothing passed (on
   })
 
   it('the walk covers every ancestor of the working folder, the account folder and the system layer', () => {
-    const files = g.codexSettingsLayerFiles({ platform: 'win32', home, cwds: [project], env: { ProgramData: programData } })
+    const files = g.codexSettingsLayerFiles({ platform: 'win32', home, cwds: [project], env: { ProgramData: programData }, fs: reader })
     expect(files).toContain(path.join(home, 'config.toml'))
     expect(files).toContain(path.join(project, '.codex', 'config.toml'))
     expect(files).toContain(path.join(root, '.codex', 'config.toml'))
     expect(files).toContain(path.join(programData, 'OpenAI', 'Codex', 'requirements.toml'))
     expect(files).toContain('C:\\ProgramData\\OpenAI\\Codex\\config.toml')
-    const posix = g.codexSettingsLayerFiles({ platform: 'linux', home, cwds: [project], env: {} })
+    const posix = g.codexSettingsLayerFiles({ platform: 'linux', home, cwds: [project], env: {}, fs: reader })
     expect(posix).toEqual(expect.arrayContaining(['/etc/codex/config.toml', '/etc/codex/requirements.toml', '/etc/codex/managed_config.toml', path.join(project, '.codex', 'config.toml')]))
     expect(posix.some((f) => f.includes('ProgramData'))).toBe(false)
+  })
+})
+
+describe('the scan reads only through the reader it is handed (review A-4)', () => {
+  it('[host] the watch reaches the fs the module itself imports: a read outside the tree is refused before the disk', () => {
+    const nowhere = path.join(path.dirname(root), 'ccc-guidance-no-such-file')
+    expect(() => g.NODE_LAYER_FS.stat(nowhere)).toThrow(/refused: outside the test tree/)
+    expect(watch.outside).toEqual([nowhere])
+    watch.outside = []
+  })
+
+  it('[host] the walk still asks for the folders above the tree and the system layer, answered as absent, and nothing outside the tree is read', () => {
+    expect(g.decideCodexGuidance(input()).guidance).toEqual({ guidance: 'full' })
+    expect(reader.asked).toContain(path.join(path.dirname(root), '.codex', 'config.toml'))
+    expect(reader.asked).toContain('C:\\ProgramData\\OpenAI\\Codex\\config.toml')
+    expect(watch.outside).toEqual([])
+  })
+
+  it('[host] a layer outside the tree is read through that reader, not the disk', () => {
+    const sample = path.join(home, 'config.toml')
+    const systemRequirements = 'C:\\ProgramData\\OpenAI\\Codex\\requirements.toml'
+    const base = jailedReader()
+    const withSystemLayer: LayerFs = {
+      list: base.list,
+      stat: (file) => (file === systemRequirements ? fs.statSync(sample) : base.stat(file)),
+      readText: (file) => (file === systemRequirements ? 'developer_instructions = "x"\n' : base.readText(file)),
+    }
+    expect(g.decideCodexGuidance(input({ layerFs: withSystemLayer }))).toEqual({ guidance: { guidance: 'tools-only', reason: 'user-instructions' } })
   })
 })
 
