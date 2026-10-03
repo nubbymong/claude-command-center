@@ -729,12 +729,15 @@ export interface ElectronAPI {
     onInstallProgress: (cb: (data: { version: string; message: string }) => void) => () => void
   }
   cloudAgent: {
-    /** `provider` (WP2 PR 4, P4.5): the assistant the agent runs on; absent means Claude Code. */
-    dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string }; provider?: ProviderId }) => Promise<CloudAgent | import('../../shared/providers').ProviderLaunchRefused>
+    /** `provider` (WP2 PR 4, P4.5): the assistant the agent runs on; absent
+     *  means Claude Code. Main holds the request to a strict schema: only that
+     *  provider's own fields. */
+    dispatch: (agent: import('../../shared/types').CloudAgentDispatchParams) => Promise<CloudAgent | import('../../shared/providers').ProviderLaunchRefused | import('../../shared/types').CloudAgentRequestRejected>
     cancel: (id: string) => Promise<boolean>
     /** #371: `ok:false` means the agent is STILL on disk — do not drop the row. */
     remove: (id: string) => Promise<{ ok: true; removed: boolean } | { ok: false; error: string }>
-    retry: (id: string) => Promise<CloudAgent | null | import('../../shared/providers').ProviderLaunchRefused>
+    /** `opts` (P4.5): this one retry may use the agent's unverified sign-in. */
+    retry: (id: string, opts?: import('../../shared/types').CloudAgentRetryOptions) => Promise<CloudAgent | null | import('../../shared/providers').ProviderLaunchRefused | import('../../shared/types').CloudAgentRequestRejected>
     list: () => Promise<CloudAgent[]>
     getOutput: (id: string) => Promise<string>
     /** #371: `ok:false` means nothing was cleared — do not filter the list. */

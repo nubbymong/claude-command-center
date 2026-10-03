@@ -473,11 +473,60 @@ export interface CloudAgent {
    *  is optional rather than defaulted and readers MUST treat undefined as
    *  'claude'. */
   provider?: ProviderId
+  /** A Codex agent's account (P4.5): the opaque registry id (`acct-`) of the
+   *  account its launch was prepared on, never a path or a credential. A
+   *  Claude Code agent names its account by `profileId`. A launch
+   *  acknowledgement is never stored. */
+  providerAccountId?: string
+  /** A Codex agent's model and effort, from the config it was started from,
+   *  kept so a Retry runs as the first run did. */
+  codexOptions?: CloudAgentCodexOptions
   output: string
   cost?: number
   duration?: number
   tokenUsage?: { inputTokens: number; outputTokens: number }
   error?: string
+}
+
+/** A Codex agent's model and reasoning effort (P4.5): its config's, as an
+ *  interactive launch of that config passes them. */
+export type CloudAgentCodexOptions = Pick<CodexOptions, 'model' | 'reasoningEffort'>
+
+/** What the New agent dialog sends (`cloudAgent:dispatch`, P4.5), held in
+ *  main to a strict schema (ipc/cloud-agent-handlers.ts): the provider, and
+ *  only that provider's own fields. */
+export interface CloudAgentDispatchParams {
+  name: string
+  description: string
+  projectPath: string
+  configId?: string
+  /** Absent means Claude Code. */
+  provider?: ProviderId
+  /** Claude Code: the account profile. */
+  profileId?: string
+  /** Claude Code: a pinned CLI version. */
+  legacyVersion?: { enabled: boolean; version: string }
+  /** Per run, never kept: Claude Code skips its permission prompts; a Codex
+   *  agent runs as Codex's Auto preset (section 10, question 7, default A). */
+  skipPermissions?: boolean
+  /** Codex: the account (an `acct-` id); absent, the provider default. */
+  providerAccountId?: string
+  /** Codex: this one launch may use the named account's unverified sign-in. */
+  acknowledgeRealmOnly?: true
+  /** Codex: the config's model and effort. */
+  codexOptions?: CloudAgentCodexOptions
+}
+
+/** A Retry's options (P4.5): this one retry may use the agent's unverified
+ *  sign-in, confirmed just before it. Never stored. */
+export interface CloudAgentRetryOptions {
+  acknowledgeRealmOnly?: true
+}
+
+/** A dispatch or retry main did not take (P4.5): not from the app's window,
+ *  or not a request it reads. Answered, never thrown; the page shows it. */
+export interface CloudAgentRequestRejected {
+  rejected: string
 }
 
 // ── Insights ──

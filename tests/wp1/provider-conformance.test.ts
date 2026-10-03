@@ -191,7 +191,9 @@ describe('Codex declares what it implements (WP1.17, WP1.18)', () => {
     }
     expect(bare.realmFolders).toBeUndefined()
     expect(wired.realmFolders).toBeDefined()
-    expect(wired.launch?.kinds).toEqual(['session', 'review'])
+    // WP2 PR 4, P4.5 (row 57): a Cloud Agent's run is a launch of its own kind.
+    expect(wired.launch?.kinds).toEqual(['session', 'review', 'background'])
+    expect(typeof wired.background?.run).toBe('function')
   })
 
   it('account usage is supported exactly when the usage port exists (usage track MP3); Claude keeps its own and declares unknown', () => {

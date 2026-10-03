@@ -773,12 +773,15 @@ export interface ElectronAPI {
     onInstallProgress: (cb: (data: { version: string; message: string }) => void) => () => void
   }
   cloudAgent: {
-    /** `provider` (WP2 PR 4, P4.5): the assistant the agent runs on; absent means Claude Code. */
-    dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string }; skipPermissions?: boolean; provider?: ProviderId }) => Promise<import('../shared/types').CloudAgent | import('../shared/providers').ProviderLaunchRefused>
+    /** `provider` (WP2 PR 4, P4.5): the assistant the agent runs on; absent
+     *  means Claude Code. Main holds the request to a strict schema: only that
+     *  provider's own fields (CloudAgentDispatchParams). */
+    dispatch: (agent: import('../shared/types').CloudAgentDispatchParams) => Promise<import('../shared/types').CloudAgent | import('../shared/providers').ProviderLaunchRefused | import('../shared/types').CloudAgentRequestRejected>
     cancel: (id: string) => Promise<boolean>
     /** #371: `ok:false` means the agent is STILL on disk — do not drop the row. */
     remove: (id: string) => Promise<{ ok: true; removed: boolean } | { ok: false; error: string }>
-    retry: (id: string) => Promise<import('../shared/types').CloudAgent | null | import('../shared/providers').ProviderLaunchRefused>
+    /** `opts` (P4.5): this one retry may use the agent's unverified sign-in. */
+    retry: (id: string, opts?: import('../shared/types').CloudAgentRetryOptions) => Promise<import('../shared/types').CloudAgent | null | import('../shared/providers').ProviderLaunchRefused | import('../shared/types').CloudAgentRequestRejected>
     list: () => Promise<import('../shared/types').CloudAgent[]>
     getOutput: (id: string) => Promise<string>
     /** #371: `ok:false` means nothing was cleared — do not filter the list. */
@@ -1319,11 +1322,12 @@ const electronAPI: ElectronAPI = {
       onChannel(IPC.VISION_STATUS_CHANGED, callback)
   },
   cloudAgent: {
-    dispatch: (params: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string }; skipPermissions?: boolean; provider?: ProviderId }) =>
+    dispatch: (params: import('../shared/types').CloudAgentDispatchParams) =>
       ipcRenderer.invoke(IPC.CLOUD_AGENT_DISPATCH, params),
     cancel: (id: string) => ipcRenderer.invoke(IPC.CLOUD_AGENT_CANCEL, id),
     remove: (id: string) => ipcRenderer.invoke(IPC.CLOUD_AGENT_REMOVE, id),
-    retry: (id: string) => ipcRenderer.invoke(IPC.CLOUD_AGENT_RETRY, id),
+    retry: (id: string, opts?: import('../shared/types').CloudAgentRetryOptions) =>
+      opts === undefined ? ipcRenderer.invoke(IPC.CLOUD_AGENT_RETRY, id) : ipcRenderer.invoke(IPC.CLOUD_AGENT_RETRY, id, opts),
     list: () => ipcRenderer.invoke(IPC.CLOUD_AGENT_LIST),
     getOutput: (id: string) => ipcRenderer.invoke(IPC.CLOUD_AGENT_GET_OUTPUT, id),
     clearCompleted: () => ipcRenderer.invoke(IPC.CLOUD_AGENT_CLEAR_COMPLETED),

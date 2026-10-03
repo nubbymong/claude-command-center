@@ -237,6 +237,14 @@ function failure(code: AccountsFailureCode, message?: string, extra: { consumers
   return { ok: false, code, message: message ?? FAIL_MESSAGES[code] ?? 'That did not work.', ...extra }
 }
 
+/** Each launch kind in a refusal's words (WP2 PR 4, P4.5: a background run,
+ *  a Cloud Agent, is named as one, never as a review). */
+const LAUNCH_KIND_WORDS: Readonly<Record<LaunchLeaseKind, string>> = Object.freeze({
+  session: 'a session',
+  review: 'a review',
+  background: 'a background run',
+})
+
 /** The launch kinds a package prepares, as it declares them; a declaration
  *  that is not a list of known kinds prepares nothing (fail closed). */
 function launchKindsOf(p: ProviderPackage): readonly LaunchLeaseKind[] {
@@ -3105,10 +3113,13 @@ export class AccountsService {
     // The package says which kinds it prepares (data, not a provider name): a
     // Claude session keeps its own launch path (A12), so only its reviews come
     // here. Refused before an account is chosen or leased.
-    if (!launchKindsOf(p).includes(input.kind)) return failure('unsupported', `${p.displayName} does not start a ${input.kind === 'session' ? 'session' : 'review'} this way.`)
+    if (!launchKindsOf(p).includes(input.kind)) return failure('unsupported', `${p.displayName} does not start ${LAUNCH_KIND_WORDS[input.kind]} this way.`)
     // A reviewer invocation always runs on this computer, beside the session
     // it serves.
     if (input.kind === 'review' && input.remote === true) return failure('unsupported', 'A review runs on this computer only.')
+    // So does a background run (a Cloud Agent, P4.5): it runs in a project
+    // folder on this computer.
+    if (input.kind === 'background' && input.remote === true) return failure('unsupported', 'A background run runs on this computer only.')
     if (input.remote === true) {
       const remote = this.remoteLaunchRefusal(p.id)
       if (remote) return remote

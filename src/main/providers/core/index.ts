@@ -3,6 +3,7 @@
 export type {
   ProviderPackage, ProviderPackageFactory, ProviderSetupOperations, ProviderAuthOperations, ProviderRealmOperations,
   ProviderManagedLaunchOperations, ProviderRealmFolderOperations, ProviderLaunchOperations, LaunchPreparation, ProviderReviewOperations, ReviewRunInput, ReviewRunResult, ReviewUsage, RealmFolderResult, RealmFolderFailureCode, ExternalDefaultRealmSpec, ProviderEnablementSpec,
+  ProviderBackgroundOperations, BackgroundRunInput, BackgroundRunResult,
   DiscoveryResult, InstallRecipe, InstalledCli, RealmRef, AuthOperationResult, AuthLoginInput, AuthLogoutOptions, AuthStatusOptions, AuthFailureCode, AuthCredentialKind,
   ModelCatalogueEntry, ModelCatalogueFailureCode, ModelCatalogueResult,
   ProviderUsageOperations, UsageReading, UsageLookup, UsageReadOutcome, UsageReadResult, UsageReadOptions,
