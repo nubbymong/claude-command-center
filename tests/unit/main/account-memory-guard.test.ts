@@ -85,11 +85,16 @@ describe('samePathForm, pathInside and isGitSegment', () => {
     expect(samePathForm('/a/B/', '/a/b', 'darwin')).toBe(true)
     expect(samePathForm('/a/\u00d6', '/a/\u00f6', 'darwin')).toBe(true)
   })
-  it('pathInside: strictly inside the root, by the same case rule, the rest as written', () => {
+  it('pathInside: strictly inside the root, by the root\'s own spelling on every platform (separators aside), the rest as written', () => {
     expect(pathInside(MEM, `${MEM}\\extensions\\x.md`, 'win32')).toBe('extensions\\x.md')
-    expect(pathInside('C:/m/', 'c:\\M\\x.md', 'win32')).toBe('x.md')
+    expect(pathInside('C:/m/', 'C:\\m\\x.md', 'win32')).toBe('x.md')
     expect(pathInside('C:\\', 'C:\\x', 'win32')).toBe('x')
-    expect(pathInside('c:\\users\\\u00f6zil\\m', 'C:\\Users\\\u00d6zil\\m\\x.md', 'win32')).toBe('x.md')
+    expect(pathInside('c:\\users\\\u00f6zil\\m', 'c:\\users\\\u00f6zil\\m\\x.md', 'win32')).toBe('x.md')
+    // RDB-1: a spelling in another case is not inside, even where the file
+    // system may call it the same folder (the listing only ever hands out the
+    // root's own spelling).
+    expect(pathInside('C:/m/', 'c:\\M\\x.md', 'win32')).toBeNull()
+    expect(pathInside('c:\\users\\\u00f6zil\\m', 'C:\\Users\\\u00d6zil\\m\\x.md', 'win32')).toBeNull()
     // B-6: a name that starts with two dots is inside.
     expect(pathInside(MEM, `${MEM}\\..notes.md`, 'win32')).toBe('..notes.md')
     for (const outside of [MEM, `${MEM}\\`, `${MEM}x\\a.md`, 'D:\\Users\\me\\res\\codex-realms\\r1\\memories\\a.md', `${HOME}\\auth.json`]) {
@@ -98,7 +103,9 @@ describe('samePathForm, pathInside and isGitSegment', () => {
     expect(pathInside('C:\\Users\\Nik\\m', 'C:\\Users\\Ni\u212a\\m\\x.md', 'win32')).toBeNull()
     expect(pathInside('/h/m', '/h/m/a/b.md', 'linux')).toBe('a/b.md')
     expect(pathInside('/h/m', '/h/M/a', 'linux')).toBeNull()
-    expect(pathInside('/h/m', '/h/M/a', 'darwin')).toBe('a')
+    expect(pathInside('/h/m', '/h/m/a', 'darwin')).toBe('a')
+    expect(pathInside('/h/m', '/h/M/a', 'darwin')).toBeNull()
+    expect(pathInside('/h/\u00f6', '/h/\u00d6/a', 'darwin')).toBeNull()
     expect(pathInside('/', '/a', 'linux')).toBe('a')
     expect(pathInside('C:\\', 'c:\\', 'win32')).toBeNull()
     expect(pathInside('/', '/', 'linux')).toBeNull()
@@ -199,6 +206,36 @@ describe('validateAccountMemoryPath', () => {
     expect(k.fileCalls() - before).toBe(0)
   })
 
+  it('RDB-1: a sibling folder spelled in another case is another folder on a case-sensitive volume: refused before any file call', async () => {
+    // macOS on a case-sensitive volume.
+    const px = createFakeAccountFs('linux')
+    plantPb6(px, '/h/codex-home/memories', '/')
+    px.writeFile('/h/codex-home/MEMORIES/a.md', '# Other\n\nnot a memory')
+    px.writeFile('/h/codex-home/Memories/MEMORY.md', '# Other\n\nnot a memory')
+    const pxSet = { ...set, memoriesDir: '/h/codex-home/memories' }
+    for (const p of ['/h/codex-home/MEMORIES/a.md', '/h/codex-home/Memories/MEMORY.md']) {
+      const before = px.fileCalls()
+      await refusedWith(guard(p, ['/h/codex-home/memories'], px, 'darwin'), 'refused')
+      await refusedWith(readAccountMemory(p, [pxSet], { fs: px as never, platform: 'darwin' }), 'refused')
+      expect(px.fileCalls() - before, p).toBe(0)
+      expect(isUnderAccountMemories(p, [pxSet], 'darwin'), p).toBe(false)
+    }
+    // The folder's own spelling still reads.
+    expect(await readAccountMemory('/h/codex-home/memories/MEMORY.md', [pxSet], { fs: px as never, platform: 'darwin' })).toContain('# Memory')
+    // Windows, a folder with case sensitivity turned on.
+    const cs = createFakeAccountFs('win32', { caseSensitive: true })
+    plantPb6(cs, MEM, '\\')
+    cs.writeFile(`${HOME}\\MEMORIES\\a.md`, '# Other\n\nnot a memory')
+    cs.writeFile(`${HOME}\\Memories\\MEMORY.md`, '# Other\n\nnot a memory')
+    for (const p of [`${HOME}\\MEMORIES\\a.md`, `${HOME}\\Memories\\MEMORY.md`]) {
+      const before = cs.fileCalls()
+      await refusedWith(guard(p, [MEM], cs), 'refused')
+      await refusedWith(readAccountMemory(p, [set], { fs: cs as never, platform: 'win32' }), 'refused')
+      expect(cs.fileCalls() - before, p).toBe(0)
+    }
+    expect(await readAccountMemory(`${MEM}\\MEMORY.md`, [set], { fs: cs as never, platform: 'win32' })).toContain('# Memory')
+  })
+
   it('B-6: a file whose name starts with two dots, at the memories root, is inside it', async () => {
     fake.writeFile(`${MEM}\\..notes.md`, '# Notes\n\nkept')
     expect((await guard(`${MEM}\\..notes.md`)).path).toBe(`${MEM}\\..notes.md`)
@@ -272,11 +309,13 @@ describe('the read and delete behind memory:read and memory:delete', () => {
     expect(isUnderAccountMemories(`${HOME}\\auth.json`, [set], 'win32')).toBe(false)
     expect(isUnderAccountMemories('\\\\host\\share\\memories\\x.md', [set], 'win32')).toBe(false)
     expect(isUnderAccountMemories(`${MEM}\\MEMORY.md`, null, 'win32')).toBe(false)
-    // The same rule as the guard: two leading dots inside, a non-ASCII case
-    // pair the same folder, the Kelvin sign another.
+    // The same rule as the guard: two leading dots inside; only the folder's
+    // own spelling, so another case (a non-ASCII pair, the Kelvin sign) is
+    // not this branch.
     expect(isUnderAccountMemories(`${MEM}\\..notes.md`, [set], 'win32')).toBe(true)
     const k = { ...set, memoriesDir: 'C:\\Users\\Nik\\\u00d6\\memories' }
-    expect(isUnderAccountMemories('c:\\users\\nik\\\u00f6\\memories\\MEMORY.md', [k], 'win32')).toBe(true)
+    expect(isUnderAccountMemories('C:\\Users\\Nik\\\u00d6\\memories\\MEMORY.md', [k], 'win32')).toBe(true)
+    expect(isUnderAccountMemories('c:\\users\\nik\\\u00f6\\memories\\MEMORY.md', [k], 'win32')).toBe(false)
     expect(isUnderAccountMemories('C:\\Users\\Ni\u212a\\\u00d6\\memories\\MEMORY.md', [k], 'win32')).toBe(false)
   })
 })

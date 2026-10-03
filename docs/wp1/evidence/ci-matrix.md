@@ -34,7 +34,7 @@ Workflow: `.github/workflows/ci.yml`. On a pull request both jobs need the `ci-r
 - Every run of the CLI gets a fresh, empty `CODEX_HOME`, and there is no sign-in and no request that needs the network:
   - the suite makes one per run: its own runs, the app's version check (discovery's version home) and the model list (its scratch home);
   - the `codex --version` PATH check and the flag-drift suite each get one made just before them (`codex-conformance-ci.mjs homes`);
-  - a step records the runner's own `~/.codex` (absent, or every entry's path, size and modified time) before the CLI is installed, and the job's last step fails if it changed, so a run that used it cannot pass unseen.
+  - a step records the runner's own `~/.codex` (absent, or every folder and every other entry's path, size and modified time) before the CLI is installed, and the job's last step fails if it changed, so a run that used it cannot pass unseen. If the record step did not run, the last step fails saying the record is missing, not that the home was used. The picture and the comparison (`tests/integration/codex-own-home.mjs`) are proven to fail on each change on every run of the suite (`tests/integration/codex-own-home.test.ts`).
 - Checks (`tests/integration/codex-real-cli-conformance.test.ts`, P3.1's no-sign-in checks):
   1. detection: the app's discovery proves the installed CLI through its real runner (on Windows the npm shim through cmd.exe), with its version and class; the app's own PATH resolution finds the same file;
   2. every flag of the command lines the app runs is defined (on an option line of its own, not only mentioned in prose) by the real help of the subcommand it names, each such help exits 0, and its `Usage:` line names that subcommand: a dropped subcommand that exits 0 with the top-level help (as 0.155.1's `mcp-server --help` does) fails, which matters for `logout` and `app-server`, whose command lines pass no flag;
@@ -49,7 +49,7 @@ Workflow: `.github/workflows/ci.yml`. On a pull request both jobs need the `ci-r
   - the model list, both soft checks (a registry without the first listed model; the recorded list with an extra id);
   - features (a feature no list names);
   - help (each fixture with its last line dropped), asserted in that run.
-- Not shown red by that dispatch: the PATH check step, the flag-drift suite (`codex-cli-compat.test.ts`, which predates P4.8 and has no prove-red input), the runner's own home check, and an rc leg's help (no fixture exists for a release candidate).
+- Not shown red by that dispatch: the PATH check step, the flag-drift suite (`codex-cli-compat.test.ts`, which predates P4.8 and has no prove-red input), the runner's own home check (its comparison is shown red by `codex-own-home.test.ts` instead), and an rc leg's help (no fixture exists for a release candidate).
 
 ## Results
 
@@ -61,9 +61,9 @@ Workflow: `.github/workflows/ci.yml`. On a pull request both jobs need the `ci-r
 
 ### Real-CLI conformance
 
-| Run | Commit | OS | Version class | Version | Detection | Flags | Model list | Features | Help against the fixtures | Flag-drift suite |
-|---|---|---|---|---|---|---|---|---|---|---|
-| (not recorded yet) | | | | | | | | | | |
+| Run | Commit | OS | Version class | Version | Detection | Flags | Model list | Features | Help against the fixtures | Flag-drift suite | Own home untouched |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| (not recorded yet) | | | | | | | | | | | |
 
 ### Shown red once (dispatch with `conformance_prove_red`)
 
