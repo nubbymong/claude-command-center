@@ -14,27 +14,32 @@
 // It starts nothing itself (P4.11 review C-4): it refuses unless the staging
 // root passes stage/stage-root.js's rules and launch.js's record for it names
 // the port of an app started on that root's data folder, so it can never
-// drive an app running on the operator's real environment. Images go to
-// <root>/out (CCC_SHOOT_OUT moves them), the log to <root>/shoot.log.
+// drive an app running on the operator's real environment. Before attaching
+// it checks that the recorded pid is still the app launch.js started and that
+// it holds the recorded port (P4.11 review). Images go to <root>/out, the log
+// to <root>/shoot.log (CCC_SHOOT_OUT / CCC_SHOOT_LOG move them, inside the
+// root only).
 
 const { chromium } = require('playwright-core')
 const fs = require('fs')
-const path = require('path')
 const UPNG = require('upng-js')
+const path = require('path')
 const S = require('./stage/stage-root')
 
-let STAGE, LAUNCH
+let STAGE, LAUNCH, PATHS
 try {
   STAGE = S.resolveStage(process.env)
   S.ensureMarker(STAGE.ROOT, { create: false })
   LAUNCH = S.readLaunchRecord(STAGE)
+  PATHS = S.shootPaths(STAGE, process.env)
+  S.checkLaunchedApp(LAUNCH)
 } catch (e) {
   if (e instanceof S.StageRefusal) { console.error('refusing: ' + e.message); process.exit(2) }
   throw e
 }
 
-const OUT = process.env.CCC_SHOOT_OUT || path.join(STAGE.ROOT, 'out')
-const LOG = process.env.CCC_SHOOT_LOG || path.join(STAGE.ROOT, 'shoot.log')
+const OUT = PATHS.OUT
+const LOG = PATHS.LOG
 const PORT = LAUNCH.port
 const W = 1600
 const H = 1100
