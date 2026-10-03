@@ -116,7 +116,7 @@ export function CodexReconfirmPage({ onShown, onAnswered }: {
     continueRef.current?.focus()
   }, [busy, error])
 
-  const card = (c: Choice, title: string, sub: string, marks: ReactNode, beta: boolean) => {
+  const card = (c: Choice, title: string, sub: string, marks: ReactNode) => {
     const off = disabled(c)
     const on = choice === c
     return (
@@ -135,7 +135,6 @@ export function CodexReconfirmPage({ onShown, onAnswered }: {
         <span className="as-marks">{marks}</span>
         <span className="as-t">
           {title}
-          {beta && <span className="as-beta">Beta</span>}
         </span>
         <span className="as-sub">{sub}</span>
         {off && <span className="as-why" data-testid="codex-reconfirm-no-why">{NO_NEEDS_CLAUDE}</span>}
@@ -151,8 +150,8 @@ export function CodexReconfirmPage({ onShown, onAnswered }: {
             <h2 className="h2">Do you use Codex?</h2>
             <p className="p2-sub">Codex now has accounts of its own in this app. Choose again: your earlier Codex setting does not carry over.</p>
             <div className="as-cards as-cards-2" role="radiogroup" aria-label="Do you use Codex?" data-testid="codex-reconfirm-cards" onKeyDown={onGroupKey}>
-              {card('yes', 'Yes, set up Codex', 'Use the Codex sign-in on this computer, or add a Codex account', <ProviderMark providerId="codex" size={26} />, true)}
-              {card('no', "No, I don't use Codex", 'Codex stays off. You can set it up later in Settings, Accounts.', <span className="as-mark-none" />, false)}
+              {card('yes', 'Yes, set up Codex', 'Use the Codex sign-in on this computer, or add a Codex account', <ProviderMark providerId="codex" size={26} />)}
+              {card('no', "No, I don't use Codex", 'Codex stays off. You can set it up later in Settings, Accounts.', <span className="as-mark-none" />)}
             </div>
             <p className="as-note" data-testid="codex-reconfirm-local-note">Codex sessions run on this computer only in this release.</p>
             {error && <div className="gh-err" role="alert" data-testid="codex-reconfirm-error">{error}</div>}

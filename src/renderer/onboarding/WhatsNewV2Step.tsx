@@ -20,7 +20,6 @@ export interface WhatsNewItem {
   title: string
   /** ONE line. If it needs two sentences, it belongs in the Feature Guide. */
   desc: string
-  beta?: boolean
   /** #463: a line that only makes sense against a BEFORE (“the app was
    *  renamed”) — hidden from the fresh-install cohort, who have no before. */
   upgradeOnly?: boolean
@@ -72,7 +71,7 @@ const SECTIONS_20: WhatsNewSection[] = [
     heading: 'Tools',
     items: [
       { title: 'Built-in Tools, your call.', desc: 'Vision, code review, host screenshots and the Agent Canvas each get a real switch.' },
-      { title: 'Codex support.', desc: "Run OpenAI's Codex CLI beside Claude, with its own switch and sign-in.", beta: true },
+      { title: 'Codex support.', desc: "Run OpenAI's Codex CLI beside Claude, with its own switch and sign-in." },
     ],
   },
   {
@@ -294,7 +293,6 @@ export function WhatsNewV2Step({
                       <div>
                         <span className="wn-t">{it.title}</span>{' '}
                         <span className="wn-d">{it.desc}</span>
-                        {it.beta && <span className="gh-tag">Beta</span>}
                         {it.seeIt && showcases.some((p) => p.id === it.seeIt) && (
                           <button
                             type="button"

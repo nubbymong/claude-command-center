@@ -577,3 +577,23 @@ describe('app knowledge after the PR 4 VM checkpoint (F1)', () => {
     expect(line).toMatch(/other than the canvas snapshot and review/)
   })
 })
+
+// [host] P4.11 (row 54, the PR 4 user-facing sweep): the Codex "Beta" labels
+// come off in the release where parity lands (recorded 2026-09-26), in the
+// Feature Guide, Ask Conductor's documentation, the README and the user guide.
+describe('the PR 4 user-facing sweep (P4.11)', () => {
+  const root = path.resolve(__dirname, '..', '..', '..')
+  const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8')
+  const guide = fs.readFileSync(path.join(root, 'docs', 'USER_GUIDE.md'), 'utf8')
+
+  it('no surface labels Codex Beta', () => {
+    for (const s of APP_KNOWLEDGE_SECTIONS) {
+      expect(s.title, s.id).not.toMatch(/beta/i)
+      expect(s.body, s.id).not.toMatch(/Codex \(Beta\)|Codex support is Beta|\(Codex support is Beta\)/)
+    }
+    expect(APP_KNOWLEDGE_SECTIONS.find((s) => s.id === 'codex')!.title).toBe('Codex: sessions and accounts')
+    for (const s of APP_KNOWLEDGE_SECTIONS) expect(s.body, s.id).not.toMatch(/see Codex \(Beta\)/)
+    expect(readme).not.toMatch(/Still marked Beta/)
+    expect(guide).not.toMatch(/\*\*Codex\*\* \(Beta\)/)
+  })
+})

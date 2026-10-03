@@ -15,6 +15,7 @@ import ToggleSwitch from '../../github/config/ToggleSwitch'
 import { Section } from '../../SettingsPage'
 import { Pill, StatusText, ErrorLine, MutedLine, RowButton } from './accounts-ui'
 import { showHelloCodexReplay, codexSetUp } from '../../../onboarding/hello-codex'
+import { tryGetRendererProvider } from '../../../providers/core'
 
 /** The user has not said whether they use the provider (Codex after an
  *  update, until they answer: owner decision 2026-09-26). The row never says
@@ -157,7 +158,8 @@ function ProviderRow({ p, first }: { p: ProviderInstallationView; first: boolean
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
           {p.displayName}
-          {p.providerId === 'codex' && <Pill tone="beta" testId={`provider-beta-${p.providerId}`}>Beta</Pill>}
+          {/* Labelled with the provider's maturity (WP1.21), read from its descriptor. */}
+          {tryGetRendererProvider(p.providerId)?.maturity === 'beta' && <Pill tone="beta" testId={`provider-beta-${p.providerId}`}>Beta</Pill>}
         </div>
         <StatusText tone={status.tone} testId={`provider-status-${p.providerId}`}>{status.text}</StatusText>
         {unset && (

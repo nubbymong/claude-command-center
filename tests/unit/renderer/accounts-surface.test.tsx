@@ -5,7 +5,7 @@
  * dialogs portal to document.body, so every query here is on the document.
  *
  * Verifies:
- *   - the Providers card: real marks, Beta on Codex only, the status line,
+ *   - the Providers card: real marks, the Beta pill only for a beta descriptor, the status line,
  *     the last-provider refusal and the in-use count under the switch;
  *   - Codex rows: labels (the external home named by its label, never by an
  *     identity name), badges, and the "..." menu for each account state,
@@ -34,6 +34,10 @@ import type { AccountProfile } from '../../../src/shared/account-types'
 import { useProviderAccountsStore, canOfferSignInAgain, signInPhaseText, notCarriedOverText } from '../../../src/renderer/stores/providerAccountsStore'
 import { useAccountProfilesStore } from '../../../src/renderer/stores/accountProfilesStore'
 import { useSettingsStore, DEFAULT_SETTINGS } from '../../../src/renderer/stores/settingsStore'
+import { registerRendererProvider, _resetRendererProviderRegistryForTest } from '../../../src/renderer/providers/core'
+import { composeRendererProviders } from '../../../src/renderer/providers'
+import { claudeDescriptor } from '../../../src/renderer/providers/claude'
+import { codexDescriptor } from '../../../src/renderer/providers/codex'
 
 // The saved on/off the Providers switch writes after main agrees.
 const updateSettings = vi.fn(() => Promise.resolve())
@@ -261,13 +265,28 @@ afterEach(() => { unmountNow() })
 // Providers card
 
 describe('Providers card', () => {
-  it('shows each provider with its real mark, Beta on Codex only, and its status', () => {
+  it('shows each provider with its real mark, no Beta label, and its status', () => {
+    // [host] P4.11 (row 54): the Codex "Beta" labels come off in the release
+    // where parity lands; both registered descriptors are stable.
+    _resetRendererProviderRegistryForTest()
+    composeRendererProviders()
     render(snapshot())
     expect(q('provider-row-claude')!.querySelector('[data-testid="provider-mark-claude"]')).toBeTruthy()
     expect(q('provider-row-codex')!.querySelector('[data-testid="provider-mark-codex"]')).toBeTruthy()
-    expect(q('provider-beta-codex')?.textContent).toBe('Beta')
+    expect(q('provider-beta-codex')).toBeNull()
     expect(q('provider-beta-claude')).toBeNull()
     expect(q('provider-status-claude')?.textContent).toBe('Claude Code 2.1.281 - ready')
+  })
+
+  it('[host] the Beta pill still follows the descriptor\'s maturity (WP1.21: labelled with provider maturity)', () => {
+    _resetRendererProviderRegistryForTest()
+    registerRendererProvider(claudeDescriptor)
+    registerRendererProvider({ ...codexDescriptor, maturity: 'beta' })
+    render(snapshot())
+    expect(q('provider-beta-codex')?.textContent).toBe('Beta')
+    expect(q('provider-beta-claude')).toBeNull()
+    _resetRendererProviderRegistryForTest()
+    composeRendererProviders()
   })
 
   it('says "At least one provider stays on." under the switch when the last one is turned off', async () => {

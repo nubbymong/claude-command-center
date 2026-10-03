@@ -219,7 +219,7 @@ export interface AppSettings {
    *  (main ignores it otherwise, and hydrate drops it: migrateCodexAnswer).
    *  Absent = not answered yet: Codex is not set up, and main refuses its
    *  launches; false disables Codex surfaces incl. the codex_review built-in
-   *  tool. Codex support is Beta. */
+   *  tool. */
   codexEnabled?: boolean
   /** The user has answered whether they use Codex, in this model (owner
    *  decision 2026-09-26): written with `codexEnabled` by every way of

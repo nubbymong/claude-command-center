@@ -103,13 +103,13 @@ interface TileSpec {
   name: string
   sub: string
   live?: boolean
-  badge: 'NOW' | 'BETA' | '2.2'
+  badge: 'NOW' | '2.2'
   glyph: () => JSX.Element
 }
 
 const TODAY: TileSpec[] = [
   { key: 'claude', name: 'Claude Code', sub: 'Anthropic', live: true, badge: 'NOW', glyph: ClaudeGlyph },
-  { key: 'codex', name: 'Codex', sub: 'OpenAI', live: true, badge: 'BETA', glyph: CodexGlyph },
+  { key: 'codex', name: 'Codex', sub: 'OpenAI', live: true, badge: 'NOW', glyph: CodexGlyph },
 ]
 
 const IN_22: TileSpec[] = [
@@ -124,7 +124,7 @@ function Tile({ t }: { t: TileSpec }) {
   const G = t.glyph
   return (
     <div className={`rn-tile${t.live ? ' rn-live' : ''}`} data-ux-id={`tile-${t.key}`}>
-      <span className={`rn-badge ${t.badge === 'NOW' ? 'rn-now' : t.badge === 'BETA' ? 'rn-beta' : 'rn-b22'}`}>{t.badge}</span>
+      <span className={`rn-badge ${t.badge === 'NOW' ? 'rn-now' : 'rn-b22'}`}>{t.badge}</span>
       <span className="rn-glyph"><G /></span>
       <span className="rn-tname">{t.name}</span>
       <span className="rn-tsub">{t.sub}</span>

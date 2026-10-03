@@ -110,7 +110,7 @@ stored login exactly as it does in a normal terminal.
 ## Choosing your assistants (Claude Code and Codex)
 
 CCC can run two assistants, called *providers*: **Claude Code** and OpenAI's
-**Codex** (Beta). **Settings → Accounts** starts with a **Providers** card, one
+**Codex**. **Settings → Accounts** starts with a **Providers** card, one
 row per provider:
 
 - a switch that turns the provider on or off;
