@@ -208,7 +208,7 @@ describe('SessionDialog indexing toggle', () => {
     expect(cb).toBeNull()
   })
 
-  it('toggle is absent for Codex sessions', () => {
+  it('P3.12: the toggle is in a Codex config too (on by default)', () => {
     act(() => {
       root.render(
         React.createElement(SessionDialog, {
@@ -222,7 +222,8 @@ describe('SessionDialog indexing toggle', () => {
       )
     })
     const cb = findCheckboxByLabel(container, 'Index conversation logs')
-    expect(cb).toBeNull()
+    expect(cb).not.toBeNull()
+    expect(cb?.checked).toBe(true)
   })
 })
 

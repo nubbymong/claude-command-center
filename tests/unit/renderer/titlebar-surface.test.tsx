@@ -74,6 +74,8 @@ describe('TitleBar degraded-status tint (#275)', () => {
       worst: 'degraded_performance',
       api: { status: 'degraded_performance' },
       updatedAt: new Date().toISOString(),
+      // P3.4: Claude's pills (and their tint) show once its page has been read.
+      claudeReadAt: new Date().toISOString(),
     })
     act(() => {
       root.render(createElement(TitleBar, { sidebarOpen: true, onToggleSidebar: () => {} }))

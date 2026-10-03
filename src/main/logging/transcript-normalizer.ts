@@ -36,7 +36,84 @@ export interface Normalizer {
   stats: NormalizerStats
 }
 
-export function makeNormalizer(opts?: { startIdx?: number; startTs?: number }): Normalizer {
+/**
+ * P3.16 (M1): `skip` says whether a record written at a time (its own
+ * `timestamp`, else the one of the record before it in this read; null when
+ * there is none) is left out: nothing of it is indexed, and one divider
+ * (`skippedLabel`) goes where a skipped run of records was, before the next
+ * rows kept. The rule a Codex rollout's records are read by
+ * (codex-rollout-normalizer.ts), for a Claude transcript.
+ */
+export function makeNormalizer(opts?: { startIdx?: number; startTs?: number; skip?: (recordTs: number | null) => boolean; skippedLabel?: string }): Normalizer {
+  const inner = makeRecordNormalizer(opts)
+  if (!opts?.skip) return inner
+  const skip = opts.skip
+  const label = opts.skippedLabel ?? ''
+  /** The last record time this read has seen (its own records only). */
+  let lastOwnTs: number | null = null
+  let skipped = false
+
+  function push(line: string): NewMessage[] {
+    if (typeof line !== 'string' || !line.trim()) return []
+    let entry: unknown
+    try { entry = JSON.parse(line) } catch { return inner.push(line) }
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return inner.push(line)
+    const own = recordTime((entry as Record<string, unknown>)['timestamp'])
+    if (own !== null) lastOwnTs = own
+    if (skip(own ?? lastOwnTs)) {
+      if (yieldsRows(entry as Record<string, unknown>)) skipped = true
+      return []
+    }
+    const out = inner.push(line)
+    if (skipped && out.length > 0) {
+      // The divider takes the first row's place; the rows move up by one.
+      const first = out[0]
+      for (const m of out) m.idx++
+      inner.advanceIdx()
+      out.unshift({ idx: first.idx - 1, ts: first.ts, role: 'system', kind: 'clear', content: label })
+      skipped = false
+    }
+    return out
+  }
+
+  return { push, stats: inner.stats }
+}
+
+/** A date-time with a zone designator (Z or an offset), the form Claude Code writes. */
+const ZONED_TIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})$/
+
+/** P3.16 (M1): a record's time for the not-indexed rule, when its stamp is a
+ *  date-time with a zone designator. A stamp with none is no time (Date.parse
+ *  would read it as the machine's local time, not the clock the windows are
+ *  kept in), as for a Codex record. */
+function recordTime(value: unknown): number | null {
+  if (typeof value !== 'string' || !ZONED_TIME_RE.test(value)) return null
+  const at = Date.parse(value)
+  return Number.isFinite(at) ? at : null
+}
+
+/** P3.16 (M1): whether a record would give rows (so leaving it out leaves a
+ *  divider): not metadata, and a conversation entry only with content that
+ *  shows (text, an image, a tool call); an entry of another type gives an
+ *  unknown row. */
+function yieldsRows(obj: Record<string, unknown>): boolean {
+  if (obj['isMeta'] === true) return false
+  const type = typeof obj['type'] === 'string' ? obj['type'] : undefined
+  if (type !== undefined && SKIP_TYPES.has(type)) return false
+  if (type !== 'user' && type !== 'assistant') return true
+  const message = obj['message']
+  if (message === null || typeof message !== 'object' || Array.isArray(message)) return true
+  const content = (message as Record<string, unknown>)['content']
+  if (typeof content === 'string') return content.trim() !== ''
+  if (!Array.isArray(content)) return true
+  return content.some((p) => {
+    if (p === null || typeof p !== 'object' || Array.isArray(p)) return false
+    const part = p as Record<string, unknown>
+    return (part['type'] === 'text' && typeof part['text'] === 'string' && part['text'] !== '') || part['type'] === 'image' || part['type'] === 'tool_use'
+  })
+}
+
+function makeRecordNormalizer(opts?: { startIdx?: number; startTs?: number }): Normalizer & { advanceIdx(): void } {
   let nextIdx = opts?.startIdx ?? 0
   let lastTs = opts?.startTs ?? 0
 
@@ -270,7 +347,7 @@ export function makeNormalizer(opts?: { startIdx?: number; startTs?: number }): 
     return out
   }
 
-  return { push, stats }
+  return { push, stats, advanceIdx: () => { nextIdx++ } }
 }
 
 // ---------------------------------------------------------------------------
@@ -300,8 +377,9 @@ const RAW_CAP = 32 * 1024
 const TRUNCATION_SUFFIX = '…[truncated]'
 
 /** Cap a raw string at RAW_CAP UTF-16 code units with a truncation suffix.
- *  Guards against a lone high surrogate at the cut boundary. */
-function capRaw(s: string): string {
+ *  Guards against a lone high surrogate at the cut boundary. The Codex rollout
+ *  normalizer (P3.12) keeps an unknown line with the same cap. */
+export function capRaw(s: string): string {
   if (s.length <= RAW_CAP) return s
   let cut = RAW_CAP
   // If the last char of the slice is a lone high surrogate, drop it
@@ -342,8 +420,9 @@ function capMetaValue(s: string): string {
  * - If the serialized JSON exceeds 2048 chars, drops trailing keys in reverse
  *   TOOL_META_KEYS order until it fits. Falls back to '{"_truncated":true}'
  *   only if even {file_path} alone would exceed the cap.
+ * - The Codex rollout normalizer (P3.12) builds its preview with this too.
  */
-function buildToolMeta(input: unknown): string {
+export function buildToolMeta(input: unknown): string {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) return '{}'
 
   const inp = input as Record<string, unknown>

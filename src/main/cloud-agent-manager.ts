@@ -14,8 +14,9 @@ import { isValidLegacyVersion } from '../shared/legacy-version'
 import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles, isValidProfileId } from './account-profiles'
 import { withProfileHome } from './pty-manager'
 import { gateManagedLaunch } from './managed-launch-diagnostics'
-import type { ProjectGateResult } from '../shared/providers'
+import type { ProjectGateResult, ProviderLaunchRefused } from '../shared/providers'
 import { acquireProfileConsumer, waitForProfileRefresh } from './profile-consumers'
+import { providerLaunchRefusal } from './provider-launch-gate'
 import { randomId } from '../shared/id'
 
 export interface CloudAgentData {
@@ -82,6 +83,18 @@ const MAX_OUTPUT_BYTES = 512 * 1024 // 500KB cap per agent
 const activeProcesses = new Map<string, ChildProcess>()
 let agents: CloudAgentData[] = []
 let getWindow: () => BrowserWindow | null = () => null
+/** Dispatches past the launch gate whose record does not exist yet (the
+ *  project scan is awaited first). */
+let dispatching = 0
+
+/** WP2: cloud agents that are Claude Code in use, for the switch-off rule
+ *  (provider-in-use.ts): every dispatch past the launch gate, from before its
+ *  record exists, and every agent running or pending -- one waiting on its
+ *  legacy CLI install or an account refresh included. A switch-off is
+ *  refused while any is counted, as it is while a session runs. */
+export function countClaudeAgentsInUse(): number {
+  return dispatching + agents.filter((a) => a.status === 'running' || a.status === 'pending').length
+}
 
 function generateId(): string {
   return randomId('ca-')
@@ -170,40 +183,59 @@ export async function dispatchAgent(params: {
   legacyVersion?: { enabled: boolean; version: string }
   // Per-run, ephemeral opt-in to --dangerously-skip-permissions. Default OFF.
   skipPermissions?: boolean
-}): Promise<CloudAgentData> {
-  // The project gate FIRST: the agent runs `claude` in the project directory,
-  // so that directory's own settings files are checked before anything is
-  // composed, and a refusal is thrown from withProfileHome below -- before an
-  // agent record exists to be stamped with a session that never started.
-  const projectGate = await gateManagedLaunch(params.projectPath)
-  // Resolve the per-account isolated environment up front so the agent record
-  // is stamped with the account it actually ran under (drives the card label,
-  // the account filter, and a consistent retry).
-  //
-  // A valid legacy pin is what the agent runs (below), so the preflight is told
-  // about it -- installed or not: it is recorded BEFORE the pin's auto-install,
-  // and the provider decides which version to check (a not-yet-installed pin
-  // counts only when it is below the floor, so a failed install that falls
-  // back to the installed CLI can only err loud, never a false "supported").
-  const pinnedCli = params.legacyVersion?.enabled ? legacyCliPin(params.legacyVersion) : undefined
-  const { env: spawnEnvVars, resolvedProfileId, accountEmail } = resolveAgentEnv(params.profileId, params.projectPath, projectGate, pinnedCli)
+}): Promise<CloudAgentData | ProviderLaunchRefused> {
+  // WP2: a cloud agent is a Claude Code run, so none starts while Claude Code
+  // is off -- refused here, before the project is scanned, a record is made,
+  // a legacy CLI is installed or anything is spawned (provider-launch-gate.ts).
+  // Every way in comes through here (dispatch, and retry below). Answered,
+  // never thrown: the Cloud Agents page says why.
+  const refused = providerLaunchRefusal('claude')
+  if (refused) return { refused }
+  // Claude Code in use from here (countClaudeAgentsInUse): counted in the
+  // same step as the check above, so a switch-off cannot slip between them;
+  // by its record once that exists (in the same step as this count ends).
+  dispatching++
+  let spawnEnvVars: Record<string, string>
+  let agent: CloudAgentData
+  let resolvedProfileId: string | null | undefined
+  let accountEmail: string | undefined
+  try {
+    // The project gate FIRST: the agent runs `claude` in the project directory,
+    // so that directory's own settings files are checked before anything is
+    // composed, and a refusal is thrown from withProfileHome below -- before an
+    // agent record exists to be stamped with a session that never started.
+    const projectGate = await gateManagedLaunch(params.projectPath)
+    // Resolve the per-account isolated environment up front so the agent record
+    // is stamped with the account it actually ran under (drives the card label,
+    // the account filter, and a consistent retry).
+    //
+    // A valid legacy pin is what the agent runs (below), so the preflight is told
+    // about it -- installed or not: it is recorded BEFORE the pin's auto-install,
+    // and the provider decides which version to check (a not-yet-installed pin
+    // counts only when it is below the floor, so a failed install that falls
+    // back to the installed CLI can only err loud, never a false "supported").
+    const pinnedCli = params.legacyVersion?.enabled ? legacyCliPin(params.legacyVersion) : undefined
+    ;({ env: spawnEnvVars, resolvedProfileId, accountEmail } = resolveAgentEnv(params.profileId, params.projectPath, projectGate, pinnedCli))
 
-  const agent: CloudAgentData = {
-    id: generateId(),
-    name: params.name,
-    description: params.description,
-    status: 'running',
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-    projectPath: params.projectPath,
-    configId: params.configId,
-    profileId: resolvedProfileId || undefined,
-    accountEmail,
-    output: '',
-    legacyVersion: params.legacyVersion,
+    agent = {
+      id: generateId(),
+      name: params.name,
+      description: params.description,
+      status: 'running',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      projectPath: params.projectPath,
+      configId: params.configId,
+      profileId: resolvedProfileId || undefined,
+      accountEmail,
+      output: '',
+      legacyVersion: params.legacyVersion,
+    }
+
+    agents.unshift(agent)
+  } finally {
+    dispatching--
   }
-
-  agents.unshift(agent)
   persist()
   broadcastStatus(agent)
 
@@ -222,6 +254,16 @@ export async function dispatchAgent(params: {
     if (agents.includes(agent)) { persist(); broadcastStatus(agent) }
     return agent
   }
+  /** Nothing was spawned, and nothing will be: the record says why. */
+  const failBeforeSpawn = (why: string): CloudAgentData => {
+    logInfo(`[cloud-agent] Agent ${agent.id} not started: ${why}`)
+    agent.status = 'failed'
+    agent.error = why
+    agent.updatedAt = Date.now()
+    agent.duration = agent.updatedAt - agent.createdAt
+    if (agents.includes(agent)) { persist(); broadcastStatus(agent) }
+    return agent
+  }
 
   // Resolve Claude binary (use legacy version if configured)
   let claudeBin = 'claude'
@@ -233,7 +275,7 @@ export async function dispatchAgent(params: {
       // Auto-install if needed
       if (!isVersionInstalled(params.legacyVersion.version)) {
         logInfo(`[cloud-agent] Auto-installing legacy v${params.legacyVersion.version} for agent ${agent.id}`)
-        const result = await installVersion(params.legacyVersion.version)
+        const result = await installVersion(params.legacyVersion.version).catch((e: unknown) => ({ ok: false, error: (e as Error)?.message ?? String(e) }))
         if (!result.ok) {
           logInfo(`[cloud-agent] Legacy install failed, using system claude: ${result.error}`)
         }
@@ -252,7 +294,6 @@ export async function dispatchAgent(params: {
   // Previous approach (child.stdin.write) broke on Windows because cmd.exe's
   // stdin passthrough doesn't always trigger Claude's pipe detection.
   const tmpFile = path.join(os.tmpdir(), `ccc-agent-${agent.id}.txt`)
-  fs.writeFileSync(tmpFile, params.description, 'utf8')
 
   // P1.3 / FEAT-1: cloud-agent dispatch never reads a persisted skip-permissions
   // setting (the legacy global `skipPermissionsForAgents` was removed in Unit 3;
@@ -264,19 +305,25 @@ export async function dispatchAgent(params: {
   const permFlag = skipPerms ? ' --dangerously-skip-permissions' : ''
   const shellCmd = `${pipeCmd} "${tmpFile}" | ${claudeBin}${permFlag}`
 
-  // #48: the agent runs in the profile's credential home for as long as its
-  // process lives, so the profile reads as in-use for exactly that long (the
-  // usage refresh and the account delete defer to it). ACQUIRED FIRST: the hold
-  // is what stops a new rotation from starting, and taking it before the wait
-  // below closes the microtask between "the in-flight rotation settled" and
-  // "we are registered" in which a fresh refresh could otherwise begin and
-  // rotate the token this agent is about to read (adversarial pass on #598).
-  // Released on 'close' and on 'error' -- one of which always fires for a
-  // spawned child -- so the ref needs no leak clock; an agent that runs for an
-  // hour is in use for an hour.
-  const releaseProfile = resolvedProfileId ? acquireProfileConsumer(resolvedProfileId, { maxAgeMs: Infinity }) : () => { /* default home: nothing held */ }
+  let releaseProfile: () => void = () => { /* default home, or not held yet: nothing held */ }
   let child: ChildProcess
+  // WP2: everything from here to the spawn is inside the try that fails the
+  // agent: a throw anywhere (the prompt file, the account hold, the wait, the
+  // spawn) must not leave the record "running" with no process -- it would
+  // read as Claude Code in use and refuse a switch-off forever.
   try {
+    fs.writeFileSync(tmpFile, params.description, 'utf8')
+    // #48: the agent runs in the profile's credential home for as long as its
+    // process lives, so the profile reads as in-use for exactly that long (the
+    // usage refresh and the account delete defer to it). ACQUIRED FIRST: the hold
+    // is what stops a new rotation from starting, and taking it before the wait
+    // below closes the microtask between "the in-flight rotation settled" and
+    // "we are registered" in which a fresh refresh could otherwise begin and
+    // rotate the token this agent is about to read (adversarial pass on #598).
+    // Released on 'close' and on 'error' -- one of which always fires for a
+    // spawned child -- so the ref needs no leak clock; an agent that runs for an
+    // hour is in use for an hour.
+    if (resolvedProfileId) releaseProfile = acquireProfileConsumer(resolvedProfileId, { maxAgeMs: Infinity })
     // #49: if the usage page is rotating this profile's token right now, let
     // the new lineage land before the agent's claude reads the credential file.
     // The hold above means no OTHER rotation can begin while we wait.
@@ -285,6 +332,17 @@ export async function dispatchAgent(params: {
       releaseProfile()
       cleanupTmpFileFor(tmpFile)
       return abandon('the account refresh wait')
+    }
+    // WP2: the launch rule once more, right before the process starts, as
+    // Insights asks before each step: Claude Code may have been switched off
+    // while this dispatch waited (a counted agent refuses a switch-off in
+    // Settings, but the saved setting can change or become unreadable). The
+    // agent is then failed with the reason, and nothing runs.
+    const refusedNow = providerLaunchRefusal('claude')
+    if (refusedNow) {
+      releaseProfile()
+      cleanupTmpFileFor(tmpFile)
+      return failBeforeSpawn(refusedNow.message)
     }
     child = spawn(shellCmd, [], {
       cwd: params.projectPath,
@@ -295,9 +353,11 @@ export async function dispatchAgent(params: {
     })
   } catch (e) {
     // spawn() itself throws only synchronously (bad argv); a hold with no child
-    // to release it would otherwise outlive the failure.
+    // to release it would otherwise outlive the failure. The record must not
+    // stay "running" either: it would read as Claude Code in use forever.
     releaseProfile()
     cleanupTmpFileFor(tmpFile)
+    failBeforeSpawn(`The agent could not be started: ${(e as Error)?.message ?? String(e)}`)
     throw e
   }
 
@@ -474,7 +534,7 @@ export function removeAgent(id: string): { ok: boolean; removed: boolean; error?
   return { ok: true, removed: true }
 }
 
-export async function retryAgent(id: string): Promise<CloudAgentData | null> {
+export async function retryAgent(id: string): Promise<CloudAgentData | null | ProviderLaunchRefused> {
   const agent = agents.find(a => a.id === id)
   if (!agent) return null
 

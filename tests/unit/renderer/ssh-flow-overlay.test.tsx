@@ -243,3 +243,101 @@ describe('SshFlowOverlay launch guard headline', () => {
     expect(container.textContent).toContain('Inner shell ready')
   })
 })
+
+// WP2 commit 6e review fix: with Claude Code switched off in Settings,
+// Accounts, a terminal-only SSH config may still connect, but nothing in the
+// flow starts Claude on the remote: every button that would is disabled with
+// the reason, and the action refuses on its own.
+describe('SshFlowOverlay with Claude Code switched off', () => {
+  const OFF = 'Claude Code is off. Turn it on in Settings, Accounts.'
+  const btn = (id: string) => container.querySelector(`[data-testid="${id}"]`) as HTMLButtonElement | null
+  const launched = () => (globalThis as any).window.electronAPI.ssh.launchClaude
+  beforeEach(async () => {
+    const { useSettingsStore, DEFAULT_SETTINGS } = await import('../../../src/renderer/stores/settingsStore')
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, claudeEnabled: false } })
+    setSession({ host: 'h', port: 22, username: 'u', remotePath: '~' })
+  })
+  afterEach(async () => {
+    const { useSettingsStore, DEFAULT_SETTINGS } = await import('../../../src/renderer/stores/settingsStore')
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })
+  })
+
+  it('before the post-connect step: Launch Claude is disabled with the reason; Skip still works', async () => {
+    await act(async () => { root.render(<SshFlowOverlay sessionId="s1" hasPostCommand={false} shellOnly enabled />) })
+    await act(async () => { flowCb?.({ state: 'awaiting-postcommand' }) })
+    const launch = btn('ssh-launch-claude')!
+    expect(launch.disabled).toBe(true)
+    expect(launch.title).toBe(OFF)
+    expect(container.querySelector('[data-testid="ssh-claude-off"]')!.textContent).toBe(OFF)
+    await act(async () => { launch.click() })
+    expect(launched()).not.toHaveBeenCalled()
+  })
+
+  it('with a post-connect command: Launch Claude on host is disabled; running the command is not', async () => {
+    await act(async () => { root.render(<SshFlowOverlay sessionId="s1" hasPostCommand shellOnly={false} enabled />) })
+    await act(async () => { flowCb?.({ state: 'awaiting-postcommand' }) })
+    expect(btn('ssh-launch-claude-on-host')!.disabled).toBe(true)
+    expect(btn('ssh-launch-claude-on-host')!.title).toBe(OFF)
+    expect(container.textContent).toContain('Run post-connect command')
+  })
+
+  it('after the post-connect command: Launch Claude and Launch anyway are disabled with the reason', async () => {
+    await act(async () => { root.render(<SshFlowOverlay sessionId="s1" hasPostCommand shellOnly enabled />) })
+    await act(async () => { flowCb?.({ state: 'awaiting-claude', info: SSH_ENTRY.INNER }) })
+    expect(btn('ssh-launch-claude')!.disabled).toBe(true)
+    expect(btn('ssh-launch-claude')!.title).toBe(OFF)
+    await act(async () => { flowCb?.({ state: 'awaiting-claude', info: ENTRY_UNVERIFIED }) })
+    expect(btn('ssh-launch-anyway')!.disabled).toBe(true)
+    expect(btn('ssh-launch-anyway')!.title).toBe(OFF)
+    await act(async () => { btn('ssh-launch-anyway')!.click() })
+    expect(launched()).not.toHaveBeenCalled()
+  })
+
+  it('after a failed setup: Retry Launch is disabled with the reason', async () => {
+    await act(async () => { root.render(<SshFlowOverlay sessionId="s1" hasPostCommand shellOnly enabled />) })
+    await act(async () => { flowCb?.({ state: 'failed', info: 'host setup timeout' }) })
+    expect(btn('ssh-retry-launch')!.disabled).toBe(true)
+    expect(btn('ssh-retry-launch')!.title).toBe(OFF)
+  })
+
+  it('turned back on, the same button launches', async () => {
+    const { useSettingsStore, DEFAULT_SETTINGS } = await import('../../../src/renderer/stores/settingsStore')
+    await act(async () => { root.render(<SshFlowOverlay sessionId="s1" hasPostCommand={false} shellOnly={false} enabled />) })
+    await act(async () => { flowCb?.({ state: 'awaiting-postcommand' }) })
+    act(() => { useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, claudeEnabled: true } }) })
+    expect(btn('ssh-launch-claude')!.disabled).toBe(false)
+    expect(container.querySelector('[data-testid="ssh-claude-off"]')).toBeNull()
+    await act(async () => { btn('ssh-launch-claude')!.click() })
+    expect(launched()).toHaveBeenCalledWith('s1')
+  })
+})
+
+// WP2: main refuses "Launch Claude" on its own while Claude Code is off
+// (src/main/provider-launch-gate.ts) -- a switch flipped after this overlay
+// last rendered. The refusal is said where the Claude-off reason is, and the
+// overlay stays usable (no stuck busy state).
+describe("SshFlowOverlay when main refuses the launch", () => {
+  const OFF = 'Claude Code is off. Turn it on in Settings, Accounts.'
+  const btn = (id: string) => container.querySelector(`[data-testid="${id}"]`) as HTMLButtonElement | null
+
+  it('says why, and Launch Claude is clickable again', async () => {
+    ;(globalThis as any).window.electronAPI.ssh.launchClaude = vi.fn(async () => ({ refused: { code: 'provider-off', providerId: 'claude', message: OFF } }))
+    setSession({ host: 'h', port: 22, username: 'u', remotePath: '~' })
+    await act(async () => { root.render(<SshFlowOverlay sessionId="s1" hasPostCommand shellOnly enabled />) })
+    await act(async () => { flowCb?.({ state: 'awaiting-claude', info: SSH_ENTRY.INNER }) })
+    expect(container.querySelector('[data-testid="ssh-claude-off"]')).toBeNull()
+    await act(async () => { btn('ssh-launch-claude')!.click() })
+    expect((globalThis as any).window.electronAPI.ssh.launchClaude).toHaveBeenCalledWith('s1')
+    expect(container.querySelector('[data-testid="ssh-claude-off"]')!.textContent).toBe(OFF)
+    expect(btn('ssh-launch-claude')!.disabled).toBe(false)
+  })
+
+  it('an accepted launch says nothing of the kind', async () => {
+    ;(globalThis as any).window.electronAPI.ssh.launchClaude = vi.fn(async () => undefined)
+    setSession({ host: 'h', port: 22, username: 'u', remotePath: '~' })
+    await act(async () => { root.render(<SshFlowOverlay sessionId="s1" hasPostCommand shellOnly enabled />) })
+    await act(async () => { flowCb?.({ state: 'awaiting-claude', info: SSH_ENTRY.INNER }) })
+    await act(async () => { btn('ssh-launch-claude')!.click() })
+    expect(container.querySelector('[data-testid="ssh-claude-off"]')).toBeNull()
+  })
+})

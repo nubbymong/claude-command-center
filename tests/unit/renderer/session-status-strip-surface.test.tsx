@@ -199,14 +199,19 @@ describe('SessionStatusStrip master switch (onboarding p4)', () => {
     expect(container.querySelector('[title="Restart session"]')).not.toBeNull()
   })
 
-  it('statusLineEnabled=false collapses a Codex strip entirely (telemetry-only, nothing left)', () => {
+  // P3.8 (row 61): a Codex strip has the controls cluster too (Compact,
+  // Restart), so it keeps it with the master off, as a Claude strip does
+  // (tests/unit/renderer/session-status-strip-codex-controls.test.tsx).
+  it('statusLineEnabled=false hides a Codex strip telemetry but keeps its controls', () => {
     sessionState.sessions = [{ id: 's1', provider: 'codex', contextPercent: 10 }]
     settingsState.settings.statusLine = { font: 'sans', fontSize: 11, showContextBar: true }
     settingsState.settings.statusLineEnabled = false
 
     act(() => { root.render(createElement(SessionStatusStrip, { sessionId: 's1' })) })
 
-    expect(container.firstChild).toBeNull()
+    expect(container.textContent).not.toContain('10%')
+    expect(container.querySelector('[title="Restart session"]')).not.toBeNull()
+    expect(container.querySelector('[title="Compact the conversation"]')).not.toBeNull()
   })
 })
 

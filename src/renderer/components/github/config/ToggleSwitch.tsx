@@ -11,9 +11,11 @@ interface Props {
   label: string
   disabled?: boolean
   title?: string
+  /** ids of the elements that explain the switch (its state, why it is off). */
+  describedBy?: string
 }
 
-export default function ToggleSwitch({ state, onToggle, label, disabled, title }: Props) {
+export default function ToggleSwitch({ state, onToggle, label, disabled, title, describedBy }: Props) {
   const track =
     state === 'on' ? 'bg-blue' : state === 'mixed' ? 'bg-mauve' : 'bg-surface1'
   const knob =
@@ -28,10 +30,11 @@ export default function ToggleSwitch({ state, onToggle, label, disabled, title }
       role="switch"
       aria-checked={state === 'mixed' ? 'mixed' : state === 'on'}
       aria-label={label}
+      aria-describedby={describedBy}
       title={title}
       disabled={disabled}
       onClick={() => { if (!disabled) onToggle() }}
-      className={`relative w-[34px] h-[19px] rounded-full shrink-0 transition-colors duration-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-blue/50 ${track} ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+      className={`relative w-[34px] h-[19px] rounded-full shrink-0 transition-colors duration-200 focus-ring-strong ${track} ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
     >
       <span
         className={`absolute top-[2px] left-[2px] w-[15px] h-[15px] rounded-full transition-transform duration-200 ${knob}`}

@@ -46,7 +46,11 @@ export interface DropdownOptionSpec { value: string; label: string; hint?: strin
 export interface ModelRegistry {
   models: ModelEntry[]
   families: Record<string, FamilySpec>
+  /** Claude Code's effort levels. */
   effortLevels: EffortLevelSpec[]
+  /** Another provider's effort levels, by provider id (P3.8, row 40: `codex`).
+   *  Top-level on purpose: mergeRegistry never takes it from an overlay. */
+  providerEffortLevels?: Record<string, EffortLevelSpec[]>
   /** Ordered ALIAS rows ("Opus 1M" → 'opus[1m]'). These are the family aliases
    *  that always follow the newest model; the pinned per-version rows are
    *  DERIVED from `models` by buildModelPickerRows() (#385) so a Sentinel or
@@ -67,7 +71,16 @@ export interface RegistryOverlay {
 export function mergeRegistry(baseline: ModelRegistry, overlay: RegistryOverlay | null): ModelRegistry {
   if (!overlay) return { ...baseline, models: [...baseline.models], families: { ...baseline.families } }
   const byId = new Map<string, ModelEntry>(baseline.models.map((m) => [m.id, m]))
-  for (const o of overlay.models ?? []) byId.set(o.id, o)
+  const shipped = new Map<string, ModelEntry>(baseline.models.map((m) => [m.id, m]))
+  for (const o of overlay.models ?? []) {
+    // P3.8 round 1 (R1): which provider a shipped model belongs to is the
+    // code's, not an overlay's. An overlay entry that would move a shipped id
+    // to the other provider (a Codex id into a Claude family, a Claude id
+    // into the codex family) is ignored; the shipped entry stays.
+    const base = o ? shipped.get(o.id) : undefined
+    if (base && familyProvider(base.family) !== familyProvider(o.family)) continue
+    byId.set(o.id, o)
+  }
   return {
     ...baseline,
     models: [...byId.values()],
@@ -254,6 +267,44 @@ export interface ModelPickerRow {
 
 export const ALIAS_GROUP_LABEL = 'Latest'
 
+/** The providers whose sessions pick a model from this registry. */
+export type ModelProvider = 'claude' | 'codex'
+
+/** The family whose models Codex sessions run (P3.8, row 39). */
+export const CODEX_FAMILY = 'codex'
+
+/**
+ * The provider whose sessions run a family's models: the codex family is
+ * Codex's, every other family Claude Code's. Fixed in code, not read from the
+ * family's data: an overlay replaces a whole family entry (mergeRegistry), so
+ * a hand-edited overlay could otherwise move a Codex model into Claude's
+ * picker, where it would be written into a Claude session as `/model <id>`.
+ */
+export function familyProvider(family: string | null | undefined): ModelProvider {
+  return family === CODEX_FAMILY ? 'codex' : 'claude'
+}
+
+/** A Codex model id as a launch takes it (`-m <id>`): bounded, charset-limited,
+ *  its first character a letter or digit so it can never read as a flag. The
+ *  pty:spawn schema holds a Codex model to this (sanitize-restored-spawn-
+ *  options.ts re-exports it), and the Codex picker offers only ids that pass
+ *  (P3.8 round 1, R1): a row it offered could otherwise be one the launch
+ *  refuses. */
+export const CODEX_MODEL_ID_MAX = 64
+export const CODEX_MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:\/-]*$/
+export function isCodexModelId(v: unknown): v is string {
+  return typeof v === 'string' && v.length > 0 && v.length <= CODEX_MODEL_ID_MAX && CODEX_MODEL_ID_RE.test(v)
+}
+
+/** A provider's effort levels, in display order: Claude Code's are the
+ *  registry's `effortLevels`, another provider's its `providerEffortLevels`
+ *  entry (none when the registry has none for it). */
+export function effortLevelsFor(registry: ModelRegistry, provider: ModelProvider = 'claude'): EffortLevelSpec[] {
+  if (provider === 'claude') return registry?.effortLevels ?? []
+  const levels = registry?.providerEffortLevels?.[provider]
+  return Array.isArray(levels) ? levels : []
+}
+
 /** Family display label ("opus" -> "Opus"), falling back to the family key. */
 export function familyDisplayLabel(registry: ModelRegistry, family: string): string {
   const raw = registry.families?.[family]?.label ?? family
@@ -309,11 +360,17 @@ export function resolvePickedModelId(
  * Within a family, pins keep `models` order (newest first by convention).
  * Entries with `pickable === false` are skipped: their `id` is a matcher, not a
  * launchable model.
+ *
+ * `provider` (P3.8, row 39): only the rows of that provider's families
+ * (familyProvider). Claude Code's is the default, so every caller that
+ * predates Codex models in the registry still gets exactly Claude's rows.
  */
-export function buildModelPickerRows(registry: ModelRegistry): ModelPickerRow[] {
-  const aliasRows: ModelPickerRow[] = (registry.dropdown ?? []).map((d) => ({
-    value: d.value, label: d.label, hint: d.hint, group: ALIAS_GROUP_LABEL, kind: 'alias' as const,
-  }))
+export function buildModelPickerRows(registry: ModelRegistry, provider: ModelProvider = 'claude'): ModelPickerRow[] {
+  const aliasRows: ModelPickerRow[] = (registry.dropdown ?? [])
+    .filter((d) => familyProvider(resolveModelInfo(registry, d.value).family) === provider)
+    .map((d) => ({
+      value: d.value, label: d.label, hint: d.hint, group: ALIAS_GROUP_LABEL, kind: 'alias' as const,
+    }))
 
   // Never offer the same string twice: an alias row wins over an identical pin.
   const seen = new Set(aliasRows.map((r) => r.value))
@@ -332,6 +389,10 @@ export function buildModelPickerRows(registry: ModelRegistry): ModelPickerRow[] 
       console.warn('[model-registry] skipping malformed model entry (needs a string id and family):', m)
       continue
     }
+    if (familyProvider(m.family) !== provider) continue
+    // P3.8 round 1 (R1): a Codex row is only an id a launch takes (`-m <id>`);
+    // an overlay id the pty:spawn schema would refuse is never offered.
+    if (provider === 'codex' && !isCodexModelId(m.id)) continue
     if (seen.has(m.id)) continue
     seen.add(m.id)
     const row: ModelPickerRow = {
@@ -381,19 +442,37 @@ export interface EffortRow { value: string; label: string; hint?: string; suppor
  * models, fall back to "all supported" (spec §3: null efforts = assume valid).
  * Unsupported levels are DISABLED by callers rather than hidden, so the list
  * never silently changes shape under the user.
+ *
+ * `provider` (P3.8, row 40): the levels are that provider's (effortLevelsFor),
+ * and only a model of that provider's families gates them; another
+ * provider's model is not this provider's to judge, so it enables everything,
+ * as an unknown model does.
  */
 export function buildEffortRows(
   registry: ModelRegistry,
   modelId: string | undefined | null,
+  provider: ModelProvider = 'claude',
 ): EffortRow[] {
-  const levels = registry.effortLevels ?? []
+  const levels = effortLevelsFor(registry, provider)
   const info = modelId ? resolveModelInfo(registry, modelId) : null
-  const trustworthy = !!info && info.known && info.matchKind !== 'pattern'
+  const trustworthy = !!info && info.known && info.matchKind !== 'pattern' && familyProvider(info.family) === provider
   const allowed = trustworthy && info!.efforts ? new Set(info!.efforts) : null
   return levels.map((l) => ({
     value: l.value, label: l.label, hint: l.hint,
     supported: allowed ? allowed.has(l.value) : true,
   }))
+}
+
+/**
+ * Whether a Codex session on `model` runs `effort` (P3.8): no effort (the
+ * model's own default) always does; a level Codex's list does not hold (a
+ * legacy 'none' or 'minimal') never does; otherwise the model's own levels
+ * decide, a model the registry cannot place taking any level. The session
+ * dialog, the command bar pill and the launch in main all ask this.
+ */
+export function codexEffortRuns(registry: ModelRegistry, model: string | null | undefined, effort: string | null | undefined): boolean {
+  if (!effort) return true
+  return buildEffortRows(registry, model || null, 'codex').some((e) => e.value === effort && e.supported)
 }
 
 // ── Model coverage vs. the published Claude Code model configuration (#385) ──
@@ -422,6 +501,9 @@ export interface ModelCoverageResult {
   missing: ExpectedModelSpec[]               // article lists it, the registry does not
   extra: ExpectedModelSpec[]                 // registry carries it, the article does not (retired/renamed?)
   covered: { id: string; by: string }[]
+  /** The Codex half (P3.8 round 2, GS): Codex ids the registry lists more
+   *  than once; they cover nothing and fail the check. */
+  duplicates?: string[]
 }
 
 /** True for an entry that came from the overlay (Sentinel- or user-added). */
@@ -480,5 +562,56 @@ export function evaluateModelCoverage(
       ? null
       : `${missing.length} model(s) from the Claude Code model configuration article are not in the registry`,
     missing, extra, covered,
+  }
+}
+
+/**
+ * The Codex half (P3.8, row 39): the registry's Codex models against the
+ * models the supported Codex CLI lists in its own model picker
+ * (`resources/codex-model-catalogue.json`). The same rules as Claude's half,
+ * over the codex family only: an id is covered by a registry entry of that
+ * family with the same id (Codex ids carry no date suffix); `extra` is a
+ * launchable Codex model the list no longer names, never an overlay entry;
+ * an empty or missing list fails closed. Round 2 (GS): only an id the Codex
+ * picker offers (isCodexModelId) covers one; an id the registry lists more
+ * than once covers nothing and fails the check (the pickers would disagree
+ * about it); a file whose `models` is not a list reads as empty.
+ */
+export function evaluateCodexModelCoverage(
+  registry: ModelRegistry,
+  expected: ExpectedModelSet | null | undefined,
+): ModelCoverageResult {
+  const entries = Array.isArray(registry?.models) ? usableEntries(registry) : []
+  const count = new Map<string, number>()
+  for (const m of entries) count.set(m.id, (count.get(m.id) ?? 0) + 1)
+  const expectedModels = (Array.isArray(expected?.models) ? expected!.models : [])
+    .filter((m) => !!m && typeof m.id === 'string' && m.id.length > 0)
+  const listedIds = new Set(expectedModels.map((m) => m.id))
+  const duplicates = [...count].filter(([id, n]) => n > 1
+    && (listedIds.has(id) || entries.some((m) => m.id === id && familyProvider(m.family) === 'codex'))).map(([id]) => id)
+  const codexModels = entries.filter((m) => familyProvider(m.family) === 'codex' && m.pickable !== false
+    && isCodexModelId(m.id) && count.get(m.id) === 1)
+  if (expectedModels.length === 0) {
+    return {
+      ok: false,
+      reason: 'the expected Codex models list is empty or missing, so the registry cannot be verified (fail closed)',
+      missing: [], extra: [], covered: [],
+    }
+  }
+  const missing: ExpectedModelSpec[] = []
+  const covered: { id: string; by: string }[] = []
+  for (const exp of expectedModels) {
+    const hit = codexModels.find((m) => m.id === exp.id)
+    if (hit) covered.push({ id: exp.id, by: hit.id })
+    else missing.push({ id: exp.id, label: exp.label })
+  }
+  const extra = codexModels
+    .filter((m) => !listedIds.has(m.id) && !isOverlaySourced(m))
+    .map((m) => ({ id: m.id, label: m.label }))
+  return {
+    ok: missing.length === 0 && duplicates.length === 0,
+    reason: missing.length > 0 ? `${missing.length} model(s) the Codex CLI lists are not in the registry`
+      : duplicates.length > 0 ? `${duplicates.length} Codex model id(s) are listed more than once in the registry` : null,
+    missing, extra, covered, duplicates,
   }
 }

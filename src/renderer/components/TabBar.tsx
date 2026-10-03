@@ -229,8 +229,12 @@ export default function TabBar({ activeView, openPageTabs, onActivateSession, on
                 }}
                 aria-label={name}
                 title={tabTitle}
+                // An attention tab has the identity colour pulsing under its
+                // label, so the label is the primary text colour, not the muted
+                // one (token-contrast.test.ts holds the pair to 4.5:1).
+                data-attention={needsAttention ? 'true' : undefined}
                 className={`relative flex items-center gap-2 pl-4 pr-7 py-1.5 text-xs rounded-t-lg transition-all duration-150 overflow-hidden focus-ring ${
-                  isActive
+                  isActive || needsAttention
                     ? 'text-text'
                     : 'text-overlay1 hover:text-text'
                 }`}

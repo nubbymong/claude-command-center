@@ -201,9 +201,9 @@ export default function MemoryPage({ onClose, onOpenSessionLogs, onJumpToSession
       onClose={onClose}
       scrollable={false}
     >
-      {/* Codex coverage note (P5.9): clarify that this page is Claude-only */}
+      {/* Codex coverage note (P5.9): this page shows Claude Code memories only */}
       <div className="rounded-md bg-blue/10 border border-blue/30 p-3 text-sm text-blue mx-5 mt-3">
-        This page surfaces Claude Code memories from <code className="font-mono text-[12px]">~/.claude/projects/*/memory/</code>. Codex stores its project context in <code className="font-mono text-[12px]">AGENTS.md</code> files (project root) and user rules in <code className="font-mono text-[12px]">~/.codex/rules/</code> -- not tracked here.
+        This page shows Claude Code memories from <code className="font-mono text-[12px]">~/.claude/projects/*/memory/</code>. Codex memories are not shown here yet. Codex reads its project instructions from <code className="font-mono text-[12px]">AGENTS.md</code> files.
       </div>
 
       {/* Main body */}

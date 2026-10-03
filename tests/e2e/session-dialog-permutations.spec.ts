@@ -22,8 +22,24 @@ let page: IsolatedApp['page']
 // audit: cleaning it up in-test raced the still-live shell and always failed).
 let probeDirToClean: string | undefined
 
+/** Codex on AND answered, and Hello Codex already seen (its one-time takeover
+ *  would otherwise cover the window), as codex-session-creation.spec.ts seeds
+ *  it. The dialog offers the Codex card only while Codex is on; the clean seed
+ *  leaves Codex not set up, which greys the card whatever the connection, so
+ *  "Codex x SSH" below could neither prove SSH greys it nor click it. The
+ *  not-set-up card is checked in codex-settings-section.spec.ts. */
+function seedCodexOn(dataDir: string): void {
+  const config = path.join(dataDir, 'resources', 'CONFIG')
+  const settingsFile = path.join(config, 'settings.json')
+  const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'))
+  fs.writeFileSync(settingsFile, JSON.stringify({ ...settings, codexEnabled: true, codexAnswered: true }, null, 2))
+  const metaFile = path.join(config, 'app-meta.json')
+  const meta = JSON.parse(fs.readFileSync(metaFile, 'utf8'))
+  fs.writeFileSync(metaFile, JSON.stringify({ ...meta, helloCodexSeenVersion: meta.setupVersion ?? 'seen' }, null, 2))
+}
+
 test.beforeAll(async () => {
-  ctx = await launchIsolatedApp()
+  ctx = await launchIsolatedApp({ seedExtra: seedCodexOn })
   page = ctx.page
 })
 
@@ -130,14 +146,16 @@ test.describe('SessionDialog — driven flow permutations', () => {
     await openDialog()
     // SSH first → Codex card disabled.
     await providerCard('claude').click()
+    // Offered before SSH is picked, so it is SSH that greys it below.
+    await expect(provider('codex'), 'Codex is not on in this app: the seed turns it on (codexEnabled with codexAnswered)').toBeEnabled()
     await transportCard('ssh').click()
     await expect(provider('codex')).toBeDisabled()
-    await expect(page.locator("text=Codex can't run over SSH yet")).toBeVisible()
+    await expect(page.locator("text=Codex can't run over SSH in this release")).toBeVisible()
     // Codex first → SSH card disabled.
     await transportCard('local').click()
     await providerCard('codex').click()
     await expect(transport('ssh')).toBeDisabled()
-    await expect(page.locator('text=Codex runs on this PC only')).toBeVisible()
+    await expect(page.locator('text=Codex runs on this computer only')).toBeVisible()
   })
 
   test('Terminal only × Local shows the command / arguments / secret fields', async () => {

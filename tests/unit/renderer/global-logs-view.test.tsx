@@ -190,6 +190,8 @@ describe('GlobalLogsView (logs2)', () => {
     const msg = (globalThis as any).confirm.mock.calls.at(-1)?.[0] as string
     expect(msg).toMatch(/indexed history/i)
     expect(msg).toMatch(/~\/\.claude/)
+    // P3.12: a Codex slot's conversation is in its account's sessions folder.
+    expect(msg).toMatch(/Codex account's sessions folder/)
     expect(deleteSlot).toHaveBeenCalled()
     cleanup()
   })

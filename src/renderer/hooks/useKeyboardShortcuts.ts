@@ -5,11 +5,37 @@ import { requestCloseSession } from '../stores/sshCloseStore'
 import { matchesShortcut, DEFAULT_SHORTCUTS } from '../utils/shortcuts'
 import { captureGlyphDiagnostic } from '../utils/glyphDiagnostic'
 import { requestResync } from '../components/terminal/repaintRegistry'
-import { sendImageToSession } from '../utils/imageTransfer'
+import { sendImageToSession, typeImagePathIntoShell } from '../utils/imageTransfer'
+import { sendImagePathToCodex } from '../lib/codexComposer'
 import { usePasteHintStore } from '../stores/pasteHintStore'
 import { useAppMetaStore } from '../stores/appMetaStore'
 import { deriveOnboarding } from '../onboarding/gate'
+import { useHelloCodexStore } from '../onboarding/hello-codex-open'
+import { PARTNER_PTY_SUFFIX } from '../../shared/multi-spawn-rule'
+import { hasSpawned } from '../ptyTracker'
 import type { ViewType } from '../types/views'
+
+/**
+ * P3.16a (N9): whether the tab's partner shell is the pane on screen. The
+ * partner view shows the partner shell (its own PTY, `<session id>-partner`)
+ * in place of the session's terminal, which is hidden then. TerminalView marks
+ * its pane with data-terminal-session (the PTY id) and the one pane on screen
+ * with data-terminal-active, as the Ctrl+Alt+R handler below reads them. The
+ * id is compared as a value, never put into a selector.
+ */
+function partnerOnScreen(sessionId: string): boolean {
+  const partnerId = sessionId + PARTNER_PTY_SUFFIX
+  return Array.from(document.querySelectorAll('[data-terminal-session]')).some(
+    (el) => el.getAttribute('data-terminal-session') === partnerId && el.hasAttribute('data-terminal-active'),
+  )
+}
+
+/** PR-level ADR-009 round 1 (A1): the hint when a plain terminal or a partner
+ *  shell gets nothing typed (typeImagePathIntoShell): where the image was
+ *  saved. */
+function notTypedHint(path: string): string {
+  return `The image was saved on this computer at ${path}; nothing was typed into this terminal.`
+}
 
 /**
  * Global keyboard shortcuts (configurable via settings).
@@ -47,6 +73,9 @@ export function useKeyboardShortcuts(
       // sessions, paste into a hidden prompt), so suppress them until the
       // flow settles. Same gate expression as App.tsx's bootGate input.
       if (deriveOnboarding(useAppMetaStore.getState().meta, {}).due) return
+      // The same for the Codex introduction's takeover and its replay (WP2
+      // commit 6f): they cover the whole shell too.
+      if (useHelloCodexStore.getState().open !== null) return
       // MERGE over the defaults, never substitute: a persisted map predating a
       // release lacks that release's new actions, and `|| DEFAULT_SHORTCUTS`
       // only helps when the whole object is absent — every existing user would
@@ -92,21 +121,77 @@ export function useKeyboardShortcuts(
       // NOTE: rename (F2) is handled in Sidebar so it edits the active session
       // in the Active Sessions list (only when the sidebar is visible), not the
       // tab. Tab double-click / right-click still edit the tab inline.
-      // Paste clipboard image: saves to host screenshots dir, then routes to
-      // Claude. Local sessions get the absolute path written into the prompt
-      // (Claude's Read tool ingests it directly). SSH sessions can't reach
-      // the host filesystem so they go through the Conductor MCP
-      // fetch over the reverse tunnel.
+      // Paste clipboard image: saves to host screenshots dir, then routes it by
+      // the pane on screen. A Claude session: a local one gets the absolute path
+      // written into the prompt (Claude's Read tool ingests it directly), an SSH
+      // one, which can't reach the host filesystem, the Conductor MCP fetch over
+      // the reverse tunnel. A Codex session: its line through the Codex typing
+      // rule. A plain terminal: only the quoted path, with no Enter; over SSH
+      // nothing, with a hint saying where the image is. The partner shell in
+      // the partner view (a shell on this computer for every tab, an SSH tab's
+      // too): only the quoted path, with no Enter. A plain terminal or a partner
+      // shell that is not running gets nothing, with a hint saying so and where
+      // the image is. Off Windows (PR-level ADR-009 round 1, A1) the path is
+      // typed only into a shell of the sh family, and only with no control
+      // character in it; otherwise nothing, with the hint saying where it is.
       if (matchesShortcut(e, shortcuts.pasteImage)) {
         e.preventDefault()
         const state = useSessionStore.getState()
         const sessionId = state.activeSessionId
         if (sessionId) {
           const session = state.sessions.find((s) => s.id === sessionId)
+          // The pane on screen when Alt+V is pressed is the target, read
+          // before the image is saved, as the session is.
+          const showingPartner = partnerOnScreen(sessionId)
           const res = await window.electronAPI.clipboard.saveImage()
           if ('path' in res) {
-            // Success is self-evident — the path appears in the prompt (no toast).
-            sendImageToSession(sessionId, res.path, 'I just pasted an image — please view it.', session?.sessionType)
+            // P3.15 (row 70): this runs with focus outside the terminal (a
+            // focused terminal hands Alt+V to the CLI, which pastes the image
+            // itself). A Codex session's line goes through the rule the app
+            // types into Codex by, and a line it could not send says why.
+            if (showingPartner) {
+              // P3.16a (N9): in the partner view the partner shell is on screen
+              // and the session's terminal is hidden, so the image goes to the
+              // partner shell and the assistant behind it gets nothing. The
+              // partner is a plain shell on this computer for every tab (an SSH
+              // tab's too: it opens at home here), so it gets what a plain
+              // terminal on this computer gets: the image's path, quoted for its
+              // shell, with no sentence and no Enter. Round 2 (Q7): a partner
+              // shell that is not running (no spawn of it is current: its
+              // process ended, or a Restart's next one has not started) has no
+              // shell to type into: nothing is typed, and the hint says so, as
+              // for a plain terminal that is not running.
+              const partnerId = sessionId + PARTNER_PTY_SUFFIX
+              if (!hasSpawned(partnerId)) {
+                usePasteHintStore.getState().show(sessionId, `This terminal is not running, so nothing was typed; the image was saved on this computer at ${res.path}.`)
+              } else if (!typeImagePathIntoShell(partnerId, res.path, window.electronPlatform === 'win32', res.posixShell)) {
+                // PR-level ADR-009 round 1 (A1): off Windows, not typed (as below).
+                usePasteHintStore.getState().show(sessionId, notTypedHint(res.path))
+              }
+            } else if (session?.shellOnly) {
+              // P3.16a (U6): a plain terminal has no assistant to tell, so it
+              // gets the image's path, quoted for its shell, and no sentence or
+              // Enter. Over SSH the file is on this computer, which the remote
+              // shell cannot read: nothing is typed, and the hint says where it is.
+              // A terminal whose process has ended or never started has no shell
+              // to type into: nothing is typed, and the hint says so (round 1),
+              // as the Codex route says when its session is not running.
+              if (session.ptyExited || session.neverStarted) {
+                usePasteHintStore.getState().show(sessionId, `This terminal is not running, so nothing was typed; the image was saved on this computer at ${res.path}.`)
+              } else if (session.sessionType === 'ssh') {
+                usePasteHintStore.getState().show(sessionId, `The image was saved on this computer at ${res.path}; the remote shell cannot read it, so nothing was typed.`)
+              } else if (!typeImagePathIntoShell(sessionId, res.path, window.electronPlatform === 'win32', res.posixShell)) {
+                // PR-level ADR-009 round 1 (A1): off Windows, a shell main did not
+                // say is of the sh family, or a path with a control character:
+                // nothing is typed, and the hint says where the image is.
+                usePasteHintStore.getState().show(sessionId, notTypedHint(res.path))
+              }
+            } else if (session?.provider === 'codex') {
+              sendImagePathToCodex(sessionId, res.path, (note) => usePasteHintStore.getState().show(sessionId, note))
+            } else {
+              // Success is self-evident — the path appears in the prompt (no toast).
+              sendImageToSession(sessionId, res.path, 'I just pasted an image — please view it.', session?.sessionType)
+            }
           } else {
             usePasteHintStore.getState().show(
               sessionId,
@@ -136,6 +221,7 @@ export function useKeyboardShortcuts(
       // Same onboarding-overlay suppression as handleKeyDown: a diagnostic
       // capture under the covered shell would screenshot the overlay.
       if (deriveOnboarding(useAppMetaStore.getState().meta, {}).due) return
+      if (useHelloCodexStore.getState().open !== null) return
       // The Settings shortcut recorder / Test box must WIN over this capture
       // listener, or the chord can never be re-recorded or tested (pressing it
       // in the Test box would fire a real capture — disk write + Explorer

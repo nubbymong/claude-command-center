@@ -13,6 +13,9 @@ import type { FromTkWorker } from '../../../src/main/tokenomics/tk-worker-transp
 
 const CODEX_PRICING = { 'gpt-5.5': { input: 1, output: 4, cacheRead: 0.1, cacheWrite: 0 } }
 
+// On-disk tests commit every sweep to a real database file and open it three times; slow Windows CI runners took 12 s.
+const ON_DISK_TIMEOUT = 30_000
+
 interface RolloutOpts {
   /** Bytes of filler in the `session_meta` line. Real rollouts carry the whole
    *  instruction blob and the serialised tool schemas here — measured at 47 KB
@@ -86,43 +89,62 @@ describe('tokenomics codex ingest hardening', () => {
     raw.close()
   }
 
-  async function waitForCompletions(msgs: FromTkWorker[], n: number): Promise<void> {
-    for (let i = 0; i < 800; i++) {
-      await new Promise((r) => setTimeout(r, 10))
-      if (completions(msgs).length >= n) return
-    }
-    throw new Error(`sweep did not complete (${completions(msgs).length}/${n})`)
+  /** Everything the worker sends, kept in order; a waiter is woken by each
+   *  message as it arrives (no polling). */
+  const arrivals = new WeakMap<FromTkWorker[], Set<() => void>>()
+  function listen(fake: FakeTkWorkerTransport): FromTkWorker[] {
+    const msgs: FromTkWorker[] = []
+    const wake = new Set<() => void>()
+    arrivals.set(msgs, wake)
+    fake.onMessage((m) => { msgs.push(m); for (const w of [...wake]) w() })
+    return msgs
+  }
+
+  function waitForCompletions(msgs: FromTkWorker[], n: number, ms = 8000): Promise<void> {
+    if (completions(msgs).length >= n) return Promise.resolve()
+    const wake = arrivals.get(msgs)!
+    return new Promise((resolve, reject) => {
+      const check = (): void => { if (completions(msgs).length >= n) { clearTimeout(t); wake.delete(check); resolve() } }
+      const t = setTimeout(() => { wake.delete(check); reject(new Error(`sweep did not complete (${completions(msgs).length}/${n})`)) }, ms)
+      wake.add(check)
+    })
   }
 
   /**
-   * Sweep until the event total has held steady for `stable` consecutive
-   * sweeps, and return it.
+   * Sweep until the worker reports a drained sweep, then run one confirming
+   * sweep and return its total.
    *
-   * Requiring several quiet sweeps rather than one matters here: a rollout can
-   * legitimately yield NOTHING for many ticks while the ingester works through
-   * megabytes of tool output, so "the total did not move this time" is not the
-   * same as "there is nothing left". Stopping at the first quiet sweep reads a
-   * mid-drain total as the final answer.
+   * The worker reports `drained` only when no file it could read was left
+   * short of its end in that sweep (tokenomics-worker.ts: noteScanned sets
+   * sweepPending whenever scannedTo < size). So a rollout that yields NOTHING
+   * for many ticks while the ingester works through megabytes of tool output
+   * is never mistaken for finished, which is what several quiet sweeps used
+   * to stand in for. The confirming sweep is one more pass over the same
+   * files. A file read to its end and unchanged since is skipped in it
+   * (unchangedAndFullyScanned returns before any read), so its total must
+   * not move; a total that moved means a sweep after the drained one still
+   * added rows, such as a file read again from the top and counted twice.
    */
-  async function drain(fake: FakeTkWorkerTransport, msgs: FromTkWorker[], stable = 12): Promise<number> {
+  async function drain(fake: FakeTkWorkerTransport, msgs: FromTkWorker[]): Promise<number> {
     await waitForCompletions(msgs, 1)
-    let last = completions(msgs)[0].eventsTotal
-    let quiet = 0
-    for (let round = 1; round < 120; round++) {
+    let i = 0
+    while (!completions(msgs)[i].drained) {
+      if (i >= 200) throw new Error('the index never drained')
       fake.post({ type: 'reindex' })
-      await waitForCompletions(msgs, round + 1)
-      const now = completions(msgs)[round].eventsTotal
-      quiet = now === last ? quiet + 1 : 0
-      last = now
-      if (quiet >= stable) return now
+      await waitForCompletions(msgs, i + 2)
+      i++
     }
-    return last
+    const atDrain = completions(msgs)[i].eventsTotal
+    fake.post({ type: 'reindex' })
+    await waitForCompletions(msgs, i + 2)
+    const confirmed = completions(msgs)[i + 1].eventsTotal
+    expect(confirmed, 'a sweep after the drained one changed the total').toBe(atDrain)
+    return confirmed
   }
 
   function start(opts: { codexDir: string; dbPath?: string; maxTickBytes?: number; fsImpl?: typeof fs }) {
     const fake = new FakeTkWorkerTransport()
-    const msgs: FromTkWorker[] = []
-    fake.onMessage((m) => msgs.push(m))
+    const msgs = listen(fake)
     const w = track(createTokenomicsWorker(fake.asWorkerSide(), {
       ...(opts.maxTickBytes !== undefined ? { maxTickBytes: opts.maxTickBytes } : {}),
       ...(opts.fsImpl ? { fs: opts.fsImpl } : {}),
@@ -189,8 +211,7 @@ describe('tokenomics codex ingest hardening', () => {
     ].join('\n') + '\n')
 
     const fake = new FakeTkWorkerTransport()
-    const msgs: FromTkWorker[] = []
-    fake.onMessage((m) => msgs.push(m))
+    const msgs = listen(fake)
     track(createTokenomicsWorker(fake.asWorkerSide(), {}))
     fake.post({
       type: 'open', dbPath: ':memory:', configs: [],
@@ -229,8 +250,7 @@ describe('tokenomics codex ingest hardening', () => {
     fs.writeFileSync(path.join(dir, 'rollout-2026-08-01T00-00-00-late.jsonl'), lines.join('\n') + '\n')
 
     const fake = new FakeTkWorkerTransport()
-    const msgs: FromTkWorker[] = []
-    fake.onMessage((m) => msgs.push(m))
+    const msgs = listen(fake)
     track(createTokenomicsWorker(fake.asWorkerSide(), { maxTickBytes: 128 * 1024 }))
     fake.post({
       type: 'open', dbPath: ':memory:', configs: [],
@@ -301,7 +321,7 @@ describe('tokenomics codex ingest hardening', () => {
 
     const b = start({ codexDir, dbPath, maxTickBytes: 256 * 1024 })
     expect(await drain(b.fake, b.msgs)).toBe(12)
-  })
+  }, ON_DISK_TIMEOUT)
 
   it('does not double-count when the same rollout is re-read from the top', async () => {
     // The truncation/rotation path resets the offset to 0 with rows already
@@ -323,7 +343,7 @@ describe('tokenomics codex ingest hardening', () => {
 
     const b = start({ codexDir, dbPath })
     expect(await drain(b.fake, b.msgs)).toBe(6)
-  })
+  }, ON_DISK_TIMEOUT)
 
   it('upgrading a database indexed by the previous build loses no turns', async () => {
     // The upgrade is the one event every existing user is guaranteed to hit.
@@ -346,7 +366,7 @@ describe('tokenomics codex ingest hardening', () => {
 
     const b = start({ codexDir, dbPath })
     expect(await drain(b.fake, b.msgs)).toBe(40)   // not 30
-  })
+  }, ON_DISK_TIMEOUT)
 
   it('a database migrated mid-drain still finds every turn', async () => {
     // The normal state of a multi-GB rollout at quit is part-indexed, which is
@@ -356,7 +376,11 @@ describe('tokenomics codex ingest hardening', () => {
     const dbPath = path.join(tmp, 'tk.db')
     writeRollout(path.join(codexDir, '2026', '08', '01'), 'rollout-2026-08-01T00-00-00-mid.jsonl', 20, { padBytes: 100 * 1024 })
     const a = start({ codexDir, dbPath, maxTickBytes: 256 * 1024 })
-    await waitForCompletions(a.msgs, 2)      // stop part-way, as a quit would
+    // Stop part-way, as a quit would: a second sweep asked for, rather than
+    // waiting on the worker's own five-second timer.
+    await waitForCompletions(a.msgs, 1)
+    a.fake.post({ type: 'reindex' })
+    await waitForCompletions(a.msgs, 2)
     const partial = completions(a.msgs)[1].eventsTotal
     expect(partial).toBeGreaterThan(0)
     expect(partial).toBeLessThan(20)
@@ -366,7 +390,7 @@ describe('tokenomics codex ingest hardening', () => {
     downgradeCursors(dbPath)
     const b = start({ codexDir, dbPath, maxTickBytes: 256 * 1024 })
     expect(await drain(b.fake, b.msgs)).toBe(20)
-  })
+  }, ON_DISK_TIMEOUT)
 
   // --- Liveness --------------------------------------------------------------
 

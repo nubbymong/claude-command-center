@@ -5,13 +5,17 @@ import { useResolvedTheme } from '../hooks/useThemeController'
 import { useRegionTypography } from '../hooks/useTypography'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { sshMappedProfileId } from '../utils/sessionLaunch'
-import { useAccountAuthStore, type AccountAuthStatus } from '../stores/accountAuthStore'
+import { useAccountAuthStore, claudeCodeNotChecked, type AccountAuthStatus } from '../stores/accountAuthStore'
+import { useClaudeOff } from '../lib/claudeOff'
 import { useSettingsStore } from '../stores/settingsStore'
-import { resolveAccountName, resolveAccountNameByEmail, resolveAccountColourKey, middleTruncateEmail } from '../../shared/account-chip-color'
+import { resolveAccountName, resolveAccountNameByEmail, middleTruncateEmail } from '../../shared/account-chip-color'
+import { chipColourKeyForEmail } from '../utils/accountChip'
+import { useProviderAccountsStore } from '../stores/providerAccountsStore'
 import { BrandMark } from './BrandMark'
-import { ContainerGlyph, containerBadgeTitle } from './sidebar/Badges'
+import { ContainerGlyph, containerBadgeTitle, ProviderMark } from './sidebar/Badges'
 import { containerNameOf, resolveTransportBadge } from './sidebar/transportBadge'
 import { useRestartSession } from '../hooks/useRestartSession'
+import { RowMenu } from './ui/RowMenu'
 import { ASK_LABEL } from '../lib/askConductor'
 import { sshAuthGiveUpMemory } from '../stores/sshAuthGiveUp'
 
@@ -60,6 +64,31 @@ function AskHeaderLead({ session }: { session: Session }) {
         Past discussions
       </button>
     </>
+  )
+}
+
+/**
+ * A Codex session's Restart (canvas F7): a menu with "Restart" (the same
+ * conversation, as Claude's Restart: main resumes the one the tab is on, P3.5;
+ * a new one when it is on none) and "Restart and pick a conversation" (the
+ * resume picker, the existing terminal script). A Codex session has no Model / Compact / Restart
+ * cluster in the status strip -- those write Claude slash commands -- so its
+ * Restart lives here, where the canvas puts it. A launch on an unverified
+ * sign-in asks for its confirmation again on the way back up (TerminalView).
+ */
+function CodexRestartMenu({ session }: { session: Session }) {
+  const { restart } = useRestartSession(session)
+  return (
+    <RowMenu
+      label="Restart this session"
+      testId="codex-restart"
+      itemTestId={(key) => `codex-restart-${key}`}
+      trigger={<>Restart<span aria-hidden className="inline-block w-0 h-0" style={{ borderLeft: '4px solid transparent', borderRight: '4px solid transparent', borderTop: '5px solid var(--text-muted)' }} /></>}
+      items={[
+        { key: 'fresh', label: 'Restart', onSelect: () => restart(undefined, { pickConversation: false }) },
+        { key: 'pick', label: 'Restart and pick a conversation', onSelect: () => restart(undefined, { pickConversation: true }) },
+      ]}
+    />
   )
 }
 
@@ -329,25 +358,47 @@ function SshConnectionPill({ session }: { session: Session }) {
  *
  * Renders NOTHING when no watcher is armed for this session -- the master
  * switch is off, or it is a session type that never arms one (shell-only,
- * Codex, Ask). An absent pill is the honest reading of "no watchdog here",
- * and beats an "off" pill on every session in a workspace with the feature
- * turned off. `checks` absent on an armed session (a state pushed by an older
- * main) reads as all-on, matching that build's behaviour.
+ * an SSH Codex session, Ask). An absent pill is the honest reading of "no
+ * watchdog here", and beats an "off" pill on every session in a workspace
+ * with the feature turned off. `checks` absent on an armed session (a state
+ * pushed by an older main) reads as all-on, matching that build's behaviour.
+ * P3.10 round 1 (S1): only the checks the session's CLI has count
+ * (`unavailable` lists the others: Codex has no safeguard message), so a
+ * Codex session with every check it has on reads green, as a Claude one does.
  */
-function WatchdogPill({ watchdog }: { watchdog?: Session['watchdog'] }) {
+const WATCHDOG_CHECK_WORDS = { rateLimit: 'rate-limit resume', overload: 'API overload', safeguard: 'safeguard' } as const
+/**
+ * P3.10 round 2 (R1): the pill reads the session's LIVE watchdog state from
+ * the store, not the record the header was handed. The shell hands the header
+ * a session copy refreshed only on structural changes (structuralSessionsEqual),
+ * and `watchdog` is deliberately not structural (it changes with every
+ * incident), so the handed copy went stale: the pill appeared only after some
+ * other structural change (a tab closed), and a check switched off left it
+ * reading on (the P3.10 VM run; the same path for a Claude and a Codex
+ * session). The handed copy stands in only while the store has no such
+ * session.
+ */
+function WatchdogPill({ session }: { session: Session }) {
+  const watchdog = useSessionStore((s) => {
+    const live = s.sessions.find((x) => x.id === session.id)
+    return live ? live.watchdog : session.watchdog
+  })
   // Presence of the state IS the armed signal: main pushes one only for a
   // session it actually watches, and clears it on teardown.
   if (!watchdog) return null
   const checks = watchdog.checks
-  const values = checks ? [checks.rateLimit, checks.overload, checks.safeguard] : [true, true, true]
-  const on = values.filter(Boolean).length
-  const tone = on === 3 ? 'var(--status-success)' : on === 0 ? 'var(--text-muted)' : 'var(--status-warning)'
-  const word = on === 3 ? undefined : on === 0 ? 'off' : 'partial'
-  const title = on === 3
-    ? 'Watchdog auto-retry is on for this session (rate-limit resume, API overload, safeguard). Right-click the session to change it.'
+  const unavailable = new Set(watchdog.unavailable ?? [])
+  const has = (['rateLimit', 'overload', 'safeguard'] as const).filter((k) => !unavailable.has(k))
+  const total = has.length
+  const on = has.filter((k) => (checks ? checks[k] : true)).length
+  const all = total > 0 && on === total
+  const tone = all ? 'var(--status-success)' : on === 0 ? 'var(--text-muted)' : 'var(--status-warning)'
+  const word = all ? undefined : on === 0 ? 'off' : 'partial'
+  const title = all
+    ? `Watchdog auto-retry is on for this session (${has.map((k) => WATCHDOG_CHECK_WORDS[k]).join(', ')}). Right-click the session to change it.`
     : on === 0
       ? 'Watchdog auto-retry is off for this session — it still reports a sleeping session, but never types. Right-click the session to change it.'
-      : `Watchdog auto-retry is partly on for this session (${on} of 3 checks). Right-click the session to change it.`
+      : `Watchdog auto-retry is partly on for this session (${on} of ${total} checks). Right-click the session to change it.`
   return <HeaderPill label="Watchdog" tone={tone} word={word} title={title} testId="session-pill-watchdog" />
 }
 
@@ -379,9 +430,15 @@ function AccountAuthPillSet({
   // very first render precedes the fetch effect, and a failed first fetch leaves
   // no result either. Never paint "signed out"/"not connected" for unknown: show
   // "…" while pending and "unknown" (error in the tooltip) after a failure.
-  const known = status?.fetchedAt !== undefined
+  // A not-checked answer (WP2) is a known answer too: it has no fetchedAt,
+  // so the next refresh asks again, but its claude.ai half stands.
+  const known = status?.fetchedAt !== undefined || !!status?.cliNotChecked
   const pending = !known && !status?.error
   const cliOk = status?.cliAuthed === true
+  // WP2: Claude Code switched off (or main did not check): the Claude Code
+  // pill says so, never "signed out" -- nothing was asked, so nothing is
+  // known either way.
+  const codeOff = claudeCodeNotChecked(status, useClaudeOff())
   const web = status?.web
   const errorSuffix = status?.error ? ` — could not read status: ${status.error}` : ''
   // A green dot = all good, no word; the word appears only when action is needed
@@ -409,9 +466,9 @@ function AccountAuthPillSet({
       />
       <HeaderPill
         label="Claude Code"
-        tone={codeTone}
-        word={codeWord}
-        title={`Claude Code sign-in for this session's account${errorSuffix}`}
+        tone={codeOff ? 'var(--text-muted)' : codeTone}
+        word={codeOff ? codeOff.word : codeWord}
+        title={codeOff ? `Claude Code sign-in for this session's account was not checked: ${codeOff.reason}` : `Claude Code sign-in for this session's account${errorSuffix}`}
         testId="session-pill-claudecode"
       >
         <button
@@ -446,6 +503,8 @@ function SessionAuthPills({ session }: { session: Session }) {
   const refresh = useAccountAuthStore((s) => s.refresh)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
+  // P3.6 (row 7): chip colours from the identity when the account list names it.
+  const accountsSnapshot = useProviderAccountsStore((s) => s.snapshot)
   const theme = useResolvedTheme()
   // Only LOCAL Claude sessions carry per-session Claude Code creds + a claude.ai
   // web session. SSH (remote creds), Codex (not profile-scoped) and shell-only
@@ -485,14 +544,17 @@ function SessionAuthPills({ session }: { session: Session }) {
   const profileId = isSshClaude ? sshProfileId : (session.profileId ?? primary?.id)
   const profile = useAccountProfilesStore((s) => (profileId ? s.profiles.find((p) => p.id === profileId) : undefined))
   const status = useAccountAuthStore((s) => (profileId ? s.byProfile[profileId] : undefined))
+  const claudeOffNow = useClaudeOff()
 
   React.useEffect(() => {
     // This header renders only the ACTIVE session, so mounting/param-change is
     // "on activate". Fetch for a LOCAL Claude session, and for an SSH session
     // whose remote account maps to a local profile (profileId set). Re-fetch when
-    // the session or its (possibly SSH-mapped) account changes.
+    // the session or its (possibly SSH-mapped) account changes -- and (WP2)
+    // when Claude Code is switched off or back on: a not-checked answer is
+    // never cached as an auth result, so switching back on asks again.
     if ((applies || isSshClaude) && !isAsk && profileId) void refresh(profileId)
-  }, [applies, isSshClaude, isAsk, profileId, refresh, session.id])
+  }, [applies, isSshClaude, isAsk, profileId, refresh, session.id, claudeOffNow])
 
   React.useEffect(() => {
     // Identity arrived → forget any recorded shimmer give-up for this session,
@@ -544,7 +606,7 @@ function SessionAuthPills({ session }: { session: Session }) {
       ? (r === idEmail ? middleTruncateEmail(idEmail) : r)
       : (sshProfile?.name || 'Account')
     const remoteTone = resolveIdentityColor(
-      resolveAccountColourKey(idEmail, accountColourOverrides, session.accountColour ?? sshProfile?.colourKey),
+      chipColourKeyForEmail(idEmail, { profiles, snapshot: accountsSnapshot, overrides: accountColourOverrides }, session.accountColour ?? sshProfile?.colourKey),
       theme,
     )
     const accountTitle = reportedEmail
@@ -562,7 +624,7 @@ function SessionAuthPills({ session }: { session: Session }) {
           profileId={sshProfileId}
           refresh={refresh}
           gitHubTail={gitHubTail}
-          watchdogPill={<WatchdogPill watchdog={session.watchdog} />}
+          watchdogPill={<WatchdogPill session={session} />}
         />
       )
     }
@@ -575,7 +637,7 @@ function SessionAuthPills({ session }: { session: Session }) {
           title={accountTitle}
           testId="session-pill-account"
         />
-        <WatchdogPill watchdog={session.watchdog} />
+        <WatchdogPill session={session} />
         {gitHubTail}
       </>
     )
@@ -583,10 +645,16 @@ function SessionAuthPills({ session }: { session: Session }) {
 
   if (!applies || !profileId) {
     // Non-Claude sessions still show the GitHub pill (with its own leading
-    // separator) so the right cluster stays consistent.
-    return !isAsk && session.githubIntegration?.repoSlug
+    // separator) so the right cluster stays consistent. P3.10 round 1 (S1): a
+    // Codex session shows its Watchdog pill as a Claude one does (nothing
+    // when no watcher is armed for it).
+    const codexWatchdog = (session.provider ?? 'claude') === 'codex' && !session.shellOnly
+      ? <WatchdogPill session={session} />
+      : null
+    const gitHubPart = !isAsk && session.githubIntegration?.repoSlug
       ? (<><div className="w-px h-4 bg-surface1 shrink-0" />{gitHub}</>)
       : null
+    return codexWatchdog || gitHubPart ? <>{codexWatchdog}{gitHubPart}</> : null
   }
 
   // Account pill: the Claude account this session ACTUALLY runs as. The LIVE
@@ -611,7 +679,7 @@ function SessionAuthPills({ session }: { session: Session }) {
       })()
     : (profile?.name || 'Account')
   const accountTone = resolveIdentityColor(
-    resolveAccountColourKey(email, accountColourOverrides, session.accountColour ?? profile?.colourKey),
+    chipColourKeyForEmail(email, { profiles, snapshot: accountsSnapshot, overrides: accountColourOverrides }, session.accountColour ?? profile?.colourKey),
     theme,
   )
 
@@ -640,7 +708,7 @@ function SessionAuthPills({ session }: { session: Session }) {
       profileId={profileId}
       refresh={refresh}
       gitHubTail={<><div className="w-px h-4 bg-surface1 shrink-0" />{gitHub}</>}
-      watchdogPill={<WatchdogPill watchdog={session.watchdog} />}
+      watchdogPill={<WatchdogPill session={session} />}
     />
   )
 }
@@ -684,6 +752,10 @@ export default function SessionHeader({ session }: Props) {
           {/* Color dot: at-a-glance session identifier */}
           <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: identity }} />
 
+          {/* The provider's own mark before the name of a Codex session (canvas
+              F7), the same mark Accounts and the session type badges draw. */}
+          {session.provider === 'codex' && !session.shellOnly && <ProviderMark providerId="codex" size={16} title="Codex" />}
+
           {/* Editable work name for this session (F2 / double-click tab / here). */}
           <SessionNameField session={session} />
 
@@ -717,6 +789,7 @@ export default function SessionHeader({ session }: Props) {
       {/* Right cluster: account · claude.ai · Claude Code | GitHub — styled to
           match the title-bar service pills (GitHub slug shows on hover). */}
       <SessionAuthPills session={session} />
+      {!isAsk && session.provider === 'codex' && !session.shellOnly && <CodexRestartMenu session={session} />}
       {/* The encrypted notes left this header for the command bar's Core band
           (ADR-018 D10): one lock with a count, the notes in its popover. */}
     </div>

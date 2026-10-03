@@ -292,8 +292,10 @@ describe('MultiSpawnStartupPage — the real page', () => {
   })
   afterEach(() => { act(() => root.unmount()); container.remove() })
 
-  const render = (autoEnabledIds: string[] = []) =>
-    act(() => root.render(React.createElement(MultiSpawnStartupPage, { autoEnabledIds, onDone })))
+  // The page counts from the restore-time tally App hands it; these cases
+  // set the sessions and remotes it tallied.
+  const render = (autoEnabledIds: string[] = [], tally: unknown = { sessions: SESSIONS.sessions, detached: DETACHED.entries }) =>
+    act(() => root.render(React.createElement(MultiSpawnStartupPage, { autoEnabledIds, tally, onDone } as never)))
 
   const q = (sel: string) => container.querySelector(sel) as HTMLElement | null
   const rowEl = (id: string) => q(`[data-testid="multi-spawn-startup-row"][data-config-id="${id}"]`)!
@@ -328,6 +330,20 @@ describe('MultiSpawnStartupPage — the real page', () => {
     expect(strip.textContent).toContain('2 sessions about to resume')
     // …and the row's own chip agrees with it.
     expect(chipEl('a')!.textContent).toContain('2 copies found')
+  })
+
+  it('walk fix N5: counts come from the restore-time tally, not the live sessions (a launch after the restore is not a restored copy)', () => {
+    CONFIG.configs = [cfg('a')]
+    // Live now: the restored copy plus a fresh launch. Tallied at restore: one.
+    SESSIONS.sessions = [sess('s1', 'a'), sess('fresh', 'a')]
+    render([], { sessions: [sess('s1', 'a')], detached: [] })
+    expect(q('[data-testid="multi-spawn-startup-resume-note"]')!.textContent).toContain('1 session about to resume')
+    expect(chipEl('a')).toBeNull()
+    // No tally yet: nothing is resuming, whatever is live.
+    act(() => root.unmount())
+    root = createRoot(container)
+    render([], null)
+    expect(q('[data-testid="multi-spawn-startup-resume-note"]')).toBeNull()
   })
 
   it('singular strip copy for a single resuming session', () => {

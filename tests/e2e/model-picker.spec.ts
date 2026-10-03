@@ -117,10 +117,15 @@ test.describe('Model picker — versioned ids (#385)', () => {
     await page.locator('[data-testid="session-dialog-submit"]').click()
     // The dialog closes on a successful create...
     await expect(page.locator('text=New saved config')).toHaveCount(0, { timeout: 15000 })
-    // ...and the config appears as a row in the Saved panel (the tab openDialog
-    // selected). Scoped to the saved tabpanel: a bare `text=` first() could
-    // resolve to a hidden node elsewhere (session tab strip, quick start) and
-    // fail on visibility even though the row rendered.
+    // ...and the config appears as a row in the Saved panel. The create also
+    // launches the config, and the sidebar follows the new session to the
+    // Running tab (Sidebar.tsx launchFromConfig), which hides the Saved
+    // tabpanel openDialog had selected: open Saved again first. Scoped to the
+    // saved tabpanel: a bare `text=` first() could resolve to a hidden node
+    // elsewhere (session tab strip, quick start) and fail on visibility even
+    // though the row rendered.
+    await expect(page.locator('[data-testid="panel-tab-running"]')).toHaveAttribute('aria-selected', 'true', { timeout: 15000 })
+    await page.locator('[data-testid="panel-tab-saved"]').click()
     await expect(page.getByTestId('saved-tab').getByText('E2E Opus46')).toBeVisible({ timeout: 30000 })
 
     // The chosen id round-trips UNCHANGED into the persisted config on disk.

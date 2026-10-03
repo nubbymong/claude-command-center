@@ -29,6 +29,7 @@
  *    never stored in the DB and never counts against the page limit.
  */
 import Database from 'better-sqlite3'
+import { dedupeSearchHits, type RankedSearchRow } from './search-dedupe'
 import type { Statement } from 'better-sqlite3'
 
 // ---------------------------------------------------------------------------
@@ -44,7 +45,14 @@ export interface StitchedMessage {
   content: string
   toolName: string | null
   toolMeta: string | null
+  /** The run's provider ('claude' | 'codex'), so a view names the assistant
+   *  of each turn (P3.12). A synthesized divider carries its run's. */
+  provider: string
 }
+
+/** The transcript format a binding is tailed with (P3.12). Stored in the
+ *  existing transcripts.sourceFormat column (default 'claude-jsonl'). */
+export type TranscriptSourceFormat = 'claude-jsonl' | 'codex-rollout'
 
 /** Shape returned by listResumableTranscripts(). */
 export interface ResumableTranscript {
@@ -53,6 +61,14 @@ export interface ResumableTranscript {
   path: string
   ingestCursor: number
   parserVersion: number
+  /** The format it is tailed with (a worker restart resumes with it). */
+  sourceFormat: string
+  /** P3.12 round 1: a Codex rollout's file identity (dev:ino) as claimed;
+   *  the tail reads only that file. Null for a Claude transcript. */
+  sourceIdentity: string | null
+  /** P3.12: the SHA-256 (hex) of the bytes a Codex tail read from the file's
+   *  start up to `ingestCursor`; null when it cannot vouch for them. */
+  readDigest: string | null
 }
 
 /** Shape returned by listSlots(). */
@@ -67,6 +83,9 @@ export interface SlotSummary {
 }
 
 /** Shape returned by searchMessages(). */
+/** P3.12: the most rows a search reads before a Codex turn met again is dropped. */
+const SEARCH_ROWS_MAX = 2000
+
 export interface TranscriptSearchHit {
   runId: number
   idx: number
@@ -158,12 +177,25 @@ export interface TranscriptsDb {
   bindTranscript(
     runId: number,
     path: string,
-    opts: { confidence: 'exact' | 'heuristic'; sourceVersion?: string; parserVersion: number },
-  ): { transcriptId: number; ord: number; isNew: boolean; cursor: number }
+    opts: { confidence: 'exact' | 'heuristic'; sourceVersion?: string; parserVersion: number; sourceFormat?: TranscriptSourceFormat; sourceIdentity?: string },
+  ): { transcriptId: number; ord: number; isNew: boolean; cursor: number; sourceFormat: string; status: string; identityChanged: boolean; readDigest: string | null }
+
+  /** P3.12: the binding of `path` to `runId`, or null. A re-bind keeps the
+   *  format the binding was made with. */
+  findTranscript(runId: number, path: string): { transcriptId: number } | null
+
+  /** P3.12 round 1: the bindings of format `sourceFormat` of the same
+   *  session's earlier runs whose file has the name `name` (the same
+   *  transcript, or a Codex rollout's copy in another account's folder), with
+   *  how far each was read. P3.16 (M1): either format (a Claude transcript as
+   *  a Codex rollout). */
+  priorBindings(runId: number, name: string, sessionId: string, sourceFormat: TranscriptSourceFormat): Array<{ transcriptId: number; path: string; ingestCursor: number; sourceIdentity: string | null; runStartedAt: number; readDigest: string | null }>
 
   setTranscriptStatus(transcriptId: number, status: 'pending' | 'tailing' | 'complete' | 'failed'): void
 
-  advanceCursor(transcriptId: number, cursor: number): void
+  /** `readDigest` (P3.12; P3.16 M1, either format): the digest of the bytes
+   *  up to `cursor` (null: none); absent leaves it as it is. */
+  advanceCursor(transcriptId: number, cursor: number, readDigest?: string | null): void
 
   /** All transcripts with status='tailing' (worker restart resume points). */
   listResumableTranscripts(): ResumableTranscript[]
@@ -184,7 +216,7 @@ export interface TranscriptsDb {
    * messages on resume (the cursor always reflects exactly what was stored).
    * msgs may be empty (cursor-only advance past lines that produced no rows).
    */
-  appendBatch(runId: number, transcriptId: number, msgs: NewMessage[], newCursor: number): void
+  appendBatch(runId: number, transcriptId: number, msgs: NewMessage[], newCursor: number, readDigest?: string | null): void
 
   /** max(idx)+1 for the run, or 0 when it has no messages. */
   nextIdx(runId: number): number
@@ -259,7 +291,7 @@ export interface TranscriptsDb {
    * (same no-bare-column-with-MAX discipline as listSlots). Ordered by lastActive
    * DESC. Used by the Memory page to show recent sessions for a project.
    */
-  sessionActivity(): Array<{ sessionId: string; lastActive: number; projectCwd: string | null }>
+  sessionActivity(): Array<{ sessionId: string; lastActive: number; projectCwd: string | null; provider: string }>
 
   /**
    * Returns the configId of the latest run for sessionId, or null when the
@@ -390,6 +422,7 @@ interface PageRow {
   toolName: string | null
   toolMeta: string | null
   runStartedAt: number
+  provider: string
 }
 
 interface StitchOptions {
@@ -398,13 +431,13 @@ interface StitchOptions {
    * provided ts value. Used when a page boundary coincides with a run boundary
    * (the first returned row belongs to a different run than the anchor).
    */
-  leadingDivider?: { runId: number; ts: number }
+  leadingDivider?: { runId: number; ts: number; provider: string }
   /**
    * If set, a relaunch divider is appended AFTER the last row, using the
    * provided runId and ts. Used when the last returned row belongs to a
    * different run than the anchor (i.e. the anchor's run starts after the page).
    */
-  trailingDivider?: { runId: number; ts: number }
+  trailingDivider?: { runId: number; ts: number; provider: string }
 }
 
 /** Insert synthesized relaunch rows at run boundaries inside an ASC page. */
@@ -421,6 +454,7 @@ function stitchRows(rows: PageRow[], opts: StitchOptions = {}): StitchedMessage[
       content: '',
       toolName: null,
       toolMeta: null,
+      provider: opts.leadingDivider.provider,
     })
   }
 
@@ -436,6 +470,7 @@ function stitchRows(rows: PageRow[], opts: StitchOptions = {}): StitchedMessage[
         content: '',
         toolName: null,
         toolMeta: null,
+        provider: row.provider,
       })
     }
     out.push({
@@ -447,6 +482,7 @@ function stitchRows(rows: PageRow[], opts: StitchOptions = {}): StitchedMessage[
       content: row.content,
       toolName: row.toolName,
       toolMeta: row.toolMeta,
+      provider: row.provider,
     })
   }
 
@@ -460,6 +496,7 @@ function stitchRows(rows: PageRow[], opts: StitchOptions = {}): StitchedMessage[
       content: '',
       toolName: null,
       toolMeta: null,
+      provider: opts.trailingDivider.provider,
     })
   }
 
@@ -494,6 +531,11 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
   // Apply PRAGMAs and create schema. exec() runs multiple semicolon-separated
   // statements so we can do this in one shot.
   sqlite.exec(DDL)
+  // P3.12 round 1: a Codex rollout's file identity, on a database made before it.
+  const transcriptCols = new Set((sqlite.prepare('PRAGMA table_info(transcripts)').all() as Array<{ name: string }>).map((c) => c.name))
+  if (!transcriptCols.has('sourceIdentity')) sqlite.exec('ALTER TABLE transcripts ADD COLUMN sourceIdentity TEXT')
+  // P3.12: the digest of what a Codex tail read, stored with its cursor.
+  if (!transcriptCols.has('readDigest')) sqlite.exec('ALTER TABLE transcripts ADD COLUMN readDigest TEXT')
 
   // ---------------------------------------------------------------------------
   // Prepared statements (prepared once; reused across calls for performance)
@@ -527,7 +569,7 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
     WHERE runId = ${latestOpenRunSubquery}
   `)
 
-  const stmtGetRunStartedAt: Statement = sqlite.prepare(`SELECT startedAt FROM runs WHERE runId = ?`)
+  const stmtGetRunStartedAt: Statement = sqlite.prepare(`SELECT startedAt, provider FROM runs WHERE runId = ?`)
 
   // Single-statement dangling-run closure: endedAt = last message ts, falling
   // back to startedAt for runs that never produced a message.
@@ -560,19 +602,32 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
 
   // ---- transcripts ----
   const stmtGetTranscriptByRunPath: Statement = sqlite.prepare(
-    `SELECT id, ord FROM transcripts WHERE runId = ? AND path = ?`,
+    `SELECT id, ord, sourceFormat, status, sourceIdentity, readDigest FROM transcripts WHERE runId = ? AND path = ?`,
   )
   const stmtRebindTranscript: Statement = sqlite.prepare(`
     UPDATE transcripts
     SET confidence = @confidence, sourceVersion = @sourceVersion, parserVersion = @parserVersion
     WHERE id = @id
   `)
+  // P3.12 round 1: a Codex binding learns its file identity; another file at
+  // the same path is read from its start.
+  const stmtSetIdentity: Statement = sqlite.prepare(`UPDATE transcripts SET sourceIdentity = @identity WHERE id = @id`)
+  const stmtResetIdentity: Statement = sqlite.prepare(`UPDATE transcripts SET sourceIdentity = @identity, ingestCursor = 0, readDigest = NULL WHERE id = @id`)
+  // P3.12 round 2 (W8): the same session's earlier runs only, the latest first.
+  // P3.16 (M1): of the binding's own format (Claude's or Codex's).
+  const stmtPriorBindings: Statement = sqlite.prepare(`
+    SELECT t.id AS transcriptId, t.path AS path, t.ingestCursor AS ingestCursor, t.sourceIdentity AS sourceIdentity, r.startedAt AS runStartedAt, t.readDigest AS readDigest
+    FROM transcripts t JOIN runs r ON r.runId = t.runId
+    WHERE t.sourceFormat = @format AND t.runId < @runId AND r.sessionId = @sessionId
+      AND length(t.path) > @n AND substr(t.path, -@n) = @name
+    ORDER BY t.runId DESC, t.ingestCursor DESC
+  `)
   const stmtNextOrd: Statement = sqlite.prepare(
     `SELECT COALESCE(MAX(ord) + 1, 0) AS nextOrd FROM transcripts WHERE runId = ?`,
   )
   const stmtInsertTranscript: Statement = sqlite.prepare(`
-    INSERT INTO transcripts (runId, path, ord, sourceVersion, parserVersion, confidence)
-    VALUES (@runId, @path, @ord, @sourceVersion, @parserVersion, @confidence)
+    INSERT INTO transcripts (runId, path, ord, sourceFormat, sourceVersion, parserVersion, confidence, sourceIdentity)
+    VALUES (@runId, @path, @ord, @sourceFormat, @sourceVersion, @parserVersion, @confidence, @sourceIdentity)
   `)
   const stmtSetTranscriptStatus: Statement = sqlite.prepare(
     `UPDATE transcripts SET status = @status WHERE id = @id`,
@@ -580,8 +635,11 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
   const stmtAdvanceCursor: Statement = sqlite.prepare(
     `UPDATE transcripts SET ingestCursor = @cursor WHERE id = @id`,
   )
+  const stmtAdvanceCursorDigest: Statement = sqlite.prepare(
+    `UPDATE transcripts SET ingestCursor = @cursor, readDigest = @digest WHERE id = @id`,
+  )
   const stmtListResumable: Statement = sqlite.prepare(`
-    SELECT id AS transcriptId, runId, path, ingestCursor, parserVersion
+    SELECT id AS transcriptId, runId, path, ingestCursor, parserVersion, sourceFormat, sourceIdentity, readDigest
     FROM transcripts WHERE status = 'tailing' ORDER BY id
   `)
 
@@ -591,9 +649,9 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
     (
       runId: number,
       path: string,
-      opts: { confidence: 'exact' | 'heuristic'; sourceVersion?: string; parserVersion: number },
-    ): { transcriptId: number; ord: number; isNew: boolean; cursor: number } => {
-      const existing = stmtGetTranscriptByRunPath.get(runId, path) as { id: number; ord: number } | undefined
+      opts: { confidence: 'exact' | 'heuristic'; sourceVersion?: string; parserVersion: number; sourceFormat?: TranscriptSourceFormat; sourceIdentity?: string },
+    ): { transcriptId: number; ord: number; isNew: boolean; cursor: number; sourceFormat: string; status: string; identityChanged: boolean; readDigest: string | null } => {
+      const existing = stmtGetTranscriptByRunPath.get(runId, path) as { id: number; ord: number; sourceFormat: string; status: string; sourceIdentity: string | null; readDigest: string | null } | undefined
       if (existing) {
         stmtRebindTranscript.run({
           id: existing.id,
@@ -601,19 +659,29 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
           sourceVersion: opts.sourceVersion ?? null,
           parserVersion: opts.parserVersion,
         })
+        let identityChanged = false
+        if (opts.sourceIdentity && existing.sourceIdentity && existing.sourceIdentity !== opts.sourceIdentity) {
+          stmtResetIdentity.run({ id: existing.id, identity: opts.sourceIdentity })
+          identityChanged = true
+        } else if (opts.sourceIdentity && !existing.sourceIdentity) {
+          stmtSetIdentity.run({ id: existing.id, identity: opts.sourceIdentity })
+        }
         const { ingestCursor } = stmtGetCursor.get(existing.id) as { ingestCursor: number }
-        return { transcriptId: existing.id, ord: existing.ord, isNew: false, cursor: ingestCursor }
+        return { transcriptId: existing.id, ord: existing.ord, isNew: false, cursor: ingestCursor, sourceFormat: existing.sourceFormat, status: existing.status, identityChanged, readDigest: identityChanged ? null : existing.readDigest ?? null }
       }
       const { nextOrd } = stmtNextOrd.get(runId) as { nextOrd: number }
+      const sourceFormat: TranscriptSourceFormat = opts.sourceFormat ?? 'claude-jsonl'
       const info = stmtInsertTranscript.run({
         runId,
         path,
         ord: nextOrd,
+        sourceFormat,
         sourceVersion: opts.sourceVersion ?? null,
         parserVersion: opts.parserVersion,
         confidence: opts.confidence,
+        sourceIdentity: opts.sourceIdentity ?? null,
       })
-      return { transcriptId: Number(info.lastInsertRowid), ord: nextOrd, isNew: true, cursor: 0 }
+      return { transcriptId: Number(info.lastInsertRowid), ord: nextOrd, isNew: true, cursor: 0, sourceFormat, status: 'pending', identityChanged: false, readDigest: null }
     },
   )
 
@@ -644,9 +712,10 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
   // The tail loop's combined write: rows + cursor in ONE transaction so a crash
   // window between "messages stored" and "cursor advanced" cannot exist.
   const runAppendBatchWithCursor = sqlite.transaction(
-    (runId: number, transcriptId: number, msgs: NewMessage[], newCursor: number) => {
+    (runId: number, transcriptId: number, msgs: NewMessage[], newCursor: number, readDigest?: string | null) => {
       for (const m of msgs) insertMessageRow(runId, m)
-      stmtAdvanceCursor.run({ id: transcriptId, cursor: newCursor })
+      if (readDigest === undefined) stmtAdvanceCursor.run({ id: transcriptId, cursor: newCursor })
+      else stmtAdvanceCursorDigest.run({ id: transcriptId, cursor: newCursor, digest: readDigest })
     },
   )
 
@@ -658,7 +727,7 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
   const pageSelect = `
     SELECT m.runId AS runId, m.idx AS idx, m.ts AS ts, m.role AS role, m.kind AS kind,
            m.content AS content, m.toolName AS toolName, m.toolMeta AS toolMeta,
-           r.startedAt AS runStartedAt
+           r.startedAt AS runStartedAt, r.provider AS provider
     FROM messages m JOIN runs r ON r.runId = m.runId
   `
   const orderAsc = `ORDER BY r.startedAt ASC, r.runId ASC, m.idx ASC`
@@ -698,9 +767,14 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
 
   // ---- search ----
   // snippet() uses FTS column index 0 (content), marks up to 16 tokens.
+  // P3.12: with each hit's provider, role, time and words, so a turn indexed
+  // by two sessions is listed once (search-dedupe.ts; P3.16 M1: a Claude
+  // turn as a Codex one, by the run's transcript paths of either format).
   const stmtSearchMessages: Statement = sqlite.prepare(`
     SELECT m.runId AS runId, m.idx AS idx, r.configId AS configId, r.sessionId AS sessionId,
-           snippet(messages_fts, 0, '[', ']', '...', 16) AS snippet
+           snippet(messages_fts, 0, '[', ']', '...', 16) AS snippet,
+           r.provider AS provider, m.role AS role, m.ts AS ts, m.content AS content,
+           (SELECT group_concat(t.path, char(10)) FROM transcripts t WHERE t.runId = m.runId) AS transcriptPaths
     FROM messages_fts
     JOIN messages m ON m.id = messages_fts.rowid
     JOIN runs r ON r.runId = m.runId
@@ -750,7 +824,7 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
       SELECT sessionId, MAX(COALESCE(endedAt, startedAt)) AS lastActive
       FROM runs GROUP BY sessionId
     )
-    SELECT g.sessionId AS sessionId, g.lastActive AS lastActive, lr.projectCwd AS projectCwd
+    SELECT g.sessionId AS sessionId, g.lastActive AS lastActive, lr.projectCwd AS projectCwd, lr.provider AS provider
     FROM grouped g
     JOIN runs lr ON lr.runId = (
       SELECT runId FROM runs WHERE sessionId = g.sessionId ORDER BY startedAt DESC, runId DESC LIMIT 1
@@ -902,12 +976,25 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
       return runBindTranscript(runId, path, opts)
     },
 
+    findTranscript(runId, path) {
+      const row = stmtGetTranscriptByRunPath.get(runId, path) as { id: number } | undefined
+      return row ? { transcriptId: row.id } : null
+    },
+
+    priorBindings(runId, name, sessionId, sourceFormat) {
+      if (!name || !sessionId || (sourceFormat !== 'claude-jsonl' && sourceFormat !== 'codex-rollout')) return []
+      const rows = stmtPriorBindings.all({ runId, sessionId, format: sourceFormat, n: name.length, name }) as Array<{ transcriptId: number; path: string; ingestCursor: number; sourceIdentity: string | null; runStartedAt: number; readDigest: string | null }>
+      // The whole file name only: the character before it is a separator.
+      return rows.filter((r) => /[\\/]/.test(r.path.charAt(r.path.length - name.length - 1)))
+    },
+
     setTranscriptStatus(transcriptId, status) {
       stmtSetTranscriptStatus.run({ id: transcriptId, status })
     },
 
-    advanceCursor(transcriptId, cursor) {
-      stmtAdvanceCursor.run({ id: transcriptId, cursor })
+    advanceCursor(transcriptId, cursor, readDigest) {
+      if (readDigest === undefined) stmtAdvanceCursor.run({ id: transcriptId, cursor })
+      else stmtAdvanceCursorDigest.run({ id: transcriptId, cursor, digest: readDigest })
     },
 
     listResumableTranscripts() {
@@ -919,8 +1006,8 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
       runAppendMessages(runId, msgs)
     },
 
-    appendBatch(runId, transcriptId, msgs, newCursor) {
-      runAppendBatchWithCursor(runId, transcriptId, msgs, newCursor)
+    appendBatch(runId, transcriptId, msgs, newCursor, readDigest) {
+      runAppendBatchWithCursor(runId, transcriptId, msgs, newCursor, readDigest)
     },
 
     nextIdx(runId) {
@@ -943,7 +1030,7 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
         return stitchRows(rows)
       }
 
-      const anchorRun = stmtGetRunStartedAt.get(page.anchor.runId) as { startedAt: number } | undefined
+      const anchorRun = stmtGetRunStartedAt.get(page.anchor.runId) as { startedAt: number; provider: string } | undefined
       if (!anchorRun) return []
       const params = {
         scope: scopeValue,
@@ -962,14 +1049,14 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
         // and the anchor is not itself a divider (idx === -1), synthesize a
         // trailing divider so consumers concatenating pages see the boundary.
         if (rows.length > 0 && rows[rows.length - 1].runId !== page.anchor.runId && page.anchor.idx !== -1) {
-          stitchOpts.trailingDivider = { runId: page.anchor.runId, ts: anchorRun.startedAt }
+          stitchOpts.trailingDivider = { runId: page.anchor.runId, ts: anchorRun.startedAt, provider: anchorRun.provider }
         }
       } else {
         rows = stmts.newer.all(params) as PageRow[]
         // Page-seam: if the first row belongs to a DIFFERENT run than the anchor,
         // synthesize a leading divider before the first row.
         if (rows.length > 0 && rows[0].runId !== page.anchor.runId) {
-          stitchOpts.leadingDivider = { runId: rows[0].runId, ts: rows[0].runStartedAt }
+          stitchOpts.leadingDivider = { runId: rows[0].runId, ts: rows[0].runStartedAt, provider: rows[0].provider }
         }
       }
 
@@ -993,7 +1080,9 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
       const safeQuery = sanitizeFtsQuery(query)
       if (!safeQuery) return []
       try {
-        return stmtSearchMessages.all({ query: safeQuery, limit }) as TranscriptSearchHit[]
+        // Enough rows for the limit after a turn met again is dropped.
+        const rows = stmtSearchMessages.all({ query: safeQuery, limit: Math.min(limit * 4, SEARCH_ROWS_MAX) }) as RankedSearchRow[]
+        return dedupeSearchHits(rows, limit) as TranscriptSearchHit[]
       } catch {
         // If FTS still chokes on a malformed query, return empty rather than throwing
         return []
@@ -1030,7 +1119,7 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
     },
 
     sessionActivity() {
-      return stmtSessionActivity.all() as Array<{ sessionId: string; lastActive: number; projectCwd: string | null }>
+      return stmtSessionActivity.all() as Array<{ sessionId: string; lastActive: number; projectCwd: string | null; provider: string }>
     },
 
     sessionConfig(sessionId: string) {

@@ -7,6 +7,7 @@ import type { SessionState, SavedSession } from './types/electron'
 import { migrateColorRecords } from './utils/migrateIdentityColors'
 import { markSessionForResumePicker } from './utils/resumePicker'
 import { shouldPredetermineRestoredAccount } from './utils/sessionLaunch'
+import { isConfigLaunchBlocked } from './hooks/useLaunchConfig'
 // Type-only: livenessStore imports persistSessionState from THIS module, so a
 // value import of either store here closes a renderer import cycle (benign
 // while nothing reads across it at module scope; a boot-time TDZ crash the day
@@ -22,7 +23,12 @@ import type { pingAllDetachedHosts } from './stores/hostReachability'
 // before invoking session-scoped IPC to keep the on-disk view in sync.
 export function buildSessionState(): SessionState {
   const state = useSessionStore.getState()
-  const sessions: SavedSession[] = state.sessions.map((s) => ({
+  // A transient tab (commandTerminal: a confirmed install command) is never
+  // saved: restoring it would run that command again at the next launch, with
+  // nobody asked. Nor is it saved as the active session.
+  const kept = state.sessions.filter((s) => !s.transient)
+  const activeKept = kept.some((s) => s.id === state.activeSessionId)
+  const sessions: SavedSession[] = kept.map((s) => ({
     id: s.id,
     configId: s.configId,
     kind: s.kind,
@@ -84,16 +90,34 @@ export function buildSessionState(): SessionState {
       loggingEnabled: s.loggingEnabled,
     } : undefined,
     codexOptions: s.codexOptions,
+    // WP2: a reopened Codex session keeps the account it ran under. The
+    // account id only: a launch acknowledgement is never saved, so the
+    // reopened session asks again if its account needs one.
+    providerAccountId: s.provider === 'codex' ? s.providerAccountId : undefined,
   }))
+  // P3.5 (a C item): while the resume prompt is unanswered, the saved set it
+  // offers stays in the file, before the tabs open now (each tab once, as it
+  // is now), so a tab launched meanwhile never overwrites a choice the user
+  // has not made yet.
+  const offered = unansweredRestore ? unansweredRestore.sessions.filter((s) => !sessions.some((k) => k.id === s.id)) : []
   return {
-    sessions,
-    activeSessionId: state.activeSessionId,
+    sessions: [...offered, ...sessions],
+    activeSessionId: activeKept ? state.activeSessionId : (kept[kept.length - 1]?.id ?? unansweredRestore?.activeSessionId ?? null),
     savedAt: Date.now(),
     // SSH Persistent (Phase 1): fold the left-running registry into the same
     // persisted file so a detached remote survives an app restart. Main round-
     // trips this untouched (only `sessions` is migrated on load).
     detachedRemotes: useDetachedRemotesStore.getState().entries,
   }
+}
+
+/** The saved set the resume prompt offers while it is unanswered (P3.5, a C
+ *  item): App keeps it in step with its pendingRestore, and clears it the
+ *  moment the prompt is answered. Every write of the session file keeps it
+ *  (buildSessionState). */
+let unansweredRestore: SessionState | null = null
+export function setUnansweredRestore(state: SessionState | null): void {
+  unansweredRestore = state && Array.isArray(state.sessions) && state.sessions.length > 0 ? state : null
 }
 
 /**
@@ -144,6 +168,24 @@ export function hydrateDetachedFromSavedState(saved: Pick<SessionState, 'detache
   if (!Array.isArray(entries) || entries.length === 0) return 0
   useDetachedRemotesStore.getState().hydrate(entries)
   return useDetachedRemotesStore.getState().entries.length
+}
+
+/**
+ * P3.5 (the C item "Resume replaces the tab list"): what the resume prompt's
+ * Refresh offers. The re-read file may hold tabs launched while the prompt was
+ * open (the autosave rewrites it on every tab added): those are running, so
+ * they are never offered again (a Resume would add a second copy). Nothing
+ * left to offer, or no file: the list it had. Answered already (`prev` null):
+ * nothing comes back.
+ */
+export function refreshRestoreOffer(
+  prev: SessionState | null,
+  saved: SessionState | null | undefined,
+  openIds: ReadonlySet<string>,
+): SessionState | null {
+  if (!prev) return null
+  const offered = (saved?.sessions ?? []).filter((s) => !openIds.has(s.id))
+  return saved && offered.length > 0 ? { ...saved, sessions: offered } : prev
 }
 
 /**
@@ -233,6 +275,21 @@ export async function persistLastUsedAccount(sessionId: string, profileId: strin
       void useSettingsStore.getState().updateSettings({ lastUsedAccountId: profileId }).catch(() => { /* non-fatal */ })
     } catch { /* non-fatal (synchronous set() failure) */ }
   }
+  try {
+    await window.electronAPI.session.save(buildSessionState())
+  } catch {
+    /* best-effort: the choice still lives in the store for this run */
+  }
+}
+
+/**
+ * P3.6 (row 22): pin the registry account a session of an account-attributed
+ * provider (Codex) now runs under, as persistLastUsedAccount pins a Claude
+ * profile, and flush it to disk eagerly so a crash cannot lose the switch.
+ * The store update is synchronous, before any respawn reads it.
+ */
+export async function persistSessionProviderAccount(sessionId: string, providerAccountId: string | undefined): Promise<void> {
+  useSessionStore.getState().updateSession(sessionId, { providerAccountId })
   try {
     await window.electronAPI.session.save(buildSessionState())
   } catch {
@@ -392,7 +449,8 @@ export async function restoreSavedSessions(
         effortLevel: claude?.effortLevel ?? saved.effortLevel,
         disableAutoMemory: claude?.disableAutoMemory ?? saved.disableAutoMemory,
         enableCodexReview: claude?.enableCodexReview,
-        loggingEnabled: claude?.loggingEnabled,
+        // P3.12: a Codex session's opt-out rides in its codexOptions.
+        loggingEnabled: saved.provider === 'codex' ? saved.codexOptions?.loggingEnabled : claude?.loggingEnabled,
         // #397 Group 4: these were dropped on save+restore, so a restored session
         // came back with the wrong permission mode / without its extra CLI args.
         permissionMode: claude?.permissionMode,
@@ -408,6 +466,14 @@ export async function restoreSavedSessions(
         resumeUuid: saved.resumeUuid,
         resumeCwd: saved.resumeCwd,
         codexOptions: saved.codexOptions,
+        providerAccountId: saved.provider === 'codex' && typeof saved.providerAccountId === 'string' ? saved.providerAccountId : undefined,
+        // Its provider cannot launch now (off, or Codex not set up: the launch
+        // rule): main will start nothing for it, so it is Not started from
+        // the restore on, and never counts as its config running before its
+        // tab is first viewed (a tab starts on first view). Its view checks
+        // the Multi Spawn rule before it tries (TerminalView), so a session
+        // that CAN launch keeps counting from the restore as before.
+        ...(isConfigLaunchBlocked({ provider: saved.provider ?? 'claude', shellOnly: saved.shellOnly }) ? { neverStarted: true } : {}),
       }
     })
 

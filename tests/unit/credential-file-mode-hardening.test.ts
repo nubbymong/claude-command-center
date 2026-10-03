@@ -42,6 +42,7 @@ vi.mock('../../src/main/conductor-mcp-server', () => ({
   getConductorMcpPort: () => 19333,
   // GHSA-q83v: the shim embeds the per-session HMAC, not the raw secret.
   mcpSessionToken: (sessionId: string) => `tok-${sessionId}`,
+  issueMcpSessionToken: (sessionId: string) => `tok-${sessionId}`,
 }))
 
 const { saveAllCredentials } = await import('../../src/main/credential-store')

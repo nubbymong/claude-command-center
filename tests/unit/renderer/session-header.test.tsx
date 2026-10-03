@@ -17,6 +17,7 @@ vi.mock('../../../src/renderer/hooks/useTypography', () => ({ useRegionTypograph
 
 const { default: SessionHeader } = await import('../../../src/renderer/components/SessionHeader')
 import type { Session } from '../../../src/renderer/stores/sessionStore'
+import { useSessionStore } from '../../../src/renderer/stores/sessionStore'
 import { useAccountAuthStore, _resetAccountAuthForTest } from '../../../src/renderer/stores/accountAuthStore'
 import { useAccountProfilesStore } from '../../../src/renderer/stores/accountProfilesStore'
 
@@ -459,6 +460,66 @@ describe('the Watchdog pill (#605)', () => {
   it('treats an armed session with no checks field as all-on (older main build)', () => {
     render(claudeSession({ status: 'monitoring', waitUntil: null, gaveUp: false }))
     expect(pill()!.textContent).not.toMatch(/off|partial/)
+  })
+
+  // P3.10 round 1 (S1): only the checks the session's CLI has count. Codex has
+  // no safeguard message (main lists it as unavailable), so a Codex session
+  // with both of its checks on reads green, as a Claude one with all three does.
+  const codexSession = (watchdog?: Session['watchdog']) => makeSession({ provider: 'codex', sessionType: 'local', watchdog })
+
+  it('a Codex session shows its pill (it has no account pill set), green with both of its checks on', () => {
+    render(codexSession({ status: 'monitoring', waitUntil: null, gaveUp: false, checks: { rateLimit: true, overload: true, safeguard: false }, unavailable: ['safeguard'] }))
+    expect(pill()).toBeTruthy()
+    expect(pill()!.textContent).not.toMatch(/off|partial/)
+    expect(pill()!.getAttribute('title')).toBe('Watchdog auto-retry is on for this session (rate-limit resume, API overload). Right-click the session to change it.')
+  })
+
+  it('a Codex session with one of its two checks on reads partial, 1 of 2; with none, off', () => {
+    render(codexSession({ status: 'monitoring', waitUntil: null, gaveUp: false, checks: { rateLimit: true, overload: false, safeguard: false }, unavailable: ['safeguard'] }))
+    expect(pill()!.textContent).toMatch(/partial/)
+    expect(pill()!.getAttribute('title')).toMatch(/1 of 2/)
+    render(codexSession({ status: 'monitoring', waitUntil: null, gaveUp: false, checks: { rateLimit: false, overload: false, safeguard: false }, unavailable: ['safeguard'] }))
+    expect(pill()!.textContent).toMatch(/off/)
+  })
+
+  it('no pill on a Codex session with no watcher armed, nor on a shell session', () => {
+    render(codexSession(undefined))
+    expect(pill()).toBeNull()
+    render(makeSession({ provider: 'codex', shellOnly: true, watchdog: { status: 'monitoring', waitUntil: null, gaveUp: false } }))
+    expect(pill()).toBeNull()
+  })
+
+  // P3.10 round 2 (R1): the shell hands the header a session copy refreshed
+  // only on structural changes, and `watchdog` is not one; the pill reads the
+  // session's live state from the store, so it appears as soon as a watcher
+  // arms and follows a check switched off, for a Claude and a Codex session
+  // alike, without the header being handed a new copy.
+  describe('follows the live watchdog state, not the copy the header was handed (round 2, R1)', () => {
+    const on = { status: 'monitoring', waitUntil: null, gaveUp: false }
+    const cases = [
+      { name: 'a Claude session', make: () => claudeSession(undefined), safeguard: true, unavailable: {} },
+      { name: 'a Codex session', make: () => codexSession(undefined), safeguard: false, unavailable: { unavailable: ['safeguard'] as Array<'safeguard'> } },
+    ]
+    for (const c of cases) {
+      it(`${c.name}: arming shows it at once; a check switched off updates it at once`, () => {
+        const stale = c.make()
+        const unavailable = c.unavailable
+        useSessionStore.setState({ sessions: [stale] })
+        try {
+          render(stale)
+          expect(pill()).toBeNull()
+          act(() => { useSessionStore.getState().updateSession(stale.id, { watchdog: { ...on, checks: { rateLimit: true, overload: true, safeguard: c.safeguard }, ...unavailable } }) })
+          expect(pill()).toBeTruthy()
+          expect(pill()!.textContent).not.toMatch(/off|partial/)
+          act(() => { useSessionStore.getState().updateSession(stale.id, { watchdog: { ...on, checks: { rateLimit: true, overload: false, safeguard: c.safeguard }, ...unavailable } }) })
+          expect(pill()!.textContent).toMatch(/partial/)
+          act(() => { useSessionStore.getState().updateSession(stale.id, { watchdog: undefined }) })
+          expect(pill()).toBeNull()
+        } finally {
+          useSessionStore.setState({ sessions: [] })
+        }
+      })
+    }
   })
 
   it('sits immediately after the account pill', () => {

@@ -131,8 +131,10 @@ export interface ClaudeOptions {
   legacyVersion?: LegacyVersion
   disableAutoMemory?: boolean
   agentIds?: string[]
-  /** RETIRED 2.1.0-beta.5 (was v1.5 P6): codex_review is authorised globally now —
-   *  every local Claude session registers, gated by the global Codex master switch.
+  /** RETIRED 2.1.0-beta.5 (was v1.5 P6): no per-config opt-in. Every local
+   *  Claude session with a real project folder registers for codex_review, and
+   *  main offers the tool per connection while the built-in tools and the Codex
+   *  review switch are on, Codex is on and a Codex account can run the review.
    *  The field remains only so stored configs round-trip; nothing reads it. */
   enableCodexReview?: boolean
   /** T16: per-session CCC indexing opt-out. DEFAULT-TRUE (undefined / true = on).
@@ -156,13 +158,36 @@ export interface TerminalOptions {
   hasSecretArg?: boolean
   /** Run the terminal elevated (gsudo on Windows, sudo elsewhere). */
   elevated?: boolean
+  /** Leave the command-button secrets (their env vars) out of this shell's
+   *  environment. Set only by the transient install/update tab
+   *  (commandTerminal.ts), whose install script is a third party's: it keeps
+   *  the secrets out of that script's way, not a boundary against a script
+   *  running as the same user. It can only take secrets away, so main
+   *  honours it as sent. */
+  noCommandSecrets?: boolean
 }
 
 export interface CodexOptions {
-  /** gpt-5.5 / gpt-5.4 / gpt-5.4-mini / gpt-5.3-codex / gpt-5.3-codex-spark / gpt-5.2 */
+  /** A Codex model id: the registry's Codex models (resources/model-registry.json,
+   *  family codex), or one saved before them. Absent or '' = Codex's own default. */
   model?: string
-  reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
-  permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
+  /** Absent (or 'none') = the model's own default; the spawn allowlist is
+   *  CODEX_EFFORTS (sanitize-restored-spawn-options.ts). */
+  reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
+  permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted' | 'plan'
+  /** P3.11 (row 62): the extraArgs field for Codex. Each word is one launch
+   *  argument, after every flag the app sets. One rule (codexExtraArgsProblem,
+   *  src/shared/extra-args.ts) in the dialog, which says why and holds Save
+   *  back, and at launch, which drops a refused value: the shared charset, and
+   *  no flag the app sets (model, -c settings, permissions, working folder,
+   *  resume), none that changes the account, provider or endpoint, and no word
+   *  Codex reads as one of its commands. */
+  extraArgs?: string
+  /** P3.12 (row 31): the per-config indexing opt-out, as
+   *  ClaudeOptions.loggingEnabled. DEFAULT-TRUE (undefined / true = on); when
+   *  false the app does not index this config's Codex conversations for the
+   *  Logs viewer. Codex keeps them in its account's sessions folder either way. */
+  loggingEnabled?: boolean
 }
 
 // ── Session Persistence ──
@@ -213,6 +238,10 @@ export interface SavedSession {
   resumeCwd?: string
   claudeOptions?: ClaudeOptions
   codexOptions?: CodexOptions
+  /** WP2: the provider account a Codex session runs under -- an opaque
+   *  registry id, never a path or a credential. Absent = the provider
+   *  default. A launch acknowledgement is never stored here or anywhere. */
+  providerAccountId?: string
   // Legacy top-level fields -- kept for backward compat during migration; read from claudeOptions after P1.2
   /** @deprecated read from claudeOptions; removed in P1.2+ */
   model?: string
@@ -279,6 +308,17 @@ export interface SessionState {
    *  on files written before this feature; round-trips untouched through the
    *  main-side save/load (only `sessions` is migrated). */
   detachedRemotes?: DetachedRemote[]
+  /** P3.6: Codex conversations whose claim was not certain (two new sessions
+   *  in one folder), written by main at every save and read back by main at
+   *  load, so a Switch account never carries one after a relaunch either. */
+  codexUncertainConversations?: string[]
+  /** P3.7: each conversation's running time (main's
+   *  conversation-running-time.ts), written by main at every save and read
+   *  back by main at load, schema-checked, so a session's Duration carries on
+   *  across a relaunch. `gaps`: spans whose completed turns are not in `ms`
+   *  yet (the next run counts them); `gapMs` (P3.16): the part of those
+   *  turns a run had counted. */
+  conversationRunningTimes?: Array<{ id: string; ms: number; until: number; gaps?: Array<{ from: number; to: number }>; gapMs?: number }>
 }
 
 /**
@@ -297,6 +337,35 @@ export interface SessionState {
 export interface DetachedRemoteLiveness {
   outcome: 'verified' | 'unverified'
   liveSessionIds: string[]
+}
+
+/**
+ * What ending an SSH remote session did (`ssh:endRemote`, endSshRemote):
+ *   - 'completed'            the End exec ran to the end.
+ *   - 'failed'               it could not connect, or timed out.
+ *   - 'no-target'            main had no connection for the session.
+ *   - 'container-needs-sudo' the host tmux session and the session's files on
+ *                            the host were ended, but Claude may still be
+ *                            running inside a rootful container: sudo could
+ *                            not run the container engine without a password,
+ *                            and End holds none (none was saved in the
+ *                            config when the session started). The
+ *                            in-container kill was still attempted with
+ *                            `sudo -n` (which never prompts), so it may have
+ *                            worked where sudo allows that exec without a
+ *                            password; hence "may".
+ */
+export type SshEndRemoteOutcome = 'completed' | 'failed' | 'no-target' | 'container-needs-sudo'
+
+/** The `ssh:endRemote` result. `container` is set only with
+ *  'container-needs-sudo': where Claude may still be running (the engine and
+ *  container name the End path validated, and the SSH host it dialled). The
+ *  host is display-only, never part of a command; the renderer's reader
+ *  (readSshEndRemoteResult) leaves it out when it cannot be shown as one plain
+ *  token, and the notice then says "the SSH host". */
+export interface SshEndRemoteResult {
+  outcome: SshEndRemoteOutcome
+  container?: { engine: 'docker' | 'podman'; name: string; host?: string }
 }
 
 /**
@@ -357,6 +426,13 @@ export interface StatuslineData {
    *  returns limits[]; the strip renders one bar per bucket (minus the user's
    *  hidden set). Legacy rateLimit* fields stay for older CLIs + the footer. */
   usageBuckets?: import('./usage-types').UsageBucket[]
+  /** When the allowance in `usageBuckets` was reported, epoch ms: the time of
+   *  the event that carried it (Codex: the rollout's token_count), so a figure
+   *  from an idle session can be told apart from a fresh one. */
+  rateLimitsAt?: number
+  /** Sent once when nothing will report this session's allowance: 'no-reading'
+   *  (Codex: no rollout was claimed within 30 s). D3 of the usage UX. */
+  usageUnavailable?: 'no-reading'
   /** Active-account email surfaced by the bridge script. Renderer displays it left of the model name. */
   accountEmail?: string
   /** Pre-computed by main process via `colourForEmail()` as an identity-palette KEY;
@@ -627,18 +703,29 @@ export interface CodexReviewDailyShard {
 // ── Tokenomics v2 (worker-backed) cross-process contract ──
 export type TkProvider = 'claude' | 'codex'
 
+/** The headline figures; costs cover models with a price only (MP11). */
+export interface TkKpis {
+  lifeToDateCostUsd: number
+  last7dCostUsd: number
+  prev7dCostUsd: number
+  cacheEfficiencyPct: number
+  cacheSavingsUsd: number
+}
+
 export interface TkSummary {
-  kpis: {
-    lifeToDateCostUsd: number
-    last7dCostUsd: number
-    prev7dCostUsd: number
-    cacheEfficiencyPct: number
-    cacheSavingsUsd: number
-  }
-  dailySeries: Array<{ day: string; costUsd: number }>
-  modelSplit: Array<{ model: string; costUsd: number; tokens: number }>
+  kpis: TkKpis
+  /** Usage track MP11: the same figures for each provider. */
+  kpisByProvider: Record<TkProvider, TkKpis>
+  /** Priced models only; `byProvider` splits each day (MP11). */
+  dailySeries: Array<{ day: string; costUsd: number; byProvider: Record<TkProvider, number> }>
+  /** `costUsd` is null for a model with no price (MP11), never 0. */
+  modelSplit: Array<{ model: string; costUsd: number | null; tokens: number }>
+  /** MP11: the models in these figures that have no price, with their
+   *  provider and tokens; their cost is in no figure. */
+  unpriced: Array<{ model: string; provider: TkProvider; tokens: number }>
   cacheSplit: { inputUsd: number; outputUsd: number; cacheReadUsd: number; cacheCreateUsd: number }
-  costByConfig: Array<{ configId: string | null; label: string; costUsd: number; sessions: number }>
+  /** `costUsd` is null for a config whose usage has no price (MP11). */
+  costByConfig: Array<{ configId: string | null; label: string; costUsd: number | null; sessions: number }>
   heatmap: Array<{ bucket: number; tokens: number }>
 }
 
@@ -648,13 +735,19 @@ export interface TkSessionRow {
   configId: string | null
   configLabel: string
   model: string
-  costUsd: number
+  /** Null when none of its models has a price (usage track MP11). */
+  costUsd: number | null
+  /** Tokens of its models that have no price (MP11); 0 when all are priced. */
+  unpricedTokens: number
   inTok: number
   outTok: number
   cacheReadTok: number
   cacheCreateTok: number
   msgCount: number
   lastTs: number
+  /** Whose session (usage track MP9): '' not recorded, `codex:external` this
+   *  computer's own Codex sign-in, `<provider>:<accountId>` a managed account. */
+  accountKey: string
 }
 
 export interface TkSessionsPage {
@@ -665,7 +758,7 @@ export interface TkSessionsPage {
 export interface TkSessionDetail extends TkSessionRow {
   firstTs: number
   projectDir: string
-  byModel: Array<{ model: string; costUsd: number; inTok: number; outTok: number; cacheReadTok: number; cacheCreateTok: number; msgCount: number }>
+  byModel: Array<{ model: string; costUsd: number | null; inTok: number; outTok: number; cacheReadTok: number; cacheCreateTok: number; msgCount: number }>
 }
 
 export interface TkIndexStatus {
@@ -682,11 +775,28 @@ export interface TkIndexStatus {
   /** Non-null when the worker reported a fatal/uncorrelated error (e.g. a failed
    *  DB open). The renderer surfaces this instead of an endless 'indexing' state. */
   error?: string | null
+  /** Usage track MP9: the one-off attribution of stored history to accounts,
+   *  while it runs (re-reading the Codex history, then rebuilding the rollups).
+   *  Totals are whole throughout; the split by provider and account is not. */
+  accountReread?: TkAccountReread | null
 }
 
-export interface TkSummaryFilter { configId?: string | null; from?: number; to?: number; model?: string }
+export interface TkAccountReread {
+  stage: 'reread' | 'rebuild'
+  done: number
+  total: number
+  /** Stage 1 before its files are counted: the list is being made, or the
+   *  account folders are not named yet. */
+  counting?: boolean
+}
+/** An account present in the stored usage (usage track MP9). */
+export interface TkAccountPresent { provider: TkProvider; accountKey: string }
+
+/** `provider` and `accountKey` (usage track MP9): only that provider's, or that
+ *  account's, usage; `accountKey: ''` is the usage not recorded to any account. */
+export interface TkSummaryFilter { configId?: string | null; from?: number; to?: number; model?: string; provider?: TkProvider; accountKey?: string }
 export interface TkSessionsQuery extends TkSummaryFilter { search?: string; cursor?: { lastTs: number; sessionId: string } | null; limit?: number }
-export interface TkIndexProgress { filesDone: number; filesTotal: number; eventsIngested: number; phase: string }
+export interface TkIndexProgress { filesDone: number; filesTotal: number; eventsIngested: number; phase: string; accountReread?: TkAccountReread | null }
 /** `drained`: every file that sweep visited was read to its end and none
  *  failed. A sweep finishing is NOT that — a multi-GB rollout takes tens of
  *  sweeps — so gate any "indexing finished" UI on `drained`. */

@@ -25,12 +25,12 @@ describe('sessionCapabilities', () => {
     expect(c.mainPaneIsShell).toBe(false)
   })
 
-  it('local Codex: the agent is Codex -- never the word Claude -- and logs are not indexable', () => {
+  it('local Codex: the agent is Codex -- never the word Claude -- and (P3.12) its logs are indexed', () => {
     const c = sessionCapabilities(local({ provider: 'codex' }))
     expect(c.agent).toBe('codex')
     expect(c.agentName).toBe('Codex')
-    expect(c.logsEmptyReason).toBe('codex')
-    expect(c.canIndexLogs).toBe(false)
+    expect(c.logsEmptyReason).toBeNull()
+    expect(c.canIndexLogs).toBe(true)
     expect(describeTarget(c, 'claude')).toBe('the Codex terminal')
   })
 

@@ -124,6 +124,16 @@ describe('window IPC is registered once per process', () => {
 // but which the adversarial pass on #598 found unpinned: each is a one-line call
 // a refactor could drop with no test going red.
 describe('index.ts wiring pinned by shape', () => {
+  // Usage track MP8 (MP7 round 1): a fresh usage read under way is stopped
+  // at quit, before the pending-kill flush, so the flush kills its helper.
+  it('the quit teardown stops fresh usage reads before it flushes the pending CLI kills', () => {
+    const body = src.slice(src.indexOf('quitTeardown = () => {'))
+    const stop = body.indexOf('getAccountsService()?.stopUsageReads()')
+    const flush = body.indexOf('flushPendingProviderCliKills()')
+    expect(stop).toBeGreaterThan(0)
+    expect(flush).toBeGreaterThan(stop)
+  })
+
   it('a (re)created window resets the close decision (rc.14 review F3)', () => {
     expect(bodyOf('function createWindow(): void {')).toContain('closeCoordinator.onWindowCreated()')
   })
@@ -157,15 +167,15 @@ describe('index.ts wiring pinned by shape', () => {
       return i
     }
     const resume = at('    registerResumeHandlers()')
-    const wipe = at('    registerLogsWipeHandlers()')
+    const wipe = at('    registerLogsWipeHandlers(getWindow)')
     // Whole lines: a statement appended after either call on the same line
     // would sit between them without being "in the gap" (re-attack round 2).
     for (const i of [resume, wipe]) {
-      expect(src.slice(i, src.indexOf('\n', i)).trim()).toMatch(/^register(Resume|LogsWipe)Handlers\(\)$/)
+      expect(src.slice(i, src.indexOf('\n', i)).trim()).toMatch(/^(registerResumeHandlers\(\)|registerLogsWipeHandlers\(getWindow\))$/)
     }
     expect(wipe).toBeGreaterThan(resume)
     expect(wipe).toBeLessThan(at('    registerDebugHandlers()'))
-    expect(wipe).toBeLessThan(at('    registerLogs2Handlers(getWindow)'))
+    expect(wipe).toBeLessThan(at('    registerLogs2Handlers(getWindow, '))
     expect(wipe).toBeLessThan(at('initLogging({'))
     // ...and nothing that can throw may be inserted into the gap.
     const gap = src.slice(resume, wipe).split('\n').slice(1)
@@ -204,13 +214,13 @@ describe('index.ts boot wiring -- mutants of the once-flag and the wipe slot', (
     expect(createWindowCode).not.toContain('windowIpcRegistered')
   })
 
-  it('registerResumeHandlers()/registerLogsWipeHandlers() sit directly in the ready callback, not inside a try block', () => {
+  it('registerResumeHandlers()/registerLogsWipeHandlers(getWindow) sit directly in the ready callback, not inside a try block', () => {
     // M2: one shared try/catch around the pair would swallow a throw in the
     // resume registration and silently skip the first-run wipe prompt AND the
     // boot-failure dialog. The pair is at the callback's own indentation (four
     // spaces, a whole line each), and the line before the first is not a try
     // opener.
-    for (const call of ['registerResumeHandlers()', 'registerLogsWipeHandlers()']) {
+    for (const call of ['registerResumeHandlers()', 'registerLogsWipeHandlers(getWindow)']) {
       expect(src, call).toMatch(new RegExp(`\\n    ${call.replace(/[()]/g, '\\$&')}\\n`))
     }
     const resume = src.indexOf('\n    registerResumeHandlers()\n')

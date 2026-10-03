@@ -18,6 +18,7 @@ import { execFileSync } from 'node:child_process'
 import { IPC } from '../../src/shared/ipc-channels'
 
 const ROOT = path.resolve(__dirname, '..', '..')
+const PROVIDER_CORE = 'src/main/providers/core/'
 
 class FakePty {
   pid = 4242; cols = 80; rows = 24; process = 'sh'; handleFlowControl = false
@@ -202,14 +203,71 @@ describe('C8: AccountProfile.colourKey is never written by the main process on t
       fs.rmSync(dir, { recursive: true, force: true })
     }
   })
-  it('no main-process source assigns colourKey on a profile record', () => {
-    let hits: string[] = []
-    try {
-      hits = execFileSync('git', ['-C', ROOT, 'grep', '-n', '-E', 'colourKey\\s*:', '--', 'src/main', 'src/shared/account-types.ts'], { encoding: 'utf8' }).trim().split('\n')
-    } catch (e: any) { if (e.status !== 1) throw e }
-    // Only the type declaration and identity push payloads (email-derived colour), never a profile write.
-    const writes = hits.filter((l) => !/account-types\.ts/.test(l) && !/claude-account-identity\.ts|account-identity\.ts|account-color\.ts/.test(l))
+  // WP2 CHANGE (scheduled, like C7's inversion): the account registry's write-
+  // through now sets colourKey on a profile that has NO email -- only after an
+  // explicit colour edit, since such a profile has no email-keyed override to
+  // carry it (src/main/providers/claude/legacy-store.ts, tests/wp1/claude-
+  // legacy-store.test.ts). That module is the one sanctioned writer. The
+  // pattern is POSIX ERE ([[:space:]], not \s): macOS git's regex has no \s,
+  // so the earlier `colourKey\s*:` matched nothing there and passed vacuously.
+  it('no main-process source writes colourKey on a profile record, except the WP2 write-through for email-less profiles', () => {
+    const grep = (re: string) => {
+      try {
+        return execFileSync('git', ['-C', ROOT, 'grep', '-n', '-E', re, '--', 'src/main', 'src/shared/account-types.ts'], { encoding: 'utf8' }).trim().split('\n').filter(Boolean)
+      } catch (e: any) { if (e.status !== 1) throw e; return [] }
+    }
+    // Every write form: an object-literal key, quoted or not (`{ colourKey: `,
+    // `, 'colourKey': `), a shorthand/spread key (`{ ...p, colourKey }`), an
+    // assignment incl. compound ones (`.colourKey =`, `??=`, `||=`), a
+    // bracket write (`['colourKey'] =`), and Object.assign/defineProperty/
+    // Reflect.set naming the field.
+    const Q = "[\"'`]"
+    const literal = grep(`(^|[{,[])[[:space:]]*${Q}?colourKey${Q}?[[:space:]]*\\]?[[:space:]]*:`)
+    const other = [
+      ...grep('[{,][[:space:]]*colourKey[[:space:]]*[,}]'),
+      ...grep('\\.[[:space:]]*colourKey[[:space:]]*(/\\*.*\\*/[[:space:]]*)?([?|&]{2})?=([^=]|$)'),
+      ...grep(`\\[[[:space:]]*${Q}colourKey${Q}[[:space:]]*\\][[:space:]]*([?|&]{2})?=([^=]|$)`),
+      ...grep('(assign|defineProperty|Reflect\\.set)[^;]*colourKey'),
+    ]
+    const at = (l: string) => l.slice(0, l.indexOf(':', l.indexOf(':') + 1) + 1) // "path:line:"
+    const pathOf = (l: string) => l.slice(0, l.indexOf(':'))
+    // The one sanctioned write, pinned by its exact text, not by its file.
+    const SANCTIONED = 'if (p.colourKey !== w.value) { p.colourKey = w.value as IdentityColorKey; changed = true }'
+    const sanctioned = other.filter((l) => pathOf(l) === 'src/main/providers/claude/legacy-store.ts' && l.slice(at(l).length).trim() === SANCTIONED)
+    // Both pattern families can see a hit on this platform (verify the verifier).
+    expect(sanctioned, 'the assignment pattern did not find the sanctioned write -- is it matching on this platform?').toHaveLength(1)
+    expect(literal.some((l) => pathOf(l) === 'src/main/claude-account-identity.ts'), 'the object-literal pattern found nothing -- is it matching on this platform?').toBe(true)
+    // The type declaration and the identity push payloads (email-derived
+    // colour, never a profile write) are exempt from the OBJECT-LITERAL
+    // family only, by file path; an assignment there still counts.
+    const literalExempt = new Set(['src/shared/account-types.ts', 'src/main/claude-account-identity.ts', 'src/main/account-color.ts'])
+    // WP2: provider core works on registry identities (ConductorIdentity),
+    // never on a profile record, and the Accounts IPC schema only validates
+    // a requested colour. Both are exempt from the OBJECT-LITERAL family only
+    // (an assignment there still counts), and the exemption is sound only
+    // because core cannot reach the profile store at all: the next test pins
+    // core's imports to core, shared and Node built-ins.
+    const literalExemptDir = (p: string) => p.startsWith(PROVIDER_CORE) || p === 'src/main/ipc/provider-accounts-handlers.ts'
+    const writes = [...new Set([...literal.filter((l) => !literalExempt.has(pathOf(l)) && !literalExemptDir(pathOf(l))), ...other.filter((l) => !sanctioned.includes(l))])]
     expect(writes, writes.join('\n')).toEqual([])
+  })
+
+  it('provider core cannot reach the profile store: it imports only core, shared and Node built-ins (what makes its C8 exemption sound)', () => {
+    const dir = path.join(ROOT, PROVIDER_CORE)
+    const files = fs.readdirSync(dir).filter((n) => n.endsWith('.ts'))
+    expect(files.length).toBeGreaterThan(3)
+    const bad: string[] = []
+    for (const f of files) {
+      const text = fs.readFileSync(path.join(dir, f), 'utf8')
+      for (const m of text.matchAll(/(?:^|\n)\s*(import|export)\b([^'"]*?)\bfrom\s+['"]([^'"]+)['"]/g)) {
+        const spec = m[3]
+        const typeOnly = /^\s*type\b/.test(m[2])
+        const ok = spec.startsWith('./') || spec.startsWith('../../../shared/') || spec.startsWith('node:') || (typeOnly && spec === '../types')
+        if (!ok) bad.push(`${f}: ${spec}`)
+      }
+      for (const m of text.matchAll(/\b(?:require|import)\s*\(\s*['"]([^'"]+)['"]/g)) bad.push(`${f}: dynamic ${m[1]}`)
+    }
+    expect(bad).toEqual([])
   })
 })
 
@@ -258,7 +316,20 @@ describe('C5: accountProfiles handlers sequencing on the base', () => {
   const order: string[] = []
   const state = { inUse: [] as boolean[], clearThrows: false, teardownThrows: false }
   let store: Array<Record<string, unknown>> = []
-  const invoke = (ch: string, ...args: any[]) => ipcHandlers.get(ch)!({} as any, ...args)
+
+  // The app's own window, and an event from its top frame: the account-profile
+  // handlers answer nothing else (P3.2, trusted-sender.ts). An event object is
+  // stamped as coming from it (its sender becomes the window's webContents).
+  const appFrame = { frame: 'app' }
+  const appWindow: any = { isDestroyed: () => false, webContents: { mainFrame: appFrame } }
+  const getAppWindow = () => appWindow
+  function fromApp<T extends Record<string, any>>(ev: T = {} as T): T {
+    const wc = ev.sender ?? { mainFrame: appFrame }
+    if (!wc.mainFrame) wc.mainFrame = { frame: 'main' }
+    appWindow.webContents = wc
+    return Object.assign(ev, { sender: wc, senderFrame: wc.mainFrame })
+  }
+  const invoke = (ch: string, ...args: any[]) => ipcHandlers.get(ch)!(fromApp({} as any), ...args)
 
   beforeEach(async () => {
     order.length = 0; state.inUse = []; state.clearThrows = false; state.teardownThrows = false
@@ -274,6 +345,7 @@ describe('C5: accountProfiles handlers sequencing on the base', () => {
     vi.doMock('../../src/main/claude-account-identity', () => ({
       getAccountIdentity: vi.fn(), getDefaultAccountEmail: vi.fn(), getWatchedProfileId: vi.fn(), detectedNewAccountEmail: vi.fn(),
       isProfileInUseByLiveSession: () => { const v = state.inUse.shift() ?? false; order.push(`inUse:${v}`); return v },
+      sessionsOnProfile: () => [],
     }))
     vi.doMock('../../src/main/usage/account-usage', () => ({ fetchAllAccountsUsage: vi.fn(), fetchAllAccountsUsageStreaming: vi.fn(), fetchAccountUsage: vi.fn() }))
     vi.doMock('../../src/main/account-auth-info', () => ({ readAllProfileAuthInfo: () => [] }))
@@ -283,7 +355,7 @@ describe('C5: accountProfiles handlers sequencing on the base', () => {
     vi.doMock('../../src/main/account-web/account-pane', () => ({ closeAccountPanesForProfile: (id: string) => { order.push(`closePanes:${id}`) } }))
     const { registerAccountProfilesHandlers } = await import('../../src/main/ipc/account-profiles-handlers')
     ipcHandlers.clear()
-    registerAccountProfilesHandlers()
+    registerAccountProfilesHandlers(getAppWindow)
   })
 
   it('rename trims and caps the name at 120 characters and refuses an invalid id', () => {
@@ -356,6 +428,10 @@ describe('C7: setup:isCliReady and setup:spawnCliSetup on the base', () => {
     vi.doMock('../../src/main/pty-manager', () => ({ resolveClaudeForPty: () => ({ cmd: 'claude-resolved', args: [] }) }))
     vi.doMock('../../src/main/claude-cli-probe', () => ({ probeClaudeCli: async () => ({ installed: true, probe: 'x' }) }))
     vi.doMock('../../src/main/data-paths', () => ({ getDataDirectory: () => home, getResourcesDirectory: () => home, setDataDirectory() {}, setResourcesDirectory() {}, isDataDirFromRegistry: () => true }))
+    // WP2: Claude Code is on here. The setup terminal asks main's launch rule
+    // first (provider-launch-gate.ts), which its own suites cover; this pins
+    // the PTY shape the base had.
+    vi.doMock('../../src/main/provider-launch-gate', () => ({ providerLaunchRefusal: () => null, providerProbeRefusal: () => null }))
     vi.resetModules()
   })
   afterEach(() => {

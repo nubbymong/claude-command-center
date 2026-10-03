@@ -110,6 +110,33 @@ describe('WP1 traceability manifest', () => {
     }
   })
 
+  // Existence is enforced for an evidenced item's tests and evidence, and for
+  // every item's currentTests (above). A PLANNED item may name a test or
+  // record that is not written yet, but never one that exists under another
+  // folder: five items once named tests/wp1/accounts-surface.test.tsx while
+  // the surface test lived in tests/unit/renderer/.
+  it('a cited path that does not exist is a planned file, never a wrong pointer to one that exists elsewhere', () => {
+    const tracked = execFileSync('git', ['-C', ROOT, 'ls-files'], { encoding: 'utf8', maxBuffer: 1 << 28 }).split('\n').map((s) => s.trim()).filter(Boolean)
+    const byName = new Map<string, string[]>()
+    for (const p of tracked) {
+      const name = p.slice(p.lastIndexOf('/') + 1)
+      byName.set(name, [...(byName.get(name) ?? []), p])
+    }
+    const wrongPointers = (items: Array<Pick<Item, 'id' | 'tests' | 'evidence'>>) => items.flatMap((i) => [...i.tests, ...i.evidence]
+      .filter((p) => !existsSync(resolve(ROOT, p)))
+      .flatMap((p) => {
+        const elsewhere = byName.get(p.slice(p.lastIndexOf('/') + 1))
+        return elsewhere ? [`${i.id}: ${p} does not exist, but ${elsewhere.join(', ')} does`] : []
+      }))
+    const wrong = wrongPointers(manifest.items)
+    expect(wrong, wrong.join('\n')).toEqual([])
+    // Verify the verifier: the old pointer is caught; a planned file that
+    // exists nowhere, and an existing one, are not.
+    expect(wrongPointers([{ id: 'WP1.39', tests: ['tests/wp1/accounts-surface.test.tsx'], evidence: [] }])).toHaveLength(1)
+    expect(wrongPointers([{ id: 'WP1.72', tests: ['tests/wp1/fake-keyring.test.ts'], evidence: ['docs/wp1/evidence/keyring-smoke.md'] }])).toEqual([])
+    expect(wrongPointers([{ id: 'WP1.39', tests: ['tests/unit/renderer/accounts-surface.test.tsx'], evidence: [] }])).toEqual([])
+  })
+
   it(`candidate phase: nothing is still planned and evidence is bound to a commit that is an ancestor of HEAD with no source or test change since (phase ${phase}: ${reason})`, () => {
     if (phase !== 'candidate') return
     const planned = manifest.items.filter((i) => i.status !== 'evidenced').map((i) => i.id)

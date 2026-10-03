@@ -21,6 +21,16 @@ describe('runningConfigCounts', () => {
     expect(c.size).toBe(0)
   })
 
+  it('a tab whose launch started nothing (refused by main) never marks its config running, for any provider', () => {
+    const c = runningConfigCounts([
+      { configId: 'refused-lab', kind: undefined, neverStarted: true },
+      { configId: 'web-app', kind: undefined, neverStarted: true },
+      { configId: 'web-app', kind: undefined },
+    ] as never)
+    expect(c.get('refused-lab')).toBeUndefined()
+    expect(c.get('web-app')).toBe(1)
+  })
+
   it('is empty for no sessions', () => {
     expect(runningConfigCounts([]).size).toBe(0)
   })

@@ -5,7 +5,7 @@
  */
 import { create } from 'zustand'
 import { saveConfigNow } from '../utils/config-saver'
-import { TIPS_LIBRARY, Tip, TipContent } from '../tips-library'
+import { TIPS_LIBRARY, Tip, TipContent, type TipPlatform } from '../tips-library'
 
 /** Single feature usage event */
 export interface FeatureUsage {
@@ -154,6 +154,10 @@ export function pruneRetiredFeatures(tracking: UsageTracking): UsageTracking {
 
 /** Decide which content variant to show for a tip given usage state */
 function resolveContent(tip: Tip, tracking: UsageTracking): TipContent | null {
+  // A tip about one operating system is offered only there (P3.15 round 1).
+  // Where the platform is not known (no preload), every tip stays offered.
+  const platform = typeof window !== 'undefined' ? window.electronPlatform : undefined
+  if (tip.platforms && platform && !tip.platforms.includes(platform as TipPlatform)) return null
   // Check excludes — if the user has done something that makes this tip irrelevant
   if (tip.excludes && tip.excludes.some((f) => (tracking.features ?? {})[f])) {
     return tip.variants.postUse ?? null

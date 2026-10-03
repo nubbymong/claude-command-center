@@ -1,0 +1,173 @@
+===== startup
+> You are in C:\Users\alex\projects\demo
+
+  Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt injection. Trusting the     
+  directory allows project-local config, hooks, and exec policies to load.
+
+› 1. Yes, continue
+  2. No, quit
+
+  Press enter to continue
+
+===== after-enter
+╭───────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.153.4)                    │
+│                                               │
+│ model:     gpt-6-astra low   /model to change │
+│ directory: C:\Users\alex\projects\demo        │
+╰───────────────────────────────────────────────╯
+
+  Tip: New Build faster with Codex.
+ 
+
+› Ask Codex to do anything
+
+  gpt-6-astra low · C:\Users\alex\projects\demo
+
+===== typed /
+╭───────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.153.4)                    │
+│                                               │
+│ model:     gpt-6-astra low   /model to change │
+│ directory: C:\Users\alex\projects\demo        │
+╰───────────────────────────────────────────────╯
+
+  Tip: New Build faster with Codex.
+
+
+› /
+
+  /model                  choose what model and reasoning effort to use
+  /fast                   2x speed, increased usage
+  /ide                    include current selection, open files, and other context from your IDE
+  /permissions            choose what Codex is allowed to do
+  /keymap                 remap TUI shortcuts
+  /vim                    toggle Vim mode for the composer
+  /setup-default-sandbox  set up elevated agent sandbox
+  /sandbox-add-read-dir   let sandbox read a directory: /sandbox-add-read-dir <absolute_path>
+
+===== typed /mo
+╭───────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.153.4)                    │
+│                                               │
+│ model:     gpt-6-astra low   /model to change │
+│ directory: C:\Users\alex\projects\demo        │
+╰───────────────────────────────────────────────╯
+
+  Tip: New Build faster with Codex.
+
+
+› /mo
+
+  /model  choose what model and reasoning effort to use
+
+===== typed /comp
+╭───────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.153.4)                    │
+│                                               │
+│ model:     gpt-6-astra low   /model to change │
+│ directory: C:\Users\alex\projects\demo        │
+╰───────────────────────────────────────────────╯
+
+  Tip: New Build faster with Codex.
+ 
+
+› /comp
+
+  /compact  summarize conversation to prevent hitting the context limit
+
+===== typed /pl
+╭───────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.153.4)                    │
+│                                               │
+│ model:     gpt-6-astra low   /model to change │
+│ directory: C:\Users\alex\projects\demo        │
+╰───────────────────────────────────────────────╯
+
+  Tip: New Build faster with Codex.
+
+
+› /pl
+
+  /plan     switch to Plan mode
+  /plugins  browse plugins
+
+===== typed /sta
+╭───────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.153.4)                    │
+│                                               │
+│ model:     gpt-6-astra low   /model to change │
+│ directory: C:\Users\alex\projects\demo        │
+╰───────────────────────────────────────────────╯
+
+  Tip: New Build faster with Codex.
+
+
+› /sta
+
+  /status      show current session configuration and token usage
+  /statusline  configure which items appear in the status line
+
+===== typed /re
+╭───────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.153.4)                    │
+│                                               │
+│ model:     gpt-6-astra low   /model to change │
+│ directory: C:\Users\alex\projects\demo        │
+╰───────────────────────────────────────────────╯
+
+  Tip: New Build faster with Codex.
+
+
+› /re
+
+  /review  review my current changes and find issues
+  /rename  rename the current thread
+  /resume  resume a saved chat
+  /recap   summarize the current conversation now
+
+===== typed /me
+╭───────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.153.4)                    │
+│                                               │
+│ model:     gpt-6-astra low   /model to change │
+│ directory: C:\Users\alex\projects\demo        │
+╰───────────────────────────────────────────────╯
+
+  Tip: New Build faster with Codex.
+
+
+› /me
+
+  /memories  configure memory use and generation
+  /mention   mention a file
+
+===== typed /ho
+╭───────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.153.4)                    │
+│                                               │
+│ model:     gpt-6-astra low   /model to change │
+│ directory: C:\Users\alex\projects\demo        │
+╰───────────────────────────────────────────────╯
+
+  Tip: New Build faster with Codex.
+ 
+
+› /ho
+
+  /hooks  view and manage lifecycle hooks
+
+===== typed /us
+╭───────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.153.4)                    │
+│                                               │
+│ model:     gpt-6-astra low   /model to change │
+│ directory: C:\Users\alex\projects\demo        │
+╰───────────────────────────────────────────────╯
+
+  Tip: New Build faster with Codex.
+ 
+
+› /us
+
+  no matches

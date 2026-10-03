@@ -25,7 +25,9 @@ import { makeTranscriptBinder } from './transcript-binder'
 import type { TranscriptBinder } from './transcript-binder'
 import { readConfig } from '../config-manager'
 import { logInfo } from '../debug-logger'
-import { getRememberedName, forgetSessionName, writeNameSidecar, nodeNameSidecarDeps } from './session-name-sidecar'
+import { getRememberedName, forgetSessionName, writeNameSidecar, nodeNameSidecarDeps, writeRealmNameSidecar, nodeRealmNameFs } from './session-name-sidecar'
+import { makeCodexLogBinder, setCodexLogBinder } from './codex-log-binder'
+import { notIndexedSnapshot, setNotIndexedListener } from './indexing-gaps'
 
 // Module-level singleton. Null until initLogging() runs, and stays null when
 // logging is disabled (no fork, no worker, no native dep loaded).
@@ -55,7 +57,11 @@ export function initLogging(opts: {
     forkChild: forkTranscriptsWorker,
     dbPath: opts.dbPath,
     emit: opts.emit,
+    // P3.12 (Y1): the worker starts with every not-indexed window, and is told
+    // of each change.
+    notIndexedSnapshot,
   })
+  setNotIndexedListener((update) => sup.notIndexedWindows(update))
   sup.start()   // forks the worker; it reconciles dangling runs itself on open
   _supervisor = sup
   // Bind discovery sources to this supervisor. Uses Task-3 canonicalize + the
@@ -80,6 +86,17 @@ export function initLogging(opts: {
       forgetSessionName(sessionId)
     },
   })
+  // P3.12 (rows 31, 32): a Codex session's rollout claims become its run's
+  // binds, and its exact claim carries the name file, as Claude's binder does
+  // for Claude's exact sources. Never through Claude's binder (its
+  // canonicalise, heuristic scan and resume record are Claude's).
+  setCodexLogBinder(makeCodexLogBinder({
+    supervisor: sup,
+    writeName: (rolloutPath, sessionsDir, name) => { writeRealmNameSidecar(rolloutPath, sessionsDir, name, nodeRealmNameFs) },
+    rememberedName: getRememberedName,
+    forgetName: forgetSessionName,
+    log: logInfo,
+  }))
 }
 
 /** The supervisor, for run lifecycle + diagnostics + the read path. Null when disabled. */
@@ -98,13 +115,16 @@ export function getTranscriptBinder(): TranscriptBinder | null {
  * when never initialised / disabled — the ref is null.
  */
 export function shutdownLogging(): void {
+  setNotIndexedListener(null)
   _supervisor?.shutdown()
   _supervisor = null
   _binder = null
+  setCodexLogBinder(null)
 }
 
 /** Test seam: reset module state so each test starts clean. Not used in production. */
 export function _resetLoggingForTest(): void {
   _supervisor = null
   _binder = null
+  setCodexLogBinder(null)
 }

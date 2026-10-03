@@ -83,8 +83,8 @@ export default function PageFrame({
           <span className="text-xs font-medium text-text shrink-0">{title}</span>
           {context && (
             <>
-              <span className="text-[11px] text-surface2 shrink-0">·</span>
-              <span className="text-[11px] text-overlay0 truncate min-w-0">{context}</span>
+              <span className="text-[11px] text-[var(--text-muted)] shrink-0">·</span>
+              <span className="text-[11px] text-[var(--text-muted)] truncate min-w-0">{context}</span>
             </>
           )}
         </div>
@@ -95,7 +95,7 @@ export default function PageFrame({
             onClick={onClose}
             aria-label="Close"
             title="Close (back to sessions)"
-            className="ml-1 w-6 h-6 flex items-center justify-center rounded shrink-0 text-overlay0 hover:text-text hover:bg-surface0 transition-colors"
+            className="ml-1 w-6 h-6 flex items-center justify-center rounded shrink-0 text-[var(--text-muted)] hover:text-text hover:bg-surface0 transition-colors"
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />

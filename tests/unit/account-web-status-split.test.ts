@@ -15,6 +15,9 @@
  * the handler ever awaits it again these tests hang instead of quietly passing.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+// Every provider is on here: main's launch rule has its own suites
+// (tests/unit/main/provider-launch-gate.test.ts and the provider-off tests).
+vi.mock('../../src/main/provider-launch-gate', () => ({ providerLaunchRefusal: () => null, providerProbeRefusal: () => null }))
 
 const handlers: Record<string, (e: unknown, ...args: unknown[]) => unknown> = {}
 

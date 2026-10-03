@@ -34,6 +34,9 @@ import type { ForkedTranscriptsWorker } from './fork-transcripts-worker'
 import type { ToTranscriptsWorker, FromTranscriptsWorker } from './log-worker-transport'
 
 export interface LogSupervisorOptions {
+  /** P3.12 (Y1): every conversation's not-indexed windows, sent to each
+   *  worker it starts. */
+  notIndexedSnapshot?: () => { conversations: Record<string, Array<[number, number | null]>>; before: number | null }
   forkChild: () => ForkedTranscriptsWorker
   dbPath: string
   emit: (channel: string, payload: unknown) => void
@@ -64,7 +67,9 @@ type BufferedMessage =
   | Extract<ToTranscriptsWorker, { type: 'run-account' }>
   | Extract<ToTranscriptsWorker, { type: 'run-rename' }>
   | Extract<ToTranscriptsWorker, { type: 'transcript-bind' }>
+  | Extract<ToTranscriptsWorker, { type: 'transcript-unbind' }>
   | Extract<ToTranscriptsWorker, { type: 'session-conversation-upsert' }>
+  | Extract<ToTranscriptsWorker, { type: 'not-indexed-windows' }>
 
 interface QueuedItem {
   msg: BufferedMessage
@@ -162,6 +167,9 @@ export class LogSupervisor {
     // runs + resumes tails itself, then posts `ready`; only then do we replay
     // the while-down buffer.
     w.transport.post({ type: 'open', dbPath: this.opts.dbPath })
+    // P3.12 (Y1): the worker starts with every not-indexed window.
+    const windows = this.opts.notIndexedSnapshot?.()
+    if (windows) w.transport.post({ type: 'not-indexed-windows', ...windows, replace: true })
     this.pushHealth()
     w.onExit(() => { if (this.worker === w) this.onWorkerExit() })
   }
@@ -277,9 +285,26 @@ export class LogSupervisor {
   }
 
   /** Bind a discovered transcript file to the session's current run; the worker
-   *  starts tailing it immediately. */
-  bindTranscript(sessionId: string, path: string, confidence: 'exact' | 'heuristic', sourceVersion?: string): void {
-    this.enqueueOrSend({ type: 'transcript-bind', sessionId, path, confidence, sourceVersion })
+   *  starts tailing it immediately. `sourceFormat` (P3.12): a Codex rollout is
+   *  tailed with the Codex normalizer; absent = Claude's JSONL, as before. */
+  bindTranscript(sessionId: string, path: string, confidence: 'exact' | 'heuristic', sourceVersion?: string, sourceFormat?: 'claude-jsonl' | 'codex-rollout', sourceIdentity?: string): void {
+    this.enqueueOrSend(sourceFormat
+      ? { type: 'transcript-bind', sessionId, path, confidence, sourceVersion, sourceFormat, ...(sourceIdentity ? { sourceIdentity } : {}) }
+      : { type: 'transcript-bind', sessionId, path, confidence, sourceVersion })
+  }
+
+  /** P3.12 (Y1): when these Codex conversations were written while not
+   *  indexed (their windows, whole) and `before`; buffered and ordered like
+   *  every other lifecycle message. */
+  notIndexedWindows(update: { conversations: Record<string, Array<[number, number | null]>>; before: number | null }): void {
+    this.enqueueOrSend({ type: 'not-indexed-windows', conversations: update.conversations, before: update.before })
+  }
+
+  /** P3.12: the session is no longer on this transcript (a Codex claim let
+   *  go): the worker drains and retires its tail; what it gave stays. Buffered
+   *  and ordered like every other lifecycle message. */
+  unbindTranscript(sessionId: string, path: string): void {
+    this.enqueueOrSend({ type: 'transcript-unbind', sessionId, path })
   }
 
   /** #480: durably record the EXACT conversation a session is on (keyed by AICC

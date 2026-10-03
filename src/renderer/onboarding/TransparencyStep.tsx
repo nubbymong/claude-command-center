@@ -1,8 +1,14 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useSettingsStore, type UpdateChannel } from '../stores/settingsStore'
+import { codexPreference, usesClaude, usesCodex } from './provider-choice'
+import { sentinelAnalysisProvider } from '../../shared/ask-conductor-provider'
+import { sentinelTransparencyText } from '../components/sentinel/sentinel-report-text'
+import { CLAUDE_OFF_ACCOUNTS_LINE } from '../lib/claudeOff'
+import { logIndexTransparencyText } from '../lib/log-index-text'
 import { useGitHubStore } from '../stores/githubStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { defaultUpdateChannelForVersion } from '../utils/versionLabel'
+import { LOGGING_CONSENT_VERSION } from '../utils/logging-consent'
 
 declare const __APP_VERSION__: string
 
@@ -39,11 +45,19 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
     typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '',
   )
 
+  // P3.4 (row 14; OD27 M1 D5): with Claude Code off the Account row (Claude's
+  // account) reads the one muted line, and Claude's own sign-in is not read.
+  const claudeOn = usesClaude(settings)
+
   useEffect(() => {
     void useGitHubStore.getState().loadConfig()
     void useAccountProfilesStore.getState().hydrate()
-    void window.electronAPI.accountProfiles.globalEmail().then(setGlobalEmail).catch(() => {})
   }, [])
+
+  useEffect(() => {
+    if (!claudeOn) return
+    void window.electronAPI.accountProfiles.globalEmail().then(setGlobalEmail).catch(() => {})
+  }, [claudeOn])
 
   // Pre-select the channel that matches the running build -- once, and never
   // over an explicit choice (updateChannelChosen). Written rather than merely
@@ -63,19 +77,27 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
   const pickChannel = (channel: UpdateChannel) => save({ updateChannel: channel, updateChannelChosen: true })
 
   const email = profiles.find((p) => p.isPrimary)?.accountEmail || profiles[0]?.accountEmail || globalEmail
-  const toolGates = [
-    settings.conductorTools?.vision !== false,
-    settings.conductorTools?.codexReview !== false && settings.codexEnabled !== false,
-    settings.conductorTools?.hostTransfer !== false,
-    settings.conductorTools?.canvas !== false,
+  // Each tool that can reach a session, named so the recap discloses which
+  // ones are on. Codex review needs Codex on (the user's yes: with no saved
+  // value, Codex is not set up), and Claude review needs Claude Code on (it
+  // runs Claude Code); each otherwise counts by its own switch (it answers the
+  // other provider's sessions whenever there are any).
+  const codex = codexPreference(settings)
+  const toolGates: [string, boolean][] = [
+    ['Vision', settings.conductorTools?.vision !== false],
+    ['Codex review', settings.conductorTools?.codexReview !== false && codex === 'on'],
+    ['Claude review', settings.conductorTools?.claudeReview !== false && claudeOn],
+    ['Host screenshots', settings.conductorTools?.hostTransfer !== false],
+    ['Agent Canvas', settings.conductorTools?.canvas !== false],
   ]
-  const toolCount = toolGates.filter(Boolean).length
+  const toolsOn = toolGates.filter(([, on]) => on).map(([name]) => name)
+  const toolCount = toolsOn.length
   const themeLabel = settings.theme === 'system' ? 'System' : settings.theme === 'light' ? 'Light' : 'Dark'
 
   const channel = settings.updateChannel === 'beta' ? 'beta' : 'stable'
   const recap: { icon: string; label: string; value: string; control?: ReactNode }[] = [
     { icon: PALETTE, label: 'Theme', value: themeLabel },
-    { icon: PERSON, label: 'Account', value: email ?? 'Sign in at first session' },
+    { icon: PERSON, label: 'Account', value: claudeOn ? email ?? 'Sign in at first session' : CLAUDE_OFF_ACCOUNTS_LINE },
     {
       icon: BRANCH,
       label: 'GitHub',
@@ -99,16 +121,16 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
     {
       icon: SPARK,
       label: 'Codex (Beta)',
-      value: settings.codexEnabled !== false ? 'On' : 'Off (Settings → Codex)',
+      value: codex === 'on' ? 'On' : codex === 'off' ? 'Off (Settings, Accounts)' : 'Not set up (Settings, Accounts)',
     },
     {
       icon: GEAR,
-      label: 'Built-in tools',
+      label: 'Built-in Tools',
       // Counted from the gate list above so adding a tool can never leave this
       // reading "3 of 3" while four are advertised.
       value:
         settings.conductorToolsEnabled !== false
-          ? `On: ${toolCount} of ${toolGates.length} tools`
+          ? `On: ${toolCount} of ${toolGates.length} tools${toolCount ? ` (${toolsOn.join(', ')})` : ''}`
           : 'Off (Settings → General)',
     },
     {
@@ -148,10 +170,14 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
 
   const loggingOn = settings.loggingEnabled !== false
   const sentinelOn = settings.sentinelEnabled === true
+  // P3.9: what Sentinel watches (the assistants in use) and what its
+  // analysis runs on (both on: the one Ask Conductor runs on).
+  const sentinelScope = { claudeOn: usesClaude(settings), codexOn: usesCodex(settings) }
+  const sentinelRunsOn = sentinelAnalysisProvider(sentinelScope.claudeOn, sentinelScope.codexOn, settings)
 
   const finish = () => {
     // The consent is the page itself: reaching Next means it was seen.
-    save({ loggingConsentSeen: true })
+    save({ loggingConsentSeen: true, loggingConsentVersion: LOGGING_CONSENT_VERSION })
     onNext()
   }
 
@@ -179,11 +205,7 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
             <div className="tc-ic">{CHART}</div>
             <div className="tc-body">
               <div className="tc-t">Index conversation logs</div>
-              <div className="tc-d">
-                Powers the Logs, Memory and Tokenomics pages by indexing Claude's own transcripts
-                (~/.claude/projects). Indexing is local; turning it off only stops the index. Your conversations
-                stay in Claude's files either way.
-              </div>
+              <div className="tc-d">{logIndexTransparencyText({ claude: claudeOn, codex: codex === 'on' })}</div>
             </div>
             <button
               className={loggingOn ? 'tc-sw on' : 'tc-sw'}
@@ -196,10 +218,7 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
             <div className="tc-ic">{SHIELD}</div>
             <div className="tc-body">
               <div className="tc-t">Sentinel</div>
-              <div className="tc-d">
-                Watches Claude Code updates for changes that could break your setup and proposes fixes. Off by
-                default because it spends Claude tokens when Claude updates. Takes effect after a restart.
-              </div>
+              <div className="tc-d">{sentinelTransparencyText(sentinelScope, sentinelRunsOn)}</div>
             </div>
             <button
               className={sentinelOn ? 'tc-sw on' : 'tc-sw'}

@@ -3,6 +3,8 @@ import * as path from 'path'
 import * as fs from 'fs'
 import { homedir } from 'os'
 import * as pty from 'node-pty'
+import { guardPtyIo } from '../pty-input-guard'
+import { stripSpoofableText } from '../../shared/safe-text'
 import { logInfo } from '../debug-logger'
 import { getInstallPath } from '../update-watcher'
 import { resolveClaudeForPty } from '../pty-manager'
@@ -58,6 +60,14 @@ export function isCliReady(): boolean {
 
 // Track CLI setup PTY
 let cliSetupPty: pty.IPty | null = null
+
+/** WP2: the CLI setup terminal runs Claude Code for as long as it is open, so
+ *  it counts as Claude Code in use for the switch-off rule
+ *  (provider-in-use.ts). It is registered in the same step as its launch
+ *  check, and dropped when it exits or is killed. */
+export function countCliSetupInUse(): number {
+  return cliSetupPty ? 1 : 0
+}
 
 export function writeCliSetupPty(data: string): void {
   cliSetupPty?.write(data)
@@ -138,6 +148,15 @@ export function registerSetupHandlers(): void {
   })
 
   ipcMain.handle('setup:spawnCliSetup', async (event, cols: number, rows: number) => {
+    // WP2: this terminal runs Claude Code itself (its folder-trust prompt), so
+    // it is refused while Claude Code is off, before anything is spawned
+    // (provider-launch-gate.ts). The renderer skips this step then anyway
+    // (skipsClaudeCliSetup); this is the authority behind it. Answered, so
+    // the setup terminal says why. Loaded lazily: config-manager imports this
+    // module, and the gate's accounts graph imports config-manager.
+    const { providerLaunchRefusal } = await import('../provider-launch-gate')
+    const refused = providerLaunchRefusal('claude')
+    if (refused) return { refused }
     const sessionId = '__cli_setup__'
     const installPath = getInstallPath()
     const cwd = installPath && fs.existsSync(installPath) ? installPath : homedir()
@@ -170,6 +189,10 @@ export function registerSetupHandlers(): void {
         if (cliSetupPty) cliSetupPty.write(`${cmd}\r`)
       }, 500)
     }
+
+    // P3.15 round 4 (P2): an error on this terminal's input (the user types
+    // into it) or output never quits the app; it ends on its own exit.
+    guardPtyIo(cliSetupPty, (side, err) => logInfo(`[setup] CLI setup PTY ${side} failed (${stripSpoofableText(String(err?.code ?? err?.message ?? err), 120)})`))
 
     const win = BrowserWindow.fromWebContents(event.sender)
 

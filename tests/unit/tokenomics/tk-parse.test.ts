@@ -47,6 +47,38 @@ describe('extractCwdFromLine', () => {
   })
 })
 
+// P3.8 round 1 (M1, Q2): a Codex turn is priced by its model's own id, as the
+// session strip prices it (providers/codex/pricing.ts); a Claude line keeps
+// its longest-prefix match, from an index built once per price-key list.
+describe('the price model of a turn', () => {
+  const codexTurn = (model: string) => [
+    JSON.stringify({ type: 'session_meta', timestamp: '2026-06-01T09:00:00Z', payload: { id: 'cx9', cwd: 'F:\\cx' } }),
+    JSON.stringify({ type: 'turn_context', payload: { model } }),
+    JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 10, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0, total_tokens: 11 } } } }),
+  ].join('\n')
+  const KEYS = ['gpt-5', 'gpt-5.3-codex', 'o3', 'claude-opus-4-8', 'claude-opus']
+
+  it('a Codex model no price names exactly keeps its own id (no price), never a shorter price key', () => {
+    for (const model of ['gpt-5.3-codex-spark', 'gpt-5.6-terra', 'o3-deep-thing', 'codex-nova-preview']) {
+      expect(codexEventsFromRollout(codexTurn(model), KEYS, 0)[0].priceModel, model).toBe(model)
+    }
+    expect(codexEventsFromRollout(codexTurn('gpt-5.3-codex'), KEYS, 0)[0].priceModel).toBe('gpt-5.3-codex')
+  })
+
+  it('a Claude line still takes its longest price key, the same answer however often it is asked', () => {
+    const line = (model: string) => JSON.stringify({ type: 'assistant', timestamp: '2026-06-01T10:00:00Z', sessionId: 's1',
+      message: { id: 'm-' + model, model, usage: { input_tokens: 1, output_tokens: 1 } } })
+    for (let i = 0; i < 3; i++) {
+      expect(parseClaudeUsageLine(line('claude-opus-4-8-20260101'), KEYS)?.priceModel).toBe('claude-opus-4-8')
+      expect(parseClaudeUsageLine(line('claude-opus-5'), KEYS)?.priceModel).toBe('claude-opus')
+      expect(parseClaudeUsageLine(line('claude-opus-4-8'), KEYS)?.priceModel).toBe('claude-opus-4-8')
+      expect(parseClaudeUsageLine(line('mystery'), KEYS)?.priceModel).toBe('mystery')
+    }
+    // A new key list is a new index: an answer from the old list is not reused.
+    expect(parseClaudeUsageLine(line('claude-opus-5'), ['claude-opus-5'])?.priceModel).toBe('claude-opus-5')
+  })
+})
+
 describe('codexEventsFromRollout', () => {
   it('emits one delta event per token_count turn (first=total, rest=last_token_usage)', () => {
     const text = [

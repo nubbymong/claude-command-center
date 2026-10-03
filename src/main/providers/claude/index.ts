@@ -12,8 +12,13 @@ import { deployClaudeStatuslineScript, deployClaudeResumePickerScript } from './
 import { watchClaudeStatuslineFile, listClaudeResumableSessions } from './telemetry'
 import {
   claudeAuthorityEnvVariables, CLAUDE_MIN_MANAGED_CLI_VERSION,
-  sanitizeClaudeManagedSettings, claudeAuthoritySettingsKeys, claudeManagedLaunchPreflight,
+  sanitizeClaudeManagedSettings, claudeAuthoritySettingsKeys, claudeManagedLaunchPreflight, claudeTransportSettingsEnv,
 } from './managed-launch'
+import { createClaudeLegacyAccountsPort } from './legacy-store'
+import type { ClaudeLegacyAccountsIo } from './legacy-store'
+import { createClaudeReviewLaunch } from './review-launch'
+import type { ClaudeReviewPorts } from './review-launch'
+import { CLAUDE_ENABLEMENT } from './enablement'
 
 // The managed-launch surface is re-exported so the composition root and the
 // conformance suite reach it through this entry point, never by deep import.
@@ -23,9 +28,33 @@ export {
   CLAUDE_REMOVED_SETTINGS_KEYS, CLAUDE_MIN_MANAGED_CLI_VERSION,
   isClaudeAuthorityEnvVariable, sanitizeClaudeManagedSettings, claudeAuthoritySettingsKeys,
   claudeAuthorityFamilyRules,
-  claudeManagedCliCompatibility, claudeManagedLaunchPreflight,
+  claudeManagedCliCompatibility, claudeManagedLaunchPreflight, claudeTransportSettingsEnv,
 } from './managed-launch'
 export type { AuthorityKind, AuthorityEntry } from './managed-launch'
+
+// profiles.json as the neutral account registry sees it (WP2, design 6.2).
+export { claudeLegacySnapshot, claudeProfilePathRef } from './legacy-accounts'
+export type { ClaudeLegacyAccountsIo } from './legacy-store'
+
+// The reviewer for Codex sessions (WP2 commit 5b): its launch, discovery and
+// adapter, and the ports the composition root hands it.
+export { createClaudeReviewLaunch } from './review-launch'
+export type { ClaudeReviewPorts } from './review-launch'
+export { createClaudeReviewOperations, parseClaudeResult, CLAUDE_REVIEW_ARGS, CLAUDE_REVIEW_MAX_STDOUT, CLAUDE_REVIEW_HOLD_GRACE_MS } from './review'
+export type { ClaudeCliPorts, ClaudeCliCommand, ClaudeCliRunOptions, ClaudeCliRunResult, ClaudeReviewDeps, ClaudeResultOutcome } from './review'
+export { discoverClaude, verifyClaudeExecutable, claudeCompatibilityAllowsUse, parseClaudeVersion } from './discovery'
+export type { ClaudeDiscovery, ClaudeDiscoveryDeps, ClaudeExecutableIdentity, ClaudeExecutableCheck, ClaudeFileStat, ClaudeVersionRun } from './discovery'
+
+/** What the composition root injects: the main-process stores the package
+ *  reads and writes without importing them (a shared main module imported
+ *  here would reach the Codex package: rule R2). Absent where only the
+ *  session surface is needed. */
+export interface ClaudePackageDeps {
+  legacyAccountsIo?: ClaudeLegacyAccountsIo
+  /** The reviewer's ports (WP2 commit 5b). Absent: the package offers no
+   *  setup, launch or review, and `claude_review` is never offered. */
+  review?: ClaudeReviewPorts
+}
 
 export class ClaudeProvider implements SshCapableProvider {
   readonly id = 'claude' as const
@@ -102,6 +131,7 @@ export const claudeCapabilities: ProviderCapabilities = {
   'auth.apiKey': { state: 'unsupported', note: 'managed accounts use the CLI sign-in; an API key is never collected' },
   'auth.status': { state: 'unknown', note: 'wired in the Claude adapter slice' },
   'auth.logout': { state: 'unknown', note: 'wired in the Claude adapter slice' },
+  'auth.retireReplaced': { state: 'unsupported', note: 'a Claude profile signs in again in its own home; nothing is replaced' },
   'realm.isolated': { state: 'unknown', platformOverrides: { darwin: 'unsupported' }, note: 'profile homes; not on macOS in WP1 (D2); wired in the Claude adapter slice' },
   'account.labelFields': { state: 'unknown', note: 'email read from the profile identity file; wired in the Claude adapter slice' },
   'account.usage': { state: 'unknown', note: 'the per-account usage fetch lives in src/main/usage, not on this package; wired in a later slice' },
@@ -167,7 +197,7 @@ export const claudeOwnedLaunchVariables: readonly string[] = [
  *  `composeProviders()`, which `index.ts` calls inside its startup error
  *  boundary. A malformed manifest therefore reaches the user as the "cannot
  *  start" dialog rather than as a main process that died while loading. */
-export function createClaudePackage(): ProviderPackage {
+export function createClaudePackage(deps: ClaudePackageDeps = {}): ProviderPackage {
   const ambientAuthVariables = claudeAmbientAuthVariables()
   const session = new ClaudeProvider()
   return {
@@ -177,11 +207,19 @@ export function createClaudePackage(): ProviderPackage {
     capabilities: claudeCapabilities,
     ambientAuthVariables,
     ownedLaunchVariables: claudeOwnedLaunchVariables,
+    // On unless the user turned it off (A4): Claude-only users change nothing.
+    enablement: CLAUDE_ENABLEMENT,
     managedLaunch: {
       minimumCliVersion: CLAUDE_MIN_MANAGED_CLI_VERSION,
       sanitizeManagedSettings: sanitizeClaudeManagedSettings,
       authoritySettingsKeys: claudeAuthoritySettingsKeys,
       preflight: claudeManagedLaunchPreflight,
+      transportSettingsEnv: claudeTransportSettingsEnv,
     },
+    ...(deps.legacyAccountsIo ? { legacyAccounts: createClaudeLegacyAccountsPort(deps.legacyAccountsIo) } : {}),
+    // A reviewer for Codex sessions: discovery, a review-only launch in the
+    // reviewer account's profile home, and the adapter (commit 5b). Claude
+    // sessions keep their own launch path (A12).
+    ...(deps.review ? createClaudeReviewLaunch(deps.review) : {}),
   }
 }

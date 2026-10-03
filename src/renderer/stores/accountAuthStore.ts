@@ -7,6 +7,7 @@
 // active, after a sign-in/out, and on a manual pill refresh — and cached with the
 // time it was read. Callers dedupe concurrent refreshes per profile.
 import { create } from 'zustand'
+import { CLAUDE_OFF } from '../lib/claudeOff'
 
 export type WebAuthStatus = 'none' | 'active' | 'expired'
 
@@ -21,6 +22,22 @@ export interface AccountAuthStatus {
   fetchedAt?: number
   /** Last error message, if the most recent fetch failed. */
   error?: string
+  /** WP2: main did not check the Claude Code sign-in (Claude Code is off,
+   *  or its on/off could not be read): the reason. Not an auth result: it
+   *  sets no `cliAuthed` and no `fetchedAt`, so the next refresh asks again. */
+  cliNotChecked?: string
+}
+
+/** WP2: why this account's Claude Code sign-in is not shown, and no sign-in
+ *  is offered: Claude Code is switched off (the renderer's own rule), or main
+ *  did not check it. Null when the sign-in status stands. */
+export function claudeCodeNotChecked(
+  status: Pick<AccountAuthStatus, 'cliNotChecked'> | undefined,
+  claudeOff: boolean,
+): { word: string; label: string; reason: string } | null {
+  if (claudeOff) return { word: 'off', label: 'Claude Code is off', reason: CLAUDE_OFF }
+  if (status?.cliNotChecked) return { word: 'not checked', label: 'Claude Code not checked', reason: status.cliNotChecked }
+  return null
 }
 
 interface AccountAuthState {
@@ -82,7 +99,18 @@ export const useAccountAuthStore = create<AccountAuthState>((set, get) => ({
     set((s) => ({ byProfile: { ...s.byProfile, [profileId]: { ...(s.byProfile[profileId] ?? {}), loading: true, error: undefined } } }))
     try {
       const r = await window.electronAPI.accountWeb.status(profileId)
-      if (r.ok) {
+      if (r.ok && typeof r.cli?.notChecked === 'string' && r.cli.notChecked) {
+        // Main did not check (Claude Code is off): not an auth result. Nothing
+        // is cached as signed in or out, and no fetchedAt is stamped, so the
+        // next refresh -- the one a switch back on makes -- asks again.
+        const reason: string = r.cli.notChecked
+        set((s) => ({
+          byProfile: {
+            ...s.byProfile,
+            [profileId]: { web: r.web?.status ?? 'none', loading: false, cliNotChecked: reason },
+          },
+        }))
+      } else if (r.ok) {
         set((s) => ({
           byProfile: {
             ...s.byProfile,

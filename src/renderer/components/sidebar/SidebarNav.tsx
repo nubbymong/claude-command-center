@@ -3,6 +3,9 @@ import { ViewType } from '../../types/views'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useTokenomicsStore } from '../../stores/tokenomicsStore'
 import { useAccountProfilesStore } from '../../stores/accountProfilesStore'
+import { useProviderAccountsStore, selectProviderAccounts } from '../../stores/providerAccountsStore'
+import { useClaudeOff } from '../../lib/claudeOff'
+import { usesCodex } from '../../onboarding/provider-choice'
 
 interface SidebarNavProps {
   currentView: ViewType
@@ -18,7 +21,8 @@ interface SidebarNavProps {
   serverRunning?: boolean
   tokenomicsIndexComplete?: boolean
   collapsed?: boolean
-  /** Opens the all-accounts usage overview. Button shown only with 2+ accounts. */
+  /** Opens the all-accounts usage overview. Button shown only with 2+ accounts
+   *  across the providers that are on (D4). */
   onShowAccountUsage?: () => void
 }
 
@@ -251,8 +255,15 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
 export default function SidebarNav({ currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, visionRunning, serverRunning, tokenomicsIndexComplete, collapsed, onShowAccountUsage }: SidebarNavProps) {
   const loggingEnabled = useSettingsStore((s) => s.settings.loggingEnabled)
   // Account-usage button lives here in the nav rail (alongside Insights etc.),
-  // shown only with 2+ accounts (never single-account or macOS).
-  const hasMultipleAccounts = useAccountProfilesStore((s) => s.profiles.length >= 2)
+  // shown only with 2+ accounts (never single-account or macOS). D4 (usage
+  // track MP4): the accounts of the providers that are on, together: Claude
+  // Code's profiles while it is on, plus the listed (non-archived) Codex
+  // accounts once Codex is answered on. One of each is two.
+  const claudeOff = useClaudeOff()
+  const codexOn = useSettingsStore((s) => usesCodex(s.settings))
+  const claudeAccounts = useAccountProfilesStore((s) => s.profiles.length)
+  const codexAccounts = useProviderAccountsStore((s) => selectProviderAccounts(s.snapshot, 'codex').length)
+  const hasMultipleAccounts = (claudeOff ? 0 : claudeAccounts) + (codexOn ? codexAccounts : 0) >= 2
 
   // Active when its view is showing, so the rail highlights it like any nav item.
   const accountUsageActive = currentView === 'account-usage'

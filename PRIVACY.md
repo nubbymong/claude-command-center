@@ -2,7 +2,7 @@
 
 **AI Code Conductor** (the "app")
 
-Last updated: 4 August 2026
+Last updated: 2 October 2026
 
 ## The short version
 
@@ -18,11 +18,17 @@ set out in the next section.
 
 ## What personal information the app handles
 
-To show which account a session is running under, the app reads — from files
-that the Claude Code and Codex tools already keep on your computer — **your
-account email address** and **the access token for that account**. The email
-address is displayed in the app so you can tell your accounts apart. The token
-is used only to ask that same provider for your usage allowance.
+To show which Claude account a session is running under, the app reads, from
+files that Claude Code already keeps on your computer, **your account email
+address** and **the access token for that account**. The email address is
+displayed in the app so you can tell your accounts apart. The token is used only
+to ask Anthropic for your usage allowance.
+
+For Codex, the app reads no sign-in file at all. It asks the Codex command-line
+tool whether each Codex account is signed in, and whether with ChatGPT or with
+an API key, and it learns no email address or token from Codex. A Codex account
+is shown under the name you give it. How Codex sign-ins are kept is set out in
+"Codex accounts and sign-ins" below.
 
 If you turn on the optional GitHub integration, the app reads your GitHub
 account details for the same purpose.
@@ -30,6 +36,16 @@ account details for the same purpose.
 Your session transcripts may contain personal information, because they contain
 whatever you typed. The app indexes them locally so it can show your history and
 costs, and that indexing can be switched off (see below).
+
+With the Hooks gateway on (Settings; it is on by default), your Claude Code
+sessions' hooks, and, once you trust them in Codex's own review, the hooks the
+app gives a Codex session, send the app the details of each session event over
+this computer's local connection only: for example the text of a message you
+send, or a tool's input and what it returned. The app uses them for the
+attention dot, its notification rules and to follow which conversation a
+session is on. It keeps them in memory, at most 1,000 per session, with secrets
+it recognises (such as keys and passwords) masked, and drops them when the
+session closes.
 
 None of this is transmitted anywhere except to the provider it already belongs
 to, and none of it ever reaches the developer of this app.
@@ -40,34 +56,139 @@ All of it is ordinary files on your own machine, in a data directory you choose
 during installation (and can change later in Settings):
 
 - your saved session configurations, command buttons, and app settings
-- an index of your Claude Code and Codex session transcripts, used to power the
-  Logs, Memory and Tokenomics views
-- cost and usage figures calculated locally from those transcripts
+- the list of your Claude and Codex accounts: the names, colours and groups
+  you give them, which of them you linked as one person, and which account is
+  the default and which the reviewer
+- one sign-in folder for each Codex account you add (see "Codex accounts and
+  sign-ins" below)
+- a small note for each Codex conversation you move to another Codex account
+  with Switch Account, kept in the same folder as the account list (never in an
+  account's own folder): which account's folder the conversation was copied
+  into, the conversation's id, and a time (the move, or the newest event time
+  in the copied conversation if that is later). It holds no text from the
+  conversation and no usage figure. The app uses it so that account's usage
+  card shows only what that account itself used after the move, not the earlier
+  account's figures. At most 256 notes are kept (an account with the most
+  loses its oldest first), and all of an account's notes, including those of a
+  folder it was moved off by Sign in again, are deleted from the notes file
+  when the account is archived or removed. A notes file the app cannot make
+  sense of is renamed with a ".bad" ending beside it and replaced, never
+  overwritten; the newest 3 such copies are kept until three newer ones
+  replace them. They hold the same kind of notes, an archived account's
+  included, and the app does not edit them. While the notes file cannot be read
+  or written the app keeps the notes in memory and writes them when it can; if
+  the app quits first they are lost, and the notes of an account archived in
+  the meantime stay in the file
+- an index of your Claude Code and Codex session transcripts, used to power
+  the Logs view and the Memory page's recent sessions (the Logs index reads a
+  Codex session's transcript from that session's own Codex account folder)
+- a record of when sessions ran with conversation indexing off, so that what
+  a session wrote then is never indexed later: start and end times, each kept
+  under a conversation's id, a Claude transcript's file name, or a one-way
+  hash of a Claude project folder's name, and never any text of a
+  conversation. It holds at most 50,000 conversations' times; a copy the app
+  cannot read is set aside beside it, and the newest 3 such copies are kept
+- cost and usage figures calculated locally from those transcripts, with the
+  account each Claude and Codex session ran under (Tokenomics keeps an index
+  of its own for this, which the conversation indexing switch does not change)
 - application logs
 - screenshots and drawings you create in the app
 
 None of this is uploaded anywhere. Deleting the data directory deletes it.
 
-The app reads the credential and configuration files that the Claude Code and
-Codex command-line tools maintain in your home directory, in order to show which
+The app reads the credential and configuration files that the Claude Code
+command-line tool maintains in your home directory, in order to show which
 account a session is signed in as and to display your usage allowance. Those
-credentials are used only to talk to the corresponding provider (below) and are
-never sent anywhere else.
+credentials are used only to talk to Anthropic (below) and are never sent
+anywhere else. The app does not read Codex's credential files.
 
-Session transcript indexing can be switched off entirely in **Settings →
-General**.
+Indexing your transcripts for the Logs page can be switched off in **Settings →
+General** (Index conversation logs), or for one saved config in its own
+settings; switching it off stops indexing at once, sessions already running
+too, and switching it on applies to sessions started after.
+The Tokenomics cost index is separate and is not affected by that switch.
+
+## Codex accounts and sign-ins
+
+- **Each Codex account you add has its own sign-in folder.** The app creates it
+  inside its resources folder, under `codex-realms/`, before you sign in, and
+  Codex keeps that account's sign-in there.
+- **The app never opens or reads the sign-in Codex keeps.** It asks Codex
+  (`codex login status`) whether an account is signed in. The only other thing
+  it does with that file is check whether it exists, before it removes the
+  folder of a setup you abandoned, so that a folder still holding a sign-in is
+  never deleted.
+- **An API key you enter goes to Codex, and the app does not store it.** It
+  travels once from the sign-in dialog to the app's main process over a
+  one-way channel, and from there to Codex on its standard input. The app never
+  writes it to disk or to a log, and drops it as soon as Codex has it, or after
+  two minutes if the sign-in never starts.
+- **Your own Codex folder (`~/.codex`, or the folder `CODEX_HOME` named when
+  the app started) is checked on the Set up Codex page, and used only when
+  you confirm it.** Once you have said you use Codex, the Set up Codex page
+  asks Codex on its own whether that folder is signed in, so the page can say
+  so; the app takes only Codex's answer, and keeps nothing of it. Asking
+  writes nothing there from the app; the Codex command-line tool keeps its
+  own scratch files in that folder (under `tmp/`) whenever it runs, this
+  check included. The app uses the folder only when you choose to: Use this
+  sign-in on the Set up Codex page, or Use this computer's Codex sign-in in
+  Settings, Accounts. A
+  session runs in it only after you confirm that launch, it is never used for
+  a code review or Sentinel's analysis, and the app never signs in to it;
+  signing out of it asks you first. Two things are read regardless: the conversation files in
+  `~/.codex/sessions` (for the local Tokenomics index, like the ones in each
+  Codex account's folder), and, when the app's built-in tool server starts or
+  stops, Codex's `config.toml` in your own Codex folder, from which the app
+  removes an entry that older versions of this app added, if one is still
+  there. Checking which Codex version is
+  installed runs it against a new, empty folder, never your own, and so does
+  Sentinel's read of the models the installed Codex offers (`codex debug
+  models --bundled`, the list built into Codex, with no sign-in).
+- **A name you give a Codex session is written beside its conversation.** Once
+  the app knows for certain which conversation the session is on, it writes
+  the name, and the time it was set, in a small file next to that
+  conversation's file in the account's `sessions` folder (the conversation
+  file's name with `.ccc-name.json` in place of `.jsonl`), where the app's own
+  conversation list reads it. Clearing the name deletes the file. This applies
+  to a session on your own Codex folder too.
+- **Sign in again on a signed-in Codex account uses a new folder.** The new
+  sign-in happens in a new folder under `codex-realms/`, and the account's
+  earlier conversations (its `sessions` folder and `history.jsonl`, never a
+  sign-in) are carried into it, each file linked where the computer allows it
+  and copied where it does not. The old folder stays, and so does its sign-in
+  until the app can sign it out without signing out the new one; archiving the
+  account signs it out. Signing your own Codex folder in again happens in
+  place, after a warning.
 
 ## Every network request the app makes
 
 | Destination | Why | When |
 | --- | --- | --- |
 | `api.anthropic.com` | Reads your Claude usage allowance for the status line, using **your** Claude OAuth token | While a session runs, when the status line is enabled |
-| `status.claude.com` | Anthropic's public service-status page | Periodically, to show service health |
+| `status.claude.com` | Anthropic's public service-status page, for the title bar's Claude status pills | While Claude Code is on: when the app starts, every 5 minutes, and at once when Claude Code is turned on. Never while it is off, and not on a first launch until its settings are first saved |
+| `status.openai.com` | OpenAI's public service-status page, for the title bar's Codex status pill | While Codex is on: when the app starts, every 5 minutes, and at once when Codex is turned on. Never while it is off or not set up |
 | `api.github.com`, `github.com` | Checks for app updates and downloads them; powers the optional GitHub integration | On update checks, and when you use the GitHub features |
 | `raw.githubusercontent.com` | Fetches a public model-pricing table (LiteLLM's open dataset) so cost figures are accurate | At most once every 24 hours, cached locally |
+| `support.claude.com`, `raw.githubusercontent.com`, `api.github.com` | Sentinel (off by default), for the assistants in use: Anthropic's public Claude Code model list and Claude Code's public changelog (the anthropics/claude-code repository), and Codex's public release notes (the openai/codex repository's releases, read one version at a time from GitHub's API), all read without any sign-in. Its analysis of an update is a run of the assistant in use (with both on, Claude Code): Claude Code in its analysis account, or Codex in the Codex account chosen for it in Settings, Sentinel (when none is chosen, or the chosen one cannot run, the account Codex reviews run on), with that account's own sign-in, as any run of it. The analysis is sent only the changelog or release notes, in an empty folder of its own that is removed after: Claude Code's runs with no tools, keeps no transcript and loads none of your own settings or instruction files (their proxy and certificate settings alone are passed on, so it can connect as your sessions do); Codex's runs with no tool that runs a command, reads the web or connects an app (its file-editing tool is refused by its read-only sandbox) and loads no project instructions | Only while Sentinel is on: the model list when the app starts; the changelog or release notes, and the analysis, when the installed version has changed since Sentinel last checked, and when you press Re-run in its panel |
+| OpenAI: `chatgpt.com`, and with Codex 0.155.1 also `sdmntprsouthcentralus.oaiusercontent.com` (OpenAI's content storage) | Codex's own usage check for a Codex account with no session open, run by the Codex command-line tool in that account's folder with that account's own sign-in. Codex reads the account's usage allowance and credits count, and on the same start refreshes its list of models and checks its plugin cache, as it does whenever it runs | Only when you open the Usage page, press Refresh or use an account card's Retry; about a second, one account at a time. Never for an API-key account, for your own Codex folder, or for an account a session or review is using |
+
+To avoid the Codex usage check, leave the Usage page closed: it runs only on
+the three actions above, and an account with a session open or an API key is
+never checked. Turning Codex off in Settings, Accounts stops it as well. The
+check talks to OpenAI only, and the app keeps only the allowance figures, the
+plan name and the credits count it returns (whether the account has credits,
+whether they are unlimited, and the balance, a count of Codex credits and not
+money). The request is the same as before, and no other field of the answer is
+kept.
 
 The app also runs a small server bound to `127.0.0.1` (localhost) so that Claude
-sessions can use its built-in tools. It is not reachable from the network.
+and Codex sessions can use its built-in tools. It is not reachable from the
+network.
+
+If you ask the Set up Codex page to run an install or update command, it types
+that npm or Homebrew command into a visible terminal tab, and the package manager
+downloads Codex from its own registry, exactly as if you had typed the command
+yourself.
 
 Nothing in the list above carries your code, your prompts, your conversations,
 or your files.
@@ -76,8 +197,12 @@ Separately, the **Claude Code and Codex command-line tools that the app launches
 are independent programs** with their own network behaviour and their own
 privacy policies. When you run a session, your prompts and code go to Anthropic
 or OpenAI through those tools, exactly as they would if you ran them yourself in
-a terminal. The app does not add to, intercept, or copy that traffic. See
-Anthropic's and OpenAI's privacy policies for how they handle it.
+a terminal. A code review works the same way: a Codex review asked for from a
+Claude session sends the change under review to OpenAI through Codex, and a
+Claude review asked for from a Codex session sends it to Anthropic through
+Claude Code; each review direction can be switched off in Settings. Signing in
+to a Codex account runs Codex's own sign-in, which talks to OpenAI directly. The app does not add to, intercept, or copy that traffic.
+See Anthropic's and OpenAI's privacy policies for how they handle it.
 
 ## What we receive
 

@@ -29,3 +29,26 @@ export function defaultLoginShell(
   }
   return '/bin/sh'
 }
+
+/** The shell a local session's PTY runs: PowerShell on Windows, the login
+ *  shell above elsewhere (defaultLoginShell, with the same environment and
+ *  file test). */
+export function localSessionShell(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  exists: (path: string) => boolean = existsSync,
+): string {
+  return platform === 'win32' ? 'powershell.exe' : defaultLoginShell(env, platform, exists)
+}
+
+/** The sh family, by name: the shells Alt+V types an image path into off
+ *  Windows (PR-level ADR-009 round 1, A1). */
+const SH_FAMILY = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh'])
+
+/** PR-level ADR-009 round 1 (A1): whether `shell` (a path or a name) is one of
+ *  the sh family by its basename: sh, bash, zsh, dash, ksh, and no other. */
+export function isShFamilyShell(shell: string): boolean {
+  if (typeof shell !== 'string') return false
+  const base = shell.split(/[\\/]/).pop() ?? ''
+  return SH_FAMILY.has(base)
+}

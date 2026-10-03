@@ -1,0 +1,388 @@
+// WP2 commit 3: the Accounts surface's contract with the main process (design
+// 5.6, 10, 11, 12, 13). Everything here crosses IPC, so everything here is
+// renderer-safe BY CONSTRUCTION: opaque ids, states, labels and counts. No
+// token, key, file path, pathRef, executable, environment value or provider
+// subject ever appears in these shapes; the main process resolves all of
+// those from the opaque ids and keeps them. Two exceptions, both display
+// text only, never a way to reach anything: sign-in output
+// (SignInOutputEvent), the provider CLI's own display text, redacted of
+// secrets, shown to the user who started it -- it carries the login URL or
+// device code they need and may name the account's folder; and
+// ExternalDefaultView.home, the folder of the provider's own shared sign-in
+// as the user may be shown it (`~/.codex`, or the CODEX_HOME folder with the
+// user's home shortened to ~ and spoofable text stripped). No other part of
+// that path, and no environment value, crosses with it.
+import type { ProviderId } from '../types'
+import type { AllowanceCredits, UsageBucket } from '../usage-types'
+import type {
+  AccountLifecycle, AuthMethod, KnownAuthState, OperationalState, IdentityAssurance, RealmLifecycle, DiscoveryState, Compatibility,
+} from './model'
+import type { CapabilityKey } from './capabilities'
+import type { ProviderMigrationMarker, ProviderMigrationSkipReason, RegistryErrorCode, SetupJournalState, IdentityConflict } from './registry'
+
+/** The user's durable yes or no for a provider, or nothing durable yet. */
+export type ProviderPreference = 'on' | 'off' | 'undecided'
+
+/** Sign-in methods a user can start from the Accounts surface. */
+export type SignInMethod = 'browser' | 'device' | 'apiKey'
+export const SIGN_IN_METHODS: readonly SignInMethod[] = ['browser', 'device', 'apiKey']
+export const SIGN_IN_CAPABILITY: Readonly<Record<SignInMethod, CapabilityKey>> = { browser: 'auth.browser', device: 'auth.device', apiKey: 'auth.apiKey' }
+
+export interface CapabilityView {
+  enabled: boolean
+  /** The surface must say "experimental" beside it. */
+  labelExperimental: boolean
+}
+
+/** Machine-level provider state (5.6). Never the executable's path. */
+export interface ProviderInstallationView {
+  providerId: ProviderId
+  displayName: string
+  enabled: boolean
+  preference: ProviderPreference
+  discoveryState: DiscoveryState
+  version?: string
+  compatibility: Compatibility
+  lastCheckedAt?: number
+  /** Whether the provider's managed accounts can be added here (Claude's
+   *  come from its own flows). */
+  managedAccounts: boolean
+  signInMethods: Readonly<Record<SignInMethod, CapabilityView>>
+  status: CapabilityView
+  logout: CapabilityView
+  /** Present when this provider reviews for the other provider's sessions:
+   *  whether a review could be prepared now on the account side, and on
+   *  which account. The review switches and the Conductor tools switch
+   *  decide the offer as well; for Claude reviews this is the account check
+   *  the offer makes. */
+  review?: ReviewReadinessView
+}
+
+export interface ReviewReadinessView {
+  ready: boolean
+  /** The account a review would use: the reviewer default, else the
+   *  provider default. Absent when there is none. */
+  accountId?: string
+  source?: 'reviewer-default' | 'provider-default'
+}
+
+export interface IdentityView {
+  id: string
+  friendlyName?: string
+  colourKey: string
+  groupId?: string
+}
+
+export interface GroupView {
+  id: string
+  name: string
+  order: number
+}
+
+export interface AccountView {
+  id: string
+  providerId: ProviderId
+  identityId: string
+  lifecycle: AccountLifecycle
+  isProviderDefault: boolean
+  /** Reviewer invocations of this provider use it when a request names none. */
+  isReviewerDefault: boolean
+  authMethod: AuthMethod
+  providerLabel?: string
+  planLabel?: string
+  lastKnownAuthState: KnownAuthState
+  operationalState: OperationalState
+  identityAssurance: IdentityAssurance
+  lastAuthenticatedAt?: number
+  lastValidatedAt?: number
+  realmLifecycle: RealmLifecycle | 'missing'
+  /** The provider's own default home, shared with other local clients. */
+  external: boolean
+  /** Nobody has vouched for who is signed in (realm-only): shown as
+   *  unverified, never linked, and every launch needs an acknowledgement.
+   *  Derived from the registry, never from the identity's name or colour. */
+  unverified: boolean
+  /** Mirrored from the provider's own account list (Claude's profiles). */
+  legacyLinked: boolean
+  /** The provider's own id for this account when it is mirrored (Claude:
+   *  the profile id), so a surface that lists the provider's own accounts
+   *  can show each one's registry state. */
+  legacyId?: string
+  /** When it was archived; present only on an archived account. */
+  archivedAt?: number
+  /** A sign in again moved it to a new sign-in and the old one is still
+   *  there (design 9.2), and why: `kept` -- the app does not remove it yet
+   *  (not proven safe for the new one; archiving removes it); `unavailable`
+   *  -- the provider cannot sign it out now; `failed` -- a removal did not
+   *  finish, and a check of the sign-in tries again. Absent otherwise. */
+  oldSignInLeft?: 'kept' | 'unavailable' | 'failed'
+  /** A sign-in of this account runs now (its Sign in again). Absent otherwise. */
+  signingIn?: true
+  /** Sessions running on this account now. */
+  runningSessions: number
+  /** Reviewer invocations running on this account now. */
+  runningReviews: number
+  /** Everything holding the account: sessions, sign-ins, operations. */
+  consumers: number
+  /** Why this account cannot run this provider's reviews here. `platform`:
+   *  it never can on this platform (Claude on macOS: only the normal
+   *  sign-in). `unknown`: the app could not tell, so nothing is offered on
+   *  it for now. Either way it cannot be made the reviewer. Absent when
+   *  nothing about the platform stops it. */
+  reviewRefusal?: ReviewRefusalView
+}
+
+export interface ReviewRefusalView {
+  reason: 'platform' | 'unknown'
+  message: string
+}
+
+/** A reviewer choice the app cleared because that account can never run
+ *  reviews on this platform. `message` is the platform rule; the surface
+ *  says the earlier choice was cleared. Shown beside the reviewer line
+ *  until a reviewer is chosen for the provider. */
+export interface ReviewerNoticeView {
+  providerId: ProviderId
+  message: string
+}
+
+/** An account being set up, or one an interrupted setup left behind (9.3). */
+export interface PendingSetupView {
+  accountId: string
+  providerId: ProviderId
+  method: AuthMethod
+  state: SetupJournalState
+  external: boolean
+  createdAt: number
+  /** A sign-in for it is running now. */
+  signingIn: boolean
+  /** Its Discard runs now (signing it out, removing its folder). Absent otherwise. */
+  discardRunning?: true
+  /** A sign in again of this account, not a new one: it is finished by that
+   *  sign in again, or discarded; never named as a new account. */
+  replacesAccountId?: string
+}
+
+/** A provider's own default sign-in on this computer (6.3; Codex's
+ *  ~/.codex). It is taken in only by the user's explicit choice (owner
+ *  decision 2026-09-26). `marker`: the answer recorded when it was, and any
+ *  answer a development build's start-up check recorded. Whether the user
+ *  must first say they use the provider is the provider's own preference
+ *  ("not answered yet"), not this view's. */
+export interface ExternalDefaultView {
+  providerId: ProviderId
+  marker?: { outcome: ProviderMigrationMarker['outcome']; reason?: ProviderMigrationSkipReason; at: number }
+  /** The folder that sign-in lives in, as the user may be shown it: the
+   *  user's home shortened to ~ (`~/.codex` when no CODEX_HOME is set, else
+   *  the folder CODEX_HOME named when the app started). A display string
+   *  only, never a way to reach it. Absent when main names none (a
+   *  CODEX_HOME set but unusable, or no home folder): the surface then names
+   *  no folder rather than guess one. */
+  home?: string
+}
+
+export type RegistryModeView =
+  | { mode: 'ready' }
+  | { mode: 'recovery'; reason: 'unloaded' | 'unreadable' | 'invalid' | 'newer-schema' }
+  | { mode: 'unavailable' }
+
+/** A name or colour edited both here and in the provider's own account list
+ *  since they last agreed (design 6.2). The registry value is kept until the
+ *  user chooses. Values are display labels and palette keys only. */
+export type IdentityConflictView = Pick<IdentityConflict, 'identityId' | 'field' | 'providerId' | 'legacyId' | 'legacyValue' | 'registryValue' | 'detectedAt'>
+
+export interface AccountsSnapshot {
+  /** Increases with every change the main process publishes. */
+  revision: number
+  registry: RegistryModeView
+  providers: ProviderInstallationView[]
+  identities: IdentityView[]
+  groups: GroupView[]
+  accounts: AccountView[]
+  pendingSetups: PendingSetupView[]
+  externalDefaults: ExternalDefaultView[]
+  conflicts: IdentityConflictView[]
+  reviewerNotices: ReviewerNoticeView[]
+}
+
+/** Why an Accounts operation did not succeed. The surface acts on the code
+ *  (design 13); the message is user-safe and never names a path. */
+export type AccountsFailureCode =
+  | RegistryErrorCode
+  | 'invalid-request'          // the request did not validate at the IPC boundary
+  | 'untrusted-sender'         // not the app's own window
+  | 'registry-unavailable'     // no registry, or recovery mode
+  | 'persist-failed'
+  | 'unsupported'              // the provider does not offer this here
+  | 'capability-disabled'      // unknown, or experimental and not enabled
+  | 'provider-disabled'
+  | 'provider-not-set-up'      // the user has not said they use the provider: nothing of it starts
+  | 'provider-state-unknown'   // the saved on/off could not be read: nothing that starts a process runs
+  | 'last-provider'            // at least one provider stays enabled
+  | 'consumers'                // sessions or operations hold it: `consumers` says how many
+  | 'in-use'                   // a live session the provider runs without a lease holds its own record (a Claude profile)
+  | 'busy'                     // a sign-in or another change holds it
+  | 'acknowledgement-required' // an external home's wider effect needs the user's yes
+  | 'not-signed-in'
+  | 'secret-unavailable'
+  | 'sign-in-changed'          // the realm now holds another sign-in: reconcile it first (design 5.5)
+  | 'review-unavailable'       // this account cannot run reviews here, or the app could not tell: the message says which
+  | 'internal'                 // unexpected; the app log has the detail
+  | 'conversation-uncertain'   // P3.6: the session's conversation could have been another session's, so a switch did not carry it
+  | AuthOperationCode
+  | RealmFolderCode
+
+/** The provider auth codes the surface can see (mirrors the core contract). */
+export type AuthOperationCode =
+  | 'realm-unavailable' | 'external-overlap' | 'cli-unavailable' | 'realm-env-file' | 'browser-busy' | 'already-signed-in'
+  | 'external-realm' | 'external-ack-required' | 'method-unsupported' | 'secret-channel-unavailable' | 'secret-invalid'
+  | 'cancelled' | 'timed-out' | 'not-started' | 'provider-refused' | 'not-confirmed' | 'status-unrecognised' | 'still-signed-in'
+
+/** The realm folder codes the surface can see (mirrors the core contract). */
+export type RealmFolderCode =
+  | 'not-managed' | 'resources-unavailable' | 'overlaps-external' | 'unsafe-path' | 'permissions' | 'credentials-present'
+  | 'not-empty' | 'unsafe-contents' | 'changed' | 'too-large' | 'cancelled' | 'io-failed'
+  | 'conversation-missing' | 'conversation-differs'
+
+export type AccountsFailure = {
+  ok: false
+  code: AccountsFailureCode
+  message: string
+  /** With `consumers`: how many hold it. */
+  consumers?: number
+  /** With `consumers` from a lifecycle change: the app sessions whose
+   *  sessions or reviews hold it (ids only), so the refusal can name them. */
+  sessions?: string[]
+  /** With `consumers` from a lifecycle change: how many holders belong to no
+   *  named session (sign-ins, operations), for "and N more". */
+  unnamed?: number
+  /** The sign-in state the operation observed, when it read one. */
+  state?: KnownAuthState
+}
+
+/**
+ * P3.6 (row 22): a respawn of a session under another account whose
+ * conversation did not come along whole (main's carry, pty:spawn): main's
+ * reason in its own words, and what the launch actually did -- resumed the
+ * conversation from a copy already in that account, or started a new one.
+ * Absent when the conversation was carried and resumed, or there was none.
+ */
+export interface ConversationCarryNotice {
+  code: AccountsFailureCode
+  message: string
+  resumed: boolean
+}
+
+export type AccountsResult<T extends object = object> = ({ ok: true } & T) | AccountsFailure
+
+/** An install or update recipe as the surface shows it: the documented
+ *  command to show and copy, never an argv. A recipe main allows to run also
+ *  carries the one shell line to type for it (`runLine`). */
+export interface InstallRecipeView {
+  id: string
+  providerId: ProviderId
+  purpose: 'install' | 'update'
+  publisher: string
+  sourceUrl: string
+  displayCommand: string
+  method: 'package-manager' | 'installer' | 'script'
+  needsNetwork: boolean
+  mayElevate: boolean
+  autoRunAllowed: boolean
+  note?: string
+  /** The exact line a Conductor terminal tab types to run this recipe, built
+   *  by main from the recipe's argv for this computer's terminal shell (on
+   *  Windows it names npm.cmd, which PowerShell's execution policy does not
+   *  block). Present only for a package-manager recipe main allows to run;
+   *  absent means show and copy only. Not what the user is shown: that is
+   *  `displayCommand`, verbatim. */
+  runLine?: string
+}
+
+/** An account's allowance as the Account usage page shows it (usage track
+ *  MP3; plan section 3). Views only: percentages, reset times, window labels,
+ *  the time of the reading, the plan's name and, for an account that has
+ *  them, its credits count (three validated fields; ADR-023). Never a path, a
+ *  file name, a process detail or a credential.
+ *  - `ok`: a reading is shown; `source` says where it came from.
+ *  - `no-session-yet`: nothing has reported an allowance for this account.
+ *  - `per-token`: an API-key account, billed per token: nothing is read.
+ *  - `inactive`: parked: nothing is read.
+ *  - `not-signed-in`: the registry says it is signed out; the last-seen
+ *    reading, if any, comes with it.
+ *  - `off`: the provider is off, not set up, or its setting could not be
+ *    read: nothing is read (D5).
+ *  - `error`: the account's realm cannot be used now. */
+export type ProviderAccountUsageStatus = 'ok' | 'no-session-yet' | 'per-token' | 'inactive' | 'not-signed-in' | 'off' | 'error'
+/** `live`: an open session's latest figure (memory only). `read`: a fresh
+ *  read of a closed account (ADR-022; not built yet). `last-seen`: the last
+ *  figure in the account's own session history, as of `readingAt`. */
+export type ProviderAccountUsageSource = 'live' | 'read' | 'last-seen'
+
+export interface ProviderAccountUsageView {
+  accountId: string
+  providerId: ProviderId
+  status: ProviderAccountUsageStatus
+  source?: ProviderAccountUsageSource
+  buckets: UsageBucket[]
+  /** When the shown figure was reported, epoch ms. */
+  readingAt?: number
+  /** The plan's display name ("Plus", "Pro"), when known. */
+  planLabel?: string
+  /** The account's Codex credits, a count and not money, when the shown
+   *  reading carries them; the key is omitted when it does not. */
+  credits?: AllowanceCredits
+}
+
+/** A usage stream's answer: `off` streams nothing (D5); `accounts` is how
+ *  many views were sent. */
+export type ProviderUsageStreamResult = AccountsResult<{ provider: 'on' | 'off'; accounts: number }>
+
+/** The private reply channel a usage stream sends its views on: this prefix
+ *  and 24 lowercase hex characters (the preload's randomId), exactly. */
+export const PROVIDER_USAGE_RESULT_PREFIX = 'providerAccounts:usageResult:'
+export const PROVIDER_USAGE_RESULT_RE = /^providerAccounts:usageResult:[0-9a-f]{24}$/
+
+/** Sign-in output, main -> the renderer that started it: the CLI's display
+ *  text, redacted of secrets, display only. It carries the login URL or
+ *  device code the user needs and may name the account's folder. */
+export interface SignInOutputEvent {
+  accountId: string
+  text: string
+  /** Set when the run moved on to a step with no output of its own (text
+   *  is then empty): a sign in again carrying the account's earlier
+   *  conversations over to the new sign-in. */
+  phase?: SignInPhase
+}
+
+/** A step of a sign-in the dialog says in its status line. */
+export type SignInPhase = 'carrying-history'
+
+/** A sign in again's answer. `notCarriedOver`: earlier conversation files
+ *  left in the old folder (each has another name the app did not give it). */
+export type SignInAgainResult = { state: KnownAuthState; separateAccountId?: string; notCarriedOver?: number }
+
+// --- Requests (validated again in the main process; these are only types) ---
+
+export interface BeginSetupRequest { providerId: ProviderId; method: SignInMethod }
+export interface SignInRequest { accountId: string; method: SignInMethod; secretHandle?: string }
+/** Sign in again: `sameAccount` is the user's answer (design 9.2), required;
+ *  `acknowledgeExternal` their yes to signing in again this computer's own
+ *  sign-in in place. */
+export interface SignInAgainRequest extends SignInRequest { sameAccount: true; acknowledgeExternal?: true }
+export type SetupIdentityChoice =
+  | { mode: 'new'; friendlyName?: string; colourKey: string; groupId?: string }
+  | { mode: 'link'; identityId: string }
+export interface CompleteSetupRequest { accountId: string; identity: SetupIdentityChoice }
+export interface LogoutRequest { accountId: string; acknowledgeExternal?: boolean }
+export interface SetLifecycleRequest { accountId: string; lifecycle: AccountLifecycle; acknowledgeExternal?: boolean }
+export interface UpdateIdentityRequest { identityId: string; friendlyName?: string | null; colourKey?: string; groupId?: string | null }
+export interface SecretDeposit { handle: string; secret: string }
+export interface ResolveConflictRequest { identityId: string; field: IdentityConflict['field']; providerId: ProviderId; legacyId: string; keep: 'registry' | 'legacy' }
+/** `accountId: null` clears the choice: reviews then use the provider default. */
+export interface SetReviewerDefaultRequest { providerId: ProviderId; accountId: string | null }
+
+/** A secret handle: main-issued, single use, bound to one pending sign-in. */
+export const SECRET_HANDLE_RE = /^sec-[0-9a-f]{32}$/
+/** Longest secret the one-way channel accepts. */
+export const SECRET_MAX = 4096

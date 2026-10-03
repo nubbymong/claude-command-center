@@ -168,6 +168,31 @@ export async function waitForProfileRefresh(profileId: string): Promise<void> {
   if (p) await p
 }
 
+/**
+ * Hold `profileId` as a consumer for a run of at most `maxAgeMs` (WP2 5b: a
+ * Claude reviewer). The hold is taken BEFORE waiting out a refresh in flight,
+ * so no new rotation can start in between (claude-headless's order); once the
+ * wait is over the run gets a fresh hold with its full bound, so a long wait
+ * cannot age it out while the run is still live. A cancel during the wait
+ * lets go at once and returns null: nothing runs, nothing is held.
+ */
+export async function holdProfileForRun(profileId: string, maxAgeMs: number, signal?: AbortSignal): Promise<(() => void) | null> {
+  if (signal?.aborted) return null
+  const waiting = acquireProfileConsumer(profileId, { maxAgeMs })
+  const pending = pendingProfileRefresh(profileId)
+  if (pending) {
+    await new Promise<void>((resolve) => {
+      const done = (): void => { signal?.removeEventListener('abort', done); resolve() }
+      signal?.addEventListener('abort', done, { once: true })
+      pending.then(done, done)
+    })
+  }
+  if (signal?.aborted) { waiting(); return null }
+  const held = acquireProfileConsumer(profileId, { maxAgeMs })
+  waiting()
+  return held
+}
+
 /** Test seam: forget every ref and every in-flight refresh. */
 export function _resetProfileConsumersForTest(): void {
   refsByProfile.clear()

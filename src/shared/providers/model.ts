@@ -42,10 +42,21 @@ export interface ProviderAccount {
   planLabel?: string
   lifecycle: AccountLifecycle
   isProviderDefault: boolean
+  /** The account a reviewer invocation of this provider uses when a request
+   *  names none. Present only when true; at most one per provider; never an
+   *  archived account. Absent everywhere means the provider default. */
+  isReviewerDefault?: true
   createdAt: number
   updatedAt: number
   lastAuthenticatedAt?: number
   lastValidatedAt?: number
+  /** When it was archived (design 5.3, "Archived (N)"). Present only while
+   *  archived: set on archive, dropped on restore. */
+  archivedAt?: number
+  /** The name of the account's own identity when it was first linked to
+   *  another one, kept to give it back on unlink (never another account's
+   *  name or label). Present only while linked, and only when it had one. */
+  nameBeforeLink?: string
   lastKnownAuthState: KnownAuthState
   operationalState: OperationalState
   identityAssurance: IdentityAssurance

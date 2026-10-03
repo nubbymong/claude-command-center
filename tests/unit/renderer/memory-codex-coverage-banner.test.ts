@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
 /**
  * P5.9 regression: Memory page shows an informational banner clarifying
- * that the page surfaces Claude Code memories only. Codex stores its
- * project context separately (AGENTS.md + ~/.codex/rules/) and is not
- * tracked here.
+ * that the page shows Claude Code memories only. WP2 P2 reworded it under
+ * the P1 parity rule (docs/wp2/parity-checklist.md, row 54): Codex memories
+ * are not shown here yet,
+ * and Codex reads its project instructions from AGENTS.md files. The earlier
+ * claim that Codex keeps user rules in ~/.codex/rules/ is gone and must not
+ * come back.
  */
 import React from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -82,13 +85,19 @@ describe('MemoryPage -- Codex coverage banner (P5.9)', () => {
   it('renders the Codex coverage banner at the top of the page', () => {
     act(() => { root.render(React.createElement(MemoryPage)) })
 
-    const text = container.textContent ?? ''
-    // Banner mentions what IS covered
-    expect(text).toContain('This page surfaces Claude Code memories')
-    // Banner mentions where Codex stores its context (the two locations)
-    expect(text).toContain('AGENTS.md')
-    expect(text).toContain('~/.codex/rules/')
-    // Banner uses the blue/30 border class (sanity check on styling)
-    expect(container.innerHTML).toContain('border-blue/30')
+    // The banner: the blue/30 note (sanity check on styling), in full.
+    const banners = Array.from(container.querySelectorAll('div')).filter((d) => d.className.split(/\s+/).includes('border-blue/30'))
+    expect(banners).toHaveLength(1)
+    const banner = banners[0]
+    // What IS covered, and where it is read from
+    expect(banner.textContent).toBe(
+      'This page shows Claude Code memories from ~/.claude/projects/*/memory/. Codex memories are not shown here yet. Codex reads its project instructions from AGENTS.md files.',
+    )
+    // The retired claim about Codex user rules is not made anywhere on the page
+    expect(container.textContent).not.toContain('~/.codex/rules/')
+    // At the top of the page: before the page body (here, its empty state)
+    const body = Array.from(container.querySelectorAll('span')).find((s) => s.textContent === 'No memory directories found')
+    expect(body).toBeTruthy()
+    expect(banner.compareDocumentPosition(body!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 })

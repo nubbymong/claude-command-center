@@ -115,14 +115,14 @@ export function AccountIsolationNotice({ profileId }: { profileId: string }) {
           <button
             onClick={() => setShowInfo((v) => !v)}
             data-testid="isolation-info-toggle"
-            className="text-[11px] text-overlay0 hover:text-overlay1 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-blue/50 rounded"
+            className="text-[11px] text-[var(--text-muted)] hover:text-text transition-colors focus-ring-strong rounded"
           >
             {showInfo ? 'Hide' : 'Show'} what account isolation changed for your sessions
           </button>
           {showInfo && (
             <ul className="mt-1 space-y-1.5">
               {info.map((f) => (
-                <li key={f.id} data-testid={`isolation-finding-${f.id}`} className="text-[11px] text-overlay0 leading-relaxed">
+                <li key={f.id} data-testid={`isolation-finding-${f.id}`} className="text-[11px] text-[var(--text-muted)] leading-relaxed">
                   <span className="text-overlay1">{f.title}.</span> {f.detail}
                 </li>
               ))}

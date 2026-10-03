@@ -38,6 +38,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { launchIsolatedApp, IsolatedApp } from './helpers/electron-app'
+import { isolatedLaunchEnv } from './helpers/isolated-env'
 
 const APP_PATH = path.resolve(__dirname, '../../out/main/index.js')
 const SESSION_NAME = 'E2E Restore'
@@ -228,13 +229,8 @@ async function createTerminalSession(page: Page): Promise<void> {
 async function launchAppAt(tag: string): Promise<{ app: ElectronApplication; page: Page }> {
   const app = await electron.launch({
     args: [APP_PATH, `--user-data-dir=${path.join(dataDir, `electron-userdata-${tag}`)}`],
-    env: {
-      ...process.env,
-      NODE_ENV: 'test',
-      E2E_HEADLESS: '1',
-      CCC_E2E_DATA_DIR: dataDir,
-      CCC_FORCE_SPLASH: '0',
-    },
+    // P3.16 (M7): with a home inside dataDir, as the helper's launch.
+    env: isolatedLaunchEnv(dataDir),
   })
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')

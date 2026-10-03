@@ -4,7 +4,8 @@
 // pane chrome INSTEAD of the transcript when there is nothing (or nothing that
 // will ever be) indexed for the current scope. Copy follows the spec
 // (2026-06-06 design, decision 11 / empty-states list): each named regression
-// (SSH remote, Codex) is surfaced HONESTLY, not silently blank.
+// (SSH remote) is surfaced HONESTLY, not silently blank. A local Codex
+// session is indexed as a Claude one is (P3.12).
 //
 // Pure/presentational; Catppuccin tokens; a 200ms fade matches the rest of the
 // logs UI.
@@ -13,7 +14,6 @@
 export type LogEmptyReason =
   | 'shell-only'
   | 'ssh'
-  | 'codex'
   | 'logging-off'
   | 'no-transcript'
   | 'select' // global view, nothing selected yet
@@ -22,6 +22,8 @@ export interface LogEmptyStateProps {
   reason: LogEmptyReason
   /** For 'no-transcript': the cwd CCC is watching for a transcript (diagnosable). */
   watchedCwd?: string | null
+  /** For 'no-transcript': whose transcript is watched for ("Claude" when absent). */
+  agentName?: string
   className?: string
 }
 
@@ -30,7 +32,7 @@ interface Copy {
   body: string
 }
 
-function copyFor(reason: LogEmptyReason, watchedCwd?: string | null): Copy {
+function copyFor(reason: LogEmptyReason, watchedCwd?: string | null, agentName = 'Claude'): Copy {
   switch (reason) {
     case 'shell-only':
       return {
@@ -42,11 +44,6 @@ function copyFor(reason: LogEmptyReason, watchedCwd?: string | null): Copy {
         title: 'Remote session — no local transcript',
         body: "SSH sessions write their transcript on the remote host, so AI Code Conductor can't index them here.",
       }
-    case 'codex':
-      return {
-        title: "Codex sessions aren't indexed",
-        body: 'Codex uses a different transcript format. Indexing Codex conversations is planned for a future release.',
-      }
     case 'logging-off':
       return {
         title: 'Conversation indexing is off',
@@ -56,8 +53,8 @@ function copyFor(reason: LogEmptyReason, watchedCwd?: string | null): Copy {
       return {
         title: 'No conversation detected yet',
         body: watchedCwd
-          ? `Watching ${watchedCwd} for Claude's transcript — turns appear here as the conversation starts.`
-          : "Watching for Claude's transcript — turns appear here as the conversation starts.",
+          ? `Watching ${watchedCwd} for ${agentName}'s transcript — turns appear here as the conversation starts.`
+          : `Watching for ${agentName}'s transcript — turns appear here as the conversation starts.`,
       }
     case 'select':
     default:
@@ -69,8 +66,8 @@ function copyFor(reason: LogEmptyReason, watchedCwd?: string | null): Copy {
 }
 
 /** A centred, muted empty state matching the Layout C transcript chrome. */
-export default function LogEmptyState({ reason, watchedCwd, className }: LogEmptyStateProps) {
-  const { title, body } = copyFor(reason, watchedCwd)
+export default function LogEmptyState({ reason, watchedCwd, agentName, className }: LogEmptyStateProps) {
+  const { title, body } = copyFor(reason, watchedCwd, agentName)
   return (
     <div
       data-testid="log-empty-state"

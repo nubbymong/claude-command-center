@@ -7,7 +7,7 @@ import { shouldRegisterRun } from '../../../src/main/logging/should-register-run
 // and the matching runEnd/endRun on exit).
 //
 // Register a run iff ALL hold:
-//   - provider === 'claude'              (local Claude only; NOT codex / other)
+//   - provider claude or codex           (P3.12: a local Codex session too; NOT other)
 //   - NOT shellOnly                      (plain shells + add-account /login)
 //   - NOT the SSH spawn path             (no local transcript to tail)
 //   - per-config loggingEnabled !== false  (DEFAULT-TRUE)
@@ -38,8 +38,23 @@ describe('shouldRegisterRun', () => {
     ).toBe(false)
   })
 
-  it('does NOT register the codex provider', () => {
+  it('P3.12: registers a local Codex session on defaults, under the same gates as Claude', () => {
+    const seen = { loggingConsentSeen: true, loggingConsentVersion: 2 }
+    expect(shouldRegisterRun({ provider: 'codex' }, seen)).toBe(true)
+    expect(shouldRegisterRun({ provider: 'codex', loggingEnabled: false }, seen)).toBe(false)
+    expect(shouldRegisterRun({ provider: 'codex' }, { ...seen, loggingEnabled: false })).toBe(false)
+    expect(shouldRegisterRun({ provider: 'codex', shellOnly: true }, seen)).toBe(false)
+    expect(shouldRegisterRun({ provider: 'codex', isAsk: true }, seen)).toBe(false)
+    expect(shouldRegisterRun({ provider: 'codex', ssh: { host: 'h' } }, seen)).toBe(false)
+  })
+
+  it('P3.12 round 2 (W9): a Codex session only once the notice naming Codex\'s indexing was seen; a Claude session keeps its rule', () => {
     expect(shouldRegisterRun({ provider: 'codex' }, {})).toBe(false)
+    expect(shouldRegisterRun({ provider: 'codex' }, { loggingConsentSeen: true })).toBe(false)
+    expect(shouldRegisterRun({ provider: 'codex' }, { loggingConsentSeen: true, loggingConsentVersion: 1 })).toBe(false)
+    expect(shouldRegisterRun({ provider: 'codex' }, { loggingConsentSeen: false, loggingConsentVersion: 2 })).toBe(false)
+    expect(shouldRegisterRun({ provider: 'codex' }, { loggingConsentSeen: true, loggingConsentVersion: 3 })).toBe(true)
+    expect(shouldRegisterRun({ provider: 'claude' }, {})).toBe(true)
   })
 
   it('does NOT register a non-claude / unknown provider', () => {
