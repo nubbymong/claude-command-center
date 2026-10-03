@@ -177,6 +177,20 @@ describe('launchAskConductor', () => {
     expect(useAskErrorStore.getState().error).toMatch(/resources directory/i)
   })
 
+  // P4.3 review (A2-5): with the rebuild, the likely cause is an entry the app
+  // cannot remove (a file a leftover Codex process holds open), not an
+  // unwritable resources directory; the line names the folder and the way out.
+  it('the failure line names the help folder, the likely cause and the workaround', async () => {
+    setApi(null)
+    await launchAskConductor('q')
+    const line = useAskErrorStore.getState().error ?? ''
+    expect(line).toMatch(/help folder/)
+    expect(line).toMatch(/Codex/)
+    expect(line).toMatch(/then try again/)
+    expect(line).toMatch(/delete/)
+    expect(line).toMatch(/^[\x20-\x7e]*$/)
+  })
+
   it('treats a throwing help:workspace the same as a null one', async () => {
     setApi(() => Promise.reject(new Error('EACCES')))
     const id = await launchAskConductor('q')
@@ -370,7 +384,11 @@ describe('launchAskConductor picks the assistant (P4.3)', () => {
     expect(workspace).toHaveBeenCalledTimes(1)
     expect(only()).toMatchObject({ kind: 'ask', provider: 'codex', sessionType: 'local', workingDirectory: 'C:/res/help', askPrompt: 'how do I add an account?' })
     expect(only().codexOptions).toEqual({ permissionsPreset: ASK_CODEX_PRESET })
-    expect(ASK_CODEX_PRESET).toBe('standard')
+    // P4.3 review (A2-3), by parity: Claude's Ask passes no permission mode, so
+    // it runs in Claude's default mode, Ask permissions; P4.1's pairing of the
+    // presets with Claude's modes (codexPresetApprovedTools, providers/codex/
+    // spawn.ts) pairs Ask permissions with Read Only.
+    expect(ASK_CODEX_PRESET).toBe('read-only')
     expect(only().configId).toBeUndefined()
   })
 
@@ -465,6 +483,29 @@ describe('the notice state (P4.3)', () => {
   it('no question, nothing kept', async () => {
     await launchAskConductor()
     expect(useAskNoticeStore.getState().kept).toBeNull()
+  })
+
+  // P4.3 review (A2-8): a live Codex tab's hand-off answers for the question
+  // it was given, so a not-delivered answer keeps THAT question, even when
+  // another was handed over while the first was still being typed.
+  it('a hand-off that was not delivered keeps its own question, not one handed over since', async () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, claudeEnabled: false, codexEnabled: true, codexAnswered: true } as never })
+    ptyWrite.mockClear()
+    let answerFirst: (v: unknown) => void = () => {}
+    const handOff = vi.fn()
+      .mockImplementationOnce(() => new Promise((resolve) => { answerFirst = resolve }))
+      .mockImplementationOnce(() => Promise.resolve({ delivered: true }))
+    ;(globalThis as any).window.electronAPI.askConductor = { handOff }
+    useSessionStore.setState({ sessions: [{ id: 'ask', kind: 'ask', label: ASK_LABEL, workingDirectory: 'C:/res/help', model: '', color: '', status: 'idle', createdAt: 1, sessionType: 'local', provider: 'codex', codexOptions: { permissionsPreset: 'read-only' } } as never] })
+    await launchAskConductor('first?')
+    await launchAskConductor('second?')
+    await vi.waitFor(() => expect(handOff).toHaveBeenCalledTimes(2))
+    expect(useAskNoticeStore.getState().kept).toEqual({ sessionId: 'ask', question: 'second?' })
+    answerFirst({ delivered: false, reason: 'busy-timeout' })
+    await vi.waitFor(() => expect(useAskNoticeStore.getState().notice).not.toBeNull())
+    expect(useAskNoticeStore.getState().notice).toEqual({ sessionId: 'ask', kind: 'not-delivered', reason: 'busy-timeout' })
+    expect(useAskNoticeStore.getState().kept).toEqual({ sessionId: 'ask', question: 'first?' })
+    expect(ptyWrite).not.toHaveBeenCalled()
   })
 
   it('every reason has its own sentence', () => {

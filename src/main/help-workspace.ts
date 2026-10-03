@@ -2,6 +2,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { appKnowledgeMarkdown } from '../shared/app-knowledge'
 import { mkdirSecure, hardenCredentialDir, atomicWriteSecure } from './account-profiles'
+import { logWarn } from './debug-logger'
 
 /**
  * "Ask Conductor" workspace. A folder under the resources directory
@@ -66,12 +67,14 @@ report exactly what happened and stop; never retry around a refusal.
 
 /** Frontmatter + shared description for both generated skill files. The
  *  description is what makes another session invoke the skill at the right
- *  moment, so it names the confusions it exists to answer. Single-quoted (')
- *  YAML is deliberate: the text contains no quotes, and a colon inside plain
- *  YAML would truncate the description silently. */
+ *  moment, so it names the confusions it exists to answer. Both preambles
+ *  offer the same files, CLAUDE.md to a Claude Code session and AGENTS.md to a
+ *  Codex one, so the skill speaks for either assistant (WP2 PR 4, P4.3).
+ *  Single-quoted (') YAML is deliberate: the text contains no quotes, and a
+ *  colon inside plain YAML would truncate the description silently. */
 const SKILL_FRONTMATTER = `---
 name: ask-conductor
-description: 'How the AI Code Conductor desktop app works -- settings files and which one wins, multiple Claude accounts and the copied-settings rule, SSH and remote sessions, the status line, known issues. Invoke for questions about the Conductor app, or when a Claude Code setting seems not to apply on this machine. Not for questions about the user''s own project code.'
+description: 'How the AI Code Conductor desktop app works -- settings files and which one wins, multiple accounts and how they share settings, SSH and remote sessions, the status line, known issues. Invoke for questions about the Conductor app, or when a Claude Code or Codex setting seems not to apply on this machine. Not for questions about the user''s own project code.'
 ---
 `
 
@@ -84,13 +87,13 @@ export function askConductorSkillMarkdown(helpDir: string): string {
 # AI Code Conductor helper
 
 This machine runs AI Code Conductor, the desktop app that launches and
-orchestrates Claude Code sessions. The app regenerates its curated user
-documentation on every launch at:
+orchestrates Claude Code or Codex sessions. The app regenerates its curated
+user documentation on every launch at:
 
     ${path.join(helpDir, 'app-knowledge.md')}
 
 Read that file first, then answer from it. It covers the settings precedence
-chain (which file wins and why a change can look ignored), how multiple Claude
+chain (which file wins and why a change can look ignored), how multiple
 accounts share and copy settings, SSH and container sessions, the status line,
 and the app's known issues with workarounds.
 
@@ -98,9 +101,9 @@ If the file is missing, the app has moved or been uninstalled: say so plainly
 and suggest the app's own Ask Conductor tab (the pill at the foot of its
 sidebar) or its Feature Guide. Do not answer app questions from memory in that
 case, and never invent a setting, tab or menu path the file does not name.
-Questions about Claude Code itself (hooks, MCP servers, slash commands) you may
-answer from your own knowledge -- say clearly which of the two you are
-describing.
+Questions about the assistant you run on, Claude Code or Codex (its hooks, MCP
+servers, slash commands, settings), you may answer from your own knowledge --
+say clearly which of the two, the app or the assistant, you are describing.
 `
 }
 
@@ -115,8 +118,9 @@ Written for AI Code Conductor v${appVersion}. This copy embeds the app's
 documentation inline so it works on a machine the app is not installed on; it
 does NOT update itself -- after an app update, copy it across again. Answer app
 questions from the embedded documentation only; never invent a setting, tab or
-menu path it does not name. Questions about Claude Code itself you may answer
-from your own knowledge -- say which of the two you are describing.
+menu path it does not name. Questions about the assistant you run on, Claude
+Code or Codex, you may answer from your own knowledge -- say which of the two,
+the app or the assistant, you are describing.
 
 ---
 
@@ -341,16 +345,38 @@ function removeNoFollow(p: string): void {
  * app's own files are written into a hardened folder and read back.
  *
  * A failure anywhere throws: an Ask launch then fails closed rather than
- * starting a session in a folder the app cannot vouch for.
+ * starting a session in a folder the app cannot vouch for. The emptiness check
+ * is its own guard, not a repeat of the removals': on Windows a file another
+ * process holds open is removed only when that process closes it, and is
+ * listed until then.
  */
 function rebuildHelpWorkspace(dir: string, files: ReadonlyArray<readonly [string, Buffer]>): void {
   for (const name of fs.readdirSync(dir)) removeNoFollow(path.join(dir, name))
   try { fs.rmdirSync(dir) } catch { /* held open as a working folder: kept, empty */ }
   mkdirSecure(dir)
   hardenCredentialDir(dir)
-  if (fs.readdirSync(dir).length !== 0) throw new Error('the help folder could not be emptied')
+  if (fs.readdirSync(dir).length !== 0) throw new Error(NOT_EMPTIED)
   for (const [name, bytes] of files) atomicWriteSecure(path.join(dir, name), bytes, 0o600)
-  if (!holdsExactly(dir, files)) throw new Error('the help folder is not the app\'s own files after a rebuild')
+  if (!holdsExactly(dir, files)) throw new Error(NOT_EXACT)
+}
+
+const NOT_EMPTIED = 'the help folder could not be emptied'
+const NOT_EXACT = 'the help folder is not the app\'s own files after a rebuild'
+
+/**
+ * A failed rebuild as the log may hold it (P4.3): a file system error by its
+ * code and the call that failed, this module's own failures by their fixed
+ * words. Never an error's message: that names the path, and the entry's name
+ * is one a session chose.
+ */
+function rebuildFailureForLog(err: unknown): string {
+  if (err instanceof Error && (err.message === NOT_EMPTIED || err.message === NOT_EXACT)) return err.message
+  const word = (v: unknown): string | null => (typeof v === 'string' && /^[A-Za-z0-9_]{1,32}$/.test(v) ? v : null)
+  const { code, syscall } = (err ?? {}) as { code?: unknown; syscall?: unknown }
+  const c = word(code)
+  if (c) return word(syscall) ? `${c} (${word(syscall)})` : c
+  if (err instanceof Error && /reparse point/.test(err.message)) return 'a link or junction where a folder should be'
+  return 'an unexpected error'
 }
 
 /**
@@ -377,14 +403,30 @@ function rebuildHelpWorkspace(dir: string, files: ReadonlyArray<readonly [string
  * to keep this folder read-only: whatever a session wrote here (an instruction
  * file, an edited AGENTS.md, a project settings file such as
  * `.codex/config.toml` or `.claude/settings.local.json`, a skills folder) is
- * gone before the next Ask launch reads the folder. Every Ask launch calls
- * this first (`help:workspace`, a revive, and main before a Codex Ask spawn).
+ * gone before the next Ask launch reads the folder.
+ *
+ * Called by main right before EVERY Ask spawn, of either assistant: a first
+ * launch, a revive, a Restart, Past discussions, an account switch's remount,
+ * a restored tab (`pty:spawn`, ipc/pty-handlers.ts; no rebuild, no launch);
+ * by `help:workspace`, which gives the renderer the folder's path; and once
+ * at boot, best-effort, so an installed helper skill reads current docs. It
+ * runs for a Claude Code Ask too: a project settings file a Codex session
+ * planted would reach it otherwise; the cost is that a Claude Ask's own
+ * "don't ask again" approvals written here do not outlive its session. A
+ * failed rebuild is logged, neutrally (rebuildFailureForLog), then thrown.
  */
 export function ensureHelpWorkspace(resourcesDir: string, opts?: { appVersion?: string; platform?: NodeJS.Platform }): string {
   const dir = path.join(resourcesDir, 'help')
   mkdirSecure(dir)
   hardenCredentialDir(dir)
   const files = helpWorkspaceFiles(dir, opts?.appVersion ?? 'unknown', opts?.platform ?? process.platform)
-  if (!holdsExactly(dir, files)) rebuildHelpWorkspace(dir, files)
+  if (!holdsExactly(dir, files)) {
+    try {
+      rebuildHelpWorkspace(dir, files)
+    } catch (err) {
+      logWarn(`[help-workspace] the help folder could not be rebuilt: ${rebuildFailureForLog(err)}; no Ask Conductor session starts until it can be`)
+      throw err
+    }
+  }
   return dir
 }

@@ -15,6 +15,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 
+vi.mock('../../../src/main/debug-logger', () => ({ logWarn: vi.fn(), logInfo: vi.fn(), logError: vi.fn() }))
 vi.mock('../../../src/main/account-profiles', () => ({
   mkdirSecure: (p: string) => fs.mkdirSync(p, { recursive: true }),
   hardenCredentialDir: () => true,
@@ -65,7 +66,7 @@ describe('[CI] [VM] the rebuild never follows a link planted in the help folder'
     expect(fs.readdirSync(outside).sort()).toEqual(['precious.txt', 'sub'])
   })
 
-  it('AGENTS.md replaced by a file link: the link goes, its target is untouched, AGENTS.md is the app\'s again', () => {
+  it('AGENTS.md replaced by a file link: the link goes, its target is untouched, AGENTS.md is the app\'s again', (ctx) => {
     const dir = ensureHelpWorkspace(tmp, opts)
     const agents = fs.readFileSync(path.join(dir, 'AGENTS.md'))
     fs.rmSync(path.join(dir, 'AGENTS.md'))
@@ -73,8 +74,8 @@ describe('[CI] [VM] the rebuild never follows a link planted in the help folder'
       fs.symlinkSync(path.join(outside, 'precious.txt'), path.join(dir, 'AGENTS.md'), 'file')
     } catch (err) {
       // A file symlink needs Developer Mode or the privilege on Windows; a
-      // junction (above) does not. Skip only that, loudly.
-      if ((err as NodeJS.ErrnoException).code === 'EPERM') return
+      // junction (above) does not. Skip only that, and report it as skipped.
+      if ((err as NodeJS.ErrnoException).code === 'EPERM') return ctx.skip('a file symlink needs Developer Mode or the privilege on Windows')
       throw err
     }
     ensureHelpWorkspace(tmp, opts)

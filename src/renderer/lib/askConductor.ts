@@ -30,9 +30,13 @@ import type { AskConductorNotice, CodexOptions, SubmitNotDeliveredReason } from 
  *    "Ask Conductor" into the user's Saved Configs, which is not something they
  *    filed and should never have been there.
  *
- * The opening question never becomes command text: it rides `pty.spawn` into
- * the spawn environment as CCC_ASK_PROMPT and the launch line carries only the
- * env reference. See spawn-claude-command.ts / terminal-launch-line.ts.
+ * The opening question never becomes command text: it rides `pty.spawn`, and
+ * main carries it. On Claude Code it goes into the spawn environment as
+ * CCC_ASK_PROMPT and the launch line holds only the env reference
+ * (spawn-claude-command.ts / terminal-launch-line.ts). On Codex it is a launch
+ * argument after `--` on the direct route, the logged line naming only its
+ * length, and elsewhere main types it at Codex's first ready, empty prompt
+ * (WP2 PR 4, P4.3).
  */
 
 /** Tab/pill label. Also the label an older persisted config may still carry. */
@@ -99,8 +103,9 @@ export function askSessionIsLive(session: Session | undefined): boolean {
 /**
  * Transient launch failure, surfaced in the sidebar dock (the one place that is
  * always on screen for every entry point). `help:workspace` fails closed to
- * `null` when the resources directory cannot be written; the old code returned
- * silently there, so the button simply did nothing.
+ * `null` when the help folder cannot be made exactly the app's own (main logs
+ * a failed rebuild); the old code returned silently there, so the button
+ * simply did nothing.
  */
 interface AskErrorState {
   error: string | null
@@ -111,16 +116,56 @@ export const useAskErrorStore = create<AskErrorState>((set) => ({
   setError: (message) => set({ error: message }),
 }))
 
+/** With the folder rebuilt before every start (help-workspace.ts), the likely
+ *  failure is an entry the app cannot remove, such as a file a program Codex
+ *  started there still holds open, rather than an unwritable resources
+ *  directory; the line names both, and the way out. */
 const WORKSPACE_FAILED =
-  'Could not stage the help workspace. Check that the resources directory is writable.'
+  'Could not rebuild Ask Conductor\'s help folder. Usually something still has a file open in it, such as a program Codex started in an earlier Ask session that is still running: end it, then try again. If it keeps failing, delete the help folder in your resources directory, or check that the resources directory is writable.'
 
 /** The permission preset a Codex Ask session starts on: the one matching
- *  Claude's Ask launch (parity, P4.3). Claude's Ask passes no permission mode,
- *  so it starts on the mode a new Claude config gets; a new Codex config
- *  starts on Standard (the session dialog's default, "Recommended"). Nothing
- *  relies on it to keep the help folder read-only: that folder is rebuilt
- *  before every Ask launch instead (help-workspace.ts). */
-export const ASK_CODEX_PRESET: CodexOptions['permissionsPreset'] = 'standard'
+ *  Claude's Ask launch (parity, P4.3). Claude's Ask passes no permission mode
+ *  (its session carries none, so no --permission-mode reaches the launch), so
+ *  it runs in Claude's default mode, the session dialog's "Ask permissions"
+ *  ("Claude asks before most actions"). P4.1 pairs the Codex presets with
+ *  Claude's modes by their words (codexPresetApprovedTools,
+ *  providers/codex/spawn.ts): Read Only with Ask permissions, Standard with
+ *  Accept edits, Plan with Plan mode. So Read Only. Nothing relies on it to
+ *  keep the help folder read-only: that folder is rebuilt before every Ask
+ *  launch instead (help-workspace.ts). */
+export const ASK_CODEX_PRESET: CodexOptions['permissionsPreset'] = 'read-only'
+
+/**
+ * What a restart clears from the previous run (useRestartSession's
+ * forceRemount). A revive is a new start too, on the same assistant or the
+ * other one, so none of the previous run's live state stays painted on it
+ * (a Claude tab's usage limits on the Codex run that revives it, say). A test
+ * reads the restart's list off the restart and holds this one to it.
+ */
+const PREVIOUS_RUN_CLEARED = {
+  contextPercent: undefined,
+  costUsd: undefined,
+  needsAttention: false,
+  modelName: undefined,
+  launchedCodexPreset: undefined,
+  effortLive: undefined,
+  fastMode: undefined,
+  ptyExited: undefined,
+  sshTmuxPersistent: undefined,
+  linesAdded: undefined,
+  linesRemoved: undefined,
+  inputTokens: undefined,
+  outputTokens: undefined,
+  totalDurationMs: undefined,
+  rateLimitCurrent: undefined,
+  rateLimitCurrentResets: undefined,
+  rateLimitWeekly: undefined,
+  rateLimitWeeklyResets: undefined,
+  rateLimitExtra: undefined,
+  usageBuckets: undefined,
+  usageUnavailable: undefined,
+  watchdog: undefined,
+} satisfies Partial<Session>
 
 /** The provider fields of an Ask session on `provider`. A Codex session needs
  *  its `codexOptions` (main refuses a Codex spawn without them). */
@@ -232,8 +277,10 @@ export function _resetAskNoticesForTest(): void {
  * never into a trust, sandbox or approval screen. Main removes the characters
  * Codex's prompt would drop and says so, and says when the question was not
  * sent; the answer is shown here too, so a notice main could not push still
- * lands. A Claude tab keeps the PTY write a command button uses (its TUI
- * submits the line and its Enter).
+ * lands. The answer is about THIS question, so a not-delivered one keeps it
+ * again: Send again and Copy then offer the question that was not sent, not
+ * one handed over while it was being typed. A Claude tab keeps the PTY write
+ * a command button uses (its TUI submits the line and its Enter).
  */
 function handQuestionToRunning(id: string, provider: Session['provider'] | undefined, question: string): void {
   useAskNoticeStore.getState().keep(id, question)
@@ -241,7 +288,10 @@ function handQuestionToRunning(id: string, provider: Session['provider'] | undef
     writeSessionInput(id, question + '\r')
     return
   }
-  const notDelivered = (reason: SubmitNotDeliveredReason): void => showAskNotice({ sessionId: id, kind: 'not-delivered', reason })
+  const notDelivered = (reason: SubmitNotDeliveredReason): void => {
+    useAskNoticeStore.getState().keep(id, question)
+    showAskNotice({ sessionId: id, kind: 'not-delivered', reason })
+  }
   const handOff = window.electronAPI?.askConductor?.handOff
   if (typeof handOff !== 'function') { notDelivered('session-gone'); return }
   void Promise.resolve()
@@ -264,8 +314,8 @@ function handQuestionToRunning(id: string, provider: Session['provider'] | undef
  * workspace joins it instead of starting a second session.
  *
  * The guard below reads the session list BEFORE `await help.workspace()`, which
- * does an mkdir and two file writes in the main process -- comfortably wider
- * than a double-click. Two clicks therefore both saw "no ask session" and both
+ * checks the help folder file by file in the main process and rebuilds it when
+ * it is not exactly the app's own -- comfortably wider than a double-click. Two clicks therefore both saw "no ask session" and both
  * called addSession. That is not a cosmetic duplicate: `Sidebar` filters
  * `kind !== 'ask'` out of the session list and `AskConductorDock` binds to the
  * FIRST ask session, so the second is unreachable from either -- while still
@@ -288,8 +338,9 @@ export function launchAskConductor(question?: string): Promise<string> {
   if (inFlightLaunch) {
     // Join the launch already running. A question typed on the second click
     // still has to land, and the session it belongs to is the one being staged,
-    // so hand it over once that resolves -- the same PTY write the
-    // already-running branch does.
+    // so hand it over once that resolves -- the same hand-over the
+    // already-running branch does (a PTY write on Claude Code, main's submit
+    // primitive on Codex).
     const askPrompt = normaliseQuestion(question)
     return inFlightLaunch.then((id) => {
       if (id && askPrompt) {
@@ -346,8 +397,9 @@ function handOverToLive(existing: Session, askPrompt: string | undefined): strin
  * and conversation fields do not come along, and the new one's account is
  * decided as on a first launch; on the same assistant the account was decided
  * when the session was first opened, and the revive must not re-pop the
- * picker over it, which is what restart does too. `dir` is the help folder
- * just rebuilt for this start.
+ * picker over it, which is what restart does too. Either way the previous
+ * run's live state is cleared as a restart clears it (PREVIOUS_RUN_CLEARED).
+ * `dir` is the help folder just rebuilt for this start.
  */
 function revive(existing: Session, askPrompt: string | undefined, dir: string, provider: AskConductorProvider): string {
   const store = useSessionStore.getState()
@@ -363,8 +415,6 @@ function revive(existing: Session, askPrompt: string | undefined, dir: string, p
         accountColour: undefined,
         resumeUuid: undefined,
         resumeCwd: undefined,
-        launchedCodexPreset: undefined,
-        modelName: undefined,
         reasoningEffort: undefined,
       }
   clearSpawned(existing.id)
@@ -372,19 +422,12 @@ function revive(existing: Session, askPrompt: string | undefined, dir: string, p
   store.addSession({
     ...existing,
     ...providerFields,
+    ...PREVIOUS_RUN_CLEARED,
     id: existing.id,
     askPrompt,
     workingDirectory: dir,
     status: 'idle',
     createdAt: Date.now(),
-    ptyExited: undefined,
-    // The same clearing a restart does: the previous run's indicators must not
-    // stay painted on a session that is starting again.
-    contextPercent: undefined,
-    costUsd: undefined,
-    needsAttention: false,
-    effortLive: undefined,
-    fastMode: undefined,
   })
   if (sameProvider) useAccountGateStore.getState().markPredetermined(existing.id)
   store.setActiveSession(existing.id)
@@ -422,7 +465,7 @@ async function doLaunchAskConductor(question?: string): Promise<string> {
 
   // Re-read AFTER the await. The latch above covers the ordinary double-click,
   // but the store is a live singleton and this function is not the only thing
-  // that can add (or restart) a session while an mkdir is in flight. Cheap, and
+  // that can add (or restart) a session while the folder is checked. Cheap, and
   // it makes the "one ask session" claim true by construction rather than by
   // timing.
   const now = findAskSession(useSessionStore.getState().sessions)
@@ -452,7 +495,7 @@ async function doLaunchAskConductor(question?: string): Promise<string> {
   // NOTE: markSessionForResumePicker is deliberately NOT called. Both resume-
   // picker branches of buildClaudeLaunchCommand return before the positional
   // prompt is appended, so routing a first launch through the picker would drop
-  // the question with no error. "Past discussions" restarts the session
-  // instead, which takes the ordinary picker path.
+  // the question with no error. "Past discussions" restarts the session and
+  // asks for the picker instead, which takes the ordinary picker path.
   return id
 }
