@@ -256,7 +256,7 @@ export default function MemoryPage({ onClose, onOpenSessionLogs, onJumpToSession
           while Codex is in use: its memories live in each account's folder. */}
       {codexOn && (
         <div className="rounded-md bg-blue/10 border border-blue/30 p-3 text-sm text-blue mx-5 mt-3">
-          Claude Code memories come from <code className="font-mono text-[12px]">~/.claude/projects/*/memory/</code>, shared by every Claude account. Each Codex account keeps its own, listed by account below, read-only for now. Codex also reads project instructions from <code className="font-mono text-[12px]">AGENTS.md</code> files.
+          Claude Code memories come from <code className="font-mono text-[12px]">~/.claude/projects/*/memory/</code>, shared by every Claude account. Each Codex account keeps its own, listed by account below, read-only. Codex also reads project instructions from <code className="font-mono text-[12px]">AGENTS.md</code> files.
         </div>
       )}
 
