@@ -119,9 +119,11 @@ describe('GuidedTour: every card, per assistants in use', () => {
     for (const [title, text] of wholes) expect(text, title).not.toContain('Claude')
     expect(cards.get('Saved configs live here')).toContain('whenever you want (Codex, on this computer).')
     expect(cards.get('Saved configs live here')).not.toContain('SSH')
-    expect(cards.get('Review what your agent builds')).toContain('A Codex agent cannot put work there yet.')
-    expect(cards.get('Review what your agent builds')).not.toContain('Your agent renders')
-    expect(cards.get('Help lives here')).toContain('The Feature Guide explains every feature in depth whenever you want it.')
+    // WP2 PR 4, P4.1 (row 51): a Codex agent puts its work on the canvas too.
+    expect(cards.get('Review what your agent builds')).toContain('Your agent renders')
+    expect(cards.get('Review what your agent builds')).not.toContain('cannot put work there')
+    // P4.3: Ask Conductor runs on Codex when Codex alone is on.
+    expect(cards.get('Help lives here')).toBe('The Feature Guide explains every feature in depth whenever you want it and can hand your question to Ask Conductor, a Codex session that knows the app.')
   })
 
   it('Claude Code only (Codex off or not answered yet): no card mentions Codex', () => {
@@ -133,7 +135,7 @@ describe('GuidedTour: every card, per assistants in use', () => {
       for (const [title, text] of wholes) expect(text, `${title} ${JSON.stringify(on)}`).not.toContain('Codex')
       expect(cards.get('Saved configs live here')).toContain(`whenever you want (Claude, here or on another machine over SSH ${DASH} plain, or persistent so a dropped link does not kill it).`)
       expect(cards.get('Review what your agent builds')).toContain('anyone here can pick up.')
-      expect(cards.get('Help lives here')).toContain('with Claude Code on, can hand your question to Ask Conductor, a Claude session that knows the app.')
+      expect(cards.get('Help lives here')).toBe('The Feature Guide explains every feature in depth whenever you want it and can hand your question to Ask Conductor, a Claude session that knows the app.')
     }
   })
 
@@ -145,11 +147,13 @@ describe('GuidedTour: every card, per assistants in use', () => {
     expect(walk(CLAUDE_ONLY).bodies.get('Review what your agent builds')).toBe(CANVAS_BEFORE_NOTE)
   })
 
-  it('both on: every card word for word as before', () => {
+  it('both on: every card word for word as before, the canvas and help cards apart (P4.1, P4.3)', () => {
     const cards = walk(BOTH).bodies
     expect(cards.get('Saved configs live here')).toBe(`The left panel has two modes ${DASH} Saved is your launcher, Running is your live sessions. A saved config is a reusable launcher: project folder, model, account. Open the Saved tab, press "+ New" and pick Config to create one, then start a session from it whenever you want (Claude or Codex here, or Claude on another machine over SSH ${DASH} plain, or persistent so a dropped link does not kill it).`)
-    expect(cards.get('Review what your agent builds')).toBe(`${CANVAS_BEFORE_NOTE} Claude sessions draw on it; a Codex agent cannot put work there yet.`)
-    expect(cards.get('Help lives here')).toBe('The Feature Guide explains every feature in depth whenever you want it and, with Claude Code on, can hand your question to Ask Conductor, a Claude session that knows the app.')
+    // WP2 PR 4, P4.1: the Codex note is gone; the card is the same for both.
+    expect(cards.get('Review what your agent builds')).toBe(CANVAS_BEFORE_NOTE)
+    // P4.3: with both on, Ask runs on the one chosen in Settings, so the card names neither.
+    expect(cards.get('Help lives here')).toBe('The Feature Guide explains every feature in depth whenever you want it and can hand your question to Ask Conductor, a session that knows the app.')
     expect(cards.get('Everything has a home')).toContain('Cloud Agents, Insights, Tokenomics, Memory, Logs and the built-in tools (Conductor MCP) all live on this rail')
     expect(cards.get('Change anything, anytime')).toContain('Everything you just set up lives in Settings: your assistants and their accounts under Accounts, GitHub, the status line and the built-in tools.')
   })

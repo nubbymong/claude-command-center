@@ -78,7 +78,7 @@ const SECTIONS_20: WhatsNewSection[] = [
   {
     heading: 'Help',
     items: [
-      { title: 'A guide that answers back.', desc: 'The ? button opens a searchable guide, and a session that has read the docs.', needsClaude: true },
+      { title: 'A guide that answers back.', desc: 'The ? button opens a searchable guide, and a session that has read the docs.' },
     ],
   },
   {
@@ -106,9 +106,10 @@ const SECTIONS_21: WhatsNewSection[] = [
     heading: 'Working with Claude',
     headingWithoutClaude: 'Working with Codex',
     items: [
-      { title: 'Agent Canvas.', desc: "Claude draws a mockup in the app. Mark up what's wrong; it picks the notes up.", seeIt: 'canvas', needsClaude: true },
+      // WP2 PR 4, P4.1 (row 51): the canvas works in Codex sessions too.
+      { title: 'Agent Canvas.', desc: "Your agent draws a mockup in the app. Mark up what's wrong; it picks the notes up.", seeIt: 'canvas' },
       { title: 'Session Watchdog.', desc: 'Waits out a rate limit and types the retry itself. Off by default.', seeIt: 'watchdog' },
-      { title: 'Ask Conductor.', desc: 'A session that has read the docs — and can install a helper skill for the rest.', seeIt: 'askConductor', needsClaude: true },
+      { title: 'Ask Conductor.', desc: 'A session that has read the docs — and can install a helper skill for the rest.', seeIt: 'askConductor' },
     ],
   },
   {

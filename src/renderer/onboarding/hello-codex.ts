@@ -216,7 +216,7 @@ export function helloCodexPages(opts: HelloCodexCopyInputs): HelloCodexPage[] {
       points: [
         { lead: 'Instructions.', rest: 'Codex reads `AGENTS.md`; Claude reads `CLAUDE.md`.' },
         { lead: 'Permissions.', rest: "Codex has its own approval and sandbox modes. Choose a preset in the session dialog; Claude's permission settings do not apply to it." },
-        { lead: 'Conductor tools.', rest: 'Codex sessions get the Conductor tools that suit them. Vision, the in-app browser and the Agent Canvas stay with Claude sessions for now.' },
+        { lead: 'Conductor tools.', rest: 'Codex sessions get the Conductor tools too: the Agent Canvas, Vision and the push to your in-app browser.' },
         { lead: 'Usage.', rest: "Codex reports tokens per session and review. Claude's rate-limit figures do not apply to Codex." },
       ],
       where: 'Feature Guide, Integrations',
