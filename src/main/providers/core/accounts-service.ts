@@ -47,7 +47,7 @@ import type {
   ResolveConflictRequest, SetReviewerDefaultRequest, ReviewerChoice, ReviewRefusalView, ReviewReadinessView, ProviderLaunchRefusal,
   ProviderAccountUsageView, ProviderUsageStreamResult, AuthRealm, SignInAgainResult, SignInPhase,
 } from '../../../shared/providers'
-import type { ProviderPackage, DiscoveryResult, AuthCredentialKind, AuthOperationResult, AuthLoginInput, InstallRecipe, ExternalDefaultRealmSpec, RealmRef, UsageReading, UsageReadOutcome, ModelCatalogueResult } from './package'
+import type { ProviderPackage, DiscoveryResult, AuthCredentialKind, AuthOperationResult, AuthLoginInput, InstallRecipe, ExternalDefaultRealmSpec, RealmRef, UsageReading, UsageReadOutcome, ModelCatalogueResult, ProviderAccountFolders } from './package'
 import type { AccountRegistryStore, StoreResult } from './account-registry-store'
 import type { ConsumerLeaseRegistry, AccountLease, LaunchLeaseKind } from './consumer-leases'
 import { LAUNCH_LEASE_KINDS } from './consumer-leases'
@@ -3030,6 +3030,47 @@ export class AccountsService {
       let dir: string | null = null
       try { dir = await p.launch.sessionsDir({ authRealmId: realm.id }) } catch { dir = null }
       if (typeof dir === 'string' && dir && !out.includes(dir)) out.push(dir)
+    }
+    return out
+  }
+
+  /** WP2 PR 4, P4.4 (rows 55, 56): each account's own folders -- its log
+   *  folder, memories folder and settings file -- for every provider whose
+   *  package names them (ProviderLaunchOperations.accountFolders), with whose
+   *  they are: the account, and whether it is this computer's own home
+   *  (`external`). Only an account's current realm, and only while it is in
+   *  use (active); a realm that cannot be located now is left out. Paths and
+   *  opaque ids only, main only: the Memory page and the log-folder channels
+   *  ask afresh per request and send a renderer no path but the memory
+   *  listing's own. Null while the registry has not been read (as
+   *  sessionsRoots). */
+  async accountFolders(): Promise<Array<{ providerId: ProviderId; accountId: string; external: boolean; logDir: string; memoriesDir: string; configFile: string }> | null> {
+    const store = this.currentStore()
+    const status = store?.status()
+    if (!store || (status?.mode === 'recovery' && status.reason === 'unloaded')) {
+      let settled = false
+      try { settled = this.deps.registrySettled?.() === true } catch { settled = false }
+      return settled ? [] : null
+    }
+    const ready = this.ready()
+    if ('ok' in ready) return []
+    let packages: readonly ProviderPackage[]
+    try { packages = this.deps.packages() } catch { return [] }
+    const text = (v: unknown): v is string => typeof v === 'string' && v.length > 0
+    const out: Array<{ providerId: ProviderId; accountId: string; external: boolean; logDir: string; memoriesDir: string; configFile: string }> = []
+    for (const p of packages) {
+      const launch = p.launch
+      const port = launch && typeof launch.accountFolders === 'function' ? launch.accountFolders.bind(launch) : null
+      if (!port) continue
+      for (const realm of ready.doc.realms) {
+        if (realm.providerId !== p.id || realm.lifecycle !== 'active') continue
+        const account = findAccount(ready.doc, realm.ownerProviderAccountId)
+        if (!account || account.authRealmId !== realm.id || out.some((o) => o.accountId === account.id)) continue
+        let f: ProviderAccountFolders | null = null
+        try { f = await port({ authRealmId: realm.id }) } catch { f = null }
+        if (!f || !text(f.logDir) || !text(f.memoriesDir) || !text(f.configFile)) continue
+        out.push({ providerId: p.id, accountId: account.id, external: realm.ownership === 'external-default', logDir: f.logDir, memoriesDir: f.memoriesDir, configFile: f.configFile })
+      }
     }
     return out
   }

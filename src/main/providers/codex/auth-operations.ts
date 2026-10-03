@@ -192,6 +192,7 @@ export interface CodexUsageReadOptions {
 export type CodexAuthOperations = ProviderAuthOperations & {
   prepareLaunch(realm: RealmRef): Promise<LaunchPreparation | Refusal>
   usageSessionsDir(realm: RealmRef): Promise<string | null>
+  accountFolders(realm: RealmRef): Promise<{ logDir: string; memoriesDir: string; configFile: string } | null>
   readUsage(realm: RealmRef, opts?: CodexUsageReadOptions): Promise<CodexUsageRead>
 }
 
@@ -429,6 +430,33 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
         try { fsid = deps.realmIdentity(where.home) } catch { return null }
         if (!fsid || fsid.isDirectory !== true || typeof fsid.canonical !== 'string' || !samePath(fsid.canonical, where.home)) return null
         return pathApi.join(where.home, 'sessions')
+      } catch {
+        return null
+      }
+    },
+
+    /** WP2 PR 4, P4.4 (rows 55, 56): the realm's own log folder (`log/`,
+     *  where codex-login.log always lands, and codex-tui.log unless log_dir
+     *  moves it), memories folder (`memories/`) and settings file
+     *  (`config.toml`, whose root-level log_dir may name another log
+     *  folder), for the Memory page and the log folders in Settings, Debug
+     *  Logging. Located exactly as usageSessionsDir locates the sessions
+     *  folder, and held to the same canonical-home check, so nothing is shown
+     *  from a home a launch would refuse. Paths only: nothing inside is read,
+     *  made or checked here; each reader checks what it reads (no link, no
+     *  `.git`, a local folder). No CLI. Null when refused. */
+    async accountFolders(realm: RealmRef): Promise<{ logDir: string; memoriesDir: string; configFile: string } | null> {
+      try {
+        const where = await locate(realm, 'sessions')
+        if (isRefusal(where)) return null
+        let fsid: CodexRealmIdentity
+        try { fsid = deps.realmIdentity(where.home) } catch { return null }
+        if (!fsid || fsid.isDirectory !== true || typeof fsid.canonical !== 'string' || !samePath(fsid.canonical, where.home)) return null
+        return {
+          logDir: pathApi.join(where.home, 'log'),
+          memoriesDir: pathApi.join(where.home, 'memories'),
+          configFile: pathApi.join(where.home, 'config.toml'),
+        }
       } catch {
         return null
       }

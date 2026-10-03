@@ -323,6 +323,27 @@ export interface ProviderLaunchOperations {
    *  home linked into another realm's is never read as its own). A path
    *  only: no CLI, no executable check. */
   sessionsDir(realm: RealmRef): Promise<string | null>
+  /** WP2 PR 4, P4.4 (rows 55, 56): the realm's own folders the app shows the
+   *  user (ProviderAccountFolders), or null exactly when sessionsDir would
+   *  be: located the same way and held to the same canonical-home check.
+   *  Paths only: no CLI, nothing read or made. Absent: the provider shows
+   *  none (Claude keeps one memory store for every account, and its own log
+   *  folder is the app's). */
+  accountFolders?(realm: RealmRef): Promise<ProviderAccountFolders | null>
+}
+
+/** A realm's folders the Memory page and Settings, Debug Logging show (P4.4):
+ *  main only, never sent to a renderer. What is read inside them is checked
+ *  by the reader itself (no link, no `.git`, a local folder). */
+export interface ProviderAccountFolders {
+  /** Where the provider writes its own logs by default (Codex: `log/`, where
+   *  the sign-in log always lands). */
+  logDir: string
+  /** Where the provider keeps the account's memories (Codex: `memories/`). */
+  memoriesDir: string
+  /** The settings file that may name another log folder (Codex:
+   *  `config.toml`'s root-level `log_dir`). */
+  configFile: string
 }
 
 /** One reviewer invocation (plan: provider review through MCP): a fresh,

@@ -489,8 +489,12 @@ function withRealms(ops: CodexAuthOperations, usageFs: CodexUsageFsPort, liveUsa
     // MP9 round 1 (B-F1): the usage index reads a realm's folder held to the
     // launch's canonical-home check (no junction or link), as the Account
     // usage page does: a home linked into another realm's is never read as
-    // its own.
-    launch: { kinds: ['session', 'review'], prepare: (realm) => ops.prepareLaunch(realm), sessionsDir: (realm) => ops.usageSessionsDir(realm) },
+    // its own. P4.4: the account's log folder, memories folder and settings
+    // file, held to the same check.
+    launch: {
+      kinds: ['session', 'review'], prepare: (realm) => ops.prepareLaunch(realm), sessionsDir: (realm) => ops.usageSessionsDir(realm),
+      accountFolders: (realm) => ops.accountFolders(realm),
+    },
     usage: createCodexUsageOperations({
       sessionsDir: (realm) => ops.usageSessionsDir(realm), fs: usageFs, live: liveUsage, marks,
       // MP8: the one helper read, and the executable it would run.
