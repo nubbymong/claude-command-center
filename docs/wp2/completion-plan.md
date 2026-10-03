@@ -83,13 +83,13 @@ still owes recorded in 4. "2; 3" means partly built in 2, the rest in 3.
   verification owed. The checklist
   moved rows 52, 68 and 69 from OWNER to MISSING, since parity settles them
   (section 10); row 69 is now built (P3.8).
-- Genuinely unresolved UX decisions: **six**, each built as a default pending the owner's decision: row 41 (P3.8 round 1, caef0d42: Codex has no one-line
+- Genuinely unresolved UX decisions: **seven**, each built as a default pending the owner's decision: row 41 (P3.8 round 1, caef0d42: Codex has no one-line
   model or effort command; section 10, question 2), row 22 (P3.6 finding
-  V3: a declined confirm after a Switch restores the previous account; question 3), row 63 (P3.10: Codex asks the user to review the app's hooks once per account; question 4), row 51 (PB1: the instruction channel on this computer's sign-in; question 5), row 53 (PB4: characters outside the BMP; question 6) and row 57 (PB5: the Cloud Agent skip-permissions mapping; question 7). The one before them (row 53, both providers on) was decided by
+  V3: a declined confirm after a Switch restores the previous account; question 3), row 63 (P3.10: Codex asks the user to review the app's hooks once per account; question 4), row 51 (PB1: the instruction channel on this computer's sign-in; question 5), row 53 (PB4: characters outside the BMP; question 6), row 57 (PB5: the Cloud Agent skip-permissions mapping; question 7) and rows 51 and 52 (the VM checkpoint at 69c98042: Codex's Auto preset cannot ask before the app's own tools; question 8). The one before them (row 53, both providers on) was decided by
   the owner on 2026-09-27 (option B; OD27 M4). Section 10.
 - PR 3 waits on the owner for questions 2, 3 and 4 and for the owner actions
   in section 10; nothing in it is blocked from being built. PR 4 waits on the
-  owner for questions 5, 6 and 7 before its merge is recommended; nothing in
+  owner for questions 5 to 8 before its merge is recommended; nothing in
   it is blocked from being built.
 
 ## 3. Where the draft plan disagreed with the record
@@ -313,7 +313,7 @@ Per PR:
   and questions 2 to 4 (section 10).
 - **PR 4.** Phases P4.1 to P4.11 (section 9), including row 15, which OD20 D8
   makes a merge blocker. The SSH live matrix is owed (P4.1 and P4.3 edit
-  `pty-manager.ts`; 9.7 gate 5), and questions 5 to 7 (section 10).
+  `pty-manager.ts`; 9.7 gate 5), and questions 5 to 8 (section 10).
 
 Package completion is not release completion. A complete PR merges to beta
 only on the owner's word, in the order #625, PR 3, PR 4, and nothing is
@@ -4468,7 +4468,7 @@ integration owner (the orchestrating session) integrates the phases one at a
 time; parallel Opus implementers work only on the disjoint lanes of 9.3. Every
 phase is **APPROVED** as the outline recorded; the owner steps are the
 artifacts record (P4.6), the Insights mockup (P4.7), P4.10's owner action, the
-owner-only checks in 9.5, and section 10's questions 5, 6 and 7. The batched VM
+owner-only checks in 9.5, and section 10's questions 5 to 8. The batched VM
 probe session (9.2) ran on 2026-10-02; each probe settled a technical choice
 inside an approved phase and reopened nothing. Two results cannot be settled
 by parity and became section 10's questions 5 (row 51) and 6 (row 53); a
@@ -4676,8 +4676,12 @@ skill.
   flags (`permissions.ts:9-27`), on both versions; each per-tool key found, set
   by `-c` for two tools only.
 - Result: Codex asks before every call of a tool without annotations under
-  Read Only, Standard and Auto, on both versions (Auto's `--ask-for-approval
-  never` included); `-c mcp_servers.<server>.tools.<tool>.approval_mode=approve`
+  Read Only, Standard and Auto, on both versions, with the probe's server
+  (Auto's `--ask-for-approval never` included). Under the app's own Auto
+  launch the VM checkpoint at 69c98042 saw Codex refuse such a call with no
+  prompt instead ("MCP tool call requires approval, but approval policy is
+  never"), on both versions (P4.1; section 10, question 8);
+  `-c mcp_servers.<server>.tools.<tool>.approval_mode=approve`
   lifts it for exactly that tool on both (0.153.4 too, although its strings
   list no "approve"); `=auto` lifts nothing; approving once leaves
   `config.toml` unchanged. The values hold no whitespace, so they ride the
@@ -4956,7 +4960,7 @@ is kept apart from three moves: P4.8 goes first, P4.3 is split across two
 lanes, and P4.11 comes before P4.10, each for the reason given. Checkpoint 2
 does not wait for an owner answer: the owner-gated halves (P4.6's sign-in
 window and artifacts, P4.7) are covered at the final head. P4.11 re-checks
-its lines against the owner's answers to questions 5 to 7, and if an answer
+its lines against the owner's answers to questions 5 to 8, and if an answer
 brings a change after P4.11 or P4.10 ran, both run again over it before the
 final head.
 
@@ -5135,9 +5139,12 @@ Claude session has them. Probes: PB1, PB2, PB3 (all reported).
     nothing; Auto ("Workspace writes, no prompts") with Claude's Auto
     ("Auto-accept most actions"), whose handling of these tools the phase
     record takes from Claude Code's documented behaviour or, where only a real
-    model can show it, from OR4's check of a real Claude session in Auto mode,
-    Auto meanwhile asking as today; Read Only, Standard and Plan keep Codex's
-    prompt, as Claude's Ask permissions, Accept edits and Plan mode ask.
+    model can show it, from OR4's check of a real Claude session in Auto mode.
+    Auto meanwhile gets no keys, so on Auto, which cannot ask, Codex refuses
+    these tools (the VM checkpoint at 69c98042; the Feature Guide says so,
+    2ef1c892 and 743241ec; section 10, question 8); Read Only, Standard and
+    Plan keep Codex's prompt, as Claude's Ask permissions, Accept edits and
+    Plan mode ask.
     Nothing wider: no `default_tools_approval_mode`, no session or always
     approval. The npm `.cmd` route's line must stay under cmd.exe's 8,191
     characters: with every key (about 29 tools under Unrestricted) and the
@@ -5145,8 +5152,10 @@ Claude session has them. Probes: PB1, PB2, PB3 (all reported).
     tested to fit; were it over, the per-preset keys are dropped with a log
     line, never the launch. No security reason against the per-preset keys is
     known; if the ADR-009 pass finds one, it is raised as a numbered section 10
-    question that day and that preset keeps asking meanwhile. P4.2 applies the
-    same rule to its tools.
+    question that day and that preset gets no keys meanwhile (its tools other
+    than the snapshot and review are then refused on a preset that cannot
+    ask, Unrestricted and Auto, and asked about on the others). P4.2 applies
+    the same rule to its tools.
   - The screen reading (`codex-screen.ts`, `BLOCKING_RE` :100-117): add Codex's
     MCP approval form ("Allow the <server> MCP server to run tool") and the
     sandbox-setup menu's title ("Set up the Codex agent sandbox"; its footer is
@@ -5373,14 +5382,18 @@ Claude session has them. Probes: PB1, PB2, PB3 (all reported).
     6 s folded) the take-back falls after it for texts up to about 11,000 code
     points.
   - *Approvals and A-5.* Unrestricted keys all 29 tools a Codex connection can
-    be offered (P4.1's 10 and P4.2's 19); Auto keeps asking. Claude Code's
-    documentation (permission modes) says that in auto mode an MCP tool call
+    be offered (P4.1's 10 and P4.2's 19); Auto gets none, and since Auto
+    cannot ask, Codex refuses those tools there (the VM checkpoint at
+    69c98042; the Feature Guide says so). Claude Code's documentation
+    (permission modes) says that in auto mode an MCP tool call
     not marked as needing the user goes to a classifier, neither always asked
     nor always approved; Accept edits does not list MCP tools; the default
     mode asks; bypassPermissions approves. The documentation therefore does
     not settle a fixed per-tool key for Codex's Auto, which has no classifier,
-    so Auto asks until OR4 checks a real Claude session in Auto mode on the
-    canvas, vision and browser tools.
+    so parity cannot settle it: section 10's question 8 asks the owner, with
+    no keys on Auto as the built default meanwhile, and OR4's check of a real
+    Claude session in Auto mode on the canvas, vision and browser tools
+    informs it.
   - *Question 5's layers,* the same in both binaries' strings and in tagged
     source from rust-v0.153.4 to rust-v0.156.1: `<CODEX_HOME>/config.toml`
     (its top level and every `[profiles.*]` table);
@@ -5396,8 +5409,12 @@ Claude session has them. Probes: PB1, PB2, PB3 (all reported).
     escapes undone, case ignored. Nothing is passed when a file cannot be read
     as text, for the macOS managed preferences, when a home Codex never ran in
     has no cloud cache, on any version but 0.153.4, 0.154.0, 0.155.0, 0.155.1,
-    0.156.0 and 0.156.1, and on the resume picker (its working folder is
-    unknown at launch).
+    0.156.0 and 0.156.1. Through the resume picker (00b8da6d, after the VM
+    checkpoint) the guidance reaches only a new conversation the picker starts
+    in the session's own folder: a resumed conversation keeps the instructions
+    it started with (Codex's behaviour), a pick in another worktree passes
+    nothing, and the canvas page says so (the `picker` guidance state,
+    ce6e79dc).
   - *The live loop (question 4's default A, a declared deviation).* Until an
     account's hooks are trusted, the queue writes at once and the primitive
     holds the marker for Codex's ready composer, bounded at 120 s; the canvas
@@ -5434,7 +5451,7 @@ Claude session has them. Probes: PB1, PB2, PB3 (all reported).
     Unrestricted; the quarantined link files on CI and the VM); OR4 (a real
     model's own use; a real Claude session in Auto mode; the staged skill read
     under the administrator sandbox, or OR6 part 2); OR5; the owner's
-    screenshot review; question 5. ADR-009 pass: PASS at 1a51bb66 (four
+    screenshot review; questions 5 and 8. ADR-009 pass: PASS at 1a51bb66 (four
     lenses, two fix rounds); VM confirmations owed.
 
 **P4.2 Browser and vision tools (row 52).** Probes: PB1 (the vision skill),
@@ -5451,10 +5468,11 @@ PB2.
   The vision skill reaches Codex through P4.1's channel (question 5 applies
   to this computer's sign-in). The push binds to the Codex session's bound id.
   Approvals: none pre-allowed on every preset (Claude pre-allows none of
-  them); Codex asks before each call under every preset probed, Auto included
-  (PB2). Under a preset whose matching Claude mode does not ask, P4.1's
+  them); Codex asks before each call under Read Only, Standard and Plan
+  (PB2), and on Auto, which cannot ask, refuses it (the VM checkpoint at
+  69c98042). Under a preset whose matching Claude mode does not ask, P4.1's
   per-preset rule sets per-tool `approval_mode=approve` keys for these tools
-  too (Unrestricted, as Claude's Bypass; Auto as P4.1 establishes); a
+  too (Unrestricted, as Claude's Bypass; Auto: none, question 8); a
   deviation is recorded only where a per-tool key cannot do it, and a
   security reason against a key goes to section 10 as P4.1 says. The
   Unrestricted preset, not probed, is checked on the VM. Copy:
@@ -5478,7 +5496,8 @@ PB2.
     `source !== 'codex'` gates and their comments are gone, the push still
     goes through `decideAgentBrowserPush` with the Codex session's bound id,
     nothing new is pre-allowed, and Unrestricted gets a per-tool key for each
-    of the 19 new tools; Auto, Standard, Read Only and Plan keep asking.
+    of the 19 new tools; Standard, Read Only and Plan keep asking, and Auto,
+    which cannot ask, refuses them (section 10, question 8).
   - *Reviews.* The P4.2 review (2eb403cf, c4f1a62c): spec PASS; its quality
     findings are fixed in 04ac6b96 (among them, the routing and push cases run
     over `/mcp` and `/sse`, with the Vision and Built-in Tools switches) and
@@ -6489,7 +6508,7 @@ Owner: OR1, OR4.
   lands. The AGENTS.md surface sweep. The owner's recapture request of
   2026-09-26.
 - *Changes.* Sweep everything PR 4 changed (each phase's own copy already
-  landed with it), and re-check the lines written for questions 5 to 7's
+  landed with it), and re-check the lines written for questions 5 to 8's
   defaults against the owner's answers. Remove the labels and update their
   tests; re-read WP1.21 ("labelled with provider maturity") so the mechanism
   stays. Recapture the images (the Mac ones on the Mac) and put them to the
@@ -6523,7 +6542,7 @@ Queued now (none blocks the start; each blocks one later step):
   model: P4.1 and P4.2, a real model choosing to use the canvas and the
   browser tools, and, where Claude Code's documentation does not settle it,
   whether a real Claude session in Auto mode asks before the app's canvas,
-  vision and browser tools (it decides Codex's Auto keys); P4.1 again,
+  vision and browser tools (it informs question 8); P4.1 again,
   unless OR6 part 2's window already checked it: on Windows, with Codex's
   administrator sandbox set up on that account as the app advises, whether
   the model reads the managed account's staged canvas skill (PB8 left that
@@ -6550,8 +6569,9 @@ Queued now (none blocks the start; each blocks one later step):
   nothing waits on part 1.
 
 Questions for the owner (section 10): 5 (row 51), 6 (row 53) and 7 (row 57),
-each built as its default A, queued now. PR 4 waits on the owner for them
-before merge is recommended, as PR 3 does for questions 2, 3 and 4; once P4.1,
+each built as its default A, queued now; and 8 (rows 51, 52), raised by the
+VM checkpoint at 69c98042, built as its default B. PR 4 waits on the owner
+for them before merge is recommended, as PR 3 does for questions 2, 3 and 4; once P4.1,
 P4.3 and P4.5 land, rows 51, 53 and 57 read PARTIAL, built as the default
 pending the owner's decision, until the answers are in and any change they
 bring is built. The
@@ -6618,11 +6638,14 @@ account's hooks are trusted, a marker waits on Codex's screen, P4.1).
     `tool_search` (namespace `mcp__<server>`, deferred loading), not offered up
     front; a fake model driving the canvas, vision or browser tools through the
     real Codex must search first (PB2; P4.1, P4.2, P4.9).
-15. **Codex asks before every call of an MCP tool without annotations, under
-    every preset probed, Auto included.** Approving once writes nothing;
+15. **Codex needs an approval before every call of an MCP tool without
+    annotations.** It asks under every preset that can ask, and PB2's probe
+    server saw it ask under Auto too; approving once writes nothing;
     `tools.<tool>.approval_mode=approve` lifts it per tool on both versions
-    (PB2). Without such keys, under Auto a Codex session asks before every
-    vision, browser and `canvas_render` call (P4.1's per-preset rule, P4.2).
+    (PB2). Under the app's own Auto launch (`--ask-for-approval never`)
+    Codex cannot ask: the VM checkpoint at 69c98042 saw it refuse vision,
+    browser and `canvas_render` calls with no prompt, on both versions
+    (P4.1's per-preset rule, P4.2; section 10, question 8).
 16. **`codex exec`** (PB5): `--skip-git-repo-check` is required in a non-git
     folder (otherwise exit 1, no request); `danger-full-access` writes a
     project trust entry into `config.toml` on every run, whatever the flags;
@@ -6679,7 +6702,7 @@ account's hooks are trusted, a marker waits on Codex's screen, P4.1).
 1. **Implemented.** Every row to its record; row 58's artifacts half DONE or
    carrying the signed section 19 record; every declared deviation recorded
    with its probe's evidence; row 15's owner-run gates (OR1) done before merge
-   (OD20 D8); questions 5 to 7 answered and any change they bring built (PR
+   (OD20 D8); questions 5 to 8 answered and any change they bring built (PR
    4 waits on the owner for them, as PR 3 does for questions 2, 3 and 4).
 2. **Tested.** Failing tests first; named host-safe test files only, the header
    grepped for HOST QUARANTINE before every run, never a directory, never
@@ -6711,6 +6734,54 @@ account's hooks are trusted, a marker waits on Codex's screen, P4.1).
    `CONTEXT.d/` fragment for PR 4; the WP1 ledger and traceability; section 9's
    phase records; the user-facing sweep; a PR body current for its head.
 
+*Record (2026-10-03): VM checkpoints 1 and 2*, run together at 69c98042 on
+WINDOWS_1 (a packaged build installed over be6ee406; Codex 0.155.1 and
+0.153.4 on both routes; the fake model). PASS: the unit suite there, apart
+from seven environment failures (two load timeouts that pass alone, four
+cases that need git history and pass in a repository made from the
+archive, and the legacy-codex gate's baseline case, which the VM cannot
+run); the native suite; the typecheck; the HOST QUARANTINE files; the
+real-CLI conformance suite on both versions; the e2e suite, 94 of 94 twice;
+the real launch's first screens at the pane size. Checkpoint 1 (P4.1, P4.2):
+the render, annotate and review loop; a marker filed mid-turn; Read Only,
+Standard and Plan asking before the app's tools and Unrestricted running
+them all; A42-5; vision and the push; the pointer guidance's encoding.
+Checkpoint 2 (P4.3 to P4.6): a question on the launch line held behind the
+trust, hooks and sandbox screens and then arriving whole; the typed routes
+after those screens; the inline `AGENTS.md` whole, with no parent file;
+Ask with Codex only and with both on, a revive, a hand-off mid-turn, a
+resumed Ask and a Restart; the help folder's rebuild; the pointer skill's
+read; emoji removed; memories; the `log_dir` folder; agents on both
+versions and routes with `config.toml` and `auth.json` unchanged; C-1's
+Stop and quit; P4.6's first half; the log folders' Windows path forms (an
+8.3 name, a subst drive, a mapped share, a UNC `log_dir`) refused, and a
+home named in another case. Four findings, each fixed: on the Auto preset
+Codex refuses the app's tools rather than asking (2ef1c892 says so in the
+Feature Guide, 743241ec names every such tool; question 8); the guidance
+did not reach a launch through the resume picker (00b8da6d; ce6e79dc gives
+the canvas page the picker's state); a test now holds the help folder's
+link-safe removal on every platform (3bb58680); the Codex compat test ran
+in the VM user's own Codex folder (e30aded1: a fresh Codex home, and the
+file is headed HOST QUARANTINE). OR6: P4.5's edit case under the non-admin
+sandbox fails even after Codex's setup. OR4: the memory delete check was
+inconclusive (consolidation did not run), so delete stays hidden. Not run:
+the kill check of a process whose parent id is stale (no pid reuse came up
+in two attempts) and row 42's leftover-kill log line (the release notes
+were unreachable); macOS and Linux. Row 38's midnight UTC check is
+scheduled on the VM. VM owed since: a launch through the resume picker
+showing the inline text in a new conversation; the compat test leaving
+`~/.codex` untouched; an Ask Restart resuming on both assistants.
+
+*Record (2026-10-03): CI on macOS and Linux.* PR 4's first CI run at
+69c98042 failed on POSIX in tests only, fixed by b76e9f6c (the Codex Cloud
+Agent tests used a Windows project path, which a POSIX run refuses as not
+a full path) and 1eba3623 (tests that delete a file or folder and make it
+again at once expected another identity; the replacement is now made
+beside the original and renamed in). Recorded as a limit of the app's
+identity checks: on ext4 a file deleted and made again at once keeps its
+inode, so those checks cannot tell it from the first (a rename over it is
+caught).
+
 ## 10. Unresolved UX decisions
 
 ### How each candidate was checked
@@ -6727,9 +6798,10 @@ account's hooks are trusted, a marker waits on Codex's screen, P4.1).
 | 41 Mid-session model and effort | Claude's pill switches model and effort in one step, live. The VM probe (evidence addendum 13): Codex has no one-line form (`/model <slug>` and `/model <slug> <effort>` are sent as a message; `/effort` is unrecognised); its own route is a two-step picker opened by a bare `/model`, which keeps the conversation | **Parity cannot carry over as it is.** Built as the default pending the owner's decision: question 2 below. |
 | 51 Canvas and vision instructions, this computer's sign-in | PB1 (2026-10-02): no channel adds to Codex's instructions on both launch routes without writing into the user's Codex folder or replacing a setting the user made | **Parity cannot carry over as it is.** Built as the default pending the owner's decision: question 5 below. |
 | 53 Ask on Codex, characters outside the BMP | PB3 and PB4 (2026-10-02): Codex's prompt drops them on both versions; only the direct route's launch argument keeps them | **Parity cannot carry over as it is.** Built as the default pending the owner's decision: question 6 below. |
+| 51, 52 Codex's Auto preset and the app's tools | The VM checkpoint at 69c98042: Codex's Auto starts with `--ask-for-approval never`, so it cannot ask before the app's tools and refuses them; Claude's Auto sends each such call to its own classifier, not a fixed per-tool answer, and the app pre-approves only the canvas snapshot and review for both | **Parity cannot carry over as it is.** Built as the default pending the owner's decision: question 8 below. |
 | 57 Cloud Agents, the skip-permissions choice | Claude's choice runs `--dangerously-skip-permissions` (Bypass, `cloud-agent-manager.ts:305`), which matches Codex's Unrestricted; PB5 (2026-10-02): Unrestricted writes the project's trust entry into the account's `config.toml` on every run | **Parity cannot carry over as it is.** Built as the default pending the owner's decision: question 7 below. |
 
-Six decisions are open: question 2 (row 41), question 3 (row 22), question 4 (row 63), question 5 (row 51), question 6 (row 53) and question 7 (row 57), each built as a default pending the owner's decision. Question 1 below was decided by the owner
+Seven decisions are open: question 2 (row 41), question 3 (row 22), question 4 (row 63), question 5 (row 51), question 6 (row 53), question 7 (row 57) and question 8 (rows 51, 52), each built as a default pending the owner's decision. Question 1 below was decided by the owner
 on 2026-09-27: option B, approved as drawn (`docs/wp1/owner-decisions-2026-09-27.md`,
 M4; canvas "Ask Conductor provider choice" v1, no notes).
 
@@ -6971,6 +7043,38 @@ of the account's settings), at the cost of the project limit. Mockup: none
 
 Built meanwhile: all of P4.5, with A. Waits on the answer: only the mapping
 step and the checkbox's wording.
+
+### Question 8 (rows 51, 52), open: built as the default, pending the owner's decision. What should Codex's Auto preset do about the app's own tools?
+
+The app's MCP tools (the Agent Canvas, Vision, the push to the in-app
+browser, the host screenshot fetch and the Claude review) declare no
+annotations, so Codex needs an approval before each call unless a per-tool
+key approves it (PB2). Codex's Auto preset ("Workspace writes, no
+prompts") starts Codex with `--ask-for-approval never`, so on Auto Codex
+cannot ask: the VM checkpoint at 69c98042 saw it refuse those calls with no
+prompt on both supported versions. P4.1 pairs Codex's Auto with Claude's
+Auto ("Auto-accept most actions"), and Claude's Auto does not give these
+tools a fixed answer either way: Claude Code's documentation says it sends
+each such call to its own classifier, which decides call by call. The app
+pre-approves only the canvas snapshot and review, in every mode, for both
+assistants. Codex has no such classifier, so Claude's behaviour cannot
+carry over as it is, and OR4's check of a real Claude session in Auto mode
+can inform the choice but not make it.
+
+- **A.** Give Auto the same per-tool keys Unrestricted gets: every offered
+  tool runs on Auto with no prompt. That is wider than Claude's Auto, which
+  still decides each call.
+- **B (built, the default).** No per-tool keys on Auto: those tools are
+  refused there, the canvas snapshot and review still run, and the Feature
+  Guide's known issues say to use the Standard or Unrestricted preset for
+  them.
+- **C.** Another mapping: for example a key for some of the tools only, or
+  Auto paired with a different Claude mode for these tools.
+
+**Recommendation: B.** It refuses what Claude's Auto would still judge call
+by call, rather than run it unchecked. Mockup: none (the known issue's
+wording). Built meanwhile: all of P4.1 and P4.2, with B. Waits on
+the answer: only the Auto preset's keys and the known issue's wording.
 
 ### One-line notices to the owner (not questions)
 
