@@ -13,9 +13,9 @@
  */
 import { describe, it, expect, afterEach } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync, existsSync } from 'fs'
-import { basename, dirname, join, relative, resolve, isAbsolute } from 'path'
+import { basename, delimiter, dirname, join, relative, resolve, isAbsolute } from 'path'
 import { tmpdir } from 'os'
-import { captureHomeDir, captureLaunchEnv } from '../../../scripts/capture-env'
+import { captureFakeBinDir, captureHomeDir, captureLaunchEnv } from '../../../scripts/capture-env'
 
 const PREFIX = 'ccc-test-capture-home-'
 const made: string[] = []
@@ -56,7 +56,10 @@ describe('the capture tool\'s home', () => {
     expect(env.NODE_ENV).toBe('production')
     expect(env.CCC_E2E_DATA_DIR).toBe(r)
     expect(env.CCC_FORCE_SPLASH).toBe('0')
-    expect(env.Path).toBe('x')
+    // P4.11 recapture: the stand-in CLIs first, then the runner's folders
+    // that hold no Claude or Codex (capture-seed.test.ts pins the filter).
+    expect(named('PATH')).toEqual(['PATH'])
+    expect(env.PATH.split(delimiter)).toEqual([captureFakeBinDir(r), 'x'])
     expect(existsSync(join(home, '.claude'))).toBe(true)
   })
 

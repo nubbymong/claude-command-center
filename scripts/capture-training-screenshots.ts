@@ -10,7 +10,10 @@
  *
  * What it does:
  *   1. Seeds sample data (configs, commands, agents, memory) into a throwaway
- *      temp data root so pages look populated without touching real user data
+ *      temp data root so pages look populated without touching real user data;
+ *      with Claude Code and Codex both on, fictional accounts of each, and
+ *      stand-in CLIs (capture-seed.ts), run on a home, app data and temp
+ *      folders inside that root (capture-env.ts). Run it on the test VM only.
  *   2. Launches the built Electron app via Playwright, pointed at that root
  *   3. Navigates to each relevant view and captures screenshots
  *   4. Saves JPEGs to src/renderer/assets/training/
@@ -22,7 +25,8 @@ import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
 import { STEPS, ONBOARDING_VERSION } from '../src/renderer/onboarding/steps'
-import { captureHomeDir, captureLaunchEnv } from './capture-env'
+import { captureHomeDir, captureLaunchEnv, captureFakeBinDir } from './capture-env'
+import { CAPTURE_PROVIDER_SETTINGS, captureAppMetaKeys, seedCaptureProviders } from './capture-seed'
 
 const SCREENSHOT_DIR = path.join(__dirname, '..', 'src', 'renderer', 'assets', 'training')
 // Must match the build's __APP_VERSION__ exactly — the Claude CLI-setup gate
@@ -394,7 +398,9 @@ function seedSampleData(): BackupInfo {
     'configs.json': SAMPLE_CONFIGS,
     'commands.json': SAMPLE_COMMANDS,
     'command-sections.json': SAMPLE_SECTIONS,
-    'settings.json': { localMachineName: 'Demo Workstation', terminalFontSize: 14, updateChannel: 'stable', colourMigrationNoticeDismissed: true, colourMigrationNoticePending: false },
+    // P4.11: Claude Code and Codex both on (Codex's on/off answered), the
+    // Conductor tools on, Sentinel off (capture-seed.ts).
+    'settings.json': { localMachineName: 'Demo Workstation', terminalFontSize: 14, updateChannel: 'stable', colourMigrationNoticeDismissed: true, colourMigrationNoticePending: false, ...CAPTURE_PROVIDER_SETTINGS },
     // Boot gates. A "very high" sentinel works only for the >= comparisons
     // (lastSeenVersion / lastTrainingVersion / lastWhatsNewVersion). The Claude
     // CLI-setup wizard is gated on `setupVersion !== __APP_VERSION__`, so
@@ -404,11 +410,16 @@ function seedSampleData(): BackupInfo {
     // The v2 onboarding harness (bootGates priority 1.5) outranks all of the
     // above and needs its own three keys — derived from STEPS so a newly added
     // step can't silently re-break this. Mirrors tests/e2e/helpers/electron-app.ts.
+    // P4.11: lastSeenVersion and lastRunVersion are compared with the running
+    // version EXACTLY (onboarding/upgrade-flow.ts), so the old '99.99.99'
+    // sentinel there read as an upgrade and opened What's New over the
+    // window; with Codex on, Hello Codex and the multi-spawn intro are marked
+    // seen too (captureAppMetaKeys).
     'app-meta.json': {
       setupVersion: APP_VERSION,
       lastTrainingVersion: '99.99.99',
       lastWhatsNewVersion: '99.99.99',
-      lastSeenVersion: '99.99.99',
+      ...captureAppMetaKeys(APP_VERSION),
       hasCreatedFirstConfig: true,
       accountGateDecided: true,
       completedSteps: Object.fromEntries(STEPS.map((s) => [s.id, '2026-01-01T00:00:00.000Z'])),
@@ -568,10 +579,21 @@ function seedSampleData(): BackupInfo {
     }
     const dir = path.join(projectsDir, s.dir)
     fs.mkdirSync(dir, { recursive: true })
-    activeBackupInfo.createdMemoryDirs.push(dir)
+    activeBackupInfo!.createdMemoryDirs.push(dir)
     fs.writeFileSync(path.join(dir, `${sessionId}.jsonl`), lines.join('\n') + '\n', 'utf-8')
     console.log(`[capture] Seeded transcript: ${s.dir} (${s.model}, ${s.turns} turns)`)
   })
+
+  // P4.11: the fictional Claude and Codex accounts, the Codex memories and
+  // the stand-in CLIs, all inside the data root (capture-seed.ts).
+  const providerFiles = seedCaptureProviders({
+    dataRoot: CAPTURE_DATA_ROOT,
+    resourcesDir: getResourcesDir(),
+    homeDir: CAPTURE_HOME,
+    fakeBinDir: captureFakeBinDir(CAPTURE_DATA_ROOT),
+    now,
+  })
+  console.log(`[capture] Seeded the Claude and Codex accounts and the stand-in CLIs (${providerFiles.length} files)`)
 
   return activeBackupInfo
 }
@@ -759,13 +781,49 @@ async function clickNav(window: any, label: string): Promise<void> {
   await window.waitForTimeout(1200)
 }
 
-/** Click a tab button by text */
+/** Click a tab button by text. The Settings tabs are buttons in a <nav>
+ *  (SettingsPage's TabsRail), so a button there wins over any other button
+ *  with the same words (an "Accounts" elsewhere on the page). */
 async function clickTab(window: any, text: string): Promise<void> {
-  await window.evaluate((txt: string) => {
-    const buttons = document.querySelectorAll('button')
-    for (const btn of buttons) { if (btn.textContent?.trim() === txt) { btn.click(); return } }
+  const clicked = await window.evaluate((txt: string) => {
+    const scoped = Array.from(document.querySelectorAll('nav button')) as HTMLElement[]
+    const all = Array.from(document.querySelectorAll('button')) as HTMLElement[]
+    for (const btn of [...scoped, ...all]) { if (btn.textContent?.trim() === txt) { btn.click(); return true } }
+    return false
   }, text)
+  if (!clicked) console.log(`[capture] WARNING: tab "${text}" not found`)
   await window.waitForTimeout(500)
+}
+
+/** The Conductor MCP page's browser: started at boot (headless), so wait
+ *  for its status to read Connected; if it reads Stopped, press the page's
+ *  own "Start browser" once. Returns the status the shot shows. */
+async function waitForBrowserConnected(window: any, timeoutMs = 45000): Promise<string> {
+  const start = Date.now()
+  let pressed = false
+  let last = ''
+  while (Date.now() - start < timeoutMs) {
+    const state = await window.evaluate(() => {
+      const pills = Array.from(document.querySelectorAll('[data-testid="sub-tool-status"]')).map((e) => (e.textContent || '').trim())
+      const startBtn = (Array.from(document.querySelectorAll('button')) as HTMLElement[])
+        .find((b) => (b.textContent || '').trim() === 'Start browser' && b.offsetParent !== null)
+      return { pills, canStart: !!startBtn }
+    })
+    last = state.pills.join(' | ')
+    if (state.pills.some((p: string) => /^Connected/i.test(p))) return last
+    if (state.canStart && !pressed && state.pills.some((p: string) => /Stopped/i.test(p))) {
+      await window.evaluate(() => {
+        const b = (Array.from(document.querySelectorAll('button')) as HTMLElement[])
+          .find((x) => (x.textContent || '').trim() === 'Start browser' && x.offsetParent !== null)
+        if (b) b.click()
+      })
+      pressed = true
+      console.log('[capture] Conductor MCP: pressed "Start browser"')
+    }
+    await window.waitForTimeout(1000)
+  }
+  console.log(`[capture] WARNING: the browser did not read Connected within ${timeoutMs} ms (last: ${last})`)
+  return last
 }
 
 async function dismissModals(window: any): Promise<void> {
@@ -903,11 +961,17 @@ async function main() {
     const dataRoot = path.dirname(resourcesDir)
     console.log(`[capture] App data root (CCC_E2E_DATA_DIR): ${dataRoot}`)
     const app = await electron.launch({
-      args: [BUILT_APP],
+      // P4.11: Electron's own user data (by default under the real app data
+      // folder, shared with an installed app) in the data root too, as the
+      // e2e harness does (tests/e2e/helpers/electron-app.ts).
+      args: [BUILT_APP, `--user-data-dir=${path.join(dataRoot, 'electron-userdata')}`],
+      cwd: dataRoot,
       // CCC_FORCE_SPLASH pinned off: the capture assumes the first window is
       // the main window, so a stray export must not surface the splash.
       // P4.11: the isolated home with the capture's switches (capture-env.ts):
-      // NODE_ENV production, CCC_E2E_DATA_DIR, CCC_FORCE_SPLASH off.
+      // NODE_ENV production, CCC_E2E_DATA_DIR, CCC_FORCE_SPLASH off; app
+      // data and temp folders in the data root; the stand-in CLIs first on a
+      // PATH without any real Claude or Codex.
       env: captureLaunchEnv(dataRoot),
     })
     const window = await app.firstWindow()
@@ -955,7 +1019,7 @@ async function main() {
       // label so the shot tracks whatever the registry currently ships;
       // React 18 reads value via the prototype descriptor, so set through
       // it and fire change. Starting effort is a radio-pill group.
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')?.set
+      const setter = Object.getOwnPropertyDescriptor(globalThis.HTMLSelectElement.prototype, 'value')?.set
       const selects = Array.from(document.querySelectorAll('select'))
       for (const s of selects) {
         const wrap = s.closest('div')?.textContent || ''
@@ -1023,7 +1087,12 @@ async function main() {
 
     // Step 3: Conductor MCP (nav label is "Conductor MCP"; the asset/step id
     // stays 'vision' for back-compat with saved view state)
+    // P4.11: both providers on, the browser started, the Codex review and
+    // Claude review cards as built.
     await clickNav(window, 'Conductor MCP')
+    const browserState = await waitForBrowserConnected(window)
+    console.log(`[capture] Conductor MCP status: ${browserState}`)
+    await window.waitForTimeout(800)
     await capture(window, 'step-vision.jpg', 'Conductor MCP page')
 
     // Step 4: Tokenomics (small settle so the transcript scan the seed feeds
@@ -1040,6 +1109,17 @@ async function main() {
     // Step 6: Memory
     await clickNav(window, 'Memory')
     await window.waitForTimeout(3000) // async scan
+    // P4.11: the Claude store and a Codex account's memories in one shot:
+    // bring the Codex section's heading to the middle of the page.
+    const codexSection = await window.evaluate(() => {
+      const els = Array.from(document.querySelectorAll('h1, h2, h3, h4, [role="heading"], div, span')) as HTMLElement[]
+      const head = els.find((e) => e.children.length === 0 && /codex memories/i.test(e.textContent || ''))
+      if (!head) return false
+      head.scrollIntoView({ block: 'center' })
+      return true
+    })
+    if (!codexSection) console.log('[capture] WARNING: no Codex memories section on the Memory page')
+    await window.waitForTimeout(600)
     await capture(window, 'step-memory.jpg', 'Memory Visualiser')
 
     // Step 7: Logs (no historical sessions seeded — empty state still shows
@@ -1048,10 +1128,15 @@ async function main() {
     await window.waitForTimeout(800)
     await capture(window, 'step-logs.jpg', 'Logs page')
 
-    // Step 8: Settings (Security)
+    // Step 8: Settings, Accounts (P4.11): the Providers card with Claude Code
+    // and Codex on and found, the fictional Claude accounts, and the Codex
+    // accounts (one the default, one the reviewer). The Claude rows' sign-in
+    // line comes from the stand-in's `auth status`, so let it settle.
     await clickNav(window, 'Settings')
     await window.waitForTimeout(500)
-    await capture(window, 'step-security.jpg', 'Settings page')
+    await clickTab(window, 'Accounts')
+    await window.waitForTimeout(3000)
+    await capture(window, 'step-security.jpg', 'Settings, Accounts')
 
     // Step 8a (v1.5.13): Dynamic Workflows toggle - on the Settings General
     // tab, scroll the Security section into view so the "Disable Claude Code
