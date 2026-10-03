@@ -622,11 +622,17 @@ async function analyzeOne(u: Update, signal: AbortSignal): Promise<{ ok: true; f
 }
 
 /** Said when some of an analysis's findings could not be matched to the
- *  notes it was sent (round 3). */
-export function unverifiedMessage(u: Update, count: number): string {
+ *  notes it was sent (round 3). Fixer 13 (fixer 12 quality NIT 1):
+ *  `onlyByRerun`, the analysis was a Re-run of a version no start analyses
+ *  (at or below the highest version checked): it says to Re-run again, as
+ *  the next check would not analyse it. */
+export function unverifiedMessage(u: Update, count: number, onlyByRerun = false): string {
   const subject = SUBJECTS[u.provider]
   const what = count === 1 ? 'One finding' : `${count} findings`
-  return `${what} from the analysis of ${subject.name} ${u.version} could not be matched to its ${subject.notesName}, so ${count === 1 ? 'it is' : 'they are'} not shown and the update will be analysed again at the next check.`
+  const lead = `${what} from the analysis of ${subject.name} ${u.version} could not be matched to its ${subject.notesName}, so ${count === 1 ? 'it is' : 'they are'} not shown`
+  return onlyByRerun
+    ? `${lead}. Use Re-run in the Sentinel panel to analyse it again.`
+    : `${lead} and the update will be analysed again at the next check.`
 }
 
 /** How many analyses of one update may find nothing they can match before
@@ -644,7 +650,11 @@ export function unverifiedRecordedMessage(u: Update, count: number, tries: numbe
 /** Analyse each update in turn. A new run supersedes any in-flight one
  *  (kills its process tree) so a stale analysis can't finish late and
  *  clobber state or leave `analyzing` stuck. `carried`: problems met before
- *  the analysis (a provider that could not be checked), said with its own. */
+ *  the analysis (a provider that could not be checked), said with its own.
+ *  Fixer 13 (X7): two callers, the start-up check (`rerun` unset) and
+ *  sentinelRerun (`rerun`: true). A start's update is always above the
+ *  highest version checked, so setting it there and raising it coincide;
+ *  a third caller that analyses a version at or below it must decide. */
 async function analyzeUpdates(updates: Update[], carried: string[] = [], opts: { rerun?: boolean } = {}): Promise<void> {
   if (!state || updates.length === 0) return
   currentAnalysis?.abort()
@@ -674,7 +684,10 @@ async function analyzeUpdates(updates: Update[], carried: string[] = [], opts: {
           state.clearUnverified(key)
           notes.push(unverifiedRecordedMessage(u, r.unverified, tries))
         } else {
-          errors.push(unverifiedMessage(u, r.unverified))
+          // Fixer 13: a Re-run of a version no start analyses says to Re-run
+          // again (the next check would not analyse it).
+          const checked = state.highestChecked(u.provider)
+          errors.push(unverifiedMessage(u, r.unverified, opts.rerun === true && (checked === null || !isUpdateAtStart(u.version, checked))))
         }
       } else {
         SUBJECTS[u.provider].recordSeen(state, u.version, opts.rerun === true)
@@ -728,7 +741,7 @@ export async function sentinelStartupCheck(): Promise<void> {
  * installed now is an update the start-up check analyses, for both
  * providers: only one HIGHER than the highest version recorded as checked
  * (fixer 11: kept apart from the version the panel names, and lowered by no
- * start and no analysis; sentinel-state.ts). Fixer 12 (ADR-009 R3-1): a
+ * start-up analysis, as fixer 13 words it; sentinel-state.ts). Fixer 12 (ADR-009 R3-1): a
  * Re-run's record, the user's own act, sets it to the version the Re-run
  * checked, so a highest stuck far ahead (a hand-edited file, a prerelease
  * once installed) can be undone; after a Re-run of a lower version, a higher
