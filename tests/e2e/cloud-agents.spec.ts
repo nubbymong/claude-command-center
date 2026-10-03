@@ -17,18 +17,17 @@
 
 import { test, expect } from '@playwright/test'
 import { launchIsolatedApp, closeIsolatedApp, IsolatedApp } from './helpers/electron-app'
+import fs from 'fs'
+import path from 'path'
+import { installFakeCodex, signInFakeRealm, fakeCodexEnv, readFakeExecRecords, FAKE_CODEX_VERSION } from './helpers/fake-codex'
+import {
+  emptyRegistry, createIdentity, beginAccountSetup, commitAccountSetup, checkRegistryInvariants, parseRegistryDoc,
+} from '../../src/shared/providers'
+import type { ProviderRegistryDoc, RegistryResult } from '../../src/shared/providers'
 
 let ctx: IsolatedApp
 let page: IsolatedApp['page']
 
-test.beforeAll(async () => {
-  ctx = await launchIsolatedApp()
-  page = ctx.page
-})
-
-test.afterAll(async () => {
-  await closeIsolatedApp(ctx)
-})
 
 const newAgentDialog = () => page.getByRole('dialog', { name: 'New agent' })
 
@@ -56,6 +55,15 @@ async function openNewAgentDialog(): Promise<void> {
 }
 
 test.describe('Cloud Agents Page', () => {
+  test.beforeAll(async () => {
+    ctx = await launchIsolatedApp()
+    page = ctx.page
+  })
+
+  test.afterAll(async () => {
+    await closeIsolatedApp(ctx)
+  })
+
   test('renders the dashboard header', async () => {
     await navigateToCloudAgents()
     await expect(page.getByRole('button', { name: 'New agent' }).first()).toBeVisible()
@@ -136,5 +144,128 @@ test.describe('Cloud Agents Page', () => {
     await expect(page.getByText('Select an agent')).toHaveCount(0)
     // Two "New agent" buttons: the header action and the hub CTA.
     await expect(page.getByRole('button', { name: 'New agent' })).toHaveCount(2)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// [VM] WP2 PR 4, P4.5 (row 57): a Codex cloud agent, end to end, on the
+// spec's own fake Codex (helpers/fake-codex.ts, its `exec --json` mode),
+// never the machine's: Codex on and answered, one managed Codex account
+// seeded with the app's own registry transitions (no sign-in), the fake first
+// on the instance's PATH. The folder picker is answered by main's own dialog
+// module, stubbed for the run. Checked: New agent offers the assistant; the
+// run is `codex exec` with the task on stdin, in the project as its working
+// folder, no path in argv, read-only by default and workspace-write when Auto
+// is ticked (section 10, question 7, default A); the reply reaches the page.
+// ---------------------------------------------------------------------------
+
+const CX_HEX = 'e2e0c0de00000000000000a5'
+const CX_IDENTITY = `idn-${CX_HEX}`
+const CX_ACCOUNT = `acct-${CX_HEX}`
+const CX_REALM = `realm-${CX_HEX}`
+const cxFakeDir = (dataDir: string) => path.join(dataDir, 'fake-codex')
+const cxRealmDir = (dataDir: string) => path.join(dataDir, 'resources', 'codex-realms', CX_REALM)
+
+function cxOk(r: RegistryResult, step: string): ProviderRegistryDoc {
+  if (!r.ok) throw new Error(`seeding the Codex account failed at ${step}: ${r.code}: ${r.message}`)
+  return r.doc
+}
+
+/** Codex on and answered, Hello Codex seen, one managed Codex account. */
+function seedCodexAgentAccount(dataDir: string): void {
+  const config = path.join(dataDir, 'resources', 'CONFIG')
+  const settingsFile = path.join(config, 'settings.json')
+  const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'))
+  fs.writeFileSync(settingsFile, JSON.stringify({ ...settings, codexEnabled: true, codexAnswered: true }, null, 2))
+  const metaFile = path.join(config, 'app-meta.json')
+  const meta = JSON.parse(fs.readFileSync(metaFile, 'utf8'))
+  fs.writeFileSync(metaFile, JSON.stringify({ ...meta, helloCodexSeenVersion: meta.setupVersion ?? 'seen' }, null, 2))
+  let doc = emptyRegistry()
+  doc = cxOk(createIdentity(doc, { id: CX_IDENTITY, friendlyName: 'E2E Agent', colourKey: 'indigo' }, 1), 'createIdentity')
+  doc = cxOk(beginAccountSetup(doc, {
+    accountId: CX_ACCOUNT, realmId: CX_REALM, providerId: 'codex', method: 'apiKey',
+    realmKind: 'codex-home', ownership: 'conductor-managed', pathRef: `managed:${CX_REALM}`,
+  }, 2), 'beginAccountSetup')
+  doc = cxOk(commitAccountSetup(doc, CX_ACCOUNT, {
+    identityId: CX_IDENTITY, authMethod: 'apiKey', lastKnownAuthState: 'signed-in', identityAssurance: 'user-asserted',
+  }, 3), 'commitAccountSetup')
+  const problems = checkRegistryInvariants(doc)
+  if (problems.length) throw new Error(`the seeded registry breaks its invariants: ${problems.join('; ')}`)
+  const parsed = parseRegistryDoc(JSON.parse(JSON.stringify(doc)))
+  if (!parsed.ok) throw new Error(`the seeded registry does not parse back: ${JSON.stringify(parsed)}`)
+  fs.mkdirSync(path.join(dataDir, 'resources', 'providers'), { recursive: true })
+  fs.writeFileSync(path.join(dataDir, 'resources', 'providers', 'registry.json'), JSON.stringify(doc, null, 2))
+  signInFakeRealm(cxRealmDir(dataDir))
+  installFakeCodex(cxFakeDir(dataDir))
+}
+
+test.describe('Cloud Agents on Codex (P4.5)', () => {
+  let cx: IsolatedApp
+
+  test.beforeAll(async () => {
+    cx = await launchIsolatedApp({
+      seedExtra: seedCodexAgentAccount,
+      env: (dataDir) => fakeCodexEnv(cxFakeDir(dataDir), path.join(dataDir, 'codex-home')),
+    })
+  })
+
+  test.afterAll(async () => {
+    test.setTimeout(120000)
+    await closeIsolatedApp(cx)
+  })
+
+  test('a Codex agent runs codex exec in its project, read-only by default and workspace-write with Auto', async () => {
+    test.setTimeout(180000)
+    const p = cx.page
+    const project = path.join(cx.dataDir, 'agent-project')
+    fs.mkdirSync(project, { recursive: true })
+    // Browse answers with the project, through main's own dialog module.
+    await cx.app.evaluate(({ dialog }, dir) => {
+      ;(dialog as unknown as { showOpenDialog: () => Promise<{ canceled: boolean; filePaths: string[] }> }).showOpenDialog = async () => ({ canceled: false, filePaths: [dir] })
+    }, project)
+    // The app sees the spec's Codex, not the machine's.
+    const discovered = await p.evaluate(async () => {
+      const api = (window as unknown as { electronAPI: { providerAccounts: { discover: (id: string) => Promise<unknown> } } }).electronAPI
+      return api.providerAccounts.discover('codex')
+    }) as { ok: boolean; installation?: { discoveryState?: string; version?: string } }
+    expect(discovered.installation, JSON.stringify(discovered)).toMatchObject({ discoveryState: 'found', version: FAKE_CODEX_VERSION })
+
+    const dialog = () => p.getByRole('dialog', { name: 'New agent' })
+    const run = async (task: string, auto: boolean) => {
+      await p.locator('aside [data-tour="nav-cloud-agents"]').click()
+      await p.getByRole('button', { name: 'New agent' }).first().click()
+      await expect(dialog()).toBeVisible({ timeout: 5000 })
+      const codex = dialog().locator('[data-testid="new-agent-provider"] [data-provider="codex"]')
+      await expect(codex, 'New agent offers no assistant choice: Codex is not on in this instance').toBeVisible({ timeout: 10000 })
+      await codex.click()
+      await dialog().locator('input[placeholder*="Auth Refactor"]').fill(auto ? 'Auto run' : 'Read-only run')
+      await dialog().locator('textarea[placeholder*="Describe"]').fill(task)
+      await dialog().getByRole('button', { name: 'Browse' }).click()
+      await expect(dialog().getByText(project)).toBeVisible({ timeout: 5000 })
+      await expect(dialog().getByText('Auto: workspace writes, no prompts, for this run')).toBeVisible()
+      if (auto) await dialog().locator('[data-testid="new-agent-permissions"] input[type="checkbox"]').check()
+      const dispatch = dialog().locator('[data-testid="new-agent-dispatch"]')
+      await expect(dispatch, 'Dispatch is held back').toBeEnabled({ timeout: 10000 })
+      await dispatch.click()
+      await expect(dialog()).toHaveCount(0, { timeout: 10000 })
+    }
+    const sameDir = (a: string, b: string) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase()
+
+    // A character outside the BMP: stdin keeps it (PB5), the composer would not.
+    const first = `List the files in this project. ${String.fromCodePoint(0x1F680)}`
+    await run(first, false)
+    await expect(p.getByText(`fake agent: ${first.length} characters, read-only`)).toBeVisible({ timeout: 60000 })
+    await expect.poll(() => readFakeExecRecords(cxRealmDir(cx.dataDir)).length, { timeout: 30000 }).toBe(1)
+    const one = readFakeExecRecords(cxRealmDir(cx.dataDir))[0]
+    expect(one.args).toEqual(['--json', '-s', 'read-only', '--skip-git-repo-check', '-'])
+    expect(sameDir(one.cwd, project), `the run's working folder ${one.cwd} is not the project ${project}`).toBe(true)
+    expect(one.taskLength).toBe(first.length)
+
+    await run('Add a NOTES file.', true)
+    await expect(p.getByText('fake agent: 17 characters, workspace-write')).toBeVisible({ timeout: 60000 })
+    await expect.poll(() => readFakeExecRecords(cxRealmDir(cx.dataDir)).length, { timeout: 30000 }).toBe(2)
+    const two = readFakeExecRecords(cxRealmDir(cx.dataDir))[1]
+    expect(two.args).toEqual(['--json', '-s', 'workspace-write', '--skip-git-repo-check', '-'])
+    expect(sameDir(two.cwd, project)).toBe(true)
   })
 })

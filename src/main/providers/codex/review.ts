@@ -35,11 +35,19 @@ export interface CodexExecOutcome {
 /** The reply cap, kept exported here for the package's existing consumers. */
 export { REVIEW_MAX_TEXT }
 
+/** What a reader tells its caller as the stream arrives (WP2 PR 4, P4.5: a
+ *  Cloud Agent shows each reply as it completes). A hook that throws never
+ *  breaks the reader. */
+export interface CodexExecEventHooks {
+  /** Each completed agent message's text, in order. */
+  onAgentMessage?: (text: string) => void
+}
+
 /** Reads the pinned CLI's `exec --json` stream as it arrives. The last agent
  *  message is the review; usage is summed over completed turns; a failed
  *  turn or an error event is kept as the error. Lines that are not JSON, or
  *  not these events, are ignored. Memory is bounded by one event line. */
-export function createCodexExecEventReader(): { push(chunk: string): void; end(): CodexExecOutcome } {
+export function createCodexExecEventReader(hooks: CodexExecEventHooks = {}): { push(chunk: string): void; end(): CodexExecOutcome } {
   let text: string | null = null
   let usage: ReviewUsage | undefined
   let error: string | undefined
@@ -56,7 +64,10 @@ export function createCodexExecEventReader(): { push(chunk: string): void; end()
     const e = ev as Record<string, unknown>
     if (e.type === 'item.completed') {
       const item = e.item as Record<string, unknown> | undefined
-      if (item && item.type === 'agent_message' && typeof item.text === 'string') text = item.text
+      if (item && item.type === 'agent_message' && typeof item.text === 'string') {
+        text = item.text
+        if (hooks.onAgentMessage) { try { hooks.onAgentMessage(item.text) } catch { /* a hook never breaks the reader */ } }
+      }
     } else if (e.type === 'turn.completed') {
       const u = (e.usage ?? {}) as Record<string, unknown>
       usage = {
