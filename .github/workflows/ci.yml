@@ -109,12 +109,11 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'ci-run')
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # Linux joined the matrix with P4.8 (OD20 D5). It is non-blocking only
-    # until its first green run: the commit that records that run in
-    # docs/wp1/evidence/ci-matrix.md removes this line, and from then on a
-    # Linux failure fails the run like any other (PR 4 package gate 7 needs
-    # Windows, macOS and Linux green). Until then a red Linux job still shows.
-    continue-on-error: ${{ matrix.os == 'ubuntu-latest' }}
+    # Linux joined the matrix with P4.8 (OD20 D5) and was non-blocking until
+    # its first green run (CI run 37134624406, recorded in
+    # docs/wp1/evidence/ci-matrix.md). It blocks now: a Linux failure fails
+    # the run like any other (PR 4 package gate 7 needs Windows, macOS and
+    # Linux green).
     strategy:
       fail-fast: false
       matrix:

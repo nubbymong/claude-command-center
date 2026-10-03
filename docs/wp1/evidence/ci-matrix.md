@@ -4,7 +4,7 @@ This file is evidence for WP1.30 (`docs/wp1/evidence/ci-matrix.md`), and the CI 
 
 WP1.30 says the Windows ACL and Unix mode tests must run on each OS runner, so its evidence is the CI matrix run, not a local run. The real-CLI conformance runs are also row 2's detection evidence per OS (P4.10).
 
-**Status: not recorded yet.** The workflow below landed in PR 4 (P4.8). No run of it is recorded here. The first run on the PR 4 branch with the `ci-run` label fills the results tables, then this status line changes. WP1.30 stays `planned` in the traceability manifest until a run is recorded here with its digest.
+**Status: the test matrix's first green Linux run is recorded below; the conformance tables are not recorded yet.** The workflow below landed in PR 4 (P4.8). WP1.30 stays `planned` in the traceability manifest until a run at the binding's head is recorded here with its digest (the candidate declaration, made at release).
 
 ## What runs
 
@@ -21,7 +21,7 @@ Workflow: `.github/workflows/ci.yml`. On a pull request both jobs need the `ci-r
   - `npx vitest run`, the whole suite, which includes WP1.30's tests: `tests/wp1/realm-paths.test.ts`, `tests/wp1/codex-realm-folders.test.ts` and `tests/wp1/codex-realm-isolation.test.ts`;
   - `npm run test:unit:native` (better-sqlite3 under Electron-as-Node);
   - `npm run build`.
-- Linux is non-blocking (`continue-on-error`) only until its first green run. The commit that records that run here removes the `continue-on-error` line, and from then on a Linux failure fails the run. PR 4's package gate 7 needs Windows, macOS and Linux green at the final head.
+- Linux was non-blocking (`continue-on-error` on the job) until its first green run, CI run 37134624406 (below). The commit that recorded that run removed the line, so a Linux failure now fails the run like any other. PR 4's package gate 7 needs Windows, macOS and Linux green at the final head.
 - The suite last ran on Linux in `release.yml` (`build-linux`, release run 35534211954, beta of 2026-09-20: 898 test files passed, 3 skipped; 11,164 tests). The WP2 stack's tests had not run on Linux before P4.8.
 
 ### The real-CLI conformance job (`Codex CLI <version class> (<os>)`)
@@ -57,7 +57,9 @@ Workflow: `.github/workflows/ci.yml`. On a pull request both jobs need the `ci-r
 
 | Run | Commit | Windows | macOS | Linux | WP1.30 files on each OS |
 |---|---|---|---|---|---|
-| (not recorded yet) | | | | | |
+| CI run 37134624406 (`pull_request`, attempt 1, 2026-10-03) | fcfd2ae60b9174a15768c443056b068f4a9d61a3, run as GitHub's merge with beta (6a07c3fb74a255266b04234482323760bb9a6da1) | Green. Typecheck; vitest 1,189 files (1,184 passed, 5 skipped), 17,391 tests (17,313 passed, 76 skipped, 2 todo); native 14 files, 225 tests passed; build | Green. Typecheck; vitest 1,189 files (1,183 passed, 6 skipped), 17,391 tests (17,315 passed, 74 skipped, 2 todo); native 14 files, 217 passed, 8 skipped; build | Green, the WP2 stack's first Linux run. Typecheck; vitest 1,189 files (1,182 passed, 7 skipped), 17,391 tests (17,307 passed, 82 skipped, 2 todo); native 14 files, 217 passed, 8 skipped (the first `test:unit:native` run on Linux); build | Each passed on all three: `realm-paths.test.ts` 13 tests, `codex-realm-folders.test.ts` 118, `codex-realm-isolation.test.ts` 8 (its one Windows-only case, a junction to a volume-GUID path, skipped on macOS and Linux) |
+
+How the run was read: `continue-on-error` on a job hides a red job behind a green run, so the Linux job was read step by step (`gh api .../actions/jobs/111236523243`): every step from the checkout to the build succeeded, and the vitest and native summaries above are from its log. The run's overall conclusion is `failure` only because of the Desktop test gate job, which waits for the owner's attestation (#309); every Test job, every conformance leg, Changelog in sync and the SSH multi-session smoke passed. The first run on the branch, at 69c98042, was red on macOS and Linux in tests only (fixed in b76e9f6c and 1eba3623).
 
 ### Real-CLI conformance
 
