@@ -278,7 +278,7 @@ describe('the store', () => {
     const yes = useCloudAgentStore.getState().retry('ca-x')
     await vi.waitFor(() => expect(useLaunchAckStore.getState().queue).toHaveLength(1))
     const asked = useLaunchAckStore.getState().queue[0]
-    expect(asked).toMatchObject({ sessionId: 'cloud-agent:ca-x', sessionLabel: 'Tidy', external: true, email: 'alex@example.com' })
+    expect(asked).toMatchObject({ sessionId: 'cloud-agent:ca-x', sessionLabel: 'Tidy', external: true, email: 'alex@example.com', retryAgent: true })
     expect(api.cloudAgent.retry).not.toHaveBeenCalled()
     act(() => { useLaunchAckStore.getState().answer(asked.requestId, true) })
     await yes
