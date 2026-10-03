@@ -34,6 +34,14 @@ import type {
   InsightsData,
   KpiData,
   CloudAgent,
+  ProviderId,
+  SubmitTextResult,
+  AskConductorNotice,
+  CanvasMarkerUndelivered,
+  CanvasSessionGuidance,
+  AccountLogFolders,
+  AccountLogFolderKind,
+  AccountLogFolderOpenResult,
 } from '../../shared/types'
 import type { HookEvent, HooksGatewayStatus } from '../../shared/hook-types'
 export type { HookEvent, HookEventKind, HooksGatewayStatus } from '../../shared/hook-types'
@@ -345,6 +353,11 @@ export interface ElectronAPI {
     disable: () => Promise<boolean>
     isEnabled: () => Promise<boolean>
     openFolder: () => Promise<string>
+    /** WP2 PR 4 (P4.4): each provider account's log folders, by kind; never paths. */
+    accountLogFolders: () => Promise<AccountLogFolders[]>
+    /** WP2 PR 4 (P4.4): open one of them. Main resolves the folder from the
+     *  account id; the renderer never names a path. */
+    openAccountLogFolder: (args: { accountId: string; folder: AccountLogFolderKind }) => Promise<AccountLogFolderOpenResult>
   }
   usage: {
     getSessionUsage: (sessionId: string) => Promise<any>
@@ -546,6 +559,12 @@ export interface ElectronAPI {
     reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[]; decision: 'approve' | 'reject' }) => Promise<CanvasReviewState>
     versionVerdict: (args: { sessionId: string; versionId?: string; state: 'approved' | 'rejected' | 'dismissed'; note?: string }) => Promise<CanvasState | { error: string }>
     agentMarker: (args: { sessionId: string; canvasId: string; line: string }) => Promise<{ delivery: 'sent' | 'queued' | 'unwired' | 'refused'; reason?: string }>
+    /** WP2 PR 4 (P4.1): a queued marker the submit primitive could not deliver,
+     *  for the review it belongs to. */
+    onAgentMarkerUndelivered: (cb: (e: CanvasMarkerUndelivered) => void) => () => void
+    /** WP2 PR 4 (P4.1): whether this session's launch carried the canvas and
+     *  vision skills' guidance with the tools, for the canvas page's one line. */
+    sessionGuidance: (args: { sessionId: string }) => Promise<CanvasSessionGuidance | null>
     versionReopen: (args: { sessionId: string; versionId: string }) => Promise<CanvasState | { error: string }>
     /** The user puts a closed note back in play. With `reviewReopen`, one of the
      *  only two writes that may revive a settled round. */
@@ -666,7 +685,8 @@ export interface ElectronAPI {
     gracefulExit: () => Promise<boolean>
   }
   insights: {
-    run: (opts?: { profileId?: string }) => Promise<string | import('../../shared/providers').ProviderLaunchRefused>
+    /** `provider` (WP2 PR 4, P4.7): the assistant the run reports on; absent means Claude Code. */
+    run: (opts?: { profileId?: string; provider?: ProviderId }) => Promise<string | import('../../shared/providers').ProviderLaunchRefused>
     /** Cross-account roll-up: runs every targeted account, then synthesizes one report. */
     runAll: (opts?: { profileIds?: string[] }) => Promise<string | import('../../shared/providers').ProviderLaunchRefused>
     getCatalogue: () => Promise<InsightsCatalogue>
@@ -709,7 +729,8 @@ export interface ElectronAPI {
     onInstallProgress: (cb: (data: { version: string; message: string }) => void) => () => void
   }
   cloudAgent: {
-    dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string } }) => Promise<CloudAgent | import('../../shared/providers').ProviderLaunchRefused>
+    /** `provider` (WP2 PR 4, P4.5): the assistant the agent runs on; absent means Claude Code. */
+    dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string }; provider?: ProviderId }) => Promise<CloudAgent | import('../../shared/providers').ProviderLaunchRefused>
     cancel: (id: string) => Promise<boolean>
     /** #371: `ok:false` means the agent is STILL on disk — do not drop the row. */
     remove: (id: string) => Promise<{ ok: true; removed: boolean } | { ok: false; error: string }>
@@ -737,6 +758,15 @@ export interface ElectronAPI {
   }
   help: {
     workspace: () => Promise<string | null>
+  }
+  /** WP2 PR 4 (P4.3): Ask Conductor on a provider whose prompt takes a
+   *  question only as text typed at its ready composer. */
+  askConductor: {
+    /** Give a live Ask tab its next question through main's submit primitive
+     *  (never raw keystrokes and a carriage return). */
+    handOff: (args: { sessionId: string; question: string }) => Promise<SubmitTextResult>
+    /** Main's one-line notices for the dock: characters removed, or a question not delivered. */
+    onNotice: (cb: (notice: AskConductorNotice) => void) => () => void
   }
   tokenomics: {
     summary: (filter?: import('../../shared/types').TkSummaryFilter) => Promise<import('../../shared/types').TkSummary | null>

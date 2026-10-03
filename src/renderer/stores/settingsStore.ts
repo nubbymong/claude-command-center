@@ -3,6 +3,7 @@ import { saveConfigNow } from '../utils/config-saver'
 import { DEFAULT_SHORTCUTS } from '../utils/shortcuts'
 import { migrateTypography } from './migrateTypography'
 import { parseFooterHiddenEntry } from '../../shared/usage-labels'
+import type { AskConductorProvider } from '../../shared/ask-conductor-provider'
 
 export type StatusLineFont = 'sans' | 'mono'
 
@@ -272,6 +273,14 @@ export interface AppSettings {
    *  an Ask session that is already open, because a display toggle must not
    *  destroy a running session. */
   showAskConductor: boolean
+  /** Which assistant Ask Conductor runs on while Claude Code and Codex are
+   *  both on (owner decision 2026-09-27, OD27 M4, option B; row 53, WP2 PR 4
+   *  P4.3): the Settings, General row "Ask Conductor runs on", shown only
+   *  while both are on; Sentinel's analysis follows it (P3.9). Claude Code by
+   *  default; turning a provider off never rewrites it. Read it only through
+   *  `askConductorProviderChoice` (shared/ask-conductor-provider.ts), which
+   *  reads anything but 'codex' as Claude Code. */
+  askConductorProvider?: AskConductorProvider
   /** #362: how the sidebar's Saved Configs panel lays configs out. 'list' is
    *  the sections-and-groups list that shipped first; 'cards' and 'find' are
    *  the two views from the design pass (both search with auto-complete, both
@@ -459,6 +468,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   updateChannel: 'stable' as const,
   showTips: true,
   showAskConductor: true,
+  askConductorProvider: 'claude',
   hooksEnabled: true,
   hooksPort: 19334,
   theme: 'dark',
