@@ -86,30 +86,43 @@ code quality PASS) and ADR-009 round 3 (lenses C and D PASS; lens C also
 confirmed P3.8's launched answer on `pty:spawn`, PASS) are answered by
 fixer 12 (e6859037: a Re-run makes the installed version the highest
 checked, down as well as up, and the user-facing line says "newer than the
-newest one it has checked"). The VM at aca63cc7, d0caf0bd and be6ee406:
+newest one it has checked"). Fixer 12's confirmations (spec, code
+quality, lenses C and D: all PASS) are answered by fixer 13 (ae05be60: an
+unmatched Re-run of a version no start analyses says to use Re-run again;
+the Re-run's mark is pinned with both providers on), whose reviews (spec,
+code quality, lens D) PASS. The VM at aca63cc7, d0caf0bd and be6ee406:
 row 36's Duration after a clear PASS on both versions, nothing coming back
 after "Close sessions", the seeded Sentinel panel naming the installed
 version with no analysis at start (both providers), the real owner-only
 test 6 of 6, the e2e suite 81 of 81 each time, the real home untouched;
-fixer 12 changes only the Re-run path and that text, covered by unit
-tests, so the VM evidence at be6ee406 stands for the rest. Recorded
-limits: one transient read failure of the session file at start latches
-saves off for that run (since fixer 9 also after a clear that kept a
-running time); a clear whose session file cannot be removed leaves the
-set on disk for the next start (pre-existing), and one refused by the
-read-failure latch deletes nothing (by design); a version below the
-highest checked is never analysed at start (a Re-run analyses it); a
-Re-run reads notes from the version the panel names.
+fixers 12 and 13 change only Sentinel's Re-run path, its message and its
+text, covered by unit tests, so the VM evidence at be6ee406 stands for
+them. Recorded limits: one transient read failure of the session file at
+start latches saves off for that run (since fixer 9 also after a clear
+that kept a running time); a clear whose session file cannot be removed
+leaves the set on disk for the next start (pre-existing), and one refused
+by the read-failure latch deletes nothing (by design); a version below
+the highest checked is never analysed at start (a Re-run analyses it); a
+Re-run reads notes from the version the panel names, which after a
+downgrade can mean a larger prompt, never an extra analysis; two app
+processes sharing one resources folder each keep Sentinel's state in
+memory, the last writer winning (pre-existing).
 
-**Owed before #626 leaves draft**: gate 3, fixer 12's spec and
-code-quality confirmations (<f12-verdicts>); gate 4, the lens C and D
-confirmations of fixer 12 (<f12-verdicts>) and the verdict comment with
-its marker line regenerated for the final head; gate 6, row 38's midnight
-UTC check and the VM read of a leftover kill's log line on the npm route
-(row 42), neither run since gate 6; the SSH live matrix at PR 3's head (pty-manager.ts changed, and
-statusline-watcher.ts in P3.2), the owner's screenshot review and the
-Desktop test gate (owner-owed); CI at the final head with the native SQL
-tests (they pass on the VM at 525a00ac); the owner-only checks gate 6
-lists (real accounts, a working model, macOS and Linux); and the PR body
-for the final head. Findings about pre-existing behaviour raised by the
-adversarial passes were routed privately.
+**Gate status**: gate 3 is closed for PR 3 (every commit has its spec and
+code-quality pair; the final fixers 9 to 13 are reviewed). Gate 4: the
+ADR-009 pass on fixers 9 to 13 (rounds 1 to 3, then the confirmations of
+fixers 12 and 13) is PASS at ae05be60, on top of the PR-level pass, PASS
+at 525a00ac. Gate 6: the VM evidence at be6ee406 stands; row 38's
+midnight UTC check (time-bound) and the VM read of a leftover kill's log
+line on the npm route (row 42) are still owed, neither run since gate 6.
+
+**Owed before #626 leaves draft**: CI at the final head, after the push,
+with the native SQL tests (they pass on the VM at 525a00ac); the PR body
+for the final head; and the owner's items, unchanged: the ADR-009 marker
+line regenerated at the final head and posted, and the needs-review label
+removed; the SSH live matrix at PR 3's head (pty-manager.ts changed, and
+statusline-watcher.ts in P3.2); the screenshot review; the Desktop test
+gate (#309); the owner-only checks gate 6 lists (real accounts, a working
+model, macOS and Linux); and questions 2 to 4. Findings about
+pre-existing behaviour raised by the adversarial passes were routed
+privately.
