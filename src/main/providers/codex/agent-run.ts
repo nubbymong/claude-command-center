@@ -151,6 +151,40 @@ function endsWithSecretField(line: string): boolean {
   return SECRET_FIELD.test(s.slice(-16))
 }
 
+/** What of a line not ended within WINDOW is held back for the next read,
+ *  which may complete a credential that starts in it. The longest shape the
+ *  redactors match is a private key block (16 KiB between its marker lines,
+ *  about 16.5 KiB with them), more than 8 KiB, so the tail is MARGIN
+ *  (20 KiB), past it. */
+const LINE_TAIL = MARGIN
+
+/** Whether cutting `s` at `c` leaves the redaction of the text around it
+ *  (LINE_TAIL on each side, past any one match) as it is in one piece: no
+ *  match the redactor would make spans the cut. Fixed size. */
+function cutKeepsRedaction(s: string, c: number): boolean {
+  const a = Math.max(0, c - LINE_TAIL)
+  const b = Math.min(s.length, c + LINE_TAIL)
+  return redact(s.slice(a, c)) + redact(s.slice(c, b)) === redact(s.slice(a, b))
+}
+
+/** Where a line not ended within WINDOW is cut: never within LINE_TAIL of its
+ *  end; at its last suitable space (cutAtSpace) if the cut keeps the
+ *  redaction, else at the first of that bound and up to seven 2 KiB steps
+ *  before it that does (never between a surrogate pair), else at the bound
+ *  (a line whose every such point lies inside a credential). Linear: one
+ *  pass for the space and at most nine checks of fixed size. */
+function longLineCut(s: string): number {
+  const limit = s.length - LINE_TAIL
+  const space = cutAtSpace(s.slice(0, limit))
+  if (space > 0 && cutKeepsRedaction(s, space)) return space
+  const whole = (c: number): number => (c > 1 && /[\uD800-\uDBFF]/.test(s[c - 1]) ? c - 1 : c)
+  for (let k = 0; k < 8; k++) {
+    const c = whole(limit - k * 2048)
+    if (c > 0 && cutKeepsRedaction(s, c)) return c
+  }
+  return whole(limit)
+}
+
 /** stderr as it is handed on: whole lines, each batch redacted as the
  *  failure message is (review-support's redactFailure), so a credential a
  *  pipe chunk split is still matched whole. A last line that ends in a
@@ -158,9 +192,9 @@ function endsWithSecretField(line: string): boolean {
  *  (its value may start it, and the redactor matches the two together); a
  *  private key block until its last line; each hold up to MARGIN (past the
  *  redactor's own bound for a key block). A line not ended within WINDOW
- *  goes at its last space (never right after a Bearer or Basic or a secret
- *  field), or with none, up to a Bearer, Basic or secret field at its end.
- *  What is left goes at `end`. Every step is linear in what is pending. */
+ *  goes in part, its last LINE_TAIL held for the next read (longLineCut).
+ *  Everything left goes at `end`, through the redactor. Every step is
+ *  linear in what is pending. */
 function createDiagnosticStream(out: (text: string) => void): { push(t: string): void; end(): void } {
   let pending = ''
   const send = (n: number): void => {
@@ -179,21 +213,7 @@ function createDiagnosticStream(out: (text: string) => void): { push(t: string):
       }
       const open = openKeyBlock(pending.slice(0, cut))
       if (open >= 0 && pending.length - open <= MARGIN) cut = open
-      else if (cut === 0 && pending.length > WINDOW) {
-        cut = cutAtSpace(pending)
-        // No such space: up to a credential's lead-in at the end, or one
-        // followed by the start of a word (what may be the credential, cut
-        // by the read), kept with what follows, up to MARGIN; else all of it.
-        if (!cut) {
-          let j = pending.length
-          while (j > 0 && !isSpace(pending[j - 1])) j--
-          const lastWord = j
-          while (j > 0 && isSpace(pending[j - 1])) j--
-          let lead = secretTailStart(pending, pending.length)
-          if (lead < 0 && j > 0 && lastWord < pending.length) lead = secretTailStart(pending, j)
-          cut = lead > 0 && pending.length - lead <= MARGIN ? lead : pending.length
-        }
-      }
+      else if (cut === 0 && pending.length > WINDOW) cut = longLineCut(pending)
       send(cut)
     },
     end() { send(pending.length) },
