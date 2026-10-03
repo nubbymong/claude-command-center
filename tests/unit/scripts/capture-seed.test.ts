@@ -8,6 +8,10 @@
  * point P411-3 raised (a resources path with a space on Windows must not put
  * Codex's hook copies under the real %LOCALAPPDATA%).
  *
+ * Also the README staging's data (scripts/readme-shots/stage): its Codex
+ * accounts go through the same registry builder, and its seed refuses the VM
+ * user's real state.
+ *
  * Writes only inside folders this file makes (its own prefix, directly in the
  * temp folder), removed by that prefix and parent alone. Spawns nothing: the
  * stand-in CLIs are compiled, never run.
@@ -17,9 +21,10 @@ import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { basename, delimiter, dirname, join, relative, resolve, isAbsolute } from 'path'
 import { tmpdir } from 'os'
 import { Script } from 'vm'
+import { createRequire } from 'module'
 import {
   CAPTURE_CLAUDE_ACCOUNTS, CAPTURE_CODEX_ACCOUNTS, CAPTURE_CLAUDE_VERSION, CAPTURE_PROVIDER_SETTINGS,
-  buildCaptureRegistry, captureAppMetaKeys, seedCaptureProviders,
+  buildCaptureRegistry, buildCodexRegistry, captureAppMetaKeys, seedCaptureProviders, type CodexSeedAccount,
 } from '../../../scripts/capture-seed'
 import { captureFakeBinDir, captureHomeDir, captureLaunchEnv, captureTempDir, pathWithoutAssistantClis } from '../../../scripts/capture-env'
 import { parseRegistryDoc, checkRegistryInvariants } from '../../../src/shared/providers'
@@ -118,6 +123,42 @@ describe('the capture seed (P4.11)', () => {
     })).toThrow(/not inside the capture's data root/)
     expect(readdirSync(outside)).toEqual([])
     expect(readdirSync(r)).toEqual([])
+  })
+})
+
+describe('the README staging (P4.11 recapture of the README images)', () => {
+  const stage = resolve(__dirname, '..', '..', '..', 'scripts', 'readme-shots', 'stage')
+  const C = createRequire(join(stage, 'content.js'))(join(stage, 'content.js')) as {
+    CODEX_ACCOUNTS: Array<CodexSeedAccount & { key: string }>
+    CONFIGS: Array<{ id: string; provider: string; codexAccountKey?: string; profileKey?: string }>
+    SESSIONS: Array<{ provider?: string; codexAccountKey?: string }>
+  }
+
+  it('[host] its Codex accounts build a valid registry through the app\'s transitions: a default and a reviewer', () => {
+    const doc = buildCodexRegistry(C.CODEX_ACCOUNTS, 1_780_000_000_000)
+    expect(checkRegistryInvariants(doc)).toEqual([])
+    const codex = doc.accounts.filter((a) => a.providerId === 'codex')
+    expect(codex.filter((a) => a.isProviderDefault === true)).toHaveLength(1)
+    expect(codex.filter((a) => a.isReviewerDefault === true)).toHaveLength(1)
+    for (const a of C.CODEX_ACCOUNTS) expect(a.label).toMatch(/@example\.(com|org|net|io|co|dev)$/)
+  })
+
+  it('[host] its Codex config and session name a staged Codex account, not a Claude profile', () => {
+    const keys = new Set(C.CODEX_ACCOUNTS.map((a) => a.key))
+    const codexConfigs = C.CONFIGS.filter((c) => c.provider === 'codex')
+    expect(codexConfigs.length).toBeGreaterThan(0)
+    for (const c of codexConfigs) { expect(keys.has(c.codexAccountKey as string)).toBe(true); expect(c.profileKey).toBeUndefined() }
+    for (const s of C.SESSIONS.filter((x) => x.provider === 'codex')) expect(keys.has(s.codexAccountKey as string)).toBe(true)
+  })
+
+  it('[host] seed.js refuses to run on real state, restores only the project folders it made, and the fake Claude has no real default', () => {
+    const seedSrc = readFileSync(join(stage, 'seed.js'), 'utf8')
+    expect(seedSrc).toMatch(/\['CCC_STAGE_HOME', 'CCC_STAGE_DATA', 'CCC_STAGE_NPM_BIN', 'CCC_STAGE_RUNNER'\]\.every/)
+    expect(seedSrc).not.toMatch(/^\s*rmrf\(DEV\)/m)
+    expect(seedSrc).toMatch(/dev-created\.json/)
+    const fake = readFileSync(join(stage, 'fake-claude.js'), 'utf8')
+    expect(fake).not.toMatch(/AppData\/Local\/AI Code Conductor/)
+    expect(fake).not.toMatch(/C:\/Users\/User/)
   })
 })
 

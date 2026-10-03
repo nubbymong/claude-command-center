@@ -48,6 +48,18 @@ review. Accounts must be signed in **on the VM through the app's own sign-in** â
 script and never with the owner's session on the host. Once signed in, the disconnected
 Enhanced Session desktop keeps everything alive between captures.
 
+Since 2.1.1 the staging runs **isolated**: `stage/seed.js` refuses to run unless
+`CCC_STAGE_HOME`, `CCC_STAGE_DATA`, `CCC_STAGE_NPM_BIN` and `CCC_STAGE_RUNNER` point at a
+staging folder of its own (it once overwrote a VM's real accounts), and `CCC_STAGE_REPO`
+names a checkout with `node_modules` so `stage/codex-registry.ts` writes the Codex accounts
+through the app's own registry code. The installed app is then started on that folder
+(`CCC_E2E_DATA_DIR`, `USERPROFILE`/`HOME`, `LOCALAPPDATA`/`APPDATA`/`TEMP` inside it, the
+fake CLIs' folder first on a PATH holding no real `claude` or `codex`,
+`--user-data-dir` inside it, `--remote-debugging-port=<port>`), and `shoot.js` attaches to
+it with `CCC_SHOOT_ATTACH_PORT=<port>`. The VM user's own app data, `~/.claude` and
+`~/.codex` are never read or written. The canvas record needs the app's signing secret, so
+start the app once on the staging folder, quit it, and seed again with `--reuse-backup`.
+
 ## Why not the old capture-training script
 
 `scripts/capture-training-screenshots.ts` launches a **dev build** via Playwright's Electron

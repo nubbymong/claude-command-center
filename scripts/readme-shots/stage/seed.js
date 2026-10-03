@@ -10,6 +10,18 @@
 //
 // Every path is forward-slash and absolute; nothing here is portable beyond the
 // screenshot VM and nothing here should ever run on a developer's machine.
+//
+// ISOLATED (2.1.1, the way to run it): point every root at a staging folder of
+// its own and run the installed app on it (CCC_E2E_DATA_DIR = CCC_STAGE_DATA,
+// USERPROFILE = CCC_STAGE_HOME, the fake CLIs' folder first on PATH), so the
+// VM user's own app data, ~/.claude and ~/.codex are never touched:
+//   CCC_STAGE_HOME, CCC_STAGE_DATA, CCC_STAGE_NPM_BIN (the fake CLIs' folder),
+//   CCC_STAGE_RUNNER (its backup), and CCC_STAGE_REPO (a checkout with
+//   node_modules: the Codex accounts are written by codex-registry.ts through
+//   the app's own registry code). Without all four roots it refuses to run
+//   unless --over-real-state is given (that mode destroyed real state once).
+// C:\dev keeps the fake projects (the configs' folders); --restore removes
+// only the project folders this seed made there.
 
 'use strict'
 
@@ -34,9 +46,17 @@ const BACKUP = `${RUNNER}/backup`
 const PROJECTS = `${HOME}/.claude/projects`
 const CODEX_SESSIONS = `${HOME}/.codex/sessions`
 const DEV = process.env.CCC_STAGE_DEV || 'C:/dev'
+const REPO = process.env.CCC_STAGE_REPO
 const NOW = Date.now()
 
 const log = (m) => console.log(m)
+
+const ISOLATED = ['CCC_STAGE_HOME', 'CCC_STAGE_DATA', 'CCC_STAGE_NPM_BIN', 'CCC_STAGE_RUNNER'].every((k) => !!process.env[k])
+if (!ISOLATED && !argv.includes('--over-real-state')) {
+  console.error('refusing: set CCC_STAGE_HOME, CCC_STAGE_DATA, CCC_STAGE_NPM_BIN and CCC_STAGE_RUNNER to a staging folder (or pass --over-real-state)')
+  process.exit(2)
+}
+const codexAcct = (key) => C.CODEX_ACCOUNTS.find((a) => a.key === key)
 
 // ── small fs helpers ───────────────────────────────────────────────────────
 function mkdirp(p) { fs.mkdirSync(p, { recursive: true }) }
@@ -79,6 +99,12 @@ const BACKED = [
 const DB_FILES = ['transcripts.db', 'transcripts.db-wal', 'transcripts.db-shm', 'tokenomics.db', 'tokenomics.db-wal', 'tokenomics.db-shm']
 
 function backupOnce() {
+  // A backup from an earlier run is NOT this state's backup: seeding over it
+  // would delete the current state with nothing to restore it from.
+  if (fs.existsSync(`${BACKUP}/.done`) && !argv.includes('--reuse-backup')) {
+    console.error(`refusing: ${BACKUP}/.done is from an earlier run; restore or move it first (or pass --reuse-backup)`)
+    process.exit(2)
+  }
   if (fs.existsSync(`${BACKUP}/.done`)) { log('backup already taken — leaving it alone'); return }
   log('taking the one-time backup → ' + BACKUP)
   for (const [name, dir] of BACKED) copyInto(dir, `${BACKUP}/${name}-parent`)
@@ -106,7 +132,8 @@ function restore() {
   rmrf(CODEX_SESSIONS)
   if (fs.existsSync(`${BACKUP}/codex/sessions`)) fs.renameSync(`${BACKUP}/codex/sessions`, CODEX_SESSIONS)
   uninstallFakeClis()
-  rmrf(DEV)
+  // Only the project folders this seed made (seedProjects), never DEV itself.
+  for (const d of readJson(`${BACKUP}/dev-created.json`, [])) rmrf(`${DEV}/${d}`)
   fs.renameSync(`${BACKUP}/.done`, `${BACKUP}/.restored-${Date.now()}`)
   log('restored')
 }
@@ -129,6 +156,10 @@ function installFakeClis() {
   fs.copyFileSync(`${here}/content.js`, `${NPM_BIN}/content.js`)
   writeText(`${NPM_BIN}/claude.cmd`, `@echo off\r\nnode "%~dp0fake-claude.js" %*\r\n`)
   writeText(`${NPM_BIN}/codex.cmd`, `@echo off\r\nnode "%~dp0fake-codex.js" %*\r\n`)
+  // Where the fake Claude keeps each session's status file (this staging's
+  // resources; it has no default of its own) and the home its transcripts
+  // are under.
+  writeJson(`${NPM_BIN}/fake-stage.json`, { statusDir: `${RES}/status`, home: HOME })
   log('fake claude/codex installed on PATH')
 }
 function uninstallFakeClis() {
@@ -140,15 +171,18 @@ function uninstallFakeClis() {
     rmrf(`${NPM_BIN}/fake-${n}.js`)
   }
   rmrf(`${NPM_BIN}/content.js`)
+  rmrf(`${NPM_BIN}/fake-stage.json`)
   log('fake CLIs removed')
 }
 
 // ── CONFIG/*.json ──────────────────────────────────────────────────────────
 function seedConfig() {
   const configs = C.CONFIGS.map((c) => {
-    const { profileKey, ...rest } = c
+    const { profileKey, codexAccountKey, ...rest } = c
     const out = { ...rest }
     if (profileKey) out.profileId = acct(profileKey).id
+    // 2.1.1: a Codex config names its account in the registry (absent = the default).
+    if (codexAccountKey) out.providerAccountId = codexAcct(codexAccountKey).accountId
     if (rest.sessionType === 'local' && !rest.machineName) out.machineName = 'workstation'
     return out
   })
@@ -165,8 +199,8 @@ function seedConfig() {
     }
     if (s.customName) base.customName = s.customName
     if (s.shellOnly) return { ...base, shellOnly: true, terminalOptions: c.terminalOptions }
+    if (s.provider === 'codex') return { ...base, providerAccountId: codexAcct(s.codexAccountKey).accountId, codexOptions: c.codexOptions }
     base.profileId = acct(s.accountKey).id
-    if (s.provider === 'codex') return { ...base, codexOptions: c.codexOptions }
     return {
       ...base,
       resumeUuid: s.resumeUuid, resumeCwd: c.workingDirectory,
@@ -175,11 +209,15 @@ function seedConfig() {
   })
   writeJson(`${CONFIG}/session-state.json`, { sessions, activeSessionId: C.ACTIVE_SESSION_ID, savedAt: NOW - 30 * C.MIN })
 
-  const steps = ['whatsNewV2', 'welcome', 'findClaude', 'compatibility', 'accounts', 'github', 'statusline', 'codex', 'codexSignIn', 'builtinTools', 'transparency', 'finish']
+  // The onboarding steps as src/renderer/onboarding/steps.ts lists them (2.1.1;
+  // ONBOARDING_VERSION '3'): all done, so the flow never covers the window.
+  const steps = ['whatsNewV2', 'welcome', 'assistants', 'commandBar', 'findClaude', 'compatibility', 'accounts', 'codexSetup', 'helloCodex', 'github', 'statusline', 'builtinTools', 'transparency', 'finish']
   const completedSteps = {}
   for (const s of steps) completedSteps[s] = APP_VERSION
   writeJson(`${CONFIG}/app-meta.json`, {
-    setupVersion: APP_VERSION, lastSeenVersion: APP_VERSION, lastTrainingVersion: APP_VERSION,
+    setupVersion: APP_VERSION, lastSeenVersion: APP_VERSION, lastRunVersion: APP_VERSION, lastTrainingVersion: APP_VERSION,
+    // 2.1.1's one-time pages: Hello Codex and the multi-spawn intro, seen.
+    helloCodexSeenVersion: APP_VERSION, multiSpawnIntroVersion: APP_VERSION,
     onboardingCompletedVersion: '3', onboardingAppVersion: APP_VERSION, completedSteps,
     commandsSeeded: true, colorMigrated: true, hasCreatedFirstConfig: true, firstRunCardDismissed: true,
     accountWizardDismissed: true, accountGateDecided: true, lastSeenGlobalAccount: acct('alex').email,
@@ -187,7 +225,9 @@ function seedConfig() {
 
   const settings = readJson(`${CONFIG}/settings.json`, {})
   Object.assign(settings, {
-    loggingConsentSeen: true, loggingEnabled: true, legacyLogsSurfacingSeen: true, showTips: false,
+    loggingConsentSeen: true, loggingConsentVersion: 2, loggingEnabled: true, legacyLogsSurfacingSeen: true, showTips: false,
+    // 2.1.1: both assistants on; Codex's on/off counts only with the answer.
+    claudeEnabled: true, codexAnswered: true,
     agentHubExplainerDismissed: true, colourMigrationNoticeDismissed: true, colourMigrationNoticePending: false,
     configHydrationNoticeDismissed: true, localMachineName: 'workstation', updateChannelChosen: true, updateChannel: 'beta',
     statusLineEnabled: true, conductorToolsEnabled: true, codexEnabled: true, sentinelEnabled: false,
@@ -464,8 +504,25 @@ function seedProjects() {
     'data/pipeline': { 'pyproject.toml': '[project]\nname = "pipeline"\n' },
     'notes': { '2026-08-17.md': '# Monday\n' },
   }
+  // Record the top-level folders this seed makes, so --restore removes those
+  // and nothing else that lives in DEV.
+  const tops = [...new Set(Object.keys(files).map((rel) => rel.split('/')[0]))]
+  const made = readJson(`${BACKUP}/dev-created.json`, [])
+  for (const t of tops) if (!fs.existsSync(`${DEV}/${t}`) && !made.includes(t)) made.push(t)
+  writeJson(`${BACKUP}/dev-created.json`, made)
   for (const [rel, fs_] of Object.entries(files)) for (const [name, body] of Object.entries(fs_)) writeText(`${DEV}/${rel}/${name}`, body)
-  log('project dirs written')
+  log(`project dirs written (made here: ${made.join(', ') || 'none'})`)
+}
+
+// -- Codex accounts (2.1.1: the app's account registry) --
+// Written by codex-registry.ts through the app's own registry code, from a
+// checkout with node_modules (CCC_STAGE_REPO). Without one, Codex runs with
+// no account (its config shows the add-an-account state).
+function seedCodexAccounts() {
+  if (!REPO) { log('!! CCC_STAGE_REPO not set: Codex accounts skipped'); return }
+  const q = (s) => `"${s}"`
+  const out = execFileSync('npx', ['--yes', 'tsx', q(`${REPO}/scripts/readme-shots/stage/codex-registry.ts`), q(RES), q(path.join(__dirname, 'content.js'))], { cwd: REPO, encoding: 'utf8', shell: true })
+  log(out.trim())
 }
 
 // ── Logs DB via python ─────────────────────────────────────────────────────
@@ -484,6 +541,7 @@ if (RESTORE) {
   seedProjects()
   seedConfig()
   seedAccounts()
+  seedCodexAccounts()
   seedStatus()
   seedTranscripts()
   seedMemory()
