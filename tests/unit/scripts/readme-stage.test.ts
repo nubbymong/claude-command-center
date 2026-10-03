@@ -38,6 +38,8 @@ const S = req('./stage-root.js') as {
   processIdentity: (pid: number, platform: string, exec: FakeExec) => { command: string; startedAt: number } | null
   isRecordedProcess: (rec: Record<string, unknown>, ident: { command: string; startedAt: number } | null, platform: string) => boolean
   checkLaunchedApp: (rec: Record<string, unknown>, deps: { platform: string; exec: FakeExec }) => void
+  checkDevTargets: (dev: string, deps?: Record<string, unknown>) => void
+  noLinkBelow: (root: string, p: string, platform: string, deps: Record<string, unknown>) => boolean
 }
 type FakeExec = (cmd: string, args: string[]) => string
 const L = req('./launch.js') as {
@@ -49,10 +51,13 @@ const made: string[] = []
 afterEach(() => {
   for (const d of made.splice(0)) if (dirname(d) === tmpdir() && basename(d).startsWith(PREFIX)) rmSync(d, { recursive: true, force: true })
 })
+// The temp folder's real path (macOS: /var is a link to /private/var; a
+// Windows runner's temp folder is an 8.3 spelling): the guard works on real
+// paths, so the paths these tests compare are real too.
 const base = (): string => {
   const d = mkdtempSync(join(tmpdir(), PREFIX))
   made.push(d)
-  return d
+  return realpathSync.native(d)
 }
 const write = (p: string, s: string) => { mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, s) }
 
@@ -296,7 +301,7 @@ describe('the staging root is compared by its real path, and UNC and device root
     registryFolders: () => [] as string[],
     userHome: () => HOME,
     osHome: () => HOME,
-    noLinkOnPath: () => true,
+    isLink: () => false,
     exists: () => true,
     realpath: (p: string) => {
       for (const [from, to] of realMap) if (p.toLowerCase().startsWith(from.toLowerCase())) return to + p.slice(from.length)
@@ -400,5 +405,67 @@ describe('shoot.js keeps its output in the root and attaches only to the recorde
     const launch = readFileSync(join(STAGE_DIR, 'launch.js'), 'utf8')
     expect(launch).toMatch(/S\.isRecordedProcess\(rec, S\.processIdentity\(rec\.pid\)\)/)
     expect(launch).not.toMatch(/process\.kill\(-rec\.pid, 'SIGTERM'\) \} catch/)
+  })
+})
+
+describe('the guard works on the real path of the root; links at or below it are refused, links above it are not (CI, macOS)', () => {
+  // Host-safe stand-ins for what the quarantined links test plants for real:
+  // `realpath` and `isLink` say which folders are links, nothing is made.
+  const posix = (links: Record<string, string>) => ({
+    registryFolders: () => [] as string[],
+    userHome: () => '/Users/me',
+    osHome: () => '/Users/me',
+    exists: () => true,
+    isLink: (p: string) => Object.keys(links).some((l) => p === l),
+    realpath: (p: string) => {
+      for (const [l, to] of Object.entries(links)) if (p === l || p.startsWith(l + '/')) return to + p.slice(l.length)
+      return p
+    },
+  })
+  const env = (root: string, more: Record<string, string> = {}) => ({ CCC_STAGE_ROOT: root, CCC_STAGE_DEV: `${root}/dev`, HOME: '/Users/me', ...more })
+
+  it('[host] a system link ABOVE the root (macOS /var -> /private/var) is resolved, and the layout is on the real path', () => {
+    const st = S.resolveStage(env('/var/folders/x/T/stage'), 'darwin', posix({ '/var': '/private/var' }))
+    expect(st.ROOT).toBe('/private/var/folders/x/T/stage')
+    expect(st.DATA).toBe('/private/var/folders/x/T/stage/data')
+    expect(st.DEV).toBe('/private/var/folders/x/T/stage/dev')
+  })
+
+  it('[host] a staging folder given in the other spelling of the root is the same folder', () => {
+    const st = S.resolveStage(env('/var/folders/x/T/stage', { CCC_STAGE_HOME: '/var/folders/x/T/stage/data/home' }), 'darwin', posix({ '/var': '/private/var' }))
+    expect(st.HOME).toBe('/private/var/folders/x/T/stage/data/home')
+  })
+
+  it('[host] noLinkBelow: the root itself and every folder down to the target, never above the root', () => {
+    const d = (links: string[]) => ({ exists: () => true, isLink: (p: string) => links.includes(p) })
+    expect(S.noLinkBelow('/srv/stage', '/srv/stage/data/home', 'darwin', d([]))).toBe(true)
+    expect(S.noLinkBelow('/srv/stage', '/srv/stage/data/home', 'darwin', d(['/srv']))).toBe(true)
+    expect(S.noLinkBelow('/srv/stage', '/srv/stage/data/home', 'darwin', d(['/srv/stage']))).toBe(false)
+    expect(S.noLinkBelow('/srv/stage', '/srv/stage/data/home', 'darwin', d(['/srv/stage/data']))).toBe(false)
+    expect(S.noLinkBelow('/srv/stage', '/srv/other', 'darwin', d([]))).toBe(false)
+  })
+
+  it('[host] the root itself a link: refused, even when it resolves somewhere harmless', () => {
+    expect(() => S.resolveStage(env('/srv/stage'), 'darwin', posix({ '/srv/stage': '/srv/elsewhere' }))).toThrow(/the staging root \/srv\/stage is a link/)
+  })
+
+  it('[host] a staging folder that is a link below the root: refused as a link', () => {
+    expect(() => S.resolveStage(env('/srv/stage'), 'darwin', posix({ '/srv/stage/data': '/Users/me/.codex' }))).toThrow(/CCC_STAGE_DATA .* has a link on its path/)
+    expect(() => S.resolveStage(env('/srv/stage', { CCC_STAGE_RUNNER: '/srv/stage/run/inner' }), 'darwin', posix({ '/srv/stage/run': '/tmp/other' }))).toThrow(/CCC_STAGE_RUNNER .* has a link on its path/)
+  })
+
+  it('[host] a root that resolves into a protected folder through a link above it: refused by its real path', () => {
+    expect(() => S.resolveStage(env('/srv/x/stage'), 'darwin', posix({ '/srv/x': '/Users/me/.codex' }))).toThrow(/overlaps .*\.codex/)
+  })
+
+  it('[host] the projects folder: resolved to its real path, a link at it or a project folder that is a link refused', () => {
+    const b = base()
+    const dev = join(b, 'dev')
+    write(join(dev, 'web', S.DEV_MARKER), 'm')
+    const linkAt = (p: string) => (q: string) => resolve(q) === resolve(p)
+    // A link above the projects folder is resolved, not refused.
+    expect(() => S.checkDevTargets(dev, { isLink: linkAt(b) })).not.toThrow()
+    expect(() => S.checkDevTargets(dev, { isLink: linkAt(join(dev, 'web')) })).toThrow(/was not made by this tool/)
+    expect(() => S.checkDevTargets(dev, { isLink: linkAt(dev) })).toThrow(/projects folder .* is a link/)
   })
 })
