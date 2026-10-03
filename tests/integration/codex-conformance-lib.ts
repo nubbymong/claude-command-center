@@ -200,7 +200,12 @@ export const REVIEWED_HELP_DIFFERENCES: readonly ReviewedHelpDifference[] = [
       `WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir "${RUN_PATH_NAMES.tmp}" (codex_home: AbsolutePathBuf("${RUN_PATH_NAMES.home}"))`,
       '',
     ],
-    why: 'on Linux Codex makes no PATH helper binaries in a home under the temporary folder, where the run makes its fresh homes',
+    // codex-rs/arg0/src/lib.rs:345-350 (rust-v0.155.1, rust-v0.153.4) refuses
+    // on every OS when the canonical home starts with std::env::temp_dir();
+    // only Linux spells the two alike (macOS canonicalises to /private/var,
+    // Windows adds the verbatim \\?\ prefix), so only Linux prints the
+    // warning (:189).
+    why: 'Codex makes no PATH helper binaries when its canonical home starts with the temporary folder, where the run makes its fresh homes; only on Linux do the two spellings agree',
   },
 ]
 
