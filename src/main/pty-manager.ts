@@ -991,14 +991,26 @@ function folderSpelling(p: string, platform: NodeJS.Platform = process.platform)
  * WP2 PR 4, P4.3 review RASK-1: an Ask launch runs in the help folder main has
  * just rebuilt (pty:spawn makes it the launch's folder), on either assistant,
  * never in a conversation's own folder elsewhere. Whether `folder` (where a
- * resumed conversation ran) is that folder, by its exact spelling (ADR-009
- * round 1: folderSpelling, never case-folded, on every platform alike). A
- * conversation from any other spelling is not resumed: the launch starts fresh
- * in the help folder.
+ * resumed conversation ran) is that folder: both are read as the volume
+ * names them (the native real path), then compared by their exact spelling
+ * (folderSpelling, never case-folded). On a case-insensitive volume a folder
+ * named in other letters comes back in its on-disk case and holds (the PR 4
+ * final VM run: a resources setting spelled in other letters); on a
+ * case-sensitive one such a folder is another folder (ADR-009 round 1,
+ * U4.11). A real path that cannot be read holds nothing. A conversation of
+ * any other folder is not resumed: the launch starts fresh in the help folder.
  */
 function askLaunchFolderHolds(folder: string | undefined, launchFolder: string): boolean {
   if (typeof folder !== 'string' || !folder) return false
-  return folderSpelling(folder) === folderSpelling(launchFolder)
+  let ran: string
+  let launch: string
+  try {
+    ran = fs.realpathSync.native(folder)
+    launch = fs.realpathSync.native(launchFolder)
+  } catch {
+    return false
+  }
+  return folderSpelling(ran) === folderSpelling(launch)
 }
 
 /** ADR-009 round 1 (PR 4): the folder each local agent process was started
@@ -5765,8 +5777,10 @@ function spawnPtyResolved(
       // P4.3 review RASK-1: an Ask launch runs in the help folder just
       // rebuilt; a conversation that ran in another folder is not resumed
       // (claude --resume finds a conversation only from its own folder).
-      if (options?.isAsk === true && claudeCwd !== resolvedCwd) {
-        if (!askLaunchFolderHolds(claudeCwd, resolvedCwd)) {
+      // Checked for every resume, the same spelling included (PR 4 final VM
+      // run): the folder holds by its real path, as the Codex branch's does.
+      if (options?.isAsk === true && (resumeUuid !== undefined || claudeCwd !== resolvedCwd)) {
+        if (resumeUuid !== undefined && !askLaunchFolderHolds(claudeCwd, resolvedCwd)) {
           logInfo(`[pty] Ask ${sessionId}: its conversation ran in another folder; started afresh in the help folder`)
           resumeUuid = undefined
           resumeUuidForBind = null

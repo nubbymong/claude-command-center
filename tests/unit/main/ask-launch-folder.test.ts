@@ -24,7 +24,22 @@ const h = vi.hoisted(() => ({
   writes: [] as string[],
   built: [] as Array<Record<string, unknown>>,
   captured: null as { uuid: string; cwd: string } | null,
+  // A stand-in for the volume's real-path answer for paths under the help
+  // folder's parent (undefined: the real one).
+  realpath: null as null | ((p: string) => string | undefined),
 }))
+
+// The real file system, with the native real path answerable per case (a
+// case-sensitive volume, or a real path that cannot be read).
+vi.mock('fs', async (importOriginal) => {
+  const real = await importOriginal<typeof import('fs')>()
+  const native = (p: import('fs').PathLike, o?: unknown): string => {
+    const stood = h.realpath?.(String(p))
+    return stood !== undefined ? stood : (real.realpathSync.native as (p: import('fs').PathLike, o?: unknown) => string)(p, o)
+  }
+  const realpathSync = Object.assign((p: import('fs').PathLike, o?: unknown) => (real.realpathSync as (p: import('fs').PathLike, o?: unknown) => string)(p, o), { native })
+  return { ...real, default: { ...real, realpathSync }, realpathSync }
+})
 
 vi.mock('node-pty', () => ({
   spawn: (_cmd: string, _args: unknown, opts: { cwd: string }) => {
@@ -137,6 +152,7 @@ beforeEach(() => {
   h.writes = []
   h.built = []
   h.captured = null
+  h.realpath = null
 })
 afterEach(() => {
   try { killPty(SID) } catch { /* not started */ }
@@ -210,24 +226,59 @@ describe('Codex: a resumed Ask conversation is held to the help folder', () => {
   })
 })
 
-describe('the help folder is compared by its exact spelling (ADR-009 round 1, U4.11)', () => {
-  // The help folder's last part in other letters: on Windows and macOS the
-  // same folder on disk, and still not the folder the launch runs in.
-  const otherCase = (): string => path.join(path.dirname(help), 'HELP')
+describe('the help folder is compared by its real path, then its exact spelling (U4.11; the PR 4 final VM run)', () => {
+  // A folder named in other letters: on a case-insensitive volume (Windows,
+  // macOS) the same folder, whose real path comes back in the on-disk case;
+  // on a case-sensitive one, another folder.
+  const otherCase = (p: string): string => path.join(path.dirname(p), path.basename(p).toUpperCase())
+  /** This volume ignores case (the temporary folder answers in other letters). */
+  const caseless = (): boolean => {
+    try {
+      const t = fs.realpathSync.native(os.tmpdir())
+      return t.toUpperCase() !== t && fs.realpathSync.native(t.toUpperCase()) === t
+    } catch { return false }
+  }
+  const under = (p: string, root: string): boolean => p === root || p.startsWith(root + path.sep)
 
-  it('[host] Codex: a conversation recorded under another case of the help folder is not resumed; the launch starts fresh there', () => {
-    codex({ cwd: help, isAsk: true, resume: { uuid: CODEX_ID, cwd: otherCase() } })
-    expect(h.built[0].resume).toBeUndefined()
-    expect(h.spawns[0].cwd).toBe(help)
+  it('[host] the resources setting spelled in other letters (the same folder on this volume): Codex resumes, in the folder the rebuild returned', () => {
+    if (!caseless()) return // a case-sensitive volume: no other spelling of the same folder exists
+    const setting = otherCase(help)
+    codex({ cwd: setting, isAsk: true, resume: { uuid: CODEX_ID, cwd: help } })
+    expect(h.built[0].resume).toEqual({ uuid: CODEX_ID, cwd: setting })
+    expect(h.spawns[0].cwd).toBe(setting)
   })
 
-  it('[host] Claude Code: the same, no --resume', async () => {
-    claude({ cwd: help, isAsk: true, resume: { uuid: UUID, cwd: otherCase() } })
+  it('[host] Claude Code the same: a Restart resumes its conversation', async () => {
+    if (!caseless()) return
+    const setting = otherCase(help)
+    claude({ cwd: setting, isAsk: true, resume: { uuid: UUID, cwd: help } })
+    expect(h.spawns[0].cwd).toBe(setting)
+    expect(await launchLine()).toContain(`--resume ${UUID}`)
+  })
+
+  it('[host] a case-sensitive volume (its real paths stood in): a folder differing only in case is another folder, so started fresh', async () => {
+    const root = path.dirname(help)
+    h.realpath = (p) => (under(path.resolve(p), root) ? path.resolve(p) : undefined)
+    codex({ cwd: help, isAsk: true, resume: { uuid: CODEX_ID, cwd: otherCase(help) } })
+    expect(h.built[0].resume).toBeUndefined()
     expect(h.spawns[0].cwd).toBe(help)
+    claude({ cwd: help, isAsk: true, resume: { uuid: UUID, cwd: otherCase(help) } })
     expect(await launchLine()).not.toContain('--resume')
   })
 
-  it('[host] separators are normalised and a trailing one dropped: the same spelling is resumed', () => {
+  it('[host] a real path that cannot be read: started fresh, never guessed from the spelling', async () => {
+    const root = path.dirname(help)
+    h.realpath = (p) => {
+      if (under(path.resolve(p), root)) throw Object.assign(new Error('EACCES'), { code: 'EACCES' })
+      return undefined
+    }
+    codex({ cwd: help, isAsk: true, resume: { uuid: CODEX_ID, cwd: help } })
+    expect(h.built[0].resume).toBeUndefined()
+    claude({ cwd: help, isAsk: true, resume: { uuid: UUID, cwd: help } })
+    expect(await launchLine()).not.toContain('--resume')
+  })
+
+  it('[host] separators and a trailing one: the same folder, resumed', () => {
     const spellings = [help + path.sep, help + path.sep + path.sep, ...(process.platform === 'win32' ? [help.replace(/\\/g, '/'), help.replace(/\\/g, '/') + '/'] : [])]
     for (const spelled of spellings) {
       h.built = []
@@ -236,9 +287,10 @@ describe('the help folder is compared by its exact spelling (ADR-009 round 1, U4
     }
   })
 
-  it('[host] a spelling through `..` is not the same spelling: started fresh', () => {
+  it('[host] a spelling through `..` that reaches the help folder: the same folder, resumed', () => {
+    fs.mkdirSync(path.join(path.dirname(help), 'x'))
     const roundabout = path.join(path.dirname(help), 'x') + path.sep + '..' + path.sep + 'help'
     codex({ cwd: help, isAsk: true, resume: { uuid: CODEX_ID, cwd: roundabout } })
-    expect(h.built[0].resume).toBeUndefined()
+    expect(h.built[0].resume).toEqual({ uuid: CODEX_ID, cwd: help })
   })
 })

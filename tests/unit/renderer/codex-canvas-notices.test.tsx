@@ -84,12 +84,15 @@ describe('a Codex session\'s canvas notices', () => {
     expect(text('codex-canvas-guidance')).toMatch(words)
   })
 
-  it('[host] a launch through the resume picker: the guidance reaches only a new conversation started in the session\'s folder, and the page says so (review RVMFIX-3)', async () => {
+  it('[host] a launch through the resume picker: the guidance is passed when Codex starts in the session\'s own folder, and the page says so (review RVMFIX-3, vm final)', async () => {
     setProvider('codex')
     guidance = { guidance: 'picker' }
     buffer = [{ sessionId: SID, event: 'SessionStart', payload: {}, ts: 1 }]
     await mount()
-    expect(text('codex-canvas-guidance')).toBe('This Codex session was started through the resume picker: the canvas tools have their skills\' guidance only in a new conversation started in this session\'s folder (a resumed conversation keeps the instructions it started with).')
+    // The final VM run: a resumed conversation without instructions of its
+    // own gets them too, so the line never says only a new one does.
+    expect(text('codex-canvas-guidance')).toBe('This Codex session was started through the resume picker: its skills\' guidance is passed when Codex starts in this session\'s own folder; a resumed conversation that already has instructions keeps its own.')
+    expect(text('codex-canvas-guidance')).not.toMatch(/only in a new conversation/)
   })
 
   it('[host] a marker not confirmed in the prompt: may still be there, unsent, never said to be taken back (review R-1)', async () => {

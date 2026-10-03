@@ -677,10 +677,11 @@ export interface CanvasMarkerUndelivered {
  *    app's, or a write failed; on macOS and Linux, the app's plugin folder
  *    could not be written).
  *  `picker`: a launch through the resume picker on this computer's own
- *  sign-in, whose guidance rides the launch's developer instructions: it
- *  reaches only a new conversation the picker starts in the session's own
- *  folder (a picked conversation keeps the instructions it started with, and
- *  one started in another worktree gets none). */
+ *  sign-in, whose guidance rides the launch's developer instructions: passed
+ *  when Codex starts in the session's own folder (a new conversation, or a
+ *  resumed one without instructions of its own); a resumed conversation that
+ *  already has instructions keeps them, and one started in another worktree
+ *  gets none. */
 export type CanvasSessionGuidance =
   | { guidance: 'full' }
   | { guidance: 'picker' }

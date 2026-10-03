@@ -539,7 +539,9 @@ describe('app knowledge after PR 4 (ADR-009 round 2)', () => {
 
   it('[host] says, in one clause, what the guidance reaches through the resume picker (review)', () => {
     const all = APP_KNOWLEDGE_SECTIONS.map((x) => x.body).join('\n')
-    expect(all).toMatch(/Through the resume picker, the guidance reaches only a new conversation started in the session's own folder\./)
+    expect(all).toMatch(/Through the resume picker, the guidance is passed when Codex starts in the session's own folder; a resumed conversation that already has instructions keeps its own\./)
+    // The final VM run: a resumed conversation without instructions gets them too.
+    expect(all).not.toMatch(/reaches only a new conversation/)
   })
 })
 

@@ -298,13 +298,14 @@ const records = new Map<string, CanvasSessionGuidance>()
 
 /**
  * What a launch carried, by the route it actually took, for the record below
- * (review RVMFIX-3 and its verification). Guidance riding the developer
- * instructions through the resume picker reaches only a new conversation the
- * picker starts in the session's own folder (a picked one keeps what it
- * started with; one in another worktree gets none), so it is recorded as
- * such. Not for an exact resume or a direct start, whatever was asked for,
- * and not for staged skills (a managed account), which reach every
- * conversation.
+ * (review RVMFIX-3, its verification and the PR 4 final VM run). Guidance
+ * riding the developer instructions through the resume picker is passed when
+ * Codex starts in the session's own folder (a new conversation, or a resumed
+ * one without instructions of its own); a resumed one that already has
+ * instructions keeps them, and one in another worktree gets none. So it is
+ * recorded as such. Not for an exact resume or a direct start, whatever was
+ * asked for, and not for staged skills (a managed account), which reach
+ * every conversation.
  */
 export function codexGuidanceAsLaunched(
   launch: { guidance: CanvasSessionGuidance | null; developerInstructions?: string },
