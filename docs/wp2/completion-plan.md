@@ -311,8 +311,8 @@ Per PR:
   real-account checks its rows list (gate 6's owner-only list, P3.16);
   and questions 2 to 4 (section 10).
 - **PR 4.** Phases P4.1 to P4.11 (section 9), including row 15, which OD20 D8
-  makes a merge blocker. The SSH live matrix is owed if P4.1 or P4.3 edits
-  `pty-manager.ts`.
+  makes a merge blocker. The SSH live matrix is owed (P4.1 and P4.3 edit
+  `pty-manager.ts`; 9.7 gate 5), and questions 5 to 7 (section 10).
 
 Package completion is not release completion. A complete PR merges to beta
 only on the owner's word, in the order #625, PR 3, PR 4, and nothing is
