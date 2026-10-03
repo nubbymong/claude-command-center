@@ -19,7 +19,7 @@ import {
   isProvableContainerEntry, parseEntrySentinels, buildEntryGuardCommand, readContainerName,
 } from '../shared/container-command'
 import { SSH_ENTRY, type SshEntryFailureReason } from '../shared/ssh-entry'
-import type { SshRuntime, DetachedRemoteLiveness, SshEndRemoteOutcome, SshEndRemoteResult } from '../shared/types'
+import type { SshRuntime, DetachedRemoteLiveness, SshEndRemoteOutcome, SshEndRemoteResult, SubmitTextResult } from '../shared/types'
 import { resolveRunningClaudeInfo } from '../shared/ssh-tmux-persistence'
 import { buildTmuxStageCommand, type TmuxStageTarget } from './ssh-tmux-stage'
 import { buildTmuxPushCommand, buildArchProbeCommandBracketed, parseArchProbeSentinel, PUSH_ACCUMULATOR_VAR } from './ssh-tmux-push'
@@ -70,8 +70,14 @@ import { registerCodexReviewSession, registerClaudeReviewSession, unregisterCode
 import { ensureCanvasPlugin } from './canvas/canvas-plugin'
 import { registerCanvasUatRoot, revokeCanvasUatRoots, designateCanvasWorktreeRoot, canvasRootRefusalReason, describeCanvasRootRefusal, setCanvasRootRefusal } from './canvas/canvas-store'
 import { designatedWorktreeDir } from './canvas/canvas-worktree'
-import { forgetSessionForCanvas } from './canvas/canvas-session-link'
+import { forgetSessionForCanvas, setCanvasCodexConversationLookup } from './canvas/canvas-session-link'
 import { forgetCanvasMarkers } from './canvas/canvas-marker-delivery'
+import { MARKER_FALLBACK_FLUSH_MS } from './canvas/canvas-marker-queue'
+import { prepareCodexCanvasLaunch } from './canvas/codex-canvas-launch'
+import { registerCodexCanvasRoots } from './canvas/codex-canvas-roots'
+import { noteCodexSessionGuidance, forgetCodexSessionGuidance } from './canvas/codex-guidance'
+import { openCodexScreen, feedCodexScreen, resizeCodexScreen, closeCodexScreen, hasCodexScreen, submitCodexText } from './providers/codex/session-screen'
+import { codexLaunchRoute, codexLaunchLineForLog, type CodexSpawnOptions } from './providers/codex/spawn'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal, withProfileHome, MANAGED_LAUNCH_REFUSAL } from './account-profiles'
 export { withProfileHome } from './account-profiles'
@@ -308,6 +314,10 @@ export interface CodexLaunch {
    *  onto another account from a conversation whose claim was not certain
    *  starts a new one there (pty-handlers carryForRespawn). */
   freshConversation?: boolean
+  /** WP2 PR 4, P4.1: the account's Codex folder as the launch prepared it,
+   *  and the Codex version discovery proved (for the canvas guidance). */
+  home?: string
+  cliVersion?: string | null
 }
 
 // WP2 (plan A10): the account lease of each running Codex session, so a
@@ -486,6 +496,9 @@ export const KEPT_CODEX_CONVERSATIONS_MAX = 512
 // session (a tab that declined Codex's review sends none, whatever another
 // tab of the same account chose).
 const keptCodexConversations = new Map<string, { uuid: string; cwd: string; accountId?: string; inferred?: boolean; hooksHeard?: boolean }>()
+/** WP2 PR 4, P4.1: the conversation a Codex session is on, for its canvas
+ *  link (canvas-session-link.ts; set at the session's launch). */
+const codexConversationForCanvas = (sessionId: string): string | undefined => keptCodexConversations.get(sessionId)?.uuid
 
 // P3.12 (row 65): the rollout each Codex session's watcher holds (claimed, or
 // read beside another tab), for its GitHub Session Context, as Claude's reads
@@ -4933,7 +4946,25 @@ function spawnPtyResolved(
       // P3.6: a respawn onto another account from a conversation whose claim
       // was not certain resumes none (`freshConversation`, main only).
       const resumeTarget = options?.resume ?? (options?.useResumePicker || launch.freshConversation === true ? undefined : keptCodexConversations.get(sessionId))
-      const built = provider.buildSpawnCommand({
+      // WP2 PR 4, P4.1 (row 51): the Agent Canvas for this launch, as a Claude
+      // session has it (canvas/codex-canvas-launch.ts): the worktree CCC
+      // designates from the CONFIGURED folder, and the skills' guidance (a
+      // managed realm's staged skills, or question 5's default A). A resumed
+      // conversation's folder is read only to pass less (its settings), never
+      // to serve or designate anything.
+      const codexToolsOn = readConfig<{ conductorToolsEnabled?: boolean }>('settings')?.conductorToolsEnabled !== false && getConductorMcpPort() > 0
+      const codexCanvas = prepareCodexCanvasLaunch({
+        sessionId,
+        configuredCwd: resolvedCwd,
+        home: launch.home ?? launch.env.CODEX_HOME ?? '',
+        route: codexLaunchRoute(launch.executable),
+        cliVersion: launch.cliVersion ?? null,
+        toolsOn: codexToolsOn,
+        startFolders: options?.useResumePicker ? null : [resolvedCwd, ...(resumeTarget?.cwd ? [resumeTarget.cwd] : [])],
+        env: launch.env,
+      })
+      setCanvasCodexConversationLookup(codexConversationForCanvas)
+      const codexSpawnOptions: CodexSpawnOptions = {
         sessionId,
         provider: 'codex',
         // The configured directory, resolved: where an exact resume falls
@@ -4953,7 +4984,9 @@ function spawnPtyResolved(
         ...(hookFile ? { codexHooks: { hookFile: hookFile.hookFile } } : {}),
         // Round 1 (V2): for the picker, the conversations other tabs are on.
         ...(options?.useResumePicker ? { codexOpenElsewhere: codexConversationsOpenElsewhere(sessionId, launch.lease.accountId) } : {}),
-      })
+        ...(codexCanvas.developerInstructions ? { developerInstructions: codexCanvas.developerInstructions } : {}),
+      }
+      const built = provider.buildSpawnCommand(codexSpawnOptions)
       const { cmd: spawnCmd, args: spawnArgs, env: spawnEnv, commandLine } = built
       // P3.10: a hook file the launch did not use goes at once; one it uses
       // goes with the session's resources. Round 1 (B2): a token nothing will
@@ -4997,10 +5030,13 @@ function spawnPtyResolved(
       const conpty = bundledConptyChoice()
       const conptyNote = conpty.kind === 'bundled' ? ` conpty=bundled (${describePathForLog(conpty.dir)})`
         : conpty.kind === 'system' ? ` conpty=system (${describePathForLog(conpty.reason)})` : ''
-      logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${commandLine ?? spawnArgs.join(' ')} cwd=${describePathForLog(codexCwd)} (resume=${built.resumeId ?? 'none'})${conptyNote}`)
-      // Codex sessions never designate a canvas worktree; drop any inherited
-      // hint, in every spelling (Windows names are case-insensitive).
+      logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${codexLaunchLineForLog(commandLine ?? spawnArgs.join(' '))} cwd=${describePathForLog(codexCwd)} (resume=${built.resumeId ?? 'none'})${conptyNote}`)
+      // WP2 PR 4, P4.1: the worktree CCC designates for the session, told to
+      // its guard as a Claude session's is (ADR-016). Any inherited hint goes
+      // first, in every spelling (Windows names are case-insensitive), and
+      // none is set when the session designates none.
       for (const k of Object.keys(spawnEnv)) if (k.toUpperCase() === 'CCC_SESSION_WORKTREE') delete (spawnEnv as Record<string, string>)[k]
+      if (codexCanvas.designatedWorktree) (spawnEnv as Record<string, string>).CCC_SESSION_WORKTREE = codexCanvas.designatedWorktree
       // Capture timestamp before spawn so the watch-and-claim window starts no later than PTY launch.
       const codexSpawnTimestamp = Date.now()
       codexLaunchedAt = codexSpawnTimestamp
@@ -5040,6 +5076,10 @@ function spawnPtyResolved(
         logInfo(`[pty-manager] Codex PTY for ${sessionId}: the bundled ConPTY failed to start; started on the system ConPTY`)
       }
       if (onBundledConpty) watchBundledConptyEarlyExit(sessionId, started)
+      // WP2 PR 4, P4.1: main's own reading of this run's screen, for the
+      // submit primitive (providers/codex/session-screen.ts), fed below.
+      const codexRun = started
+      if (codexRun) openCodexScreen(sessionId, { cols, rows, write: (data) => codexRun.write(data), current: () => ptySessions.get(sessionId)?.ptyProcess === codexRun })
       ptyProcess.onData((data) => {
         if (win.isDestroyed()) return
         if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) return // rc.15 review R9
@@ -5047,6 +5087,7 @@ function spawnPtyResolved(
         // P3.10 (rows 43, 46): the Watchdog's pane and silence clock, as a
         // Claude session's; a no-op until the session arms one (off by default).
         getWatchdogManager()?.feedData(sessionId, data)
+        feedCodexScreen(sessionId, data)
         win.webContents.send(`pty:data:${sessionId}`, data)
       })
       // P3.12 (row 31): whatever an earlier launch of this session claimed is
@@ -5147,9 +5188,19 @@ function spawnPtyResolved(
       } else {
         registerClaudeReviewSession(sessionId, resolvedCwd)
       }
+      // WP2 PR 4, P4.1 (row 51): the Agent Canvas serving roots, by the
+      // Claude branch's rule (canvas/codex-canvas-roots.ts): the configured
+      // project directory and the designated worktree, never `codexCwd` or any
+      // folder a rollout recorded. killPty's revoke (run before every spawn)
+      // and the session's cleanup clear them. And what this launch carried of
+      // the skills' guidance, for the canvas page's line.
+      registerCodexCanvasRoots(sessionId, resolvedCwd, codexCanvas.designatedWorktree)
+      if (codexCanvas.guidance) noteCodexSessionGuidance(sessionId, codexCanvas.guidance)
+      else forgetCodexSessionGuidance(sessionId)
     } catch (err) {
       // P3.10: a launch that failed keeps no hook file or hooked mark, and
       // (round 1, B2) no gateway token it minted.
+      closeCodexScreen(sessionId)
       if (hookFile) { try { hookFile.dispose() } catch { /* best-effort */ } }
       forgetCodexHooks(sessionId)
       if (tokenMinted) dropGatewayToken(sessionId)
@@ -6262,6 +6313,23 @@ function isSubmittedPayload(data: string): boolean {
 }
 
 /**
+ * WP2 PR 4, P4.1: an Agent Canvas marker line into a session. A Codex
+ * session's goes through the submit primitive (providers/codex/
+ * composer-submit.ts), which types it only at Codex's ready, empty composer
+ * (waiting, within the marker queue's own fallback bound, while a turn runs
+ * or a prompt is up), submits it once it is confirmed on screen, and answers
+ * whether it was delivered: Codex never submits one write of a line and its
+ * Enter (PB3). Claude's keep writeSubmittedLine.
+ */
+export function writeCanvasMarkerLine(sessionId: string, line: string): void | Promise<SubmitTextResult> {
+  if (isCodexPtySession(sessionId)) {
+    if (!hasCodexScreen(sessionId)) return Promise.resolve({ delivered: false, reason: 'session-gone' })
+    return submitCodexText(sessionId, line, { readyWaitMs: MARKER_FALLBACK_FLUSH_MS })
+  }
+  writeSubmittedLine(sessionId, line)
+}
+
+/**
  * #85 — submit a programmatic LINE into a session (the watchdog's retry, the
  * canvas marker queue), leaving tmux copy-mode first when the session is
  * tmux-wrapped.
@@ -6360,6 +6428,8 @@ export function resizePty(sessionId: string, cols: number, rows: number): void {
     getPtyIntegrityMonitor()?.recordResizeApplied(sessionId, cols, rows)
     // Keep the watchdog's rendered pane wrapping like the real one (#266).
     getWatchdogManager()?.noteResize(sessionId, cols, rows)
+    // WP2 PR 4, P4.1: and the submit primitive's pane of a Codex session.
+    resizeCodexScreen(sessionId, cols, rows)
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException)?.code
     if (code === 'EPIPE' || code === 'EIO') {
@@ -6515,6 +6585,11 @@ function cleanupSessionResources(sessionId: string): void {
   // no static import of pty-manager (its PTY end is injected at boot from
   // index.ts), so importing it here introduces no cycle.
   forgetCanvasMarkers(sessionId)
+  // WP2 PR 4, P4.1: the submit primitive's pane of a Codex run goes with it
+  // (a submission still waiting on it reports the session gone, and types
+  // nothing into the next run), and so does the launch's guidance record.
+  closeCodexScreen(sessionId)
+  forgetCodexSessionGuidance(sessionId)
   // SECURITY (adversarial review, FINDING 1): tear the session watchdog down
   // here too, for the identical per-spawn isolation invariant. This runs from
   // BOTH killPty (restart / deliberate close) and the natural-exit cleanup, and

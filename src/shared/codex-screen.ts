@@ -15,6 +15,10 @@
  *  - once a command is typed its popup replaces the footer.
  * P3.10: Codex's "Hooks need review" screens (its startup review of the
  * app's hooks, and the /hooks view it opens) are blocking screens too.
+ * WP2 PR 4, P4.1: so are its MCP approval form and its sandbox set-up menu
+ * (by title as well as footer); and main's submit primitive
+ * (src/main/providers/codex/composer-submit.ts) reads a long paste's
+ * placeholder and the composer's height from here.
  */
 
 /** One row of a terminal's live screen. */
@@ -114,6 +118,13 @@ const BLOCKING_RE = [
   /Hooks need review/i,
   /\bhooks? needs? review before\b/i,
   /Press t to trust/i,
+  // WP2 PR 4, P4.1 (the PR 4 VM probes PB2 and PB4, both versions): Codex's
+  // MCP approval form ('Allow the <server> MCP server to run tool "<name>"?'),
+  // which takes a digit as its answer at once, and the title of its sandbox
+  // set-up menu (its footer above is matched already; the title is defence in
+  // depth for a pane that wraps or clips the footer).
+  /\bAllow the .{1,80}? MCP server to run tool\b/i,
+  /Set up the Codex agent sandbox/i,
 ]
 /** A turn running (its status row). */
 const BUSY_RE = /esc to interrupt/i
@@ -221,6 +232,43 @@ export function codexTextTyped(lines: ScreenLine[] | null | undefined, text: str
   const wrapped = below.slice(0, -1)
   if (!wrapped.every((l) => WRAPPED_ROW_RE.test(l.text))) return false
   return [composerContent(shown[i]), ...wrapped.map((l) => l.text)].join('').replace(/\s+/g, '') === want
+}
+
+/** The placeholder Codex draws in its composer for a long paste: the count is
+ *  the paste's length in code points (PB3, PB9). */
+const PASTED_CONTENT_RE = /^\[Pasted Content (\d{1,7}) chars\]$/
+
+/** WP2 PR 4, P4.1 (PB9): whether the screen shows Codex's paste placeholder
+ *  for exactly `codePoints` at the composer, with nothing in the way: no
+ *  blocking prompt, no turn running, the composer holding only the
+ *  placeholder, and under it only the footer. Codex folds a text into it from
+ *  1,001 code points on, both supported versions, every width probed. */
+export function codexPastedContentShown(lines: ScreenLine[] | null | undefined, codePoints: number, models?: readonly string[] | null): boolean {
+  if (!Number.isInteger(codePoints) || codePoints < 1) return false
+  if (!lines || lines.length === 0 || blocked(lines) || lines.some((l) => BUSY_RE.test(l.text))) return false
+  const shown = lines.filter(nonBlank)
+  const i = composerIndex(shown)
+  if (i < 0) return false
+  const m = PASTED_CONTENT_RE.exec(composerContent(shown[i]))
+  if (!m || Number(m[1]) !== codePoints) return false
+  const below = shown.slice(i + 1)
+  return below.length === 1 && footerRe(models).test(below[0].text)
+}
+
+/** WP2 PR 4, P4.1 (PB9): how many rows the composer takes on screen now, from
+ *  the row with the prompt glyph down to the row above the footer (the rows
+ *  Codex wraps a text onto included), or null when no composer stands on a
+ *  footer. Codex's composer is at most the pane's rows minus 4 high, and a
+ *  taller text scrolls inside it (its first rows hidden), so a composer this
+ *  tall holds a text that cannot be confirmed on screen. */
+export function codexComposerRows(lines: ScreenLine[] | null | undefined, models?: readonly string[] | null): number | null {
+  if (!lines || lines.length === 0) return null
+  const shown = lines.filter(nonBlank)
+  const i = composerIndex(shown)
+  if (i < 0) return null
+  const below = shown.slice(i + 1)
+  if (below.length === 0 || !footerRe(models).test(below[below.length - 1].text)) return null
+  return below.length
 }
 
 /** Codex's Plan mode label, right-aligned in its footer after the folder. */

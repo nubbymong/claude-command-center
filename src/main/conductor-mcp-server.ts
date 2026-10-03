@@ -1104,9 +1104,13 @@ export async function startMcpServer(
     // Agent Canvas: both tools are about the session's OWN canvas — the
     // snapshot reads its rendered page and the render writes to it — so like
     // codex_review they bind to the transport's session id and refuse a
-    // model-supplied one (#188). Not advertised to Codex, which connects without
-    // a bound session id — every call would refuse, so offering it is a lie.
-    if (source !== 'codex' && toolOn('canvas')) {
+    // model-supplied one (#188). WP2 PR 4, P4.1 (row 51): offered to a Codex
+    // session too. Its /mcp connection is bound to its session by the same
+    // per-session credential a Claude connection presents (`boundSessionId =
+    // authedSession` on the /mcp route), and the serving rule is keyed on that
+    // session id and checks no provider (canvas-store, ADR-016, ADR-017), so a
+    // Codex session's canvas is its own exactly as a Claude session's is.
+    if (toolOn('canvas')) {
       registerCanvasTools(server, z, () => boundSessionId, {
         getCanvasState: (sessionId: string) => getCanvasStateForSession(sessionId),
         // canvas_snapshot only: follows the agent's drafting canvas while a

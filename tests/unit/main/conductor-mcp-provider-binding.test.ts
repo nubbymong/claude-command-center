@@ -40,6 +40,7 @@ vi.mock('../../../src/main/ipc/setup-handlers', () => {
 })
 
 const server = await import('../../../src/main/conductor-mcp-server')
+const { CODEX_CONDUCTOR_TOOLS, CANVAS_TOOL_NAMES } = await import('../../../src/main/providers/codex/conductor-tools')
 
 let port = 0
 beforeAll(async () => {
@@ -132,6 +133,28 @@ describe('SSE route: the tool set follows the issued provider', () => {
       for (const name of CLAUDE_ONLY) expect(tools).not.toContain(name)
     },
   )
+
+  // WP2 PR 4, P4.1 (row 51): the Agent Canvas tools reach a Codex session
+  // too: its connection is bound to its session by its own credential, as a
+  // Claude one is, and the serving rule is keyed on that session id.
+  it('serves a Codex session the Agent Canvas tools', async () => {
+    const token = server.issueMcpSessionToken('pb-codex-canvas', 'codex')
+    const tools = await toolsOffered('pb-codex-canvas', token)
+    for (const name of CANVAS_TOOL_NAMES) expect(tools).toContain(name)
+  })
+
+  // The table a Codex launch's per-preset approvals read
+  // (providers/codex/conductor-tools.ts) is held to what a Codex connection
+  // really lists: no tool is offered that it does not name.
+  it('every tool a Codex connection is offered is in the launch\'s tool table', async () => {
+    const token = server.issueMcpSessionToken('pb-codex-table', 'codex')
+    const tools = await toolsOffered('pb-codex-table', token)
+    const table = CODEX_CONDUCTOR_TOOLS.map((t) => t.name)
+    expect(tools.filter((t) => !table.includes(t))).toEqual([])
+    // ...and, with every switch on, it names nothing the connection lacks
+    // but claude_review, which also waits on a ready Claude review.
+    expect(table.filter((t) => !tools.includes(t) && t !== 'claude_review')).toEqual([])
+  })
 
   it('serves the latest issue: a session re-issued as Codex gets the Codex set', async () => {
     server.issueMcpSessionToken('pb-reissued', 'claude')
