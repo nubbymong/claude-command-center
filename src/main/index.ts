@@ -7,7 +7,7 @@ import { createSplashWindow, closeSplashWindow, SPLASH_MIN_MS, SPLASH_POST_READY
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerAccountWebHandlers } from './ipc/account-web-handlers'
 import { sweepAbandonedProfiles } from './account-web/sign-in'
-import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine, routeHookTranscriptPath, noteCodexHookEvent, isCodexPtySession, codexRolloutForSessionContext, applyLoggingSwitches } from './pty-manager'
+import { killAllPty, gracefulExitAllPty, isSessionWritable, writePty, writeSubmittedLine, writeCanvasMarkerLine, routeHookTranscriptPath, noteCodexHookEvent, isCodexPtySession, codexRolloutForSessionContext, applyLoggingSwitches } from './pty-manager'
 import { registerResumeHandlers } from './ipc/resume-handlers'
 import { registerCliHandlers } from './ipc/cli-handlers'
 import { registerClipboardHandlers } from './ipc/clipboard-handlers'
@@ -904,9 +904,18 @@ if (!gotTheLock) {
     // Both ends are injected here so the canvas IPC module needs no static
     // import of pty-manager or the gateway (see canvas-marker-delivery.ts).
     startCanvasMarkerQueue({
-      // The same submit shape every other programmatic line into the Claude TUI
-      // uses (the watchdog retry, the command buttons, the launch line).
-      write: (sessionId, line) => writeSubmittedLine(sessionId, line),
+      // A Claude session's marker: the same submit shape every other
+      // programmatic line into the Claude TUI uses (the watchdog retry, the
+      // command buttons, the launch line). WP2 PR 4, P4.1: a Codex session's
+      // goes through the submit primitive (writeCanvasMarkerLine), which
+      // answers later whether it was delivered.
+      write: (sessionId, line) => writeCanvasMarkerLine(sessionId, line),
+      // P4.1: a Codex marker the primitive did not deliver is shown on the
+      // canvas, on the review it belongs to.
+      onUndelivered: (u) => {
+        const w = getWindow()
+        if (w && !w.isDestroyed()) w.webContents.send(IPC.CANVAS_AGENT_MARKER_UNDELIVERED, u)
+      },
       subscribe: (cb) => {
         const gw = getGateway()
         if (!gw) return
