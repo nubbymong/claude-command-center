@@ -97,13 +97,16 @@ stay `planned`, and the e2e mode matrix lives in its own record
 
 ## 4. Verification owed by the 20 DONE rows (PR 4, P4.10)
 
-Twenty parity rows are DONE with an automated test on the Codex path and owe
-only real-CLI, per-OS or packaged verification (`docs/wp2/completion-plan.md`
-section 2): rows 1, 2, 3, 4, 6, 9, 12, 13, 18, 21, 23, 25, 27, 29, 33, 48, 49,
-50, 64 and 74. PR 4 records their Windows column; macOS, Linux and the signed
-packaged build close at release (completion plan section 7). This section is
-the map, not the evidence: every check below is still owed, and each is run on
-PR 4's final head (P4.10 runs last) and recorded in the file named.
+20 of the 52 DONE parity rows (75 rows in all; of the other DONE rows, 27 owe
+PR 3's VM checks and 5 owe nothing) have an automated test on the Codex path
+and owe only real-CLI, per-OS or packaged verification
+(`docs/wp2/completion-plan.md` section 2): rows 1, 2, 3, 4, 6, 9, 12, 13, 18,
+21, 23, 25, 27, 29, 33, 48, 49, 50, 64 and 74. PR 4 records their Windows
+column, and OR1 records rows 4 and 6 on macOS and Linux as well; the other
+rows' macOS and Linux columns and the signed packaged build close at release.
+This section is the map, not the evidence: every check below is still owed,
+and each is run on PR 4's final head (P4.10 runs last) and recorded in the file
+named.
 
 Who runs each check:
 
@@ -114,52 +117,60 @@ Who runs each check:
   menu answered only on a verified "2." row; `config.toml` hashed before and
   after every writable step; the VM user's own `~/.codex` never started or
   written).
-- **OR1**: the owner, on real accounts and the owner's hosts (two disposable
-  ChatGPT identities and a throwaway OpenAI API key; OD20 D8, before merge).
+- **OR1**: the owner, on real accounts on the owner's hosts, one per OS
+  (Windows, macOS, and Linux Ubuntu 24.04 or newer), with two disposable
+  ChatGPT identities and a throwaway OpenAI API key, on PR 4's final build.
+  These checks block merging PR 4, not building it (OD20 D8; plan 9.5).
 - **OR4**: the owner, with a working model.
 - **Release**: nothing owed on Windows; the row closes at release.
 
 Where each check is recorded:
 
 - `docs/wp1/evidence/real-cli-matrix.md` (P4.10 writes it; cited by WP1.2,
-  WP1.10, WP1.20, WP1.32, WP1.64, WP1.71): one part for the WP1 items, one
-  part for the parity rows below that no WP1 item covers (13, 18, 21, 27, 29,
-  48, 49, 50, 64, 74), each with the head, the CLI version and route, the
-  actor and the commands.
+  WP1.10, WP1.20, WP1.32, WP1.64, WP1.71), in two parts: the item part, for
+  the checks a citing item claims (rows 2, 3, 4, 6, 9, 25, 33 and 49), and the
+  no-item part, for the checks no citing item claims (rows 1, 12, 13, 18, 21,
+  23, 27, 29, 48, 50, 64 and 74). Each entry gives the CLI version and route,
+  the actor and the commands.
+  The WP1 items column below names the items a row relates to; an item's
+  evidence record covers a check only where the item cites the file.
 - `docs/wp1/evidence/keyring-smoke.md` (P4.10, OR1; WP1.11, WP1.72).
 - `docs/wp1/evidence/packaged-smoke.md` (P4.10, from the owner's packaged smoke
   of the PR 4 build; WP1.63 stays `planned` until the signed release run).
 - `docs/wp1/evidence/ci-matrix.md` and `mode-matrix.md` (lane E, P4.8 and
   P4.9).
+- Every evidence file names the full 40-hex head its checks ran on, and its
+  record in `tests/wp1/traceability.json` gives the same head, which must be
+  the binding's `boundHead` (`tests/wp1/traceability.test.ts`).
 - The result also goes on the row itself, in `docs/wp2/parity-checklist.md`
   and section 4 of the completion plan (the integration owner).
 
-| Row | Feature | Windows check owed in PR 4 | Who | Recorded in | WP1 items | Left for release |
+| Row | Feature | Check owed in PR 4 (Windows unless an OS is named) | Who | Recorded in | WP1 items | Left for release |
 |---|---|---|---|---|---|---|
-| 1 | Provider on/off, "not set up", last provider on | With the real CLI at 0.153.4 and 0.155.1: an unanswered Codex starts nothing; Codex off refuses its configs and restored tabs with the off wording; the last provider on cannot be turned off | VM agent | `real-cli-matrix.md`; the fake-CLI e2e side in `mode-matrix.md` (P4.9) | WP1.1, WP1.3, WP1.6, WP1.7, WP1.60 | Packaged on a clean machine per OS (`packaged-smoke.md`, WP1.63); macOS, Linux |
+| 1 | Provider on/off, "not set up", last provider on | With the real CLI at 0.153.4 and 0.155.1: an unanswered Codex starts nothing; Codex off refuses its configs and restored tabs with the off wording; the last provider on cannot be turned off | VM agent | `real-cli-matrix.md` (no-item part); the fake-CLI e2e side in `mode-matrix.md` (P4.9) | WP1.1, WP1.3, WP1.6, WP1.7, WP1.60 | Packaged on a clean machine per OS (`packaged-smoke.md`, WP1.63); macOS, Linux |
 | 2 | CLI detect and version classes | The minimum 0.153.4 and the pinned 0.155.1 detected and classed on both install routes (the `codex.exe` each npm install ships, and its `.cmd` shim); per OS also from P4.8's real-CLI job | VM agent; CI (P4.8) | `real-cli-matrix.md`; `ci-matrix.md` | WP1.17, WP1.44, WP1.49, WP1.71 (minimum and pinned) | The release-candidate CLI (WP1.71); macOS, Linux |
 | 3 | Install and update | None on Windows (the 2026-09-26 upgrade walk ran the npm install and the npm update there) | Release | `real-cli-matrix.md`, at release | WP1.18, WP1.19, WP1.32 | One real install per OS on macOS and Linux; Homebrew unrun |
-| 4 | Sign-in (browser, API key) | A real API-key sign-in and sign-out on a managed account (the browser sign-in was done on Windows by the owner, 0.157.1) | OR1 | `real-cli-matrix.md` | WP1.20, WP1.22, WP1.23, WP1.64 | Sign-in, status and sign-out on macOS and Linux |
-| 6 | Multiple isolated accounts | A real two-account run: each disposable identity signs in to its own folder, and status and sign-out of one leave the other untouched; the native keyring scoping | OR1 | `real-cli-matrix.md` (WP1.10); `keyring-smoke.md` (WP1.11, WP1.72) | WP1.10, WP1.11, WP1.72 | macOS (the login keychain), Linux |
+| 4 | Sign-in (browser, API key) | On Windows, macOS and Linux: a real sign-in with a disposable ChatGPT identity and with the API key, status and sign-out, on a managed account (the owner's browser sign-in on Windows, 0.157.1, predates the final build) | OR1 | `real-cli-matrix.md` | WP1.20, WP1.22, WP1.23, WP1.64 | None: OR1 closes every OS before merge |
+| 6 | Multiple isolated accounts | On Windows, macOS and Linux: a real two-account run (each disposable identity signs in to its own folder, and status and sign-out of one leave the other untouched) and the native keyring smoke on that OS's own credential store | OR1 | `real-cli-matrix.md` (WP1.10); `keyring-smoke.md` (WP1.11, WP1.72) | WP1.10, WP1.11, WP1.72 | None: OR1 closes every OS before merge |
 | 9 | Launch and resume in the exact account | A tab restored after a relaunch keeps its managed account and resumes in that account's folder, on 0.153.4 and 0.155.1 | VM agent | `real-cli-matrix.md` | WP1.2, WP1.38, WP1.42 | macOS, Linux |
-| 12 | Upgrade question and the read-only sign-in check | The check of this computer's sign-in (a throwaway `CODEX_HOME` standing in for `~/.codex`) and "Use this sign-in" on 0.153.4 and 0.155.1, with the CLI's own scratch writes under `tmp/` recorded on 0.155.1 | VM agent | `real-cli-matrix.md` | WP1.5, WP1.43 | macOS, Linux; the upgrade walk again on the signed release candidate |
-| 13 | Hello Codex | On the final build (P4.1 and P4.2 change its copy): shown after Set up Codex once a managed account is signed in, marked seen, not shown on relaunch, replayed from Accounts and from the Feature Guide | VM agent | `real-cli-matrix.md` (parity part); the owner's screenshot review | none (HCS; `hello-codex.acceptance.test.ts`) | macOS, Linux |
-| 18 | Session-strip meters | A 0.155.1 rollout fixture taken from a real session (OD27 M3), and a real-CLI run with a working model | OR4 | `real-cli-matrix.md` (parity part); the fixture beside the strip's tests | none | macOS, Linux |
-| 21 | Multi-account footer | Two managed accounts live at once on the packaged PR 4 build with the real CLI, the fake model sending usage headers: one pill per identity, grouped by provider | VM agent | `real-cli-matrix.md` (parity part) | none | Packaged on macOS and Linux |
-| 23 | Choose the account at launch | The new-config picker on a managed account (no confirmation) and on this computer's sign-in (a throwaway `CODEX_HOME`; the per-launch confirmation), on 0.153.4 and 0.155.1 | VM agent | `real-cli-matrix.md` | WP1.38, WP1.42 | macOS, Linux |
+| 12 | Upgrade question and the read-only sign-in check | The check of this computer's sign-in (a throwaway `CODEX_HOME` standing in for `~/.codex`) and "Use this sign-in" on 0.153.4 and 0.155.1, with the CLI's own scratch writes under `tmp/` recorded on 0.155.1 | VM agent | `real-cli-matrix.md` (no-item part) | WP1.5, WP1.43 | macOS, Linux; the upgrade walk again on the signed release candidate |
+| 13 | Hello Codex | On the final build (P4.1 and P4.2 change its copy): shown after Set up Codex once a managed account is signed in, marked seen, not shown on relaunch, replayed from Accounts and from the Feature Guide | VM agent | `real-cli-matrix.md` (no-item part); the owner's screenshot review | none (HCS; `hello-codex.acceptance.test.ts`) | macOS, Linux |
+| 18 | Session-strip meters | A 0.155.1 rollout fixture taken from a real session (OD27 M3), and a real-CLI run with a working model | OR4 | `real-cli-matrix.md` (no-item part); the fixture beside the strip's tests | none | macOS, Linux |
+| 21 | Multi-account footer | Two managed accounts live at once on the packaged PR 4 build with the real CLI, the fake model sending usage headers: one pill per identity, grouped by provider | VM agent | `real-cli-matrix.md` (no-item part) | none | Packaged on macOS and Linux |
+| 23 | Choose the account at launch | The new-config picker on a managed account (no confirmation) and on this computer's sign-in (a throwaway `CODEX_HOME`; the per-launch confirmation), on 0.153.4 and 0.155.1 | VM agent | `real-cli-matrix.md` (no-item part) | WP1.38, WP1.42 | macOS, Linux |
 | 25 | Tokenomics reads managed realms and `~/.codex` | Real rollouts copied read-only from the VM user's `~/.codex/sessions` into a throwaway home (no Codex started there), indexed beside a managed realm's fake-model rollouts, each turn priced once | VM agent | `real-cli-matrix.md` | WP1.2 (`tokenomics-realm-discovery.test.ts`) | macOS, Linux |
-| 27 | Subagent collision | A 0.155.1 subagent rollout indexed without a collision (the #307 fix, `7fc96639`), if the fake model can drive a subagent; otherwise from a real session | VM agent, else OR4 | `real-cli-matrix.md` (parity part) | none | macOS, Linux |
-| 29 | Plan type | None on Windows (the MP8 VM walk showed the plan on 0.153.4 and 0.155.1) | Release | `real-cli-matrix.md`, at release | none | macOS, Linux, packaged |
+| 27 | Subagent collision | A 0.155.1 subagent rollout indexed without a collision (the #307 fix, `7fc96639`), if the fake model can drive a subagent; otherwise from a real session | VM agent, else OR4 | `real-cli-matrix.md` (no-item part) | none | macOS, Linux |
+| 29 | Plan type | None on Windows (the MP8 VM walk showed the plan on 0.153.4 and 0.155.1) | Release | `real-cli-matrix.md` (no-item part), at release | none | macOS, Linux, packaged |
 | 33 | Resume in the exact realm | Two managed accounts with a conversation each: the second account's picker never lists the first's, on 0.153.4 and 0.155.1 | VM agent | `real-cli-matrix.md` | WP1.2, WP1.38 | macOS, Linux |
-| 48 | Conductor MCP transport | A live 0.155.1 tool listing of the Conductor MCP server through Codex's tool search, on the final build (P4.1 and P4.2 add tools) | VM agent | `real-cli-matrix.md` (parity part) | WP1.68 | macOS, Linux |
-| 49 | `codex_review` | A real run on a signed-in account with a working model | OR4 | `real-cli-matrix.md` (parity part) | WP1.64 | macOS, Linux |
-| 50 | `claude_review` | A live wait past 300 s, with the stand-in Claude if it can hold a review that long; otherwise a real one | VM agent, else OR4 | `real-cli-matrix.md` (parity part) | none | macOS, Linux |
-| 64 | Partner terminal wording | On a live Codex tab (real CLI) and a Claude tab (the stand-in Claude), the strip names the tab's assistant; at a narrow window the label clears the floating GitHub button (P3.7's fix, `b1cffc71`) | VM agent | `real-cli-matrix.md` (parity part); the owner's screenshot review | none | macOS, Linux |
-| 74 | Command buttons, preset pill, restart menu, theme | The real-CLI pass on 0.153.4 and 0.155.1: a command button's text reaches Codex, the preset pill, Restart and Restart and pick a conversation, light and dark themes | VM agent | `real-cli-matrix.md` (parity part); the owner's screenshot review | none | macOS, Linux |
+| 48 | Conductor MCP transport | A live 0.155.1 tool listing of the Conductor MCP server through Codex's tool search, on the final build (P4.1 and P4.2 add tools) | VM agent | `real-cli-matrix.md` (no-item part) | none (WP1.68's per-spawn MCP outcome is evidenced by the ledger) | macOS, Linux |
+| 49 | `codex_review` | A real run on a signed-in account with a working model | OR4 | `real-cli-matrix.md` (WP1.64) | WP1.64 | macOS, Linux |
+| 50 | `claude_review` | A live wait past 300 s, with the stand-in Claude if it can hold a review that long; otherwise a real one | VM agent, else OR4 | `real-cli-matrix.md` (no-item part) | none | macOS, Linux |
+| 64 | Partner terminal wording | On a live Codex tab (real CLI) and a Claude tab (the stand-in Claude), the strip names the tab's assistant; at a narrow window the label clears the floating GitHub button (P3.7's fix, `b1cffc71`) | VM agent | `real-cli-matrix.md` (no-item part); the owner's screenshot review | none | macOS, Linux |
+| 74 | Command buttons, preset pill, restart menu, theme | The real-CLI pass on 0.153.4 and 0.155.1: a command button's text reaches Codex, the preset pill, Restart and Restart and pick a conversation, light and dark themes | VM agent | `real-cli-matrix.md` (no-item part); the owner's screenshot review | none | macOS, Linux |
 
 Counts: VM agent 12 rows (1, 2, 9, 12, 13, 21, 23, 25, 33, 48, 64, 74), and
-rows 27 and 50 when the fake model can make their evidence; OR1 2 rows (4, 6);
-OR4 2 rows (18, 49), and rows 27 and 50 otherwise; nothing on Windows for 2
-rows (3, 29). The items only the release can evidence stay `planned` with that
-reason: the signed packaged smoke (row 66, WP1.63), the release-candidate CLI
-(WP1.71) and this file's section 3 (WP1.37).
+rows 27 and 50 when the fake model can make their evidence; OR1 2 rows (4, 6),
+on every OS; OR4 2 rows (18, 49), and rows 27 and 50 otherwise; nothing on
+Windows for 2 rows (3, 29). The items only the release can evidence stay
+`planned` with that reason: the signed packaged smoke (row 66, WP1.63), the
+release-candidate CLI (WP1.71) and this file's section 3 (WP1.37).
