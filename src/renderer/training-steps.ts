@@ -44,9 +44,10 @@ export interface TrainingStep {
    *  WhatsNewV2Step's needsClaude hides a line). The phase that brings the
    *  feature to Codex lifts it (Insights: P4.7). */
   needsClaude?: boolean
-  /** P4.11: the card is about Codex, so it is not shown while Claude Code is
-   *  the only assistant in use (OD27 M1 D5: a provider that is off shows
-   *  nothing). */
+  /** P4.11: the card is about something that needs Codex as well (Code
+   *  review needs both), so it is not shown while Claude Code is the only
+   *  assistant in use. The Codex card itself stays, as What's New keeps its
+   *  Codex lines for a Claude-only user (P4.11 review, P411-2). */
   needsCodex?: boolean
   /** P4.11: the card's copy while Codex is the only assistant in use, for a
    *  card that also holds lines about Claude Code only; each field given
@@ -257,7 +258,6 @@ export const trainingSteps: TrainingStep[] = [
     title: 'Codex Provider',
     sinceVersion: '1.5.0',
     section: 'integrations',
-    needsCodex: true,
     summary:
       "OpenAI's Codex CLI runs beside Claude, or on its own. A saved config picks Codex and the Codex account it runs under; the models the supported Codex versions offer, permission presets with Plan mode, the resume picker, Logs, Switch Account and Tokenomics by account are all wired in.",
     highlights: [
@@ -892,7 +892,8 @@ export const trainingSteps: TrainingStep[] = [
 /** The cards for the assistants in use, each with its copy for that mode
  *  (P4.11, row 14), for the Feature Guide and the Feature tour. With Codex
  *  alone, a card that needs Claude Code is not shown and a card with copy for
- *  that mode shows it; with Claude Code alone, a Codex card is not shown; with
+ *  that mode shows it; with Claude Code alone, a card that needs Codex as well
+ *  is not shown; with
  *  both on, or neither (a state setup never leaves), every card as written. */
 export function stepsForAssistants(steps: readonly TrainingStep[], only: OnlyAssistant): TrainingStep[] {
   if (only === 'codex') return steps.filter((s) => !s.needsClaude).map((s) => (s.withoutClaude ? { ...s, ...s.withoutClaude } : s))

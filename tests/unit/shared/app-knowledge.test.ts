@@ -602,6 +602,10 @@ describe('the PR 4 user-facing sweep (P4.11)', () => {
   // The policy wraps its lines, so phrases are matched with the wrapping undone.
   const privacy = fs.readFileSync(path.join(root, 'PRIVACY.md'), 'utf8').replace(/\s+/g, ' ')
 
+  it('the Feature Guide filter is said where Ask Conductor reads it (review P411C-10, P411-2)', () => {
+    expect(body('providers')).toMatch(/The Feature Guide and its tour show the cards for the assistants you use: with Codex alone, the cards for features that need Claude Code \(Dynamic Workflows, Multiple Accounts and Insights\) and Code review are not shown, and with Claude Code alone, Code review is not shown, since it needs both\./)
+  })
+
   it('Artifacts: shown for an SSH Claude session signed in as a local account too, not only a local one', () => {
     expect(body('draw')).toMatch(/it appears for a Claude session signed into one of your accounts here, a local session or an SSH session signed in as an account you also use on this computer, and uses that account/)
     expect(body('draw')).not.toMatch(/appears for a local Claude session signed into an account/)
@@ -661,6 +665,7 @@ describe('What\'s New after PR 4 (P4.11)', () => {
       /A Codex tab's right-click menu no longer offers Claude's claude\.ai items/,
       /Codex is no longer marked Beta/,
       /The Feature Guide and its tour show the cards for the assistants you use/,
+      /with Claude Code alone, Code review is not shown, since it needs both/,
       /Claude Opus 5\.5 and Claude Sonnet 5\.5 are in the model picker/,
       /The Usage page's Updated line now ages while the page stays open/,
       /now says 1 note, not 1 notes/,

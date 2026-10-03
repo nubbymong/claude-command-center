@@ -7,9 +7,10 @@
  * Verifies:
  *   - a card about something only Claude Code has in this release (Dynamic
  *     Workflows, Multiple Accounts, Insights until P4.7, and Code review, which
- *     needs both) is not shown while Codex is the only assistant in use, and a
- *     Codex card (and Code review) is not shown while Claude Code is the only
- *     one; with both on every card shows, as written;
+ *     needs both) is not shown while Codex is the only assistant in use; with
+ *     Claude Code alone only Code review goes, and the Codex card stays, as
+ *     What's New shows its Codex lines (P4.11 review, P411-2); with both on
+ *     every card shows, as written;
  *   - with Codex alone, no line a shown card holds names Claude unless it
  *     names Codex too (a line about both assistants), and the cards that hold
  *     Claude-only lines show their copy for that mode;
@@ -61,11 +62,11 @@ describe('stepsForAssistants', () => {
     for (const id of ['codex-provider', 'provider-accounts', 'ask-conductor', 'vision', 'agent-canvas', 'excalidraw', 'snap', 'memory-visualiser', 'settings']) expect(shown, id).toContain(id)
   })
 
-  it('Claude Code alone: the Codex card and Code review go, every other card stays', () => {
+  it('Claude Code alone: only Code review goes (it needs both); the Codex card stays, as before', () => {
     const shown = ids(shownFor(CLAUDE_ONLY))
-    expect(shown).not.toContain('codex-provider')
+    expect(shown).toContain('codex-provider')
     expect(shown).not.toContain('code-review')
-    expect(shown).toEqual(ids(trainingSteps).filter((id) => id !== 'codex-provider' && id !== 'code-review'))
+    expect(shown).toEqual(ids(trainingSteps).filter((id) => id !== 'code-review'))
     // Claude Code alone shows each card as written.
     for (const s of shownFor(CLAUDE_ONLY)) expect(s).toBe(trainingSteps.find((t) => t.id === s.id))
   })
@@ -163,13 +164,13 @@ describe('the Feature Guide page', () => {
     expect(cardShown('dynamic-workflows')).toBe(false)
   })
 
-  it('Claude Code alone: Integrations shows no Codex card and no Code review card; both on shows them', async () => {
+  it('Claude Code alone: Integrations shows the Codex card and no Code review card; both on shows both', async () => {
     setProviders(CLAUDE_ONLY)
     await guide()
     await open('integrations')
-    expect(cardShown('codex-provider')).toBe(false)
+    expect(cardShown('codex-provider')).toBe(true)
     expect(cardShown('code-review')).toBe(false)
-    expect(container.querySelector('[data-ux-id="section-hero"]')!.textContent).not.toMatch(/Codex/)
+    expect(container.querySelector('[data-ux-id="section-hero"]')!.textContent).toMatch(/Codex, browser automation, agents, GitHub and the Agent Canvas/)
     act(() => { root.unmount() })
     root = createRoot(container)
     setProviders(BOTH)
