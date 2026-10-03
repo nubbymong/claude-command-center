@@ -60,7 +60,12 @@ describe('the fresh Codex folder of one run', () => {
       expect(removeCompatHome(other)).toBe(false)
       expect(fs.existsSync(other)).toBe(true)
       expect(removeCompatHome(path.join(other, `${COMPAT_HOME_PREFIX}x`))).toBe(false)
-      expect(removeCompatHome(path.join(os.homedir(), '.codex'))).toBe(false)
+      // A home-like folder outside its own prefix (a decoy: the real home is
+      // never handed to the remover, even to be refused).
+      const decoyHome = path.join(other, '.codex')
+      fs.mkdirSync(decoyHome)
+      expect(removeCompatHome(decoyHome)).toBe(false)
+      expect(fs.existsSync(decoyHome)).toBe(true)
     } finally {
       fs.rmSync(other, { recursive: true, force: true })
     }

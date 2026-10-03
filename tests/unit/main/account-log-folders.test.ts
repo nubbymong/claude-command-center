@@ -210,10 +210,21 @@ describe('debug:openAccountLogFolder -- what a folder must be', () => {
   it('the name rule: any folder name ending in .{...}, trailing dots and spaces set aside; nothing else', () => {
     for (const p of ['C:\\a\\x.{g}', 'C:\\x.{g}\\a', 'C:\\a\\x.{g}.', 'C:\\a\\x.{g} . \\b', 'C:/a/x.{}/b', 'x.{g}']) expect(hasShellObjectName(p), p).toBe(true)
     for (const p of ['C:\\a\\x{g}', 'C:\\a\\{g}', 'C:\\a\\x.{g}y', 'C:\\a\\x.g}', 'C:\\a\\logs', 'C:\\a.{b\\c}']) expect(hasShellObjectName(p), p).toBe(false)
-    // One pass: a long name is decided at once.
-    const t0 = performance.now()
-    expect(hasShellObjectName(`C:\\${'.{'.repeat(200_000)}x`)).toBe(false)
-    expect(performance.now() - t0).toBeLessThan(500)
+    // One pass: four times the path takes under eight times as long (growth,
+    // not wall-clock time, so a loaded machine does not fail it).
+    const longPath = (n: number) => `C:\\${'{x}\\'.repeat(n)}${'.{'.repeat(n)}y${' .'.repeat(n)}`
+    const time = (p: string): number => {
+      let best = Infinity
+      for (let i = 0; i < 3; i++) {
+        const t0 = performance.now()
+        expect(hasShellObjectName(p)).toBe(false)
+        best = Math.min(best, performance.now() - t0)
+      }
+      return best
+    }
+    const t1 = time(longPath(50_000))
+    const t4 = time(longPath(200_000))
+    expect(t4 / Math.max(t1, 1), `${t1.toFixed(2)} ms, then ${t4.toFixed(2)} ms`).toBeLessThan(8)
   })
 
   it('a log_dir with no way to reveal it, or whose reveal throws, is refused and never opened', async () => {

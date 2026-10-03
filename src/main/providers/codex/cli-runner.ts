@@ -27,8 +27,9 @@
 // the run lets go only once that kill has finished. Nothing is killed by pid
 // once the root has exited: its pid may have been reused; an exec run stopped
 // as a tree (scope 'tree') then ends only what the records taken while it ran
-// prove is left of it, as its own exit does (CodexKillTree.leftovers; on
-// Windows, since on POSIX the stop has signalled the run's group). At app
+// prove is left of it, as its own exit does (CodexKillTree.leftovers; on POSIX
+// only when the stop did not signal the run's group, its root having exited
+// before the kill could). At app
 // quit, kills still reading kill what they know at once, an exec run's its
 // whole tree and, on Windows, what its records prove is left
 // (flushPendingCodexKills). See runCodexCli and makeCodexKillTree.
@@ -263,6 +264,9 @@ export type CodexKillTree = ((child: ChildProcess, opts?: { scope?: CodexKillSco
    *  records prove is left of the run (see makeCodexKillTree). Never
    *  rejects. */
   leftovers?: (child: ChildProcess, window: CodexRunWindow) => Promise<void>
+  /** POSIX: whether a tree kill of this run signalled its process group
+   *  (only while its root ran). Absent: never. */
+  groupSignalled?: (child: ChildProcess) => boolean
 }
 
 /** Why a run is read (round 4): the scheduled reads stop once two of them
@@ -652,6 +656,8 @@ export function makeCodexKillTree(
   // Round 3: what the reads taken while an observed run ran proved is its.
   type Observed = { since: number; members: Map<string, CodexRunMember>; reads: number; inFlight: Set<Promise<void>>; quietScheduled: number }
   const observed = new WeakMap<ChildProcess, Observed>()
+  // The runs whose group a tree kill signalled (POSIX).
+  const signalledGroups = new WeakSet<ChildProcess>()
   /** A table and when the read that gave it began. */
   type Answer = { table: CodexProcessEntry[]; started: number }
   const bounded = <T>(p: Promise<T>, ms: number): Promise<T | null> => new Promise((resolve) => {
@@ -708,7 +714,7 @@ export function makeCodexKillTree(
         k.on('exit', (code) => { if (code !== 0) killRoot(child); resolve() })
       })
     } else {
-      if (scope === 'tree' && running(child) && child.pid) { try { killGroup(child.pid) } catch { /* the pids below still go */ } }
+      if (scope === 'tree' && running(child) && child.pid) { signalledGroups.add(child); try { killGroup(child.pid) } catch { /* the pids below still go */ } }
       for (const p of pids) { try { process.kill(p, 'SIGKILL') } catch { /* already gone */ } }
     }
   }
@@ -798,6 +804,7 @@ export function makeCodexKillTree(
     r.inFlight.add(reading)
     void reading.finally(() => { r.inFlight.delete(reading) })
   }
+  kill.groupSignalled = (child) => signalledGroups.has(child)
   kill.leftovers = async (child, window) => {
     try {
       const pid = child.pid
@@ -1125,15 +1132,19 @@ export function runCodexCli(cmd: CodexCommand, opts: CodexRunOptions, deps: Code
       let killDone = false
       const killEnded = killed.then(() => { killDone = true }, () => { killDone = true })
       const rootGone = new Promise<void>((res) => { if (exited !== undefined) res(); else c.once('exit', () => res()) })
-      // A tree stop on Windows then ends what the records taken while the run
-      // ran prove is left of it, for the root's own lifetime, as the run's
-      // own exit does (settleExited): a process whose parent had exited is
-      // not below the root, so the kill above does not reach it. Within the
-      // same bound. Not on POSIX: there the stop has signalled the run's
-      // group while its root ran, and once the root is reaped its id no
-      // longer vouches for a group.
-      const ended: Promise<unknown> = scope === 'tree' && deps.platform === 'win32' && deps.killTree.leftovers
-        ? Promise.all([killEnded, rootGone]).then(() => deps.killTree.leftovers?.(c, { since: spawnedAt, until: exitedAt })).then(() => undefined, () => undefined)
+      // A tree stop then ends what the records taken while the run ran prove
+      // is left of it, for the root's own lifetime, as the run's own exit
+      // does (settleExited), within the same bound. On Windows always: a
+      // process whose parent had exited is not below the root, so the kill
+      // above does not reach it. On POSIX only when the kill did not signal
+      // the run's group, its root having exited first (while the kill read
+      // the table): the step then signals the group only while a process its
+      // records saw still runs, as at the run's own exit; a stop that did
+      // signal the group runs no second signal at a reaped root's id.
+      const ended: Promise<unknown> = scope === 'tree' && deps.killTree.leftovers
+        ? Promise.all([killEnded, rootGone])
+          .then(() => (deps.platform === 'win32' || !deps.killTree.groupSignalled?.(c) ? deps.killTree.leftovers?.(c, { since: spawnedAt, until: exitedAt }) : undefined))
+          .then(() => undefined, () => undefined)
         : Promise.all([killEnded, rootGone])
       let bound: ReturnType<typeof setTimeout> | null = null
       const bounded = new Promise<void>((res) => { bound = setTimeout(res, CODEX_KILL_SETTLE_MS) })
