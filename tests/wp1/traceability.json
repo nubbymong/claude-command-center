@@ -394,7 +394,6 @@
       "title": "Corrupt source or destination metadata fails closed without credential loss",
       "kind": "automated",
       "tests": [
-        "tests/wp1/migration-interruption.test.ts",
         "tests/wp1/registry-store.test.ts",
         "tests/wp1/registry-fs-port.test.ts"
       ],
@@ -1020,7 +1019,8 @@
       "title": "The fake CLI has a versioned oracle manifest from pinned docs/source and sanitised real observations; self-tests compare real/fake",
       "kind": "automated",
       "tests": [
-        "tests/wp1/fake-cli.test.ts"
+        "tests/wp1/fake-cli.test.ts",
+        "tests/wp1/fake-cli-oracle.test.ts"
       ],
       "evidence": [
         "tests/wp1/fake-cli/oracle.json"
