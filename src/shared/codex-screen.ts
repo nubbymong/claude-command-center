@@ -292,3 +292,28 @@ export function codexPlanModeOnScreen(lines: ScreenLine[] | null | undefined, mo
   if (footer.width !== undefined && footer.end !== undefined && footer.end !== footer.width - PLAN_MODE_RIGHT_MARGIN) return false
   return true
 }
+
+/**
+ * WP2 PR 4, P4.3 (section 10 question 6, default A): the text Codex's prompt
+ * keeps, and how many characters it would have dropped. Codex's composer
+ * drops every character outside the Basic Multilingual Plane (emoji, some
+ * rare CJK, mathematical letters) on both supported versions, written plainly
+ * or as a bracketed paste (PB3, PB4); everything else arrives. So before a
+ * question is typed into it they are removed here, and counted, so the app
+ * can say so; a lone surrogate (not a character at all) goes too. Argv keeps
+ * them (PB4), so the launch argument is never passed through this.
+ */
+export function codexPromptKeeps(text: string): { text: string; removed: number } {
+  let kept = ''
+  let removed = 0
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i)
+    if (c >= 0xd800 && c <= 0xdbff && i + 1 < text.length) {
+      const d = text.charCodeAt(i + 1)
+      if (d >= 0xdc00 && d <= 0xdfff) { removed++; i++; continue }
+    }
+    if (c >= 0xd800 && c <= 0xdfff) { removed++; continue }
+    kept += text[i]
+  }
+  return { text: kept, removed }
+}

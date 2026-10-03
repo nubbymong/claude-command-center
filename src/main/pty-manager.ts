@@ -19,7 +19,10 @@ import {
   isProvableContainerEntry, parseEntrySentinels, buildEntryGuardCommand, readContainerName,
 } from '../shared/container-command'
 import { SSH_ENTRY, type SshEntryFailureReason } from '../shared/ssh-entry'
-import type { SshRuntime, DetachedRemoteLiveness, SshEndRemoteOutcome, SshEndRemoteResult, SubmitTextResult } from '../shared/types'
+import type { SshRuntime, DetachedRemoteLiveness, SshEndRemoteOutcome, SshEndRemoteResult, SubmitTextResult, AskConductorNotice } from '../shared/types'
+import { IPC } from '../shared/ipc-channels'
+import { codexPromptKeeps } from '../shared/codex-screen'
+import { askConductorProjectDocMaxBytes } from './help-workspace'
 import { resolveRunningClaudeInfo } from '../shared/ssh-tmux-persistence'
 import { buildTmuxStageCommand, type TmuxStageTarget } from './ssh-tmux-stage'
 import { buildTmuxPushCommand, buildArchProbeCommandBracketed, parseArchProbeSentinel, PUSH_ACCUMULATOR_VAR } from './ssh-tmux-push'
@@ -958,6 +961,10 @@ export function isCodexPtySession(sessionId: string): boolean {
 function codexRunScreen(): SessionRunScreen | undefined {
   try { return getProvider('codex').runScreen } catch { return undefined }
 }
+
+/** WP2 PR 4, P4.3: the Codex sessions running as Ask Conductor (launched with
+ *  isAsk), the only ones a question is handed to (handOffAskQuestion). */
+const codexAskSessions = new Set<string>()
 
 /** P3.10: a session's own hook named conversation `uuid`: P3.6's doubt
  *  about it goes -- unless a live launch resumed it by id (round 1, S4:
@@ -4994,6 +5001,12 @@ function spawnPtyResolved(
         // Round 1 (V2): for the picker, the conversations other tabs are on.
         ...(options?.useResumePicker ? { codexOpenElsewhere: codexConversationsOpenElsewhere(sessionId, launch.lease.accountId) } : {}),
         ...(codexCanvas.developerInstructions ? { developerInstructions: codexCanvas.developerInstructions } : {}),
+        // WP2 PR 4, P4.3 (row 53): Ask Conductor's opening question (argv
+        // after `--` on the direct route's fresh launch; otherwise typed
+        // through the pane below), and on every Ask launch the scope of the
+        // help folder's AGENTS.md (its byte bound, no parent folder's).
+        ...(options?.askPrompt ? { askPrompt: options.askPrompt } : {}),
+        ...(options?.isAsk === true ? { askProjectDocMaxBytes: askConductorProjectDocMaxBytes() } : {}),
       }
       const built = provider.buildSpawnCommand(codexSpawnOptions)
       const { cmd: spawnCmd, args: spawnArgs, env: spawnEnv, commandLine } = built
@@ -5103,6 +5116,16 @@ function spawnPtyResolved(
         runScreen?.feed(sessionId, data)
         win.webContents.send(`pty:data:${sessionId}`, data)
       })
+      // WP2 PR 4, P4.3 (row 53): an Ask session takes later questions through
+      // the pane (handOffAskQuestion). A question this launch did not carry
+      // on argv (the npm .cmd route, an exact resume, the picker, a question
+      // argv may not hold) is typed there at Codex's first ready, empty
+      // composer, never into its trust or sandbox screens; scheduled for once
+      // spawnPty has registered this run (below the provider branches).
+      if (options?.isAsk === true) codexAskSessions.add(sessionId)
+      else codexAskSessions.delete(sessionId)
+      const askQuestion = options?.askPrompt
+      if (askQuestion && !built.askPromptOnArgv) setImmediate(() => { void deliverAskQuestion(win, sessionId, askQuestion) })
       // P3.12 (row 31): whatever an earlier launch of this session claimed is
       // not this run's; this launch's claims are held until its run is
       // recorded (a resume claims at once, inside ingestSessionTelemetry).
@@ -5214,6 +5237,7 @@ function spawnPtyResolved(
       // P3.10: a launch that failed keeps no hook file or hooked mark, and
       // (round 1, B2) no gateway token it minted.
       codexRunScreen()?.close(sessionId)
+      codexAskSessions.delete(sessionId)
       if (hookFile) { try { hookFile.dispose() } catch { /* best-effort */ } }
       forgetCodexHooks(sessionId)
       if (tokenMinted) dropGatewayToken(sessionId)
@@ -6343,6 +6367,57 @@ export function writeCanvasMarkerLine(sessionId: string, line: string): void | P
   writeSubmittedLine(sessionId, line)
 }
 
+/** WP2 PR 4, P4.3: how long an Ask question waits for Codex's ready, empty
+ *  composer. A first Ask in a fresh account folder shows folder trust and the
+ *  sandbox setup first, which the user answers (PB4), and a live tab may be
+ *  mid-answer. Past it the question is not sent, and the dock says so and
+ *  keeps it. */
+export const ASK_READY_WAIT_MS = 300_000
+
+/** One of Ask Conductor's notice lines, to the dock (askConductor:notice). */
+function sendAskNotice(win: BrowserWindow, notice: AskConductorNotice): void {
+  try { if (!win.isDestroyed()) win.webContents.send(IPC.ASK_CONDUCTOR_NOTICE, notice) } catch { /* the window is going */ }
+}
+
+/**
+ * WP2 PR 4, P4.3 (row 53): type an Ask question into a Codex session through
+ * the run's pane and its submit primitive, never as the raw question and
+ * Enter (Codex submits no such write, PB3). The characters Codex's prompt
+ * would drop are removed first and the dock told how many (section 10
+ * question 6, default A); a question that is not sent is said, with why, and
+ * the dock keeps it. The log names the question by its length only. Never
+ * rejects.
+ */
+async function deliverAskQuestion(win: BrowserWindow, sessionId: string, question: string): Promise<SubmitTextResult> {
+  let result: SubmitTextResult
+  try {
+    const screen = codexRunScreen()
+    if (!screen?.has(sessionId)) {
+      result = { delivered: false, reason: 'session-gone' }
+    } else {
+      const { text, removed } = codexPromptKeeps(question)
+      if (removed > 0) sendAskNotice(win, { sessionId, kind: 'removed', count: removed })
+      result = text.trim() ? await screen.submit(sessionId, text, { readyWaitMs: ASK_READY_WAIT_MS }) : { delivered: false, reason: 'refused-text' }
+    }
+  } catch {
+    result = { delivered: false, reason: 'session-gone' }
+  }
+  logInfo(`[codex-ask] ${sessionId}: a question of ${[...question].length} characters ${result.delivered ? 'typed into Codex\'s prompt' : `not delivered (${result.reason})`}`)
+  if (!result.delivered) sendAskNotice(win, { sessionId, kind: 'not-delivered', reason: result.reason })
+  return result
+}
+
+/**
+ * WP2 PR 4, P4.3: a question for a LIVE Ask session on Codex
+ * (askConductor:handOff), through the same door as the launch's. Only a
+ * running Codex session that launched as Ask takes one; anything else is the
+ * session gone, and nothing is typed.
+ */
+export function handOffAskQuestion(win: BrowserWindow, sessionId: string, question: string): Promise<SubmitTextResult> {
+  if (!isCodexPtySession(sessionId) || !codexAskSessions.has(sessionId)) return Promise.resolve({ delivered: false, reason: 'session-gone' })
+  return deliverAskQuestion(win, sessionId, question)
+}
+
 /**
  * #85 — submit a programmatic LINE into a session (the watchdog's retry, the
  * canvas marker queue), leaving tmux copy-mode first when the session is
@@ -6603,6 +6678,7 @@ function cleanupSessionResources(sessionId: string): void {
   // (a submission still waiting on it reports the session gone, and types
   // nothing into the next run), and so does the launch's guidance record.
   codexRunScreen()?.close(sessionId)
+  codexAskSessions.delete(sessionId)
   forgetCodexSessionGuidance(sessionId)
   // SECURITY (adversarial review, FINDING 1): tear the session watchdog down
   // here too, for the identical per-spawn isolation invariant. This runs from

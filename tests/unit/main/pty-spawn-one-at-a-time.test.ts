@@ -19,6 +19,7 @@ const handlers = new Map<string, (...a: unknown[]) => unknown>()
 vi.mock('electron', () => ({
   ipcMain: { handle: (ch: string, fn: (...a: unknown[]) => unknown) => { handlers.set(ch, fn) }, on: (ch: string, fn: (...a: unknown[]) => unknown) => { handlers.set(ch, fn) } },
   BrowserWindow: class {},
+  app: { getVersion: () => '0.0.0-test' },
 }))
 // What pty-manager would answer: ids with a PTY, and ids whose spawn main is
 // still preparing (a registered preparation).
@@ -49,6 +50,10 @@ vi.mock('../../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: (m
 vi.mock('../../../src/main/legacy-version-manager', () => ({ isVersionInstalled: () => true, installVersion: vi.fn(async () => ({ ok: true })) }))
 vi.mock('../../../src/main/services/pty-integrity-monitor', () => ({ getPtyIntegrityMonitor: () => ({ record: vi.fn(), report: vi.fn() }) }))
 vi.mock('../../../src/main/canvas/canvas-session-link', () => ({ noteSessionSpawnForCanvas: vi.fn() }))
+// WP2 PR 4, P4.3: every Ask spawn rebuilds the help folder in main first (and
+// fails closed); here it stands in, so no real folder is written.
+vi.mock('../../../src/main/help-workspace', () => ({ ensureHelpWorkspace: vi.fn(() => '/res/help') }))
+vi.mock('../../../src/main/ipc/setup-handlers', () => ({ getResourcesDirectory: () => '/res' }))
 let configsOnDisk: unknown = null
 vi.mock('../../../src/main/config-manager', () => ({ readConfig: (key: string) => (key === 'configs' ? configsOnDisk : null) }))
 const loadCredential = vi.fn((_k: string) => 'pw')

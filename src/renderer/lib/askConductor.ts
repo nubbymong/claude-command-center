@@ -224,6 +224,33 @@ export function _resetAskNoticesForTest(): void {
 }
 
 /**
+ * Hand a question to the RUNNING Ask session `id`, kept for the dock first.
+ *
+ * An Ask session on Codex gets it through main's submit primitive (askConductor:handOff,
+ * WP2 PR 4, P4.3), never as the raw question and Enter: Codex submits no
+ * such write (PB3), and the primitive types only at its ready, empty prompt,
+ * never into a trust, sandbox or approval screen. Main removes the characters
+ * Codex's prompt would drop and says so, and says when the question was not
+ * sent; the answer is shown here too, so a notice main could not push still
+ * lands. A Claude tab keeps the PTY write a command button uses (its TUI
+ * submits the line and its Enter).
+ */
+function handQuestionToRunning(id: string, provider: Session['provider'] | undefined, question: string): void {
+  useAskNoticeStore.getState().keep(id, question)
+  if (provider !== 'codex') {
+    writeSessionInput(id, question + '\r')
+    return
+  }
+  const notDelivered = (reason: SubmitNotDeliveredReason): void => showAskNotice({ sessionId: id, kind: 'not-delivered', reason })
+  const handOff = window.electronAPI?.askConductor?.handOff
+  if (typeof handOff !== 'function') { notDelivered('session-gone'); return }
+  void Promise.resolve()
+    .then(() => handOff({ sessionId: id, question }))
+    .then((answer) => { if (!answer || answer.delivered !== true) notDelivered(answer && isNotDeliveredReason(answer.reason) ? answer.reason : 'session-gone') })
+    .catch(() => notDelivered('session-gone'))
+}
+
+/**
  * Open Ask Conductor, optionally with an opening question.
  *
  * If an Ask session is already open it is focused rather than duplicated — the
@@ -266,8 +293,8 @@ export function launchAskConductor(question?: string): Promise<string> {
     const askPrompt = normaliseQuestion(question)
     return inFlightLaunch.then((id) => {
       if (id && askPrompt) {
-        useAskNoticeStore.getState().keep(id, askPrompt)
-        writeSessionInput(id, askPrompt + '\r')
+        const session = useSessionStore.getState().sessions.find((s) => s.id === id)
+        handQuestionToRunning(id, session?.provider, askPrompt)
       }
       return id
     })
@@ -282,9 +309,9 @@ export function _resetAskLaunchForTest(): void {
 }
 
 /**
- * Hand a question to the Ask session that is running: write it to the PTY,
- * which is how a command button does it -- the spawn route is spawn-time only,
- * so there is nothing else to use mid-session.
+ * Hand a question to the Ask session that is running (handQuestionToRunning):
+ * the spawn route is spawn-time only, so mid-session a Claude tab gets the
+ * PTY write a command button uses, and one on Codex main's submit primitive.
  *
  * The tab keeps the assistant it started on. When that assistant has been
  * switched off since, nothing is typed into it (nothing is typed into an
@@ -300,10 +327,7 @@ function handOverToLive(existing: Session, askPrompt: string | undefined): strin
   }
   useAskErrorStore.getState().setError(null)
   store.setActiveSession(existing.id)
-  if (askPrompt) {
-    useAskNoticeStore.getState().keep(existing.id, askPrompt)
-    writeSessionInput(existing.id, askPrompt + '\r')
-  }
+  if (askPrompt) handQuestionToRunning(existing.id, existing.provider, askPrompt)
   return existing.id
 }
 
