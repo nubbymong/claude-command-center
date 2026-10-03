@@ -49,11 +49,13 @@ function AskHeaderLead({ session }: { session: Session }) {
           Knows this app at v{__APP_VERSION__} -- features, settings, known issues. Not your code.
         </span>
       </span>
-      {/* Restart already marks the session for the resume picker, so this is the
-          ordinary "pick an older conversation" path, not a second mechanism. */}
+      {/* The ordinary "pick an older conversation" path, not a second mechanism:
+          a Restart that opens the resume picker. Asked for outright, because
+          only Claude's plain Restart opens it; a Codex one carries on with the
+          conversation the tab is on (canvas F7; P4.3). */}
       <button
         data-ux-id="ask-band-history"
-        onClick={() => restart()}
+        onClick={() => restart(undefined, { pickConversation: true })}
         className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-medium shrink-0 focus-ring transition-colors"
         style={{
           color: 'var(--brand)',
