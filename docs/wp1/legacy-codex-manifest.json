@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-03T07:32:56.713Z",
-  "head": "2be770ad9652e2fbd2324ed01a4e7ef947364768",
-  "tree": "bd5b4865396dc8d5b2cb65d0876278d796d712fd",
+  "generatedAt": "2026-10-03T08:35:37.146Z",
+  "head": "b4413a2436acc2924153f492090d6d7b6e285f15",
+  "tree": "113c04661771797106223204603797d3f7941818",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2676,
+  "trackedFileCount": 2679,
   "excludedFileCount": 390,
-  "scannedFileCount": 2286,
+  "scannedFileCount": 2289,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 747,
-  "pathDigest": "865e088a1b03ce68d64971f188d30eae91f4f1a9d9172b03653c574f981a3b54",
+  "matchedPathCount": 751,
+  "pathDigest": "70aa97f738c3ecbcdadd2ebdd1950d3d33092505719b582db6a0bad806c6862b",
   "entries": [
     {
       "path": ".github/workflows/ci.yml",
@@ -472,7 +472,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 14
+      "lineCount": 15
     },
     {
       "path": "src/main/channel-emitters.ts",
@@ -924,7 +924,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 21
+      "lineCount": 20
     },
     {
       "path": "src/main/providers/codex/conductor-tools.ts",
@@ -1099,7 +1099,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 125
+      "lineCount": 126
     },
     {
       "path": "src/main/providers/codex/telemetry.ts",
@@ -1190,7 +1190,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 445,
+      "lineCount": 443,
       "truncated": true
     },
     {
@@ -2378,7 +2378,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 9
+      "lineCount": 10
     },
     {
       "path": "src/shared/canvas.ts",
@@ -3324,7 +3324,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 22
+      "lineCount": 24
     },
     {
       "path": "tests/integration/codex-conformance-lib.test.ts",
@@ -3341,6 +3341,23 @@
         "P13"
       ],
       "lineCount": 7
+    },
+    {
+      "path": "tests/integration/codex-own-home.mjs",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 3
+    },
+    {
+      "path": "tests/integration/codex-own-home.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 10
     },
     {
       "path": "tests/integration/codex-real-cli-conformance.test.ts",
@@ -3554,7 +3571,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 14
+      "lineCount": 21
     },
     {
       "path": "tests/unit/main/account-registry-load-settled.test.ts",
@@ -3576,7 +3593,16 @@
         "P07",
         "P13"
       ],
-      "lineCount": 10
+      "lineCount": 14
+    },
+    {
+      "path": "tests/unit/main/ask-launch-folder.test.ts",
+      "predicates": [
+        "P04",
+        "P07",
+        "P13"
+      ],
+      "lineCount": 24
     },
     {
       "path": "tests/unit/main/attention-source-codex.test.ts",
@@ -3594,7 +3620,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 34
+      "lineCount": 35
     },
     {
       "path": "tests/unit/main/canvas-codex-roots-spawn.test.ts",
@@ -3811,7 +3837,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 24
+      "lineCount": 23
     },
     {
       "path": "tests/unit/main/codex-resume-launch.test.ts",
@@ -4584,7 +4610,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 37
+      "lineCount": 44
     },
     {
       "path": "tests/unit/providers/codex/spawn-canvas.test.ts",
@@ -4882,7 +4908,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 16
+      "lineCount": 21
     },
     {
       "path": "tests/unit/renderer/ask-conductor-launch.test.ts",
@@ -4917,6 +4943,13 @@
         "P13"
       ],
       "lineCount": 11
+    },
+    {
+      "path": "tests/unit/renderer/canvas-pane-inbound-wiring.test.tsx",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 8
     },
     {
       "path": "tests/unit/renderer/claude-off-launch.test.tsx",
