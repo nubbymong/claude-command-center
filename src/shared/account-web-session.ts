@@ -160,6 +160,9 @@ export interface AccountWebSession {
   origin: WebSessionOrigin
 }
 
+/** The partition prefix of the `profile` id class: a Claude account's claude.ai web session. */
+export const CLAUDE_WEB_PARTITION_PREFIX = 'persist:claude-web-'
+
 /**
  * The Electron partition that holds one account's claude.ai cookies.
  *
@@ -174,7 +177,7 @@ export function webPartitionForProfile(profileId: string): string {
   if (!PROFILE_ID_RE.test(profileId)) {
     throw new Error(`refusing to build a web partition for an unexpected profile id: ${profileId}`)
   }
-  return `persist:claude-web-${profileId}`
+  return `${CLAUDE_WEB_PARTITION_PREFIX}${profileId}`
 }
 
 /**
@@ -214,6 +217,59 @@ export function webSessionIdClass(id: unknown): WebSessionIdClass | null {
   if (PROFILE_ID_RE.test(id)) return 'profile'
   if (isWebSessionAccountId(id)) return 'account'
   return null
+}
+
+/**
+ * The partition prefix of the `account` id class: a Codex account's own
+ * chatgpt.com web session (P4.6, row 58). Its own prefix, so a partition of
+ * one class can never be named like one of the other: neither prefix starts
+ * the other, whatever the ids.
+ */
+export const CODEX_WEB_PARTITION_PREFIX = 'persist:codex-web-'
+
+/**
+ * The Electron partition that holds one Codex account's chatgpt.com cookies.
+ *
+ * The same isolation model as webPartitionForProfile: one partition per
+ * account, keyed by the account's registry id and re-validated here against
+ * the registry's own id pattern (`acct-<16..64 lowercase hex>`), because this
+ * string names a security boundary. A Claude profile id, or anything else off
+ * that pattern, is refused, never sanitised into some other account's name.
+ *
+ * The pattern is the shape only: a registry account of any provider has such
+ * an id, so a caller that materialises the partition (the sign-in window and
+ * the pane's account surface, after the owner's OR2a run) first confirms from
+ * the registry that the account is a Codex account.
+ *
+ * Nothing is ever copied into this partition from the user's browser: it is
+ * filled only by a sign-in inside an app window on it (WP1 design principle
+ * 4). Claude's cookie copy (cookie-harvest.ts, the SSO route of sign-in.ts)
+ * is keyed by profile id and builds its partition with webPartitionForProfile,
+ * which refuses an account id, so it cannot reach this one.
+ */
+export function webPartitionForCodexAccount(accountId: string): string {
+  if (!isWebSessionAccountId(accountId)) {
+    const raw: unknown = accountId
+    const shown = typeof raw === 'string' ? JSON.stringify(raw.slice(0, 80)) : typeof raw
+    throw new Error(`refusing to build a web partition for an unexpected account id: ${shown}`)
+  }
+  return `${CODEX_WEB_PARTITION_PREFIX}${accountId}`
+}
+
+/** The two prefixes as Electron's on-disk directory names (see below). */
+const WEB_SESSION_PARTITION_DIR_PREFIXES: readonly string[] = [CLAUDE_WEB_PARTITION_PREFIX, CODEX_WEB_PARTITION_PREFIX]
+  .map((prefix) => prefix.slice('persist:'.length))
+
+/**
+ * Whether a directory under `<sessionData>/Partitions` holds one of the two
+ * web-session partitions. Electron keeps a `persist:<name>` partition in a
+ * directory named `<name>`, lower-cased and path-escaped; every id both
+ * builders accept is already lower case and path-safe, so the directory is
+ * the partition name without `persist:`. Matched by prefix, as the dev
+ * start's orphan warning always matched Claude's (account-web/orphan-partitions.ts).
+ */
+export function isWebSessionPartitionDir(name: string): boolean {
+  return typeof name === 'string' && WEB_SESSION_PARTITION_DIR_PREFIXES.some((prefix) => name.startsWith(prefix))
 }
 
 /** Hosts whose cookies are harvested. Nothing else is ever copied out of the browser. */

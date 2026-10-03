@@ -31,7 +31,7 @@ import ConfigContextMenu from './sidebar/ConfigContextMenu'
 import SessionContextMenu from './sidebar/SessionContextMenu'
 import ConfigEditGuardDialog from './sidebar/ConfigEditGuardDialog'
 import { configEditGuardState } from './sidebar/configEditGuard'
-import { openArtifactsPerSetting } from '../lib/claude-web-targets'
+import { openArtifactsPerSetting, claudeWebActionProfileId } from '../lib/claude-web-targets'
 import GroupContextMenu from './sidebar/GroupContextMenu'
 import SectionHeader from './sidebar/SectionHeader'
 import GroupHeader from './sidebar/GroupHeader'
@@ -964,7 +964,10 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         onRenameFinish={handleFinishSessionRename}
         onRenameCancel={() => { setRenamingSessionId(null); setSessionRenameValue('') }}
         onClick={(e) => handleSessionClick(session.id, e)}
-        onContextMenu={(e) => { e.preventDefault(); const prefetchId = sshMappedProfileId(session, accountProfiles) ?? (session.profileId ?? primaryProfileId); refreshWebOnly(prefetchId); void refreshWebSessions(prefetchId); setSessionContextMenu({ sessionId: session.id, x: e.clientX, y: e.clientY }) }}
+        // P4.6 (row 58): a Codex row's menu has no Claude account items, so it
+        // no longer prefetches the primary Claude profile's status (the full
+        // refresh runs that account's `claude auth status`).
+        onContextMenu={(e) => { e.preventDefault(); if ((session.provider ?? 'claude') === 'claude') { const prefetchId = sshMappedProfileId(session, accountProfiles) ?? (session.profileId ?? primaryProfileId); refreshWebOnly(prefetchId); void refreshWebSessions(prefetchId) } setSessionContextMenu({ sessionId: session.id, x: e.clientX, y: e.clientY }) }}
         isSelected={selectedSessionIds.has(session.id)}
         isFocused={focusedSessionIndex === flatIndex}
         ordinal={sessionOrdinals.get(session.id)}
@@ -1600,9 +1603,9 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         // mapped profile for a mapped SSH session. Undefined for a shell-only
         // session, and for an SSH session with no matching local profile — which
         // keeps the profile-scoped items hidden/off there, exactly as before.
-        const actionProfileId = !s.shellOnly && s.sessionType === 'local'
-          ? (s.profileId ?? primaryProfileId)
-          : sshProfileId
+        // Undefined for a Codex session too (P4.6, row 58): the primary fallback
+        // made Claude's items act on another account there (claude-web-targets).
+        const actionProfileId = claudeWebActionProfileId(s, primaryProfileId, accountProfiles)
         return (
           <SessionContextMenu
             x={sessionContextMenu.x}
