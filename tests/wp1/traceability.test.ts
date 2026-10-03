@@ -42,6 +42,16 @@ const nonEmpty = (p: string) => existsSync(resolve(ROOT, p)) && statSync(resolve
 const sha256 = (p: string) => createHash('sha256').update(readFileSync(resolve(ROOT, p))).digest('hex')
 const byId = new Map(manifest.items.map((i) => [i.id, i]))
 
+// The candidate check's filter, a pure function over the changed-file list
+// (`git diff` feeds it below). A change under src, scripts or tests, or to
+// package.json, breaks the evidence binding; this manifest is the one
+// exception, because the commit that records boundHead edits it, so counting
+// it made the check unsatisfiable.
+const MANIFEST_PATH = 'tests/wp1/traceability.json'
+function bindingBreaks(changed: readonly string[]): string[] {
+  return changed.filter((p) => p !== MANIFEST_PATH && (p === 'package.json' || /^(src|scripts|tests)\//.test(p)))
+}
+
 describe('WP1 traceability manifest', () => {
   it('has exactly WP1.1 .. WP1.73, unique and contiguous, and is bound to the reviewed design digest', () => {
     const ids = manifest.items.map((i) => i.id)
@@ -137,6 +147,23 @@ describe('WP1 traceability manifest', () => {
     expect(wrongPointers([{ id: 'WP1.39', tests: ['tests/unit/renderer/accounts-surface.test.tsx'], evidence: [] }])).toEqual([])
   })
 
+  // [host] The candidate check's filter, on injected changed-file lists (no
+  // git is spawned): the commit that records boundHead edits this manifest,
+  // so the manifest alone must not break the binding (P4.10), while any other
+  // change under src, scripts or tests, or to package.json, still does.
+  it('the candidate check ignores only its own manifest: any other change under tests, src, scripts or package.json still breaks the binding', () => {
+    expect(bindingBreaks(['tests/wp1/traceability.json'])).toEqual([])
+    expect(bindingBreaks(['tests/wp1/traceability.json', 'docs/wp1/evidence/real-cli-matrix.md', 'README.md', 'CONTEXT.d/x.md', 'package-lock.json'])).toEqual([])
+    expect(bindingBreaks(['tests/wp1/traceability.json', 'tests/wp1/traceability.test.ts'])).toEqual(['tests/wp1/traceability.test.ts'])
+    for (const p of ['tests/wp1/legacy-codex-ledger.json', 'tests/wp1/fake-cli/oracle.json', 'tests/wp1/phase.ts', 'tests/unit/main/x.test.ts', 'tests/e2e/x.spec.ts', 'src/main/index.ts', 'scripts/release.js', 'package.json']) {
+      expect(bindingBreaks(['tests/wp1/traceability.json', p]), p).toEqual([p])
+    }
+    // Only the manifest's exact path is ignored, never a near miss of it.
+    for (const p of ['tests/wp1/traceability.json.bak', 'tests/wp1/fake-cli/traceability.json', 'tests/traceability.json', 'src/traceability.json']) {
+      expect(bindingBreaks([p]), p).toEqual([p])
+    }
+  })
+
   it(`candidate phase: nothing is still planned and evidence is bound to a commit that is an ancestor of HEAD with no source or test change since (phase ${phase}: ${reason})`, () => {
     if (phase !== 'candidate') return
     const planned = manifest.items.filter((i) => i.status !== 'evidenced').map((i) => i.id)
@@ -145,7 +172,11 @@ describe('WP1 traceability manifest', () => {
     let ancestor = true
     try { execFileSync('git', ['-C', ROOT, 'merge-base', '--is-ancestor', manifest.boundHead!, 'HEAD'], { stdio: ['ignore', 'pipe', 'pipe'] }) } catch { ancestor = false }
     expect(ancestor, `boundHead ${manifest.boundHead} is not an ancestor of HEAD`).toBe(true)
-    const changed = execFileSync('git', ['-C', ROOT, 'diff', '--name-only', `${manifest.boundHead}..HEAD`, '--', 'src', 'scripts', 'tests', 'package.json'], { encoding: 'utf8' }).trim()
-    expect(changed, `source or tests changed after evidence collection; regenerate the affected records:\n${changed}`).toBe('')
+    // Every changed path, NUL-separated (no quoting of unusual names) and
+    // without rename pairing (a file moved out of src still lists its old
+    // path); bindingBreaks decides which of them count.
+    const changed = execFileSync('git', ['-C', ROOT, 'diff', '--name-only', '--no-renames', '-z', `${manifest.boundHead}..HEAD`], { encoding: 'utf8', maxBuffer: 1 << 28 }).split('\0').filter(Boolean)
+    const breaks = bindingBreaks(changed)
+    expect(breaks, `source or tests changed after evidence collection; regenerate the affected records:\n${breaks.join('\n')}`).toEqual([])
   })
 })
