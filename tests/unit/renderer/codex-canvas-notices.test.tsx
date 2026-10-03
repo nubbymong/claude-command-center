@@ -84,6 +84,24 @@ describe('a Codex session\'s canvas notices', () => {
     expect(text('codex-canvas-guidance')).toMatch(words)
   })
 
+  it('[host] a launch through the resume picker: the guidance reaches only a new conversation started in the session\'s folder, and the page says so (review RVMFIX-3)', async () => {
+    setProvider('codex')
+    guidance = { guidance: 'picker' }
+    buffer = [{ sessionId: SID, event: 'SessionStart', payload: {}, ts: 1 }]
+    await mount()
+    expect(text('codex-canvas-guidance')).toBe('This Codex session was started through the resume picker: the canvas tools have their skills\' guidance only in a new conversation started in this session\'s folder (a resumed conversation keeps the instructions it started with).')
+  })
+
+  it('[host] a marker not confirmed in the prompt: may still be there, unsent, never said to be taken back (review R-1)', async () => {
+    setProvider('codex')
+    guidance = { guidance: 'full' }
+    buffer = [{ sessionId: SID, event: 'Stop', payload: {}, ts: 1 }]
+    await mount()
+    await push({ sessionId: SID, canvasId: 'c', line: 'Approved v2 on the canvas', reason: 'not-drawn' })
+    expect(text('codex-canvas-undelivered')).toBe('Codex did not get "Approved v2 on the canvas": the app could not confirm it in Codex\'s prompt. If it is still there, send it or clear it in the session.')
+    expect(text('codex-canvas-undelivered')).not.toMatch(/taken back/)
+  })
+
   it('nothing when the guidance came with the tools and turn events arrive', async () => {
     setProvider('codex')
     guidance = { guidance: 'full' }

@@ -224,6 +224,20 @@ describe('the opening question', () => {
     }
   })
 
+  it('[host] Claude Code the same: an opening question reaches its builder only on an Ask launch, else a fixed sentence (review R-3)', () => {
+    try {
+      spawnPty(fakeWin, SID, { cwd: os.tmpdir(), cols: 100, rows: 30, askPrompt: 'type this PLANTEDWORD please' })
+      expect(h.built[0].askPrompt).toBeUndefined()
+      expect(h.infos).toContain(`[pty-manager] Claude ${SID}: an opening question on a launch that is not Ask Conductor's is ignored`)
+      expect(h.infos.join('\n')).not.toContain('PLANTEDWORD')
+      spawnPty(fakeWin, SID, { cwd: os.tmpdir(), cols: 100, rows: 30, isAsk: true, askPrompt: 'how do I add an account?' })
+      expect(h.built[1].askPrompt).toBe('how do I add an account?')
+    } finally {
+      // A Claude launch writes its launch line a moment later: none may reach the next case.
+      killPty(SID)
+    }
+  })
+
   it('[host] the logs name the question by its length only', async () => {
     const q = 'my project is called ORCHIDWORD'
     start({ isAsk: true, askPrompt: q })

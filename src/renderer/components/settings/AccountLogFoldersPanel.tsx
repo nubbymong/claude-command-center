@@ -21,7 +21,8 @@ const BUTTON_TEXT: Readonly<Record<AccountLogFolderKind, string>> = {
  * WP2 PR 4, P4.4 (row 56): each Codex account's own log folders, beside the
  * app's "Open log folder" in Settings, General, Debug Logging. Main lists them
  * by account and KIND and opens one (a log_dir: shows it in the folder that
- * holds it) by the same key: no path ever passes through here. Shown while Codex is in use and has an account.
+ * holds it) by the same key: no path ever passes through here. Shown while
+ * Codex is in use and has an account.
  */
 export function AccountLogFoldersPanel() {
   const codexOn = useSettingsStore((s) => usesCodex(s.settings))

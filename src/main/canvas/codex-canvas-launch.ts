@@ -44,6 +44,8 @@ export interface CodexCanvasLaunchInput {
    *  Codex it starts there) and a resumed conversation's own. Null when they
    *  are not known: nothing is passed. */
   startFolders: readonly string[] | null
+  /** The launch goes through the resume picker (review RVMFIX-3). */
+  picker?: boolean
   env: Readonly<Record<string, string | undefined>>
   platform?: NodeJS.Platform
 }
@@ -116,5 +118,13 @@ function guidanceFor(input: CodexCanvasLaunchInput): Omit<CodexCanvasLaunch, 'de
     pluginSkillsDir,
     env: input.env,
   })
-  return { guidance: decision.guidance, ...(decision.developerInstructions ? { developerInstructions: decision.developerInstructions } : {}) }
+  // Review RVMFIX-3: guidance riding the developer instructions through the
+  // resume picker reaches only a new conversation the picker starts in the
+  // session's own folder (a picked one keeps what it started with; one in
+  // another worktree gets none), so it is recorded as such, not as full.
+  // Staged skills (a managed account) reach every conversation: full stands.
+  const guidance: CanvasSessionGuidance = input.picker === true && decision.developerInstructions && decision.guidance.guidance === 'full'
+    ? { guidance: 'picker' }
+    : decision.guidance
+  return { guidance, ...(decision.developerInstructions ? { developerInstructions: decision.developerInstructions } : {}) }
 }

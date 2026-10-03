@@ -10,7 +10,8 @@ import type { CanvasSessionGuidance, SubmitNotDeliveredReason } from '../../shar
  *
  *  - The tools without their skills' guidance: the launch could not carry it
  *    (section 10 question 5, built as its default A), and why, from main's
- *    own launch record (`canvas:sessionGuidance`).
+ *    own launch record (`canvas:sessionGuidance`); or, for a launch through
+ *    the resume picker, which conversations it reaches.
  *  - The live loop without turn events: until Codex's hooks are trusted for
  *    the account no turn event arrives, so a review filed mid-turn reaches
  *    Codex once its prompt reads ready on screen, not at the turn's end. Read
@@ -30,14 +31,25 @@ const GUIDANCE_WORDS: Record<Extract<CanvasSessionGuidance, { guidance: 'tools-o
   'skills-not-staged': 'the skills could not be put in place for this Codex account',
 }
 
+/** A launch through the resume picker (review RVMFIX-3): the guidance rides
+ *  only a new conversation the picker starts in the session's own folder. */
+const PICKER_GUIDANCE_LINE = 'This Codex session was started through the resume picker: the canvas tools have their skills\' guidance only in a new conversation started in this session\'s folder (a resumed conversation keeps the instructions it started with).'
+
 const UNDELIVERED_WORDS: Record<SubmitNotDeliveredReason, string> = {
   'busy-timeout': 'Codex stayed busy, or its prompt was not ready, for two minutes',
   'prompt-on-screen': 'Codex was showing a question or a prompt',
   'too-tall': 'the line is taller than the Codex prompt at this pane size',
-  'not-drawn': 'Codex did not show the line once it was typed, so it was taken back',
+  // Not confirmed on screen: most often taken back, but with no reading of
+  // the screen nothing was taken back, so the line may still be in the prompt.
+  'not-drawn': 'the app could not confirm it in Codex\'s prompt. If it is still there, send it or clear it in the session',
   'refused-text': 'the line holds characters the Codex prompt cannot take',
   'session-gone': 'the session ended or restarted first, or the line could not be typed into it',
 }
+
+/** What the user can do after the reason: typing the line again, except where
+ *  it may still be in the prompt (the reason's own words say what to do). */
+const undeliveredTail = (reason: SubmitNotDeliveredReason): string =>
+  (reason === 'not-drawn' ? '' : ' You can type it into the session yourself.')
 
 /** How often, and how many times, a missing launch record is asked again
  *  (the page can mount before the session's launch has finished). */
@@ -106,14 +118,20 @@ export default function CodexCanvasNotices({ sessionId, canvasId }: { sessionId:
 
   if (!isCodex) return null
   const toolsOnly = guidance && guidance.guidance === 'tools-only' ? guidance : null
+  const viaPicker = guidance?.guidance === 'picker'
   const noTurnEvents = turnEvents === false
-  if (!toolsOnly && !noTurnEvents && undelivered.length === 0) return null
+  if (!toolsOnly && !viaPicker && !noTurnEvents && undelivered.length === 0) return null
 
   return (
     <div className="flex-none flex flex-col" data-testid="codex-canvas-notices">
       {toolsOnly && (
         <div data-testid="codex-canvas-guidance" className="px-3.5 py-1.5 text-[12px]" style={strip}>
           {`This Codex session has the canvas tools without their skills' guidance: ${GUIDANCE_WORDS[toolsOnly.reason] ?? 'the launch could not carry it'}.`}
+        </div>
+      )}
+      {viaPicker && (
+        <div data-testid="codex-canvas-guidance" className="px-3.5 py-1.5 text-[12px]" style={strip}>
+          {PICKER_GUIDANCE_LINE}
         </div>
       )}
       {noTurnEvents && (
@@ -124,7 +142,7 @@ export default function CodexCanvasNotices({ sessionId, canvasId }: { sessionId:
       {undelivered.map((u) => (
         <div key={u.line} data-testid="codex-canvas-undelivered" className="flex items-center gap-2 px-3.5 py-1.5 text-[12px]" style={strip}>
           <span className="min-w-0 truncate" style={{ color: 'var(--text-primary)' }}>
-            {`Codex did not get "${u.line}": ${UNDELIVERED_WORDS[u.reason] ?? 'it was not sent'}. You can type it into the session yourself.`}
+            {`Codex did not get "${u.line}": ${UNDELIVERED_WORDS[u.reason] ?? 'it was not sent'}.${undeliveredTail(u.reason)}`}
           </span>
           <DismissButton
             className="ml-auto"

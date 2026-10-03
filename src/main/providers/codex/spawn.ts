@@ -567,15 +567,18 @@ function buildCodexSpawnCommand(opts: SpawnOptions): ProviderSpawnCommand {
 
   // WP2 PR 4, P4.1: cmd.exe takes a line under CMD_EXE_LINE_MAX characters.
   // Were the per-preset approvals to take this launch's line past it, they
-  // alone are left off, with a log line, and the session still launches (its
-  // tools then ask, as before); nothing else is dropped. `prefix`: what goes
-  // before the flags on that line (an exact resume's `resume <id>`).
+  // alone are left off, with a log line, and the session still launches;
+  // nothing else is dropped. Those keys exist only under Unrestricted, which
+  // launches with no approval prompts, so without them those tools are
+  // refused, not asked about (review RVMFIX-2); canvas_snapshot and
+  // canvas_review keep theirs. `prefix`: what goes before the flags on that
+  // line (an exact resume's `resume <id>`).
   const fitCmdLine = (prefix: string[]): string[] => {
     if (!viaCmdExe || presetKeyArgs.length === 0 || presetKeysAt < 0) return flags
     let line: string
     try { line = codexCmdExeTarget(executable, [...prefix, ...flags], env).commandLine } catch { return flags }
     if (line.length < CMD_EXE_LINE_MAX) return flags
-    logWarn(`[codex-spawn] ${opts.sessionId}: the per-preset tool approvals are left off this launch: with them its cmd.exe line would be ${line.length} characters (cmd.exe takes under ${CMD_EXE_LINE_MAX}); its conductor tools ask before each call`)
+    logWarn(`[codex-spawn] ${opts.sessionId}: the per-preset tool approvals are left off this launch: with them its cmd.exe line would be ${line.length} characters (cmd.exe takes under ${CMD_EXE_LINE_MAX}); its conductor tools other than canvas_snapshot and canvas_review are refused (this preset runs without approval prompts)`)
     return [...flags.slice(0, presetKeysAt), ...flags.slice(presetKeysAt + presetKeyArgs.length)]
   }
 

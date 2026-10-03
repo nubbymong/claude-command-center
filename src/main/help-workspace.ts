@@ -402,6 +402,13 @@ function rebuildFailureForLog(err: unknown): string {
   return 'an unexpected error'
 }
 
+/** The help folder of a resources folder: its one spelling, for the rebuild
+ *  below and for pty:spawn, which ends the runs working in it before each Ask
+ *  launch (review R-5: spelled twice, a change to one would end nothing). */
+export function helpWorkspaceDir(resourcesDir: string): string {
+  return path.join(resourcesDir, 'help')
+}
+
 /**
  * CLAUDE.md and AGENTS.md here are not data: they are the instruction files a
  * real Claude Code or Codex session reads at startup, and this directory
@@ -441,7 +448,7 @@ function rebuildFailureForLog(err: unknown): string {
  * of every Ask start that a rebuild refused (review RASK-2).
  */
 export function ensureHelpWorkspace(resourcesDir: string, opts?: { appVersion?: string; platform?: NodeJS.Platform }): string {
-  const dir = path.join(resourcesDir, 'help')
+  const dir = helpWorkspaceDir(resourcesDir)
   try {
     mkdirSecure(dir)
     hardenCredentialDir(dir)

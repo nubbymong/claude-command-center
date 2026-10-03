@@ -54,7 +54,7 @@ vi.mock('../../../src/main/account-profiles', () => ({
 }))
 
 const {
-  ensureHelpWorkspace, askConductorSkillMarkdown, askConductorSkillPortableMarkdown,
+  ensureHelpWorkspace, helpWorkspaceDir, askConductorSkillMarkdown, askConductorSkillPortableMarkdown,
   askConductorAgentsMarkdown, askConductorProjectDocMaxBytes,
 } = await import('../../../src/main/help-workspace')
 const { appKnowledgeMarkdown } = await import('../../../src/shared/app-knowledge')
@@ -77,6 +77,13 @@ afterEach(() => {
   hooks.writes = []
   hooks.logWarn.mockClear()
   fs.rmSync(tmp, { recursive: true, force: true })
+})
+
+describe('the help folder has one spelling (review R-5)', () => {
+  it('[host] the folder ensureHelpWorkspace rebuilds is the one helpWorkspaceDir names, where pty:spawn ends the runs', () => {
+    expect(ensureHelpWorkspace(tmp, { appVersion: '9.9.9' })).toBe(helpWorkspaceDir(tmp))
+    expect(helpWorkspaceDir(tmp)).toBe(path.join(tmp, 'help'))
+  })
 })
 
 describe('ensureHelpWorkspace stages the helper-skill files', () => {
