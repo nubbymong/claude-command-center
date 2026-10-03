@@ -13,7 +13,7 @@ import type { CanvasSessionGuidance } from '../../shared/types'
 import { getResourcesDirectory } from '../ipc/setup-handlers'
 import { ensureCanvasPlugin } from './canvas-plugin'
 import { codexDesignatedWorktree } from './codex-canvas-roots'
-import { codexManagedRealmSkillsDir, stageCodexRealmSkills, removeCodexRealmSkills } from './codex-realm-skills'
+import { stageCodexRealmSkills, removeCodexRealmSkills } from './codex-realm-skills'
 import { decideCodexGuidance } from './codex-guidance'
 import { logWarn } from '../debug-logger'
 
@@ -24,8 +24,12 @@ export interface CodexCanvasLaunchInput {
   configuredCwd: string
   /** The account's Codex folder (CODEX_HOME). */
   home: string
-  /** The launch route (providers/codex/spawn.ts codexLaunchRoute). */
+  /** The launch route (the Codex package's SessionProvider.launchRoute). */
   route: 'direct' | 'cmd'
+  /** The skills folder the Codex package gives a home under a resources
+   *  folder (SessionProvider.stagedSkillsDir): a managed account's own, else
+   *  null (this computer's own sign-in). */
+  managedSkillsDirFor: (home: string, resourcesDir: string) => string | null
   /** The Codex version discovery proved, when known. */
   cliVersion: string | null
   /** The built-in tools reach this launch (on, and the server listening). */
@@ -62,12 +66,13 @@ function guidanceFor(input: CodexCanvasLaunchInput): Omit<CodexCanvasLaunch, 'de
   // A managed realm's home sits directly under the managed realms root, and
   // this computer's own sign-in never can (realm-paths.ts refuses an overlap
   // either way), so the path alone tells the two apart.
-  const managed = !!resourcesDir && codexManagedRealmSkillsDir(input.home, resourcesDir) !== null
+  const managedSkillsDir = resourcesDir ? input.managedSkillsDirFor(input.home, resourcesDir) : null
+  const managed = managedSkillsDir !== null
   if (!input.toolsOn) {
-    if (managed) removeCodexRealmSkills(input.home, resourcesDir)
+    if (managed) removeCodexRealmSkills(input.home, managedSkillsDir)
     return { guidance: null }
   }
-  const managedSkills = managed ? stageCodexRealmSkills(input.home, resourcesDir) : undefined
+  const managedSkills = managed ? stageCodexRealmSkills(input.home, managedSkillsDir) : undefined
   let pluginSkillsDir: string | null = null
   if (!managed && platform !== 'win32' && input.route === 'direct') {
     const pluginDir = ensureCanvasPlugin()

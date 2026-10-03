@@ -11,6 +11,9 @@ vi.mock('../../../src/main/hooks/index', () => ({ getGateway: () => null }))
 
 const screen = await import('../../../src/main/providers/codex/session-screen')
 const { TAKE_BACK_KEY } = await import('../../../src/main/providers/codex/composer-submit')
+// The PTY manager hands the pane the Watchdog's CSI clamp (the package imports
+// no watchdog module), so the tests do too.
+const { clampAnsiChunk } = await import('../../../src/main/watchdog/watchdog-manager')
 
 const P = '\u203a'
 const DOT = '\u00b7'
@@ -35,6 +38,7 @@ function fakeCodex(sessionId: string, opts: { cols?: number; rows?: number } = {
     cols: opts.cols ?? 100,
     rows: opts.rows ?? 30,
     current: () => current,
+    clamp: clampAnsiChunk,
     write: (data) => {
       sent.push(data)
       if (data === '\r') { if (composer) submitted.push(composer); composer = '' }
@@ -79,6 +83,32 @@ describe('the pane', () => {
     const t0 = Date.now()
     screen.feedCodexScreen(SID, 'x\x1b[2147483647b')
     expect(Date.now() - t0).toBeLessThan(2_000)
+  })
+
+  it('[host] every chunk goes through the clamp the caller gave, with the pane\'s own state across chunks', () => {
+    const seen: Array<{ data: string; state: { residual: string } }> = []
+    screen.openCodexScreen(SID, {
+      cols: 80, rows: 24, write: () => {}, current: () => true,
+      clamp: (data, state) => { seen.push({ data, state }); return clampAnsiChunk(data, state) },
+    })
+    screen.feedCodexScreen(SID, 'one\x1b[')
+    screen.feedCodexScreen(SID, '2Jtwo')
+    expect(seen.map((c) => c.data)).toEqual(['one\x1b[', '2Jtwo'])
+    expect(seen[0].state).toBe(seen[1].state)
+  })
+
+  it('[host] a pane is never opened without its clamp (never fed unclamped output)', () => {
+    expect(() => screen.openCodexScreen(SID, { cols: 80, rows: 24, write: () => {}, current: () => true } as unknown as Parameters<typeof screen.openCodexScreen>[1])).toThrow(/clamp/)
+    expect(screen.hasCodexScreen(SID)).toBe(false)
+  })
+
+  it('[host] a clamp that throws drops that chunk; it is never written unclamped', async () => {
+    let calls = 0
+    screen.openCodexScreen(SID, { cols: 80, rows: 24, write: () => {}, current: () => true, clamp: () => { calls++; throw new Error('boom') } })
+    screen.feedCodexScreen(SID, 'VISIBLETEXT')
+    await new Promise((r) => setTimeout(r, 30))
+    expect(calls).toBe(1)
+    expect(screen.readCodexSessionScreen(SID)!.some((l) => l.text.includes('VISIBLETEXT'))).toBe(false)
   })
 })
 

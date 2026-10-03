@@ -150,6 +150,22 @@ export function codexManagedRealmsRoot(resourcesDir: string, pathApi: typeof pat
   return pathApi.join(pathApi.resolve(resourcesDir), CODEX_REALMS_DIRNAME)
 }
 
+/** WP2 PR 4, P4.1: the skills folder of a MANAGED realm's home, where the app
+ *  stages its canvas skills: `<home>/skills` when `home` sits directly under
+ *  the managed realms root as a realm id, else null. Pure path arithmetic (the
+ *  rule a managed home is built by above): this computer's own sign-in, the
+ *  external default, never has one. */
+export function codexManagedRealmSkillsDir(home: string, resourcesDir: string, pathApi: typeof path = path): string | null {
+  if (typeof home !== 'string' || !home || typeof resourcesDir !== 'string' || !resourcesDir) return null
+  if (!pathApi.isAbsolute(home) || !pathApi.isAbsolute(resourcesDir)) return null
+  const root = codexManagedRealmsRoot(resourcesDir, pathApi)
+  const resolved = pathApi.resolve(home)
+  const parent = pathApi.dirname(resolved)
+  const same = isWin(pathApi) ? parent.toLowerCase() === root.toLowerCase() : parent === root
+  if (!same || !isOpaqueId(pathApi.basename(resolved), 'realm')) return null
+  return pathApi.join(resolved, 'skills')
+}
+
 /** True when an external home and the managed root overlap in either
  *  direction (compared case-insensitively on Windows). */
 export function codexHomesOverlap(externalHome: string, resourcesDir: string, pathApi: typeof path = path): boolean {

@@ -240,6 +240,20 @@ describe('developer instructions (question 5, default A)', () => {
     expect(logged).toMatch(/developer_instructions=<\d+ characters>/)
     expect(logged).not.toContain('Agent Canvas')
   })
+
+  it('[host] the built launch carries that line as its logLine (the PTY manager logs it, never the arguments)', () => {
+    const out = buildCodexSpawn({ sessionId: 'sid', realmLaunch: linuxLaunch, developerInstructions: codexInlineGuidance(), codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' } })
+    expect(out.logLine).toBe(codexLaunchLineForLog(out.args.join(' ')))
+    expect(out.logLine).toMatch(/developer_instructions=<\d+ characters>/)
+    expect(out.logLine).not.toContain('Agent Canvas')
+  })
+
+  it('[host] on the npm .cmd route the logLine is the cmd.exe line', () => {
+    withWin32(() => {
+      const out = buildCodexSpawn({ sessionId: 'sid', realmLaunch: { ...linuxLaunch, executable: SHIM, env: winEnv }, codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' } })
+      expect(out.logLine).toBe(codexLaunchLineForLog(out.commandLine!))
+    })
+  })
 })
 
 describe('launch line budgets', () => {
@@ -295,5 +309,27 @@ describe('launch line budgets', () => {
       expect(out.commandLine).not.toContain(codexToolApprovalArg('canvas_render'))
       expect(logWarn).toHaveBeenCalledWith(expect.stringMatching(/per-preset tool approvals are left off/))
     })
+  })
+})
+
+describe('the registered Codex provider offers main its launch helpers (no deep import)', () => {
+  it('[host] launchRoute, stagedSkillsDir and the run pane are the package\'s own', async () => {
+    const { CodexProvider } = await import('../../../../src/main/providers/codex/index')
+    const screen = await import('../../../../src/main/providers/codex/session-screen')
+    const p = new CodexProvider()
+    withWin32(() => {
+      expect(p.launchRoute(SHIM)).toBe('cmd')
+      expect(p.launchRoute(EXE)).toBe('direct')
+    })
+    const res = path.resolve('/res')
+    const home = path.join(res, 'codex-realms', 'realm-0123456789abcdef0123')
+    expect(p.stagedSkillsDir(home, res)).toBe(path.join(home, 'skills'))
+    expect(p.stagedSkillsDir(path.resolve('/home/u/.codex'), res)).toBeNull()
+    const sid = 'prov00000000prov00000000'
+    p.runScreen.open(sid, { cols: 80, rows: 24, write: () => {}, current: () => true, clamp: (d) => d })
+    expect(screen.hasCodexScreen(sid)).toBe(true)
+    expect(p.runScreen.has(sid)).toBe(true)
+    p.runScreen.close(sid)
+    expect(screen.hasCodexScreen(sid)).toBe(false)
   })
 })

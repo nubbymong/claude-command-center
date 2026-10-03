@@ -49,8 +49,13 @@ vi.mock('../../../src/main/conductor-mcp-server', () => ({
   unregisterCodexReviewSession: () => {},
 }))
 const STALE_WT = path.join('F:', 'stale-outer', 'ccc-wt', 'deadbeefdead')
-vi.mock('../../../src/main/providers', () => ({
-  getProvider: () => ({
+// The registered Codex provider's pane is the real one (session-screen.ts):
+// the PTY manager reaches it only through the registry.
+vi.mock('../../../src/main/providers', async () => {
+  const screen = await import('../../../src/main/providers/codex/session-screen')
+  const runScreen = { open: screen.openCodexScreen, feed: screen.feedCodexScreen, resize: screen.resizeCodexScreen, close: screen.closeCodexScreen, has: screen.hasCodexScreen, submit: screen.submitCodexText }
+  return { getProvider: () => ({
+    runScreen,
     buildSpawnCommand: (opts: Record<string, unknown>) => {
       h.built.push(opts)
       const launch = opts.realmLaunch as { executable: string; env: Record<string, string> }
@@ -62,8 +67,8 @@ vi.mock('../../../src/main/providers', () => ({
       return { cmd: launch.executable, args: [], env }
     },
     ingestSessionTelemetry: (_sid: string, opts: Record<string, unknown>) => { h.telemetry.push(opts); return { stop: () => {} } },
-  }),
-}))
+  }) }
+})
 vi.mock('../../../src/main/providers/claude/spawn', () => ({ resolveClaudeBinary: () => ({ cmd: 'claude', source: 'system' }), resolveHostColorScheme: () => 'dark' }))
 vi.mock('../../../src/main/vision-manager', () => ({ isGlobalVisionRunning: () => false, getGlobalVisionConfig: () => null, teardownVisionSession: () => {} }))
 vi.mock('../../../src/main/canvas/canvas-plugin', async (importOriginal) => ({ ...(await importOriginal<typeof import('../../../src/main/canvas/canvas-plugin')>()), ensureCanvasPlugin: () => null }))
@@ -194,6 +199,8 @@ describe('a Codex session\'s canvas markers go through the submit primitive', ()
     start(project)
     const answer = writeCanvasMarkerLine(SID, `Approved v7 on the canvas ${String.fromCharCode(0xb7)} canvas_version_verdict recorded`)
     expect(answer && typeof (answer as Promise<unknown>).then).toBe('function')
+    // Waiting on the run's pane for Codex's prompt, not answered at once.
+    expect(await Promise.race([answer, new Promise((r) => setTimeout(() => r('pending'), 100))])).toBe('pending')
     killPty(SID)
     expect(await answer).toEqual({ delivered: false, reason: 'session-gone' })
   })

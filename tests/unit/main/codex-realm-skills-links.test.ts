@@ -15,6 +15,11 @@ import * as os from 'os'
 import * as path from 'path'
 
 const { stageCodexRealmSkills, removeCodexRealmSkills, STAGED_SKILL_MARK, STAGED_SKILL_MARK_BYTES } = await import('../../../src/main/canvas/codex-realm-skills')
+// The skills folder comes from the Codex package's path rule (realm-paths.ts),
+// which the launch reaches through the registered provider (stagedSkillsDir).
+const { codexManagedRealmSkillsDir } = await import('../../../src/main/providers/codex/realm-paths')
+const stage = (h: string, r: string) => stageCodexRealmSkills(h, codexManagedRealmSkillsDir(h, r))
+const remove = (h: string, r: string) => removeCodexRealmSkills(h, codexManagedRealmSkillsDir(h, r))
 const { canvasSkillFiles } = await import('../../../src/main/canvas/canvas-plugin')
 
 const REALM = 'realm-fedcba9876543210fedc'
@@ -41,7 +46,7 @@ afterEach(() => {
 describe('links in a managed realm', () => {
   it('a link at skills/: nothing written through it, the skills not staged', () => {
     fs.symlinkSync(outside, path.join(home, 'skills'), LINK_KIND)
-    expect(stageCodexRealmSkills(home, res)).toEqual({ staged: false, reason: 'link' })
+    expect(stage(home, res)).toEqual({ staged: false, reason: 'link' })
     expect(fs.readdirSync(outside)).toEqual(['precious.txt'])
   })
 
@@ -50,24 +55,24 @@ describe('links in a managed realm', () => {
     fs.writeFileSync(path.join(outside, 'agent-canvas', 'SKILL.md'), canvasSkillFiles()[0].bytes)
     fs.writeFileSync(path.join(outside, 'agent-canvas', STAGED_SKILL_MARK), STAGED_SKILL_MARK_BYTES)
     fs.symlinkSync(outside, path.join(home, 'skills'), LINK_KIND)
-    removeCodexRealmSkills(home, res)
+    remove(home, res)
     expect(fs.existsSync(path.join(outside, 'agent-canvas', 'SKILL.md'))).toBe(true)
   })
 
   it('a link at a skill folder: left alone, its target untouched, the skill not staged', () => {
     fs.mkdirSync(path.join(home, 'skills'))
     fs.symlinkSync(outside, path.join(home, 'skills', 'agent-canvas'), LINK_KIND)
-    expect(stageCodexRealmSkills(home, res)).toEqual({ staged: false, reason: 'link' })
+    expect(stage(home, res)).toEqual({ staged: false, reason: 'link' })
     expect(fs.readdirSync(outside)).toEqual(['precious.txt'])
     expect(fs.lstatSync(path.join(home, 'skills', 'agent-canvas')).isSymbolicLink()).toBe(true)
-    removeCodexRealmSkills(home, res)
+    remove(home, res)
     expect(fs.readFileSync(path.join(outside, 'precious.txt'), 'utf8')).toBe('keep me')
   })
 
   it('a link planted INSIDE the app\'s own folder: the rebuild removes the link, never its target', () => {
-    expect(stageCodexRealmSkills(home, res)).toEqual({ staged: true })
+    expect(stage(home, res)).toEqual({ staged: true })
     fs.symlinkSync(outside, path.join(home, 'skills', 'canvas-plan', 'refs'), LINK_KIND)
-    expect(stageCodexRealmSkills(home, res)).toEqual({ staged: true })
+    expect(stage(home, res)).toEqual({ staged: true })
     expect(fs.readFileSync(path.join(outside, 'precious.txt'), 'utf8')).toBe('keep me')
     expect(fs.readdirSync(path.join(home, 'skills', 'canvas-plan')).sort()).toEqual([STAGED_SKILL_MARK, 'SKILL.md'].sort())
   })
