@@ -24,6 +24,7 @@ import { trackUsage } from '../stores/tipsStore'
 import { useAddAccount } from '../hooks/useAddAccount'
 import { AccountsSurface } from './settings/accounts/AccountsSurface'
 import { CodeReviewTools } from './settings/CodeReviewTools'
+import { AccountLogFoldersPanel } from './settings/AccountLogFoldersPanel'
 import { BuildIdentityLine } from './BuildIdentityLine'
 import { shortSha } from '../../shared/build-identity'
 import { usesClaude, usesCodex } from '../onboarding/provider-choice'
@@ -627,6 +628,8 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                 >
                   Open log folder
                 </button>
+                {/* WP2 PR 4, P4.4 (row 56): each Codex account's own log folders */}
+                <AccountLogFoldersPanel />
               </Section>
 
               <Section title="Advanced" icon={<path d="M8 2v3M8 11v3M2 8h3M11 8h3M4 4l2 2M10 10l2 2M4 12l2-2M10 6l2-2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />}>

@@ -31,7 +31,7 @@ import { initProviderAccounts, getAccountsService, runStartupProviderMigrations,
 import { probeClaudeCliVersion, setClaudeCliProbeAllowed } from './claude-cli-version'
 import { providerProbeRefusal } from './provider-launch-gate'
 import { providerUseWithoutLease } from './provider-in-use'
-import { registerDebugHandlers } from './ipc/debug-handlers'
+import { registerDebugHandlers, registerAccountLogFolderHandlers } from './ipc/debug-handlers'
 import { disableDebugMode } from './debug-capture'
 import { registerUpdateHandlers } from './ipc/update-handlers'
 import { adoptRenamedRepoIfLive } from './github-update'
@@ -673,6 +673,9 @@ if (!gotTheLock) {
     // between here and there may throw and skip the first-run wipe prompt.
     registerLogsWipeHandlers(getWindow)
     registerDebugHandlers()
+    // WP2 PR 4, P4.4 (row 56): each account's own log folders, keyed by
+    // account id and folder kind; the folders come from the accounts service.
+    registerAccountLogFolderHandlers(getWindow, async () => (await getAccountsService()?.accountFolders()) ?? null)
     registerUpdateHandlers()
     // Pre-emptive repo-rename handling: if the app has been renamed on GitHub
     // (claude-command-center -> ai-code-conductor) adopt + persist the new repo
@@ -766,7 +769,9 @@ if (!gotTheLock) {
     startRulesEngine()
     registerCloudAgentHandlers(getWindow)
     registerLegacyVersionHandlers(getWindow)
-    registerMemoryHandlers()
+    // WP2 PR 4, P4.4 (row 55): each account's own memories beside Claude's
+    // store, and every memory channel answering only the app window.
+    registerMemoryHandlers({ getWindow, accountFolders: async () => (await getAccountsService()?.accountFolders()) ?? null })
     // GitHub sidebar — reads/writes github-config.json + encrypted auth profiles
     // under the CONFIG dir alongside other app config. Session-level integration
     // state piggybacks on the existing session-state persistence helpers.
