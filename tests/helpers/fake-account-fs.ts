@@ -19,11 +19,13 @@ const eloop = (p: string): NodeJS.ErrnoException => Object.assign(new Error(`ELO
 
 export const O_NOFOLLOW_FAKE = 0x20000
 
-export function createFakeAccountFs(platform: 'win32' | 'linux' = 'linux') {
+/** `caseSensitive`: a Windows folder with case sensitivity turned on (a name
+ *  in another case is another file); the POSIX form always is. */
+export function createFakeAccountFs(platform: 'win32' | 'linux' = 'linux', opts: { caseSensitive?: boolean } = {}) {
   const p = platform === 'win32' ? path.win32 : path.posix
   const key = (x: string): string => {
     const n = p.resolve(x)
-    return platform === 'win32' ? n.toLowerCase() : n
+    return platform === 'win32' && !opts.caseSensitive ? n.toLowerCase() : n
   }
   const nodes = new Map<string, Node>()
   const display = new Map<string, string>()

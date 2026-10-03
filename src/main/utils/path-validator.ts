@@ -127,16 +127,16 @@ export function localPathFormProblem(p: unknown, platform: PathPlatform = proces
 }
 
 /**
- * The one case rule for "the same path" in the account-folder checks: the
- * containment test and the real-path test alike (Node's path.relative folds
- * with toLowerCase, which this replaces). Chosen to follow how Windows
- * compares names: NTFS upper-cases each UTF-16 unit through a one-to-one
- * upcase table. So a unit is folded only to an upper case that is itself one
- * unit and lowers back to it (a plain letter pair, o and O with umlauts
- * included); anything else is kept as written: the Kelvin sign is not k,
- * dotless i is not I, sharp s never becomes two letters, a surrogate is never
- * folded. A pair this cannot be sure of reads as two names, and each check
- * refuses on a mismatch, so it fails closed.
+ * The case rule for the account-folder checks' real-path test (samePathForm):
+ * whether the real path the file system gave back is the path that reached
+ * it, in another case. Chosen to follow how Windows compares names: NTFS
+ * upper-cases each UTF-16 unit through a one-to-one upcase table. So a unit is
+ * folded only to an upper case that is itself one unit and lowers back to it
+ * (a plain letter pair, o and O with umlauts included); anything else is kept
+ * as written: the Kelvin sign is not k, dotless i is not I, sharp s never
+ * becomes two letters, a surrogate is never folded. A volume can keep apart a
+ * pair this folds (a case-sensitive folder or disk), so it never decides
+ * whether a path is inside a folder: pathInside compares spellings exactly.
  */
 export function foldPathCase(s: string): string {
   return s.replace(/[a-z]|[^\x00-\x7f]/g, (c) => {
@@ -160,7 +160,8 @@ const caseKey = (s: string, platform: PathPlatform): string => (platform === 'wi
 /**
  * Two spellings of one path as the platform compares them: on Windows and
  * macOS by foldPathCase (Windows also takes either separator); elsewhere
- * exact. A trailing separator is ignored, a root's is kept.
+ * exact. A trailing separator is ignored, a root's is kept. For the real-path
+ * test only, never containment (pathInside).
  */
 export function samePathForm(a: string, b: string, platform: PathPlatform = process.platform): boolean {
   return caseKey(spelled(a, platform), platform) === caseKey(spelled(b, platform), platform)
@@ -168,18 +169,20 @@ export function samePathForm(a: string, b: string, platform: PathPlatform = proc
 
 /**
  * `target`'s path below `root` (as `target` writes it), when it is strictly
- * inside it by samePathForm's rule; else null. Both must already have a local
- * form (localPathFormProblem): no `.` or `..` segment is resolved here, so a
- * name that merely starts with two dots is inside.
+ * inside it spelled as `root` is spelled (on Windows either separator); else
+ * null. Case is never folded here, on any platform: a folder spelled in
+ * another case can be another folder (a case-sensitive folder or disk), and
+ * the listing only ever hands out paths built from the root's own spelling.
+ * Both must already have a local form (localPathFormProblem): no `.` or `..`
+ * segment is resolved here, so a name that merely starts with two dots is
+ * inside.
  */
 export function pathInside(root: string, target: string, platform: PathPlatform = process.platform): string | null {
   const sep = platform === 'win32' ? '\\' : '/'
   const r = spelled(root, platform)
   const t = spelled(target, platform)
   const prefix = r.endsWith(sep) ? r : r + sep
-  // foldPathCase keeps every unit in its place, so the prefix's length cuts
-  // the target as written.
-  if (t.length <= prefix.length || !caseKey(t, platform).startsWith(caseKey(prefix, platform))) return null
+  if (t.length <= prefix.length || !t.startsWith(prefix)) return null
   return t.slice(prefix.length)
 }
 
@@ -229,7 +232,8 @@ export interface AccountMemoryTarget {
  *
  * Refused (AccountPathRefused): a path whose form is not a fully qualified
  * local path (localPathFormProblem: a UNC or device path never reaches a file
- * call); one not strictly inside one of the roots; one with a `.git` segment
+ * call); one not strictly inside one of the roots as the root is spelled
+ * (pathInside: another case is outside); one with a `.git` segment
  * (a provider may keep its memories folder as a git repository: nothing in
  * `.git` is listed, read or deleted); a root or file whose real path is not its own (a
  * link or junction anywhere on the way, an 8.3 short name, a substituted

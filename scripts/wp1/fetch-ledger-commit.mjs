@@ -36,8 +36,8 @@
 //
 //   node scripts/wp1/fetch-ledger-commit.mjs
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import { basename, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const INVENTORY = 'docs/wp1/baseline-test-inventory.json'
@@ -173,8 +173,34 @@ function fetchBaseline() {
   return 0
 }
 
-const invokedDirectly = process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])
-if (invokedDirectly) {
+/** How this file was started: 'main' when node was asked to run it, by
+ *  whatever path (both sides compared as real paths, so a linked or
+ *  junctioned checkout still runs it), 'imported' when a test imports it, and
+ *  an error when the started file has this script's name but is not this
+ *  script: the CI step must never exit 0 having done nothing (PR 4
+ *  re-review).
+ *  @param {string} self this module's path @param {string | undefined} started process.argv[1]
+ *  @param {(p: string) => string} real
+ *  @returns {{ as: 'main' | 'imported' } | { as: 'unknown', error: string }} */
+export function invocation(self, started, real) {
+  if (!started) return { as: 'imported' }
+  /** @param {string} p */
+  const canon = (p) => {
+    try { return real(p) } catch { return resolve(p) }
+  }
+  if (canon(self) === canon(resolve(started))) return { as: 'main' }
+  if (basename(started).toLowerCase() === basename(self).toLowerCase()) {
+    return { as: 'unknown', error: `started as ${started}, which does not resolve to this script (${self}); run this script by its own path` }
+  }
+  return { as: 'imported' }
+}
+
+const started = invocation(fileURLToPath(import.meta.url), process.argv[1], realpathSync.native)
+if (started.as === 'unknown') {
+  console.error(`::error::${started.error}`)
+  process.exit(1)
+}
+if (started.as === 'main') {
   // The binding first: once HEAD's history is deep enough, a baseline on it is
   // already present, and a baseline fetched at depth 1 afterwards cannot cut
   // the path just found (a commit on that path is present, so it is not

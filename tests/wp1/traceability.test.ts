@@ -11,7 +11,7 @@ import { join, resolve } from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { resolvePhaseDetailed } from './phase'
 import { MANIFEST_PATH, SHA_RE, ancestry, bindingBreaks, changedPaths, staleRecords, type EvidenceRecord, type Git } from './binding'
-import { DEEPEN_STEPS, deepenUntilDecidable, readBoundHead } from '../../scripts/wp1/fetch-ledger-commit.mjs'
+import { DEEPEN_STEPS, deepenUntilDecidable, invocation, readBoundHead } from '../../scripts/wp1/fetch-ledger-commit.mjs'
 
 const ROOT = resolve(__dirname, '..', '..')
 type Item = {
@@ -287,6 +287,28 @@ describe('WP1 traceability manifest', () => {
     expect(readBoundHead(JSON.stringify({ boundHead: B }))).toEqual({ sha: B })
     for (const bad of ['--upload-pack=touch x', 'HEAD', 'abc123', 'B'.repeat(40), `${B}\n`, `${B}0`, 123, ['x']]) {
       expect(readBoundHead(JSON.stringify({ boundHead: bad })), String(bad)).toEqual({ error: 'tests/wp1/traceability.json boundHead is not a 40-hex commit id' })
+    }
+  })
+
+  // [host] The script runs when node is asked to run it, through whatever path
+  // CI used (a linked or junctioned checkout included), and never exits 0
+  // having done nothing (PR 4 re-review): a started file with its name that
+  // is not it is an error. Real paths are injected; nothing is resolved.
+  it('[host] the binding fetch runs by its real path, and refuses to guess when started under its name from elsewhere', () => {
+    const self = '/real/ws/scripts/wp1/fetch-ledger-commit.mjs'
+    const links: Record<string, string> = { '/link/ws/scripts/wp1/fetch-ledger-commit.mjs': self }
+    const real = (p: string) => {
+      const n = p.replace(/\\/g, '/').replace(/^[A-Za-z]:/, '')
+      if (n === self || n.startsWith('/elsewhere/') || n.startsWith('/repo/')) return n
+      if (links[n]) return links[n]
+      throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' })
+    }
+    expect(invocation(self, self, real)).toEqual({ as: 'main' })
+    expect(invocation(self, '/link/ws/scripts/wp1/fetch-ledger-commit.mjs', real)).toEqual({ as: 'main' })
+    expect(invocation(self, undefined, real)).toEqual({ as: 'imported' })
+    expect(invocation(self, '/repo/node_modules/vitest/vitest.mjs', real)).toEqual({ as: 'imported' })
+    for (const other of ['/elsewhere/fetch-ledger-commit.mjs', '/gone/scripts/wp1/fetch-ledger-commit.mjs']) {
+      expect(invocation(self, other, real), other).toMatchObject({ as: 'unknown', error: expect.stringMatching(/does not resolve to this script/) })
     }
   })
 
