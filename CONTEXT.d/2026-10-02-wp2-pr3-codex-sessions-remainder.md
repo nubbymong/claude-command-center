@@ -78,23 +78,35 @@ three-analysis cap, one start-up rule for both providers; d0caf0bd:
 nothing is written in front of a `.bak` a clear could not remove, "has
 saved sessions" means at least one session, the extra-arguments label
 tied to its field). Fixer 10's reviews (PASS with fixes) and round 2's
-minors are fixed by fixer 11 (`<fixer-11>`, in progress). The VM at
-aca63cc7 and d0caf0bd: row 36's Duration after a clear PASS on both
-versions, nothing coming back after "Close sessions", the real owner-only
-test 6 of 6, the e2e suite 81 of 81 each time, the real home untouched.
-Recorded limits: one transient read failure of the session file at start
-latches saves off for that run (since fixer 9 also after a clear that
-kept a running time); a version below the highest checked is never
-analysed at start (a Re-run analyses it).
+minors are fixed by fixer 11 (67b3b9a8: Sentinel goes by the highest
+version checked and the panel names the version installed; be6ee406: a
+clear drops the cleared set whatever the clear did, and a save removes a
+`.bak` it cannot overwrite). Fixer 11's reviews (spec PASS with fixes,
+code quality PASS) and ADR-009 round 3 (lenses C and D PASS; lens C also
+confirmed P3.8's launched answer on `pty:spawn`, PASS) are answered by
+fixer 12 (e6859037: a Re-run makes the installed version the highest
+checked, down as well as up, and the user-facing line says "newer than the
+newest one it has checked"). The VM at aca63cc7, d0caf0bd and be6ee406:
+row 36's Duration after a clear PASS on both versions, nothing coming back
+after "Close sessions", the seeded Sentinel panel naming the installed
+version with no analysis at start (both providers), the real owner-only
+test 6 of 6, the e2e suite 81 of 81 each time, the real home untouched;
+fixer 12 changes only the Re-run path and that text, covered by unit
+tests, so the VM evidence at be6ee406 stands for the rest. Recorded
+limits: one transient read failure of the session file at start latches
+saves off for that run (since fixer 9 also after a clear that kept a
+running time); a clear whose session file cannot be removed leaves the
+set on disk for the next start (pre-existing), and one refused by the
+read-failure latch deletes nothing (by design); a version below the
+highest checked is never analysed at start (a Re-run analyses it); a
+Re-run reads notes from the version the panel names.
 
-**Owed before #626 leaves draft**: gate 3, fixer 11's spec and
-code-quality reviews (the gate closes when they pass); gate 4, the lens C
-and D confirmation of fixer 11 (round 3), the attackers' confirmation of
-P3.8's launched answer on `pty:spawn` (never probed), and the verdict
-comment with its marker line regenerated for the final head; gate 6, at
-the final head on the VM the e2e suite and a seeded Sentinel panel check,
-row 38's midnight UTC check, and the VM read of a leftover kill's log
-line on the npm route (row 42); the SSH live matrix at PR 3's head (pty-manager.ts changed, and
+**Owed before #626 leaves draft**: gate 3, fixer 12's spec and
+code-quality confirmations (<f12-verdicts>); gate 4, the lens C and D
+confirmations of fixer 12 (<f12-verdicts>) and the verdict comment with
+its marker line regenerated for the final head; gate 6, row 38's midnight
+UTC check and the VM read of a leftover kill's log line on the npm route
+(row 42), neither run since gate 6; the SSH live matrix at PR 3's head (pty-manager.ts changed, and
 statusline-watcher.ts in P3.2), the owner's screenshot review and the
 Desktop test gate (owner-owed); CI at the final head with the native SQL
 tests (they pass on the VM at 525a00ac); the owner-only checks gate 6
