@@ -8,6 +8,8 @@ import { join } from 'node:path'
 import {
   HELP_CAPTURES, normaliseCapture, formatCapture, parseCapture, compareCapture, parseFeaturesList,
   argvShape, flagsMissingFromHelp, helpNamesSubcommand, disabledFeatures, expectedVersion,
+  REVIEWED_HELP_DIFFERENCES, RUN_PATH_NAMES, withRunPaths, expectedOnPlatform, withoutLastStdoutLine,
+  type Capture,
 } from './codex-conformance-lib'
 import { codexCommandLine, CODEX_MIN_SUPPORTED_VERSION, CODEX_PINNED_CLI_VERSION } from '../../src/main/providers/codex'
 
@@ -146,6 +148,16 @@ describe('each comparison fails on a deliberately wrong fixture (verify the veri
     }
   })
 
+  it('prove-red: the help fixture with its last non-empty stdout line dropped, everything else kept', () => {
+    const text = fixture(v, 'version')
+    expect(parseCapture(withoutLastStdoutLine(text))).toEqual({ exit: 0, stdout: '', stderr: '' })
+    expect(compareCapture(parseCapture(text)!, withoutLastStdoutLine(text)).same).toBe(false)
+    const lines = good.stdout.split('\n')
+    const last = lines.map((l) => l.trim() !== '').lastIndexOf(true)
+    expect(last).toBeGreaterThan(10)
+    expect(parseCapture(withoutLastStdoutLine(fixture(v, 'exec-help')))).toEqual({ ...good, stdout: [...lines.slice(0, last), ...lines.slice(last + 1)].join('\n') })
+  })
+
   it('versions: the minimum and pinned come from the contract; a mismatch, a bad class or an rc without its version is refused', () => {
     const contract = { minimum: CODEX_MIN_SUPPORTED_VERSION, pinned: CODEX_PINNED_CLI_VERSION }
     expect(expectedVersion('minimum', undefined, contract)).toEqual({ kind: 'minimum', version: CODEX_MIN_SUPPORTED_VERSION })
@@ -156,5 +168,128 @@ describe('each comparison fails on a deliberately wrong fixture (verify the veri
     expect(expectedVersion('rc', 'latest', contract)).toHaveProperty('error')
     expect(expectedVersion('newest', '0.160.0', contract)).toHaveProperty('error')
     expect(expectedVersion(undefined, undefined, contract)).toHaveProperty('error')
+  })
+})
+
+// [host] P4.10: the help captures of CI run 37134624406 (fcfd2ae6) were
+// reviewed per OS (docs/wp1/evidence/ci-matrix.md, "Help captures
+// reviewed"). The fixtures were captured on Windows; macOS and Linux differ
+// in reviewed ways only, which the comparison accepts by name before the help
+// is asserted. The runs below are made from the fixtures by hand, as that run
+// captured them on each OS, independently of the lib's list.
+describe('the help differences reviewed per OS (P4.10)', () => {
+  const VERSIONS = [CODEX_MIN_SUPPORTED_VERSION, CODEX_PINNED_CLI_VERSION]
+  const TMP = '/tmp/ccc-vitest-yZDdXV'
+  const HOME = `${TMP}/ccc-conformance-home-cftQeL`
+  const linuxWarning = (tmp: string, home: string) =>
+    `WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir "${tmp}" (codex_home: AbsolutePathBuf("${home}"))\n`
+  const APP = '  app               Launch the Desktop app (opens the app installer if missing)\n'
+  const MAC_SANDBOX_OPTIONS = [
+    '', '      --allow-unix-socket <ALLOW_UNIX_SOCKETS>',
+    '          Allow the sandboxed command to bind/connect AF_UNIX sockets rooted at this path. Relative',
+    '          paths are resolved against the current directory. Repeat to allow multiple paths',
+    '', '      --log-denials',
+    '          While the command runs, capture macOS sandbox denials via `log stream` and print them',
+    '          after exit', '',
+  ].join('\n')
+  /** A capture as the reviewed run made it on that OS (real temp paths in it). */
+  function observed(platform: 'darwin' | 'linux', version: string, name: string): Capture {
+    const f = parseCapture(fixture(version, name))!
+    let stdout = f.stdout
+    if (name === 'features-list') stdout = stdout.replace(/^(secret_auth_storage +stable +)true$/m, '$1false')
+    if (name === 'sandbox-help') {
+      stdout = stdout.replace('under Windows restricted token sandbox', platform === 'darwin' ? 'under seatbelt' : 'under the Linux sandbox')
+      if (platform === 'darwin') stdout = stdout.replace('explicit permissions profile\n', `explicit permissions profile\n${MAC_SANDBOX_OPTIONS}`)
+    }
+    if (platform === 'linux') stdout = stdout.replace(APP, '')
+    return { exit: f.exit, stdout, stderr: platform === 'linux' ? linuxWarning(TMP, HOME) : f.stderr }
+  }
+  const named = (c: Capture) => withRunPaths(c, { home: HOME, tmp: TMP })
+  const expected = (platform: string, version: string, name: string, text = fixture(version, name)) => {
+    const e = expectedOnPlatform(text, platform, version, name)
+    if ('error' in e) throw new Error(e.error)
+    return e
+  }
+
+  it('every reviewed difference applies to its fixture exactly once, each is used, and Windows has none', () => {
+    for (const version of VERSIONS) {
+      for (const c of HELP_CAPTURES) {
+        const win = expected('win32', version, c.name)
+        expect(win.applied, c.name).toBe(0)
+        expect(win.text).toBe(normaliseCapture(fixture(version, c.name)))
+      }
+    }
+    for (const d of REVIEWED_HELP_DIFFERENCES) {
+      for (const version of d.versions) {
+        expect(VERSIONS, d.why).toContain(version)
+        for (const name of d.captures) {
+          const e = expectedOnPlatform(fixture(version, name), d.platform, version, name, [d])
+          expect(e, `${d.platform} ${version} ${name}: ${d.why}`).toMatchObject({ applied: 1 })
+        }
+      }
+    }
+  })
+
+  it('the run as captured on each OS compares the same once its reviewed differences are applied, and differs from the bare fixture', () => {
+    for (const platform of ['darwin', 'linux'] as const) {
+      for (const version of VERSIONS) {
+        const differ: string[] = []
+        for (const c of HELP_CAPTURES) {
+          const run = named(observed(platform, version, c.name))
+          expect(compareCapture(run, expected(platform, version, c.name).text), `${platform} ${version} ${c.name}`).toMatchObject({ same: true })
+          if (!compareCapture(run, fixture(version, c.name)).same) differ.push(c.name)
+        }
+        expect(differ, `${platform} ${version}`).toEqual(platform === 'darwin' ? ['features-list', 'sandbox-help'] : HELP_CAPTURES.map((c) => c.name))
+      }
+    }
+  })
+
+  it('anything else still fails: a difference not reviewed, one on another OS, a reviewed one missing, another home in the warning', () => {
+    const v = CODEX_PINNED_CLI_VERSION
+    // Another OS's difference.
+    expect(compareCapture(named(observed('linux', v, 'sandbox-help')), expected('darwin', v, 'sandbox-help').text).same).toBe(false)
+    expect(compareCapture(named(observed('linux', v, 'help')), expected('win32', v, 'help').text).same).toBe(false)
+    expect(compareCapture(named(observed('darwin', v, 'features-list')), expected('linux', v, 'features-list').text).same).toBe(false)
+    // A reviewed difference that does not show: the Windows text on macOS, Linux without the stderr line.
+    expect(compareCapture(parseCapture(fixture(v, 'features-list'))!, expected('darwin', v, 'features-list').text).same).toBe(false)
+    expect(compareCapture({ ...named(observed('linux', v, 'help')), stderr: '' }, expected('linux', v, 'help').text).same).toBe(false)
+    // The warning names a home that is not this run's own.
+    expect(compareCapture(named({ ...observed('linux', v, 'version'), stderr: linuxWarning(TMP, '/home/runner/another-home') }), expected('linux', v, 'version').text).same).toBe(false)
+    // A difference no one reviewed, on top of the reviewed ones.
+    const extra = observed('darwin', v, 'exec-help')
+    expect(compareCapture(named({ ...extra, stdout: extra.stdout.replace('--sandbox', '--sandbax') }), expected('darwin', v, 'exec-help').text).same).toBe(false)
+    const more = observed('linux', v, 'help')
+    expect(compareCapture(named({ ...more, stdout: `${more.stdout}  a new line\n` }), expected('linux', v, 'help').text).same).toBe(false)
+    expect(compareCapture(named({ ...more, stderr: `${more.stderr}another warning\n` }), expected('linux', v, 'help').text).same).toBe(false)
+  })
+
+  it('a reviewed difference whose line the fixture does not hold exactly once is an error, never a silent pass', () => {
+    const v = CODEX_PINNED_CLI_VERSION
+    const help = normaliseCapture(fixture(v, 'help'))
+    expect(expectedOnPlatform(help.replace(APP, ''), 'linux', v, 'help')).toEqual({ error: expect.stringMatching(/Desktop app on Linux.*exactly once in the fixture's stdout; it is there 0 times/) })
+    expect(expectedOnPlatform(help.replace(APP, APP + APP), 'linux', v, 'help')).toEqual({ error: expect.stringMatching(/it is there 2 times/) })
+    expect(expectedOnPlatform(help, 'linux', v, 'help', [{ ...REVIEWED_HELP_DIFFERENCES[0], platform: 'linux', captures: ['help'] }])).toHaveProperty('error')
+    expect(expectedOnPlatform('not a capture', 'linux', v, 'help')).toEqual({ error: 'the fixture is not in the capture form' })
+  })
+
+  it('prove-red: with the last stdout line dropped, every capture on every OS is still red', () => {
+    for (const platform of ['win32', 'darwin', 'linux'] as const) {
+      for (const version of VERSIONS) {
+        for (const c of HELP_CAPTURES) {
+          const run = platform === 'win32' ? parseCapture(fixture(version, c.name))! : named(observed(platform, version, c.name))
+          const red = expectedOnPlatform(withoutLastStdoutLine(fixture(version, c.name)), platform, version, c.name)
+          if ('error' in red) continue
+          expect(compareCapture(run, red.text).same, `${platform} ${version} ${c.name}`).toBe(false)
+        }
+      }
+    }
+  })
+
+  it("the run's own folders become names, the home first since it lies inside the temporary folder", () => {
+    const c = { exit: 0, stdout: `x ${TMP}\n`, stderr: `${HOME} and ${TMP}/other\n` }
+    expect(withRunPaths(c, { home: HOME, tmp: TMP })).toEqual({
+      exit: 0, stdout: `x ${RUN_PATH_NAMES.tmp}\n`, stderr: `${RUN_PATH_NAMES.home} and ${RUN_PATH_NAMES.tmp}/other\n`,
+    })
+    expect(withRunPaths(c, { home: '', tmp: '' })).toEqual(c)
   })
 })

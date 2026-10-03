@@ -93,6 +93,143 @@ export function compareCapture(run: Capture, fixtureText: string): CaptureCompar
   return { same: true, why: null, onlyInRun: [], onlyInFixture: [] }
 }
 
+/** The prove-red run's help fixture: its last non-empty stdout line dropped,
+ *  everything else kept. */
+export function withoutLastStdoutLine(fixtureText: string): string {
+  const p = parseCapture(fixtureText)
+  if (!p) return fixtureText
+  const lines = p.stdout.split('\n')
+  const last = lines.map((l) => l.trim() !== '').lastIndexOf(true)
+  return formatCapture({ ...p, stdout: lines.filter((_, i) => i !== last).join('\n') })
+}
+
+/** A difference between one OS's help and the fixtures, which were captured
+ *  on Windows, reviewed and accepted by name (P4.10: CI run 37134624406 at
+ *  fcfd2ae6, every capture read line by line; docs/wp1/evidence/
+ *  ci-matrix.md, "Help captures reviewed"). On `platform`, for the listed
+ *  versions and captures, the fixture's line `line` in `stream`, which must
+ *  be there exactly once, reads as `becomes` (several lines, or none). */
+export interface ReviewedHelpDifference {
+  platform: 'darwin' | 'linux'
+  versions: readonly string[]
+  captures: readonly string[]
+  stream: 'stdout' | 'stderr'
+  line: string
+  becomes: readonly string[]
+  why: string
+}
+
+/** What a capture says about the run's own folders, as names: the fresh
+ *  Codex home and the temporary folder it was made in. */
+export const RUN_PATH_NAMES = { home: '<RUN_HOME>', tmp: '<RUN_TMPDIR>' } as const
+
+/** The run's own folders in a capture replaced by their names, the home
+ *  first (it lies inside the temporary folder), so a line that names them
+ *  compares the same on every run. */
+export function withRunPaths(c: Capture, paths: { home: string; tmp: string }): Capture {
+  const name = (s: string) => {
+    let out = s
+    if (paths.home) out = out.split(paths.home).join(RUN_PATH_NAMES.home)
+    if (paths.tmp) out = out.split(paths.tmp).join(RUN_PATH_NAMES.tmp)
+    return out
+  }
+  return { exit: c.exit, stdout: name(c.stdout), stderr: name(c.stderr) }
+}
+
+const REVIEWED_VERSIONS = ['0.153.4', '0.155.1'] as const
+const DESKTOP_APP_LINE = '  app               Launch the Desktop app (opens the app installer if missing)'
+const SANDBOX_ARG_ON_WINDOWS = '          Full command args to run under Windows restricted token sandbox'
+const SECRET_AUTH_STORAGE_ON_WINDOWS = 'secret_auth_storage                      stable             true'
+const SECRET_AUTH_STORAGE_OFF = 'secret_auth_storage                      stable             false'
+const LAST_SHARED_SANDBOX_OPTION = '          Include managed requirements while resolving an explicit permissions profile'
+
+/** Every difference the review accepted, and nothing else: once asserted, any
+ *  other difference fails, and so does a reviewed one whose line the fixture
+ *  no longer holds exactly once. Windows has none. */
+export const REVIEWED_HELP_DIFFERENCES: readonly ReviewedHelpDifference[] = [
+  {
+    platform: 'darwin', versions: REVIEWED_VERSIONS, captures: ['features-list'], stream: 'stdout',
+    line: SECRET_AUTH_STORAGE_ON_WINDOWS, becomes: [SECRET_AUTH_STORAGE_OFF],
+    why: 'the secret_auth_storage feature is off by default on macOS',
+  },
+  {
+    platform: 'darwin', versions: REVIEWED_VERSIONS, captures: ['sandbox-help'], stream: 'stdout',
+    line: SANDBOX_ARG_ON_WINDOWS, becomes: ['          Full command args to run under seatbelt'],
+    why: 'the sandbox command runs under the macOS sandbox',
+  },
+  {
+    platform: 'darwin', versions: REVIEWED_VERSIONS, captures: ['sandbox-help'], stream: 'stdout',
+    line: LAST_SHARED_SANDBOX_OPTION,
+    becomes: [
+      LAST_SHARED_SANDBOX_OPTION,
+      '',
+      '      --allow-unix-socket <ALLOW_UNIX_SOCKETS>',
+      '          Allow the sandboxed command to bind/connect AF_UNIX sockets rooted at this path. Relative',
+      '          paths are resolved against the current directory. Repeat to allow multiple paths',
+      '',
+      '      --log-denials',
+      '          While the command runs, capture macOS sandbox denials via `log stream` and print them',
+      '          after exit',
+    ],
+    why: 'two macOS-only sandbox options follow --include-managed-config',
+  },
+  {
+    platform: 'linux', versions: REVIEWED_VERSIONS, captures: ['help'], stream: 'stdout',
+    line: DESKTOP_APP_LINE, becomes: [],
+    why: 'Codex offers no Desktop app on Linux',
+  },
+  {
+    platform: 'linux', versions: ['0.155.1'], captures: ['mcp-server-help'], stream: 'stdout',
+    line: DESKTOP_APP_LINE, becomes: [],
+    why: 'on 0.155.1 `mcp-server --help` prints the top-level help, which has no Desktop app on Linux',
+  },
+  {
+    platform: 'linux', versions: REVIEWED_VERSIONS, captures: ['features-list'], stream: 'stdout',
+    line: SECRET_AUTH_STORAGE_ON_WINDOWS, becomes: [SECRET_AUTH_STORAGE_OFF],
+    why: 'the secret_auth_storage feature is off by default on Linux',
+  },
+  {
+    platform: 'linux', versions: REVIEWED_VERSIONS, captures: ['sandbox-help'], stream: 'stdout',
+    line: SANDBOX_ARG_ON_WINDOWS, becomes: ['          Full command args to run under the Linux sandbox'],
+    why: 'the sandbox command runs under the Linux sandbox',
+  },
+  {
+    platform: 'linux', versions: REVIEWED_VERSIONS, captures: HELP_CAPTURES.map((c) => c.name), stream: 'stderr',
+    line: '',
+    becomes: [
+      `WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir "${RUN_PATH_NAMES.tmp}" (codex_home: AbsolutePathBuf("${RUN_PATH_NAMES.home}"))`,
+      '',
+    ],
+    why: 'on Linux Codex makes no PATH helper binaries in a home under the temporary folder, where the run makes its fresh homes',
+  },
+]
+
+/** The fixture as this OS's run should read: each reviewed difference for
+ *  this platform, version and capture applied in turn. An error when one no
+ *  longer applies (its line is not in the fixture exactly once), so a
+ *  reviewed difference never passes silently against a fixture it was not
+ *  made for. */
+export function expectedOnPlatform(
+  fixtureText: string, platform: string, version: string, name: string,
+  reviewed: readonly ReviewedHelpDifference[] = REVIEWED_HELP_DIFFERENCES,
+): { text: string; applied: number } | { error: string } {
+  const fixture = parseCapture(fixtureText)
+  if (!fixture) return { error: 'the fixture is not in the capture form' }
+  const streams = { stdout: fixture.stdout.split('\n'), stderr: fixture.stderr.split('\n') }
+  let applied = 0
+  for (const d of reviewed) {
+    if (d.platform !== platform || !d.versions.includes(version) || !d.captures.includes(name)) continue
+    const lines = streams[d.stream]
+    const at = lines.flatMap((l, i) => (l === d.line ? [i] : []))
+    if (at.length !== 1) {
+      return { error: `the reviewed ${platform} difference "${d.why}" needs ${JSON.stringify(d.line)} exactly once in the fixture's ${d.stream}; it is there ${at.length} times` }
+    }
+    lines.splice(at[0], 1, ...d.becomes)
+    applied++
+  }
+  return { text: formatCapture({ exit: fixture.exit, stdout: streams.stdout.join('\n'), stderr: streams.stderr.join('\n') }), applied }
+}
+
 /** `codex features list`: name, stage, on. Lines that are not a feature row
  *  are skipped (the same reading as analysis-features.test.ts). */
 export function parseFeaturesList(text: string): Map<string, { stage: string; on: boolean }> {
