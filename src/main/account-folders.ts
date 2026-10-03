@@ -12,15 +12,21 @@
 // root-level `log_dir` may name a second log folder anywhere on the computer.
 //
 // The log-folder channel (debug:openAccountLogFolder) is keyed by account id
-// and folder KIND. A folder is handed to `shell.openPath` -- which launches
-// whatever it is given, a program included -- only when:
+// and folder KIND. A folder reaches the shell only when:
 //   1. its FORM is a fully qualified local path (localPathFormProblem): a
 //      relative `log_dir`, a UNC share and a device path are refused before
-//      any file or shell call (`shell.openPath` on a share opens a network
+//      any file or shell call (the shell on a share opens a network
 //      connection);
 //   2. it is a folder, not a link or junction, and its real path is its own
 //      (no link anywhere on the way, which also refuses a mapped network drive,
 //      whose real path is a share).
+// Then the account's own log folder (`log`, a path main names) is OPENED with
+// `shell.openPath`, as the app's own log folder is (debug:openFolder). A
+// `log_dir` -- a path the account's settings file names -- is only REVEALED,
+// on every OS: `shell.showItemInFolder` shows it, selected, in the folder that
+// holds it. `shell.openPath` acts on what it is given, and opening a folder
+// can do more than show it (a macOS bundle is a folder that opening runs), so
+// a folder whose name and contents are not the app's is never opened.
 // What remains: the folder could be swapped between the check and the shell
 // call by someone who can write beside it; the check is made immediately
 // before the call, and the shell is given the checked real path.
@@ -310,8 +316,11 @@ export async function readLogDirSetting(configFile: string, files: AccountFileFs
 
 export interface LogFolderDeps {
   fs: AccountFileFs
-  /** shell.openPath: '' on success, else an error text. */
+  /** shell.openPath: '' on success, else an error text. The account's own
+   *  log folder only. */
   openPath(p: string): Promise<string>
+  /** shell.showItemInFolder: a `log_dir` is only ever revealed. */
+  showItemInFolder(p: string): void
   platform: NodeJS.Platform
   log?(message: string): void
 }
@@ -405,6 +414,18 @@ export async function openAccountLogFolder(input: unknown, source: AccountFolder
     return refused('refused')
   }
 
+  // 3. The account's own log folder is opened; a folder its settings name is
+  // revealed, never opened (see the module comment).
+  if (folder === 'log-dir') {
+    try {
+      if (typeof deps.showItemInFolder !== 'function') throw new Error('no reveal')
+      deps.showItemInFolder(real)
+    } catch {
+      log(`${folder} could not be shown`)
+      return refused('refused')
+    }
+    return { ok: true }
+  }
   let err: string
   try {
     err = await deps.openPath(real)

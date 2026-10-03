@@ -94,15 +94,17 @@ describe('account memories on real links', () => {
 })
 
 describe('a log_dir on a real link', () => {
-  it('opens a plain folder, refuses a link or junction, and the shell never sees the refused one', async () => {
+  it('reveals a plain folder (never opens it), refuses a link or junction, and the shell never sees the refused one', async () => {
     const openPath = vi.fn(async (_p: string) => '')
+    const showItemInFolder = vi.fn((_p: string) => {})
     const logs = path.join(tmp, 'tui-logs')
     fs.mkdirSync(logs)
-    const toml = (p: string) => `log_dir = ${JSON.stringify(p)}\n`
+    const toml = (p: string) => `log_dir = ${JSON.stringify(p)}
+`
     fs.writeFileSync(set.configFile, toml(logs))
-    const d = { fs: realAccountFileFs, openPath, platform: process.platform }
+    const d = { fs: realAccountFileFs, openPath, showItemInFolder, platform: process.platform }
     expect(await openAccountLogFolder({ accountId: 'acct-real', folder: 'log-dir' }, async () => [set], d)).toEqual({ ok: true })
-    expect(openPath).toHaveBeenCalledTimes(1)
+    expect(showItemInFolder).toHaveBeenCalledTimes(1)
     const linked = path.join(home, 'linked-logs')
     link(logs, linked)
     fs.writeFileSync(set.configFile, toml(linked))
@@ -111,6 +113,7 @@ describe('a log_dir on a real link', () => {
     fs.mkdirSync(path.join(logs, 'sub'))
     fs.writeFileSync(set.configFile, toml(path.join(linked, 'sub')))
     expect(await openAccountLogFolder({ accountId: 'acct-real', folder: 'log-dir' }, async () => [set], d)).toEqual({ ok: false, code: 'refused' })
-    expect(openPath).toHaveBeenCalledTimes(1)
+    expect(showItemInFolder).toHaveBeenCalledTimes(1)
+    expect(openPath).not.toHaveBeenCalled()
   })
 })

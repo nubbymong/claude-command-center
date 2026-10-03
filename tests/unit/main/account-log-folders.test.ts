@@ -11,16 +11,20 @@
 // junction cases are account-folders-links-real.test.ts's, CI and VM only), a
 // link on the way refused,
 // a missing folder, a folder not set, the sender check, the request shape,
-// and config.toml's log_dir read as TOML reads it.
+// and config.toml's log_dir read as TOML reads it. The account's own log
+// folder is opened; a log_dir (a folder its settings name) is only revealed.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createFakeAccountFs } from '../../helpers/fake-account-fs'
 import type { FakeAccountFs } from '../../helpers/fake-account-fs'
 
 const handlers = new Map<string, (e: unknown, ...args: unknown[]) => Promise<unknown>>()
 const openPath = vi.fn(async (_p: string) => '')
+const reveal = vi.fn((_p: string) => {})
+const shellReveal = vi.fn((_p: string) => {})
+const shellOpen = vi.fn(async (_p: string) => '')
 vi.mock('electron', () => ({
   ipcMain: { handle: vi.fn((ch: string, fn: (e: unknown, ...a: unknown[]) => Promise<unknown>) => { handlers.set(ch, fn) }) },
-  shell: { openPath: (p: string) => openPath(p) },
+  shell: { openPath: (p: string) => shellOpen(p), showItemInFolder: (p: string) => shellReveal(p) },
 }))
 vi.mock('../../../src/main/debug-capture', () => ({
   enableDebugMode: vi.fn(), disableDebugMode: vi.fn(), isDebugModeEnabled: vi.fn(() => false), getDebugDir: vi.fn(() => ''),
@@ -47,16 +51,22 @@ let source: ReturnType<typeof vi.fn>
 function register(sets: Set[] | null, platform: 'win32' | 'linux' = 'win32') {
   handlers.clear()
   source = vi.fn(async () => sets)
-  registerAccountLogFolderHandlers(() => win as never, source as never, { fs: fake as never, openPath, platform, log: () => {} })
+  registerAccountLogFolderHandlers(() => win as never, source as never, { fs: fake as never, openPath, showItemInFolder: reveal, platform, log: () => {} })
 }
 const open = (input: unknown, e: unknown = fromApp) => handlers.get('debug:openAccountLogFolder')!(e, input)
 const list = (e: unknown = fromApp) => handlers.get('debug:accountLogFolders')!(e)
+/** Neither opened nor revealed. */
+const expectShellUntouched = () => { expect(openPath).not.toHaveBeenCalled(); expect(reveal).not.toHaveBeenCalled() }
 /** File calls that named `p` (any of them). */
 const callsOn = (p: string): number => Object.values(fake.calls).flat().filter((x) => x.toLowerCase() === p.toLowerCase()).length
 
 beforeEach(() => {
   openPath.mockReset()
   openPath.mockImplementation(async () => '')
+  reveal.mockReset()
+  shellReveal.mockReset()
+  shellOpen.mockReset()
+  shellOpen.mockImplementation(async () => '')
   fake = createFakeAccountFs('win32')
   fake.mkdir(W)
   fake.mkdir(`${W}\\log`)
@@ -66,7 +76,7 @@ describe('debug:openAccountLogFolder -- the plan cases', () => {
   it('an unknown account id is refused as unknown, and nothing is opened', async () => {
     register([winSet()])
     expect(await open({ accountId: 'acct-nope', folder: 'log' })).toEqual({ ok: false, code: 'unknown-account' })
-    expect(openPath).not.toHaveBeenCalled()
+    expectShellUntouched()
     expect(fake.fileCalls()).toBe(0)
   })
 
@@ -75,7 +85,7 @@ describe('debug:openAccountLogFolder -- the plan cases', () => {
     fake.writeFile(`${W}\\config.toml`, 'log_dir = "C:\\\\tools\\\\evil.exe"\n')
     register([winSet()])
     expect(await open({ accountId: 'acct-1', folder: 'log-dir' })).toEqual({ ok: false, code: 'refused' })
-    expect(openPath).not.toHaveBeenCalled()
+    expectShellUntouched()
   })
 
   it('a relative log_dir is refused by its form, before any call on it', async () => {
@@ -88,7 +98,7 @@ describe('debug:openAccountLogFolder -- the plan cases', () => {
       expect(fake.calls.lstat.slice(-1)[0]?.toLowerCase(), rel).toBe(`${W}\\config.toml`.toLowerCase())
       expect(fake.fileCalls() - before, rel).toBe(2)
     }
-    expect(openPath).not.toHaveBeenCalled()
+    expectShellUntouched()
   })
 
   it('a UNC path is refused by its form: neither the file system nor the shell is called on it', async () => {
@@ -109,7 +119,7 @@ describe('debug:openAccountLogFolder -- the plan cases', () => {
       expect(await open({ accountId: 'acct-1', folder: 'log-dir' }), unc).toEqual({ ok: false, code: 'refused' })
       expect(callsOn(`${unc}\\config.toml`), unc).toBe(0)
     }
-    expect(openPath).not.toHaveBeenCalled()
+    expectShellUntouched()
   })
 
   it('a device or verbatim path is refused by its form: neither the file system nor the shell is called on it', async () => {
@@ -123,7 +133,7 @@ describe('debug:openAccountLogFolder -- the plan cases', () => {
       expect(await open({ accountId: 'acct-1', folder: 'log' }), dev).toEqual({ ok: false, code: 'refused' })
       expect(fake.fileCalls() - before, dev).toBe(0)
     }
-    expect(openPath).not.toHaveBeenCalled()
+    expectShellUntouched()
   })
 })
 
@@ -135,15 +145,67 @@ describe('debug:openAccountLogFolder -- what a folder must be', () => {
     expect(openPath.mock.calls[0][0].toLowerCase()).toBe(`${W}\\log`.toLowerCase())
   })
 
-  it('opens a log_dir set in config.toml, in a basic or a literal string', async () => {
+  it('reveals a log_dir set in config.toml, in a basic or a literal string, at its real path', async () => {
     fake.mkdir('D:\\codex logs\\tui')
     for (const line of ['log_dir = "D:\\\\codex logs\\\\tui"', "log_dir = 'D:\\codex logs\\tui'", "log_dir = 'D:/codex logs/tui/'"]) {
       fake.writeFile(`${W}\\config.toml`, `model = "gpt-5.5"\n${line}\n\n[features]\nmemories = true\n`)
       register([winSet()])
-      openPath.mockClear()
+      reveal.mockClear()
       expect(await open({ accountId: 'acct-1', folder: 'log-dir' }), line).toEqual({ ok: true })
-      expect(openPath.mock.calls[0][0], line).toBe('D:\\codex logs\\tui')
+      expect(reveal.mock.calls, line).toEqual([['D:\\codex logs\\tui']])
     }
+    expect(openPath).not.toHaveBeenCalled()
+  })
+
+  // [host] PR 4 ADR-009 round 1 (L3-1, L3-2): a folder the account's settings
+  // name is revealed on every OS, never opened: whatever it is named or
+  // holds, the shell only shows it in the folder that holds it. The
+  // account's own log folder (a path main names) is still opened.
+  it('a log_dir is revealed, never opened, on every OS and whatever its name; the account\'s own log folder is opened', async () => {
+    const cases: Array<{ platform: 'win32' | 'linux' | 'darwin'; home: string; sep: string; names: string[] }> = [
+      { platform: 'darwin', home: '/Users/me/codex-home', sep: '/', names: ['/Users/me/work/Tool.app', '/Users/me/work/Flow.workflow', '/Users/me/work/Pane.prefPane', '/Users/me/work/logs'] },
+      { platform: 'win32', home: 'C:\\Users\\me\\codex-home', sep: '\\', names: ['C:\\Users\\me\\work\\logs.{00000000-0000-0000-0000-000000000000}', 'C:\\Users\\me\\work\\logs'] },
+      { platform: 'linux', home: '/home/me/codex-home', sep: '/', names: ['/home/me/work/logs'] },
+    ]
+    for (const c of cases) {
+      for (const target of c.names) {
+        fake = createFakeAccountFs(c.platform === 'win32' ? 'win32' : 'linux')
+        const set = { providerId: 'codex' as const, accountId: 'acct-x', external: true, logDir: `${c.home}${c.sep}log`, memoriesDir: `${c.home}${c.sep}memories`, configFile: `${c.home}${c.sep}config.toml` }
+        fake.mkdir(set.logDir)
+        fake.mkdir(target)
+        fake.writeFile(set.configFile, `log_dir = '${target}'\n`)
+        openPath.mockClear()
+        reveal.mockClear()
+        const deps = { fs: fake as never, openPath, showItemInFolder: reveal, platform: c.platform }
+        expect(await openAccountLogFolder({ accountId: 'acct-x', folder: 'log-dir' }, async () => [set], deps), target).toEqual({ ok: true })
+        expect(reveal.mock.calls, target).toEqual([[target]])
+        expect(openPath, target).not.toHaveBeenCalled()
+        expect(await openAccountLogFolder({ accountId: 'acct-x', folder: 'log' }, async () => [set], deps), target).toEqual({ ok: true })
+        expect(openPath.mock.calls, target).toEqual([[set.logDir]])
+        expect(reveal, target).toHaveBeenCalledTimes(1)
+      }
+    }
+  })
+
+  it('a log_dir with no way to reveal it, or whose reveal throws, is refused and never opened', async () => {
+    fake.mkdir('D:\\x')
+    fake.writeFile(`${W}\\config.toml`, "log_dir = 'D:\\x'\n")
+    expect(await openAccountLogFolder({ accountId: 'acct-1', folder: 'log-dir' }, async () => [winSet()], { fs: fake as never, openPath, platform: 'win32' } as never)).toEqual({ ok: false, code: 'refused' })
+    expect(await openAccountLogFolder({ accountId: 'acct-1', folder: 'log-dir' }, async () => [winSet()], { fs: fake as never, openPath, showItemInFolder: () => { throw new Error('no shell') }, platform: 'win32' })).toEqual({ ok: false, code: 'refused' })
+    expect(openPath).not.toHaveBeenCalled()
+  })
+
+  it('the channel\'s own shell: the account log folder through shell.openPath, a log_dir through shell.showItemInFolder', async () => {
+    fake.mkdir('D:\\x')
+    fake.writeFile(`${W}\\config.toml`, "log_dir = 'D:\\x'\n")
+    handlers.clear()
+    registerAccountLogFolderHandlers(() => win as never, (async () => [winSet()]) as never, { fs: fake as never, platform: 'win32', log: () => {} })
+    expect(await open({ accountId: 'acct-1', folder: 'log-dir' })).toEqual({ ok: true })
+    expect(shellReveal.mock.calls).toEqual([['D:\\x']])
+    expect(shellOpen).not.toHaveBeenCalled()
+    expect(await open({ accountId: 'acct-1', folder: 'log' })).toEqual({ ok: true })
+    expect(shellOpen.mock.calls.map((c) => c[0].toLowerCase())).toEqual([`${W}\\log`.toLowerCase()])
+    expect(shellReveal).toHaveBeenCalledTimes(1)
   })
 
   it('a log_dir that is a link or junction is refused', async () => {
@@ -152,7 +214,7 @@ describe('debug:openAccountLogFolder -- what a folder must be', () => {
     fake.writeFile(`${W}\\config.toml`, "log_dir = 'D:\\linked-logs'\n")
     register([winSet()])
     expect(await open({ accountId: 'acct-1', folder: 'log-dir' })).toEqual({ ok: false, code: 'refused' })
-    expect(openPath).not.toHaveBeenCalled()
+    expectShellUntouched()
   })
 
   it('a folder reached through a link on the way is refused (its real path is not its own)', async () => {
@@ -166,7 +228,7 @@ describe('debug:openAccountLogFolder -- what a folder must be', () => {
     fake.symlink('D:\\real\\logs', `${W}\\log`)
     register([winSet()])
     expect(await open({ accountId: 'acct-1', folder: 'log' })).toEqual({ ok: false, code: 'refused' })
-    expect(openPath).not.toHaveBeenCalled()
+    expectShellUntouched()
   })
 
   it('a folder that is not there is not found; a log_dir not set is not set', async () => {
@@ -176,7 +238,7 @@ describe('debug:openAccountLogFolder -- what a folder must be', () => {
     expect(await open({ accountId: 'acct-1', folder: 'log-dir' })).toEqual({ ok: false, code: 'not-set' })
     fake.writeFile(`${W}\\config.toml`, 'model = "x"\n[profiles.a]\nlog_dir = "D:\\\\x"\n')
     expect(await open({ accountId: 'acct-1', folder: 'log-dir' })).toEqual({ ok: false, code: 'not-set' })
-    expect(openPath).not.toHaveBeenCalled()
+    expectShellUntouched()
   })
 
   it('a settings file that is a link, or that TOML cannot read for certain, is refused', async () => {
@@ -187,7 +249,7 @@ describe('debug:openAccountLogFolder -- what a folder must be', () => {
     fake.remove(`${W}\\config.toml`)
     fake.writeFile(`${W}\\config.toml`, "log_dir = 'D:\\x'\nlog_dir = 'D:\\y'\n")
     expect(await open({ accountId: 'acct-1', folder: 'log-dir' })).toEqual({ ok: false, code: 'refused' })
-    expect(openPath).not.toHaveBeenCalled()
+    expectShellUntouched()
   })
 
   it('a settings file over 256 KiB is not read: refused, and listed without log-dir', async () => {
@@ -196,7 +258,7 @@ describe('debug:openAccountLogFolder -- what a folder must be', () => {
     register([winSet()])
     expect(await open({ accountId: 'acct-1', folder: 'log-dir' })).toEqual({ ok: false, code: 'refused' })
     expect(await list()).toEqual([{ accountId: 'acct-1', folders: ['log'] }])
-    expect(openPath).not.toHaveBeenCalled()
+    expectShellUntouched()
   })
 
   it('B-3: a log folder main names in another non-ASCII case than the disk opens, at its real path', async () => {
@@ -212,7 +274,7 @@ describe('debug:openAccountLogFolder -- what a folder must be', () => {
     expect(await open({ accountId: 'acct-1', folder: 'log' })).toEqual({ ok: false, code: 'refused' })
   })
 
-  it('POSIX: a fully qualified folder opens; a relative one and a // one are refused by form', async () => {
+  it('POSIX: a fully qualified folder opens (a log_dir: is revealed); a relative one and a // one are refused by form', async () => {
     fake = createFakeAccountFs('linux')
     fake.mkdir('/home/me/codex-home/log')
     fake.mkdir('/var/tmp/codex-logs')
@@ -226,7 +288,8 @@ describe('debug:openAccountLogFolder -- what a folder must be', () => {
       expect(await open({ accountId: 'acct-x', folder: 'log-dir' }), bad).toEqual({ ok: false, code: 'refused' })
       expect(callsOn(bad), bad).toBe(0)
     }
-    expect(openPath).toHaveBeenCalledTimes(2)
+    expect(openPath.mock.calls).toEqual([['/home/me/codex-home/log']])
+    expect(reveal.mock.calls).toEqual([['/var/tmp/codex-logs']])
   })
 })
 
@@ -239,7 +302,7 @@ describe('the two channels: who may ask, and what', () => {
     await expect(open({ accountId: 'acct-1', folder: 'log' }, subframe)).rejects.toThrow(/not accepted/)
     expect(source).not.toHaveBeenCalled()
     expect(fake.fileCalls()).toBe(0)
-    expect(openPath).not.toHaveBeenCalled()
+    expectShellUntouched()
   })
 
   it('only { accountId, folder } with a known kind: a path, an extra key or an odd shape is refused before the accounts are asked', async () => {
@@ -258,7 +321,7 @@ describe('the two channels: who may ask, and what', () => {
       expect(await open(bad), JSON.stringify(bad) ?? String(bad)).toEqual({ ok: false, code })
     }
     expect(source).not.toHaveBeenCalled()
-    expect(openPath).not.toHaveBeenCalled()
+    expectShellUntouched()
     // The longest id the schema takes reaches the accounts (and is not one).
     expect(await open({ accountId: 'a'.repeat(200), folder: 'log' })).toEqual({ ok: false, code: 'unknown-account' })
     expect(source).toHaveBeenCalledTimes(1)
