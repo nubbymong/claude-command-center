@@ -4,8 +4,9 @@
 // Claude Code by default; turning a provider off never rewrites the saved
 // choice. With both on, Sentinel's analysis runs on the provider this names
 // (completion plan, P3.9). The Settings row and Ask on Codex are built with
-// row 53 (PR 4); until then the key is absent and the answer is Claude Code,
-// the decided default. The one reading of the saved key, for both.
+// row 53 (PR 4, P4.3); until the row writes the key it reads as Claude Code
+// (DEFAULT_SETTINGS holds 'claude'), the decided default. The one reading
+// of the saved key, for both.
 export type AskConductorProvider = 'claude' | 'codex'
 
 /** The saved key, as PR 4's Settings row writes it. */

@@ -37,6 +37,10 @@ function AskHeaderLead({ session }: { session: Session }) {
   return (
     <>
       <BrandMark className="w-6 h-6 shrink-0" />
+      {/* P4.3: an Ask session on Codex wears the Codex mark, as every Codex
+          session header does; a Claude one stays unmarked, like every Claude
+          header (the approved Ask Conductor provider mockup). */}
+      {session.provider === 'codex' && <ProviderMark providerId="codex" size={16} title="Codex" />}
       <span className="min-w-0 flex-1 leading-tight">
         <span className="block text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
           {ASK_LABEL}
