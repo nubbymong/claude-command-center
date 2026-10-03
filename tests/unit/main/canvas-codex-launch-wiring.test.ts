@@ -214,3 +214,30 @@ describe('the realm skills follow the master switch only, as Claude\'s --plugin-
     expect(codexSessionGuidance(SID)).toEqual({ guidance: 'full' })
   })
 })
+
+// [host] PR 4 VM checkpoint (F2): a launch from a saved config goes through
+// the app's resume picker. The picker runs in the configured folder, so the
+// guidance is decided for that folder's settings layers, as a direct launch
+// is (question 5's default A), and reaches the builder; the picker passes it
+// on only to a Codex it starts there (scripts/lib/codex-resume-picker-lib.js
+// flagsForFolder).
+describe('a launch through the resume picker (the VM checkpoint, F2)', () => {
+  const startPicker = (home: string, ownership?: 'conductor-managed' | 'external-default'): void => {
+    spawnPty(fakeWin, SID, { cwd: project, cols: 100, rows: 30, provider: 'codex', useResumePicker: true, codexOptions: { permissionsPreset: 'standard' }, codexLaunch: launch(home, ownership) })
+  }
+
+  it('[host] this computer\'s own sign-in: decided for the configured folder the picker runs in, and the instructions reach the builder', () => {
+    startPicker(externalHome, 'external-default')
+    expect(h.decided[0]).toMatchObject({ external: true, route: 'direct', cliVersion: '0.155.1', home: externalHome, cwds: [project] })
+    expect(h.built[0].useResumePicker).toBe(true)
+    expect(h.built[0].developerInstructions).toBe('THE-DECIDED-GUIDANCE')
+    expect(codexSessionGuidance(SID)).toEqual({ guidance: 'full' })
+  })
+
+  it('[host] a restored conversation the picker launch also names: its folder is scanned too', () => {
+    const other = path.join(tmp, 'other-worktree')
+    fs.mkdirSync(other, { recursive: true })
+    spawnPty(fakeWin, SID, { cwd: project, cols: 100, rows: 30, provider: 'codex', useResumePicker: true, resume: { uuid: '019dd000-0001-7000-8000-000000000101', cwd: other }, codexOptions: { permissionsPreset: 'standard' }, codexLaunch: launch(externalHome, 'external-default') })
+    expect(h.decided[0]).toMatchObject({ cwds: [project, other] })
+  })
+})

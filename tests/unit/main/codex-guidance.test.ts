@@ -152,7 +152,7 @@ describe('this computer\'s sign-in: the default A', () => {
     expect(g.decideCodexGuidance(input({ cliVersion: v })).guidance).toEqual({ guidance: 'full' })
   })
 
-  it('passes nothing when the resume picker chooses the working folder', () => {
+  it('passes nothing when the working folder is not known at launch', () => {
     expect(g.decideCodexGuidance(input({ cwds: null })).guidance).toEqual({ guidance: 'tools-only', reason: 'unknown-settings' })
   })
 })
