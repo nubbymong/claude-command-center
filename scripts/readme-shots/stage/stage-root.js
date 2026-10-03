@@ -120,25 +120,64 @@ function protectedFolders(env = process.env, platform = process.platform, deps =
   return { homes: [...homes], appRoots: [...appRoots], within: [...within] }
 }
 
+/** A UNC (`\\server\share`) or device (`\\?\`, `\\.\`) spelling, on Windows. */
+const uncOrDevice = (p, platform) => isWin(platform) && /^[\\/]{2}/.test(String(p))
+
+/** `p` as the file system names it (P4.11 review V-1): the real path of its
+ *  deepest existing ancestor (fs.realpathSync.native resolves 8.3 short
+ *  names, subst drives and drives mapped to a share), with the parts that do
+ *  not exist yet joined on. A spelling the overlap checks would otherwise
+ *  miss (C:\Users\NICHOL~1\.codex, S:\.codex for a subst onto the home)
+ *  becomes the folder it is. */
+function canonicalPath(p, platform = process.platform, deps = {}) {
+  const P = pathApi(platform)
+  const exists = deps.exists || fs.existsSync
+  const real = deps.realpath || ((x) => fs.realpathSync.native(x))
+  let cur = P.resolve(p)
+  const rest = []
+  for (;;) {
+    if (exists(cur)) {
+      let r = cur
+      try { r = real(cur) } catch { /* unreadable: keep the spelling */ }
+      return rest.length ? P.join(r, ...rest.reverse()) : r
+    }
+    const parent = P.dirname(cur)
+    if (parent === cur) return P.resolve(p)
+    rest.push(P.basename(cur))
+    cur = parent
+  }
+}
+
 /** Resolve the staging layout from `env` and check every rule except the
  *  marker. Throws StageRefusal. Pure apart from reading the file system. */
 function resolveStage(env = process.env, platform = process.platform, deps = {}) {
   const P = pathApi(platform)
   const raw = env.CCC_STAGE_ROOT
   if (typeof raw !== 'string' || !raw || !P.isAbsolute(raw)) refuse('CCC_STAGE_ROOT must name the staging root (an absolute path)')
+  if (uncOrDevice(raw, platform)) refuse(`the staging root ${raw} is a UNC or device path: give a local folder`)
   const ROOT = P.resolve(raw)
   if (same(ROOT, P.parse(ROOT).root, platform)) refuse(`the staging root ${ROOT} is a drive root`)
   if (!(deps.noLinkOnPath || noLinkOnPath)(ROOT, platform)) refuse(`the staging root ${ROOT} has a link on its path`)
+  // V-1: every check on both spellings, the given one and the real path, of
+  // the root and of each protected folder.
+  const canon = (p) => canonicalPath(p, platform, deps)
+  const REAL_ROOT = canon(ROOT)
+  if (uncOrDevice(REAL_ROOT, platform)) refuse(`the staging root ${ROOT} is on a UNC or device path (${REAL_ROOT}): give a local folder`)
+  if (same(REAL_ROOT, P.parse(REAL_ROOT).root, platform)) refuse(`the staging root ${ROOT} is a drive root (${REAL_ROOT})`)
+  const roots = [ROOT, REAL_ROOT]
+  const both = (list) => list.flatMap((x) => [x, canon(x)])
   const prot = protectedFolders(env, platform, deps)
-  for (const h of prot.homes) if (sameOrInside(h, ROOT, platform)) refuse(`the staging root ${ROOT} is or holds the home folder ${h}`)
-  for (const a of prot.appRoots) if (sameOrInside(a, ROOT, platform)) refuse(`the staging root ${ROOT} is or holds the app data folder ${a}`)
-  for (const w of prot.within) if (sameOrInside(ROOT, w, platform) || inside(w, ROOT, platform)) refuse(`the staging root ${ROOT} overlaps ${w}`)
+  for (const h of both(prot.homes)) for (const r of roots) if (sameOrInside(h, r, platform)) refuse(`the staging root ${ROOT} is or holds the home folder ${h}`)
+  for (const a of both(prot.appRoots)) for (const r of roots) if (sameOrInside(a, r, platform)) refuse(`the staging root ${ROOT} is or holds the app data folder ${a}`)
+  for (const w of both(prot.within)) for (const r of roots) if (sameOrInside(r, w, platform) || inside(w, r, platform)) refuse(`the staging root ${ROOT} overlaps ${w}`)
 
   const sub = (name, fallback) => {
     const v = env[name]
     const p = v ? P.resolve(v) : fallback
     if (v && !P.isAbsolute(v)) refuse(`${name} must be an absolute path`)
+    if (v && uncOrDevice(v, platform)) refuse(`${name} (${v}) is a UNC or device path`)
     if (!inside(p, ROOT, platform)) refuse(`${name} (${p}) is not inside the staging root ${ROOT}`)
+    if (!inside(canon(p), REAL_ROOT, platform)) refuse(`${name} (${p}) is not inside the staging root ${ROOT} by its real path`)
     if (!(deps.noLinkOnPath || noLinkOnPath)(p, platform)) refuse(`${name} (${p}) has a link on its path`)
     return p
   }
@@ -230,7 +269,83 @@ function readLaunchRecord(stage) {
   return rec
 }
 
+/** Where shoot.js writes its images and log: <root>/out and <root>/shoot.log,
+ *  or CCC_SHOOT_OUT / CCC_SHOOT_LOG, which must be inside the root too. */
+function shootPaths(stage, env = process.env) {
+  const pick = (name, fallback) => {
+    const v = env[name]
+    if (!v) return fallback
+    if (!path.isAbsolute(v)) refuse(`${name} must be an absolute path`)
+    const p = path.resolve(v)
+    if (!inside(p, stage.ROOT) || !inside(canonicalPath(p), canonicalPath(stage.ROOT))) refuse(`${name} (${p}) is not inside the staging root ${stage.ROOT}`)
+    if (!noLinkOnPath(p)) refuse(`${name} (${p}) has a link on its path`)
+    return p
+  }
+  return { OUT: pick('CCC_SHOOT_OUT', path.join(stage.ROOT, 'out')), LOG: pick('CCC_SHOOT_LOG', path.join(stage.ROOT, 'shoot.log')) }
+}
+
+const runCmd = (cmd, args) => execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, timeout: 20000 })
+
+/** What process `pid` is now: its executable (Windows) or command line
+ *  (ps on macOS and Linux) and its start time; null when it is gone. */
+function processIdentity(pid, platform = process.platform, exec = runCmd) {
+  const n = Number(pid)
+  if (!Number.isInteger(n) || n <= 0) return null
+  try {
+    if (isWin(platform)) {
+      const row = String(exec('powershell.exe', ['-NoProfile', '-Command', `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${n}"; if ($p) { $p.ExecutablePath + '|' + $p.CreationDate.ToUniversalTime().ToString('o') }`])).trim()
+      const i = row.lastIndexOf('|')
+      if (i <= 0) return null
+      const startedAt = Date.parse(row.slice(i + 1))
+      return Number.isFinite(startedAt) ? { command: row.slice(0, i), startedAt } : null
+    }
+    // ps -o lstart: "Sat Oct  3 11:00:03 2026" (local time, whole seconds), then the command line.
+    const row = String(exec('ps', ['-p', String(n), '-o', 'lstart=', '-o', 'command='])).trim()
+    const m = row.match(/^(\w{3}\s+\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.+)$/)
+    if (!m) return null
+    const startedAt = Date.parse(m[1].replace(/\s+/g, ' '))
+    return Number.isFinite(startedAt) ? { command: m[2], startedAt } : null
+  } catch {
+    return null
+  }
+}
+
+/** The process is the one launch.js recorded: the recorded executable (the
+ *  command's start on macOS and Linux), started no earlier than the record
+ *  (ps rounds to whole seconds). */
+function isRecordedProcess(rec, ident, platform = process.platform) {
+  if (!rec || !ident || !Number.isFinite(ident.startedAt) || typeof rec.exe !== 'string') return false
+  const since = Date.parse(rec.startedAt)
+  if (!Number.isFinite(since) || ident.startedAt < since - 2000) return false
+  return isWin(platform) ? same(ident.command, rec.exe, platform) : ident.command === rec.exe || ident.command.startsWith(rec.exe + ' ')
+}
+
+/** The pid listening on `port` on the loopback, or null. */
+function portOwnerPid(port, platform = process.platform, exec = runCmd) {
+  const n = Number(port)
+  try {
+    const out = isWin(platform)
+      ? String(exec('powershell.exe', ['-NoProfile', '-Command', `(Get-NetTCPConnection -State Listen -LocalPort ${n} -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess`]))
+      : String(exec('lsof', ['-nP', `-iTCP:${n}`, '-sTCP:LISTEN', '-t']))
+    const pid = Number(out.trim().split(/\s+/)[0])
+    return Number.isInteger(pid) && pid > 0 ? pid : null
+  } catch {
+    return null
+  }
+}
+
+/** Before shoot.js attaches: the recorded app is still the process launch.js
+ *  started, and it is what holds the recorded debug port. */
+function checkLaunchedApp(rec, deps = {}) {
+  const platform = deps.platform || process.platform
+  const exec = deps.exec || runCmd
+  if (!isRecordedProcess(rec, processIdentity(rec.pid, platform, exec), platform)) refuse(`the recorded app (pid ${rec.pid}) is not running any more: start it with launch.js`)
+  const owner = portOwnerPid(rec.port, platform, exec)
+  if (owner !== rec.pid) refuse(`port ${rec.port} is not held by the recorded app (pid ${rec.pid}; held by ${owner === null ? 'nothing' : 'pid ' + owner})`)
+}
+
 module.exports = {
+  canonicalPath, shootPaths, processIdentity, isRecordedProcess, portOwnerPid, checkLaunchedApp,
   MARKER, MARKER_TEXT, DEV_MARKER, DEV_TOPS, REAL_DEV, StageRefusal,
   inside, same, sameOrInside, isLink, noLinkOnPath, protectedFolders, registryFolders,
   resolveStage, ensureMarker, checkDevTargets, validDevEntry, removeNoFollow, launchRecordPath, readLaunchRecord,

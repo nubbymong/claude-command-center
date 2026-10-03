@@ -125,14 +125,12 @@ function stop() {
   const stage = S.resolveStage(process.env)
   S.ensureMarker(stage.ROOT, { create: false })
   const rec = S.readLaunchRecord(stage)
-  if (process.platform !== 'win32') { try { process.kill(-rec.pid, 'SIGTERM') } catch { /* gone */ } console.log('stopped'); return }
-  // The pid must still be the app this launcher started: same exe, started at or after the record.
-  const ps = `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${rec.pid}"; if ($p) { $p.ExecutablePath + '|' + $p.CreationDate.ToUniversalTime().ToString('o') }`
-  const row = execFileSync('powershell.exe', ['-NoProfile', '-Command', ps], { encoding: 'utf8', windowsHide: true }).trim()
-  if (!row) { console.log(`pid ${rec.pid} has ended`); return }
-  const [exe, created] = row.split('|')
-  if (!S.same(exe, rec.exe) || Date.parse(created) < Date.parse(rec.startedAt)) { console.log(`pid ${rec.pid} is another process now: not touched`); return }
-  execFileSync('taskkill', ['/T', '/F', '/PID', String(rec.pid)], { stdio: 'ignore', windowsHide: true })
+  // The pid must still be the app this launcher started (its executable, or
+  // its command on macOS and Linux, started no earlier than the record), on
+  // every platform: PIDs are reused.
+  if (!S.isRecordedProcess(rec, S.processIdentity(rec.pid))) { console.log(`pid ${rec.pid} is not the app launch.js started (ended, or another process now): not touched`); return }
+  if (process.platform === 'win32') execFileSync('taskkill', ['/T', '/F', '/PID', String(rec.pid)], { stdio: 'ignore', windowsHide: true })
+  else process.kill(-rec.pid, 'SIGTERM') // its own process group (started detached)
   console.log(`ended the app's tree (pid ${rec.pid})`)
 }
 

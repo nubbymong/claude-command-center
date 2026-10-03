@@ -18,7 +18,7 @@
  * temp folder), removed by that prefix and parent alone.
  */
 import { describe, it, expect, afterEach } from 'vitest'
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, existsSync, statSync } from 'fs'
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync, existsSync, statSync } from 'fs'
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from 'path'
 import { tmpdir } from 'os'
 import { spawnSync } from 'child_process'
@@ -34,7 +34,12 @@ const S = req('./stage-root.js') as {
   ensureMarker: (root: string, o: { create: boolean }) => string
   validDevEntry: (e: unknown, dev: string) => boolean
   readLaunchRecord: (stage: Record<string, string>) => unknown
+  shootPaths: (stage: Record<string, string>, env: Record<string, string | undefined>) => { OUT: string; LOG: string }
+  processIdentity: (pid: number, platform: string, exec: FakeExec) => { command: string; startedAt: number } | null
+  isRecordedProcess: (rec: Record<string, unknown>, ident: { command: string; startedAt: number } | null, platform: string) => boolean
+  checkLaunchedApp: (rec: Record<string, unknown>, deps: { platform: string; exec: FakeExec }) => void
 }
+type FakeExec = (cmd: string, args: string[]) => string
 const L = req('./launch.js') as {
   planLaunch: (env: Record<string, string | undefined>, cle: typeof captureLaunchEnv, o?: Record<string, unknown>) => { exe: string; args: string[]; env: Record<string, string>; cwd: string; stage: Record<string, string> }
 }
@@ -274,5 +279,126 @@ describe('launch.js starts the installed app only isolated (C-4)', () => {
       expect(src, f).toMatch(/require\(path\.join\(REPO, 'node_modules', 'esbuild'\)\)/)
     }
     expect(readFileSync(SEED, 'utf8')).not.toMatch(/over-real-state/)
+  })
+})
+
+describe('the staging root is compared by its real path, and UNC and device roots are refused (V-1)', () => {
+  const HOME = 'C:\\Users\\nicholas'
+  // Stand-ins for spellings the file system resolves to another folder: a subst
+  // drive, an 8.3 short name and a drive mapped to a share, as realpath sees them.
+  const realMap: Array<[string, string]> = [
+    ['S:\\', `${HOME}\\`],
+    ['C:\\Users\\NICHOL~1', HOME],
+    [`${HOME}\\AppData\\Roaming\\ANTHRO~1`, `${HOME}\\AppData\\Roaming\\Anthropic`],
+    ['K:\\', '\\\\localhost\\C$\\'],
+  ]
+  const deps = (extra: Record<string, unknown> = {}) => ({
+    registryFolders: () => [] as string[],
+    userHome: () => HOME,
+    osHome: () => HOME,
+    noLinkOnPath: () => true,
+    exists: () => true,
+    realpath: (p: string) => {
+      for (const [from, to] of realMap) if (p.toLowerCase().startsWith(from.toLowerCase())) return to + p.slice(from.length)
+      return p
+    },
+    ...extra,
+  })
+  const env = (root: string, more: Record<string, string> = {}) => ({ CCC_STAGE_ROOT: root, CCC_STAGE_DEV: `${root}\\dev`, USERPROFILE: HOME, HOME, ...more })
+  const cases: Array<[string, string, RegExp]> = [
+    ['a subst drive onto ~/.codex', 'S:\\.codex\\stage', /overlaps .*\.codex/],
+    ['an 8.3 spelling of ~/.claude', 'C:\\Users\\NICHOL~1\\.claude\\stage', /overlaps .*\.claude/],
+    ["an 8.3 spelling of Anthropic's app data folder", `${HOME}\\AppData\\Roaming\\ANTHRO~1\\stage`, /overlaps .*Anthropic/],
+    ['a drive mapped to a share', 'K:\\stage', /UNC or device path/],
+    ['a device path (\\\\?\\)', `\\\\?\\${HOME}\\.codex\\stage`, /UNC or device path/],
+    ['a device path (\\\\.\\)', '\\\\.\\C:\\stage', /UNC or device path/],
+    ['a UNC root', '\\\\localhost\\C$\\Users\\nicholas\\.codex\\stage', /UNC or device path/],
+  ]
+  for (const [name, root, why] of cases) {
+    it.runIf(process.platform === 'win32')(`[host] refuses ${name}`, () => {
+      expect(() => S.resolveStage(env(root), 'win32', deps())).toThrow(why)
+    })
+  }
+
+  it.runIf(process.platform === 'win32')('[host] a protected folder named by another spelling is compared by its real path too', () => {
+    // The home given only through USERPROFILE, in its short spelling; the root under the long one.
+    const d = deps({ userHome: () => 'D:\\elsewhere', osHome: () => 'D:\\elsewhere' })
+    expect(() => S.resolveStage(env(`${HOME}\\.codex\\stage`, { USERPROFILE: 'C:\\Users\\NICHOL~1', HOME: 'C:\\Users\\NICHOL~1' }), 'win32', d)).toThrow(/overlaps .*\.codex/)
+  })
+
+  it.runIf(process.platform === 'win32')('[host] a plain staging root elsewhere still passes', () => {
+    expect(S.resolveStage(env('D:\\stage'), 'win32', deps()).ROOT).toBe('D:\\stage')
+  })
+
+  it.runIf(process.platform === 'win32')('[host] a real 8.3 spelling of a decoy home on disk is refused (when the volume makes short names)', (ctx) => {
+    const b = base()
+    const home = join(b, 'decoyhomelongname')
+    mkdirSync(join(home, '.codex'), { recursive: true })
+    const short = join(b, 'DECOYH~1')
+    let real = ''
+    try { real = realpathSync.native(short) } catch { /* no short names on this volume */ }
+    if (!real || real.toLowerCase() !== home.toLowerCase()) { ctx.skip(); return }
+    expect(() => S.resolveStage({ CCC_STAGE_ROOT: join(short, '.codex', 'stage'), CCC_STAGE_DEV: join(short, '.codex', 'stage', 'dev'), USERPROFILE: home, HOME: home }, 'win32', { registryFolders: () => [] })).toThrow(/overlaps .*\.codex/)
+  })
+})
+
+describe('shoot.js keeps its output in the root and attaches only to the recorded app (V NITs)', () => {
+  it('[host] CCC_SHOOT_OUT and CCC_SHOOT_LOG must be inside the root', () => {
+    const b = base()
+    const root = join(b, 'stage')
+    const st = S.resolveStage({ CCC_STAGE_ROOT: root, CCC_STAGE_DEV: join(root, 'dev') }, process.platform, { registryFolders: () => [] })
+    expect(S.shootPaths(st, {})).toEqual({ OUT: join(root, 'out'), LOG: join(root, 'shoot.log') })
+    expect(S.shootPaths(st, { CCC_SHOOT_OUT: join(root, 'pngs') }).OUT).toBe(join(root, 'pngs'))
+    expect(() => S.shootPaths(st, { CCC_SHOOT_OUT: join(b, 'elsewhere') })).toThrow(/CCC_SHOOT_OUT .* not inside the staging root/)
+    expect(() => S.shootPaths(st, { CCC_SHOOT_LOG: join(b, 'shoot.log') })).toThrow(/CCC_SHOOT_LOG .* not inside the staging root/)
+    expect(() => S.shootPaths(st, { CCC_SHOOT_OUT: 'out' })).toThrow(/absolute/)
+  })
+
+  const rec = { pid: 4242, port: 9335, exe: 'C:\\Apps\\AI Code Conductor\\AI Code Conductor.exe', startedAt: '2026-10-03T18:00:00.000Z', dataDir: 'C:\\x' }
+  const winExec = (row: string, owner: string): FakeExec => (cmd, args) => {
+    const script = args.join(' ')
+    if (/Get-NetTCPConnection/.test(script)) return owner
+    if (/Win32_Process/.test(script)) return row
+    throw new Error('unexpected ' + cmd)
+  }
+  it('[host] the recorded process on Windows: same exe, started at or after the record', () => {
+    const ident = S.processIdentity(4242, 'win32', winExec(`${rec.exe}|2026-10-03T18:00:00.500Z`, '4242'))
+    expect(ident).toEqual({ command: rec.exe, startedAt: Date.parse('2026-10-03T18:00:00.500Z') })
+    expect(S.isRecordedProcess(rec, ident, 'win32')).toBe(true)
+    expect(S.isRecordedProcess(rec, { command: 'C:\\Windows\\notepad.exe', startedAt: ident!.startedAt }, 'win32')).toBe(false)
+    expect(S.isRecordedProcess(rec, { command: rec.exe, startedAt: Date.parse('2026-10-03T17:00:00Z') }, 'win32')).toBe(false)
+    expect(S.isRecordedProcess(rec, null, 'win32')).toBe(false)
+    expect(S.processIdentity(4242, 'win32', winExec('', '4242'))).toBeNull()
+  })
+  it('[host] the recorded process on macOS and Linux: ps start time and command', () => {
+    // ps -o lstart prints the local start time as "Sat Oct  3 11:00:03 2026".
+    const d = new Date(Date.parse(rec.startedAt) + 3000)
+    const day = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()]
+    const mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()]
+    const two = (n: number) => String(n).padStart(2, '0')
+    const lstart = `${day} ${mon} ${String(d.getDate()).padStart(2, ' ')} ${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())} ${d.getFullYear()}`
+    const exe = '/Applications/AI Code Conductor.app/Contents/MacOS/AI Code Conductor'
+    const r2 = { ...rec, exe }
+    const exec: FakeExec = (cmd) => { if (cmd === 'ps') return `${lstart} ${exe} --remote-debugging-port=9335\n`; throw new Error(cmd) }
+    const ident = S.processIdentity(4242, 'darwin', exec)
+    expect(ident && ident.command).toContain(exe)
+    expect(S.isRecordedProcess(r2, ident, 'darwin')).toBe(true)
+    expect(S.isRecordedProcess(r2, ident ? { ...ident, command: '/bin/sleep 100' } : null, 'darwin')).toBe(false)
+    expect(S.isRecordedProcess(r2, ident ? { ...ident, startedAt: Date.parse('2026-10-03T17:00:00Z') } : null, 'darwin')).toBe(false)
+  })
+  it('[host] attaching refuses when the port is not held by the recorded app', () => {
+    const live = `${rec.exe}|2026-10-03T18:00:01.000Z`
+    expect(() => S.checkLaunchedApp(rec, { platform: 'win32', exec: winExec(live, '4242') })).not.toThrow()
+    expect(() => S.checkLaunchedApp(rec, { platform: 'win32', exec: winExec(live, '9999') })).toThrow(/not held by the recorded app/)
+    expect(() => S.checkLaunchedApp(rec, { platform: 'win32', exec: winExec(live, '') })).toThrow(/not held by the recorded app/)
+    expect(() => S.checkLaunchedApp(rec, { platform: 'win32', exec: winExec('', '4242') })).toThrow(/not running any more/)
+  })
+  it('[host] shoot.js and launch.js use those checks', () => {
+    const shoot = readFileSync(resolve(STAGE_DIR, '..', 'shoot.js'), 'utf8')
+    expect(shoot).toMatch(/S\.shootPaths\(STAGE, process\.env\)/)
+    expect(shoot).toMatch(/S\.checkLaunchedApp\(LAUNCH\)/)
+    const launch = readFileSync(join(STAGE_DIR, 'launch.js'), 'utf8')
+    expect(launch).toMatch(/S\.isRecordedProcess\(rec, S\.processIdentity\(rec\.pid\)\)/)
+    expect(launch).not.toMatch(/process\.kill\(-rec\.pid, 'SIGTERM'\) \} catch/)
   })
 })
