@@ -1,6 +1,9 @@
+// HOST QUARANTINE: this file starts the real `codex` found on PATH (when one is
+// there), so it runs in CI and on the VM, never on the owner's workstation.
 import { describe, it, expect } from 'vitest'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { codexCommandLine } from '../../src/main/providers/codex'
+import { compatProbeEnv, withCompatHome } from './codex-cli-compat-env'
 
 /**
  * P7.7.9 -- CI flag-drift integration test.
@@ -15,6 +18,13 @@ import { codexCommandLine } from '../../src/main/providers/codex'
  * Behaviour when codex is not on PATH: SKIP (do not fail). CI runners
  * without Codex installed pass this suite trivially -- the regression
  * signal fires on dev machines + the pre-release smoke environment.
+ *
+ * PR 4 VM checkpoint (F4): the run of codex gets a fresh, empty Codex folder
+ * of its own (CODEX_HOME), under the app's allowlisted Codex environment, so
+ * no Codex or OpenAI variable of the caller reaches it and nothing is read
+ * from or written into the user's own ~/.codex; the folder is removed after
+ * the run by its own temp-folder prefix (codex-cli-compat-env.ts, checked
+ * without starting anything by codex-cli-compat-env.test.ts).
  */
 
 function codexOnPath(): string | null {
@@ -28,21 +38,26 @@ function codexOnPath(): string | null {
   }
 }
 
-function codexExecHelp(): { ok: true; text: string } | { ok: false; reason: string } {
+type HelpResult = { ok: true; text: string } | { ok: false; reason: string }
+
+function codexExecHelp(): HelpResult {
   // `codex exec --help` -- some platforms ship the binary as a .cmd shim
   // (Windows npm-installed). This test-only probe resolves it with a shell
   // and a constant argv; the product runs a shim through an absolute cmd.exe
   // (cli-runner.ts codexCommandLine).
   const useShell = process.platform === 'win32'
-  const result = spawnSync('codex', ['exec', '--help'], {
-    encoding: 'utf-8',
-    timeout: 10_000,
-    shell: useShell,
+  return withCompatHome((home): HelpResult => {
+    const result = spawnSync('codex', ['exec', '--help'], {
+      encoding: 'utf-8',
+      timeout: 10_000,
+      shell: useShell,
+      env: compatProbeEnv(process.env, home),
+    })
+    if (result.error) return { ok: false, reason: 'spawn failed: ' + result.error.message }
+    if (result.status !== 0) return { ok: false, reason: `exit ${result.status}: ${result.stderr}` }
+    if (!result.stdout) return { ok: false, reason: 'empty stdout' }
+    return { ok: true, text: result.stdout }
   })
-  if (result.error) return { ok: false, reason: 'spawn failed: ' + result.error.message }
-  if (result.status !== 0) return { ok: false, reason: `exit ${result.status}: ${result.stderr}` }
-  if (!result.stdout) return { ok: false, reason: 'empty stdout' }
-  return { ok: true, text: result.stdout }
 }
 
 const haveCodex = codexOnPath() !== null
