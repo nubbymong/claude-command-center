@@ -618,11 +618,18 @@ export interface CanvasMarkerUndelivered {
  *  - `npm-route`: a launch route that takes no launch setting holding a space;
  *  - `user-instructions`: a settings file the assistant reads already names
  *    developer instructions, which the app never replaces;
- *  - `unknown-settings`: where the assistant's managed settings live could
- *    not be established for the installed version, so nothing was passed. */
+ *  - `unknown-settings`: where the assistant reads its settings could not be
+ *    established for the installed version or this launch (a version whose
+ *    settings layers are not established, a settings file that cannot be read
+ *    as text, or a working folder the resume picker chooses), so nothing was
+ *    passed;
+ *  - `skills-not-staged`: the skills could not be put in place (a managed
+ *    account's skills folder is a link, a same-named skill folder is not the
+ *    app's, or a write failed; on macOS and Linux, the app's plugin folder
+ *    could not be written). */
 export type CanvasSessionGuidance =
   | { guidance: 'full' }
-  | { guidance: 'tools-only'; reason: 'npm-route' | 'user-instructions' | 'unknown-settings' }
+  | { guidance: 'tools-only'; reason: 'npm-route' | 'user-instructions' | 'unknown-settings' | 'skills-not-staged' }
 
 /** One of a provider account's own log folders (P4.4, row 56): `log`, the
  *  account's log folder, where the sign-in log always lands; `log-dir`, the

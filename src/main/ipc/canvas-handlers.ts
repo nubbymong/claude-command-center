@@ -1076,7 +1076,10 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
     const { sessionId, canvasId, line } = agentMarkerSchema.parse(args)
     const allowed = canvasArtifactMutationAllowed(sessionId, canvasId)
     if (!allowed.ok) return { delivery: 'refused' as const, reason: allowed.reason }
-    return { delivery: deliverCanvasMarker(sessionId, line) }
+    // WP2 PR 4, P4.1: the canvas rides along, so a Codex session's marker the
+    // submit primitive could not deliver can be shown on the review it
+    // belongs to (canvas-marker-delivery.ts).
+    return { delivery: deliverCanvasMarker(sessionId, line, canvasId) }
   })
 
   ipcMain.handle(IPC.CANVAS_VERSION_REOPEN, async (_e, args: unknown) => {
