@@ -2,7 +2,7 @@
 
 **AI Code Conductor** (the "app")
 
-Last updated: 2 October 2026
+Last updated: 3 October 2026
 
 ## The short version
 
@@ -147,14 +147,23 @@ The Tokenomics cost index is separate and is not affected by that switch.
 - **The Agent Canvas and Vision guidance.** For a Codex account you added, the
   app writes its three instruction files (the canvas review loop, canvas plans
   and the Conductor browser) into that account's own folder, under `skills/`,
-  while the matching built-in tool is on, and removes them when it is off; it
-  rewrites or removes only the files it marked as its own. For a session on your
-  own Codex folder, the app writes nothing there: before such a launch it reads,
-  as plain text and keeping nothing, the Codex settings files that could set
-  developer instructions (your `config.toml` and its profile files, the
-  project's `.codex/config.toml` files, and the system and managed settings
-  files), and only when none of them does, passes its guidance to that one
-  session as Codex developer instructions on its launch line.
+  while the built-in tools are on, whichever of them are on, and removes them at
+  that account's next launch with the built-in tools off; it rewrites or removes
+  only the files it marked as its own. For a session on your own Codex folder,
+  the app writes nothing there: before such a launch it reads, as plain text and
+  keeping nothing, every Codex settings file that could set developer
+  instructions: in your Codex folder, `config.toml`, `managed_config.toml`,
+  every profile file ending in `.config.toml` and Codex's cached managed
+  settings (`cloud-config-bundle-cache.json`), and it checks whether that
+  folder holds a `sessions` folder; the project folder's own `config.toml`
+  and every `.codex/config.toml` from the project folder up to the top of its
+  drive; and the system settings files (on Windows `config.toml` and
+  `requirements.toml` under `ProgramData\OpenAI\Codex`, elsewhere
+  `config.toml`, `requirements.toml` and `managed_config.toml` under
+  `/etc/codex`). On macOS it also checks whether Codex's managed preferences
+  exist, without reading them. Only when none of them sets developer
+  instructions does it pass its guidance to that one session as Codex developer
+  instructions on its launch line.
 - **The Memory page and Debug Logging read each Codex account's own folders.**
   The Memory page lists the memory files Codex keeps in each account's
   `memories` folder (your own Codex folder included, once you use it), reading

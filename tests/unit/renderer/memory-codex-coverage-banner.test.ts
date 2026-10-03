@@ -5,7 +5,8 @@
  * 54), and WP2 PR 4 P4.4 (row 55) replaced it once the page lists each Codex
  * account's own memories: while Codex is in use, the note says Claude Code's
  * come from ~/.claude/projects/*\/memory/ (shared by every Claude account),
- * each Codex account keeps its own, listed by account and read-only for now,
+ * each Codex account keeps its own, listed by account and read-only (P4.11
+ * review: no hint at a delete the page does not show),
  * and Codex reads project instructions from AGENTS.md files. With Codex not
  * in use there is nothing to explain, and no note. The earlier claim that
  * Codex keeps user rules in ~/.codex/rules/ is gone and must not come back,
@@ -72,7 +73,7 @@ vi.mock('../../../src/renderer/stores/sessionStore', () => ({
 const { default: MemoryPage } = await import('../../../src/renderer/components/MemoryPage')
 const { useSettingsStore } = await import('../../../src/renderer/stores/settingsStore')
 
-const NOTE = 'Claude Code memories come from ~/.claude/projects/*/memory/, shared by every Claude account. Each Codex account keeps its own, listed by account below, read-only for now. Codex also reads project instructions from AGENTS.md files.'
+const NOTE = 'Claude Code memories come from ~/.claude/projects/*/memory/, shared by every Claude account. Each Codex account keeps its own, listed by account below, read-only. Codex also reads project instructions from AGENTS.md files.'
 
 describe('MemoryPage -- Codex coverage banner (P5.9)', () => {
   let container: HTMLDivElement

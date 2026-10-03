@@ -413,6 +413,13 @@ Linux may ask for administrator rights; CCC never elevates on its own.
 - **Ask Conductor starts nothing when its documentation folder cannot be
   rebuilt**, usually because a program a Codex Ask session started is still
   running. End that program and open Ask Conductor again.
+- **The first Codex session in a new folder may not stay read-only.** In the
+  session in which Codex asks its first-launch questions (folder trust, and on
+  Windows its sandbox setup), Codex runs as on *Standard* even when the session
+  was started on *Read-only*: it can edit files in the folder, and commands you
+  approve can run outside its sandbox. Later sessions keep the preset. Once you
+  have answered those questions, Restart the session before relying on
+  *Read-only*.
 - **On Windows, a Codex session's tab can stay open after Codex quits** while a
   command Codex started in the background still runs. Close the tab: that ends
   the command too.

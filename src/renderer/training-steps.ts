@@ -600,7 +600,7 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '1.5.38',
     section: 'admin',
     summary:
-      'A dashboard over Claude\'s auto-memory across every project and, with Codex in use, each Codex account\'s own memories, listed under the account\'s name, read-only for now. A KPI strip and charts summarise the whole store; a ranked project list shows staleness and live-session activity; drill into any project for a sortable memory table, and open a memory in the reading drawer to read it cleanly.',
+      'A dashboard over Claude\'s auto-memory across every project and, with Codex in use, each Codex account\'s own memories, listed under the account\'s name, read-only. A KPI strip and charts summarise the whole store; a ranked project list shows staleness and live-session activity; drill into any project for a sortable memory table, and open a memory in the reading drawer to read it cleanly.',
     highlights: [
       '**KPI strip** -- memories, projects, total size, stale over 30 days, and index health',
       '**Activity chart** + **type donut** for the whole store',

@@ -62,10 +62,22 @@ No images were added. Images that show a surface this release retired, all due a
 | `src/renderer/assets/training/step-security.jpg`, `step-security-mac.jpg` | The Settings rail with the retired Codex tab | No longer used: the Multiple Accounts, Settings and Sentinel cards now show the neutral `v2-shell-hero.jpg`, as the two new cards do. Needs a recapture of the current Settings, Accounts page. |
 | `src/renderer/assets/training/step-vision.jpg` | The Conductor MCP page, whose Codex review card still points at "Settings -> Codex" | Kept on the Conductor MCP, Agent Canvas and Canvas Explained cards (a card must name an existing asset). Needs a recapture. |
 | `docs/screenshots/settings.jpg`, `settings-mac.jpg` | A 1.5.x Settings page with the Codex tab | Referenced by nothing; nothing to remove. |
+| `docs/screenshots/shot-memory.png` | The Memory page with the banner WP2 removed, and no Codex account's memories (P4.4 lists them) | Recaptured at the final head. Until then the README shows no image there, since a superseded shot beside text that contradicts it is worse than none (P4.11 review). |
+| `docs/screenshots/shot-tokenomics.png` | Tokenomics without the provider and account filters and the split KPIs (the WP2 usage track) | Recaptured at the final head. |
+| `docs/screenshots/shot-sessions.png` | The stacked sidebar and separate tools row the 2.1 two-mode panel and one-row bar replaced (superseded before WP2) | Recaptured at the final head. |
+| `docs/screenshots/shot-canvas.png` | The canvas before its review rework, with per-note Approve and Re-annotate (superseded before WP2) | Recaptured at the final head. |
 
-None of the seven README images (`hero-banner.png`, `shot-sessions.png`,
-`shot-canvas.png`, `shot-tokenomics.png`, `shot-logs.png`, `shot-memory.png`,
-`shot-insights.png`) shows a surface WP2 changed, so all references stay.
+Corrected in P4.11: an earlier version of this record said none of the seven
+README images showed a surface WP2 changed. Four do, listed above; the other
+three (`hero-banner.png`, `shot-logs.png`, `shot-insights.png`) show no
+surface WP2 changed.
+
+For the recapture (the VM for Windows and the Mac for macOS, never the owner's
+machine): the capture tool runs the app on a home of its own inside its
+throwaway data root (P4.11). It still has to seed Codex on with fictional
+Claude and Codex accounts and open the Accounts tab for the Settings shot, and
+its host safety is checked again with Codex on, a resources path with a space
+on Windows included.
 
 ## 2. Code evidence for the privacy claims
 

@@ -662,15 +662,69 @@ describe('What\'s New after PR 4 (P4.11)', () => {
       /Vision and the push to the in-app browser work in Codex sessions too/,
       /Cloud Agents run on Codex too/,
       /The Memory page lists each Codex account's own memories/,
-      /A Codex tab's right-click menu no longer offers Claude's claude\.ai items/,
       /Codex is no longer marked Beta/,
       /The Feature Guide and its tour show the cards for the assistants you use/,
       /with Claude Code alone, Code review is not shown, since it needs both/,
       /Claude Opus 5\.5 and Claude Sonnet 5\.5 are in the model picker/,
       /The Usage page's Updated line now ages while the page stays open/,
       /now says 1 note, not 1 notes/,
-      /now says Retry agent, not Start session/,
     ]) expect(all).toMatch(said)
     for (const text of [top.highlights ?? '', ...top.changes.map((c) => c.description)]) expect(text, text.slice(0, 40)).toMatch(/^[\x20-\x7e]*$/)
+  })
+
+  // [host] The P4.11 copy review (P411C-2, -3, -5, -7, -8, -9): every line
+  // says only what is true of what ships.
+  it('the 2.1.1 lines claim no parity beyond the label, carry the Auto caveat, and list no fix for what never shipped', () => {
+    const all = top.changes.map((c) => c.description).join('\n')
+    expect(all).not.toMatch(/it now does what Claude Code does across the app/)
+    expect(all).toMatch(/Codex is no longer marked Beta: the label is gone from setup, Settings, Accounts and the Feature Guide\./)
+    const canvas = top.changes.find((c) => c.description.startsWith('The Agent Canvas works in Codex sessions'))!.description
+    expect(canvas).toMatch(/On the Auto preset Codex refuses the canvas render and the canvas's other tools apart from the snapshot and review, because Auto cannot ask before them; use Standard or Unrestricted \(see Known issues\)\./)
+    expect(all).not.toMatch(/Retry agent|Start session/)
+    expect(all).toMatch(/Debug Logging opens each Codex account's log folder too, and shows a log_dir folder its settings name selected in the folder that holds it/)
+    expect(all).toMatch(/A Codex session's right-click menu no longer offers Claude's account items \(Open artifacts, Authenticate claude\.ai and Sign in to Claude Code\), which acted on your primary Claude account, and its browser pane's start page no longer offers that account's claude\.ai\./)
+    expect(all).not.toMatch(/A Codex tab's right-click menu/)
+    const root = path.resolve(__dirname, '..', '..', '..')
+    const surfaces = [
+      all,
+      fs.readFileSync(path.join(root, 'README.md'), 'utf8'),
+      ...APP_KNOWLEDGE_SECTIONS.map((s) => s.body),
+      ...TIPS_LIBRARY.map((t) => t.variants.primary.body),
+      ...trainingSteps.map((s) => JSON.stringify(s)),
+    ]
+    for (const s of surfaces) expect(s).not.toMatch(/read-only for now/)
+  })
+})
+
+// [host] The P4.11 copy review (P411C-1, -4, -6).
+describe('the P4.11 review: images, privacy and the first-launch session', () => {
+  const root = path.resolve(__dirname, '..', '..', '..')
+  const read = (...p: string[]) => fs.readFileSync(path.join(root, ...p), 'utf8')
+  it('the README shows no superseded Memory page, and the release record names the README images WP2 changed', () => {
+    expect(read('README.md')).not.toMatch(/shot-memory\.png/)
+    const rq = read('docs', 'wp1', 'evidence', 'release-qualification.md').replace(/\s+/g, ' ')
+    expect(rq).not.toMatch(/shows a surface WP2 changed, so all references stay/)
+    for (const img of ['shot-memory.png', 'shot-tokenomics.png', 'shot-sessions.png', 'shot-canvas.png']) expect(rq).toMatch(new RegExp('`docs/screenshots/' + img.replace('.', '\\.') + '` \\| [^|]+ \\| Recaptured at the final head'))
+  })
+
+  it('privacy: when the staged skills are written and removed, and every settings file the guidance check reads', () => {
+    const p = read('PRIVACY.md').replace(/\s+/g, ' ')
+    expect(p).toMatch(/Last updated: 3 October 2026/)
+    expect(p).toMatch(/while the built-in tools are on, whichever of them are on, and removes them at that account's next launch with the built-in tools off/)
+    expect(p).not.toMatch(/while the matching built-in tool is on/)
+    for (const said of [
+      /in your Codex folder, `config\.toml`, `managed_config\.toml`, every profile file ending in `\.config\.toml` and Codex's cached managed settings \(`cloud-config-bundle-cache\.json`\)/,
+      /the project folder's own `config\.toml` and every `\.codex\/config\.toml` from the project folder up to the top of its drive/,
+      /`config\.toml` and `requirements\.toml` under `ProgramData\\OpenAI\\Codex`/,
+      /`config\.toml`, `requirements\.toml` and `managed_config\.toml` under `\/etc\/codex`/,
+      /checks whether Codex's managed preferences exist, without reading them/,
+    ]) expect(p).toMatch(said)
+  })
+
+  it('the first session on a new Codex account or folder: a neutral known issue with its workaround, in both places', () => {
+    const k = APP_KNOWLEDGE_SECTIONS.find((s) => s.id === 'known-issues')!.body
+    expect(k).toMatch(/The first Codex session in a new folder may not stay read-only\. In the session in which Codex asks its first-launch questions \(whether you trust the folder, and on Windows how to set up its sandbox\), Codex runs as on the Standard preset even when the session was started on Read-only: it can edit files in the folder, and commands you approve can run outside its sandbox\. This is Codex's own behaviour, and later sessions keep the preset you chose\. The workaround: once you have answered those questions, Restart the session before relying on Read-only\./)
+    const guide = read('docs', 'USER_GUIDE.md').replace(/\s+/g, ' ')
+    expect(guide).toMatch(/\*\*The first Codex session in a new folder may not stay read-only\.\*\*/)
   })
 })

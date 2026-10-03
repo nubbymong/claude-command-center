@@ -69,11 +69,7 @@ The Conductor indexes Claude's own transcripts, and a local Codex session's own 
 
 ## Memory — catch the drift before it costs you context
 
-<p align="center">
-  <img src="docs/screenshots/shot-memory.png" alt="The Memory dashboard" width="88%">
-</p>
-
-A dashboard over Claude's auto-memory across every project. A KPI strip — memories, projects, total size, stale-over-30-days, index health — and charts summarise the store; a ranked project list shows staleness, index warnings and live-session activity. Drill into any project for a sortable table, open a memory in the **reading drawer** to read it cleanly, write missing frontmatter, or delete it. Full-text search runs across everything. With Codex in use, each Codex account's own memories are listed below, under the account's name, read-only for now.
+A dashboard over Claude's auto-memory across every project. A KPI strip — memories, projects, total size, stale-over-30-days, index health — and charts summarise the store; a ranked project list shows staleness, index warnings and live-session activity. Drill into any project for a sortable table, open a memory in the **reading drawer** to read it cleanly, write missing frontmatter, or delete it. Full-text search runs across everything. With Codex in use, each Codex account's own memories are listed below, under the account's name, read-only.
 
 ## Insights — what actually happened, across every account
 
