@@ -6482,6 +6482,65 @@ Owner: OR1, OR4.
     moving to evidenced as their evidence lands; the 13 cited paths this entry
     lists created or re-pointed; OR4's rows. ADR-009: N (this entry); the
     PR-level pass at the final head: pending.
+- *Record (2026-10-03; the second part, the agent-doable half, at
+  8bb79510).*
+  - *CI (with P4.8).* 2723b1ed: CI run 37134624406 at fcfd2ae6 is the WP2
+    stack's first green Linux run, read step by step (17,391 tests: 17,307
+    passed, 82 skipped, 2 todo; the first native run on Linux, 217 passed);
+    recorded in `ci-matrix.md` with Windows and macOS, and the ubuntu Test
+    job's `continue-on-error` dropped. f6f43f7a: its six conformance legs
+    recorded, and their help captures reviewed per OS line by line: Windows
+    matches the fixtures; macOS differs in 2 captures and Linux in 4, plus one
+    stderr line on every Linux capture (Codex makes no PATH helper binaries in
+    a home under the temporary folder); each an OS difference or the run's
+    own set-up, none a fixture to refresh. aad49d69: those differences
+    accepted by name and nothing else (red first, seven mutants killed; on the
+    run's 90 real captures all the same, and all red under prove-red's
+    fixture). 4f8f78b7: `CCC_CODEX_HELP_ASSERT` is `1`.
+  - *The candidate check at release (re-review note).* 90be62a6: `phase` is a
+    field of a neutral path, so a manifest-only commit could switch the check
+    off; both `release.yml` steps that run the suite now give
+    `WP1_PHASE=candidate` on a stable release that is not a dry run, and
+    `phase.ts` lets the environment only raise the phase. A beta, dev or dry
+    run reads the manifest, so beta cuts with planned items still run. Red
+    first; six mutants killed.
+  - *The 13 cited paths.* Made by P4.9: `mode-matrix.test.ts`,
+    `onboarding-provider-select.spec.ts`. Recorded: `ci-matrix.md`. Created:
+    `migration-interruption.test.ts` (WP1.26, WP1.61; every interruption of
+    the registry migration's ports, crash or one-off, converging on a rerun)
+    and `rollback-reupgrade.test.ts` (WP1.31; this build's write-through
+    leaves a `profiles.json` the pre-WP1 build reads, and a re-upgrade keeps
+    every id) in f54b7ed3; `codex-pinned-source-contract.test.ts` (WP1.11;
+    the upstream source at rust-v0.155.1 and rust-v0.153.4 keys both keyring
+    backends by the canonical `codex_home`, kept as a fixture with the tag
+    commits and file digests) in 497f538d; `fake-cli/oracle.json` with
+    `fake-cli-oracle.test.ts` (WP1.69) in c77c4b97; `skip-ledger.md`
+    (WP1.65; every skip of run 37134624406 explained by its condition) in
+    8bb79510. Re-pointed: WP1.27 drops `migration-interruption.test.ts`;
+    `registry-store.test.ts` and `registry-fs-port.test.ts`, which it
+    already cites, prove it. Each new test file is pure [host], each guard
+    shown red under its mutants.
+  - *Still owed, owner- or VM-gated.* `real-cli-matrix.md` (the VM agent's
+    checks at the final head, OR1, OR4), `keyring-smoke.md` (OR1),
+    `packaged-smoke.md` (OR1; WP1.63 at the signed release run),
+    `rollback.md` (a VM rollback run: whether the pre-WP1 build can still use
+    a Claude credential this build refreshed).
+  - *Open, for the integration owner.* `fake-keyring.test.ts` (WP1.11,
+    WP1.72): the app has no keyring of its own to inject a fake into (the
+    Codex CLI owns it; the app sets `CODEX_HOME`), so the cited test cannot
+    be written as described. Either re-point it to
+    `codex-pinned-source-contract.test.ts` and the realm-isolation tests, or
+    give the fake CLI a fake keyring keyed by the canonical home (a HOST
+    QUARANTINE test).
+  - *Findings.* On Windows Codex's default credential store is its Secrets
+    backend (keyring service `codex`, account `secrets|<16 hex>`), not the
+    Direct one, so OR1's native keyring smoke on Windows checks that entry.
+    The fake CLI's `turn.completed` lacks two usage fields both real versions
+    print; the app reads neither. No item moved to evidenced in this part.
+  - *Owed.* The prove-red dispatch, filling `ci-matrix.md`'s "Shown red
+    once"; the next CI run with the help asserted on all six legs; the spec
+    and quality reviews of this part; OR1 and OR4 as above. ADR-009: N (this
+    part: tests, CI and evidence; no path on the ADR-009 list).
 
 **P4.11 Final sweep, Beta labels, screenshot recapture (row 54).**
 - *Today: the labels.* `src/renderer/providers/codex/index.ts:10`
