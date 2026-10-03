@@ -2420,17 +2420,29 @@ describe('a tree stop and the quit: what they reach', () => {
     } finally { vi.useRealTimers() }
   })
 
-  // [host] PR 4 ADR-009 round 2: on POSIX the stop signalled the run's group
-  // while its root ran; once the root is reaped its id vouches for no group,
-  // so no leftovers step (which would signal one) runs after the stop.
-  it('POSIX: a tree stop runs no leftovers step once the root has exited; its own exit, unstopped, still does', async () => {
+  // [host] PR 4 ADR-009 round 2: on POSIX a stop that signalled the run's
+  // group while its root ran runs no leftovers step after (it would signal
+  // again at a reaped root's id). PR 4 review (R-ADRFIX-2): one whose kill
+  // found the root already gone signalled nothing, so it runs the step, as
+  // the run's own exit does.
+  it('POSIX: a tree stop that signalled the group runs no leftovers step once the root has exited; one that did not, and its own exit, unstopped, do', async () => {
     vi.useFakeTimers()
     try {
       const cmd = { file: '/usr/bin/codex', args: ['exec'], verbatim: false, cwd: '/home/me/p' }
       for (const platform of ['linux', 'darwin'] as const) {
+        const unsignalled = fakeDeps()
+        const stepped = vi.fn(async () => {})
+        const quiet = Object.assign((c: EventEmitter) => { queueMicrotask(() => c.emit('exit', null, 'SIGKILL')) }, { leftovers: stepped, groupSignalled: () => false })
+        const ac0 = new AbortController()
+        const p0 = runCodexCli(cmd, { env: {}, timeoutMs: 600_000, settleAfterExitMs: 2000, killScope: 'tree', signal: ac0.signal }, { ...unsignalled.deps, platform, killTree: quiet as never })
+        await vi.advanceTimersByTimeAsync(100)
+        ac0.abort()
+        await vi.advanceTimersByTimeAsync(0)
+        expect(await p0, platform).toMatchObject({ stopped: 'cancel' })
+        expect(stepped, platform).toHaveBeenCalledTimes(1)
         const { deps } = fakeDeps()
         const leftovers = vi.fn(async () => {})
-        const killTree = Object.assign((c: EventEmitter) => { queueMicrotask(() => c.emit('exit', null, 'SIGKILL')) }, { leftovers })
+        const killTree = Object.assign((c: EventEmitter) => { queueMicrotask(() => c.emit('exit', null, 'SIGKILL')) }, { leftovers, groupSignalled: () => true })
         const ac = new AbortController()
         const p = runCodexCli(cmd, { env: {}, timeoutMs: 600_000, settleAfterExitMs: 2000, killScope: 'tree', signal: ac.signal }, { ...deps, platform, killTree: killTree as never })
         await vi.advanceTimersByTimeAsync(100)
@@ -2447,6 +2459,44 @@ describe('a tree stop and the quit: what they reach', () => {
         expect(leftovers, platform).toHaveBeenCalledTimes(1)
       }
     } finally { vi.useRealTimers() }
+  })
+
+  // [host] PR 4 review (R-ADRFIX-2), with the real kill: the root exits on its
+  // own while the stop's kill reads the table, so the kill signals nothing;
+  // the stop then runs the run's leftovers step, which signals the group
+  // while a process the records saw still runs (as at the run's own exit),
+  // and not once none does. A stop whose kill found the root running
+  // signals the group once, from the kill, and no step follows.
+  it('POSIX: a stop whose kill finds the root already gone runs the run\'s own leftovers step; one whose kill signalled the group runs none', async () => {
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true)
+    try {
+      const cmd = { file: '/usr/bin/codex', args: ['exec'], verbatim: false, cwd: '/home/me/p' }
+      const root: CodexProcessEntry = { pid: 900800, ppid: 1, name: 'codex', created: 100 }
+      const helper: CodexProcessEntry = { pid: 900801, ppid: 900800, name: 'sleep', created: 110 }
+      for (const [race, helperLives, groupsWanted, pidKills] of [[true, true, [900800], 0], [true, false, [], 0], [false, true, [900800], 2]] as const) {
+        killSpy.mockClear()
+        const c = Object.assign(new EventEmitter(), { pid: 900800, exitCode: null as number | null, signalCode: null, kill: vi.fn(), stdout: new EventEmitter(), stderr: new EventEmitter(), stdin: null })
+        let phase: 'observe' | 'kill' | 'after' = 'observe'
+        const killRead: { answer: ((t: CodexProcessEntry[]) => void) | null } = { answer: null }
+        const lister = () => (phase === 'kill' ? new Promise<CodexProcessEntry[]>((res) => { killRead.answer = res }) : Promise.resolve(phase === 'observe' ? [root, helper] : helperLives ? [{ ...helper, ppid: 1 }] : []))
+        const groups: number[] = []
+        const kt = makeCodexKillTree('linux', (() => { throw new Error('no spawn') }) as never, undefined, lister, null, (g) => { groups.push(g) }, () => {})
+        const ac = new AbortController()
+        const p = runCodexCli(cmd, { env: {}, timeoutMs: 600_000, settleAfterExitMs: 2000, killScope: 'tree', signal: ac.signal }, { spawn: (() => c) as never, platform: 'linux', killTree: kt })
+        await new Promise((r) => setTimeout(r, 20))
+        phase = 'kill'
+        ac.abort()
+        await new Promise((r) => setTimeout(r, 5))
+        expect(killRead.answer, 'the kill is reading').not.toBeNull()
+        if (race) { c.exitCode = 0; c.emit('exit', 0, null) }
+        killRead.answer?.([root, helper])
+        phase = 'after'
+        if (!race) { await new Promise((r) => setTimeout(r, 5)); c.exitCode = 1; c.emit('exit', null, 'SIGKILL') }
+        expect(await p).toMatchObject({ stopped: 'cancel' })
+        expect(groups, `race ${race}, helper ${helperLives}`).toEqual(groupsWanted)
+        expect(killSpy.mock.calls.length, `race ${race}`).toBe(pidKills)
+      }
+    } finally { killSpy.mockRestore() }
   })
 
   it('Windows: a tree stop ends a process of the run whose parent had exited (the records name it), never a stranger', async () => {

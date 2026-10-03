@@ -15,6 +15,7 @@ import { APP_KNOWLEDGE_SECTIONS } from '../../../src/shared/app-knowledge'
 import { TIPS_LIBRARY } from '../../../src/renderer/tips-library'
 import { trainingSteps } from '../../../src/renderer/training-steps'
 import { changelog } from '../../../src/renderer/changelog'
+import { CODEX_CONDUCTOR_TOOLS } from '../../../src/main/providers/codex/conductor-tools'
 
 describe('app knowledge is publishable', () => {
   it('has unique, stable-looking ids and a title and body for every section', () => {
@@ -545,9 +546,29 @@ describe('app knowledge after PR 4 (ADR-009 round 2)', () => {
 describe('app knowledge after the PR 4 VM checkpoint (F1)', () => {
   it('says Codex on Auto cannot ask before the canvas render, the Vision tools or the in-app browser, and names Standard or Unrestricted', () => {
     const k = APP_KNOWLEDGE_SECTIONS.find((x) => x.id === 'known-issues')!.body
-    expect(k).toMatch(/On the Auto preset, Codex cannot use the Agent Canvas render, the Vision tools or the push to the in-app browser/)
+    expect(k).toMatch(/On the Auto preset, Codex cannot use the app's built-in tools other than the canvas snapshot and review: the Agent Canvas render, [^.]*the Vision tools, the push to the in-app browser/)
     expect(k).toMatch(/Auto starts Codex with no prompts at all, so it cannot ask before these tools and refuses each call instead/)
     expect(k).toMatch(/The canvas snapshot and review tools still run on Auto/)
     expect(k).toMatch(/The workaround: use the Standard preset, where Codex asks before each of these tools, or Unrestricted, where they run without asking/)
+  })
+
+  // [host] PR 4 review (RVMFIX-1): every tool a Codex connection may be
+  // offered is refused on Auto but the two the app lets run on every preset
+  // (canvas_snapshot and canvas_review: CODEX_PREALLOWED_TOOLS, pinned in
+  // spawn-canvas.test.ts), so the line names each of the others. A tool added
+  // to the Codex list without a phrase here fails.
+  it('the Auto line names every tool offered to Codex that Auto refuses: all but the canvas snapshot and review', () => {
+    const k = APP_KNOWLEDGE_SECTIONS.find((x) => x.id === 'known-issues')!.body
+    const line = /On the Auto preset, Codex cannot use [^.]*\./.exec(k)?.[0] ?? ''
+    const named: Record<string, RegExp> = {
+      canvas_render: /the Agent Canvas render/, canvas_resolve: /resolving notes/, canvas_verdict: /verdicts/,
+      canvas_version_verdict: /verdicts/, canvas_pick: /picks/, canvas_complete: /marking a plan complete/,
+      open_in_app_browser: /the push to the in-app browser/, fetch_host_screenshot: /the host screenshot fetch/,
+      claude_review: /the Claude review/,
+    }
+    const refused = CODEX_CONDUCTOR_TOOLS.map((t) => t.name).filter((n) => n !== 'canvas_snapshot' && n !== 'canvas_review')
+    expect(refused.length).toBeGreaterThan(20)
+    for (const tool of refused) expect(line, tool).toMatch(named[tool] ?? (tool.startsWith('vision_') ? /the Vision tools/ : /a phrase for this tool/))
+    expect(line).toMatch(/other than the canvas snapshot and review/)
   })
 })

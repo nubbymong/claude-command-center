@@ -213,31 +213,49 @@ describe('the run', () => {
   // past the redaction window; finding that space is one pass whatever the
   // line holds (no space at all, a Bearer before a long run of spaces), so a
   // large stderr read never holds the main process.
+  // PR 4 review (R-ADRFIX-4): asserted as growth, not wall-clock time, so a
+  // loaded machine does not fail it: four times the line takes under eight
+  // times as long (linear: about four; a search whose time grows with the
+  // square: about sixteen).
   it('a long unterminated stderr line is handed on in time linear in its length, whatever it holds, and nothing is lost', async () => {
-    // Each past WINDOW (64 KiB), so the cut is looked for; a search that is
-    // not linear fails the first bound it meets (the code under test runs
-    // synchronously, so these are kept to seconds even then).
-    const shapes = [
-      'z'.repeat(100_000),
-      'z'.repeat(10_000) + ' Basic' + ' '.repeat(100_000) + 'end',
-      ('x Bearer' + ' '.repeat(8000)).repeat(12),
-      ('z'.repeat(996) + ' Bearer  !').repeat(130),
+    // Every line is past WINDOW (64 KiB), so the cut is looked for.
+    const shapes: Array<(n: number) => string> = [
+      (n) => 'z'.repeat(n),
+      (n) => 'z'.repeat(n / 10) + ' Basic' + ' '.repeat(n) + 'end',
+      (n) => ('x Bearer' + ' '.repeat(8000)).repeat(n / 8000),
+      (n) => ('z'.repeat(990) + ' Bearer  !').repeat(n / 1000),
     ]
-    let total = 0
-    for (const shape of shapes) {
+    /** How long one read of `line` takes to be handed on (milliseconds). */
+    const pushTime = (line: string): number => {
+      const { deps, spawned } = fakeDeps()
+      void createCodexBackgroundOperations({ platform: 'win32', runDeps: () => deps }).run(input())
+      const t0 = performance.now()
+      spawned[0].child.stderr.emit('data', line)
+      const ms = performance.now() - t0
+      spawned[0].child.emit('close', 0)
+      return ms
+    }
+    const FLOOR_MS = 2
+    const FACTOR = 8
+    for (const make of shapes) {
+      const small = make(72_000)
+      const big = make(288_000)
+      let t1 = Infinity
+      for (let i = 0; i < 3; i++) t1 = Math.min(t1, pushTime(small))
+      // A ceiling far above any machine's time for 72 KB, only so that a
+      // search that is not linear fails here at once rather than run on.
+      expect(t1, small.slice(0, 12)).toBeLessThan(1_500)
+      let t4 = pushTime(big)
+      if (t4 >= FACTOR * Math.max(t1, FLOOR_MS)) t4 = Math.min(t4, pushTime(big))
+      expect(t4 / Math.max(t1, FLOOR_MS), `${small.slice(0, 12)}: ${t1.toFixed(1)} ms, then ${t4.toFixed(1)} ms`).toBeLessThan(FACTOR)
       const { deps, spawned } = fakeDeps()
       const said: string[] = []
       const p = createCodexBackgroundOperations({ platform: 'win32', runDeps: () => deps }).run(input({ onDiagnostic: (t: string) => said.push(t) }))
-      const t0 = performance.now()
-      spawned[0].child.stderr.emit('data', shape)
-      const ms = performance.now() - t0
-      total += ms
-      expect(ms, shape.slice(0, 12)).toBeLessThan(250)
+      spawned[0].child.stderr.emit('data', big)
       spawned[0].child.emit('close', 0)
       expect(await p).toEqual({ ok: true })
-      expect(said.join('') === shape, shape.slice(0, 12)).toBe(true)
+      expect(said.join('') === big, big.slice(0, 12)).toBe(true)
     }
-    expect(total).toBeLessThan(500)
     // The cut never falls between a Bearer and its token.
     const { deps, spawned } = fakeDeps()
     const said: string[] = []
