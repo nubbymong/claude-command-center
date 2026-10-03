@@ -95,10 +95,11 @@ are in each phase's record: among them the Past discussions picker when the
 resources folder sits inside a git repository (a follow-up proposal) and the
 POSIX quit check of a Codex agent's commands (VM).
 
-**Gate status.** ADR-009: pending for P4.1 to P4.6, then the PR-level pass at
-the final head. The SSH live matrix at PR 4's final head (OR5: `pty-manager.ts`
-changed outside the SSH branch). The VM walks each phase lists, the e2e suite
-at the final head, CI with `ci-run` (the first Linux run of the WP2 stack),
+**Gate status.** ADR-009 pass: PASS at 227cd300 (four lenses, two fix rounds);
+VM confirmations owed. The SSH live matrix at PR 4's final head (OR5:
+`pty-manager.ts` changed outside the SSH branch). The VM walks each phase
+lists, the e2e suite at the final head, CI with `ci-run` (the first Linux run
+of the WP2 stack),
 the owner's screenshot review, OR1 to OR4, the Desktop test gate, and
 questions 5 to 7. Findings about pre-existing behaviour raised by the reviews
 were routed privately.

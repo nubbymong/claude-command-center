@@ -4921,7 +4921,9 @@ start):**
    field (`settingsStore.ts`, lane A2) and the Codex web-session id class
    (`shared/account-web-session.ts`, lane D). After S0 those files belong to
    their lanes. S0's IPC and preload entries are attacked with the phase each
-   one serves (9.7 gate 4).
+   one serves (9.7 gate 4). Record (2026-10-03): S0 reviewed PASS; its
+   channels' ADR-009 pass: PASS at 227cd300 (four lenses, two fix rounds); VM
+   confirmations owed.
 2. PB8 and PB9 have run (9.2, 2026-10-02): no code waits on them any more;
    the primitive's form is PB9's.
 3. Lane E: P4.8 in full.
@@ -5432,7 +5434,8 @@ Claude session has them. Probes: PB1, PB2, PB3 (all reported).
     Unrestricted; the quarantined link files on CI and the VM); OR4 (a real
     model's own use; a real Claude session in Auto mode; the staged skill read
     under the administrator sandbox, or OR6 part 2); OR5; the owner's
-    screenshot review; question 5. ADR-009: pending.
+    screenshot review; question 5. ADR-009 pass: PASS at 227cd300 (four
+    lenses, two fix rounds); VM confirmations owed.
 
 **P4.2 Browser and vision tools (row 52).** Probes: PB1 (the vision skill),
 PB2.
@@ -5489,7 +5492,8 @@ PB2.
     `vision_screenshot`'s inline image drawn by Codex's client (A42-5); vision
     on WINDOWS_1; a screenshot and a push by the fake model after a tool
     search. OR4 (a real model's own use); the owner's screenshot review.
-    ADR-009: pending.
+    ADR-009 pass: PASS at 227cd300 (four lenses, two fix rounds); VM
+    confirmations owed.
 
 **P4.3 Ask Conductor on Codex (row 53, the Ask part of 14).** Lane A2 builds
 everything but the carrier; lane A builds the carrier after P4.1's primitive
@@ -5710,7 +5714,9 @@ and lane A2's integration. Probes: PB3, PB4 (both reported).
     Code Ask is the safer reading: a project settings file a Codex session
     planted (`.claude/settings.local.json`, `.mcp.json`) would otherwise reach
     the next Claude Ask; the cost is that a Claude Ask's own "don't ask again"
-    approvals written there do not outlive its session.
+    approvals written there do not outlive its session. Before the rebuild,
+    an Ask start waits for an earlier Ask run in the help folder to end, and
+    starts nothing if it does not.
   - *Reviews.* The P4.3 review of lane A2's half (995148ea, d809078d,
     c4f1a62c): spec FAIL (A2-1, and A2-2, which lane A's carrier closed),
     quality FAIL (minor fixes). The integration review (INT-1) found the copy
@@ -5767,7 +5773,8 @@ and lane A2's integration. Probes: PB3, PB4 (both reported).
     owner's screenshots (the Settings row, the dock badge, the notice lines,
     the still-starting line, the Codex Ask header mark, the failure line in
     the dock and after "Failed to launch session:" on a Restart); question 6.
-    ADR-009: pending.
+    ADR-009 pass: PASS at 227cd300 (four lenses, two fix rounds); VM
+    confirmations owed.
 
 **P4.4 Memory and Codex logs (rows 55, 56).** Probe: PB6 (reported).
 - *Today: memory.* The banner is at `MemoryPage.tsx:204-207`.
@@ -5879,6 +5886,8 @@ and lane A2's integration. Probes: PB3, PB4 (both reported).
   - *Pre-existing (not a PR 4 regression).*
     `tests/unit/memory-path-symlink.test.ts` (50005dc5, 2026-06-15) plants
     junctions without a HOST QUARANTINE header; it should carry one.
+  - *Log folders.* The button for a `log_dir`, "Show log_dir folder", shows
+    that folder selected in its parent rather than opening it.
   - *Owed.* The VM: a realm with memories on shows them; each account's log
     folders open, `log_dir` set in `config.toml` included (PB6 saw
     `codex-tui.log` move with `-c log_dir` only, so the copy saying it moves
@@ -5890,7 +5899,8 @@ and lane A2's integration. Probes: PB3, PB4 (both reported).
     check (a run-made file deleted, a relaunch and a wait; it counts only if
     consolidation ran). OR4: the real `MEMORY.md` and `memory_summary.md`
     format, and the delete check if the VM's is inconclusive. The owner's
-    screenshot review. ADR-009: pending.
+    screenshot review. ADR-009 pass: PASS at 227cd300 (four lenses, two fix
+    rounds); VM confirmations owed.
 
 **P4.5 Cloud Agents with `codex exec` (row 57).** Probe: PB5 (reported).
 - *Today: the runner.* The refusal is `cloud-agent-manager.ts:192`
@@ -6059,7 +6069,8 @@ and lane A2's integration. Probes: PB3, PB4 (both reported).
     check (above). OR4 (a real agent's output and cost); question 7; the
     owner's screenshot review. The P4.11 copy: `AgentHubOnboarding.tsx:59` ("A
     headless Claude runs it") and LaunchAckConfirm's "Start session" title on
-    a Codex agent's Retry. ADR-009: pending.
+    a Codex agent's Retry. ADR-009 pass: PASS at 227cd300 (four lenses, two
+    fix rounds); VM confirmations owed.
 
 **P4.6 Codex web session; the artifacts record (row 58).** Owner: OR2 (the
 sign-in, before and after the build), OR3 (the record). PB7 sized OR2.
@@ -6152,8 +6163,9 @@ sign-in, before and after the build), OR3 (the record). PB7 sized OR2.
     account-keyed channels take strict schemas and trusted-sender checks.
   - *Owed.* OR2a, then the sign-in window, the pane's account surface and the
     Codex menu item; OR3, the artifacts record; OR2b on the final build.
-    ADR-009: pending (the first half's own round, and the second half's with
-    it).
+    ADR-009 pass: PASS at 227cd300 (four lenses, two fix rounds); VM
+    confirmations owed. The second half has its own round when it is
+    built.
 
 **P4.7 Insights for Codex (row 68).** After P4.5's runner and OR3's approval.
 Probe: PB5 (shared with P4.5).
