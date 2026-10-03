@@ -250,7 +250,7 @@ jobs:
       github.event_name == 'push' ||
       github.event_name == 'workflow_dispatch' ||
       contains(github.event.pull_request.labels.*.name, 'ci-run')
-    name: Codex CLI ${{ matrix.codex }} (${{ matrix.os }})
+    name: Codex CLI ${{ matrix.cli }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     permissions:
@@ -259,9 +259,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-2025, macos-latest, ubuntu-latest]
-        codex: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.codex_rc_version != '' && '["minimum","pinned","rc"]' || '["minimum","pinned"]') }}
+        cli: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.codex_rc_version != '' && '["minimum","pinned","rc"]' || '["minimum","pinned"]') }}
     env:
-      CCC_CODEX_CONFORMANCE_KIND: ${{ matrix.codex }}
+      CCC_CODEX_CONFORMANCE_KIND: ${{ matrix.cli }}
       CCC_CODEX_CONFORMANCE_PROVE_RED: ${{ inputs.conformance_prove_red && '1' || '0' }}
       # '0' until the help captures of each OS are reviewed (P4.8), then '1'.
       CCC_CODEX_HELP_ASSERT: '0'
@@ -305,18 +305,18 @@ jobs:
         id: ver
         env:
           RC_VERSION: ${{ inputs.codex_rc_version }}
-        run: node tests/integration/codex-conformance-ci.mjs version ${{ matrix.codex }}
+        run: node tests/integration/codex-conformance-ci.mjs version ${{ matrix.cli }}
 
       - name: Install Codex ${{ steps.ver.outputs.version }} into its own prefix
         shell: bash
         env:
           CODEX_VERSION: ${{ steps.ver.outputs.version }}
-          PREFIX: ${{ runner.temp }}/codex-${{ matrix.codex }}
+          PREFIX: ${{ runner.temp }}/codex-${{ matrix.cli }}
         run: npm install --global --prefix "$PREFIX" --no-audit --no-fund "@openai/codex@$CODEX_VERSION"
 
       - name: Locate the installed CLI
         id: bin
-        run: node tests/integration/codex-conformance-ci.mjs bin "${{ runner.temp }}/codex-${{ matrix.codex }}"
+        run: node tests/integration/codex-conformance-ci.mjs bin "${{ runner.temp }}/codex-${{ matrix.cli }}"
 
       # The flag-drift suite skips itself when no codex is on PATH: prove the
       # install is the one PATH finds, so that suite cannot pass by skipping.
@@ -343,7 +343,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: codex-conformance-${{ matrix.os }}-${{ matrix.codex }}
+          name: codex-conformance-${{ matrix.os }}-${{ matrix.cli }}
           path: ${{ runner.temp }}/codex-conformance
           if-no-files-found: warn
           retention-days: 30
