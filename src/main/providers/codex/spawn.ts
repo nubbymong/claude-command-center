@@ -6,12 +6,14 @@ import { sandboxFor, approvalFor } from './permissions'
 import { getResourcesDirectory, getDataDirectory } from '../../ipc/setup-handlers'
 import type { SpawnOptions, ProviderSpawnCommand, PickFolderIdentity } from '../types'
 import { getConductorMcpPort, issueMcpSessionToken } from '../../conductor-mcp-server'
+import { CODEX_CONDUCTOR_TOOLS, type ConductorToolSwitches } from './conductor-tools'
 import { readConfig, getConfigDir } from '../../config-manager'
 import { colorFgBgValue } from '../host-color-scheme'
 import { codexShellEnv, CMD_UNSAFE_PATH_RE } from './cli-runner'
 import { CODEX_CONVERSATION_ID_RE, codexFolderIdentity, resolveCodexResume } from './rollout-lookup'
-import { codexHookCommand, codexHookConfigArgs, codexPlainWrapperDir, codexLocalAppData, verifyPlainCodexHookWrapper, CODEX_HOOK_FILE_ENV, CODEX_HOOK_SCRIPT, CODEX_HOOK_WRAPPER } from './hooks'
+import { codexHookCommand, codexHookConfigArgs, codexPlainWrapperDir, codexLocalAppData, verifyPlainCodexHookWrapper, tomlString, CODEX_HOOK_FILE_ENV, CODEX_HOOK_SCRIPT, CODEX_HOOK_WRAPPER } from './hooks'
 import { codexExtraArgsProblem, codexExtraArgWords } from '../../../shared/extra-args'
+import { logWarn } from '../../debug-logger'
 
 export function resolveCodexBinary(): { cmd: string; args: string[] } | null {
   if (os.platform() !== 'win32') {
@@ -181,6 +183,66 @@ export function codexCmdExeTarget(shim: string, args: readonly string[], env: Re
   return { cmd, commandLine: `/d /v:off /s /c "${[`"${shim}"`, ...args].join(' ')}"` }
 }
 
+/** cmd.exe takes a command line under this many characters (its documented
+ *  limit is 8,191 including the terminator). */
+export const CMD_EXE_LINE_MAX = 8_191
+
+/** WP2 PR 4, P4.1 (PB2): the app's tools a Codex session runs without
+ *  asking, on every preset, as a Claude session's two are pre-allowed in every
+ *  mode (hooks/per-session-settings.ts CANVAS_TOOL_PERMISSIONS): neither takes
+ *  a path or anything that widens what it can touch. `canvas_render` is NOT
+ *  one of them (it reads a model-chosen file). */
+export const CODEX_PREALLOWED_TOOLS: readonly string[] = ['canvas_snapshot', 'canvas_review']
+
+/** The `-c` key that lets one conductor tool run without Codex's prompt
+ *  (PB2: `approve` lifts it per tool on both supported versions; `auto` does
+ *  not). Tool names are plain words, so the value rides the .cmd route. */
+export function codexToolApprovalArg(tool: string): string {
+  if (!/^[a-z][a-z0-9_]{0,63}$/.test(tool)) throw new Error(`not a conductor tool name: ${tool}`)
+  return `mcp_servers.conductor.tools.${tool}.approval_mode=approve`
+}
+
+/** WP2 PR 4, P4.1 (by parity per preset): the further tools a Codex preset
+ *  runs without asking -- exactly the tools the matching Claude mode does not
+ *  ask before. Matched by the presets' own words: Unrestricted ("Full
+ *  machine access") with Claude's Bypass ("Skip every permission prompt"),
+ *  which asks before nothing, so every conductor tool the connection is
+ *  offered; Auto ("Workspace writes, no prompts") with Claude's Auto, whose
+ *  handling of these tools waits on OR4's check of a real Claude session,
+ *  so Auto keeps asking as today; Read Only, Standard and Plan keep Codex's
+ *  prompt, as Claude's Ask, Accept edits and Plan mode ask. Nothing wider:
+ *  never a server-wide default, never a session or always approval. */
+export function codexPresetApprovedTools(preset: string, switches: ConductorToolSwitches): string[] {
+  if (preset !== 'unrestricted') return []
+  return CODEX_CONDUCTOR_TOOLS
+    .filter((t) => t.offered(switches) && !CODEX_PREALLOWED_TOOLS.includes(t.name))
+    .map((t) => t.name)
+}
+
+/** The launch route a Codex executable takes: the npm `.cmd` shim runs
+ *  through cmd.exe (no argument may hold whitespace there), anything else is
+ *  started directly. */
+export function codexLaunchRoute(executable: string, platform: NodeJS.Platform = process.platform): 'direct' | 'cmd' {
+  return platform === 'win32' && /\.(cmd|bat)$/i.test(executable) ? 'cmd' : 'direct'
+}
+
+/** A Codex launch line as the log may hold it: the developer instructions
+ *  (the app's own guidance, thousands of characters) named by their length
+ *  only. */
+export function codexLaunchLineForLog(line: string): string {
+  return line.replace(/developer_instructions=("(?:[^"\\]|\\.)*"|'[^']*')/g, (_m, value: string) => `developer_instructions=<${value.length} characters>`)
+}
+
+/** WP2 PR 4, P4.1: what main adds to a Codex launch beyond SpawnOptions. */
+export interface CodexSpawnExtras {
+  /** The app's canvas and browser guidance as Codex developer instructions
+   *  (section 10 question 5, default A): main decides whether this launch
+   *  carries it (src/main/canvas/codex-guidance.ts); the builder passes it on
+   *  the direct route only, never through cmd.exe. */
+  developerInstructions?: string
+}
+export type CodexSpawnOptions = SpawnOptions & CodexSpawnExtras
+
 /** Set a variable main owns, removing every other spelling of it first: on
  *  Windows names are case-insensitive and a child reads the FIRST match in
  *  its environment block, so an inherited `conductor_mcp_token` would
@@ -190,7 +252,7 @@ function setOwned(env: Record<string, string>, name: string, value: string, win3
   env[name] = value
 }
 
-export function buildCodexSpawn(opts: SpawnOptions): ProviderSpawnCommand {
+export function buildCodexSpawn(opts: CodexSpawnOptions): ProviderSpawnCommand {
   const co = opts.codexOptions
   if (!co) throw new Error('codexOptions required for Codex spawn')
 
@@ -225,8 +287,14 @@ export function buildCodexSpawn(opts: SpawnOptions): ProviderSpawnCommand {
   // Built-in tools master (onboarding p6 / Settings): off = no conductor MCP
   // flags at all, so Codex launches without the built-in tools. Read fresh
   // per spawn; port 0 (server unbound) behaves identically.
-  const conductorOn = readConfig<{ conductorToolsEnabled?: boolean }>('settings')?.conductorToolsEnabled !== false
+  const spawnSettings = readConfig<{ conductorToolsEnabled?: boolean } & ConductorToolSwitches>('settings')
+  const conductorOn = spawnSettings?.conductorToolsEnabled !== false
   const mcpPort = conductorOn ? getConductorMcpPort() : 0
+  const viaCmdExe = win32 && /\.(cmd|bat)$/i.test(executable)
+  // WP2 PR 4, P4.1: where the per-preset approvals sit in `flags`, so a
+  // cmd.exe line that would be too long can drop them (and only them).
+  let presetKeysAt = -1
+  let presetKeyArgs: string[] = []
   if (mcpPort > 0) {
     // cccSessionId is the ONLY query param, so the URL stays free of `&` — a
     // second param would be a cmd.exe command separator on the win32 .cmd-shim
@@ -245,6 +313,24 @@ export function buildCodexSpawn(opts: SpawnOptions): ProviderSpawnCommand {
     // codex-rs/codex-mcp/src/rmcp_client.rs, rust-v0.155.1) and would give up
     // on a longer review first; seconds, read as a float.
     flags.push('-c', `mcp_servers.conductor.tool_timeout_sec=${CONDUCTOR_TOOL_TIMEOUT_SEC}`)
+    // WP2 PR 4, P4.1 (PB2): Codex asks before every call of a tool without
+    // annotations, under every preset probed, Auto's `--ask-for-approval
+    // never` included. The two Claude pre-allows in every mode run without
+    // asking on every preset; under a preset whose matching Claude mode asks
+    // before nothing, every tool the connection is offered does too
+    // (codexPresetApprovedTools). Per tool, never server-wide.
+    for (const tool of CODEX_PREALLOWED_TOOLS) flags.push('-c', codexToolApprovalArg(tool))
+    presetKeyArgs = codexPresetApprovedTools(co.permissionsPreset, spawnSettings ?? {}).flatMap((tool) => ['-c', codexToolApprovalArg(tool)])
+    presetKeysAt = flags.length
+    flags.push(...presetKeyArgs)
+    // WP2 PR 4, P4.1 (section 10 question 5, default A): the app's canvas and
+    // browser guidance as Codex's developer instructions, decided by main for
+    // this launch (src/main/canvas/codex-guidance.ts), encoded as a TOML
+    // string. Never through cmd.exe: the npm .cmd route refuses an argument
+    // holding a space (codexCmdExeTarget).
+    if (typeof opts.developerInstructions === 'string' && opts.developerInstructions && !viaCmdExe) {
+      flags.push('-c', `developer_instructions=${tomlString(opts.developerInstructions)}`)
+    }
   }
 
   // CLAUDE_MULTI_SESSION_ID identifies the spawning CCC session for downstream
@@ -271,7 +357,6 @@ export function buildCodexSpawn(opts: SpawnOptions): ProviderSpawnCommand {
   // program name resolved from the project folder -- is closed instead by
   // telling cmd.exe not to search the current directory.
   if (win32) setOwned(env, 'NoDefaultCurrentDirectoryInExePath', '1', win32)
-  const viaCmdExe = win32 && /\.(cmd|bat)$/i.test(executable)
 
   // P3.10 (rows 43, 46, 47, 63): the app's hooks, as a Claude session gets
   // its http hooks through its settings file: the same command for every
@@ -322,6 +407,20 @@ export function buildCodexSpawn(opts: SpawnOptions): ProviderSpawnCommand {
     flags.push(...codexExtraArgWords(co.extraArgs))
   }
 
+  // WP2 PR 4, P4.1: cmd.exe takes a line under CMD_EXE_LINE_MAX characters.
+  // Were the per-preset approvals to take this launch's line past it, they
+  // alone are left off, with a log line, and the session still launches (its
+  // tools then ask, as before); nothing else is dropped. `prefix`: what goes
+  // before the flags on that line (an exact resume's `resume <id>`).
+  const fitCmdLine = (prefix: string[]): string[] => {
+    if (!viaCmdExe || presetKeyArgs.length === 0 || presetKeysAt < 0) return flags
+    let line: string
+    try { line = codexCmdExeTarget(executable, [...prefix, ...flags], env).commandLine } catch { return flags }
+    if (line.length < CMD_EXE_LINE_MAX) return flags
+    logWarn(`[codex-spawn] ${opts.sessionId}: the per-preset tool approvals are left off this launch: with them its cmd.exe line would be ${line.length} characters (cmd.exe takes under ${CMD_EXE_LINE_MAX}); its conductor tools ask before each call`)
+    return [...flags.slice(0, presetKeysAt), ...flags.slice(presetKeysAt + presetKeyArgs.length)]
+  }
+
   // P3.5 (rows 34, 35): an exact resume, as Claude's `claude --resume <uuid>`
   // (resolveResumeLaunch): the conversation's rollout must be in THIS realm's
   // sessions folder, and the CLI starts in the directory the conversation ran
@@ -335,7 +434,7 @@ export function buildCodexSpawn(opts: SpawnOptions): ProviderSpawnCommand {
     if (!CODEX_CONVERSATION_ID_RE.test(resumed.resumeId)) {
       throw new Error('Cannot resume the Codex conversation: its id is not a conversation id.')
     }
-    const args = ['resume', resumed.resumeId, ...flags]
+    const args = ['resume', resumed.resumeId, ...fitCmdLine(['resume', resumed.resumeId])]
     const cwd = resumed.cwd || undefined
     const resumeCwdMismatch = resumed.cwdMismatch
     // The rollout chosen here, so the status line claims it without a second walk.
@@ -357,8 +456,10 @@ export function buildCodexSpawn(opts: SpawnOptions): ProviderSpawnCommand {
     const pickerScript = getCodexResumePickerPath()
     if (pickerScript) {
       // The picker starts the same proven executable (never its own lookup),
-      // through cmd.exe under the same rules; refuse here what it would.
-      if (viaCmdExe) codexCmdExeTarget(executable, flags, env)
+      // through cmd.exe under the same rules; refuse here what it would. Its
+      // line may resume a conversation (`resume <id>` before the flags).
+      const pickerFlags = fitCmdLine(['resume', '00000000-0000-0000-0000-000000000000'])
+      if (viaCmdExe) codexCmdExeTarget(executable, pickerFlags, env)
       const pickerEnv = { ...env }
       setOwned(pickerEnv, 'CCC_CODEX_EXECUTABLE', executable, win32)
       // P3.5 (rows 32, 38): where the picker records each decision it makes,
@@ -396,14 +497,14 @@ export function buildCodexSpawn(opts: SpawnOptions): ProviderSpawnCommand {
       if (openElsewhere.length > 0) setOwned(pickerEnv, CODEX_OPEN_ELSEWHERE_ENV, openElsewhere.join(','), win32)
       // Bare 'node' fails under node-pty/ConPTY on Windows (no PATH lookup).
       // Resolve to the full node.exe path via `where node`. See resolveNodeExe.
-      return { cmd: resolveNodeExe(), args: [pickerScript, ...flags], env: pickerEnv, ...(pickFile && pickFolder ? { pickFile, pickFolder } : {}), hooksInstalled }
+      return { cmd: resolveNodeExe(), args: [pickerScript, ...pickerFlags], env: pickerEnv, ...(pickFile && pickFolder ? { pickFile, pickFolder } : {}), hooksInstalled }
     }
     // Fallthrough: picker missing, spawn codex directly.
   }
 
   if (viaCmdExe) {
     // node-pty / ConPTY cannot directly invoke .cmd shims; route through cmd.exe.
-    const target = codexCmdExeTarget(executable, flags, env)
+    const target = codexCmdExeTarget(executable, fitCmdLine([]), env)
     return { cmd: target.cmd, args: [], commandLine: target.commandLine, env, hooksInstalled }
   }
   return { cmd: executable, args: flags, env, hooksInstalled }

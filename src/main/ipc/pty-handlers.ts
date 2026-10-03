@@ -27,6 +27,8 @@ import { detachedDestinationAgrees, type SshDestinationSource } from '../../shar
 import { readDetachedRemotesRegistry } from '../session-state'
 import { pingHost } from '../host-ping'
 import { noteSessionSpawnForCanvas } from '../canvas/canvas-session-link'
+import { codexSessionGuidance } from '../canvas/codex-guidance'
+import { appWindowSender } from './trusted-sender'
 import { getRegistry } from '../model-registry-service'
 import { codexEffortRuns } from '../../shared/model-registry'
 import {
@@ -670,7 +672,31 @@ function endTargetFromSavedConfig(configId: string, sessionId: string): SshEndTa
   }
 }
 
+/** WP2 PR 4, P4.1: the Codex version discovery proved, or null. */
+function codexDiscoveredVersion(service: AccountsService): string | null {
+  try {
+    const v = service.snapshot().providers.find((p) => p.providerId === 'codex')?.version
+    return typeof v === 'string' && v ? v : null
+  } catch {
+    return null
+  }
+}
+
+/** WP2 PR 4, P4.1: `canvas:sessionGuidance`'s payload: one session id. */
+const sessionGuidanceSchema = z.object({ sessionId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/) }).strict()
+
 export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void {
+  // WP2 PR 4, P4.1 (row 51): whether a Codex session's launch carried the
+  // canvas and vision skills' guidance with the tools, for the canvas page's
+  // one line. A pure read of main's own launch record; the app's window only.
+  const fromApp = appWindowSender(getWindow)
+  ipcMain.handle(IPC.CANVAS_SESSION_GUIDANCE, (e, args: unknown) => {
+    if (!fromApp(e)) return null
+    const parsed = sessionGuidanceSchema.safeParse(args)
+    if (!parsed.success) return null
+    return codexSessionGuidance(parsed.data.sessionId)
+  })
+
   // The body of pty:spawn. `claim` holds the one-at-a-time gate's ticket for this
   // call (P3.13), and whether the call reached pty-manager's spawn: the handler
   // registered below discards the ticket when the call ends, so a spawn that
@@ -919,7 +945,12 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
         codexLease = prepared.lease
         resolvedOptions = {
           ...resolvedOptions,
-          codexLaunch: { lease: prepared.lease, executable: prepared.executable, env: prepared.env, sessionsDir: prepared.sessionsDir },
+          codexLaunch: {
+            lease: prepared.lease, executable: prepared.executable, env: prepared.env, sessionsDir: prepared.sessionsDir,
+            // WP2 PR 4, P4.1: the account's Codex folder and the version
+            // discovery proved, for the launch's canvas guidance (question 5).
+            home: prepared.home, cliVersion: codexDiscoveredVersion(service),
+          },
         }
         // P3.6 (row 22): a respawn of this session on another account
         // carries the conversation it is on into that account first, once

@@ -125,11 +125,25 @@ export function codexHookCommand(scriptsDir: string, platform: NodeJS.Platform, 
 }
 
 /** A TOML string holding `s`: a literal string (no escapes, no double quote)
- *  when `s` holds no single quote, else a basic string with `\` and `"`
- *  escaped. */
-function tomlString(s: string): string {
-  if (!s.includes("'")) return `'${s}'`
-  return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+ *  when `s` holds no single quote and no control character, else a basic
+ *  string with `\` and `"` escaped. WP2 PR 4, P4.1: exported for the
+ *  `-c developer_instructions` value (question 5's default A), whose text
+ *  runs over several lines: a control character (a TOML literal string can
+ *  hold none, a newline included) takes the basic form, written as its
+ *  escape (`\n`, `\t`, or `\uXXXX`). A hook command holds none, so its value
+ *  is unchanged. */
+export function tomlString(s: string): string {
+  // eslint-disable-next-line no-control-regex
+  const control = /[\u0000-\u001f\u007f]/
+  if (!s.includes("'") && !control.test(s)) return `'${s}'`
+  const escaped = s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+  // eslint-disable-next-line no-control-regex
+  return `"${escaped.replace(/[\u0000-\u001f\u007f]/g, (c) => {
+    if (c === '\n') return '\\n'
+    if (c === '\t') return '\\t'
+    if (c === '\r') return '\\r'
+    return `\\u${c.charCodeAt(0).toString(16).padStart(4, '0').toUpperCase()}`
+  })}"`
 }
 
 /** The `-c` overrides that give a launch the app's hooks: one per event,
