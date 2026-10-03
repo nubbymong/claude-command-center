@@ -10,8 +10,10 @@
  * The script is the observable contract of the repo's fake Codex CLI
  * (tests/wp1/fake-cli.test.ts, `FAKE`), cut to what an app instance asks it
  * without a real sign-in: `--version`, and `login status` (signed in when the
- * account's folder holds the fake credential, `auth.fake`). The same guard
- * refuses an ambient credential or NODE_OPTIONS, and anything else exits 64.
+ * account's folder holds the fake credential, `auth.fake`), the usage
+ * helper (`app-server`), and a Cloud Agent's `exec --json` run (WP2 PR 4,
+ * P4.5; see readFakeExecRecords). The same guard refuses an ambient
+ * credential or NODE_OPTIONS, and anything else exits 64.
  * On Windows it sits behind the same npm-style `.cmd` shim (npm's cmd-shim
  * template), with node's absolute path where the template runs a bare `node`,
  * so it needs no node on the PATH it is given. That fake is a constant inside
@@ -60,6 +62,34 @@ function fakeScript(version: string): string {
     '  setInterval(() => {}, 1000)',
     '  return',
     '}',
+    // WP2 PR 4, P4.5 (row 57): a Cloud Agent's headless run, `exec --json`
+    // with the task on stdin. It refuses any argv the app must never send (a
+    // working-folder flag, a sandbox bypass, danger-full-access, --ephemeral,
+    // --ignore-user-config), records what it was given in the account folder
+    // (argv, working folder, sandbox, the task's length and SHA-256, never the
+    // task), and answers with the events the real CLI writes.
+    "if (process.argv[2] === 'exec') {",
+    '  const args = process.argv.slice(3)',
+    "  const never = ['--dangerously-bypass-approvals-and-sandbox', '--yolo', '--full-auto', '--ephemeral', '--ignore-user-config', '-C', '--cd', 'danger-full-access']",
+    "  if (args[0] !== '--json' || args[args.length - 1] !== '-' || !args.includes('--skip-git-repo-check') || args.some((x) => never.includes(x))) { process.stderr.write('refused exec ' + args.join(' ') + NL); process.exit(65) }",
+    "  const at = args.indexOf('-s')",
+    "  const sandbox = at >= 0 ? args[at + 1] : ''",
+    "  if (sandbox !== 'read-only' && sandbox !== 'workspace-write') { process.stderr.write('refused sandbox ' + sandbox + NL); process.exit(65) }",
+    "  let task = ''",
+    "  process.stdin.setEncoding('utf8')",
+    '  process.stdin.on(\'data\', (c) => { task += c })',
+    "  process.stdin.on('end', () => {",
+    "    const sha = require('crypto').createHash('sha256').update(task).digest('hex')",
+    "    fs.writeFileSync(path.join(home, 'fake-exec-' + Date.now() + '-' + process.pid + '.json'), JSON.stringify({ args, cwd: process.cwd(), sandbox, taskLength: task.length, taskSha256: sha }))",
+    '    const ev = (o) => process.stdout.write(JSON.stringify(o) + NL)',
+    "    ev({ type: 'thread.started', thread_id: '00000000-0000-7000-8000-0000000000e2' })",
+    "    ev({ type: 'turn.started' })",
+    "    ev({ type: 'item.completed', item: { id: 'item_0', type: 'agent_message', text: 'fake agent: ' + task.length + ' characters, ' + sandbox } })",
+    "    ev({ type: 'turn.completed', usage: { input_tokens: 1200, cached_input_tokens: 200, cache_write_input_tokens: 0, output_tokens: 34, reasoning_output_tokens: 0 } })",
+    '    process.exit(0)',
+    '  })',
+    '  return',
+    '}',
     "process.stderr.write('unknown ' + a + NL); process.exit(64)",
     '',
   ].join('\n')
@@ -91,6 +121,23 @@ export function installFakeCodex(dir: string, version: string = FAKE_CODEX_VERSI
 export function signInFakeRealm(realmDir: string, how = 'Logged in using an API key - sk-***'): void {
   fs.mkdirSync(realmDir, { recursive: true })
   fs.writeFileSync(path.join(realmDir, 'auth.fake'), `${how}\n`)
+}
+
+/** What the fake's `exec --json` mode recorded in an account folder, one
+ *  record per run, oldest first (P4.5). Never the task itself. */
+export interface FakeExecRecord {
+  args: string[]
+  cwd: string
+  sandbox: 'read-only' | 'workspace-write'
+  taskLength: number
+  taskSha256: string
+}
+
+export function readFakeExecRecords(realmDir: string): FakeExecRecord[] {
+  let names: string[] = []
+  try { names = fs.readdirSync(realmDir).filter((n) => /^fake-exec-\d+-\d+\.json$/.test(n)) } catch { return [] }
+  const stamp = (n: string) => Number(n.split('-')[2])
+  return names.sort((x, y) => stamp(x) - stamp(y)).map((n) => JSON.parse(fs.readFileSync(path.join(realmDir, n), 'utf8')) as FakeExecRecord)
 }
 
 /** The folders on `pathValue` minus every one that holds a Codex. */

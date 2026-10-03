@@ -94,7 +94,7 @@ import { cleanupStaleHookEntries, cleanupStaleMcpConfigs } from './hooks/boot-cl
 import { isSentinelEnabled } from '../shared/sentinel-enabled'
 import { resolveHooksPort } from './hooks/hooks-types'
 import { fetchModelPricing } from './tokenomics/tk-pricing'
-import { killAllAgents } from './cloud-agent-manager'
+import { killAllAgents, stopBackgroundAgentRuns } from './cloud-agent-manager'
 import { startServiceStatusPoller, stopServiceStatusPoller, registerServiceStatusHandlers, refreshServiceStatus } from './service-status'
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
 import { startUpdateServer, stopUpdateServer } from './update-server'
@@ -1103,6 +1103,9 @@ try { getWatchdogManager()?.disposeAll() } catch { /* never init */ }
     // Usage track MP8: a fresh usage read under way is stopped first, so the
     // flush below kills its helper too, and none starts again.
     try { getAccountsService()?.stopUsageReads() } catch { /* no accounts service */ }
+    // WP2 PR 4, P4.5: a Codex cloud agent still running is stopped here too,
+    // so the flush below kills its chain.
+    try { stopBackgroundAgentRuns() } catch { /* none running */ }
     // A headless CLI run stopped but still reading its process table would
     // otherwise leave its chain below cmd.exe running once the app is gone.
     try { flushPendingProviderCliKills() } catch { /* nothing pending */ }

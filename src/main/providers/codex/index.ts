@@ -23,6 +23,7 @@ import { readCodexModelCatalogue } from './model-catalogue'
 import type { CodexCatalogueDeps } from './model-catalogue'
 import { createCodexAuthOperations } from './auth-operations'
 import { createCodexReviewOperations } from './review'
+import { createCodexBackgroundOperations } from './agent-run'
 import type { CodexAuthDeps, CodexAuthOperations } from './auth-operations'
 import { createCodexRealmFolders, createCodexRealmLocks, resolveCodexRealmRoots } from './realm-folders'
 import { carryCodexRollout } from './conversation-carry'
@@ -52,6 +53,12 @@ export {
 } from './model-catalogue'
 export type { CodexCatalogueDeps } from './model-catalogue'
 export { createCodexReviewOperations, createCodexExecEventReader, parseCodexExecEvents, REVIEW_MAX_TEXT, CODEX_EXEC_EXIT_SETTLE_MS } from './review'
+export type { CodexExecEventHooks } from './review'
+// WP2 PR 4, P4.5 (row 57): a Cloud Agent's headless run.
+export {
+  createCodexBackgroundOperations, codexAgentArgs, codexAgentCommandLine, codexAgentSandbox, CODEX_AGENT_EFFORTS, CODEX_AGENT_TIMEOUT_MS,
+} from './agent-run'
+export type { CodexAgentSandbox } from './agent-run'
 export type { CodexDiscovery, CodexDiscoveryDeps, CodexExecutableIdentity, CodexExecutableCheck, CodexFileStat } from './discovery'
 export { codexLoginShellPath, codexOperationBaseEnv, extractMarkedPath, absolutePathEntries } from './process-env'
 export {
@@ -457,6 +464,9 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
     // A reviewer for another provider's sessions (plan: provider review
     // through MCP), run from a launch the accounts service prepared.
     review: createCodexReviewOperations(),
+    // WP2 PR 4, P4.5 (row 57): a Cloud Agent's headless `codex exec`, run
+    // from a launch the accounts service prepared (kind `background`).
+    background: createCodexBackgroundOperations(),
     ...(source && realmFs ? {
       ...withRealms(
         createCodexAuthOperations({ ...realAuthDeps({ lookupRealm, takeSecret: deps.auth?.takeSecret }, realmFs), ...testAuthPorts(deps.authPorts), locks, proven: () => proven }),
@@ -490,9 +500,11 @@ function withRealms(ops: CodexAuthOperations, usageFs: CodexUsageFsPort, liveUsa
     // launch's canonical-home check (no junction or link), as the Account
     // usage page does: a home linked into another realm's is never read as
     // its own. P4.4: the account's log folder, memories folder and settings
-    // file, held to the same check.
+    // file, held to the same check. P4.5 (row 57): a Cloud Agent's headless
+    // run is a launch of its own kind, `background`, bound and leased as
+    // sessions and reviews are.
     launch: {
-      kinds: ['session', 'review'], prepare: (realm) => ops.prepareLaunch(realm), sessionsDir: (realm) => ops.usageSessionsDir(realm),
+      kinds: ['session', 'review', 'background'], prepare: (realm) => ops.prepareLaunch(realm), sessionsDir: (realm) => ops.usageSessionsDir(realm),
       accountFolders: (realm) => ops.accountFolders(realm),
     },
     usage: createCodexUsageOperations({

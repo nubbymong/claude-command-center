@@ -387,6 +387,47 @@ export interface ProviderReviewOperations {
   run(input: ReviewRunInput): Promise<ReviewRunResult>
 }
 
+/** WP2 PR 4, P4.5 (row 57): one headless background run (a Cloud Agent): a
+ *  fresh, non-interactive process of the provider, run from a launch the
+ *  accounts service prepared (kind `background`), in the project. */
+export interface BackgroundRunInput {
+  /** From the prepared launch: the executable setup proved. */
+  executable: string
+  /** From the prepared launch: the realm's environment. */
+  env: Readonly<Record<string, string>>
+  /** The project: the process's working directory, never an argument. */
+  cwd: string
+  /** The task, handed to the process on stdin, never as argv. */
+  prompt: string
+  /** The New agent dialog's per-run "skip permission prompts" choice; the
+   *  package maps it onto its own permission setting, and refuses a run it
+   *  cannot map. Never kept. */
+  skipPermissions: boolean
+  /** The config's model and reasoning effort, as an interactive launch of it
+   *  passes them; absent, the provider's own default. The package refuses a
+   *  value it would not pass to a launch. */
+  model?: string
+  effort?: string
+  signal?: AbortSignal
+  /** Each reply the run makes, as it completes. Never throws into the run. */
+  onText?: (text: string) => void
+  /** The process's diagnostic output as it arrives, kept with the reply (a
+   *  refused edit may show only there). Never throws into the run. */
+  onDiagnostic?: (text: string) => void
+}
+
+/** `killSettled`: a stopped run whose kill was still under way when it
+ *  settled says when that kill has finished; it never rejects. The caller
+ *  holding the account's lease lets go only then. `costUsd`: only when the
+ *  model run is known and priced. */
+export type BackgroundRunResult =
+  | { ok: true; usage?: ReviewUsage; costUsd?: number }
+  | { ok: false; code: 'cancelled' | 'failed' | 'not-started'; message: string; usage?: ReviewUsage; costUsd?: number; killSettled?: Promise<void> }
+
+export interface ProviderBackgroundOperations {
+  run(input: BackgroundRunInput): Promise<BackgroundRunResult>
+}
+
 /** An account's allowance as a package reports it: provider-neutral buckets
  *  (the package keys and labels them), when they were reported, the plan's
  *  display name, and, when the provider reports them, the account's credits
@@ -511,6 +552,11 @@ export interface ProviderPackage {
   /** Present when the provider can review a change for another provider's
    *  session (plan: provider review through MCP). */
   readonly review?: ProviderReviewOperations
+  /** Present when the provider runs Cloud Agents through the accounts
+   *  service (WP2 PR 4, P4.5): its launch kinds list `background`. Absent for
+   *  a provider whose agents keep their own path (Claude Code's `claude -p`,
+   *  cloud-agent-manager.ts). */
+  readonly background?: ProviderBackgroundOperations
   readonly realms?: ProviderRealmOperations
   /** Present when the package reports its accounts' allowances (the
    *  `account.usage` capability's backing): Codex, once the registry's realms
