@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-03T08:35:37.146Z",
-  "head": "b4413a2436acc2924153f492090d6d7b6e285f15",
-  "tree": "113c04661771797106223204603797d3f7941818",
+  "generatedAt": "2026-10-03T11:03:17.617Z",
+  "head": "227cd3000a7f769f43fcf51058b309945d7ba891",
+  "tree": "eec5c0363a60ade7723ca344da9fe94129c60790",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2679,
+  "trackedFileCount": 2682,
   "excludedFileCount": 390,
-  "scannedFileCount": 2289,
+  "scannedFileCount": 2292,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 751,
-  "pathDigest": "70aa97f738c3ecbcdadd2ebdd1950d3d33092505719b582db6a0bad806c6862b",
+  "matchedPathCount": 754,
+  "pathDigest": "ede294c20b1b609bf33e9da63540ae0e4264bf333a50cdd513e14645cb7c7dcc",
   "entries": [
     {
       "path": ".github/workflows/ci.yml",
@@ -204,7 +204,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 984,
+      "lineCount": 1074,
       "truncated": true
     },
     {
@@ -472,7 +472,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 15
+      "lineCount": 21
     },
     {
       "path": "src/main/channel-emitters.ts",
@@ -677,7 +677,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 121
+      "lineCount": 123
     },
     {
       "path": "src/main/ipc/tokenomics2-handlers.ts",
@@ -873,7 +873,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 43
+      "lineCount": 48
     },
     {
       "path": "src/main/providers/codex/app-server-client.ts",
@@ -916,7 +916,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 166
+      "lineCount": 183
     },
     {
       "path": "src/main/providers/codex/composer-submit.ts",
@@ -1089,7 +1089,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 23
+      "lineCount": 24
     },
     {
       "path": "src/main/providers/codex/spawn.ts",
@@ -1099,7 +1099,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 126
+      "lineCount": 127
     },
     {
       "path": "src/main/providers/codex/telemetry.ts",
@@ -1190,7 +1190,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 443,
+      "lineCount": 445,
       "truncated": true
     },
     {
@@ -3564,7 +3564,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 15
+      "lineCount": 21
     },
     {
       "path": "tests/unit/main/account-memory-guard.test.ts",
@@ -3593,7 +3593,16 @@
         "P07",
         "P13"
       ],
-      "lineCount": 14
+      "lineCount": 16
+    },
+    {
+      "path": "tests/unit/main/ask-help-folder-runs.test.ts",
+      "predicates": [
+        "P04",
+        "P07",
+        "P13"
+      ],
+      "lineCount": 18
     },
     {
       "path": "tests/unit/main/ask-launch-folder.test.ts",
@@ -3602,7 +3611,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 24
+      "lineCount": 29
     },
     {
       "path": "tests/unit/main/attention-source-codex.test.ts",
@@ -3729,7 +3738,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 28
+      "lineCount": 29
     },
     {
       "path": "tests/unit/main/codex-background-launch.test.ts",
@@ -3746,7 +3755,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 31
+      "lineCount": 40
     },
     {
       "path": "tests/unit/main/codex-effort-allowlist.test.ts",
@@ -3831,6 +3840,22 @@
       "lineCount": 12
     },
     {
+      "path": "tests/unit/main/codex-realm-skills-race-links.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 10
+    },
+    {
+      "path": "tests/unit/main/codex-realm-skills-swap.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 7
+    },
+    {
       "path": "tests/unit/main/codex-realm-skills.test.ts",
       "predicates": [
         "P01",
@@ -3883,7 +3908,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 50
+      "lineCount": 61
     },
     {
       "path": "tests/unit/main/codex-unanswered-service.test.ts",
@@ -4448,7 +4473,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 61
+      "lineCount": 78
     },
     {
       "path": "tests/unit/providers/codex/analysis-features.test.ts",
@@ -4610,7 +4635,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 44
+      "lineCount": 60
     },
     {
       "path": "tests/unit/providers/codex/spawn-canvas.test.ts",
@@ -4917,7 +4942,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 47
+      "lineCount": 50
     },
     {
       "path": "tests/unit/renderer/ask-conductor-persistence.test.ts",
