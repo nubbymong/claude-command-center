@@ -4,6 +4,10 @@
 // process -- on Windows through a real npm-style `.cmd` shim and cmd.exe,
 // which is where quoting and CVE-2024-27980 handling actually break.
 //
+// WP1.69: FAKE below is one of the fakes the versioned oracle
+// (tests/wp1/fake-cli/oracle.json) holds to the real CLI; the comparison is
+// tests/wp1/fake-cli-oracle.test.ts, which reads FAKE as text.
+//
 // HOST QUARANTINE: this suite writes a temp directory and starts processes. It
 // runs in CI and on the VM, never on the owner's workstation. It touches no
 // ACL, no junction, no real home and no real Codex.

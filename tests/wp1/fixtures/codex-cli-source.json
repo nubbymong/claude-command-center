@@ -1,0 +1,959 @@
+{
+  "wp1": "WP1.69",
+  "upstream": "https://github.com/openai/codex",
+  "license": "Apache-2.0 (excerpts quoted with their source named)",
+  "fetchedVia": "GitHub API: git/ref/tags/<tag> and git/tags/<object> for the tag and its commit; repos/openai/codex/contents/<path>?ref=<commitSha> for each file, whose decoded bytes hash to the git blob sha GitHub reports (blobSha)",
+  "note": "Re-read on every pin change: tests/wp1/fake-cli-oracle.test.ts requires exactly the minimum and pinned versions here, and every upstream citation in tests/wp1/fake-cli/oracle.json must match these lines verbatim.",
+  "versions": [
+    {
+      "version": "0.153.4",
+      "tag": "rust-v0.153.4",
+      "tagObjectSha": "042fb41b7c813ac7999105e886b2b7aa715b5081",
+      "commitSha": "3d2ee51ca2d5db578f328aa75e20aa22c0197c9a",
+      "fetchedAt": "2026-10-03",
+      "sources": [
+        {
+          "role": "login-status",
+          "path": "codex-rs/cli/src/login.rs",
+          "sha256": "34f8a089a6907d9791e4bb858f44fdee56350b9898daad45c2065325f9e6bef7",
+          "blobSha": "22e607c6e64315252ec5b942ede27eed0361e913",
+          "what": "`codex login status`: an API key, ChatGPT or no sign-in, each printed on stderr (eprintln!) with its exit code.",
+          "excerpt": [
+            {
+              "line": 443,
+              "text": "pub async fn run_login_status(cli_config_overrides: CliConfigOverrides) -> ! {"
+            },
+            {
+              "line": 465,
+              "text": "            AuthMode::ApiKey => match auth.get_token() {"
+            },
+            {
+              "line": 466,
+              "text": "                Ok(api_key) => {"
+            },
+            {
+              "line": 467,
+              "text": "                    eprintln!(\"Logged in using an API key - {}\", safe_format_key(&api_key));"
+            },
+            {
+              "line": 468,
+              "text": "                    std::process::exit(0);"
+            },
+            {
+              "line": 475,
+              "text": "            AuthMode::Chatgpt | AuthMode::ChatgptAuthTokens => {"
+            },
+            {
+              "line": 476,
+              "text": "                eprintln!(\"Logged in using ChatGPT\");"
+            },
+            {
+              "line": 477,
+              "text": "                std::process::exit(0);"
+            },
+            {
+              "line": 499,
+              "text": "        Ok(None) => {"
+            },
+            {
+              "line": 500,
+              "text": "            eprintln!(\"Not logged in\");"
+            },
+            {
+              "line": 501,
+              "text": "            std::process::exit(1);"
+            }
+          ]
+        },
+        {
+          "role": "api-key-redaction",
+          "path": "codex-rs/cli/src/login.rs",
+          "sha256": "34f8a089a6907d9791e4bb858f44fdee56350b9898daad45c2065325f9e6bef7",
+          "blobSha": "22e607c6e64315252ec5b942ede27eed0361e913",
+          "what": "How `login status` shows an API key: *** for 13 characters or fewer, else the first 8, ***, the last 5.",
+          "excerpt": [
+            {
+              "line": 579,
+              "text": "fn safe_format_key(key: &str) -> String {"
+            },
+            {
+              "line": 580,
+              "text": "    if key.len() <= 13 {"
+            },
+            {
+              "line": 581,
+              "text": "        return \"***\".to_string();"
+            },
+            {
+              "line": 583,
+              "text": "    let prefix = &key[..8];"
+            },
+            {
+              "line": 584,
+              "text": "    let suffix = &key[key.len() - 5..];"
+            },
+            {
+              "line": 585,
+              "text": "    format!(\"{prefix}***{suffix}\")"
+            }
+          ]
+        },
+        {
+          "role": "api-key-login",
+          "path": "codex-rs/cli/src/login.rs",
+          "sha256": "34f8a089a6907d9791e4bb858f44fdee56350b9898daad45c2065325f9e6bef7",
+          "blobSha": "22e607c6e64315252ec5b942ede27eed0361e913",
+          "what": "`codex login --with-api-key` once the key is read: stored in codex_home, \"Successfully logged in\" on stderr, exit 0.",
+          "excerpt": [
+            {
+              "line": 46,
+              "text": "const LOGIN_SUCCESS_MESSAGE: &str = \"Successfully logged in\";"
+            },
+            {
+              "line": 204,
+              "text": "pub async fn run_login_with_api_key("
+            },
+            {
+              "line": 220,
+              "text": "    match login_with_api_key("
+            },
+            {
+              "line": 221,
+              "text": "        &config.codex_home,"
+            },
+            {
+              "line": 226,
+              "text": "        Ok(_) => {"
+            },
+            {
+              "line": 227,
+              "text": "            eprintln!(\"{LOGIN_SUCCESS_MESSAGE}\");"
+            },
+            {
+              "line": 228,
+              "text": "            std::process::exit(0);"
+            }
+          ]
+        },
+        {
+          "role": "stdin-secret",
+          "path": "codex-rs/cli/src/login.rs",
+          "sha256": "34f8a089a6907d9791e4bb858f44fdee56350b9898daad45c2065325f9e6bef7",
+          "blobSha": "22e607c6e64315252ec5b942ede27eed0361e913",
+          "what": "The key is read from stdin; a terminal on stdin is refused on stderr with exit 1, before anything is stored.",
+          "excerpt": [
+            {
+              "line": 277,
+              "text": "pub fn read_api_key_from_stdin() -> String {"
+            },
+            {
+              "line": 278,
+              "text": "    read_stdin_secret("
+            },
+            {
+              "line": 279,
+              "text": "        \"--with-api-key expects the API key on stdin. Try piping it, e.g. `printenv OPENAI_API_KEY | codex login --with-api-key`.\","
+            },
+            {
+              "line": 293,
+              "text": "fn read_stdin_secret(terminal_message: &str, reading_message: &str, empty_message: &str) -> String {"
+            },
+            {
+              "line": 294,
+              "text": "    let mut stdin = std::io::stdin();"
+            },
+            {
+              "line": 296,
+              "text": "    if stdin.is_terminal() {"
+            },
+            {
+              "line": 297,
+              "text": "        eprintln!(\"{terminal_message}\");"
+            },
+            {
+              "line": 298,
+              "text": "        std::process::exit(1);"
+            }
+          ]
+        },
+        {
+          "role": "logout",
+          "path": "codex-rs/cli/src/login.rs",
+          "sha256": "34f8a089a6907d9791e4bb858f44fdee56350b9898daad45c2065325f9e6bef7",
+          "blobSha": "22e607c6e64315252ec5b942ede27eed0361e913",
+          "what": "`codex logout`: the stored credentials removed (logout_with_revoke on codex_home), a line on stderr, exit 0.",
+          "excerpt": [
+            {
+              "line": 510,
+              "text": "pub async fn run_logout(cli_config_overrides: CliConfigOverrides) -> ! {"
+            },
+            {
+              "line": 514,
+              "text": "    let logged_out = match logout_with_revoke("
+            },
+            {
+              "line": 515,
+              "text": "        &config.codex_home,"
+            },
+            {
+              "line": 547,
+              "text": "    if logged_out || cleared_bedrock_config {"
+            },
+            {
+              "line": 548,
+              "text": "        eprintln!(\"Successfully logged out\");"
+            },
+            {
+              "line": 549,
+              "text": "    } else {"
+            },
+            {
+              "line": 550,
+              "text": "        eprintln!(\"Not logged in\");"
+            },
+            {
+              "line": 552,
+              "text": "    std::process::exit(0);"
+            }
+          ]
+        },
+        {
+          "role": "login-dispatch",
+          "path": "codex-rs/cli/src/main.rs",
+          "sha256": "beab9cd5ea1cbf6e8762397e39fcdec9f263b675365cd206fd808501a2102c14",
+          "blobSha": "71d032373538c29eb06047450dec850c09161812",
+          "what": "The CLI entry: `login status`, `login --with-api-key` (the key read from stdin before the login runs) and `logout`.",
+          "excerpt": [
+            {
+              "line": 1526,
+              "text": "                Some(LoginSubcommand::Status) => {"
+            },
+            {
+              "line": 1527,
+              "text": "                    run_login_status(login_cli.config_overrides).await;"
+            },
+            {
+              "line": 1547,
+              "text": "                    } else if login_cli.with_api_key {"
+            },
+            {
+              "line": 1548,
+              "text": "                        let api_key = read_api_key_from_stdin();"
+            },
+            {
+              "line": 1549,
+              "text": "                        run_login_with_api_key(login_cli.config_overrides, api_key).await;"
+            },
+            {
+              "line": 1559,
+              "text": "        Some(Subcommand::Logout(mut logout_cli)) => {"
+            },
+            {
+              "line": 1569,
+              "text": "            run_logout(logout_cli.config_overrides).await;"
+            }
+          ]
+        },
+        {
+          "role": "debug-models",
+          "path": "codex-rs/cli/src/main.rs",
+          "sha256": "beab9cd5ea1cbf6e8762397e39fcdec9f263b675365cd206fd808501a2102c14",
+          "blobSha": "71d032373538c29eb06047450dec850c09161812",
+          "what": "`codex debug models --bundled`: the bundled catalogue written to stdout as JSON and a line feed; the command returns Ok through a main that returns anyhow::Result, so the exit code is 0.",
+          "excerpt": [
+            {
+              "line": 294,
+              "text": "struct DebugModelsCommand {"
+            },
+            {
+              "line": 296,
+              "text": "    #[arg(long = \"bundled\", default_value_t = false)]"
+            },
+            {
+              "line": 1038,
+              "text": "fn main() -> anyhow::Result<()> {"
+            },
+            {
+              "line": 2292,
+              "text": "async fn run_debug_models_command("
+            },
+            {
+              "line": 2296,
+              "text": "    let catalog = if cmd.bundled {"
+            },
+            {
+              "line": 2297,
+              "text": "        bundled_models_response()?"
+            },
+            {
+              "line": 2317,
+              "text": "    serde_json::to_writer(std::io::stdout(), &catalog)?;"
+            },
+            {
+              "line": 2318,
+              "text": "    println!();"
+            },
+            {
+              "line": 2319,
+              "text": "    Ok(())"
+            }
+          ]
+        },
+        {
+          "role": "app-server-initialize",
+          "path": "codex-rs/app-server/src/request_processors/initialize_processor.rs",
+          "sha256": "6e73dce0275c7264b23ee0a312f215fead241ce55dc1a86fa1dbd109ad4278e0",
+          "blobSha": "442b71f335ac83c2ecd698aea0f11a74fdc4a495",
+          "what": "The app-server `initialize` answer: the user agent from get_codex_user_agent and the configured codex_home.",
+          "excerpt": [
+            {
+              "line": 8,
+              "text": "use codex_login::default_client::get_codex_user_agent;"
+            },
+            {
+              "line": 96,
+              "text": "        let codex_home = self.config.codex_home.clone();"
+            },
+            {
+              "line": 141,
+              "text": "        let user_agent = get_codex_user_agent();"
+            },
+            {
+              "line": 142,
+              "text": "        let response = InitializeResponse {"
+            },
+            {
+              "line": 143,
+              "text": "            user_agent,"
+            },
+            {
+              "line": 144,
+              "text": "            codex_home,"
+            }
+          ]
+        },
+        {
+          "role": "user-agent",
+          "path": "codex-rs/login/src/auth/default_client.rs",
+          "sha256": "e50fc9a61d4b91127e2c248e15d45e735831e4070c396fa8efbc693717cfb23b",
+          "blobSha": "cd4cbd5431a785b0a1f2a9963b1536d2edf135ec",
+          "what": "The user agent starts <originator>/<crate version> (default originator codex_cli_rs), then a space and the platform.",
+          "excerpt": [
+            {
+              "line": 40,
+              "text": "pub const DEFAULT_ORIGINATOR: &str = \"codex_cli_rs\";"
+            },
+            {
+              "line": 164,
+              "text": "pub fn get_codex_user_agent() -> String {"
+            },
+            {
+              "line": 165,
+              "text": "    let build_version = env!(\"CARGO_PKG_VERSION\");"
+            },
+            {
+              "line": 168,
+              "text": "    let prefix = format!("
+            },
+            {
+              "line": 169,
+              "text": "        \"{}/{build_version} ({} {}; {}) {}\","
+            },
+            {
+              "line": 170,
+              "text": "        originator.value.as_str(),"
+            }
+          ]
+        },
+        {
+          "role": "login-crate-version",
+          "path": "codex-rs/login/Cargo.toml",
+          "sha256": "0c762d109c77508556e0d61badaba96a9e9a43ddd5dc1273113d2a8684e76593",
+          "blobSha": "2971dec6c1a81cb80379477333371bba6e8fbece",
+          "what": "The codex-login crate (default_client.rs) takes the workspace version.",
+          "excerpt": [
+            {
+              "line": 2,
+              "text": "name = \"codex-login\""
+            },
+            {
+              "line": 3,
+              "text": "version.workspace = true"
+            }
+          ]
+        },
+        {
+          "role": "workspace-version",
+          "path": "codex-rs/Cargo.toml",
+          "sha256": "673bd2b14aad8194d5db7f86c99a6a06f214542c3a51d1551ee958cc228805db",
+          "blobSha": "351d1e6cd5f7517b8f50caf8415b2dcbe7435b1d",
+          "what": "The workspace version: the release.",
+          "excerpt": [
+            {
+              "line": 149,
+              "text": "[workspace.package]"
+            },
+            {
+              "line": 150,
+              "text": "version = \"0.153.4\""
+            }
+          ]
+        },
+        {
+          "role": "jsonrpc-response",
+          "path": "codex-rs/app-server-protocol/src/rpc.rs",
+          "sha256": "78c516097c55b665e375807be6dcdceba232805c9ae9fa48420b0a537f0df705",
+          "blobSha": "23920864dd3fc7e09a64fc46909ef598f6f3b7ae",
+          "what": "A successful app-server answer is {id, result}: the id of the request it answers.",
+          "excerpt": [
+            {
+              "line": 67,
+              "text": "/// A successful (non-error) response to a request."
+            },
+            {
+              "line": 69,
+              "text": "pub struct JSONRPCResponse {"
+            },
+            {
+              "line": 70,
+              "text": "    pub id: RequestId,"
+            },
+            {
+              "line": 71,
+              "text": "    pub result: Result,"
+            }
+          ]
+        },
+        {
+          "role": "app-server-stdio",
+          "path": "codex-rs/app-server-transport/src/transport/stdio.rs",
+          "sha256": "ffb372ec8a369b307ad3c0fb3d7af19982098360df12ed4158fe5180beb0a91b",
+          "blobSha": "2d30296cd07430d98c02ec0e4e6f7b7380af80f4",
+          "what": "The app-server stdio transport: requests read from stdin by line, each answer written to stdout as one JSON line.",
+          "excerpt": [
+            {
+              "line": 24,
+              "text": "pub async fn start_stdio_connection("
+            },
+            {
+              "line": 44,
+              "text": "        let stdin = io::stdin();"
+            },
+            {
+              "line": 83,
+              "text": "        let mut stdout = io::stdout();"
+            },
+            {
+              "line": 88,
+              "text": "            json.push('\\n');"
+            },
+            {
+              "line": 89,
+              "text": "            if let Err(err) = stdout.write_all(json.as_bytes()).await {"
+            }
+          ]
+        },
+        {
+          "role": "codex-home",
+          "path": "codex-rs/utils/home-dir/src/lib.rs",
+          "sha256": "1338259489ade54b01caa1468b6d25fc5a183657fa94cca0add8b91865635ef5",
+          "blobSha": "caa43569c78bae9f5cc875092f378f4d935b8063",
+          "what": "CODEX_HOME, when set, must name an existing folder, and is canonicalised.",
+          "excerpt": [
+            {
+              "line": 9,
+              "text": "/// - If `CODEX_HOME` is set, the value must exist and be a directory. The"
+            },
+            {
+              "line": 10,
+              "text": "///   value will be canonicalized and this function will Err otherwise."
+            },
+            {
+              "line": 13,
+              "text": "pub fn find_codex_home() -> std::io::Result<AbsolutePathBuf> {"
+            },
+            {
+              "line": 14,
+              "text": "    let codex_home_env = std::env::var(\"CODEX_HOME\")"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.155.1",
+      "tag": "rust-v0.155.1",
+      "tagObjectSha": "4e21628f9ec9ee656650cd2b62ef92225725b5ac",
+      "commitSha": "be2951ea34f0d295ed0becf97079f92fa5f6950e",
+      "fetchedAt": "2026-10-03",
+      "sources": [
+        {
+          "role": "login-status",
+          "path": "codex-rs/cli/src/login.rs",
+          "sha256": "34f8a089a6907d9791e4bb858f44fdee56350b9898daad45c2065325f9e6bef7",
+          "blobSha": "22e607c6e64315252ec5b942ede27eed0361e913",
+          "what": "`codex login status`: an API key, ChatGPT or no sign-in, each printed on stderr (eprintln!) with its exit code.",
+          "excerpt": [
+            {
+              "line": 443,
+              "text": "pub async fn run_login_status(cli_config_overrides: CliConfigOverrides) -> ! {"
+            },
+            {
+              "line": 465,
+              "text": "            AuthMode::ApiKey => match auth.get_token() {"
+            },
+            {
+              "line": 466,
+              "text": "                Ok(api_key) => {"
+            },
+            {
+              "line": 467,
+              "text": "                    eprintln!(\"Logged in using an API key - {}\", safe_format_key(&api_key));"
+            },
+            {
+              "line": 468,
+              "text": "                    std::process::exit(0);"
+            },
+            {
+              "line": 475,
+              "text": "            AuthMode::Chatgpt | AuthMode::ChatgptAuthTokens => {"
+            },
+            {
+              "line": 476,
+              "text": "                eprintln!(\"Logged in using ChatGPT\");"
+            },
+            {
+              "line": 477,
+              "text": "                std::process::exit(0);"
+            },
+            {
+              "line": 499,
+              "text": "        Ok(None) => {"
+            },
+            {
+              "line": 500,
+              "text": "            eprintln!(\"Not logged in\");"
+            },
+            {
+              "line": 501,
+              "text": "            std::process::exit(1);"
+            }
+          ]
+        },
+        {
+          "role": "api-key-redaction",
+          "path": "codex-rs/cli/src/login.rs",
+          "sha256": "34f8a089a6907d9791e4bb858f44fdee56350b9898daad45c2065325f9e6bef7",
+          "blobSha": "22e607c6e64315252ec5b942ede27eed0361e913",
+          "what": "How `login status` shows an API key: *** for 13 characters or fewer, else the first 8, ***, the last 5.",
+          "excerpt": [
+            {
+              "line": 579,
+              "text": "fn safe_format_key(key: &str) -> String {"
+            },
+            {
+              "line": 580,
+              "text": "    if key.len() <= 13 {"
+            },
+            {
+              "line": 581,
+              "text": "        return \"***\".to_string();"
+            },
+            {
+              "line": 583,
+              "text": "    let prefix = &key[..8];"
+            },
+            {
+              "line": 584,
+              "text": "    let suffix = &key[key.len() - 5..];"
+            },
+            {
+              "line": 585,
+              "text": "    format!(\"{prefix}***{suffix}\")"
+            }
+          ]
+        },
+        {
+          "role": "api-key-login",
+          "path": "codex-rs/cli/src/login.rs",
+          "sha256": "34f8a089a6907d9791e4bb858f44fdee56350b9898daad45c2065325f9e6bef7",
+          "blobSha": "22e607c6e64315252ec5b942ede27eed0361e913",
+          "what": "`codex login --with-api-key` once the key is read: stored in codex_home, \"Successfully logged in\" on stderr, exit 0.",
+          "excerpt": [
+            {
+              "line": 46,
+              "text": "const LOGIN_SUCCESS_MESSAGE: &str = \"Successfully logged in\";"
+            },
+            {
+              "line": 204,
+              "text": "pub async fn run_login_with_api_key("
+            },
+            {
+              "line": 220,
+              "text": "    match login_with_api_key("
+            },
+            {
+              "line": 221,
+              "text": "        &config.codex_home,"
+            },
+            {
+              "line": 226,
+              "text": "        Ok(_) => {"
+            },
+            {
+              "line": 227,
+              "text": "            eprintln!(\"{LOGIN_SUCCESS_MESSAGE}\");"
+            },
+            {
+              "line": 228,
+              "text": "            std::process::exit(0);"
+            }
+          ]
+        },
+        {
+          "role": "stdin-secret",
+          "path": "codex-rs/cli/src/login.rs",
+          "sha256": "34f8a089a6907d9791e4bb858f44fdee56350b9898daad45c2065325f9e6bef7",
+          "blobSha": "22e607c6e64315252ec5b942ede27eed0361e913",
+          "what": "The key is read from stdin; a terminal on stdin is refused on stderr with exit 1, before anything is stored.",
+          "excerpt": [
+            {
+              "line": 277,
+              "text": "pub fn read_api_key_from_stdin() -> String {"
+            },
+            {
+              "line": 278,
+              "text": "    read_stdin_secret("
+            },
+            {
+              "line": 279,
+              "text": "        \"--with-api-key expects the API key on stdin. Try piping it, e.g. `printenv OPENAI_API_KEY | codex login --with-api-key`.\","
+            },
+            {
+              "line": 293,
+              "text": "fn read_stdin_secret(terminal_message: &str, reading_message: &str, empty_message: &str) -> String {"
+            },
+            {
+              "line": 294,
+              "text": "    let mut stdin = std::io::stdin();"
+            },
+            {
+              "line": 296,
+              "text": "    if stdin.is_terminal() {"
+            },
+            {
+              "line": 297,
+              "text": "        eprintln!(\"{terminal_message}\");"
+            },
+            {
+              "line": 298,
+              "text": "        std::process::exit(1);"
+            }
+          ]
+        },
+        {
+          "role": "logout",
+          "path": "codex-rs/cli/src/login.rs",
+          "sha256": "34f8a089a6907d9791e4bb858f44fdee56350b9898daad45c2065325f9e6bef7",
+          "blobSha": "22e607c6e64315252ec5b942ede27eed0361e913",
+          "what": "`codex logout`: the stored credentials removed (logout_with_revoke on codex_home), a line on stderr, exit 0.",
+          "excerpt": [
+            {
+              "line": 510,
+              "text": "pub async fn run_logout(cli_config_overrides: CliConfigOverrides) -> ! {"
+            },
+            {
+              "line": 514,
+              "text": "    let logged_out = match logout_with_revoke("
+            },
+            {
+              "line": 515,
+              "text": "        &config.codex_home,"
+            },
+            {
+              "line": 547,
+              "text": "    if logged_out || cleared_bedrock_config {"
+            },
+            {
+              "line": 548,
+              "text": "        eprintln!(\"Successfully logged out\");"
+            },
+            {
+              "line": 549,
+              "text": "    } else {"
+            },
+            {
+              "line": 550,
+              "text": "        eprintln!(\"Not logged in\");"
+            },
+            {
+              "line": 552,
+              "text": "    std::process::exit(0);"
+            }
+          ]
+        },
+        {
+          "role": "login-dispatch",
+          "path": "codex-rs/cli/src/main.rs",
+          "sha256": "aaa8e6b68c603f53572da2088bc7ec0469256a94e2c8f3f9858939c87ccc0902",
+          "blobSha": "ee42ceb1e589061335026f39d3937adb646c2ade",
+          "what": "The CLI entry: `login status`, `login --with-api-key` (the key read from stdin before the login runs) and `logout`.",
+          "excerpt": [
+            {
+              "line": 1609,
+              "text": "                Some(LoginSubcommand::Status) => {"
+            },
+            {
+              "line": 1610,
+              "text": "                    run_login_status(login_cli.config_overrides).await;"
+            },
+            {
+              "line": 1630,
+              "text": "                    } else if login_cli.with_api_key {"
+            },
+            {
+              "line": 1631,
+              "text": "                        let api_key = read_api_key_from_stdin();"
+            },
+            {
+              "line": 1632,
+              "text": "                        run_login_with_api_key(login_cli.config_overrides, api_key).await;"
+            },
+            {
+              "line": 1642,
+              "text": "        Some(Subcommand::Logout(mut logout_cli)) => {"
+            },
+            {
+              "line": 1652,
+              "text": "            run_logout(logout_cli.config_overrides).await;"
+            }
+          ]
+        },
+        {
+          "role": "debug-models",
+          "path": "codex-rs/cli/src/main.rs",
+          "sha256": "aaa8e6b68c603f53572da2088bc7ec0469256a94e2c8f3f9858939c87ccc0902",
+          "blobSha": "ee42ceb1e589061335026f39d3937adb646c2ade",
+          "what": "`codex debug models --bundled`: the bundled catalogue written to stdout as JSON and a line feed; the command returns Ok through a main that returns anyhow::Result, so the exit code is 0.",
+          "excerpt": [
+            {
+              "line": 306,
+              "text": "struct DebugModelsCommand {"
+            },
+            {
+              "line": 308,
+              "text": "    #[arg(long = \"bundled\", default_value_t = false)]"
+            },
+            {
+              "line": 1125,
+              "text": "fn main() -> anyhow::Result<()> {"
+            },
+            {
+              "line": 2396,
+              "text": "async fn run_debug_models_command("
+            },
+            {
+              "line": 2400,
+              "text": "    let catalog = if cmd.bundled {"
+            },
+            {
+              "line": 2401,
+              "text": "        bundled_models_response()?"
+            },
+            {
+              "line": 2421,
+              "text": "    serde_json::to_writer(std::io::stdout(), &catalog)?;"
+            },
+            {
+              "line": 2422,
+              "text": "    println!();"
+            },
+            {
+              "line": 2423,
+              "text": "    Ok(())"
+            }
+          ]
+        },
+        {
+          "role": "app-server-initialize",
+          "path": "codex-rs/app-server/src/request_processors/initialize_processor.rs",
+          "sha256": "538deb7e05fff1c1efbacb6967a12b2b870215d3c10651f826cc0a83348ac244",
+          "blobSha": "d6c77f12ebadcf6d6210530bbbad2c1f7ef84061",
+          "what": "The app-server `initialize` answer: the user agent from get_codex_user_agent and the configured codex_home.",
+          "excerpt": [
+            {
+              "line": 8,
+              "text": "use codex_login::default_client::get_codex_user_agent;"
+            },
+            {
+              "line": 126,
+              "text": "        let codex_home = self.config.codex_home.clone();"
+            },
+            {
+              "line": 176,
+              "text": "        let user_agent = get_codex_user_agent();"
+            },
+            {
+              "line": 177,
+              "text": "        let response = InitializeResponse {"
+            },
+            {
+              "line": 178,
+              "text": "            user_agent,"
+            },
+            {
+              "line": 179,
+              "text": "            codex_home,"
+            }
+          ]
+        },
+        {
+          "role": "user-agent",
+          "path": "codex-rs/login/src/auth/default_client.rs",
+          "sha256": "e50fc9a61d4b91127e2c248e15d45e735831e4070c396fa8efbc693717cfb23b",
+          "blobSha": "cd4cbd5431a785b0a1f2a9963b1536d2edf135ec",
+          "what": "The user agent starts <originator>/<crate version> (default originator codex_cli_rs), then a space and the platform.",
+          "excerpt": [
+            {
+              "line": 40,
+              "text": "pub const DEFAULT_ORIGINATOR: &str = \"codex_cli_rs\";"
+            },
+            {
+              "line": 164,
+              "text": "pub fn get_codex_user_agent() -> String {"
+            },
+            {
+              "line": 165,
+              "text": "    let build_version = env!(\"CARGO_PKG_VERSION\");"
+            },
+            {
+              "line": 168,
+              "text": "    let prefix = format!("
+            },
+            {
+              "line": 169,
+              "text": "        \"{}/{build_version} ({} {}; {}) {}\","
+            },
+            {
+              "line": 170,
+              "text": "        originator.value.as_str(),"
+            }
+          ]
+        },
+        {
+          "role": "login-crate-version",
+          "path": "codex-rs/login/Cargo.toml",
+          "sha256": "0c762d109c77508556e0d61badaba96a9e9a43ddd5dc1273113d2a8684e76593",
+          "blobSha": "2971dec6c1a81cb80379477333371bba6e8fbece",
+          "what": "The codex-login crate (default_client.rs) takes the workspace version.",
+          "excerpt": [
+            {
+              "line": 2,
+              "text": "name = \"codex-login\""
+            },
+            {
+              "line": 3,
+              "text": "version.workspace = true"
+            }
+          ]
+        },
+        {
+          "role": "workspace-version",
+          "path": "codex-rs/Cargo.toml",
+          "sha256": "b15abad2118d15436ecd56a7563578daf10c2e46a0bb3b9986dbd3ad8148508c",
+          "blobSha": "64304afb510ecea87637d28f90ce95581dee6fe7",
+          "what": "The workspace version: the release.",
+          "excerpt": [
+            {
+              "line": 153,
+              "text": "[workspace.package]"
+            },
+            {
+              "line": 154,
+              "text": "version = \"0.155.1\""
+            }
+          ]
+        },
+        {
+          "role": "jsonrpc-response",
+          "path": "codex-rs/app-server-protocol/src/rpc.rs",
+          "sha256": "78c516097c55b665e375807be6dcdceba232805c9ae9fa48420b0a537f0df705",
+          "blobSha": "23920864dd3fc7e09a64fc46909ef598f6f3b7ae",
+          "what": "A successful app-server answer is {id, result}: the id of the request it answers.",
+          "excerpt": [
+            {
+              "line": 67,
+              "text": "/// A successful (non-error) response to a request."
+            },
+            {
+              "line": 69,
+              "text": "pub struct JSONRPCResponse {"
+            },
+            {
+              "line": 70,
+              "text": "    pub id: RequestId,"
+            },
+            {
+              "line": 71,
+              "text": "    pub result: Result,"
+            }
+          ]
+        },
+        {
+          "role": "app-server-stdio",
+          "path": "codex-rs/app-server-transport/src/transport/stdio.rs",
+          "sha256": "e4f83304498aec2e9ccad9ad3a0af66965ab93508a4a6923f993731adcd69c19",
+          "blobSha": "12552800cf2c79f6e6fe2b75a3e4e8e18c2aaace",
+          "what": "The app-server stdio transport: requests read from stdin by line, each answer written to stdout as one JSON line.",
+          "excerpt": [
+            {
+              "line": 28,
+              "text": "pub async fn start_stdio_connection("
+            },
+            {
+              "line": 73,
+              "text": "            for line in std::io::stdin().lock().lines() {"
+            },
+            {
+              "line": 87,
+              "text": "            let mut stdout = std::io::stdout().lock();"
+            },
+            {
+              "line": 89,
+              "text": "                if let Err(err) = stdout.write_all(json.as_bytes()) {"
+            },
+            {
+              "line": 141,
+              "text": "            json.push('\\n');"
+            }
+          ]
+        },
+        {
+          "role": "codex-home",
+          "path": "codex-rs/utils/home-dir/src/lib.rs",
+          "sha256": "1338259489ade54b01caa1468b6d25fc5a183657fa94cca0add8b91865635ef5",
+          "blobSha": "caa43569c78bae9f5cc875092f378f4d935b8063",
+          "what": "CODEX_HOME, when set, must name an existing folder, and is canonicalised.",
+          "excerpt": [
+            {
+              "line": 9,
+              "text": "/// - If `CODEX_HOME` is set, the value must exist and be a directory. The"
+            },
+            {
+              "line": 10,
+              "text": "///   value will be canonicalized and this function will Err otherwise."
+            },
+            {
+              "line": 13,
+              "text": "pub fn find_codex_home() -> std::io::Result<AbsolutePathBuf> {"
+            },
+            {
+              "line": 14,
+              "text": "    let codex_home_env = std::env::var(\"CODEX_HOME\")"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
