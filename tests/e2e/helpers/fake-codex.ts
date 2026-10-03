@@ -14,6 +14,18 @@
  * helper (`app-server`), and a Cloud Agent's `exec --json` run (WP2 PR 4,
  * P4.5; see readFakeExecRecords). The same guard refuses an ambient
  * credential or NODE_OPTIONS, and anything else exits 64.
+ *
+ * P4.9 (row 67): a session launch stands in for Codex's TUI, so a spec can
+ * start, restart and stop Codex tabs without a real Codex. The app's session
+ * argv carries `--sandbox` and starts with a flag (a fresh launch) or with
+ * `resume` (a resumed one); no CLI operation the app runs does
+ * (cli-runner.ts), and a Cloud Agent's `exec` run starts with `exec`. Such a
+ * launch is recorded in `launches.jsonl` beside the fake (its argv,
+ * CODEX_HOME, working folder and pid; helpers/codex-mode.ts reads it), prints
+ * one ready line, and stays up until `/exit` and Enter, Ctrl+C or the end of
+ * its input. A session runs in the app's own environment, not the
+ * allowlisted one of a CLI operation, so only an ambient credential is
+ * refused there.
  * On Windows it sits behind the same npm-style `.cmd` shim (npm's cmd-shim
  * template), with node's absolute path where the template runs a bare `node`,
  * so it needs no node on the PATH it is given. That fake is a constant inside
@@ -34,7 +46,27 @@ function fakeScript(version: string): string {
   return [
     "const fs = require('fs'), path = require('path')",
     'const NL = String.fromCharCode(10)',
-    "const a = process.argv.slice(2).join(' ')",
+    "const argv = process.argv.slice(2)",
+    "const a = argv.join(' ')",
+    // P4.9: a session launch (see the header): recorded, then up until told to quit.
+    "if ((argv[0] === 'resume' || /^-/.test(argv[0] || '')) && argv.includes('--sandbox')) {",
+    "  if (process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY) { process.stderr.write('LEAK' + NL); process.exit(9) }",
+    "  fs.appendFileSync(path.join(__dirname, 'launches.jsonl'), JSON.stringify({ argv, codexHome: process.env.CODEX_HOME || null, cwd: process.cwd(), pid: process.pid, tty: !!process.stdin.isTTY, at: Date.now() }) + NL)",
+    '  const CRLF = String.fromCharCode(13, 10)',
+    `  process.stdout.write('Fake Codex ${version} (e2e stand-in): ready' + CRLF)`,
+    "  const quit = () => { process.stdout.write('Fake Codex: bye' + CRLF); process.exit(0) }",
+    "  let typed = ''",
+    '  if (process.stdin.isTTY && process.stdin.setRawMode) process.stdin.setRawMode(true)',
+    "  process.stdin.setEncoding('utf8')",
+    "  process.stdin.on('data', (c) => {",
+    '    if (c.includes(String.fromCharCode(3))) return quit()',
+    '    typed = (typed + c).slice(-64)',
+    "    if (typed.includes('/exit' + String.fromCharCode(13))) quit()",
+    '  })',
+    "  process.stdin.on('end', quit)",
+    '  setInterval(() => {}, 1000)',
+    '  return',
+    '}',
     "if (process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY || process.env.NODE_OPTIONS) { process.stderr.write('LEAK' + NL); process.exit(9) }",
     `if (a === '--version') { process.stdout.write('codex-cli ${version}' + NL); process.exit(0) }`,
     'const home = process.env.CODEX_HOME',
