@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-03T16:40:46.459Z",
-  "head": "09facf4fb621ec31b0702c6d4064d0723a8e98df",
-  "tree": "54b37ed7f2fde7d2d2904b825296fd660f8083c9",
+  "generatedAt": "2026-10-03T17:17:34.600Z",
+  "head": "1d7f251febb4e6251aa79975a500630f60c0ebd6",
+  "tree": "657d5ac8b5b487b38fbb51a38c2b55f377659036",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2691,
+  "trackedFileCount": 2692,
   "excludedFileCount": 390,
-  "scannedFileCount": 2301,
+  "scannedFileCount": 2302,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -140,7 +140,7 @@
   "unscopedMentions": [],
   "unreadable": [],
   "matchedPathCount": 762,
-  "pathDigest": "b4357b4cdb78a6b739604f549cb4ec109813237af274879da1fc9de402018bda",
+  "pathDigest": "d8bca10d994368fce0bedb97351cc6397b1402441660c6d7a008b4a0ed3422c5",
   "entries": [
     {
       "path": ".github/workflows/ci.yml",
@@ -169,7 +169,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 64
+      "lineCount": 68
     },
     {
       "path": "README.md",
@@ -190,7 +190,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 145
+      "lineCount": 148
     },
     {
       "path": "docs/dev-alongside-prod.md",
@@ -2307,7 +2307,7 @@
       "predicates": [
         "P11"
       ],
-      "lineCount": 90
+      "lineCount": 91
     },
     {
       "path": "src/renderer/types/electron.d.ts",
@@ -2385,7 +2385,7 @@
         "P12",
         "P14"
       ],
-      "lineCount": 101
+      "lineCount": 103
     },
     {
       "path": "src/shared/ask-conductor-provider.ts",
@@ -5281,7 +5281,7 @@
         "P10",
         "P13"
       ],
-      "lineCount": 302
+      "lineCount": 296
     },
     {
       "path": "tests/unit/renderer/insights-codex-empty.test.ts",
@@ -6113,9 +6113,10 @@
     {
       "path": "tests/unit/shared/app-knowledge.test.ts",
       "predicates": [
+        "P04",
         "P13"
       ],
-      "lineCount": 167
+      "lineCount": 182
     },
     {
       "path": "tests/unit/status-ingest.test.ts",
