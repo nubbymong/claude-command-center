@@ -6,7 +6,30 @@ This file is evidence for WP1.1 and WP1.60 (`docs/wp1/evidence/mode-matrix.md`).
 
 The ledger also cites WP1.2. Its evidence is `docs/wp1/evidence/real-cli-matrix.md`, not this file.
 
-It is a partial record. WP1.1 and WP1.60 stay `planned` in the traceability manifest: WP1.60's upgrade, restart, enable/disable and minimum real-launch modes are not covered here (see "Not covered").
+It is a partial record. WP1.1 and WP1.60 stay `planned` in the traceability manifest until the matrix below has a recorded VM run.
+
+## The mode matrix (P4.9, PR 4, row 67)
+
+Every cell of WP1.60's matrix now has an e2e spec that drives it in the real app, and a contract test that checks the same cell against the accounts service's own rules (`tests/wp1/mode-matrix.test.ts`, host-safe, which also fails if a cell's spec is missing or not named here). The specs run on the Windows test VM only; they were written in PR 4 and have **not run yet**: they run in the VM e2e run at PR 4's final head, and their results go in a new record above the history below.
+
+| Cell | Items | E2e spec (VM) | What it drives |
+|---|---|---|---|
+| Fresh install, Claude Code only, no Codex installed | WP1.1 | `tests/e2e/onboarding-provider-select.spec.ts` | The onboarding from its first page; the assistants page's Claude only; no Codex page; Claude on, Codex off and answered; Settings, Accounts shows Codex off. A stand-in `claude` answers the version check. |
+| Fresh install, Codex only | WP1.2 | `tests/e2e/onboarding-provider-select.spec.ts`, `tests/e2e/codex-session-creation.spec.ts` | Codex only with the fake Codex: no Claude page, Set up Codex ready to sign in; then a Codex config created and bound to its account. |
+| Fresh install, both | WP1.3 | `tests/e2e/onboarding-provider-select.spec.ts` | Both, with no Codex installed: Set up Codex says the CLI was not found; both saved on; Accounts says Codex was not found. |
+| Upgrade | WP1.60 | `tests/e2e/codex-reconfirm-upgrade.spec.ts` | "Do you use Codex?" after an update, for a Claude-only, a Codex-only and a dual upgrader. |
+| Restart: a tab, an app relaunch | WP1.60 | `tests/e2e/codex-mode-restart.spec.ts` | A Codex tab's Restart starts a new Codex process on the same account folder with the same options; after a crash the relaunch offers the tab back and it starts Codex on its account. |
+| Enable and disable round trips | WP1.60 | `tests/e2e/codex-mode-enable-disable.spec.ts` | The in-use refusal while a tab runs; off, the config says why and a restart reads Not started; on again, the restart starts it; off at the next start, the restored tab reads Not started until Codex is on and the tab restarted. |
+| Minimum real launch | WP1.60, WP1.2 | `tests/e2e/codex-real-launch.spec.ts` | The real Codex 0.153.4 and 0.155.1 in a Codex tab, no sign-in (a fake API key), the loopback fake model: the first screens answered by the 9.2 rules, a ready composer, one prompt answered, and the account's `config.toml` changed only by those answers. |
+
+The fake-CLI specs use the e2e fake Codex (`tests/e2e/helpers/fake-codex.ts`), which stands in for Codex's TUI when the app starts a session and records each start beside itself. `tests/e2e/helpers/codex-mode.ts` holds what the mode specs share.
+
+What the VM run must give:
+- the spec list from `git ls-files tests/e2e/*.spec.ts` (26 specs with these four), passed explicitly, never a bare `npx playwright test`;
+- for `codex-real-launch.spec.ts`, which is skipped without them:
+  - `CCC_E2E_REAL_CODEX`: the installs, `<version>=<absolute path>` joined by `;`, for example the npm `codex.cmd` of 0.153.4 and the `codex.exe` 0.155.1 ships (both routes are then covered);
+  - `CCC_E2E_FAKE_MODEL_URL`: the loopback fake model's base URL, the fake model already running on the VM (9.2, report item 17);
+- the isolation below (a fake home, `CODEX_HOME` and `CLAUDE_CONFIG_DIR` cleared). No spec starts Codex on, or writes into, the VM user's own `~/.codex`.
 
 **Current record:** commit `0cb1bf31bf1f090c7fadd902c41219b0e2a36fa9`, the WP2 final candidate head, with no patch applied. Earlier runs are kept below as history.
 
@@ -149,11 +172,13 @@ The driving setup for the rows below:
 | Fresh, Claude found | Claude CLI Setup (terminal focused; skipped) -> Welcome -> assistants with Claude, Codex, Both all selectable (default Both) | reached |
 | Fresh, Codex only, this computer already signed in | Set up Codex settles on "Using this sign-in" + "Add a new Codex account (Recommended)"; Hello Codex is correctly not due (external sign-in) | reached (first run, `accec3c2`) |
 
-Not covered here, for WP1.60's other modes:
+Not covered by the rows above, for WP1.60's other modes, when they were recorded:
 - upgrade;
 - restart;
 - enable and disable round trips;
 - a minimum launch smoke of a real Codex session.
+
+Each now has its spec in "The mode matrix (P4.9, PR 4, row 67)" above: the upgrade `codex-reconfirm-upgrade.spec.ts` (VM only), the rest P4.9's specs. None of them has a recorded run in this file yet.
 
 ## History
 
