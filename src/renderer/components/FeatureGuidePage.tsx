@@ -79,10 +79,8 @@ export default function FeatureGuidePage({ onNavigateToSessions, onStartTour }: 
   const askOff = useAskConductorBlocked()
   const askProvider = useAskConductorProvider()
   // The cards for the assistants in use, with their copy for that mode.
-  const claudeEnabled = useSettingsStore((s) => s.settings.claudeEnabled)
-  const codexEnabled = useSettingsStore((s) => s.settings.codexEnabled)
-  const only = onlyAssistantInUse({ claudeEnabled, codexEnabled })
-  const steps = useMemo(() => stepsForAssistants(trainingSteps, { claudeEnabled, codexEnabled }), [claudeEnabled, codexEnabled])
+  const only = useSettingsStore((s) => onlyAssistantInUse(s.settings))
+  const steps = useMemo(() => stepsForAssistants(trainingSteps, only), [only])
   // The Canvas Explained page, embedded (owner request): the front-page card
   // only exists inside an open session's canvas pane, so the guide — which
   // works with zero sessions open — carries the alternate route. Local state,
@@ -405,9 +403,12 @@ function SectionHero({ eyebrow, title, blurb }: { eyebrow: string; title: string
 }
 
 // ── Overview landing ─────────────────────────────────────────────────────────
+/** The assistant's name in the Ask card's lead. */
+const ASK_SESSION_NAME: Readonly<Record<AskConductorProvider, string>> = { claude: 'Claude', codex: 'Codex' }
+
 /** The Ask card's lead: the assistant Ask runs on now (P4.3), named. */
 function askCardLead(provider: AskConductorProvider | null): string {
-  const name = provider === 'codex' ? 'Codex' : provider === 'claude' ? 'Claude' : ''
+  const name = provider ? ASK_SESSION_NAME[provider] : ''
   return name
     ? `Opens a ${name} session already primed with this guide, so it can answer questions about the app itself. Uses your normal ${name} usage.`
     : 'Opens a session already primed with this guide, so it can answer questions about the app itself.'

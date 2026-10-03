@@ -35,9 +35,13 @@ const { default: FeatureGuidePage } = await import('../../../src/renderer/compon
 const { default: TrainingWalkthrough } = await import('../../../src/renderer/components/TrainingWalkthrough')
 const { snapshot } = await import('./accounts-snapshot-harness')
 
-const CODEX_ONLY = { claudeEnabled: false, codexEnabled: true }
-const CLAUDE_ONLY = { claudeEnabled: true, codexEnabled: false }
-const BOTH = { claudeEnabled: true, codexEnabled: true }
+const { choiceSettings, onlyAssistantInUse } = await import('../../../src/renderer/onboarding/provider-choice')
+// The saved switches for each choice, as Settings saves them.
+const CODEX_ONLY = choiceSettings('codex')
+const CLAUDE_ONLY = choiceSettings('claude')
+const BOTH = choiceSettings('both')
+/** The cards shown for the switches `s`, as the guide and the tour read them. */
+const shownFor = (s: typeof BOTH) => stepsForAssistants(trainingSteps, onlyAssistantInUse(s))
 
 const ids = (s: { id: string }[]) => s.map((x) => x.id)
 
@@ -48,31 +52,31 @@ function lines(step: (typeof trainingSteps)[number]): string[] {
 
 describe('stepsForAssistants', () => {
   it('both on: every card, as written', () => {
-    expect(stepsForAssistants(trainingSteps, BOTH)).toEqual(trainingSteps)
+    expect(shownFor(BOTH)).toEqual(trainingSteps)
   })
 
   it('Codex alone: the Claude-only cards go, the Codex card stays', () => {
-    const shown = ids(stepsForAssistants(trainingSteps, CODEX_ONLY))
+    const shown = ids(shownFor(CODEX_ONLY))
     for (const id of ['dynamic-workflows', 'multi-account', 'insights', 'code-review']) expect(shown, id).not.toContain(id)
     for (const id of ['codex-provider', 'provider-accounts', 'ask-conductor', 'vision', 'agent-canvas', 'excalidraw', 'snap', 'memory-visualiser', 'settings']) expect(shown, id).toContain(id)
   })
 
   it('Claude Code alone: the Codex card and Code review go, every other card stays', () => {
-    const shown = ids(stepsForAssistants(trainingSteps, CLAUDE_ONLY))
+    const shown = ids(shownFor(CLAUDE_ONLY))
     expect(shown).not.toContain('codex-provider')
     expect(shown).not.toContain('code-review')
     expect(shown).toEqual(ids(trainingSteps).filter((id) => id !== 'codex-provider' && id !== 'code-review'))
     // Claude Code alone shows each card as written.
-    for (const s of stepsForAssistants(trainingSteps, CLAUDE_ONLY)) expect(s).toBe(trainingSteps.find((t) => t.id === s.id))
+    for (const s of shownFor(CLAUDE_ONLY)) expect(s).toBe(trainingSteps.find((t) => t.id === s.id))
   })
 
   it('Codex alone: no line names Claude unless it names Codex too', () => {
-    const noisy = stepsForAssistants(trainingSteps, CODEX_ONLY).flatMap((s) => lines(s).filter((l) => /Claude/.test(l) && !/Codex/.test(l)).map((l) => `${s.id}: ${l}`))
+    const noisy = shownFor(CODEX_ONLY).flatMap((s) => lines(s).filter((l) => /Claude/.test(l) && !/Codex/.test(l)).map((l) => `${s.id}: ${l}`))
     expect(noisy).toEqual([])
   })
 
   it('Codex alone: the cards with Claude-only lines show their copy for that mode', () => {
-    const shown = stepsForAssistants(trainingSteps, CODEX_ONLY)
+    const shown = shownFor(CODEX_ONLY)
     const text = (id: string) => lines(shown.find((s) => s.id === id)!).join('\n')
     expect(text('session-options')).not.toMatch(/\/effort/)
     expect(text('session-options')).toMatch(/model pill/)
@@ -99,7 +103,7 @@ describe('stepsForAssistants', () => {
 let container: HTMLDivElement
 let root: Root
 
-function setProviders(over: { claudeEnabled?: boolean; codexEnabled?: boolean }) {
+function setProviders(over: Partial<typeof BOTH>) {
   useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, ...over }, isLoaded: true })
 }
 
@@ -202,7 +206,7 @@ describe('the Feature tour', () => {
     setProviders(CODEX_ONLY)
     useAppMetaStore.setState({ meta: { ...useAppMetaStore.getState().meta, lastTrainingVersion: '0.0.0' } } as never)
     await act(async () => { root.render(<TrainingWalkthrough onClose={() => {}} showAll mode="help" />) })
-    const expected = stepsForAssistants(trainingSteps, CODEX_ONLY).length
+    const expected = shownFor(CODEX_ONLY).length
     expect(expected).toBeLessThan(trainingSteps.length)
     expect(document.body.textContent).toContain(`step 1 of ${expected}`)
   })

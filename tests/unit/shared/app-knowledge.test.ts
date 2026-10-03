@@ -613,7 +613,7 @@ describe('the PR 4 user-facing sweep (P4.11)', () => {
     expect(tip('tip.vision-system').body).not.toMatch(/gives Claude a real browser|that Claude can drive|showing Claude/)
     expect(tip('tip.memory-visualiser').shortText).toBe('Browse what your assistants remember about your projects')
     expect(tip('tip.cloud-agents').shortText).toBe('Dispatch an agent to work in the background')
-    expect(tip('tip.codex-sessions').body).toMatch(/The Agent Canvas, Vision and the push to the Browser pane work in Codex sessions too./)
+    expect(TIPS_LIBRARY.find((t) => t.variants.primary.title === 'Codex Sessions')!.variants.primary.body).toMatch(/The Agent Canvas, Vision and the push to the Browser pane work in Codex sessions too./)
     expect(tip('tip.cloud-agents').body).toMatch(/runs headless agents on Claude Code or Codex in the background/)
     expect(tip('tip.transparency.vision-mcp').body).toMatch(/is offered the same vision, browser push, host screenshot and canvas tools, with `claude_review` in place of `codex_review`/)
   })

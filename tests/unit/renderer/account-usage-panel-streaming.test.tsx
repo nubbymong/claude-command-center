@@ -607,7 +607,7 @@ describe('AccountUsagePanel: the age line ages while the page stays open (P4.11)
 
   it('[host] a Codex card: the same', async () => {
     vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
-    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, claudeEnabled: false, codexEnabled: true, codexAnswered: true }, isLoaded: true })
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, ...choiceSettings('codex'), codexAnswered: true }, isLoaded: true })
     useProviderAccountsStore.setState({ snapshot: snapshotOf([cxAccount('w')]), loaded: true })
     await mount()
     latestCx().emit(cxView('w', 18))
