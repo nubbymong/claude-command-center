@@ -137,11 +137,12 @@ describe('the Claude half through the shared checks (P3)', () => {
 
 describe('the fetch reads each half on its own (P2) and keeps its window (P1, P2)', () => {
   it('a broken Claude entry does not cost Codex its live prices', async () => {
-    env.body = JSON.stringify({ 'gpt-6-astra': openai(10, 60), 'claude-x-broken': null, 'claude-opus-5': claude(5, 25) })
+    env.body = JSON.stringify({ 'gpt-6-astra': openai(10, 60), 'claude-x-broken': null, 'claude-opus-5': claude(6, 30) })
     const { tk, cx } = await load()
     await tk.fetchModelPricing()
     expect(cx.priceForModel('gpt-6-astra')).toEqual({ inputPer1M: 10, cachedInputPer1M: null, outputPer1M: 60 })
-    expect(tk.getPricingWithSource('claude-opus-5').source).toBe('live')
+    // The live price (6 / 30), not the registry's (5 / 25): Tokenomics' own map.
+    expect(tk.getAllPricing()['claude-opus-5']).toMatchObject({ input: 6, output: 30 })
   })
 
   it('a list with no usable OpenAI price is recorded, so a fresh day asks once, not on every call', async () => {
@@ -169,15 +170,17 @@ describe('the fetch reads each half on its own (P2) and keeps its window (P1, P2
 
   it('a fresh saved Claude copy is read back through the checks at start, not taken as it is', async () => {
     fs.writeFileSync(path.join(env.dir, 'model-pricing.json'), JSON.stringify({
-      'claude-opus-5': { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+      'claude-opus-5': { input: 6, output: 30, cacheRead: 0.6, cacheWrite: 7.5 },
       'claude-sonnet-9': { input: -1, output: 1, cacheRead: 0, cacheWrite: 0 },
     }))
     fs.writeFileSync(path.join(env.dir, 'openai-model-pricing.json'), JSON.stringify({ models: {} }))
     const { tk } = await load()
     await tk.fetchModelPricing()
     expect(env.requests).toBe(0)
-    expect(tk.getPricingWithSource('claude-opus-5')).toEqual({ pricing: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 }, source: 'live' })
-    expect(tk.getPricingWithSource('claude-sonnet-9').source).not.toBe('live')
+    // The saved copy's price (6 / 30, not the registry's 5 / 25) is taken; the
+    // entry that fails the checks never reaches Tokenomics' map.
+    expect(tk.getAllPricing()['claude-opus-5']).toEqual({ input: 6, output: 30, cacheRead: 0.6, cacheWrite: 7.5 })
+    expect(tk.getAllPricing()['claude-sonnet-9']).toBeUndefined()
   })
 
   it('a saved OpenAI entry with both prices zero is not a price', async () => {
