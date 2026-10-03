@@ -200,9 +200,9 @@ export const PROFILE_ID_RE = /^profile-[a-z0-9-]{1,64}$/
  * account id (`account`: `acct-<16..64 lowercase hex>`, the registry's own
  * pattern, shared/providers/ids.ts). The two shapes cannot overlap, so an id
  * names one class or neither, never both. Each class has its own partition
- * prefix (the `account` class's builder lands with P4.6), and a builder for
- * one class refuses an id of the other, as webPartitionForProfile already
- * refuses an `account` id.
+ * prefix (the `account` class's is CODEX_WEB_PARTITION_PREFIX, built by
+ * webPartitionForCodexAccount), and a builder for one class refuses an id of
+ * the other, as webPartitionForProfile refuses an `account` id.
  */
 export type WebSessionIdClass = 'profile' | 'account'
 
@@ -267,6 +267,11 @@ const WEB_SESSION_PARTITION_DIR_PREFIXES: readonly string[] = [CLAUDE_WEB_PARTIT
  * builders accept is already lower case and path-safe, so the directory is
  * the partition name without `persist:`. Matched by prefix, as the dev
  * start's orphan warning always matched Claude's (account-web/orphan-partitions.ts).
+ *
+ * The prefix alone is enough for a warning that only lists. It never checks
+ * the rest of the name, so it must never become a deletion check: anything
+ * that removes a partition directory validates the whole name against its id
+ * class (PROFILE_ID_RE, isWebSessionAccountId) instead.
  */
 export function isWebSessionPartitionDir(name: string): boolean {
   return typeof name === 'string' && WEB_SESSION_PARTITION_DIR_PREFIXES.some((prefix) => name.startsWith(prefix))

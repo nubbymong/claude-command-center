@@ -171,8 +171,11 @@ describe('sidebar context menus — Quick Start + running lock', () => {
     // fallback to the primary profile.
     expect(SIDEBAR_SOURCE).toContain('const actionProfileId = claudeWebActionProfileId(s, primaryProfileId, accountProfiles)')
     expect(SIDEBAR_SOURCE).not.toMatch(/\(s\.profileId \?\? primaryProfileId\)\s*:\s*sshProfileId/)
-    // Right-clicking a Codex row runs no status read (the full one runs
-    // `claude auth status`) for the primary Claude profile.
-    expect(SIDEBAR_SOURCE).toContain("if ((session.provider ?? 'claude') === 'claude') { const prefetchId = ")
+    // The right-click prefetch reads the same helper, so it refreshes only the
+    // account the menu acts on: none for a Codex row (the full read runs
+    // `claude auth status`), nor for a row whose menu has no account items.
+    // Both refresh helpers do nothing for an undefined id.
+    expect(SIDEBAR_SOURCE).toContain('const prefetchId = claudeWebActionProfileId(session, primaryProfileId, accountProfiles); refreshWebOnly(prefetchId); void refreshWebSessions(prefetchId)')
+    expect(SIDEBAR_SOURCE).not.toContain('?? (session.profileId ?? primaryProfileId)')
   })
 })

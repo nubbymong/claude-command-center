@@ -964,10 +964,11 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         onRenameFinish={handleFinishSessionRename}
         onRenameCancel={() => { setRenamingSessionId(null); setSessionRenameValue('') }}
         onClick={(e) => handleSessionClick(session.id, e)}
-        // P4.6 (row 58): a Codex row's menu has no Claude account items, so it
-        // no longer prefetches the primary Claude profile's status (the full
-        // refresh runs that account's `claude auth status`).
-        onContextMenu={(e) => { e.preventDefault(); if ((session.provider ?? 'claude') === 'claude') { const prefetchId = sshMappedProfileId(session, accountProfiles) ?? (session.profileId ?? primaryProfileId); refreshWebOnly(prefetchId); void refreshWebSessions(prefetchId) } setSessionContextMenu({ sessionId: session.id, x: e.clientX, y: e.clientY }) }}
+        // P4.6 (row 58): prefetch the account the menu acts on, from the same
+        // helper as its actionProfileId. None for a Codex row, or for a row whose
+        // menu has no account items, so neither runs the primary Claude
+        // profile's `claude auth status` (both refreshes skip an undefined id).
+        onContextMenu={(e) => { e.preventDefault(); const prefetchId = claudeWebActionProfileId(session, primaryProfileId, accountProfiles); refreshWebOnly(prefetchId); void refreshWebSessions(prefetchId); setSessionContextMenu({ sessionId: session.id, x: e.clientX, y: e.clientY }) }}
         isSelected={selectedSessionIds.has(session.id)}
         isFocused={focusedSessionIndex === flatIndex}
         ordinal={sessionOrdinals.get(session.id)}
