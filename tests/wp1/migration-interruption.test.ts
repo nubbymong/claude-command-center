@@ -6,6 +6,9 @@
 // the uninterrupted run's call count, counted from a recording run (so a call added
 // later is covered without editing this file): as a crash (that call and every later
 // one fail) or a transient error (that call alone), before or after it takes effect.
+// "Never torn" here holds over the fake port's write, which lands a whole document or
+// nothing; the real port's write (the app's atomic write: staging, then a rename, read
+// back before it counts) is exercised on a disk by registry-fs-port.test.ts (CI, VM).
 import { describe, it, expect } from 'vitest'
 import { AccountRegistryStore, deterministicOpaqueId } from '../../src/main/providers/core'
 import type { RegistryFsPort, LegacyAccountsPort, LegacyReconcileOutcome } from '../../src/main/providers/core'

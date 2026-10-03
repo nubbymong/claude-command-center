@@ -382,7 +382,8 @@
       "title": "Migration is atomic and idempotent at every injected interruption point",
       "kind": "automated",
       "tests": [
-        "tests/wp1/migration-interruption.test.ts"
+        "tests/wp1/migration-interruption.test.ts",
+        "tests/wp1/registry-fs-port.test.ts"
       ],
       "evidence": [],
       "status": "planned",
