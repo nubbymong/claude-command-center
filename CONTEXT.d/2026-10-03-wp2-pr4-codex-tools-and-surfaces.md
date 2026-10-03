@@ -74,8 +74,11 @@ checklist):
 - P4.10, first part: the traceability binding made decidable on a shallow
   CI checkout and unable to certify itself, and the map of what the 20 DONE
   rows owe (`docs/wp1/evidence/release-qualification.md`).
-- Not started: P4.7 (Insights, after OR3's mockup) and P4.11 (the final
-  sweep, the Beta labels, the screenshots).
+- P4.11 (row 54): the Codex Beta labels off, the Feature Guide showing the
+  cards for the assistants in use, and the PR 4 user-facing sweep with the
+  2.1.1 changelog lines, built on the defaults of questions 5 to 8; seven
+  listed items are owner calls (the plan's P4.11 record).
+- Not started: P4.7 (Insights, after OR3's mockup).
 
 **Why this way.** The parity rule (OD26 P1): Claude's behaviour in the code
 is the spec. Where it carries over it decides, as when the re-review sent
@@ -116,3 +119,14 @@ once keeps its inode, recorded as a limit of the identity checks. Still owed
 on the VM: a picker launch showing the inline guidance in a new
 conversation, the compat test leaving `~/.codex` untouched, and an Ask
 Restart resuming on both assistants.
+
+**Final head.** The final-head VM run at f73f1785 passed (e2e 94 of 94, the
+picker guidance, the compat test, an Ask Restart on both assistants, the Auto
+refusal, the capture tool's host safety); what it found since is fixed
+(eef195d8, 512e6bb4), and row 38 stays scheduled. The recaptured images wait
+for the owner's review, with step-snap and the Mac images still to take.
+512e6bb4 fixes a boot chain latent since 2.1.0 that no shipped path hit. The
+dependency floors are raised (198b0412, ca965fd7); the electron-builder 26 and
+excalidraw chains need major changes and are the owner's. P4.10's second part
+is done; OR1, OR4, the VM rollback run and the release-level items stay
+owner-gated.

@@ -64,7 +64,7 @@ still owes recorded in 4. "2; 3" means partly built in 2, the rest in 3.
 - 75 rows: **53 DONE, 18 PARTIAL, 4 OPEN** (recounted after PR 4's P4.1 to P4.6 records and question 8, with section 4's rows 51 to 58 brought current from them;
   they agree with the parity checklist). At the recount after P3.15 it was 52 DONE, 12 PARTIAL and 11 OPEN. Rows 59, 60 and 67 are
   built (P4.8, P4.9) and move when their CI and VM runs are recorded.
-- The 22 rows not DONE, by gap: **implementation 6, verification 7, owner 9** (rows 15 and 58, an owner action and a record to sign, row 58's sign-in window waiting on OR2a; rows 22, 41 and 63, each built as a default pending the owner's decision; rows 51, 52, 53 and 57, built as the default pending an owner question each (questions 5 to 8, section 10; row 51 has two), counted under owner as row 58 is; row 55 counts under verification, its delete check). At the recount after P3.15: implementation 9, verification 6, owner 8. Row 53
+- The 22 rows not DONE, by gap: **implementation 5, verification 8, owner 9** (rows 15 and 58, an owner action and a record to sign, row 58's sign-in window waiting on OR2a; rows 22, 41 and 63, each built as a default pending the owner's decision; rows 51, 52, 53 and 57, built as the default pending an owner question each (questions 5 to 8, section 10; row 51 has two), counted under owner as row 58 is; row 55 counts under verification, its delete check, and since P4.11 row 54, its images' review). At the recount after P3.15: implementation 9, verification 6, owner 8. Row 53
   moved from owner to implementation when the owner decided it
   (`docs/wp1/owner-decisions-2026-09-27.md`, M4), and back under owner with question 6 (PB4, 2026-10-02).
 - By PR: **8 in PR 3, 15 in PR 4**. No row changes package. The Ask Conductor
@@ -181,7 +181,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 51 | Agent Canvas from Codex | PARTIAL (P4.1, b98bc235 to b4413a24; mocked): built, this computer's sign-in as question 5's default A; was withheld (`src/main/conductor-mcp-server.ts:1106`) because a Codex session had no bound id | Parity: the tools, roots, instruction delivery and the live loop | owner (question 5, section 10); verification: the VM walk, OR4, OR5 | 4 |
 | 52 | Browser and vision tools | PARTIAL (P4.2, 2eb403cf, 04ac6b96; mocked): built, the Auto preset as question 8's default B; was withheld (`conductor-mcp-server.ts:911-913`, `:1042`, a "Claude-only for now" call of 2026-07-02) | Parity; the later owner decisions (the 2.1.1 gate, OD26 P1) end a call worded "for now" (section 10) | owner (question 8, section 10); verification: the VM (vision and the push with the fake model, the per-preset approvals); OR4 | 4 |
 | 53 | Ask Conductor on Codex | PARTIAL (P4.3, 995148ea to b4413a24; mocked): built, the characters outside the BMP as question 6's default A; was pinned to Claude (`src/renderer/lib/askConductor.ts:255`) and blocked with Claude Code off (`askConductorGate.ts`) | Codex only: design section 2 and parity (Ask runs on the provider that is on). Both on: OD27 M4 (option B, canvas "Ask Conductor provider choice" v1): a Settings, General row "Ask Conductor runs on", shown only while both are on, Claude Code by default | owner (question 6, section 10); verification: the VM (the first Ask in a fresh account folder), OR4, OR5 | 4 |
-| 54 | App knowledge, tour, tips | PARTIAL: the P2 fixes are done; P4.1 to P4.5's own copy landed with them (c4f1a62c, eecd1b75, 2be770ad) | The AGENTS.md surface sweep; recorded 2026-09-26: the Codex "Beta" labels come off in the release where parity lands | implementation (the final sweep) | 2; 4 |
+| 54 | App knowledge, tour, tips | PARTIAL: the P2 fixes are done; P4.1 to P4.5's own copy landed with them (c4f1a62c, eecd1b75, 2be770ad); P4.11's sweep and the Beta labels done (31169913 to f1b96edd), the recaptured images waiting for the owner's review | The AGENTS.md surface sweep; recorded 2026-09-26: the Codex "Beta" labels come off in the release where parity lands | verification: the owner's review of the recaptured images; the Mac recapture | 2; 4 |
 | 55 | Memory | PARTIAL (P4.4, 1a12160b to 41638f93; mocked): listing, guard and read built; delete built, hidden and refused in main until the VM check; frontmatter edit does not carry over (recorded) | Parity: each realm's Codex memories on the Memory page | verification: the delete check on the VM (else OR4); OR4: the real file format | 4 |
 | 56 | Codex logs | DONE (P4.4, 1a12160b, 8fb60652; mocked) | Parity: each realm's `log` folder offered where the app offers its own log folder (Settings, Debug Logging) | verification: the VM (each account's folders open, `log_dir` from `config.toml` included) | 4 |
 | 57 | Cloud Agents | PARTIAL (P4.5, 5d0187c6 to d41c4a8b; mocked): built, the skip-permissions choice as question 7's default A; was Claude only (`src/main/cloud-agent-manager.ts:192`) | Parity: background agents run with `codex exec` in the account's realm, as Claude's run its headless CLI; not the experimental `codex cloud` (WP1.41) | owner (question 7, section 10); verification: the VM run, OR4 | 4 |
@@ -6628,6 +6628,18 @@ Owner: OR1, OR4.
     first macOS and Linux runs of the new [host] files; the re-review of the
     P410b fixes; the owner's decisions in section 10; OR1 and OR4 as above. ADR-009: N (this
     part: tests, CI and evidence; no path on the ADR-009 list).
+  - *Status at 072023f4.* The second part's agent-doable half is done, and its
+    review fixes are verified (P410b's fix verification at d9ceeeee, and the
+    short verification of 465ff8f7, the fake CLI's terminal refusal at exit 1,
+    and of 072023f4: CLOSED, no regression). Owner-gated still: OR1 on every
+    OS (a real sign-in, status and sign-out, the native keyring smoke, a real
+    two-account run, and the packaged smoke of the PR 4 build), OR4 (rows 18
+    and 49, and rows 27 and 50 if the fake model cannot make their evidence),
+    the VM rollback run (`rollback.md`), and the owner's decisions in section
+    10 on the stable release's WP1 candidate. At release: the signed packaged
+    smoke (row 66, WP1.63), the release-candidate CLI (WP1.71) and the release
+    record (WP1.37). Owed on CI or the VM: one run of the quarantined
+    `fake-cli.test.ts`; the prove-red dispatch.
 
 **P4.11 Final sweep, Beta labels, screenshot recapture (row 54).**
 - *Today: the labels.* `src/renderer/providers/codex/index.ts:10`
@@ -6662,6 +6674,53 @@ Owner: OR1, OR4.
   whole-release sweep stays release level.
 - *ADR-009: N. SSH radius: N.*
 - *Tests.* [host] the label tests above, updated.
+- *Record (2026-10-03; 31169913 to f1b96edd, with later fixes to 072023f4).*
+  - *Built, on the defaults of questions 5 to 8 (5 A, 6 A, 7 A, 8 B).* The
+    Codex Beta labels are off, and the provider's maturity drives the pill, so
+    WP1.21's mechanism stays (31169913). The Feature Guide shows the cards for
+    the assistants in use, in its sections, rail counts, search and tour, with
+    Codex-alone copy where a card names Claude (87de87fb, 09facf4f, 43e0aefe).
+    An open usage page's age line ages (8824c268). One note reads "1 note" in
+    the review marker line (2fe29f45). Claude Opus 5.5 and Sonnet 5.5 are in
+    the model registry, priced on the path Tokenomics uses (8529827c,
+    1d7f251f). A Codex agent's Retry and the agents explainer name what runs
+    (f2b01c8c). The PR 4 user-facing sweep: app knowledge with its known
+    issues, mirrored in the User Guide; tips; the guided tour and the Feature
+    Guide; README; PRIVACY.md; Hello Codex's comparison row; and the 2.1.1
+    changelog lines (906a5978, 1ee04981). The training screenshot tool runs
+    the app on a home of its own and seeds both assistants (13e3fd8a,
+    de940b56, 3cd7dd61); the README image staging works only in a marked
+    staging root of its own (f73f1785, 67c94aa5, e9fcaf9a, 04da46fb). Each
+    line written for a question's default is checked again when the owner
+    answers.
+  - *Reviews.* The code review: every commit spec and quality PASS, no blocker
+    or major; its findings fixed in 43e0aefe, b86f62a4 and 1d7f251f, verified
+    spec and quality PASS; P411-4 (a latent count) closed by 512e6bb4; one nit
+    (P411-8) left. The copy review: 906a5978 spec FAIL on lines that said more
+    than ships (one major, four minor), fixed in 1ee04981, all closed. The
+    capture tools: the training capture PASS; the README staging quality FAIL
+    on its isolation from the operator's own folders, fixed in e9fcaf9a and
+    04da46fb, verified spec and quality PASS. The dependency floors: below, in
+    9.7.
+  - *Listed, not built (owner calls or follow-ups).* A Cloud Agents card in
+    the Feature Guide. A provider filter for the tips: some tips that need
+    Claude Code are still offered with it off. gpt-5.2 in the Codex model list
+    (the owner's call, section 10's notices). Sonnet 5's fallback price in the
+    registry (3/15, where Anthropic's reference lists 2/10; older than PR 4).
+    The model picker's "Latest Opus (200k context)" hint, while Opus 5 and 5.5
+    run with 1M (older than PR 4). The help folder's Codex skill text, which
+    says "the user's OTHER Codex sessions" although it installs into one
+    account's skills folder. The README's Telemetry row, which leaves out
+    Sentinel's Codex notes read and the Codex usage check (PRIVACY.md has
+    both).
+  - *The images.* Recaptured on the VM at the final-head run (9.7, f73f1785)
+    and waiting for the owner's review, image by image; none is committed.
+    `step-snap.jpg` is retaken with the tool fixed in 512e6bb4; the `-mac`
+    images on the Mac.
+  - *Owed.* The owner's review of every recaptured image, and the Mac
+    recapture; the owner's answers to questions 5 to 8, then this sweep's
+    lines checked against them. ADR-009: N (copy, UI, a pricing fallback and
+    dev tools). SSH radius: N.
 
 ### 9.5 Owner-gated items
 
@@ -6940,6 +6999,57 @@ beside the original and renamed in). Recorded as a limit of the app's
 identity checks: on ext4 a file deleted and made again at once keeps its
 inode, so those checks cannot tell it from the first (a rename over it is
 caught).
+
+*Record (2026-10-03): the final-head VM run*, at f73f1785 on WINDOWS_1 (a
+packaged build installed over 69c98042; the fake model, fictional accounts).
+PASS: the e2e suite, 94 of 94, with the real home untouched; the guidance
+through the resume picker on this computer's sign-in, reaching a new
+conversation started in the session's folder whole; the Codex compat test, 5
+of 5, leaving `~/.codex` untouched; an Ask Restart resuming its conversation
+on Codex and on Claude Code; the Auto preset refusing the app's tools with no
+prompt, and the Feature Guide line saying so; P411-3's host safety (the
+training capture left the real Claude and Codex folders and the app's real
+data untouched, also with a temp folder whose path holds a space). Seen there
+and fixed since: on Claude Code an Ask Restart started afresh when the app's
+data folder was spelled in another case than on disk (eef195d8 holds an Ask
+resume by both folders' real paths); the picker line said less than Codex does
+for a resumed conversation that had no instructions (eef195d8 makes it true);
+the boot chain (512e6bb4, below). Row 38's midnight UTC check had not fired by
+the run's end and stays scheduled on the VM.
+The images were recaptured there and wait for the owner's review; none is
+committed. Each would replace, under `src/renderer/assets/training/`:
+`step-security.jpg`, `step-vision.jpg`, `step-memory.jpg`,
+`step-session-options.jpg`, `step-tokenomics.jpg`, `step-tips.jpg`,
+`step-dynamic-workflows.jpg`, `step-codex.jpg`, `step-excalidraw.jpg`,
+`step-logs.jpg`, `step-insights.jpg`, `step-combined.jpg`, `github-panel.jpg`
+and `v2-shell-hero.jpg`; under `docs/screenshots/`: `settings.jpg`,
+`vision.jpg`, `memory.jpg`, `session-config.jpg`, `tokenomics.jpg`,
+`shortcuts.jpg`, `dynamic-workflows.jpg` and `v2-shell-hero.jpg`, and the
+README's `shot-sessions.png`, `shot-canvas.png`, `shot-tokenomics.png` and
+`shot-memory.png`. Two more are for review only (the boot screen, and the
+Settings Codex accounts). `src/renderer/assets/training/step-snap.jpg` needs a
+recapture too: the tool could not find the Snap button by its old title until
+512e6bb4. The `-mac` images are taken on the Mac.
+
+*Record (2026-10-03): the boot chain (512e6bb4)*, latent since 2.1.0. A tour
+version with a prerelease (`2.1.1-beta.2`) read as `2.1.0`, so the newest
+cards counted as unseen, and the boot chain still waited on an unseen card
+although nothing has opened the tour by itself since ba6b0df9 (2026-08-21,
+shipped in 2.1.0 and 2.1.1-beta.1). So every gate below it (the Codex
+question, the consent notice, the resume prompt, the Multi Spawn page, Hello
+Codex) and the GitHub page waited for good. No shipped path hit it: every
+install, upgrade and downgrade runs the onboarding harness, which stamps the
+build's own release version first; the VM's staging seed had written a
+prerelease stamp. Fixed: the chain and the GitHub page wait on no tour, a
+prerelease reads as its release, and a walkthrough with no card to draw for
+the assistants in use closes as a close does.
+
+*Record (2026-10-03): dependency floors.* 198b0412 and ca965fd7 raise the
+override floors of ip-address, undici (node-gyp's own too), fast-uri,
+dompurify and brace-expansion past their advisories, inside their current
+majors (lockfile only; reviewed SPEC PASS, QUALITY PASS). What `npm audit`
+still reports needs a major change, the electron-builder 26 chain and the
+excalidraw build chain, and is left for the owner (section 7, items 4 and 5).
 
 ## 10. Unresolved UX decisions
 
