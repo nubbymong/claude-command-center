@@ -1,4 +1,4 @@
-import { onlyAssistantInUse, type ProviderChoiceView } from './onboarding/provider-choice'
+import type { OnlyAssistant } from './onboarding/provider-choice'
 
 /** Logical group used in the hero breadcrumb. Keep small -- one of these. */
 export type TrainingSection =
@@ -894,8 +894,7 @@ export const trainingSteps: TrainingStep[] = [
  *  alone, a card that needs Claude Code is not shown and a card with copy for
  *  that mode shows it; with Claude Code alone, a Codex card is not shown; with
  *  both on, or neither (a state setup never leaves), every card as written. */
-export function stepsForAssistants(steps: readonly TrainingStep[], settings: ProviderChoiceView): TrainingStep[] {
-  const only = onlyAssistantInUse(settings)
+export function stepsForAssistants(steps: readonly TrainingStep[], only: OnlyAssistant): TrainingStep[] {
   if (only === 'codex') return steps.filter((s) => !s.needsClaude).map((s) => (s.withoutClaude ? { ...s, ...s.withoutClaude } : s))
   if (only === 'claude') return steps.filter((s) => !s.needsCodex)
   return [...steps]
