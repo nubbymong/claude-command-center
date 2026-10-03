@@ -9,7 +9,7 @@ export const LOG_FOLDER_RESULT_TEXT: Readonly<Record<Exclude<AccountLogFolderOpe
   'unknown-account': 'This account is no longer listed.',
   'not-set': "This account's config.toml no longer sets log_dir.",
   'not-found': 'That folder does not exist yet. Codex makes it when it first writes a log there.',
-  refused: 'The app did not open or show that folder: it is not a plain local folder, or it could not be shown.',
+  refused: 'The app did not open or show that folder: it is not a plain local folder, or the system could not open or show it.',
 }
 
 const BUTTON_TEXT: Readonly<Record<AccountLogFolderKind, string>> = {

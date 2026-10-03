@@ -95,26 +95,50 @@ function openKeyBlock(s: string): number {
 }
 
 const isSpace = (ch: string | undefined): boolean => ch !== undefined && /\s/.test(ch)
+const isWordChar = (ch: string | undefined): boolean => ch !== undefined && /[A-Za-z0-9_-]/.test(ch)
+
+/** The names of the fields the redactor clears the value of (as a suffix:
+ *  access_token, client_secret, an API key's name). */
+const SECRET_FIELD = /(?:password|secret|token|api[_-]?key)$/i
+
+/** Where `s` up to `end` (whitespace before `end` set aside) ends in a
+ *  Bearer or Basic word, or in a secret field's name with its quote and
+ *  separator: the start of that word or name (its opening quote included),
+ *  else -1. What comes next may be its credential, which the redactor
+ *  matches only together with it. Reads of fixed size, plus the whitespace
+ *  before `end` and before a separator. */
+function secretTailStart(s: string, end: number): number {
+  let e = end
+  while (e > 0 && isSpace(s[e - 1])) e--
+  const word = /(?:^|[^A-Za-z0-9_])(bearer|basic)$/i.exec(s.slice(Math.max(0, e - 7), e))
+  if (word) return e - word[1].length
+  let f = e
+  if (s[f - 1] === ':' || s[f - 1] === '=') { f--; while (f > 0 && isSpace(s[f - 1])) f-- }
+  if (s[f - 1] === '"' || s[f - 1] === "'") f--
+  const field = SECRET_FIELD.exec(s.slice(Math.max(0, f - 16), f))
+  if (!field) return -1
+  let start = f - field[0].length
+  for (let k = 0; k < 64 && start > 0 && isWordChar(s[start - 1]); k++) start--
+  if (s[start - 1] === '"' || s[start - 1] === "'") start--
+  return start
+}
 
 /** Where a line not ended within WINDOW may be cut: just after its last run
- *  of whitespace that does not follow a Bearer or Basic, or 0 for none. One
- *  backward pass over `s` (each character looked at once, the word before a
- *  run read in at most seven), so linear in its length. */
+ *  of whitespace that does not follow a Bearer or Basic, or a secret field's
+ *  name or separator, else 0. One backward pass over `s` (each character
+ *  looked at at most twice, the text before a run read in fixed-size
+ *  pieces), so linear in its length. */
 function cutAtSpace(s: string): number {
   let i = s.length - 1
   while (i >= 0) {
     if (!isSpace(s[i])) { i--; continue }
     let j = i
     while (j > 0 && isSpace(s[j - 1])) j--
-    if (!/(?:^|[^A-Za-z0-9_])(?:bearer|basic)$/i.test(s.slice(Math.max(0, j - 7), j))) return i + 1
+    if (secretTailStart(s, j) < 0) return i + 1
     i = j - 1
   }
   return 0
 }
-
-/** The names of the fields the redactor clears the value of (as a suffix:
- *  access_token, client_secret, an API key's name). */
-const SECRET_FIELD = /(?:password|secret|token|api[_-]?key)$/i
 
 /** Whether a line ends in a secret field's name and its separator (`:` or
  *  `=`), a quote and whitespace allowed between: its value may start the
@@ -134,8 +158,9 @@ function endsWithSecretField(line: string): boolean {
  *  (its value may start it, and the redactor matches the two together); a
  *  private key block until its last line; each hold up to MARGIN (past the
  *  redactor's own bound for a key block). A line not ended within WINDOW
- *  goes at its last space (never right after a Bearer or Basic). What is
- *  left goes at `end`. Every step is linear in what is pending. */
+ *  goes at its last space (never right after a Bearer or Basic or a secret
+ *  field), or with none, up to a Bearer, Basic or secret field at its end.
+ *  What is left goes at `end`. Every step is linear in what is pending. */
 function createDiagnosticStream(out: (text: string) => void): { push(t: string): void; end(): void } {
   let pending = ''
   const send = (n: number): void => {
@@ -154,7 +179,21 @@ function createDiagnosticStream(out: (text: string) => void): { push(t: string):
       }
       const open = openKeyBlock(pending.slice(0, cut))
       if (open >= 0 && pending.length - open <= MARGIN) cut = open
-      else if (cut === 0 && pending.length > WINDOW) cut = cutAtSpace(pending) || pending.length
+      else if (cut === 0 && pending.length > WINDOW) {
+        cut = cutAtSpace(pending)
+        // No such space: up to a credential's lead-in at the end, or one
+        // followed by the start of a word (what may be the credential, cut
+        // by the read), kept with what follows, up to MARGIN; else all of it.
+        if (!cut) {
+          let j = pending.length
+          while (j > 0 && !isSpace(pending[j - 1])) j--
+          const lastWord = j
+          while (j > 0 && isSpace(pending[j - 1])) j--
+          let lead = secretTailStart(pending, pending.length)
+          if (lead < 0 && j > 0 && lastWord < pending.length) lead = secretTailStart(pending, j)
+          cut = lead > 0 && pending.length - lead <= MARGIN ? lead : pending.length
+        }
+      }
       send(cut)
     },
     end() { send(pending.length) },

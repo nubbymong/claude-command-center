@@ -19,6 +19,7 @@ import {
 import { CODEX_EFFORTS } from '../../../../src/main/sanitize-restored-spawn-options'
 import type { CodexRunDeps } from '../../../../src/main/providers/codex/cli-runner'
 import { CODEX_EXEC_EXIT_SETTLE_MS } from '../../../../src/main/providers/codex/review'
+import { redactFailure } from '../../../../src/main/providers/review-support'
 
 const fixture = (version: string, name: string) => readFileSync(join(__dirname, `../../../fixtures/codex/cli/${version}/${name}`), 'utf8')
 const PLAIN_ARG = /^[A-Za-z0-9._,:=/[\]-]+$/
@@ -280,6 +281,32 @@ describe('the run', () => {
     spawned[0].child.emit('close', 0)
     await p
     expect(said.join('')).toBe('an ordinary line\nthe last line says token:\n')
+  })
+
+  // [host] PR 4 ADR-009 residuals: a line past the window, cut by a pipe read
+  // right after a credential's lead-in (a secret field and its separator, or
+  // a Bearer), keeps the lead-in for the next read, so the redactor sees the
+  // two together; the result is what one read of the whole would give.
+  it('a line past the window cut by a read right after a secret field or a Bearer keeps the lead-in with what follows: redacted as one read would be', async () => {
+    const value = 'QwErTyUiOpAsDfGhJkLzXcVbNm'
+    const tok = 'abcdefghijklmnopQRSTUVWX' + '12345'
+    for (const [chunks, secret] of [
+      [['{"blob":"' + 'x'.repeat(66_000) + '","api_key": ', `"${value}","z":1}\n`], value],
+      [['{"blob":"' + 'x'.repeat(66_000) + '","api_key":', `"${value}","z":1}\n`], value],
+      [['y'.repeat(66_000) + ' ok password = ', `${value} next\n`], value],
+      [['x'.repeat(66_000) + ',Authorization:Bearer ', `${tok} next\n`], tok],
+      [['x'.repeat(66_000) + ',Authorization:Bearer ' + tok.slice(0, 10), `${tok.slice(10)} next\n`], tok],
+    ] as Array<[string[], string]>) {
+      const { deps, spawned } = fakeDeps()
+      const said: string[] = []
+      const p = createCodexBackgroundOperations({ platform: 'win32', runDeps: () => deps }).run(input({ onDiagnostic: (t: string) => said.push(t) }))
+      for (const c of chunks) spawned[0].child.stderr.emit('data', c)
+      spawned[0].child.emit('close', 0)
+      await p
+      const all = said.join('')
+      expect(all, chunks[0].slice(-24)).not.toContain(secret)
+      expect(all === redactFailure(chunks.join('')), chunks[0].slice(-24)).toBe(true)
+    }
   })
 
   // [host] PR 4 ADR-009 round 1 (L4-4): the CLI-operation allowlist drops

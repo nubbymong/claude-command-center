@@ -81,6 +81,14 @@ describe('AccountLogFoldersPanel', () => {
     expect(container.querySelector('[data-account="acct-work"] [role="status"]')!.textContent).toBe(LOG_FOLDER_RESULT_TEXT.refused)
   })
 
+  // [host] PR 4 ADR-009 residuals: the account's log folder is opened and a
+  // log_dir only shown, so the refusal names both, for either button.
+  it('the refusal is true for either folder: opened (the log folder) or shown (a log_dir)', () => {
+    expect(LOG_FOLDER_RESULT_TEXT.refused).toMatch(/open or show that folder/)
+    expect(LOG_FOLDER_RESULT_TEXT.refused).toMatch(/could not open or show it/)
+    expect(LOG_FOLDER_RESULT_TEXT.refused).not.toMatch(/could not be shown|could not be opened\./)
+  })
+
   it('every line it shows is plain ASCII', () => {
     for (const t of Object.values(LOG_FOLDER_RESULT_TEXT)) expect(t).toMatch(/^[\x20-\x7e]+$/)
   })
