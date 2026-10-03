@@ -446,7 +446,7 @@ describe('the account surface (#439/#475) — claude.ai as this session’s acco
     expect(byTest('browser-start-claudeai')).not.toBeNull()
   })
 
-  // WP2 PR 4, P4.6 (row 58): a Codex session has no Claude account, and the
+  // [host] WP2 PR 4, P4.6 (row 58): a Codex session has no Claude account, and the
   // primary fallback would have offered ANOTHER account's claude.ai (#216;
   // P3.6 V5), as the session menu's items did.
   it('a local Codex session never carries the claude.ai entry, whatever Claude profile is primary', async () => {
