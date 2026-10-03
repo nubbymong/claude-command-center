@@ -543,6 +543,15 @@ describe('normaliseQuestion', () => {
     expect(out).toHaveLength(8000)
   })
 
+  it('[host] cuts between two characters, never inside an emoji (review RASK-3)', () => {
+    const rocket = String.fromCodePoint(0x1f680)
+    // The bound falls between the emoji's two halves: the whole emoji goes.
+    const out = normaliseQuestion('a'.repeat(7999) + rocket + 'tail')!
+    expect(out).toBe('a'.repeat(7999))
+    // One that fits whole stays whole.
+    expect(normaliseQuestion('a'.repeat(7998) + rocket + 'tail')).toBe('a'.repeat(7998) + rocket)
+  })
+
   it('leaves shell metacharacters alone -- the env reference is the boundary, not a charset', () => {
     const q = `what's the $(rm -rf /) cost; really \`x\` & 100%?`
     expect(normaliseQuestion(q)).toBe(q)

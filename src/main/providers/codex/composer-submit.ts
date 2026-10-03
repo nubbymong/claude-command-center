@@ -25,7 +25,7 @@
 //  - characters outside the Basic Multilingual Plane are dropped by the
 //    composer itself (PB3), so a text holding one cannot be confirmed.
 import {
-  readCodexScreen, codexTextTyped, codexPastedContentShown, codexComposerRows, codexComposerText,
+  readCodexScreen, codexTextTyped, codexPastedContentShown, codexComposerRows,
   type ScreenLine,
 } from '../../../shared/codex-screen'
 import type { SubmitNotDeliveredReason, SubmitTextResult } from '../../../shared/types'
@@ -240,7 +240,8 @@ export async function submitToCodexComposer(text: string, deps: ComposerSubmitDe
     await deps.sleep(SUBMIT_CONFIRM_POLL_MS)
     if (!deps.live()) return notDelivered('session-gone')
     const screen = read()
-    if (readyState(screen, models) === 'ready' && codexComposerText(screen) === '') break
+    // Ready is ready AND empty (readyState).
+    if (readyState(screen, models) === 'ready') break
     if (deps.now() >= clearUntil) {
       log('the text was taken back (Ctrl+U) but the cleared composer was not seen in time')
       break

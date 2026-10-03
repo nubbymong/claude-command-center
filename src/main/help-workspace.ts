@@ -413,20 +413,20 @@ function rebuildFailureForLog(err: unknown): string {
  * runs for a Claude Code Ask too: a project settings file a Codex session
  * planted would reach it otherwise; the cost is that a Claude Ask's own
  * "don't ask again" approvals written here do not outlive its session. A
- * failed rebuild is logged, neutrally (rebuildFailureForLog), then thrown.
+ * failed rebuild is logged, neutrally (rebuildFailureForLog), then thrown:
+ * any failure, the folder's own making included, so the log has the cause
+ * of every Ask start that a rebuild refused (review RASK-2).
  */
 export function ensureHelpWorkspace(resourcesDir: string, opts?: { appVersion?: string; platform?: NodeJS.Platform }): string {
   const dir = path.join(resourcesDir, 'help')
-  mkdirSecure(dir)
-  hardenCredentialDir(dir)
-  const files = helpWorkspaceFiles(dir, opts?.appVersion ?? 'unknown', opts?.platform ?? process.platform)
-  if (!holdsExactly(dir, files)) {
-    try {
-      rebuildHelpWorkspace(dir, files)
-    } catch (err) {
-      logWarn(`[help-workspace] the help folder could not be rebuilt: ${rebuildFailureForLog(err)}; no Ask Conductor session starts until it can be`)
-      throw err
-    }
+  try {
+    mkdirSecure(dir)
+    hardenCredentialDir(dir)
+    const files = helpWorkspaceFiles(dir, opts?.appVersion ?? 'unknown', opts?.platform ?? process.platform)
+    if (!holdsExactly(dir, files)) rebuildHelpWorkspace(dir, files)
+  } catch (err) {
+    logWarn(`[help-workspace] the help folder could not be rebuilt: ${rebuildFailureForLog(err)}; no Ask Conductor session starts until it can be`)
+    throw err
   }
   return dir
 }

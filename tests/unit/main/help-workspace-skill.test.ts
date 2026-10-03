@@ -351,6 +351,18 @@ describe('the rebuild fails closed (P4.3)', () => {
     ensureHelpWorkspace(tmp, opts)
     expect(hooks.logWarn).not.toHaveBeenCalled()
   })
+
+  it('[host] the folder itself cannot be made: thrown, and logged by its code only, as a rebuild is (review RASK-2)', () => {
+    // A file where the folder goes: the folder's own making fails.
+    fs.writeFileSync(path.join(tmp, 'help'), 'x')
+    expect(thrownBy(() => ensureHelpWorkspace(tmp, opts))).toBeInstanceOf(Error)
+    expect(hooks.writes).toEqual([])
+    expect(hooks.logWarn).toHaveBeenCalledTimes(1)
+    const line = hooks.logWarn.mock.calls[0].map(String).join(' ')
+    expect(line).toContain('could not be rebuilt')
+    expect(line).toMatch(/E[A-Z]+ \(mkdir\)/)
+    expect(line).not.toContain(tmp)
+  })
 })
 
 describe('template generators (pure)', () => {

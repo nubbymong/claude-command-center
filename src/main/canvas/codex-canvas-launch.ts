@@ -36,9 +36,6 @@ export interface CodexCanvasLaunchInput {
   cliVersion: string | null
   /** The built-in tools reach this launch (on, and the server listening). */
   toolsOn: boolean
-  /** The tool groups this session is offered (Settings, Built-in Tools):
-   *  each staged skill follows its group (review A-6). Absent: both on. */
-  skillGroups?: { canvas: boolean; vision: boolean }
   /** The account's realm, as the launch prepared it: an app-managed one or
    *  this computer's own sign-in (review A-2). Absent: told by path alone. */
   ownership?: RealmOwnership
@@ -47,9 +44,6 @@ export interface CodexCanvasLaunchInput {
   env: Readonly<Record<string, string | undefined>>
   platform?: NodeJS.Platform
 }
-
-/** The tool group each staged skill belongs to; any other is the canvas's. */
-const SKILL_GROUP: Readonly<Record<string, 'canvas' | 'vision'>> = { 'agent-canvas': 'canvas', 'canvas-plan': 'canvas', 'conductor-vision': 'vision' }
 
 /**
  * Whether the launch's account is an app-managed one, and its skills folder
@@ -99,8 +93,10 @@ function guidanceFor(input: CodexCanvasLaunchInput): Omit<CodexCanvasLaunch, 'de
     if (managed) removeCodexRealmSkills(input.home, managedSkillsDir)
     return { guidance: null }
   }
-  const groups = input.skillGroups ?? { canvas: true, vision: true }
-  const managedSkills = managed ? stageCodexRealmSkills(input.home, managedSkillsDir, (skill) => groups[SKILL_GROUP[skill] ?? 'canvas']) : undefined
+  // All three skills while the tools are on, whichever tool groups are on,
+  // as Claude's --plugin-dir (review RA-1): conductor-vision is what tells a
+  // session with Vision off where the switch is.
+  const managedSkills = managed ? stageCodexRealmSkills(input.home, managedSkillsDir) : undefined
   let pluginSkillsDir: string | null = null
   if (!managed && platform !== 'win32' && input.route === 'direct') {
     const pluginDir = ensureCanvasPlugin()

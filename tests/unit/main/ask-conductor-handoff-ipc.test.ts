@@ -6,12 +6,17 @@
 //  - the help folder rebuilt in main before EVERY Ask spawn of either
 //    assistant (a first launch, a revive, a Restart, Past discussions, an
 //    account switch's remount, a restored tab all come through pty:spawn),
-//    last before the spawn, and failing closed: no rebuild, no launch.
+//    last before the spawn, and failing closed: no rebuild, no launch, and
+//    a fixed sentence, never the file system's own message (review RASK-2);
+//  - the spawn starts in the folder just rebuilt, whatever folder the tab
+//    kept (review RASK-1; pty-manager holds a resumed conversation to it,
+//    ask-launch-folder.test.ts).
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const h = vi.hoisted(() => ({
   handlers: new Map<string, (...a: unknown[]) => unknown>(),
   order: [] as string[],
+  spawned: [] as Array<Record<string, unknown> | undefined>,
   rebuildThrows: null as Error | null,
   handOffs: [] as Array<{ sessionId: string; question: string }>,
 }))
@@ -21,8 +26,8 @@ vi.mock('electron', () => ({
   app: { getVersion: () => '9.9.9-test' },
 }))
 vi.mock('../../../src/main/pty-manager', () => ({
-  spawnPty: vi.fn(() => { h.order.push('spawn') }), writePty: vi.fn(), resizePty: vi.fn(), killPty: vi.fn(), getSshFlow: vi.fn(), endSshRemote: vi.fn(),
-  beginSpawnPreparation: vi.fn(() => ({ current: true, spawn: () => { h.order.push('spawn') }, abandon: vi.fn() })),
+  spawnPty: vi.fn((_win: unknown, _id: string, opts?: Record<string, unknown>) => { h.order.push('spawn'); h.spawned.push(opts) }), writePty: vi.fn(), resizePty: vi.fn(), killPty: vi.fn(), getSshFlow: vi.fn(), endSshRemote: vi.fn(),
+  beginSpawnPreparation: vi.fn(() => ({ current: true, spawn: (opts?: Record<string, unknown>) => { h.order.push('spawn'); h.spawned.push(opts) }, abandon: vi.fn() })),
   holdsCodexLaunchLease: () => false, codexLaunchLeaseTaken: () => false,
   isSessionLiveOrStarting: () => false, getKeptCodexConversationSource: () => undefined, getKeptCodexConversation: () => undefined,
   codexRunEnded: async () => true,
@@ -56,6 +61,7 @@ vi.mock('../../../src/main/provider-launch-gate', () => ({ providerLaunchRefusal
 const { IPC } = await import('../../../src/shared/ipc-channels')
 const { registerPtyHandlers } = await import('../../../src/main/ipc/pty-handlers')
 const ptyManager = await import('../../../src/main/pty-manager')
+const { ASK_HELP_FOLDER_FAILED } = await import('../../../src/shared/ask-conductor-provider')
 
 const mainFrame = { id: 'top' }
 const webContents = { mainFrame }
@@ -68,6 +74,7 @@ const SID = 'askh1111askh1111askh1111'
 
 beforeEach(() => {
   h.order = []
+  h.spawned = []
   h.rebuildThrows = null
   h.handOffs = []
   vi.mocked(ptyManager.handOffAskQuestion).mockClear()
@@ -115,7 +122,7 @@ describe('the help folder is rebuilt before every Ask spawn', () => {
 
   it('[host] a rebuild that fails starts nothing (fails closed)', async () => {
     h.rebuildThrows = new Error('EPERM')
-    await expect(spawn({}, SID, { cwd: 'C:/res/help', isAsk: true, provider: 'codex', codexOptions: { permissionsPreset: 'standard' } })).rejects.toThrow(/help folder could not be rebuilt/)
+    await expect(spawn({}, SID, { cwd: 'C:/res/help', isAsk: true, provider: 'codex', codexOptions: { permissionsPreset: 'standard' } })).rejects.toThrow(ASK_HELP_FOLDER_FAILED)
     expect(h.order).toEqual(['rebuild C:/res 9.9.9-test'])
   })
 
@@ -123,5 +130,37 @@ describe('the help folder is rebuilt before every Ask spawn', () => {
     await spawn({}, SID, { cwd: 'C:/dev/project' })
     await spawn({}, 'askh2222askh2222askh2222', { cwd: 'C:/res/help', isAsk: true, shellOnly: true })
     expect(h.order).toEqual(['spawn', 'spawn'])
+    // Their folders are their own.
+    expect(h.spawned.map((o) => o?.cwd)).toEqual(['C:/dev/project', 'C:/res/help'])
+  })
+})
+
+describe('a failed rebuild is said in a fixed sentence (P4.3 review RASK-2)', () => {
+  it.each([['Claude Code', {}], ['Codex', { provider: 'codex', codexOptions: { permissionsPreset: 'standard' } }]])('[host] %s: the tab gets the plain sentence, never the file system\'s message', async (_name, extra) => {
+    // The message names the path and an entry a session chose; none of it may
+    // reach the tab.
+    h.rebuildThrows = Object.assign(new Error('EPERM: operation not permitted, unlink \'C:\\res\\help\\planted-by-a-session.md\''), { code: 'EPERM', syscall: 'unlink' })
+    const thrown = await (spawn({}, SID, { cwd: 'C:/res/help', isAsk: true, ...extra }) as Promise<unknown>).then(() => null, (e: unknown) => e as Error)
+    expect(thrown).toBeInstanceOf(Error)
+    expect(thrown!.message).toBe(ASK_HELP_FOLDER_FAILED)
+    expect(thrown!.message).not.toMatch(/EPERM|unlink|planted|C:/)
+    expect(h.spawned).toEqual([])
+  })
+})
+
+describe('the Ask spawn starts in the folder just rebuilt (P4.3 review RASK-1)', () => {
+  // A Restart, Past discussions, an account switch's remount and a restored
+  // tab all send the folder the tab was opened in; after the resources folder
+  // moved, that is the old one (left unrebuilt) or one that is gone.
+  it.each([
+    ['the folder of a resources folder that moved', 'D:/old-resources/help'],
+    ['a folder that is gone', 'C:/gone/help'],
+    ['no folder', undefined],
+    ['the folder just rebuilt', 'C:/res/help'],
+  ])('[host] %s, on either assistant: the spawn runs in the rebuilt one', async (_name, kept) => {
+    await spawn({}, SID, { cwd: kept, isAsk: true })
+    await spawn({}, SID, { cwd: kept, isAsk: true, provider: 'codex', codexOptions: { permissionsPreset: 'read-only' } })
+    await spawn({}, SID, { cwd: kept, isAsk: true, useResumePicker: true, resume: { uuid: '11111111-2222-3333-4444-555555555555', cwd: kept ?? 'D:/x' } })
+    expect(h.spawned.map((o) => o?.cwd)).toEqual(['C:/res/help', 'C:/res/help', 'C:/res/help'])
   })
 })
