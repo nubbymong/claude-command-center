@@ -46,8 +46,8 @@ checklist):
   this computer's sign-in, the per-preset approvals, and markers typed
   through one submit primitive at Codex's ready composer, a marker not sent
   kept on the canvas page until dismissed.
-- P4.2 (row 52, VERIFIED): the vision tools and the push to the in-app
-  browser for Codex sessions under Claude's switches.
+- P4.2 (row 52, PARTIAL: question 8): the vision tools and the push to the
+  in-app browser for Codex sessions under Claude's switches.
 - P4.3 (row 53, PARTIAL: question 6): Ask Conductor on Codex, the "Ask
   Conductor runs on" row with both on, the help folder with `AGENTS.md`
   rebuilt before every Ask start of either assistant and every Ask launch
