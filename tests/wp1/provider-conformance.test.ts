@@ -166,7 +166,9 @@ describe('composition roots (WP1.66)', () => {
     composeRendererProviders()
     composeRendererProviders()
     expect(composedRendererProviderIds()).toEqual([...PROVIDER_IDS])
-    expect(listRendererProviders().map((d) => d.maturity)).toEqual(['stable', 'beta'])
+    // P4.11 (row 54): the Codex Beta label comes off in the release where parity
+    // lands; the maturity field stays, read by the Providers card (WP1.21).
+    expect(listRendererProviders().map((d) => d.maturity)).toEqual(['stable', 'stable'])
     expect(getRendererProvider('codex').shortName).toBe('Codex')
     _resetRendererProviderRegistryForTest()
     composeRendererProviders()

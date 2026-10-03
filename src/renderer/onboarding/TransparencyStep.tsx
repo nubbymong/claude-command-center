@@ -120,7 +120,7 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
     },
     {
       icon: SPARK,
-      label: 'Codex (Beta)',
+      label: 'Codex',
       value: codex === 'on' ? 'On' : codex === 'off' ? 'Off (Settings, Accounts)' : 'Not set up (Settings, Accounts)',
     },
     {

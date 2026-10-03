@@ -612,26 +612,19 @@ describe('contrast: every onboarding badge and badge-like pill, both themes', ()
   // attribute selector such as [class~="wait"], a tag or an id) is not found,
   // and a change to an ancestor's surface (a card whose background changes)
   // is only measured where it is listed in MEASURE below.
-  const FAMILIES = new Set(['badge', 'ma-badge', 'rn-badge', 'hc-badge', 'ob-new', 'pill', 'opt-tag', 'as-beta'])
+  // P4.11 (row 54): the Codex Beta labels came off, and with them .as-beta
+  // and .rn-badge.rn-beta.
+  const FAMILIES = new Set(['badge', 'ma-badge', 'rn-badge', 'hc-badge', 'ob-new', 'pill', 'opt-tag'])
   type Surface = [string, (mode: 0 | 1) => string]
   const raised: Surface = ['--surface-raised', (m) => token('surface-raised', m)]
   const base: Surface = ['--surface-base (the page)', (m) => token('surface-base', m)]
   const panel: Surface = ['--surface-panel', (m) => token('surface-panel', m)]
   const stage: Surface = ['--surface-stage', (m) => token('surface-stage', m)]
-  /** --ob-soft (an rgba token) painted over a surface: a selected card. */
-  function obSoftOver(surface: string, mode: 0 | 1): string {
-    const all = [...CSS.matchAll(/--ob-soft\s*:\s*rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)/g)]
-    if (all.length !== 2) throw new Error(`--ob-soft defined ${all.length} times in styles.css; expected exactly dark + light`)
-    const m = all[mode]
-    return wash('#' + [m[1], m[2], m[3]].map((c) => Number(c).toString(16).padStart(2, '0')).join(''), Number(m[4]), surface)
-  }
-  const selectedCard: Surface = ['a selected card (--ob-soft over --surface-raised)', (m) => obSoftOver(token('surface-raised', m), m)]
   // The check rows and account rows are --surface-raised; an account row
   // switched off is transparent over the page; the Hello Codex vignette is
   // --surface-panel; the release-notes tiles are --surface-stage (their
   // badges carry their own fill); "New in this release" is on the page; the
-  // approval card and the option rows are --surface-raised; an assistants
-  // card is --surface-raised, and a selected one lays --ob-soft over it.
+  // approval card and the option rows are --surface-raised.
   const MEASURE: Record<string, Surface[]> = {
     '.ob-root .ob-new': [base],
     '.ob-root .badge.ok': [raised],
@@ -643,9 +636,7 @@ describe('contrast: every onboarding badge and badge-like pill, both themes', ()
     '.ob-root .ma-badge.off': [base],
     '.ob-root .opt-tag': [raised],
     '.ob-root .rn-badge.rn-now': [stage],
-    '.ob-root .rn-badge.rn-beta': [stage],
     '.ob-root .rn-badge.rn-b22': [stage],
-    '.ob-root .as-beta': [raised, selectedCard],
     '.ob-root .hc-badge': [panel],
     '.ob-root .hc-badge.def': [panel],
     '.ob-root .hc-badge.rev': [panel],

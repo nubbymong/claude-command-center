@@ -419,6 +419,12 @@ describe('#463 — since-2.0 coverage and the first-run cohort', () => {
     expect(text).not.toContain('New name.')
   })
 
+  it('[host] P4.11 (row 54): no line carries a Beta tag, the 2.0 Codex support line included', () => {
+    const all = [...sectionsFor(undefined, '2.1.0'), ...sectionsFor(undefined, '2.0.5')].flatMap((s2) => s2.items)
+    expect(all.some((it2) => it2.title === 'Codex support.')).toBe(true)
+    for (const it2 of all) expect('beta' in it2, it2.title).toBe(false)
+  })
+
   it('no upgrade-only line carries a See-it link — the fresh page count must not desync', () => {
     // The sub-line says "N of them have a page of their own"; an upgradeOnly
     // item with a seeIt would make that true for upgraders and false for the
@@ -468,7 +474,9 @@ describe('#525 — the rename/roadmap page', () => {
       expect(q(id), id).not.toBeNull()
     }
     expect(q('tile-claude')!.textContent).toContain('NOW')
-    expect(q('tile-codex')!.textContent).toContain('BETA') // owner call R2: Codex is beta today
+    // P4.11 (row 54): Codex is live like Claude Code, so its tile reads NOW.
+    expect(q('tile-codex')!.textContent).toContain('NOW')
+    expect(q('tile-codex')!.textContent).not.toContain('BETA')
     expect(q('tile-copilot')!.textContent).toContain('2.2')
     expect(q('roadmap-pill')!.textContent).toContain('2.2 IN DEVELOPMENT')
     // Owner call R5: this is a 2.1 install — the tagline speaks to today,

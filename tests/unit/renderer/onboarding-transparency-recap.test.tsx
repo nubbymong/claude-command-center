@@ -138,7 +138,7 @@ describe('Transparency recap rows', () => {
 
   describe('the Codex row', () => {
     const codexValue = () => {
-      const c = [...container.querySelectorAll('.gh-card')].find((x) => x.querySelector('.gh-t')?.textContent === 'Codex (Beta)')
+      const c = [...container.querySelectorAll('.gh-card')].find((x) => x.querySelector('.gh-t')?.textContent === 'Codex')
       return c?.querySelector('.gh-d')?.textContent
     }
 
@@ -164,9 +164,11 @@ describe('Transparency recap rows', () => {
   it('keeps the rest of the recap intact', () => {
     render()
     const text = container.textContent ?? ''
-    for (const label of ['Theme', 'Account', 'GitHub', 'Status line', 'Codex (Beta)', 'Built-in Tools']) {
+    for (const label of ['Theme', 'Account', 'GitHub', 'Status line', 'Codex', 'Built-in Tools']) {
       expect(text).toContain(label)
     }
+    // P4.11 (row 54): the Codex row is no longer labelled Beta.
+    expect(text).not.toContain('Codex (Beta)')
   })
 })
 

@@ -27,12 +27,6 @@ export function ProviderSegmentedControl({ value, onChange, sessionType, codexMa
     target?.focus()
   }
 
-  // The Beta pill tracks the chip it sits in: muted when Codex can't be picked,
-  // the brand when the chip is selected, otherwise the warning tone it always had.
-  const betaTone = codexDisabled
-    ? 'var(--text-muted)'
-    : value === 'codex' ? 'var(--brand)' : 'var(--status-warning)'
-
   return (
     <div className="flex flex-col gap-1 mb-4">
       <label className="text-[10px] uppercase tracking-wider font-medium" style={{ color: 'var(--text-secondary)' }}>Provider</label>
@@ -63,13 +57,7 @@ export function ProviderSegmentedControl({ value, onChange, sessionType, codexMa
           className={`${DIALOG_SEG_CHIP} flex-1 justify-center font-medium`}
           style={dialogSegStyle(value === 'codex', codexDisabled)}
         >
-          Codex{' '}
-          <span
-            className="text-[9px] uppercase tracking-wider border rounded-full px-1.5 py-px align-middle"
-            style={{ color: betaTone, borderColor: `color-mix(in srgb, ${betaTone} 40%, transparent)` }}
-          >
-            Beta
-          </span>
+          Codex
         </button>
       </div>
       <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
