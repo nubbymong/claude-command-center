@@ -2,7 +2,7 @@
   "schema": "wp1-traceability/1",
   "phase": "gate0",
   "boundHead": null,
-  "note": "Gate 0 plan: every WP1.* item maps to the tests/evidence that will prove it and to the CURRENT base tests that protect the behaviour today. `status` flips to `evidenced` (with digest-bound evidenceRecords for docs/wp1/evidence artifacts) when the artifact exists; ./phase.ts derives the candidate phase and traceability.test.ts enforces completeness there. Non-automated items carry the reason automation is not safe or possible (design 16.1).",
+  "note": "Gate 0 plan: every WP1.* item maps to the tests/evidence that will prove it and to the CURRENT base tests that protect the behaviour today. `status` flips to `evidenced` (with digest-bound evidenceRecords for docs/wp1/evidence artifacts: artifact, sha256, head (the 40-hex commit the evidence was taken at, which the artifact names in its text; at the candidate phase every head must equal boundHead), actor, at, commands) when the artifact exists; ./phase.ts derives the candidate phase and traceability.test.ts enforces completeness there. Non-automated items carry the reason automation is not safe or possible (design 16.1).",
   "items": [
     {
       "id": "WP1.1",

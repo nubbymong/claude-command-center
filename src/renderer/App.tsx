@@ -14,6 +14,7 @@ import { useWebviewStore } from './stores/webviewStore'
 import { usePaneOcclusionStore, useOccludesNativePanes } from './stores/paneOcclusionStore'
 import { useExcalidrawStore } from './stores/excalidrawStore'
 import { setupCanvasListener } from './stores/canvasStore'
+import { setupCodexMarkerNoticeListener } from './stores/codexMarkerNoticeStore'
 import { setupCanvasReviewListener } from './stores/canvasReviewStore'
 import { setupCanvasSnapshotHost } from './canvas/canvas-snapshot-host'
 import { useLogsStore } from './stores/useLogsStore'
@@ -717,6 +718,9 @@ export default function App() {
       setupSleepListeners()
       setupActiveListeners()
       setupCanvasListener()
+      // WP2 PR 4, P4.1 (review A-1): canvas markers a Codex session did not get, kept
+      // while the canvas page is closed.
+      setupCodexMarkerNoticeListener()
       setupCanvasReviewListener()
       setupCanvasSnapshotHost()
       useGitHubStore.getState().loadConfig()

@@ -7,6 +7,7 @@
 import { describe, it, expect } from 'vitest'
 import { harness, addCodexAccount, managedHome, EXT_HOME } from '../../wp1/accounts-harness'
 import type { Harness } from '../../wp1/accounts-harness'
+import { createCodexAuthOperations } from '../../../src/main/providers/codex/auth-operations'
 
 const realmOf = (h: Harness, accountId: string) => h.doc().accounts.find((a) => a.id === accountId)!.authRealmId
 const foldersOf = (home: string) => ({ logDir: `${home}\\log`, memoriesDir: `${home}\\memories`, configFile: `${home}\\config.toml` })
@@ -38,6 +39,28 @@ describe('the Codex package names a realm\'s own folders (launch.accountFolders)
     expect(await h.codex.launch!.accountFolders!({ authRealmId: realmOf(h, b) })).toBeNull()
     expect(await h.codex.launch!.accountFolders!({ authRealmId: 'realm-0000000000000000000000000000000f' })).toBeNull()
     expect(await h.codex.launch!.accountFolders!(null as never)).toBeNull()
+  })
+
+  it('the canonical-home check folds case by the account-folder checks\' rule (P4.4 review B-3): a non-ASCII case pair is the same home, the Kelvin sign another', async () => {
+    // The auth operations alone, the realm record and the home's identity given.
+    const opsFor = (home: string, canonical: string) => createCodexAuthOperations({
+      lookupRealm: async (ref: { authRealmId: string }) => ({
+        ok: true,
+        realm: { id: ref.authRealmId, providerId: 'codex', kind: 'codex-home', ownership: 'external-default', pathRef: 'external-default' },
+        roots: { resourcesDir: 'C:\\res', externalDefaultHome: home },
+      }),
+      realmIdentity: () => ({ canonical, dev: '1', ino: '2', isDirectory: true }),
+      executablePorts: { platform: 'win32' },
+    } as never)
+    const ref = { authRealmId: 'realm-ext' }
+    // Its real path in another case, a non-ASCII letter included: the same home.
+    const named = 'c:\\users\\\u00f6zil\\.codex'
+    expect(await opsFor(named, 'C:\\Users\\\u00d6zil\\.codex').accountFolders(ref)).toEqual(foldersOf(named))
+    // Its real path naming the Kelvin sign where the home has k: to Windows
+    // another folder, so not the home's own path.
+    const nik = opsFor('C:\\Users\\Nik\\.codex', 'C:\\Users\\Ni\u212a\\.codex')
+    expect(await nik.accountFolders(ref)).toBeNull()
+    expect(await nik.usageSessionsDir(ref)).toBeNull()
   })
 })
 

@@ -52,6 +52,7 @@ import type {
 } from '../core'
 import { redactSecrets } from '../../hooks/hook-payload-redactor'
 import { redactTokens } from '../../github/security/token-redactor'
+import { foldPathCase } from '../../utils/path-validator'
 import { parseCodexLoginStatus, classifyCodexVersion } from './cli-contract'
 import {
   createAppServerUsageClient, APP_SERVER_READ_DEADLINE_MS, APP_SERVER_INITIALIZE_TIMEOUT_MS, APP_SERVER_EXIT_GRACE_MS, APP_SERVER_MAX_LINE,
@@ -200,8 +201,11 @@ export function createCodexAuthOperations(deps: CodexAuthDeps): CodexAuthOperati
   const platform = deps.executablePorts.platform
   const pathApi = platform === 'win32' ? path.win32 : path.posix
   const caseless = platform === 'win32' || platform === 'darwin'
+  // Case folded as the account-folder checks fold it (foldPathCase: how
+  // Windows compares names), so the realm home this accepts and the folders
+  // named in it are held to one rule.
   const samePath = (a: string, b: string) => {
-    const norm = (p: string) => { const s = p.replace(/[\\/]+$/, ''); return caseless ? s.toLowerCase() : s }
+    const norm = (p: string) => { const s = p.replace(/[\\/]+$/, ''); return caseless ? foldPathCase(s) : s }
     return norm(a) === norm(b)
   }
   const locks = deps.locks ?? createCodexRealmLocks()

@@ -1077,7 +1077,7 @@ try { getWatchdogManager()?.disposeAll() } catch { /* never init */ }
     // flush below kills its helper too, and none starts again.
     try { getAccountsService()?.stopUsageReads() } catch { /* no accounts service */ }
     // WP2 PR 4, P4.5: a Codex cloud agent still running is stopped here too,
-    // so the flush below kills its chain.
+    // so the flush below ends its whole tree (as killAllAgents a Claude agent).
     try { stopBackgroundAgentRuns() } catch { /* none running */ }
     // A headless CLI run stopped but still reading its process table would
     // otherwise leave its chain below cmd.exe running once the app is gone.
