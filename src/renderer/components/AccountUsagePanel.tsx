@@ -13,6 +13,7 @@ import type { AccountProfile } from '../../shared/account-types'
 import type { AccountsSnapshot, AccountView, ProviderAccountUsageView, ProviderId } from '../../shared/providers'
 import { useClaudeOff, CLAUDE_OFF_ACCOUNTS_LINE } from '../lib/claudeOff'
 import { useRenderAtNextReset } from '../hooks/useRenderAtNextReset'
+import { useRenderEvery } from '../hooks/useRenderEvery'
 import { useSettingsStore } from '../stores/settingsStore'
 import { usesCodex } from '../onboarding/provider-choice'
 import {
@@ -39,6 +40,11 @@ const PROVIDER_NAME: Readonly<Record<ProviderId, string>> = { claude: 'Claude Co
 
 /** A window focus reloads the page's Codex views at most this often. */
 export const FOCUS_REFRESH_MS = 60_000
+
+/** How often an open page re-renders so its ages move on ("just now", then
+ *  "1 min ago"): ages are in whole minutes, so a reading never shows more
+ *  than half a minute behind. */
+const AGE_TICK_MS = 30_000
 /** In the registry-change bookkeeping: the stream read this account, before
  *  its sign-in state was known here. */
 const READ_BY_STREAM = 'read-by-stream'
@@ -278,6 +284,9 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate, onOpenTok
     return out
   }, [usageByProfile, codexViews])
   useRenderAtNextReset(resets)
+  // Each card's "Updated <age>" ages while the page stays open (P4.11; it
+  // kept "Updated just now" until new data or the next reset re-rendered it).
+  useRenderEvery(AGE_TICK_MS)
   const now = Date.now()
 
   // Sections (the approved drawing): Codex has one once it has an account to
