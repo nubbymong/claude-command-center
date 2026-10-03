@@ -1,0 +1,611 @@
+{
+  "wp1": "WP1.11",
+  "upstream": "https://github.com/openai/codex",
+  "license": "Apache-2.0 (excerpts quoted with their source named)",
+  "fetchedVia": "GitHub API (refs/tags, git/tags) for the tag and its commit; raw.githubusercontent.com/openai/codex/<commitSha>/<path> for each file",
+  "note": "Re-read on every pin change: the contract test requires exactly the pinned and minimum supported versions here.",
+  "versions": [
+    {
+      "version": "0.155.1",
+      "tag": "rust-v0.155.1",
+      "tagObjectSha": "4e21628f9ec9ee656650cd2b62ef92225725b5ac",
+      "commitSha": "be2951ea34f0d295ed0becf97079f92fa5f6950e",
+      "fetchedAt": "2026-10-03",
+      "sources": [
+        {
+          "role": "direct-keyring-key",
+          "path": "codex-rs/login/src/auth/storage.rs",
+          "sha256": "2e95a8998687e926675d41b5d941c3c3546a652c03d9680e6c7385e59bf459af",
+          "what": "The Direct keyring backend: the entry (service \"Codex Auth\") is keyed by sha256 of the canonicalised codex_home; load, save and delete all use it. The file store is codex_home/auth.json. The Secrets backend is built on the same codex_home.",
+          "excerpt": [
+            {
+              "line": 154,
+              "text": "pub(super) fn get_auth_file(codex_home: &Path) -> PathBuf {"
+            },
+            {
+              "line": 155,
+              "text": "    codex_home.join(\"auth.json\")"
+            },
+            {
+              "line": 235,
+              "text": "const KEYRING_SERVICE: &str = \"Codex Auth\";"
+            },
+            {
+              "line": 238,
+              "text": "fn compute_store_key(codex_home: &Path) -> std::io::Result<String> {"
+            },
+            {
+              "line": 239,
+              "text": "    let canonical = codex_home"
+            },
+            {
+              "line": 240,
+              "text": "        .canonicalize()"
+            },
+            {
+              "line": 241,
+              "text": "        .unwrap_or_else(|_| codex_home.to_path_buf());"
+            },
+            {
+              "line": 242,
+              "text": "    let path_str = canonical.to_string_lossy();"
+            },
+            {
+              "line": 243,
+              "text": "    let mut hasher = Sha256::new();"
+            },
+            {
+              "line": 244,
+              "text": "    hasher.update(path_str.as_bytes());"
+            },
+            {
+              "line": 245,
+              "text": "    let digest = hasher.finalize();"
+            },
+            {
+              "line": 246,
+              "text": "    let hex = format!(\"{digest:x}\");"
+            },
+            {
+              "line": 247,
+              "text": "    let truncated = hex.get(..16).unwrap_or(&hex);"
+            },
+            {
+              "line": 248,
+              "text": "    Ok(format!(\"cli|{truncated}\"))"
+            },
+            {
+              "line": 297,
+              "text": "        let key = compute_store_key(&self.codex_home)?;"
+            },
+            {
+              "line": 302,
+              "text": "        let key = compute_store_key(&self.codex_home)?;"
+            },
+            {
+              "line": 313,
+              "text": "        let key = compute_store_key(&self.codex_home)?;"
+            },
+            {
+              "line": 344,
+              "text": "        let secrets_manager = SecretsManager::new_with_keyring_store_and_namespace("
+            },
+            {
+              "line": 345,
+              "text": "            codex_home.clone(),"
+            },
+            {
+              "line": 346,
+              "text": "            SecretsBackendKind::Local,"
+            },
+            {
+              "line": 347,
+              "text": "            keyring_store,"
+            },
+            {
+              "line": 348,
+              "text": "            LocalSecretsNamespace::CodexAuth,"
+            },
+            {
+              "line": 349,
+              "text": "        );"
+            }
+          ]
+        },
+        {
+          "role": "secrets-keyring-account",
+          "path": "codex-rs/secrets/src/lib.rs",
+          "sha256": "24adb17fb1c54e0e98107f53f36e63c47b4475d6421528548eadc009ae8529ef",
+          "what": "The Secrets backend: the OS keyring entry (service \"codex\") holding the encryption key is keyed by sha256 of the canonicalised codex_home.",
+          "excerpt": [
+            {
+              "line": 23,
+              "text": "const KEYRING_SERVICE: &str = \"codex\";"
+            },
+            {
+              "line": 183,
+              "text": "pub fn compute_keyring_account(codex_home: &Path) -> String {"
+            },
+            {
+              "line": 184,
+              "text": "    let canonical = codex_home"
+            },
+            {
+              "line": 185,
+              "text": "        .canonicalize()"
+            },
+            {
+              "line": 186,
+              "text": "        .unwrap_or_else(|_| codex_home.to_path_buf())"
+            },
+            {
+              "line": 187,
+              "text": "        .to_string_lossy()"
+            },
+            {
+              "line": 188,
+              "text": "        .into_owned();"
+            },
+            {
+              "line": 189,
+              "text": "    let mut hasher = Sha256::new();"
+            },
+            {
+              "line": 190,
+              "text": "    hasher.update(canonical.as_bytes());"
+            },
+            {
+              "line": 191,
+              "text": "    let digest = hasher.finalize();"
+            },
+            {
+              "line": 192,
+              "text": "    let hex = format!(\"{digest:x}\");"
+            },
+            {
+              "line": 193,
+              "text": "    let short = hex.get(..16).unwrap_or(hex.as_str());"
+            },
+            {
+              "line": 194,
+              "text": "    format!(\"secrets|{short}\")"
+            },
+            {
+              "line": 195,
+              "text": "}"
+            }
+          ]
+        },
+        {
+          "role": "secrets-file-and-key-lookup",
+          "path": "codex-rs/secrets/src/local.rs",
+          "sha256": "d43996c83710542696da20117c6413a16615858a78c59bb9be3fafaee565bf2b",
+          "what": "The Secrets backend keeps the encrypted auth file under codex_home/secrets and looks its key up by compute_keyring_account(codex_home).",
+          "excerpt": [
+            {
+              "line": 42,
+              "text": "const CODEX_AUTH_SECRETS_FILENAME: &str = \"codex_auth.age\";"
+            },
+            {
+              "line": 150,
+              "text": "    fn secrets_dir(&self) -> PathBuf {"
+            },
+            {
+              "line": 151,
+              "text": "        self.codex_home.join(\"secrets\")"
+            },
+            {
+              "line": 152,
+              "text": "    }"
+            },
+            {
+              "line": 238,
+              "text": "        let account = compute_keyring_account(&self.codex_home);"
+            }
+          ]
+        },
+        {
+          "role": "keyring-backend-default",
+          "path": "codex-rs/config/src/types.rs",
+          "sha256": "81d942b13fd69449420227c64e482b9565818a70b63b37018d6280dc3b1945ea",
+          "what": "The default keyring backend: Secrets on Windows, Direct elsewhere. Both derive their keyring entry from codex_home.",
+          "excerpt": [
+            {
+              "line": 141,
+              "text": "pub enum AuthKeyringBackendKind {"
+            },
+            {
+              "line": 142,
+              "text": "    /// Store the serialized auth payload directly in the OS keyring."
+            },
+            {
+              "line": 143,
+              "text": "    Direct,"
+            },
+            {
+              "line": 144,
+              "text": "    /// Store auth payloads in the local encrypted secrets file, with the file key in the OS keyring."
+            },
+            {
+              "line": 145,
+              "text": "    Secrets,"
+            },
+            {
+              "line": 146,
+              "text": "}"
+            },
+            {
+              "line": 147,
+              "text": ""
+            },
+            {
+              "line": 148,
+              "text": "impl Default for AuthKeyringBackendKind {"
+            },
+            {
+              "line": 149,
+              "text": "    fn default() -> Self {"
+            },
+            {
+              "line": 150,
+              "text": "        if cfg!(windows) {"
+            },
+            {
+              "line": 151,
+              "text": "            Self::Secrets"
+            },
+            {
+              "line": 152,
+              "text": "        } else {"
+            },
+            {
+              "line": 153,
+              "text": "            Self::Direct"
+            },
+            {
+              "line": 154,
+              "text": "        }"
+            },
+            {
+              "line": 155,
+              "text": "    }"
+            }
+          ]
+        },
+        {
+          "role": "codex-home-from-env",
+          "path": "codex-rs/utils/home-dir/src/lib.rs",
+          "sha256": "1338259489ade54b01caa1468b6d25fc5a183657fa94cca0add8b91865635ef5",
+          "what": "codex_home is the CODEX_HOME environment variable when set (canonicalised; an error when missing or not a directory), else ~/.codex.",
+          "excerpt": [
+            {
+              "line": 13,
+              "text": "pub fn find_codex_home() -> std::io::Result<AbsolutePathBuf> {"
+            },
+            {
+              "line": 14,
+              "text": "    let codex_home_env = std::env::var(\"CODEX_HOME\")"
+            },
+            {
+              "line": 15,
+              "text": "        .ok()"
+            },
+            {
+              "line": 16,
+              "text": "        .filter(|val| !val.is_empty());"
+            },
+            {
+              "line": 17,
+              "text": "    find_codex_home_from_env(codex_home_env.as_deref())"
+            },
+            {
+              "line": 43,
+              "text": "                let canonical = path.canonicalize().map_err(|err| {"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.153.4",
+      "tag": "rust-v0.153.4",
+      "tagObjectSha": "042fb41b7c813ac7999105e886b2b7aa715b5081",
+      "commitSha": "3d2ee51ca2d5db578f328aa75e20aa22c0197c9a",
+      "fetchedAt": "2026-10-03",
+      "sources": [
+        {
+          "role": "direct-keyring-key",
+          "path": "codex-rs/login/src/auth/storage.rs",
+          "sha256": "2e95a8998687e926675d41b5d941c3c3546a652c03d9680e6c7385e59bf459af",
+          "what": "The Direct keyring backend: the entry (service \"Codex Auth\") is keyed by sha256 of the canonicalised codex_home; load, save and delete all use it. The file store is codex_home/auth.json. The Secrets backend is built on the same codex_home.",
+          "excerpt": [
+            {
+              "line": 154,
+              "text": "pub(super) fn get_auth_file(codex_home: &Path) -> PathBuf {"
+            },
+            {
+              "line": 155,
+              "text": "    codex_home.join(\"auth.json\")"
+            },
+            {
+              "line": 235,
+              "text": "const KEYRING_SERVICE: &str = \"Codex Auth\";"
+            },
+            {
+              "line": 238,
+              "text": "fn compute_store_key(codex_home: &Path) -> std::io::Result<String> {"
+            },
+            {
+              "line": 239,
+              "text": "    let canonical = codex_home"
+            },
+            {
+              "line": 240,
+              "text": "        .canonicalize()"
+            },
+            {
+              "line": 241,
+              "text": "        .unwrap_or_else(|_| codex_home.to_path_buf());"
+            },
+            {
+              "line": 242,
+              "text": "    let path_str = canonical.to_string_lossy();"
+            },
+            {
+              "line": 243,
+              "text": "    let mut hasher = Sha256::new();"
+            },
+            {
+              "line": 244,
+              "text": "    hasher.update(path_str.as_bytes());"
+            },
+            {
+              "line": 245,
+              "text": "    let digest = hasher.finalize();"
+            },
+            {
+              "line": 246,
+              "text": "    let hex = format!(\"{digest:x}\");"
+            },
+            {
+              "line": 247,
+              "text": "    let truncated = hex.get(..16).unwrap_or(&hex);"
+            },
+            {
+              "line": 248,
+              "text": "    Ok(format!(\"cli|{truncated}\"))"
+            },
+            {
+              "line": 297,
+              "text": "        let key = compute_store_key(&self.codex_home)?;"
+            },
+            {
+              "line": 302,
+              "text": "        let key = compute_store_key(&self.codex_home)?;"
+            },
+            {
+              "line": 313,
+              "text": "        let key = compute_store_key(&self.codex_home)?;"
+            },
+            {
+              "line": 344,
+              "text": "        let secrets_manager = SecretsManager::new_with_keyring_store_and_namespace("
+            },
+            {
+              "line": 345,
+              "text": "            codex_home.clone(),"
+            },
+            {
+              "line": 346,
+              "text": "            SecretsBackendKind::Local,"
+            },
+            {
+              "line": 347,
+              "text": "            keyring_store,"
+            },
+            {
+              "line": 348,
+              "text": "            LocalSecretsNamespace::CodexAuth,"
+            },
+            {
+              "line": 349,
+              "text": "        );"
+            }
+          ]
+        },
+        {
+          "role": "secrets-keyring-account",
+          "path": "codex-rs/secrets/src/lib.rs",
+          "sha256": "24adb17fb1c54e0e98107f53f36e63c47b4475d6421528548eadc009ae8529ef",
+          "what": "The Secrets backend: the OS keyring entry (service \"codex\") holding the encryption key is keyed by sha256 of the canonicalised codex_home.",
+          "excerpt": [
+            {
+              "line": 23,
+              "text": "const KEYRING_SERVICE: &str = \"codex\";"
+            },
+            {
+              "line": 183,
+              "text": "pub fn compute_keyring_account(codex_home: &Path) -> String {"
+            },
+            {
+              "line": 184,
+              "text": "    let canonical = codex_home"
+            },
+            {
+              "line": 185,
+              "text": "        .canonicalize()"
+            },
+            {
+              "line": 186,
+              "text": "        .unwrap_or_else(|_| codex_home.to_path_buf())"
+            },
+            {
+              "line": 187,
+              "text": "        .to_string_lossy()"
+            },
+            {
+              "line": 188,
+              "text": "        .into_owned();"
+            },
+            {
+              "line": 189,
+              "text": "    let mut hasher = Sha256::new();"
+            },
+            {
+              "line": 190,
+              "text": "    hasher.update(canonical.as_bytes());"
+            },
+            {
+              "line": 191,
+              "text": "    let digest = hasher.finalize();"
+            },
+            {
+              "line": 192,
+              "text": "    let hex = format!(\"{digest:x}\");"
+            },
+            {
+              "line": 193,
+              "text": "    let short = hex.get(..16).unwrap_or(hex.as_str());"
+            },
+            {
+              "line": 194,
+              "text": "    format!(\"secrets|{short}\")"
+            },
+            {
+              "line": 195,
+              "text": "}"
+            }
+          ]
+        },
+        {
+          "role": "secrets-file-and-key-lookup",
+          "path": "codex-rs/secrets/src/local.rs",
+          "sha256": "d43996c83710542696da20117c6413a16615858a78c59bb9be3fafaee565bf2b",
+          "what": "The Secrets backend keeps the encrypted auth file under codex_home/secrets and looks its key up by compute_keyring_account(codex_home).",
+          "excerpt": [
+            {
+              "line": 42,
+              "text": "const CODEX_AUTH_SECRETS_FILENAME: &str = \"codex_auth.age\";"
+            },
+            {
+              "line": 150,
+              "text": "    fn secrets_dir(&self) -> PathBuf {"
+            },
+            {
+              "line": 151,
+              "text": "        self.codex_home.join(\"secrets\")"
+            },
+            {
+              "line": 152,
+              "text": "    }"
+            },
+            {
+              "line": 238,
+              "text": "        let account = compute_keyring_account(&self.codex_home);"
+            }
+          ]
+        },
+        {
+          "role": "keyring-backend-default",
+          "path": "codex-rs/config/src/types.rs",
+          "sha256": "c5a81049a05861c6a8a4ca7384f410ebcd4438e3712d31a32a32f888e1bb1a7a",
+          "what": "The default keyring backend: Secrets on Windows, Direct elsewhere. Both derive their keyring entry from codex_home.",
+          "excerpt": [
+            {
+              "line": 141,
+              "text": "pub enum AuthKeyringBackendKind {"
+            },
+            {
+              "line": 142,
+              "text": "    /// Store the serialized auth payload directly in the OS keyring."
+            },
+            {
+              "line": 143,
+              "text": "    Direct,"
+            },
+            {
+              "line": 144,
+              "text": "    /// Store auth payloads in the local encrypted secrets file, with the file key in the OS keyring."
+            },
+            {
+              "line": 145,
+              "text": "    Secrets,"
+            },
+            {
+              "line": 146,
+              "text": "}"
+            },
+            {
+              "line": 147,
+              "text": ""
+            },
+            {
+              "line": 148,
+              "text": "impl Default for AuthKeyringBackendKind {"
+            },
+            {
+              "line": 149,
+              "text": "    fn default() -> Self {"
+            },
+            {
+              "line": 150,
+              "text": "        if cfg!(windows) {"
+            },
+            {
+              "line": 151,
+              "text": "            Self::Secrets"
+            },
+            {
+              "line": 152,
+              "text": "        } else {"
+            },
+            {
+              "line": 153,
+              "text": "            Self::Direct"
+            },
+            {
+              "line": 154,
+              "text": "        }"
+            },
+            {
+              "line": 155,
+              "text": "    }"
+            }
+          ]
+        },
+        {
+          "role": "codex-home-from-env",
+          "path": "codex-rs/utils/home-dir/src/lib.rs",
+          "sha256": "1338259489ade54b01caa1468b6d25fc5a183657fa94cca0add8b91865635ef5",
+          "what": "codex_home is the CODEX_HOME environment variable when set (canonicalised; an error when missing or not a directory), else ~/.codex.",
+          "excerpt": [
+            {
+              "line": 13,
+              "text": "pub fn find_codex_home() -> std::io::Result<AbsolutePathBuf> {"
+            },
+            {
+              "line": 14,
+              "text": "    let codex_home_env = std::env::var(\"CODEX_HOME\")"
+            },
+            {
+              "line": 15,
+              "text": "        .ok()"
+            },
+            {
+              "line": 16,
+              "text": "        .filter(|val| !val.is_empty());"
+            },
+            {
+              "line": 17,
+              "text": "    find_codex_home_from_env(codex_home_env.as_deref())"
+            },
+            {
+              "line": 43,
+              "text": "                let canonical = path.canonicalize().map_err(|err| {"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
