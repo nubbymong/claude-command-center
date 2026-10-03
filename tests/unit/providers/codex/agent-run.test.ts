@@ -245,8 +245,10 @@ describe('the run', () => {
       // A ceiling far above any machine's time for 72 KB, only so that a
       // search that is not linear fails here at once rather than run on.
       expect(t1, small.slice(0, 12)).toBeLessThan(1_500)
-      let t4 = pushTime(big)
-      if (t4 >= FACTOR * Math.max(t1, FLOOR_MS)) t4 = Math.min(t4, pushTime(big))
+      // Best of three as for the small size (no need to go on once one is
+      // under the bound: the best can only fall).
+      let t4 = Infinity
+      for (let i = 0; i < 3 && t4 >= FACTOR * Math.max(t1, FLOOR_MS); i++) t4 = Math.min(t4, pushTime(big))
       expect(t4 / Math.max(t1, FLOOR_MS), `${small.slice(0, 12)}: ${t1.toFixed(1)} ms, then ${t4.toFixed(1)} ms`).toBeLessThan(FACTOR)
       const { deps, spawned } = fakeDeps()
       const said: string[] = []

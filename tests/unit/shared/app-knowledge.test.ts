@@ -567,7 +567,7 @@ describe('app knowledge after the PR 4 VM checkpoint (F1)', () => {
     const line = /On the Auto preset, Codex cannot use [^.]*\./.exec(k)?.[0] ?? ''
     const named: Record<string, RegExp> = {
       canvas_render: /the Agent Canvas render/, canvas_resolve: /resolving notes/, canvas_verdict: /verdicts/,
-      canvas_version_verdict: /verdicts/, canvas_pick: /picks/, canvas_complete: /marking a plan complete/,
+      canvas_version_verdict: /verdicts/, canvas_pick: /recording which option you chose/, canvas_complete: /marking a plan complete/,
       open_in_app_browser: /the push to the in-app browser/, fetch_host_screenshot: /the host screenshot fetch/,
       claude_review: /the Claude review/,
     }
