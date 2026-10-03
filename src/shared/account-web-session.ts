@@ -21,6 +21,8 @@
  * No default export (project convention).
  */
 
+import { isOpaqueId } from './providers/ids'
+
 /**
  * Where a web session came from. Recorded so a stale one can be explained.
  *   - `system-browser`: signed in via a launched Chrome/Edge, cookies read over
@@ -187,6 +189,32 @@ export function webPartitionForProfile(profileId: string): string {
  * the shape removes the ambiguity instead of teaching every consumer about it.
  */
 export const PROFILE_ID_RE = /^profile-[a-z0-9-]{1,64}$/
+
+/**
+ * The web-session id classes (WP2 PR 4, P4.6, row 58). A Claude account's
+ * web session is keyed by its account profile id (`profile`: PROFILE_ID_RE);
+ * a provider account the provider registry holds is keyed by its registry
+ * account id (`account`: `acct-<16..64 lowercase hex>`, the registry's own
+ * pattern, shared/providers/ids.ts). The two shapes cannot overlap, so an id
+ * names one class or neither, never both. Each class has its own partition
+ * prefix (the `account` class's builder lands with P4.6), and a builder for
+ * one class refuses an id of the other, as webPartitionForProfile already
+ * refuses an `account` id.
+ */
+export type WebSessionIdClass = 'profile' | 'account'
+
+/** True for a registry account id, the `account` class. */
+export function isWebSessionAccountId(id: unknown): id is string {
+  return isOpaqueId(id, 'account')
+}
+
+/** The class an id belongs to, or null when it is neither. */
+export function webSessionIdClass(id: unknown): WebSessionIdClass | null {
+  if (typeof id !== 'string') return null
+  if (PROFILE_ID_RE.test(id)) return 'profile'
+  if (isWebSessionAccountId(id)) return 'account'
+  return null
+}
 
 /** Hosts whose cookies are harvested. Nothing else is ever copied out of the browser. */
 export const CLAUDE_COOKIE_HOSTS = ['claude.ai', '.claude.ai'] as const

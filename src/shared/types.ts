@@ -468,6 +468,11 @@ export interface CloudAgent {
   profileId?: string
   /** Resolved account email at dispatch time. Drives the card label + account filter. */
   accountEmail?: string
+  /** The assistant this agent runs on (WP2 PR 4, P4.5, row 57). Absent on
+   *  every agent saved before PR 4, all of which ran Claude Code, so the field
+   *  is optional rather than defaulted and readers MUST treat undefined as
+   *  'claude'. */
+  provider?: ProviderId
   output: string
   cost?: number
   duration?: number
@@ -486,6 +491,10 @@ export interface InsightsRun {
   /** Account this run was generated for (multi-account). Undefined = default. */
   accountEmail?: string
   profileId?: string
+  /** The assistant whose sessions this run reports on (WP2 PR 4, P4.7, row
+   *  68). Absent on every run written before PR 4, all of them Claude Code's,
+   *  so readers MUST treat undefined as 'claude'. */
+  provider?: ProviderId
   /** Run completed but KPI extraction failed: report is viewable, no kpis.json. */
   kpisUnavailable?: boolean
   /**
@@ -558,6 +567,81 @@ export interface InsightsData {
 
 /** Alias for backward compatibility */
 export type KpiData = InsightsData
+
+// -- WP2 PR 4 shared scaffold (S0; completion plan 9.3 item 1) --
+//
+// The shapes the PR 4 channels carry, landed before any lane starts. The
+// handlers that produce and check them come with the phase each one serves.
+
+/** Why the submit primitive did not deliver a text into a session's prompt
+ *  (completion plan P4.1; P4.3 reuses it). What the primitive does before
+ *  it reports one (a take-back, or no further key) is P4.1's rule.
+ *  - `busy-timeout`: no ready, empty prompt within the wait's bound (a turn
+ *    still running);
+ *  - `prompt-on-screen`: a trust prompt, a setup menu or an approval form
+ *    was on screen, before the write or on the re-read after it;
+ *  - `too-tall`: the text is visible but taller than the prompt at this
+ *    pane size, so it cannot be confirmed on screen;
+ *  - `not-drawn`: the text was never drawn within its bound;
+ *  - `refused-text`: the text holds a control character or a character the
+ *    prompt cannot take (outside the Basic Multilingual Plane);
+ *  - `session-gone`: the session ended or was replaced meanwhile. */
+export type SubmitNotDeliveredReason = 'busy-timeout' | 'prompt-on-screen' | 'too-tall' | 'not-drawn' | 'refused-text' | 'session-gone'
+
+/** The submit primitive's answer: typed and submitted, confirmed on screen,
+ *  or not delivered and why. */
+export type SubmitTextResult = { delivered: true } | { delivered: false; reason: SubmitNotDeliveredReason }
+
+/** Ask Conductor's one-line notices from main, drawn in the dock (P4.3):
+ *  `removed` counts the characters taken out of a question before it was
+ *  typed, because the prompt would have dropped them (question 6, default
+ *  A); `not-delivered` says the question was not sent and why, and the dock
+ *  keeps the question. */
+export type AskConductorNotice =
+  | { sessionId: string; kind: 'removed'; count: number }
+  | { sessionId: string; kind: 'not-delivered'; reason: SubmitNotDeliveredReason }
+
+/** A queued Agent Canvas marker the submit primitive could not deliver
+ *  (P4.1): the line as the canvas filed it, so the canvas can show it on the
+ *  review it belongs to. */
+export interface CanvasMarkerUndelivered {
+  sessionId: string
+  canvasId: string
+  line: string
+  reason: SubmitNotDeliveredReason
+}
+
+/** Whether a session's launch carried the Agent Canvas and vision skills'
+ *  guidance with the tools (P4.1, question 5). `full`: the guidance came
+ *  with them. `tools-only`: the tools and their descriptions came without
+ *  it, and why, for the canvas page's one line:
+ *  - `npm-route`: a launch route that takes no launch setting holding a space;
+ *  - `user-instructions`: a settings file the assistant reads already names
+ *    developer instructions, which the app never replaces;
+ *  - `unknown-settings`: where the assistant's managed settings live could
+ *    not be established for the installed version, so nothing was passed. */
+export type CanvasSessionGuidance =
+  | { guidance: 'full' }
+  | { guidance: 'tools-only'; reason: 'npm-route' | 'user-instructions' | 'unknown-settings' }
+
+/** One of a provider account's own log folders (P4.4, row 56): `log`, the
+ *  account's log folder, where the sign-in log always lands; `log-dir`, the
+ *  folder its settings name for the session log, when they name one. Kinds,
+ *  never paths: main resolves the folder from the account id. */
+export type AccountLogFolderKind = 'log' | 'log-dir'
+
+/** The log folders a provider account has, by kind. */
+export interface AccountLogFolders {
+  accountId: string
+  folders: AccountLogFolderKind[]
+}
+
+/** Opening one: refused for an unknown account, a kind the account does
+ *  not have, or a folder main will not open (not a local directory, or a
+ *  link or junction), and not found when the folder is not there. */
+export type AccountLogFolderOpenResult =
+  | { ok: true }
+  | { ok: false; code: 'unknown-account' | 'not-set' | 'refused' | 'not-found' }
 
 // ── Cross-account insights (aggregate runs) ──
 // A cross-account roll-up keeps NUMBERS and PROSE strictly separate: every value

@@ -14,7 +14,7 @@ import { isValidLegacyVersion } from '../shared/legacy-version'
 import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles, isValidProfileId } from './account-profiles'
 import { withProfileHome } from './pty-manager'
 import { gateManagedLaunch } from './managed-launch-diagnostics'
-import type { ProjectGateResult, ProviderLaunchRefused } from '../shared/providers'
+import type { ProjectGateResult, ProviderLaunchRefused, ProviderId } from '../shared/providers'
 import { acquireProfileConsumer, waitForProfileRefresh } from './profile-consumers'
 import { providerLaunchRefusal } from './provider-launch-gate'
 import { randomId } from '../shared/id'
@@ -32,6 +32,10 @@ export interface CloudAgentData {
   profileId?: string
   /** Resolved account email at dispatch time. Drives the card label + account filter. */
   accountEmail?: string
+  /** The assistant this agent runs on (WP2 PR 4, P4.5, row 57). Absent on
+   *  every agent saved before PR 4, all of which ran Claude Code: readers
+   *  MUST treat undefined as 'claude'. */
+  provider?: ProviderId
   output: string
   cost?: number
   duration?: number
