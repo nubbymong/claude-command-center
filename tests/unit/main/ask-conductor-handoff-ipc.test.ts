@@ -12,7 +12,6 @@
 //    kept (review RASK-1; pty-manager holds a resumed conversation to it,
 //    ask-launch-folder.test.ts).
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import * as path from 'path'
 
 const h = vi.hoisted(() => ({
   handlers: new Map<string, (...a: unknown[]) => unknown>(),
@@ -54,6 +53,9 @@ vi.mock('../../../src/main/help-workspace', () => ({
     if (h.rebuildThrows) throw h.rebuildThrows
     return `${dir}/help`
   }),
+  // Review R-5: the help folder's one spelling, which pty:spawn must take from
+  // here (a stand-in value, so a folder spelled anywhere else shows).
+  helpWorkspaceDir: (dir: string) => `${dir}|THE-HELP-FOLDER`,
 }))
 vi.mock('../../../src/main/ipc/setup-handlers', () => ({ getResourcesDirectory: () => 'C:/res' }))
 vi.mock('../../../src/main/debug-capture', () => ({ logUserInput: vi.fn(), isDebugModeEnabled: () => false }))
@@ -100,8 +102,9 @@ beforeEach(() => {
 })
 
 /** What pty:spawn hands pty-manager to end before the rebuild: the help folder
- *  of the resources folder (ensureHelpWorkspace's own `<resources>/help`). */
-const END = `end ${path.join('C:/res', 'help')}`
+ *  as help-workspace spells it (helpWorkspaceDir, the spelling
+ *  ensureHelpWorkspace rebuilds; help-workspace-skill.test.ts pins the two). */
+const END = 'end C:/res|THE-HELP-FOLDER'
 const REBUILD = 'rebuild C:/res 9.9.9-test'
 
 describe('askConductor:handOff', () => {
@@ -228,5 +231,25 @@ describe('the Ask spawn starts in the folder just rebuilt (P4.3 review RASK-1)',
     await spawn({}, SID, { cwd: kept, isAsk: true, provider: 'codex', codexOptions: { permissionsPreset: 'read-only' } })
     await spawn({}, SID, { cwd: kept, isAsk: true, useResumePicker: true, resume: { uuid: '11111111-2222-3333-4444-555555555555', cwd: kept ?? 'D:/x' } })
     expect(h.spawned.map((o) => o?.cwd)).toEqual(['C:/res/help', 'C:/res/help', 'C:/res/help'])
+  })
+})
+
+describe('an opening question reaches a spawn only when it is made as Ask Conductor (review R-3)', () => {
+  const ASSISTANTS: Array<[string, Record<string, unknown>]> = [['Claude Code', {}], ['Codex', { provider: 'codex', codexOptions: { permissionsPreset: 'standard' } }]]
+
+  it.each(ASSISTANTS)('[host] %s: a launch that is not Ask\'s gets no question, and the log says so in a fixed sentence', async (_name, extra) => {
+    const { logWarn } = await import('../../../src/main/debug-logger')
+    vi.mocked(logWarn).mockClear()
+    await spawn({}, SID, { cwd: 'C:/dev/project', askPrompt: 'type this PLANTEDWORD', ...extra })
+    expect(h.spawned).toHaveLength(1)
+    expect(h.spawned[0]).not.toHaveProperty('askPrompt')
+    const logged = vi.mocked(logWarn).mock.calls.map((c) => String(c[0]))
+    expect(logged).toContain(`[pty] Session ${SID}: an opening question on a launch that is not Ask Conductor's is dropped`)
+    expect(logged.join('\n')).not.toContain('PLANTEDWORD')
+  })
+
+  it.each(ASSISTANTS)('[host] %s: an Ask launch keeps its question', async (_name, extra) => {
+    await spawn({}, SID, { cwd: 'C:/res/help', isAsk: true, askPrompt: 'how do I add an account?', ...extra })
+    expect(h.spawned[0]?.askPrompt).toBe('how do I add an account?')
   })
 })

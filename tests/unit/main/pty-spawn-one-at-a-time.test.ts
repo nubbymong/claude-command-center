@@ -54,7 +54,7 @@ vi.mock('../../../src/main/services/pty-integrity-monitor', () => ({ getPtyInteg
 vi.mock('../../../src/main/canvas/canvas-session-link', () => ({ noteSessionSpawnForCanvas: vi.fn() }))
 // WP2 PR 4, P4.3: every Ask spawn rebuilds the help folder in main first (and
 // fails closed); here it stands in, so no real folder is written.
-vi.mock('../../../src/main/help-workspace', () => ({ ensureHelpWorkspace: vi.fn(() => '/res/help') }))
+vi.mock('../../../src/main/help-workspace', () => ({ ensureHelpWorkspace: vi.fn(() => '/res/help'), helpWorkspaceDir: (dir: string) => `${dir}/help` }))
 vi.mock('../../../src/main/ipc/setup-handlers', () => ({ getResourcesDirectory: () => '/res' }))
 let configsOnDisk: unknown = null
 vi.mock('../../../src/main/config-manager', () => ({ readConfig: (key: string) => (key === 'configs' ? configsOnDisk : null) }))

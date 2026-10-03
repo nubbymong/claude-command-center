@@ -1,10 +1,9 @@
 import { ipcMain, BrowserWindow, app } from 'electron'
 import { z } from 'zod'
 import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemoteDetailed, probeTmuxLive, holdsCodexLaunchLease, codexLaunchLeaseTaken, beginSpawnPreparation, isSessionWritable, isSessionLiveOrStarting, SSHOptions, SshEndTarget, getKeptCodexConversation, getKeptCodexConversationSource, codexRunEnded, codexConversationHeldElsewhere, endAgentRunsInFolder } from '../pty-manager'
-import * as path from 'path'
 import type { CodexLaunch } from '../pty-manager'
 import { handOffAskQuestion } from '../pty-manager'
-import { ensureHelpWorkspace } from '../help-workspace'
+import { ensureHelpWorkspace, helpWorkspaceDir } from '../help-workspace'
 import { ASK_HELP_FOLDER_FAILED } from '../../shared/ask-conductor-provider'
 import { getResourcesDirectory } from './setup-handlers'
 import { getAccountsService } from '../provider-accounts'
@@ -906,6 +905,14 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
       let resolvedOptions: typeof options = options ? { ...options, terminalSecret: undefined, commandSecrets: undefined } : options
       if (resolvedOptions) {
         for (const mainInternal of MAIN_INTERNAL_SPAWN_FIELDS) delete (resolvedOptions as Record<string, unknown>)[mainInternal]
+        // Review R-3: an opening question rides only a launch made as Ask
+        // Conductor, on either assistant (each branch of pty-manager holds
+        // the same rule); on any other it is dropped here, and the log says
+        // so in a fixed sentence, never the question.
+        if (resolvedOptions.askPrompt !== undefined && resolvedOptions.isAsk !== true) {
+          logWarn(`[pty] Session ${sessionId}: an opening question on a launch that is not Ask Conductor's is dropped`)
+          delete (resolvedOptions as Record<string, unknown>).askPrompt
+        }
       }
       // An SSH block is bound to the config it names, ON DISK: the request must be
       // that config's own (host/port/username/remotePath/postCommand) or the spawn
@@ -1093,7 +1100,7 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
         // it is rebuilt. One still running at the bound: nothing starts, with
         // the same fixed sentence.
         let ended = false
-        try { ended = await endAgentRunsInFolder(path.join(resourcesDir, 'help'), ASK_HELP_RUNS_END_WAIT_MS) } catch { ended = false }
+        try { ended = await endAgentRunsInFolder(helpWorkspaceDir(resourcesDir), ASK_HELP_RUNS_END_WAIT_MS) } catch { ended = false }
         if (preparation && !preparation.current) {
           logInfo(`[pty] Session ${sessionId}: closed or superseded while the help folder's runs ended -- not spawning`)
           codexLease?.release()

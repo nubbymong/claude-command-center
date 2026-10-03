@@ -231,6 +231,21 @@ describe('a launch through the resume picker (the VM checkpoint, F2)', () => {
     expect(h.decided[0]).toMatchObject({ external: true, route: 'direct', cliVersion: '0.155.1', home: externalHome, cwds: [project] })
     expect(h.built[0].useResumePicker).toBe(true)
     expect(h.built[0].developerInstructions).toBe('THE-DECIDED-GUIDANCE')
+    // Review RVMFIX-3: recorded as the picker delivers it, not as full: a new
+    // conversation it starts in this folder gets the guidance, a picked one
+    // keeps what it started with, one in another worktree gets none.
+    expect(codexSessionGuidance(SID)).toEqual({ guidance: 'picker' })
+  })
+
+  it('[host] a managed account through the picker: its staged skills reach any conversation, so full (review RVMFIX-3)', () => {
+    startPicker(managedHome, 'conductor-managed')
+    expect(h.built[0].developerInstructions).toBeUndefined()
+    expect(codexSessionGuidance(SID)).toEqual({ guidance: 'full' })
+  })
+
+  it('[host] this computer\'s own sign-in started directly: still full (review RVMFIX-3)', () => {
+    start(externalHome, 'external-default')
+    expect(h.built[0].developerInstructions).toBe('THE-DECIDED-GUIDANCE')
     expect(codexSessionGuidance(SID)).toEqual({ guidance: 'full' })
   })
 

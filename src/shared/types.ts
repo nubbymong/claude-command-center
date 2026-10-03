@@ -675,9 +675,15 @@ export interface CanvasMarkerUndelivered {
  *  - `skills-not-staged`: the skills could not be put in place (a managed
  *    account's skills folder is a link, a same-named skill folder is not the
  *    app's, or a write failed; on macOS and Linux, the app's plugin folder
- *    could not be written). */
+ *    could not be written).
+ *  `picker`: a launch through the resume picker on this computer's own
+ *  sign-in, whose guidance rides the launch's developer instructions: it
+ *  reaches only a new conversation the picker starts in the session's own
+ *  folder (a picked conversation keeps the instructions it started with, and
+ *  one started in another worktree gets none). */
 export type CanvasSessionGuidance =
   | { guidance: 'full' }
+  | { guidance: 'picker' }
   | { guidance: 'tools-only'; reason: 'npm-route' | 'user-instructions' | 'unknown-settings' | 'skills-not-staged' }
 
 /** One of a provider account's own log folders (P4.4, row 56): `log`, the
@@ -692,9 +698,11 @@ export interface AccountLogFolders {
   folders: AccountLogFolderKind[]
 }
 
-/** Opening one: refused for an unknown account, a kind the account does
- *  not have, or a folder main will not open (not a local directory, or a
- *  link or junction), and not found when the folder is not there. */
+/** Showing one (the account's log folder opened; a log_dir revealed in the
+ *  folder that holds it, never opened): refused for an unknown account, a
+ *  kind the account does not have, or a folder main will not show (not a
+ *  local directory, or a link or junction), and not found when the folder is
+ *  not there. */
 export type AccountLogFolderOpenResult =
   | { ok: true }
   | { ok: false; code: 'unknown-account' | 'not-set' | 'refused' | 'not-found' }

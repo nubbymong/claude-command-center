@@ -99,8 +99,7 @@ describe('a log_dir on a real link', () => {
     const showItemInFolder = vi.fn((_p: string) => {})
     const logs = path.join(tmp, 'tui-logs')
     fs.mkdirSync(logs)
-    const toml = (p: string) => `log_dir = ${JSON.stringify(p)}
-`
+    const toml = (p: string) => `log_dir = ${JSON.stringify(p)}\n`
     fs.writeFileSync(set.configFile, toml(logs))
     const d = { fs: realAccountFileFs, openPath, showItemInFolder, platform: process.platform }
     expect(await openAccountLogFolder({ accountId: 'acct-real', folder: 'log-dir' }, async () => [set], d)).toEqual({ ok: true })

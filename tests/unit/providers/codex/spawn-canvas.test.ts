@@ -308,6 +308,11 @@ describe('launch line budgets', () => {
       expect(out.commandLine).toContain(codexToolApprovalArg('canvas_snapshot'))
       expect(out.commandLine).not.toContain(codexToolApprovalArg('canvas_render'))
       expect(logWarn).toHaveBeenCalledWith(expect.stringMatching(/per-preset tool approvals are left off/))
+      // Review RVMFIX-2: the keys exist only under Unrestricted, which never
+      // asks; without them those tools are refused, not asked about.
+      const said = logWarn.mock.calls.map((c) => String(c[0])).find((m) => /per-preset tool approvals are left off/.test(m))!
+      expect(said).toMatch(/other than canvas_snapshot and canvas_review are refused/)
+      expect(said).not.toMatch(/\bask/)
     })
   })
 })

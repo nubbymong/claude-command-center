@@ -5112,6 +5112,9 @@ function spawnPtyResolved(
         // flagsForFolder), so a picker launch is decided for that folder, as
         // a direct one is.
         startFolders: [resolvedCwd, ...(resumeTarget?.cwd ? [resumeTarget.cwd] : [])],
+        // Review RVMFIX-3: and the canvas page is told which conversations
+        // the picker's guidance reaches.
+        picker: options?.useResumePicker === true,
         env: launch.env,
       })
       const codexSpawnOptions: SpawnOptions = {
@@ -5406,6 +5409,11 @@ function spawnPtyResolved(
       claudeSpawnSettings?.theme,
       nativeTheme.shouldUseDarkColors,
     )
+    // Review R-3: as the Codex branch, an opening question is honoured only on
+    // a launch made as Ask Conductor (pty:spawn drops it first); on any other
+    // it is ignored, and the log says so in a fixed sentence.
+    const claudeAskPrompt = options?.isAsk === true ? options?.askPrompt : undefined
+    if (options?.askPrompt && options?.isAsk !== true) logWarn(`[pty-manager] Claude ${sessionId}: an opening question on a launch that is not Ask Conductor's is ignored`)
     const { cmd: spawnCmd, args: spawnArgs, env: spawnEnv } = provider.buildSpawnCommand({
       sessionId,
       cwd: options?.cwd,
@@ -5425,7 +5433,7 @@ function spawnPtyResolved(
       clickableQuestions,
       disableBackgroundTasks,
       hostColorScheme,
-      askPrompt: options?.askPrompt,
+      askPrompt: claudeAskPrompt,
     })
     const wantProfileId = options?.profileId
     // Validate before the join. This is the FOURTH site with the resolver shape,
