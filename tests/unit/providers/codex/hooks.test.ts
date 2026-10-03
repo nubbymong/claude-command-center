@@ -75,6 +75,24 @@ function makeRoot(): string {
   return root
 }
 
+/** A folder's identity (its volume and inode number). */
+const folderId = (d: string): string => { const st = fs.lstatSync(d, { bigint: true }); return `${st.dev}:${st.ino}` }
+
+/** The empty folder at `dir` removed and made again: another folder on every
+ *  file system. The new one is made beside it while it still exists (`fill`
+ *  writes into it), then renamed into its place. Removing a folder and making
+ *  it again at once is not enough: ext4 hands the freed inode number straight
+ *  to the next folder, so on Linux it would carry the first one's identity. */
+function makeFolderAgain(dir: string, fill?: (d: string) => void): void {
+  const before = folderId(dir)
+  const next = `${dir}.next`
+  fs.mkdirSync(next)
+  fill?.(next)
+  fs.rmdirSync(dir)
+  fs.renameSync(next, dir)
+  expect(folderId(dir)).not.toBe(before)
+}
+
 /** The owner-only rule as the real one behaves for the folder order
  *  (src/main/owner-only-folders.ts): each folder in turn; a link is refused,
  *  and so is a folder below a refused one, or below an earlier folder of the
@@ -216,9 +234,7 @@ describe('writeCodexHookFile / removeCodexHookFile', () => {
     const root = makeRoot()
     const h = writeCodexHookFile('sess-3', 51234, TOKEN, root)!
     fs.unlinkSync(h.file)
-    fs.rmdirSync(h.dir)
-    fs.mkdirSync(h.dir)
-    fs.writeFileSync(h.file, 'someone else')
+    makeFolderAgain(h.dir, (d) => fs.writeFileSync(path.join(d, path.basename(h.file)), 'someone else'))
     removeCodexHookFile(h)
     expect(fs.readFileSync(h.file, 'utf8')).toBe('someone else')
   })
@@ -454,8 +470,7 @@ describe('round 4: preparing the hook folders', () => {
     expect((await prepareCodexHookFolders(plan, r.secure)).root).toBe(true)
     expect(r.calls).toHaveLength(1)
     // Removed and made again: another folder, not ready until prepared again.
-    fs.rmdirSync(root)
-    fs.mkdirSync(root)
+    makeFolderAgain(root)
     expect(preparedCodexHookRoot(data)).toBeNull()
     expect((await prepareCodexHookFolders(plan, r.secure)).root).toBe(true)
     expect(r.calls).toHaveLength(2)
