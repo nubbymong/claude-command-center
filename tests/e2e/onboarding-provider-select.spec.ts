@@ -73,6 +73,11 @@ function installStandInClaude(dir: string): string {
     fs.writeFileSync(path.join(dir, 'claude.cmd'), ['@ECHO off', `"${process.execPath}" "%~dp0stand-in-claude.js" %*`, ''].join('\r\n'))
   } else {
     fs.writeFileSync(path.join(dir, 'claude'), `#!${process.execPath}\nrequire(${JSON.stringify(path.join(dir, 'stand-in-claude.js'))})\n`, { mode: 0o755 })
+    // The app finds a CLI through a login shell on macOS and Linux: a stand-in
+    // that keeps the PATH given here (as helpers/fake-codex.ts's does), so the
+    // user's own login shell never puts a real Claude or Codex back, with or
+    // without the fake Codex.
+    fs.writeFileSync(path.join(dir, 'login-shell'), '#!/bin/sh\n[ "$1" = "-l" ] && shift\nexec /bin/sh "$@"\n', { mode: 0o755 })
   }
   return dir
 }
@@ -95,9 +100,8 @@ async function launch(dataDir: string, withCodex: boolean): Promise<{ app: Elect
     env: isolatedLaunchEnv(dataDir, {
       PATH: pathWith(codexDir ? [claudeDir, codexDir] : [claudeDir]),
       CODEX_HOME: codexHome,
-      // The app finds a CLI through a login shell on macOS and Linux; the
-      // fake's stand-in shell keeps the PATH given here (helpers/fake-codex.ts).
-      ...(!IS_WIN && codexDir ? { SHELL: path.join(codexDir, 'login-shell') } : {}),
+      // The stand-in login shell on macOS and Linux, in every cell.
+      ...(!IS_WIN ? { SHELL: path.join(claudeDir, 'login-shell') } : {}),
     }),
   })
   const page = await app.firstWindow()

@@ -4,13 +4,13 @@ This file is evidence for WP1.1 and WP1.60 (`docs/wp1/evidence/mode-matrix.md`).
 - `tests/e2e/codex-session-creation.spec.ts`
 - `tests/e2e/codex-settings-section.spec.ts`
 
-The ledger also cites WP1.2. Its evidence is `docs/wp1/evidence/real-cli-matrix.md`, not this file.
+The ledger also cites WP1.2. Its real-CLI evidence is `docs/wp1/evidence/real-cli-matrix.md` (P4.10); this file holds WP1.2's two mode-matrix cells below (Codex only on a fresh install, and the minimum real launch).
 
 It is a partial record. WP1.1 and WP1.60 stay `planned` in the traceability manifest until the matrix below has a recorded VM run.
 
 ## The mode matrix (P4.9, PR 4, row 67)
 
-Every cell of WP1.60's matrix now has an e2e spec that drives it in the real app, and a contract test that checks the same cell against the accounts service's own rules (`tests/wp1/mode-matrix.test.ts`, host-safe, which also fails if a cell's spec is missing or not named here). The specs run on the Windows test VM only; they were written in PR 4 and have **not run yet**: they run in the VM e2e run at PR 4's final head, and their results go in a new record above the history below.
+Every cell of WP1.60's matrix now has an e2e spec that drives it in the real app. `tests/wp1/mode-matrix.test.ts` (host-safe) checks every cell but the minimum real launch against the accounts service's own rules, and fails if a cell's spec is missing or if the table below differs from its cells, items and specs. The minimum real launch has no accounts-service case: its contract half is its spec and P4.8's real-CLI conformance job (`docs/wp1/evidence/ci-matrix.md`); the same test checks the spec's first-screen reader on screen text rendered from the 9.2 probe captures. The specs run on the Windows test VM only; they were written in PR 4 and have **not run yet**: they run in the VM e2e run at PR 4's final head, and their results go in a new record above the history below.
 
 | Cell | Items | E2e spec (VM) | What it drives |
 |---|---|---|---|
@@ -22,12 +22,12 @@ Every cell of WP1.60's matrix now has an e2e spec that drives it in the real app
 | Enable and disable round trips | WP1.60 | `tests/e2e/codex-mode-enable-disable.spec.ts` | The in-use refusal while a tab runs; off, the config says why and a restart reads Not started; on again, the restart starts it; off at the next start, the restored tab reads Not started until Codex is on and the tab restarted. |
 | Minimum real launch | WP1.60, WP1.2 | `tests/e2e/codex-real-launch.spec.ts` | The real Codex 0.153.4 and 0.155.1 in a Codex tab, no sign-in (a fake API key), the loopback fake model: the first screens answered by the 9.2 rules, a ready composer, one prompt answered, and the account's `config.toml` changed only by those answers. |
 
-The fake-CLI specs use the e2e fake Codex (`tests/e2e/helpers/fake-codex.ts`), which stands in for Codex's TUI when the app starts a session and records each start beside itself. `tests/e2e/helpers/codex-mode.ts` holds what the mode specs share.
+The fake-CLI specs use the e2e fake Codex (`tests/e2e/helpers/fake-codex.ts`), which stands in for Codex's TUI when the app starts a session and records each start beside itself. `tests/e2e/helpers/codex-mode.ts` holds what the mode specs share, and `tests/e2e/helpers/codex-first-screens.ts` how the real launch reads Codex's first screens: the live screen is the lowest title on screen, Enter goes only on the verified selected row of that screen's own menu, each screen is answered once, and ready needs Codex's placeholder in the composer above its footer (during the sandbox set-up the composer reads "Input disabled until setup completes." over the same footer).
 
 What the VM run must give:
 - the spec list from `git ls-files tests/e2e/*.spec.ts` (26 specs with these four), passed explicitly, never a bare `npx playwright test`;
 - for `codex-real-launch.spec.ts`, which is skipped without them:
-  - `CCC_E2E_REAL_CODEX`: the installs, `<version>=<absolute path>` joined by `;`, for example the npm `codex.cmd` of 0.153.4 and the `codex.exe` 0.155.1 ships (both routes are then covered);
+  - `CCC_E2E_REAL_CODEX`: the installs, `<version>=<absolute path>` joined by `;`, for example the npm `codex.cmd` of 0.153.4 and the `codex.exe` 0.155.1 ships (both routes are then covered). Given, it must name both versions, each an existing file, or the spec fails;
   - `CCC_E2E_FAKE_MODEL_URL`: the loopback fake model's base URL, the fake model already running on the VM (9.2, report item 17);
 - the isolation below (a fake home, `CODEX_HOME` and `CLAUDE_CONFIG_DIR` cleared). No spec starts Codex on, or writes into, the VM user's own `~/.codex`.
 

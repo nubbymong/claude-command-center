@@ -16,11 +16,12 @@
 // What it checks, P3.1's no-sign-in checks run against the real CLI:
 //   1. detection: discovery through the app's runner (cmd.exe and the npm
 //      shim on Windows), and the app's own PATH resolution;
-//   2. every flag of the constant command lines the app runs is in the real
-//      help of the subcommand it names;
+//   2. every flag of the constant command lines the app runs is defined in
+//      the real help of the subcommand it names, and that help is the
+//      subcommand's own (its Usage line names it);
 //   3. the model list (`codex debug models --bundled`) through the app's own
 //      reader, covered by the model registry, and equal to the recorded list
-//      for the minimum and pinned versions;
+//      for the minimum and pinned versions (its own case, two soft checks);
 //   4. `codex features list` names every feature the analysis run turns off;
 //   5. help: every P3.1 capture made again and written to the run's artifacts,
 //      compared with the normalised fixture. Reported, not asserted, until
@@ -43,7 +44,7 @@ import { evaluateCodexModelCoverage, type ModelRegistry } from '../../src/shared
 import registryJson from '../../resources/model-registry.json'
 import {
   HELP_CAPTURES, formatCapture, compareCapture, parseCapture, parseFeaturesList, argvShape, flagsMissingFromHelp,
-  disabledFeatures, expectedVersion,
+  helpNamesSubcommand, disabledFeatures, expectedVersion,
 } from './codex-conformance-lib'
 
 const BIN = process.env.CCC_CODEX_CONFORMANCE_BIN ?? ''
@@ -106,6 +107,9 @@ function recordedModelIds(version: string): string[] | null {
 
 describe.skipIf(!LIVE)(`the real Codex CLI, no sign-in (${OS_TAG}, ${KIND || '?'} ${VERSION || '?'})`, () => {
   beforeAll(() => {
+    // The install's folder first on PATH, as a user's install puts it, for
+    // the app's own resolution (`where` on Windows, a login shell elsewhere).
+    process.env.PATH = `${path.dirname(BIN)}${path.delimiter}${process.env.PATH ?? ''}`
     fs.mkdirSync(path.join(OUT, 'help'), { recursive: true })
     note(`Codex ${VERSION} (${KIND}) on ${OS_TAG}; executable ${path.basename(BIN)}${PROVE_RED ? '; PROVE RED: every check runs against a wrong expectation' : ''}`)
   })
@@ -140,18 +144,23 @@ describe.skipIf(!LIVE)(`the real Codex CLI, no sign-in (${OS_TAG}, ${KIND || '?'
   }, CASE_MS)
 
   it("detection (row 2): the app's own PATH resolution finds the install, and its discovery reads the same version", async () => {
-    // The install's folder first on PATH, as a user's install puts it; the
-    // app resolves through `where` (Windows) or a login shell (macOS, Linux).
-    process.env.PATH = `${path.dirname(BIN)}${path.delimiter}${process.env.PATH ?? ''}`
-    const pkg = createCodexPackage({})
-    const r = await pkg.setup!.discover()
+    const r = await createCodexPackage({}).setup!.discover()
     note(`discovery by PATH: ${r.state}, ${r.executable ? path.basename(r.executable) : '-'}, version ${r.version ?? '-'}`)
     const version = PROVE_RED ? `${VERSION}-wrong` : VERSION
     expect(r, PROVE_RED ? WRONG : `discovery by PATH: ${JSON.stringify(r)}`).toMatchObject({ state: 'found', version })
     expect(fs.realpathSync.native(r.executable!)).toBe(fs.realpathSync.native(BIN))
+  }, CASE_MS)
 
-    // The model list (`codex debug models --bundled`) through the app's own
-    // reader, on the CLI that discovery just proved, in a fresh empty home.
+  // Its own case, so a red detection never hides it and the prove-red run
+  // names it: coverage and the recorded list are two soft checks, both
+  // reported in one run.
+  it('the model list (`codex debug models --bundled`) through the app reader: covered by the registry, and the recorded list', async () => {
+    // The CLI found as the app finds it (PATH); a prerequisite here, never
+    // flipped by prove-red, which the detection cases above own.
+    const pkg = createCodexPackage({})
+    const found = await pkg.setup!.discover()
+    expect(found, `discovery by PATH, for the model list: ${JSON.stringify(found)}`).toMatchObject({ state: 'found', version: VERSION })
+    // The app's reader runs it in a fresh empty home of its own.
     const cat = await pkg.setup!.modelCatalogue!()
     note(`model list: ${cat.ok ? cat.models.map((m) => m.id).join(', ') : `${cat.code}: ${cat.detail}`}`)
     expect(cat, `model list: ${JSON.stringify(cat)}`).toMatchObject({ ok: true, version: VERSION })
@@ -162,9 +171,10 @@ describe.skipIf(!LIVE)(`the real Codex CLI, no sign-in (${OS_TAG}, ${KIND || '?'
       : registry
     const coverage = evaluateCodexModelCoverage(tested, { source: `Codex ${VERSION}`, models: cat.models.map((m) => ({ id: m.id, label: m.label })) })
     note(`registry coverage: ${coverage.ok ? 'ok' : coverage.reason}; missing ${coverage.missing.map((m) => m.id).join(', ') || 'none'}; not listed by this CLI ${coverage.extra.map((m) => m.id).join(', ') || 'none'}`)
-    expect(coverage.ok, PROVE_RED ? WRONG : `${coverage.reason}: ${coverage.missing.map((m) => m.id).join(', ')}`).toBe(true)
+    expect.soft(coverage.ok, `model list, registry coverage: ${PROVE_RED ? WRONG : `${coverage.reason}: ${coverage.missing.map((m) => m.id).join(', ')}`}`).toBe(true)
     const recorded = recordedModelIds(VERSION)
-    if (recorded) expect(cat.models.map((m) => m.id)).toEqual(PROVE_RED ? [...recorded, 'gpt-wrong'] : recorded)
+    note(`recorded list: ${recorded ? (recorded.join(',') === cat.models.map((m) => m.id).join(',') ? 'equal' : 'differs') : `none recorded for ${VERSION}`}`)
+    if (recorded) expect.soft(cat.models.map((m) => m.id), `model list, the recorded list for ${VERSION}${PROVE_RED ? `: ${WRONG}` : ''}`).toEqual(PROVE_RED ? [...recorded, 'gpt-wrong'] : recorded)
   }, CASE_MS)
 
   it('every flag of the command lines the app runs is in the real help of the subcommand it names', async () => {
@@ -172,12 +182,17 @@ describe.skipIf(!LIVE)(`the real Codex CLI, no sign-in (${OS_TAG}, ${KIND || '?'
     for (const op of OPERATIONS) {
       const { path: sub, flags } = argvShape(argvOf(op))
       const r = await run([...sub, '--help'])
-      expect(r.exitCode, `codex ${[...sub, '--help'].join(' ')}: ${r.stderr}`).toBe(0)
+      const shown = `codex ${sub.join(' ') || '(top level)'} --help`
+      if (r.exitCode !== 0) { missing.push(`${op}: ${shown} exited ${r.exitCode}: ${r.stderr.trim().slice(0, 200)}`); continue }
+      // The help must be the subcommand's own: a dropped subcommand can exit 0
+      // with the top-level help.
+      const named = PROVE_RED ? [...sub, 'no-such-subcommand-ccc'] : sub
+      if (!helpNamesSubcommand(named, r.stdout)) missing.push(`${op}: ${shown} is not the help of codex ${named.join(' ')} (its Usage line names another)`)
       const tested = PROVE_RED ? [...flags, '--no-such-flag-ccc'] : flags
-      for (const f of flagsMissingFromHelp(tested, r.stdout)) missing.push(`${op}: ${f} (codex ${sub.join(' ') || '(top level)'} --help)`)
+      for (const f of flagsMissingFromHelp(tested, r.stdout)) missing.push(`${op}: ${f} (${shown})`)
     }
-    note(`flags: ${missing.length === 0 ? 'every flag listed' : missing.join('; ')}`)
-    expect(missing, PROVE_RED ? WRONG : missing.join('\n')).toEqual([])
+    note(`flags: ${missing.length === 0 ? 'every flag defined, each in its subcommand help' : missing.join('; ')}`)
+    expect(missing, PROVE_RED ? `${WRONG}\n${missing.join('\n')}` : missing.join('\n')).toEqual([])
   }, CASE_MS)
 
   it('`codex features list` names every feature the analysis run turns off', async () => {

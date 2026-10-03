@@ -115,13 +115,32 @@ export function argvShape(argv: readonly string[]): { path: string[]; flags: str
   return { path, flags: [...new Set(flags)] }
 }
 
-/** The flags of `argv` that `help` does not list. A flag counts as listed
- *  when it stands as a word of its own (`-m,` `--sandbox <MODE>`), never as a
+const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/** The flags of `argv` that `help` does not define. A flag counts as defined
+ *  only on an option line of its own (`  -m, --model <MODEL>`,
+ *  `      --json`, `  -V, --version`), never when a line only mentions it in
+ *  prose (exec help's "pick the most recent with --last"), and never as a
  *  piece of a longer one (`--json` inside `--json-schema`). */
 export function flagsMissingFromHelp(flags: readonly string[], help: string): string[] {
   const text = normaliseCapture(help)
-  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return flags.filter((f) => !new RegExp(`(^|[\\s,\\[])${esc(f)}(?![A-Za-z0-9_-])`, 'm').test(text))
+  return flags.filter((f) => {
+    const option = f.startsWith('--')
+      ? `^[ \\t]+(?:-[A-Za-z0-9], )?${esc(f)}(?![A-Za-z0-9_-])`
+      : `^[ \\t]+${esc(f)}(?:,|[ \\t]|$)`
+    return !new RegExp(option, 'm').test(text)
+  })
+}
+
+/** Whether `help` is the help of the subcommand `path`: its Usage line names
+ *  that path after the program (`Usage: codex app-server [OPTIONS]`). A
+ *  subcommand a release dropped can still exit 0 with the TOP-LEVEL help
+ *  (0.155.1's `mcp-server --help` does), which names no path; an operation
+ *  that passes no flag (logout, app-server) would otherwise pass on exit 0
+ *  alone. The top level (an empty path) needs nothing. */
+export function helpNamesSubcommand(path: readonly string[], help: string): boolean {
+  if (path.length === 0) return true
+  return new RegExp(`^Usage: \\S+ ${path.map(esc).join(' ')}(?= |$)`, 'm').test(normaliseCapture(help))
 }
 
 /** The features the analysis argv turns off (`--disable <name>`). */
