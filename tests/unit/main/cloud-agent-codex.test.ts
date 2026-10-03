@@ -102,7 +102,12 @@ const {
 } = await import('../../../src/main/cloud-agent-manager')
 
 const tick = () => new Promise<void>((r) => setTimeout(r, 0))
-const PARAMS = { name: 'Tidy', description: 'Tidy the imports', projectPath: 'C:\\dev\\project', provider: 'codex' as const }
+// A full project path is the running platform's own (the manager's
+// isFullProjectPath): a drive or UNC path on Windows, a rooted path on macOS
+// and Linux. The other platform's form is not a full path here.
+const PROJECT = process.platform === 'win32' ? 'C:\\dev\\project' : '/home/dev/project'
+const FOREIGN_PROJECT = process.platform === 'win32' ? '/home/dev/project' : 'C:\\dev\\project'
+const PARAMS = { name: 'Tidy', description: 'Tidy the imports', projectPath: PROJECT, provider: 'codex' as const }
 const agentOf = (id: string) => listAgents().find((a) => a.id === id)!
 
 beforeEach(() => {
@@ -144,7 +149,7 @@ describe('a Codex agent', () => {
     await tick()
     expect(s.runs).toHaveLength(1)
     expect(s.runs[0].input).toMatchObject({
-      executable: 'C:\\Tools\\codex.exe', env: { CODEX_HOME: 'C:\\res\\codex-realms\\realm-1' }, cwd: 'C:\\dev\\project', prompt: 'Tidy the imports',
+      executable: 'C:\\Tools\\codex.exe', env: { CODEX_HOME: 'C:\\res\\codex-realms\\realm-1' }, cwd: PROJECT, prompt: 'Tidy the imports',
       skipPermissions: true, model: 'gpt-5.5', effort: 'high',
     })
     expect(mockSpawn).not.toHaveBeenCalled()
@@ -268,7 +273,7 @@ describe('a Codex agent', () => {
   })
 
   it('a project that is not a full path is failed before any account is prepared', async () => {
-    for (const projectPath of ['project', '.\\project', '\\project']) {
+    for (const projectPath of ['project', '.\\project', '\\project', FOREIGN_PROJECT]) {
       const a = await dispatchAgent({ ...PARAMS, projectPath })
       if (!('id' in a)) throw new Error('refused')
       expect(agentOf(a.id)).toMatchObject({ status: 'failed', error: 'The project folder must be a full path.' })
