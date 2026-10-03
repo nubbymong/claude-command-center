@@ -104,6 +104,10 @@ export function estimateComposerRows(text: string, cols: number): number {
 export interface ComposerSubmitDeps {
   /** The session's live screen now; null when it cannot be read. */
   readScreen: () => ScreenLine[] | null
+  /** Resolves once the screen has drawn everything the session has sent so
+   *  far (a pane parses its input a moment after it arrives), false when it
+   *  did not in time. Awaited before every read (ADR-009 round 1). */
+  settle?: () => Promise<boolean>
   /** The pane's size now. */
   size: () => { cols: number; rows: number }
   /** A raw write into this run's terminal, as one write. */
@@ -170,18 +174,28 @@ export async function submitToCodexComposer(text: string, deps: ComposerSubmitDe
   if (submitTextRefusal(text)) return notDelivered('refused-text')
   const codePoints = [...text].length
   const folded = codePoints > SUBMIT_EXACT_MAX_CODE_POINTS
-  const read = (): ScreenLine[] | null => { try { return deps.readScreen() } catch { return null } }
+  // Every read waits for the screen to draw what the session has already
+  // sent: a prompt that arrived just before a read is on it (ADR-009 round 1).
+  // A screen not drawn in time gives no reading.
+  const read = async (): Promise<ScreenLine[] | null> => {
+    if (deps.settle) {
+      let drawn = false
+      try { drawn = (await deps.settle()) === true } catch { drawn = false }
+      if (!drawn) return null
+    }
+    try { return deps.readScreen() } catch { return null }
+  }
 
   // 2. The ready, empty composer, on two reads.
   const waitUntil = deps.now() + Math.max(0, opts.readyWaitMs)
   let last: Ready = 'waiting'
   for (;;) {
     if (!deps.live()) return notDelivered('session-gone')
-    last = readyState(read(), models)
+    last = readyState(await read(), models)
     if (last === 'ready') {
       await deps.sleep(SUBMIT_READY_SECOND_READ_MS)
       if (!deps.live()) return notDelivered('session-gone')
-      last = readyState(read(), models)
+      last = readyState(await read(), models)
       if (last === 'ready') break
     }
     if (deps.now() >= waitUntil) return notDelivered(last === 'blocked' ? 'prompt-on-screen' : 'busy-timeout')
@@ -198,7 +212,7 @@ export async function submitToCodexComposer(text: string, deps: ComposerSubmitDe
   deps.write(text)
   const wroteAt = deps.now()
   if (!deps.live()) return notDelivered('session-gone')
-  if (readyState(read(), models) === 'blocked') {
+  if (readyState(await read(), models) === 'blocked') {
     log('a prompt came up as the text was typed; no further key sent')
     return notDelivered('prompt-on-screen')
   }
@@ -209,7 +223,7 @@ export async function submitToCodexComposer(text: string, deps: ComposerSubmitDe
   for (;;) {
     await deps.sleep(SUBMIT_CONFIRM_POLL_MS)
     if (!deps.live()) return notDelivered('session-gone')
-    const screen = read()
+    const screen = await read()
     if (readyState(screen, models) === 'blocked') {
       log('a prompt came up before the text was confirmed; no further key sent')
       return notDelivered('prompt-on-screen')
@@ -230,7 +244,7 @@ export async function submitToCodexComposer(text: string, deps: ComposerSubmitDe
   const ingested = wroteAt + submitIngestionWindowMs(codePoints)
   if (deps.now() < ingested) await deps.sleep(ingested - deps.now())
   if (!deps.live()) return notDelivered('session-gone')
-  if (readyState(read(), models) === 'blocked') {
+  if (readyState(await read(), models) === 'blocked') {
     log('the text was not confirmed and a prompt is up; nothing taken back')
     return notDelivered('prompt-on-screen')
   }
@@ -239,7 +253,7 @@ export async function submitToCodexComposer(text: string, deps: ComposerSubmitDe
   for (;;) {
     await deps.sleep(SUBMIT_CONFIRM_POLL_MS)
     if (!deps.live()) return notDelivered('session-gone')
-    const screen = read()
+    const screen = await read()
     // Ready is ready AND empty (readyState).
     if (readyState(screen, models) === 'ready') break
     if (deps.now() >= clearUntil) {

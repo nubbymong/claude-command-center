@@ -12,6 +12,7 @@
 //    kept (review RASK-1; pty-manager holds a resumed conversation to it,
 //    ask-launch-folder.test.ts).
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import * as path from 'path'
 
 const h = vi.hoisted(() => ({
   handlers: new Map<string, (...a: unknown[]) => unknown>(),
@@ -19,6 +20,11 @@ const h = vi.hoisted(() => ({
   spawned: [] as Array<Record<string, unknown> | undefined>,
   rebuildThrows: null as Error | null,
   handOffs: [] as Array<{ sessionId: string; question: string }>,
+  // ADR-009 round 1: the runs in the help folder end, or do not, as each case says.
+  endAnswer: true,
+  endGate: null as Promise<void> | null,
+  prepCurrent: true,
+  prepared: [] as string[],
 }))
 vi.mock('electron', () => ({
   ipcMain: { handle: (ch: string, fn: (...a: unknown[]) => unknown) => { h.handlers.set(ch, fn) }, on: vi.fn() },
@@ -27,10 +33,19 @@ vi.mock('electron', () => ({
 }))
 vi.mock('../../../src/main/pty-manager', () => ({
   spawnPty: vi.fn((_win: unknown, _id: string, opts?: Record<string, unknown>) => { h.order.push('spawn'); h.spawned.push(opts) }), writePty: vi.fn(), resizePty: vi.fn(), killPty: vi.fn(), getSshFlow: vi.fn(), endSshRemote: vi.fn(),
-  beginSpawnPreparation: vi.fn(() => ({ current: true, spawn: (opts?: Record<string, unknown>) => { h.order.push('spawn'); h.spawned.push(opts) }, abandon: vi.fn() })),
+  beginSpawnPreparation: vi.fn((_win: unknown, id: string) => {
+    h.prepared.push(id)
+    return { get current() { return h.prepCurrent }, spawn: (opts?: Record<string, unknown>) => { h.order.push('spawn'); h.spawned.push(opts) }, abandon: vi.fn(() => { h.order.push('abandon') }) }
+  }),
   holdsCodexLaunchLease: () => false, codexLaunchLeaseTaken: () => false,
   isSessionLiveOrStarting: () => false, getKeptCodexConversationSource: () => undefined, getKeptCodexConversation: () => undefined,
   codexRunEnded: async () => true,
+  endAgentRunsInFolder: vi.fn(async (folder: string) => {
+    h.order.push(`end ${folder}`)
+    if (h.endGate) await h.endGate
+    h.order.push('ended')
+    return h.endAnswer
+  }),
   handOffAskQuestion: vi.fn(async (_win: unknown, sessionId: string, question: string) => { h.handOffs.push({ sessionId, question }); return { delivered: true } }),
 }))
 vi.mock('../../../src/main/help-workspace', () => ({
@@ -77,8 +92,17 @@ beforeEach(() => {
   h.spawned = []
   h.rebuildThrows = null
   h.handOffs = []
+  h.endAnswer = true
+  h.endGate = null
+  h.prepCurrent = true
+  h.prepared = []
   vi.mocked(ptyManager.handOffAskQuestion).mockClear()
 })
+
+/** What pty:spawn hands pty-manager to end before the rebuild: the help folder
+ *  of the resources folder (ensureHelpWorkspace's own `<resources>/help`). */
+const END = `end ${path.join('C:/res', 'help')}`
+const REBUILD = 'rebuild C:/res 9.9.9-test'
 
 describe('askConductor:handOff', () => {
   it('[host] is registered', () => {
@@ -110,20 +134,20 @@ describe('askConductor:handOff', () => {
 })
 
 describe('the help folder is rebuilt before every Ask spawn', () => {
-  it('[host] a Claude Ask spawn: rebuilt in main, then spawned', async () => {
+  it('[host] a Claude Ask spawn: the runs in the folder ended, rebuilt in main, then spawned', async () => {
     await spawn({}, SID, { cwd: 'C:/res/help', isAsk: true })
-    expect(h.order).toEqual(['rebuild C:/res 9.9.9-test', 'spawn'])
+    expect(h.order).toEqual([END, 'ended', REBUILD, 'spawn'])
   })
 
   it('[host] a Codex Ask spawn: rebuilt last, after the account is prepared, then spawned', async () => {
     await spawn({}, SID, { cwd: 'C:/res/help', isAsk: true, provider: 'codex', codexOptions: { permissionsPreset: 'standard' } })
-    expect(h.order).toEqual(['rebuild C:/res 9.9.9-test', 'spawn'])
+    expect(h.order).toEqual([END, 'ended', REBUILD, 'spawn'])
   })
 
   it('[host] a rebuild that fails starts nothing (fails closed)', async () => {
     h.rebuildThrows = new Error('EPERM')
     await expect(spawn({}, SID, { cwd: 'C:/res/help', isAsk: true, provider: 'codex', codexOptions: { permissionsPreset: 'standard' } })).rejects.toThrow(ASK_HELP_FOLDER_FAILED)
-    expect(h.order).toEqual(['rebuild C:/res 9.9.9-test'])
+    expect(h.order).toEqual([END, 'ended', REBUILD, 'abandon'])
   })
 
   it('[host] not for a session that is not Ask\'s, nor for the Ask tab\'s shell', async () => {
@@ -132,6 +156,48 @@ describe('the help folder is rebuilt before every Ask spawn', () => {
     expect(h.order).toEqual(['spawn', 'spawn'])
     // Their folders are their own.
     expect(h.spawned.map((o) => o?.cwd)).toEqual(['C:/dev/project', 'C:/res/help'])
+  })
+})
+
+describe('nothing still running writes into the help folder once it is rebuilt (ADR-009 round 1, L1-2)', () => {
+  const ASSISTANTS: Array<[string, Record<string, unknown>]> = [['Claude Code', {}], ['Codex', { provider: 'codex', codexOptions: { permissionsPreset: 'standard' } }]]
+
+  it.each(ASSISTANTS)('[host] %s: the rebuild waits until every run in the folder has ended', async (_name, extra) => {
+    let release!: () => void
+    h.endGate = new Promise<void>((r) => { release = r })
+    const started = spawn({}, SID, { cwd: 'C:/res/help', isAsk: true, ...extra }) as Promise<unknown>
+    await new Promise((r) => setTimeout(r, 20))
+    expect(h.order).toEqual([END])
+    release()
+    await started
+    expect(h.order).toEqual([END, 'ended', REBUILD, 'spawn'])
+  })
+
+  it.each(ASSISTANTS)('[host] %s: a run that does not end in time: nothing rebuilt, nothing started, the fixed sentence', async (_name, extra) => {
+    h.endAnswer = false
+    const thrown = await (spawn({}, SID, { cwd: 'C:/res/help', isAsk: true, ...extra }) as Promise<unknown>).then(() => null, (e: unknown) => e as Error)
+    expect(thrown).toBeInstanceOf(Error)
+    expect(thrown!.message).toBe(ASK_HELP_FOLDER_FAILED)
+    expect(h.order).toEqual([END, 'ended', 'abandon'])
+    expect(h.spawned).toEqual([])
+  })
+
+  it.each(ASSISTANTS)('[host] %s: closed while the runs ended: nothing rebuilt or started, and said so', async (_name, extra) => {
+    let release!: () => void
+    h.endGate = new Promise<void>((r) => { release = r })
+    const started = spawn({}, SID, { cwd: 'C:/res/help', isAsk: true, ...extra }) as Promise<unknown>
+    await new Promise((r) => setTimeout(r, 20))
+    h.prepCurrent = false
+    release()
+    expect(await started).toEqual({ started: false })
+    expect(h.order).toEqual([END, 'ended', 'abandon'])
+    expect(h.spawned).toEqual([])
+  })
+
+  it('[host] an Ask spawn of either assistant is prepared (the end of its previous run is the spawn\'s to supersede); another Claude spawn is not', async () => {
+    await spawn({}, SID, { cwd: 'C:/res/help', isAsk: true })
+    await spawn({}, 'askh3333askh3333askh3333', { cwd: 'C:/dev/project' })
+    expect(h.prepared).toEqual([SID])
   })
 })
 

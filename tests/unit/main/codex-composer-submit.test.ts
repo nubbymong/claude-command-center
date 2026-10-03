@@ -326,3 +326,62 @@ describe('busy, gone, refused', () => {
     expect(submitTextRefusal(`Approved v7 on the canvas ${DOT} canvas_version_verdict recorded`)).toBeNull()
   })
 })
+
+describe('every read waits for the screen to draw what the session has sent (ADR-009 round 1)', () => {
+  // A pane parses the session's output a moment after main receives it: the
+  // screen a read sees ("drawn") can be behind what has arrived ("received").
+  // `settle` draws everything received; a read before it would be stale.
+  const head = [plain('  Tip: New Build faster with Codex.')]
+  const footer = plain(`  gpt-5.5 medium ${DOT} C:\\dev\\demo`)
+  const READY_SCREEN: ScreenLine[] = [...head, { text: `${P} Ask Codex to do anything`, typed: P }, footer]
+  const TRUST_SCREEN: ScreenLine[] = [...head, plain('  Do you trust the contents of this directory?'), plain(`${P} 1. Yes, continue`), plain('  Press enter to continue')]
+
+  function lagging(opts: { onSleep?: (ms: number) => void; onWrite?: (data: string) => void; drawn?: boolean } = {}) {
+    let t = 0
+    let received = READY_SCREEN
+    let drawn = READY_SCREEN
+    let staleReads = 0
+    const writes: string[] = []
+    const logs: string[] = []
+    const deps: ComposerSubmitDeps = {
+      readScreen: () => { if (drawn !== received) staleReads++; return drawn },
+      settle: async () => {
+        if (opts.drawn === false) return false
+        drawn = received
+        return true
+      },
+      size: () => ({ cols: 80, rows: 24 }),
+      write: (data) => { writes.push(data); opts.onWrite?.(data) },
+      live: () => true,
+      now: () => t,
+      sleep: async (ms) => { t += Math.max(0, ms); opts.onSleep?.(ms) },
+      log: (msg) => { logs.push(msg) },
+    }
+    return { deps, writes, logs, receive: (lines: ScreenLine[]) => { received = lines }, get staleReads() { return staleReads } }
+  }
+
+  it('[host] a trust prompt that arrived before the second ready read stops it: nothing is typed', async () => {
+    let arrived = false
+    const s = lagging({ onSleep: () => { if (!arrived) { arrived = true; s.receive(TRUST_SCREEN) } } })
+    const r = await submitToCodexComposer('1 how do I add an account?', s.deps, { readyWaitMs: 2_000 })
+    expect(r).toEqual({ delivered: false, reason: 'prompt-on-screen' })
+    expect(s.writes).toEqual([])
+    expect(s.staleReads).toBe(0)
+  })
+
+  it('[host] a prompt that arrived as the text was typed is read by the read after the write: no further key', async () => {
+    const s = lagging({ onWrite: (data) => { if (data !== '\r') s.receive(TRUST_SCREEN) } })
+    const r = await submitToCodexComposer(MARKER, s.deps, { readyWaitMs: 2_000 })
+    expect(r).toEqual({ delivered: false, reason: 'prompt-on-screen' })
+    expect(s.writes).toEqual([MARKER])
+    expect(s.logs).toContain('a prompt came up as the text was typed; no further key sent')
+    expect(s.staleReads).toBe(0)
+  })
+
+  it('[host] a screen not drawn in time gives no reading: nothing is typed', async () => {
+    const s = lagging({ drawn: false })
+    const r = await submitToCodexComposer(MARKER, s.deps, { readyWaitMs: 1_000 })
+    expect(r).toEqual({ delivered: false, reason: 'busy-timeout' })
+    expect(s.writes).toEqual([])
+  })
+})

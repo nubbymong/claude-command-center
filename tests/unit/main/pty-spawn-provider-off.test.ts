@@ -37,6 +37,8 @@ vi.mock('../../../src/main/pty-manager', () => ({
   getKeptCodexConversationSource: () => undefined,
   getKeptCodexConversation: () => undefined,
   codexRunEnded: async () => true,
+  // ADR-009 round 1: no run is working in the help folder.
+  endAgentRunsInFolder: async () => true,
 }))
 vi.mock('../../../src/main/debug-capture', () => ({ logUserInput: vi.fn(), isDebugModeEnabled: () => false }))
 vi.mock('../../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }))

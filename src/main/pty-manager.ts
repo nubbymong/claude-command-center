@@ -973,22 +973,114 @@ function codexRunScreen(): SessionRunScreen | undefined {
  *  isAsk), the only ones a question is handed to (handOffAskQuestion). */
 const codexAskSessions = new Set<string>()
 
+/** A folder as spelled, with its separators normalised (on Windows `/` is
+ *  `\`; a run of them is one, a UNC path keeps its leading pair) and no
+ *  trailing separator. Nothing else is changed: no case folding, no `.` or
+ *  `..` resolved, no link followed. */
+function folderSpelling(p: string, platform: NodeJS.Platform = process.platform): string {
+  const win = platform === 'win32'
+  const sep = win ? '\\' : '/'
+  let s = win ? p.replace(/\//g, '\\') : p
+  const lead = s.startsWith(sep + sep) && win ? sep + sep : s.startsWith(sep) ? sep : ''
+  s = lead + s.slice(lead.length).split(sep).filter((part, i, all) => part !== '' || i === all.length - 1).join(sep)
+  while (s.length > lead.length && s.endsWith(sep) && !(win && /^[A-Za-z]:\\$/.test(s))) s = s.slice(0, -1)
+  return s
+}
+
 /**
  * WP2 PR 4, P4.3 review RASK-1: an Ask launch runs in the help folder main has
  * just rebuilt (pty:spawn makes it the launch's folder), on either assistant,
  * never in a conversation's own folder elsewhere. Whether `folder` (where a
- * resumed conversation ran) is that folder: by the real path when both exist,
- * else resolved; case-folded on Windows and macOS. A conversation from another
- * folder is not resumed: the launch starts fresh in the help folder.
+ * resumed conversation ran) is that folder, by its exact spelling (ADR-009
+ * round 1: folderSpelling, never case-folded, on every platform alike). A
+ * conversation from any other spelling is not resumed: the launch starts fresh
+ * in the help folder.
  */
 function askLaunchFolderHolds(folder: string | undefined, launchFolder: string): boolean {
   if (typeof folder !== 'string' || !folder) return false
+  return folderSpelling(folder) === folderSpelling(launchFolder)
+}
+
+/** ADR-009 round 1 (PR 4): the folder each local agent process was started
+ *  in, by process, until its exit is reported (a killed process stays here
+ *  while it winds down), and that exit. */
+const agentRunFolders = new Map<pty.IPty, { sessionId: string; folder: string; ended: Promise<void> }>()
+
+function noteAgentRunFolder(proc: pty.IPty, sessionId: string, folder: string): void {
+  let ended!: () => void
+  const done = new Promise<void>((resolve) => { ended = resolve })
+  agentRunFolders.set(proc, { sessionId, folder, ended: done })
+  try {
+    proc.onExit(() => { agentRunFolders.delete(proc); ended() })
+  } catch {
+    agentRunFolders.delete(proc)
+    ended()
+  }
+}
+
+/** Whether no process has this id any more (its exit may simply not have
+ *  been reported). Signal 0 only asks; an id that exists, or one that cannot
+ *  be asked about, is not gone. */
+function processGone(pid: unknown): boolean {
+  if (typeof pid !== 'number' || !Number.isSafeInteger(pid) || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return false
+  } catch (err) {
+    return (err as NodeJS.ErrnoException)?.code === 'ESRCH'
+  }
+}
+
+/** For ending runs, the same folder however it is spelled: by the real path
+ *  when it exists, case-folded where names are (Windows, macOS). Ending one
+ *  run too many is the safe side. */
+function sameFolderForEnding(folder: string, target: string): boolean {
   const canon = (p: string): string => {
     let out: string
     try { out = fs.realpathSync.native(p) } catch { out = path.resolve(p) }
     return process.platform === 'win32' || process.platform === 'darwin' ? out.toLowerCase() : out
   }
-  return canon(folder) === canon(launchFolder)
+  const f = canon(folder)
+  const t = canon(target)
+  return f === t || f.startsWith(t.endsWith(path.sep) ? t : t + path.sep)
+}
+
+/**
+ * ADR-009 round 1 (PR 4): before the help folder is rebuilt for an Ask launch,
+ * every local agent run (either assistant) started in it, or in a folder
+ * inside it, is ended -- the tab's own previous run included -- with the
+ * session's own kill (endLiveRun, as killPty ends a run, without cancelling a
+ * spawn the session is preparing), and its exit is waited for: nothing that
+ * is still running writes into the folder after it is rebuilt. A run already
+ * killed (a Restart's kill does not wait) is waited for too. True when every
+ * such run has ended within `timeoutMs` (one whose process id is gone by then
+ * counts as ended: its exit was not reported); false when one is still
+ * running, and then the caller starts nothing.
+ */
+export async function endAgentRunsInFolder(folder: string, timeoutMs: number): Promise<boolean> {
+  const runs: Array<[pty.IPty, { ended: Promise<void> }]> = []
+  for (const [proc, run] of [...agentRunFolders]) {
+    if (!sameFolderForEnding(run.folder, folder)) continue
+    if (ptySessions.get(run.sessionId)?.ptyProcess === proc) {
+      logInfo(`[pty] Session ${run.sessionId} runs in the help folder; it is ended before the folder is rebuilt`)
+      endLiveRun(run.sessionId)
+    }
+    runs.push([proc, run])
+  }
+  if (runs.length === 0) return true
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), Math.max(0, timeoutMs)) })
+  let allEnded: boolean
+  try {
+    allEnded = await Promise.race([Promise.all(runs.map(([, run]) => run.ended)).then(() => true), late])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+  if (allEnded) return true
+  const running = runs.filter(([proc]) => agentRunFolders.has(proc) && !processGone(proc.pid))
+  for (const [proc] of runs) if (!running.some(([p]) => p === proc)) agentRunFolders.delete(proc)
+  if (running.length > 0) logWarn(`[pty] ${running.length} run(s) in the help folder did not end within ${timeoutMs} ms`)
+  return running.length === 0
 }
 
 /** P3.10: a session's own hook named conversation `uuid`: P3.6's doubt
@@ -4991,6 +5083,11 @@ function spawnPtyResolved(
         if (!held) logInfo(`[pty-manager] Ask ${sessionId}: its conversation ran in another folder; started afresh in the help folder`)
         resumeTarget = held ? { uuid: resumeTarget.uuid, cwd: resolvedCwd } : undefined
       }
+      // ADR-009 round 1 (PR 4): an opening question is honoured only on a
+      // launch made as Ask Conductor; on any other it is ignored, and the log
+      // says so in a fixed sentence (never the question).
+      const askQuestion = options?.isAsk === true ? options?.askPrompt : undefined
+      if (options?.askPrompt && options?.isAsk !== true) logWarn(`[pty-manager] Codex ${sessionId}: an opening question on a launch that is not Ask Conductor's is ignored`)
       // WP2 PR 4, P4.1 (row 51): the Agent Canvas for this launch, as a Claude
       // session has it (canvas/codex-canvas-launch.ts): the worktree CCC
       // designates from the CONFIGURED folder, and the skills' guidance (a
@@ -5037,7 +5134,7 @@ function spawnPtyResolved(
         // after `--` on the direct route's fresh launch; otherwise typed
         // through the pane below), and on every Ask launch the scope of the
         // help folder's AGENTS.md (its byte bound, no parent folder's).
-        ...(options?.askPrompt ? { askPrompt: options.askPrompt } : {}),
+        ...(askQuestion ? { askPrompt: askQuestion } : {}),
         ...(options?.isAsk === true ? { askProjectDocMaxBytes: askConductorProjectDocMaxBytes() } : {}),
       }
       const built = provider.buildSpawnCommand(codexSpawnOptions)
@@ -5132,6 +5229,8 @@ function spawnPtyResolved(
         logInfo(`[pty-manager] Codex PTY for ${sessionId}: the bundled ConPTY failed to start; started on the system ConPTY`)
       }
       if (onBundledConpty) watchBundledConptyEarlyExit(sessionId, started)
+      // ADR-009 round 1 (PR 4): where this run works, until it has ended.
+      noteAgentRunFolder(started, sessionId, codexCwd)
       // WP2 PR 4, P4.1: main's own reading of this run's screen, for the
       // submit primitive (the package's runScreen), fed below through the
       // Watchdog's CSI clamp.
@@ -5156,7 +5255,6 @@ function spawnPtyResolved(
       // spawnPty has registered this run (below the provider branches).
       if (options?.isAsk === true) codexAskSessions.add(sessionId)
       else codexAskSessions.delete(sessionId)
-      const askQuestion = options?.askPrompt
       if (askQuestion && !built.askPromptOnArgv) setImmediate(() => { void deliverAskQuestion(win, sessionId, askQuestion) })
       // P3.12 (row 31): whatever an earlier launch of this session claimed is
       // not this run's; this launch's claims are held until its run is
@@ -5679,6 +5777,8 @@ function spawnPtyResolved(
         useConpty: true
       })
       localStarted = ptyProcess
+      // ADR-009 round 1 (PR 4): where this run works, until it has ended.
+      noteAgentRunFolder(ptyProcess, sessionId, claudeCwd)
 
       // B3: capture identity ONLY after the spawn succeeds — if pty.spawn throws,
       // no map entry is created (no leak), and shell-only sessions never reach
@@ -6789,6 +6889,13 @@ export function killPty(sessionId: string, opts: KillPtyOptions = {}): void {
       waiting.win.webContents.send(`pty:exit:${sessionId}`, -1)
     }
   }
+  endLiveRun(sessionId, opts)
+}
+
+/** The part of killPty that ends the session's running process and drops
+ *  what it held, leaving a spawn the session is preparing in place (ADR-009
+ *  round 1: endAgentRunsInFolder ends a run while its own respawn waits). */
+function endLiveRun(sessionId: string, opts: KillPtyOptions = {}): void {
   const entry = ptySessions.get(sessionId)
   // WP2: a killed Codex PTY keeps its account lease until its process has
   // ended (see releaseCodexLeaseOnExit); cleanupSessionResources below then

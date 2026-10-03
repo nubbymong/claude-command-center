@@ -206,6 +206,24 @@ describe('the opening question', () => {
     killPty(SID)
   })
 
+  it('[host] a launch not made as Ask Conductor: an opening question is ignored, and logged by a fixed sentence only (ADR-009 round 1)', async () => {
+    for (const carried of [true, false]) {
+      h.carried = carried
+      h.built = []
+      h.infos = []
+      start({ askPrompt: 'type this PLANTEDWORD please' })
+      expect(h.built[0]).not.toHaveProperty('askPrompt')
+      await tick(20)
+      expect(h.submits).toEqual([])
+      expect(h.ptyWrites.join('')).not.toContain('PLANTEDWORD')
+      expect(h.infos).toContain(`[pty-manager] Codex ${SID}: an opening question on a launch that is not Ask Conductor's is ignored`)
+      expect(h.infos.join('\n')).not.toContain('PLANTEDWORD')
+      // Nor does a later hand-off reach it: it is not an Ask session.
+      expect(await handOffAskQuestion(fakeWin, SID, 'and this')).toEqual({ delivered: false, reason: 'session-gone' })
+      killPty(SID)
+    }
+  })
+
   it('[host] the logs name the question by its length only', async () => {
     const q = 'my project is called ORCHIDWORD'
     start({ isAsk: true, askPrompt: q })

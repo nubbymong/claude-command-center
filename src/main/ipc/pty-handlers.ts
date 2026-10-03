@@ -1,6 +1,7 @@
 import { ipcMain, BrowserWindow, app } from 'electron'
 import { z } from 'zod'
-import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemoteDetailed, probeTmuxLive, holdsCodexLaunchLease, codexLaunchLeaseTaken, beginSpawnPreparation, isSessionWritable, isSessionLiveOrStarting, SSHOptions, SshEndTarget, getKeptCodexConversation, getKeptCodexConversationSource, codexRunEnded, codexConversationHeldElsewhere } from '../pty-manager'
+import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemoteDetailed, probeTmuxLive, holdsCodexLaunchLease, codexLaunchLeaseTaken, beginSpawnPreparation, isSessionWritable, isSessionLiveOrStarting, SSHOptions, SshEndTarget, getKeptCodexConversation, getKeptCodexConversationSource, codexRunEnded, codexConversationHeldElsewhere, endAgentRunsInFolder } from '../pty-manager'
+import * as path from 'path'
 import type { CodexLaunch } from '../pty-manager'
 import { handOffAskQuestion } from '../pty-manager'
 import { ensureHelpWorkspace } from '../help-workspace'
@@ -145,6 +146,11 @@ let codexLaunchSeq = 0
  *  carried: what a process still running writes after the copy would be
  *  lost. */
 export const CODEX_CARRY_EXIT_WAIT_MS = 5_000
+
+/** ADR-009 round 1 (PR 4): how long an Ask spawn waits for the runs working
+ *  in the help folder to end before it is rebuilt. Past it, with one still
+ *  running, the spawn starts nothing (fails closed). */
+export const ASK_HELP_RUNS_END_WAIT_MS = 5_000
 
 /** P3.6 (ADR-009 round 1, A6): how long a respawn waits for the copy itself.
  *  A copy of the largest rollout takes well under a second on a local disk;
@@ -863,7 +869,12 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     // The legacy pin is a Claude Code CLI: installed only for a Claude launch
     // the gate above let through, never for a shell or a Codex session.
     const legacyInstall = launchProvider === 'claude' && !!(options?.legacyVersion?.enabled && options.legacyVersion.version && !isVersionInstalled(options.legacyVersion.version))
-    const preparation = codexSession || legacyInstall ? beginSpawnPreparation(win, sessionId, options?.shellOnly ? null : (options?.provider ?? 'claude')) : null
+    // ADR-009 round 1 (PR 4): an Ask spawn waits too, for the runs in the help
+    // folder to end before it is rebuilt (below); while it waits, the end of
+    // the tab's own previous run is this spawn's to supersede, as a prepared
+    // Codex spawn's is.
+    const askSpawn = options?.isAsk === true && !options.shellOnly
+    const preparation = codexSession || legacyInstall || askSpawn ? beginSpawnPreparation(win, sessionId, options?.shellOnly ? null : (options?.provider ?? 'claude')) : null
     // PR-level ADR-009 round 1 (B1): once that preparation is cancelled or
     // superseded, this spawn's ticket stops counting as one under way.
     if (preparation) noteConfigLaunchPreparation(configClaim.ticket, () => preparation.current)
@@ -1074,10 +1085,28 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
       // Past discussions, an account switch's remount, a restored tab -- and
       // nothing a session wrote reaches the next. Fails closed: no rebuild, no
       // launch. Last before the spawn, after every wait above.
-      if (options?.isAsk === true && !options.shellOnly) {
+      if (askSpawn) {
+        const resourcesDir = getResourcesDirectory()
+        // ADR-009 round 1 (PR 4): first every run still working in the help
+        // folder (either assistant, the tab's own previous run included) is
+        // ended and its end waited for, bounded, so nothing writes there once
+        // it is rebuilt. One still running at the bound: nothing starts, with
+        // the same fixed sentence.
+        let ended = false
+        try { ended = await endAgentRunsInFolder(path.join(resourcesDir, 'help'), ASK_HELP_RUNS_END_WAIT_MS) } catch { ended = false }
+        if (preparation && !preparation.current) {
+          logInfo(`[pty] Session ${sessionId}: closed or superseded while the help folder's runs ended -- not spawning`)
+          codexLease?.release()
+          preparation.abandon()
+          return { started: false as const }
+        }
+        if (!ended) {
+          logWarn(`[pty] Session ${sessionId}: a run in the help folder did not end in time; Ask Conductor does not start`)
+          throw new Error(ASK_HELP_FOLDER_FAILED)
+        }
         let helpDir: string
         try {
-          helpDir = ensureHelpWorkspace(getResourcesDirectory(), { appVersion: app.getVersion() })
+          helpDir = ensureHelpWorkspace(resourcesDir, { appVersion: app.getVersion() })
         } catch {
           // A fixed sentence (review RASK-2): ensureHelpWorkspace has logged
           // the cause by its code; the error's own message never reaches the
