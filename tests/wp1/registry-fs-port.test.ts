@@ -1,6 +1,10 @@
 // WP1.27, WP1.4 -- WP2 slice 2 (plan A1): the REAL registry file port and the strict
 // profiles.json reader, against real files in a temp directory; and (commit 3)
 // the registry following a resources directory chosen after start.
+// WP1.26: the real port writes through the app's atomic write (staging, then a
+// rename) and reads it back before it counts; migration-interruption.test.ts
+// sweeps every interruption over a fake port that writes whole documents
+// only, and this file exercises the real port's write on a disk.
 //
 // HOST QUARANTINE: this suite writes files. It runs on the VM and in CI, never
 // on the owner's workstation. It touches no ACL, no junction and no real home.
