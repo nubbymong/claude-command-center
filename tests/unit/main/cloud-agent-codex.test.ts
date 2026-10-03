@@ -62,10 +62,12 @@ const s = vi.hoisted(() => ({
   prepareResult: null as null | Record<string, unknown>,
   prepareGate: null as null | Promise<void>,
   released: [] as string[],
+  /** Leases handed out and not yet released (what the accounts service counts in use). */
+  held: 0,
   runs: [] as Array<{ input: Record<string, unknown>; finish: (r: unknown) => void }>,
   noPort: false,
 }))
-const lease = (ownerId: string) => ({ id: 1, accountId: ACCT, providerId: 'codex', kind: 'background', ownerId, released: false, release: vi.fn(() => { s.released.push(ownerId) }) })
+const lease = (ownerId: string) => ({ id: 1, accountId: ACCT, providerId: 'codex', kind: 'background', ownerId, released: false, release: vi.fn(() => { s.released.push(ownerId); s.held-- }) })
 vi.mock('../../../src/main/provider-accounts', () => ({
   getAccountsService: () => ({
     launchRefusal: (id: string) => (id === 'codex' && s.codex === 'off' ? OFF : null),
@@ -77,6 +79,7 @@ vi.mock('../../../src/main/provider-accounts', () => ({
       if (s.offAfterPrepare) s.codex = 'off'
       if (s.prepareResult) return s.prepareResult
       const accountId = (input.providerAccountId as string | undefined) ?? ACCT
+      s.held++
       return {
         ok: true, lease: { ...lease(input.ownerId as string), accountId }, binding: { providerAccountId: accountId, authRealmId: 'realm-1' }, realmOnly: false,
         home: 'C:\\res\\codex-realms\\realm-1', executable: 'C:\\Tools\\codex.exe', env: { CODEX_HOME: 'C:\\res\\codex-realms\\realm-1' }, sessionsDir: 'x',
@@ -106,7 +109,7 @@ beforeEach(() => {
   mockSpawn.mockReset()
   writeConfig.mockClear()
   gateManagedLaunch.mockClear()
-  Object.assign(s, { codex: 'on', offAfterPrepare: false, prepared: 0, prepareInputs: [], prepareResult: null, prepareGate: null, released: [], runs: [], noPort: false })
+  Object.assign(s, { codex: 'on', offAfterPrepare: false, prepared: 0, prepareInputs: [], prepareResult: null, prepareGate: null, released: [], held: 0, runs: [], noPort: false })
   saved.agents = []
   _resetCloudAgentLatchForTest()
   initCloudAgentManager(() => null)
@@ -178,7 +181,8 @@ describe('a Codex agent', () => {
     expect(agentOf(a.id).output).toBe('first\n\npatch rejected: writing is blocked\n\nsecond')
     expect(chunks.join('')).toBe(agentOf(a.id).output)
     expect(s.released).toEqual([])
-    expect(countCodexAgentsInUse()).toBe(1)
+    // In use once, through its lease.
+    expect([s.held, countCodexAgentsInUse()]).toEqual([1, 0])
     s.runs[0].finish({ ok: true, usage: { inputTokens: 1200, cachedInputTokens: 200, outputTokens: 34 }, costUsd: 0.0021 })
     await tick()
     expect(agentOf(a.id)).toMatchObject({ status: 'completed', tokenUsage: { inputTokens: 1200, outputTokens: 34 }, cost: 0.0021 })
@@ -276,11 +280,56 @@ describe('a Codex agent', () => {
     const a = await dispatchAgent(PARAMS)
     if (!('id' in a)) throw new Error('refused')
     await tick()
-    expect(countCodexAgentsInUse()).toBe(1)
+    expect(s.held + countCodexAgentsInUse()).toBe(1)
     expect(countClaudeAgentsInUse()).toBe(0)
     s.runs[0].finish({ ok: true })
     await tick()
-    expect(countCodexAgentsInUse()).toBe(0)
+    expect(s.held + countCodexAgentsInUse()).toBe(0)
+  })
+
+  // [host] PR 4 review C-4: a running agent counted here AND through its
+  // lease, so a switch-off read "Codex is in use (2)" for one agent.
+  it('one agent counts once as Codex in use: here while its launch is prepared (no lease yet), through its lease from then on, until a kill still under way has ended', async () => {
+    const gate = deferred<void>()
+    s.prepareGate = gate.promise
+    const pending = dispatchAgent(PARAMS)
+    await tick()
+    expect([s.held, countCodexAgentsInUse()]).toEqual([0, 1])
+    gate.resolve()
+    const a = await pending
+    if (!('id' in a)) throw new Error('refused')
+    await tick()
+    expect([s.held, countCodexAgentsInUse()]).toEqual([1, 0])
+    expect(cancelAgent(a.id)).toBe(true)
+    const kill = deferred<void>()
+    s.runs[0].finish({ ok: false, code: 'cancelled', message: 'The agent was stopped.', killSettled: kill.promise })
+    await tick()
+    expect([s.held, countCodexAgentsInUse()]).toEqual([1, 0])
+    kill.resolve()
+    await tick()
+    expect([s.held, countCodexAgentsInUse()]).toEqual([0, 0])
+  })
+
+  // [host] PR 4 review C-2: a Stop in the run's settle window, after codex
+  // had exited on its own, left the finished run recorded as cancelled.
+  it('a Stop after the run had finished on its own: the run\'s own result stands (completed, or failed with its reason), not cancelled', async () => {
+    const a = await dispatchAgent(PARAMS)
+    if (!('id' in a)) throw new Error('refused')
+    await tick()
+    expect(cancelAgent(a.id)).toBe(true)
+    expect(agentOf(a.id).status).toBe('cancelled')
+    s.runs[0].finish({ ok: true, usage: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 2 } })
+    await tick()
+    expect(agentOf(a.id)).toMatchObject({ status: 'completed', tokenUsage: { inputTokens: 10, outputTokens: 2 } })
+    expect(agentOf(a.id).error).toBeUndefined()
+    expect(s.released).toEqual([`cloud-agent:${a.id}`])
+    const b = await dispatchAgent(PARAMS)
+    if (!('id' in b)) throw new Error('refused')
+    await tick()
+    expect(cancelAgent(b.id)).toBe(true)
+    s.runs[1].finish({ ok: false, code: 'failed', message: 'Codex exited with code 1: quota.' })
+    await tick()
+    expect(agentOf(b.id)).toMatchObject({ status: 'failed', error: 'Codex exited with code 1: quota.' })
   })
 
   it('Retry: the same task on the same account and options, the permission choice not kept, the acknowledgement only when asked', async () => {

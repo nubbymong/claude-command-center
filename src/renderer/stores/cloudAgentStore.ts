@@ -14,8 +14,11 @@ type FilterType = 'all' | 'running' | 'completed' | 'failed'
 // Each is refused while its own provider is off, and only by its own
 // provider's switch.
 
-/** The provider an agent runs on: absent on every agent saved before PR 4
- *  (and on an id this page does not know), all of which ran Claude Code. */
+/** The provider an agent runs on: absent on every agent saved before PR 4,
+ *  all of which ran Claude Code. Any other value is returned as it is: main
+ *  starts no agent of a provider it has no package for (the record fails),
+ *  and agentLaunchBlockedReason gates anything but Codex by Claude Code's
+ *  switch. */
 export function agentProviderOf(agent: Pick<CloudAgent, 'provider'> | null | undefined): ProviderId {
   return agent?.provider ?? 'claude'
 }

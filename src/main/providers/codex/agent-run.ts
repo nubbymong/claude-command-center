@@ -146,14 +146,24 @@ export function createCodexBackgroundOperations(deps: { platform?: NodeJS.Platfo
       const figures = { ...(out.usage ? { usage: out.usage } : {}), ...(typeof cost === 'number' && Number.isFinite(cost) && cost >= 0 ? { costUsd: cost } : {}) }
       // Only a stopped run can carry one: the lease is held until it ends.
       const kill = r.killSettled ? { killSettled: r.killSettled } : {}
-      if (r.stopped === 'cancel' || input.signal?.aborted) return { ok: false, code: 'cancelled', message: 'The agent was stopped.', ...figures, ...kill }
-      if (r.timedOut || r.stopped === 'deadline') return { ok: false, code: 'failed', message: 'The agent ran past the longest run this app allows.', ...figures, ...kill }
+      // Codex exited on its own, even if a stop came after (the settle
+      // window): its own exit code stands, not the stop.
+      const exitedOnItsOwn = typeof r.exitCode === 'number'
+      if (!exitedOnItsOwn && (r.stopped === 'cancel' || input.signal?.aborted)) return { ok: false, code: 'cancelled', message: 'The agent was stopped.', ...figures, ...kill }
+      if (!exitedOnItsOwn && (r.timedOut || r.stopped === 'deadline')) return { ok: false, code: 'failed', message: 'The agent ran past the longest run this app allows.', ...figures, ...kill }
       if (r.spawnError) return { ok: false, code: 'not-started', message: `Codex could not be started: ${clip(redactHead(r.spawnError, redact))}.` }
       if (r.exitCode !== 0) {
         const stderr = (errCut ? redact(errTail).slice(MARGIN) : redact(errTail)).trim()
         const detail = out.error !== undefined ? clip(redactHead(out.error, redact)) : stderr.slice(-MAX_MESSAGE)
         const how = r.exitCode === null ? 'Codex ended without an exit code' : `Codex exited with code ${r.exitCode}`
         return { ok: false, code: 'failed', message: `${how}${detail ? `: ${detail}` : ''}.`, ...figures }
+      }
+      // Exit 0 is a completed run (as a Claude agent's status follows its
+      // exit code), but a failed turn with no reply keeps its reason in the
+      // output, redacted, rather than reading as a clean run.
+      if (out.error !== undefined && (out.text === null || !out.text.trim())) {
+        const lead = errTail && !errTail.endsWith('\n') ? '\n' : ''
+        emit(input.onDiagnostic, `${lead}Codex reported an error and gave no reply: ${clip(redactHead(out.error, redact))}\n`)
       }
       return { ok: true, ...figures }
     },
