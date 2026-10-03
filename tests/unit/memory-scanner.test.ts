@@ -8,6 +8,11 @@ vi.mock('fs')
 vi.mock('os')
 
 import { scanLocalMemory, readMemoryContent, deleteMemoryFile, writeMemoryFrontmatter } from '../../src/main/memory-scanner'
+import { scanAccountMemories, ACCOUNT_MEMORY_LIMITS } from '../../src/main/account-memories'
+import type { AccountFolderSet } from '../../src/main/account-folders'
+import { createFakeAccountFs } from '../helpers/fake-account-fs'
+import type { FakeAccountFs } from '../helpers/fake-account-fs'
+import { PB6_MEMORIES, PB6_LISTED_MD } from '../fixtures/codex/memories-pb6'
 
 /**
  * NOTE: cleanProjectName, inferTypeFromFilename, and parseFrontmatter are
@@ -287,5 +292,159 @@ describe('memory-scanner', () => {
       expect(written).toContain('name: New Name')
       expect(written).toContain('type: feedback')
     })
+  })
+})
+
+// [host] WP2 PR 4, P4.4 (row 55): a provider account's own memories (Codex's
+// `memories/`, on the layout PB6's run made: a git repository), walked with
+// the in-memory file system of tests/helpers/fake-account-fs.ts (the `fs`
+// mock above is not used by it). The fixture's MEMORY.md and
+// memory_summary.md are seeded, and labelled so in the fixture.
+describe('scanAccountMemories (a provider account\'s own memories folder)', () => {
+  const HOME = 'C:\\Users\\me\\res\\codex-realms\\r1'
+  const MEM = `${HOME}\\memories`
+  const set = (over: Partial<AccountFolderSet> = {}): AccountFolderSet => ({
+    providerId: 'codex', accountId: 'acct-1', external: false, logDir: `${HOME}\\log`, memoriesDir: MEM, configFile: `${HOME}\\config.toml`, ...over,
+  })
+  let fake: FakeAccountFs
+  const deps = () => ({ fs: fake as never, platform: 'win32' as const })
+  const plant = (root: string): void => {
+    fake.mkdir(root)
+    for (const e of PB6_MEMORIES) {
+      const at = `${root}\\${e.rel.split('/').join('\\')}`
+      if (e.kind === 'dir') fake.mkdir(at)
+      else fake.writeFile(at, e.content ?? '')
+    }
+  }
+  const inGit = (p: string): boolean => p.split('\\').some((s) => s.toLowerCase() === '.git')
+
+  beforeEach(() => {
+    fake = createFakeAccountFs('win32')
+    plant(MEM)
+  })
+
+  it('lists every .md file, nested ones included, and nothing inside .git', async () => {
+    const [acct] = await scanAccountMemories([set()], deps())
+    expect(acct.state).toBe('present')
+    expect(acct.truncated).toBe(false)
+    expect(acct.files.map((f) => f.relPath)).toEqual([...PB6_LISTED_MD])
+    expect(acct.files.map((f) => f.relPath)).toContain('extensions/ad_hoc/instructions.md')
+    expect(acct.files.some((f) => f.relPath.split('/').some((s) => s.toLowerCase() === '.git'))).toBe(false)
+    // .git is never even listed, looked at or opened.
+    expect(fake.calls.readdir.some(inGit)).toBe(false)
+    expect(fake.calls.lstat.some(inGit)).toBe(false)
+    expect(fake.calls.open.some(inGit)).toBe(false)
+  })
+
+  it('describes each file from its heading-first text, labelled by account', async () => {
+    const [acct] = await scanAccountMemories([set({ external: true })], deps())
+    expect(acct).toMatchObject({ providerId: 'codex', accountId: 'acct-1', external: true })
+    const byRel = Object.fromEntries(acct.files.map((f) => [f.relPath, f]))
+    expect(byRel['MEMORY.md']).toMatchObject({ name: 'MEMORY', filename: 'MEMORY.md', type: 'reference', hasFrontmatter: false, accountId: 'acct-1', providerId: 'codex' })
+    expect(byRel['MEMORY.md'].description).toBe('Seeded stand-in: the user prefers small commits.')
+    expect(byRel['MEMORY.md'].path).toBe(`${MEM}\\MEMORY.md`)
+    expect(byRel['raw_memories.md'].description).toBe('') // a heading only (PB6)
+    expect(byRel['extensions/ad_hoc/instructions.md']).toMatchObject({ name: 'instructions', filename: 'extensions/ad_hoc/instructions.md' })
+    // Ids are stable across scans and differ between accounts.
+    const again = await scanAccountMemories([set(), set({ accountId: 'acct-2' })], deps())
+    expect(again[0].files.map((f) => f.id)).toEqual(acct.files.map((f) => f.id))
+    expect(again[1].files[0].id).not.toBe(again[0].files[0].id)
+  })
+
+  it('no memories folder is the "memories are off" state; something odd there is unreadable', async () => {
+    const none = createFakeAccountFs('win32')
+    none.mkdir(HOME)
+    fake = none
+    expect((await scanAccountMemories([set()], deps()))[0]).toMatchObject({ state: 'none', files: [] })
+    fake.writeFile(MEM, 'a file where the folder would be')
+    expect((await scanAccountMemories([set()], deps()))[0]).toMatchObject({ state: 'unreadable', files: [] })
+    // The memories folder a junction elsewhere: nothing read through it.
+    const j = createFakeAccountFs('win32')
+    fake = j
+    plant('C:\\elsewhere\\mem')
+    j.mkdir(HOME)
+    j.symlink('C:\\elsewhere\\mem', MEM)
+    expect((await scanAccountMemories([set()], deps()))[0]).toMatchObject({ state: 'unreadable', files: [] })
+    expect(j.calls.readdir).toEqual([])
+    // A folder ABOVE the memories folder a junction (the account folder
+    // swapped after the accounts service checked it): unreadable too.
+    const above = createFakeAccountFs('win32')
+    fake = above
+    plant('C:\\real\\memories')
+    above.symlink('C:\\real', 'C:\\via')
+    expect((await scanAccountMemories([set({ memoriesDir: 'C:\\via\\memories' })], deps()))[0]).toMatchObject({ state: 'unreadable', files: [] })
+    expect(above.calls.readdir).toEqual([])
+    // A path that is not a local one is never touched.
+    fake = createFakeAccountFs('win32')
+    expect((await scanAccountMemories([set({ memoriesDir: '\\\\host\\share\\memories' })], deps()))[0].state).toBe('unreadable')
+    expect(fake.fileCalls()).toBe(0)
+  })
+
+  it('never follows a link or junction inside, and skips a file with a second name', async () => {
+    fake.writeFile('C:\\secret\\outside.md', '# Secret\n\nnot a memory')
+    fake.symlink('C:\\secret', `${MEM}\\linked-dir`)
+    fake.symlink('C:\\secret\\outside.md', `${MEM}\\linked.md`)
+    fake.writeFile(`${MEM}\\hardlinked.md`, '# x\n\ny', { nlink: 2 })
+    fake.writeFile(`${MEM}\\notes.txt`, 'not markdown')
+    const [acct] = await scanAccountMemories([set()], deps())
+    expect(acct.files.map((f) => f.relPath)).toEqual([...PB6_LISTED_MD])
+    expect(fake.calls.readdir.some((p) => p.toLowerCase().includes('secret') || p.includes('linked-dir'))).toBe(false)
+  })
+
+  it('a file swapped between the walk and the description read is left out', async () => {
+    const realOpen = fake.open.bind(fake)
+    fake.open = (async (p: string, flags: number) => {
+      if (p.endsWith('MEMORY.md')) { fake.remove(p); fake.writeFile(p, '# other') }
+      return realOpen(p, flags)
+    }) as typeof fake.open
+    const [acct] = await scanAccountMemories([set()], deps())
+    expect(acct.files.map((f) => f.relPath)).not.toContain('MEMORY.md')
+  })
+
+  it('a folder swapped for a link after the walk saw it is not listed through', async () => {
+    fake.writeFile('C:\\secret\\outside.md', '# Secret\n\nnot a memory')
+    const realReaddir = fake.readdir.bind(fake)
+    let swapped = false
+    fake.readdir = (async (p: string) => {
+      if (!swapped && p.toLowerCase().endsWith('\\extensions')) {
+        // Someone replaces the folder with a junction to elsewhere, now.
+        swapped = true
+        fake.remove(p)
+        fake.symlink('C:\\secret', p)
+      }
+      return realReaddir(p)
+    }) as typeof fake.readdir
+    const [acct] = await scanAccountMemories([set()], deps())
+    expect(swapped).toBe(true)
+    expect(acct.files.map((f) => f.relPath).some((r) => r.includes('outside'))).toBe(false)
+    expect(fake.calls.open.some((p) => p.includes('outside'))).toBe(false)
+    // A folder that is a link before it is listed is never listed at all.
+    const j = createFakeAccountFs('win32')
+    fake = j
+    plant(MEM)
+    j.writeFile('C:\\secret\\outside.md', '# Secret')
+    const realRealpath = j.realpath.bind(j)
+    let swapped2 = false
+    j.realpath = (async (p: string) => {
+      if (!swapped2 && p.toLowerCase().endsWith('\\extensions')) { swapped2 = true; j.remove(p); j.symlink('C:\\secret', p) }
+      return realRealpath(p)
+    }) as typeof j.realpath
+    const [acct2] = await scanAccountMemories([set()], deps())
+    expect(swapped2).toBe(true)
+    expect(j.calls.readdir.some((p) => p.toLowerCase().endsWith('\\extensions'))).toBe(false)
+    expect(acct2.files.map((f) => f.relPath).some((r) => r.includes('outside'))).toBe(false)
+  })
+
+  it('is bounded: past the file limit the listing is cut and says so', async () => {
+    for (let i = 0; i < ACCOUNT_MEMORY_LIMITS.maxFiles + 5; i++) fake.writeFile(`${MEM}\\rollout_summaries\\s${String(i).padStart(4, '0')}.md`, `# s${i}`)
+    const [acct] = await scanAccountMemories([set()], deps())
+    expect(acct.truncated).toBe(true)
+    expect(acct.files.length).toBe(ACCOUNT_MEMORY_LIMITS.maxFiles)
+  })
+
+  it('one account failing never hides the others; no accounts lists none', async () => {
+    expect(await scanAccountMemories(null, deps())).toEqual([])
+    const out = await scanAccountMemories([set({ accountId: 'acct-bad', memoriesDir: 'C:\\nowhere\\memories' }), set()], deps())
+    expect(out.map((a) => [a.accountId, a.state])).toEqual([['acct-bad', 'none'], ['acct-1', 'present']])
   })
 })

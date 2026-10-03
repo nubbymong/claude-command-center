@@ -86,7 +86,7 @@ function cleanProjectName(dirName: string): string {
 /**
  * Infer memory type from filename when no frontmatter type is present.
  */
-function inferTypeFromFilename(
+export function inferTypeFromFilename(
   filename: string
 ): 'feedback' | 'project' | 'snapshot' | 'reference' | 'uncategorized' {
   const lower = filename.toLowerCase()
@@ -111,7 +111,7 @@ function inferTypeFromFilename(
  * Parse YAML frontmatter from file content.
  * Returns the parsed fields and the remaining content after frontmatter.
  */
-function parseFrontmatter(content: string): {
+export function parseFrontmatter(content: string): {
   fields: Record<string, string>
   body: string
   hasFrontmatter: boolean
@@ -147,7 +147,7 @@ function parseFrontmatter(content: string): {
 /**
  * Extract description: first non-empty, non-header line of markdown content.
  */
-function extractDescription(body: string): string {
+export function extractDescription(body: string): string {
   const lines = body.split('\n')
   for (const line of lines) {
     const trimmed = line.trim()
