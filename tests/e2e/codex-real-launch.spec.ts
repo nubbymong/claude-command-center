@@ -8,7 +8,8 @@
  * VM ONLY, and skipped unless the VM run gives both:
  *   CCC_E2E_REAL_CODEX       the installs, `<version>=<absolute path>` joined
  *                            by `;`: an npm install's `codex.cmd` shim or the
- *                            `codex.exe` it ships;
+ *                            `codex.exe` it ships; given, it must name both
+ *                            0.153.4 and 0.155.1, each an existing file;
  *   CCC_E2E_FAKE_MODEL_URL   the loopback fake model's base URL (for example
  *                            http://127.0.0.1:18893/v1), already running.
  *
@@ -16,9 +17,13 @@
  *   - Codex's sandbox menu is answered only by moving the selection to "2"
  *     and pressing Enter once "2." is the selected row; never option 1 (the
  *     administrator setup is the owner's), never a digit and Enter at once;
+ *   - Enter goes only on a verified row of the LIVE menu, each screen is
+ *     answered once, and never while the screen is unchanged since the last
+ *     answer (helpers/codex-first-screens.ts: an answered menu can stay on
+ *     screen above the live one);
  *   - nothing is typed into a run whose composer is not ready: ready means
- *     Codex's footer is on the last line and no prompt is on screen, on two
- *     reads 300 ms apart;
+ *     no prompt is on screen, Codex's footer is on the last line and the
+ *     composer above it shows its placeholder, on two reads 300 ms apart;
  *   - the account's config.toml is hashed before and after: the app's launch
  *     writes nothing there, and Codex writes only what the answers record;
  *   - nothing starts Codex on, or writes into, the VM user's own ~/.codex:
@@ -31,7 +36,7 @@
  * moved, Enter only on that row), so config.toml records no hook trust.
  * Every request stays on the VM: a dead proxy for everything but loopback.
  */
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
@@ -43,7 +48,8 @@ import { isolatedHomeDir } from './helpers/isolated-env'
 import {
   seedCodexAccount, realmDirOf, createCodexConfig, openSession, activeSessionId, terminalRows, ptyWrite,
 } from './helpers/codex-mode'
-import { classifyCodexVersion } from '../../src/main/providers/codex/cli-contract'
+import { FIRST_SCREENS, nextFirstScreen, confirmable, composerReady, type FirstScreen, type FirstScreenAnswer } from './helpers/codex-first-screens'
+import { classifyCodexVersion, CODEX_MIN_SUPPORTED_VERSION, CODEX_PINNED_CLI_VERSION } from '../../src/main/providers/codex/cli-contract'
 
 const IS_WIN = process.platform === 'win32'
 const FAKE_MODEL_URL = (process.env.CCC_E2E_FAKE_MODEL_URL ?? '').trim()
@@ -53,10 +59,12 @@ const DEAD_PROXY = { HTTPS_PROXY: 'http://127.0.0.1:9', HTTP_PROXY: 'http://127.
 const PROMPT = 'P310-PLAIN-67'
 const REPLY = 'Done: PLAIN 67'
 
-/** `<version>=<path>;...`, each an absolute path to an existing file. */
+/** What the VM run gives: `<version>=<path>;...`. */
+const GIVEN = (process.env.CCC_E2E_REAL_CODEX ?? '').trim()
+/** The installs given, each an absolute path to an existing file. */
 function realInstalls(): Array<{ version: string; bin: string }> {
   const out: Array<{ version: string; bin: string }> = []
-  for (const part of (process.env.CCC_E2E_REAL_CODEX ?? '').split(';')) {
+  for (const part of GIVEN.split(';')) {
     const at = part.indexOf('=')
     if (at < 0) continue
     const version = part.slice(0, at).trim()
@@ -143,24 +151,45 @@ function cliEnv(dataDir: string, extra: Record<string, string>): Record<string, 
   return { ...env, USERPROFILE: home, HOME: home, ...DEAD_PROXY, ...extra }
 }
 
-const TRUST = /trust the contents|Do you trust|Yes, continue/i
-const SANDBOX = /Set up default sandbox|Use non-admin sandbox|Set up the Codex agent sandbox/i
-const HOOKS = /Hooks need review/i
-const ANY_PROMPT = /trust the contents|Do you trust|Yes, continue|No, quit|Set up default sandbox|Use non-admin sandbox|Set up the Codex agent sandbox|Hooks need review/i
-/** The selected row of a Codex menu. */
-const selectedRow = (rows: string[]) => rows.find((l) => /^\s*\u203a\s*\d\./.test(l)) ?? ''
-/** A ready composer: no prompt on screen, and Codex's footer (model and
- *  folder, joined by a middle dot) on the last line. */
-function readyOn(rows: string[]): boolean {
-  const shown = rows.filter((l) => l.trim())
-  return !ANY_PROMPT.test(shown.join('\n')) && /gpt-\S+ .*\u00b7 /.test(shown[shown.length - 1] ?? '')
+/** Answer one first screen by the 9.2 rules (helpers/codex-first-screens.ts):
+ *  move the selection with that screen's own keys, then press Enter only once
+ *  the LIVE menu's selected row is the option the spec answers, read again
+ *  for a bounded time; otherwise stop with nothing confirmed. Returns the
+ *  screen Enter confirmed. */
+async function answerFirstScreen(page: Page, sid: string, kind: FirstScreen): Promise<string> {
+  await sleep(400)
+  for (const key of FIRST_SCREENS[kind].keys) { await ptyWrite(page, sid, key); await sleep(300) }
+  let check: ReturnType<typeof confirmable> = { ok: false, row: '' }
+  let rows: string[] = []
+  const until = Date.now() + 3000
+  while (Date.now() < until) {
+    await sleep(400)
+    rows = await terminalRows(page)
+    check = confirmable(rows, kind)
+    if (check.ok) break
+  }
+  if (!check.ok) throw new Error(`${kind} screen: ${check.why ?? 'not confirmable'} (the row read: ${JSON.stringify(check.row.trim())}); nothing was confirmed`)
+  await ptyWrite(page, sid, '\r')
+  await sleep(1500)
+  return rows.join('\n')
 }
 
-test.skip(INSTALLS.length === 0 || !FAKE_MODEL_URL, 'VM only: needs CCC_E2E_REAL_CODEX (the installed Codex CLIs) and CCC_E2E_FAKE_MODEL_URL (the loopback fake model)')
+test.skip(!GIVEN || !FAKE_MODEL_URL, 'VM only: needs CCC_E2E_REAL_CODEX (the installed Codex CLIs) and CCC_E2E_FAKE_MODEL_URL (the loopback fake model)')
 
 // With no install given, one case stands for the run, so the report shows it
 // skipped rather than nothing at all.
-if (INSTALLS.length === 0) test('a real Codex launch (no real Codex CLI given)', () => { /* skipped above */ })
+if (!GIVEN) test('a real Codex launch (no real Codex CLI given)', () => { /* skipped above */ })
+
+// Given, it must be both supported versions, each part a usable install: a
+// run with one version, or a part that names no existing file, does not pass
+// the row.
+if (GIVEN) {
+  test('the run gives the minimum and the pinned Codex, each an existing install', () => {
+    const parts = GIVEN.split(';').map((p) => p.trim()).filter(Boolean)
+    expect(INSTALLS.length, `every part of CCC_E2E_REAL_CODEX is <version>=<absolute path to an existing file>: ${GIVEN}`).toBe(parts.length)
+    expect(INSTALLS.map((i) => i.version).sort()).toEqual([CODEX_MIN_SUPPORTED_VERSION, CODEX_PINNED_CLI_VERSION].sort())
+  })
+}
 
 for (const { version, bin } of INSTALLS) {
   test.describe(`a real Codex ${version} launch (${path.basename(bin)})`, () => {
@@ -217,60 +246,28 @@ for (const { version, bin } of INSTALLS) {
       await openSession(page, `Real Codex ${version}`)
       const sid = await activeSessionId(page)
 
-      // The first screens, answered only as the VM rules allow.
-      const screens: string[] = []
+      // The first screens, answered only as the VM rules allow: the live
+      // screen (the lowest title on screen), each once, Enter only on the
+      // verified row of its own menu. Never option 1 of the sandbox menu.
+      const answered: FirstScreenAnswer[] = []
       let cfgAtFirstScreen: string | null = null
       let ready = false
       const deadline = Date.now() + 150000
       while (Date.now() < deadline) {
         const rows = await terminalRows(page)
-        const text = rows.join('\n')
-        // The sandbox menu first, then the hooks review, then the folder
-        // trust: each is answered only once the row it confirms is the
-        // selected one. Never option 1 of the sandbox menu.
-        if (SANDBOX.test(text) && screens.filter((s) => s === 'sandbox').length < 2) {
+        const next = nextFirstScreen(rows, answered)
+        if (next.act === 'answer') {
           cfgAtFirstScreen ??= sha(configToml)
-          screens.push('sandbox')
-          await sleep(400)
-          // A digit only moves the selection in this menu; Enter confirms.
-          await ptyWrite(page, sid, '2')
-          await sleep(700)
-          const sel = selectedRow(await terminalRows(page))
-          if (!/\u203a\s*2\.\s*Use non-admin sandbox/.test(sel)) throw new Error(`sandbox menu: option 2 is not the selected row (${JSON.stringify(sel.trim())}); nothing was confirmed`)
-          await ptyWrite(page, sid, '\r')
-          await sleep(1500)
+          answered.push({ kind: next.kind, screen: await answerFirstScreen(page, sid, next.kind) })
           continue
         }
-        if (HOOKS.test(text) && !screens.includes('hooks')) {
-          cfgAtFirstScreen ??= sha(configToml)
-          screens.push('hooks')
-          await sleep(400)
-          await ptyWrite(page, sid, '\x1b[B')
+        if (next.act === 'none' && composerReady(rows)) {
           await sleep(300)
-          await ptyWrite(page, sid, '\x1b[B')
-          await sleep(700)
-          const sel = selectedRow(await terminalRows(page))
-          if (!/\u203a\s*3\.\s*Continue without trusting/.test(sel)) throw new Error(`hooks review: option 3 is not the selected row (${JSON.stringify(sel.trim())}); nothing was confirmed`)
-          await ptyWrite(page, sid, '\r')
-          await sleep(1500)
-          continue
-        }
-        if (TRUST.test(text) && !screens.includes('trust')) {
-          cfgAtFirstScreen ??= sha(configToml)
-          screens.push('trust')
-          await sleep(400)
-          const sel = selectedRow(await terminalRows(page))
-          if (!/\u203a\s*1\.\s*Yes, continue/.test(sel)) throw new Error(`folder trust: "1. Yes, continue" is not the selected row (${JSON.stringify(sel.trim())}); nothing was confirmed`)
-          await ptyWrite(page, sid, '\r')
-          await sleep(1200)
-          continue
-        }
-        if (readyOn(rows)) {
-          await sleep(300)
-          if (readyOn(await terminalRows(page))) { ready = true; break }
+          if (composerReady(await terminalRows(page))) { ready = true; break }
         }
         await sleep(250)
       }
+      const screens = answered.map((a) => a.kind)
       test.info().annotations.push({ type: 'screens', description: screens.join(', ') || 'none' })
       expect(ready, `no ready composer within the bound; the screen:\n${(await terminalRows(page)).filter((l) => l.trim()).join('\n')}`).toBe(true)
       // A new account folder in a new project shows the folder trust first,

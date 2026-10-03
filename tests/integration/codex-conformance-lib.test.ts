@@ -7,7 +7,7 @@ import { readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   HELP_CAPTURES, normaliseCapture, formatCapture, parseCapture, compareCapture, parseFeaturesList,
-  argvShape, flagsMissingFromHelp, disabledFeatures, expectedVersion,
+  argvShape, flagsMissingFromHelp, helpNamesSubcommand, disabledFeatures, expectedVersion,
 } from './codex-conformance-lib'
 import { codexCommandLine, CODEX_MIN_SUPPORTED_VERSION, CODEX_PINNED_CLI_VERSION } from '../../src/main/providers/codex'
 
@@ -80,6 +80,50 @@ describe('each comparison fails on a deliberately wrong fixture (verify the veri
     // A flag inside a longer one is not listed by it.
     expect(flagsMissingFromHelp(['--sand'], help)).toEqual(['--sand'])
     expect(flagsMissingFromHelp(['--json'], 'Options:\n      --json-schema <FILE>\n')).toEqual(['--json'])
+    // A flag only mentioned in prose is not defined there: exec help names
+    // `--last` in its resume line; exec resume's help defines it.
+    expect(help).toMatch(/most recent with --last/)
+    expect(flagsMissingFromHelp(['--last'], help)).toEqual(['--last'])
+    expect(flagsMissingFromHelp(['--last'], parseCapture(fixture(v, 'exec-resume-help'))!.stdout)).toEqual([])
+    expect(flagsMissingFromHelp(['--model'], 'Options:\n      --other  pass --model to change it\n')).toEqual(['--model'])
+    // Short and long forms on one option line are both defined.
+    expect(flagsMissingFromHelp(['-m', '--model', '-c'], help)).toEqual([])
+    expect(flagsMissingFromHelp(['-x'], 'Options:\n      --max  see -x\n')).toEqual(['-x'])
+  })
+
+  it('flags: every operation the app runs, on each version that has its help captured', () => {
+    // The P3.1 captures hold the top-level, exec and login help; the rest
+    // (app-server, debug models, login status, logout) are read in CI only.
+    const captured: Record<string, string> = { '': 'help', exec: 'exec-help', login: 'login-help' }
+    for (const op of ['version', 'login-browser', 'login-device', 'login-api-key', 'review', 'analysis'] as const) {
+      const { path, flags } = argvShape(argvOf(op))
+      for (const version of [CODEX_MIN_SUPPORTED_VERSION, CODEX_PINNED_CLI_VERSION]) {
+        const text = parseCapture(fixture(version, captured[path.join(' ')]))!.stdout
+        expect(flagsMissingFromHelp(flags, text), `${op} on ${version}`).toEqual([])
+        expect(helpNamesSubcommand(path, text), `${op} on ${version}`).toBe(true)
+      }
+    }
+  })
+
+  it("subcommands: the help's Usage line names the subcommand; a dropped one that falls back to the top-level help is caught", () => {
+    expect(helpNamesSubcommand(['exec'], parseCapture(fixture(v, 'exec-help'))!.stdout)).toBe(true)
+    expect(helpNamesSubcommand(['exec', 'resume'], parseCapture(fixture(v, 'exec-resume-help'))!.stdout)).toBe(true)
+    expect(helpNamesSubcommand(['login'], parseCapture(fixture(v, 'login-help'))!.stdout)).toBe(true)
+    // 0.155.1 dropped `mcp-server`: its `--help` exits 0 with the top-level
+    // help, which a flags-only check would pass (the app's logout and
+    // app-server pass no flags).
+    expect(parseCapture(fixture(CODEX_PINNED_CLI_VERSION, 'mcp-server-help'))!.exit).toBe(0)
+    expect(helpNamesSubcommand(['mcp-server'], parseCapture(fixture(CODEX_PINNED_CLI_VERSION, 'mcp-server-help'))!.stdout)).toBe(false)
+    expect(helpNamesSubcommand(['mcp-server'], parseCapture(fixture(CODEX_MIN_SUPPORTED_VERSION, 'mcp-server-help'))!.stdout)).toBe(true)
+    // A nested subcommand missing from its parent's help: login's help is
+    // not `login status`'s.
+    expect(helpNamesSubcommand(['login', 'status'], parseCapture(fixture(v, 'login-help'))!.stdout)).toBe(false)
+    // A name that only starts the path's word is not it; the top level
+    // names no subcommand and matches only an empty path.
+    expect(helpNamesSubcommand(['exe'], parseCapture(fixture(v, 'exec-help'))!.stdout)).toBe(false)
+    expect(helpNamesSubcommand([], parseCapture(fixture(v, 'help'))!.stdout)).toBe(true)
+    expect(helpNamesSubcommand(['app-server'], 'no usage line at all\n')).toBe(false)
+    expect(helpNamesSubcommand(['app-server'], '\uFEFFUsage: codex.exe app-server [OPTIONS] [COMMAND]\r\n')).toBe(true)
   })
 
   it('argv shapes: the subcommand path and the flags, never the stdin marker or a value', () => {

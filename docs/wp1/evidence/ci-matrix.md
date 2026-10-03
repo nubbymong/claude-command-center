@@ -30,15 +30,26 @@ Workflow: `.github/workflows/ci.yml`. On a pull request both jobs need the `ci-r
 - Versions:
   - every run checks the minimum and the pinned version, read from `src/main/providers/codex/cli-contract.ts` (`CODEX_MIN_SUPPORTED_VERSION` 0.153.4, `CODEX_PINNED_CLI_VERSION` 0.155.1);
   - the release-candidate version is checked only when the workflow is dispatched with `codex_rc_version` (release level, D7). PR runs have no such input.
-- Each version is installed with `npm install --global --prefix <its own folder>` from the published `@openai/codex` package. The job holds no secrets. Every run of the CLI gets a fresh, empty `CODEX_HOME`; there is no sign-in and no request that needs the network.
+- Each version is installed with `npm install --global --prefix <its own folder> --ignore-scripts` from the published `@openai/codex` package, into an npm cache of its own (not the one the job saves). The package and its platform packages declare no install scripts (0.153.4 and 0.155.1, read from the registry on 2026-10-03), so none is needed; a release whose CLI needed one would fail the job, not pass it. The checkout keeps no token on disk (`persist-credentials: false`), and the job holds no secrets.
+- Every run of the CLI gets a fresh, empty `CODEX_HOME`, and there is no sign-in and no request that needs the network:
+  - the suite makes one per run: its own runs, the app's version check (discovery's version home) and the model list (its scratch home);
+  - the `codex --version` PATH check and the flag-drift suite each get one made just before them (`codex-conformance-ci.mjs homes`);
+  - a step records the runner's own `~/.codex` (absent, or every entry's path, size and modified time) before the CLI is installed, and the job's last step fails if it changed, so a run that used it cannot pass unseen.
 - Checks (`tests/integration/codex-real-cli-conformance.test.ts`, P3.1's no-sign-in checks):
   1. detection: the app's discovery proves the installed CLI through its real runner (on Windows the npm shim through cmd.exe), with its version and class; the app's own PATH resolution finds the same file;
-  2. every flag of the command lines the app runs is listed by the real help of the subcommand it names;
-  3. the model list (`codex debug models --bundled`) through the app's own reader is covered by `resources/model-registry.json`, and for the minimum and pinned versions it equals the recorded list;
+  2. every flag of the command lines the app runs is defined (on an option line of its own, not only mentioned in prose) by the real help of the subcommand it names, each such help exits 0, and its `Usage:` line names that subcommand: a dropped subcommand that exits 0 with the top-level help (as 0.155.1's `mcp-server --help` does) fails, which matters for `logout` and `app-server`, whose command lines pass no flag;
+  3. the model list (`codex debug models --bundled`) through the app's own reader is covered by `resources/model-registry.json`, and for the minimum and pinned versions it equals the recorded list. It is a case of its own, so a red detection never hides it, and coverage and the recorded list are two soft checks, both reported in one run;
   4. `codex features list` names every feature the analysis run turns off;
   5. help: P3.1's captures are made again, uploaded as the run's artifact, and compared with the normalised fixtures in `tests/fixtures/codex/cli/<version>/help/`. The comparison is reported, not asserted, until the captures of each OS are reviewed; then `CCC_CODEX_HELP_ASSERT` turns to `1` in the workflow.
 - Then the flag-drift suite (`tests/integration/codex-cli-compat.test.ts`) runs against the same install. A step first proves `codex --version` on PATH prints the installed version, so that suite cannot pass by skipping.
-- The pure comparisons are proven to fail on a deliberately wrong fixture on every run of the suite (`tests/integration/codex-conformance-lib.test.ts`). Each check is also shown red once in CI: a dispatch with `conformance_prove_red` runs every check against a deliberately wrong expectation, and the job must go red with each check named.
+- The pure comparisons are proven to fail on a deliberately wrong fixture on every run of the suite (`tests/integration/codex-conformance-lib.test.ts`).
+- Each check of the suite is also shown red once in CI: a dispatch with `conformance_prove_red` (and no release candidate) runs it against a deliberately wrong expectation. Every leg must go red naming:
+  - detection, both cases (a wrong version);
+  - flags (a flag no help defines, and for each command line a subcommand its help does not name);
+  - the model list, both soft checks (a registry without the first listed model; the recorded list with an extra id);
+  - features (a feature no list names);
+  - help (each fixture with its last line dropped), asserted in that run.
+- Not shown red by that dispatch: the PATH check step, the flag-drift suite (`codex-cli-compat.test.ts`, which predates P4.8 and has no prove-red input), the runner's own home check, and an rc leg's help (no fixture exists for a release candidate).
 
 ## Results
 

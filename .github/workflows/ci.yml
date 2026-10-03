@@ -11,8 +11,9 @@ on:
     branches: [main]
   # Release level (P4.8; OD20 D7, WP1.71): the release-candidate Codex CLI is
   # checked on its own, dispatched with its version, besides the minimum and
-  # pinned ones every run checks. Only the codex-conformance job runs on a
-  # dispatch; the inputs reach a step through env, never a shell line.
+  # pinned ones every run checks. On a dispatch the codex-conformance job runs,
+  # with the always-on changelog check; every other job's condition skips it.
+  # The inputs reach a step through env, never a shell line.
   workflow_dispatch:
     inputs:
       codex_rc_version:
@@ -266,7 +267,11 @@ jobs:
       # '0' until the help captures of each OS are reviewed (P4.8), then '1'.
       CCC_CODEX_HELP_ASSERT: '0'
     steps:
+      # No git operation in this job needs the token, so it is not left on
+      # disk for the third-party install below.
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v7
         with:
@@ -307,16 +312,31 @@ jobs:
           RC_VERSION: ${{ inputs.codex_rc_version }}
         run: node tests/integration/codex-conformance-ci.mjs version ${{ matrix.cli }}
 
+      # Codex prepares its home before it parses even --version, so every run
+      # of the CLI in this job gets a fresh, empty CODEX_HOME: the suite makes
+      # one per run, these steps make the PATH check's and the flag-drift
+      # suite's, and the last step proves the runner's own home untouched.
+      - name: The runner's own Codex home, before
+        run: node tests/integration/codex-conformance-ci.mjs own-home record "${{ runner.temp }}/own-codex-home.txt"
+
+      # The package and its platform packages declare no install scripts
+      # (0.153.4, 0.155.1), so none runs; the tarballs go to a cache of their
+      # own, not the npm cache the job saves under the lockfile's key.
       - name: Install Codex ${{ steps.ver.outputs.version }} into its own prefix
         shell: bash
         env:
           CODEX_VERSION: ${{ steps.ver.outputs.version }}
           PREFIX: ${{ runner.temp }}/codex-${{ matrix.cli }}
-        run: npm install --global --prefix "$PREFIX" --no-audit --no-fund "@openai/codex@$CODEX_VERSION"
+          NPM_CACHE: ${{ runner.temp }}/npm-codex-cache
+        run: npm install --global --prefix "$PREFIX" --ignore-scripts --cache "$NPM_CACHE" --no-audit --no-fund "@openai/codex@$CODEX_VERSION"
 
       - name: Locate the installed CLI
         id: bin
         run: node tests/integration/codex-conformance-ci.mjs bin "${{ runner.temp }}/codex-${{ matrix.cli }}"
+
+      - name: Fresh Codex homes for the PATH check and the flag-drift suite
+        id: homes
+        run: node tests/integration/codex-conformance-ci.mjs homes onpath compat
 
       # The flag-drift suite skips itself when no codex is on PATH: prove the
       # install is the one PATH finds, so that suite cannot pass by skipping.
@@ -324,6 +344,7 @@ jobs:
         shell: bash
         env:
           CODEX_VERSION: ${{ steps.ver.outputs.version }}
+          CODEX_HOME: ${{ steps.homes.outputs.onpath }}
         run: |
           out="$(codex --version | tr -d '\r')"
           echo "$out"
@@ -337,7 +358,13 @@ jobs:
         run: npx vitest run tests/integration/codex-real-cli-conformance.test.ts
 
       - name: Flag-drift suite against this install
+        env:
+          CODEX_HOME: ${{ steps.homes.outputs.compat }}
         run: npx vitest run tests/integration/codex-cli-compat.test.ts
+
+      - name: No run of the CLI touched the runner's own Codex home
+        if: ${{ !cancelled() }}
+        run: node tests/integration/codex-conformance-ci.mjs own-home check "${{ runner.temp }}/own-codex-home.txt"
 
       - name: Upload the help captures and the run report
         if: always()
