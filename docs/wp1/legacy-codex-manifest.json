@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-03T11:18:45.176Z",
-  "head": "1a51bb66769004e0edd1e6a2a30f8b3b6e7d19e1",
-  "tree": "228d85517e43be559c5329cdbe83916564e45b6f",
+  "generatedAt": "2026-10-03T15:35:26.841Z",
+  "head": "7d7deff1aa3f9ba7a16d7483e995e6e012af37a8",
+  "tree": "769fa6e2ad3d1b2d3c2720be46adcbe2fbf63db6",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2682,
+  "trackedFileCount": 2685,
   "excludedFileCount": 390,
-  "scannedFileCount": 2292,
+  "scannedFileCount": 2295,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 754,
-  "pathDigest": "ede294c20b1b609bf33e9da63540ae0e4264bf333a50cdd513e14645cb7c7dcc",
+  "matchedPathCount": 756,
+  "pathDigest": "c95cdb71d78ac8963fa545a085e754c6dcafd98a6caa6baac138668b5eef9b0f",
   "entries": [
     {
       "path": ".github/workflows/ci.yml",
@@ -204,7 +204,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 1074,
+      "lineCount": 1093,
       "truncated": true
     },
     {
@@ -297,7 +297,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 39
+      "lineCount": 40
     },
     {
       "path": "scripts/lib/codex-resume-picker-lib.js",
@@ -305,7 +305,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 28
+      "lineCount": 31
     },
     {
       "path": "scripts/readme-shots/stage/content.js",
@@ -447,7 +447,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 25
+      "lineCount": 26
     },
     {
       "path": "src/main/canvas/codex-canvas-roots.ts",
@@ -1099,7 +1099,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 127
+      "lineCount": 128
     },
     {
       "path": "src/main/providers/codex/telemetry.ts",
@@ -1190,7 +1190,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 445,
+      "lineCount": 448,
       "truncated": true
     },
     {
@@ -1450,7 +1450,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 40
+      "lineCount": 42
     },
     {
       "path": "src/renderer/components/CommandBar.tsx",
@@ -2371,7 +2371,7 @@
         "P12",
         "P14"
       ],
-      "lineCount": 99
+      "lineCount": 101
     },
     {
       "path": "src/shared/ask-conductor-provider.ts",
@@ -3310,12 +3310,32 @@
       "lineCount": 3
     },
     {
+      "path": "tests/integration/codex-cli-compat-env.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P09",
+        "P13"
+      ],
+      "lineCount": 31
+    },
+    {
+      "path": "tests/integration/codex-cli-compat-env.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 11
+    },
+    {
       "path": "tests/integration/codex-cli-compat.test.ts",
       "predicates": [
         "P01",
+        "P04",
         "P13"
       ],
-      "lineCount": 25
+      "lineCount": 35
     },
     {
       "path": "tests/integration/codex-conformance-ci.mjs",
@@ -3593,7 +3613,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 16
+      "lineCount": 18
     },
     {
       "path": "tests/unit/main/ask-help-folder-runs.test.ts",
@@ -3629,7 +3649,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 35
+      "lineCount": 43
     },
     {
       "path": "tests/unit/main/canvas-codex-roots-spawn.test.ts",
@@ -4473,7 +4493,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 79
+      "lineCount": 80
     },
     {
       "path": "tests/unit/providers/codex/analysis-features.test.ts",
@@ -5033,7 +5053,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 48
+      "lineCount": 53
     },
     {
       "path": "tests/unit/renderer/codex-composer-screens.ts",
@@ -5983,7 +6003,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 26
+      "lineCount": 35
     },
     {
       "path": "tests/unit/scripts/codex-resume-picker.test.ts",
@@ -6051,7 +6071,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 126
+      "lineCount": 138
     },
     {
       "path": "tests/unit/status-ingest.test.ts",
