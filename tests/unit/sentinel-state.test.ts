@@ -71,9 +71,10 @@ describe('SentinelState for Codex (P3.9)', () => {
   // Fixer 11 (gate 3 F10, ADR-009 D1 round 2): the highest version checked,
   // which the start-up rule and the cap go by, is kept apart from the version
   // the panel names (lastSeen*). A check of a lower version (a downgrade seen
-  // at start, an analysis) moves only the one shown; fixer 12: only a Re-run's
-  // record, the user's own act, sets it to its version (below).
-  it('the highest version checked follows a higher version and never goes down; the version shown follows each check', () => {
+  // at start, a start-up analysis) moves only the one shown; fixer 12: only a
+  // Re-run's record, the user's own act, sets it to its version (below).
+  // Fixer 13 (gate 3 F17): the name says what this case covers.
+  it('the highest version checked follows a higher version and goes down for no start or start-up analysis; the version shown follows each check', () => {
     const s = new SentinelState(dir)
     expect([s.highestChecked('claude'), s.highestChecked('codex')]).toEqual([null, null])
     s.setLastSeenCodexVersion('0.156.0')

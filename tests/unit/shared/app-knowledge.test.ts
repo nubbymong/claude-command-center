@@ -333,11 +333,14 @@ describe('the PR 3 user-facing sweep (P3.16)', () => {
   // assistant that had Sentinel before this release.
   it('Sentinel (fixers 11 and 12): at start only a version newer than the newest checked is analysed; a downgrade runs no analysis; Re-run resets the newest checked', () => {
     const s = body('sentinel')
-    expect(s).toMatch(/At start it analyses only a version newer than the newest one it has checked, so going back to an older version runs no analysis and the panel names the version installed\. Re-run analyses the installed version and makes it the newest one checked, so a newer version you go back to afterwards is an update again, with the same limit of three analyses\./)
+    // Fixer 13 (gate 3 F16, fixer 12 quality NIT 1): the Re-run moves the
+    // newest checked once its analysis is done, and an unmatched one of a
+    // version no start analyses asks for another Re-run.
+    expect(s).toMatch(/At start it analyses only a version newer than the newest one it has checked, so going back to an older version runs no analysis and the panel names the version installed\. Re-run analyses the installed version and, once that analysis is done, makes it the newest one checked, so a newer version you go back to afterwards is an update again, with the same limit of three analyses\. When a version no start analyses has a finding that cannot be matched, the panel asks you to use Re-run again\./)
     expect(s).not.toMatch(/the last one it checked/)
     const all = top.changes.map((c) => c.description).join('\n')
     expect(all).toMatch(/Sentinel no longer runs an analysis at start when you go back to an older Claude Code version \(Codex works the same way\): it analyses only a version newer than the newest one it has checked/)
-    expect(all).toMatch(/Re-run in the Sentinel panel analyses the installed version and makes it the newest one checked\./)
+    expect(all).toMatch(/Re-run in the Sentinel panel analyses the installed version and, once that analysis is done, makes it the newest one checked\./)
     expect(all).not.toMatch(/the last one it checked|older Claude Code or Codex version/)
   })
 

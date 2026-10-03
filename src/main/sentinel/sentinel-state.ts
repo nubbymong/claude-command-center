@@ -88,7 +88,8 @@ export class SentinelState {
   }
   /** A completed check of Claude Code `v`: the panel names it, and (fixer
    *  11) the highest version checked rises to it when it is higher, never
-   *  going down for a start (a downgrade seen there) or an analysis. Fixer 12
+   *  going down for a start (a downgrade seen there) or a start-up analysis
+   *  (fixer 13, gate 3 F17: a Re-run is an analysis too). Fixer 12
    *  (ADR-009 R3-1): a Re-run's record (`rerun`), the user's own act, sets it
    *  to `v`, down as well as up, so a highest stuck far ahead (a hand-edited
    *  file, a prerelease once installed) can be undone. */
@@ -116,7 +117,7 @@ export class SentinelState {
    *  Fixer 10 (the cap for versions installed in turn): no other version's
    *  count is dropped here. A start analyses only a version higher than the
    *  highest one checked (sentinel/index.ts, isUpdateAtStart; fixer 11: no
-   *  start and no analysis lowers it; fixer 12: a Re-run's record sets it to
+   *  start-up analysis lowers it; fixer 12: a Re-run's record sets it to
    *  the version the Re-run checked, so after a Re-run of a lower version a
    *  higher one taken in turn is an update again, at most
    *  UNVERIFIED_MAX_TRIES analyses, a cost of that Re-run), so a count

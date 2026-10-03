@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-02T23:45:43.623Z",
-  "head": "a30cf55b16ce935a6c94c77de43ae3581e23b94b",
-  "tree": "809c78e22a428f238e3e9a7a08c3a5f4ff1df8ca",
+  "generatedAt": "2026-10-03T00:06:26.072Z",
+  "head": "94e36a46d853c3c7bc94536ed2e2498dff8fa8a6",
+  "tree": "8272e09626e6b547d6ddeb4077176d2b0d5e3f0c",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -3633,7 +3633,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 154
+      "lineCount": 159
     },
     {
       "path": "tests/unit/main/service-status-providers.test.ts",

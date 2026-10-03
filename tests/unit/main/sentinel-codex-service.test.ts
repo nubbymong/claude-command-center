@@ -138,11 +138,12 @@ const claudeRuns: Array<{ cwd: string; listing: string[]; env: Record<string, st
 const transport = vi.hoisted(() => ({ pick: null as null | ((raw: string) => Record<string, string>) }))
 const versionThrows = vi.hoisted(() => ({ on: false }))
 /** Fixer 10: the Claude Code version installed, and its analysis's reply (none: no findings). */
-const claude = vi.hoisted(() => ({ version: '2.1.300', answer: null as null | string }))
+/** Fixer 13: `versionCode`, the exit code of `claude --version` (not 0: the version is unavailable). */
+const claude = vi.hoisted(() => ({ version: '2.1.300', answer: null as null | string, versionCode: 0 }))
 const spawnClaudeHeadless = vi.fn(async (args: string[], _t?: number, _stdin?: string, _home?: string | null, _signal?: AbortSignal, opts?: { cwd?: string; env?: Record<string, string>; transportEnv?: Record<string, string> }) => {
   if (args[0] === '--version') {
     if (versionThrows.on) throw new Error('the version check broke')
-    return { code: 0, stdout: `${claude.version} (Claude Code)`, stderr: '' }
+    return { code: claude.versionCode, stdout: claude.versionCode === 0 ? `${claude.version} (Claude Code)` : '', stderr: '' }
   }
   if (opts?.cwd) claudeRuns.push({ cwd: opts.cwd, listing: fs.readdirSync(opts.cwd), env: opts.env, transportEnv: opts.transportEnv })
   return { code: 0, stdout: JSON.stringify({ type: 'result', result: claude.answer ?? JSON.stringify({ breakingChanges: [] }) }), stderr: '' }
@@ -189,6 +190,7 @@ beforeEach(() => {
   versionThrows.on = false
   claude.version = '2.1.300'
   claude.answer = null
+  claude.versionCode = 0
   fsHooks.beforeMkdtemp = null
   fetchChangelog.mockClear()
   fetchChangelog.mockImplementation(async () => null)
@@ -799,6 +801,35 @@ for (const p of ['codex', 'claude'] as const) {
       })
     }
 
+    // Fixer 13 (fixer 12 quality NIT 1): an unmatched analysis of a version a
+    // start does not analyse (at or below the highest checked) says to Re-run
+    // again; one of a version above it still says the next check analyses it.
+    it('an unmatched Re-run of a version no start analyses says to Re-run again; one of a newer version says the next check', async () => {
+      only()
+      unmatched()
+      await seed(B)
+      install(A)
+      let s = await sentinel()
+      await s.sentinelRerun()
+      let err = s.getSentinelState()!.snapshot().lastAnalysisError ?? ''
+      expect(err).toBe(`One finding from the analysis of ${name} ${A} could not be matched to its ${p === 'codex' ? 'release notes' : 'changelog'}, so it is not shown. Use Re-run in the Sentinel panel to analyse it again.`)
+      install(C)
+      s = await sentinel()
+      await s.sentinelRerun()
+      err = s.getSentinelState()!.snapshot().lastAnalysisError ?? ''
+      expect(err).toContain('the update will be analysed again at the next check')
+      expect(err).not.toMatch(/Use Re-run/)
+    })
+
+    it('an unmatched Re-run before any version was checked says to Re-run again (the next start only takes a baseline)', async () => {
+      only()
+      unmatched()
+      install(A)
+      const s = await sentinel()
+      await s.sentinelRerun()
+      expect(s.getSentinelState()!.snapshot().lastAnalysisError ?? '').toMatch(/Use Re-run in the Sentinel panel to analyse it again\.$/)
+    })
+
     it('a Re-run whose findings never match records the installed version at its third analysis, as the highest checked too', async () => {
       only()
       await sentinel(p === 'codex' ? { lastSeenCodexVersion: A, highestCheckedCodexVersion: '9999.0.0' } : { lastSeenCcVersion: A, highestCheckedCcVersion: '9999.0.0' })
@@ -828,6 +859,34 @@ for (const p of ['codex', 'claude'] as const) {
     }
   })
 }
+
+// Fixer 13 (ADR-009 lens D round 3, MINOR 1): a Re-run's record sets the
+// highest version checked whatever else the Re-run met: with both providers
+// analysed, and with a problem carried from the other provider.
+describe('fixer 13: a Re-run undoes a highest version checked stuck far ahead, with both providers on', () => {
+  const STUCK = { lastSeenCcVersion: '2.1.301', highestCheckedCcVersion: '9999.0.0', lastSeenCodexVersion: '0.155.1', highestCheckedCodexVersion: '9999.0.0' }
+  const changelog = '## 2.1.302\n- b change\n\n## 2.1.301\n- a change\n'
+  it('both analysed in one Re-run: each provider\'s highest version checked is its installed version', async () => {
+    fetchChangelog.mockImplementation(async () => changelog)
+    claude.version = '2.1.302'
+    svc.installation = { discoveryState: 'found', version: '0.156.0', compatibility: 'supported' }
+    const s = await sentinel(STUCK)
+    await s.sentinelRerun()
+    expect(claudeAnalyses()).toHaveLength(2)
+    expect(s.getSentinelState()!.snapshot()).toMatchObject({ highestCheckedCcVersion: '2.1.302', highestCheckedCodexVersion: '0.156.0', lastSeenCcVersion: '2.1.302', lastSeenCodexVersion: '0.156.0' })
+  })
+
+  it('Claude Code\'s version unavailable (a problem carried): Codex\'s highest version checked is still its installed version', async () => {
+    fetchChangelog.mockImplementation(async () => changelog)
+    claude.versionCode = 1
+    svc.installation = { discoveryState: 'found', version: '0.156.0', compatibility: 'supported' }
+    const s = await sentinel(STUCK)
+    await s.sentinelRerun()
+    const snap = s.getSentinelState()!.snapshot()
+    expect(snap.lastAnalysisError).toContain('claude --version unavailable')
+    expect(snap).toMatchObject({ highestCheckedCodexVersion: '0.156.0', lastSeenCodexVersion: '0.156.0', highestCheckedCcVersion: '9999.0.0' })
+  })
+})
 
 describe('fixer 10: a Codex downgrade still raises its version finding', () => {
   it('a version older than the app supports, lower than the last checked: the finding, and no analysis', async () => {
