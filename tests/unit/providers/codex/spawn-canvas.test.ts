@@ -128,7 +128,7 @@ describe('approvals (PB2), by parity per preset', () => {
     expect(keysOf(out.args)).toContain(codexToolApprovalArg('canvas_render'))
   })
 
-  it.each(['auto', 'standard', 'read-only', 'plan'] as Preset[])('no per-preset keys under %s (Auto waits on OR4; the others ask, as Claude\'s matching modes)', (preset) => {
+  it.each(['auto', 'standard', 'read-only', 'plan'] as Preset[])('no per-preset keys under %s (Auto cannot ask, and the app approves none of these for Claude\'s Auto: none until OR4; the others ask, as Claude\'s matching modes)', (preset) => {
     expect(codexPresetApprovedTools(preset, {})).toEqual([])
   })
 
