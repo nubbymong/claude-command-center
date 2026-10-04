@@ -30,6 +30,13 @@ export type TipCategory =
 
 export type TipComplexity = 'simple' | 'intermediate' | 'advanced'
 
+/** An assistant a tip can be about on its own. */
+export type TipProvider = 'claude' | 'codex'
+
+/** How the tip card names each assistant beside its mark (the app's own
+ *  provider names, as Settings, Accounts shows them). */
+export const TIP_PROVIDER_NAMES: Readonly<Record<TipProvider, string>> = { claude: 'Claude Code', codex: 'Codex' }
+
 /** An operating system, as Electron names it. */
 export type TipPlatform = 'win32' | 'darwin' | 'linux'
 
@@ -63,6 +70,11 @@ export interface Tip {
   requires?: string[]
   /** Feature IDs that if used, make the primary variant irrelevant */
   excludes?: string[]
+  /** The one assistant the tip is about, when only that assistant has what
+   *  it describes (as the code has it): the card shows that assistant's mark.
+   *  A mark, not a filter (the owner's 2026-10-04 answer): the tip is offered
+   *  whichever assistants are on. None: a tip about both, or about the app. */
+  provider?: TipProvider
   /** The operating systems the tip is about; offered only there (none: everywhere) */
   platforms?: TipPlatform[]
   variants: {
@@ -243,6 +255,7 @@ export const TIPS_LIBRARY: Tip[] = [
     category: 'sessions',
     complexity: 'intermediate',
     priority: 60,
+    provider: 'claude',
     requires: ['sessions.create-config'],
     excludes: ['sessions.effort-level'],
     variants: {
@@ -259,6 +272,7 @@ export const TIPS_LIBRARY: Tip[] = [
     category: 'sessions',
     complexity: 'intermediate',
     priority: 55,
+    provider: 'claude',
     excludes: ['sessions.session-type'],
     variants: {
       primary: {
@@ -279,6 +293,7 @@ export const TIPS_LIBRARY: Tip[] = [
     category: 'sessions',
     complexity: 'intermediate',
     priority: 54,
+    provider: 'claude',
     requires: ['sessions.session-type'],
     variants: {
       primary: {
@@ -446,6 +461,7 @@ export const TIPS_LIBRARY: Tip[] = [
     category: 'productivity',
     complexity: 'simple',
     priority: 45,
+    provider: 'claude',
     variants: {
       primary: {
         shortText: 'Open your account artifacts from the command bar',
@@ -513,6 +529,7 @@ export const TIPS_LIBRARY: Tip[] = [
     category: 'advanced',
     complexity: 'advanced',
     priority: 25,
+    provider: 'claude',
     variants: {
       primary: {
         shortText: 'AI-powered analysis of your Claude usage',
@@ -531,6 +548,7 @@ export const TIPS_LIBRARY: Tip[] = [
     category: 'transparency',
     complexity: 'intermediate',
     priority: 20,
+    provider: 'claude',
     variants: {
       primary: {
         shortText: 'How we power the statusline metrics',
@@ -710,6 +728,7 @@ export const TIPS_LIBRARY: Tip[] = [
     category: 'productivity',
     complexity: 'advanced',
     priority: 55,
+    provider: 'claude',
     variants: {
       primary: {
         shortText: 'Opus 4.8 can orchestrate hundreds of subagents',
@@ -882,6 +901,7 @@ export const TIPS_LIBRARY: Tip[] = [
     category: 'sessions',
     complexity: 'intermediate',
     priority: 74,
+    provider: 'claude',
     requires: ['sessions.session-type'],
     variants: {
       primary: {
@@ -898,6 +918,7 @@ export const TIPS_LIBRARY: Tip[] = [
     category: 'sessions',
     complexity: 'intermediate',
     priority: 76,
+    provider: 'claude',
     requires: ['sessions.session-type'],
     variants: {
       primary: {
@@ -946,6 +967,7 @@ export const TIPS_LIBRARY: Tip[] = [
     category: 'sessions',
     complexity: 'intermediate',
     priority: 72,
+    provider: 'claude',
     requires: ['sessions.session-type'],
     variants: {
       primary: {
@@ -962,6 +984,7 @@ export const TIPS_LIBRARY: Tip[] = [
     category: 'sessions',
     complexity: 'intermediate',
     priority: 64,
+    provider: 'codex',
     excludes: ['sessions.codex-config'],
     variants: {
       primary: {
@@ -996,6 +1019,7 @@ export const TIPS_LIBRARY: Tip[] = [
     category: 'sessions',
     complexity: 'intermediate',
     priority: 60,
+    provider: 'codex',
     requires: ['sessions.codex-config'],
     variants: {
       primary: {
@@ -1032,6 +1056,7 @@ export const TIPS_LIBRARY: Tip[] = [
     category: 'sessions',
     complexity: 'simple',
     priority: 55,
+    provider: 'codex',
     requires: ['sessions.codex-config'],
     variants: {
       primary: {
@@ -1048,6 +1073,7 @@ export const TIPS_LIBRARY: Tip[] = [
     category: 'sessions',
     complexity: 'intermediate',
     priority: 52,
+    provider: 'codex',
     requires: ['sessions.codex-config'],
     variants: {
       primary: {
@@ -1087,6 +1113,7 @@ export const TIPS_LIBRARY: Tip[] = [
     category: 'sessions',
     complexity: 'intermediate',
     priority: 54,
+    provider: 'codex',
     requires: ['sessions.codex-config'],
     variants: {
       primary: {
@@ -1103,6 +1130,7 @@ export const TIPS_LIBRARY: Tip[] = [
     category: 'sessions',
     complexity: 'intermediate',
     priority: 53,
+    provider: 'codex',
     requires: ['sessions.codex-config'],
     variants: {
       primary: {
@@ -1122,6 +1150,7 @@ export const TIPS_LIBRARY: Tip[] = [
     category: 'sessions',
     complexity: 'intermediate',
     priority: 56,
+    provider: 'codex',
     requires: ['sessions.codex-config'],
     platforms: ['win32'],
     variants: {
@@ -1138,6 +1167,7 @@ export const TIPS_LIBRARY: Tip[] = [
     category: 'ui-navigation',
     complexity: 'simple',
     priority: 45,
+    provider: 'codex',
     requires: ['sessions.codex-config'],
     variants: {
       primary: {
@@ -1155,6 +1185,7 @@ export const TIPS_LIBRARY: Tip[] = [
     category: 'sessions',
     complexity: 'intermediate',
     priority: 68,
+    provider: 'claude',
     excludes: ['accounts.switch-session-account'],
     variants: {
       primary: {
@@ -1302,6 +1333,7 @@ export const TIPS_LIBRARY: Tip[] = [
     category: 'sessions',
     complexity: 'simple',
     priority: 38,
+    provider: 'claude',
     variants: {
       primary: {
         shortText: 'Editing a running SSH config warns you first',

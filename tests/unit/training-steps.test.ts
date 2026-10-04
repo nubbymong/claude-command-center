@@ -9,7 +9,7 @@ import {
 
 describe('training-steps', () => {
   describe('trainingSteps array', () => {
-    it('has exactly 23 steps', () => {
+    it('has exactly 24 steps', () => {
       // v1.5.12 added dynamic-workflows; permission-tray step removed with the
       // feature; v2-readiness added multi-account + sentinel steps (16 -> 18);
       // v2.0.0 added the ai-usage-meter step (18 -> 19); the Agent Canvas got
@@ -20,8 +20,10 @@ describe('training-steps', () => {
       // #443 deprecated the Agent Hub, so its card left (21 -> 20). The 2.1
       // canvas rework's Canvas Explained page got a card (20 -> 21). The second
       // provider (2.1.1) added two surfaces with no card: the Providers and
-      // Accounts page, and code review in both directions (21 -> 23).
-      expect(trainingSteps).toHaveLength(23)
+      // Accounts page, and code review in both directions (21 -> 23). Cloud
+      // Agents, without a card since the Agent Hub's left, got one of its own
+      // (the owner's 2026-10-04 answer; 23 -> 24).
+      expect(trainingSteps).toHaveLength(24)
     })
 
     it('every step has required fields', () => {
@@ -109,7 +111,8 @@ describe('training-steps', () => {
       // cards are a proportionate interruption, replaying the 2.1 set is not.
       // They stay at 2.1.1, not above it: see the comment on the Providers and
       // Accounts card for why a higher pin would hold the boot chain instead.
-      expect(getNewSteps('2.1.0').map((s) => s.id)).toEqual(['provider-accounts', 'ask-conductor', 'code-review'])
+      // Cloud Agents joined them (the owner's 2026-10-04 answer).
+      expect(getNewSteps('2.1.0').map((s) => s.id)).toEqual(['provider-accounts', 'ask-conductor', 'code-review', 'cloud-agents'])
       // Users arriving from 2.0.x get it as part of the normal backlog.
       expect(getNewSteps('2.0.0').map((s) => s.id)).toContain('ask-conductor')
     })

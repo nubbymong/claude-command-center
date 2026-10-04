@@ -369,6 +369,61 @@ export const trainingSteps: TrainingStep[] = [
     screenshotFilename: 'step-vision.jpg',
   },
   {
+    // The owner's 2026-10-04 answer: Cloud Agents has had no card since the
+    // Agent Hub's left with #443. For both assistants; a Codex agent's
+    // permission tick runs Codex's Auto preset (section 10, question 7, answer
+    // A: confined to the project, the account's config.toml untouched).
+    // Pinned at 2.1.1 for the reason given on the Providers and Accounts card.
+    id: 'cloud-agents',
+    title: 'Cloud Agents',
+    sinceVersion: '2.1.1',
+    section: 'integrations',
+    summary:
+      'Hand a task to an agent that runs in the background, on Claude Code or on Codex, and come back for the result. Each run is a headless agent in the project you pick; the Cloud Agents page shows its status, elapsed time, tokens, cost and output while you keep working.',
+    highlights: [
+      'With Claude Code and Codex both on, **New agent** asks which one runs the agent; a Codex agent runs on the Codex account you pick',
+      'Each agent shows its **status**, **elapsed time**, **tokens** and **cost**, with its **Output** and a **Summary**',
+      '**Stop** a running agent; **Retry** or **Remove** one that has finished',
+      'A **Claude Code** agent asks before editing files or running commands unless you tick **Skip permission prompts for this run**; a headless run has no one to answer, so it may pause',
+      'A **Codex** agent runs read-only unless you tick **Auto** for that run (workspace writes, no prompts). That is Codex\'s Auto preset, not a skip of every prompt: the agent edits files inside its project only, and the Codex account\'s settings (its config.toml) are left as they are',
+      'On Windows, a Codex agent on **Auto** makes no edits until Codex\'s sandbox is set up for its Codex account, and with the non-admin sandbox its commands fail',
+    ],
+    howToTrigger: [
+      { label: 'Open', value: 'Click  Cloud Agents  in the sidebar nav' },
+      { label: 'Dispatch', value: 'Cloud Agents -> New agent' },
+    ],
+    proTip:
+      'Leave the permission tick off for a first run on a new project: a Claude Code agent then asks before it changes anything, and a Codex agent only reads the project and reports.',
+    bullets: [
+      '**Background agents** on Claude Code or Codex, one task each',
+      'Status, elapsed time, tokens, cost and output on the **Cloud Agents** page',
+      'A Codex agent writes only with **Auto** ticked, and then only inside its project',
+    ],
+    // Codex alone: Cloud Agents runs Codex agents only.
+    withoutClaude: {
+      summary:
+        'Hand a task to an agent that runs in the background on Codex, and come back for the result. Each run is a headless Codex agent in the project you pick, on the Codex account you choose; the Cloud Agents page shows its status, elapsed time, tokens, cost and output while you keep working.',
+      highlights: [
+        '**New agent** lists your Codex accounts; the agent runs on the one you pick',
+        'Each agent shows its **status**, **elapsed time**, **tokens** and **cost**, with its **Output** and a **Summary**',
+        '**Stop** a running agent; **Retry** or **Remove** one that has finished',
+        'An agent runs read-only unless you tick **Auto** for that run (workspace writes, no prompts). That is Codex\'s Auto preset, not a skip of every prompt: the agent edits files inside its project only, and the Codex account\'s settings (its config.toml) are left as they are',
+        'On Windows, a Codex agent on **Auto** makes no edits until Codex\'s sandbox is set up for its Codex account, and with the non-admin sandbox its commands fail',
+      ],
+      proTip:
+        'Leave Auto off for a first run on a new project: the agent then only reads the project and reports.',
+      bullets: [
+        '**Background agents** on Codex, one task each',
+        'Status, elapsed time, tokens, cost and output on the **Cloud Agents** page',
+        'An agent writes only with **Auto** ticked, and then only inside its project',
+      ],
+    },
+    // No capture of the Cloud Agents page exists yet; the shell shot is the
+    // neutral stand-in the other uncaptured cards use. The VM recapture
+    // produces step-cloud-agents.jpg for this card.
+    screenshotFilename: 'v2-shell-hero.jpg',
+  },
+  {
     id: 'agent-canvas',
     title: 'Agent Canvas',
     sinceVersion: '2.1.0',
