@@ -14,27 +14,38 @@ import { CODEX_CONVERSATION_ID_RE, codexFolderIdentity, resolveCodexResume } fro
 import { codexHookCommand, codexHookConfigArgs, codexPlainWrapperDir, codexLocalAppData, verifyPlainCodexHookWrapper, CODEX_HOOK_FILE_ENV, CODEX_HOOK_SCRIPT, CODEX_HOOK_WRAPPER } from './hooks'
 import { codexExtraArgsProblem, codexExtraArgWords } from '../../../shared/extra-args'
 import { logWarn } from '../../debug-logger'
+import { windowsPathHasTrailingDotOrSpace } from './discovery'
 
-/** The two forms a Codex install puts on PATH on Windows, in the order a
- *  terminal tries them within one folder: PATHEXT's order (Windows' own
- *  default when it is unset). A form PATHEXT does not list still counts,
- *  after the ones it lists, so the lookup never finds less than it did. */
-export function codexWindowsForms(pathExt: string | undefined): string[] {
-  const listed = (pathExt ?? '.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC')
+/** The two forms a Codex install puts on PATH on Windows: `listed`, the ones
+ *  PATHEXT lists, in its order (Windows' own default when it is unset), as a
+ *  terminal tries them within one folder; `unlisted`, the rest, looked for
+ *  only once no PATH folder held a listed one (review B-S2), so an install a
+ *  custom PATHEXT leaves out is still found, and never wins over a listed
+ *  form later in PATH. */
+export function codexWindowsForms(pathExt: string | undefined): { listed: string[]; unlisted: string[] } {
+  const exts = (pathExt ?? '.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC')
     .split(';').map((e) => e.trim().toLowerCase())
   const forms = ['.exe', '.cmd']
-  const known = listed.filter((e, i) => forms.includes(e) && listed.indexOf(e) === i)
-  return [...known, ...forms.filter((f) => !known.includes(f))].map((ext) => `codex${ext}`)
+  const known = exts.filter((e, i) => forms.includes(e) && exts.indexOf(e) === i)
+  return {
+    listed: known.map((ext) => `codex${ext}`),
+    unlisted: forms.filter((f) => !known.includes(f)).map((ext) => `codex${ext}`),
+  }
 }
 
 /** PATH's folders as the lookup reads them: `;`-separated, a quoted entry
- *  without its quotes, and only fully qualified folders (a drive or a share). */
+ *  without its quotes, and only a fully qualified folder on a drive
+ *  (`C:\...`) whose every name Node and Windows read alike (none ends in a
+ *  dot or a space: windowsPathHasTrailingDotOrSpace; review L3). A network
+ *  share (`\\server\share`) is not read: a read there cannot be time-limited
+ *  in this lookup, which runs on the main process (review B-S3; a recorded
+ *  limit). */
 export function codexWindowsPathFolders(pathVar: string | undefined): string[] {
   const out: string[] = []
   for (const raw of (pathVar ?? '').split(';')) {
     let dir = raw.trim()
     if (dir.length >= 2 && dir.startsWith('"') && dir.endsWith('"')) dir = dir.slice(1, -1).trim()
-    if (/^[A-Za-z]:[\\/]/.test(dir) || /^[\\/]{2}[^\\/?.][^\\/]*[\\/][^\\/]+/.test(dir)) out.push(dir)
+    if (/^[A-Za-z]:[\\/]/.test(dir) && !windowsPathHasTrailingDotOrSpace(dir)) out.push(dir)
   }
   return out
 }
@@ -45,18 +56,34 @@ function winEnvValue(env: Readonly<Record<string, string | undefined>>, name: st
   return key ? env[key] : undefined
 }
 
+/** What one look at a candidate found: a regular file, nothing there, or a
+ *  folder that could not be read (asked nothing more in that lookup). */
+export type CodexCandidateStat = 'file' | 'none' | 'unreachable'
+
 export interface CodexBinaryLookup {
   /** Default: this machine's. */
   platform?: NodeJS.Platform
   /** Default: this process's environment (Windows: its PATH and PATHEXT). */
   env?: Readonly<Record<string, string | undefined>>
-  /** Whether a regular file is there (default: the disk, links followed as a
-   *  terminal follows them). */
+  /** Whether a regular file is there (links followed as a terminal follows
+   *  them). Default: statFile. */
   isFile?: (p: string) => boolean
+  /** The same, telling a folder that could not be read from one that holds
+   *  nothing (default: the disk). */
+  statFile?: (p: string) => CodexCandidateStat
 }
 
-const diskIsFile = (p: string): boolean => {
-  try { return fs.statSync(p).isFile() } catch { return false }
+/** `none` for an answer that says the file is not there (or is not a file);
+ *  `unreachable` for anything else -- a drive that did not answer, a denied
+ *  folder -- so the walk asks that folder nothing more (the precedent:
+ *  claude-cli-version.ts findClaudeOnWindowsPath). */
+const diskStat = (p: string): CodexCandidateStat => {
+  try {
+    return fs.statSync(p).isFile() ? 'file' : 'none'
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code
+    return code === 'ENOENT' || code === 'ENOTDIR' ? 'none' : 'unreachable'
+  }
 }
 
 export function resolveCodexBinary(lookup: CodexBinaryLookup = {}): { cmd: string; args: string[] } | null {
@@ -80,16 +107,29 @@ export function resolveCodexBinary(lookup: CodexBinaryLookup = {}): { cmd: strin
   }
   // Windows (owner, 2026-10-04): PATH order wins, as a terminal finds it.
   // The first PATH folder holding codex.exe or codex.cmd gives it, and within
-  // one folder PATHEXT's order decides. Read in this process: no shell, no
-  // process started (an `where codex.exe` lookup preferred a codex.exe
-  // anywhere on PATH over an earlier codex.cmd).
+  // one folder PATHEXT's order decides; a form PATHEXT does not list is looked
+  // for in a second pass, once no folder held a listed one. Read in this
+  // process with no shell and no process started, from the folders
+  // codexWindowsPathFolders reads, each asked nothing more in this lookup
+  // once it could not be read.
   const env = lookup.env ?? process.env
-  const isFile = lookup.isFile ?? diskIsFile
-  const forms = codexWindowsForms(winEnvValue(env, 'PATHEXT'))
-  for (const dir of codexWindowsPathFolders(winEnvValue(env, 'PATH'))) {
-    for (const name of forms) {
-      const candidate = path.win32.join(dir, name)
-      if (isFile(candidate)) return { cmd: candidate, args: [] }
+  const isFile = lookup.isFile
+  const stat: (p: string) => CodexCandidateStat = lookup.statFile ?? (isFile ? (p) => (isFile(p) ? 'file' : 'none') : diskStat)
+  const { listed, unlisted } = codexWindowsForms(winEnvValue(env, 'PATHEXT'))
+  const folders = codexWindowsPathFolders(winEnvValue(env, 'PATH'))
+  const unreachable = new Set<string>()
+  for (const forms of [listed, unlisted]) {
+    for (const dir of folders) {
+      if (unreachable.has(dir)) continue
+      for (const name of forms) {
+        const candidate = path.win32.join(dir, name)
+        const found = stat(candidate)
+        if (found === 'file') return { cmd: candidate, args: [] }
+        if (found === 'unreachable') {
+          unreachable.add(dir)
+          break
+        }
+      }
     }
   }
   return null

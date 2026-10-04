@@ -7,11 +7,13 @@
 //    question 5, answered C), and the record the canvas page reads;
 //  - with the built-in tools off: none, and the app's staged skills removed
 //    from that account's folder, as Claude gets --plugin-dir only while they
-//    are on.
+//    are on (from this computer's own Codex folder only when their switch is
+//    off, not when the server is merely not listening).
 import * as fs from 'fs'
 import type { CanvasSessionGuidance } from '../../shared/types'
 import type { RealmOwnership } from '../../shared/providers'
 import { getResourcesDirectory } from '../ipc/setup-handlers'
+import { readConfig } from '../config-manager'
 import { codexDesignatedWorktree } from './codex-canvas-roots'
 import { codexLaunchGuidance, codexGuidanceNotStaged } from './codex-guidance'
 import { logWarn } from '../debug-logger'
@@ -73,6 +75,11 @@ export function prepareCodexCanvasLaunch(input: CodexCanvasLaunchInput): CodexCa
   }
 }
 
+/** The Built-in Tools switch is off in the saved settings. */
+function toolsSwitchedOff(): boolean {
+  try { return readConfig<{ conductorToolsEnabled?: boolean }>('settings')?.conductorToolsEnabled === false } catch { return false }
+}
+
 function guidanceFor(input: CodexCanvasLaunchInput): CanvasSessionGuidance | null {
   let resourcesDir = ''
   try { resourcesDir = getResourcesDirectory() || '' } catch { resourcesDir = '' }
@@ -83,6 +90,10 @@ function guidanceFor(input: CodexCanvasLaunchInput): CanvasSessionGuidance | nul
   return codexLaunchGuidance({
     home: input.home,
     toolsOn: input.toolsOn,
+    // Review B-S6: the user's own folder follows the Built-in Tools switch
+    // itself, as the saved settings hold it (settings that cannot be read
+    // say nothing is switched off).
+    toolsSwitchedOff: toolsSwitchedOff(),
     managed,
     managedSkillsDir: skillsDir,
     ruleSkillsDir,

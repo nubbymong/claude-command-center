@@ -240,9 +240,11 @@ function helpWorkspaceFiles(dir: string, appVersion: string, platform: NodeJS.Pl
     ['app-knowledge.md', utf8(appKnowledgeMarkdown())],
     // The two ready-made helper-skill files the preambles teach the Ask
     // session to install (#586). Written here -- inside the hardened dir --
-    // and ONLY here: the app itself never writes into ~/.claude or a Codex
-    // home; the install is a user-approved copy performed by the Ask session
-    // under its own CLI's permission or approval prompt.
+    // and ONLY here: the app itself never writes these into ~/.claude or a
+    // Codex home; the install is a user-approved copy performed by the Ask
+    // session under its own CLI's permission or approval prompt. (The only
+    // thing the app writes into a Codex home is its own marked canvas
+    // skills: canvas/codex-user-skills.ts and codex-realm-skills.ts.)
     ['ask-conductor-skill.md', utf8(askConductorSkillMarkdown(dir))],
     ['ask-conductor-skill-portable.md', utf8(askConductorSkillPortableMarkdown(appVersion))],
   ]

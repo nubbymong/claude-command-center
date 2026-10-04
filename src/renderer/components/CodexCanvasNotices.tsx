@@ -37,13 +37,16 @@ function listed(names: readonly string[]): string {
   return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
 }
 
-/** The one line for skills that are not in place: which, and why. */
+/** The one line for skills that are not in place: which, and why. `own-skill`
+ *  covers a folder without the app's mark and a link the user put at the
+ *  skill's name (main's codexGuidanceFromStaging); a copy of the app's that
+ *  could not be rebuilt is never said to be the user's. */
 function missingSkillsLine(g: MissingSkills): string {
   const names = (Array.isArray(g.skills) ? g.skills : []).filter((n) => typeof n === 'string' && SKILL_NAME_RE.test(n)).slice(0, 3)
   const one = names.length === 1
   const which = names.length > 0 ? `the app's ${listed(names)} skill${one ? '' : 's'}` : 'the app\'s canvas skills'
   const why = g.reason === 'own-skill'
-    ? (one ? 'a skill of that name in this account\'s Codex skills folder is not the app\'s, and the app never replaces it' : 'skills of those names in this account\'s Codex skills folder are not the app\'s, and the app never replaces them')
+    ? (one ? 'a skill or link of that name in this account\'s Codex skills folder is not the app\'s, and the app never replaces it' : 'skills or links of those names in this account\'s Codex skills folder are not the app\'s, and the app never replaces them')
     : `the app could not put ${one ? 'it' : 'them'} in this account's Codex skills folder`
   return `This Codex session has the canvas tools without ${which}: ${why}.`
 }

@@ -15,17 +15,22 @@
 // Each such folder is written into the app's record (CODEX_USER_SKILLS_RECORD,
 // in the app's own data folder) BEFORE anything is copied there, so a switch
 // turned off later, in this run or another, finds every folder the app may
-// have written to. No record, no copy.
+// have written to. No record, no copy. A record that cannot be read refuses
+// both copying and removing until it can; one that does not parse is kept
+// aside and never taken as empty (that would let every folder in it go).
+// A folder leaves the record only once none of the app's copies is left in
+// it, or it is really gone (nothing there, its parent present): one that
+// cannot be read now (an offline share, a denied folder) stays recorded.
 //
-// What is written and removed: only the app's own skill folders, each proved
-// by the app's exact ownership mark (codex-realm-skills.ts, the same staging,
+// What is written and removed: only the app's own skill folders, each
+// carrying the app's ownership mark (codex-realm-skills.ts, the same staging,
 // with the same link and race refusals). A skill of the user's own with the
-// same name is never touched: that skill is skipped, and the launch says so
-// on the canvas page.
+// same name (no mark) is never touched: that skill is skipped, and the launch
+// says so on the canvas page.
 //
 // When (startCodexUserSkills, wired by the composition root):
 //  - before a launch on this computer's sign-in: copied while the built-in
-//    tools are on, removed while they are off (codexLaunchGuidance);
+//    tools are on, removed while their switch is off (codexLaunchGuidance);
 //  - when Codex or the built-in tools are turned off (a settings save, or a
 //    change the accounts service announces), and once after the app starts:
 //    removed from every recorded folder;
@@ -38,7 +43,7 @@ import { atomicWriteSecure } from '../account-profiles'
 import { getDataDirectory } from '../ipc/setup-handlers'
 import { canvasSkillFiles } from './canvas-plugin'
 import { logInfo, logWarn } from '../debug-logger'
-import { stageCanvasSkillsIn, removeCanvasSkillsFrom, canvasSkillsPresent, realRealmSkillsIo, type CanvasSkillsStaging, type RealmSkillsIo } from './codex-realm-skills'
+import { stageCanvasSkillsIn, removeCanvasSkillsFrom, canvasSkillsLeft, realRealmSkillsIo, type CanvasSkillsStaging, type RealmSkillsIo } from './codex-realm-skills'
 
 /** The record's file name, in the app's data folder. */
 export const CODEX_USER_SKILLS_RECORD = 'codex-user-skills.json'
@@ -60,7 +65,13 @@ export interface CodexUserSkillsDeps {
   io?: RealmSkillsIo
   /** Whose path rules the recorded folders follow (default: this one's). */
   platform?: NodeJS.Platform
+  /** The record's text (default: read from disk); throws when it cannot be
+   *  read now. */
+  readFile?: (file: string) => string
 }
+
+/** Beside a record that does not parse: the same name with this added. */
+export const CODEX_USER_SKILLS_DAMAGED_SUFFIX = '.damaged'
 
 function recordFileOf(deps: CodexUserSkillsDeps): string | null {
   try {
@@ -80,17 +91,33 @@ function fullyQualified(p: unknown, platform: NodeJS.Platform): p is string {
   return path.posix.isAbsolute(p)
 }
 
+/** The same folder: letter case folded on Windows only, whose file system
+ *  does not tell names apart by case; a macOS or Linux volume can, so two
+ *  folders that differ only in case stay two (review L1-3). */
 function sameHome(a: string, b: string, platform: NodeJS.Platform): boolean {
   const x = path.resolve(a).replace(/[\\/]+$/, '')
   const y = path.resolve(b).replace(/[\\/]+$/, '')
-  return platform === 'win32' || platform === 'darwin' ? x.toLowerCase() === y.toLowerCase() : x === y
+  return platform === 'win32' ? x.toLowerCase() === y.toLowerCase() : x === y
 }
 
 type RecordRead = { ok: true; file: string; homes: string[] } | { ok: false }
 
-/** The record: absent is empty; one that is not a plain file, or too large,
- *  cannot be read (nothing is copied, nothing removed); one that does not
- *  parse is taken as empty and replaced by the next write. */
+/** A record that does not parse is kept aside, beside it, so nothing it held
+ *  is lost without a trace; the next pass starts a new one. Left in place
+ *  (and so refused again) when it cannot be moved. */
+function setAside(file: string): void {
+  try {
+    fs.renameSync(file, `${file}${CODEX_USER_SKILLS_DAMAGED_SUFFIX}`)
+    logWarn('[codex-skills] the record of this computer\'s Codex folders does not read as the app wrote it; it is kept aside and a new one is started at the next pass')
+  } catch (err) {
+    logWarn(`[codex-skills] the record of this computer's Codex folders does not read as the app wrote it, and could not be kept aside: ${(err as Error)?.message ?? err}`)
+  }
+}
+
+/** The record: absent is empty. One that is not a plain file, too large, or
+ *  cannot be read now is refused (nothing is copied, nothing removed; asked
+ *  again at the next pass). One that does not parse as the app's record is
+ *  kept aside and refused this time, never taken as empty (review B-Q2). */
 function readRecord(deps: CodexUserSkillsDeps): RecordRead {
   const file = recordFileOf(deps)
   const platform = deps.platform ?? process.platform
@@ -100,12 +127,18 @@ function readRecord(deps: CodexUserSkillsDeps): RecordRead {
     return (err as NodeJS.ErrnoException)?.code === 'ENOENT' ? { ok: true, file, homes: [] } : { ok: false }
   }
   if (!st.isFile() || st.isSymbolicLink() || st.size > RECORD_READ_MAX) return { ok: false }
-  let parsed: unknown
-  try { parsed = JSON.parse(fs.readFileSync(file, 'utf8')) } catch {
-    logWarn('[codex-skills] the record of this computer\'s Codex folders could not be read; it is started again')
-    return { ok: true, file, homes: [] }
+  let text: string
+  try { text = deps.readFile ? deps.readFile(file) : fs.readFileSync(file, 'utf8') } catch (err) {
+    logWarn(`[codex-skills] the record of this computer's Codex folders could not be read now: ${(err as Error)?.message ?? err}`)
+    return { ok: false }
   }
-  const raw = parsed && typeof parsed === 'object' && Array.isArray((parsed as { homes?: unknown }).homes) ? (parsed as { homes: unknown[] }).homes : []
+  let parsed: unknown
+  try { parsed = JSON.parse(text) } catch { parsed = null }
+  if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as { homes?: unknown }).homes)) {
+    setAside(file)
+    return { ok: false }
+  }
+  const raw = (parsed as { homes: unknown[] }).homes
   const homes: string[] = []
   for (const h of raw) {
     if (homes.length >= CODEX_USER_SKILLS_HOMES_MAX) break
@@ -167,8 +200,8 @@ function forget(deps: CodexUserSkillsDeps, drop: (home: string) => boolean): voi
 }
 
 /** Remove the app's copies from `home` (only its marked folders, never
- *  through a link); the record lets the folder go once none is left. Never
- *  throws. */
+ *  through a link); the record lets the folder go once none is left
+ *  (removeCanvasSkillsFrom says `clear` only then). Never throws. */
 export function removeCodexUserSkills(home: string, deps: CodexUserSkillsDeps = {}): void {
   const platform = deps.platform ?? process.platform
   try {
@@ -184,7 +217,8 @@ export function removeCodexUserSkills(home: string, deps: CodexUserSkillsDeps = 
  * Every recorded folder, by the switches: `wanted` (Codex and the built-in
  * tools on), the app's copies already there are made exact again and none is
  * added; otherwise they are removed. A folder holding none of the app's
- * copies afterwards leaves the record. Never throws.
+ * copies afterwards leaves the record; one that cannot be read now stays in
+ * it (canvasSkillsLeft). Never throws.
  */
 export function reconcileCodexUserSkills(wanted: boolean, deps: CodexUserSkillsDeps = {}): void {
   const platform = deps.platform ?? process.platform
@@ -197,7 +231,7 @@ export function reconcileCodexUserSkills(wanted: boolean, deps: CodexUserSkillsD
       const skillsDir = path.join(home, 'skills')
       if (wanted) {
         stageCanvasSkillsIn(home, skillsDir, { place: 'own', onlyExisting: true }, io)
-        if (!canvasSkillsPresent(home, skillsDir, io)) gone.push(home)
+        if (canvasSkillsLeft(home, skillsDir, 'own', io) === 'none') gone.push(home)
       } else if (removeCanvasSkillsFrom(home, skillsDir, 'own', io) === 'clear') {
         gone.push(home)
       }

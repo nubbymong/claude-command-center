@@ -192,11 +192,21 @@ describe('the tools reach the launch (A-3)', () => {
     expect(codexSessionGuidance(SID)).toBeNull()
   })
 
-  it('[host] the server not listening is the tools off too: removed', () => {
+  it('[host] the server not listening is the tools off too for a managed realm: removed', () => {
     stageAll()
     h.port = 0
     start(managedHome, 'conductor-managed')
     expect(fs.existsSync(path.join(managedHome, 'skills', 'agent-canvas'))).toBe(false)
+  })
+
+  it('[host] this computer\'s own sign-in with the server not listening: the copies stay (only the switches remove them; review B-S6), nothing recorded for the page', () => {
+    start(externalHome, 'external-default')
+    killPty(SID)
+    h.port = 0
+    start(externalHome, 'external-default')
+    for (const name of SKILL_NAMES) expect(copied(externalHome, name)).toBe(true)
+    expect(codexUserSkillsHomes({ recordFile })).toEqual([externalHome])
+    expect(codexSessionGuidance(SID)).toBeNull()
   })
 })
 

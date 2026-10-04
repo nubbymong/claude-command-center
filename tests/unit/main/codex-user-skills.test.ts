@@ -2,12 +2,14 @@
 // 2026-10-04): the canvas skills copied into THIS COMPUTER'S own Codex
 // sign-in's skills folder (src/main/canvas/codex-user-skills.ts), and taken
 // out again when Codex or the built-in tools are turned off.
-//  - only the app's own skill folders, each proved by its exact ownership
+//  - only the app's own skill folders, each carrying the app's ownership
 //    mark, are written, rewritten or removed; a skill of the user's own with
-//    the same name is never touched, and is reported by name;
+//    the same name (no mark) is never touched, and is reported by name (a
+//    changed mark: codex-user-skills-ownership.test.ts);
 //  - the folder is recorded before anything is copied there, and without a
-//    record nothing is copied; the record lets a folder go once none of the
-//    app's copies is left in it;
+//    record nothing is copied; a record that cannot be read refuses, and one
+//    that does not parse is kept aside, never taken as empty; the record
+//    lets a folder go once none of the app's copies is left in it;
 //  - the switches: off removes from every recorded folder; on keeps the
 //    copies already there current (an app update) and adds none;
 //  - unreadable settings do nothing.
@@ -61,12 +63,11 @@ const isCopied = (h: string, name: string): boolean => {
       && fs.readdirSync(skillDir(h, name)).length === 2
   } catch { return false }
 }
-/** A skill of the user's own: no mark, or a mark that is not exactly the app's. */
-function plantOwn(h: string, name: string, mark?: string): void {
+/** A skill of the user's own: no mark. */
+function plantOwn(h: string, name: string): void {
   fs.mkdirSync(skillDir(h, name), { recursive: true })
   fs.writeFileSync(path.join(skillDir(h, name), 'SKILL.md'), `---\nname: ${name}\ndescription: mine\n---\nthe user's own\n`)
   fs.writeFileSync(path.join(skillDir(h, name), 'notes.md'), 'theirs')
-  if (mark !== undefined) fs.writeFileSync(path.join(skillDir(h, name), STAGED_SKILL_MARK), mark)
 }
 const ownIntact = (h: string, name: string): boolean =>
   fs.readFileSync(path.join(skillDir(h, name), 'SKILL.md'), 'utf8').includes('the user\'s own') && fs.readFileSync(path.join(skillDir(h, name), 'notes.md'), 'utf8') === 'theirs'
@@ -84,12 +85,8 @@ describe('copying into this computer\'s Codex skills folder', () => {
     expect(JSON.parse(fs.readFileSync(path.join(data, u.CODEX_USER_SKILLS_RECORD), 'utf8'))).toEqual({ homes: [home] })
   })
 
-  it.each([
-    ['no mark', undefined],
-    ['a mark that is not exactly the app\'s', 'not the app\'s mark'],
-    ['the app\'s mark with one byte more', `${STAGED_SKILL_MARK_BYTES.toString('utf8')} `],
-  ])('[host] a skill of the user\'s own with the same name (%s) is never touched; it is skipped by name and the others are copied', (_name, mark) => {
-    plantOwn(home, 'agent-canvas', mark)
+  it('[host] a skill of the user\'s own with the same name (no mark) is never touched; it is skipped by name and the others are copied', () => {
+    plantOwn(home, 'agent-canvas')
     const before = fs.readdirSync(skillDir(home, 'agent-canvas')).sort()
     const out = u.stageCodexUserSkills(home, deps)
     expect(out.outcome).toEqual({ staged: false, reason: 'not-ours' })
@@ -177,12 +174,50 @@ describe('copying into this computer\'s Codex skills folder', () => {
     expect(u.codexUserSkillsHomes(deps)).toEqual(homes)
   })
 
-  it('[host] a record that does not parse is started again; entries that are not full paths are dropped', () => {
-    fs.writeFileSync(deps.recordFile(), '{ not json')
+  it.each([
+    ['does not parse', '{ not json'],
+    ['parses as something other than the app\'s record', JSON.stringify(['x'])],
+    ['has no list of folders', JSON.stringify({ homes: 'x' })],
+  ])('[host] a record that %s is kept aside and refused this time (never taken as empty): nothing copied or removed; the next pass starts a new one (review B-Q2)', (_name, text) => {
+    const other = path.join(tmp, 'other-codex-home')
+    fs.mkdirSync(other)
+    u.stageCodexUserSkills(other, deps)
+    fs.writeFileSync(deps.recordFile(), text)
+    expect(u.stageCodexUserSkills(home, deps).outcome.staged).toBe(false)
+    expect(fs.existsSync(path.join(home, 'skills'))).toBe(false)
+    u.reconcileCodexUserSkills(false, deps)
+    expect(isCopied(other, 'agent-canvas')).toBe(true)
+    expect(fs.readFileSync(`${deps.recordFile()}.damaged`, 'utf8')).toBe(text)
+    expect(fs.existsSync(deps.recordFile())).toBe(false)
     expect(u.stageCodexUserSkills(home, deps).outcome).toEqual({ staged: true })
     expect(u.codexUserSkillsHomes(deps)).toEqual([home])
+  })
+
+  it('[host] a record that cannot be read now is refused and kept as it is: nothing copied, nothing removed, no folder let go (review B-Q2)', () => {
+    const other = path.join(tmp, 'other-codex-home')
+    fs.mkdirSync(other)
+    u.stageCodexUserSkills(other, deps)
+    const busy = { ...deps, readFile: (): string => { throw Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' }) } }
+    expect(u.stageCodexUserSkills(home, busy).outcome.staged).toBe(false)
+    expect(fs.existsSync(path.join(home, 'skills'))).toBe(false)
+    u.reconcileCodexUserSkills(false, busy)
+    expect(isCopied(other, 'agent-canvas')).toBe(true)
+    expect(u.codexUserSkillsHomes(deps)).toEqual([other])
+    expect(fs.existsSync(`${deps.recordFile()}.damaged`)).toBe(false)
+  })
+
+  it('[host] entries that are not full paths are dropped', () => {
     fs.writeFileSync(deps.recordFile(), JSON.stringify({ homes: ['relative/x', 7, '', home, home] }))
     expect(u.codexUserSkillsHomes(deps)).toEqual([home])
+  })
+
+  it('[host] two folders whose names differ only in letter case: one folder on Windows, two elsewhere (a macOS or Linux volume can tell them apart; review L1-3)', () => {
+    const rf = deps.recordFile()
+    fs.writeFileSync(rf, JSON.stringify({ homes: ['C:\\Codex\\Home', 'c:\\codex\\home'] }))
+    expect(u.codexUserSkillsHomes({ recordFile: () => rf, platform: 'win32' })).toHaveLength(1)
+    fs.writeFileSync(rf, JSON.stringify({ homes: ['/Users/a/Codex', '/Users/a/codex'] }))
+    expect(u.codexUserSkillsHomes({ recordFile: () => rf, platform: 'darwin' })).toHaveLength(2)
+    expect(u.codexUserSkillsHomes({ recordFile: () => rf, platform: 'linux' })).toHaveLength(2)
   })
 })
 

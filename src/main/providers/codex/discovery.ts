@@ -56,6 +56,19 @@ export interface CodexDiscoveryDeps {
 
 export type CodexDiscovery = DiscoveryResult & { identity?: CodexExecutableIdentity }
 
+/** A Windows path with a folder or file name that ends in a dot or a space
+ *  (`C:\tools.\codex.exe`), or a `.` or `..` step. Node
+ *  reads such a name as it is spelled, while Windows' own path handling,
+ *  which starts the program, drops the dot or space and reaches another
+ *  file, so a proof of one would not be a proof of the other. Such a path is
+ *  never proved or run (review L3; the resources folder follows the same
+ *  rule, realm-folders.ts). */
+export function windowsPathHasTrailingDotOrSpace(p: string): boolean {
+  return p.split(/[\\/]/).slice(1).some((seg) => /[. ]$/.test(seg))
+}
+
+const DOT_SPACE_DETAIL = 'the Codex CLI on PATH is at a path with a name ending in a dot or a space, which this app does not run'
+
 /** Only a proven, not-too-old CLI may be used for sign-in or a managed
  *  launch: `unknown` is unproven and blocks exactly like `too-old`. */
 export function codexCompatibilityAllowsUse(c: Compatibility): boolean {
@@ -87,6 +100,7 @@ export async function discoverCodex(deps: CodexDiscoveryDeps): Promise<CodexDisc
   } catch {
     return { ...base, state: 'invalid', detail: 'the Codex CLI on PATH could not be read' }
   }
+  if (deps.platform === 'win32' && windowsPathHasTrailingDotOrSpace(canonical)) return { ...base, state: 'invalid', detail: DOT_SPACE_DETAIL }
   if (!st.isFile) return { ...base, state: 'invalid', detail: 'the Codex CLI on PATH is not a file' }
   const identity = identityOf(canonical, st)
   const cmd = codexCommandLine(canonical, 'version', deps.platform, codexShellEnv(deps.env, deps.platform))
@@ -148,7 +162,8 @@ export function verifyCodexExecutable(recorded: CodexExecutableIdentity, deps: P
   } catch {
     return { ok: false, reason: 'missing', detail: 'the Codex CLI on PATH can no longer be read' }
   }
-  const same = deps.platform === 'win32' ? canonical.toLowerCase() === recorded.path.toLowerCase() : canonical === recorded.path
+  if (deps.platform === 'win32' && windowsPathHasTrailingDotOrSpace(canonical)) return { ok: false, reason: 'moved', detail: DOT_SPACE_DETAIL }
+  const same =deps.platform === 'win32' ? canonical.toLowerCase() === recorded.path.toLowerCase() : canonical === recorded.path
   if (!same) return { ok: false, reason: 'moved', detail: 'PATH now resolves a different Codex CLI than the one setup checked' }
   if (!st.isFile || !sameIdentity(identityOf(canonical, st), recorded)) return { ok: false, reason: 'replaced', detail: 'the Codex CLI was replaced since setup checked it' }
   return { ok: true, executable: canonical }

@@ -13,7 +13,8 @@
 //    folder (codex-user-skills.ts), only the app's own marked folders, never
 //    a skill of the user's own with the same name;
 //  - with the built-in tools off: none, and the app's copies removed from
-//    that account's folder.
+//    that account's folder (from the user's own folder only when the switch
+//    itself is off, not when the server is merely not listening).
 // Nothing rides the launch line any more (option A's developer instructions
 // are gone). The canvas page says so in one line only when a skill could not
 // be put in place, and which (the session's guidance record below, read
@@ -30,6 +31,12 @@ export interface CodexLaunchGuidanceInput {
   home: string
   /** The built-in tools reach this launch (on, and the server listening). */
   toolsOn: boolean
+  /** The Built-in Tools switch itself is off (review B-S6): only then does
+   *  a launch take the app's copies out of the user's own Codex folder, as
+   *  Claude's --plugin-dir follows that switch alone; a launch the tools do
+   *  not reach while it is on (the server not listening) leaves them.
+   *  Default: the tools not reaching the launch. */
+  toolsSwitchedOff?: boolean
   /** An app-managed account (codex-canvas-launch.ts codexManagedSkillsFolder),
    *  and its skills folder by the Codex package's path rule (null: the rule
    *  does not find it, and nothing is staged). */
@@ -57,13 +64,16 @@ export function codexGuidanceNotStaged(): CanvasSessionGuidance {
 
 /** What a staging gave the session: every skill in place (`full`), or the
  *  ones that are not, and why: only skills of that name that are not the
- *  app's (`own-skill`: in the user's own folder, the user's own skill, which
- *  the app never replaces), or anything else (`skills-not-staged`). */
+ *  app's (`own-skill`: a folder without the app's mark, or a link at the
+ *  skill's own name, review B-S4 -- in the user's own folder, the user's,
+ *  which the app never replaces), or anything else (`skills-not-staged`: a
+ *  write that failed, a copy of the app's it could not rebuild, or a skills
+ *  folder that is itself a link, which the app never writes through). */
 export function codexGuidanceFromStaging(staging: CanvasSkillsStaging): CanvasSessionGuidance {
   if (staging.outcome.staged) return { guidance: 'full' }
   const skills = staging.skipped.map((s) => s.name)
   if (skills.length === 0) return codexGuidanceNotStaged()
-  const own = staging.skipped.every((s) => s.reason === 'not-ours')
+  const own = staging.skipped.every((s) => s.reason === 'not-ours' || s.reason === 'link')
   return { guidance: 'tools-only', reason: own ? 'own-skill' : 'skills-not-staged', skills }
 }
 
@@ -88,7 +98,7 @@ export function codexLaunchGuidance(input: CodexLaunchGuidanceInput, deps: Codex
     // tell, whose folder is nobody's to write.
     const own = input.ownership === 'external-default' && input.ruleSkillsDir === null
     if (!input.toolsOn) {
-      if (own) removeCodexUserSkills(input.home, deps)
+      if (own && input.toolsSwitchedOff !== false) removeCodexUserSkills(input.home, deps)
       return null
     }
     if (!own) return codexGuidanceNotStaged()

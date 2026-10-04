@@ -120,6 +120,16 @@ describe('this computer\'s own sign-in: the skills copied into the user\'s own C
     expect(codexUserSkillsHomes(deps)).toEqual([])
   })
 
+  it('[host] the tools not reaching a launch while their switch is on (the server not listening): the copies stay, only the switch removes them (review B-S6)', () => {
+    g.codexLaunchGuidance(own(), deps)
+    expect(g.codexLaunchGuidance(own({ toolsOn: false, toolsSwitchedOff: false }), deps)).toBeNull()
+    for (const name of ALL) expect(fs.existsSync(skill(ownHome, name))).toBe(true)
+    expect(codexUserSkillsHomes(deps)).toEqual([ownHome])
+    expect(g.codexLaunchGuidance(own({ toolsOn: false, toolsSwitchedOff: true }), deps)).toBeNull()
+    for (const name of ALL) expect(fs.existsSync(skill(ownHome, name))).toBe(false)
+    expect(codexUserSkillsHomes(deps)).toEqual([])
+  })
+
   it.each([
     ['an account whose realm cannot be told', (): Partial<Input> => ({ ownership: undefined })],
     ['an app-managed account the path rule does not find', (): Partial<Input> => ({ ownership: 'conductor-managed' })],
@@ -143,7 +153,9 @@ describe('what the page is told', () => {
     ['every skill in place', { outcome: { staged: true as const }, skipped: [] }, { guidance: 'full' }],
     ['only skills not the app\'s', { outcome: { staged: false as const, reason: 'not-ours' as const }, skipped: [{ name: 'agent-canvas', reason: 'not-ours' as const }, { name: 'canvas-plan', reason: 'not-ours' as const }] }, { guidance: 'tools-only', reason: 'own-skill', skills: ['agent-canvas', 'canvas-plan'] }],
     ['one not the app\'s and one that failed', { outcome: { staged: false as const, reason: 'not-ours' as const }, skipped: [{ name: 'agent-canvas', reason: 'not-ours' as const }, { name: 'canvas-plan', reason: 'failed' as const }] }, { guidance: 'tools-only', reason: 'skills-not-staged', skills: ['agent-canvas', 'canvas-plan'] }],
-    ['a link', { outcome: { staged: false as const, reason: 'link' as const }, skipped: [{ name: 'conductor-vision', reason: 'link' as const }] }, { guidance: 'tools-only', reason: 'skills-not-staged', skills: ['conductor-vision'] }],
+    ['a link at a skill\'s own name (the user\'s; review B-S4)', { outcome: { staged: false as const, reason: 'link' as const }, skipped: [{ name: 'conductor-vision', reason: 'link' as const }] }, { guidance: 'tools-only', reason: 'own-skill', skills: ['conductor-vision'] }],
+    ['one not the app\'s and a link at another\'s name', { outcome: { staged: false as const, reason: 'not-ours' as const }, skipped: [{ name: 'agent-canvas', reason: 'not-ours' as const }, { name: 'conductor-vision', reason: 'link' as const }] }, { guidance: 'tools-only', reason: 'own-skill', skills: ['agent-canvas', 'conductor-vision'] }],
+    ['the skills folder a link', { outcome: { staged: false as const, reason: 'link' as const }, skipped: ALL.map((name) => ({ name, reason: 'folder-link' as const })) }, { guidance: 'tools-only', reason: 'skills-not-staged', skills: ALL }],
     ['not staged, with no skill named', { outcome: { staged: false as const, reason: 'failed' as const }, skipped: [] }, { guidance: 'tools-only', reason: 'skills-not-staged', skills: ALL }],
   ])('[host] %s', (_name, staging, told) => {
     expect(g.codexGuidanceFromStaging(staging)).toEqual(told)

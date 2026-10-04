@@ -96,13 +96,22 @@ describe('real links in this computer\'s Codex folder', () => {
     expect(fs.readdirSync(path.join(home, 'skills', 'canvas-plan')).sort()).toEqual([STAGED_SKILL_MARK, 'SKILL.md'].sort())
   })
 
-  it('a link at a staging name: removed as the link itself, its target untouched', () => {
+  it('a link at a staging name: left alone (only staging the app can tell is its own is swept; review B-S8), its target untouched', () => {
     fs.mkdirSync(path.join(home, 'skills'))
     appCopyOutside()
     link(path.join(home, 'skills', `${STAGING_PREFIX}Qr12St`))
     u.removeCodexUserSkills(home, deps)
-    expect(fs.existsSync(path.join(home, 'skills', `${STAGING_PREFIX}Qr12St`))).toBe(false)
+    expect(fs.lstatSync(path.join(home, 'skills', `${STAGING_PREFIX}Qr12St`)).isSymbolicLink()).toBe(true)
     expect(fs.readdirSync(outside).sort()).toEqual([FIRST, 'precious.txt'])
+  })
+
+  it('a link planted INSIDE the app\'s own copy: the switch-off removal removes the link, never its target', () => {
+    expect(u.stageCodexUserSkills(home, deps).outcome).toEqual({ staged: true })
+    link(path.join(home, 'skills', 'canvas-plan', 'refs'))
+    u.reconcileCodexUserSkills(false, deps)
+    expect(fs.existsSync(path.join(home, 'skills', 'canvas-plan'))).toBe(false)
+    expect(fs.readFileSync(path.join(outside, 'precious.txt'), 'utf8')).toBe('keep me')
+    expect(u.codexUserSkillsHomes(deps)).toEqual([])
   })
 
   it('the record itself a link: never read or written through, nothing copied', () => {

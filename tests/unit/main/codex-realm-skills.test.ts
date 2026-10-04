@@ -145,8 +145,6 @@ describe('staging', () => {
     fs.mkdirSync(theirs, { recursive: true })
     fs.writeFileSync(path.join(theirs, 'SKILL.md'), 'the user\'s own agent-canvas skill')
     fs.writeFileSync(path.join(theirs, 'notes.md'), 'theirs')
-    // A mark that is not exactly the app's does not make it the app's.
-    fs.writeFileSync(path.join(theirs, STAGED_SKILL_MARK), 'not the app\'s mark')
     expect(stage(home, res)).toEqual({ staged: false, reason: 'not-ours' })
     expect(fs.readFileSync(path.join(theirs, 'SKILL.md'), 'utf8')).toBe('the user\'s own agent-canvas skill')
     expect(fs.readFileSync(path.join(theirs, 'notes.md'), 'utf8')).toBe('theirs')
@@ -154,6 +152,19 @@ describe('staging', () => {
     expect(fs.readFileSync(path.join(skillDir('canvas-plan'), 'SKILL.md')).equals(SKILLS.find((s) => s.name === 'canvas-plan')!.bytes)).toBe(true)
     remove(home, res)
     expect(fs.readFileSync(path.join(theirs, 'SKILL.md'), 'utf8')).toBe('the user\'s own agent-canvas skill')
+  })
+
+  it('[host] a folder carrying the app\'s mark changed or replaced is still the app\'s: rebuilt whole, and removed when the tools are off', () => {
+    stage(home, res)
+    const mark = path.join(skillDir('agent-canvas'), STAGED_SKILL_MARK)
+    fs.writeFileSync(mark, 'not the app\'s mark')
+    fs.writeFileSync(path.join(skillDir('agent-canvas'), 'notes.md'), 'planted')
+    expect(stage(home, res)).toEqual({ staged: true })
+    expect(fs.readdirSync(skillDir('agent-canvas')).sort()).toEqual([STAGED_SKILL_MARK, 'SKILL.md'].sort())
+    fs.appendFileSync(mark, ' ')
+    remove(home, res)
+    expect(fs.existsSync(skillDir('agent-canvas'))).toBe(false)
+    expect(fs.readdirSync(path.join(home, 'skills')).filter((n) => n.startsWith(STAGING_PREFIX))).toEqual([])
   })
 
   it('a file standing at a skill\'s name is not the app\'s: left alone', () => {
@@ -248,8 +259,8 @@ describe('a staging folder left behind (ADR-009 round 2)', () => {
   it.each([
     ['a file the app never writes there', (dir: string) => { fs.mkdirSync(path.join(dir, SKILLS[0].name), { recursive: true }); fs.writeFileSync(path.join(dir, SKILLS[0].name, 'notes.md'), 'theirs') }],
     ['a folder not named after a skill', (dir: string) => { fs.mkdirSync(path.join(dir, 'my-skill'), { recursive: true }) }],
-    ['a mark that is not exactly the app\'s', (dir: string) => { fs.mkdirSync(path.join(dir, SKILLS[0].name), { recursive: true }); fs.writeFileSync(path.join(dir, SKILLS[0].name, STAGED_SKILL_MARK), 'not the app\'s mark') }],
     ['a file at its top', (dir: string) => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'SKILL.md'), 'theirs') }],
+    ['a skill folder holding a file of another name beside SKILL.md, without the mark', (dir: string) => { fs.mkdirSync(path.join(dir, SKILLS[0].name), { recursive: true }); fs.writeFileSync(path.join(dir, SKILLS[0].name, 'SKILL.md'), 'x'); fs.writeFileSync(path.join(dir, SKILLS[0].name, 'run.ps1'), 'theirs') }],
   ])('[host] one that is not the app\'s (%s) is left alone, at stage and at removal', (_name, plant) => {
     const theirs = staging('Zz99Zz')
     plant(theirs)
@@ -265,5 +276,18 @@ describe('a staging folder left behind (ADR-009 round 2)', () => {
     expect(stage(home, res)).toEqual({ staged: true })
     remove(home, res)
     expect(fs.readFileSync(staging('File00'), 'utf8')).toBe('a file')
+  })
+
+  it('[host] what the app\'s own removal can leave part-way is the app\'s and swept: a skill folder carrying a changed mark, or holding only SKILL.md, or nothing', () => {
+    const changed = path.join(staging('Rm01Aa'), SKILLS[0].name)
+    fs.mkdirSync(changed, { recursive: true })
+    fs.writeFileSync(path.join(changed, STAGED_SKILL_MARK), 'not the app\'s mark')
+    fs.writeFileSync(path.join(changed, 'notes.md'), 'planted')
+    const skillOnly = path.join(staging('Rm02Bb'), SKILLS[1].name)
+    fs.mkdirSync(skillOnly, { recursive: true })
+    fs.writeFileSync(path.join(skillOnly, 'SKILL.md'), 'an older version of the skill')
+    fs.mkdirSync(path.join(staging('Rm03Cc'), SKILLS[2].name), { recursive: true })
+    remove(home, res)
+    expect(leftovers()).toEqual([])
   })
 })

@@ -72,8 +72,8 @@ const text = (id: string): string | null => host.querySelector(`[data-testid="${
 
 describe('a Codex session\'s canvas notices', () => {
   it.each([
-    ['one skill of the user\'s own', 'own-skill', ['agent-canvas'], 'This Codex session has the canvas tools without the app\'s agent-canvas skill: a skill of that name in this account\'s Codex skills folder is not the app\'s, and the app never replaces it.'],
-    ['two skills of the user\'s own', 'own-skill', ['agent-canvas', 'conductor-vision'], 'This Codex session has the canvas tools without the app\'s agent-canvas and conductor-vision skills: skills of those names in this account\'s Codex skills folder are not the app\'s, and the app never replaces them.'],
+    ['one skill of the user\'s own', 'own-skill', ['agent-canvas'], 'This Codex session has the canvas tools without the app\'s agent-canvas skill: a skill or link of that name in this account\'s Codex skills folder is not the app\'s, and the app never replaces it.'],
+    ['two skills of the user\'s own', 'own-skill', ['agent-canvas', 'conductor-vision'], 'This Codex session has the canvas tools without the app\'s agent-canvas and conductor-vision skills: skills or links of those names in this account\'s Codex skills folder are not the app\'s, and the app never replaces them.'],
     ['one that could not be put in place', 'skills-not-staged', ['canvas-plan'], 'This Codex session has the canvas tools without the app\'s canvas-plan skill: the app could not put it in this account\'s Codex skills folder.'],
     ['none could be put in place', 'skills-not-staged', ['agent-canvas', 'canvas-plan', 'conductor-vision'], 'This Codex session has the canvas tools without the app\'s agent-canvas, canvas-plan and conductor-vision skills: the app could not put them in this account\'s Codex skills folder.'],
   ] as const)('[host] says which skill is missing and why (%s), question 5 answered C', async (_name, reason, skills, line) => {
@@ -89,7 +89,16 @@ describe('a Codex session\'s canvas notices', () => {
     guidance = { guidance: 'tools-only', reason: 'own-skill', skills: ['agent-canvas', '<b>x</b>', 'a'.repeat(200)] }
     buffer = [{ sessionId: SID, event: 'SessionStart', payload: {}, ts: 1 }]
     await mount()
-    expect(text('codex-canvas-guidance')).toBe('This Codex session has the canvas tools without the app\'s agent-canvas skill: a skill of that name in this account\'s Codex skills folder is not the app\'s, and the app never replaces it.')
+    expect(text('codex-canvas-guidance')).toBe('This Codex session has the canvas tools without the app\'s agent-canvas skill: a skill or link of that name in this account\'s Codex skills folder is not the app\'s, and the app never replaces it.')
+  })
+
+  it('[host] a copy of the app\'s that could not be removed or rebuilt is never said to be the user\'s: the line says the app could not put it in (review B-Q1)', async () => {
+    setProvider('codex')
+    guidance = { guidance: 'tools-only', reason: 'skills-not-staged', skills: ['agent-canvas'] }
+    buffer = [{ sessionId: SID, event: 'SessionStart', payload: {}, ts: 1 }]
+    await mount()
+    expect(text('codex-canvas-guidance')).toMatch(/the app could not put it in/)
+    expect(text('codex-canvas-guidance')).not.toMatch(/not the app's|never replaces/)
   })
 
   it('[host] no line while every skill is in place, however the session was started (the picker included): the skills reach every conversation of the account', async () => {

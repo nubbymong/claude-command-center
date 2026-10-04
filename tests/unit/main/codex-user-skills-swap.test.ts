@@ -19,6 +19,7 @@ import * as path from 'path'
 vi.mock('../../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }))
 
 const u = await import('../../../src/main/canvas/codex-user-skills')
+const g = await import('../../../src/main/canvas/codex-guidance')
 const { realRealmSkillsIo, STAGING_PREFIX, STAGED_SKILL_MARK, STAGED_SKILL_MARK_BYTES } = await import('../../../src/main/canvas/codex-realm-skills')
 type RealmSkillsIo = typeof realRealmSkillsIo
 const { canvasSkillFiles } = await import('../../../src/main/canvas/canvas-plugin')
@@ -106,7 +107,7 @@ function linkingIo(when: (op: Op, p: string) => boolean = () => false, at: (p: s
       fs.rmdirSync(through(p))
     },
   }
-  return { io, links, get swapped() { return swapped } }
+  return { io, links, through, get swapped() { return swapped } }
 }
 
 const deps = (io: RealmSkillsIo) => ({ io, recordFile: () => recordFile })
@@ -128,14 +129,19 @@ describe('a link standing in this computer\'s Codex folder', () => {
     l.links.set(home, outside)
     const out = u.stageCodexUserSkills(home, deps(l.io))
     expect(out.outcome).toEqual({ staged: false, reason: 'link' })
-    expect(out.skipped.every((s) => s.reason === 'link')).toBe(true)
+    expect(out.skipped.every((s) => s.reason === 'folder-link')).toBe(true)
+    // The page: the app could not put them there (never "the user's own skill").
+    expect(g.codexGuidanceFromStaging(out)).toMatchObject({ reason: 'skills-not-staged' })
     outsideUntouched()
   })
 
   it('[host] at skills/: nothing copied or written through it, and removal deletes nothing through it', () => {
     const l = linkingIo()
     l.links.set(skills, outside)
-    expect(u.stageCodexUserSkills(home, deps(l.io)).outcome).toEqual({ staged: false, reason: 'link' })
+    const out = u.stageCodexUserSkills(home, deps(l.io))
+    expect(out.outcome).toEqual({ staged: false, reason: 'link' })
+    expect(out.skipped.every((s) => s.reason === 'folder-link')).toBe(true)
+    expect(g.codexGuidanceFromStaging(out)).toMatchObject({ reason: 'skills-not-staged' })
     outsideUntouched()
     plantAppCopyOutside()
     u.removeCodexUserSkills(home, deps(l.io))
@@ -151,6 +157,8 @@ describe('a link standing in this computer\'s Codex folder', () => {
     l.links.set(path.join(skills, FIRST), outside)
     const out = u.stageCodexUserSkills(home, deps(l.io))
     expect(out.skipped).toEqual([{ name: FIRST, reason: 'link' }])
+    // A link the user put at a skill's own name is the user's (review B-S4).
+    expect(g.codexGuidanceFromStaging(out)).toEqual({ guidance: 'tools-only', reason: 'own-skill', skills: [FIRST] })
     outsideUntouched()
     plantAppCopyOutside()
     u.removeCodexUserSkills(home, deps(l.io))
@@ -159,7 +167,7 @@ describe('a link standing in this computer\'s Codex folder', () => {
     expect(fs.existsSync(path.join(outside, FIRST, 'SKILL.md'))).toBe(true)
   })
 
-  it('[host] at a staging name: removed as the link itself, at copy and at removal; its target is never followed', () => {
+  it('[host] at a staging name: left alone at copy and at removal (only staging the app can tell is its own is swept; review B-S8); its target is never followed', () => {
     fs.mkdirSync(skills)
     plantAppCopyOutside()
     for (const op of ['copy', 'removal'] as const) {
@@ -168,9 +176,38 @@ describe('a link standing in this computer\'s Codex folder', () => {
       l.links.set(link, outside)
       if (op === 'copy') u.stageCodexUserSkills(home, deps(l.io))
       else u.removeCodexUserSkills(home, deps(l.io))
-      expect(l.links.has(link)).toBe(false)
+      expect(l.links.get(link)).toBe(outside)
       expect(fs.readdirSync(outside).sort()).toEqual([FIRST, 'precious.txt'])
     }
+  })
+
+  it('[host] an empty folder at a staging name is not the app\'s to tell: left alone (review B-S8)', () => {
+    fs.mkdirSync(path.join(skills, `${STAGING_PREFIX}Uv34Wx`), { recursive: true })
+    u.stageCodexUserSkills(home, deps(realRealmSkillsIo))
+    u.removeCodexUserSkills(home, deps(realRealmSkillsIo))
+    expect(fs.existsSync(path.join(skills, `${STAGING_PREFIX}Uv34Wx`))).toBe(true)
+  })
+
+  it('[host] a link put at skills/ after it was checked, before it is made: nothing is made at the link\'s target (review L1-2)', () => {
+    const l = linkingIo()
+    const missing = path.join(outside, 'missing')
+    let looks = 0
+    const io: RealmSkillsIo = {
+      ...l.io,
+      lstat: (p) => {
+        const out = l.io.lstat(p)
+        if (path.resolve(p) === skills && out === null && ++looks === 1) l.links.set(skills, missing)
+        return out
+      },
+      // As the app's checked mkdir does: the folders made, then the walk for a link.
+      mkdirChecked: (p) => {
+        fs.mkdirSync(l.through(p), { recursive: true })
+        for (const k of l.links.keys()) if (path.resolve(p) === k || path.resolve(p).startsWith(k + path.sep)) throw new Error('refusing: a link')
+      },
+    }
+    expect(u.stageCodexUserSkills(home, deps(io)).outcome.staged).toBe(false)
+    expect(fs.existsSync(missing)).toBe(false)
+    outsideUntouched()
   })
 })
 
@@ -179,7 +216,14 @@ describe('a copy that cannot be removed (a file held open)', () => {
     const l = linkingIo()
     const recorded = (): string[] => u.codexUserSkillsHomes({ recordFile: () => recordFile })
     u.stageCodexUserSkills(home, deps(l.io))
-    const busy: RealmSkillsIo = { ...l.io, removeTree: (p) => { if (path.basename(p) === FIRST) throw Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' }); l.io.removeTree(p) } }
+    // A file in it held open: the folder cannot be renamed out of its place,
+    // and that file cannot be deleted.
+    const EBUSY = (): Error => Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' })
+    const busy: RealmSkillsIo = {
+      ...l.io,
+      rename: (from, to) => { if (path.basename(from) === FIRST) throw EBUSY(); l.io.rename(from, to) },
+      removeTree: (p) => { if (p.split(/[\\/]/).includes(FIRST)) throw EBUSY(); l.io.removeTree(p) },
+    }
     u.removeCodexUserSkills(home, deps(busy))
     expect(fs.existsSync(path.join(skills, FIRST))).toBe(true)
     expect(recorded()).toEqual([home])
