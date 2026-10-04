@@ -22,6 +22,7 @@ import { parseCodexVersion, classifyCodexVersion } from './cli-contract'
 import { codexCommandLine, codexShellEnv } from './cli-runner'
 import type { CodexCommand, CodexRunResult } from './cli-runner'
 import { codexCliEnv } from './cli-env'
+import { windowsPathHasTrailingDotOrSpace } from '../windows-path-names'
 
 export interface CodexExecutableIdentity {
   /** Canonical absolute path. */
@@ -64,9 +65,7 @@ export type CodexDiscovery = DiscoveryResult & { identity?: CodexExecutableIdent
  *  not be a proof of the other. A resolved path with any such name is never
  *  proved or run (review L3; the resources folder follows the same rule,
  *  realm-folders.ts). */
-export function windowsPathHasTrailingDotOrSpace(p: string): boolean {
-  return p.split(/[\\/]/).slice(1).some((seg) => /[. ]$/.test(seg))
-}
+export { windowsPathHasTrailingDotOrSpace }
 
 const DOT_SPACE_DETAIL = 'the Codex CLI on PATH is at a path with a name ending in a dot or a space, which this app does not run'
 

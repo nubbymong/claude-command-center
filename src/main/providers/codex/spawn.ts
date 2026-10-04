@@ -9,6 +9,7 @@ import { getConductorMcpPort, issueMcpSessionToken } from '../../conductor-mcp-s
 import { CODEX_CONDUCTOR_TOOLS, type ConductorToolSwitches } from './conductor-tools'
 import { readConfig, getConfigDir } from '../../config-manager'
 import { colorFgBgValue } from '../host-color-scheme'
+import { windowsFolderAsRun } from '../windows-path-names'
 import { codexShellEnv, CMD_UNSAFE_PATH_RE } from './cli-runner'
 import { CODEX_CONVERSATION_ID_RE, codexFolderIdentity, resolveCodexResume } from './rollout-lookup'
 import { codexHookCommand, codexHookConfigArgs, codexPlainWrapperDir, codexLocalAppData, verifyPlainCodexHookWrapper, CODEX_HOOK_FILE_ENV, CODEX_HOOK_SCRIPT, CODEX_HOOK_WRAPPER } from './hooks'
@@ -46,12 +47,7 @@ const WIN_PATH_FOLDER_RE = /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/?.][^\\/]*[\\/][^\\/
  *  are kept. `.` and `..` steps are folded when the candidate is joined
  *  (path.win32). Node reads every name as it is spelled, so without this the
  *  lookup would read another folder than the one a terminal runs from. */
-export function codexWindowsFolderAsRun(dir: string): string {
-  const parts = dir.split(/([\\/])/)
-  // A share keeps `\\server\share` as it is: parts '', sep, '', sep, server, sep, share.
-  const root = /^[\\/]{2}/.test(dir) ? 7 : 1
-  return parts.map((part, i) => (i < root || i % 2 === 1 ? part : part.replace(/([^.])\.$/, '$1'))).join('')
-}
+export const codexWindowsFolderAsRun: (dir: string) => string = windowsFolderAsRun
 
 /** PATH's folders as the lookup reads them: `;`-separated, a quoted entry
  *  without its quotes, and only fully qualified folders (WIN_PATH_FOLDER_RE:
