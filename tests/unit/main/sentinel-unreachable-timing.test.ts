@@ -24,6 +24,9 @@
  * each retry, its `error_status` null when no answer came back (the pinned
  * 2.1.288 CLI's `--output-format stream-json --verbose`), so Sentinel ends it
  * after five such retries in a row, and an answered retry keeps its schedule.
+ * A Claude Code that prints no retry line (older than 2.1.287) is replayed too:
+ * the analysis's retry backstop (8) makes it give its own reason inside the
+ * 180 s deadline, an estimate, as no such run was measured.
  *
  * The owner's bar: the panel reports within a minute, with what happened.
  */
@@ -95,15 +98,18 @@ vi.mock('../../../src/main/account-profiles', () => ({
   sharedRoot: () => path.join(os.tmpdir(), 'ccc-sentinel-timing-no-such-folder'),
 }))
 
-/** VM: `claude -p` with Sentinel's argv against a service it cannot reach,
- *  with its default 10 retries: the seconds until it gave its reason. */
-const CLAUDE_GIVES_UP_S = 192.7
+/** `claude -p` with Sentinel's argv against a service it cannot reach: the
+ *  seconds until it gives its own reason, by the retries it is allowed. VM:
+ *  the default 10 gave up after 192.7 s. 8 is an ESTIMATE (unmeasured): 95.5 s
+ *  of backoff, about 120 s with the CLI's 25% jitter, plus about 3 s for each
+ *  of 9 refused requests (what the VM's 192.7 s for 10 retries implies). */
+const CLAUDE_GIVES_UP_S: Record<string, number> = { default: 192.7, '8': 150 }
 /** When it reports each failed request, in seconds after the run started:
  *  the first at 5.8 s, then its backoff doubling from 0.5 s. */
 const CLAUDE_RETRY_REPORT_S = [5.8, 6.3, 7.3, 9.3, 13.3, 21.3, 37.3, 69.3, 101.3, 133.3]
 /** The reason it gives once its retries run out (the CLI's own words). */
 const CLAUDE_UNREACHABLE = 'API Error: Connection refused \u2014 a firewall or proxy may be blocking it (ECONNREFUSED)'
-const claudeMode = vi.hoisted(() => ({ analysis: 'unreachable' as 'unreachable' | 'ok' | 'overloaded' }))
+const claudeMode = vi.hoisted(() => ({ analysis: 'unreachable' as 'unreachable' | 'ok' | 'overloaded' | 'silent' }))
 const claudeAnalyses: Array<{ args: string[]; env?: Record<string, string>; stopped: boolean; retries: number }> = []
 type HeadlessOpts = { env?: Record<string, string>; onStdout?: (chunk: string) => void }
 const spawnClaudeHeadless = vi.fn(async (args: string[], timeoutMs?: number, _stdin?: string, _home?: string | null, signal?: AbortSignal, opts?: HeadlessOpts) => {
@@ -122,8 +128,12 @@ const spawnClaudeHeadless = vi.fn(async (args: string[], timeoutMs?: number, _st
   if (claudeMode.analysis === 'ok') { clock.t += 15; return reply() }
   const deadline = (timeoutMs ?? 180000) / 1000
   const answered = claudeMode.analysis === 'overloaded'
+  const allowed = opts?.env?.CLAUDE_CODE_MAX_RETRIES
+  const givesUp = CLAUDE_GIVES_UP_S[allowed ?? 'default'] ?? CLAUDE_GIVES_UP_S.default
   // An overloaded service answers 529 three times (about 9 s of backoff), then serves the reply.
-  for (const [i, at] of CLAUDE_RETRY_REPORT_S.slice(0, answered ? 4 : undefined).entries()) {
+  // An older Claude Code ('silent') prints no retry line at all.
+  const reports = claudeMode.analysis === 'silent' ? [] : CLAUDE_RETRY_REPORT_S.slice(0, answered ? 4 : allowed ? Number(allowed) : undefined)
+  for (const [i, at] of reports.entries()) {
     if (at > deadline) break
     clock.t = start + at
     if (answered && i === 3) return reply()
@@ -131,8 +141,8 @@ const spawnClaudeHeadless = vi.fn(async (args: string[], timeoutMs?: number, _st
     run.retries++
     if (signal?.aborted) { run.stopped = true; return { code: 1, stdout, stderr: '\nAborted' } }
   }
-  if (CLAUDE_GIVES_UP_S > deadline) { clock.t = start + deadline; return { code: 1, stdout, stderr: `\nTimed out after ${deadline}s` } }
-  clock.t = start + CLAUDE_GIVES_UP_S
+  if (givesUp > deadline) { clock.t = start + deadline; return { code: 1, stdout, stderr: `\nTimed out after ${deadline}s` } }
+  clock.t = start + givesUp
   emit({ type: 'result', subtype: 'success', is_error: true, result: CLAUDE_UNREACHABLE })
   return { code: 1, stdout, stderr: '' }
 })
@@ -207,10 +217,24 @@ describe('the analysis cannot reach its service: the panel reports within a minu
     expect(claudeAnalyses).toHaveLength(1)
     expect(claudeAnalyses[0]).toMatchObject({ stopped: true, retries: 5 })
     expect(claudeAnalyses[0].args).toEqual(expect.arrayContaining(['--output-format', 'stream-json', '--verbose']))
-    expect(Object.keys(claudeAnalyses[0].env ?? {}).some((k) => /RETRIES/.test(k))).toBe(false)
+    expect(claudeAnalyses[0].env?.CLAUDE_CODE_MAX_RETRIES).toBe('8')
     expect(report.error).toMatch(/could not reach its service/i)
     expect(report.error).toMatch(/no answer/)
     expect(report.error).toMatch(/Re-run/)
+  })
+
+  it('Claude Code older than 2.1.287 (no retry line): the retry backstop ends it with the CLI\'s own reason inside the deadline, one attempt [host]', async () => {
+    pref.claude = 'on'; pref.codex = 'off'
+    claudeMode.analysis = 'silent'
+    const { mod, report } = await sentinelSeeded({ lastSeenCcVersion: '2.1.290' })
+    await mod.sentinelStartupCheck()
+    expect(claudeAnalyses).toHaveLength(1)
+    expect(claudeAnalyses[0]).toMatchObject({ stopped: false, retries: 0 })
+    expect(report.at).not.toBeNull()
+    expect(report.at!).toBeLessThan(180)
+    expect(report.error).toMatch(/could not reach its service/i)
+    expect(report.error).toContain('ECONNREFUSED')
+    expect(report.error).not.toMatch(/busy or rate limited|update was large/)
   })
 
   it('Claude Code: an overloaded service that answers keeps Claude Code\'s own retries, and the analysis completes [host]', async () => {

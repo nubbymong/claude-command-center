@@ -11,9 +11,9 @@ import { isSentinelEnabled } from '../../../shared/sentinel-enabled'
 // (info / managed-only / mechanisms CCC doesn't use). It is a calm state — the
 // alarming colours (amber 'findings', red 'high') are reserved for findings that
 // would actually affect this install, so the colour means what the user expects.
-// 'incomplete' (PR 4, owner answers review) = the last analysis did not
-// complete and no finding reaches the user: the chip says so, in the same calm
-// grey, instead of "no issues found" (the panel says the same).
+// 'incomplete' (PR 4, owner answers review) = the last analysis failed (not a
+// refusal, a carried problem or unmatched findings) and no finding reaches the
+// user: the chip says so, in the same calm grey, instead of "no issues found".
 export type DotState = 'hidden' | 'ok' | 'analyzing' | 'reviewed' | 'incomplete' | 'findings' | 'high'
 
 export function deriveDotState(
@@ -27,7 +27,7 @@ export function deriveDotState(
   const reaching = open.filter((f) => findingReachesUser(f, ctx))
   if (reaching.some((f) => f.severity === 'high')) return 'high'
   if (reaching.length) return 'findings'
-  if (snap.lastAnalysisError) return 'incomplete'
+  if (snap.lastAnalysisError && snap.lastAnalysisFailed === true) return 'incomplete'
   if (open.length) return 'reviewed'
   return 'ok'
 }

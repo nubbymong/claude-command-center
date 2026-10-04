@@ -73,14 +73,23 @@ export const CLAUDE_ANALYSIS_ARGS: readonly string[] = [
 
 /** Claude Code's own switches for the analysis run: no CLAUDE.md or memory
  *  file of any scope, no auto memory, and no git status or git instructions
- *  in its context. No retry setting (owner answers review): Claude Code's one
- *  retry setting covers answered retries too (an overloaded or failing
- *  service), so the run keeps its own schedule and ends early only on
- *  retries that got no answer (CLAUDE_UNANSWERED_RETRIES_STOP). */
+ *  in its context. */
 export const CLAUDE_ANALYSIS_ENV: Readonly<Record<string, string>> = Object.freeze({
   CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
   CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
   CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1',
+  // PR 4 (owner answers review): a backstop for a Claude Code that prints no
+  // retry line (older than 2.1.287), where the watch below sees nothing. Its
+  // default, 10 retries, outlasts the 3-minute cap when the service cannot be
+  // reached (Windows test VM: 192.7 s, then killed and tried again, 6 minutes
+  // in all). With 8 it gives its own reason inside the cap, said as
+  // unreachable, one attempt: 95.5 s of backoff, about 120 s with its 25%
+  // jitter, plus about 3 s for each of 9 refused requests (an estimate from
+  // that run). The one setting also covers answered retries (408, 409, 429,
+  // 5xx, 529): an analysis rides out an overloaded service for up to 8
+  // retries instead of 10; the two dropped would come about 128 to 160 s into
+  // the backoff, where the 3-minute cap ends most runs anyway.
+  CLAUDE_CODE_MAX_RETRIES: '8',
 })
 
 /** PR 4 (owner answers review): how many retries in a row that got no answer
@@ -92,7 +101,8 @@ export const CLAUDE_ANALYSIS_ENV: Readonly<Record<string, string>> = Object.free
  *  the run was killed and tried again, 6 minutes in all); its first failed
  *  request is reported about 6 s in and its backoff doubles from 0.5 s, so the
  *  fifth comes about 13 s in. An answered retry (408, 409, 429, 5xx, 529)
- *  keeps Claude Code's own schedule, inside the 3-minute cap. */
+ *  keeps Claude Code's own schedule, up to the retry backstop in
+ *  CLAUDE_ANALYSIS_ENV. */
 export const CLAUDE_UNANSWERED_RETRIES_STOP = 5
 
 /** The reason a Claude Code analysis ended that way gives. It carries
@@ -115,8 +125,8 @@ function streamEvent(raw: string): Record<string, unknown> | null {
 
 /** Reads a Claude Code analysis's stream as it arrives and decides when it
  *  ends early: after `stopAfter` retries in a row that got no answer
- *  (error_status null; a retry that waited on a reply, or a cloud credential
- *  error, is not counted). An answered retry or a model message resets the
+ *  (error_status null, a reply that never came `no_response` included; a
+ *  cloud credential error is not counted). An answered retry or a model message resets the
  *  count, and once the result line has come nothing ends the run. Only the
  *  CLI's own top-level lines count: model text rides inside them, escaped.
  *  `push` is true once, when the stop is decided. Memory is bounded by one
@@ -134,7 +144,7 @@ export function createClaudeRetryWatch(stopAfter = CLAUDE_UNANSWERED_RETRIES_STO
     if (e.type === 'assistant') { unanswered = 0; return }
     if (e.type !== 'system' || e.subtype !== 'api_retry') return
     if (typeof e.error_status === 'number') { unanswered = 0; return }
-    if (e.error_status === null && e.no_response === undefined && e.error !== 'cloud_credential_error') unanswered++
+    if (e.error_status === null && e.error !== 'cloud_credential_error') unanswered++
   }
   return {
     push(chunk: string) {
@@ -387,6 +397,12 @@ export function envelopeError(stdout: string): { rateLimited: boolean; unreachab
   return { rateLimited, unreachable, reason }
 }
 
+/** Text matched as itself in a regular expression (owner answers review):
+ *  every character a pattern treats specially is escaped. */
+function plainPattern(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 /** PR 4 (owner answers, the Sentinel chase): a failure that never got an
  *  answer from the assistant's service (no network, or a proxy or firewall in
  *  the way). Claude Code says "Connection refused ... (ECONNREFUSED)" or
@@ -394,7 +410,7 @@ export function envelopeError(stdout: string): { rateLimited: boolean; unreachab
  *  ANALYSIS_UNREACHABLE_WORDS (plain words: Codex's reviewer, once Codex is
  *  waiting for the network; Sentinel's Claude Code runner, after retries
  *  that got no answer, CLAUDE_UNREACHABLE_TEXT). */
-const UNREACHABLE_REASON = new RegExp(String.raw`\b(?:ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH)\b|\bconnection (?:refused|error)\b|\b${ANALYSIS_UNREACHABLE_WORDS}\b|\bwaiting for network\b`, 'i')
+const UNREACHABLE_REASON = new RegExp(String.raw`\b(?:ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH)\b|\bconnection (?:refused|error)\b|\bwaiting for network\b|(?<!\w)` + plainPattern(ANALYSIS_UNREACHABLE_WORDS) + String.raw`(?!\w)`, 'i')
 
 /** The message a JSON error body carries, if it has one. */
 function jsonErrorMessage(body: string): string | null {

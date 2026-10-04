@@ -53,6 +53,12 @@ export interface SentinelStateSnapshot {
   analyzingProvider?: SentinelProvider | null
   lastAnalysisAt: number | null
   lastAnalysisError: string | null
+  /** PR 4 (owner answers review): the last check's message is a failed
+   *  analysis (one attempted for an update that did not complete: its notes
+   *  unreadable, its run unable to start, or the run itself failed), not a
+   *  refusal, a carried problem or unmatched findings. Absent in a file
+   *  written before it: read as not failed. */
+  lastAnalysisFailed?: boolean
   /** P3.9 round 1: said beside a completed analysis that did not read all of
    *  the notes in full (some were cut, or not every version could be read). */
   lastAnalysisNote?: string | null

@@ -95,10 +95,12 @@ export function sentinelCodexRunsInFlight(): number {
  *  check and the count. `probe`: a check nobody asked for (the start-up
  *  check), which is not logged when skipped. Lazy for the same reason as
  *  headlessRunner (the accounts graph is heavy). */
-async function beginRun(provider: SentinelProvider, opts: { probe: boolean }): Promise<{ refused: string } | { end: () => void }> {
+async function beginRun(provider: SentinelProvider, opts: { probe: boolean }): Promise<{ refused: string; gate: true } | { end: () => void }> {
   const gate = await import('../provider-launch-gate')
   const refusal = opts.probe ? gate.providerProbeRefusal(provider) : gate.providerLaunchRefusal(provider)
-  if (refusal) return { refused: refusal.message }
+  // `gate` (owner answers review): the launch rule refused it (the provider
+  // is off or not set up), a refusal and not a failed analysis.
+  if (refusal) return { refused: refusal.message, gate: true }
   countRun(provider, 1)
   let ended = false
   return {
@@ -314,7 +316,7 @@ interface AnalysisRunner { run: HeadlessRunner; accountLabel: string | null; end
  *  review): its stream is read as it arrives, and a run whose retries got no
  *  answer from the service, CLAUDE_UNANSWERED_RETRIES_STOP in a row, is
  *  stopped then (its tree, as a cancel) and said as unreachable. */
-async function claudeAnalysisRunner(signal: AbortSignal): Promise<AnalysisRunner | { refused: string }> {
+async function claudeAnalysisRunner(signal: AbortSignal): Promise<AnalysisRunner | RunnerRefusal> {
   const begun = await beginRun('claude', { probe: false })
   if ('refused' in begun) return begun
   let handedOver = false
@@ -474,7 +476,7 @@ function makeAnalysisFolder(parent: string, prefix: string = CODEX_ANALYSIS_DIR_
  * Counted as Codex in use while it runs; the lease and the folder go once
  * the run, and any kill still under way, has ended.
  */
-async function codexAnalysisRunner(signal: AbortSignal): Promise<AnalysisRunner | { refused: string }> {
+async function codexAnalysisRunner(signal: AbortSignal): Promise<AnalysisRunner | RunnerRefusal> {
   const begun = await beginRun('codex', { probe: false })
   if ('refused' in begun) return begun
   let handedOver = false
@@ -544,18 +546,22 @@ async function codexAnalysisRunner(signal: AbortSignal): Promise<AnalysisRunner 
   }
 }
 
+/** A runner that could not start: why, and (`gate`) whether the launch rule
+ *  refused it (the provider off or not set up) rather than a failure. */
+type RunnerRefusal = { refused: string; gate?: true }
+
 /** Each provider's analysis runner. */
-const RUNNERS: Record<SentinelProvider, (signal: AbortSignal) => Promise<AnalysisRunner | { refused: string }>> = {
+const RUNNERS: Record<SentinelProvider, (signal: AbortSignal) => Promise<AnalysisRunner | RunnerRefusal>> = {
   claude: claudeAnalysisRunner, codex: codexAnalysisRunner,
 }
 
 /** The runner for an analysis: Claude Code or Codex, whichever is on; with
  *  both on, the one Ask Conductor runs on (OD27 M4). */
-async function analysisRunner(signal: AbortSignal): Promise<AnalysisRunner | { refused: string }> {
+async function analysisRunner(signal: AbortSignal): Promise<AnalysisRunner | RunnerRefusal> {
   const claudeOff = await refusalOf('claude', true)
   const codexOff = await refusalOf('codex', true)
   const provider = sentinelAnalysisProvider(!claudeOff, !codexOff, await savedSettings())
-  if (!provider) return { refused: claudeOff ?? codexOff ?? 'No assistant is on to run the analysis.' }
+  if (!provider) return { refused: claudeOff ?? codexOff ?? 'No assistant is on to run the analysis.', gate: true }
   return RUNNERS[provider](signal)
 }
 
@@ -604,20 +610,23 @@ const SUBJECTS: Record<SentinelProvider, UpdateSubject> = { claude: CLAUDE_UPDAT
 
 /** One update's analysis: its changelog (Claude Code's) or release notes
  *  (Codex's) between the last version and this one, checked against that
- *  provider's surfaces on the runner that is on. */
-async function analyzeOne(u: Update, signal: AbortSignal): Promise<{ ok: true; findings: SentinelFinding[]; unverified: number; note: string | null } | { ok: false; error: string; note?: string | null }> {
+ *  provider's surfaces on the runner that is on. `failed` (owner answers
+ *  review): the analysis was attempted and did not complete (its notes
+ *  unreadable, its runner unable to start for a reason other than the launch
+ *  rule, or the run failed); a provider that is off is a refusal. */
+async function analyzeOne(u: Update, signal: AbortSignal): Promise<{ ok: true; findings: SentinelFinding[]; unverified: number; note: string | null } | { ok: false; error: string; failed: boolean; note?: string | null }> {
   const subject = SUBJECTS[u.provider]
   const notes = await subject.notes(u)
   // Analysis-unavailable is the degraded state, shown as a calm note -- not a
   // finding. Findings are reserved for actual severe breaking changes now.
-  if (!notes) return { ok: false, error: subject.unavailable }
-  if (signal.aborted) return { ok: false, error: '' }
+  if (!notes) return { ok: false, error: subject.unavailable, failed: true }
+  if (signal.aborted) return { ok: false, error: '', failed: false }
   // The update's own provider, switched off while its notes were fetched, is
   // not analysed.
   const off = await refusalOf(u.provider)
-  if (off) return { ok: false, error: off }
+  if (off) return { ok: false, error: off, failed: false }
   const runner = await analysisRunner(signal)
-  if ('refused' in runner) return { ok: false, error: runner.refused }
+  if ('refused' in runner) return { ok: false, error: runner.refused, failed: runner.gate !== true }
   try {
     const r = await runAnalysis({
       runner: runner.run,
@@ -625,7 +634,7 @@ async function analyzeOne(u: Update, signal: AbortSignal): Promise<{ ok: true; f
       from: u.last, to: u.version, accountLabel: runner.accountLabel, subject: u.provider,
     })
     // Round 2: what was cut is said whether or not the analysis completed.
-    return { ...r, note: notes.cut }
+    return r.ok ? { ...r, note: notes.cut } : { ...r, failed: true, note: notes.cut }
   } finally {
     runner.end()
   }
@@ -672,6 +681,10 @@ async function analyzeUpdates(updates: Update[], carried: string[] = [], opts: {
   currentAnalysis = ac
   const errors = [...carried]
   const notes: string[] = []
+  // Owner answers review: whether an analysis attempted here failed (the
+  // chip's "did not complete"), as against carried problems, refusals and
+  // unmatched findings.
+  let failed = false
   for (const u of updates) {
     if (ac.signal.aborted) break
     state.setAnalyzing(true, null, u.provider)
@@ -705,11 +718,12 @@ async function analyzeUpdates(updates: Update[], carried: string[] = [], opts: {
       }
     } else if (r.error) {
       errors.push(r.error)
+      if (r.failed) failed = true
     }
   }
   if (currentAnalysis === ac) currentAnalysis = null
   if (ac.signal.aborted) return
-  state.setAnalyzing(false, errors.length ? errors.join(' ') : null, null, notes.length ? notes.join(' ') : null)
+  state.setAnalyzing(false, errors.length ? errors.join(' ') : null, null, notes.length ? notes.join(' ') : null, failed)
 }
 
 /** Trigger B startup check (spec §5). Non-blocking — call fire-and-forget from bootstrap. */

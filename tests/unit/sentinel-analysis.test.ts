@@ -333,7 +333,7 @@ describe('the analysis, round 2', () => {
     const denied = CLAUDE_ANALYSIS_DENIED_TOOLS.split(',')
     for (const t of ['Bash', 'PowerShell', 'REPL', 'Read', 'WebFetch', 'WebBrowser', 'Monitor', 'CronCreate', 'EnterWorktree', 'ToolSearch', 'SendMessage', 'Artifact']) expect(denied, t).toContain(t)
     expect(Object.isFrozen(CLAUDE_ANALYSIS_ENV)).toBe(true)
-    expect({ ...CLAUDE_ANALYSIS_ENV }).toEqual({ CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1', CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1' })
+    expect({ ...CLAUDE_ANALYSIS_ENV }).toEqual({ CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1', CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1', CLAUDE_CODE_MAX_RETRIES: '8' })
     // An absolute folder on every platform (a drive path is relative on macOS and Linux).
     expect(() => assertHeadlessOptions({ cwd: process.cwd(), env: CLAUDE_ANALYSIS_ENV })).not.toThrow()
   })
@@ -557,10 +557,17 @@ describe('an analysis that cannot reach its service (PR 4, the Sentinel chase)',
     expect(envelopeError(JSON.stringify({ is_error: true, result: 'Codex exited with code 1: unexpected status 400 Bad Request' }))!.unreachable).toBe(false)
   })
 
-  it("Claude Code keeps its own retries for answers it retries: the analysis sets no retry cap [host]", () => {
-    // Owner answers review (E-S1): a cap would also cut how long an analysis rides out
-    // an overloaded service (429, 5xx, 529). Only retries that got no answer end it early.
-    expect(Object.keys(CLAUDE_ANALYSIS_ENV).some((k) => /RETRIES/.test(k))).toBe(false)
+  it("a retry backstop of 8 keeps one attempt inside the 3-minute cap when no retry line is printed [host]", () => {
+    // Owner answers review (E-S5): a Claude Code that prints no api_retry line (older than
+    // 2.1.287) still gives its own reason inside the cap: 8 retries back off 0.5 s doubling
+    // to 32 s, 95.5 s in all, about 120 s with the CLI's 25% jitter, plus about 3 s for each
+    // of 9 refused requests (the VM's 192.7 s for 10 retries implies that).
+    expect(CLAUDE_ANALYSIS_ENV.CLAUDE_CODE_MAX_RETRIES).toBe('8')
+    const backoff = Array.from({ length: 8 }, (_, i) => Math.min(0.5 * 2 ** i, 32)).reduce((a, b) => a + b, 0)
+    expect(backoff).toBe(95.5)
+    expect(backoff * 1.25 + 9 * 3).toBeLessThan(180)
+    // The watch stops first wherever the lines are printed.
+    expect(CLAUDE_UNANSWERED_RETRIES_STOP).toBeLessThan(8)
     expect(() => assertHeadlessOptions({ cwd: process.cwd(), env: CLAUDE_ANALYSIS_ENV })).not.toThrow()
   })
 
@@ -616,9 +623,15 @@ describe('the stream of a Claude Code analysis: unanswered retries end it early 
     expect(w.stopped()).toBe(false)
   })
 
-  it('a retry that waited on a reply (no_response), a cloud credential error, or a malformed status is not counted [host]', () => {
+  it('a retry that waited on a reply that never came (no_response) counts as unanswered [host]', () => {
     const w = createClaudeRetryWatch()
-    for (let i = 1; i <= 6; i++) w.push(retry(i, { no_response: { waited_ms: 30000, retry_wait_ms: 30000 } }))
+    w.push(unanswered(2))
+    for (let i = 3; i < 5; i++) expect(w.push(retry(i, { no_response: { waited_ms: 30000, retry_wait_ms: 30000 } }))).toBe(false)
+    expect(w.push(retry(5, { no_response: { waited_ms: 30000, retry_wait_ms: 30000 } }))).toBe(true)
+  })
+
+  it('a cloud credential error or a malformed status is not counted [host]', () => {
+    const w = createClaudeRetryWatch()
     for (let i = 1; i <= 6; i++) w.push(retry(i, { error: 'cloud_credential_error' }))
     for (let i = 1; i <= 6; i++) w.push(retry(i, { error_status: 'null' }))
     for (let i = 1; i <= 6; i++) w.push(retry(i, { error_status: undefined }))

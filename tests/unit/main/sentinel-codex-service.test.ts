@@ -112,9 +112,9 @@ vi.mock('../../../src/main/providers/core', async (orig) => ({
     },
   },
 }))
-const settings = vi.hoisted(() => ({ value: null as null | Record<string, unknown> }))
+const settings = vi.hoisted(() => ({ value: null as null | Record<string, unknown>, onRead: null as null | (() => void) }))
 vi.mock('../../../src/main/config-manager', () => ({
-  readConfig: () => settings.value,
+  readConfig: () => { settings.onRead?.(); return settings.value },
   readConfigChecked: () => ({ value: settings.value, outcome: settings.value ? 'ok' : 'absent' }),
 }))
 vi.mock('../../../src/main/account-profiles', () => ({
@@ -175,6 +175,7 @@ beforeEach(() => {
   review.answer = null
   review.hold = null
   settings.value = null
+  settings.onRead = null
   spawnClaudeHeadless.mockClear()
   claudeRuns.length = 0
   transport.pick = null
@@ -299,7 +300,7 @@ describe("the analysis of a Codex update, on the provider that is on (row 42; OD
     expect(path.dirname(run.cwd)).toBe(path.resolve(runsDir()))
     expect(path.basename(run.cwd)).toMatch(/^ccc-sentinel-claude-/)
     expect(run.listing).toEqual([])
-    expect(run.env).toEqual({ CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1', CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1' })
+    expect(run.env).toEqual({ CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1', CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1', CLAUDE_CODE_MAX_RETRIES: '8' })
     expect(fs.existsSync(run.cwd)).toBe(false)
     // The version check is not an analysis: it runs as before.
     expect(spawnClaudeHeadless).toHaveBeenCalledWith(['--version'], 15000, undefined, null)
@@ -495,6 +496,69 @@ describe("the analysis of a Codex update, on the provider that is on (row 42; OD
     expect(prompts[0]).toMatch(/--- BEGIN CHANGELOG [0-9a-f]{16} ---/)
     expect(prompts[1]).toMatch(/--- BEGIN RELEASE NOTES [0-9a-f]{16} ---/)
     expect(s.getSentinelState()!.snapshot()).toMatchObject({ lastSeenCcVersion: '2.1.300', lastSeenCodexVersion: '0.155.1', lastAnalysisError: null })
+  })
+})
+
+describe("the title-bar chip's failed-analysis mark (owner answers review, E-S6) [host]", () => {
+  const snap = (s: Awaited<ReturnType<typeof sentinel>>) => s.getSentinelState()!.snapshot()
+  it('an analysis that ran and failed is marked failed [host]', async () => {
+    svc.pref.claude = 'off'
+    review.answer = () => ({ ok: false, code: 'failed', message: 'Codex exited with code 1: unexpected status 400 Bad Request.' })
+    const s = await sentinel({ lastSeenCodexVersion: '0.153.4' })
+    await s.sentinelStartupCheck()
+    expect(snap(s)).toMatchObject({ lastAnalysisFailed: true })
+    expect(snap(s).lastAnalysisError).toContain('unexpected status 400')
+  })
+  it('release notes that could not be read, or a launch Codex could not prepare, mark it failed [host]', async () => {
+    fetchCodexReleaseNotes.mockImplementationOnce(async () => null)
+    const s = await sentinel({ lastSeenCodexVersion: '0.153.4' })
+    await s.sentinelStartupCheck()
+    expect(snap(s)).toMatchObject({ lastAnalysisFailed: true })
+    svc.pref.claude = 'off'
+    svc.prepareAnswer = () => ({ ok: false, code: 'acknowledgement-required', message: 'This sign-in is unverified: confirm that this launch may use it.' })
+    await s.sentinelRerun()
+    expect(snap(s)).toMatchObject({ lastAnalysisFailed: true })
+    expect(snap(s).lastAnalysisError).toContain('This sign-in is unverified')
+  })
+  it('unmatched findings (the analysis completed) are not a failure [host]', async () => {
+    svc.pref.claude = 'off'
+    review.answer = () => reply('{"tokens":{"refresh_token":"FAKE"}}')
+    const s = await sentinel({ lastSeenCodexVersion: '0.153.4' })
+    await s.sentinelStartupCheck()
+    expect(snap(s).lastAnalysisError).toMatch(/could not be matched/)
+    expect(snap(s).lastAnalysisFailed).toBe(false)
+  })
+  it('an assistant switched off while its notes were fetched, or a Re-run with every assistant off, is not a failure [host]', async () => {
+    fetchCodexReleaseNotes.mockImplementationOnce(async () => { svc.pref.codex = 'off'; return { text: NOTES_TEXT, versions: ['0.155.1'], cut: null } })
+    const s = await sentinel({ lastSeenCodexVersion: '0.153.4' })
+    await s.sentinelStartupCheck()
+    expect(snap(s).lastAnalysisError).toBe('Codex is off. Turn it on in Settings, Accounts.')
+    expect(snap(s).lastAnalysisFailed).toBe(false)
+    svc.pref = { claude: 'off', codex: 'off' }
+    await s.sentinelRerun()
+    expect(snap(s).lastAnalysisError).toMatch(/Claude Code is off/)
+    expect(snap(s).lastAnalysisFailed).toBe(false)
+  })
+  it('the launch rule refusing the runner itself (its provider switched off as it starts) is not a failure [host]', async () => {
+    svc.pref.claude = 'off'
+    // Codex is switched off after the runner was chosen and before it starts.
+    fetchCodexReleaseNotes.mockImplementationOnce(async () => {
+      settings.onRead = () => { svc.pref.codex = 'off'; settings.onRead = null }
+      return { text: NOTES_TEXT, versions: ['0.155.1'], cut: null }
+    })
+    const s = await sentinel({ lastSeenCodexVersion: '0.153.4' })
+    await s.sentinelStartupCheck()
+    expect(review.runs).toHaveLength(0)
+    expect(snap(s).lastAnalysisError).toBe('Codex is off. Turn it on in Settings, Accounts.')
+    expect(snap(s).lastAnalysisFailed).toBe(false)
+  })
+  it('a problem carried beside an analysis that completed is not a failure [host]', async () => {
+    svc.installation = { discoveryState: 'error', compatibility: 'unknown' }
+    fetchChangelog.mockImplementationOnce(async () => '## 2.1.300\n- x')
+    const s = await sentinel({ lastSeenCcVersion: '2.1.300' })
+    await s.sentinelRerun()
+    expect(snap(s).lastAnalysisError).toMatch(/The installed Codex could not be checked/)
+    expect(snap(s).lastAnalysisFailed).toBe(false)
   })
 })
 

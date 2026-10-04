@@ -131,6 +131,16 @@ describe('SentinelState for Codex (P3.9)', () => {
     s.setAnalyzing(false)
     expect(s.snapshot().lastAnalysisNote).toBeNull()
   })
+  it('a failed analysis is marked as such (and reloaded) until the next one starts; any other message is not (owner answers review) [host]', () => {
+    const s = new SentinelState(dir)
+    s.setAnalyzing(false, 'AI analysis could not complete: Overloaded.', null, null, true)
+    expect(s.snapshot()).toMatchObject({ lastAnalysisError: 'AI analysis could not complete: Overloaded.', lastAnalysisFailed: true })
+    expect(new SentinelState(dir).snapshot().lastAnalysisFailed).toBe(true)
+    s.setAnalyzing(true, null, 'claude')
+    expect(s.snapshot().lastAnalysisFailed).toBe(false)
+    s.setAnalyzing(false, 'Claude Code is off. Turn it on in Settings, Accounts.')
+    expect(s.snapshot().lastAnalysisFailed).toBe(false)
+  })
 })
 
 // P3.9 round 2: an analysis finding is known by its version and its quote.

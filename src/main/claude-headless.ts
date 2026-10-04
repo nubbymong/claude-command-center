@@ -2,6 +2,7 @@
 // Used by insights-runner and the Sentinel AI analysis runner.
 import { spawn, execSync } from 'child_process'
 import * as path from 'path'
+import { StringDecoder } from 'string_decoder'
 import { logInfo, logError } from './debug-logger'
 import { withProfileHome } from './pty-manager'
 import { gateManagedLaunch, peekGateVerdict } from './managed-launch-diagnostics'
@@ -237,13 +238,19 @@ function spawnNow(
     let stdout = ''
     let stderr = ''
     let resolved = false
+    // PR 4 (owner answers review): stdout is decoded across chunks, so a
+    // character cut between two chunks arrives whole; bytes still held when
+    // the run settles are read as before (a cut character).
+    const decoder = new StringDecoder('utf8')
+    let flushed = false
+    const allStdout = () => { if (!flushed) { flushed = true; stdout += decoder.end() } return stdout }
 
     const timeout = setTimeout(() => {
       if (!resolved) {
         resolved = true
         logError(`[claude-headless] Timed out after ${timeoutMs / 1000}s`)
         killHeadlessTree(proc)
-        resolve({ code: 1, stdout, stderr: stderr + '\nTimed out after ' + (timeoutMs / 1000) + 's' })
+        resolve({ code: 1, stdout: allStdout(), stderr: stderr + '\nTimed out after ' + (timeoutMs / 1000) + 's' })
       }
     }, timeoutMs)
 
@@ -257,13 +264,13 @@ function spawnNow(
       clearTimeout(timeout)
       logInfo('[claude-headless] Aborted; killing process tree')
       killHeadlessTree(proc)
-      resolve({ code: 1, stdout, stderr: stderr + '\nAborted' })
+      resolve({ code: 1, stdout: allStdout(), stderr: stderr + '\nAborted' })
     }
     if (signal?.aborted) onAbort()
     else signal?.addEventListener('abort', onAbort, { once: true })
 
     proc.stdout?.on('data', (data) => {
-      const chunk = data.toString()
+      const chunk = typeof data === 'string' ? data : decoder.write(data)
       stdout += chunk
       if (onStdout) { try { onStdout(chunk) } catch { /* a callback never breaks the run */ } }
     })
@@ -274,7 +281,7 @@ function spawnNow(
         resolved = true
         clearTimeout(timeout)
         logError('[claude-headless] Spawn error:', err.message)
-        resolve({ code: 1, stdout, stderr: stderr + '\n' + err.message })
+        resolve({ code: 1, stdout: allStdout(), stderr: stderr + '\n' + err.message })
       }
     })
 
@@ -283,7 +290,7 @@ function spawnNow(
         resolved = true
         clearTimeout(timeout)
         logInfo(`[claude-headless] Process exited with code ${code}`)
-        resolve({ code: code ?? 1, stdout, stderr })
+        resolve({ code: code ?? 1, stdout: allStdout(), stderr })
       }
     })
   })
