@@ -116,7 +116,7 @@ row per provider:
 - a switch that turns the provider on or off;
 - whether its CLI was found on this computer and which version (on Windows,
   Codex is the first `codex.exe` or `codex.cmd` in `PATH` order, as a terminal
-  finds it; a folder on a network share is not looked in), with **Check now** or **Check again** when it has not been looked
+  finds it), with **Check now** or **Check again** when it has not been looked
   for yet, was not found, or cannot be used as found;
 - when Codex is missing or too old, the commands to install or update it (see
   [Installing or updating Codex](#installing-or-updating-codex));

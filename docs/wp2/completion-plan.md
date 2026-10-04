@@ -178,7 +178,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 48 | Conductor MCP transport | DONE | PLAN commits 4 and 5b | verification: a live 0.155.1 tool listing | 2, v4 |
 | 49 | `codex_review` | DONE | PLAN commit 5a (its defaults stand unless the owner overturns them) | verification: a real run on a signed-in account | 2, v4 |
 | 50 | `claude_review` | DONE | PLAN commit 5b, owner decisions 1 to 3 (2026-09-24) | verification: a live wait past 300 s | 2, v4 |
-| 51 | Agent Canvas from Codex | DONE (P4.1, b98bc235 to b4413a24; question 5 answered C on 2026-10-04 and built in c0d79113 and 8a87026a, its review fix pass 89f0da82; mocked): built, this computer's sign-in getting the canvas skills copied into its own Codex skills folder, and the Auto preset as question 8 was decided (B); was withheld (`src/main/conductor-mcp-server.ts:1106`) because a Codex session had no bound id | Parity: the tools, roots, instruction delivery and the live loop | verification: the VM walk (question 5's copy and removal on this computer's sign-in among it, a copy held open by another program while the tools are turned off, and its HOST QUARANTINE link files on CI and the VM), OR4 (a copied skill read from the Windows sandbox among it), OR5; the spec and quality reviews and the ADR-009 delta pass of question 5's C (c0d79113, 8a87026a), owed until the re-review and the re-attack of its review fix pass (89f0da82) pass | 4 |
+| 51 | Agent Canvas from Codex | DONE (P4.1, b98bc235 to b4413a24; question 5 answered C on 2026-10-04 and built in c0d79113 and 8a87026a, its review fix pass 89f0da82; mocked): built, this computer's sign-in getting the canvas skills copied into its own Codex skills folder, and the Auto preset as question 8 was decided (B); was withheld (`src/main/conductor-mcp-server.ts:1106`) because a Codex session had no bound id | Parity: the tools, roots, instruction delivery and the live loop | verification: the VM walk (question 5's copy and removal on this computer's sign-in among it, a copy held open by another program while the tools are turned off, and its HOST QUARANTINE link files on CI and the VM), OR4 (a copied skill read from the Windows sandbox among it), OR5; the spec and quality reviews and the ADR-009 delta pass of question 5's C (c0d79113, 8a87026a), its one major (L1-1) fixed in 89f0da82 and confirmed, PASS, at 46832d72; owed until the re-review and the round-2 re-attack of its fixes (89f0da82, 28960fbe) pass | 4 |
 | 52 | Browser and vision tools | DONE (P4.2, 2eb403cf, 04ac6b96; mocked): built, the Auto preset as the owner decided on 2026-10-04 (question 8: B, kept as built); was withheld (`conductor-mcp-server.ts:911-913`, `:1042`, a "Claude-only for now" call of 2026-07-02) | Parity; the later owner decisions (the 2.1.1 gate, OD26 P1) end a call worded "for now" (section 10) | verification: the VM (vision and the push with the fake model, the per-preset approvals); OR4 | 4 |
 | 53 | Ask Conductor on Codex | DONE (P4.3, 995148ea to b4413a24; mocked): built, the characters outside the BMP as the owner decided on 2026-10-04 (question 6: A, kept as built); was pinned to Claude (`src/renderer/lib/askConductor.ts:255`) and blocked with Claude Code off (`askConductorGate.ts`) | Codex only: design section 2 and parity (Ask runs on the provider that is on). Both on: OD27 M4 (option B, canvas "Ask Conductor provider choice" v1): a Settings, General row "Ask Conductor runs on", shown only while both are on, Claude Code by default | verification: the VM (the first Ask in a fresh account folder), OR4, OR5 | 4 |
 | 54 | App knowledge, tour, tips | PARTIAL: the P2 fixes are done; P4.1 to P4.5's own copy landed with them (c4f1a62c, eecd1b75, 2be770ad); P4.11's sweep and the Beta labels done (31169913 to f1b96edd), the recaptured images waiting for the owner's review | The AGENTS.md surface sweep; recorded 2026-09-26: the Codex "Beta" labels come off in the release where parity lands | verification: the owner's review of the recaptured images; the Mac recapture | 2; 4 |
@@ -6975,8 +6975,10 @@ Codex's screen, P4.1).
    one pre-existing e2e failure, reproduced on beta, routed privately, is not
    waived); PB8 and PB9 as run on 2026-10-02 (9.2); the real-CLI
    walks with the fake model under 9.2's VM rules, none of them using the VM
-   user's own `~/.codex`; screenshots of new or changed screens reviewed by
-   the owner, image by image.
+   user's own `~/.codex`; Sentinel's analysis under the dead proxy for both
+   assistants, with in-app timestamps, Claude Code on 2.1.278 and on the
+   current version (review E-S5); screenshots of new or changed screens
+   reviewed by the owner, image by image.
 7. **CI green** at the final head on Windows, macOS and Linux (from P4.8), the
    Desktop test gate aside until the owner attests (#309).
 8. **Recorded.** The checklist rows moved in the commit that does the work; a
@@ -7117,7 +7119,8 @@ applied their shared-file changes (section 10 records each answer):
   developer instructions, settings scan and picker record are removed. Codex
   on Windows is found in PATH order: the first `codex.exe` or `codex.cmd`,
   PATHEXT order within a folder, with no shell and no process, reading only
-  fully qualified local PATH folders.
+  fully qualified PATH folders (a drive or a share, as a terminal does), each
+  named as Windows names it when it runs a program from it.
 - Lane C (8fb5714d, 66cefbee, 3fede225, 7b1d0804): the tip marks; the Cloud
   Agents card; Sonnet 5's fallback price; the Opus hint; the Close sessions
   clear retried at each later save, exit flush and load; the credential
@@ -7148,19 +7151,38 @@ applied their shared-file changes (section 10 records each answer):
   529). The pinned 2.1.288 CLI tells the two apart in its stream format: an
   `api_retry` line before each retry, its `error_status` null when no answer
   came back. So the analysis now runs with `--output-format stream-json
-  --verbose` and no cap, and stops after five retries in a row that got no
-  answer (about 13 s in by the VM probe's backoff); an answered retry keeps
-  Claude Code's own schedule (fe51f31d, with an optional stdout callback on
-  the headless spawner). The Codex early stop reacts only while its run
-  streams and before a turn completes, so a finished reply is kept, and it
+  --verbose`, and stops after five retries in a row that got no answer
+  (about 13 s in by the VM probe's backoff); an answered retry keeps Claude
+  Code's own schedule (fe51f31d, with an optional stdout callback on the
+  headless spawner), up to a retry backstop of 8 (47751ec3, below). The
+  Codex early stop reacts only while its run streams and before a turn
+  completes, so a finished reply is kept, and it
   carries its tree kill (killSettled). Both runners' "could not reach" words
   come from one source. The changelog read closes a non-200 answer's
   connection and declares its timer first. The title-bar chip says a failed
   analysis did not complete instead of "no issues found" (fd02adfd). Owed
-  (VM, final head): the panel and a Re-run under the dead proxy for both
-  assistants, with in-app timestamps (Claude Code's early stop has not been
-  run in the app); the link cases moved to the HOST QUARANTINE suite
-  `sentinel-analysis-folders-links.test.ts`.
+  (VM, final head; a merge gate, 9.7 gate 6): the panel and a Re-run under
+  the dead proxy for both assistants, with in-app timestamps, Claude Code
+  on the oldest supported version (2.1.278) as well as the current one (its early stop has not run
+  against a real CLI); the link cases moved to the HOST QUARANTINE suite
+  `sentinel-analysis-folders-links.test.ts`. Owed (owner): one real-model
+  Claude Code analysis on the stream format (row 42's completed real
+  analysis).
+- The bounded final round for lane E (47751ec3). The analysis keeps its
+  watch and sets CLAUDE_CODE_MAX_RETRIES 8 as a backstop: a Claude Code that
+  prints no `api_retry` line (older than 2.1.287; the managed floor is
+  2.1.278) gives its own reason inside the 180 s cap, one attempt, said as
+  unreachable. That is an estimate, not a measurement: 95.5 s of backoff,
+  about 120 s with its 25% jitter, plus about 3 s per refused request. An
+  answered overload is ridden out for up to 8 retries instead of 10 (the
+  two dropped fall about 128 to 160 s into the backoff, where the cap ends
+  most runs). A retry that waited for a reply that never came
+  (`no_response`) counts as unanswered; the shared "could not reach" words
+  are escaped in the check's pattern; the headless spawner decodes stdout
+  across chunks. The title-bar chip says "did not complete" only after an
+  analysis that failed (`lastAnalysisFailed`: notes unreadable, a runner
+  that could not start for a reason other than the launch rule, or a failed
+  run), not for unmatched findings, carried problems or refusals.
 - The integration (8a87026a): lane B's launch, PTY, start-up and copy
   patches; the picker flag (`viaPicker`) and the discovered version
   (`cliVersion`) retired, and the launch route port
@@ -7170,9 +7192,10 @@ applied their shared-file changes (section 10 records each answer):
   capture shot and dock mark; the WP1 ledger (12 new rows, app-knowledge's
   P04, three claudeTestChanges mappings for baseline files whose case names
   changed).
-- Owed: the re-review and the ADR-009 re-attack of the review fix pass (the
-  round's spec and quality reviews and its ADR-009 delta pass ran at
-  8bf078f2; the record "the review fix pass" below); the SSH live matrix at
+- Owed: the ADR-009 delta pass's round-2 re-attack (the round's reviews and
+  the delta pass ran at 8bf078f2, and L1-1, its one major, was fixed in
+  89f0da82 and confirmed, PASS, at 46832d72; the record "the review fix
+  pass" below); the SSH live matrix at
   the final head, which covers lane A's `pty-manager.ts` and
   `statusline-watcher.ts` hunks (import lines, call sites and one
   registry-lookup helper, `claudeSshSurface`; `resolveClaudeForPty` now
@@ -7294,15 +7317,19 @@ downgrade of a main package to clear the audit report.
 reviews (groups A1, A2, B, C, E, INT and D) and its ADR-009 delta pass (four
 lenses) ran at 8bf078f2. Nine of the twelve reviews passed with findings and
 three failed on major findings (group A2's spec review, three; group B's
-quality review, one; group C's spec review, one, an owner item); the ADR-009
-delta pass returned FINDINGS (one major open, L1-1). Four fixers fixed or
-recorded each finding on disjoint files, test-first, with every guard they
-added or changed mutation-proved (one mutant, FA-M15, is owed on CI and the
-VM): fd02adfd and fe51f31d (lane E's files, Sentinel), 4913297e (lane C's and
-lane T's), 89f0da82 (lane B's), 26fb4fcd and c748fa7e (lane A's). The
-integration commit after them applied their shared-file changes and WP1
-ledger rows. What each changed is in the record "the owner's answers, built"
-above and in section 10. Recorded with it:
+quality review, one; group C's spec review, one, an owner item). The ADR-009
+delta pass returned FINDINGS: its one major, L1-1, was fixed in 89f0da82 and
+confirmed, PASS, at 46832d72; its round-2 re-attack is owed. Four fixers
+fixed or recorded each finding on disjoint files, test-first, with every
+guard they added or changed mutation-proved (one mutant, FA-M15, is owed on
+CI and the VM): fd02adfd and fe51f31d (lane E's files, Sentinel), 4913297e
+(lane C's and lane T's), 89f0da82 (lane B's), 26fb4fcd and c748fa7e (lane
+A's). The integration commit after them applied their shared-file changes
+and WP1 ledger rows. A bounded second round followed, on the re-review's and
+the confirmation's findings: 28960fbe (lane B's), bea30e0f (lane C's),
+47751ec3 (lane E's), c60c864d and a3580bb6 (lane A's), integrated in the
+commit after them. What each changed is in the record "the owner's answers,
+built" above and in section 10. Recorded with it:
 - c748fa7e's subject is 127 characters, over commitlint's 120. CI lints only
   the PR title and the PR squash-merges, so it is recorded here and not
   rewritten. 14ac75e8's message says `auth.browser` is left undeclared; it
@@ -7326,15 +7353,22 @@ above and in section 10. Recorded with it:
     three folders afterwards).
   - A recorded `CODEX_HOME` on a network share that does not answer can
     still hold the start pass and a settings save for as long as Windows
-    waits for it (those reads are synchronous). A PATH entry on a network
-    share is no longer looked in for Codex, for the same reason (a known
-    issue, with the workaround).
-  - The marker that keeps a Close sessions clear owed across a restart fails
-    closed: one that can be neither read nor removed makes each start remove
-    the saved file, while a readable one never removes a later save. A clock
-    set back between the clear and a later save could make that save look
-    older, which matters only if every save of that run also failed to
-    remove the marker.
+    waits for it (those reads are synchronous). A PATH folder on a network
+    share that does not answer can hold the Codex check up the same way, once
+    per such folder in a check (a known issue, with the workaround); share
+    folders are read, as a terminal reads them (round 2, review B-S10).
+  - The marker that keeps a Close sessions clear owed across a restart holds
+    the time of the user's clear (a retry that fails never moves it) and
+    never removes a state saved after it: one that cannot be read, does not
+    parse or holds no time stands at its own modification time, and when
+    even that, or the saved file itself, cannot be read, nothing is removed
+    or offered and saves are held for that start until a later load can tell
+    (re-review R-1 and R-2, bea30e0f). A clock set back between the clear
+    and a later save could make that save look older, which matters only if
+    every save of that run also failed to remove the marker. If the marker
+    can be written neither at the clear nor at any retry in that run, and no
+    retry removes the set either, the next start offers the set again (Don't
+    open dismisses it).
   - Sentinel on a network that silently drops traffic still runs up to its
     old limit (a known issue). The evidence for Claude Code's early stop
     (fe51f31d): in the pinned 2.1.288 CLI, read as text and never run,
@@ -7372,16 +7406,24 @@ above and in section 10. Recorded with it:
   empty); OR4, a copied `SKILL.md` under `%USERPROFILE%\.codex\skills` read
   from the Windows sandbox on this computer's sign-in; the Sentinel panel and
   a Re-run for both assistants at the final head behind the dead proxy, with
-  in-app timestamps (Claude Code's early stop has not run in the app); the
-  Tokenomics Cost over time chart on All, 7d and 30d at a narrow and a wide
-  window; the packaged canvas run for the sass override; the Cloud Agents
-  card's image, recaptured.
+  in-app timestamps, Claude Code on 2.1.278 and on the current version, a
+  merge gate (9.7 gate 6; Claude Code's early stop has not run against a
+  real CLI); the Tokenomics Cost over time chart on All, 7d and 30d at a
+  narrow and a wide window; the packaged canvas run for the sass override;
+  the Cloud Agents card's image, recaptured; A2-R1: sign out the primary
+  Claude profile with the acknowledgement, restart the app, and confirm the
+  primary profile and its `identity/.credentials.json` stay signed out
+  (`syncPrimaryCredentialsWithGlobal` must not copy the global credentials
+  back; if it does, the sign-out must also stop that sync for the profile).
 - Owed by the owner: on a Mac, a sign-out of a Claude account through the
   provider-neutral sign-out with the acknowledgement, confirming that Claude
   Code in Terminal is signed out too, that the sign-in check before it read
-  signed in, and that the Accounts panel row reads the Mac's real state; the
-  SSH live matrix at the final head with the cases in the record "the
-  owner's answers, built".
+  signed in, and that the Accounts panel row reads the Mac's real state; on
+  a Mac that still carries several legacy profiles, that every Accounts
+  panel row reads the Mac's one Claude Code sign-in (intended, D2; it also
+  ends the #117 keychain dialog in the panel; A2-R5); one real-model Claude
+  Code analysis on the stream format (review E-S5); the SSH live matrix at
+  the final head with the cases in the record "the owner's answers, built".
 
 ## 10. Unresolved UX decisions
 
@@ -7777,7 +7819,9 @@ day):
   the user's acknowledgement. Owed on a Mac (owner queue): sign out a Claude
   account through the provider-neutral sign-out with the acknowledgement and
   confirm Claude Code in Terminal is signed out too, and that the sign-in
-  check before it read signed in.
+  check before it read signed in; and, on a Mac that still carries several
+  legacy profiles, that every Accounts panel row reads the Mac's one Claude
+  Code sign-in (intended, D2).
 - **The release order**: agreed (above).
 - **Dependencies**: option 1, the sass override scoped and pinned (dropped
   once excalidraw declares sass >= 1.79), and the HTTP-cache advisory an
@@ -7812,10 +7856,13 @@ day):
 - **Sentinel showing analyzing for minutes with its assistant unreachable**:
   chased on the VM with per-step timestamps and fixed test-first; when the
   connection is refused the panel says so within a minute, measured in the
-  app on the VM for Codex and, for Claude Code, from the CLI probe and the
-  unit replay; a network that silently drops traffic is not stopped early (a
-  known issue) (9dfc220c, the Codex half in 8a87026a; the review fixes in
-  fd02adfd and fe51f31d).
+  app on the VM for Codex and, for Claude Code, from the pinned CLI's stream
+  format as read from its binary and the unit replay (the CLI probe gives
+  only the backoff schedule; the early stop has not yet run against a real
+  CLI, VM owed); a Claude Code older than 2.1.287 gives up on its own inside
+  the 180 s cap (estimated); a network that silently drops traffic is not
+  stopped early (a known issue) (9dfc220c, the Codex half in 8a87026a; the
+  review fixes in fd02adfd, fe51f31d and 47751ec3).
 - **The `[credentials] delete refused` warning**: the delete is skipped
   quietly for an id outside the key shape that the store holds nothing
   under, and still warns when the store holds one (written by an older

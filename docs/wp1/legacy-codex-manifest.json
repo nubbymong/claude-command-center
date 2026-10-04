@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-04T05:29:33.288Z",
-  "head": "f2ed852ed5273bfb4b3c52034faf7fa3ff792d66",
-  "tree": "27b1b29ba56c1dcf156bf4a722447814f8b20b2f",
+  "generatedAt": "2026-10-04T08:53:32.742Z",
+  "head": "a3580bb6d202d60258f572928770abf3fb020574",
+  "tree": "24fa851c4c6adf290cd334085f585c61a6380ab4",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2742,
+  "trackedFileCount": 2743,
   "excludedFileCount": 400,
-  "scannedFileCount": 2342,
+  "scannedFileCount": 2343,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -521,7 +521,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 34
+      "lineCount": 38
     },
     {
       "path": "src/main/canvas/codex-user-skills.ts",
@@ -530,7 +530,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 61
+      "lineCount": 65
     },
     {
       "path": "src/main/channel-emitters.ts",
@@ -1157,7 +1157,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 133
+      "lineCount": 138
     },
     {
       "path": "src/main/providers/codex/telemetry.ts",
@@ -4039,7 +4039,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 51
+      "lineCount": 65
     },
     {
       "path": "tests/unit/main/codex-user-skills-race-links.test.ts",
@@ -4072,7 +4072,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 102
+      "lineCount": 111
     },
     {
       "path": "tests/unit/main/conductor-mcp-auth.test.ts",
@@ -4402,7 +4402,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 157
+      "lineCount": 175
     },
     {
       "path": "tests/unit/main/sentinel-unreachable-timing.test.ts",
@@ -4410,7 +4410,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 50
+      "lineCount": 52
     },
     {
       "path": "tests/unit/main/service-status-providers.test.ts",
@@ -4715,7 +4715,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 45
+      "lineCount": 59
     },
     {
       "path": "tests/unit/providers/codex/codex-discovery-path-names.test.ts",
