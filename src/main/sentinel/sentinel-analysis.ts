@@ -8,6 +8,7 @@ import { randomBytes } from 'crypto'
 import type { SentinelFinding, SentinelProvider } from '../../shared/sentinel-types'
 import { stripSpoofableText } from '../../shared/safe-text'
 import { redactFailure } from '../providers/review-support'
+import { ANALYSIS_UNREACHABLE_WORDS } from '../../shared/sentinel-analysis-contract'
 import { evidenceIsQuoted, normaliseQuoteText, quoteKey, dropTokenRuns } from './sentinel-quote'
 
 export { evidenceIsQuoted } from './sentinel-quote'
@@ -73,12 +74,15 @@ export const CLAUDE_ANALYSIS_ENV: Readonly<Record<string, string>> = Object.free
   CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
   CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
   CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1',
-  // PR 4 (owner answers): how often Claude Code retries a request its service
-  // did not answer. Its default, 10, outlasts the 3-minute cap when the service
-  // cannot be reached (Windows test VM, every proxy a dead port: it gave up
-  // after 192.7 s, so the run was killed and tried again, 6 minutes in all);
-  // with 5 it gives its own reason after 23 s. A request that is answered is
-  // not retried, so a working analysis is unchanged.
+  // PR 4 (owner answers): how often Claude Code retries a failed request. Its
+  // default, 10, outlasts the 3-minute cap when the service cannot be reached
+  // (Windows test VM, every proxy a dead port: it gave up after 192.7 s, so the
+  // run was killed and tried again, 6 minutes in all); with 5 it gives its own
+  // reason after 23 s. The one setting also covers answers Claude Code retries
+  // (an overloaded or failing service, 408, 409, 429, 5xx, 529): with 5, an
+  // attempt rides out about 15 s of such answers instead of about 160 s, and
+  // runAnalysis's second attempt is kept for them. A healthy service is
+  // unchanged.
   CLAUDE_CODE_MAX_RETRIES: '5',
 })
 
@@ -289,9 +293,10 @@ export function envelopeError(stdout: string): { rateLimited: boolean; unreachab
 /** PR 4 (owner answers, the Sentinel chase): a failure that never got an
  *  answer from the assistant's service (no network, or a proxy or firewall in
  *  the way). Claude Code says "Connection refused ... (ECONNREFUSED)" or
- *  "Connection error"; Codex's reviewer says Codex "could not reach its model"
- *  once Codex is waiting for the network. */
-const UNREACHABLE_REASON = /\b(?:ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH)\b|\bconnection (?:refused|error)\b|\bcould not reach\b|\bwaiting for network\b/i
+ *  "Connection error"; a runner that stopped such a run itself says
+ *  ANALYSIS_UNREACHABLE_WORDS (plain words: Codex's reviewer, once Codex is
+ *  waiting for the network). */
+const UNREACHABLE_REASON = new RegExp(String.raw`\b(?:ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH)\b|\bconnection (?:refused|error)\b|\b${ANALYSIS_UNREACHABLE_WORDS}\b|\bwaiting for network\b`, 'i')
 
 /** The message a JSON error body carries, if it has one. */
 function jsonErrorMessage(body: string): string | null {

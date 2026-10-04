@@ -12,6 +12,9 @@ export async function fetchChangelog(timeoutMs = 10000): Promise<string | null> 
     const https = await import('https')
     return await new Promise<string | null>((resolve) => {
       let settled = false
+      // Declared before done(): an answer that arrives at once must not find
+      // the timer missing.
+      let deadline: ReturnType<typeof setTimeout> | undefined
       const done = (v: string | null) => { if (!settled) { settled = true; clearTimeout(deadline); resolve(v) } }
       const req = https.request({
         hostname: 'raw.githubusercontent.com',
@@ -20,8 +23,9 @@ export async function fetchChangelog(timeoutMs = 10000): Promise<string | null> 
       }, (res) => {
         // PR 4: only the changelog itself is the changelog. Any other answer
         // (a proxy refusing, a limit, a server error) could not be read; it is
-        // never analysed as if it were the notes.
-        if (res.statusCode !== 200) { res.resume(); done(null); return }
+        // never analysed as if it were the notes. Its connection is closed at
+        // once (owner answers review), not drained with no deadline left.
+        if (res.statusCode !== 200) { done(null); res.destroy(); return }
         let d = ''
         res.setEncoding('utf8')
         res.on('data', (c: string) => { d += c })
@@ -29,8 +33,10 @@ export async function fetchChangelog(timeoutMs = 10000): Promise<string | null> 
         res.on('error', () => done(null))
         res.on('close', () => done(null))          // cut off before its end
       })
-      const deadline = setTimeout(() => { req.destroy(new Error('timeout')); done(null) }, CHANGELOG_DEADLINE_MS)
-      ;(deadline as unknown as { unref?: () => void }).unref?.()
+      if (!settled) {
+        deadline = setTimeout(() => { req.destroy(new Error('timeout')); done(null) }, CHANGELOG_DEADLINE_MS)
+        ;(deadline as unknown as { unref?: () => void }).unref?.()
+      }
       req.on('error', () => done(null))
       req.on('timeout', () => { req.destroy(new Error('timeout')) })
       req.end()

@@ -61,21 +61,25 @@ vi.mock('../../../src/main/provider-accounts', () => ({
 const codexRuns = vi.hoisted(() => ({ n: 0, mode: 'unreachable' as 'unreachable' | 'ok' }))
 /** VM: the first "waiting for network" event, 33.8 s after the run started. */
 const CODEX_WAITING_FOR_NETWORK_S = 33.8
-vi.mock('../../../src/main/providers/core', async (orig) => ({
-  ...(await orig<typeof import('../../../src/main/providers/core')>()),
-  tryGetProviderPackage: (id: string) => id !== 'codex' ? null : {
-    id, displayName: 'Codex',
-    setup: { supportedVersions: { minimum: '0.153.4', maximumTested: '0.156.1' } },
-    review: {
-      run: async (input: { timeoutMs: number }) => {
-        codexRuns.n++
-        if (codexRuns.mode === 'ok') { clock.t += 20; return { ok: true, text: JSON.stringify({ breakingChanges: [] }) } }
-        clock.t += Math.min(CODEX_WAITING_FOR_NETWORK_S, input.timeoutMs / 1000)
-        return { ok: false, code: 'failed', message: 'Codex could not reach its model: Reconnecting... waiting for network (Connection failed: error sending request).' }
+vi.mock('../../../src/main/providers/core', async (orig) => {
+  // The reviewer's own words, from the one place they are written.
+  const { CODEX_UNREACHABLE_PREFIX } = await import('../../../src/main/providers/codex/review')
+  return {
+    ...(await orig<typeof import('../../../src/main/providers/core')>()),
+    tryGetProviderPackage: (id: string) => id !== 'codex' ? null : {
+      id, displayName: 'Codex',
+      setup: { supportedVersions: { minimum: '0.153.4', maximumTested: '0.156.1' } },
+      review: {
+        run: async (input: { timeoutMs: number }) => {
+          codexRuns.n++
+          if (codexRuns.mode === 'ok') { clock.t += 20; return { ok: true, text: JSON.stringify({ breakingChanges: [] }) } }
+          clock.t += Math.min(CODEX_WAITING_FOR_NETWORK_S, input.timeoutMs / 1000)
+          return { ok: false, code: 'failed', message: `${CODEX_UNREACHABLE_PREFIX}: Reconnecting... waiting for network (Connection failed: error sending request).` }
+        },
       },
     },
-  },
-}))
+  }
+})
 vi.mock('../../../src/main/config-manager', () => ({
   readConfig: () => null,
   readConfigChecked: () => ({ value: null, outcome: 'absent' }),
@@ -108,11 +112,15 @@ vi.mock('../../../src/main/claude-headless', () => ({ spawnClaudeHeadless: (...a
 vi.mock('../../../src/main/sentinel/sentinel-model-article', () => ({ fetchArticleModelIds: async () => { clock.t += 0.6; return null } }))
 const notes = vi.hoisted(() => ({ readable: true }))
 const CHANGELOG = '# Changelog\n\n## 2.1.300\n- Something changed in the statusline hook payload.\n\n## 2.1.299\n- Older fixes.\n'
-vi.mock('../../../src/main/sentinel/sentinel-changelog', async (orig) => ({
-  ...(await orig<typeof import('../../../src/main/sentinel/sentinel-changelog')>()),
-  // Unreadable: the socket's idle deadline (10 s) is the longest it waits.
-  fetchChangelog: async () => { if (!notes.readable) { clock.t += 10; return null } clock.t += 1; return CHANGELOG },
-}))
+vi.mock('../../../src/main/sentinel/sentinel-changelog', async (orig) => {
+  const real = await orig<typeof import('../../../src/main/sentinel/sentinel-changelog')>()
+  return {
+    ...real,
+    // Unreadable: the read's overall deadline (CHANGELOG_DEADLINE_MS, 20 s) is
+    // the longest it waits; the socket's 10 s idle limit can only end it sooner.
+    fetchChangelog: async () => { if (!notes.readable) { clock.t += real.CHANGELOG_DEADLINE_MS / 1000; return null } clock.t += 1; return CHANGELOG },
+  }
+})
 vi.mock('../../../src/main/sentinel/sentinel-codex-changelog', async (orig) => ({
   ...(await orig<typeof import('../../../src/main/sentinel/sentinel-codex-changelog')>()),
   // VM: 13 requests in 2.9 s; unreadable: the first request's deadline (10 s) ends the read.

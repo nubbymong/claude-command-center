@@ -17,6 +17,7 @@ import type { ProviderReviewOperations, ReviewRunInput, ReviewRunResult, ReviewU
 import { reviewerEnv, finishReview, redactFailure as redact, redactHead, clip, WINDOW, MARGIN, MAX_MESSAGE, REVIEW_MAX_TEXT } from '../review-support'
 import { codexCommandLine, codexShellEnv, runCodexCli } from './cli-runner'
 import type { CodexRunDeps } from './cli-runner'
+import { ANALYSIS_UNREACHABLE_WORDS } from '../../../shared/sentinel-analysis-contract'
 
 /** stdout is read as it streams and stderr's tail is kept as it streams:
  *  the runner's own head-capped capture is not used. */
@@ -43,6 +44,8 @@ export interface CodexExecEventHooks {
   onAgentMessage?: (text: string) => void
   /** PR 4: each error event's message, in order (Codex's reconnects among them). */
   onError?: (message: string) => void
+  /** PR 4 (owner answers review): each completed turn, as it completes. */
+  onTurnCompleted?: () => void
 }
 
 /** PR 4 (owner answers, the Sentinel chase): Codex's own words once it has
@@ -55,6 +58,11 @@ export interface CodexExecEventHooks {
 export function codexWaitingForNetwork(message: string): boolean {
   return /\bwaiting for network\b/i.test(message)
 }
+
+/** How an analysis that ended that way begins its message. Sentinel reads
+ *  ANALYSIS_UNREACHABLE_WORDS in it to report the failure as unreachable and
+ *  not try again, so the words come from that one shared source. */
+export const CODEX_UNREACHABLE_PREFIX = `Codex ${ANALYSIS_UNREACHABLE_WORDS} its model`
 
 /** Reads the pinned CLI's `exec --json` stream as it arrives. The last agent
  *  message is the review; usage is summed over completed turns; a failed
@@ -88,6 +96,7 @@ export function createCodexExecEventReader(hooks: CodexExecEventHooks = {}): { p
         cachedInputTokens: (usage?.cachedInputTokens ?? 0) + num(u.cached_input_tokens),
         outputTokens: (usage?.outputTokens ?? 0) + num(u.output_tokens),
       }
+      if (hooks.onTurnCompleted) { try { hooks.onTurnCompleted() } catch { /* a hook never breaks the reader */ } }
     } else if (e.type === 'turn.failed') {
       const err = e.error as Record<string, unknown> | undefined
       if (err && typeof err.message === 'string') error = err.message
@@ -148,10 +157,17 @@ export function createCodexReviewOperations(deps: { platform?: NodeJS.Platform; 
       // PR 4 (owner answers, the Sentinel chase): an analysis whose Codex says
       // it is waiting for the network is stopped then (its run's tree, as a
       // cancel), so Sentinel says so within a minute instead of at the
-      // deadline. A review keeps its deadline.
-      const unreachable = input.purpose === 'analysis' ? { ac: new AbortController(), message: null as string | null } : null
+      // deadline. A review keeps its deadline. Only while the run is still
+      // streaming and no turn has completed: a reply already finished is kept,
+      // and a line read after the run ended changes nothing.
+      const unreachable = input.purpose === 'analysis' ? { ac: new AbortController(), message: null as string | null, streaming: true, completed: false } : null
       const reader = createCodexExecEventReader(unreachable ? {
-        onError: (m) => { if (unreachable.message === null && codexWaitingForNetwork(m)) { unreachable.message = m; unreachable.ac.abort() } },
+        onError: (m) => {
+          if (!unreachable.streaming || unreachable.completed || unreachable.message !== null || !codexWaitingForNetwork(m)) return
+          unreachable.message = m
+          unreachable.ac.abort()
+        },
+        onTurnCompleted: () => { unreachable.completed = true },
       } : {})
       const signal = unreachable ? (input.signal ? AbortSignal.any([input.signal, unreachable.ac.signal]) : unreachable.ac.signal) : input.signal
       let errTail = ''
@@ -169,12 +185,13 @@ export function createCodexReviewOperations(deps: { platform?: NodeJS.Platform; 
         { env, timeoutMs: input.timeoutMs, stdin: input.prompt, maxOutput: REVIEW_MAX_CAPTURE, onChunk, settleAfterExitMs: CODEX_EXEC_EXIT_SETTLE_MS, killScope: 'tree', ...(signal ? { signal } : {}) },
         ...(deps.runDeps ? [deps.runDeps()] : []),
       )
+      if (unreachable) unreachable.streaming = false
       const out = reader.end()
       const usage = out.usage ? { usage: out.usage } : {}
       // Only a stopped run can carry one: the lease is held until it ends.
       const kill = r.killSettled ? { killSettled: r.killSettled } : {}
       if (unreachable?.message != null && !input.signal?.aborted) {
-        return { ok: false, code: 'failed', message: `Codex could not reach its model: ${clip(redactHead(unreachable.message, redact))}.`, ...usage, ...kill }
+        return { ok: false, code: 'failed', message: `${CODEX_UNREACHABLE_PREFIX}: ${clip(redactHead(unreachable.message, redact))}.`, ...usage, ...kill }
       }
       if (r.stopped === 'cancel' || input.signal?.aborted) return { ok: false, code: 'cancelled', message: 'The review was cancelled.', ...usage, ...kill }
       if (r.timedOut || r.stopped === 'deadline') return { ok: false, code: 'timed-out', message: 'The review timed out.', ...usage, ...kill }

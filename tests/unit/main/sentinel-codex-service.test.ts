@@ -18,7 +18,10 @@
  * The accounts service, the Codex package's reviewer, the headless Claude
  * spawner, the network fetches and the settings are faked: no process
  * starts, no request leaves, and the only folders made are this suite's own
- * state folder and what the service makes (and removes) inside it.
+ * state folder and what the service makes (and removes) inside it. The
+ * cases where the runs folder is a link plant junctions, so they live in a
+ * suite of their own that runs in CI and on the VM only:
+ * sentinel-analysis-folders-links.test.ts.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as fs from 'fs'
@@ -27,18 +30,6 @@ import * as path from 'path'
 import type { SentinelStateSnapshot } from '../../../src/shared/sentinel-types'
 import { sentinelVersionParts, sentinelCompatibleSubject, CLAUDE_ONLY_SCOPE } from '../../../src/renderer/components/sentinel/sentinel-report-text'
 
-// P3.9 round 2 (F2): a hook run once just before the next mkdtemp, to move
-// the runs folder between the check and the make.
-const fsHooks = vi.hoisted(() => ({ beforeMkdtemp: null as null | ((prefix: string) => void) }))
-vi.mock('fs', async (orig) => {
-  const real = await orig<typeof import('fs')>()
-  const mkdtempSync = ((prefix: string, opts?: unknown) => {
-    const h = fsHooks.beforeMkdtemp
-    if (h) { fsHooks.beforeMkdtemp = null; h(prefix) }
-    return (real.mkdtempSync as (p: string, o?: unknown) => string)(prefix, opts)
-  }) as typeof real.mkdtempSync
-  return { ...real, mkdtempSync, default: { ...real, mkdtempSync } }
-})
 vi.mock('electron', () => ({
   ipcMain: { handle: vi.fn(), on: vi.fn() },
   BrowserWindow: { fromWebContents: () => null, getAllWindows: () => [] },
@@ -191,7 +182,6 @@ beforeEach(() => {
   claude.version = '2.1.300'
   claude.answer = null
   claude.versionCode = 0
-  fsHooks.beforeMkdtemp = null
   fetchChangelog.mockClear()
   fetchChangelog.mockImplementation(async () => null)
   fetchCodexReleaseNotes.mockClear()
@@ -505,62 +495,6 @@ describe("the analysis of a Codex update, on the provider that is on (row 42; OD
     expect(prompts[0]).toMatch(/--- BEGIN CHANGELOG [0-9a-f]{16} ---/)
     expect(prompts[1]).toMatch(/--- BEGIN RELEASE NOTES [0-9a-f]{16} ---/)
     expect(s.getSentinelState()!.snapshot()).toMatchObject({ lastSeenCcVersion: '2.1.300', lastSeenCodexVersion: '0.155.1', lastAnalysisError: null })
-  })
-})
-
-describe("the analysis folders (round 1)", () => {
-  it('round 2: a runs folder that became a link between the check and the make is refused; nothing runs and nothing is left there', async () => {
-    svc.pref.claude = 'off'
-    const elsewhere = path.join(dir, 'elsewhere')
-    fs.mkdirSync(elsewhere)
-    fsHooks.beforeMkdtemp = () => {
-      fs.renameSync(runsDir(), runsDir() + '-was')
-      fs.symlinkSync(elsewhere, runsDir(), 'junction')
-    }
-    const s = await sentinel({ lastSeenCodexVersion: '0.153.4' })
-    await s.sentinelStartupCheck()
-    expect(fsHooks.beforeMkdtemp).toBeNull()
-    expect(review.runs).toHaveLength(0)
-    expect(fs.readdirSync(elsewhere)).toEqual([])
-    expect(svc.released).toBe(1)
-    expect(s.getSentinelState()!.snapshot().lastAnalysisError).toBe("Sentinel's analysis could not run on Codex: no empty folder could be made for it.")
-  })
-
-  it('leftovers of earlier runs (own prefix, an hour old, real folders) are swept; a young one, another name and a link are left', async () => {
-    svc.pref.claude = 'off'
-    fs.mkdirSync(runsDir(), { recursive: true })
-    const old = path.join(runsDir(), 'ccc-sentinel-codex-OLD111')
-    const young = path.join(runsDir(), 'ccc-sentinel-codex-YOUNG1')
-    const other = path.join(runsDir(), 'something-else')
-    const target = path.join(dir, 'link-target')
-    for (const d of [old, young, other, target]) fs.mkdirSync(d)
-    fs.writeFileSync(path.join(target, 'keep.txt'), 'x')
-    const link = path.join(runsDir(), 'ccc-sentinel-codex-LINK11')
-    fs.symlinkSync(target, link, 'junction')
-    const hourAgo = (Date.now() - 2 * 60 * 60 * 1000) / 1000
-    for (const d of [old, other]) fs.utimesSync(d, hourAgo, hourAgo)
-    try { fs.lutimesSync(link, hourAgo, hourAgo) } catch { /* not everywhere */ }
-    const s = await sentinel({ lastSeenCodexVersion: '0.153.4' })
-    await s.sentinelStartupCheck()
-    expect(review.runs).toHaveLength(1)
-    expect(fs.existsSync(old)).toBe(false)
-    expect(fs.existsSync(young)).toBe(true)
-    expect(fs.existsSync(other)).toBe(true)
-    expect(fs.existsSync(path.join(target, 'keep.txt'))).toBe(true)
-  })
-
-  it('a runs folder that is a link (not the app\'s own folder) is refused: nothing runs, the lease goes', async () => {
-    svc.pref.claude = 'off'
-    const elsewhere = path.join(dir, 'elsewhere')
-    fs.mkdirSync(elsewhere)
-    fs.mkdirSync(path.join(dir, 'sentinel'), { recursive: true })
-    fs.symlinkSync(elsewhere, runsDir(), 'junction')
-    const s = await sentinel({ lastSeenCodexVersion: '0.153.4' })
-    await s.sentinelStartupCheck()
-    expect(review.runs).toHaveLength(0)
-    expect(svc.released).toBe(1)
-    expect(fs.readdirSync(elsewhere)).toEqual([])
-    expect(s.getSentinelState()!.snapshot().lastAnalysisError).toBe("Sentinel's analysis could not run on Codex: no empty folder could be made for it.")
   })
 })
 
