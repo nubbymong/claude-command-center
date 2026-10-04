@@ -272,6 +272,139 @@ describe('the durability core: a clear keeps main\'s running times (fixer 9 A1)'
     d.flushOnExit('before-quit')
     expect(save).not.toHaveBeenCalled()
   })
+
+  // The owner's 2026-10-04 answer (pre-existing since #397, recorded at the
+  // PR 3 closeout): a clear that leaves a copy of the discarded set on disk
+  // (the session file held by a scanner, or its .bak) is retried at each later
+  // save and exit flush until it removes every copy; a save that succeeds ends
+  // the retry, since the saved state replaces the set. Until then nothing the
+  // core writes or loads brings the set back. A clear that succeeds does what
+  // it always did.
+  /** A clear that fails `failures` times, then removes every copy. */
+  function clearFailing(failures: number) {
+    let calls = 0
+    const fn = vi.fn((): Cleared => (++calls <= failures ? { ok: false, bakRemoved: false } : { ok: true, bakRemoved: true }))
+    return fn
+  }
+
+  it('[host] a clear that failed is retried at the next exit flush; once it succeeds the running times are kept, as after a clear that succeeded', () => {
+    const t: Times = [{ id: CONV, ms: 149_000, until: 1_000 }]
+    const clear = clearFailing(1)
+    const { d, save, logged } = core(() => t, () => true, clear)
+    d.saveEnriched(theSet())
+    save.mockClear()
+    expect(d.clear()).toBe(false)
+    expect(save).not.toHaveBeenCalled()
+    d.flushOnExit('before-quit')
+    expect(clear).toHaveBeenCalledTimes(2)
+    expect(save).toHaveBeenCalledTimes(1)
+    expect(save.mock.calls[0][0]).toEqual({ sessions: [], activeSessionId: null, savedAt: expect.any(Number), conversationRunningTimes: t })
+    expect(logged()).toMatch(/cleared sessions are now removed from disk/)
+    // Done: later flushes keep the times without clearing again.
+    d.flushOnExit('will-quit')
+    expect(clear).toHaveBeenCalledTimes(2)
+    expect(save).toHaveBeenCalledTimes(2)
+    for (const c of save.mock.calls) expect(JSON.stringify(c[0])).not.toMatch(/Orchard|orchard|"s1"/)
+  })
+
+  it('[host] until the retried clear succeeds, no exit flush writes anything, and each flush tries again', () => {
+    const t: Times = [{ id: CONV, ms: 149_000, until: 1_000 }]
+    const clear = clearFailing(Infinity)
+    const { d, save, logged } = core(() => t, () => true, clear)
+    d.saveEnriched(theSet())
+    save.mockClear()
+    d.clear()
+    for (const why of ['powerMonitor suspend', 'before-quit', 'will-quit']) d.flushOnExit(why)
+    expect(clear).toHaveBeenCalledTimes(4)
+    expect(save).not.toHaveBeenCalled()
+    expect(d.peek()).toBeNull()
+    expect(logged()).toMatch(/still on disk after a retry on exit flush on will-quit/)
+  })
+
+  it('[host] a save that succeeds ends the retry: the saved state replaces the set', () => {
+    const t: Times = [{ id: CONV, ms: 149_000, until: 1_000 }]
+    const clear = clearFailing(Infinity)
+    const { d, save } = core(() => t, () => true, clear)
+    d.saveEnriched(theSet())
+    d.clear()
+    save.mockClear()
+    expect(d.saveEnriched(freshSet())).toBe(true)
+    d.flushOnExit('before-quit')
+    d.flushOnExit('will-quit')
+    expect(clear).toHaveBeenCalledTimes(1)
+    expect(save).toHaveBeenCalledTimes(3)
+    for (const c of save.mock.calls) expect(c[0]).toMatchObject({ sessions: [{ id: 's2' }] })
+  })
+
+  it('[host] after that save a load reads the saved state and clears nothing (the new file is never taken for the set)', () => {
+    const clear = clearFailing(Infinity)
+    const fresh = freshSet()
+    const load = vi.fn((): SessionState | null => fresh)
+    const enrichDeps = { getExactResumeTarget: () => null, getLatestTranscriptPath: () => null, isExactBindSourceActive: () => true, resolveResumeTargetFromTranscript: () => null }
+    const d = createSessionDurability({ enrichDeps, save: () => true, load, clear })
+    d.saveEnriched(theSet())
+    d.clear()
+    expect(d.saveEnriched(fresh)).toBe(true)
+    expect(d.load()).toBe(fresh)
+    expect(load).toHaveBeenCalledTimes(1)
+    expect(clear).toHaveBeenCalledTimes(1)
+  })
+
+  it('[host] a save that fails while the clear is pending retries the clear (the file still holds the discarded set)', () => {
+    const t: Times = [{ id: CONV, ms: 149_000, until: 1_000 }]
+    const clear = clearFailing(1)
+    let accept = false
+    const { d, save } = core(() => t, () => accept, clear)
+    d.saveEnriched(theSet())
+    d.clear()
+    expect(clear).toHaveBeenCalledTimes(1)
+    expect(d.saveEnriched(freshSet())).toBe(false)
+    expect(clear).toHaveBeenCalledTimes(2)
+    // The clear is done; the next flush saves the fresh set and clears nothing.
+    accept = true
+    save.mockClear()
+    d.flushOnExit('before-quit')
+    expect(clear).toHaveBeenCalledTimes(2)
+    expect(save).toHaveBeenCalledTimes(1)
+    expect(save.mock.calls[0][0]).toMatchObject({ sessions: [{ id: 's2' }] })
+  })
+
+  it('[host] a load while the clear is pending retries it first, and never hands back the discarded set', () => {
+    const readBack = vi.fn()
+    const load = vi.fn((): SessionState | null => theSet())
+    const enrichDeps = { getExactResumeTarget: () => null, getLatestTranscriptPath: () => null, isExactBindSourceActive: () => true, resolveResumeTargetFromTranscript: () => null }
+    // Still held: the load answers as the clear would have (nothing saved),
+    // without reading the file.
+    const held = clearFailing(Infinity)
+    const a = createSessionDurability({ enrichDeps, save: () => true, load, clear: held, readBack })
+    a.clear()
+    expect(a.load()).toBeNull()
+    expect(held).toHaveBeenCalledTimes(2)
+    expect(load).not.toHaveBeenCalled()
+    expect(readBack).toHaveBeenCalledWith(null)
+    // Released by the time of the load: the retry removes it, then the load reads.
+    load.mockImplementation(() => null)
+    const released = clearFailing(1)
+    const b = createSessionDurability({ enrichDeps, save: () => true, load, clear: released, readBack })
+    b.clear()
+    expect(b.load()).toBeNull()
+    expect(released).toHaveBeenCalledTimes(2)
+    expect(load).toHaveBeenCalledTimes(1)
+  })
+
+  it('[host] a clear that succeeds first time is never retried, at a flush, a save or a load', () => {
+    const t: Times = [{ id: CONV, ms: 149_000, until: 1_000 }]
+    const clear = clearFailing(0)
+    const { d, save } = core(() => t, () => true, clear)
+    d.saveEnriched(theSet())
+    save.mockClear()
+    expect(d.clear()).toBe(true)
+    expect(save).toHaveBeenCalledTimes(1)
+    d.flushOnExit('before-quit')
+    d.load()
+    d.saveEnriched(freshSet())
+    expect(clear).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('the VM repro as a round trip through the real session file (fixer 9 A1)', () => {
@@ -407,6 +540,9 @@ describe('the VM repro as a round trip through the real session file (fixer 9 A1
   // that cannot be removed is a failed clear (ok false), and the discarded
   // set is still not written back by the exit flush: the file on disk is left
   // as it was.
+  // The owner's 2026-10-04 answer: while the file is still held, each exit
+  // flush retries the clear and writes nothing; the first flush after the hold
+  // is released removes the file and its .bak, and keeps the running times.
   it('a session file that cannot be removed: the clear fails, and the exit flush never writes the discarded set back', () => {
     const now = Date.now()
     noteConversationRunningTime(CONV, 149_000, now - 6_000)
@@ -417,14 +553,53 @@ describe('the VM repro as a round trip through the real session file (fixer 9 A1
     try {
       expect(clearSessionState()).toEqual({ ok: false, bakRemoved: false })
       expect(d.clear()).toBe(false)
+      expect(d.peek()).toBeNull()
+      // A run settles after the clear; the flush must still write nothing.
+      noteConversationRunningTime(CONV, 155_000, now)
+      d.flushOnExit('before-quit')
     } finally {
       fault.mainUnlink = false
     }
-    expect(d.peek()).toBeNull()
-    // A run settles after the clear; the flush must still write nothing.
+    expect(readFileSync(file(), 'utf8')).toBe(before)
+  })
+
+  it('[host] "Close sessions" with the session file held: the next exit flush after the hold ends removes the set, and the next run is offered nothing', () => {
+    const now = Date.now()
+    noteConversationRunningTime(CONV, 149_000, now - 6_000)
+    const d = createAppSessionDurability()
+    d.saveEnriched(theSet())
+    fault.mainUnlink = true
+    try {
+      expect(d.clear()).toBe(false)
+    } finally {
+      fault.mainUnlink = false
+    }
+    // Still the discarded set on disk, file and .bak alike.
+    expect(readFileSync(file(), 'utf8')).toMatch(/Orchard/)
+    expect(readFileSync(file() + '.bak', 'utf8')).toMatch(/Orchard/)
     noteConversationRunningTime(CONV, 155_000, now)
     d.flushOnExit('before-quit')
-    expect(readFileSync(file(), 'utf8')).toBe(before)
+    for (const f of [file(), file() + '.bak']) if (existsSync(f)) expect(readFileSync(f, 'utf8')).not.toMatch(/Orchard|orchard/)
+    const { loaded } = nextRun()
+    expect(names(loaded)).toEqual([])
+    expect(conversationRunningTime(CONV)).toMatchObject({ ms: 155_000, until: now })
+  })
+
+  it('[host] the hold ends only after a new set is saved: that save replaces the discarded set, and nothing is cleared after it', () => {
+    noteConversationRunningTime(CONV, 149_000, Date.now())
+    const d = createAppSessionDurability()
+    d.saveEnriched(theSet())
+    fault.mainUnlink = true
+    try {
+      expect(d.clear()).toBe(false)
+      // The user opens new tabs; the autosave lands while the file is held for
+      // removal but can be written over.
+      expect(d.saveEnriched(freshSet())).toBe(true)
+    } finally {
+      fault.mainUnlink = false
+    }
+    d.flushOnExit('before-quit')
+    expect(names(nextRun().loaded)).toEqual(['Quarry'])
   })
 
   // Fixer 11 (ADR-009 R2-3, pre-existing since #397): a save whose copy over
