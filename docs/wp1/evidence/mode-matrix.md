@@ -33,13 +33,14 @@ What the VM run must give:
 
 ## The mode matrix's runs (P4.9, PR 4)
 
-Three runs of the whole e2e suite on the Windows test VM (WINDOWS_1) on 2026-10-03, each with the 26 tracked specs passed explicitly, the loopback fake model running, and the real installs given to `codex-real-launch.spec.ts` (0.153.4 as the npm `codex.cmd`, 0.155.1 as `codex.exe`):
+Four runs of the whole e2e suite on the Windows test VM (WINDOWS_1), on 2026-10-03 and (the last) 2026-10-04, each with the 26 tracked specs passed explicitly, the loopback fake model running, and the real installs given to `codex-real-launch.spec.ts` (0.153.4 as the npm `codex.cmd`, 0.155.1 as `codex.exe`):
 
 | Run | Commit | VM local start (PDT) | Result |
 |---|---|---|---|
 | e2e-69c98042 | `69c9804232d067bdf93cfc57890b0a744dcc597a` | 05:34:41 | 94 of 94 passed, none skipped (Playwright 3.3 min) |
 | e2e-69c98042-run2 | `69c9804232d067bdf93cfc57890b0a744dcc597a` | 05:39:55 | 94 of 94 passed, none skipped (3.2 min) |
 | e2e-f73f1785 | `f73f1785392fe3c9156448e87b7f0a317ff3b7f0` | 11:12:32 | 94 of 94 passed, none skipped (3.4 min) |
+| e2e-bdc0c019 (2026-10-04) | `bdc0c019526bccec1223643cd0a4275844cf2162` | 04:54 | 94 of 94 passed, none skipped or flaky (4.2 min) |
 
 - Every cell of the matrix above passed in each run: `onboarding-provider-select.spec.ts` 3 tests (a fresh install with Claude Code only, both, and Codex only), `codex-session-creation.spec.ts` 2, `codex-reconfirm-upgrade.spec.ts` 3, `codex-mode-restart.spec.ts` 2, `codex-mode-enable-disable.spec.ts` 4, and `codex-real-launch.spec.ts` 3 (the two installs named, then a real launch of 0.153.4 through `codex.cmd` and of 0.155.1 through `codex.exe`, each through its first screens to an answered prompt). The 20 other specs passed their 77 tests.
 - Build: each run built its commit with electron-vite (exit 0), the main bundle checked for the commit's short sha; package version 2.1.1-beta.1.

@@ -178,7 +178,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 48 | Conductor MCP transport | DONE | PLAN commits 4 and 5b | verification: a live 0.155.1 tool listing | 2, v4 |
 | 49 | `codex_review` | DONE | PLAN commit 5a (its defaults stand unless the owner overturns them) | verification: a real run on a signed-in account | 2, v4 |
 | 50 | `claude_review` | DONE | PLAN commit 5b, owner decisions 1 to 3 (2026-09-24) | verification: a live wait past 300 s | 2, v4 |
-| 51 | Agent Canvas from Codex | DONE (P4.1, b98bc235 to b4413a24; question 5 answered C on 2026-10-04 and built in c0d79113 and 07315265, its review fix pass 374ab0fb; mocked): built, this computer's sign-in getting the canvas skills copied into its own Codex skills folder, and the Auto preset as question 8 was decided (B); was withheld (`src/main/conductor-mcp-server.ts:1106`) because a Codex session had no bound id | Parity: the tools, roots, instruction delivery and the live loop | verification: the VM walk (question 5's copy and removal on this computer's sign-in among it, a copy held open by another program while the tools are turned off, and its HOST QUARANTINE link files on CI and the VM), OR4 (a copied skill read from the Windows sandbox among it), OR5; the spec and quality reviews and the ADR-009 delta pass of question 5's C (c0d79113, 07315265), its one major (L1-1) fixed in 374ab0fb and confirmed, PASS, at 18269882; owed until the re-review and the round-2 re-attack of its fixes (374ab0fb, afc5ce7d) pass | 4 |
+| 51 | Agent Canvas from Codex | DONE (P4.1, b98bc235 to b4413a24; question 5 answered C on 2026-10-04 and built in c0d79113 and 07315265, its review fix pass 374ab0fb; mocked): built, this computer's sign-in getting the canvas skills copied into its own Codex skills folder, and the Auto preset as question 8 was decided (B); was withheld (`src/main/conductor-mcp-server.ts:1106`) because a Codex session had no bound id | Parity: the tools, roots, instruction delivery and the live loop | verification: the VM walk, question 5's part done at bdc0c019 (the copy and its removal on this computer's sign-in, a copy held open by another program while the tools were turned off, and its HOST QUARANTINE link files, all PASS), OR4 (a copied skill read from the Windows sandbox among it), OR5; done: the spec and quality reviews and the ADR-009 delta pass of question 5's C (c0d79113, 07315265) and of its fixes (374ab0fb, afc5ce7d), L1-1 fixed and every confirmation PASS (final reviewed tree d717a083) | 4 |
 | 52 | Browser and vision tools | DONE (P4.2, 2eb403cf, 04ac6b96; mocked): built, the Auto preset as the owner decided on 2026-10-04 (question 8: B, kept as built); was withheld (`conductor-mcp-server.ts:911-913`, `:1042`, a "Claude-only for now" call of 2026-07-02) | Parity; the later owner decisions (the 2.1.1 gate, OD26 P1) end a call worded "for now" (section 10) | verification: the VM (vision and the push with the fake model, the per-preset approvals); OR4 | 4 |
 | 53 | Ask Conductor on Codex | DONE (P4.3, 995148ea to b4413a24; mocked): built, the characters outside the BMP as the owner decided on 2026-10-04 (question 6: A, kept as built); was pinned to Claude (`src/renderer/lib/askConductor.ts:255`) and blocked with Claude Code off (`askConductorGate.ts`) | Codex only: design section 2 and parity (Ask runs on the provider that is on). Both on: OD27 M4 (option B, canvas "Ask Conductor provider choice" v1): a Settings, General row "Ask Conductor runs on", shown only while both are on, Claude Code by default | verification: the VM (the first Ask in a fresh account folder), OR4, OR5 | 4 |
 | 54 | App knowledge, tour, tips | PARTIAL: the P2 fixes are done; P4.1 to P4.5's own copy landed with them (c4f1a62c, eecd1b75, 2be770ad); P4.11's sweep and the Beta labels done (31169913 to f1b96edd), the recaptured images waiting for the owner's review | The AGENTS.md surface sweep; recorded 2026-09-26: the Codex "Beta" labels come off in the release where parity lands | verification: the owner's review of the recaptured images; the Mac recapture | 2; 4 |
@@ -199,7 +199,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 64 | Partner terminal wording | DONE | P2 | verification: per OS | 2, v4 |
 | 65 | GitHub session context | DONE (P3.12, d86fd80f and its fixes; mocked; VM at ff7be273 (WINDOWS_1, real Codex 0.155.1 and 0.153.4), and its re-check with the fixes: a Codex session's commands and edited files, nothing before its first turn, the heading naming Codex, PASS): a Codex session reads the rollout its watcher holds, checked again inside its realm, with Claude's bounded tail, for the unchanged reference scanner and file-signal inspector (`src/main/github/session/codex-rollout-loader.ts`), read only from the realm's real day folder (a path check: see P3.12's limits); both assistants: a recent file shown as plain text, relative to the session's folder when inside it, once per file, under a heading that names the session's assistant; after Switch Account the earlier account's rollout is not read | Parity: read the session's realm rollouts | verification: done, the VM re-checks of P3.12's fixes (P3.12's record); ADR-009: done, PR 3's PR-level pass (P3.16), PASS at 525a00ac, which covers P3.12 (quarantined after its own bounded rounds); owed: the owner's screenshot review; the SSH live matrix at PR 3's head (no Codex case: a Codex session over SSH is refused) | 3 |
 | 66 | Packaged smoke | PARTIAL: Windows only, an unsigned candidate on a used VM | OD20 D8; WP1.63 | verification (release level; owner hosts) | 4 |
-| 67 | E2E mode matrix | DONE (P4.9, 7f15e2ec, d31d4940, b26079e9; VERIFIED): every cell of WP1.60's matrix has its e2e spec; on the Windows test VM the 26 specs passed 94 of 94, twice at 69c98042 (runs e2e-69c98042 and e2e-69c98042-run2) and at the final head f73f1785 (run e2e-f73f1785), the real launch of 0.153.4 (`codex.cmd`) and 0.155.1 (`codex.exe`) included | WP1.1, WP1.60 | none: the runs are recorded in `docs/wp1/evidence/mode-matrix.md`; WP1.1 and WP1.60 move to evidenced with row 16's traceability binding (P4.10) | 2; 4 |
+| 67 | E2E mode matrix | DONE (P4.9, 7f15e2ec, d31d4940, b26079e9; VERIFIED): every cell of WP1.60's matrix has its e2e spec; on the Windows test VM the 26 specs passed 94 of 94, twice at 69c98042 (runs e2e-69c98042 and e2e-69c98042-run2), at f73f1785 (run e2e-f73f1785) and at bdc0c019 (run e2e-bdc0c019), the real launch of 0.153.4 (`codex.cmd`) and 0.155.1 (`codex.exe`) included | WP1.1, WP1.60 | none: the runs are recorded in `docs/wp1/evidence/mode-matrix.md`; WP1.1 and WP1.60 move to evidenced with row 16's traceability binding (P4.10) | 2; 4 |
 | 68 | Insights | OPEN: Claude only; Claude's Insights types Claude Code's own `/insights` in a terminal (`src/main/insights-runner.ts:234-237`) | Parity, recorded 2026-09-26 (the parity reset's "Resolved by parity" list, sessions batch; not one of that day's open questions): a Conductor-native Codex report, run with `codex exec`. A mockup comes before the build (section 10) | implementation | 4 |
 | 69 | Plan mode | DONE (P3.8 round 1, caef0d42; round 2, f1783110): a "Plan mode" permissions choice, as Claude's launch option: the session starts READ-ONLY and Codex's own `/plan` is typed into its first ready prompt only (never the folder-trust prompt, the user's typing or after a turn), within a bounded wait; otherwise a note says Plan mode is not on and the session is read-only. The pill reads "plan" only while Codex's footer shows its Plan mode | Parity: Claude's Plan mode launch option (`src/renderer/lib/claude-cli-options.ts:85`); Codex has `/plan` on both supported versions and no launch flag for it (VM), so no section 19 record | verification: Plan mode on the VM, done: round 3 PASS at c67b1041, and rounds 4 and 5 at 525a00ac (PR 3 gate 6, P3.16): 3 of 3 fresh launches on 0.155.1 and 5 of 5 on 0.153.4, a Restart and a tab switch PASS (no erase was needed in those runs, so the erase after a second read and the start-up row's place are unit-tested only); the attackers' confirmation of the launched answer on `pty:spawn`, done: PASS by ADR-009 lens C in its round 3 on fixer 11 (P3.8); the approval flow with a working model (owner-only) | 3 |
 | 70 | Image paste | DONE (P3.15, bbcb6ef8; the focused key on the VM at c11fb360, both versions): with the terminal focused Alt+V goes to the CLI and Codex attaches the image itself ("[Image #1]"); with focus elsewhere a Codex session's line is ASCII and typed by the Codex typing rule, its notes in the paste hint (mocked: `codex-image-paste.test.ts`, `alt-v-image-route.test.tsx`); the tip and the Tips and Shortcuts card say both | Parity | verification: the wrapped line on the VM (round 1), done: PASS at 525a00ac (PR 3 gate 6, 0.155.1: a line over two composer rows at 91 columns, Enter 302 ms later; P3.16); real Claude Code's own Alt+V, signed in, and the focused key over SSH (owner); macOS, Linux | 3 |
@@ -7160,12 +7160,13 @@ applied their shared-file changes (section 10 records each answer):
   carries its tree kill (killSettled). Both runners' "could not reach" words
   come from one source. The changelog read closes a non-200 answer's
   connection and declares its timer first. The title-bar chip says a failed
-  analysis did not complete instead of "no issues found" (3fe02ebd). Owed
-  (VM, final head; a merge gate, 9.7 gate 6): the panel and a Re-run under
-  the dead proxy for both assistants, with in-app timestamps, Claude Code
-  on the oldest supported version (2.1.278) as well as the current one (its early stop has not run
-  against a real CLI); the link cases moved to the HOST QUARANTINE suite
-  `sentinel-analysis-folders-links.test.ts`. Owed (owner): one real-model
+  analysis did not complete instead of "no issues found" (3fe02ebd). The
+  merge gate (9.7 gate 6) ran on the VM at bdc0c019: the panel and a Re-run
+  behind the dead proxy, Codex 39.0 s and 38.9 s, Claude Code 2.1.278 9.7 s
+  and 9.4 s and 2.1.280 9.2 s and 9.9 s (five retries that got no answer,
+  then the early stop), in-app timestamps; the link cases moved to the HOST
+  QUARANTINE suite `sentinel-analysis-folders-links.test.ts`, 3 of 3 there.
+  Owed (owner): one real-model
   Claude Code analysis on the stream format (row 42's completed real
   analysis).
 - The bounded final round for lane E (7a2a7d71). The analysis keeps its
@@ -7199,23 +7200,22 @@ applied their shared-file changes (section 10 records each answer):
   capture shot and dock mark; the WP1 ledger (12 new rows, app-knowledge's
   P04, three claudeTestChanges mappings for baseline files whose case names
   changed).
-- Owed: the ADR-009 delta pass's round-2 re-attack (the round's reviews and
-  the delta pass ran at 1f199305, and L1-1, its one major, was fixed in
-  374ab0fb and confirmed, PASS, at 18269882; the record "the review fix
-  pass" below); the SSH live matrix at
-  the final head, which covers lane A's `pty-manager.ts` and
-  `statusline-watcher.ts` hunks (import lines, call sites and one
-  registry-lookup helper, `claudeSshSurface`; `resolveClaudeForPty` now
-  throws on a null resolve; the `healGlobalStatusline` wrapper) and lane
-  B's `pty-manager.ts` hunk in the local Codex branch (the
-  developer-instructions spawn option removed, which changes that branch's
-  argv), with these cases: End remote on a container runtime with and
-  without a saved sudo password, the End remote tmux kill, and a
-  non-persistent teardown (`remoteSessionCleanupCommand`); on the VM,
-  question 5's HOST QUARANTINE link files, the copy and its removal on this
-  computer's sign-in, a PATH with an npm `codex.cmd` before a `codex.exe`,
-  and the packaged canvas run for the sass override; the Cloud Agents card's
-  image.
+- Owed: the SSH live matrix at the final head, which covers lane A's
+  `pty-manager.ts` and `statusline-watcher.ts` hunks (import lines, call
+  sites and one registry-lookup helper, `claudeSshSurface`;
+  `resolveClaudeForPty` now throws on a null resolve; the
+  `healGlobalStatusline` wrapper) and lane B's `pty-manager.ts` hunk in the
+  local Codex branch (the developer-instructions spawn option removed, which
+  changes that branch's argv), with these cases: End remote on a container
+  runtime with and without a saved sudo password, the End remote tmux kill,
+  and a non-persistent teardown (`remoteSessionCleanupCommand`); on the VM,
+  a PATH with an npm `codex.cmd` before a `codex.exe` (question 5's HOST
+  QUARANTINE link files, the copy and its removal on this computer's
+  sign-in, the packaged canvas run and the Cloud Agents card's image ran at
+  bdc0c019, the record "the VM run at bdc0c019" below; the image waits for
+  the owner's review). The reviews and the ADR-009 delta pass, their
+  confirmations included, all passed (the record "the review fix pass"
+  below).
 
 *Record (2026-10-04): the CI and VM runs in the rows.*
 - Row 59, DONE: CI run 37134624406 (fcfd2ae6, 2026-10-03) ran the whole
@@ -7326,17 +7326,20 @@ lenses) ran at 1f199305. Nine of the twelve reviews passed with findings and
 three failed on major findings (group A2's spec review, three; group B's
 quality review, one; group C's spec review, one, an owner item). The ADR-009
 delta pass returned FINDINGS: its one major, L1-1, was fixed in 374ab0fb and
-confirmed, PASS, at 18269882; its round-2 re-attack is owed. Four fixers
-fixed or recorded each finding on disjoint files, test-first, with every
-guard they added or changed mutation-proved (one mutant, FA-M15, is owed on
-CI and the VM): 3fe02ebd and e0e1c8db (lane E's files, Sentinel), 97d94a01
-(lane C's and lane T's), 374ab0fb (lane B's), 0d3a9ee1 and b85c0f9b (lane
-A's). The integration commit after them applied their shared-file changes
-and WP1 ledger rows. A bounded second round followed, on the re-review's and
-the confirmation's findings: afc5ce7d (lane B's), 3e8233c9 (lane C's),
-7a2a7d71 (lane E's), 5b946c82 and ba346a93 (lane A's), integrated in the
-commit after them. What each changed is in the record "the owner's answers,
-built" above and in section 10. Recorded with it:
+confirmed, PASS, at 18269882. Every later confirmation and re-review passed,
+across the four lenses (L1 to L4) and the reviewers, with no open BLOCKER or
+MAJOR: the second round at 4d15230d, the polish pass at 0c520cf2 and the
+final nits at d717a083, the final reviewed tree. Four fixers fixed or
+recorded each finding on disjoint files, test-first, with every guard they
+added or changed mutation-proved (one mutant, FA-M15, is owed on CI and the
+VM): 3fe02ebd and e0e1c8db (lane E's files, Sentinel), 97d94a01 (lane C's
+and lane T's), 374ab0fb (lane B's), 0d3a9ee1 and b85c0f9b (lane A's). The
+integration commit after them applied their shared-file changes and WP1
+ledger rows. A bounded second round followed, on the re-review's and the
+confirmation's findings: afc5ce7d (lane B's), 3e8233c9 (lane C's), 7a2a7d71
+(lane E's), 5b946c82 and ba346a93 (lane A's), integrated in the commit after
+them. What each changed is in the record "the owner's answers, built" above
+and in section 10. Recorded with it:
 - b85c0f9b's subject is 127 characters, over commitlint's 120. CI lints only
   the PR title and the PR squash-merges, so it is recorded here and not
   rewritten. 0bd670ce's message says `auth.browser` is left undeclared; it
@@ -7356,15 +7359,15 @@ built" above and in section 10. Recorded with it:
   (a004e27a); the Claude lookup names PATH folders as Windows does, and its
   discovery refuses a path with a name ending in a dot or a space (a01876d2;
   the helpers shared with the Codex lookup in dc904e6a). Their targeted
-  re-review and re-attack are owed.
+  re-review and re-attack passed (0c520cf2).
 - The final review nits, one commit after the polish pass: both PATH lookups
-  read their folders by one shared rule (a drive, or a share spelled with two
-  leading slashes; review L3), so the Claude lookup reads the same folders as
-  the Codex one; a Sentinel check that fails with a thrown value that is not
-  an Error keeps that value's text, so the chip says it did not complete
-  (E-Q15); the What's New line drops a note meant for the VM run (E-Q14); and
-  comments, test names and records about the lookups now say what each one
-  reads. Their targeted re-review is owed with the polish pass's.
+  read their folders by one shared rule (a drive, or a share spelled with
+  two leading slashes; review L3), so the Claude lookup reads the same
+  folders as the Codex one; a Sentinel check that fails with a thrown value
+  that is not an Error keeps that value's text, so the chip says it did not
+  complete (E-Q15); the What's New line drops a note meant for the VM run
+  (E-Q14); and comments, test names and records about the lookups now say
+  what each one reads. Their re-review and confirmation passed at d717a083.
 - Before this round's first push, the unpushed commits were rewritten to
   tidy wording; the final tree is byte-identical to the reviewed head, and
   every commit reference in these records was updated.
@@ -7432,32 +7435,37 @@ built" above and in section 10. Recorded with it:
   latch, so a sidebar read after a start whose load failed no longer lets a
   close with no tabs remove the unread file; a read that fails gives the
   sidebar nothing, and a sidebar save whose read fails writes nothing.
-- Owed on CI and the VM: the HOST QUARANTINE files
-  `codex-user-skills-links.test.ts`, `codex-user-skills-race-links.test.ts`,
-  `codex-realm-skills-links.test.ts`, `codex-realm-skills-race-links.test.ts`,
-  `hooks-links.test.ts`, `sentinel-analysis-folders-links.test.ts` and
-  `claude-identity-copy-links.test.ts` (FA-M15 with it), and
-  `claude-headless-real-argv.test.ts`, which follows the analysis's new
-  argv. On CI: the Sonnet 5 fallback price's native test
-  (`tests/unit/native/tk-db-sonnet5-price.native.test.ts`) has never run;
-  its CI run id is owed after the push before that price counts as tested on
-  the real pricing path.
-- Owed on the VM: the copy and its removal on this computer's sign-in, and a
-  copy held open from PowerShell while the tools are turned off (no copy is
-  left without its mark at the skill's name and the folder stays recorded;
-  released and turned off again, all three are gone and the record is
-  empty); OR4, a copied `SKILL.md` under `%USERPROFILE%\.codex\skills` read
-  from the Windows sandbox on this computer's sign-in; the Sentinel panel and
-  a Re-run for both assistants at the final head behind the dead proxy, with
-  in-app timestamps, Claude Code on 2.1.278 and on the current version, a
-  merge gate (9.7 gate 6; Claude Code's early stop has not run against a
-  real CLI); the Tokenomics Cost over time chart on All, 7d and 30d at a
-  narrow and a wide window; the packaged canvas run for the sass override;
-  the Cloud Agents card's image, recaptured; A2-R1: sign out the primary
-  Claude profile with the acknowledgement, restart the app, and confirm the
-  primary profile and its `identity/.credentials.json` stay signed out
+- The HOST QUARANTINE files ran on the VM at bdc0c019 (the record below):
+  all 22, 21 passed and the real-CLI conformance file 8 of 9 on each version
+  (its one skip the placeholder for a run with no CLI). FA-M15 is recorded
+  as an equivalent mutant: dropping `st.isSymbolicLink() ||` from
+  `removeProfileIdentityCredentials` (`src/main/account-profiles.ts:2045`)
+  changes nothing, because Node's lstat reports a link or junction as not a
+  directory, so `!st.isDirectory()` refuses the same links. On CI: CI run
+  37198938793 was red on three test expectations, fixed in f03d1d3a (the
+  Claude sign-out tests follow each platform's sign-in model) and 14e4140f
+  (the picker worktree test, its link cases moved to the HOST QUARANTINE
+  file `tests/unit/scripts/codex-resume-picker-links.test.ts`); its re-run
+  is pending, and with it the run id of the Sonnet 5 fallback price's native
+  test (`tests/unit/native/tk-db-sonnet5-price.native.test.ts`), owed before
+  that price counts as tested on the real pricing path.
+- Done on the VM at bdc0c019 (the record below): the copy and its removal on
+  this computer's sign-in, a same-named skill of the user's left alone and
+  named, and a copy held open while the tools were turned off (no copy left
+  without its mark at the skill's name, the folder kept in the record;
+  released and turned off again, all three gone and the record empty); the
+  Sentinel merge gate for both assistants, Claude Code on 2.1.278 and
+  2.1.280; the Codex lookup with a share that does not answer; the
+  Tokenomics Cost over time and Memory activity charts; the packaged canvas
+  run; the Cloud Agents card's image, recaptured (the owner's review of it
+  owed). Still owed on the VM: A2-R1, sign out the primary Claude profile
+  with the acknowledgement, restart the app, and confirm the primary profile
+  and its `identity/.credentials.json` stay signed out
   (`syncPrimaryCredentialsWithGlobal` must not copy the global credentials
-  back; if it does, the sign-out must also stop that sync for the profile).
+  back; if it does, the sign-out must also stop that sync for the profile);
+  a PATH with an npm `codex.cmd` before a `codex.exe`. OR4 (owner, a real
+  model): a copied `SKILL.md` under `%USERPROFILE%\.codex\skills` read from
+  the Windows sandbox on this computer's sign-in.
 - Owed by the owner: on a Mac, a sign-out of a Claude account through the
   provider-neutral sign-out with the acknowledgement, confirming that Claude
   Code in Terminal is signed out too, that the sign-in check before it read
@@ -7467,6 +7475,42 @@ built" above and in section 10. Recorded with it:
   ends the #117 keychain dialog in the panel; A2-R5); one real-model Claude
   Code analysis on the stream format (review E-S5); the SSH live matrix at
   the final head with the cases in the record "the owner's answers, built".
+
+*Record (2026-10-04): the VM run at bdc0c019.* On WINDOWS_1, a packaged
+build of bdc0c019 installed over f73f1785 (unsigned), the fake model,
+fictional accounts, isolated Codex and Claude folders; the VM user's own
+folders were the same at the end as at the start.
+- E2e suite: the 26 specs, 94 of 94, none skipped or flaky, the real launch
+  of 0.153.4 (`codex.cmd`) and 0.155.1 (`codex.exe`) included; the one
+  pre-existing failure did not occur in this run.
+- HOST QUARANTINE files: all 22 (19 headed, and three that only name the
+  words), 21 passed, 205 tests, and the real-CLI conformance file 8 of 9 on
+  each version; FA-M15 an equivalent mutant (above).
+- Question 5's C on this computer's sign-in: the three skills copied on
+  launch with their marks and the folder recorded; with `agent-canvas` held
+  open, turning the tools off removed the other two and left it whole, marked
+  and recorded, and the next on and off removed all three and emptied the
+  record; a same-named skill of the user's (`canvas-plan`) left byte for
+  byte and named on the canvas page; turning Codex off removed the copies.
+- Sentinel behind the dead proxy, start-up check then Re-run, in-app
+  timestamps: Codex 39.0 s and 38.9 s (stopped once Codex said it was
+  waiting for the network); Claude Code 2.1.278 9.7 s and 9.4 s, and 2.1.280
+  9.2 s and 9.9 s (five retries that got no answer, then the early stop); the
+  Claude Code chip said the analysis did not complete.
+- The Codex lookup with a share that does not answer first in PATH: one
+  check per folder in each lookup, about 1.1 s the first time for a server
+  name that does not exist, then cached by Windows.
+- Tokenomics Cost over time on All, 7d and 30d at a narrow and a wide window:
+  drawn at its own width, round dots, date labels spaced; the Memory activity
+  chart's dots round at both widths; the tips' marks on the card and in the
+  dock row; the Cloud Agents card's image recaptured.
+- The packaged canvas with sass 1.79.4: a render, a rectangle drawn, a note
+  and a review the agent fetched with its image; the installed asar holds
+  sass 1.79.4 and chokidar 4.0.3, and none of braces or the
+  http-cache-semantics chain.
+- Three observations went to the owner's queue: the chip's order after a
+  failed Codex analysis with an open notice, the gpt-5.2 notice, and the
+  panel header's version after a failed Claude Code run.
 
 ## 10. Unresolved UX decisions
 

@@ -74,6 +74,17 @@ moves its rows.
   PARTIAL, 2 OPEN. A bounded second round (afc5ce7d, 3e8233c9, 7a2a7d71,
   5b946c82, ba346a93) fixed the re-review's findings, integrated after them.
 
+- **Confirmations and the VM run.** Every confirmation and re-review passed,
+  across the four ADR-009 lenses and the reviewers (final reviewed tree
+  d717a083). The VM run at bdc0c019: e2e 94 of 94; the 22 HOST QUARANTINE
+  files pass (FA-M15 an equivalent mutant); question 5's C walk passes, the
+  held-open copy included; Sentinel behind the dead proxy stops in 39.0 s
+  and 38.9 s for Codex and in 9.2 s to 9.9 s for Claude Code 2.1.278 and
+  2.1.280; a share that does not answer is asked once per lookup; the
+  charts, the packaged canvas and the asar scan pass. CI run 37198938793 was
+  red on three test expectations, fixed in f03d1d3a and 14e4140f; its re-run
+  is pending.
+
 **Evidence recorded.** Rows 59 and 67 are VERIFIED (CI runs 37134624406 and
 37156412028; the VM e2e runs at 69c98042 and f73f1785, recorded in
 `docs/wp1/evidence/mode-matrix.md`), row 60 is PARTIAL
@@ -81,22 +92,18 @@ until its release-candidate leg, and the prove-red dispatch (CI run
 37155296304) is in `docs/wp1/evidence/ci-matrix.md`. Row 38's midnight UTC
 check passed on the VM.
 
-**Still owed.** The ADR-009 delta pass's round-2 re-attack, and the polish
-pass's targeted re-review and re-attack; the SSH live matrix at the final
-head (the pty manager, the statusline watcher and the per-session settings
-writer changed at import lines, call sites and one registry-lookup helper,
-with a throw on a null Claude resolve and a heal wrapper; the local Codex
-branch drops the developer-instructions spawn option, which changes its
-argv), with End remote with and without a saved sudo password, the tmux kill
-and a non-persistent teardown; the HOST QUARANTINE files on CI and the VM;
-the VM checks of question 5's copy and removal (a held-open copy among
-them), the Windows PATH order, Sentinel behind the dead proxy for both
-assistants (a merge gate, Claude Code on 2.1.278 and on the current
-version), the primary Claude profile staying signed out after a sign-out and
-a restart, the Tokenomics chart and the packaged canvas run; the Sonnet 5
-price's native test in CI; the Cloud Agents card's image; on a Mac, the
-Claude sign-out with the acknowledgement and every Accounts row reading the
-Mac's one sign-in (owner); one real-model Claude Code analysis on the stream
-format (owner). Closed since: the GitHub sidebar's session reads leave the
-read-failure latch alone (871b6d59), and the Claude auth runs build their
-environment in the managed-launch shape the WP1 check reads (cb6d06fa).
+**Still owed.** The SSH live matrix at the final head (the pty manager, the
+statusline watcher and the per-session settings writer changed at import
+lines, call sites and one registry-lookup helper, with a throw on a null
+Claude resolve and a heal wrapper; the local Codex branch drops the
+developer-instructions spawn option, which changes its argv), with End
+remote with and without a saved sudo password, the tmux kill and a
+non-persistent teardown; CI run 37198938793's re-run, with the Sonnet 5
+price's native test; on the VM, the Windows PATH order and the primary
+Claude profile staying signed out after a sign-out and a restart; the
+owner's review of the recaptured images; on a Mac, the Claude sign-out with
+the acknowledgement and every Accounts row reading the Mac's one sign-in
+(owner); one real-model Claude Code analysis on the stream format (owner).
+Closed since: the GitHub sidebar's session reads leave the read-failure
+latch alone (871b6d59), and the Claude auth runs build their environment in
+the managed-launch shape the WP1 check reads (cb6d06fa).
