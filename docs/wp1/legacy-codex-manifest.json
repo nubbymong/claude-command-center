@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-04T08:53:32.742Z",
-  "head": "a3580bb6d202d60258f572928770abf3fb020574",
-  "tree": "24fa851c4c6adf290cd334085f585c61a6380ab4",
+  "generatedAt": "2026-10-04T10:18:28.177Z",
+  "head": "00216aac2fac90dfe6762c6e48c3766ce976762b",
+  "tree": "699e156697a059b4fe1b8c91d0d2e93141295be8",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2743,
+  "trackedFileCount": 2746,
   "excludedFileCount": 400,
-  "scannedFileCount": 2343,
+  "scannedFileCount": 2346,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -204,7 +204,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 1174,
+      "lineCount": 1176,
       "truncated": true
     },
     {
@@ -530,7 +530,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 65
+      "lineCount": 67
     },
     {
       "path": "src/main/channel-emitters.ts",
@@ -4072,7 +4072,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 111
+      "lineCount": 122
     },
     {
       "path": "tests/unit/main/conductor-mcp-auth.test.ts",
@@ -4402,7 +4402,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 175
+      "lineCount": 177
     },
     {
       "path": "tests/unit/main/sentinel-unreachable-timing.test.ts",

@@ -58,7 +58,7 @@ moves its rows.
   assessment and a follow-up for 2.2 (aicc_planning#127). http-cache-semantics
   4.3.0, published after the records commit, is not taken: it is unverified
   as a fix. The sass pin is dropped once excalidraw declares sass >= 1.79.
--  **Review fix pass.** The round's spec and quality reviews and its ADR-009
+- **Review fix pass.** The round's spec and quality reviews and its ADR-009
   delta pass ran at 8bf078f2: three reviews failed on major findings and the
   delta pass returned FINDINGS (its one major, L1-1, fixed in 89f0da82 and
   confirmed at 46832d72), the rest passed with findings. Four fixers fixed
@@ -81,22 +81,22 @@ until its release-candidate leg, and the prove-red dispatch (CI run
 37155296304) is in `docs/wp1/evidence/ci-matrix.md`. Row 38's midnight UTC
 check passed on the VM.
 
-**Still owed.** The ADR-009 delta pass's round-2 re-attack; the SSH live
-matrix at the final head (the pty manager, the statusline watcher and the
-per-session settings writer changed at import lines, call sites and one
-registry-lookup helper, with a throw on a null Claude resolve and a heal
-wrapper; the local Codex branch drops the developer-instructions spawn
-option, which changes its argv), with End remote with and without a saved
-sudo password, the tmux kill and a non-persistent teardown; the HOST
-QUARANTINE files on CI and the VM; the VM checks of question 5's copy and
-removal (a held-open copy among them), the Windows PATH order, Sentinel
-behind the dead proxy for both assistants (a merge gate, Claude Code on
-2.1.278 and on the current version), the primary Claude profile staying
-signed out after a sign-out and a restart, the Tokenomics chart and the
-packaged canvas run; the Sonnet 5 price's native test in CI; the Cloud
-Agents card's image; on a Mac, the Claude sign-out with the acknowledgement
-and every Accounts row reading the Mac's one sign-in (owner); one real-model
-Claude Code analysis on the stream format (owner). Closed since: the GitHub
-sidebar's session reads leave the read-failure latch alone (f2ed852e), and
-the Claude auth runs build their environment in the managed-launch shape the
-WP1 check reads (9f3adef4).
+**Still owed.** The ADR-009 delta pass's round-2 re-attack, and the polish
+pass's targeted re-review and re-attack; the SSH live matrix at the final
+head (the pty manager, the statusline watcher and the per-session settings
+writer changed at import lines, call sites and one registry-lookup helper,
+with a throw on a null Claude resolve and a heal wrapper; the local Codex
+branch drops the developer-instructions spawn option, which changes its
+argv), with End remote with and without a saved sudo password, the tmux kill
+and a non-persistent teardown; the HOST QUARANTINE files on CI and the VM;
+the VM checks of question 5's copy and removal (a held-open copy among
+them), the Windows PATH order, Sentinel behind the dead proxy for both
+assistants (a merge gate, Claude Code on 2.1.278 and on the current
+version), the primary Claude profile staying signed out after a sign-out and
+a restart, the Tokenomics chart and the packaged canvas run; the Sonnet 5
+price's native test in CI; the Cloud Agents card's image; on a Mac, the
+Claude sign-out with the acknowledgement and every Accounts row reading the
+Mac's one sign-in (owner); one real-model Claude Code analysis on the stream
+format (owner). Closed since: the GitHub sidebar's session reads leave the
+read-failure latch alone (f2ed852e), and the Claude auth runs build their
+environment in the managed-launch shape the WP1 check reads (9f3adef4).

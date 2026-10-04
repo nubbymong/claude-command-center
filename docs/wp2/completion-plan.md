@@ -7170,8 +7170,9 @@ applied their shared-file changes (section 10 records each answer):
   analysis).
 - The bounded final round for lane E (47751ec3). The analysis keeps its
   watch and sets CLAUDE_CODE_MAX_RETRIES 8 as a backstop: a Claude Code that
-  prints no `api_retry` line (older than 2.1.287; the managed floor is
-  2.1.278) gives its own reason inside the 180 s cap, one attempt, said as
+  prints no `api_retry` line (the pinned 2.1.287 to 2.1.289 print one; the
+  VM run checks 2.1.278, the managed floor) gives its own reason inside the
+  180 s cap, one attempt, said as
   unreachable. That is an estimate, not a measurement: 95.5 s of backoff,
   about 120 s with its 25% jitter, plus about 3 s per refused request. An
   answered overload is ridden out for up to 8 retries instead of 10 (the
@@ -7182,7 +7183,13 @@ applied their shared-file changes (section 10 records each answer):
   across chunks. The title-bar chip says "did not complete" only after an
   analysis that failed (`lastAnalysisFailed`: notes unreadable, a runner
   that could not start for a reason other than the launch rule, or a failed
-  run), not for unmatched findings, carried problems or refusals.
+  run), not for unmatched findings, carried problems or refusals. Polish
+  pass: only a retry the CLI labels "unknown" (no answer at all: a refused
+  connection, or the first-byte watchdog's `no_response`) counts; an error
+  the service sent after answering 200 carries no HTTP status but a named
+  kind (overloaded, rate_limit, server_error), and is an answer, as the
+  pinned binary's labels show; an unexpected error in the start-up check or
+  a Re-run marks the check failed.
 - The integration (8a87026a): lane B's launch, PTY, start-up and copy
   patches; the picker flag (`viaPicker`) and the discovered version
   (`cliVersion`) retired, and the launch route port
@@ -7341,6 +7348,15 @@ built" above and in section 10. Recorded with it:
   it in the managed-launch shape at each call site, behaviour unchanged, the
   macOS mutants re-proved. The GitHub sidebar defect below, which the
   integration step left open, landed in f2ed852e.
+- A polish pass closed six MINORs, each in its own commit: a Sentinel retry
+  for an overload reported after a 200 counts as answered, and the chip
+  marks a check failed after an unexpected error (b8a653fc); an owed clear
+  ignores a marker dated in the future and moves a damaged saved file aside
+  (6272aab3); kept-aside skill records never block the switch-off pass
+  (f0ea1f82); the Claude lookup names PATH folders as Windows does, and its
+  discovery refuses a path with a name ending in a dot or a space (26e4e3b5;
+  the helpers shared with the Codex lookup in 00216aac). Their targeted
+  re-review and re-attack are owed.
 - Known limits, recorded with no change made:
   - For developers only: a dev build and the installed app running together
     share `~/.codex`. Either one's switch-off removes the other's skill
@@ -7354,21 +7370,28 @@ built" above and in section 10. Recorded with it:
   - A recorded `CODEX_HOME` on a network share that does not answer can
     still hold the start pass and a settings save for as long as Windows
     waits for it (those reads are synchronous). A PATH folder on a network
-    share that does not answer can hold the Codex check up the same way, once
-    per such folder in a check (a known issue, with the workaround); share
-    folders are read, as a terminal reads them (round 2, review B-S10).
+    share that does not answer can hold the app up the same way, once per
+    such folder, every time it looks Codex up: the check, and before every
+    Codex launch, sign-in or sign-out and model-list read (a known issue, with
+    the workaround; review B-Q13); share folders are read, as a terminal reads
+    them (round 2, review B-S10).
   - The marker that keeps a Close sessions clear owed across a restart holds
     the time of the user's clear (a retry that fails never moves it) and
     never removes a state saved after it: one that cannot be read, does not
     parse or holds no time stands at its own modification time, and when
     even that, or the saved file itself, cannot be read, nothing is removed
     or offered and saves are held for that start until a later load can tell
-    (re-review R-1 and R-2, bea30e0f). A clock set back between the clear
-    and a later save could make that save look older, which matters only if
-    every save of that run also failed to remove the marker. If the marker
-    can be written neither at the clear nor at any retry in that run, and no
-    retry removes the set either, the next start offers the set again (Don't
-    open dismisses it).
+    (re-review R-1 and R-2, bea30e0f). A marker dated in the future (a time
+    later than now, or a time in its content later than its own modification
+    time) is dropped with nothing removed, and while a clear is owed a
+    damaged session file is moved aside, never deleted (6272aab3). A clock
+    set back between the clear and a later save could make that save look
+    older, which matters only if every save of that run also failed to
+    remove the marker; so could a marker whose content is damaged and whose
+    modification time a copy or restore moved past a later save (but not
+    past the present). If the marker can be written neither at the clear nor
+    at any retry in that run, and no retry removes the set either, the next
+    start offers the set again (Don't open dismisses it).
   - Sentinel on a network that silently drops traffic still runs up to its
     old limit (a known issue). The evidence for Claude Code's early stop
     (fe51f31d): in the pinned 2.1.288 CLI, read as text and never run,
@@ -7859,8 +7882,8 @@ day):
   app on the VM for Codex and, for Claude Code, from the pinned CLI's stream
   format as read from its binary and the unit replay (the CLI probe gives
   only the backoff schedule; the early stop has not yet run against a real
-  CLI, VM owed); a Claude Code older than 2.1.287 gives up on its own inside
-  the 180 s cap (estimated); a network that silently drops traffic is not
+  CLI, VM owed); a Claude Code that prints no retry lines gives up on its own
+  inside the 180 s cap (estimated; the VM run checks 2.1.278); a network that silently drops traffic is not
   stopped early (a known issue) (9dfc220c, the Codex half in 8a87026a; the
   review fixes in fd02adfd, fe51f31d and 47751ec3).
 - **The `[credentials] delete refused` warning**: the delete is skipped
