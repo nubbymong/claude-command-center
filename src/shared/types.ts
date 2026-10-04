@@ -660,32 +660,21 @@ export interface CanvasMarkerUndelivered {
   reason: SubmitNotDeliveredReason
 }
 
-/** Whether a session's launch carried the Agent Canvas and vision skills'
- *  guidance with the tools (P4.1, question 5). `full`: the guidance came
- *  with them. `tools-only`: the tools and their descriptions came without
- *  it, and why, for the canvas page's one line:
- *  - `npm-route`: a launch route that takes no launch setting holding a space;
- *  - `user-instructions`: a settings file the assistant reads already names
- *    developer instructions, which the app never replaces;
- *  - `unknown-settings`: where the assistant reads its settings could not be
- *    established for the installed version or this launch (a version whose
- *    settings layers are not established, a settings file that cannot be read
- *    as text, or a working folder not known at launch), so nothing was
- *    passed;
- *  - `skills-not-staged`: the skills could not be put in place (a managed
- *    account's skills folder is a link, a same-named skill folder is not the
- *    app's, or a write failed; on macOS and Linux, the app's plugin folder
- *    could not be written).
- *  `picker`: a launch through the resume picker on this computer's own
- *  sign-in, whose guidance rides the launch's developer instructions: passed
- *  when Codex starts in the session's own folder (a new conversation, or a
- *  resumed one without instructions of its own); a resumed conversation that
- *  already has instructions keeps them, and one started in another worktree
- *  gets none. */
+/** Whether a session's launch had the Agent Canvas and vision skills in its
+ *  account's own skills folder (P4.1, question 5, answered C), where they
+ *  reach every session of that account however it is started. `full`: all
+ *  of them. `tools-only`: the tools came without the skills named in
+ *  `skills`, and why, for the canvas page's one line:
+ *  - `own-skill`: a skill or file of that name there is not the app's (in
+ *    the user's own Codex folder, the user's own skill), which the app never
+ *    replaces;
+ *  - `skills-not-staged`: the skills could not be put in place (the folder
+ *    or a skill folder is a link, a write failed, the app has no record of
+ *    the folder to write into, or the account's folder is not one the app
+ *    writes into). */
 export type CanvasSessionGuidance =
   | { guidance: 'full' }
-  | { guidance: 'picker' }
-  | { guidance: 'tools-only'; reason: 'npm-route' | 'user-instructions' | 'unknown-settings' | 'skills-not-staged' }
+  | { guidance: 'tools-only'; reason: 'own-skill' | 'skills-not-staged'; skills: string[] }
 
 /** One of a provider account's own log folders (P4.4, row 56): `log`, the
  *  account's log folder, where the sign-in log always lands; `log-dir`, the

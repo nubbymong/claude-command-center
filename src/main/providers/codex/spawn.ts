@@ -268,14 +268,6 @@ export function codexPresetApprovedTools(preset: string, switches: ConductorTool
     .map((t) => t.name)
 }
 
-/** The launch route a Codex executable takes: the npm `.cmd` shim runs
- *  through cmd.exe (no argument may hold whitespace there), anything else is
- *  started directly. */
-export function codexLaunchRoute(executable: string, platform: NodeJS.Platform = process.platform): 'direct' | 'cmd' {
-  return platform === 'win32' && /\.(cmd|bat)$/i.test(executable) ? 'cmd' : 'direct'
-}
-
-
 /** Set a variable main owns, removing every other spelling of it first: on
  *  Windows names are case-insensitive and a child reads the FIRST match in
  *  its environment block, so an inherited `conductor_mcp_token` would
@@ -689,7 +681,7 @@ function buildCodexSpawnCommand(opts: SpawnOptions): ProviderSpawnCommand {
       if (openElsewhere.length > 0) setOwned(pickerEnv, CODEX_OPEN_ELSEWHERE_ENV, openElsewhere.join(','), win32)
       // Bare 'node' fails under node-pty/ConPTY on Windows (no PATH lookup).
       // Resolve to the full node.exe path via `where node`. See resolveNodeExe.
-      return { cmd: resolveNodeExe(), args: [pickerScript, ...pickerFlags], env: pickerEnv, ...(pickFile && pickFolder ? { pickFile, pickFolder } : {}), hooksInstalled, viaPicker: true }
+      return { cmd: resolveNodeExe(), args: [pickerScript, ...pickerFlags], env: pickerEnv, ...(pickFile && pickFolder ? { pickFile, pickFolder } : {}), hooksInstalled }
     }
     // Fallthrough: picker missing, spawn codex directly.
   }

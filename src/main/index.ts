@@ -57,6 +57,7 @@ import { registerAccountProfilesHandlers } from './ipc/account-profiles-handlers
 import { migrateProfilesToHomeLayout, cleanupSessionHomes, syncPrimaryCredentialsWithGlobal, repairSharedProjectJunctions, getProfilesRoot, getProfileConfigDir, isValidProfileId } from './account-profiles'
 import { secureOwnerOnlyFolders } from './owner-only-folders'
 import { startCodexHookFolders, codexHookFoldersSettingsChanged } from './codex-hook-folders'
+import { startCodexUserSkills, codexUserSkillsSettingsChanged } from './canvas/codex-user-skills'
 import { runFirstRunCapture } from './first-run-accounts'
 import { backupRealClaudeOnce } from './claude-backup'
 import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
@@ -101,7 +102,7 @@ import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp
 import { startUpdateServer, stopUpdateServer } from './update-server'
 import { loadSessionState, hasSavedSessionState, SessionState } from './session-state'
 import { createAppSessionDurability } from './app-session-durability'
-import { getConfigDir, snapshotConfig, readConfig } from './config-manager'
+import { getConfigDir, snapshotConfig, readConfig, readConfigChecked } from './config-manager'
 import { stopGlobalVision, killSpawnedBrowser, cleanupLegacyVisionMarkers } from './vision-manager'
 import { startConductorMcpServer, stopConductorMcpServer, startBrowserAtBoot } from './conductor-mcp-server'
 import { loadWindowState, clampToVisibleDisplay, saveWindowStateFor } from './window-state'
@@ -558,6 +559,20 @@ if (!gotTheLock) {
           subscribe: (listener) => getAccountsService()?.subscribe(listener) ?? (() => {}),
           log: (level, message) => (level === 'warn' ? logWarn(message) : logInfo(message)),
         })
+        // WP2 PR 4 (section 10 question 5, answered C): the canvas skills the
+        // app copied into this computer's own Codex folder are removed when
+        // Codex or the built-in tools are turned off, and kept current while
+        // both are on (canvas/codex-user-skills.ts): once after first paint,
+        // then at every settings save and every change the accounts service
+        // announces. Settings that cannot be read do nothing.
+        startCodexUserSkills({
+          settings: () => {
+            const r = readConfigChecked<Record<string, unknown>>('settings', { quarantineUnparseable: false })
+            return r.outcome === 'ok' && r.value && typeof r.value === 'object' ? r.value : null
+          },
+          codexOn: () => providerOnNow('codex'),
+          subscribe: (listener) => getAccountsService()?.subscribe(listener) ?? (() => {}),
+        })
       })
       // Resume-picker bug fix: backfill companion dirs so DIRECT-WORK
       // conversations (no subagent/workflow → no companion dir from the CLI) are
@@ -681,6 +696,9 @@ if (!gotTheLock) {
         void refreshServiceStatus().catch((err) => logError('[main] service status refresh failed:', err))
         // P3.10 round 4 (P1): Codex switched on has its hook folders prepared.
         try { codexHookFoldersSettingsChanged() } catch (err) { logError('[main] codex hook folders failed:', err) }
+        // Question 5, answered C: Codex or the built-in tools turned off takes
+        // the app's skills out of this computer's own Codex folder.
+        try { codexUserSkillsSettingsChanged() } catch (err) { logError('[main] codex user skills failed:', err) }
         // P3.12 round 1 (V1): the logging switch turned off stops indexing the
         // sessions already running, both assistants.
         try { applyLoggingSwitches() } catch (err) { logError('[main] logging switches failed:', err) }

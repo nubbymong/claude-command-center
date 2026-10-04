@@ -106,19 +106,6 @@ export const CODEX_GUIDANCE_RECORDS_MAX = 512
 
 const records = new Map<string, CanvasSessionGuidance>()
 
-/**
- * What a launch carried, by the route it took. The skills are in the
- * account's own folder, which every conversation lists whatever the route,
- * so the route no longer changes it. Kept while the PTY manager still asks;
- * the integration patch that stops asking removes it.
- */
-export function codexGuidanceAsLaunched(
-  launch: { guidance: CanvasSessionGuidance | null },
-  _route: { viaPicker: boolean },
-): CanvasSessionGuidance | null {
-  return launch.guidance
-}
-
 /** What a Codex session's launch carried, for the canvas page's line. */
 export function noteCodexSessionGuidance(sessionId: string, guidance: CanvasSessionGuidance): void {
   records.delete(sessionId)

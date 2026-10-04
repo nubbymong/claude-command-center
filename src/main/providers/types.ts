@@ -78,12 +78,6 @@ export interface SpawnOptions {
    *  app are on (ids), for the resume picker to say one is open in another
    *  tab. Set by main only. */
   codexOpenElsewhere?: string[]
-  /** Codex (WP2 PR 4, P4.1): the app's canvas and browser guidance as Codex
-   *  developer instructions (section 10 question 5, default A). Main decides
-   *  whether this launch carries it (src/main/canvas/codex-guidance.ts); the
-   *  builder passes it on the direct route only, never through cmd.exe. Set
-   *  by main only. */
-  developerInstructions?: string
   /** Codex (WP2 PR 4, P4.3): this launch is an Ask Conductor session in the
    *  app's help folder; the byte bound of the AGENTS.md written there
    *  (help-workspace.ts askConductorProjectDocMaxBytes). The builder passes
@@ -128,10 +122,6 @@ export interface ProviderSpawnCommand {
    *  holds the question and types it through the run's pane at the first
    *  ready, empty composer. */
   askPromptOnArgv?: boolean
-  /** Codex (WP2 PR 4, review): the launch runs the resume picker (asked for,
-   *  in place, and no conversation resumed exactly), so the guidance it
-   *  carries is passed only when Codex starts in the session's own folder. */
-  viaPicker?: boolean
 }
 
 /** A folder as it was when made: what it is (its device and file id, exact)
@@ -267,12 +257,6 @@ export interface SessionProvider {
    *  hook folders were not prepared (round 4, prepareHookFolders): nothing is
    *  started here. */
   prepareSessionHooks?(sessionId: string, port: number, secret: string): { hookFile: string; dispose(): void } | null
-  /** Optional -- Codex (WP2 PR 4, P4.1): how a launch from `executable` is
-   *  started: `cmd` through cmd.exe (the npm .cmd shim, where no argument may
-   *  hold whitespace or a character cmd.exe interprets), else `direct`. Main
-   *  reads it before the launch is built, to decide what rides argv. Absent:
-   *  main assumes `cmd`, the route that carries less. */
-  launchRoute?(executable: string): 'direct' | 'cmd'
   /** Optional -- Codex (P4.1): the skills folder of the provider home a
    *  launch runs in when the app may stage its skills there (a managed
    *  account's own folder, by path), else null: the user's own home is never

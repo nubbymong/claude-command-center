@@ -49,8 +49,8 @@ describe('canvas:sessionGuidance', () => {
 
   it('answers the app\'s window with the session\'s launch record', () => {
     expect(handler(fromApp, { sessionId: SID })).toBeNull()
-    guidance.noteCodexSessionGuidance(SID, { guidance: 'tools-only', reason: 'npm-route' })
-    expect(handler(fromApp, { sessionId: SID })).toEqual({ guidance: 'tools-only', reason: 'npm-route' })
+    guidance.noteCodexSessionGuidance(SID, { guidance: 'tools-only', reason: 'own-skill', skills: ['agent-canvas'] })
+    expect(handler(fromApp, { sessionId: SID })).toEqual({ guidance: 'tools-only', reason: 'own-skill', skills: ['agent-canvas'] })
   })
 
   it('answers nothing to another sender, or to a frame inside the window', () => {

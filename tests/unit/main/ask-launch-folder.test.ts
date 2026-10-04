@@ -89,7 +89,6 @@ vi.mock('../../../src/main/providers', () => ({
           return { cmd: '/proven/codex', args: [], env: {}, logLine: '', ...(resume ? { resumeId: resume.uuid, cwd: resume.cwd } : {}) }
         },
         ingestSessionTelemetry: () => ({ stop: () => {} }),
-        launchRoute: () => 'direct',
       }
     : { resolveBinary: () => ({ cmd: 'claude', source: 'system' }), buildSpawnCommand: () => ({ cmd: 'pwsh', args: [], env: {} }), ingestSessionTelemetry: () => ({ stop: () => {} }) }),
 }))

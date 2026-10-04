@@ -537,11 +537,13 @@ describe('app knowledge after PR 4 (ADR-009 round 2)', () => {
     expect(body).not.toMatch(/The app opens only a plain folder/)
   })
 
-  it('[host] says, in one clause, what the guidance reaches through the resume picker (review)', () => {
+  it('[host] says where the canvas skills go for this computer\'s own Codex sign-in, when they leave, and what a same-named skill of the user\'s own gets (question 5, answered C)', () => {
     const all = APP_KNOWLEDGE_SECTIONS.map((x) => x.body).join('\n')
-    expect(all).toMatch(/Through the resume picker, the guidance is passed when Codex starts in the session's own folder; a resumed conversation that already has instructions keeps its own\./)
-    // The final VM run: a resumed conversation without instructions gets them too.
-    expect(all).not.toMatch(/reaches only a new conversation/)
+    expect(all).toMatch(/The sign-in already on this computer gets them in your own Codex skills folder \(~\/\.codex\/skills, or the skills folder inside the folder CODEX_HOME names\), where Codex lists them for every session that uses that folder, however it is started\./)
+    expect(all).toMatch(/they are removed when you turn Codex or the built-in tools off, and kept up to date while both are on\./)
+    expect(all).toMatch(/A skill of your own with the same name \(agent-canvas, canvas-plan or conductor-vision\) is never touched/)
+    // Option A's words are gone: no developer instructions, no picker clause.
+    expect(all).not.toMatch(/developer_instructions|Through the resume picker, the guidance/)
   })
 })
 
@@ -640,13 +642,16 @@ describe('the PR 4 user-facing sweep (P4.11)', () => {
     expect(guide).not.toMatch(/for Claude Code also cloud agents and Insights/)
     // The guide wraps its lines, so a phrase is matched across a line break.
     const known = guide.slice(guide.indexOf('## Known issues with Codex'), guide.indexOf('## Logs & transcript viewer')).replace(/\s+/g, ' ')
-    for (const said of [/On the Auto preset, Codex refuses the app's own tools/, /without the guidance on using them/, /cannot pass on emoji/, /documentation folder cannot be rebuilt/, /A Codex cloud agent run with Auto/]) expect(known).toMatch(said)
+    for (const said of [/On the Auto preset, Codex refuses the app's own tools/, /CCC copies its three canvas skills into your own Codex skills folder/, /cannot pass on emoji/, /documentation folder cannot be rebuilt/, /A Codex cloud agent run with Auto/]) expect(known).toMatch(said)
   })
 
-  it('privacy: the staged skills, the guidance read on your own Codex folder, the Memory page and log folders, and cloud agents', () => {
+  it('privacy: the staged skills, the copies in your own Codex folder and the record of it, the Memory page and log folders, and cloud agents', () => {
     expect(privacy).toMatch(/under `skills\/`/)
-    expect(privacy).toMatch(/developer instructions/)
-    expect(privacy).toMatch(/the app writes nothing there/)
+    const said = privacy.replace(/\s+/g, ' ')
+    expect(said).toMatch(/it writes the same three into your own Codex folder, under `skills\/`/)
+    expect(said).toMatch(/removes them when you turn Codex or the built-in tools off/)
+    expect(said).toMatch(/notes that folder's path, and nothing else, in a small file in its own data folder/)
+    expect(said).not.toMatch(/developer instructions|the app writes nothing there/)
     expect(privacy).toMatch(/\*\*The Memory page and Debug Logging read each Codex account's own folders\.\*\*/)
     expect(privacy).toMatch(/A cloud agent works the same way/)
   })
@@ -709,18 +714,14 @@ describe('the P4.11 review: images, privacy and the first-launch session', () =>
     for (const img of ['shot-memory.png', 'shot-tokenomics.png', 'shot-sessions.png', 'shot-canvas.png']) expect(rq).toMatch(new RegExp('`docs/screenshots/' + img.replace('.', '\\.') + '` \\| [^|]+ \\| Recaptured at the final head'))
   })
 
-  it('privacy: when the staged skills are written and removed, and every settings file the guidance check reads', () => {
+  it('privacy: when the staged skills are written and removed, in a managed account\'s folder and in your own (question 5, answered C)', () => {
     const p = read('PRIVACY.md').replace(/\s+/g, ' ')
-    expect(p).toMatch(/Last updated: 3 October 2026/)
+    expect(p).toMatch(/Last updated: 4 October 2026/)
     expect(p).toMatch(/while the built-in tools are on, whichever of them are on, and removes them at that account's next launch with the built-in tools off/)
     expect(p).not.toMatch(/while the matching built-in tool is on/)
-    for (const said of [
-      /in your Codex folder, `config\.toml`, `managed_config\.toml`, every profile file ending in `\.config\.toml` and Codex's cached managed settings \(`cloud-config-bundle-cache\.json`\)/,
-      /the project folder's own `config\.toml` and every `\.codex\/config\.toml` from the project folder up to the top of its drive/,
-      /`config\.toml` and `requirements\.toml` under `ProgramData\\OpenAI\\Codex`/,
-      /`config\.toml`, `requirements\.toml` and `managed_config\.toml` under `\/etc\/codex`/,
-      /checks whether Codex's managed preferences exist, without reading them/,
-    ]) expect(p).toMatch(said)
+    expect(p).toMatch(/In either folder it rewrites or removes only the skill folders it marked as its own, never through a link, and never a skill of yours with the same name\./)
+    // Option A's settings scan is gone, and PRIVACY no longer lists it.
+    expect(p).not.toMatch(/cloud-config-bundle-cache\.json|without reading them|ProgramData\\OpenAI\\Codex/)
   })
 
   it('the first session on a new Codex account or folder: a neutral known issue with its workaround, in both places', () => {

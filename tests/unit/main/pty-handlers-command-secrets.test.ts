@@ -113,9 +113,9 @@ describe('pty:spawn and command secrets', () => {
     acct.service = { prepareLaunch }
     await spawn({}, SID, { cwd: 'C:/w', provider: 'codex', codexOptions: { permissionsPreset: 'read-only' }, codexLaunch: forged })
     expect(spawnPty).toHaveBeenCalledTimes(2)
-    // WP2 PR 4, P4.1: with the realm's Codex folder the service prepared, and
-    // the version discovery proved (none known here), for the canvas guidance.
-    expect(spawnPty.mock.calls[1][2].codexLaunch).toEqual({ lease, executable: 'C:/proven/codex.exe', env: { CODEX_HOME: 'C:/res/r1' }, sessionsDir: 'C:/res/r1/sessions', home: 'C:/res/r1', cliVersion: null })
+    // WP2 PR 4, P4.1: with the realm's Codex folder the service prepared, for
+    // the canvas skills.
+    expect(spawnPty.mock.calls[1][2].codexLaunch).toEqual({ lease, executable: 'C:/proven/codex.exe', env: { CODEX_HOME: 'C:/res/r1' }, sessionsDir: 'C:/res/r1/sessions', home: 'C:/res/r1' })
     // P3.2: the lease names the session it runs for, so a refused
     // inactivate or archive can offer "Go to" that session.
     expect(prepareLaunch.mock.calls[0][0]).toMatchObject({ kind: 'session', providerId: 'codex', sessionId: SID })

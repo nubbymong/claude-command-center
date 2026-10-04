@@ -7,7 +7,7 @@ import type { AllowanceReading } from '../../../shared/usage-types'
 import type { ProviderCapabilities, AuthRealm, RealmUse } from '../../../shared/providers'
 import type { ProviderPackage, ProviderPricingOperations, RealmRef } from '../core'
 import { CODEX_ENABLEMENT } from './enablement'
-import { resolveCodexBinary, buildCodexSpawn, codexHookDataDir, codexLaunchRoute } from './spawn'
+import { resolveCodexBinary, buildCodexSpawn, codexHookDataDir } from './spawn'
 import { openCodexScreen, feedCodexScreen, resizeCodexScreen, closeCodexScreen, hasCodexScreen, submitCodexText } from './session-screen'
 import { detectCodexUi } from './ui-detection'
 import { watchAndClaimRollout } from './telemetry'
@@ -155,11 +155,6 @@ export class CodexProvider implements SessionProvider {
 
   buildSpawnCommand(opts: SpawnOptions): ProviderSpawnCommand {
     return buildCodexSpawn(opts)
-  }
-
-  /** WP2 PR 4, P4.1: the npm .cmd shim runs through cmd.exe (spawn.ts). */
-  launchRoute(executable: string): 'direct' | 'cmd' {
-    return codexLaunchRoute(executable)
   }
 
   /** WP2 PR 4, P4.1: a managed account's own skills folder, by the managed

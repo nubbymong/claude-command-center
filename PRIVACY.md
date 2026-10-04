@@ -2,7 +2,7 @@
 
 **AI Code Conductor** (the "app")
 
-Last updated: 3 October 2026
+Last updated: 4 October 2026
 
 ## The short version
 
@@ -148,22 +148,17 @@ The Tokenomics cost index is separate and is not affected by that switch.
   app writes its three instruction files (the canvas review loop, canvas plans
   and the Conductor browser) into that account's own folder, under `skills/`,
   while the built-in tools are on, whichever of them are on, and removes them at
-  that account's next launch with the built-in tools off; it rewrites or removes
-  only the files it marked as its own. For a session on your own Codex folder,
-  the app writes nothing there: before such a launch it reads, as plain text and
-  keeping nothing, every Codex settings file that could set developer
-  instructions: in your Codex folder, `config.toml`, `managed_config.toml`,
-  every profile file ending in `.config.toml` and Codex's cached managed
-  settings (`cloud-config-bundle-cache.json`), and it checks whether that
-  folder holds a `sessions` folder; the project folder's own `config.toml`
-  and every `.codex/config.toml` from the project folder up to the top of its
-  drive; and the system settings files (on Windows `config.toml` and
-  `requirements.toml` under `ProgramData\OpenAI\Codex`, elsewhere
-  `config.toml`, `requirements.toml` and `managed_config.toml` under
-  `/etc/codex`). On macOS it also checks whether Codex's managed preferences
-  exist, without reading them. Only when none of them sets developer
-  instructions does it pass its guidance to that one session as Codex developer
-  instructions on its launch line.
+  that account's next launch with the built-in tools off. For the sign-in
+  already on this computer, it writes the same three into your own Codex
+  folder, under `skills/`, before a session there while the built-in tools are
+  on, and removes them when you turn Codex or the built-in tools off; while both
+  are on it keeps the copies already there up to date. Codex lists them for
+  every session that uses that folder, including ones you start outside the
+  app. Before it writes into your own Codex folder the app notes that folder's
+  path, and nothing else, in a small file in its own data folder, so that it
+  can find its copies again to remove them. In either folder it rewrites or
+  removes only the skill folders it marked as its own, never through a link,
+  and never a skill of yours with the same name.
 - **The Memory page and Debug Logging read each Codex account's own folders.**
   The Memory page lists the memory files Codex keeps in each account's
   `memories` folder (your own Codex folder included, once you use it), reading

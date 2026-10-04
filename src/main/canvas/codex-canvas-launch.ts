@@ -2,21 +2,18 @@
 // decided in one place so the Codex branch of pty-manager.ts stays small:
 //  - the worktree CCC designates for the session (CCC_SESSION_WORKTREE), as a
 //    Claude session's (codex-canvas-roots.ts);
-//  - the skills' guidance: staged into a managed account's realm, or passed
-//    as developer instructions on this computer's own sign-in (question 5's
-//    default A), or neither, and the record the canvas page reads
-//    (codex-guidance.ts);
-//  - with the built-in tools off: no guidance, and a managed realm's staged
-//    skills removed, as Claude gets --plugin-dir only while they are on.
+//  - the skills, in the account's own skills folder (codex-guidance.ts): a
+//    managed account's realm, or this computer's own Codex folder (section 10
+//    question 5, answered C), and the record the canvas page reads;
+//  - with the built-in tools off: none, and the app's staged skills removed
+//    from that account's folder, as Claude gets --plugin-dir only while they
+//    are on.
 import * as fs from 'fs'
-import * as path from 'path'
 import type { CanvasSessionGuidance } from '../../shared/types'
 import type { RealmOwnership } from '../../shared/providers'
 import { getResourcesDirectory } from '../ipc/setup-handlers'
-import { ensureCanvasPlugin } from './canvas-plugin'
 import { codexDesignatedWorktree } from './codex-canvas-roots'
-import { stageCodexRealmSkills, removeCodexRealmSkills } from './codex-realm-skills'
-import { decideCodexGuidance } from './codex-guidance'
+import { codexLaunchGuidance, codexGuidanceNotStaged } from './codex-guidance'
 import { logWarn } from '../debug-logger'
 
 export interface CodexCanvasLaunchInput {
@@ -26,26 +23,16 @@ export interface CodexCanvasLaunchInput {
   configuredCwd: string
   /** The account's Codex folder (CODEX_HOME). */
   home: string
-  /** The launch route (the Codex package's SessionProvider.launchRoute). */
-  route: 'direct' | 'cmd'
   /** The skills folder the Codex package gives a home under a resources
    *  folder (SessionProvider.stagedSkillsDir): a managed account's own, else
    *  null (this computer's own sign-in). */
   managedSkillsDirFor: (home: string, resourcesDir: string) => string | null
-  /** The Codex version discovery proved, when known. */
-  cliVersion: string | null
   /** The built-in tools reach this launch (on, and the server listening). */
   toolsOn: boolean
   /** The account's realm, as the launch prepared it: an app-managed one or
-   *  this computer's own sign-in (review A-2). Absent: told by path alone. */
+   *  this computer's own sign-in (review A-2). Absent: told by path alone,
+   *  and never this computer's own folder to write into. */
   ownership?: RealmOwnership
-  /** The folders Codex may start in with the guidance: the configured one
-   *  (where the resume picker runs too; it passes the guidance on only to a
-   *  Codex it starts there) and a resumed conversation's own. Null when they
-   *  are not known: nothing is passed. */
-  startFolders: readonly string[] | null
-  env: Readonly<Record<string, string | undefined>>
-  platform?: NodeJS.Platform
 }
 
 /**
@@ -55,7 +42,7 @@ export interface CodexCanvasLaunchInput {
  * against the resources folder's REAL path, because the account's home is a
  * real path and the resources folder may be reached through a junction or a
  * mapped path. A managed account whose folder the rule does not find gets no
- * skills (said as not staged); this computer's own sign-in never does.
+ * skills (said as not staged). Without an ownership it is the rule alone.
  */
 export function codexManagedSkillsFolder(
   input: { ownership?: RealmOwnership; home: string; resourcesDir: string; managedSkillsDirFor: (home: string, resourcesDir: string) => string | null },
@@ -70,51 +57,35 @@ export function codexManagedSkillsFolder(
 
 export interface CodexCanvasLaunch {
   designatedWorktree: string | null
-  developerInstructions?: string
   /** What the launch carries, for the canvas page; null with the tools off. */
   guidance: CanvasSessionGuidance | null
 }
 
-/** Never throws: a launch is never stopped by its canvas guidance (the
- *  worktree is kept; the guidance is then recorded as unknown). */
+/** Never throws: a launch is never stopped by its canvas skills (the
+ *  worktree is kept; the skills are then recorded as not staged). */
 export function prepareCodexCanvasLaunch(input: CodexCanvasLaunchInput): CodexCanvasLaunch {
   const designatedWorktree = codexDesignatedWorktree(input.configuredCwd, input.sessionId)
   try {
-    return { designatedWorktree, ...guidanceFor(input) }
+    return { designatedWorktree, guidance: guidanceFor(input) }
   } catch (err) {
-    logWarn(`[codex-canvas] the canvas guidance for ${input.sessionId} could not be prepared: ${(err as Error)?.message ?? err}`)
-    return { designatedWorktree, guidance: input.toolsOn ? { guidance: 'tools-only', reason: 'unknown-settings' } : null }
+    logWarn(`[codex-canvas] the canvas skills for ${input.sessionId} could not be prepared: ${(err as Error)?.message ?? err}`)
+    return { designatedWorktree, guidance: input.toolsOn ? codexGuidanceNotStaged() : null }
   }
 }
 
-function guidanceFor(input: CodexCanvasLaunchInput): Omit<CodexCanvasLaunch, 'designatedWorktree'> {
-  const platform = input.platform ?? process.platform
+function guidanceFor(input: CodexCanvasLaunchInput): CanvasSessionGuidance | null {
   let resourcesDir = ''
   try { resourcesDir = getResourcesDirectory() || '' } catch { resourcesDir = '' }
-  const { managed, skillsDir: managedSkillsDir } = codexManagedSkillsFolder({ ownership: input.ownership, home: input.home, resourcesDir, managedSkillsDirFor: input.managedSkillsDirFor })
-  if (!input.toolsOn) {
-    if (managed) removeCodexRealmSkills(input.home, managedSkillsDir)
-    return { guidance: null }
-  }
-  // All three skills while the tools are on, whichever tool groups are on,
-  // as Claude's --plugin-dir (review RA-1): conductor-vision is what tells a
-  // session with Vision off where the switch is.
-  const managedSkills = managed ? stageCodexRealmSkills(input.home, managedSkillsDir) : undefined
-  let pluginSkillsDir: string | null = null
-  if (!managed && platform !== 'win32' && input.route === 'direct') {
-    const pluginDir = ensureCanvasPlugin()
-    pluginSkillsDir = pluginDir ? path.join(pluginDir, 'skills') : null
-  }
-  const decision = decideCodexGuidance({
-    platform,
-    route: input.route,
-    external: !managed,
-    ...(managedSkills ? { managedSkills } : {}),
-    cliVersion: input.cliVersion,
+  const { managed, skillsDir } = codexManagedSkillsFolder({ ownership: input.ownership, home: input.home, resourcesDir, managedSkillsDirFor: input.managedSkillsDirFor })
+  // The path rule's own answer, whatever the ownership: a home it takes for a
+  // managed realm's is never written into as this computer's own folder.
+  const ruleSkillsDir = codexManagedSkillsFolder({ home: input.home, resourcesDir, managedSkillsDirFor: input.managedSkillsDirFor }).skillsDir
+  return codexLaunchGuidance({
     home: input.home,
-    cwds: input.startFolders,
-    pluginSkillsDir,
-    env: input.env,
+    toolsOn: input.toolsOn,
+    managed,
+    managedSkillsDir: skillsDir,
+    ruleSkillsDir,
+    ...(input.ownership ? { ownership: input.ownership } : {}),
   })
-  return { guidance: decision.guidance, ...(decision.developerInstructions ? { developerInstructions: decision.developerInstructions } : {}) }
 }

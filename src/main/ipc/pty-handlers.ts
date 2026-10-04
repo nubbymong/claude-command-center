@@ -693,16 +693,6 @@ function codexAccountOwnership(service: AccountsService, accountId: string): 'co
   }
 }
 
-/** WP2 PR 4, P4.1: the Codex version discovery proved, or null. */
-function codexDiscoveredVersion(service: AccountsService): string | null {
-  try {
-    const v = service.snapshot().providers.find((p) => p.providerId === 'codex')?.version
-    return typeof v === 'string' && v ? v : null
-  } catch {
-    return null
-  }
-}
-
 /** WP2 PR 4, P4.1: `canvas:sessionGuidance`'s payload: one session id. */
 const sessionGuidanceSchema = z.object({ sessionId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/) }).strict()
 
@@ -1003,9 +993,9 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
           ...resolvedOptions,
           codexLaunch: {
             lease: prepared.lease, executable: prepared.executable, env: prepared.env, sessionsDir: prepared.sessionsDir,
-            // WP2 PR 4, P4.1: the account's Codex folder and the version
-            // discovery proved, for the launch's canvas guidance (question 5).
-            home: prepared.home, cliVersion: codexDiscoveredVersion(service),
+            // WP2 PR 4, P4.1: the account's Codex folder, for the launch's
+            // canvas skills (question 5).
+            home: prepared.home,
             // Review A-2: app-managed or this computer's own sign-in.
             ownership: codexAccountOwnership(service, prepared.lease.accountId),
           },

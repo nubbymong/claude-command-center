@@ -399,13 +399,14 @@ Linux may ask for administrator rights; CCC never elevates on its own.
   push to the in-app browser, the host screenshot fetch and the Claude review.
   Auto starts Codex with no prompts, so it cannot ask before them. Use
   *Standard*, where Codex asks before each one, or *Unrestricted*.
-- **A Codex session on the sign-in already on this computer may get the canvas
-  and Vision tools without the guidance on using them.** CCC never writes into
-  your own Codex folder, so it passes that guidance at launch only when Codex is
-  started directly (not through its npm command), the installed version is one
-  CCC has checked, and none of your own Codex settings sets
-  `developer_instructions`; the canvas page says when it could not. Run the
-  session on a Codex account you added in Settings, Accounts instead.
+- **CCC copies its three canvas skills into your own Codex skills folder** for
+  the sign-in already on this computer (`~/.codex/skills`, or `skills` in the
+  folder `CODEX_HOME` names), where Codex lists them for every session that
+  uses that folder, started in CCC or not. CCC rewrites or removes only the skill
+  folders it marked as its own, removes them when you turn Codex or the built-in
+  tools off, and never touches a skill of your own with the same name: the
+  session then uses yours, and the canvas page names it. Rename yours, or run
+  the session on a Codex account you added in Settings, Accounts.
 - **Ask Conductor on Codex cannot pass on emoji typed into Codex's prompt.**
   When the question has to be typed into Codex's prompt, CCC removes the
   characters it cannot take first, and the Ask Conductor row says how many. Say

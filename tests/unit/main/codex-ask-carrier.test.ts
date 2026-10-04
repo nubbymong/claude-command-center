@@ -114,7 +114,6 @@ function fakeProvider(): Record<string, unknown> {
         : { cmd: '/proven/codex', args: [], env: {}, logLine: '--sandbox workspace-write' }
     },
     ingestSessionTelemetry: () => ({ stop: () => {} }),
-    launchRoute: () => (h.carried ? 'direct' : 'cmd'),
     runScreen: {
       open: () => {}, feed: () => {}, resize: () => {}, close: () => {},
       has: () => true,

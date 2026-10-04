@@ -2,13 +2,14 @@ import React, { useState } from 'react'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useTipsStore, countUnseenTips } from '../../stores/tipsStore'
+import { TIP_PROVIDER_NAMES } from '../../tips-library'
 import { launchAskConductor, useAskErrorStore, ASK_LABEL, askSessionIsLive, useAskNoticeStore, askNoticeText, listenForAskNotices } from '../../lib/askConductor'
 import { ASK_CLAUDE_OFF, useAskConductorBlocked, useAskConductorChoiceShown, useAskConductorProvider } from '../../lib/askConductorGate'
 import { LightbulbMark } from '../ui/LightbulbMark'
 import askMarkUrl from '../../assets/aicc-code-conductor.svg'
 import DockRowMenu from './DockRowMenu'
 import HideDockFeatureDialog, { type DockFeature } from '../HideDockFeatureDialog'
-import { SessionTypeBadge } from './Badges'
+import { SessionTypeBadge, ProviderMark } from './Badges'
 
 /**
  * The sidebar dock: Ask Conductor, and the tip of the day beneath it.
@@ -371,6 +372,11 @@ export default function AskConductorDock({ collapsed, onOpened, isActive, onShow
           >
             {currentTip!.content.shortText}
           </span>
+          {/* The tip card's mark for a tip about one assistant alone (the
+              owner's 2026-10-04 answer), so the row says it too. */}
+          {currentTip!.tip.provider && (
+            <ProviderMark providerId={currentTip!.tip.provider} size={14} title={TIP_PROVIDER_NAMES[currentTip!.tip.provider]} />
+          )}
           {unseen > 0 && (
             // A counter, not a worded pill: "3 new" cost more of the row than the
             // tip could spare, and the tooltip carries the wording.

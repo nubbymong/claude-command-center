@@ -77,7 +77,7 @@ import { forgetCanvasMarkers } from './canvas/canvas-marker-delivery'
 import { MARKER_FALLBACK_FLUSH_MS } from './canvas/canvas-marker-queue'
 import { prepareCodexCanvasLaunch } from './canvas/codex-canvas-launch'
 import { registerCodexCanvasRoots } from './canvas/codex-canvas-roots'
-import { noteCodexSessionGuidance, forgetCodexSessionGuidance, codexGuidanceAsLaunched } from './canvas/codex-guidance'
+import { noteCodexSessionGuidance, forgetCodexSessionGuidance } from './canvas/codex-guidance'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal, withProfileHome, MANAGED_LAUNCH_REFUSAL } from './account-profiles'
 export { withProfileHome } from './account-profiles'
@@ -314,10 +314,9 @@ export interface CodexLaunch {
    *  onto another account from a conversation whose claim was not certain
    *  starts a new one there (pty-handlers carryForRespawn). */
   freshConversation?: boolean
-  /** WP2 PR 4, P4.1: the account's Codex folder as the launch prepared it,
-   *  and the Codex version discovery proved (for the canvas guidance). */
+  /** WP2 PR 4, P4.1: the account's Codex folder as the launch prepared it
+   *  (for the canvas skills). */
   home?: string
-  cliVersion?: string | null
   /** P4.1 review A-2: the account's realm, app-managed or this computer's own
    *  sign-in, so the canvas skills follow the account, not a path compared
    *  against the resources folder's spelling. */
@@ -5117,29 +5116,17 @@ function spawnPtyResolved(
       if (options?.askPrompt && options?.isAsk !== true) logWarn(`[pty-manager] Codex ${sessionId}: an opening question on a launch that is not Ask Conductor's is ignored`)
       // WP2 PR 4, P4.1 (row 51): the Agent Canvas for this launch, as a Claude
       // session has it (canvas/codex-canvas-launch.ts): the worktree CCC
-      // designates from the CONFIGURED folder, and the skills' guidance (a
-      // managed realm's staged skills, or question 5's default A). A resumed
-      // conversation's folder is read only to pass less (its settings), never
-      // to serve or designate anything.
+      // designates from the CONFIGURED folder, and the skills in the account's
+      // own skills folder (a managed realm's, or this computer's own Codex
+      // folder: question 5, answered C), which every route lists.
       const codexToolsOn = readConfig<{ conductorToolsEnabled?: boolean }>('settings')?.conductorToolsEnabled !== false && getConductorMcpPort() > 0
       const codexCanvas = prepareCodexCanvasLaunch({
         sessionId,
         configuredCwd: resolvedCwd,
         home: launch.home ?? launch.env.CODEX_HOME ?? '',
-        // The package says which way this executable starts; one that cannot
-        // say is taken as cmd.exe, the route that carries less.
-        route: provider.launchRoute?.(launch.executable) ?? 'cmd',
         managedSkillsDirFor: (home, resourcesDir) => provider.stagedSkillsDir?.(home, resourcesDir) ?? null,
-        cliVersion: launch.cliVersion ?? null,
         toolsOn: codexToolsOn,
         ...(launch.ownership ? { ownership: launch.ownership } : {}),
-        // The resume picker runs in the configured folder (the launch's cwd
-        // below) and passes the guidance on only to a Codex it starts there
-        // (the PR 4 VM checkpoint, F2; codex-resume-picker-lib.js
-        // flagsForFolder), so a picker launch is decided for that folder, as
-        // a direct one is.
-        startFolders: [resolvedCwd, ...(resumeTarget?.cwd ? [resumeTarget.cwd] : [])],
-        env: launch.env,
       })
       const codexSpawnOptions: SpawnOptions = {
         sessionId,
@@ -5161,7 +5148,6 @@ function spawnPtyResolved(
         ...(hookFile ? { codexHooks: { hookFile: hookFile.hookFile } } : {}),
         // Round 1 (V2): for the picker, the conversations other tabs are on.
         ...(options?.useResumePicker ? { codexOpenElsewhere: codexConversationsOpenElsewhere(sessionId, launch.lease.accountId) } : {}),
-        ...(codexCanvas.developerInstructions ? { developerInstructions: codexCanvas.developerInstructions } : {}),
         // WP2 PR 4, P4.3 (row 53): Ask Conductor's opening question (argv
         // after `--` on the direct route's fresh launch; otherwise typed
         // through the pane below), and on every Ask launch the scope of the
@@ -5391,11 +5377,10 @@ function spawnPtyResolved(
       // project directory and the designated worktree, never `codexCwd` or any
       // folder a rollout recorded. killPty's revoke (run before every spawn)
       // and the session's cleanup clear them. And what this launch carried of
-      // the skills' guidance, for the canvas page's line, by the route the
-      // builder actually took (the picker, or not: review).
+      // the skills, for the canvas page's line (whatever route the builder
+      // took: every route lists the account's own skills folder).
       registerCodexCanvasRoots(sessionId, resolvedCwd, codexCanvas.designatedWorktree)
-      const carried = codexGuidanceAsLaunched(codexCanvas, { viaPicker: built.viaPicker === true })
-      if (carried) noteCodexSessionGuidance(sessionId, carried)
+      if (codexCanvas.guidance) noteCodexSessionGuidance(sessionId, codexCanvas.guidance)
       else forgetCodexSessionGuidance(sessionId)
     } catch (err) {
       // P3.10: a launch that failed keeps no hook file or hooked mark, and

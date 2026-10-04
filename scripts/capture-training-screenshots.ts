@@ -1109,8 +1109,13 @@ async function main() {
     await capture(window, 'step-codex.jpg', 'Codex provider edit dialog (CodexFormFields visible)')
     await closeDialog(window)
 
-    // (The Agent Hub capture left with #443 -- the training card is gone and
-    // the surviving Cloud Agents page has no card of its own yet.)
+    // (The Agent Hub capture left with #443.) The Cloud Agents page has a
+    // Feature Guide card again (the owner's 2026-10-04 answer); its image is
+    // the page with the seeded demo agents (SAMPLE_CLOUD_AGENTS). Until this
+    // shot exists the card shows v2-shell-hero.jpg (training-steps.ts).
+    await clickNav(window, 'Cloud Agents')
+    await window.waitForTimeout(800)
+    await capture(window, 'step-cloud-agents.jpg', 'Cloud Agents page (seeded demo agents)')
 
     // Step 3: Conductor MCP (nav label is "Conductor MCP"; the asset/step id
     // stays 'vision' for back-compat with saved view state)

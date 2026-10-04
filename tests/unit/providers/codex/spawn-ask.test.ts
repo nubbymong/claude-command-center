@@ -182,8 +182,6 @@ describe('where the question never rides argv', () => {
       const realm = { ...linuxLaunch, sessionsDir: path.join(home, 'sessions'), env: { ...linuxLaunch.env, CODEX_HOME: home } }
       const out = buildCodexSpawn({ sessionId: 'sid', realmLaunch: realm, cwd, codexOptions: STANDARD, askPrompt: 'continue please', resume: { uuid, cwd } })
       expect(out.resumeId).toBe(uuid)
-      // An exact resume is not the picker's route, whatever was asked for.
-      expect(out.viaPicker).toBeUndefined()
       expect(out.args).not.toContain('continue please')
       expect(out.args).not.toContain('--')
       expect(out.askPromptOnArgv).toBeUndefined()
@@ -204,8 +202,6 @@ describe('where the question never rides argv', () => {
       const out = buildCodexSpawn({ sessionId: 'sid', realmLaunch: linuxLaunch, codexOptions: STANDARD, useResumePicker: true, askPrompt: q, askProjectDocMaxBytes: askConductorProjectDocMaxBytes('linux') })
       pickDir = out.pickFile ? path.dirname(out.pickFile) : null
       expect(out.args[0]).toBe(script)
-      // Said, so main records the guidance the picker carries (review).
-      expect(out.viaPicker).toBe(true)
       expect(out.args).not.toContain(q)
       expect(out.args).not.toContain('--')
       expect(out.askPromptOnArgv).toBeUndefined()
@@ -268,11 +264,10 @@ function splitLikeCodex(line: string): string[] {
   return out
 }
 
-describe('the route a picker launch took (review)', () => {
-  it('[host] the picker asked for but not in place: Codex is started directly, and the launch does not say it went through the picker', () => {
+describe('the picker asked for but not in place (review)', () => {
+  it('[host] Codex is started directly', () => {
     const out = buildCodexSpawn({ sessionId: 'sid', realmLaunch: linuxLaunch, codexOptions: STANDARD, useResumePicker: true })
     expect(out.cmd).toBe(linuxLaunch.executable)
-    expect(out.viaPicker).toBeUndefined()
   })
 })
 

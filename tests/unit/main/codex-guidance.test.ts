@@ -148,13 +148,6 @@ describe('what the page is told', () => {
   ])('[host] %s', (_name, staging, told) => {
     expect(g.codexGuidanceFromStaging(staging)).toEqual(told)
   })
-
-  it('[host] the route a launch took no longer changes what it carried (the skills reach every conversation of the account)', () => {
-    const full = { guidance: 'full' as const }
-    expect(g.codexGuidanceAsLaunched({ guidance: full }, { viaPicker: true })).toEqual(full)
-    expect(g.codexGuidanceAsLaunched({ guidance: full }, { viaPicker: false })).toEqual(full)
-    expect(g.codexGuidanceAsLaunched({ guidance: null }, { viaPicker: true })).toBeNull()
-  })
 })
 
 describe('the session record the canvas page reads', () => {

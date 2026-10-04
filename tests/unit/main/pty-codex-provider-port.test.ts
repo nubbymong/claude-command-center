@@ -3,8 +3,9 @@
 // importing it. Through the REAL spawnPty (the rest of main mocked, as
 // canvas-codex-roots-spawn.test.ts does), a fake registered Codex provider
 // shows what the Codex branch takes from it:
-//  - the launch route (SessionProvider.launchRoute), and cmd.exe -- the route
-//    that carries less -- when the provider cannot say;
+//  - no launch route for the canvas launch: the skills are in the account's
+//    own skills folder, which every route lists (section 10 question 5,
+//    answered C), so the route is neither asked for nor handed on;
 //  - a managed account's skills folder (stagedSkillsDir), handed to the
 //    canvas launch, and none when the provider gives none;
 //  - the builder's log line (logLine), and no argument logged without one;
@@ -93,7 +94,6 @@ function fullProvider(): Record<string, unknown> {
   return {
     buildSpawnCommand: () => ({ cmd: '/proven/codex', args: ['--sandbox', 'workspace-write', 'SECRETARG'], env: {}, logLine: '--sandbox workspace-write <redacted>' }),
     ingestSessionTelemetry: () => ({ stop: () => {} }),
-    launchRoute: (exe: string) => { h.calls.push(`route ${exe}`); return 'direct' },
     stagedSkillsDir: (home: string, res: string) => { h.calls.push(`skills ${home} ${res}`); return path.join(home, 'skills') },
     runScreen: {
       open: (sessionId: string, opts: Omit<Opened, 'sessionId'>) => { h.opened.push({ sessionId, ...opts }); h.calls.push(`open ${sessionId}`) },
@@ -116,18 +116,14 @@ beforeEach(() => {
   h.provider = fullProvider()
 })
 
-describe('the launch route comes from the registered provider', () => {
-  it('the provider\'s answer for the proven executable reaches the canvas launch', () => {
+describe('the canvas launch needs no launch route (question 5, answered C)', () => {
+  it('the route is neither asked of the provider nor handed to the canvas launch, nor anything option A read', () => {
+    // The port is gone from the provider contract; a provider that still
+    // offered one is never asked.
+    h.provider.launchRoute = (exe: string) => { h.calls.push(`route ${exe}`); return 'direct' }
     start()
-    expect(h.calls).toContain('route /proven/codex')
-    expect(h.canvasInputs[0].route).toBe('direct')
-    killPty(SID)
-  })
-
-  it('a provider that cannot say: cmd.exe, the route that carries less', () => {
-    delete h.provider.launchRoute
-    start()
-    expect(h.canvasInputs[0].route).toBe('cmd')
+    expect(h.calls.some((c) => c.startsWith('route '))).toBe(false)
+    for (const key of ['route', 'cliVersion', 'startFolders', 'env']) expect(h.canvasInputs[0]).not.toHaveProperty(key)
     killPty(SID)
   })
 })

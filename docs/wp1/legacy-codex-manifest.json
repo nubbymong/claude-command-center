@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-03T21:20:38.591Z",
-  "head": "072023f4c9af459bc19a6b9958de6e2379bcea04",
-  "tree": "d00f2eceee374cea119bd271adffbbd8e220f42a",
+  "generatedAt": "2026-10-04T02:08:31.021Z",
+  "head": "16557fb0f6d33e9a1d26c25279c90c96cdfa4072",
+  "tree": "e3e8074cf30429afa3c8399e5319fabf4e117453",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2709,
+  "trackedFileCount": 2726,
   "excludedFileCount": 399,
-  "scannedFileCount": 2310,
+  "scannedFileCount": 2327,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 770,
-  "pathDigest": "d824cc9095f50497cacec007c0ef19a9775c47f7055030f839798ae113c85683",
+  "matchedPathCount": 782,
+  "pathDigest": "fe24b19eb7b0333340ff75fd6fcef31249534f700420bfa8d0521ca5fd46b12c",
   "entries": [
     {
       "path": ".github/workflows/ci.yml",
@@ -169,14 +169,14 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 68
+      "lineCount": 64
     },
     {
       "path": "README.md",
       "predicates": [
         "P12"
       ],
-      "lineCount": 24
+      "lineCount": 25
     },
     {
       "path": "SECURITY.md",
@@ -190,7 +190,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 148
+      "lineCount": 149
     },
     {
       "path": "docs/dev-alongside-prod.md",
@@ -204,7 +204,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 1112,
+      "lineCount": 1129,
       "truncated": true
     },
     {
@@ -496,7 +496,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 26
+      "lineCount": 22
     },
     {
       "path": "src/main/canvas/codex-canvas-roots.ts",
@@ -513,7 +513,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 68
+      "lineCount": 33
     },
     {
       "path": "src/main/canvas/codex-realm-skills.ts",
@@ -521,7 +521,16 @@
         "P01",
         "P14"
       ],
-      "lineCount": 21
+      "lineCount": 29
+    },
+    {
+      "path": "src/main/canvas/codex-user-skills.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P14"
+      ],
+      "lineCount": 57
     },
     {
       "path": "src/main/channel-emitters.ts",
@@ -601,7 +610,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 89
+      "lineCount": 86
     },
     {
       "path": "src/main/config-manager.ts",
@@ -641,7 +650,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 35
+      "lineCount": 36
     },
     {
       "path": "src/main/hooks/hooks-gateway.ts",
@@ -663,7 +672,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 30
+      "lineCount": 39
     },
     {
       "path": "src/main/install-secret.ts",
@@ -726,7 +735,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 123
+      "lineCount": 118
     },
     {
       "path": "src/main/ipc/tokenomics2-handlers.ts",
@@ -1015,7 +1024,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 95
+      "lineCount": 96
     },
     {
       "path": "src/main/providers/codex/index.ts",
@@ -1026,7 +1035,7 @@
         "P09",
         "P14"
       ],
-      "lineCount": 257
+      "lineCount": 270
     },
     {
       "path": "src/main/providers/codex/install-recipes.ts",
@@ -1121,7 +1130,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 27
+      "lineCount": 33
     },
     {
       "path": "src/main/providers/codex/rollout-lookup.ts",
@@ -1148,7 +1157,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 128
+      "lineCount": 130
     },
     {
       "path": "src/main/providers/codex/telemetry.ts",
@@ -1197,7 +1206,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 11
+      "lineCount": 12
     },
     {
       "path": "src/main/providers/host-color-scheme.ts",
@@ -1222,7 +1231,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 40
+      "lineCount": 36
     },
     {
       "path": "src/main/pty-input-guard.ts",
@@ -1239,7 +1248,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 450,
+      "lineCount": 446,
       "truncated": true
     },
     {
@@ -1264,7 +1273,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 20
+      "lineCount": 22
     },
     {
       "path": "src/main/sentinel/sentinel-codex-changelog.ts",
@@ -1352,7 +1361,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 19
+      "lineCount": 27
     },
     {
       "path": "src/main/tokenomics/tk-supervisor.ts",
@@ -1499,7 +1508,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 43
+      "lineCount": 38
     },
     {
       "path": "src/renderer/components/CommandBar.tsx",
@@ -2342,14 +2351,14 @@
         "P11",
         "P12"
       ],
-      "lineCount": 178
+      "lineCount": 198
     },
     {
       "path": "src/renderer/training-steps.ts",
       "predicates": [
         "P11"
       ],
-      "lineCount": 91
+      "lineCount": 106
     },
     {
       "path": "src/renderer/types/electron.d.ts",
@@ -2423,11 +2432,12 @@
     {
       "path": "src/shared/app-knowledge.ts",
       "predicates": [
+        "P04",
         "P10",
         "P12",
         "P14"
       ],
-      "lineCount": 103
+      "lineCount": 104
     },
     {
       "path": "src/shared/ask-conductor-provider.ts",
@@ -3807,6 +3817,15 @@
       "lineCount": 32
     },
     {
+      "path": "tests/unit/main/codex-analysis-unreachable.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 20
+    },
+    {
       "path": "tests/unit/main/codex-ask-carrier.test.ts",
       "predicates": [
         "P01",
@@ -3869,7 +3888,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 61
+      "lineCount": 41
     },
     {
       "path": "tests/unit/main/codex-hook-folders.test.ts",
@@ -4006,6 +4025,39 @@
       "lineCount": 120
     },
     {
+      "path": "tests/unit/main/codex-user-skills-links.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 24
+    },
+    {
+      "path": "tests/unit/main/codex-user-skills-race-links.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 8
+    },
+    {
+      "path": "tests/unit/main/codex-user-skills-swap.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 29
+    },
+    {
+      "path": "tests/unit/main/codex-user-skills.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 87
+    },
+    {
       "path": "tests/unit/main/conductor-mcp-auth.test.ts",
       "predicates": [
         "P13"
@@ -4079,7 +4131,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 29
+      "lineCount": 33
     },
     {
       "path": "tests/unit/main/install-tab-command-secrets.test.ts",
@@ -4198,7 +4250,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 17
+      "lineCount": 16
     },
     {
       "path": "tests/unit/main/pty-conpty-per-provider.test.ts",
@@ -4317,6 +4369,14 @@
         "P13"
       ],
       "lineCount": 165
+    },
+    {
+      "path": "tests/unit/main/sentinel-unreachable-timing.test.ts",
+      "predicates": [
+        "P04",
+        "P13"
+      ],
+      "lineCount": 47
     },
     {
       "path": "tests/unit/main/service-status-providers.test.ts",
@@ -4536,6 +4596,13 @@
       "lineCount": 6
     },
     {
+      "path": "tests/unit/providers/claude/auth-operations.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 2
+    },
+    {
       "path": "tests/unit/providers/claude/statusline-deploy.test.ts",
       "predicates": [
         "P13"
@@ -4585,6 +4652,15 @@
         "P13"
       ],
       "lineCount": 18
+    },
+    {
+      "path": "tests/unit/providers/codex/codex-binary-path-order.test.ts",
+      "predicates": [
+        "P01",
+        "P07",
+        "P13"
+      ],
+      "lineCount": 32
     },
     {
       "path": "tests/unit/providers/codex/conversation-carry-folders.test.ts",
@@ -4721,7 +4797,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 97
+      "lineCount": 86
     },
     {
       "path": "tests/unit/providers/codex/spawn-extra-args.test.ts",
@@ -4870,6 +4946,15 @@
         "P13"
       ],
       "lineCount": 1
+    },
+    {
+      "path": "tests/unit/providers/provider-entry-routing.test.ts",
+      "predicates": [
+        "P04",
+        "P07",
+        "P13"
+      ],
+      "lineCount": 37
     },
     {
       "path": "tests/unit/pty-manager-ssh-container-entry.test.ts",
@@ -5117,7 +5202,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 55
+      "lineCount": 57
     },
     {
       "path": "tests/unit/renderer/codex-composer-screens.ts",
@@ -5278,6 +5363,13 @@
         "P13"
       ],
       "lineCount": 2
+    },
+    {
+      "path": "tests/unit/renderer/feature-guide-cloud-agents.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 13
     },
     {
       "path": "tests/unit/renderer/feature-guide-provider-filter.test.tsx",
@@ -5961,6 +6053,14 @@
       "lineCount": 5
     },
     {
+      "path": "tests/unit/renderer/tips-provider-mark.test.tsx",
+      "predicates": [
+        "P04",
+        "P13"
+      ],
+      "lineCount": 24
+    },
+    {
       "path": "tests/unit/renderer/titlebar-provider-status.test.tsx",
       "predicates": [
         "P04",
@@ -6121,7 +6221,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 20
+      "lineCount": 24
     },
     {
       "path": "tests/unit/scripts/release-gate.test.ts",
@@ -6136,7 +6236,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 51
+      "lineCount": 56
     },
     {
       "path": "tests/unit/sentinel-codex-changelog.test.ts",
@@ -6211,7 +6311,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 4
+      "lineCount": 7
     },
     {
       "path": "tests/unit/tokenomics/tk-pricing-live-codex.test.ts",
@@ -6219,14 +6319,14 @@
         "P01",
         "P13"
       ],
-      "lineCount": 12
+      "lineCount": 15
     },
     {
       "path": "tests/unit/tokenomics/tk-pricing.test.ts",
       "predicates": [
         "P13"
       ],
-      "lineCount": 13
+      "lineCount": 16
     },
     {
       "path": "tests/unit/tokenomics/tk-supervisor.test.ts",

@@ -1,20 +1,26 @@
-// [host] WP2 PR 4, P4.1 review (A-3, A-2, RA-1): the Codex branch of the REAL
-// spawnPty wired to the REAL canvas launch (canvas/codex-canvas-launch.ts) and
-// the real realm skills staging, with the built-in tools reaching the launch
-// (the conductor server listening). The rest of main is mocked, as
-// canvas-codex-roots-spawn.test.ts does.
-//  - A-3: a managed account's skills are staged and its guidance recorded; on
-//    this computer's own sign-in the decided developer instructions reach the
-//    builder; with the tools off a managed realm's staged skills are removed.
+// [host] WP2 PR 4, P4.1 review (A-3, A-2, RA-1) and section 10 question 5,
+// answered C by the owner on 2026-10-04: the Codex branch of the REAL
+// spawnPty wired to the REAL canvas launch (canvas/codex-canvas-launch.ts),
+// the real realm staging and the real copy into this computer's own Codex
+// folder, with the built-in tools reaching the launch (the conductor server
+// listening). The rest of main is mocked, as canvas-codex-roots-spawn.test.ts
+// does.
+//  - A-3: a managed account's skills are staged and its guidance recorded;
+//    on this computer's own sign-in the skills are copied into its own Codex
+//    skills folder (recorded in the app's data folder first), a skill of the
+//    user's own with the same name is never touched and is named for the
+//    page; no launch carries developer instructions; with the tools off the
+//    app's skills are removed from either folder.
 //  - A-2: the account's realm ownership decides managed or not; the path rule
-//    is only the second guard, against the resources folder's real path.
-//  - RA-1: the realm skills follow the Built-in Tools master switch only, as
+//    is the second guard, against the resources folder's real path, and a
+//    home it takes for a managed realm's is never written as the user's own.
+//  - RA-1: the skills follow the Built-in Tools master switch only, as
 //    Claude's --plugin-dir carries all three while it is on; a tool group
 //    switched off removes none of them.
-// The decision for this computer's own sign-in is stubbed (its settings walk
-// would read folders above the temporary tree; codex-guidance.test.ts covers
-// it with a reader held to its own tree), so nothing outside the temporary
-// tree is read or written.
+//  - the resume picker: the skills are in the account's folder, so every
+//    conversation it starts lists them, and the launch is recorded as full.
+// Temporary folders stand in for the app's resources and data folders and
+// for this computer's own Codex folder: nothing outside them is written.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
@@ -24,9 +30,7 @@ const h = vi.hoisted(() => ({
   res: '',
   port: 19333,
   settings: {} as Record<string, unknown>,
-  route: 'direct' as 'direct' | 'cmd',
   built: [] as Array<Record<string, unknown>>,
-  decided: [] as Array<Record<string, unknown>>,
   // The resume picker's script is not in place (the builder starts Codex itself).
   pickerMissing: false,
 }))
@@ -56,23 +60,12 @@ vi.mock('../../../src/main/providers', async () => {
         h.built.push(opts)
         const resume = opts.resume as { uuid: string; cwd: string } | undefined
         if (resume) return { cmd: '/proven/codex', args: [], env: {}, logLine: '', resumeId: resume.uuid }
-        if (opts.useResumePicker === true && !h.pickerMissing) return { cmd: '/node', args: ['picker.js'], env: {}, logLine: '', viaPicker: true }
+        if (opts.useResumePicker === true && !h.pickerMissing) return { cmd: '/node', args: ['picker.js'], env: {}, logLine: '' }
         return { cmd: '/proven/codex', args: [], env: {}, logLine: '' }
       },
       ingestSessionTelemetry: () => ({ stop: () => {} }),
-      launchRoute: () => h.route,
       stagedSkillsDir: (home: string, resourcesDir: string) => paths.codexManagedRealmSkillsDir(home, resourcesDir),
     }),
-  }
-})
-vi.mock('../../../src/main/canvas/codex-guidance', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../../src/main/canvas/codex-guidance')>()
-  return {
-    ...actual,
-    decideCodexGuidance: (input: Parameters<typeof actual.decideCodexGuidance>[0]) => {
-      h.decided.push(input as unknown as Record<string, unknown>)
-      return input.external ? { guidance: { guidance: 'full' as const }, developerInstructions: 'THE-DECIDED-GUIDANCE' } : actual.decideCodexGuidance(input)
-    },
   }
 })
 vi.mock('../../../src/main/providers/claude/spawn', () => ({ resolveClaudeBinary: () => ({ cmd: 'claude', source: 'system' }), resolveHostColorScheme: () => 'dark' }))
@@ -105,7 +98,8 @@ const { spawnPty, killPty } = await import('../../../src/main/pty-manager')
 const { codexSessionGuidance, _resetCodexGuidanceForTest } = await import('../../../src/main/canvas/codex-guidance')
 const { codexManagedSkillsFolder } = await import('../../../src/main/canvas/codex-canvas-launch')
 const { codexManagedRealmSkillsDir } = await import('../../../src/main/providers/codex/realm-paths')
-const { stageCodexRealmSkills } = await import('../../../src/main/canvas/codex-realm-skills')
+const { stageCodexRealmSkills, STAGED_SKILL_MARK, STAGED_SKILL_MARK_BYTES } = await import('../../../src/main/canvas/codex-realm-skills')
+const { codexUserSkillsHomes, CODEX_USER_SKILLS_RECORD } = await import('../../../src/main/canvas/codex-user-skills')
 type SpawnOpts = NonNullable<Parameters<typeof spawnPty>[2]>
 
 const fakeWin = { isDestroyed: () => false, webContents: { send: () => {} } } as unknown as Parameters<typeof spawnPty>[0]
@@ -118,7 +112,7 @@ let seq = 0
 let SID = ''
 const skill = (home: string, name: string): string => path.join(home, 'skills', name, 'SKILL.md')
 const launch = (home: string, ownership?: 'conductor-managed' | 'external-default') => ({
-  lease: { release: vi.fn() }, executable: '/proven/codex', env: { CODEX_HOME: home }, sessionsDir: path.join(home, 'sessions'), home, cliVersion: '0.155.1',
+  lease: { release: vi.fn() }, executable: '/proven/codex', env: { CODEX_HOME: home }, sessionsDir: path.join(home, 'sessions'), home,
   ...(ownership ? { ownership } : {}),
 }) as unknown as SpawnOpts['codexLaunch']
 const start = (home: string, ownership?: 'conductor-managed' | 'external-default'): void => {
@@ -136,9 +130,7 @@ beforeEach(() => {
   for (const d of [managedHome, externalHome, project]) fs.mkdirSync(d, { recursive: true })
   h.port = 19333
   h.settings = {}
-  h.route = 'direct'
   h.built = []
-  h.decided = []
   h.pickerMissing = false
   _resetCodexGuidanceForTest()
 })
@@ -147,28 +139,56 @@ afterEach(() => {
   fs.rmSync(tmp, { recursive: true, force: true })
 })
 
+const recordFile = (): string => path.join(h.res, CODEX_USER_SKILLS_RECORD)
+const copied = (home: string, name: string): boolean => {
+  try {
+    return fs.readFileSync(path.join(home, 'skills', name, STAGED_SKILL_MARK)).equals(STAGED_SKILL_MARK_BYTES) && fs.existsSync(skill(home, name))
+  } catch { return false }
+}
+const SKILL_NAMES = ['agent-canvas', 'canvas-plan', 'conductor-vision']
+
 describe('the tools reach the launch (A-3)', () => {
   it('[host] a managed account: its skills are staged, its guidance recorded, and no developer instructions are passed', () => {
     start(managedHome, 'conductor-managed')
-    for (const name of ['agent-canvas', 'canvas-plan', 'conductor-vision']) expect(fs.existsSync(skill(managedHome, name))).toBe(true)
+    for (const name of SKILL_NAMES) expect(fs.existsSync(skill(managedHome, name))).toBe(true)
+    expect(codexSessionGuidance(SID)).toEqual({ guidance: 'full' })
+    expect(h.built[0]).not.toHaveProperty('developerInstructions')
+    expect(fs.existsSync(recordFile())).toBe(false)
+  })
+
+  it('[host] this computer\'s own sign-in: the skills are copied into its own Codex skills folder with the app\'s mark, the folder recorded first, no developer instructions passed (question 5, C)', () => {
+    start(externalHome, 'external-default')
+    for (const name of SKILL_NAMES) expect(copied(externalHome, name)).toBe(true)
+    expect(codexUserSkillsHomes({ recordFile })).toEqual([externalHome])
     expect(codexSessionGuidance(SID)).toEqual({ guidance: 'full' })
     expect(h.built[0]).not.toHaveProperty('developerInstructions')
   })
 
-  it('[host] this computer\'s own sign-in: the decided developer instructions reach the builder, and the guidance is recorded', () => {
+  it('[host] this computer\'s own sign-in with a skill of the user\'s own of the same name: never touched, and named for the page', () => {
+    fs.mkdirSync(path.join(externalHome, 'skills', 'agent-canvas'), { recursive: true })
+    fs.writeFileSync(skill(externalHome, 'agent-canvas'), 'the user\'s own skill')
     start(externalHome, 'external-default')
-    expect(h.decided[0]).toMatchObject({ external: true, route: 'direct', cliVersion: '0.155.1', home: externalHome, cwds: [project] })
-    expect(h.built[0].developerInstructions).toBe('THE-DECIDED-GUIDANCE')
-    expect(codexSessionGuidance(SID)).toEqual({ guidance: 'full' })
-    expect(fs.existsSync(path.join(externalHome, 'skills'))).toBe(false)
+    expect(fs.readFileSync(skill(externalHome, 'agent-canvas'), 'utf8')).toBe('the user\'s own skill')
+    expect(copied(externalHome, 'canvas-plan')).toBe(true)
+    expect(codexSessionGuidance(SID)).toEqual({ guidance: 'tools-only', reason: 'own-skill', skills: ['agent-canvas'] })
   })
 
   it('[host] the built-in tools off: a managed realm\'s staged skills are removed, nothing is passed, no guidance recorded', () => {
     stageAll()
     h.settings = { conductorToolsEnabled: false }
     start(managedHome, 'conductor-managed')
-    for (const name of ['agent-canvas', 'canvas-plan', 'conductor-vision']) expect(fs.existsSync(path.dirname(skill(managedHome, name)))).toBe(false)
+    for (const name of SKILL_NAMES) expect(fs.existsSync(path.dirname(skill(managedHome, name)))).toBe(false)
     expect(h.built[0]).not.toHaveProperty('developerInstructions')
+    expect(codexSessionGuidance(SID)).toBeNull()
+  })
+
+  it('[host] the built-in tools off: the app\'s copies leave this computer\'s own Codex folder, and the record lets it go', () => {
+    start(externalHome, 'external-default')
+    killPty(SID)
+    h.settings = { conductorToolsEnabled: false }
+    start(externalHome, 'external-default')
+    for (const name of SKILL_NAMES) expect(fs.existsSync(path.join(externalHome, 'skills', name))).toBe(false)
+    expect(codexUserSkillsHomes({ recordFile })).toEqual([])
     expect(codexSessionGuidance(SID)).toBeNull()
   })
 
@@ -181,20 +201,26 @@ describe('the tools reach the launch (A-3)', () => {
 })
 
 describe('managed or not follows the account\'s realm (A-2)', () => {
-  it('[host] an app-managed account the path rule cannot find: managed, no skills, said as not staged (never the npm route\'s reason)', () => {
-    h.route = 'cmd'
+  it('[host] an app-managed account the path rule cannot find: managed, no skills, said as not staged, every skill named', () => {
     const elsewhere = path.join(tmp, 'elsewhere', REALM)
     fs.mkdirSync(elsewhere, { recursive: true })
     start(elsewhere, 'conductor-managed')
-    expect(codexSessionGuidance(SID)).toEqual({ guidance: 'tools-only', reason: 'skills-not-staged' })
-    expect(h.decided.every((d) => d.external === false)).toBe(true)
+    expect(codexSessionGuidance(SID)).toEqual({ guidance: 'tools-only', reason: 'skills-not-staged', skills: SKILL_NAMES })
     expect(fs.existsSync(path.join(elsewhere, 'skills'))).toBe(false)
+    expect(fs.existsSync(recordFile())).toBe(false)
   })
 
-  it('[host] this computer\'s own sign-in is never staged into, even at a path the rule would take', () => {
+  it('[host] this computer\'s own sign-in at a path the managed rule takes: never written into', () => {
     start(managedHome, 'external-default')
     expect(fs.existsSync(path.join(managedHome, 'skills'))).toBe(false)
-    expect(h.decided[0]).toMatchObject({ external: true })
+    expect(codexSessionGuidance(SID)).toEqual({ guidance: 'tools-only', reason: 'skills-not-staged', skills: SKILL_NAMES })
+    expect(fs.existsSync(recordFile())).toBe(false)
+  })
+
+  it('[host] an account whose realm cannot be told, outside the managed root: nothing written into its folder', () => {
+    start(externalHome)
+    expect(fs.existsSync(path.join(externalHome, 'skills'))).toBe(false)
+    expect(codexSessionGuidance(SID)).toEqual({ guidance: 'tools-only', reason: 'skills-not-staged', skills: SKILL_NAMES })
   })
 
   it('[host] the resources folder reached through another spelling: the rule is held against its real path', () => {
@@ -221,65 +247,36 @@ describe('the realm skills follow the master switch only, as Claude\'s --plugin-
     stageAll()
     h.settings = settings
     start(managedHome, 'conductor-managed')
-    for (const name of ['agent-canvas', 'canvas-plan', 'conductor-vision']) expect(fs.existsSync(skill(managedHome, name))).toBe(true)
+    for (const name of SKILL_NAMES) expect(fs.existsSync(skill(managedHome, name))).toBe(true)
     expect(codexSessionGuidance(SID)).toEqual({ guidance: 'full' })
   })
 })
 
-// [host] PR 4 VM checkpoint (F2): a launch from a saved config goes through
-// the app's resume picker. The picker runs in the configured folder, so the
-// guidance is decided for that folder's settings layers, as a direct launch
-// is (question 5's default A), and reaches the builder; the picker passes it
-// on only to a Codex it starts there (scripts/lib/codex-resume-picker-lib.js
-// flagsForFolder).
-describe('a launch through the resume picker (the VM checkpoint, F2)', () => {
+// [host] Question 5 answered C: the skills are in the account's own folder,
+// so every conversation a launch through the resume picker starts lists them
+// (a new one, or a resumed one in any folder), and the launch is recorded as
+// full whatever route it took.
+describe('a launch through the resume picker', () => {
   const startPicker = (home: string, ownership?: 'conductor-managed' | 'external-default'): void => {
     spawnPty(fakeWin, SID, { cwd: project, cols: 100, rows: 30, provider: 'codex', useResumePicker: true, codexOptions: { permissionsPreset: 'standard' }, codexLaunch: launch(home, ownership) })
   }
 
-  it('[host] this computer\'s own sign-in: decided for the configured folder the picker runs in, and the instructions reach the builder', () => {
-    startPicker(externalHome, 'external-default')
-    expect(h.decided[0]).toMatchObject({ external: true, route: 'direct', cliVersion: '0.155.1', home: externalHome, cwds: [project] })
+  it.each([
+    ['this computer\'s own sign-in', () => externalHome, 'external-default' as const],
+    ['a managed account', () => managedHome, 'conductor-managed' as const],
+  ])('[host] %s: the skills in place before the picker starts, recorded as full, no developer instructions', (_name, homeOf, ownership) => {
+    startPicker(homeOf(), ownership)
     expect(h.built[0].useResumePicker).toBe(true)
-    expect(h.built[0].developerInstructions).toBe('THE-DECIDED-GUIDANCE')
-    // Review RVMFIX-3: recorded as the picker delivers it, not as full: passed
-    // when Codex starts in this folder, kept out of another worktree, and a
-    // resumed conversation that already has instructions keeps its own.
-    expect(codexSessionGuidance(SID)).toEqual({ guidance: 'picker' })
-  })
-
-  it('[host] a managed account through the picker: its staged skills reach any conversation, so full (review RVMFIX-3)', () => {
-    startPicker(managedHome, 'conductor-managed')
-    expect(h.built[0].developerInstructions).toBeUndefined()
+    expect(h.built[0]).not.toHaveProperty('developerInstructions')
+    for (const name of SKILL_NAMES) expect(fs.existsSync(skill(homeOf(), name))).toBe(true)
     expect(codexSessionGuidance(SID)).toEqual({ guidance: 'full' })
   })
 
-  it('[host] this computer\'s own sign-in started directly: still full (review RVMFIX-3)', () => {
-    start(externalHome, 'external-default')
-    expect(h.built[0].developerInstructions).toBe('THE-DECIDED-GUIDANCE')
-    expect(codexSessionGuidance(SID)).toEqual({ guidance: 'full' })
-  })
-
-  it('[host] a restored conversation the picker launch also names: its folder is scanned too', () => {
+  it('[host] a picker launch that resumed its named conversation in another worktree exactly: still full', () => {
     const other = path.join(tmp, 'other-worktree')
     fs.mkdirSync(other, { recursive: true })
     spawnPty(fakeWin, SID, { cwd: project, cols: 100, rows: 30, provider: 'codex', useResumePicker: true, resume: { uuid: '019dd000-0001-7000-8000-000000000101', cwd: other }, codexOptions: { permissionsPreset: 'standard' }, codexLaunch: launch(externalHome, 'external-default') })
-    expect(h.decided[0]).toMatchObject({ cwds: [project, other] })
-  })
-
-  // Review (ADRFIX verification): the record follows the route the launch took, not the option asked for.
-  it('[host] a picker launch that resumed its named conversation exactly: recorded as full, not as the picker', () => {
-    const other = path.join(tmp, 'other-worktree')
-    fs.mkdirSync(other, { recursive: true })
-    spawnPty(fakeWin, SID, { cwd: project, cols: 100, rows: 30, provider: 'codex', useResumePicker: true, resume: { uuid: '019dd000-0001-7000-8000-000000000101', cwd: other }, codexOptions: { permissionsPreset: 'standard' }, codexLaunch: launch(externalHome, 'external-default') })
-    expect(h.built[0].developerInstructions).toBe('THE-DECIDED-GUIDANCE')
-    expect(codexSessionGuidance(SID)).toEqual({ guidance: 'full' })
-  })
-
-  it('[host] the picker not in place, so Codex was started directly: recorded as full, not as the picker', () => {
-    h.pickerMissing = true
-    startPicker(externalHome, 'external-default')
-    expect(h.built[0].developerInstructions).toBe('THE-DECIDED-GUIDANCE')
+    expect(h.built[0]).not.toHaveProperty('developerInstructions')
     expect(codexSessionGuidance(SID)).toEqual({ guidance: 'full' })
   })
 })

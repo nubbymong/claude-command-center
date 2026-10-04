@@ -37,7 +37,7 @@ vi.mock('../../../../src/main/config-manager', () => ({
 const logWarn = vi.fn()
 vi.mock('../../../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: (...a: unknown[]) => logWarn(...a), logError: vi.fn() }))
 
-const { buildCodexSpawn, codexToolApprovalArg, codexPresetApprovedTools, codexLaunchRoute, CODEX_PREALLOWED_TOOLS, CMD_EXE_LINE_MAX } = await import('../../../../src/main/providers/codex/spawn')
+const { buildCodexSpawn, codexToolApprovalArg, codexPresetApprovedTools, CODEX_PREALLOWED_TOOLS, CMD_EXE_LINE_MAX } = await import('../../../../src/main/providers/codex/spawn')
 const { CODEX_CONDUCTOR_TOOLS, VISION_TOOL_NAMES } = await import('../../../../src/main/providers/codex/conductor-tools')
 const { codexHookConfigArgs } = await import('../../../../src/main/providers/codex/hooks')
 const { EXTRA_ARGS_MAX, codexExtraArgsProblem } = await import('../../../../src/shared/extra-args')
@@ -173,10 +173,12 @@ describe('no developer instructions (question 5, answered C)', () => {
     withWin32(() => {
       const exe = buildCodexSpawn(asked({ sessionId: 'sid', realmLaunch: { ...linuxLaunch, executable: EXE, env: winEnv }, codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' } }))
       expect(exe.args.join(' ')).not.toMatch(/developer_instructions/i)
-      expect(codexLaunchRoute(EXE, 'win32')).toBe('direct')
+      // Started directly: no cmd.exe line.
+      expect(exe.commandLine).toBeUndefined()
       const shim = buildCodexSpawn(asked({ sessionId: 'sid', realmLaunch: { ...linuxLaunch, executable: SHIM, env: winEnv }, codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' } }))
       expect(shim.commandLine).not.toMatch(/developer_instructions/i)
-      expect(codexLaunchRoute(SHIM, 'win32')).toBe('cmd')
+      // Started through cmd.exe: the line it runs.
+      expect(shim.commandLine).toMatch(/^\/d \/v:off \/s \/c "/)
     })
   })
 
@@ -254,14 +256,11 @@ describe('launch line budgets', () => {
 })
 
 describe('the registered Codex provider offers main its launch helpers (no deep import)', () => {
-  it('[host] launchRoute, stagedSkillsDir and the run pane are the package\'s own', async () => {
+  it('[host] stagedSkillsDir and the run pane are the package\'s own; no launch route is offered (question 5, answered C: no consumer)', async () => {
     const { CodexProvider } = await import('../../../../src/main/providers/codex/index')
     const screen = await import('../../../../src/main/providers/codex/session-screen')
     const p = new CodexProvider()
-    withWin32(() => {
-      expect(p.launchRoute(SHIM)).toBe('cmd')
-      expect(p.launchRoute(EXE)).toBe('direct')
-    })
+    expect('launchRoute' in p).toBe(false)
     const res = path.resolve('/res')
     const home = path.join(res, 'codex-realms', 'realm-0123456789abcdef0123')
     expect(p.stagedSkillsDir(home, res)).toBe(path.join(home, 'skills'))
