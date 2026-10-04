@@ -393,6 +393,18 @@ export const IPC = {
   ACCOUNT_WEB_PANE_GET_STATE: 'accountWeb:paneGetState',
   ACCOUNT_WEB_PANE_STATE: 'accountWeb:paneState', // main → renderer: AccountPaneState
   ACCOUNT_WEB_PANE_CLOSED: 'accountWeb:paneClosed', // main → renderer: main force-closed the surface (sign-out/delete/crash)
+  // A Codex account's chatgpt.com web session (WP2 PR 4, P4.6, row 58), keyed
+  // by its registry account id. Every channel answers the app's own window
+  // only, takes the `account` id class only, and acts only for a known,
+  // non-archived Codex account. The pane's other controls (close, bounds,
+  // visible, reload, state, and the two pushes above) are session-keyed and
+  // shared with the claude.ai surface.
+  CODEX_WEB_STATUS: 'codexWeb:status',
+  CODEX_WEB_SIGN_IN: 'codexWeb:signIn',
+  CODEX_WEB_SIGN_IN_STATE: 'codexWeb:signInState',
+  CODEX_WEB_CANCEL: 'codexWeb:cancel',
+  CODEX_WEB_SIGN_OUT: 'codexWeb:signOut',
+  CODEX_WEB_PANE_OPEN: 'codexWeb:paneOpen',
 
   // Hooks gateway
   HOOKS_TOGGLE: 'hooks:toggle',

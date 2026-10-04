@@ -46,9 +46,14 @@ import { registerScreenshotHandlers } from './ipc/screenshot-handlers'
 import { registerDiagnosticsHandlers } from './ipc/diagnostics-handlers'
 import { registerWebviewHandlers } from './ipc/webview-handlers'
 import { closeAllWebviews } from './webview-manager'
-import { closeAllAccountPanes, closeAccountPanesForProfile } from './account-web/account-pane'
+import { closeAllAccountPanes, closeAccountPanesForProfile, closeCodexAccountPanes } from './account-web/account-pane'
 import { onPartitionRevoked } from './account-web/partition-revocation'
 import { removeWebSession } from './account-web/session-store'
+// WP2 PR 4, P4.6 (row 58): a Codex account's chatgpt.com web session.
+import { registerCodexWebHandlers } from './ipc/codex-web-handlers'
+import { onCodexWebSessionCleared, prepareCodexWebArchive } from './account-web/codex-web-session'
+import { removeCodexWebSession } from './account-web/codex-web-store'
+import { onBeforeAccountArchive } from './account-archive-hooks'
 import { registerInsightsHandlers } from './ipc/insights-handlers'
 import { registerNotesHandlers } from './ipc/notes-handlers'
 import { registerVisionHandlers } from './ipc/vision-handlers'
@@ -490,6 +495,10 @@ if (!gotTheLock) {
     // registry it reports the account list as unavailable. The one-time
     // adoption of a provider's own default sign-in runs after the legacy
     // reconcile, outside the registry lock.
+    // P4.6 (row 58): an archive clears what the account holds outside its
+    // sign-in FIRST, and a clear that fails refuses the archive. Registered
+    // before the service exists, so no archive can run without it.
+    onBeforeAccountArchive(prepareCodexWebArchive)
     try {
       // A switch-off is refused while any of the provider runs: its sessions,
       // and (WP2) for Claude Code its cloud agents, Insights runs, Sentinel
@@ -653,6 +662,13 @@ if (!gotTheLock) {
     // here so it never has to import their heavy graphs. Both run synchronously.
     onPartitionRevoked(removeWebSession)
     onPartitionRevoked(closeAccountPanesForProfile)
+    // P4.6 (row 58): the same for a Codex account's chatgpt.com session: its
+    // own channels (the app window only, the registry checked), and when its
+    // partition is wiped (sign-out, archive, an incomplete sign-in) its record
+    // and its panes go with it.
+    registerCodexWebHandlers(getWindow)
+    onCodexWebSessionCleared(removeCodexWebSession)
+    onCodexWebSessionCleared(closeCodexAccountPanes)
     // #216: a crash or forced quit can leave a sign-in browser profile behind, and
     // each one holds a live claude.ai session. Sweep them at boot.
     try { sweepAbandonedProfiles(getDataDirectory()) } catch { /* best effort */ }

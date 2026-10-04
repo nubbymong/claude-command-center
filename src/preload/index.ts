@@ -5,6 +5,7 @@ import { isIpcStreamEnd, IPC_STREAM_END_WAIT_MS } from '../shared/ipc-stream'
 import type { HookEvent, HooksGatewayStatus } from '../shared/hook-types'
 import type { StatuslineData, SubmitTextResult, AskConductorNotice, CanvasMarkerUndelivered, CanvasSessionGuidance, AccountLogFolders, AccountLogFolderKind, AccountLogFolderOpenResult } from '../shared/types'
 import type { WebviewNavState } from '../shared/browser-url'
+import type { AccountPaneStateView, CodexWebSessionView, CodexWebSignInState } from '../shared/account-web-session'
 import type { ModelRegistry } from '../shared/model-registry'
 import type { SentinelStateSnapshot } from '../shared/sentinel-types'
 import type {
@@ -397,9 +398,19 @@ export interface ElectronAPI {
     paneBounds: (args: { sessionId: string; bounds: { x: number; y: number; width: number; height: number } }) => Promise<{ ok: boolean }>
     paneVisible: (args: { sessionId: string; visible: boolean }) => Promise<{ ok: boolean }>
     paneReload: (sessionId: string) => Promise<{ ok: boolean }>
-    paneGetState: (sessionId: string) => Promise<{ ok: true; state: { sessionId: string; profileId: string; authed: boolean | null; email: string | null } | null } | { ok: false; error: string }>
-    onPaneState: (cb: (state: { sessionId: string; profileId: string; authed: boolean | null; email: string | null }) => void) => () => void
+    paneGetState: (sessionId: string) => Promise<{ ok: true; state: AccountPaneStateView | null } | { ok: false; error: string }>
+    onPaneState: (cb: (state: AccountPaneStateView) => void) => () => void
     onPaneClosed: (cb: (e: { sessionId: string }) => void) => () => void
+  }
+  /** A Codex account's chatgpt.com web session (WP2 PR 4, P4.6), keyed by its
+   *  registry account id. The pane's other controls are accountWeb's. */
+  codexWeb: {
+    status: (accountId: string) => Promise<{ ok: true; web: CodexWebSessionView } | { ok: false; error: string }>
+    signIn: (accountId: string) => Promise<{ ok: true; state: CodexWebSignInState } | { ok: false; error: string }>
+    signInState: () => Promise<{ ok: true; state: CodexWebSignInState } | { ok: false; error: string }>
+    cancel: (accountId: string) => Promise<{ ok: true } | { ok: false; error: string }>
+    signOut: (accountId: string) => Promise<{ ok: true } | { ok: false; error: string }>
+    paneOpen: (args: { sessionId: string; accountId: string; bounds: { x: number; y: number; width: number; height: number } }) => Promise<{ ok: boolean; error?: string }>
   }
   canvas: {
     getState: (args: { sessionId: string }) => Promise<CanvasState | null>
@@ -1122,10 +1133,18 @@ const electronAPI: ElectronAPI = {
     paneVisible: (args) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_PANE_VISIBLE, args),
     paneReload: (sessionId) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_PANE_RELOAD, sessionId),
     paneGetState: (sessionId) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_PANE_GET_STATE, sessionId),
-    onPaneState: (cb: (state: { sessionId: string; profileId: string; authed: boolean | null; email: string | null }) => void) =>
+    onPaneState: (cb: (state: AccountPaneStateView) => void) =>
       onChannel(IPC.ACCOUNT_WEB_PANE_STATE, cb),
     onPaneClosed: (cb: (e: { sessionId: string }) => void) =>
       onChannel(IPC.ACCOUNT_WEB_PANE_CLOSED, cb),
+  },
+  codexWeb: {
+    status: (accountId) => ipcRenderer.invoke(IPC.CODEX_WEB_STATUS, accountId),
+    signIn: (accountId) => ipcRenderer.invoke(IPC.CODEX_WEB_SIGN_IN, accountId),
+    signInState: () => ipcRenderer.invoke(IPC.CODEX_WEB_SIGN_IN_STATE),
+    cancel: (accountId) => ipcRenderer.invoke(IPC.CODEX_WEB_CANCEL, accountId),
+    signOut: (accountId) => ipcRenderer.invoke(IPC.CODEX_WEB_SIGN_OUT, accountId),
+    paneOpen: (args) => ipcRenderer.invoke(IPC.CODEX_WEB_PANE_OPEN, args),
   },
   // Agent Canvas — per-session review surface state + change push. Content
   // itself loads straight into the canvas iframe over ccc-ux://, not IPC.

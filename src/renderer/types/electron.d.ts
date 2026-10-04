@@ -45,6 +45,7 @@ import type {
 } from '../../shared/types'
 import type { HookEvent, HooksGatewayStatus } from '../../shared/hook-types'
 export type { HookEvent, HookEventKind, HooksGatewayStatus } from '../../shared/hook-types'
+import type { AccountPaneStateView, CodexWebSessionView, CodexWebSignInState } from '../../shared/account-web-session'
 import type { ModelRegistry } from '../../shared/model-registry'
 export type { ModelRegistry } from '../../shared/model-registry'
 import type {
@@ -467,9 +468,20 @@ export interface ElectronAPI {
     paneBounds: (args: { sessionId: string; bounds: { x: number; y: number; width: number; height: number } }) => Promise<{ ok: boolean }>
     paneVisible: (args: { sessionId: string; visible: boolean }) => Promise<{ ok: boolean }>
     paneReload: (sessionId: string) => Promise<{ ok: boolean }>
-    paneGetState: (sessionId: string) => Promise<{ ok: true; state: { sessionId: string; profileId: string; authed: boolean | null; email: string | null } | null } | { ok: false; error: string }>
-    onPaneState: (cb: (state: { sessionId: string; profileId: string; authed: boolean | null; email: string | null }) => void) => () => void
+    paneGetState: (sessionId: string) => Promise<{ ok: true; state: AccountPaneStateView | null } | { ok: false; error: string }>
+    onPaneState: (cb: (state: AccountPaneStateView) => void) => () => void
     onPaneClosed: (cb: (e: { sessionId: string }) => void) => () => void
+  }
+  /** A Codex account's chatgpt.com web session (WP2 PR 4, P4.6), keyed by its
+   *  registry account id. The pane's other controls (close, bounds, visible,
+   *  reload, state) are accountWeb's, which are session-keyed. */
+  codexWeb: {
+    status: (accountId: string) => Promise<{ ok: true; web: CodexWebSessionView } | { ok: false; error: string }>
+    signIn: (accountId: string) => Promise<{ ok: true; state: CodexWebSignInState } | { ok: false; error: string }>
+    signInState: () => Promise<{ ok: true; state: CodexWebSignInState } | { ok: false; error: string }>
+    cancel: (accountId: string) => Promise<{ ok: true } | { ok: false; error: string }>
+    signOut: (accountId: string) => Promise<{ ok: true } | { ok: false; error: string }>
+    paneOpen: (args: { sessionId: string; accountId: string; bounds: { x: number; y: number; width: number; height: number } }) => Promise<{ ok: boolean; error?: string }>
   }
   /** Agent Canvas — session review-surface state; content loads over ccc-ux://. */
   canvas: {
