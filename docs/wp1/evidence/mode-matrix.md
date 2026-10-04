@@ -6,11 +6,11 @@ This file is evidence for WP1.1 and WP1.60 (`docs/wp1/evidence/mode-matrix.md`).
 
 The ledger also cites WP1.2. Its real-CLI evidence is `docs/wp1/evidence/real-cli-matrix.md` (P4.10); this file holds WP1.2's two mode-matrix cells below (Codex only on a fresh install, and the minimum real launch).
 
-It is a partial record. WP1.1 and WP1.60 stay `planned` in the traceability manifest until the matrix below has a recorded VM run.
+The matrix below has its recorded VM runs ("The mode matrix's runs (P4.9, PR 4)"). WP1.1 and WP1.60 are still `planned` in the traceability manifest: they move to evidenced when the traceability binding records this file with its digest (P4.10), not in this file.
 
 ## The mode matrix (P4.9, PR 4, row 67)
 
-Every cell of WP1.60's matrix now has an e2e spec that drives it in the real app. `tests/wp1/mode-matrix.test.ts` (host-safe) checks every cell but the minimum real launch against the accounts service's own rules, and fails if a cell's spec is missing or if the table below differs from its cells, items and specs. The minimum real launch has no accounts-service case: its contract half is its spec and P4.8's real-CLI conformance job (`docs/wp1/evidence/ci-matrix.md`); the same test checks the spec's first-screen reader on screen text rendered from the 9.2 probe captures. The specs run on the Windows test VM only; they were written in PR 4 and have **not run yet**: they run in the VM e2e run at PR 4's final head, and their results go in a new record above the history below.
+Every cell of WP1.60's matrix now has an e2e spec that drives it in the real app. `tests/wp1/mode-matrix.test.ts` (host-safe) checks every cell but the minimum real launch against the accounts service's own rules, and fails if a cell's spec is missing or if the table below differs from its cells, items and specs. The minimum real launch has no accounts-service case: its contract half is its spec and P4.8's real-CLI conformance job (`docs/wp1/evidence/ci-matrix.md`); the same test checks the spec's first-screen reader on screen text rendered from the 9.2 probe captures. The specs run on the Windows test VM only; they were written in PR 4, and their runs are recorded in "The mode matrix's runs (P4.9, PR 4)" below.
 
 | Cell | Items | E2e spec (VM) | What it drives |
 |---|---|---|---|
@@ -31,7 +31,23 @@ What the VM run must give:
   - `CCC_E2E_FAKE_MODEL_URL`: the loopback fake model's base URL, the fake model already running on the VM (9.2, report item 17);
 - the isolation below (a fake home, `CODEX_HOME` and `CLAUDE_CONFIG_DIR` cleared). No spec starts Codex on, or writes into, the VM user's own `~/.codex`.
 
-**Current record:** commit `0cb1bf31bf1f090c7fadd902c41219b0e2a36fa9`, the WP2 final candidate head, with no patch applied. Earlier runs are kept below as history.
+## The mode matrix's runs (P4.9, PR 4)
+
+Three runs of the whole e2e suite on the Windows test VM (WINDOWS_1) on 2026-10-03, each with the 26 tracked specs passed explicitly, the loopback fake model running, and the real installs given to `codex-real-launch.spec.ts` (0.153.4 as the npm `codex.cmd`, 0.155.1 as `codex.exe`):
+
+| Run | Commit | VM local start (PDT) | Result |
+|---|---|---|---|
+| e2e-69c98042 | `69c9804232d067bdf93cfc57890b0a744dcc597a` | 05:34:41 | 94 of 94 passed, none skipped (Playwright 3.3 min) |
+| e2e-69c98042-run2 | `69c9804232d067bdf93cfc57890b0a744dcc597a` | 05:39:55 | 94 of 94 passed, none skipped (3.2 min) |
+| e2e-f73f1785 | `f73f1785392fe3c9156448e87b7f0a317ff3b7f0` | 11:12:32 | 94 of 94 passed, none skipped (3.4 min) |
+
+- Every cell of the matrix above passed in each run: `onboarding-provider-select.spec.ts` 3 tests (a fresh install with Claude Code only, both, and Codex only), `codex-session-creation.spec.ts` 2, `codex-reconfirm-upgrade.spec.ts` 3, `codex-mode-restart.spec.ts` 2, `codex-mode-enable-disable.spec.ts` 4, and `codex-real-launch.spec.ts` 3 (the two installs named, then a real launch of 0.153.4 through `codex.cmd` and of 0.155.1 through `codex.exe`, each through its first screens to an answered prompt). The 20 other specs passed their 77 tests.
+- Build: each run built its commit with electron-vite (exit 0), the main bundle checked for the commit's short sha; package version 2.1.1-beta.1.
+- Isolation: each run counted the VM user's real folders before and after: 76 `.claude` settings sidecars, 6,536 files under `~\.codex` and 554 under `~\.claude`, the same after as before, with no file under either written since the run's start; no app, Electron or Codex process was left. The helper's `ccc-e2e-*` data folders were left in `%TEMP%` (16 after the first run), as in the earlier records.
+- A run of `codex-real-launch.spec.ts` alone at 69c98042 (05:44:41) passed 3 of 3 in 37.1 s, the real folders again unchanged.
+- The VM-side logs are kept with the runs (fictional data). Not run: macOS and Linux (these specs are VM-only).
+
+**The earlier full-suite record (21 specs, before PR 4's specs):** commit `0cb1bf31bf1f090c7fadd902c41219b0e2a36fa9`, the WP2 final candidate head, with no patch applied. Earlier runs are kept below as history.
 
 - Date: 2026-09-25 (VM local clock 15:47:21-15:49:56 PDT).
 - Commit: `0cb1bf31bf1f090c7fadd902c41219b0e2a36fa9` (`origin/session/beta/c4d568ce-wp2-codex`).
@@ -178,7 +194,7 @@ Not covered by the rows above, for WP1.60's other modes, when they were recorded
 - enable and disable round trips;
 - a minimum launch smoke of a real Codex session.
 
-Each now has its spec in "The mode matrix (P4.9, PR 4, row 67)" above: the upgrade `codex-reconfirm-upgrade.spec.ts` (VM only), the rest P4.9's specs. None of them has a recorded run in this file yet.
+Each now has its spec in "The mode matrix (P4.9, PR 4, row 67)" above: the upgrade `codex-reconfirm-upgrade.spec.ts` (VM only), the rest P4.9's specs. Their runs are in "The mode matrix's runs (P4.9, PR 4)" above.
 
 ## History
 

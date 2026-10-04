@@ -26,10 +26,12 @@ moves its rows.
   empty, and an esbuild metafile of `src/main/index.ts` shows no new import
   cycle. The Claude adapter's `cli.discovery`, `auth.status` and
   `auth.logout` are complete, reusing the existing `claude auth status`
-  probe and a sign-out beside it in the profile's own home; the sign-out is
-  unsupported on macOS only, where one keychain sign-in is shared by every
-  Claude Code on the Mac (14ac75e8). No renderer surface calls them for a
-  Claude account.
+  probe and a sign-out beside it in the profile's own home (14ac75e8). The
+  review fix pass runs both from the executable discovery proved, with no
+  shell, and a sign-out of this computer's own sign-in (the primary profile;
+  every profile on macOS, where each runs on the Mac's one keychain sign-in)
+  only with the user's acknowledgement; no platform carve-out is left. No
+  renderer surface calls them for a Claude account.
 - **Smaller answers (lanes B and C).** Codex on Windows is the first
   `codex.exe` or `codex.cmd` in PATH order (1745a9cc); one-assistant tips
   carry that assistant's mark, with no filter; the Feature Guide has a Cloud
@@ -39,24 +41,52 @@ moves its rows.
   skips quietly an id that cannot hold a stored credential.
 - **Sentinel (lane E).** The VM chase showed the release notes were read and
   the wait was the analysis agent, unable to reach its model and tried twice
-  under a 180 s cap. An analysis that cannot reach its assistant now says so
-  within a minute, for Claude Code and Codex (9dfc220c, and the Codex half in
-  8a87026a).
+  under a 180 s cap. An analysis whose connection to its assistant is refused
+  now says so within a minute: measured in the app for Codex, and for Claude
+  Code from the CLI probe and the unit replay (9dfc220c, and the Codex half in
+  8a87026a). The review fixes (fd02adfd, fe51f31d): Claude Code stops early
+  only on retries that got no answer, so an answered overload keeps its own
+  retries; the title-bar chip says a failed analysis did not complete. A
+  network that silently drops traffic is not stopped early (a known issue).
 - **Dependencies (lane D).** The sass override is scoped under excalidraw and
   pinned to 1.79.4, clearing the braces advisory from the runtime set
   (ec89e5a6); the remaining http-cache-semantics advisory is recorded as an
   explicit 2.1.1 exception on the build path only, with its exposure
-  assessment and a follow-up for 2.2.
+  assessment and a follow-up for 2.2 (aicc_planning#127). http-cache-semantics
+  4.3.0, published after the records commit, is not taken: it is unverified
+  as a fix. The sass pin is dropped once excalidraw declares sass >= 1.79.
+- **Review fix pass.** The round's spec and quality reviews and its ADR-009
+  delta pass ran at 8bf078f2: three reviews failed on major findings and the
+  delta pass returned FINDINGS, the rest passed with findings. Four fixers
+  fixed them on disjoint files (fd02adfd, fe51f31d, 4913297e, 89f0da82,
+  26fb4fcd, c748fa7e), and an integration commit applied their shared-file
+  changes: the Codex skill copies stay the app's in every state and a
+  removal never leaves an unmarked copy; Codex on Windows is looked for only
+  in fully qualified local PATH folders, a network share skipped; a Close
+  sessions clear stays owed across a restart; a Claude sign-out of this
+  computer's own sign-in asks first and runs the proved executable;
+  Sentinel's Claude Code analysis stops early only on unanswered retries.
+  Row 22 goes back to PARTIAL (its real-account resume is still owed, as row
+  35's): 61 DONE, 12 PARTIAL, 2 OPEN.
 
 **Evidence recorded.** Rows 59 and 67 are VERIFIED (CI runs 37134624406 and
-37156412028; the VM e2e runs at 69c98042 and f73f1785), row 60 is PARTIAL
+37156412028; the VM e2e runs at 69c98042 and f73f1785, recorded in
+`docs/wp1/evidence/mode-matrix.md`), row 60 is PARTIAL
 until its release-candidate leg, and the prove-red dispatch (CI run
 37155296304) is in `docs/wp1/evidence/ci-matrix.md`. Row 38's midnight UTC
 check passed on the VM.
 
-**Still owed.** The reviews and the ADR-009 delta pass of this round; the
-SSH live matrix at the final head (the pty manager, the statusline watcher
-and the per-session settings writer changed at import lines and call sites
-only); the VM checks of question 5's copy and its HOST QUARANTINE link
-tests, the Windows PATH order and the packaged canvas run; the Cloud Agents
-card's image.
+**Still owed.** The re-review and the ADR-009 re-attack of the review fix
+pass; the SSH live matrix at the final head (the pty manager, the statusline
+watcher and the per-session settings writer changed at import lines, call
+sites and one registry-lookup helper, with a throw on a null Claude resolve
+and a heal wrapper; the local Codex branch drops the developer-instructions
+spawn option, which changes its argv), with End remote with and without a
+saved sudo password, the tmux kill and a non-persistent teardown; the HOST
+QUARANTINE files on CI and the VM; the VM checks of question 5's copy and
+removal (a held-open copy among them), the Windows PATH order, Sentinel
+behind the dead proxy for both assistants, the Tokenomics chart and the
+packaged canvas run; the Sonnet 5 price's native test in CI; the Cloud
+Agents card's image; on a Mac, the Claude sign-out with the acknowledgement
+(owner). Open: the GitHub sidebar's session reads still reach the
+read-failure latch (pre-existing; its fix is pending).
