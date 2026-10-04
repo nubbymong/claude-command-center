@@ -15,7 +15,7 @@ vi.mock('../../src/main/conductor-mcp-server', () => ({ getConductorMcpPort: () 
 
 import { CAPABILITY_KEYS, WP1_REQUIRED_CAPABILITIES, PROVIDER_IDS, missingCapabilityKeys, isNeverOwnedLaunchVariable, NEVER_OWNED_LAUNCH_VARIABLES } from '../../src/shared/providers'
 import type { CapabilityPlatform } from '../../src/shared/providers'
-import { createClaudePackage, claudeCapabilities } from '../../src/main/providers/claude'
+import { createClaudePackage, claudeWiredCapabilities } from '../../src/main/providers/claude'
 import { createCodexPackage, codexWiredCapabilities } from '../../src/main/providers/codex'
 import { claudeDescriptor } from '../../src/renderer/providers/claude'
 import { codexDescriptor } from '../../src/renderer/providers/codex'
@@ -79,16 +79,23 @@ describe.each(cases)('provider conformance: $id', ({ id, create, descriptor, amb
   })
 
   // [host] PR 4 P4.10 review: the candidate judges the declaration the app
-  // registers. Codex's wired table (codexWiredCapabilities) supports every
-  // WP1-required key; its bare factory table never can, so a candidate that
-  // judged it could never pass. Claude's gaps are recorded, not fixed here:
-  // each is owed to the owner or a phase (completion plan 9.4 P4.10, 9.5).
-  it('main package as the composition root registers it: its declaration, and the WP1-required capabilities it does not support yet', () => {
+  // registers. Each wired table (codexWiredCapabilities, claudeWiredCapabilities)
+  // supports every WP1-required key; a bare factory table never can, so a
+  // candidate that judged it could never pass. WP2 PR 4 (owner answers
+  // 2026-10-04): the Claude adapter's discovery, sign-in status and sign-out
+  // are completed, so neither provider has a gap; Claude's sign-out is
+  // unsupported on macOS only, a recorded platform limitation (D2).
+  it('main package as the composition root registers it: its declaration supports every WP1-required capability', () => {
     const judged = judgedPackage(id)
     expect(packageRegistrationProblem(judged)).toBeNull()
     expect(missingCapabilityKeys(judged.capabilities)).toEqual([])
-    expect(judged.capabilities).toBe(id === 'codex' ? codexWiredCapabilities : claudeCapabilities)
-    expect(candidateGaps(judged.capabilities), `${id}: WP1-required capabilities the candidate would refuse today`).toEqual(id === 'codex' ? [] : ['cli.discovery', 'auth.status', 'auth.logout'])
+    expect(judged.capabilities).toBe(id === 'codex' ? codexWiredCapabilities : claudeWiredCapabilities)
+    expect(candidateGaps(judged.capabilities), `${id}: WP1-required capabilities the candidate would refuse`).toEqual([])
+    for (const k of WP1_REQUIRED_CAPABILITIES) {
+      const overrides = judged.capabilities[k].platformOverrides ?? {}
+      const off = (Object.entries(overrides) as Array<[string, string]>).filter(([, s]) => s !== 'supported').map(([p]) => `${k}:${p}`)
+      expect(off, `${id}: WP1-required keys switched off on a platform`).toEqual(id === 'claude' && k === 'auth.logout' ? ['auth.logout:darwin'] : [])
+    }
   })
 
   it('main package: ambient authentication variables include the realm-overriding variable, owned variables include the realm selector (D1/D3)', () => {

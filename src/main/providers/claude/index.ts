@@ -23,6 +23,8 @@ import { createClaudeLegacyAccountsPort } from './legacy-store'
 import type { ClaudeLegacyAccountsIo } from './legacy-store'
 import { createClaudeReviewLaunch } from './review-launch'
 import type { ClaudeReviewPorts } from './review-launch'
+import { createClaudeAuthOperations } from './auth-operations'
+import type { ClaudeAuthPorts } from './auth-operations'
 import { CLAUDE_ENABLEMENT } from './enablement'
 
 // The managed-launch surface is re-exported so the composition root and the
@@ -49,6 +51,9 @@ export { createClaudeReviewOperations, parseClaudeResult, CLAUDE_REVIEW_ARGS, CL
 export type { ClaudeCliPorts, ClaudeCliCommand, ClaudeCliRunOptions, ClaudeCliRunResult, ClaudeReviewDeps, ClaudeResultOutcome } from './review'
 export { discoverClaude, verifyClaudeExecutable, claudeCompatibilityAllowsUse, parseClaudeVersion } from './discovery'
 export type { ClaudeDiscovery, ClaudeDiscoveryDeps, ClaudeExecutableIdentity, ClaudeExecutableCheck, ClaudeFileStat, ClaudeVersionRun } from './discovery'
+// WP2 PR 4: sign-in status and sign-out, and the ports the root hands them.
+export { createClaudeAuthOperations, CLAUDE_MAC_SIGN_OUT_REFUSAL } from './auth-operations'
+export type { ClaudeAuthPorts, ClaudeProfileAuthStatus, ClaudeProfileLogout } from './auth-operations'
 
 /** What the composition root injects: the main-process stores the package
  *  reads and writes without importing them (a shared main module imported
@@ -59,6 +64,10 @@ export interface ClaudePackageDeps {
   /** The reviewer's ports (WP2 commit 5b). Absent: the package offers no
    *  setup, launch or review, and `claude_review` is never offered. */
   review?: ClaudeReviewPorts
+  /** The sign-in status and sign-out ports (WP2 PR 4): the app's own
+   *  `claude auth status` probe and the sign-out beside it. Absent: the
+   *  package offers no auth operations. */
+  auth?: ClaudeAuthPorts
 }
 
 export class ClaudeProvider implements SshCapableProvider {
@@ -118,15 +127,6 @@ export class ClaudeProvider implements SshCapableProvider {
   async deployResumePickerScript(resourcesDir: string): Promise<void> {
     return deployClaudeResumePickerScript(resourcesDir)
   }
-}
-
-/** What Claude Code supports through this app, stated honestly (design 7.3).
- *  A key is `supported` only once this package exposes the operation behind
- *  it (registration enforces that), so the setup/auth/realm keys stay
- *  `unknown` until the Claude adapter slice wires them. Account isolation is
- *  the existing profile-home mechanism (owner decision D1); it is not
- *  available on macOS, where the login keychain is located through $HOME
- *  (D2, WP1 only). No tested CLI version range is declared yet: the range is
 
   // WP2 PR 4: what the PTY manager, the per-session settings writer and the
   // statusline dispatcher used to deep-import, offered through the
@@ -174,15 +174,25 @@ export class ClaudeProvider implements SshCapableProvider {
   looksLikeShellPromptTail(data: string): boolean {
     return looksLikeShellPromptTail(data)
   }
- *  established by the D7 conformance evidence (dev host: Claude Code 2.1.278). */
+}
+
+/** What Claude Code supports through this app, stated honestly (design 7.3),
+ *  for a package created with no ports (the session surface only). A key is
+ *  `supported` only once this package exposes the operation behind it
+ *  (registration enforces that); claudeCapabilitiesFor declares the keys the
+ *  composition root's ports back. Account isolation is the existing
+ *  profile-home mechanism (owner decision D1); it is not available on macOS,
+ *  where the login keychain is located through $HOME (D2, WP1 only). No
+ *  tested CLI version range is declared yet: the range is established by the
+ *  D7 conformance evidence (dev host: Claude Code 2.1.278). */
 export const claudeCapabilities: ProviderCapabilities = {
-  'cli.discovery': { state: 'unknown', note: 'wired in the Claude adapter slice' },
+  'cli.discovery': { state: 'unknown', note: 'claude --version through setup.discover, which exists once the composition root hands the package its CLI ports; this package has none' },
   'install.recipes': { state: 'unknown', note: 'the official native installer, shown and copied, never scraped; wired in the Claude adapter slice' },
   'auth.browser': { state: 'unknown', note: 'the genuine CLI login in a Conductor terminal; wired in the Claude adapter slice' },
   'auth.device': { state: 'unsupported', note: 'Claude Code has no device-code sign-in' },
   'auth.apiKey': { state: 'unsupported', note: 'managed accounts use the CLI sign-in; an API key is never collected' },
-  'auth.status': { state: 'unknown', note: 'wired in the Claude adapter slice' },
-  'auth.logout': { state: 'unknown', note: 'wired in the Claude adapter slice' },
+  'auth.status': { state: 'unknown', note: 'the profile\'s claude auth status, which exists once the composition root hands the package its sign-in ports; this package has none' },
+  'auth.logout': { state: 'unknown', note: 'the profile\'s claude auth logout, which exists once the composition root hands the package its sign-in ports; this package has none' },
   'auth.retireReplaced': { state: 'unsupported', note: 'a Claude profile signs in again in its own home; nothing is replaced' },
   'realm.isolated': { state: 'unknown', platformOverrides: { darwin: 'unsupported' }, note: 'profile homes; not on macOS in WP1 (D2); wired in the Claude adapter slice' },
   'account.labelFields': { state: 'unknown', note: 'email read from the profile identity file; wired in the Claude adapter slice' },
@@ -191,6 +201,31 @@ export const claudeCapabilities: ProviderCapabilities = {
   'session.history': { state: 'supported', note: 'resume picker and history listing' },
   'session.cloud': { state: 'unknown', note: 'cloud agents run through cloud-agent-manager, not through the provider package; wired in a later slice' },
   'session.ssh': { state: 'supported' },
+}
+
+/** The declaration of the package the composition root registers, with the
+ *  CLI ports (setup.discover) and the sign-in ports (auth.status,
+ *  auth.logout). WP2 PR 4 (owner answers 2026-10-04): each note says what
+ *  runs. The sign-out is unsupported on macOS only (auth-operations.ts,
+ *  CLAUDE_MAC_SIGN_OUT_REFUSAL): one keychain sign-in there is shared by
+ *  every Claude Code on the Mac and a profile home cannot reach it (D2). */
+export const claudeWiredCapabilities: ProviderCapabilities = {
+  ...claudeCapabilities,
+  'cli.discovery': { state: 'supported', note: 'claude --version on the executable the app resolves, through its runner with no Conductor variable, absolute PATH entries only and no shell (setup.discover); run at start while Claude Code is on, by Check again in Settings, Accounts, and again before a reviewer launch when the proven file changed' },
+  'auth.status': { state: 'supported', note: 'claude auth status in the account\'s own profile home, by the probe the Accounts panel uses (the profile held as a credential consumer, the project gate, the hardened profile-home environment), falling back to the profile\'s credential file when the CLI does not answer' },
+  'auth.logout': { state: 'supported', platformOverrides: { darwin: 'unsupported' }, note: 'claude auth logout in the account\'s own profile home with the status probe\'s hold, gate and environment, refused while a session or a check uses the profile, confirmed by the profile\'s state read afresh; not on macOS, where one keychain sign-in is shared by every Claude Code on the Mac' },
+}
+
+/** The declaration for the ports a package was created with: each key is
+ *  claimed only when the operation behind it exists. */
+function claudeCapabilitiesFor(wired: { setup: boolean; auth: boolean }): ProviderCapabilities {
+  if (wired.setup && wired.auth) return claudeWiredCapabilities
+  if (!wired.setup && !wired.auth) return claudeCapabilities
+  return {
+    ...claudeCapabilities,
+    ...(wired.setup ? { 'cli.discovery': claudeWiredCapabilities['cli.discovery'] } : {}),
+    ...(wired.auth ? { 'auth.status': claudeWiredCapabilities['auth.status'], 'auth.logout': claudeWiredCapabilities['auth.logout'] } : {}),
+  }
 }
 
 /** Ambient variables that could override a bound Claude realm (D3).
@@ -256,7 +291,7 @@ export function createClaudePackage(deps: ClaudePackageDeps = {}): ProviderPacka
     id: session.id,
     displayName: session.displayName,
     session,
-    capabilities: claudeCapabilities,
+    capabilities: claudeCapabilitiesFor({ setup: !!deps.review, auth: !!deps.auth }),
     ambientAuthVariables,
     ownedLaunchVariables: claudeOwnedLaunchVariables,
     // On unless the user turned it off (A4): Claude-only users change nothing.
@@ -273,5 +308,8 @@ export function createClaudePackage(deps: ClaudePackageDeps = {}): ProviderPacka
     // reviewer account's profile home, and the adapter (commit 5b). Claude
     // sessions keep their own launch path (A12).
     ...(deps.review ? createClaudeReviewLaunch(deps.review) : {}),
+    // Sign-in status and sign-out in the account's own profile home, by the
+    // app's existing probe and the sign-out beside it (WP2 PR 4).
+    ...(deps.auth ? { auth: createClaudeAuthOperations(deps.auth) } : {}),
   }
 }

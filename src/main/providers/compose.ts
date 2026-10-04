@@ -8,12 +8,13 @@ import { PROVIDER_IDS } from '../../shared/providers'
 import type { ProviderPackageFactory } from './core'
 import { registerProviderPackage, listProviderPackages, tryGetProviderPackage } from './core'
 import { createClaudePackage } from './claude'
-import type { ClaudeLegacyAccountsIo, ClaudeReviewPorts } from './claude'
+import type { ClaudeLegacyAccountsIo, ClaudeReviewPorts, ClaudeAuthPorts } from './claude'
 import { createCodexPackage, cliCommandLine, codexShellEnv, runCodexCli, defaultCodexRunDeps, flushPendingCodexKills } from './codex'
 import type { CodexRealmSource } from './codex'
 import { findRealm, realmOperable } from '../../shared/providers'
 import { readProfilesStrict, updateProfilesStrict, mkdirSecure, profileRealmLaunch, profileReviewRefusal, recordProfileReviewPreflight } from '../account-profiles'
 import { holdProfileForRun } from '../profile-consumers'
+import { readClaudeCliAuth, logoutClaudeCli } from '../account-web/claude-cli-auth'
 import { resolveClaudeExecutable } from '../claude-cli-version'
 import { readConfigChecked } from '../config-manager'
 import { getAccountRegistry, getAccountRegistryResourcesDir, REGISTRY_DIRNAME } from '../provider-account-registry'
@@ -91,11 +92,21 @@ export const claudeReviewPorts: ClaudeReviewPorts = {
   run: (cmd, opts) => runCodexCli(cmd, opts, defaultCodexRunDeps()),
 }
 
+/** The Claude sign-in ports (WP2 PR 4, owner answers 2026-10-04): the app's
+ *  own `claude auth status` probe (the one the Accounts panel uses) and the
+ *  sign-out beside it, both keyed by profile; the package resolves a realm to
+ *  its profile through the same snapshot read the reviewer uses. */
+export const claudeAuthPorts: ClaudeAuthPorts = {
+  lookupRealm: (ref) => claudeReviewPorts.lookupRealm(ref),
+  readStatus: (profileId) => readClaudeCliAuth(profileId),
+  logout: (profileId) => logoutClaudeCli(profileId),
+}
+
 /** Keyed by `ProviderId`, so a provider added to the union but not composed
  *  here is a compile error rather than one that silently never registers.
  *  Exactly one package per provider: the Codex realm locks live in it. */
 const PACKAGE_FACTORIES: Readonly<Record<ProviderId, ProviderPackageFactory>> = {
-  claude: () => createClaudePackage({ legacyAccountsIo: claudeLegacyAccountsIo, review: claudeReviewPorts }),
+  claude: () => createClaudePackage({ legacyAccountsIo: claudeLegacyAccountsIo, review: claudeReviewPorts, auth: claudeAuthPorts }),
   codex: () => createCodexPackage({ realms: codexRealmSource, auth: { takeSecret: (handle) => takeProviderSecret(handle) }, carryMarksPort }),
 }
 

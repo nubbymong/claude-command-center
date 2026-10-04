@@ -26,6 +26,7 @@
  */
 
 import { execFile } from 'node:child_process'
+import type { ExecFileOptions } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -33,9 +34,15 @@ import { logError, logInfo, logWarn } from '../debug-logger'
 import { gateManagedLaunch, peekGateVerdict } from '../managed-launch-diagnostics'
 import { getProfileConfigDir, getProfilesRoot, withProfileHome, MANAGED_LAUNCH_REFUSAL } from '../account-profiles'
 import { acquireProfileConsumer, pendingProfileRefresh } from '../profile-consumers'
+import { isProfileInUseByLiveSession } from '../claude-account-identity'
 import { DEFAULT_CLI_AUTH_METHOD, PROFILE_ID_RE, isCliAuthMethod, type CliAuthMethod } from '../../shared/account-web-session'
 
-const execFileAsync = promisify(execFile)
+/** promisify(execFile), made when a CLI runs rather than when this module
+ *  loads: the composition root imports it at start (WP2 PR 4, the Claude
+ *  package's sign-in ports), long before anything here runs. Synchronous up
+ *  to the spawn, as before. */
+type ExecFileAsync = (file: string, args: readonly string[], options: ExecFileOptions & { encoding: 'utf-8' }) => Promise<{ stdout: string; stderr: string }>
+const execFileAsync: ExecFileAsync = (file, args, options) => (promisify(execFile) as unknown as ExecFileAsync)(file, args, options)
 
 export interface ClaudeCliAuthStatus {
   /** True when this account is signed in to the CLI. */
@@ -242,6 +249,83 @@ async function readClaudeCliAuthUncached(profileId: string): Promise<ClaudeCliAu
   } catch (err) {
     logError(`[account-web] could not read CLI auth for ${profileId}: ${(err as Error)?.message}`)
     return { authenticated: false, error: 'could not determine CLI auth state' }
+  }
+}
+
+/** What a sign-out did. `ran`: `claude auth logout` was started, so the
+ *  profile may have changed whatever followed. `after`: the CLI's own answer
+ *  for the profile, read afresh once the sign-out ended; null when it could
+ *  not be read. `refused`: nothing was started, and why. */
+export interface ClaudeCliLogoutResult {
+  ran: boolean
+  after: ClaudeCliAuthStatus | null
+  refused?: 'invalid-profile' | 'in-use' | 'no-home' | 'host-control'
+  timedOut?: boolean
+}
+
+const LOGOUT_TIMEOUT_MS = 30_000
+
+/**
+ * Sign one account's CLI out: `claude auth logout` in that profile's own home,
+ * by delegation, as the status probe above reads it. WP2 PR 4: the Claude
+ * package's `auth.logout` (owner answers 2026-10-04).
+ *
+ * The same launch as the probe: the profile held as a credential consumer for
+ * the run, a token rotation already in flight waited for, the project gate for
+ * the directory this process runs in, and the environment withProfileHome
+ * hardens -- so the CLI signs out this profile's home and nothing else. The
+ * credential file is never opened here; the CLI owns it.
+ *
+ * Refused, before anything starts, while the profile is in use (a live
+ * session, or another check or run holding it): signing out removes the
+ * credentials that consumer reads -- the rule a profile removal follows.
+ * The verdict is the profile's state read afterwards, not the exit code.
+ */
+export async function logoutClaudeCli(profileId: string): Promise<ClaudeCliLogoutResult> {
+  if (!PROFILE_ID_RE.test(profileId)) return { ran: false, after: null, refused: 'invalid-profile' }
+  if (isProfileInUseByLiveSession(profileId)) return { ran: false, after: null, refused: 'in-use' }
+  const release = acquireProfileConsumer(profileId)
+  try {
+    const rotation = pendingProfileRefresh(profileId)
+    if (rotation) await rotation
+    const cwd = process.cwd()
+    const projectGate = peekGateVerdict(cwd) ?? await gateManagedLaunch(cwd)
+    const home = join(getProfilesRoot(), profileId)
+    if (!existsSync(home)) return { ran: false, after: null, refused: 'no-home' }
+    let env: Record<string, string>
+    try {
+      // Exactly the probe's environment (see readClaudeCliAuthUncached).
+      env = Object.assign(withProfileHome({ ...process.env } as Record<string, string>, home, { launchId: 'auth-logout', cwd, probe: true, projectGate }), { HOME: home })
+    } catch (e) {
+      logWarn(`[account-web] profile ${profileId}: the CLI sign-out was refused -- ${(e as Error)?.message ?? String(e)}. Nothing was run.`)
+      return { ran: false, after: null, refused: 'host-control' }
+    }
+    let timedOut = false
+    try {
+      await execFileAsync('claude', ['auth', 'logout'], { encoding: 'utf-8', timeout: LOGOUT_TIMEOUT_MS, windowsHide: true, shell: true, env })
+    } catch (e) {
+      // A sign-out that failed is judged by the state read below, as one
+      // that succeeded is.
+      timedOut = (e as { killed?: unknown })?.killed === true
+    }
+    const after = await readStatusAfterLogout(env)
+    logInfo(`[account-web] ${profileId}: signed out through the claude CLI (${after && !after.error && after.authenticated === false ? 'confirmed' : 'not confirmed'})`)
+    return { ran: true, after, ...(timedOut ? { timedOut } : {}) }
+  } finally {
+    release()
+  }
+}
+
+/** The profile's state straight from the CLI, never a probe already in
+ *  flight (that one started before the sign-out). `claude auth status`
+ *  exits 1 when signed out, with its answer still on stdout. */
+async function readStatusAfterLogout(env: Record<string, string>): Promise<ClaudeCliAuthStatus | null> {
+  try {
+    const { stdout } = await execFileAsync('claude', ['auth', 'status'], { encoding: 'utf-8', timeout: 10_000, windowsHide: true, shell: true, env })
+    return parseAuthStatus(stdout)
+  } catch (e) {
+    const stdout = (e as { stdout?: unknown })?.stdout
+    return typeof stdout === 'string' ? parseAuthStatus(stdout) : null
   }
 }
 
