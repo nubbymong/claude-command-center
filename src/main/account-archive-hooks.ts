@@ -3,9 +3,9 @@
  * archived, registered at start (WP2 PR 4, P4.6, row 58).
  *
  * The accounts service (provider core) archives an account; what else an
- * account holds is not core's to know. A Codex account's chatgpt.com web
- * session is one such thing: it must be cleared first, and a clear that fails
- * must refuse the archive (Claude's account delete is the precedent). The
+ * account holds is not core's to know. An account's own web session (P4.6)
+ * is one such thing: it must be cleared first, and a clear that fails must
+ * refuse the archive (Claude's account delete is the precedent). The
  * service calls prepareAccountArchive with the account and its provider; the
  * owners of such state register a hook here at start (index.ts). Provider
  * neutral, and zero dependencies, so provider core reaches nothing concrete
