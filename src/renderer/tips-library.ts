@@ -1087,6 +1087,26 @@ export const TIPS_LIBRARY: Tip[] = [
     },
   },
 
+  // P4.6 (row 58): a Codex account's own chatgpt.com sign-in in the app.
+  {
+    id: 'tip.codex-chatgpt-sign-in',
+    category: 'sessions',
+    complexity: 'intermediate',
+    priority: 51,
+    provider: 'codex',
+    requires: ['sessions.codex-config'],
+    variants: {
+      primary: {
+        shortText: 'Sign a Codex account in to chatgpt.com, in the app',
+        title: 'chatgpt.com for a Codex Account',
+        body: 'A Codex account can be signed in to **chatgpt.com** inside the app, as a Claude account can be to claude.ai:\n\n\u2022 **Sign in to chatgpt.com**, in the account\'s menu in **Settings, Accounts** or in a Codex session\'s right-click menu, opens a sign-in window on that account\'s own browser storage\n\u2022 The window closes once the sign-in and your email are confirmed, and the row says who is signed in\n\u2022 The browser pane\'s start page in that account\'s Codex sessions then offers **chatgpt.com**\n\u2022 **Sign out of chatgpt.com** clears it, and archiving the account clears it first. The Codex command-line tool\'s own **Sign out** leaves it alone',
+        actionLabel: 'Open Settings',
+        actionTarget: 'settings',
+        focusHint: 'Settings, Accounts -- the menu on a Codex account row',
+      },
+    },
+  },
+
   // P3.16 sweep: what PR 3 added that a user would not find alone -- the
   // identity editor behind an account row's chip (P3.2), Switch Account on a
   // Codex session (P3.6), and Codex's own Plan mode, Compact and model picker
@@ -1353,7 +1373,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'What the app sends over the network',
         title: 'Network Activity',
-        body: 'In the interest of transparency, here\'s every network call the app makes:\n\n• **Rate limits** (`api.anthropic.com/api/oauth/usage`) -- once per Claude Code command, only when statusline is enabled. Uses YOUR Claude OAuth token (read from `~/.claude/.credentials.json`).\n\n• **Update check** (`api.github.com`) -- via `gh` CLI, checks for new releases when you explicitly trigger an update check or on app start. The optional GitHub integration talks to GitHub too, when you use it.\n\n• **Model pricing** (`raw.githubusercontent.com/BerriAI/litellm`) -- once per 24 hours, to get current Claude and Codex model pricing for cost calculations. Cached locally.\n\n• **Service status** (`status.claude.com` while Claude Code is on, `status.openai.com` while Codex is on) -- the public status pages behind the title bar\'s status pills.\n\n\u2022 **Sentinel** (off by default) -- while it is on, Claude Code\'s public model list and changelog (`support.claude.com`, `raw.githubusercontent.com`) and Codex\'s public release notes (`api.github.com`), read without any sign-in. Its analysis of a new version is a run of the assistant you use, on the account chosen for it.\n\n\u2022 **Codex usage check** (`chatgpt.com`, and with some Codex versions OpenAI\'s content storage) -- only when you open the Usage page, press Refresh or use a card\'s Retry: for a Codex account you added, signed in with ChatGPT, with no session or review on it, Codex checks that account\'s usage once, with its own sign-in.\n\n• **Vision MCP server** -- listens on `127.0.0.1:19333` only. Localhost-only, never exposed to the network.\n\n**The app sends NO telemetry, analytics, or usage data.** Everything else stays on your machine.',
+        body: 'In the interest of transparency, here\'s every network call the app makes:\n\n• **Rate limits** (`api.anthropic.com/api/oauth/usage`) -- once per Claude Code command, only when statusline is enabled. Uses YOUR Claude OAuth token (read from `~/.claude/.credentials.json`).\n\n• **Update check** (`api.github.com`) -- via `gh` CLI, checks for new releases when you explicitly trigger an update check or on app start. The optional GitHub integration talks to GitHub too, when you use it.\n\n• **Model pricing** (`raw.githubusercontent.com/BerriAI/litellm`) -- once per 24 hours, to get current Claude and Codex model pricing for cost calculations. Cached locally.\n\n• **Service status** (`status.claude.com` while Claude Code is on, `status.openai.com` while Codex is on) -- the public status pages behind the title bar\'s status pills.\n\n\u2022 **Sentinel** (off by default) -- while it is on, Claude Code\'s public model list and changelog (`support.claude.com`, `raw.githubusercontent.com`) and Codex\'s public release notes (`api.github.com`), read without any sign-in. Its analysis of a new version is a run of the assistant you use, on the account chosen for it.\n\n\u2022 **Codex usage check** (`chatgpt.com`, and with some Codex versions OpenAI\'s content storage) -- only when you open the Usage page, press Refresh or use a card\'s Retry: for a Codex account you added, signed in with ChatGPT, with no session or review on it, Codex checks that account\'s usage once, with its own sign-in.\n\n\u2022 **chatgpt.com sign-in** (`chatgpt.com`, and the sign-in pages it sends you to) -- only when you sign a Codex account in to chatgpt.com in the app, or open chatgpt.com in its browser pane, with that account\'s own sign-in in its own browser storage here. Nothing is copied from your own browser.\n\n• **Vision MCP server** -- listens on `127.0.0.1:19333` only. Localhost-only, never exposed to the network.\n\n**The app sends NO telemetry, analytics, or usage data.** Everything else stays on your machine.',
       },
     },
   },

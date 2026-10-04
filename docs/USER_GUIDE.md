@@ -314,6 +314,26 @@ signed in a different way than before cannot be picked until you confirm it
 - A signed-out *This computer's Codex*: run `codex login` in a terminal, then
   **Check sign-in**.
 
+### chatgpt.com in the app
+
+A Codex account can also be signed in to chatgpt.com inside the app, as a
+Claude account can be to claude.ai:
+
+- **Sign in to chatgpt.com**, in the account's menu in Settings, Accounts or
+  in a Codex session's right-click menu, opens a sign-in window. It keeps the
+  sign-in in that account's own browser storage in the app, apart from every
+  other account, and nothing is copied from your own browser. The window
+  closes once the sign-in and your email are confirmed, and the row then
+  reads chatgpt.com: signed in as that email. A sign-in that does not finish
+  (the window closed, Cancel, or five minutes with no sign-in) is cleared.
+- A Codex session's browser pane then offers **chatgpt.com** on its start
+  page, as the account the session runs under.
+- **Sign out of chatgpt.com** in the account's menu clears that storage.
+  Archiving the account clears it first; if that clear fails, the archive
+  is refused and the account stays. The Codex command-line tool's own
+  **Sign out** leaves the chatgpt.com sign-in alone, as Claude Code's
+  sign-out leaves claude.ai.
+
 ### Installing or updating Codex
 
 CCC needs Codex 0.153.4 or newer. A version newer than CCC was tested with

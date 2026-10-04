@@ -32,7 +32,7 @@ const CLAUDE_ONLY = [
   'tip.container-runtime', 'tip.multi-account', 'tip.config-edit-guard',
 ]
 const CODEX_ONLY = [
-  'tip.codex-sessions', 'tip.codex-accounts-reviewer', 'tip.codex-restart-pick', 'tip.codex-check-sign-in',
+  'tip.codex-sessions', 'tip.codex-accounts-reviewer', 'tip.codex-restart-pick', 'tip.codex-check-sign-in', 'tip.codex-chatgpt-sign-in',
   'tip.codex-switch-account', 'tip.codex-plan-compact', 'tip.codex-windows-sandbox', 'tip.hello-codex-replay',
 ]
 
