@@ -2,17 +2,37 @@
 // Fetch pattern mirrors tk-pricing.ts (dynamic https import, same error handling).
 import { compareSemver } from './sentinel-version'
 
+/** PR 4 (owner answers, the Sentinel chase): the longest the changelog read
+ *  takes in all, as well as the socket's idle limit (a reply that keeps
+ *  trickling in never trips that one), so unread notes are said promptly. */
+export const CHANGELOG_DEADLINE_MS = 20_000
+
 export async function fetchChangelog(timeoutMs = 10000): Promise<string | null> {
   try {
     const https = await import('https')
-    return await new Promise<string>((resolve, reject) => {
+    return await new Promise<string | null>((resolve) => {
+      let settled = false
+      const done = (v: string | null) => { if (!settled) { settled = true; clearTimeout(deadline); resolve(v) } }
       const req = https.request({
         hostname: 'raw.githubusercontent.com',
         path: '/anthropics/claude-code/main/CHANGELOG.md',
         method: 'GET', timeout: timeoutMs,
-      }, (res) => { let d = ''; res.on('data', (c: string) => { d += c }); res.on('end', () => resolve(d)) })
-      req.on('error', reject)
-      req.on('timeout', () => { req.destroy(); reject(new Error('timeout')) })
+      }, (res) => {
+        // PR 4: only the changelog itself is the changelog. Any other answer
+        // (a proxy refusing, a limit, a server error) could not be read; it is
+        // never analysed as if it were the notes.
+        if (res.statusCode !== 200) { res.resume(); done(null); return }
+        let d = ''
+        res.setEncoding('utf8')
+        res.on('data', (c: string) => { d += c })
+        res.on('end', () => done(d))
+        res.on('error', () => done(null))
+        res.on('close', () => done(null))          // cut off before its end
+      })
+      const deadline = setTimeout(() => { req.destroy(new Error('timeout')); done(null) }, CHANGELOG_DEADLINE_MS)
+      ;(deadline as unknown as { unref?: () => void }).unref?.()
+      req.on('error', () => done(null))
+      req.on('timeout', () => { req.destroy(new Error('timeout')) })
       req.end()
     })
   } catch { return null }                       // offline -> caller raises "analysis unavailable" (spec §7)

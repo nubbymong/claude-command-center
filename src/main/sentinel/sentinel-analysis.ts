@@ -73,6 +73,13 @@ export const CLAUDE_ANALYSIS_ENV: Readonly<Record<string, string>> = Object.free
   CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
   CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
   CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1',
+  // PR 4 (owner answers): how often Claude Code retries a request its service
+  // did not answer. Its default, 10, outlasts the 3-minute cap when the service
+  // cannot be reached (Windows test VM, every proxy a dead port: it gave up
+  // after 192.7 s, so the run was killed and tried again, 6 minutes in all);
+  // with 5 it gives its own reason after 23 s. A request that is answered is
+  // not retried, so a working analysis is unchanged.
+  CLAUDE_CODE_MAX_RETRIES: '5',
 })
 
 /** How many fresh markers are tried before the notes are refused (round 2). */
@@ -254,7 +261,7 @@ const CONTROL_CHARS = /[\u0000-\u001F\u007F-\u009F]/g
  * not complete" with no hint that it was a usage limit or that Re-run was futile
  * until reset (#430).
  */
-export function envelopeError(stdout: string): { rateLimited: boolean; reason: string } | null {
+export function envelopeError(stdout: string): { rateLimited: boolean; unreachable: boolean; reason: string } | null {
   // Parse the RAW top-level envelope — NOT unwrapPayload, which peels `.result`,
   // and on an error envelope `.result` is the human string ("You've hit your
   // weekly limit …"), not nested JSON. The error envelope's is_error /
@@ -274,8 +281,17 @@ export function envelopeError(stdout: string): { rateLimited: boolean; reason: s
   const raw = typeof env.result === 'string' ? plainErrorReason(env.result) : ''
   const reason = raw || (status !== null ? `the account returned HTTP ${status}` : 'the account could not be reached')
   const rateLimited = status === 429 || /\blimit\b/i.test(reason)
-  return { rateLimited, reason }
+  // An HTTP status is an answer from the service, so it never counts as unreachable.
+  const unreachable = status === null && !rateLimited && UNREACHABLE_REASON.test(reason)
+  return { rateLimited, unreachable, reason }
 }
+
+/** PR 4 (owner answers, the Sentinel chase): a failure that never got an
+ *  answer from the assistant's service (no network, or a proxy or firewall in
+ *  the way). Claude Code says "Connection refused ... (ECONNREFUSED)" or
+ *  "Connection error"; Codex's reviewer says Codex "could not reach its model"
+ *  once Codex is waiting for the network. */
+const UNREACHABLE_REASON = /\b(?:ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH)\b|\bconnection (?:refused|error)\b|\bcould not reach\b|\bwaiting for network\b/i
 
 /** The message a JSON error body carries, if it has one. */
 function jsonErrorMessage(body: string): string | null {
@@ -321,13 +337,18 @@ export function plainErrorReason(text: string): string {
 // the fix is in Settings, not Re-run.
 export function analysisFailureMessage(
   stderr: string,
-  envErr?: { rateLimited: boolean; reason: string } | null,
+  envErr?: { rateLimited: boolean; unreachable?: boolean; reason: string } | null,
   accountLabel?: string | null,
 ): string {
   const who = accountLabel ? ` (${accountLabel})` : ''
   if (envErr) {
     if (envErr.rateLimited) {
       return `The Sentinel analysis account${who} has hit its usage limit — ${envErr.reason}. Pick a different account in Settings → Sentinel, or Re-run once it resets. The deterministic checks still ran.`
+    }
+    // PR 4: the service could not be reached; said as that, not as a busy
+    // account or a large update.
+    if (envErr.unreachable) {
+      return `AI analysis could not reach its service${who}: ${envErr.reason}. Check the network, a proxy or a firewall, then use Re-run. The deterministic checks still ran.`
     }
     return `AI analysis could not complete: ${envErr.reason}. The deterministic checks still ran. Use Re-run to try again.`
   }
@@ -350,7 +371,7 @@ export async function runAnalysis(opts: {
   if (prompt === null) return { ok: false, error: ANALYSIS_UNFENCED }
   const args = [...CLAUDE_ANALYSIS_ARGS]
   let lastStderr = ''
-  let lastEnvErr: { rateLimited: boolean; reason: string } | null = null
+  let lastEnvErr: { rateLimited: boolean; unreachable: boolean; reason: string } | null = null
   for (let attempt = 0; attempt < 2; attempt++) {
     const res = await opts.runner(args, 180000, prompt)          // 3-minute cap
     lastStderr = res.stderr
@@ -361,8 +382,9 @@ export async function runAnalysis(opts: {
     } else {
       lastEnvErr = envelopeError(res.stdout)
       // A usage limit will not clear on an immediate retry — stop and report it
-      // rather than burning the second attempt on the same wall.
-      if (lastEnvErr?.rateLimited) break
+      // rather than burning the second attempt on the same wall. PR 4: nor will
+      // a service that could not be reached (the CLI has already retried it).
+      if (lastEnvErr?.rateLimited || lastEnvErr?.unreachable) break
     }
   }
   return { ok: false, error: analysisFailureMessage(lastStderr, lastEnvErr, opts.accountLabel) }

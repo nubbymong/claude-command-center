@@ -333,7 +333,7 @@ describe('the analysis, round 2', () => {
     const denied = CLAUDE_ANALYSIS_DENIED_TOOLS.split(',')
     for (const t of ['Bash', 'PowerShell', 'REPL', 'Read', 'WebFetch', 'WebBrowser', 'Monitor', 'CronCreate', 'EnterWorktree', 'ToolSearch', 'SendMessage', 'Artifact']) expect(denied, t).toContain(t)
     expect(Object.isFrozen(CLAUDE_ANALYSIS_ENV)).toBe(true)
-    expect({ ...CLAUDE_ANALYSIS_ENV }).toEqual({ CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1', CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1' })
+    expect({ ...CLAUDE_ANALYSIS_ENV }).toEqual({ CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1', CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1', CLAUDE_CODE_MAX_RETRIES: '5' })
     // An absolute folder on every platform (a drive path is relative on macOS and Linux).
     expect(() => assertHeadlessOptions({ cwd: process.cwd(), env: CLAUDE_ANALYSIS_ENV })).not.toThrow()
   })
@@ -514,5 +514,61 @@ describe('the analysis, round 3', () => {
     expect(long.endsWith(' (cut short)')).toBe(true)
     expect(long.length).toBeLessThan(200)
     expect(plainErrorReason('API Error: 400 capture server said no.')).toBe('API Error: 400 capture server said no')
+  })
+})
+
+// PR 4 (owner answers, the Sentinel chase): on the Windows test VM, with every
+// proxy a dead loopback port, the analysis agent never reached its service and
+// Sentinel waited out two 180 s attempts (6 minutes) before saying anything,
+// and then blamed a busy account or a large update. The timing through the
+// whole service is in tests/unit/main/sentinel-unreachable-timing.test.ts.
+describe('an analysis that cannot reach its service (PR 4, the Sentinel chase)', () => {
+  /** What `claude -p` printed on the VM after its retries (the CLI's own words). */
+  const refused = JSON.stringify({ type: 'result', subtype: 'success', is_error: true, result: 'API Error: Connection refused \u2014 a firewall or proxy may be blocking it (ECONNREFUSED)' })
+  /** What the Codex reviewer says when Codex waits for the network (VM, 0.153.4 and 0.155.1). */
+  const codexUnreachable = JSON.stringify({ is_error: true, result: 'Codex could not reach its model: Reconnecting... waiting for network (Connection failed: error sending request).' })
+
+  it('is not tried again (an immediate retry meets the same wall), and says what happened [host]', async () => {
+    for (const stdout of [refused, codexUnreachable]) {
+      let calls = 0
+      const runner = async () => { calls++; return { code: 1, stdout, stderr: '' } }
+      const r = await runAnalysis({ runner, changelog: 'x', from: '1', to: '2', accountLabel: 'Riley' })
+      expect(calls, stdout).toBe(1)
+      expect(r.ok).toBe(false)
+      if (!r.ok) {
+        expect(r.error).toMatch(/could not reach/i)
+        expect(r.error).toContain('Riley')
+        expect(r.error).toMatch(/network, a proxy or a firewall/)
+        expect(r.error).toMatch(/Re-run/)
+        expect(r.error).toMatch(/deterministic checks still ran/i)
+        expect(r.error).not.toMatch(/busy or rate limited|update was large|usage limit/i)
+      }
+    }
+  })
+
+  it('only a failure that never got an answer counts: an HTTP status, a limit or a model reply is an answer [host]', () => {
+    expect(envelopeError(refused)!.unreachable).toBe(true)
+    expect(envelopeError(codexUnreachable)!.unreachable).toBe(true)
+    expect(envelopeError(JSON.stringify({ is_error: true, result: 'API Error: Connection error.' }))!.unreachable).toBe(true)
+    expect(envelopeError(JSON.stringify({ is_error: true, result: 'getaddrinfo ENOTFOUND api.anthropic.com' }))!.unreachable).toBe(true)
+    expect(envelopeError(JSON.stringify({ is_error: true, api_error_status: 500, result: 'Internal server error' }))!.unreachable).toBe(false)
+    expect(envelopeError(JSON.stringify({ is_error: true, api_error_status: 502, result: 'upstream connection refused' }))!.unreachable).toBe(false)
+    expect(envelopeError(rateLimitEnvelope)!.unreachable).toBe(false)
+    expect(envelopeError(JSON.stringify({ is_error: true, result: 'Codex exited with code 1: unexpected status 400 Bad Request' }))!.unreachable).toBe(false)
+  })
+
+  it("Claude Code's own retries are bounded for the analysis, by its own switch, a value the spawner takes [host]", () => {
+    // VM: its default (10) gave up after 192.7 s, past the 180 s deadline; 5 gave its reason after 23.0 s.
+    expect(CLAUDE_ANALYSIS_ENV.CLAUDE_CODE_MAX_RETRIES).toBe('5')
+    expect(() => assertHeadlessOptions({ cwd: process.cwd(), env: CLAUDE_ANALYSIS_ENV })).not.toThrow()
+  })
+
+  it('a reachable service that fails is still tried twice, as before [host]', async () => {
+    let calls = 0
+    const env = JSON.stringify({ is_error: true, api_error_status: 529, result: 'Overloaded' })
+    const runner = async () => { calls++; return { code: 1, stdout: env, stderr: '' } }
+    const r = await runAnalysis({ runner, changelog: 'x', from: '1', to: '2' })
+    expect(calls).toBe(2)
+    if (!r.ok) expect(r.error).toMatch(/Overloaded/)
   })
 })
