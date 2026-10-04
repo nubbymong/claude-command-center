@@ -29,7 +29,7 @@
     { "id": "claude-sonnet-5-5", "patterns": ["sonnet"], "aliases": ["sonnet"], "family": "sonnet", "label": "Sonnet 5.5",
       "fallbackPricing": { "input": 2, "output": 10, "cacheRead": 0.2, "cacheWrite": 2.5 } },
     { "id": "claude-sonnet-5", "patterns": ["sonnet-5"], "family": "sonnet", "label": "Sonnet 5",
-      "fallbackPricing": { "input": 3, "output": 15, "cacheRead": 0.3, "cacheWrite": 3.75 } },
+      "fallbackPricing": { "input": 2, "output": 10, "cacheRead": 0.2, "cacheWrite": 2.5 } },
     { "id": "claude-sonnet-4-6", "patterns": ["sonnet-4-6"], "family": "sonnet", "label": "Sonnet 4.6",
       "efforts": ["low", "medium", "high", "max"],
       "fallbackPricing": { "input": 3, "output": 15, "cacheRead": 0.3, "cacheWrite": 3.75 } },
@@ -79,7 +79,7 @@
     ]
   },
   "dropdown": [
-    { "value": "opus", "label": "Opus", "hint": "Latest Opus (200k context)" },
+    { "value": "opus", "label": "Opus", "hint": "Latest Opus" },
     { "value": "opus[1m]", "label": "Opus 1M", "hint": "Latest Opus (1M context)" },
     { "value": "fable", "label": "Fable", "hint": "Latest Fable · most capable, ~2x faster than Opus" },
     { "value": "sonnet", "label": "Sonnet", "hint": "Latest Sonnet" },

@@ -18,7 +18,7 @@ describe('registry-derived option lists', () => {
     // The alias rows are the old hardcoded MODELS array and still come first —
     // "Opus" always means the newest Opus.
     expect(modelsFromRegistry(reg).slice(0, 5)).toEqual([
-      { label: 'Opus', value: 'opus', hint: 'Latest Opus (200k context)' },
+      { label: 'Opus', value: 'opus', hint: 'Latest Opus' },
       { label: 'Opus 1M', value: 'opus[1m]', hint: 'Latest Opus (1M context)' },
       { label: 'Fable', value: 'fable', hint: 'Latest Fable · most capable, ~2x faster than Opus' },
       { label: 'Sonnet', value: 'sonnet', hint: 'Latest Sonnet' },
