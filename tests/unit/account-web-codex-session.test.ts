@@ -1,5 +1,8 @@
 // [host] WP2 PR 4, P4.6 first half (row 58): a Codex account's own web
-// session, before its sign-in window exists (that waits on the owner's OR2a).
+// session, at the partition and the profile-keyed channels. The second half
+// (the sign-in window, the pane's chatgpt.com surface and their own codexWeb
+// channels) is pinned in codex-web-sign-in, codex-web-pane and
+// codex-web-handlers.test.ts.
 //
 // What this pins, every case a refusal or an isolation property (ADR-009):
 //  - the partition builder for the `account` id class: keyed by the registry
@@ -273,6 +276,15 @@ describe('every profile-keyed accountWeb:* channel refuses an account id (nothin
     // the profile list happens for an id of the other class.
     for (const [name, f] of Object.entries(acted)) {
       expect(f, `${channel} reached ${name}`).not.toHaveBeenCalled()
+    }
+  })
+
+  it("Claude's handler registration serves no codexWeb channel: a Codex account's surface has its own gated channels", () => {
+    const registered = Object.keys(handlers)
+    expect(registered.length).toBeGreaterThan(0)
+    expect(registered.every((ch) => ch.startsWith('accountWeb:'))).toBe(true)
+    for (const ch of [IPC.CODEX_WEB_STATUS, IPC.CODEX_WEB_SIGN_IN, IPC.CODEX_WEB_SIGN_IN_STATE, IPC.CODEX_WEB_CANCEL, IPC.CODEX_WEB_SIGN_OUT, IPC.CODEX_WEB_PANE_OPEN]) {
+      expect(handlers[ch], ch).toBeUndefined()
     }
   })
 

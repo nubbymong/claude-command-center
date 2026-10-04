@@ -238,8 +238,9 @@ export const CODEX_WEB_PARTITION_PREFIX = 'persist:codex-web-'
  *
  * The pattern is the shape only: a registry account of any provider has such
  * an id, so a caller that materialises the partition (the sign-in window and
- * the pane's account surface, after the owner's OR2a run) first confirms from
- * the registry that the account is a Codex account.
+ * the pane's account surface, through ipc/codex-web-handlers.ts) first
+ * confirms from the registry that the account is a known, non-archived Codex
+ * account.
  *
  * Nothing is ever copied into this partition from the user's browser: it is
  * filled only by a sign-in inside an app window on it (WP1 design principle
