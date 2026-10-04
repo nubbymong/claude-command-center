@@ -155,10 +155,16 @@ describe('Claude sign-out: the profile the realm names, judged by its state afte
       expect(out, refused).toEqual({ ok: false, code })
       expect(out.ran, refused).toBeUndefined()
     }
-    const gate = await createClaudeAuthOperations(ports({ logouts: { [PA]: { ran: false, after: null, refused: 'host-control' } } }).p, proven).logout({ authRealmId: 'realm-a' })
+    const gate = await createClaudeAuthOperations(ports({ logouts: { [PA]: { ran: false, after: null, refused: 'project-gate' } } }).p, proven).logout({ authRealmId: 'realm-a' })
     expect(gate).toMatchObject({ ok: false, code: 'not-started' })
     expect(gate.message).toMatch(/settings/)
     expect(gate.ran).toBeUndefined()
+    // A hardening failure that is not the gate says its own reason, never the gate's.
+    const unprepared = await createClaudeAuthOperations(ports({ logouts: { [PA]: { ran: false, after: null, refused: 'host-control' } } }).p, proven).logout({ authRealmId: 'realm-a' })
+    expect(unprepared).toMatchObject({ ok: false, code: 'not-started' })
+    expect(unprepared.message).toMatch(/could not prepare/)
+    expect(unprepared.message).not.toMatch(/settings/)
+    expect(unprepared.ran).toBeUndefined()
     const thrown = createClaudeAuthOperations(ports({ logout: async () => { throw new Error('x') } }).p, proven)
     expect(await thrown.logout({ authRealmId: 'realm-a' })).toEqual({ ok: false, code: 'not-started' })
     const notRun = createClaudeAuthOperations(ports({ logouts: { [PA]: { ran: false, after: cliStatus(false) } } }).p, proven)

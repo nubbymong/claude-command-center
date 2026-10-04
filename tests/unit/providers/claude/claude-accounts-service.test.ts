@@ -203,11 +203,18 @@ describe('the user\'s Sign out of a Claude account through the service [host]', 
   })
 
   it('records what a sign-out left: in use records nothing, timed out records unknown, still signed in records signed-in', async () => {
+    // Each starts from a recorded signed-in, so a sign-out that recorded
+    // nothing and one that recorded unknown read differently.
     const inUse = await build({ logout: () => ({ ran: false, after: null, refused: 'in-use' }) })
-    const before = inUse.state(P2)
+    inUse.signedIn.add(P2)
+    expect(await inUse.service.refreshStatus({ accountId: inUse.acct(P2) })).toEqual({ ok: true, state: 'signed-in' })
+    expect(inUse.state(P2)).toBe('signed-in')
     expect(await inUse.service.logout({ accountId: inUse.acct(P2) })).toMatchObject({ ok: false, code: 'busy' })
-    expect(inUse.state(P2)).toBe(before)
+    expect(inUse.state(P2)).toBe('signed-in')
     const slow = await build({ logout: () => ({ ran: true, after: null, timedOut: true }) })
+    slow.signedIn.add(P2)
+    expect(await slow.service.refreshStatus({ accountId: slow.acct(P2) })).toEqual({ ok: true, state: 'signed-in' })
+    expect(slow.state(P2)).toBe('signed-in')
     expect(await slow.service.logout({ accountId: slow.acct(P2) })).toMatchObject({ ok: false, code: 'timed-out' })
     expect(slow.state(P2)).toBe('unknown')
     const still = await build({ logout: () => ({ ran: true, after: { authenticated: true, source: 'cli-status' } }) })

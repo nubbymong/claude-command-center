@@ -332,7 +332,7 @@ async function readClaudeCliAuthUncached(profileId: string, runner?: ClaudeCliAu
 export interface ClaudeCliLogoutResult {
   ran: boolean
   after: ClaudeCliAuthStatus | null
-  refused?: 'invalid-profile' | 'in-use' | 'no-home' | 'host-control' | 'cli-unavailable' | 'computer-sign-in'
+  refused?: 'invalid-profile' | 'in-use' | 'no-home' | 'project-gate' | 'host-control' | 'cli-unavailable' | 'computer-sign-in'
   timedOut?: boolean
 }
 
@@ -387,9 +387,9 @@ const refusedLogout = (refused: NonNullable<ClaudeCliLogoutResult['refused']>): 
  * profile is then held for the whole run (holdProfileForRun, with the run's
  * full bound), a probe of it waits for the sign-out, and the sessions on it
  * are asked again just before the start. The verdict is the profile's state
- * read afterwards, not the exit code. Once a sign-out has run, the profile's
- * identity copy of its credentials is removed (unless the profile still reads
- * as signed in).
+ * read afterwards, not the exit code. Once a sign-out has run to its end (not
+ * stopped at its time limit), the profile's identity copy of its credentials
+ * is removed, unless the profile still reads as signed in.
  */
 export async function logoutClaudeCli(profileId: string, opts: ClaudeCliLogoutOptions = {}): Promise<ClaudeCliLogoutResult> {
   if (!PROFILE_ID_RE.test(profileId)) return refusedLogout('invalid-profile')
@@ -411,8 +411,9 @@ export async function logoutClaudeCli(profileId: string, opts: ClaudeCliLogoutOp
 async function runLogout(profileId: string, runner: ClaudeCliAuthRunner): Promise<ClaudeCliLogoutResult> {
   // Held before the wait for a rotation in flight, then again with the run's
   // full bound: the sign-out, the status read after it and a slow kill.
-  const release = await holdProfileForRun(profileId, LOGOUT_TIMEOUT_MS + STATUS_TIMEOUT_MS + CLI_HOLD_GRACE_MS)
-  if (!release) return refusedLogout('in-use')
+  // No cancel signal is passed, so the hold always comes back (null is only
+  // the answer to a cancel).
+  const release = (await holdProfileForRun(profileId, LOGOUT_TIMEOUT_MS + STATUS_TIMEOUT_MS + CLI_HOLD_GRACE_MS)) as () => void
   const kills: Promise<void>[] = []
   const ended = async (r: ClaudeCliAuthRun): Promise<void> => {
     if (r.killSettled instanceof Promise) {
@@ -429,7 +430,9 @@ async function runLogout(profileId: string, runner: ClaudeCliAuthRunner): Promis
       env = Object.assign(withProfileHome({ ...process.env } as Record<string, string>, home, { launchId: 'auth-logout', cwd: runner.cwd, probe: true, projectGate }), process.platform === 'darwin' ? {} : { HOME: home })
     } catch (e) {
       logWarn(`[account-web] profile ${profileId}: the CLI sign-out was refused -- ${(e as Error)?.message ?? String(e)}. Nothing was run.`)
-      return refusedLogout('host-control')
+      // The project gate's refusal, or the environment could not be
+      // hardened: each says its own reason to the user.
+      return refusedLogout(projectGate?.status === 'refused' ? 'project-gate' : 'host-control')
     }
     // Asked again after every wait, immediately before the start: a session
     // opened on the profile meanwhile refuses the sign-out. The sessions are
@@ -443,8 +446,9 @@ async function runLogout(profileId: string, runner: ClaudeCliAuthRunner): Promis
     }
     if (out.timedOut) {
       // Its process tree has ended (awaited above). Whether it signed out is
-      // not known, and no status is read in its place.
-      removeProfileIdentityCredentials(profileId)
+      // not known, and no status is read in its place. The identity copy
+      // stays: a run stopped before it changed anything leaves the profile
+      // signed in, and that copy is what restores its identity.
       logInfo(`[account-web] ${profileId}: the claude CLI sign-out was stopped at its time limit; signed out is unconfirmed`)
       return { ran: true, after: null, timedOut: true }
     }

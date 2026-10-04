@@ -38,6 +38,7 @@ const profiles = await import('../../src/main/account-profiles')
 const consumers = await import('../../src/main/profile-consumers')
 const identity = await import('../../src/main/claude-account-identity')
 const { gateManagedLaunch, _resetProjectScanStateForTest } = await import('../../src/main/managed-launch-diagnostics')
+const { _resetProviderRegistryForTest } = await import('../../src/main/providers/core')
 
 const PRIMARY = 'profile-pri-000'
 const ID = 'profile-abc-123'
@@ -253,7 +254,8 @@ describe('logoutClaudeCli: the CLI\'s own sign-out in exactly this profile\'s ho
     expect(execCalls).toEqual([['claude', 'auth', 'status']])
   })
 
-  it('a sign-out stopped at its time limit: no status read, its process tree ended before it answers, unconfirmed in the log', async () => {
+  it('a sign-out stopped at its time limit: no status read, its process tree ended before it answers, unconfirmed in the log, the identity copy kept', async () => {
+    plantIdentity(ID)
     let killDone: () => void = () => {}
     const killSettled = new Promise<void>((res) => { killDone = res })
     const runner = fakeRunner((args) => (args.includes('logout') ? { exitCode: null, stdout: '', timedOut: true, killSettled } : signedOut()))
@@ -266,6 +268,8 @@ describe('logoutClaudeCli: the CLI\'s own sign-out in exactly this profile\'s ho
     killDone()
     expect(await run).toEqual({ ran: true, after: null, timedOut: true })
     expect(runner.calls.map((c) => c.args)).toEqual([['auth', 'logout']])
+    // Stopped before any result: what restores the profile's identity stays.
+    expect(fs.existsSync(identityCopy(ID)), 'a stopped sign-out removed the identity copy').toBe(true)
     await settle()
     expect(consumers.hasTransientProfileConsumer(ID)).toBe(false)
     expect(logs.info.some((l) => l.includes(ID) && l.includes('unconfirmed'))).toBe(true)
@@ -305,9 +309,16 @@ describe('logoutClaudeCli: the CLI\'s own sign-out in exactly this profile\'s ho
     const runner = fakeRunner()
     gateSeam.refuse = true
     _resetProjectScanStateForTest()
-    expect(await logoutClaudeCli(ID, { runner })).toEqual({ ran: false, after: null, refused: 'host-control' })
+    expect(await logoutClaudeCli(ID, { runner })).toEqual({ ran: false, after: null, refused: 'project-gate' })
     expect(consumers.hasTransientProfileConsumer(ID)).toBe(false)
     gateSeam.refuse = false
+    // An environment that cannot be hardened (no provider registered) is its own refusal, not the gate's.
+    _resetProviderRegistryForTest()
+    try {
+      expect(await logoutClaudeCli(ID, { runner })).toEqual({ ran: false, after: null, refused: 'host-control' })
+    } finally {
+      composeProviders()
+    }
     expect(await logoutClaudeCli('profile-not-there-1', { runner })).toEqual({ ran: false, after: null, refused: 'no-home' })
     for (const bad of ['../../etc', '', 'a b']) expect(await logoutClaudeCli(bad, { runner })).toEqual({ ran: false, after: null, refused: 'invalid-profile' })
     expect(runner.calls).toEqual([])
