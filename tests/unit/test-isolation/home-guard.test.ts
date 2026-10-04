@@ -2,19 +2,21 @@
 //
 // Covers the guard installed by tests/helpers/home-isolation.ts (setupFiles[0]) and
 // its plain-node twin tests/helpers/probe-guard.mjs: the home variables point at an
-// isolated folder, and every fs mutation or spawn aimed at a real home throws
-// TEST_ISOLATION_VIOLATION, whatever the import form or path spelling.
+// isolated folder, and the covered fs and spawn calls aimed at a real home throw
+// TEST_ISOLATION_VIOLATION, whatever the import form or path spelling; node children
+// load the guard too.
 //
 // Every real-home target below is harmless if the guard were missing: deletes and
 // renames name a random entry that does not exist, writes and creates go into a
 // random folder that does not exist (the call fails ENOENT and creates nothing),
-// copies and links read a source that does not exist, and spawns either run
-// `node -e 0` or fail on a missing working folder. The API is imported from the
-// core module, not from the setup entry, so a config without the setup runs these
-// tests unguarded and they fail.
+// copies and links read a source that does not exist, spawns either run
+// `node -e 0`, run a script that does not exist, or fail on a missing working
+// folder, and the fd checks run in a child whose "real" home is a scratch folder.
+// The API is imported from the core module, not from the setup entry, so a config
+// without the setup runs these tests unguarded and they fail.
 import { afterAll, describe, expect, it } from 'vitest'
 import fsDefault from 'fs'
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
 import * as fsNs from 'node:fs'
 import { rm as rmPromise } from 'fs/promises'
 import * as fsp from 'node:fs/promises'
@@ -26,13 +28,17 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
+import { Worker } from 'node:worker_threads'
 import {
   HOME_VARS,
   MARKER_ENV,
+  PROBE_GUARD_URL,
   VIOLATION_CODE,
+  XDG_VARS,
   createHomeChecker,
   deriveAccountProfilesRoots,
   drainViolations,
+  isReadOnlyFlag,
   isRealHomePath,
   isolatedProbeEnv,
   isolatedRoot,
@@ -43,8 +49,8 @@ import {
 
 const WIN = process.platform === 'win32'
 const FOLDS = WIN || process.platform === 'darwin'
-const PROBE_GUARD = path.resolve(__dirname, '../../helpers/probe-guard.mjs')
 const PROJECT_ROOT = path.resolve(__dirname, '../../..')
+const CORE_URL = pathToFileURL(path.resolve(__dirname, '../../helpers/home-guard-core.mjs')).href
 const requireCjs = createRequire(import.meta.url)
 const PTY_LOADS = ((): boolean => {
   try {
@@ -84,23 +90,19 @@ afterAll(() => {
 
 type Recorded = { op: string; target: string; root: string }
 
-/** Quiet whatever an unguarded call handed back (a child, a stream, a promise). */
+/** Quiet whatever an unguarded call handed back (a child, a stream, a worker, a promise). */
 function settle(result: unknown): void {
   if (!result || typeof result !== 'object') return
-  const r = result as { on?: unknown; kill?: unknown; destroy?: unknown; then?: unknown; catch?: unknown }
+  const r = result as { on?: unknown; kill?: unknown; destroy?: unknown; terminate?: unknown; then?: unknown; catch?: unknown }
   if (typeof r.on === 'function') (r.on as (e: string, f: () => void) => void).call(result, 'error', noop)
-  if (typeof r.kill === 'function') {
-    try {
-      ;(r.kill as () => void).call(result)
-    } catch {
-      /* already gone */
-    }
-  }
-  if (typeof r.destroy === 'function') {
-    try {
-      ;(r.destroy as () => void).call(result)
-    } catch {
-      /* already closed */
+  for (const m of ['kill', 'destroy', 'terminate'] as const) {
+    if (typeof r[m] === 'function') {
+      try {
+        const out = (r[m] as () => unknown).call(result)
+        if (out && typeof (out as Promise<unknown>).catch === 'function') (out as Promise<unknown>).catch(noop)
+      } catch {
+        /* already gone */
+      }
     }
   }
   if (typeof r.then === 'function' && typeof r.catch === 'function') (r.catch as (f: () => void) => void).call(result, noop)
@@ -155,13 +157,33 @@ function isDir(p: string): boolean {
     return false
   }
 }
-function readEnvFile(file: string): Record<string, string> {
-  const raw = JSON.parse(readFileSync(file, 'utf8')) as Record<string, string>
+function upperKeys(raw: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {}
   for (const [k, v] of Object.entries(raw)) out[WIN ? k.toUpperCase() : k] = v
   return out
 }
-const PRINT_ENV = 'require("fs").writeFileSync(process.argv[1], JSON.stringify(process.env))'
+
+/** Write a child script and its targets into a fresh scratch folder; return the script path. */
+function childScript(name: string, body: string, targets: Record<string, unknown>): string {
+  const dir = mkdtempSync(path.join(SCRATCH, `${name}-`))
+  writeFileSync(path.join(dir, 'targets.json'), JSON.stringify({ guardUrl: PROBE_GUARD_URL, coreUrl: CORE_URL, ...targets }))
+  const file = path.join(dir, 'child.mjs')
+  writeFileSync(file, ["import fs from 'node:fs'", "const t = JSON.parse(fs.readFileSync(new URL('./targets.json', import.meta.url), 'utf8'))", body].join('\n'))
+  return file
+}
+/** Run a child script; return its parsed stdout, status and stderr. */
+function runChild(file: string, opts: { env?: Record<string, string>; preload?: boolean } = {}) {
+  const args = opts.preload === false ? [file] : ['--import', PROBE_GUARD_URL, file]
+  const r = spawnSync(process.execPath, args, { env: opts.env ?? { ...MIN_ENV }, cwd: path.dirname(file), encoding: 'utf8', timeout: 60_000 })
+  let out: Record<string, unknown> = {}
+  try {
+    out = JSON.parse(r.stdout || '{}') as Record<string, unknown>
+  } catch {
+    out = { unparsed: r.stdout }
+  }
+  return { out, status: r.status, stderr: r.stderr }
+}
+const ATTEMPT = 'const out = {}; const attempt = async (name, fn) => { try { await fn(); out[name] = "no refusal" } catch (e) { out[name] = e && e.code } }'
 
 describe('the home variables point at an isolated folder', () => {
   it('points the six home variables, and os.homedir(), inside the isolated root', () => {
@@ -172,6 +194,10 @@ describe('the home variables point at an isolated folder', () => {
       expect(isDir(process.env[name] ?? ''), `${name} folder exists`).toBe(true)
     }
     expect(inside(os.homedir(), iso)).toBe(true)
+  })
+
+  it.runIf(!WIN)('points the XDG folders inside the isolated root too', () => {
+    for (const name of XDG_VARS) expect(inside(process.env[name], isolatedRoot()), `${name}=${process.env[name]}`).toBe(true)
   })
 
   it('knows the real home (the OS answer) and protects every captured root, and only those', () => {
@@ -239,8 +265,12 @@ describe('fs writes and creates aimed at a real home throw', () => {
     ['fs.openSync', () => fsNs.openSync(inMissing(), 'w')],
     ['fs.openSync', () => fsNs.openSync(inMissing(), 'a+')],
     ['fs.openSync', () => fsNs.openSync(inMissing(), fsNs.constants.O_WRONLY | fsNs.constants.O_CREAT)],
+    // 0x40 is _O_TEMPORARY (delete on close) on Windows and O_CREAT on Linux.
+    ['fs.openSync', () => fsNs.openSync(inMissing(), 0x40)],
+    ['fs.openSync', () => fsNs.openSync(inMissing(), 'x')],
     ['fs.open', () => fsNs.open(inMissing(), 'r+', noop)],
     ['fs.createWriteStream', () => fsNs.createWriteStream(inMissing())],
+    ['fs.mkdtempDisposableSync', () => (fsNs as unknown as { mkdtempDisposableSync: (p: string) => unknown }).mkdtempDisposableSync(inMissing() + '-')],
   ]
   it.each(cases)('%s', (op, run) => expectRefused(run, op))
 
@@ -253,6 +283,39 @@ describe('fs writes and creates aimed at a real home throw', () => {
     }
     expect(code).toBe('ENOENT')
     expect(drainViolations()).toEqual([])
+  })
+
+  it('read-only flags are an allow-list', () => {
+    for (const f of [undefined, 'r', 'rs', 'sr', 0]) expect(isReadOnlyFlag(f), String(f)).toBe(true)
+    for (const f of ['w', 'r+', 'a', 'as', 'wx', 'R', 'rw', 0x40, 1, 2, 0x100, 0x200, 8, {}, 1.5]) expect(isReadOnlyFlag(f), String(f)).toBe(false)
+  })
+})
+
+describe('reads with a write flag, and the other entry points, aimed at a real home throw', () => {
+  it.each<[string, () => unknown]>([
+    ['fs.readFileSync', () => fsNs.readFileSync(inMissing(), { flag: 'w' })],
+    ['fs.readFileSync', () => fsNs.readFileSync(inMissing(), { encoding: 'utf8', flag: 'w' })],
+    ['fs.readFileSync', () => fsNs.readFileSync(inMissing(), { flag: 0x40 as unknown as string })],
+    ['fs.readFile', () => fsNs.readFile(inMissing(), { flag: 'a' }, noop)],
+    ['fs.createReadStream', () => fsNs.createReadStream(inMissing(), { flags: 'w' })],
+  ])('%s', (op, run) => expectRefused(run, op))
+
+  it('fs.promises.readFile with a write flag', () => expectRejected(() => fsp.readFile(inMissing(), { flag: 'w' }), 'fs.promises.readFile'))
+  it('fs.promises.mkdtempDisposable', () =>
+    expectRejected(() => (fsp as unknown as { mkdtempDisposable: (p: string) => Promise<unknown> }).mkdtempDisposable(inMissing() + '-'), 'fs.promises.mkdtempDisposable'))
+
+  it('a URL-like object is read the way fs reads it (hostname + pathname), not by its href', () => {
+    const target = new URL(pathToFileURL(inMissing()).href)
+    const likeUrl = { href: pathToFileURL(path.join(SCRATCH, 'x')).href, protocol: 'file:', hostname: '', pathname: target.pathname }
+    expectRefused(() => writeFileSync(likeUrl as unknown as URL, 'x'), 'fs.writeFileSync')
+  })
+
+  it.each(['fs', 'fs_dir', 'spawn_sync', 'process_wrap'])("process.binding('%s') is refused", (name) => {
+    expectRefused(() => (process as unknown as { binding: (n: string) => unknown }).binding(name), 'process.binding')
+  })
+
+  it('a worker_threads Worker is refused (its builtins would be unguarded)', () => {
+    expectRefused(() => new Worker('0', { eval: true }), 'worker_threads.Worker')
   })
 })
 
@@ -304,6 +367,7 @@ describe('every import form sees the guard', () => {
       () => (requireCjs('child_process') as typeof cpNs).spawn(process.execPath, ['-e', '0'], { cwd: missing() }),
       'child_process.spawn cwd',
     ))
+  it("named import from 'node:worker_threads'", () => expectRefused(() => new Worker('0', { eval: true }), 'worker_threads.Worker'))
   it('util.promisify(execFile)', () =>
     expectRejected(() => promisify(execFile)(process.execPath, ['-e', '0'], { cwd: missing() }), 'child_process.execFile cwd'))
   it('util.promisify(exec)', () =>
@@ -326,6 +390,8 @@ describe('path spellings that reach a real home are refused', () => {
     ['a \\\\?\\ prefix', WIN, () => '\\\\?\\' + inMissing()],
     ['a \\\\.\\ prefix', WIN, () => '\\\\.\\' + inMissing()],
     ['a stream suffix', WIN, () => inMissing() + ':s'],
+    // Any UNC share fails closed (this one does not even exist).
+    ['a UNC path', WIN, () => `\\\\localhost\\ccc-iso-no-share-${TAG}\\f`],
   ]
   for (const [label, applies, target] of variants) {
     it.runIf(applies)(label, () => expectRefused(() => writeFileSync(target() as string, 'x'), 'fs.writeFileSync'))
@@ -346,13 +412,17 @@ describe('spawns that would act on a real home throw', () => {
     expectRefused(run, op)
   })
 
+  it.runIf(WIN)('a UNC working folder', () => {
+    expectRefused(() => spawnSync(process.execPath, ['-e', '0'], { cwd: `\\\\localhost\\ccc-iso-no-share-${TAG}` }), 'child_process.spawnSync cwd')
+  })
+
   it.runIf(PTY_LOADS)('node-pty spawn with a real-home cwd', async () => {
     expect(ptyGuarded()).toBe(true)
     const pty = await import('node-pty')
     expectRefused(() => pty.spawn(process.execPath, ['-e', '0'], { cwd: missing() }), 'node-pty.spawn cwd')
   })
 
-  it.each(HOME_VARS.map((n) => [n]))('an explicit env whose %s is in a real home', (name) => {
+  it.each([...HOME_VARS, ...XDG_VARS, 'TEMP', 'TMP', 'TMPDIR'].map((n) => [n]))('an explicit env whose %s is in a real home', (name) => {
     expectRefused(
       () => spawnSync(process.execPath, ['-e', '0'], { env: { ...MIN_ENV, [name]: missing() }, stdio: 'ignore' }),
       `child_process.spawnSync env ${name}`,
@@ -366,15 +436,29 @@ describe('spawns that would act on a real home throw', () => {
     )
   })
 
-  it.runIf(WIN && /^[a-z]:\\/i.test(REAL))('HOMEDRIVE + HOMEPATH naming a real home', () => {
+  it('a home variable inherited through the env prototype (Node reads it with for...in)', () => {
+    const env = Object.assign(Object.create({ CODEX_HOME: missing() }) as Record<string, string>, MIN_ENV)
+    expectRefused(() => spawnSync(process.execPath, ['-e', '0'], { env, stdio: 'ignore' }), 'child_process.spawnSync env CODEX_HOME')
+  })
+
+  it('a home variable that is not a string (Node coerces it)', () => {
+    const real = missing()
+    const env = { ...MIN_ENV, CODEX_HOME: { toString: () => real } } as unknown as NodeJS.ProcessEnv
+    expectRefused(() => spawnSync(process.execPath, ['-e', '0'], { env, stdio: 'ignore' }), 'child_process.spawnSync env CODEX_HOME')
+  })
+
+  it.runIf(WIN && /^[a-z]:\\/i.test(REAL))('HOMEDRIVE + HOMEPATH naming a real home, or HOMEPATH alone (the drive is filled)', () => {
     expectRefused(
-      () =>
-        spawnSync(process.execPath, ['-e', '0'], {
-          env: { ...MIN_ENV, HOMEDRIVE: REAL.slice(0, 2), HOMEPATH: REAL.slice(2) },
-          stdio: 'ignore',
-        }),
+      () => spawnSync(process.execPath, ['-e', '0'], { env: { ...MIN_ENV, HOMEDRIVE: REAL.slice(0, 2), HOMEPATH: REAL.slice(2) }, stdio: 'ignore' }),
       'child_process.spawnSync env HOMEDRIVE+HOMEPATH',
     )
+    const drive = (isolatedRoot() ?? '').slice(0, 2).toUpperCase()
+    if (drive === REAL.slice(0, 2).toUpperCase()) {
+      expectRefused(
+        () => spawnSync(process.execPath, ['-e', '0'], { env: { ...MIN_ENV, HOMEPATH: REAL.slice(2) }, stdio: 'ignore' }),
+        'child_process.spawnSync env HOMEDRIVE+HOMEPATH',
+      )
+    }
   })
 
   it('an inherited env whose HOME a test pointed at a real home', () => {
@@ -387,19 +471,29 @@ describe('spawns that would act on a real home throw', () => {
     }
   })
 
-  it.each<[string, () => string]>([
-    ['the real .claude', () => path.join(REAL, '.claude')],
-    ['the real .claude.json', () => path.join(REAL, '.claude.json')],
-    ['a file in the real .codex', () => path.join(REAL, '.codex', 'auth.json')],
-    ['the real credentials file', () => path.join(REAL, '.claude', '.credentials.json')],
-    ['the real home itself', () => REAL],
-    ['a --name=value option', () => '--settings=' + path.join(REAL, '.claude', 'settings.json')],
-    ['a ~ path', () => '~/.claude'],
-  ])('an argument naming %s', (_label, arg) => {
+  const user = path.basename(REAL)
+  it.each<[string, boolean, () => string]>([
+    ['the real .claude', true, () => path.join(REAL, '.claude')],
+    ['the real .claude.json', true, () => path.join(REAL, '.claude.json')],
+    ['a file in the real .codex', true, () => path.join(REAL, '.codex', 'auth.json')],
+    ['the real credentials file', true, () => path.join(REAL, '.claude', '.credentials.json')],
+    ['the real home itself', true, () => REAL],
+    ['any other path in the real home', true, () => path.join(missing(), 'Documents')],
+    ['a --name=value option, at any depth', true, () => '--cfg=k=' + path.join(REAL, '.claude', 'settings.json')],
+    ['a bracketed list', true, () => `writable_roots=["${path.join(REAL, '.codex')}"]`],
+    ['a long argument', true, () => 'x'.repeat(6000) + ' ' + path.join(REAL, '.claude')],
+    ['a glob into the real home', true, () => path.join(REAL, '.cl*')],
+    ['a glob that reaches the real home', true, () => path.join(path.dirname(REAL), user.slice(0, -1) + '*', '.claude')],
+    ['~user', /^[A-Za-z0-9._-]+$/.test(user), () => `~${user}/.claude`],
+    ['an MSYS spelling', WIN && /^[a-z]:\\/i.test(REAL), () => `/${REAL[0].toLowerCase()}/${REAL.slice(3).split('\\').join('/')}/.claude`],
+    ['a WSL spelling', WIN && /^[a-z]:\\/i.test(REAL), () => `/mnt/${REAL[0].toLowerCase()}/${REAL.slice(3).split('\\').join('/')}/.claude`],
+    ['a UNC spelling', WIN, () => `\\\\localhost\\ccc-iso-no-share-${TAG}\\.claude`],
+  ])('an argument naming %s', (_label, applies, arg) => {
+    if (!applies) return
     expectRefused(() => spawnSync(process.execPath, ['-e', '0', arg()], { stdio: 'ignore' }), 'child_process.spawnSync argv')
   })
 
-  it('a real-home config path inside a shell command line or an -e script', () => {
+  it('a real-home path inside a shell command line or an -e script', () => {
     expectRefused(
       () => execSync(`"${process.execPath}" -e 0 "${path.join(REAL, '.claude')}"`, { stdio: 'ignore' }),
       'child_process.execSync argv',
@@ -410,39 +504,65 @@ describe('spawns that would act on a real home throw', () => {
     )
   })
 
+  it('a node script in a real home outside its npm or nvm folder (the script does not exist)', () => {
+    expectRefused(() => spawnSync(process.execPath, [path.join(missing(), 'cli.js')], { stdio: 'ignore' }), 'child_process.spawnSync argv')
+    expectRefused(() => fork(path.join(missing(), 'cli.js'), [], { stdio: 'ignore' }), 'child_process.fork argv')
+  })
+
   it('an executable that lives under a real home may run (running a binary is not a mutation)', () => {
     const r = spawnSync(path.join(missing(), 'tool.exe'), [], { stdio: 'ignore' })
     expect((r.error as NodeJS.ErrnoException | undefined)?.code).toBe('ENOENT')
     expect(drainViolations()).toEqual([])
   })
 
-  it('an argument naming the isolated .claude is fine', () => {
-    const r = spawnSync(process.execPath, ['-e', '0', path.join(os.homedir(), '.claude')], { stdio: 'ignore' })
+  it('arguments naming the isolated home, ~ (the child HOME), URLs and scripts are fine', () => {
+    const args = ['-e', '0', path.join(os.homedir(), '.claude'), '~/.claude/x', 'https://example.com/a/b', 'http://127.0.0.1:1/mcp', '/* c */ a / b', 'tests/x', '/v', '/s', '/d']
+    const r = spawnSync(process.execPath, args, { stdio: 'ignore' })
     expect(r.status).toBe(0)
     expect(drainViolations()).toEqual([])
   })
 })
 
-describe('a spawn gets the isolated home, never the real one', () => {
-  it('an explicit env that omits the home variables gets the isolated ones filled in', () => {
+describe('a node child gets the guard, and the isolated home, never the real one', () => {
+  const PRINT = [
+    'const g = process[Symbol.for("ccc.test-home-guard.state")]',
+    "fs.writeFileSync(t.out, JSON.stringify({ env: process.env, guarded: !!g, entry: g ? g.entry : null }))",
+  ].join('\n')
+
+  it('an explicit env that omits the home variables gets the isolated ones; the guard preload and marker stay out of view', () => {
     const out = path.join(isolatedRoot() ?? SCRATCH, `env-${TAG}-explicit.json`)
-    const r = spawnSync(process.execPath, ['-e', PRINT_ENV, out], { env: { ...MIN_ENV } })
-    expect(r.status, String(r.stderr)).toBe(0)
-    const child = readEnvFile(out)
-    for (const name of ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA']) {
+    const r = runChild(childScript('print-explicit', PRINT, { out }), { preload: false })
+    expect(r.status, r.stderr).toBe(0)
+    const res = JSON.parse(readFileSync(out, 'utf8')) as { env: Record<string, string>; guarded: boolean; entry: string }
+    const child = upperKeys(res.env)
+    for (const name of ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'CODEX_HOME']) {
       expect(inside(child[name], isolatedRoot()), `${name}=${child[name]}`).toBe(true)
     }
-    // Unset, they fall back to the (isolated) HOME / USERPROFILE: left unset on purpose.
+    // Unset, it falls back to the (isolated) HOME; the managed launch strips it on purpose.
     expect(child.CLAUDE_CONFIG_DIR).toBeUndefined()
-    expect(child.CODEX_HOME).toBeUndefined()
+    expect(res.guarded).toBe(true)
+    expect(res.entry).toBe('probe')
+    expect(child.NODE_OPTIONS).toBeUndefined()
+    expect(child[MARKER_ENV]).toBeUndefined()
   })
 
   it('an inherited env carries the isolated values', () => {
     const out = path.join(isolatedRoot() ?? SCRATCH, `env-${TAG}-inherited.json`)
-    const r = spawnSync(process.execPath, ['-e', PRINT_ENV, out])
-    expect(r.status, String(r.stderr)).toBe(0)
-    const child = readEnvFile(out)
+    const file = childScript('print-inherited', PRINT, { out })
+    const r = spawnSync(process.execPath, [file], { encoding: 'utf8' })
+    expect(r.status, r.stderr).toBe(0)
+    const res = JSON.parse(readFileSync(out, 'utf8')) as { env: Record<string, string>; guarded: boolean }
+    const child = upperKeys(res.env)
     for (const name of HOME_VARS) expect(inside(child[name], isolatedRoot()), `${name}=${child[name]}`).toBe(true)
+    expect(res.guarded).toBe(true)
+  })
+
+  it('a node child that writes to the real home is refused in the child, and exits non-zero', () => {
+    const body = [ATTEMPT, 'await attempt("rmSync", () => fs.rmSync(t.del))', 'await attempt("writeFileSync", () => fs.writeFileSync(t.write, "x"))', 'process.stdout.write(JSON.stringify(out))'].join('\n')
+    const r = runChild(childScript('child-writes', body, { del: missing(), write: inMissing() }), { preload: false })
+    expect(r.out).toEqual({ rmSync: VIOLATION_CODE, writeFileSync: VIOLATION_CODE })
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain(VIOLATION_CODE)
   })
 })
 
@@ -466,8 +586,198 @@ describe('refusals are recorded', () => {
   })
 })
 
+describe('the guard in a plain-node child (probe-guard.mjs)', () => {
+  it('protects a home that only the environment names (an account-profiles USERPROFILE outside the OS profile)', () => {
+    // A folder at the drive root that does not exist and is never created.
+    const envHome = path.join(path.parse(PROJECT_ROOT).root, `ccc-iso-envhome-${TAG}`, 'account-profiles', 'p1')
+    const envCodex = path.join(path.parse(PROJECT_ROOT).root, `ccc-iso-envcodex-${TAG}`)
+    const body = [
+      'const g = await import(t.guardUrl)',
+      ATTEMPT,
+      'out.home = g.isRealHomePath(t.home); out.cred = g.isRealHomePath(t.cred); out.profiles = g.isRealHomePath(t.profiles); out.cfg = g.isRealHomePath(t.cfg); out.codex = g.isRealHomePath(t.codex)',
+      'await attempt("rmSync", () => fs.rmSync(t.del))',
+      'g.drainViolations()',
+      'process.stdout.write(JSON.stringify(out))',
+    ].join('\n')
+    const file = childScript('env-home', body, {
+      home: envHome,
+      cred: path.join(envHome, '.claude', '.credentials.json'),
+      profiles: path.join(path.dirname(envHome), 'p2'),
+      cfg: path.join(envHome, '.claude'),
+      del: path.join(envHome, `.ccc-iso-canary-${TAG}`),
+      codex: path.join(envCodex, 'auth.json'),
+    })
+    // On Windows the variable name is matched case-insensitively, as the OS does.
+    const codexKey = WIN ? 'codex_home' : 'CODEX_HOME'
+    const r = runChild(file, { env: { ...MIN_ENV, USERPROFILE: envHome, CLAUDE_CONFIG_DIR: path.join(envHome, '.claude'), [codexKey]: envCodex } })
+    expect(r.status, r.stderr).toBe(0)
+    expect(r.out).toEqual({ home: true, cred: true, profiles: true, cfg: true, codex: true, rmSync: VIOLATION_CODE })
+    expect(existsSync(path.dirname(path.dirname(envHome)))).toBe(false)
+    expect(existsSync(envCodex)).toBe(false)
+  })
+
+  it('refuses fd and FileHandle metadata calls on a real-home file opened read-only', () => {
+    // The child's "real" home is a scratch folder: HOME points there and its temp folder is elsewhere.
+    const sim = mkdtempSync(path.join(SCRATCH, 'simhome-'))
+    const home = path.join(sim, 'home')
+    const tmp = path.join(sim, 'tmp')
+    mkdirSync(home)
+    mkdirSync(tmp)
+    writeFileSync(path.join(home, 'f.txt'), 'x')
+    const body = [
+      'const g = await import(t.guardUrl)',
+      ATTEMPT,
+      'const fd = fs.openSync(t.homeFile, "r")',
+      'await attempt("fchmodSync", () => fs.fchmodSync(fd, 0o644))',
+      'await attempt("futimesSync", () => fs.futimesSync(fd, new Date(), new Date()))',
+      'await attempt("ftruncateSync", () => fs.ftruncateSync(fd, 0))',
+      'await attempt("fchmod", () => new Promise((res, rej) => fs.fchmod(fd, 0o644, (e) => (e ? rej(e) : res()))))',
+      'fs.closeSync(fd)',
+      // The next open usually reuses the closed fd number: a closed fd must be forgotten.
+      'const fdReuse = fs.openSync(t.tmpFile, "w")',
+      'await attempt("reused", () => fs.futimesSync(fdReuse, new Date(), new Date()))',
+      'fs.closeSync(fdReuse)',
+      'const fh = await fs.promises.open(t.homeFile, "r")',
+      'await attempt("fhChmod", () => fh.chmod(0o644))',
+      'await attempt("fhUtimes", () => fh.utimes(new Date(), new Date()))',
+      'await fh.close()',
+      'const fd2 = fs.openSync(t.tmpFile, "w")',
+      'await attempt("control", () => fs.futimesSync(fd2, new Date(), new Date()))',
+      'fs.closeSync(fd2)',
+      'out.recorded = g.drainViolations().length',
+      'process.stdout.write(JSON.stringify(out))',
+    ].join('\n')
+    const file = childScript('fd', body, { homeFile: path.join(home, 'f.txt'), tmpFile: path.join(tmp, 'g.txt') })
+    const marker = JSON.stringify({ v: 1, real: [], tmp: [tmp], inst: [] })
+    const r = runChild(file, { env: { ...MIN_ENV, HOME: home, USERPROFILE: home, TEMP: tmp, TMP: tmp, TMPDIR: tmp, [MARKER_ENV]: marker } })
+    expect(r.status, r.stderr).toBe(0)
+    expect(r.out).toEqual({
+      fchmodSync: VIOLATION_CODE,
+      futimesSync: VIOLATION_CODE,
+      ftruncateSync: VIOLATION_CODE,
+      fchmod: VIOLATION_CODE,
+      reused: 'no refusal',
+      fhChmod: VIOLATION_CODE,
+      fhUtimes: VIOLATION_CODE,
+      control: 'no refusal',
+      recorded: 6,
+    })
+  })
+
+  it('isolating fails loudly when os.homedir() does not follow the redirect', () => {
+    const body = [
+      'const g = await import(t.coreUrl)',
+      "const os = (await import('node:os')).default",
+      'os.homedir = () => t.elsewhere',
+      'let result = "no throw"',
+      'try { g.installHomeGuard({ entry: "vitest", isolate: true }) } catch (e) { result = e && e.message && e.message.includes("home isolation did not take effect") ? "threw" : String(e) }',
+      'process.stdout.write(JSON.stringify({ result }))',
+    ].join('\n')
+    const r = runChild(childScript('homedir', body, { elsewhere: path.join(SCRATCH, 'not-the-isolated-home') }))
+    expect(r.status, r.stderr).toBe(0)
+    expect(r.out).toEqual({ result: 'threw' })
+  })
+
+  it('a forged marker cannot make the real home, or a folder in it, a temp or isolated folder', () => {
+    // Neither folder exists; the deletes name entries inside them.
+    const sub = path.join(REAL, `.ccc-iso-forged-${TAG}`)
+    const iso = path.join(REAL, `.ccc-iso-forged-iso-${TAG}`)
+    const body = [
+      'const g = await import(t.guardUrl)',
+      ATTEMPT,
+      'await attempt("home", () => fs.rmSync(t.del))',
+      'await attempt("tmpInHome", () => fs.rmSync(t.delSub))',
+      'await attempt("isolatedInHome", () => fs.rmSync(t.delIso))',
+      'g.drainViolations()',
+      'process.stdout.write(JSON.stringify(out))',
+    ].join('\n')
+    const file = childScript('forged', body, { del: missing(), delSub: path.join(sub, 'c'), delIso: path.join(iso, 'c') })
+    for (const isolated of [REAL, iso]) {
+      const marker = JSON.stringify({ v: 1, real: [], tmp: [REAL, sub], inst: [], isolated })
+      const r = runChild(file, { env: { ...MIN_ENV, [MARKER_ENV]: marker } })
+      expect(r.status, r.stderr).toBe(0)
+      expect(r.out, isolated).toEqual({ home: VIOLATION_CODE, tmpInHome: VIOLATION_CODE, isolatedInHome: VIOLATION_CODE })
+    }
+    expect(existsSync(sub) || existsSync(iso)).toBe(false)
+  })
+
+  it('a child marker always carries the parent real homes, merged into one the caller passed', () => {
+    const body = ['const st = process[Symbol.for("ccc.test-home-guard.state")]', 'process.stdout.write(JSON.stringify({ marker: st ? st.markerRaw : null }))'].join('\n')
+    const given = path.join(SCRATCH, 'given-real')
+    const r = runChild(childScript('merge', body, {}), { env: { ...MIN_ENV, [MARKER_ENV]: JSON.stringify({ v: 1, real: [given], tmp: [], inst: [] }) } })
+    expect(r.status, r.stderr).toBe(0)
+    const marker = JSON.parse(String(r.out.marker)) as { real: string[] }
+    const got = marker.real.map(norm)
+    expect(got).toContain(norm(given))
+    for (const root of realHomeRoots()) expect(got, root).toContain(norm(root))
+  })
+
+  it('with no isolated home to fill: a child env without HOME is refused, and on Windows a missing USERPROFILE takes the live value libuv copies in, which is checked', () => {
+    const tmpHome = mkdtempSync(path.join(SCRATCH, 'tmphome-'))
+    const drive = WIN ? { HOMEDRIVE: tmpHome.slice(0, 2), HOMEPATH: tmpHome.slice(2) } : {}
+    const body = [
+      'const g = await import(t.guardUrl)',
+      ATTEMPT,
+      "const { spawnSync } = await import('node:child_process')",
+      'const base = { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot }',
+      'await attempt("noHome", () => spawnSync(process.execPath, ["-e", "0"], { cwd: t.tmpHome, env: { ...base, ...t.drive, USERPROFILE: t.tmpHome, APPDATA: t.tmpHome, LOCALAPPDATA: t.tmpHome } }))',
+      'await attempt("noProfile", () => spawnSync(process.execPath, ["-e", "0"], { cwd: t.tmpHome, env: { ...base, ...t.drive, HOME: t.tmpHome, APPDATA: t.tmpHome, LOCALAPPDATA: t.tmpHome } }))',
+      'g.drainViolations()',
+      'process.stdout.write(JSON.stringify(out))',
+    ].join('\n')
+    // A marker naming no isolated root: the child has no isolated home to fill in.
+    const r = runChild(childScript('fallback', body, { tmpHome, drive }), { env: { ...MIN_ENV, [MARKER_ENV]: JSON.stringify({ v: 1, real: [], tmp: [], inst: [] }) } })
+    expect(r.status, r.stderr).toBe(0)
+    expect(r.out).toEqual({ noHome: VIOLATION_CODE, noProfile: WIN ? VIOLATION_CODE : 'no refusal' })
+  })
+
+  it("a node script in a real home's npm folder may run; a script elsewhere in that home may not", () => {
+    // The child's "real" home is a scratch folder holding an npm folder.
+    const sim = mkdtempSync(path.join(SCRATCH, 'instsim-'))
+    const home = path.join(sim, 'home')
+    const tmp = path.join(sim, 'tmp')
+    const npm = path.join(home, 'npm')
+    mkdirSync(npm, { recursive: true })
+    mkdirSync(tmp)
+    writeFileSync(path.join(npm, 'ok.cjs'), '')
+    writeFileSync(path.join(home, 'other.cjs'), '')
+    const inner: Record<string, string> = { ...MIN_ENV, HOME: tmp, USERPROFILE: tmp, APPDATA: tmp, LOCALAPPDATA: tmp, TEMP: tmp, TMP: tmp, TMPDIR: tmp }
+    if (WIN) Object.assign(inner, { HOMEDRIVE: tmp.slice(0, 2), HOMEPATH: tmp.slice(2) })
+    const body = [
+      'const g = await import(t.guardUrl)',
+      ATTEMPT,
+      "const { spawnSync } = await import('node:child_process')",
+      'await attempt("installed", () => { const r = spawnSync(process.execPath, [t.ok], { env: t.inner, cwd: t.tmp, encoding: "utf8" }); if (r.status !== 0) throw new Error("exit " + r.status + " " + r.stderr) })',
+      'await attempt("elsewhere", () => spawnSync(process.execPath, [t.other], { env: t.inner, cwd: t.tmp }))',
+      'g.drainViolations()',
+      'process.stdout.write(JSON.stringify(out))',
+    ].join('\n')
+    const file = childScript('install', body, { ok: path.join(npm, 'ok.cjs'), other: path.join(home, 'other.cjs'), inner, tmp })
+    const marker = JSON.stringify({ v: 1, real: [], tmp: [tmp], inst: [npm] })
+    const r = runChild(file, { env: { ...MIN_ENV, HOME: home, USERPROFILE: home, TEMP: tmp, TMP: tmp, TMPDIR: tmp, [MARKER_ENV]: marker } })
+    expect(r.status, r.stderr).toBe(0)
+    expect(r.out).toEqual({ installed: 'no refusal', elsewhere: VIOLATION_CODE })
+  })
+
+  it('upgrades a probe-entry guard when the vitest entry loads later in the same process', () => {
+    const body = [
+      'const g = await import(t.coreUrl)',
+      'const before = g.guardEntry()',
+      'let unisolated = "no throw"; try { g.assertHomeIsolated() } catch (e) { unisolated = "threw" }',
+      'g.installHomeGuard({ entry: "vitest", isolate: true })',
+      'let isolated = "ok"; try { g.assertHomeIsolated() } catch (e) { isolated = String(e.message) }',
+      'const os = await import("node:os")',
+      'process.stdout.write(JSON.stringify({ before, unisolated, after: g.guardEntry(), isolated, homeInside: os.homedir().toLowerCase().startsWith(String(g.isolatedRoot()).toLowerCase()) }))',
+    ].join('\n')
+    // A marker naming no isolated root: the child starts guarded but not isolated.
+    const r = runChild(childScript('upgrade', body, {}), { env: { ...MIN_ENV, [MARKER_ENV]: JSON.stringify({ v: 1, real: [], tmp: [], inst: [] }) } })
+    expect(r.status, r.stderr).toBe(0)
+    expect(r.out).toEqual({ before: 'probe', unisolated: 'threw', after: 'vitest', isolated: 'ok', homeInside: true })
+  })
+})
+
 describe('the pure checker (simulated roots, any host)', () => {
-  type FakeStat = { isSymbolicLink: () => boolean }
+  type FakeStat = { isSymbolicLink: () => boolean; isDirectory: () => boolean }
   // A tiny win32-flavoured fake filesystem: folders that exist and links (target strings).
   function fakeFs(dirs: string[], links: Record<string, string> = {}) {
     const key = (p: string): string => p.replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase()
@@ -487,10 +797,10 @@ describe('the pure checker (simulated roots, any host)', () => {
     }
     return {
       lstatSync: (p: string): FakeStat | undefined => {
-        if (linkMap.has(key(p))) return { isSymbolicLink: () => true }
+        if (linkMap.has(key(p))) return { isSymbolicLink: () => true, isDirectory: () => false }
         try {
           realpathSync(p)
-          return { isSymbolicLink: () => false }
+          return { isSymbolicLink: () => false, isDirectory: () => true }
         } catch {
           return undefined
         }
@@ -501,16 +811,22 @@ describe('the pure checker (simulated roots, any host)', () => {
         if (t === undefined) throw Object.assign(new Error('EINVAL'), { code: 'EINVAL' })
         return t
       },
+      readdirSync: (p: string): string[] => {
+        const k = key(p)
+        return [...dirSet, ...linkMap.keys()].filter((e) => e.startsWith(k + '\\') && !e.slice(k.length + 1).includes('\\')).map((e) => e.slice(k.length + 1))
+      },
     }
   }
 
   const win = createHomeChecker({
     platform: 'win32',
-    realRoots: ['C:\\Users\\alice'],
+    realRoots: ['C:\\Users\\alice', 'C:\\Users\\John Smith'],
+    userNames: ['alice'],
     allowedRoots: [
       { path: 'C:\\Users\\alice\\AppData\\Local\\Temp', kind: 'tmp' },
       { path: 'C:\\Users\\alice\\src\\repo', kind: 'project' },
     ],
+    installRoots: ['C:\\Users\\alice\\AppData\\Roaming\\npm'],
     fsImpl: fakeFs([]),
     cwd: () => 'C:\\work',
   })
@@ -529,11 +845,15 @@ describe('the pure checker (simulated roots, any host)', () => {
     ['\\??\\', '\\??\\C:\\Users\\alice\\x'],
     ['\\\\?\\UNC admin share', '\\\\?\\UNC\\localhost\\C$\\Users\\alice\\x'],
     ['an admin share by address', '\\\\127.0.0.1\\c$\\users\\alice\\x'],
+    ['any UNC share', '\\\\localhost\\Users\\alice\\x'],
+    ['a UNC share with forward slashes', '//server/share/x'],
     ['an unmappable device path', '\\\\?\\Volume{01234567-89ab-cdef-0123-456789abcdef}\\x'],
     ['a file: URL string', 'file:///C:/Users/alice/x'],
     ['a file: URL object', new URL('file:///C:/Users/alice/x')],
+    ['a URL-like object read by hostname and pathname', { href: 'file:///D:/safe', protocol: 'file:', hostname: '', pathname: '/C:/Users/alice/x' }],
     ['a Buffer', Buffer.from('C:\\Users\\alice\\x')],
     ['a relative path', '..\\Users\\alice\\x'],
+    ['a root with a space', 'C:\\Users\\John Smith\\x'],
   ])('win32 protects %s', (_label, input) => {
     expect(win.isProtected(input)).toBe(true)
   })
@@ -548,6 +868,76 @@ describe('the pure checker (simulated roots, any host)', () => {
     ['another drive', 'D:\\x'],
   ])('win32 allows %s', (_label, input) => {
     expect(win.isProtected(input)).toBe(false)
+  })
+
+  it.each<[string]>([
+    ['C:\\Users\\alice\\.claude'],
+    ['C:\\Users\\alice\\Documents\\x'],
+    ['C:\\Users\\alice'],
+    ['C:\\Users\\alice\\.cl*'],
+    ['C:\\Users\\ali*\\.claude'],
+    ['C:\\Users\\{alice,bob}\\x'],
+    ['~alice/.claude'],
+    ['/c/Users/alice/.claude'],
+    ['/mnt/c/Users/alice/x'],
+    ['/cygdrive/c/users/alice'],
+    ['\\\\localhost\\Users\\alice\\.claude'],
+    ['//localhost/Users/alice'],
+    ['--cfg=k=C:\\Users\\alice\\.claude'],
+    ['writable_roots=["C:\\Users\\alice\\.codex"]'],
+    ['cd /d "C:\\Users\\John Smith\\x" && del y'],
+    ['"C:\\Users\\John Smith\\Docs"'],
+    ['C:\\Users\\alice\\src\\repo\\..\\..\\.claude'],
+    ['file:///C:/Users/alice/x'],
+    ['void "C:\\\\Users\\\\alice\\\\.codex"'],
+    ['"\\\\localhost\\share\\x"'],
+  ])('win32 argument %s is refused', (arg) => {
+    expect(win.argHit(arg, 'C:\\work')).not.toBeNull()
+    expect(win.argHit('x'.repeat(5000) + ' ' + arg, 'C:\\work'), 'after a long prefix').not.toBeNull()
+  })
+
+  it.each<[string]>([
+    ['-e'],
+    ['console.log(1/2)'],
+    ['/* comment */ x'],
+    ['C:\\Users\\alice\\AppData\\Local\\Temp\\x'],
+    ['C:\\Users\\alice\\src\\repo\\tests\\x.ts'],
+    ['C:\\Users\\bob\\.claude'],
+    ['C:\\Users\\alicex\\y'],
+    ['https://example.com/users/alice'],
+    ['https://example.com/a/b'],
+    ['--url=wss://h/x'],
+    ['http://127.0.0.1:3000/mcp'],
+    ['--registry=https://registry.npmjs.org/'],
+    ['x.replace(/\\\\\\\\/g, "/")'],
+    ['"\\\\\\\\server\\\\share"'],
+    ['~/.claude/statusline.sh'],
+    ['~~x'],
+    ['/c'],
+    ['D:\\Users\\alice\\x'],
+    ['\\\\.\\pipe\\x'],
+    ['require("path").join(__dirname, "..")'],
+    ['require("fs").writeFileSync("C:\\\\Users\\\\alice\\\\AppData\\\\Local\\\\Temp\\\\x", "x")'],
+    ['"C:\\\\Users\\\\alice\\\\src\\\\repo\\\\tests\\\\x.ts"'],
+  ])('win32 argument %s is allowed', (arg) => {
+    expect(win.argHit(arg, 'C:\\work')).toBeNull()
+  })
+
+  it('a /v switch read as drive V: (a mapped network share) is no refusal; V:\\x as written is', () => {
+    const c = createHomeChecker({
+      platform: 'win32',
+      realRoots: ['C:\\Users\\alice'],
+      fsImpl: fakeFs(['C:\\', '\\\\server\\share'], { 'V:\\': '\\\\server\\share' }),
+      cwd: () => 'C:\\work',
+    })
+    expect(c.argHit('/v', 'C:\\work')).toBeNull()
+    expect(c.argHit('V:\\x', 'C:\\work')).not.toBeNull()
+  })
+
+  it('a script in a real home counts as installed only inside its npm or nvm folder', () => {
+    expect(win.inInstallRoot('C:\\Users\\alice\\AppData\\Roaming\\npm\\node_modules\\x\\cli.js')).toBe(true)
+    expect(win.inInstallRoot('C:\\Users\\alice\\AppData\\Roaming\\npm-x\\cli.js')).toBe(false)
+    expect(win.inInstallRoot('C:\\Users\\alice\\x.js')).toBe(false)
   })
 
   it('a link from an allowed folder into a real home is followed (live, dangling, \\\\?\\ junction)', () => {
@@ -568,19 +958,37 @@ describe('the pure checker (simulated roots, any host)', () => {
     expect(c.isProtected('C:\\T\\plain\\f')).toBe(false)
   })
 
-  it('the more specific root wins; on a tie temp wins and the project root does not', () => {
+  it('a recursive copy destination holding a link into a real home is caught', () => {
+    const fake = fakeFs(['C:\\', 'C:\\Users', 'C:\\Users\\alice', 'C:\\T', 'C:\\T\\dest', 'C:\\T\\dest\\sub', 'C:\\T\\clean', 'C:\\T\\clean\\sub'], {
+      'C:\\T\\dest\\sub\\lnk': 'C:\\Users\\alice',
+    })
+    const c = createHomeChecker({ platform: 'win32', realRoots: ['C:\\Users\\alice'], allowedRoots: [{ path: 'C:\\T', kind: 'tmp' }], fsImpl: fake, cwd: () => 'C:\\T' })
+    expect(c.treeHit('C:\\T\\dest')).not.toBeNull()
+    expect(c.treeHit('C:\\T\\clean')).toBeNull()
+    expect(c.treeHit('C:\\T\\absent')).toBeNull()
+  })
+
+  it('the more specific root wins; on a tie only the isolated root does', () => {
     const nested = createHomeChecker({ platform: 'win32', realRoots: ['C:\\T\\cfg'], allowedRoots: [{ path: 'C:\\T', kind: 'tmp' }], fsImpl: fakeFs([]) })
     expect(nested.isProtected('C:\\T\\cfg\\x')).toBe(true)
     expect(nested.isProtected('C:\\T\\y')).toBe(false)
-    const tieProject = createHomeChecker({ platform: 'win32', realRoots: ['C:\\R'], allowedRoots: [{ path: 'C:\\R', kind: 'project' }], fsImpl: fakeFs([]) })
-    expect(tieProject.isProtected('C:\\R\\x')).toBe(true)
-    const tieTmp = createHomeChecker({ platform: 'win32', realRoots: ['C:\\R'], allowedRoots: [{ path: 'C:\\R', kind: 'tmp' }], fsImpl: fakeFs([]) })
-    expect(tieTmp.isProtected('C:\\R\\x')).toBe(false)
+    for (const kind of ['project', 'tmp'] as const) {
+      const tie = createHomeChecker({ platform: 'win32', realRoots: ['C:\\R'], allowedRoots: [{ path: 'C:\\R', kind }], fsImpl: fakeFs([]) })
+      expect(tie.isProtected('C:\\R\\x'), kind).toBe(true)
+    }
+    const tieIso = createHomeChecker({ platform: 'win32', realRoots: ['C:\\R'], allowedRoots: [{ path: 'C:\\R', kind: 'isolated' }], fsImpl: fakeFs([]) })
+    expect(tieIso.isProtected('C:\\R\\x')).toBe(false)
   })
 
-  it('posix compares case-sensitively, darwin folds case', () => {
+  it('posix compares case-sensitively, darwin folds case; arguments are checked the same way', () => {
     const none = { lstatSync: () => undefined, realpathSync: () => { throw new Error('ENOENT') }, readlinkSync: () => { throw new Error('EINVAL') } }
-    const roots = { realRoots: ['/home/bob'], allowedRoots: [{ path: '/tmp', kind: 'tmp' as const }, { path: '/home/bob/work/repo', kind: 'project' as const }], fsImpl: none, cwd: () => '/' }
+    const roots = {
+      realRoots: ['/home/bob'],
+      userNames: ['bob'],
+      allowedRoots: [{ path: '/tmp', kind: 'tmp' as const }, { path: '/home/bob/work/repo', kind: 'project' as const }],
+      fsImpl: none,
+      cwd: () => '/home/bob/work/repo',
+    }
     const linux = createHomeChecker({ ...roots, platform: 'linux' })
     expect(linux.isProtected('/home/bob/.claude/x')).toBe(true)
     expect(linux.isProtected('/home/bob/work/repo/tests/x')).toBe(false)
@@ -588,38 +996,8 @@ describe('the pure checker (simulated roots, any host)', () => {
     expect(linux.isProtected('/tmp/x')).toBe(false)
     expect(linux.isProtected('/HOME/bob/x')).toBe(false)
     expect(createHomeChecker({ ...roots, platform: 'darwin' }).isProtected('/HOME/bob/x')).toBe(true)
-  })
-
-  it('an argument names a real home configuration only when it is one', () => {
-    const c = createHomeChecker({
-      platform: 'win32',
-      realRoots: ['C:\\Users\\alice', 'D:\\cfg\\claude', 'E:\\res\\account-profiles'],
-      configRoots: ['D:\\cfg\\claude', 'E:\\res\\account-profiles'],
-      allowedRoots: [{ path: 'C:\\Users\\alice\\AppData\\Local\\Temp', kind: 'tmp' }],
-      fsImpl: fakeFs([]),
-      cwd: () => 'C:\\work',
-    })
-    for (const hit of [
-      'C:\\Users\\alice\\.claude',
-      'C:\\Users\\alice\\.claude.json',
-      'C:\\Users\\alice\\.codex\\auth.json',
-      'C:\\Users\\alice',
-      'C:\\Users\\alice\\x\\.credentials.json',
-      '~/.claude',
-      'D:\\cfg\\claude\\settings.json',
-      'E:\\res\\account-profiles\\p-1',
-    ]) {
-      expect(c.configHit(hit), hit).not.toBeNull()
-    }
-    for (const miss of [
-      'C:\\Users\\alice\\AppData\\Local\\Temp\\home\\.claude\\.credentials.json',
-      'C:\\Users\\alice\\work\\.claude',
-      'C:\\Users\\alice\\AppData\\Local\\Programs\\tool.exe',
-      'C:\\Users\\bob\\.claude',
-      'C:\\elsewhere\\account-profiles\\p-1',
-    ]) {
-      expect(c.configHit(miss), miss).toBeNull()
-    }
+    for (const a of ['/home/bob/.claude', '~bob/.claude', 'PATH=/bin:/home/bob/.codex', '/home/bob', '/home/*', '../../.claude']) expect(linux.argHit(a, '/home/bob/work/repo'), a).not.toBeNull()
+    for (const a of ['/home/bob/work/repo/tests/x', '/tmp/x', '/usr/bin/git', 'a / b', 'http://x/y', '~/.claude']) expect(linux.argHit(a, '/home/bob/work/repo'), a).toBeNull()
   })
 
   it('an account-profiles folder above a real root is a real root too', () => {
@@ -629,18 +1007,19 @@ describe('the pure checker (simulated roots, any host)', () => {
 })
 
 describe('probes: isolatedProbeEnv and probe-guard.mjs', () => {
-  it('builds a FRESH env: nothing inherited but the essentials, the six home variables inside the root', () => {
+  it('builds a FRESH env: nothing inherited but the essentials, the home variables inside the root, the guard preloaded', () => {
     const root = mkdtempSync(path.join(SCRATCH, 'probe-env-'))
     process.env.CCC_ISO_SENTINEL = 'inherited'
     try {
       const env = isolatedProbeEnv(root)
       expect(env.CCC_ISO_SENTINEL).toBeUndefined()
-      const allowed = new Set(['PATH', 'PATHEXT', 'SYSTEMROOT', 'SYSTEMDRIVE', 'WINDIR', 'COMSPEC', 'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'TZ', 'TERM', 'HOMEDRIVE', 'HOMEPATH', MARKER_ENV, ...HOME_VARS])
+      const allowed = new Set(['PATH', 'PATHEXT', 'SYSTEMROOT', 'SYSTEMDRIVE', 'WINDIR', 'COMSPEC', 'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'TZ', 'TERM', 'HOMEDRIVE', 'HOMEPATH', 'NODE_OPTIONS', MARKER_ENV, ...HOME_VARS, ...XDG_VARS])
       for (const k of Object.keys(env)) expect(allowed.has(k.toUpperCase()) || allowed.has(k), k).toBe(true)
       for (const name of HOME_VARS) {
         expect(inside(env[name], root), `${name}=${env[name]}`).toBe(true)
         expect(isDir(env[name]), name).toBe(true)
       }
+      expect(env.NODE_OPTIONS).toBe(`--import=${PROBE_GUARD_URL}`)
       const marker = JSON.parse(env[MARKER_ENV]) as { real: string[]; isolated: string }
       expect(marker.real.map(norm)).toContain(norm(REAL))
       expect(norm(marker.isolated)).toBe(norm(root))
@@ -674,13 +1053,13 @@ describe('probes: isolatedProbeEnv and probe-guard.mjs', () => {
   it('refuses the same operations in a plain-node probe, and hands its children the probe home', () => {
     const root = mkdtempSync(path.join(SCRATCH, 'probe-'))
     const t = {
-      guardUrl: pathToFileURL(PROBE_GUARD).href,
+      guardUrl: PROBE_GUARD_URL,
       del: missing(),
       write: inMissing(),
       cwd: missing(),
       envHome: missing(),
       argv: path.join(REAL, '.claude'),
-      printEnv: PRINT_ENV,
+      printEnv: 'require("fs").writeFileSync(process.argv[1], JSON.stringify(process.env))',
       out: path.join(root, 'child-env.json'),
       results: path.join(root, 'results.json'),
     }
@@ -703,8 +1082,7 @@ describe('probes: isolatedProbeEnv and probe-guard.mjs', () => {
       spawnArgv: VIOLATION_CODE,
     })
     expect(res.recorded).toBe(6)
-    const child: Record<string, string> = {}
-    for (const [k, v] of Object.entries(res.childEnv)) child[WIN ? k.toUpperCase() : k] = v
+    const child = upperKeys(res.childEnv)
     for (const name of ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA']) expect(inside(child[name], root), `${name}=${child[name]}`).toBe(true)
   })
 
@@ -715,7 +1093,7 @@ describe('probes: isolatedProbeEnv and probe-guard.mjs', () => {
       path.join(root, 'probe.mjs'),
       "import fs from 'node:fs'\nconst t = fs.readFileSync(new URL('./target.txt', import.meta.url), 'utf8')\ntry { fs.rmSync(t) } catch { /* swallowed */ }\n",
     )
-    const r = spawnSync(process.execPath, ['--import', pathToFileURL(PROBE_GUARD).href, path.join(root, 'probe.mjs')], {
+    const r = spawnSync(process.execPath, ['--import', PROBE_GUARD_URL, path.join(root, 'probe.mjs')], {
       env: isolatedProbeEnv(root),
       cwd: root,
       encoding: 'utf8',

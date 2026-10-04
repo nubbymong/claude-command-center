@@ -6,11 +6,14 @@
 // above its imports, and an import-sorting edit could move it; the setupFiles order
 // is the one ordering vitest guarantees.
 //
-// It points the home variables (HOME_VARS in home-guard-core.mjs, and HOMEDRIVE/HOMEPATH
-// on Windows) at a fresh folder per worker, re-asserts them
-// before every test, and installs the guard in home-guard-core.mjs: an fs mutation
-// or a spawn that would act on a real home throws TEST_ISOLATION_VIOLATION, and a
-// refusal the code under test catches still fails the test in afterEach.
+// It points the home variables (HOME_VARS in home-guard-core.mjs; HOMEDRIVE/HOMEPATH
+// on Windows, the XDG folders elsewhere) at a fresh folder per worker, re-asserts
+// them before every test, and installs the guard in home-guard-core.mjs. That file
+// lists what the guard covers and what it does not. A refusal the code under test
+// catches still fails the test in afterEach. Installing fails loudly if os.homedir()
+// is not inside the isolated folder afterwards (a worker THREAD keeps its own copy
+// of the environment: vitest.config.ts pins pool 'forks', and the native config
+// already runs in forks).
 //
 // Not loaded by vitest.live.config.ts (the live SSH pack runs real ssh with the
 // user's real keys) or by Playwright.

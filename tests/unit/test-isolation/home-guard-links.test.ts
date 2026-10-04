@@ -39,4 +39,15 @@ describe('[CI] [VM] a real link out of an allowed folder is followed', () => {
   it('but not into a plain folder beside it', () => {
     expect(c.isProtected(path.join(allowed, 'plain', 'f'))).toBe(false)
   })
+
+  it('a recursive copy destination holding a link into the home is caught; a plain one is not', () => {
+    const dest = path.join(base, 'dest')
+    const plain = path.join(base, 'plain-dest')
+    mkdirSync(path.join(dest, 'sub'), { recursive: true })
+    mkdirSync(path.join(plain, 'sub'), { recursive: true })
+    symlinkSync(fakeHome, path.join(dest, 'sub', 'lnk'), 'junction')
+    const t = createHomeChecker({ realRoots: [fakeHome], allowedRoots: [{ path: base, kind: 'tmp' }] })
+    expect(t.treeHit(dest)).not.toBeNull()
+    expect(t.treeHit(plain)).toBeNull()
+  })
 })

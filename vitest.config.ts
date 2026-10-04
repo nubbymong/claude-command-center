@@ -20,6 +20,9 @@ export default defineConfig({
     environment: 'node',
     // home-isolation FIRST: tests never act on a real home (tests/helpers/home-isolation.ts).
     setupFiles: ['tests/helpers/home-isolation.ts', 'tests/unit/setup.ts'],
+    // Forks, not worker threads: a worker thread keeps its own copy of the environment,
+    // so the home redirect above would not reach os.homedir() (home-isolation.ts checks).
+    pool: 'forks',
     // Sweeps orphaned per-worker temp roots + a stray drive-root \mock (#559).
     globalSetup: ['tests/global-setup.ts'],
     // Integration tests (e.g. hooks synthetic path) spin up a real loopback

@@ -4,51 +4,79 @@
 //   - tests/helpers/home-isolation.ts (vitest setupFiles[0]) points the home
 //     variables at a per-worker folder and installs the guard;
 //   - tests/helpers/probe-guard.mjs (`node --import`) installs the same guard in a
-//     plain-node probe or fake CLI started with isolatedProbeEnv(root).
+//     plain-node probe or fake CLI. Every node child of a guarded process loads it
+//     too: the spawn check adds `--import=<probe-guard URL>` to the child's
+//     NODE_OPTIONS, and the child removes it from its own view at start.
 // Plain JS so node can load it without a TypeScript loader.
 //
-// The guard captures the REAL home roots once (HOME, USERPROFILE, APPDATA,
-// LOCALAPPDATA, CLAUDE_CONFIG_DIR, CODEX_HOME, HOMEDRIVE+HOMEPATH, os.homedir() and
-// os.userInfo().homedir, which ignores the environment, plus any account-profiles
-// folder above one of them). From then on these throw TEST_ISOLATION_VIOLATION:
-//   - every fs delete, move, write or create whose target resolves inside a real
-//     home (sync, callback and fs.promises forms);
-//   - every child_process / node-pty spawn whose cwd, or whose HOME, USERPROFILE,
-//     APPDATA, LOCALAPPDATA, CLAUDE_CONFIG_DIR or CODEX_HOME value, resolves inside
-//     a real home, or whose arguments name a real home or its Claude/Codex config.
-// The executable itself may live under a real home: running a binary is not a
-// mutation. A path is inside a real home when it is under a real root and not
-// under a more specific allowed root: the isolated root, the original temp folder
-// (on Windows it sits under LOCALAPPDATA), or the project root (CI runners keep the
-// checkout under HOME). Paths are compared after resolving `..`, separators, case
-// (win32, darwin), trailing dots and spaces, stream suffixes, device and UNC
-// admin-share prefixes, file: URLs and Buffers, and the real path of the nearest
-// existing ancestor (so a link from an allowed folder into a real home is caught).
-// Every violation is also recorded, so one swallowed by a broad catch still fails
-// the test (vitest entry) or the probe's exit code (probe entry).
+// Real homes: the original HOME, USERPROFILE, APPDATA, LOCALAPPDATA,
+// CLAUDE_CONFIG_DIR, CODEX_HOME, XDG_{CONFIG,DATA,STATE,CACHE}_HOME and
+// HOMEDRIVE+HOMEPATH, os.homedir(), os.userInfo().homedir (which ignores the
+// environment), and any account-profiles folder above one of them. A path is inside
+// a real home when it is under one of them and not under a more specific allowed
+// root: the isolated root, the temp folder (on Windows it sits under LOCALAPPDATA),
+// or the project root (CI runners keep the checkout under HOME). Only the isolated
+// root wins a tie.
+//
+// Covered (each throws TEST_ISOLATION_VIOLATION and is recorded, so a refusal the
+// caller swallows still fails the test, or the probe's exit code):
+//   - the fs entry points in the tables below (sync, callback and fs.promises),
+//     opens and reads whose flags are not read-only, the fd and FileHandle
+//     metadata calls on a real-home file opened read-only, and a recursive copy
+//     into a folder holding a link into a real home;
+//   - child_process spawn/spawnSync/exec/execSync/execFile/execFileSync/fork and
+//     node-pty spawn: the working folder, the child environment exactly as Node and
+//     libuv build it (home and temp variables), and every path in the arguments
+//     (any spelling); the executable itself, and a node script in a real home's
+//     npm or nvm folder, are not refused;
+//   - worker_threads Workers (refused: they get fresh, unguarded builtins) and
+//     process.binding('fs' | 'fs_dir' | 'spawn_sync' | 'process_wrap').
+// Paths are compared after resolving `..`, separators, case (win32, darwin),
+// trailing dots and spaces, stream suffixes, `\\?\` `\\.\` `\??\` prefixes, file:
+// URLs and URL-like objects, Buffers, and the real path of the nearest existing
+// ancestor (a link out of an allowed folder is followed). UNC paths other than
+// `\\.\pipe\` and unmappable device paths fail closed.
+//
+// NOT covered: native addons (better-sqlite3 and node-pty write natively); a child
+// that is not node is guarded only through its environment, working folder and
+// arguments; a process started without going through these entry points; a
+// recursive delete is left to Node, which does not follow links.
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import util from 'node:util'
 import childProcess from 'node:child_process'
+import workerThreads from 'node:worker_threads'
 import { createRequire, syncBuiltinESMExports } from 'node:module'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 export const VIOLATION_CODE = 'TEST_ISOLATION_VIOLATION'
 export const MARKER_ENV = 'CCC_HOME_GUARD'
 export const HOME_VARS = Object.freeze(['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME'])
-// A child whose env omits one of these falls back to the OS profile, a real home,
-// so a spawn that omits them gets the isolated value. CLAUDE_CONFIG_DIR and
-// CODEX_HOME fall back to HOME/USERPROFILE, which are filled, so leaving them
-// unset keeps the child isolated (and keeps code that strips them testable).
-const FILL_VARS = Object.freeze(['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA'])
-// The variables whose absence sends a child to the OS profile on each platform.
-const FALLBACK_VARS = Object.freeze(process.platform === 'win32' ? ['USERPROFILE', 'APPDATA', 'LOCALAPPDATA'] : ['HOME'])
+export const XDG_VARS = Object.freeze(['XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME'])
+const TEMP_VARS = Object.freeze(['TEMP', 'TMP', 'TMPDIR'])
+const IS_WIN = process.platform === 'win32'
+// Filled into a child environment that omits them. CLAUDE_CONFIG_DIR is left unset
+// on purpose: unset it falls back to the filled HOME, and the launch code that
+// strips it is tested through a real child.
+const FILL_VARS = Object.freeze(
+  IS_WIN
+    ? ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'HOMEDRIVE', 'HOMEPATH', 'CODEX_HOME']
+    : ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'CODEX_HOME', ...XDG_VARS],
+)
+// Absent from a child environment, these send the child to the OS profile.
+const FALLBACK_VARS = Object.freeze(IS_WIN ? ['HOME', 'APPDATA', 'LOCALAPPDATA'] : ['HOME'])
+// libuv copies these from the live process environment into a Windows child
+// environment that omits them.
+const LIBUV_REQUIRED = Object.freeze(IS_WIN ? ['USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'TEMP'] : [])
 const STATE_KEY = Symbol.for('ccc.test-home-guard.state')
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
-const CONFIG_NAME = /^\.(claude|codex)/i
+export const PROBE_GUARD_URL = pathToFileURL(path.join(PROJECT_ROOT, 'tests', 'helpers', 'probe-guard.mjs')).href
+const NODE_OPTIONS_IMPORT = `--import=${PROBE_GUARD_URL}`
 // The only variables a fresh probe environment copies from its caller.
 const PROBE_ENV_KEEP = Object.freeze(['PATH', 'PATHEXT', 'SystemRoot', 'SystemDrive', 'windir', 'ComSpec', 'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'TZ', 'TERM'])
+const BINDINGS_REFUSED = Object.freeze(['fs', 'fs_dir', 'spawn_sync', 'process_wrap'])
+const TREE_LIMIT = 20000
 
 export class TestIsolationViolation extends Error {
   /** @param {string} op @param {string} target @param {string} root @param {string} [reason] */
@@ -86,8 +114,9 @@ function nonEmpty(v) {
 
 /**
  * Every string a path argument can stand for: a string (and, for a `file:` string,
- * the URL reading too), a file URL object, or a Buffer / Uint8Array. Anything else
- * (a descriptor, a FileHandle) is not a path and is not checked.
+ * the URL reading too), a URL or URL-like object read the way Node's fs reads it
+ * (fileURLToPath of the object: hostname and pathname) and through its href, or a
+ * Buffer / Uint8Array. Anything else (a descriptor, a FileHandle) is not a path.
  * @param {unknown} input @param {string} platform @returns {string[]}
  */
 function pathStrings(input, platform) {
@@ -104,20 +133,27 @@ function pathStrings(input, platform) {
     return out
   }
   if (input instanceof Uint8Array) return [Buffer.from(input).toString('utf8')]
-  if (input && typeof input === 'object' && typeof (/** @type {any} */ (input).href) === 'string') {
+  if (input && typeof input === 'object' && /** @type {any} */ (input).href) {
+    /** @type {string[]} */ const out = []
     try {
-      return [fileURLToPath(/** @type {any} */ (input).href, { windows })]
+      out.push(fileURLToPath(/** @type {any} */ (input), { windows }))
     } catch {
-      return []
+      /* not URL-like for Node either */
     }
+    try {
+      out.push(fileURLToPath(String(/** @type {any} */ (input).href), { windows }))
+    } catch {
+      /* href is not a file URL */
+    }
+    return out
   }
   return []
 }
 
 /**
  * Absolute, lexically normalised forms of `str` (original case). `device` means a
- * Win32 device-namespace path that cannot be mapped to a drive or share; callers
- * treat it as a violation (fail closed).
+ * Win32 path the guard cannot map to a drive (a UNC share, a volume or device
+ * path); callers treat it as a violation (fail closed). A named pipe is no path.
  * @param {string} str @param {string} base @param {string} platform
  * @returns {{ forms: string[], device: boolean }}
  */
@@ -136,6 +172,8 @@ function lexicalForms(str, base, platform) {
   }
   const abs = P.resolve(base, s)
   const root = P.parse(abs).root
+  // Any UNC path (\\host\share\..., an administrative share included) fails closed.
+  if (root.startsWith('\\\\')) return { forms: [], device: true }
   const comps = abs.slice(root.length).split('\\').filter((c) => c.length > 0)
   /** @type {string[]} */ const asParent = []
   /** @type {string[]} */ const asSelf = []
@@ -158,18 +196,13 @@ function lexicalForms(str, base, platform) {
   }
   const forms = [P.resolve(root, ...asParent)]
   if (ambiguous) forms.push(P.resolve(root, ...asSelf))
-  // An administrative share (\\host\C$\...) reaches a local drive: check it as that drive too.
-  for (const f of [...forms]) {
-    const share = /^\\\\[^\\]+\\([a-z])\$(?:\\|$)/i.exec(f)
-    if (share) forms.push(share[1] + ':\\' + f.slice(share[0].length))
-  }
   return { forms, device: false }
 }
 
 /**
  * The real path of `abs`: the realpath of its nearest existing ancestor with the
  * missing tail appended; a dangling link is followed through its target. Returns
- * null when a link leads into the unmappable device namespace.
+ * null when a link leads somewhere the guard cannot map.
  * @param {string} abs @param {FsImpl} fsImpl @param {string} platform @param {number} [hops]
  * @returns {string | null}
  */
@@ -232,9 +265,9 @@ function within(k, rootKey, sep) {
 }
 
 /**
- * @typedef {{ lstatSync: Function, realpathSync: Function, readlinkSync: Function }} FsImpl
+ * @typedef {{ lstatSync: Function, realpathSync: Function, readlinkSync: Function, readdirSync?: Function }} FsImpl
  * @typedef {{ path: string, kind: 'isolated' | 'tmp' | 'project' }} AllowedRoot
- * @typedef {{ root: string, form: string, reason?: string }} Hit
+ * @typedef {{ root: string, form: string, reason?: string, device?: boolean }} Hit
  */
 
 /** @type {FsImpl} */
@@ -242,6 +275,7 @@ const REAL_FS = {
   lstatSync: fs.lstatSync,
   realpathSync: fs.realpathSync.native,
   readlinkSync: fs.readlinkSync,
+  readdirSync: fs.readdirSync,
 }
 
 /**
@@ -262,10 +296,16 @@ export function deriveAccountProfilesRoots(roots, platform = process.platform) {
   return [...new Set(out)]
 }
 
+// Characters that end a path inside an argument (a JSON array, an assignment, a
+// shell line). '[' and '{' are glob characters, not terminators.
+const TERM_WIN = ' \t\r\n"\'`=,;|&<>()]}'
+const TERM_POSIX = TERM_WIN + ':'
+const GLOB_CHARS = /[*?[{]/
+
 /**
  * A pure checker over explicit roots. The installed guard is one of these; tests
  * build their own with simulated roots and a fake fs.
- * @param {{ realRoots: string[], allowedRoots?: AllowedRoot[], configRoots?: string[],
+ * @param {{ realRoots: string[], allowedRoots?: AllowedRoot[], installRoots?: string[], userNames?: string[],
  *   platform?: string, fsImpl?: FsImpl, cwd?: () => string }} opts
  */
 export function createHomeChecker(opts) {
@@ -274,6 +314,9 @@ export function createHomeChecker(opts) {
   const cwd = opts.cwd ?? (() => process.cwd())
   const P = pathApi(platform)
   const sep = P.sep
+  const win = platform === 'win32'
+  const fold = foldsCase(platform)
+  const TERM = win ? TERM_WIN : TERM_POSIX
 
   /** @param {string} s @param {string} base */
   const formsOf = (s, base) => {
@@ -283,7 +326,9 @@ export function createHomeChecker(opts) {
     for (const f of lf.forms) {
       const r = resolveReal(f, fsImpl, platform)
       if (r === null) return { device: true, forms: /** @type {string[]} */ ([]) }
-      for (const g of lexicalForms(r, base, platform).forms) out.add(g)
+      const again = lexicalForms(r, base, platform)
+      if (again.device) return { device: true, forms: /** @type {string[]} */ ([]) }
+      for (const g of again.forms) out.add(g)
     }
     return { device: false, forms: [...out] }
   }
@@ -295,13 +340,14 @@ export function createHomeChecker(opts) {
   }
 
   const realKeys = keysOf(opts.realRoots)
-  const configKeys = keysOf(opts.configRoots ?? [])
+  const installKeys = keysOf(opts.installRoots ?? [])
   /** @type {{ key: string, kind: string }[]} */
   const allowed = []
   for (const a of opts.allowedRoots ?? []) {
     if (!a || !nonEmpty(a.path)) continue
     for (const k of keysOf([a.path])) allowed.push({ key: k, kind: a.kind })
   }
+  const userNames = new Set((opts.userNames ?? []).filter(nonEmpty).map((n) => n.toLowerCase()))
 
   /** The real root that makes key `k` protected, or null. @param {string} k */
   const protectedBy = (k) => {
@@ -310,9 +356,8 @@ export function createHomeChecker(opts) {
     if (!real) return null
     for (const a of allowed) {
       if (!within(k, a.key, sep)) continue
-      // The more specific root wins; on a tie the temp and isolated roots win and
-      // the project root does not (a checkout that IS a home stays protected).
-      if (a.key.length > real.length || (a.key.length === real.length && a.kind !== 'project')) return null
+      // The more specific root wins; on a tie only the isolated root does.
+      if (a.key.length > real.length || (a.key.length === real.length && a.kind === 'isolated')) return null
     }
     return real
   }
@@ -322,7 +367,7 @@ export function createHomeChecker(opts) {
     const b = base ?? cwd()
     for (const s of pathStrings(input, platform)) {
       const f = formsOf(s, b)
-      if (f.device) return { root: '(device namespace)', form: s, reason: 'is a device path the guard cannot map' }
+      if (f.device) return { root: '(UNC or device path)', form: s, reason: 'is a UNC or device path the guard cannot map', device: true }
       for (const form of f.forms) {
         const root = protectedBy(keyOf(form, platform))
         if (root) return { root, form }
@@ -331,32 +376,192 @@ export function createHomeChecker(opts) {
     return null
   }
 
-  /**
-   * Does an argument name a real home itself or the Claude / Codex configuration in
-   * one (`.claude*`, `.codex*`, a `.credentials.json`, the original
-   * CLAUDE_CONFIG_DIR / CODEX_HOME, an account-profiles folder)?
-   * @param {string} token @param {string} [base] @returns {Hit | null}
-   */
-  const configHit = (token, base) => {
-    const b = base ?? cwd()
-    /** @type {string[]} */ const candidates = pathStrings(token, platform)
-    if (token === '~' || token.startsWith('~/') || token.startsWith('~\\')) {
-      for (const r of opts.realRoots.filter(nonEmpty)) candidates.push(r + token.slice(1))
-    }
-    for (const s of candidates) {
-      const f = formsOf(s, b)
-      if (f.device) continue
+  /** Is `p` (not a filesystem root) the parent, or an ancestor, of a real root? @param {string} p @param {string} base */
+  const coversReal = (p, base) => {
+    for (const s of pathStrings(p, platform)) {
+      const f = formsOf(s, base)
       for (const form of f.forms) {
         const k = keyOf(form, platform)
-        const root = protectedBy(k)
-        if (!root) continue
-        if (k === root) return { root, form, reason: 'names a real home' }
-        const first = k.slice(root.length).split(sep).filter(Boolean)[0] ?? ''
-        const base2 = k.slice(k.lastIndexOf(sep) + 1)
-        if (CONFIG_NAME.test(first) || base2.toLowerCase() === '.credentials.json' || configKeys.some((c) => within(k, c, sep))) {
-          return { root, form, reason: 'names a real home configuration' }
+        if (k === keyOf(P.parse(form).root, platform)) continue
+        if (realKeys.some((r) => within(r, k, sep))) return true
+      }
+    }
+    return false
+  }
+
+  /** @param {string} p @param {string} base */
+  const inInstallRoot = (p, base) => {
+    if (installKeys.length === 0) return false
+    const f = formsOf(p, base)
+    if (f.device || f.forms.length === 0) return false
+    return f.forms.every((form) => installKeys.some((r) => within(keyOf(form, platform), r, sep)))
+  }
+
+  /** The drive spellings of an MSYS, Cygwin or WSL path (`/c/x`, `/cygdrive/c/x`, `/mnt/c/x`). @param {string} c */
+  const msysForms = (c) => {
+    if (!win) return []
+    const m = /^[\\/](?:cygdrive[\\/]|mnt[\\/])?([a-z])(?=[\\/]|$)(.*)$/i.exec(c)
+    return m ? [`${m[1]}:\\${m[2].replace(/^[\\/]+/, '')}`] : []
+  }
+
+  /**
+   * `~user` spellings (a shell resolves them from the user database, not from HOME).
+   * A bare `~` expands from the child's own HOME, which the spawn check has already
+   * filled or checked, so it is no real-home spelling.
+   * @param {string} c @returns {string[] | null}
+   */
+  const tildeForms = (c) => {
+    const m = /^~([A-Za-z0-9._-]+)(?=[\\/]|$)(.*)$/.exec(c)
+    if (!m) return null
+    const name = m[1].toLowerCase()
+    /** @type {string[]} */ const roots = []
+    for (const r of opts.realRoots.filter(nonEmpty)) {
+      if (userNames.has(name) || P.basename(r).toLowerCase() === name) roots.push(r)
+    }
+    return roots.map((r) => r + m[2])
+  }
+
+  /**
+   * Check one candidate path from an argument. A UNC or device result counts only for
+   * the argument as written: an MSYS or `~user` reading is a guess (a `/v` switch read
+   * as drive V: can land on a mapped network share), so only a real home counts there.
+   * @param {string} c @param {string} base @returns {Hit | null}
+   */
+  const argCandidate = (c, base) => {
+    if (!c) return null
+    const tilde = tildeForms(c)
+    const forms = [c, ...msysForms(c), ...(tilde ?? [])]
+    for (const f of forms) {
+      const literal = f === c
+      const hit = classify(f, base)
+      if (hit && (literal || !hit.device)) return hit
+      // A glob whose fixed part is a real home, or the folder above one, expands into it.
+      const noPrefix = f.replace(/^(?:\\\\[?.]\\|\/\/[?.]\/|\\\?\?\\)/, '')
+      const g = GLOB_CHARS.exec(noPrefix)
+      if (g) {
+        const fixed = noPrefix.slice(0, g.index)
+        const cut = Math.max(fixed.lastIndexOf('/'), fixed.lastIndexOf('\\'))
+        const dir = cut >= 0 ? fixed.slice(0, cut + 1) : ''
+        if (dir) {
+          const dHit = classify(dir, base)
+          if (dHit && (literal || !dHit.device)) return { ...dHit, reason: 'is a glob into a real home' }
+          if (coversReal(dir, base)) return { root: dir, form: f, reason: 'is a glob that can reach a real home' }
         }
       }
+    }
+    return null
+  }
+
+  /** Paths written anywhere in an argument: drive, UNC, MSYS/WSL, POSIX absolute, `~`. @param {string} el */
+  const embeddedPaths = (el) => {
+    const T = TERM.replace(/[\]\\^-]/g, '\\$&')
+    const body = `[^${T}]*`
+    /** @type {RegExp[]} */
+    const res = win
+      ? [
+          new RegExp(`(?<![A-Za-z0-9])[A-Za-z]:[\\\\/]${body}`, 'g'),
+          // A UNC path starts a word (an escaped `C:\\Users\\x` in a script is no share).
+          new RegExp(`(?<![^${T}])(?:\\\\\\\\|//)[^\\\\/${T}]+[\\\\/]${body}`, 'g'),
+          new RegExp(`(?<![A-Za-z0-9_.~\\\\/-])/(?:cygdrive/|mnt/)?[A-Za-z](?=/|$|[${T}])${body}`, 'g'),
+        ]
+      : [new RegExp(`(?<![A-Za-z0-9_.~-])/${body}`, 'g')]
+    res.push(new RegExp(`(?<![^${T}])~[A-Za-z0-9._-]*(?=[\\\\/]|$|[${T}])${body}`, 'g'))
+    /** @type {string[]} */ const out = []
+    for (const re of res) for (const m of el.matchAll(re)) out.push(m[0])
+    return out
+  }
+
+  // Each real root as it can be written: drive form, MSYS / Cygwin / WSL forms, and
+  // (for a UNC share) the path below the drive. Normalised: '/' separators, folded.
+  const spellings = realKeys.flatMap((k) => {
+    const n = k.replace(/\\/g, '/')
+    const m = /^([a-z]):(\/.*)?$/i.exec(n)
+    if (!win || !m) return [{ v: n, kind: 'path' }]
+    const rest = m[2] ?? ''
+    if (!rest || rest === '/') return [{ v: n, kind: 'path' }]
+    const d = m[1].toLowerCase()
+    return [
+      { v: n, kind: 'path' },
+      { v: `/${d}${rest}`, kind: 'msys' },
+      { v: `/cygdrive/${d}${rest}`, kind: 'msys' },
+      { v: `/mnt/${d}${rest}`, kind: 'msys' },
+      { v: rest, kind: 'unc' },
+    ]
+  })
+
+  /** Real-root spellings inside an argument, roots with spaces included. @param {string} el @param {string} base */
+  const spellingHit = (el, base) => {
+    const s0 = el.replace(/\\/g, '/')
+    const s = fold ? s0.toLowerCase() : s0
+    for (const { v, kind } of spellings) {
+      const needle = fold ? v.toLowerCase() : v
+      let from = 0
+      for (;;) {
+        const i = s.indexOf(needle, from)
+        if (i < 0) break
+        from = i + 1
+        const after = s.slice(i + needle.length).replace(/^[. ]+(?=\/|$)/, '')
+        if (after.length > 0 && after[0] !== '/' && !TERM.includes(after[0])) continue
+        const before = s.slice(0, i)
+        if (kind === 'unc') {
+          if (/(?:^|[^/:])\/\/[^/\s]+(?:\/[^/\s]+)?$/.test(before)) return { root: v, form: el, reason: 'names a real home through a UNC share' }
+          continue
+        }
+        if (kind === 'msys' && before.length > 0 && !TERM.includes(before[before.length - 1])) continue
+        let end = i + needle.length
+        while (end < el.length && !TERM.includes(el[end])) end++
+        const hit = argCandidate(el.slice(i, end), base)
+        if (hit) return hit
+      }
+    }
+    return null
+  }
+
+  /** @param {string} el @param {string} base @returns {Hit | null} */
+  const argHit = (el, base) => {
+    /** @type {string[]} */ const cands = []
+    if (/[\\/]|^\.|^[A-Za-z]:/.test(el)) cands.push(el)
+    const parts = el.split('=')
+    for (let i = 1; i < parts.length; i++) cands.push(parts.slice(i).join('='))
+    cands.push(...embeddedPaths(el))
+    for (const c of cands) {
+      const hit = argCandidate(c, base)
+      if (hit) return hit
+    }
+    return spellingHit(el, base)
+  }
+
+  /** Links inside an existing folder tree that lead into a real home. @returns {Hit | null} */
+  const treeHit = (/** @type {unknown} */ dir) => {
+    const readdir = fsImpl.readdirSync
+    if (!readdir) return null
+    const start = pathStrings(dir, platform)[0]
+    if (start === undefined) return null
+    /** @type {string[]} */ const queue = [P.resolve(cwd(), start)]
+    let seen = 0
+    while (queue.length > 0) {
+      const cur = /** @type {string} */ (queue.pop())
+      let st
+      try {
+        st = fsImpl.lstatSync(cur, { throwIfNoEntry: false })
+      } catch {
+        st = undefined
+      }
+      if (!st) continue
+      if (++seen > TREE_LIMIT) return { root: start, form: start, reason: `is a folder tree over ${TREE_LIMIT} entries the guard cannot check for links` }
+      if (st.isSymbolicLink()) {
+        const hit = classify(cur)
+        if (hit) return { ...hit, reason: 'holds a link into a real home' }
+        continue
+      }
+      if (!st.isDirectory()) continue
+      let names = []
+      try {
+        names = readdir(cur)
+      } catch {
+        names = []
+      }
+      for (const n of names) queue.push(P.join(cur, String(n)))
     }
     return null
   }
@@ -364,9 +569,12 @@ export function createHomeChecker(opts) {
   return {
     platform,
     classify,
-    configHit,
+    argHit,
+    treeHit,
     /** @param {unknown} p */
     isProtected: (p) => classify(p) !== null,
+    /** @param {string} p @param {string} [base] */
+    inInstallRoot: (p, base) => inInstallRoot(p, base ?? cwd()),
     /** @param {string} s @param {string} [base] */
     keysOf: (s, base) => formsOf(s, base ?? cwd()).forms.map((f) => keyOf(f, platform)),
   }
@@ -375,29 +583,40 @@ export function createHomeChecker(opts) {
 // ---------------------------------------------------------------------------
 // Capture and state.
 
-/** @param {NodeJS.ProcessEnv | Record<string, unknown>} env @param {string} name @returns {string[]} */
-function envValues(env, name) {
-  /** @type {string[]} */ const out = []
-  const fold = process.platform === 'win32'
-  for (const k of Object.keys(env)) {
-    if (k === name || (fold && k.toUpperCase() === name)) {
-      const v = env[k]
-      if (nonEmpty(v)) out.push(v)
-    }
+/**
+ * The value Node gives a child for `name`: keys in for...in order (prototype
+ * values included), and on Windows the first case-variant in sorted order wins.
+ * @param {Record<string, unknown>} env @param {string} name @param {boolean} [win]
+ */
+function envValue(env, name, win = IS_WIN) {
+  /** @type {string[]} */ const keys = []
+  for (const k in env) keys.push(k)
+  const match = win ? keys.filter((k) => k.toUpperCase() === name.toUpperCase()).sort() : keys.filter((k) => k === name)
+  for (const k of match) {
+    const v = env[k]
+    if (v !== undefined) return `${v}`
   }
-  return out
+  return undefined
 }
 
-/** @param {NodeJS.ProcessEnv | Record<string, unknown>} env */
+/** @param {Record<string, unknown>} env */
 function envHomeDrivePath(env) {
-  const d = envValues(env, 'HOMEDRIVE')[0]
-  const p = envValues(env, 'HOMEPATH')[0]
+  const d = envValue(env, 'HOMEDRIVE')
+  const p = envValue(env, 'HOMEPATH')
   return d && p ? d + p : undefined
 }
 
 function osUserHome() {
   try {
     return os.userInfo().homedir
+  } catch {
+    return undefined
+  }
+}
+
+function osUserName() {
+  try {
+    return os.userInfo().username
   } catch {
     return undefined
   }
@@ -418,7 +637,7 @@ function parseMarker(raw) {
     const m = JSON.parse(raw)
     if (!m || m.v !== 1) return null
     const list = (/** @type {unknown} */ x) => (Array.isArray(x) ? x.filter(nonEmpty) : [])
-    return { real: list(m.real), config: list(m.config), tmp: list(m.tmp), isolated: nonEmpty(m.isolated) ? m.isolated : undefined }
+    return { real: list(m.real), tmp: list(m.tmp), inst: list(m.inst), isolated: nonEmpty(m.isolated) ? m.isolated : undefined }
   } catch {
     return null
   }
@@ -443,58 +662,88 @@ export function isolatedHomeVars(root, platform = process.platform) {
       vars.HOMEDRIVE = m[1]
       vars.HOMEPATH = m[2]
     }
+  } else {
+    vars.XDG_CONFIG_HOME = P.join(home, '.config')
+    vars.XDG_DATA_HOME = P.join(home, '.local', 'share')
+    vars.XDG_STATE_HOME = P.join(home, '.local', 'state')
+    vars.XDG_CACHE_HOME = P.join(home, '.cache')
   }
   return vars
 }
 
+/** A real home's program-install folders: npm's global prefix and nvm. @param {Record<string, string | undefined>} env */
+function installRootsFrom(env) {
+  /** @type {(string | undefined)[]} */ const out = [env.NVM_HOME, env.NVM_SYMLINK, env.NVM_DIR, env.npm_config_prefix]
+  if (IS_WIN) {
+    if (env.APPDATA) out.push(path.join(env.APPDATA, 'npm'), path.join(env.APPDATA, 'nvm'))
+  } else {
+    if (env.HOME) out.push(path.join(env.HOME, '.nvm'), path.join(env.HOME, '.npm-global'))
+    out.push(path.dirname(path.dirname(process.execPath)))
+  }
+  return [...new Set(out.filter(nonEmpty).map((p) => path.resolve(p)))]
+}
+
 /**
- * Real roots, config roots and allowed roots for the current process.
- * @param {{ extraTmpRoots?: string[], isolated?: string }} [opts]
+ * Real roots, temp roots, install roots and the isolated root for this process.
+ * Order matters: trusted real roots (the OS profile, a parent's real roots) are
+ * fixed first; a temp root that contains one is refused; an environment home inside
+ * an accepted temp root or the isolated root is a temporary home, not a real one.
+ * @param {{ extraTmpRoots?: string[], isolated?: string, markerRaw?: string }} [opts]
  */
 function buildConfig(opts = {}) {
   const platform = process.platform
-  const env = process.env
-  const marker = parseMarker(env[MARKER_ENV])
-  const tmpRoots = [...new Set([...(opts.extraTmpRoots ?? []), os.tmpdir(), ...(marker ? marker.tmp : [])].filter(nonEmpty).map((p) => path.resolve(p)))]
-  const markerIsolated = marker?.isolated
-  // A captured value already inside the isolated or temp area is not a real home
-  // (a re-load after the redirect, or a probe started with isolatedProbeEnv).
-  const notReal = createHomeChecker({
-    realRoots: [markerIsolated, ...tmpRoots].filter(nonEmpty),
-    platform,
-  })
+  const env = /** @type {Record<string, unknown>} */ (process.env)
+  const markerRaw = opts.markerRaw ?? envValue(env, MARKER_ENV)
+  const marker = parseMarker(markerRaw)
+  const abs = (/** @type {string[]} */ list) => [...new Set(list.filter(nonEmpty).map((p) => path.resolve(p)))]
+
+  const trustedReal = abs([osUserHome() ?? '', ...(marker ? marker.real : [])])
+  for (const d of deriveAccountProfilesRoots(trustedReal, platform)) if (!trustedReal.includes(d)) trustedReal.push(d)
+  const containsTrusted = (/** @type {string} */ t) => trustedReal.some((r) => createHomeChecker({ realRoots: [t], platform }).isProtected(r))
+  // This process's own temp folder is trusted (a guarded parent checked TEMP/TMP/TMPDIR
+  // in its environment). A temp root handed over in the marker counts only if it is
+  // named like a temp folder (Temp, tmp, T, _temp, or this guard's ccc-vitest-*) and
+  // holds no trusted real home: a marker cannot turn a home, or a folder in one, into
+  // an allowed area.
+  const tempNamed = (/** @type {string} */ t) => /^(?:_?te?mp|t|ccc-vitest-.+)$/i.test(path.basename(t))
+  const tmpRoots = abs([
+    ...abs([...(opts.extraTmpRoots ?? []), os.tmpdir()]),
+    ...abs(marker ? marker.tmp : []).filter(tempNamed),
+  ]).filter((t) => !containsTrusted(t))
+
   /** @type {Record<string, string | undefined>} */
   const originalEnv = {}
-  for (const name of [...HOME_VARS, 'HOMEDRIVE', 'HOMEPATH']) originalEnv[name] = envValues(env, name)[0]
-  const captured = [...HOME_VARS.flatMap((n) => envValues(env, n)), envHomeDrivePath(env), osHome()].filter(nonEmpty)
-  const realFromEnv = captured.filter((v) => !notReal.isProtected(v))
-  const realRaw = [...new Set([...(marker ? marker.real : []), ...realFromEnv, osUserHome()].filter(nonEmpty).map((p) => path.resolve(p)))]
-  const derived = deriveAccountProfilesRoots(realRaw, platform)
-  for (const d of derived) if (!realRaw.includes(d)) realRaw.push(d)
-  const configRaw = [
-    ...new Set(
-      [...(marker ? marker.config : []), ...['CLAUDE_CONFIG_DIR', 'CODEX_HOME'].flatMap((n) => envValues(env, n)).filter((v) => !notReal.isProtected(v)), ...derived]
-        .filter(nonEmpty)
-        .map((p) => path.resolve(p)),
-    ),
-  ]
-  /** @type {AllowedRoot[]} */
-  const base = [...tmpRoots.map((p) => /** @type {AllowedRoot} */ ({ path: p, kind: 'tmp' })), { path: PROJECT_ROOT, kind: 'project' }]
-  // Accept an isolated root only if it is not itself inside a real home.
-  let isolated = opts.isolated ?? markerIsolated
-  if (isolated) {
-    const probe = createHomeChecker({ realRoots: realRaw, allowedRoots: base, configRoots: configRaw, platform })
-    if (probe.isProtected(isolated)) isolated = undefined
+  for (const name of [...HOME_VARS, ...XDG_VARS, 'HOMEDRIVE', 'HOMEPATH', 'NVM_HOME', 'NVM_SYMLINK', 'NVM_DIR', 'npm_config_prefix']) {
+    originalEnv[name] = envValue(env, name)
   }
+  const inTmp = createHomeChecker({ realRoots: tmpRoots, platform })
+  let captured = abs([...[...HOME_VARS, ...XDG_VARS].map((n) => envValue(env, n) ?? ''), envHomeDrivePath(env) ?? '', osHome() ?? '']).filter(
+    (v) => !inTmp.isProtected(v),
+  )
+
+  const base = [...tmpRoots.map((p) => /** @type {AllowedRoot} */ ({ path: p, kind: 'tmp' })), { path: PROJECT_ROOT, kind: /** @type {'project'} */ ('project') }]
+  let isolated = opts.isolated ?? marker?.isolated
+  if (isolated) {
+    const probe = createHomeChecker({ realRoots: [...trustedReal, ...captured], allowedRoots: base, platform })
+    if (probe.isProtected(isolated) || containsTrusted(isolated)) isolated = undefined
+  }
+  if (isolated) {
+    const inIso = createHomeChecker({ realRoots: [isolated], platform })
+    captured = captured.filter((v) => !inIso.isProtected(v))
+  }
+  const realRaw = abs([...trustedReal, ...captured])
+  for (const d of deriveAccountProfilesRoots(realRaw, platform)) if (!realRaw.includes(d)) realRaw.push(d)
+  const installRoots = abs([...(marker ? marker.inst : []), ...installRootsFrom(originalEnv)])
+  const userNames = [osUserName() ?? '', ...realRaw.map((r) => path.basename(r))]
   const allowedRoots = isolated ? [{ path: isolated, kind: /** @type {'isolated'} */ ('isolated') }, ...base] : base
-  const checker = createHomeChecker({ realRoots: realRaw, allowedRoots, configRoots: configRaw, platform })
-  return { platform, realRaw, configRaw, tmpRoots, isolated, checker, originalEnv }
+  const checker = createHomeChecker({ realRoots: realRaw, allowedRoots, installRoots, userNames, platform })
+  return { platform, realRaw, tmpRoots, installRoots, isolated, checker, originalEnv, markerRaw }
 }
 
 /**
  * @typedef {ReturnType<typeof buildConfig> & {
  *   entry: string, isolatedEnv: Record<string, string> | null, ptyGuarded?: boolean,
- *   safeArea?: ReturnType<typeof createHomeChecker>,
+ *   safeArea?: ReturnType<typeof createHomeChecker>, protectedFds: Map<number, string>,
  *   violations: { op: string, target: string, root: string }[] }} GuardState
  */
 
@@ -503,9 +752,9 @@ function getState() {
   return /** @type {any} */ (process)[STATE_KEY]
 }
 
-/** @param {GuardState} state */
-function markerValue(state) {
-  return JSON.stringify({ v: 1, real: state.realRaw, config: state.configRaw, tmp: state.tmpRoots, isolated: state.isolated })
+/** @param {{ realRaw: string[], tmpRoots: string[], installRoots: string[] }} c @param {string | undefined} isolated */
+function markerValue(c, isolated) {
+  return JSON.stringify({ v: 1, real: c.realRaw, tmp: c.tmpRoots, inst: c.installRoots, isolated })
 }
 
 /** @param {GuardState} state @param {string} op @param {unknown} target @param {Hit} hit */
@@ -526,92 +775,208 @@ function violation(state, op, target, hit) {
 // ---------------------------------------------------------------------------
 // fs guard.
 
-// Which arguments name a target: indexes, or a rule.
-/** @type {[string, number[] | 'open' | 'symlink'][]} */
-const FS_DELETE = [
+/**
+ * Which arguments name a target: indexes, or a rule.
+ * @typedef {number[] | 'open' | 'symlink' | 'read' | 'stream' | 'cp' | 'fd'} Spec
+ */
+/** @type {[string, Spec][]} */
+const FS_SYNC_AND_CALLBACK = [
   ['rm', [0]], ['rmSync', [0]], ['rmdir', [0]], ['rmdirSync', [0]], ['unlink', [0]], ['unlinkSync', [0]],
   ['rename', [0, 1]], ['renameSync', [0, 1]],
-]
-/** @type {[string, number[] | 'open' | 'symlink'][]} */
-const FS_WRITE = [
   ['writeFile', [0]], ['writeFileSync', [0]], ['appendFile', [0]], ['appendFileSync', [0]],
-  ['mkdir', [0]], ['mkdirSync', [0]], ['mkdtemp', [0]], ['mkdtempSync', [0]],
-  ['copyFile', [1]], ['copyFileSync', [1]], ['cp', [1]], ['cpSync', [1]],
+  ['mkdir', [0]], ['mkdirSync', [0]], ['mkdtemp', [0]], ['mkdtempSync', [0]], ['mkdtempDisposableSync', [0]],
+  ['copyFile', [1]], ['copyFileSync', [1]], ['cp', 'cp'], ['cpSync', 'cp'],
   ['symlink', 'symlink'], ['symlinkSync', 'symlink'], ['link', [0, 1]], ['linkSync', [0, 1]],
   ['truncate', [0]], ['truncateSync', [0]], ['chmod', [0]], ['chmodSync', [0]], ['lchmod', [0]], ['lchmodSync', [0]],
   ['chown', [0]], ['chownSync', [0]], ['lchown', [0]], ['lchownSync', [0]],
   ['utimes', [0]], ['utimesSync', [0]], ['lutimes', [0]], ['lutimesSync', [0]],
   ['open', 'open'], ['openSync', 'open'], ['createWriteStream', [0]],
+  ['readFile', 'read'], ['readFileSync', 'read'], ['createReadStream', 'stream'],
+  ['fchmod', 'fd'], ['fchmodSync', 'fd'], ['fchown', 'fd'], ['fchownSync', 'fd'],
+  ['futimes', 'fd'], ['futimesSync', 'fd'], ['ftruncate', 'fd'], ['ftruncateSync', 'fd'],
 ]
-/** @type {[string, number[] | 'open' | 'symlink'][]} */
+/** @type {[string, Spec][]} */
 const FS_PROMISES = [
   ['rm', [0]], ['rmdir', [0]], ['unlink', [0]], ['rename', [0, 1]],
-  ['writeFile', [0]], ['appendFile', [0]], ['mkdir', [0]], ['mkdtemp', [0]],
-  ['copyFile', [1]], ['cp', [1]], ['symlink', 'symlink'], ['link', [0, 1]],
+  ['writeFile', [0]], ['appendFile', [0]], ['mkdir', [0]], ['mkdtemp', [0]], ['mkdtempDisposable', [0]],
+  ['copyFile', [1]], ['cp', 'cp'], ['symlink', 'symlink'], ['link', [0, 1]],
   ['truncate', [0]], ['chmod', [0]], ['lchmod', [0]], ['chown', [0]], ['lchown', [0]],
-  ['utimes', [0]], ['lutimes', [0]], ['open', 'open'],
+  ['utimes', [0]], ['lutimes', [0]], ['open', 'open'], ['readFile', 'read'],
 ]
+const FILEHANDLE_MUTATORS = ['chmod', 'chown', 'utimes', 'truncate', 'write', 'writev', 'writeFile', 'appendFile', 'createWriteStream']
 
-const WRITE_FLAG_BITS =
-  (fs.constants.O_WRONLY ?? 0) | (fs.constants.O_RDWR ?? 0) | (fs.constants.O_CREAT ?? 0) | (fs.constants.O_TRUNC ?? 0) | (fs.constants.O_APPEND ?? 0)
+const SAFE_READ_BITS = ['O_RDONLY', 'O_NOFOLLOW', 'O_DIRECTORY', 'O_NOATIME', 'O_NONBLOCK', 'O_SYNC', 'O_DSYNC', 'O_NOCTTY', 'UV_FS_O_FILEMAP'].reduce(
+  (acc, n) => acc | (/** @type {Record<string, number>} */ (fs.constants)[n] ?? 0),
+  0,
+)
 
-/** @param {unknown} flags */
-function isWriteFlag(flags) {
-  if (typeof flags === 'string') return /[wa+]/i.test(flags)
-  if (typeof flags === 'number') return (flags & WRITE_FLAG_BITS) !== 0
+/** Read-only flags only (an allow-list): anything else is treated as a write. @param {unknown} flags */
+export function isReadOnlyFlag(flags) {
+  if (flags === undefined || flags === null) return true
+  if (typeof flags === 'string') return flags === 'r' || flags === 'rs' || flags === 'sr'
+  if (typeof flags === 'number') return Number.isInteger(flags) && (flags & ~SAFE_READ_BITS) === 0
   return false
 }
 
-/** @param {GuardState} state @param {string} op @param {number[] | 'open' | 'symlink'} spec @param {unknown[]} args */
+/** The flag in a readFile / createReadStream options argument. @param {unknown} o @param {'flag' | 'flags'} key */
+function optionFlag(o, key) {
+  return o && typeof o === 'object' ? /** @type {any} */ (o)[key] : undefined
+}
+
+/** @param {GuardState} state @param {string} op @param {Spec} spec @param {unknown[]} args @returns {string | undefined} a protected path opened read-only */
 function checkFsCall(state, op, spec, args) {
   const check = (/** @type {unknown} */ target, /** @type {string} */ what, /** @type {string | undefined} */ base = undefined) => {
     const hit = state.checker.classify(target, base)
     if (hit) throw violation(state, what, target, hit)
   }
-  if (spec === 'open') {
-    if (isWriteFlag(args[1])) check(args[0], op)
-    return
+  switch (spec) {
+    case 'open': {
+      if (!isReadOnlyFlag(args[1])) check(args[0], op)
+      else if (state.checker.isProtected(args[0])) return pathStrings(args[0], state.platform)[0] ?? String(args[0])
+      return undefined
+    }
+    case 'read':
+      if (typeof args[0] !== 'number' && !isReadOnlyFlag(optionFlag(args[1], 'flag'))) check(args[0], op)
+      return undefined
+    case 'stream':
+      if (!isReadOnlyFlag(optionFlag(args[1], 'flags'))) check(args[0], op)
+      return undefined
+    case 'fd': {
+      const opened = typeof args[0] === 'number' ? state.protectedFds.get(args[0]) : undefined
+      if (opened !== undefined) throw violation(state, op, `fd ${args[0]} (${opened})`, { root: opened, form: opened, reason: 'is a real-home file opened read-only' })
+      return undefined
+    }
+    case 'symlink': {
+      check(args[1], op)
+      // A link into a real home is the first step of every escape: refuse to make one.
+      const linkPath = pathStrings(args[1], state.platform)[0]
+      if (linkPath !== undefined) check(args[0], op + ' target', path.dirname(path.resolve(linkPath)))
+      return undefined
+    }
+    case 'cp': {
+      check(args[1], op)
+      const o = args[2]
+      if (o && typeof o === 'object' && /** @type {any} */ (o).recursive) {
+        const hit = state.checker.treeHit(args[1])
+        if (hit) throw violation(state, op, args[1], hit)
+      }
+      return undefined
+    }
+    default:
+      for (const i of spec) check(args[i], op)
+      return undefined
   }
-  if (spec === 'symlink') {
-    check(args[1], op)
-    // A link into a real home is the first step of every escape: refuse to make one.
-    const linkPath = pathStrings(args[1], state.platform)[0]
-    if (linkPath !== undefined) check(args[0], op + ' target', path.dirname(path.resolve(linkPath)))
-    return
-  }
-  for (const i of spec) check(args[i], op)
 }
 
-/** @param {GuardState} state @param {any} target @param {string} prefix @param {[string, number[] | 'open' | 'symlink'][]} table @param {boolean} promise */
+/** Remember an fd opened read-only on a real-home path, until it is closed. @param {GuardState} state @param {unknown} fd @param {string} p */
+function trackFd(state, fd, p) {
+  if (typeof fd === 'number') state.protectedFds.set(fd, p)
+}
+
+/** A FileHandle on a real-home path refuses its mutating methods. @param {GuardState} state @param {any} fh @param {string} p */
+function guardFileHandle(state, fh, p) {
+  if (!fh || typeof fh !== 'object') return
+  const fd = fh.fd
+  trackFd(state, fd, p)
+  for (const name of FILEHANDLE_MUTATORS) {
+    const orig = fh[name]
+    if (typeof orig !== 'function') continue
+    Object.defineProperty(fh, name, {
+      configurable: true,
+      value: function () {
+        const err = violation(state, 'FileHandle.' + name, `fd ${fd} (${p})`, { root: p, form: p, reason: 'is a real-home file opened read-only' })
+        if (name === 'createWriteStream') throw err
+        return Promise.reject(err)
+      },
+    })
+  }
+  const close = fh.close
+  if (typeof close === 'function') {
+    Object.defineProperty(fh, 'close', {
+      configurable: true,
+      value: function (/** @type {unknown[]} */ ...a) {
+        state.protectedFds.delete(fd)
+        return close.apply(fh, a)
+      },
+    })
+  }
+}
+
+/** @param {GuardState} state @param {any} target @param {string} prefix @param {[string, Spec][]} table @param {boolean} promise */
 function wrapFsTable(state, target, prefix, table, promise) {
   for (const [name, spec] of table) {
     const orig = target[name]
     if (typeof orig !== 'function') continue
     const op = prefix + name
-    const guarded = promise
-      ? function (/** @type {unknown[]} */ ...args) {
-          try {
-            checkFsCall(state, op, spec, args)
-          } catch (e) {
-            return Promise.reject(e)
+    /** @type {Function} */ let guarded
+    if (promise) {
+      guarded = function (/** @type {unknown[]} */ ...args) {
+        let opened
+        try {
+          opened = checkFsCall(state, op, spec, args)
+        } catch (e) {
+          return Promise.reject(e)
+        }
+        // @ts-ignore -- forwarding the caller's receiver
+        const out = orig.apply(this, args)
+        if (opened !== undefined && out && typeof out.then === 'function') {
+          return out.then((/** @type {any} */ fh) => {
+            guardFileHandle(state, fh, opened)
+            return fh
+          })
+        }
+        return out
+      }
+    } else if (spec === 'open' && name === 'open') {
+      guarded = function (/** @type {unknown[]} */ ...args) {
+        const opened = checkFsCall(state, op, spec, args)
+        const cb = args[args.length - 1]
+        if (opened !== undefined && typeof cb === 'function') {
+          args[args.length - 1] = (/** @type {unknown} */ err, /** @type {unknown} */ fd) => {
+            if (!err) trackFd(state, fd, opened)
+            return cb(err, fd)
           }
-          // @ts-ignore -- forwarding the caller's receiver
-          return orig.apply(this, args)
         }
-      : function (/** @type {unknown[]} */ ...args) {
-          checkFsCall(state, op, spec, args)
-          // @ts-ignore -- forwarding the caller's receiver
-          return orig.apply(this, args)
-        }
+        // @ts-ignore -- forwarding the caller's receiver
+        return orig.apply(this, args)
+      }
+    } else if (spec === 'open') {
+      guarded = function (/** @type {unknown[]} */ ...args) {
+        const opened = checkFsCall(state, op, spec, args)
+        // @ts-ignore -- forwarding the caller's receiver
+        const fd = orig.apply(this, args)
+        if (opened !== undefined) trackFd(state, fd, opened)
+        return fd
+      }
+    } else {
+      guarded = function (/** @type {unknown[]} */ ...args) {
+        checkFsCall(state, op, spec, args)
+        // @ts-ignore -- forwarding the caller's receiver
+        return orig.apply(this, args)
+      }
+    }
     Object.defineProperty(guarded, 'name', { value: name })
     target[name] = guarded
+  }
+  if (!promise) {
+    for (const name of ['close', 'closeSync']) {
+      const orig = target[name]
+      if (typeof orig !== 'function') continue
+      const guarded = function (/** @type {unknown[]} */ ...args) {
+        if (typeof args[0] === 'number') state.protectedFds.delete(args[0])
+        // @ts-ignore -- forwarding the caller's receiver
+        return orig.apply(this, args)
+      }
+      Object.defineProperty(guarded, 'name', { value: name })
+      target[name] = guarded
+    }
   }
 }
 
 // ---------------------------------------------------------------------------
 // Spawn guard.
 
-/** Quote-aware split of a command line or argument into words. @param {string} s */
+/** Quote-aware split of a command line into words. @param {string} s */
 function shellWords(s) {
   /** @type {string[]} */ const out = []
   let cur = ''
@@ -637,39 +1002,108 @@ function shellWords(s) {
   return out
 }
 
-/** @param {string[]} words */
-function withAssignments(words) {
-  /** @type {string[]} */ const out = []
-  for (const w of words) {
-    out.push(w)
-    const eq = w.indexOf('=')
-    if (eq >= 0 && eq < w.length - 1) out.push(w.slice(eq + 1))
+/** @param {unknown} exe */
+function isNodeExecutable(exe) {
+  if (typeof exe !== 'string' || !exe) return false
+  if (path.resolve(exe) === path.resolve(process.execPath)) return true
+  return /^(?:node|nodejs)(?:\.exe)?$/i.test(path.basename(exe))
+}
+
+const NODE_VALUE_OPTIONS = new Set(['-r', '--require', '--import', '--loader', '--experimental-loader', '-C', '--conditions', '--input-type', '--env-file', '--title', '--stack-size', '--max-old-space-size'])
+
+/** Index (in `args`) of the script node is asked to run, or -1. @param {string[]} args */
+function nodeScriptIndex(args) {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]
+    if (a === '--') return i + 1 < args.length ? i + 1 : -1
+    if (/^(?:-e|-p|--eval|--print|-pe|-ep)$/.test(a) || /^--(?:eval|print)=/.test(a)) return -1
+    if (NODE_VALUE_OPTIONS.has(a)) {
+      i++
+      continue
+    }
+    if (a.startsWith('-')) continue
+    return i
   }
+  return -1
+}
+
+/**
+ * The child environment exactly as Node and libuv will build it, with the isolated
+ * home filled in where it is missing, the guard preload and the guard marker added,
+ * then checked. Returns the env object to pass.
+ * @param {GuardState} state @param {string} op @param {Record<string, unknown>} src @param {string} cwdAbs
+ */
+function childEnv(state, op, src, cwdAbs) {
+  /** @type {string[]} */ let keys = []
+  for (const k in src) keys.push(k)
+  if (IS_WIN) {
+    const seen = new Set()
+    keys = keys.sort().filter((k) => {
+      const u = k.toUpperCase()
+      if (seen.has(u)) return false
+      seen.add(u)
+      return true
+    })
+  }
+  /** @type {Record<string, string>} */ const out = {}
+  for (const k of keys) {
+    const v = src[k]
+    if (v !== undefined) out[k] = `${v}`
+  }
+  const keyFor = (/** @type {string} */ name) => (IS_WIN ? Object.keys(out).find((k) => k.toUpperCase() === name.toUpperCase()) : name in out ? name : undefined)
+  const get = (/** @type {string} */ name) => {
+    const k = keyFor(name)
+    return k === undefined ? undefined : out[k]
+  }
+  const set = (/** @type {string} */ name, /** @type {string} */ value) => {
+    out[keyFor(name) ?? name] = value
+  }
+  for (const name of FILL_VARS) {
+    const value = state.isolatedEnv && state.isolatedEnv[name]
+    if (get(name) === undefined && value) set(name, value)
+  }
+  // What libuv will add on Windows, from the live process environment.
+  const live = (/** @type {string} */ name) => get(name) ?? (LIBUV_REQUIRED.includes(name) ? envValue(/** @type {any} */ (process.env), name) : undefined)
+  for (const name of [...HOME_VARS, ...XDG_VARS, ...TEMP_VARS]) {
+    const v = live(name)
+    if (v === undefined || v === '') continue
+    const hit = state.checker.classify(v, cwdAbs)
+    if (hit) throw violation(state, `${op} env ${name}`, v, hit)
+  }
+  const drive = live('HOMEDRIVE')
+  const hpath = live('HOMEPATH')
+  if (hpath) {
+    const v = (drive ?? '') + hpath
+    const hit = state.checker.classify(v, cwdAbs)
+    if (hit) throw violation(state, `${op} env HOMEDRIVE+HOMEPATH`, v, hit)
+  }
+  for (const name of FALLBACK_VARS) {
+    if (live(name) === undefined) {
+      throw violation(state, `${op} env ${name}`, `(unset ${name})`, { root: '(OS profile fallback)', form: name, reason: 'is unset and no isolated home is available' })
+    }
+  }
+  const nodeOptions = get('NODE_OPTIONS') ?? ''
+  if (!nodeOptions.includes(NODE_OPTIONS_IMPORT)) set('NODE_OPTIONS', (nodeOptions ? nodeOptions + ' ' : '') + NODE_OPTIONS_IMPORT)
+  const given = parseMarker(get(MARKER_ENV))
+  set(
+    MARKER_ENV,
+    JSON.stringify({
+      v: 1,
+      real: [...new Set([...(given ? given.real : []), ...state.realRaw])],
+      tmp: given ? given.tmp : state.tmpRoots,
+      inst: [...new Set([...(given ? given.inst : []), ...state.installRoots])],
+      isolated: given ? given.isolated : state.isolated,
+    }),
+  )
   return out
 }
 
 /**
- * The arguments to check: every argument (whole, split into words, and the value
- * of any `name=value`), never the executable. For a shell command line the first
- * word is the executable.
- * @param {unknown} command @param {unknown[]} argv @param {unknown} execArgv @param {boolean} shell
- */
-function spawnTokens(command, argv, execArgv, shell) {
-  const out = new Set()
-  if (shell && typeof command === 'string') for (const t of withAssignments(shellWords(command).slice(1))) out.add(t)
-  const rest = [...argv, ...(Array.isArray(execArgv) ? execArgv : [])]
-  for (const v of rest) {
-    if (typeof v !== 'string') continue
-    out.add(v)
-    for (const t of withAssignments(shellWords(v))) out.add(t)
-  }
-  return /** @type {string[]} */ ([...out].filter((t) => t.length > 0 && t.length <= 4096))
-}
-
-/**
  * @param {GuardState} state @param {string} op
- * @param {{ command: unknown, argv: unknown[], options: any, shell: boolean }} call
- * @returns {any} the options to use (a copy with the isolated home filled in when needed)
+ * @param {{ exe: unknown, args: unknown[], options: any, line?: string, script?: number }} call
+ *   `line`: a shell command line (its first word is the executable); `script`: the
+ *   index in `args` of the script node runs (-1: none)
+ * @returns {any} the options to use (a copy carrying the checked child environment)
  */
 function checkSpawn(state, op, call) {
   const options = call.options && typeof call.options === 'object' ? call.options : undefined
@@ -678,38 +1112,27 @@ function checkSpawn(state, op, call) {
   if (cwdHit) throw violation(state, op + ' cwd', cwdInput, cwdHit)
   const cwdAbs = path.resolve(pathStrings(cwdInput, state.platform)[0] ?? process.cwd())
 
-  const explicit = !!(options && options.env && typeof options.env === 'object')
-  const env = explicit ? options.env : process.env
-  for (const name of HOME_VARS) {
-    for (const v of envValues(env, name)) {
-      const hit = state.checker.classify(v, cwdAbs)
-      if (hit) throw violation(state, `${op} env ${name}`, v, hit)
-    }
+  /** @type {string[]} */ let elements
+  let script = call.script ?? -1
+  if (call.line !== undefined) {
+    const words = shellWords(call.line)
+    elements = words.slice(1)
+    script = isNodeExecutable(words[0]) ? nodeScriptIndex(elements) : -1
+  } else {
+    elements = call.args.map((a) => String(a))
+    if (call.script === undefined) script = isNodeExecutable(call.exe) ? nodeScriptIndex(elements) : -1
   }
-  const hdp = envHomeDrivePath(env)
-  if (hdp) {
-    const hit = state.checker.classify(hdp, cwdAbs)
-    if (hit) throw violation(state, `${op} env HOMEDRIVE+HOMEPATH`, hdp, hit)
+  const execArgv = options && Array.isArray(options.execArgv) ? options.execArgv.map((/** @type {unknown} */ a) => String(a)) : []
+  const all = [...elements, ...execArgv]
+  for (let i = 0; i < all.length; i++) {
+    // The script node runs may live in a real home's npm or nvm folder; nothing else there.
+    if (i === script && state.checker.inInstallRoot(all[i], cwdAbs)) continue
+    const hit = state.checker.argHit(all[i], cwdAbs)
+    if (hit) throw violation(state, op + ' argv', all[i], hit)
   }
 
-  for (const t of spawnTokens(call.command, call.argv, options && options.execArgv, call.shell || !!(options && options.shell))) {
-    const hit = state.checker.configHit(t, cwdAbs)
-    if (hit) throw violation(state, op + ' argv', t, hit)
-  }
-
-  /** @type {Record<string, string>} */ const fills = {}
-  const want = [...FILL_VARS, ...(state.platform === 'win32' ? ['HOMEDRIVE', 'HOMEPATH'] : [])]
-  for (const name of want) {
-    if (envValues(env, name).length > 0) continue
-    const value = state.isolatedEnv && state.isolatedEnv[name]
-    if (value) fills[name] = value
-    else if (FALLBACK_VARS.includes(name)) {
-      // No isolated home to hand over: the child would fall back to a real one.
-      throw violation(state, `${op} env ${name}`, `(unset ${name})`, { root: '(OS profile fallback)', form: name, reason: 'is unset and no isolated home is available' })
-    }
-  }
-  if (Object.keys(fills).length === 0) return call.options
-  return { ...(options ?? {}), env: { ...env, ...fills } }
+  const src = options && options.env && typeof options.env === 'object' ? options.env : process.env
+  return { ...(options ?? {}), env: childEnv(state, op, src, cwdAbs) }
 }
 
 /** @param {unknown} v */
@@ -720,20 +1143,25 @@ function isOptionsObject(v) {
 /** @param {GuardState} state @param {string} name @param {unknown[]} args */
 function guardSpawnArgs(state, name, args) {
   const a = [...args]
-  const shell = name === 'exec' || name === 'execSync'
+  const exec = name === 'exec' || name === 'execSync'
   /** @type {unknown[]} */ let argv = []
   let optIdx = -1
-  if (shell) optIdx = isOptionsObject(a[1]) ? 1 : -1
+  if (exec) optIdx = isOptionsObject(a[1]) ? 1 : -1
   else if (Array.isArray(a[1])) {
     argv = a[1]
     optIdx = isOptionsObject(a[2]) ? 2 : -1
   } else if (a[1] == null) optIdx = isOptionsObject(a[2]) ? 2 : -1
   else optIdx = isOptionsObject(a[1]) ? 1 : -1
-  const options = optIdx >= 0 ? a[optIdx] : undefined
-  const next = checkSpawn(state, 'child_process.' + name, { command: a[0], argv, options, shell })
-  if (next === options) return a
+  const options = optIdx >= 0 ? /** @type {any} */ (a[optIdx]) : undefined
+  /** @type {{ exe: unknown, args: unknown[], options: any, line?: string, script?: number }} */
+  let call
+  if (exec) call = { exe: undefined, args: [], options, line: String(a[0]) }
+  else if (name === 'fork') call = { exe: options?.execPath ?? process.execPath, args: [a[0], ...argv], options, script: 0 }
+  else if (options && options.shell) call = { exe: undefined, args: [], options, line: [a[0], ...argv].map(String).join(' ') }
+  else call = { exe: a[0], args: argv, options }
+  const next = checkSpawn(state, 'child_process.' + name, call)
   if (optIdx >= 0) a[optIdx] = next
-  else if (shell) a.splice(1, 0, next)
+  else if (exec) a.splice(1, 0, next)
   else if (Array.isArray(a[1])) a.splice(2, 0, next)
   else if (a[1] == null && a.length >= 2) {
     a[1] = []
@@ -755,7 +1183,7 @@ function patchChildProcess(state) {
       return orig.apply(this, guardSpawnArgs(state, name, args))
     }
     Object.defineProperty(guarded, 'name', { value: name })
-    // util.promisify(exec / execFile) uses this symbol, which calls the original:
+    // util.promisify(exec / execFile) uses this symbol; keep its result shape and
     // route it through the guard too.
     const custom = orig[util.promisify.custom]
     if (typeof custom === 'function') {
@@ -784,7 +1212,7 @@ function patchNodePty(state) {
     if (typeof orig !== 'function') continue
     pty[name] = function (/** @type {unknown} */ file, /** @type {unknown} */ args, /** @type {unknown} */ opt) {
       const argv = Array.isArray(args) ? args : typeof args === 'string' ? [args] : []
-      const next = checkSpawn(state, 'node-pty.' + name, { command: file, argv, options: opt, shell: false })
+      const next = checkSpawn(state, 'node-pty.' + name, { exe: file, args: argv, options: opt })
       // @ts-ignore -- forwarding the caller's receiver
       return orig.call(this, file, args, next)
     }
@@ -792,70 +1220,129 @@ function patchNodePty(state) {
   return true
 }
 
+/** Workers get fresh, unpatched builtins: refuse them. @param {GuardState} state */
+function patchWorkers(state) {
+  const wt = /** @type {any} */ (workerThreads)
+  const Orig = wt.Worker
+  if (typeof Orig !== 'function') return
+  const Guarded = function Worker(/** @type {unknown} */ filename) {
+    throw violation(state, 'worker_threads.Worker', String(filename).slice(0, 120), {
+      root: '(worker thread)',
+      form: 'Worker',
+      reason: 'would run with unguarded builtins',
+    })
+  }
+  Guarded.prototype = Orig.prototype
+  wt.Worker = Guarded
+}
+
+/** @param {GuardState} state */
+function patchProcessBinding(state) {
+  const p = /** @type {any} */ (process)
+  const orig = p.binding
+  if (typeof orig !== 'function') return
+  p.binding = function binding(/** @type {string} */ name) {
+    if (BINDINGS_REFUSED.includes(String(name))) {
+      throw violation(state, 'process.binding', String(name), { root: '(internal binding)', form: String(name), reason: 'bypasses the guarded fs and child_process' })
+    }
+    return orig.call(process, name)
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Install and the read-only API.
 
+/** Drop the guard's own preload and marker from this process's view of its env. */
+function hideGuardEnv() {
+  const cur = process.env.NODE_OPTIONS
+  if (cur !== undefined && cur.includes(NODE_OPTIONS_IMPORT)) {
+    const rest = cur.split(NODE_OPTIONS_IMPORT).join(' ').replace(/\s+/g, ' ').trim()
+    if (rest) process.env.NODE_OPTIONS = rest
+    else delete process.env.NODE_OPTIONS
+  }
+  delete process.env[MARKER_ENV]
+}
+
+/** @param {GuardState} state */
+function makeIsolated(state, /** @type {string[] | undefined} */ extraTmpRoots) {
+  const origTmp = (extraTmpRoots ?? []).find(nonEmpty) ?? os.tmpdir()
+  // A sibling of the per-worker temp root, never inside it: some code treats a home
+  // below os.tmpdir() differently. The `ccc-vitest-` prefix lets global-setup sweep it.
+  const root = fs.mkdtempSync(path.join(origTmp, 'ccc-vitest-home-'))
+  // The marker this process started with is gone from its env by now; the state kept it.
+  const { originalEnv: _orig, ...config } = buildConfig({ extraTmpRoots, isolated: root, markerRaw: state.markerRaw })
+  Object.assign(state, config, { isolatedEnv: config.isolated ? isolatedHomeVars(config.isolated, config.platform) : null, safeArea: undefined })
+  applyIsolatedEnv(state, true)
+  process.once('exit', () => {
+    try {
+      fs.rmSync(root, { recursive: true, force: true })
+    } catch {
+      /* best effort; global-setup sweeps ccc-vitest-* */
+    }
+  })
+}
+
 /**
- * Install the guard once per process (later calls return the installed state).
- * `isolate` creates a fresh isolated root under the original temp folder and points
- * the home variables at it (the vitest entry); without it the isolated root is the
- * one a caller handed over through isolatedProbeEnv (the probe entry).
+ * Isolate, then fail loudly if os.homedir() did not follow (a worker thread keeps its
+ * own copy of the environment). @param {GuardState} state @param {string[] | undefined} extraTmpRoots
+ */
+function isolateNow(state, extraTmpRoots) {
+  makeIsolated(state, extraTmpRoots)
+  assertHomeIsolated()
+}
+
+/**
+ * Install the guard once per process. `isolate` creates a fresh isolated root under
+ * the original temp folder and points the home variables at it (the vitest entry);
+ * it also upgrades a guard the probe entry installed earlier in this process
+ * (a vitest worker started under a guarded parent). Without `isolate` the isolated
+ * root is the one a guarded parent handed over.
  * @param {{ entry: 'vitest' | 'probe', isolate?: boolean, extraTmpRoots?: string[] }} opts
  * @returns {GuardState}
  */
 export function installHomeGuard(opts) {
   const existing = getState()
-  if (existing) return existing
-  let isolatedRoot
-  if (opts.isolate) {
-    const origTmp = (opts.extraTmpRoots ?? []).find(nonEmpty) ?? os.tmpdir()
-    // A sibling of the per-worker temp root, never inside it: some code treats a home
-    // below os.tmpdir() differently. The `ccc-vitest-` prefix lets global-setup sweep it.
-    isolatedRoot = fs.mkdtempSync(path.join(origTmp, 'ccc-vitest-home-'))
+  if (existing) {
+    if (opts.isolate && existing.entry === 'probe') {
+      existing.entry = opts.entry
+      isolateNow(existing, opts.extraTmpRoots)
+    }
+    return existing
   }
-  const config = buildConfig({ extraTmpRoots: opts.extraTmpRoots, isolated: isolatedRoot })
+  const config = buildConfig({ extraTmpRoots: opts.extraTmpRoots })
+  hideGuardEnv()
   /** @type {GuardState} */
   const state = {
     ...config,
     entry: opts.entry,
     isolatedEnv: config.isolated ? isolatedHomeVars(config.isolated, config.platform) : null,
+    protectedFds: new Map(),
     violations: [],
   }
   Object.defineProperty(process, STATE_KEY, { value: state, enumerable: false, configurable: false, writable: false })
 
-  wrapFsTable(state, fs, 'fs.', FS_DELETE, false)
-  wrapFsTable(state, fs, 'fs.', FS_WRITE, false)
+  wrapFsTable(state, fs, 'fs.', FS_SYNC_AND_CALLBACK, false)
   wrapFsTable(state, fs.promises, 'fs.promises.', FS_PROMISES, true)
   patchChildProcess(state)
   state.ptyGuarded = patchNodePty(state)
-  // `import { rmSync } from 'fs'`, `import * as fs from 'node:fs'`, fs/promises and
-  // child_process named imports read the ESM bindings: bring them in line.
+  patchWorkers(state)
+  patchProcessBinding(state)
+  // `import { rmSync } from 'fs'`, `import * as fs from 'node:fs'`, fs/promises,
+  // child_process and worker_threads named imports read the ESM bindings.
   syncBuiltinESMExports()
 
-  if (opts.isolate && isolatedRoot) {
-    applyIsolatedEnv(state, true)
-    const root = isolatedRoot
-    process.once('exit', () => {
-      try {
-        fs.rmSync(root, { recursive: true, force: true })
-      } catch {
-        /* best effort; global-setup sweeps ccc-vitest-* */
-      }
-    })
-  }
-  process.env[MARKER_ENV] = markerValue(state)
-  if (opts.entry === 'probe') {
-    process.once('exit', () => {
-      const left = drainViolations()
-      if (left.length === 0) return
-      try {
-        process.stderr.write(`${VIOLATION_CODE}: ${left.length} refused operation(s) in this probe:\n${left.map((v) => `  ${v.op}: ${v.target}`).join('\n')}\n`)
-      } catch {
-        /* stderr closed */
-      }
-      if (!process.exitCode) process.exitCode = 1
-    })
-  }
+  if (opts.isolate) isolateNow(state, opts.extraTmpRoots)
+  process.once('exit', () => {
+    if (state.entry !== 'probe') return
+    const left = drainViolations()
+    if (left.length === 0) return
+    try {
+      process.stderr.write(`${VIOLATION_CODE}: ${left.length} refused operation(s) in this probe:\n${left.map((v) => `  ${v.op}: ${v.target}`).join('\n')}\n`)
+    } catch {
+      /* stderr closed */
+    }
+    if (!process.exitCode) process.exitCode = 1
+  })
   return state
 }
 
@@ -877,15 +1364,28 @@ function applyIsolatedEnv(st, force) {
   // "Inside the isolated or temp area", built once: a checker whose roots are those.
   const safe = (st.safeArea ??= createHomeChecker({ realRoots: [st.isolated, ...st.tmpRoots], platform: st.platform }))
   const ok = (/** @type {string | undefined} */ v) => !force && nonEmpty(v) && safe.isProtected(v) && !st.checker.isProtected(v)
-  for (const name of HOME_VARS) {
-    if (!ok(process.env[name])) process.env[name] = iso[name]
+  for (const name of [...HOME_VARS, ...XDG_VARS]) {
+    if (iso[name] && !ok(process.env[name])) process.env[name] = iso[name]
   }
-  if (iso.HOMEDRIVE && iso.HOMEPATH && !ok(envHomeDrivePath(process.env))) {
+  if (iso.HOMEDRIVE && iso.HOMEPATH && !ok(envHomeDrivePath(/** @type {any} */ (process.env)))) {
     process.env.HOMEDRIVE = iso.HOMEDRIVE
     process.env.HOMEPATH = iso.HOMEPATH
   }
-  process.env[MARKER_ENV] = markerValue(st)
-  for (const name of HOME_VARS) fs.mkdirSync(iso[name], { recursive: true })
+  for (const name of [...HOME_VARS, ...XDG_VARS]) if (iso[name]) fs.mkdirSync(iso[name], { recursive: true })
+}
+
+/** Throw unless os.homedir() points inside the isolated root (a worker thread keeps its own env). */
+export function assertHomeIsolated() {
+  const st = getState()
+  const iso = st?.isolated
+  const home = osHome()
+  const inside = iso && home ? createHomeChecker({ realRoots: [iso], platform: process.platform }).isProtected(home) : false
+  if (!inside) {
+    throw new Error(
+      `${VIOLATION_CODE}: home isolation did not take effect: os.homedir() is ${home}, the isolated root is ${iso}. ` +
+        "Run vitest with pool 'forks' (a worker thread keeps its own copy of the environment).",
+    )
+  }
 }
 
 /** Remove and return the recorded violations. */
@@ -936,6 +1436,11 @@ export function guardInstalled() {
   return getState() !== undefined
 }
 
+/** Which entry installed the guard in this process ('vitest' | 'probe'), or undefined. */
+export function guardEntry() {
+  return getState()?.entry
+}
+
 /** Whether node-pty loaded in this process and its spawn is guarded. */
 export function ptyGuarded() {
   return getState()?.ptyGuarded === true
@@ -943,10 +1448,10 @@ export function ptyGuarded() {
 
 /**
  * A FRESH environment for a probe or fake CLI: nothing from process.env except
- * PATH-style essentials, and HOME, USERPROFILE, APPDATA, LOCALAPPDATA,
- * CLAUDE_CONFIG_DIR and CODEX_HOME (and HOMEDRIVE/HOMEPATH on Windows) inside
- * `root`. Carries the caller's real home roots so `--import probe-guard.mjs` in the
- * child protects them too. Throws if `root` is inside a real home.
+ * PATH-style essentials, the home variables (and HOMEDRIVE/HOMEPATH on Windows, the
+ * XDG folders elsewhere) inside `root`, and the guard preload in NODE_OPTIONS. It
+ * carries the caller's real home roots so the child protects them too. Throws if
+ * `root` is inside a real home.
  * @param {string} root
  */
 export function isolatedProbeEnv(root) {
@@ -963,15 +1468,16 @@ export function isolatedProbeEnv(root) {
   /** @type {Record<string, string>} */ const env = {}
   for (const name of PROBE_ENV_KEEP) {
     for (const k of Object.keys(process.env)) {
-      if (k === name || (process.platform === 'win32' && k.toUpperCase() === name.toUpperCase())) {
+      if (k === name || (IS_WIN && k.toUpperCase() === name.toUpperCase())) {
         const v = process.env[k]
         if (nonEmpty(v)) env[k] = v
       }
     }
   }
   const vars = isolatedHomeVars(abs)
-  for (const name of HOME_VARS) fs.mkdirSync(vars[name], { recursive: true })
+  for (const name of [...HOME_VARS, ...XDG_VARS]) if (vars[name]) fs.mkdirSync(vars[name], { recursive: true })
   Object.assign(env, vars)
-  env[MARKER_ENV] = JSON.stringify({ v: 1, real: config.realRaw, config: config.configRaw, tmp: config.tmpRoots, isolated: abs })
+  env.NODE_OPTIONS = NODE_OPTIONS_IMPORT
+  env[MARKER_ENV] = markerValue(config, abs)
   return env
 }
