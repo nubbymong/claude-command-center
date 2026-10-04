@@ -5,7 +5,7 @@
  */
 
 import { join } from 'path'
-import { readFileSync, existsSync, unlinkSync, renameSync, copyFileSync } from 'fs'
+import { readFileSync, existsSync, unlinkSync, renameSync, copyFileSync, lstatSync } from 'fs'
 import { getConfigDir, ensureConfigDir, migrateConfigToProviderShape } from './config-manager'
 import { logInfo, logError } from './debug-logger'
 import { atomicWriteFileSync } from './atomic-write'
@@ -65,86 +65,145 @@ export function sessionStateReadFailed(): boolean {
  * file unread, the read-failure latch untouched) and tries the removal again;
  * nothing else reads the set back either. The marker goes once every copy is
  * gone, or once a later save has replaced the set: a save that succeeds
- * removes it, and a file whose own savedAt is later than the clear the
- * marker records is that save's, even when the marker could not be removed.
- * A marker that cannot be read, or holds no time, counts as owed.
- * `clearOwedThisRun` holds the same for this run when the marker could not
- * be written.
+ * removes it, and a state saved after the clear the marker records (its own
+ * savedAt is later) is that save's, even when the marker could not be
+ * removed. The marker keeps the time of the user's clear: a retry that fails
+ * never moves it (PR 4 re-review R-1). Nothing is removed that may hold a
+ * later save (R-2): a marker that cannot be read, does not parse or holds no
+ * time stands at its own modification time (the atomic write made it at the
+ * clear), and when even that, or the saved file itself, cannot be read,
+ * nothing is removed or offered, and the read-failure latch keeps anything
+ * from being written over the file until a later load can tell.
+ * `clearOwedThisRun` holds the clear for this run, with its time, when the
+ * marker could not be written (each retry then tries the write again).
  */
 function getSessionStateClearOwedFile(): string {
   return `${getSessionStateFile()}.clear-owed`
 }
 
 let clearOwedThisRun = false
+/** This run's owed clear: the time the user cleared, and whether the
+ *  marker holding it was written. */
+let clearOwedSince = 0
+let clearOwedMarked = false
+/** The read-failure latch was set because an owed clear could not be told
+ *  apart from a later save (R-2), not by a read of the file. */
+let latchHeldForOwedClear = false
 
 type ClearOwed = { owed: false } | { owed: true; clearedAt: number | null }
 
 function readClearOwed(): ClearOwed {
-  if (clearOwedThisRun) return { owed: true, clearedAt: null }
-  let text: string
+  if (clearOwedThisRun) return { owed: true, clearedAt: clearOwedSince }
+  const marker = getSessionStateClearOwedFile()
+  let text: string | null = null
   try {
-    text = readFileSync(getSessionStateClearOwedFile(), 'utf-8')
+    text = readFileSync(marker, 'utf-8')
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return { owed: false }
+  }
+  if (text !== null) {
+    try {
+      const parsed = JSON.parse(text) as { clearedAt?: unknown } | null
+      const at = parsed && typeof parsed === 'object' ? parsed.clearedAt : undefined
+      if (typeof at === 'number' && Number.isFinite(at)) return { owed: true, clearedAt: at }
+    } catch { /* not JSON: its own time stands in, below */ }
+  }
+  // Unreadable, not JSON or no time: the marker's own modification time.
+  try {
+    return { owed: true, clearedAt: lstatSync(marker).mtimeMs }
   } catch (err) {
     if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return { owed: false }
     return { owed: true, clearedAt: null }
   }
-  try {
-    const parsed = JSON.parse(text) as { clearedAt?: unknown } | null
-    const at = parsed && typeof parsed === 'object' ? parsed.clearedAt : undefined
-    if (typeof at === 'number' && Number.isFinite(at)) return { owed: true, clearedAt: at }
-  } catch { /* not JSON: owed, with no time */ }
-  return { owed: true, clearedAt: null }
 }
 
-/** The file on disk was saved after the clear at `clearedAt` (its own
- *  savedAt is later). Only reads: no latch, nothing moved aside. */
-function savedAfter(clearedAt: number): boolean {
-  try {
-    const state = parseSessionStateText(readFileSync(getSessionStateFile(), 'utf-8'))
-    return !!state && typeof state.savedAt === 'number' && state.savedAt > clearedAt
-  } catch {
-    return false
+/** Whether the state a load would offer was saved after the clear at
+ *  `clearedAt`: the file's own savedAt, or its .bak's when the file is gone
+ *  or does not parse. 'unknown' when either cannot be read. Only reads: no
+ *  latch, nothing moved aside. */
+function savedSinceClear(clearedAt: number): 'after' | 'before' | 'unknown' {
+  const later = (state: SessionState | null) => !!state && typeof state.savedAt === 'number' && state.savedAt > clearedAt
+  for (const path of [getSessionStateFile(), getSessionStateBakFile()]) {
+    let text: string
+    try {
+      text = readFileSync(path, 'utf-8')
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') continue
+      return 'unknown'
+    }
+    const state = parseSessionStateText(text)
+    if (state) return later(state) ? 'after' : 'before'
   }
+  return 'before'
 }
 
-/** Remember, on disk and for this run, that the clear is still owed. */
+/** Remember, on disk and for this run, that the clear is still owed. A new
+ *  clear takes the time now; a retry keeps the first clear's time (R-1) and
+ *  only writes the marker if it could not be written before. */
 function markClearOwed(): void {
-  clearOwedThisRun = true
+  if (!clearOwedThisRun) {
+    clearOwedThisRun = true
+    clearOwedSince = Date.now()
+    clearOwedMarked = false
+  }
+  if (clearOwedMarked) return
   try {
-    atomicWriteFileSync(getSessionStateClearOwedFile(), JSON.stringify({ clearedAt: Date.now() }))
+    atomicWriteFileSync(getSessionStateClearOwedFile(), JSON.stringify({ clearedAt: clearOwedSince }))
+    clearOwedMarked = true
   } catch (err) {
-    logError(`[session-state] the clear is still owed, but that could not be written down for the next start (this run still holds it): ${(err as Error)?.message ?? err}`)
+    logError(`[session-state] the clear is still owed, but that could not be written down for the next start (this run still holds it, and tries again at each retry): ${(err as Error)?.message ?? err}`)
   }
 }
 
 /** The clear is no longer owed: every copy is gone, or a save replaced the set. */
 function dropClearOwed(): void {
   clearOwedThisRun = false
+  clearOwedMarked = false
   try {
     unlinkSync(getSessionStateClearOwedFile())
   } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') logError(`[session-state] the note that a clear was owed could not be removed (a file saved after that clear is still loaded): ${(err as Error)?.message ?? err}`)
+    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') logError(`[session-state] the note that a clear was owed could not be removed (a state saved after that clear is still loaded): ${(err as Error)?.message ?? err}`)
   }
 }
 
-/** Whether the file on disk is still a set the user cleared. Only reads. */
+/** Whether the file on disk may still be a set the user cleared. Only reads. */
 function clearStillOwed(): boolean {
   const owed = readClearOwed()
-  return owed.owed && (owed.clearedAt === null || !savedAfter(owed.clearedAt))
+  return owed.owed && (owed.clearedAt === null || savedSinceClear(owed.clearedAt) !== 'after')
+}
+
+/** Lift the latch an owed clear set (R-2), once the clear can be told
+ *  apart from a later save again. */
+function releaseOwedClearLatch(): void {
+  if (!latchHeldForOwedClear) return
+  latchHeldForOwedClear = false
+  lastLoadFailed = false
 }
 
 /**
  * The load's side of a clear still owed: retry the removal. True while the
- * set is still on disk (the caller answers nothing). Never reads the set for
- * the caller and never touches the read-failure latch.
+ * set may still be on disk (the caller answers nothing). Never reads the set
+ * for the caller. Removes nothing it cannot tell from a later save (R-2):
+ * then it sets the read-failure latch instead, so nothing is written over
+ * the file, and a later load tries again.
  */
 function settleOwedClear(): boolean {
   const owed = readClearOwed()
   if (!owed.owed) return false
-  if (owed.clearedAt !== null && savedAfter(owed.clearedAt)) {
+  const when = owed.clearedAt === null ? 'unknown' : savedSinceClear(owed.clearedAt)
+  if (when === 'after') {
     dropClearOwed()
     return false
   }
+  if (when === 'unknown') {
+    if (!lastLoadFailed) {
+      lastLoadFailed = true
+      latchHeldForOwedClear = true
+    }
+    logError('[session-state] a clear may still be owed, but the note of it or the saved file cannot be read, so nothing is removed or offered, and saves are held until a later load can tell')
+    return true
+  }
+  releaseOwedClearLatch()
   const done = removeSavedCopies()
   if (done.ok && done.bakRemoved) {
     dropClearOwed()
@@ -276,11 +335,13 @@ function parseSessionStateText(text: string): SessionState | null {
  * also returns null (the caller's contract is unchanged) but sets the latch
  * that refuses the next save/clear. While a clear is still owed (C-S1, above)
  * it answers null as that clear would have, after trying the removal again,
- * with the file unread and the latch untouched: the `session:load` path and
- * the GitHub sidebar's reads alike.
+ * with the file unread; the latch is left alone, except when the clear
+ * cannot be told apart from a later save (R-2), which holds it.
  */
 export function loadSessionState(): SessionState | null {
   if (settleOwedClear()) return null
+  // From here the read below decides the latch.
+  latchHeldForOwedClear = false
   const file = getSessionStateFile()
   try {
     if (!existsSync(file)) {
