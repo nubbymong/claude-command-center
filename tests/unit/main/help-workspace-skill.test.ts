@@ -214,6 +214,15 @@ describe('AGENTS.md for an Ask session on Codex (P4.3)', () => {
     // ASCII only.
     expect(md).toMatch(/^[\x09\x0a\x20-\x7e]*$/)
   })
+
+  it('[host] says exactly which sessions an installed helper skill reaches: those of the Codex account it is installed for, inside the app or not, and no other account\'s (owner, 2026-10-04)', () => {
+    for (const platform of ['linux', 'win32'] as const) {
+      const md = askConductorAgentsMarkdown(platform).replace(/\s+/g, ' ')
+      expect(md).toContain('lets the other Codex sessions of the account it is installed for answer Conductor questions')
+      expect(md).toContain('every Codex session that uses that account\'s Codex home, whether it was started in this app or outside it, and no session of any other account')
+      expect(md).not.toMatch(/OTHER Codex sessions/)
+    }
+  })
 })
 
 describe('the help folder is rebuilt to exactly the app\'s own files before every Ask launch (P4.3)', () => {

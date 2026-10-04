@@ -8,10 +8,11 @@ import type { CanvasSessionGuidance, SubmitNotDeliveredReason } from '../../shar
  * The Agent Canvas page's one-line notices for a Codex session (WP2 PR 4,
  * P4.1, row 51). Nothing for any other session.
  *
- *  - The tools without their skills' guidance: the launch could not carry it
- *    (section 10 question 5, built as its default A), and why, from main's
- *    own launch record (`canvas:sessionGuidance`); or, for a launch through
- *    the resume picker, which conversations it reaches.
+ *  - A canvas skill that could not be put in the account's own skills folder
+ *    (section 10 question 5, answered C), which and why, from main's own
+ *    launch record (`canvas:sessionGuidance`). The skills there reach every
+ *    session of that account however it is started, so nothing is said while
+ *    all of them are in place.
  *  - The live loop without turn events: until Codex's hooks are trusted for
  *    the account no turn event arrives, so a review filed mid-turn reaches
  *    Codex once its prompt reads ready on screen, not at the turn's end. Read
@@ -24,18 +25,28 @@ import type { CanvasSessionGuidance, SubmitNotDeliveredReason } from '../../shar
  *    when the canvas is open again (review A-1).
  */
 
-const GUIDANCE_WORDS: Record<Extract<CanvasSessionGuidance, { guidance: 'tools-only' }>['reason'], string> = {
-  'npm-route': 'Codex was started through its npm command, which cannot take that guidance',
-  'user-instructions': 'your Codex settings already set developer instructions, which the app never replaces',
-  'unknown-settings': 'the app could not confirm where this Codex version reads its settings, so it passed nothing',
-  'skills-not-staged': 'the skills could not be put in place for this Codex account',
+type MissingSkills = Extract<CanvasSessionGuidance, { guidance: 'tools-only' }>
+
+/** A skill's name as main sends it (the app's own skills): shown only when it
+ *  is a plain name, at most three of them. */
+const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/
+
+/** "a", "a and b", "a, b and c". */
+function listed(names: readonly string[]): string {
+  if (names.length <= 1) return names.join('')
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
 }
 
-/** A launch through the resume picker (review RVMFIX-3, the PR 4 final VM
- *  run): the guidance is passed when Codex starts in the session's own
- *  folder, a new conversation or a resumed one without instructions of its
- *  own; one that already has instructions keeps them. */
-const PICKER_GUIDANCE_LINE = 'This Codex session was started through the resume picker: its skills\' guidance is passed when Codex starts in this session\'s own folder; a resumed conversation that already has instructions keeps its own.'
+/** The one line for skills that are not in place: which, and why. */
+function missingSkillsLine(g: MissingSkills): string {
+  const names = (Array.isArray(g.skills) ? g.skills : []).filter((n) => typeof n === 'string' && SKILL_NAME_RE.test(n)).slice(0, 3)
+  const one = names.length === 1
+  const which = names.length > 0 ? `the app's ${listed(names)} skill${one ? '' : 's'}` : 'the app\'s canvas skills'
+  const why = g.reason === 'own-skill'
+    ? (one ? 'a skill of that name in this account\'s Codex skills folder is not the app\'s, and the app never replaces it' : 'skills of those names in this account\'s Codex skills folder are not the app\'s, and the app never replaces them')
+    : `the app could not put ${one ? 'it' : 'them'} in this account's Codex skills folder`
+  return `This Codex session has the canvas tools without ${which}: ${why}.`
+}
 
 const UNDELIVERED_WORDS: Record<SubmitNotDeliveredReason, string> = {
   'busy-timeout': 'Codex stayed busy, or its prompt was not ready, for two minutes',
@@ -119,21 +130,15 @@ export default function CodexCanvasNotices({ sessionId, canvasId }: { sessionId:
   useEffect(() => { setupCodexMarkerNoticeListener() }, [])
 
   if (!isCodex) return null
-  const toolsOnly = guidance && guidance.guidance === 'tools-only' ? guidance : null
-  const viaPicker = guidance?.guidance === 'picker'
+  const missing = guidance && guidance.guidance === 'tools-only' ? guidance : null
   const noTurnEvents = turnEvents === false
-  if (!toolsOnly && !viaPicker && !noTurnEvents && undelivered.length === 0) return null
+  if (!missing && !noTurnEvents && undelivered.length === 0) return null
 
   return (
     <div className="flex-none flex flex-col" data-testid="codex-canvas-notices">
-      {toolsOnly && (
+      {missing && (
         <div data-testid="codex-canvas-guidance" className="px-3.5 py-1.5 text-[12px]" style={strip}>
-          {`This Codex session has the canvas tools without their skills' guidance: ${GUIDANCE_WORDS[toolsOnly.reason] ?? 'the launch could not carry it'}.`}
-        </div>
-      )}
-      {viaPicker && (
-        <div data-testid="codex-canvas-guidance" className="px-3.5 py-1.5 text-[12px]" style={strip}>
-          {PICKER_GUIDANCE_LINE}
+          {missingSkillsLine(missing)}
         </div>
       )}
       {noTurnEvents && (

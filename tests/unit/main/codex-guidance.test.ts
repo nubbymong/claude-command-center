@@ -1,251 +1,159 @@
-// [host] WP2 PR 4, P4.1 (row 51; section 10 question 5, built as its default
-// A): which Codex launches carry the Agent Canvas, canvas-plan and Conductor
-// vision guidance, and how (src/main/canvas/codex-guidance.ts).
-//  - a managed account: its staged skills;
-//  - this computer's own sign-in: `-c developer_instructions` on the direct
-//    route only, for a version whose settings layers are established, and
-//    only when no settings layer Codex reads names `developer_instructions`
-//    (one case per layer), failing toward passing nothing; inline on Windows
-//    (at most 6,000 characters), a pointer to the plugin's skills elsewhere;
-//  - otherwise the tools alone, and why, for the canvas page's line.
-// Temporary folders stand in for the account's Codex folder and the project,
-// and the scan is handed a reader held to that temporary tree: the walk still
-// names every folder above it and the system layer, but anything outside the
-// tree is answered as absent without a read. The fs module is watched too:
-// while a test body runs, any read outside the tree is refused before it
-// reaches the disk and recorded, and every test fails if one was asked for.
-// So nothing here reads this user's own ~/.codex or ProgramData (review A-4).
+// [host] WP2 PR 4, P4.1 (row 51; section 10 question 5, answered C by the
+// owner on 2026-10-04): how the Agent Canvas, canvas-plan and Conductor
+// vision guidance reaches a Codex launch (src/main/canvas/codex-guidance.ts).
+//  - a managed account: its realm's staged skills;
+//  - this computer's own sign-in (and only it, by its realm, at a home the
+//    managed path rule does not take): the skills copied into the user's own
+//    Codex skills folder, never over a skill of the user's own;
+//  - the built-in tools off: nothing, and the app's copies removed;
+//  - what the canvas page is told: every skill in place, or which are not
+//    and why.
+// Option A (developer instructions on the launch line, after a scan of the
+// settings files Codex reads) is gone with its tests: the layer scan, the
+// established-version list, the inline and pointer texts and the npm-route,
+// user-instructions and unknown-settings reasons no longer exist.
+// Temporary folders stand in for the account's Codex folder, the app's
+// resources and its data folder: nothing here reads or writes this user's
+// own ~/.codex.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 
-const watch = vi.hoisted(() => ({ root: '', armed: false, outside: [] as string[] }))
-vi.mock('fs', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('fs')>()
-  const nodePath = await import('path')
-  const inside = (p: unknown): boolean => {
-    if (!watch.armed) return true
-    const rel = nodePath.relative(watch.root, nodePath.resolve(String(p)))
-    return rel === '' || (!rel.startsWith('..') && !nodePath.isAbsolute(rel))
-  }
-  const refuse = (p: unknown): never => {
-    watch.outside.push(String(p))
-    throw Object.assign(new Error(`refused: outside the test tree: ${String(p)}`), { code: 'ENOENT' })
-  }
-  const guard = <F extends (...a: any[]) => any>(fn: F): F => ((p: unknown, ...rest: unknown[]) => (inside(p) ? fn(p, ...rest) : refuse(p))) as F
-  const watched = {
-    ...actual,
-    statSync: guard(actual.statSync), lstatSync: guard(actual.lstatSync), readFileSync: guard(actual.readFileSync),
-    readdirSync: guard(actual.readdirSync), openSync: guard(actual.openSync),
-    existsSync: (p: Parameters<typeof actual.existsSync>[0]) => (inside(p) ? actual.existsSync(p) : (watch.outside.push(String(p)), false)),
-  }
-  return { ...watched, default: watched }
-})
+vi.mock('../../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }))
+vi.mock('../../../src/main/ipc/setup-handlers', () => ({ getDataDirectory: () => '' }))
 
 const g = await import('../../../src/main/canvas/codex-guidance')
-type LayerFs = NonNullable<Parameters<typeof g.decideCodexGuidance>[0]['layerFs']>
+const { STAGED_SKILL_MARK, STAGED_SKILL_MARK_BYTES } = await import('../../../src/main/canvas/codex-realm-skills')
+const { codexUserSkillsHomes } = await import('../../../src/main/canvas/codex-user-skills')
+const { codexManagedRealmSkillsDir } = await import('../../../src/main/providers/codex/realm-paths')
 const { canvasSkillFiles } = await import('../../../src/main/canvas/canvas-plugin')
 
-let root: string
-let home: string
-let project: string
-let programData: string
-
-/** A reader held to the temporary tree: what lies outside it is answered as
- *  absent, never read, and the path is noted (the walk still asks for it). */
-function jailedReader(): LayerFs & { asked: string[] } {
-  const asked: string[] = []
-  const inRoot = (p: string): boolean => {
-    const rel = path.relative(root, path.resolve(p))
-    return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))
-  }
-  const absent = (p: string): never => { asked.push(p); throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' }) }
-  return {
-    asked,
-    stat: (file) => (inRoot(file) ? fs.statSync(file) : absent(file)),
-    readText: (file) => (inRoot(file) ? fs.readFileSync(file, 'utf8') : absent(file)),
-    list: (dir) => (inRoot(dir) ? fs.readdirSync(dir) : absent(dir)),
-  }
-}
-let reader: ReturnType<typeof jailedReader>
+const ALL = canvasSkillFiles().map((s) => s.name)
+const REALM = 'realm-0123456789abcdef0c0d'
+let tmp: string
+let res: string
+let managedHome: string
+let ownHome: string
+let deps: { recordFile: () => string }
 
 beforeEach(() => {
-  root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-guidance-')))
-  home = path.join(root, 'codex-home')
-  project = path.join(root, 'repo', 'app')
-  programData = path.join(root, 'ProgramData')
-  for (const d of [home, path.join(home, 'sessions'), project, programData]) fs.mkdirSync(d, { recursive: true })
-  fs.writeFileSync(path.join(home, 'config.toml'), 'model = "gpt-5.5"\n[projects."C:\\\\repo"]\ntrust_level = "trusted"\n')
+  tmp = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-guidance-')))
+  res = path.join(tmp, 'res')
+  managedHome = path.join(res, 'codex-realms', REALM)
+  ownHome = path.join(tmp, 'own-codex')
+  fs.mkdirSync(managedHome, { recursive: true })
+  fs.mkdirSync(ownHome)
+  deps = { recordFile: () => path.join(tmp, 'codex-user-skills.json') }
   g._resetCodexGuidanceForTest()
-  reader = jailedReader()
-  watch.root = root
-  watch.outside = []
-  watch.armed = true
 })
 afterEach(() => {
-  watch.armed = false
-  fs.rmSync(root, { recursive: true, force: true })
-  // No test read anything outside its temporary tree.
-  expect(watch.outside).toEqual([])
+  fs.rmSync(tmp, { recursive: true, force: true })
 })
 
-const input = (over: Partial<Parameters<typeof g.decideCodexGuidance>[0]> = {}): Parameters<typeof g.decideCodexGuidance>[0] => ({
-  platform: 'win32',
-  route: 'direct',
-  external: true,
-  cliVersion: '0.155.1',
-  home,
-  cwds: [project],
-  pluginSkillsDir: path.join(root, 'res', 'canvas-plugin', 'skills'),
-  env: { ProgramData: programData },
-  layerFs: reader,
-  ...over,
+type Input = Parameters<typeof g.codexLaunchGuidance>[0]
+const skill = (home: string, name: string): string => path.join(home, 'skills', name, 'SKILL.md')
+const managed = (over: Partial<Input> = {}): Input => ({
+  home: managedHome, toolsOn: true, managed: true, managedSkillsDir: codexManagedRealmSkillsDir(managedHome, res), ruleSkillsDir: codexManagedRealmSkillsDir(managedHome, res), ownership: 'conductor-managed', ...over,
 })
-const write = (file: string, text: string): void => {
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.writeFileSync(file, text)
+const own = (over: Partial<Input> = {}): Input => ({
+  home: ownHome, toolsOn: true, managed: false, managedSkillsDir: null, ruleSkillsDir: null, ownership: 'external-default', ...over,
+})
+function plantOwn(home: string, name: string): void {
+  fs.mkdirSync(path.dirname(skill(home, name)), { recursive: true })
+  fs.writeFileSync(skill(home, name), 'the user\'s own skill')
 }
 
-describe('this computer\'s sign-in: the default A', () => {
-  it('passes the inline guidance on Windows when every layer is clear', () => {
-    const d = g.decideCodexGuidance(input())
-    expect(d.guidance).toEqual({ guidance: 'full' })
-    expect(d.developerInstructions).toBe(g.codexInlineGuidance())
+describe('a managed account: its realm\'s skills', () => {
+  it('[host] staged, and the session told every skill is in place', () => {
+    expect(g.codexLaunchGuidance(managed(), deps)).toEqual({ guidance: 'full' })
+    for (const name of ALL) expect(fs.existsSync(skill(managedHome, name))).toBe(true)
+    expect(codexUserSkillsHomes(deps)).toEqual([])
   })
 
-  it('the inline text is at most 6,000 characters, ASCII apart from the review marker line\'s own characters', () => {
-    const text = g.codexInlineGuidance()
-    expect(text.length).toBeLessThanOrEqual(6_000)
-    const nonAscii = [...text].filter((c) => c.charCodeAt(0) > 126)
-    expect(new Set(nonAscii)).toEqual(new Set([String.fromCharCode(0x2014), String.fromCharCode(0xb7)]))
-    for (const tool of ['canvas_render', 'canvas_snapshot', 'canvas_review', 'canvas_resolve', 'canvas_verdict', 'canvas_version_verdict', 'canvas_pick', 'canvas_complete', 'vision_text', 'open_in_app_browser']) {
-      expect(text).toContain(tool)
-    }
-    expect(text).toContain(`Review #3 ${String.fromCharCode(0x2014)} 5 notes ${String.fromCharCode(0xb7)} canvas_review R3`)
+  it('[host] a same-named folder that is not the app\'s: named, and never replaced', () => {
+    plantOwn(managedHome, 'canvas-plan')
+    expect(g.codexLaunchGuidance(managed(), deps)).toEqual({ guidance: 'tools-only', reason: 'own-skill', skills: ['canvas-plan'] })
+    expect(fs.readFileSync(skill(managedHome, 'canvas-plan'), 'utf8')).toBe('the user\'s own skill')
   })
 
-  it.each(['linux', 'darwin'] as const)('on %s a pointer naming the three skills and where their full text is', (platform) => {
-    const d = g.decideCodexGuidance(input({ platform, env: {} }))
-    expect(d.guidance).toEqual({ guidance: 'full' })
-    for (const skill of canvasSkillFiles()) {
-      expect(d.developerInstructions).toContain(`- ${skill.name}: ${skill.description}`)
-      expect(d.developerInstructions).toContain(path.join(root, 'res', 'canvas-plugin', 'skills', skill.name, 'SKILL.md'))
-    }
-    expect(d.developerInstructions!.length).toBeLessThan(3_000)
+  it('[host] a managed account whose folder the path rule cannot find: nothing staged, every skill named', () => {
+    expect(g.codexLaunchGuidance(managed({ managedSkillsDir: null }), deps)).toEqual({ guidance: 'tools-only', reason: 'skills-not-staged', skills: ALL })
+    expect(fs.existsSync(path.join(managedHome, 'skills'))).toBe(false)
   })
 
-  it('on macOS and Linux without the plugin folder: the tools alone', () => {
-    expect(g.decideCodexGuidance(input({ platform: 'linux', pluginSkillsDir: null })).guidance).toEqual({ guidance: 'tools-only', reason: 'skills-not-staged' })
-  })
-
-  it('never on the npm .cmd route', () => {
-    const d = g.decideCodexGuidance(input({ route: 'cmd' }))
-    expect(d).toEqual({ guidance: { guidance: 'tools-only', reason: 'npm-route' } })
-  })
-
-  it.each([null, '0.153.3', '0.157.0', '0.156.1-alpha.1'])('passes nothing on a version whose layers are not established (%s)', (v) => {
-    expect(g.decideCodexGuidance(input({ cliVersion: v }))).toEqual({ guidance: { guidance: 'tools-only', reason: 'unknown-settings' } })
-  })
-
-  it.each(['0.153.4', '0.154.0', '0.155.0', '0.155.1', '0.156.0', '0.156.1'])('the established versions (%s) pass it', (v) => {
-    expect(g.decideCodexGuidance(input({ cliVersion: v })).guidance).toEqual({ guidance: 'full' })
-  })
-
-  it('passes nothing when the working folder is not known at launch', () => {
-    expect(g.decideCodexGuidance(input({ cwds: null })).guidance).toEqual({ guidance: 'tools-only', reason: 'unknown-settings' })
+  it('[host] the tools off: its staged skills removed, nothing recorded', () => {
+    g.codexLaunchGuidance(managed(), deps)
+    expect(g.codexLaunchGuidance(managed({ toolsOn: false }), deps)).toBeNull()
+    for (const name of ALL) expect(fs.existsSync(path.dirname(skill(managedHome, name)))).toBe(false)
   })
 })
 
-describe('a settings layer that names developer_instructions: nothing passed (one case per layer)', () => {
-  const NAMES = 'developer_instructions = "be terse"\n'
+describe('this computer\'s own sign-in: the skills copied into the user\'s own Codex skills folder (question 5, C)', () => {
+  it('[host] copied with the app\'s mark, the folder recorded, and the session told every skill is in place', () => {
+    expect(g.codexLaunchGuidance(own(), deps)).toEqual({ guidance: 'full' })
+    for (const s of canvasSkillFiles()) {
+      expect(fs.readFileSync(skill(ownHome, s.name)).equals(s.bytes)).toBe(true)
+      expect(fs.readFileSync(path.join(ownHome, 'skills', s.name, STAGED_SKILL_MARK)).equals(STAGED_SKILL_MARK_BYTES)).toBe(true)
+    }
+    expect(codexUserSkillsHomes(deps)).toEqual([ownHome])
+  })
+
+  it('[host] a skill of the user\'s own with the same name: skipped by name, never touched, the others copied', () => {
+    plantOwn(ownHome, 'agent-canvas')
+    expect(g.codexLaunchGuidance(own(), deps)).toEqual({ guidance: 'tools-only', reason: 'own-skill', skills: ['agent-canvas'] })
+    expect(fs.readFileSync(skill(ownHome, 'agent-canvas'), 'utf8')).toBe('the user\'s own skill')
+    expect(fs.existsSync(skill(ownHome, 'conductor-vision'))).toBe(true)
+  })
+
+  it('[host] no record to write the folder into (the default data folder is not known here): nothing copied, every skill named', () => {
+    expect(g.codexLaunchGuidance(own(), {})).toEqual({ guidance: 'tools-only', reason: 'skills-not-staged', skills: ALL })
+    expect(fs.existsSync(path.join(ownHome, 'skills'))).toBe(false)
+  })
+
+  it('[host] the tools off: the app\'s copies removed from that folder (the user\'s own skill stays), nothing recorded for the page', () => {
+    plantOwn(ownHome, 'agent-canvas')
+    g.codexLaunchGuidance(own(), deps)
+    expect(g.codexLaunchGuidance(own({ toolsOn: false }), deps)).toBeNull()
+    expect(fs.existsSync(path.dirname(skill(ownHome, 'canvas-plan')))).toBe(false)
+    expect(fs.readFileSync(skill(ownHome, 'agent-canvas'), 'utf8')).toBe('the user\'s own skill')
+    expect(codexUserSkillsHomes(deps)).toEqual([])
+  })
+
   it.each([
-    ['the account\'s config.toml, top level', () => write(path.join(home, 'config.toml'), `model = "x"\n${NAMES}`)],
-    ['a [profiles.*] table', () => write(path.join(home, 'config.toml'), `profile = "work"\n[profiles.work]\n${NAMES}`)],
-    ['a profile file beside it', () => write(path.join(home, 'work.config.toml'), NAMES)],
-    ['a trusted project\'s settings at the working folder', () => write(path.join(project, '.codex', 'config.toml'), NAMES)],
-    ['a project\'s settings at a parent below the root marker', () => write(path.join(root, 'repo', '.codex', 'config.toml'), NAMES)],
-    ['the working folder\'s own config.toml', () => write(path.join(project, 'config.toml'), NAMES)],
-    ['the system layer (ProgramData)', () => write(path.join(programData, 'OpenAI', 'Codex', 'config.toml'), NAMES)],
-    ['the requirements (ProgramData)', () => write(path.join(programData, 'OpenAI', 'Codex', 'requirements.toml'), 'additional_developer_instructions = "x"\n')],
-    ['the account\'s managed_config.toml', () => write(path.join(home, 'managed_config.toml'), NAMES)],
-    ['the enterprise cloud layer\'s cache', () => write(path.join(home, 'cloud-config-bundle-cache.json'), '{"signed_payload":{"bundle":{"config_toml":{"enterprise_managed":["developer\\u005finstructions = \\"x\\""]}}}}')],
-    ['a quoted key spelled with a TOML escape', () => write(path.join(home, 'config.toml'), '"developer\\u005Finstructions" = "x"\n')],
-    ['another case', () => write(path.join(home, 'config.toml'), 'DEVELOPER_INSTRUCTIONS = "x"\n')],
-  ])('%s', (_name, plant) => {
-    plant()
-    expect(g.decideCodexGuidance(input())).toEqual({ guidance: { guidance: 'tools-only', reason: 'user-instructions' } })
-  })
-
-  it('a resumed conversation\'s own folder is read too', () => {
-    const other = path.join(root, 'elsewhere')
-    write(path.join(other, '.codex', 'config.toml'), NAMES)
-    expect(g.decideCodexGuidance(input({ cwds: [project, other] })).guidance).toEqual({ guidance: 'tools-only', reason: 'user-instructions' })
-  })
-
-  it('a layer that cannot be read as text passes nothing', () => {
-    fs.mkdirSync(path.join(project, '.codex', 'config.toml'), { recursive: true })
-    expect(g.decideCodexGuidance(input()).guidance).toEqual({ guidance: 'tools-only', reason: 'unknown-settings' })
-  })
-
-  it('a folder Codex has never run in, with no cloud cache: the cloud layer is unknown, nothing passed', () => {
-    fs.rmSync(path.join(home, 'sessions'), { recursive: true })
-    expect(g.decideCodexGuidance(input()).guidance).toEqual({ guidance: 'tools-only', reason: 'unknown-settings' })
-  })
-
-  it('a clean cloud cache is read and passes', () => {
-    write(path.join(home, 'cloud-config-bundle-cache.json'), '{"signed_payload":{"bundle":{}}}')
-    expect(g.decideCodexGuidance(input()).guidance).toEqual({ guidance: 'full' })
-  })
-
-  it('the walk covers every ancestor of the working folder, the account folder and the system layer', () => {
-    const files = g.codexSettingsLayerFiles({ platform: 'win32', home, cwds: [project], env: { ProgramData: programData }, fs: reader })
-    expect(files).toContain(path.join(home, 'config.toml'))
-    expect(files).toContain(path.join(project, '.codex', 'config.toml'))
-    expect(files).toContain(path.join(root, '.codex', 'config.toml'))
-    expect(files).toContain(path.join(programData, 'OpenAI', 'Codex', 'requirements.toml'))
-    expect(files).toContain('C:\\ProgramData\\OpenAI\\Codex\\config.toml')
-    const posix = g.codexSettingsLayerFiles({ platform: 'linux', home, cwds: [project], env: {}, fs: reader })
-    expect(posix).toEqual(expect.arrayContaining(['/etc/codex/config.toml', '/etc/codex/requirements.toml', '/etc/codex/managed_config.toml', path.join(project, '.codex', 'config.toml')]))
-    expect(posix.some((f) => f.includes('ProgramData'))).toBe(false)
+    ['an account whose realm cannot be told', (): Partial<Input> => ({ ownership: undefined })],
+    ['an app-managed account the path rule does not find', (): Partial<Input> => ({ ownership: 'conductor-managed' })],
+    ['this computer\'s sign-in at a home the managed path rule takes', (): Partial<Input> => ({ ruleSkillsDir: path.join(ownHome, 'skills') })],
+  ])('[host] %s: nothing written into that folder, at copy or at removal', (_name, over) => {
+    plantOwn(ownHome, 'canvas-plan')
+    fs.mkdirSync(path.join(ownHome, 'skills', 'agent-canvas'))
+    fs.writeFileSync(skill(ownHome, 'agent-canvas'), canvasSkillFiles()[0].bytes)
+    fs.writeFileSync(path.join(ownHome, 'skills', 'agent-canvas', STAGED_SKILL_MARK), STAGED_SKILL_MARK_BYTES)
+    const before = fs.readdirSync(path.join(ownHome, 'skills')).sort()
+    expect(g.codexLaunchGuidance(own(over()), deps)).toEqual({ guidance: 'tools-only', reason: 'skills-not-staged', skills: ALL })
+    expect(g.codexLaunchGuidance(own({ ...over(), toolsOn: false }), deps)).toBeNull()
+    expect(fs.readdirSync(path.join(ownHome, 'skills')).sort()).toEqual(before)
+    expect(fs.existsSync(skill(ownHome, 'agent-canvas'))).toBe(true)
+    expect(codexUserSkillsHomes(deps)).toEqual([])
   })
 })
 
-describe('the scan reads only through the reader it is handed (review A-4)', () => {
-  it('[host] the watch reaches the fs the module itself imports: a read outside the tree is refused before the disk', () => {
-    const nowhere = path.join(path.dirname(root), 'ccc-guidance-no-such-file')
-    expect(() => g.NODE_LAYER_FS.stat(nowhere)).toThrow(/refused: outside the test tree/)
-    expect(watch.outside).toEqual([nowhere])
-    watch.outside = []
+describe('what the page is told', () => {
+  it.each([
+    ['every skill in place', { outcome: { staged: true as const }, skipped: [] }, { guidance: 'full' }],
+    ['only skills not the app\'s', { outcome: { staged: false as const, reason: 'not-ours' as const }, skipped: [{ name: 'agent-canvas', reason: 'not-ours' as const }, { name: 'canvas-plan', reason: 'not-ours' as const }] }, { guidance: 'tools-only', reason: 'own-skill', skills: ['agent-canvas', 'canvas-plan'] }],
+    ['one not the app\'s and one that failed', { outcome: { staged: false as const, reason: 'not-ours' as const }, skipped: [{ name: 'agent-canvas', reason: 'not-ours' as const }, { name: 'canvas-plan', reason: 'failed' as const }] }, { guidance: 'tools-only', reason: 'skills-not-staged', skills: ['agent-canvas', 'canvas-plan'] }],
+    ['a link', { outcome: { staged: false as const, reason: 'link' as const }, skipped: [{ name: 'conductor-vision', reason: 'link' as const }] }, { guidance: 'tools-only', reason: 'skills-not-staged', skills: ['conductor-vision'] }],
+    ['not staged, with no skill named', { outcome: { staged: false as const, reason: 'failed' as const }, skipped: [] }, { guidance: 'tools-only', reason: 'skills-not-staged', skills: ALL }],
+  ])('[host] %s', (_name, staging, told) => {
+    expect(g.codexGuidanceFromStaging(staging)).toEqual(told)
   })
 
-  it('[host] the walk still asks for the folders above the tree and the system layer, answered as absent, and nothing outside the tree is read', () => {
-    expect(g.decideCodexGuidance(input()).guidance).toEqual({ guidance: 'full' })
-    expect(reader.asked).toContain(path.join(path.dirname(root), '.codex', 'config.toml'))
-    expect(reader.asked).toContain('C:\\ProgramData\\OpenAI\\Codex\\config.toml')
-    expect(watch.outside).toEqual([])
-  })
-
-  it('[host] a layer outside the tree is read through that reader, not the disk', () => {
-    const sample = path.join(home, 'config.toml')
-    const systemRequirements = 'C:\\ProgramData\\OpenAI\\Codex\\requirements.toml'
-    const base = jailedReader()
-    const withSystemLayer: LayerFs = {
-      list: base.list,
-      stat: (file) => (file === systemRequirements ? fs.statSync(sample) : base.stat(file)),
-      readText: (file) => (file === systemRequirements ? 'developer_instructions = "x"\n' : base.readText(file)),
-    }
-    expect(g.decideCodexGuidance(input({ layerFs: withSystemLayer }))).toEqual({ guidance: { guidance: 'tools-only', reason: 'user-instructions' } })
-  })
-})
-
-describe('a managed account: its staged skills', () => {
-  it('full when they are staged, and no developer instructions', () => {
-    expect(g.decideCodexGuidance(input({ external: false, managedSkills: { staged: true }, route: 'cmd' }))).toEqual({ guidance: { guidance: 'full' } })
-  })
-
-  it.each(['link', 'not-ours', 'failed', 'not-managed'] as const)('the tools alone when they are not (%s)', (reason) => {
-    expect(g.decideCodexGuidance(input({ external: false, managedSkills: { staged: false, reason } }))).toEqual({ guidance: { guidance: 'tools-only', reason: 'skills-not-staged' } })
+  it('[host] the route a launch took no longer changes what it carried (the skills reach every conversation of the account)', () => {
+    const full = { guidance: 'full' as const }
+    expect(g.codexGuidanceAsLaunched({ guidance: full }, { viaPicker: true })).toEqual(full)
+    expect(g.codexGuidanceAsLaunched({ guidance: full }, { viaPicker: false })).toEqual(full)
+    expect(g.codexGuidanceAsLaunched({ guidance: null }, { viaPicker: true })).toBeNull()
   })
 })
 

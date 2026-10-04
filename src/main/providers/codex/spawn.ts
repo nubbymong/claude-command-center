@@ -11,7 +11,7 @@ import { readConfig, getConfigDir } from '../../config-manager'
 import { colorFgBgValue } from '../host-color-scheme'
 import { codexShellEnv, CMD_UNSAFE_PATH_RE } from './cli-runner'
 import { CODEX_CONVERSATION_ID_RE, codexFolderIdentity, resolveCodexResume } from './rollout-lookup'
-import { codexHookCommand, codexHookConfigArgs, codexPlainWrapperDir, codexLocalAppData, verifyPlainCodexHookWrapper, tomlString, CODEX_HOOK_FILE_ENV, CODEX_HOOK_SCRIPT, CODEX_HOOK_WRAPPER } from './hooks'
+import { codexHookCommand, codexHookConfigArgs, codexPlainWrapperDir, codexLocalAppData, verifyPlainCodexHookWrapper, CODEX_HOOK_FILE_ENV, CODEX_HOOK_SCRIPT, CODEX_HOOK_WRAPPER } from './hooks'
 import { codexExtraArgsProblem, codexExtraArgWords } from '../../../shared/extra-args'
 import { logWarn } from '../../debug-logger'
 
@@ -231,13 +231,6 @@ export function codexLaunchRoute(executable: string, platform: NodeJS.Platform =
   return platform === 'win32' && /\.(cmd|bat)$/i.test(executable) ? 'cmd' : 'direct'
 }
 
-/** A Codex launch line as the log may hold it: the developer instructions
- *  (the app's own guidance, thousands of characters) named by their length
- *  only. */
-export function codexLaunchLineForLog(line: string): string {
-  return line.replace(/developer_instructions=("(?:[^"\\]|\\.)*"|'[^']*')/g, (_m, value: string) => `developer_instructions=<${value.length} characters>`)
-}
-
 
 /** Set a variable main owns, removing every other spelling of it first: on
  *  Windows names are case-insensitive and a child reads the FIRST match in
@@ -375,11 +368,10 @@ function askArgvSurvives(executable: string, args: readonly string[], win32: boo
 }
 
 /** The Codex launch for `opts`, with the line the app's log may hold
- *  (`logLine`): the developer instructions named by their length
- *  (codexLaunchLineForLog), and an Ask question carried on argv named only by
- *  its length, never its words (P4.3, as Claude's route keeps the question off
- *  its logged line by environment reference). The PTY manager logs that line,
- *  never the arguments themselves. */
+ *  (`logLine`): an Ask question carried on argv named only by its length,
+ *  never its words (P4.3, as Claude's route keeps the question off its logged
+ *  line by environment reference). The PTY manager logs that line, never the
+ *  arguments themselves. */
 export function buildCodexSpawn(opts: SpawnOptions): ProviderSpawnCommand {
   const built = buildCodexSpawnCommand(opts)
   const q = opts.askPrompt
@@ -392,7 +384,7 @@ export function buildCodexSpawn(opts: SpawnOptions): ProviderSpawnCommand {
     }
     shown = [...built.args.slice(0, n - 1), `<question, ${[...q].length} characters>`]
   }
-  return { ...built, logLine: codexLaunchLineForLog(built.commandLine ?? shown.join(' ')) }
+  return { ...built, logLine: built.commandLine ?? shown.join(' ') }
 }
 
 function buildCodexSpawnCommand(opts: SpawnOptions): ProviderSpawnCommand {
@@ -481,14 +473,9 @@ function buildCodexSpawnCommand(opts: SpawnOptions): ProviderSpawnCommand {
     presetKeyArgs = codexPresetApprovedTools(co.permissionsPreset, spawnSettings ?? {}).flatMap((tool) => ['-c', codexToolApprovalArg(tool)])
     presetKeysAt = flags.length
     flags.push(...presetKeyArgs)
-    // WP2 PR 4, P4.1 (section 10 question 5, default A): the app's canvas and
-    // browser guidance as Codex's developer instructions, decided by main for
-    // this launch (src/main/canvas/codex-guidance.ts), encoded as a TOML
-    // string. Never through cmd.exe: the npm .cmd route refuses an argument
-    // holding a space (codexCmdExeTarget).
-    if (typeof opts.developerInstructions === 'string' && opts.developerInstructions && !viaCmdExe) {
-      flags.push('-c', `developer_instructions=${tomlString(opts.developerInstructions)}`)
-    }
+    // The canvas and browser skills are not on this line: they are in the
+    // account's own skills folder (section 10 question 5, answered C;
+    // src/main/canvas/codex-guidance.ts), which Codex lists on every route.
   }
 
   // CLAUDE_MULTI_SESSION_ID identifies the spawning CCC session for downstream

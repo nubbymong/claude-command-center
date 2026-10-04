@@ -180,8 +180,10 @@ Rules:
 
 ## The helper skill (you are the installer)
 
-Beside this file sit two READY-MADE skill files that let the user's OTHER Codex sessions
-answer Conductor questions without opening this tab:
+Beside this file sit two READY-MADE skill files. Once installed, a helper skill lets the
+other Codex sessions of the account it is installed for answer Conductor questions without
+opening this tab: every Codex session that uses that account's Codex home, whether it was
+started in this app or outside it, and no session of any other account.
 
 - **ask-conductor-skill.md** -- for THIS machine. To install it: in the \`skills\` folder of
   the Codex home this session runs under (\`$CODEX_HOME/skills\` when CODEX_HOME is set,

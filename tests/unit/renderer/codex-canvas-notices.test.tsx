@@ -2,8 +2,9 @@
 //
 // [host] WP2 PR 4, P4.1 (row 51): the Agent Canvas page's one-line notices for
 // a Codex session (src/renderer/components/CodexCanvasNotices.tsx):
-//  - the tools without their skills' guidance, and why (section 10 question
-//    5's default A), from main's launch record;
+//  - a canvas skill that could not be put in the account's own skills folder,
+//    which, and why (section 10 question 5, answered C), from main's launch
+//    record; nothing while every skill is in place;
 //  - no turn events yet (its hooks not trusted), so a filed review reaches
 //    Codex when its prompt is ready, read from the hook stream;
 //  - a filed review or verdict Codex did not get, with the line and why, on
@@ -71,28 +72,33 @@ const text = (id: string): string | null => host.querySelector(`[data-testid="${
 
 describe('a Codex session\'s canvas notices', () => {
   it.each([
-    ['npm-route', /npm command/],
-    ['user-instructions', /developer instructions, which the app never replaces/],
-    ['unknown-settings', /could not confirm where this Codex version reads its settings/],
-    ['skills-not-staged', /skills could not be put in place/],
-  ] as const)('says the tools came without their guidance, and why (%s)', async (reason, words) => {
+    ['one skill of the user\'s own', 'own-skill', ['agent-canvas'], 'This Codex session has the canvas tools without the app\'s agent-canvas skill: a skill of that name in this account\'s Codex skills folder is not the app\'s, and the app never replaces it.'],
+    ['two skills of the user\'s own', 'own-skill', ['agent-canvas', 'conductor-vision'], 'This Codex session has the canvas tools without the app\'s agent-canvas and conductor-vision skills: skills of those names in this account\'s Codex skills folder are not the app\'s, and the app never replaces them.'],
+    ['one that could not be put in place', 'skills-not-staged', ['canvas-plan'], 'This Codex session has the canvas tools without the app\'s canvas-plan skill: the app could not put it in this account\'s Codex skills folder.'],
+    ['none could be put in place', 'skills-not-staged', ['agent-canvas', 'canvas-plan', 'conductor-vision'], 'This Codex session has the canvas tools without the app\'s agent-canvas, canvas-plan and conductor-vision skills: the app could not put them in this account\'s Codex skills folder.'],
+  ] as const)('[host] says which skill is missing and why (%s), question 5 answered C', async (_name, reason, skills, line) => {
     setProvider('codex')
-    guidance = { guidance: 'tools-only', reason }
+    guidance = { guidance: 'tools-only', reason, skills: [...skills] }
     buffer = [{ sessionId: SID, event: 'SessionStart', payload: {}, ts: 1 }]
     await mount()
-    expect(text('codex-canvas-guidance')).toMatch(/without their skills' guidance/)
-    expect(text('codex-canvas-guidance')).toMatch(words)
+    expect(text('codex-canvas-guidance')).toBe(line)
   })
 
-  it('[host] a launch through the resume picker: the guidance is passed when Codex starts in the session\'s own folder, and the page says so (review RVMFIX-3, vm final)', async () => {
+  it('[host] a skill name that is not a plain name is never shown (the record is main\'s, still read as data)', async () => {
     setProvider('codex')
-    guidance = { guidance: 'picker' }
+    guidance = { guidance: 'tools-only', reason: 'own-skill', skills: ['agent-canvas', '<b>x</b>', 'a'.repeat(200)] }
     buffer = [{ sessionId: SID, event: 'SessionStart', payload: {}, ts: 1 }]
     await mount()
-    // The final VM run: a resumed conversation without instructions of its
-    // own gets them too, so the line never says only a new one does.
-    expect(text('codex-canvas-guidance')).toBe('This Codex session was started through the resume picker: its skills\' guidance is passed when Codex starts in this session\'s own folder; a resumed conversation that already has instructions keeps its own.')
-    expect(text('codex-canvas-guidance')).not.toMatch(/only in a new conversation/)
+    expect(text('codex-canvas-guidance')).toBe('This Codex session has the canvas tools without the app\'s agent-canvas skill: a skill of that name in this account\'s Codex skills folder is not the app\'s, and the app never replaces it.')
+  })
+
+  it('[host] no line while every skill is in place, however the session was started (the picker included): the skills reach every conversation of the account', async () => {
+    setProvider('codex')
+    guidance = { guidance: 'full' }
+    buffer = [{ sessionId: SID, event: 'SessionStart', payload: {}, ts: 1 }]
+    await mount()
+    expect(text('codex-canvas-guidance')).toBeNull()
+    expect(host.innerHTML).not.toMatch(/resume picker|developer instructions/)
   })
 
   it('[host] a marker not confirmed in the prompt: may still be there, unsent, never said to be taken back (review R-1)', async () => {
@@ -183,7 +189,7 @@ describe('a Codex session\'s canvas notices', () => {
 
   it('nothing at all for a Claude session', async () => {
     setProvider('claude')
-    guidance = { guidance: 'tools-only', reason: 'npm-route' }
+    guidance = { guidance: 'tools-only', reason: 'own-skill', skills: ['agent-canvas'] }
     await mount()
     expect(host.innerHTML).toBe('')
   })

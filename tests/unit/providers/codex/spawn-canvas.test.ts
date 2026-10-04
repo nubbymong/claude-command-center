@@ -5,11 +5,11 @@
 //    mode; under Unrestricted (matched with Claude's Bypass, which asks before
 //    nothing) every tool the connection is offered does too; per tool, never
 //    a server-wide default;
-//  - the canvas guidance as `-c developer_instructions` (section 10 question
-//    5's default A), on the direct route only, TOML-encoded;
+//  - never developer instructions (section 10 question 5, answered C: the
+//    canvas skills are in the account's own skills folder, not on the line);
 //  - the launch lines' budgets: under 32,767 characters on the direct route
-//    (with the inline guidance, every key, the longest extra arguments and an
-//    8,000-character Ask question quoted at its worst), under cmd.exe's 8,191
+//    (with every key, the longest extra arguments and an 8,000-character Ask
+//    question quoted at its worst), under cmd.exe's 8,191
 //    on the npm .cmd route (with every key under every preset and the longest
 //    extra arguments); a forced overflow there drops the per-preset keys, with
 //    a log line, and still launches.
@@ -37,10 +37,9 @@ vi.mock('../../../../src/main/config-manager', () => ({
 const logWarn = vi.fn()
 vi.mock('../../../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: (...a: unknown[]) => logWarn(...a), logError: vi.fn() }))
 
-const { buildCodexSpawn, codexToolApprovalArg, codexPresetApprovedTools, codexLaunchRoute, codexLaunchLineForLog, CODEX_PREALLOWED_TOOLS, CMD_EXE_LINE_MAX } = await import('../../../../src/main/providers/codex/spawn')
+const { buildCodexSpawn, codexToolApprovalArg, codexPresetApprovedTools, codexLaunchRoute, CODEX_PREALLOWED_TOOLS, CMD_EXE_LINE_MAX } = await import('../../../../src/main/providers/codex/spawn')
 const { CODEX_CONDUCTOR_TOOLS, VISION_TOOL_NAMES } = await import('../../../../src/main/providers/codex/conductor-tools')
-const { codexInlineGuidance, codexPointerGuidance, CODEX_INLINE_GUIDANCE_MAX } = await import('../../../../src/main/canvas/codex-guidance')
-const { tomlString } = await import('../../../../src/main/providers/codex/hooks')
+const { codexHookConfigArgs } = await import('../../../../src/main/providers/codex/hooks')
 const { EXTRA_ARGS_MAX, codexExtraArgsProblem } = await import('../../../../src/shared/extra-args')
 
 type Preset = 'read-only' | 'standard' | 'auto' | 'unrestricted' | 'plan'
@@ -73,23 +72,6 @@ function windowsCommandLine(file: string, args: string[]): string {
     return out + '\\'.repeat(bs * 2) + '"'
   }
   return [file, ...args].map(quote).join(' ')
-}
-
-/** A TOML string read back (the two forms tomlString writes). A literal
- *  string holds no single quote and no control character but a tab (TOML
- *  1.0); a basic one has them escaped. */
-function readToml(v: string): string {
-  if (v.startsWith("'")) {
-    expect(v.endsWith("'")).toBe(true)
-    const inner = v.slice(1, -1)
-    expect(inner.includes("'"), 'a literal string holds no single quote').toBe(false)
-    expect([...inner].some((c) => (c.charCodeAt(0) < 32 && c !== '\t') || c.charCodeAt(0) === 127), 'a literal string holds no control character').toBe(false)
-    return inner
-  }
-  expect(v.startsWith('"') && v.endsWith('"')).toBe(true)
-  expect([...v].some((c) => (c.charCodeAt(0) < 32 && c !== '\t') || c.charCodeAt(0) === 127), 'a basic string holds its control characters escaped').toBe(false)
-  return v.slice(1, -1).replace(/\\(u[0-9A-Fa-f]{4}|["\\ntr])/g, (_m, e: string) =>
-    e === 'n' ? '\n' : e === 't' ? '\t' : e === 'r' ? '\r' : e === '"' ? '"' : e === '\\' ? '\\' : String.fromCharCode(parseInt(e.slice(1), 16)))
 }
 
 /** The longest extra arguments a Codex session may carry. */
@@ -175,100 +157,54 @@ describe('approvals (PB2), by parity per preset', () => {
   })
 })
 
-describe('developer instructions (question 5, default A)', () => {
-  const text = 'line one\nline "two" with C:\\path and it\'s'
+describe('no developer instructions (question 5, answered C)', () => {
+  // Option A passed the guidance as `-c developer_instructions` on this
+  // computer's own sign-in; C copies the skills into the account's own skills
+  // folder instead (src/main/canvas/codex-user-skills.ts), so a launch line
+  // never carries them, whatever main hands the builder.
+  const asked = (o: Record<string, unknown>) => ({ ...o, developerInstructions: 'line one\nline "two"' }) as unknown as Parameters<typeof buildCodexSpawn>[0]
 
-  it('the direct route carries them as one TOML-encoded -c value', () => {
-    const out = buildCodexSpawn({ sessionId: 'sid', realmLaunch: linuxLaunch, developerInstructions: text, codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' } })
-    const arg = out.args.find((a) => a.startsWith('developer_instructions='))!
-    expect(out.args[out.args.indexOf(arg) - 1]).toBe('-c')
-    expect(readToml(arg.slice('developer_instructions='.length))).toBe(text)
+  it('[host] the direct route never carries developer instructions', () => {
+    const out = buildCodexSpawn(asked({ sessionId: 'sid', realmLaunch: linuxLaunch, codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' } }))
+    expect(out.args.join(' ')).not.toMatch(/developer_instructions/i)
   })
 
-  it('a Windows codex.exe is the direct route too', () => {
+  it('[host] neither does a Windows codex.exe, nor the npm .cmd route', () => {
     withWin32(() => {
-      const out = buildCodexSpawn({ sessionId: 'sid', realmLaunch: { ...linuxLaunch, executable: EXE, env: winEnv }, developerInstructions: text, codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' } })
-      expect(out.commandLine).toBeUndefined()
-      expect(out.args.some((a) => a.startsWith('developer_instructions='))).toBe(true)
+      const exe = buildCodexSpawn(asked({ sessionId: 'sid', realmLaunch: { ...linuxLaunch, executable: EXE, env: winEnv }, codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' } }))
+      expect(exe.args.join(' ')).not.toMatch(/developer_instructions/i)
       expect(codexLaunchRoute(EXE, 'win32')).toBe('direct')
-    })
-  })
-
-  it('never on the npm .cmd route (it refuses an argument holding a space)', () => {
-    withWin32(() => {
-      const out = buildCodexSpawn({ sessionId: 'sid', realmLaunch: { ...linuxLaunch, executable: SHIM, env: winEnv }, developerInstructions: text, codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' } })
-      expect(out.commandLine).toBeDefined()
-      expect(out.commandLine).not.toContain('developer_instructions')
+      const shim = buildCodexSpawn(asked({ sessionId: 'sid', realmLaunch: { ...linuxLaunch, executable: SHIM, env: winEnv }, codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' } }))
+      expect(shim.commandLine).not.toMatch(/developer_instructions/i)
       expect(codexLaunchRoute(SHIM, 'win32')).toBe('cmd')
     })
   })
 
-  it('never when the built-in tools do not reach the launch', () => {
-    ;(globalThis as any).__mockMcpPort = 0
-    const out = buildCodexSpawn({ sessionId: 'sid', realmLaunch: linuxLaunch, developerInstructions: text, codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' } })
-    expect(out.args.join(' ')).not.toContain('developer_instructions')
-  })
-
-  it.each([
-    ['a space and backslashes', 'C:\\Program Files\\AI Code Conductor\\res\\canvas-plugin\\skills'],
-    ['a single quote', "/Users/o'brien/Library/Application Support/ccc/canvas-plugin/skills"],
-  ])('the pointer text survives the encoding with a plugin path holding %s', (_name, dir) => {
-    const pointer = codexPointerGuidance(dir)
-    expect(pointer).toContain(path.join(dir, 'agent-canvas', 'SKILL.md'))
-    expect(readToml(tomlString(pointer))).toBe(pointer)
-    const out = buildCodexSpawn({ sessionId: 'sid', realmLaunch: linuxLaunch, developerInstructions: pointer, codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' } })
-    expect(readToml(out.args.find((a) => a.startsWith('developer_instructions='))!.slice('developer_instructions='.length))).toBe(pointer)
-  })
-
-  it('a hook command (no quote, no control character) keeps its literal form', () => {
-    expect(tomlString("node '/x/y.js'")).toBe('"node \'/x/y.js\'"')
-    expect(tomlString('C:\\res\\hook.cmd')).toBe("'C:\\res\\hook.cmd'")
-  })
-
-  it('a text over several lines with no quote takes the basic form, its newlines escaped (a TOML literal string holds none)', () => {
-    const lines = ['first line', 'C:\\path\\x', 'third\tcolumn', 'bell' + String.fromCharCode(7)].join('\n')
-    const v = tomlString(lines)
-    expect(v.startsWith('"')).toBe(true)
-    expect(v).toContain('\\n')
-    expect(v).toContain('\\u0007')
-    expect(readToml(v)).toBe(lines)
-  })
-
-  it('the log line names the instructions by length only', () => {
-    const out = buildCodexSpawn({ sessionId: 'sid', realmLaunch: linuxLaunch, developerInstructions: codexInlineGuidance(), codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' } })
-    const logged = codexLaunchLineForLog(out.args.join(' '))
-    expect(logged).toMatch(/developer_instructions=<\d+ characters>/)
-    expect(logged).not.toContain('Agent Canvas')
-  })
-
-  it('[host] the built launch carries that line as its logLine (the PTY manager logs it, never the arguments)', () => {
-    const out = buildCodexSpawn({ sessionId: 'sid', realmLaunch: linuxLaunch, developerInstructions: codexInlineGuidance(), codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' } })
-    expect(out.logLine).toBe(codexLaunchLineForLog(out.args.join(' ')))
-    expect(out.logLine).toMatch(/developer_instructions=<\d+ characters>/)
-    expect(out.logLine).not.toContain('Agent Canvas')
+  it('[host] the log line is the launch line itself: nothing on it is the app\'s guidance to shorten', () => {
+    const out = buildCodexSpawn({ sessionId: 'sid', realmLaunch: linuxLaunch, codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' } })
+    expect(out.logLine).toBe(out.args.join(' '))
   })
 
   it('[host] on the npm .cmd route the logLine is the cmd.exe line', () => {
     withWin32(() => {
       const out = buildCodexSpawn({ sessionId: 'sid', realmLaunch: { ...linuxLaunch, executable: SHIM, env: winEnv }, codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' } })
-      expect(out.logLine).toBe(codexLaunchLineForLog(out.commandLine!))
+      expect(out.logLine).toBe(out.commandLine)
     })
+  })
+
+  it('a hook command (no quote) keeps its literal TOML form; one holding a quote takes the basic form', () => {
+    expect(codexHookConfigArgs('C:\\res\\hook.cmd')[1]).toContain("command='C:\\res\\hook.cmd'")
+    expect(codexHookConfigArgs("node '/x/y.js'")[1]).toContain('command="node \'/x/y.js\'"')
   })
 })
 
 describe('launch line budgets', () => {
-  it('the inline Windows text is at most 6,000 characters', () => {
-    expect(codexInlineGuidance().length).toBeLessThanOrEqual(CODEX_INLINE_GUIDANCE_MAX)
-    expect(CODEX_INLINE_GUIDANCE_MAX).toBe(6_000)
-  })
-
-  it('the direct route stays under 32,767 characters with the inline text, every key, the longest extra arguments and an 8,000-character question quoted at its worst', () => {
+  it('the direct route stays under 32,767 characters with every key, the longest extra arguments and an 8,000-character question quoted at its worst', () => {
     ;(globalThis as any).__mockSettings = {}
     expect(codexExtraArgsProblem(LONGEST_EXTRA)).toBeNull()
     withWin32(() => {
       const out = buildCodexSpawn({
         sessionId: 'a'.repeat(64), realmLaunch: { ...linuxLaunch, executable: EXE, env: winEnv },
-        developerInstructions: codexInlineGuidance(),
         codexOptions: { model: 'gpt-5.5-codex-max', reasoningEffort: 'xhigh', permissionsPreset: 'unrestricted', extraArgs: LONGEST_EXTRA },
       })
       const worstQuestion = '\\"'.repeat(4_000)
