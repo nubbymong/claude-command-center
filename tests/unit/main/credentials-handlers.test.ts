@@ -2,7 +2,8 @@
  * The renderer's two doors into the credential store accept only keys of the
  * app's own shape (credential-key.ts): an id, or an id with one of the three
  * known suffixes. Anything else is refused before the store is touched. Driven
- * through the real handlers on a fake ipcMain.
+ * through the real handlers on a fake ipcMain. A delete for an id string the
+ * save door refuses has nothing to delete and is skipped without a warning.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
@@ -12,8 +13,9 @@ vi.mock('electron', () => ({
 }))
 const saveCredential = vi.fn(() => true)
 const deleteCredential = vi.fn(() => true)
+const logWarn = vi.fn()
 vi.mock('../../../src/main/credential-store', () => ({ saveCredential, deleteCredential, loadCredential: vi.fn() }))
-vi.mock('../../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }))
+vi.mock('../../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn, logError: vi.fn() }))
 
 const { registerCredentialHandlers } = await import('../../../src/main/ipc/credentials-handlers')
 const { isAllowedCredentialKey, CREDENTIAL_KEY_PATTERN } = await import('../../../src/main/credential-key')
@@ -21,7 +23,7 @@ registerCredentialHandlers()
 const save = handlers.get('credentials:save')!
 const del = handlers.get('credentials:delete')!
 
-beforeEach(() => { saveCredential.mockClear(); deleteCredential.mockClear() })
+beforeEach(() => { saveCredential.mockClear(); deleteCredential.mockClear(); deleteCredential.mockImplementation(() => true); logWarn.mockClear() })
 
 describe('isAllowedCredentialKey', () => {
   it('accepts the four shapes the app writes', () => {
@@ -55,5 +57,58 @@ describe('credentials:save / credentials:delete', () => {
     expect(await save({}, 'cfg1', { v: 'pw' })).toBe(false)
     expect(await save({}, 'cfg1', undefined)).toBe(false)
     expect(saveCredential).not.toHaveBeenCalled()
+  })
+})
+
+// [host] The owner's 2026-10-04 answer: a delete for an id that cannot hold a
+// stored credential is skipped quietly. "Cannot hold one" is the save door's
+// own rule (credentials:save is the only door that adds an entry, and it takes
+// only keys isAllowedCredentialKey accepts), so the two doors must agree on
+// every key. A refusal that still means something keeps its warning.
+describe('credentials:delete for ids that cannot hold a stored credential', () => {
+  const warned = () => logWarn.mock.calls.map((c) => String(c[0]))
+
+  it('[host] skips an id string the save door never accepts, without a warning and without touching the store', async () => {
+    // Ids from outside the app (imported or seeded configs), with the suffixes
+    // the edit-save deletes for, and anything else outside the shape.
+    for (const k of ['cfg-ssh-1', 'cfg-ssh-1_sudo', 'cfg-ssh-1_argsecret', 'cfg 1', 'cfg1_token', '', 'a'.repeat(65), 'cfg1; rm']) {
+      expect(await del({}, k), JSON.stringify(k)).toBe(false)
+    }
+    expect(deleteCredential).not.toHaveBeenCalled()
+    expect(warned()).toEqual([])
+  })
+
+  it('[host] a request whose key is not a string at all is still refused with a warning', async () => {
+    for (const k of [undefined, null, 42, {}, ['cfg1']]) {
+      logWarn.mockClear()
+      expect(await del({}, k)).toBe(false)
+      expect(warned(), JSON.stringify(k)).toEqual(['[credentials] delete refused: key not of the expected shape'])
+    }
+    expect(deleteCredential).not.toHaveBeenCalled()
+  })
+
+  it('[host] a store that cannot delete a key that could hold a credential says so', async () => {
+    deleteCredential.mockImplementation(() => false)
+    expect(await del({}, 'cfg1_sudo')).toBe(false)
+    expect(deleteCredential).toHaveBeenCalledWith('cfg1_sudo')
+    expect(warned()).toEqual(['[credentials] delete refused: the credential store could not be read or written'])
+    // A delete the store carries out is not logged.
+    deleteCredential.mockImplementation(() => true)
+    logWarn.mockClear()
+    expect(await del({}, 'cfg1_sudo')).toBe(true)
+    expect(warned()).toEqual([])
+  })
+
+  it('[host] the delete door skips exactly the keys the save door refuses: one rule for both', async () => {
+    const keys = ['cfg1', 'a1b2c3d4e5f6a1b2c3d4e5f6', 'cfg1_sudo', 'cfg1_argsecret', 'aaa111_cmdsecret', 'k9ZmQ2_sudo', 'a'.repeat(64),
+      'cfg-1', 'cfg_1', 'cfg-ssh-1_sudo', 'cfg1_', '_sudo', 'cfg1_sudo_sudo', 'a'.repeat(65), 'cfg1\n', 'cfg.1', 'cfg1_cmdsecret ']
+    for (const k of keys) {
+      saveCredential.mockClear()
+      deleteCredential.mockClear()
+      await save({}, k, 'pw')
+      await del({}, k)
+      expect(deleteCredential.mock.calls.length, JSON.stringify(k)).toBe(saveCredential.mock.calls.length)
+      expect(deleteCredential.mock.calls.length, JSON.stringify(k)).toBe(isAllowedCredentialKey(k) ? 1 : 0)
+    }
   })
 })
