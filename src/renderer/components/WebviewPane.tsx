@@ -4,6 +4,8 @@ import { useBrowserStore } from '../stores/browserStore'
 import { useSessionStore } from '../stores/sessionStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useNativePanesOccluded } from '../stores/paneOcclusionStore'
+import { useProviderAccountsStore, accountDisplayName } from '../stores/providerAccountsStore'
+import { codexWebActionAccountId } from '../lib/claude-web-targets'
 import { normaliseBrowserInput, shortUrlLabel } from '../../shared/browser-url'
 import heroUrl from '../assets/aicc-browser-http.svg'
 
@@ -84,7 +86,22 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
     const p = paneAccountId ? s.profiles.find((x) => x.id === paneAccountId) : undefined
     return p?.name || p?.accountEmail || null
   })
+  // WP2 PR 4, P4.6 (row 58): a local Codex session's own account gets the
+  // chatgpt.com entry instead (codexWebActionAccountId: the account the
+  // session runs under, never a Claude profile, never an archived account).
+  const sessionProvider = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId)?.provider)
+  const sessionShellOnly = useSessionStore((s) => !!s.sessions.find((x) => x.id === sessionId)?.shellOnly)
+  const sessionKind = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId)?.sessionType)
+  const sessionProviderAccountId = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId)?.providerAccountId)
+  const accountsSnapshot = useProviderAccountsStore((s) => s.snapshot)
+  const codexPaneAccountId = codexWebActionAccountId(
+    { provider: sessionProvider, shellOnly: sessionShellOnly, sessionType: sessionKind, providerAccountId: sessionProviderAccountId },
+    accountsSnapshot,
+  )
+  const codexPaneAccount = codexPaneAccountId ? accountsSnapshot?.accounts.find((a) => a.id === codexPaneAccountId) : undefined
+  const codexPaneAccountLabel = codexPaneAccount ? accountDisplayName(accountsSnapshot, codexPaneAccount) : null
   const openAccountPane = useWebviewStore((s) => s.openAccountPane)
+  const openCodexAccountPane = useWebviewStore((s) => s.openCodexAccountPane)
   const closeAccountPaneStore = useWebviewStore((s) => s.closeAccountPane)
   const setAccountPaneState = useWebviewStore((s) => s.setAccountPaneState)
   const favourites = useBrowserStore((s) => s.favourites)
@@ -260,11 +277,17 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
   // the ACCOUNT's partition. Entering closes the ordinary view; leaving closes
   // the account view and restores the ordinary one through the same tryOpen
   // path a fresh mount uses.
-  const accountModeProfileId = state?.accountPane?.profileId ?? null
+  // The surface's account: a Claude profile id, or (P4.6) a Codex account id.
+  // `accountModeKey` names both the service and the account, so a switch
+  // between the two services re-runs the lifecycle below.
+  const accountMode = state?.accountPane ?? null
+  const accountModeCodex = accountMode?.service === 'codex'
+  const accountModeId = accountMode ? (accountMode.service === 'codex' ? accountMode.accountId : accountMode.profileId) : null
+  const accountModeKey = accountModeId ? `${accountModeCodex ? 'codex' : 'claude'}:${accountModeId}` : null
   const accountReadyRef = useRef(false)
   const accountTryOpenRef = useRef<(() => void) | null>(null)
   useEffect(() => {
-    if (!accountModeProfileId) return
+    if (!accountModeKey || !accountModeId) return
     viewReadyRef.current = false
     void window.electronAPI.webview.close(sessionId).catch(() => { /* noop */ })
     // A stale freeze overlay would pin the account view invisible (the
@@ -273,8 +296,16 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
     setFrozenImage(null)
 
     // Same older-preload tolerance as the Artifacts tool's accountWeb?. calls.
+    // A Codex account's view opens through its own registry-checked channel;
+    // every other pane control is accountWeb's (session-keyed, shared).
     const paneApi = window.electronAPI.accountWeb
-    if (typeof paneApi?.paneOpen !== 'function') {
+    const codexApi = window.electronAPI.codexWeb
+    const openView = accountModeCodex
+      ? (typeof codexApi?.paneOpen === 'function'
+          ? (b: Bounds) => codexApi.paneOpen({ sessionId, accountId: accountModeId, bounds: b })
+          : null)
+      : (b: Bounds) => paneApi.paneOpen({ sessionId, profileId: accountModeId, bounds: b })
+    if (typeof paneApi?.paneOpen !== 'function' || !openView) {
       closeAccountPaneStore(sessionId)
       // The ordinary view was just closed above; bring it back once the store
       // update has cleared accountPane (tryOpen's guard reads the store live).
@@ -294,8 +325,7 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
         return
       }
       inFlight = true
-      paneApi
-        .paneOpen({ sessionId, profileId: accountModeProfileId, bounds: b })
+      openView(b)
         .then((r) => {
           inFlight = false
           if (cancelled) return
@@ -329,7 +359,10 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
       // where the store still carries accountPane).
       tryOpenRef.current?.()
     }
-  }, [sessionId, accountModeProfileId, measure, closeAccountPaneStore, setAccountPaneState])
+    // accountModeKey carries the service and the id (accountModeCodex and
+    // accountModeId are derived from it within this render).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, accountModeKey, measure, closeAccountPaneStore, setAccountPaneState])
 
   // Parked account open retries when the pane may show again.
   useEffect(() => {
@@ -354,7 +387,7 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
   // Bounds + visibility for the account view — same mechanics as the ordinary
   // view; native views ignore CSS.
   useEffect(() => {
-    if (!shown || !accountModeProfileId) return
+    if (!shown || !accountModeKey) return
     const el = containerRef.current
     if (!el) return
     let last: { x: number; y: number; width: number; height: number } | null = null
@@ -376,13 +409,13 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
       window.removeEventListener('resize', onResize)
       window.clearInterval(tick)
     }
-  }, [sessionId, shown, accountModeProfileId, measure])
+  }, [sessionId, shown, accountModeKey, measure])
 
   useEffect(() => {
-    if (!state?.isOpen || !accountModeProfileId) return
+    if (!state?.isOpen || !accountModeKey) return
     const visible = shown && !frozenImage
     void window.electronAPI.accountWeb?.paneVisible?.({ sessionId, visible }).catch(() => { /* noop */ })
-  }, [sessionId, shown, state?.isOpen, accountModeProfileId, frozenImage])
+  }, [sessionId, shown, state?.isOpen, accountModeKey, frozenImage])
 
   // ── Bounds tracking ───────────────────────────────────────────────────
   // ResizeObserver + window resize for real size changes, plus a 500 ms
@@ -440,14 +473,19 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
     const authWord = authed === true
       ? (account.email ? `signed in as ${account.email}` : 'signed in')
       : authed === false ? 'not signed in — sign in below, once' : 'checking…'
+    // P4.6 (row 58): a Codex account's surface is chatgpt.com, and its
+    // signed-out line names the service.
+    const accountIsCodex = account.service === 'codex'
+    const serviceLabel = accountIsCodex ? 'chatgpt.com' : 'claude.ai'
+    const shownAuthWord = accountIsCodex && authed === false ? 'not signed in. Sign in to chatgpt.com below, once' : authWord
     return (
       <div className="flex-1 flex flex-col min-h-0 bg-[var(--surface-stage)] relative" data-testid="browser-pane">
         <div className="flex items-center gap-2 px-2 py-1 border-b border-[var(--border-subtle)] bg-[var(--surface-chrome)] shrink-0 z-10" data-testid="account-pane-strip">
           <span className="text-[var(--brand)] shrink-0">{Icon.globe}</span>
-          <span className="text-xs font-medium text-[var(--text-primary)] shrink-0">claude.ai</span>
+          <span className="text-xs font-medium text-[var(--text-primary)] shrink-0" data-testid="account-pane-service">{serviceLabel}</span>
           <span className="flex items-center gap-1.5 min-w-0 flex-1">
             <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: authDot }} aria-hidden />
-            <span className="text-[11px] truncate" style={{ color: 'var(--text-secondary)' }} data-testid="account-pane-auth">{authWord}</span>
+            <span className="text-[11px] truncate" style={{ color: 'var(--text-secondary)' }} data-testid="account-pane-auth">{shownAuthWord}</span>
             {page?.loading && <span className="text-[10px] text-[var(--text-muted)] shrink-0">loading…</span>}
           </span>
           <button onClick={() => { void window.electronAPI.accountWeb?.paneReload?.(sessionId) }} className={`${toolBtn} ${toolBtnIdle}`} title="Reload" aria-label="Reload" data-testid="account-pane-reload">{Icon.reload}</button>
@@ -672,6 +710,8 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
           error={addressError}
           accountLabel={paneAccountId ? paneAccountLabel : null}
           onOpenAccount={paneAccountId ? () => openAccountPane(sessionId, paneAccountId) : undefined}
+          codexAccountLabel={codexPaneAccountId ? codexPaneAccountLabel : null}
+          onOpenCodexAccount={codexPaneAccountId ? () => openCodexAccountPane(sessionId, codexPaneAccountId) : undefined}
         />
       )}
 
@@ -714,6 +754,10 @@ function StartPage(props: {
   accountLabel?: string | null
   /** #475: open the pane's account surface. Absent hides the entry. */
   onOpenAccount?: () => void
+  /** P4.6 (row 58): a Codex session's account name, for the chatgpt.com entry. */
+  codexAccountLabel?: string | null
+  /** P4.6: open the Codex account's chatgpt.com surface. Absent hides the entry. */
+  onOpenCodexAccount?: () => void
 }) {
   const [value, setValue] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -767,6 +811,29 @@ function StartPage(props: {
               <span className="block text-xs text-[var(--text-primary)] truncate">claude.ai — your artifacts</span>
               <span className="block text-[10px] text-[var(--text-muted)] truncate">
                 {props.accountLabel ? `As ${props.accountLabel} — signed in once, stays signed in` : 'This session’s account — signed in once, stays signed in'}
+              </span>
+            </span>
+            <span className="ml-auto text-[10px] text-[var(--text-muted)] shrink-0">pinned</span>
+          </button>
+        )}
+
+        {/* P4.6 (row 58): a Codex session's own account on chatgpt.com, on the
+            account's own partition, hosted right here in the pane. */}
+        {props.onOpenCodexAccount && (
+          <button
+            onClick={props.onOpenCodexAccount}
+            className="mt-4 w-full flex items-center gap-2 px-3 py-2 rounded border text-left focus-ring transition-colors"
+            style={{
+              borderColor: 'color-mix(in srgb, var(--brand) 42%, transparent)',
+              background: 'color-mix(in srgb, var(--brand) 10%, transparent)',
+            }}
+            data-testid="browser-start-chatgpt"
+          >
+            <span className="text-[var(--brand)]">{Icon.globe}</span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-xs text-[var(--text-primary)] truncate">chatgpt.com</span>
+              <span className="block text-[10px] text-[var(--text-muted)] truncate">
+                {props.codexAccountLabel ? `As ${props.codexAccountLabel}. Signed in once, stays signed in` : "This session's account. Signed in once, stays signed in"}
               </span>
             </span>
             <span className="ml-auto text-[10px] text-[var(--text-muted)] shrink-0">pinned</span>

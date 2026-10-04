@@ -178,4 +178,34 @@ describe('sidebar context menus — Quick Start + running lock', () => {
     expect(SIDEBAR_SOURCE).toContain('const prefetchId = claudeWebActionProfileId(session, primaryProfileId, accountProfiles); refreshWebOnly(prefetchId); void refreshWebSessions(prefetchId)')
     expect(SIDEBAR_SOURCE).not.toContain('?? (session.profileId ?? primaryProfileId)')
   })
+
+  // [host] WP2 PR 4, P4.6 second half (row 58): a Codex row's own web-session
+  // item: the account is the one the session runs under (the sidebar resolves
+  // it with codexWebActionAccountId), and the item names no sign-in method.
+  const codexItem = () => container.querySelector('[data-testid="session-ctx-codex-web"]') as HTMLButtonElement | null
+
+  it('session menu: a Codex row gets its own chatgpt.com sign-in item; clicking it runs and dismisses', () => {
+    const onCodexWebSignIn = vi.fn(); const onDismiss = vi.fn()
+    renderSessionMenu({ session: { ...session, provider: 'codex' }, onCodexWebSignIn, onDismiss })
+    expect(codexItem()!.textContent).toBe('Sign in to chatgpt.com...')
+    act(() => { codexItem()!.click() })
+    expect(onCodexWebSignIn).toHaveBeenCalledTimes(1)
+    expect(onDismiss).toHaveBeenCalledTimes(1)
+    renderSessionMenu({ session: { ...session, provider: 'codex' }, onCodexWebSignIn, codexWebSignedIn: true })
+    expect(codexItem()!.textContent).toBe('Sign in to chatgpt.com again...')
+    // Never Claude's items beside it.
+    expect(accountItemTexts()).toEqual([])
+  })
+
+  it('session menu: a Claude row never gets the Codex item, even when the callback is passed', () => {
+    renderSessionMenu({ ...claudeItems, onCodexWebSignIn: vi.fn() })
+    expect(codexItem()).toBeNull()
+    renderSessionMenu({ session: { ...session, provider: undefined }, onCodexWebSignIn: vi.fn() })
+    expect(codexItem()).toBeNull()
+  })
+
+  it("the sidebar wires the Codex item from the session's own registry account", () => {
+    expect(SIDEBAR_SOURCE).toContain('const codexWebId = codexWebActionAccountId(s, accountsSnapshot)')
+    expect(SIDEBAR_SOURCE).toContain('onCodexWebSignIn={codexWebId ? () => { void useCodexWebStore.getState().signIn(codexWebId) } : undefined}')
+  })
 })

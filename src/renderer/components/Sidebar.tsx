@@ -31,7 +31,8 @@ import ConfigContextMenu from './sidebar/ConfigContextMenu'
 import SessionContextMenu from './sidebar/SessionContextMenu'
 import ConfigEditGuardDialog from './sidebar/ConfigEditGuardDialog'
 import { configEditGuardState } from './sidebar/configEditGuard'
-import { openArtifactsPerSetting, claudeWebActionProfileId } from '../lib/claude-web-targets'
+import { openArtifactsPerSetting, claudeWebActionProfileId, codexWebActionAccountId } from '../lib/claude-web-targets'
+import { useCodexWebStore } from '../stores/codexWebStore'
 import GroupContextMenu from './sidebar/GroupContextMenu'
 import SectionHeader from './sidebar/SectionHeader'
 import GroupHeader from './sidebar/GroupHeader'
@@ -332,6 +333,8 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   // P3.6 (row 22): the menu's Switch Account lists the session provider's
   // accounts, as the strip's pill does (utils/switchAccountItems).
   const accountsSnapshot = useProviderAccountsStore((s) => s.snapshot)
+  // P4.6 (row 58): a Codex account's chatgpt.com status, for the menu's item.
+  const codexWebByAccount = useCodexWebStore((s) => s.byAccount)
   const menuSwitchItems = switchAccountItems(menuSession, { profiles: accountProfiles, aliases: accountAliases, snapshot: accountsSnapshot })
   const canSwitchAccount = canSwitchAccountForSession({ provider: menuSession?.provider, isSsh: !!menuSession?.sshConfig, shellOnly: !!menuSession?.shellOnly, profileCount: accountProfiles.length, providerAccountCount: menuSwitchItems.length })
   const switchMenuAccount = useSwitchAccount(menuSession)
@@ -968,7 +971,9 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         // helper as its actionProfileId. None for a Codex row, or for a row whose
         // menu has no account items, so neither runs the primary Claude
         // profile's `claude auth status` (both refreshes skip an undefined id).
-        onContextMenu={(e) => { e.preventDefault(); const prefetchId = claudeWebActionProfileId(session, primaryProfileId, accountProfiles); refreshWebOnly(prefetchId); void refreshWebSessions(prefetchId); setSessionContextMenu({ sessionId: session.id, x: e.clientX, y: e.clientY }) }}
+        // A Codex row prefetches its own account's chatgpt.com status instead
+        // (a local read in main), for the menu's web-session item.
+        onContextMenu={(e) => { e.preventDefault(); const prefetchId = claudeWebActionProfileId(session, primaryProfileId, accountProfiles); refreshWebOnly(prefetchId); void refreshWebSessions(prefetchId); const codexWebId = codexWebActionAccountId(session, accountsSnapshot); if (codexWebId) void useCodexWebStore.getState().refresh(codexWebId); setSessionContextMenu({ sessionId: session.id, x: e.clientX, y: e.clientY }) }}
         isSelected={selectedSessionIds.has(session.id)}
         isFocused={focusedSessionIndex === flatIndex}
         ordinal={sessionOrdinals.get(session.id)}
@@ -1607,6 +1612,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         // Undefined for a Codex session too (P4.6, row 58): the primary fallback
         // made Claude's items act on another account there (claude-web-targets).
         const actionProfileId = claudeWebActionProfileId(s, primaryProfileId, accountProfiles)
+        const codexWebId = codexWebActionAccountId(s, accountsSnapshot)
         return (
           <SessionContextMenu
             x={sessionContextMenu.x}
@@ -1695,6 +1701,10 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
                   }
                 : undefined
             }
+            // P4.6 (row 58): a Codex session's own account's chatgpt.com
+            // sign-in (codexWebActionAccountId: the account it runs under).
+            onCodexWebSignIn={codexWebId ? () => { void useCodexWebStore.getState().signIn(codexWebId) } : undefined}
+            codexWebSignedIn={!!codexWebId && codexWebByAccount[codexWebId]?.status === 'active'}
           />
         )
       })()}

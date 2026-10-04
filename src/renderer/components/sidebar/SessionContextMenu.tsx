@@ -56,6 +56,11 @@ interface SessionContextMenuProps {
   onToggleWatchdogCheck?: (key: WatchdogCheckKey) => void
   /** P3.10: checks this session's CLI has no patterns for: shown off, not switchable. */
   watchdogUnavailable?: WatchdogCheckKey[]
+  /** WP2 PR 4, P4.6 (row 58): sign THIS Codex session's own account in to
+   *  chatgpt.com, in a sign-in window. Shown on a Codex row only. */
+  onCodexWebSignIn?: () => void
+  /** True when that account already holds a chatgpt.com web session. */
+  codexWebSignedIn?: boolean
 }
 
 export default function SessionContextMenu({
@@ -64,6 +69,7 @@ export default function SessionContextMenu({
   canSwitchAccount, switchItems, onSwitchAccount,
   onOpenArtifacts, onAuthenticateWeb, onSignInCode, hasWebSession, codeSignedIn, codeNotChecked,
   watchdogChecks, onToggleWatchdogCheck, watchdogUnavailable,
+  onCodexWebSignIn, codexWebSignedIn,
 }: SessionContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
   useClickOutside(menuRef, onDismiss)
@@ -82,6 +88,9 @@ export default function SessionContextMenu({
   const openArtifactsItem = claudeAccountItems ? onOpenArtifacts : undefined
   const authenticateWebItem = claudeAccountItems ? onAuthenticateWeb : undefined
   const signInCodeItem = claudeAccountItems ? onSignInCode : undefined
+  // P4.6 (row 58): a Codex row's own web-session item, its account the one the
+  // session runs under. Never on a Claude row, whatever the caller passes.
+  const codexWebItem = session.provider === 'codex' ? onCodexWebSignIn : undefined
 
   // Keep the menu inside the window. This one is the tallest in the app and
   // still grows -- the #605 Watchdog block, and Switch Account expanding to one
@@ -292,6 +301,25 @@ export default function SessionContextMenu({
               {codeSignedIn ? 'Signed in to Claude Code' : 'Sign in to Claude Code'}
             </button>
           )}
+        </>
+      )}
+
+      {codexWebItem && (
+        <>
+          <div className="my-1 border-t" style={{ borderColor: 'var(--border-subtle)' }} />
+          <button
+            onClick={() => { codexWebItem(); onDismiss() }}
+            title={codexWebSignedIn ? 'This account is signed in to chatgpt.com. Sign in again to replace that sign-in' : 'Sign this account in to chatgpt.com, in a sign-in window'}
+            className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
+            style={{ color: 'var(--text-primary)' }}
+            data-testid="session-ctx-codex-web"
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2">
+              <circle cx="6" cy="6" r="4.5"/>
+              <path d="M1.5 6h9M6 1.5c1.5 1.6 1.5 7.4 0 9M6 1.5c-1.5 1.6-1.5 7.4 0 9" strokeLinecap="round"/>
+            </svg>
+            {codexWebSignedIn ? 'Sign in to chatgpt.com again...' : 'Sign in to chatgpt.com...'}
+          </button>
         </>
       )}
 

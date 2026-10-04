@@ -13,6 +13,7 @@ import {
   paneHostSession,
   openArtifactsPerSetting,
   claudeWebActionProfileId,
+  codexWebActionAccountId,
 } from '../../../src/renderer/lib/claude-web-targets'
 import { useSettingsStore } from '../../../src/renderer/stores/settingsStore'
 import { useSessionStore } from '../../../src/renderer/stores/sessionStore'
@@ -147,5 +148,45 @@ describe('claudeWebActionProfileId', () => {
   it('a shell-only session, or no session, has none', () => {
     expect(claudeWebActionProfileId({ sessionType: 'local', shellOnly: true }, 'profile-primary', profiles)).toBeUndefined()
     expect(claudeWebActionProfileId(undefined, 'profile-primary', profiles)).toBeUndefined()
+  })
+})
+
+// [host] WP2 PR 4, P4.6 second half (row 58): the Codex account a session's
+// chatgpt.com actions act on. Only a local, non-shell Codex session has one:
+// the registry account it runs under (the one it names, else the provider
+// default), never a Claude profile, never an archived account.
+describe('codexWebActionAccountId', () => {
+  const A = 'acct-0123456789abcdef'
+  const D = 'acct-dddddddddddddddd'
+  const snap = (over: Array<Record<string, unknown>> = []) => ({
+    accounts: [
+      { id: A, providerId: 'codex', lifecycle: 'active', isProviderDefault: false },
+      { id: D, providerId: 'codex', lifecycle: 'active', isProviderDefault: true },
+      ...over,
+    ],
+  }) as never
+
+  it('a local Codex session acts on the account it names, else the provider default', () => {
+    expect(codexWebActionAccountId({ provider: 'codex', sessionType: 'local', providerAccountId: A }, snap())).toBe(A)
+    expect(codexWebActionAccountId({ provider: 'codex', sessionType: 'local' }, snap())).toBe(D)
+  })
+
+  it('none for a Claude session, a shell-only or SSH session, no session, or no account list', () => {
+    expect(codexWebActionAccountId({ provider: 'claude', sessionType: 'local', providerAccountId: A }, snap())).toBeUndefined()
+    expect(codexWebActionAccountId({ sessionType: 'local', providerAccountId: A }, snap())).toBeUndefined()
+    expect(codexWebActionAccountId({ provider: 'codex', sessionType: 'local', shellOnly: true, providerAccountId: A }, snap())).toBeUndefined()
+    expect(codexWebActionAccountId({ provider: 'codex', sessionType: 'ssh', providerAccountId: A }, snap())).toBeUndefined()
+    expect(codexWebActionAccountId(undefined, snap())).toBeUndefined()
+    expect(codexWebActionAccountId({ provider: 'codex', sessionType: 'local', providerAccountId: A }, null)).toBeUndefined()
+  })
+
+  it('never an archived account, another provider\'s account, an unknown one, or an id off the registry pattern', () => {
+    const archived = { accounts: [{ id: A, providerId: 'codex', lifecycle: 'archived', isProviderDefault: false }] } as never
+    expect(codexWebActionAccountId({ provider: 'codex', sessionType: 'local', providerAccountId: A }, archived)).toBeUndefined()
+    const claudeOwned = { accounts: [{ id: A, providerId: 'claude', lifecycle: 'active', isProviderDefault: false }] } as never
+    expect(codexWebActionAccountId({ provider: 'codex', sessionType: 'local', providerAccountId: A }, claudeOwned)).toBeUndefined()
+    expect(codexWebActionAccountId({ provider: 'codex', sessionType: 'local', providerAccountId: 'acct-ffffffffffffffff' }, snap())).toBeUndefined()
+    const odd = { accounts: [{ id: 'profile-own', providerId: 'codex', lifecycle: 'active', isProviderDefault: true }] } as never
+    expect(codexWebActionAccountId({ provider: 'codex', sessionType: 'local' }, odd)).toBeUndefined()
   })
 })

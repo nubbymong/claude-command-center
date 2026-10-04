@@ -3,7 +3,10 @@ import { useWebviewStore } from '../stores/webviewStore'
 import { useSessionStore } from '../stores/sessionStore'
 import { trackUsage } from '../stores/tipsStore'
 import { sshMappedProfileId } from '../utils/sessionLaunch'
+import { sessionProviderAccount } from '../utils/accountChip'
+import { isOpaqueId } from '../../shared/providers/ids'
 import type { ProviderId } from '../../shared/types'
+import type { AccountsSnapshot } from '../../shared/providers'
 
 /**
  * The two "where does claude.ai open" knobs (owner call 2026-08-26): both
@@ -84,6 +87,30 @@ export function claudeWebActionProfileId(
   if (!session || session.shellOnly || (session.provider ?? 'claude') !== 'claude') return undefined
   if (session.sessionType === 'local') return session.profileId ?? primaryProfileId
   return sshMappedProfileId(session, profiles)
+}
+
+/**
+ * The Codex account a session's chatgpt.com actions act on (WP2 PR 4, P4.6,
+ * row 58): the registry account a local, non-shell Codex session runs under,
+ * by the rule the footer reads (sessionProviderAccount: the account it names,
+ * else the provider default). Never a Claude profile, never another provider's
+ * account, never an archived one. None for a Claude session, a shell-only
+ * session, or an SSH session (the pane's account view runs on this computer,
+ * as Claude's start-page entry is local only).
+ */
+export function codexWebActionAccountId(
+  session: {
+    shellOnly?: boolean
+    sessionType?: string
+    provider?: ProviderId
+    providerAccountId?: string
+  } | undefined,
+  snapshot: AccountsSnapshot | null,
+): string | undefined {
+  if (!session || session.shellOnly || session.provider !== 'codex' || session.sessionType !== 'local') return undefined
+  const account = sessionProviderAccount({ provider: 'codex', providerAccountId: session.providerAccountId }, snapshot)
+  if (!account || account.providerId !== 'codex' || account.lifecycle === 'archived') return undefined
+  return isOpaqueId(account.id, 'account') ? account.id : undefined
 }
 
 /**
