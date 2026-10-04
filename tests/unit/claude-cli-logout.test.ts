@@ -6,6 +6,9 @@
 // root is a temp folder (_setRootsForTest); withProfileHome, the project gate,
 // the profile list, the consumer registry and the session registry are the REAL
 // ones, so what is asserted is the environment and the order the real code uses.
+// The environment the code starts from is sandboxed too: HOME, USERPROFILE,
+// APPDATA, LOCALAPPDATA and CLAUDE_CONFIG_DIR point inside the temp folder for
+// every case, so nothing handed to a runner names this computer's own folders.
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
@@ -46,6 +49,8 @@ const OTHER = 'profile-def-456'
 let sandbox = ''
 let root = ''
 let binDir = ''
+const SANDBOXED_ENV = ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'CLAUDE_CONFIG_DIR'] as const
+let savedEnv: Partial<Record<(typeof SANDBOXED_ENV)[number], string | undefined>> = {}
 
 type RunCall = { args: string[]; env: Record<string, string>; timeoutMs: number }
 const signedOut = (): ClaudeCliAuthRun => ({ exitCode: 1, stdout: JSON.stringify({ loggedIn: false, authMethod: 'none' }), timedOut: false })
@@ -86,6 +91,11 @@ async function until(cond: () => boolean, why: string): Promise<void> {
 beforeAll(() => { composeProviders() })
 beforeEach(async () => {
   sandbox = fs.mkdtempSync(join(os.tmpdir(), 'ccc-cli-logout-'))
+  savedEnv = {}
+  for (const k of SANDBOXED_ENV) {
+    savedEnv[k] = process.env[k]
+    process.env[k] = join(sandbox, 'env', k.toLowerCase())
+  }
   profiles._setRootsForTest({ resourcesDir: sandbox, sharedRoot: join(sandbox, '.claude') })
   root = profiles.getProfilesRoot()
   binDir = join(sandbox, 'bin')
@@ -102,6 +112,10 @@ beforeEach(async () => {
   await gateManagedLaunch(binDir)
 })
 afterEach(() => {
+  for (const k of SANDBOXED_ENV) {
+    if (savedEnv[k] === undefined) delete process.env[k]
+    else process.env[k] = savedEnv[k]
+  }
   vi.restoreAllMocks()
   profiles._setRootsForTest(null)
   if (sandbox.startsWith(join(os.tmpdir(), 'ccc-cli-logout-'))) fs.rmSync(sandbox, { recursive: true, force: true })
@@ -186,6 +200,25 @@ describe('logoutClaudeCli: the CLI\'s own sign-out in exactly this profile\'s ho
     expect(await logoutClaudeCli(ID, { runner: unknown })).toEqual({ ran: false, after: null, refused: 'computer-sign-in' })
     expect(unknown.calls).toEqual([])
     expect(await logoutClaudeCli(ID, { runner: unknown, acknowledgeComputerSignIn: true })).toMatchObject({ ran: true })
+  })
+
+  it('the primary is the one the token sync reads, by the same rule: a non-boolean isPrimary still needs the acknowledgement', async () => {
+    // profiles.json written by hand or by an older build: the token sync
+    // (getPrimaryProfileId) reads any truthy isPrimary as the primary.
+    fs.writeFileSync(join(root, 'profiles.json'), JSON.stringify({ profiles: [
+      { id: PRIMARY, name: PRIMARY, createdAt: 1, isPrimary: 1 },
+      { id: ID, name: ID, createdAt: 1 },
+    ] }))
+    expect(profiles.getPrimaryProfileId()).toBe(PRIMARY)
+    const runner = fakeRunner()
+    expect(await logoutClaudeCli(PRIMARY, { runner })).toEqual({ ran: false, after: null, refused: 'computer-sign-in' })
+    expect(runner.calls).toEqual([])
+    expect(await logoutClaudeCli(ID, { runner })).toMatchObject({ ran: true })
+    for (const c of runner.calls) {
+      for (const k of ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA']) {
+        if (c.env[k] !== undefined) expect(c.env[k].startsWith(sandbox), `${k} left the sandbox`).toBe(true)
+      }
+    }
   })
 
   it('macOS: every profile runs on the Mac\'s one sign-in, so every sign-out needs the acknowledgement, and HOME stays the real home', async () => {

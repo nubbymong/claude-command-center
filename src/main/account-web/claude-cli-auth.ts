@@ -32,7 +32,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { logError, logInfo, logWarn } from '../debug-logger'
 import { gateManagedLaunch, peekGateVerdict } from '../managed-launch-diagnostics'
-import { getProfileConfigDir, getProfilesRoot, withProfileHome, readProfilesStrict, removeProfileIdentityCredentials, MANAGED_LAUNCH_REFUSAL } from '../account-profiles'
+import { getProfileConfigDir, getProfilesRoot, getPrimaryProfileId, withProfileHome, readProfilesStrict, removeProfileIdentityCredentials, MANAGED_LAUNCH_REFUSAL } from '../account-profiles'
 import { acquireProfileConsumer, holdProfileForRun, pendingProfileRefresh } from '../profile-consumers'
 import { isProfileInUseByLiveSession, sessionsOnProfile } from '../claude-account-identity'
 import { DEFAULT_CLI_AUTH_METHOD, PROFILE_ID_RE, isCliAuthMethod, type CliAuthMethod } from '../../shared/account-web-session'
@@ -362,7 +362,9 @@ function profileSharesComputerSignIn(profileId: string): boolean {
   let all: ReturnType<typeof readProfilesStrict>
   try { all = readProfilesStrict() } catch { return true }
   if (all === null) return true
-  return all.some((p) => !!p && typeof p === 'object' && p.isPrimary === true && p.id === profileId)
+  // The token sync's own rule: getPrimaryProfileId reads any truthy isPrimary.
+  // Asked through that helper too, so the two can never disagree.
+  return all.some((p) => !!p && typeof p === 'object' && !!p.isPrimary && p.id === profileId) || getPrimaryProfileId() === profileId
 }
 
 const refusedLogout = (refused: NonNullable<ClaudeCliLogoutResult['refused']>): ClaudeCliLogoutResult => ({ ran: false, after: null, refused })
