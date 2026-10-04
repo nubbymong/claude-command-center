@@ -61,10 +61,9 @@ still owes recorded in 4. "2; 3" means partly built in 2, the rest in 3.
 
 ## 2. Summary
 
-- 75 rows: **53 DONE, 18 PARTIAL, 4 OPEN** (recounted after PR 4's P4.1 to P4.6 records and question 8, with section 4's rows 51 to 58 brought current from them;
-  they agree with the parity checklist). At the recount after P3.15 it was 52 DONE, 12 PARTIAL and 11 OPEN. Rows 59, 60 and 67 are
-  built (P4.8, P4.9) and move when their CI and VM runs are recorded.
-- The 22 rows not DONE, by gap: **implementation 5, verification 8, owner 9** (rows 15 and 58, an owner action and a record to sign, row 58's sign-in window waiting on OR2a; rows 22, 41 and 63, each built as a default pending the owner's decision; rows 51, 52, 53 and 57, built as the default pending an owner question each (questions 5 to 8, section 10; row 51 has two), counted under owner as row 58 is; row 55 counts under verification, its delete check, and since P4.11 row 54, its images' review). At the recount after P3.15: implementation 9, verification 6, owner 8. Row 53
+- 75 rows: **62 DONE, 11 PARTIAL, 2 OPEN** (recounted after the owner's answers of 2026-10-04 and the CI and VM records of 9.7: rows 22, 41, 51, 52, 53, 57 and 63 leave PARTIAL with their questions answered and question 5's answer built; rows 59 and 67 are DONE with their runs, and row 60 PARTIAL until its release-candidate leg;
+  they agree with the parity checklist). At the recount after PR 4's P4.1 to P4.6 records and question 8 it was 53 DONE, 18 PARTIAL and 4 OPEN, and after P3.15 52 DONE, 12 PARTIAL and 11 OPEN.
+- The 13 rows not DONE, by gap: **implementation 2, verification 9, owner 2** (rows 14 and 68 under implementation; rows 15 and 58 under owner, an owner action and a record to sign, row 58's sign-in window waiting on OR2a; rows 11, 16, 34, 35, 45, 54, 55, 60 and 66 under verification, row 55 its delete check, row 54 its images' review and row 60 its release-candidate leg). At the recount before the owner's answers of 2026-10-04: implementation 5, verification 8, owner 9 (rows 22, 41, 51, 52, 53, 57 and 63 then under owner, each built as a default pending a question). At the recount after P3.15: implementation 9, verification 6, owner 8. Row 53
   moved from owner to implementation when the owner decided it
   (`docs/wp1/owner-decisions-2026-09-27.md`, M4), and back under owner with question 6 (PB4, 2026-10-02).
 - By PR: **8 in PR 3, 15 in PR 4**. No row changes package. The Ask Conductor
@@ -83,14 +82,14 @@ still owes recorded in 4. "2; 3" means partly built in 2, the rest in 3.
   verification owed. The checklist
   moved rows 52, 68 and 69 from OWNER to MISSING, since parity settles them
   (section 10); row 69 is now built (P3.8).
-- Genuinely unresolved UX decisions: **seven**, each built as a default pending the owner's decision: row 41 (P3.8 round 1, caef0d42: Codex has no one-line
+- Genuinely unresolved UX decisions: **none**. The seven built as defaults were decided on 2026-10-04: questions 2, 3, 4, 6 and 7 A and question 8 B, each kept as built, and question 5 C, superseding the default A and built in PR 4 (c0d79113, 8a87026a). They were: row 41 (P3.8 round 1, caef0d42: Codex has no one-line
   model or effort command; section 10, question 2), row 22 (P3.6 finding
   V3: a declined confirm after a Switch restores the previous account; question 3), row 63 (P3.10: Codex asks the user to review the app's hooks once per account; question 4), row 51 (PB1: the instruction channel on this computer's sign-in; question 5), row 53 (PB4: characters outside the BMP; question 6), row 57 (PB5: the Cloud Agent skip-permissions mapping; question 7) and rows 51 and 52 (the VM checkpoint at 69c98042: Codex's Auto preset cannot ask before the app's own tools; question 8). The one before them (row 53, both providers on) was decided by
   the owner on 2026-09-27 (option B; OD27 M4). Section 10.
-- PR 3 waits on the owner for questions 2, 3 and 4 and for the owner actions
-  in section 10; nothing in it is blocked from being built. PR 4 waits on the
-  owner for questions 5 to 8 before its merge is recommended; nothing in
-  it is blocked from being built.
+- PR 3 waits on the owner for the owner actions in section 10 only (its
+  questions 2, 3 and 4 were answered on 2026-10-04); nothing in it is blocked
+  from being built. PR 4 no longer waits on a section 10 question (questions
+  5 to 8 were answered on 2026-10-04); its owner-gated items are in 9.5.
 
 ## 3. Where the draft plan disagreed with the record
 
@@ -139,7 +138,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 19 | Strip cost wording | DONE | "API-equivalent estimate" wording (decided by design, 2026-09-26) | none | 2 |
 | 20 | Account chip on the strip and in the sidebar | DONE (P3.6, 57ce396a, 68d00f62, 4439d7e2; mocked): a Codex session's account chip on the strip and its sidebar card, from the identity; Claude's chips read the identity's colour | Canvas 2026-09-26, "Switching a running Codex session's account": the strip's Codex account pill and its Switch account menu; the footer's label rule (a Codex identity shows its name); parity for the sidebar | verification: the VM check of W1, done: PASS at 427807fb (P3.7's VM run, MOCKED) and at 525a00ac (PR 3 gate 6, P3.16: the note's Dismiss 8 px from the floating GitHub button, a hit test landing on it); the owner's screenshot review; the SSH live matrix at PR 3's head | 2; 3 |
 | 21 | Multi-account footer | DONE | Canvas 2026-09-26 (footer, option B); OD27 M1 | verification: real CLI, packaged | 2, v4 |
-| 22 | Switch the account of a running session | PARTIAL (P3.6, 8274b3d1, 4439d7e2, bb99d2da; mocked): Switch account lists the Codex accounts, and a pick restarts the session on the new account with its conversation carried over. A declined confirm after a Switch restores the previous account, the default pending the owner's decision (section 10, question 3) | Canvas 2026-09-26 (as row 20): keep the conversation; copy its rollout into the new account's folder, then `codex resume` there | owner (question 3); verification: the real-CLI walk on 0.153.4 and 0.155.1, done for a switch between managed accounts (the conversation carried and continued there) and a declined confirm as built, PASS at 525a00ac (PR 3 gate 6, fake-key accounts on a loopback fake model; P3.16); owed: the real-account resume (owner), the carry to and from this computer's sign-in, a switch back and a conversation from an earlier day (P3.6); the SSH live matrix | 3 |
+| 22 | Switch the account of a running session | DONE (P3.6, 8274b3d1, 4439d7e2, bb99d2da; mocked): Switch account lists the Codex accounts, and a pick restarts the session on the new account with its conversation carried over. A declined confirm after a Switch restores the previous account, as the owner decided on 2026-10-04 (section 10, question 3: A, kept as built) | Canvas 2026-09-26 (as row 20): keep the conversation; copy its rollout into the new account's folder, then `codex resume` there | verification: the real-CLI walk on 0.153.4 and 0.155.1, done for a switch between managed accounts (the conversation carried and continued there) and a declined confirm as built, PASS at 525a00ac (PR 3 gate 6, fake-key accounts on a loopback fake model; P3.16); owed: the real-account resume (owner), the carry to and from this computer's sign-in, a switch back and a conversation from an earlier day (P3.6); the SSH live matrix | 3 |
 | 23 | Choose the account at launch | DONE | Commit 6 canvas, 2026-09-24 | verification: per OS | 2, v4 |
 | 24 | Running sessions per account | DONE (P3.2, 65612489): "N running" on the account row | Canvas 2026-09-26 ("N running" pill on the row) | verification: real CLI: done, PASS with the real CLI 0.155.1 on a packaged build of 525a00ac (PR 3 gate 6, P3.16) | 3 |
 | 25 | Tokenomics reads managed realms and `~/.codex` | DONE | OD20 D10; OD26 U3 | verification: real rollouts | 2, v4 |
@@ -160,10 +159,10 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 35 | Restart and Switch keep the conversation | PARTIAL (P3.5, 90a717df, Restart; P3.6, 4439d7e2, Switch; mocked): Restart resumes the conversation the session kept (VM c2c42e22); a Switch carries it into the new account and resumes it | Parity (Claude's Restart resumes); canvas 2026-09-26 for Switch | verification: the Switch half on the VM with a real CLI (row 22), done: PASS on 0.155.1 and 0.153.4 at 525a00ac (PR 3 gate 6, P3.16); owed: the real-account resume after a Switch (owner; row 22) | 3 |
 | 36 | Statusline segments | DONE (the account chip in P3.6, 68d00f62; Lines changed and Duration in P3.7, 5de7a4c4, 9f2bd164; mocked) | Parity (line counts: evidence first; section 19 if Codex reports none) | verification: the VM run, done: PASS at 427807fb (MOCKED) and at 525a00ac (PR 3 gate 6, the real CLIs; P3.16): the line count of a new and a deleted file on 0.153.4 and 0.155.1, and the Duration on a new conversation, after a Restart, after a relaunch, outside the app and after a TUI resume (0.155.1); FAIL there: the Duration after the saved session file was cleared (P3.7), fixed in fixer 9 (86ae88ac) and re-checked PASS on 0.155.1 and 0.153.4 at aca63cc7 (fixer 9's head: "Close sessions", "Don't open", the last tab closed, and a TUI resume after a clear) and at d0caf0bd (fixer 10: "Close sessions" and a TUI resume after it; P3.7); the owner's screenshot review | 3 |
 | 37 | Statusline settings | DONE (P2; P3.7, 5de7a4c4, 9f2bd164; mocked): the settings apply to Codex, and Lines changed and Duration show for a Codex session | Parity | verification: the VM screenshot of the Status Line tab with Codex on, both themes, done: PASS at 427807fb (MOCKED) and at 525a00ac (PR 3 gate 6, P3.16); the owner's screenshot review | 2; 3 |
-| 38 | Statusline after resuming an old rollout | DONE (P3.5, 28f42af2, 90a717df; mocked; VM c2c42e22): the claim re-reads its date folders on every poll and finds a resumed conversation wherever it is | Parity | verification: a session crossing midnight UTC on a real CLI (time-bound: not run at PR 3 gate 6, 525a00ac; it can be scheduled for 17:00 on the VM, 00:00 UTC) | 3 |
+| 38 | Statusline after resuming an old rollout | DONE (P3.5, 28f42af2, 90a717df; mocked; VM c2c42e22): the claim re-reads its date folders on every poll and finds a resumed conversation wherever it is | Parity | verification: a session crossing midnight UTC on a real CLI, done: PASS on the VM on 2026-10-04 (run cp4-row38; real Codex 0.155.1 on the loopback fake model, fictional data): the status line followed the tab across 00:00 UTC (381,011, then 763,033, then 1,146,055 input tokens), a Restart ran `codex resume` with the same conversation id and the turn after it updated, and the rollout stayed in its day folder and grew | 3 |
 | 39 | Model catalogue | DONE: the registry's Codex models, the list the supported CLIs (0.153.4 and 0.155.1) offer in their own picker, Sentinel's check, and the release gate's Codex half (P3.8, 260d4abc; round 1, caef0d42); P3.9 (3a4ed400; mocked): Sentinel's Codex check compares the registry with the list the installed CLI offers, read from it (`codex debug models --bundled` in an empty folder, no sign-in), naming its version, else the shipped list | Parity: the model registry plus Sentinel's coverage check. Not app-server `model/list`: OD27 M2 allows usage reads only | verification: done on the VM at 7678c433 (`--bundled` accepted on 0.153.4 and 0.155.1, the same list as the plain command, no connection); the gpt-5.2 notice to the owner stands (section 10); ADR-009: P3.9, quarantined after its own bounded rounds, is covered by PR 3's PR-level pass (P3.16), PASS at 525a00ac | 3 |
 | 40 | Effort | DONE (P3.8, 260d4abc; round 1, caef0d42): each Codex model's own levels, from the CLI's catalogue (0.155.1's are the same, VM); a launch drops a saved effort its model cannot run. The CLI accepts max and ultra at launch on both versions (VM) | Parity | verification: whether the server takes max and ultra (a real sign-in; the CLI does not check at launch) | 3 |
-| 41 | Mid-session model and effort | PARTIAL, built as the default pending the owner's decision (P3.8 round 1, caef0d42): on a live session the command bar's model pill types a bare `/model`, only at Codex's ready prompt, which opens Codex's own model-and-effort picker and keeps the conversation; a stopped session keeps the select, applied at its next start | Parity: applied live, keeping the conversation. Codex has no one-line form (VM: `/model <slug>` is sent as a message; there is no `/effort`), so Claude's one-step switch cannot carry over as it is | owner: the default (section 10, question 2); verification: the pill on the VM, done: PASS on 0.155.1 and 0.153.4 at 525a00ac (PR 3 gate 6, P3.16; a stopped session's select on 0.153.4) | 3 |
+| 41 | Mid-session model and effort | DONE, as the owner decided on 2026-10-04 (section 10, question 2: A, kept as built; P3.8 round 1, caef0d42): on a live session the command bar's model pill types a bare `/model`, only at Codex's ready prompt, which opens Codex's own model-and-effort picker and keeps the conversation; a stopped session keeps the select, applied at its next start | Parity: applied live, keeping the conversation. Codex has no one-line form (VM: `/model <slug>` is sent as a message; there is no `/effort`), so Claude's one-step switch cannot carry over as it is | verification: the pill on the VM, done: PASS on 0.155.1 and 0.153.4 at 525a00ac (PR 3 gate 6, P3.16; a stopped session's select on 0.153.4) | 3 |
 | 42 | Sentinel | DONE (P3.9, 3a4ed400; mocked): while Codex is on, its version against the supported range (a finding outside it), the live model list (row 39), and a newer version's release notes analysed against its launch flags, TUI, rollout session files and config and account files; the analysis runs on the provider that is on (both on: the one Ask Conductor runs on, Claude Code until PR 4's row); the same panel, dot, Settings section and Transparency card | Parity: version drift, flags and the rollout format checked, with findings; the analysis runs on whichever provider is on | verification: the VM run at 7678c433 (the findings as specified; a Codex-run analysis left config.toml unchanged; the notes read failed, fixed in round 1, e357fe33, with the ADR-009 pass 1 findings); the VM re-check at 82c78680, five of six passed, its bug and the ADR-009 pass 2 findings fixed in round 2, 1f010667); the VM re-check at 84fd2d03, the suspended git left by a fast failure fixed in round 3, 5fd82db8); ADR-009: FINDINGS after pass 3, P3.9 quarantined; covered by PR 3's PR-level pass (P3.16), PASS at 525a00ac, its rounds 3 to 5 included; the VM re-check at 2499766e: direct route 10/10 clean, npm route 1/15 left a suspended git (round 4 logs the kill's result; an access-denied result is an upstream residual); the reviews of rounds 4 and 5: done (P3.9); fixers 10 to 13 (P3.9): only a version above the highest checked is analysed at start, for Claude Code too, which keeps versions installed in turn within the three-analysis cap, and a Re-run makes the installed version the highest checked once its analysis is done (an unmatched Re-run of a version no start analyses says to use Re-run again); the seeded panel check PASS on the VM at be6ee406; limits: a Re-run reads notes from the version the panel names, so after a downgrade with a newer update pending its prompt also takes in versions already checked (bounded by the slice caps, never an extra analysis); on the npm shim route, a helper Codex starts after its scheduled reads have stopped (two in a row found its chain alone, about 1 s and 2 s in) and that outlives Codex is not ended; a version below the highest checked is never analysed at start, even a new one (a Re-run analyses it); owed: the VM read of a leftover kill's log line on the npm route (access denied or not), a completed real analysis (owner) and the owner's screenshot review | 3 |
 | 43 | Watchdog | DONE (P3.10, d8f538b1; mocked): armed for a local Codex session (opt-in, off by default, as for Claude) with Codex's own detectors: its usage-limit and sustained server-error cells above the composer, the reset time, a turn running, Codex's own retry; the retry typed only into its ready, empty composer, Enter 300 ms later only when the pane shows it typed; the safeguard check shown unavailable (Codex has no such message). Round 1 (afae03f7): the session header's Watchdog pill shows on a Codex session and counts only the checks Codex has; the Feature Guide, tip and What's New cover it, under the one switch. VM at 6d576634: armed only when switched on, backoff and retry on a server error. Round 2 (5b178c7a): the header pill follows the watchdog live (it showed only after another change); one overload is retried once (an error above a newer turn is an earlier one's). VM at 6b465aef: the pill live on a Codex and a Claude session (R1); one retry per overload (R2); a persistent overload retried without backing off, fixed in round 3 (18029bb0): an episode lasts until two minutes of quiet after a retry, for Claude and Codex alike, so the backoff grows and the cap trips; VM at the round-3b build: a persistent overload backs off 30, 60, 120, 240 and 300 s and gives up, on a Codex and a Claude session, and an error after two quiet minutes starts afresh. Round 4: an episode whose recovering frame was the session's last output settles two minutes after it, and the backoff a retry logs is the one the episode then waits; VM at the round-4 build: a fresh episode after a last-output recovery, the logged backoff equal to the wait | Parity: auto-retry and silence detection; aicc_planning#72 (a CLI without its own patterns reports Watchdog unavailable, never Claude's) | verification: the Watchdog on an SSH Claude session (a persistent overload backing off, in the owner's live SSH matrix); a real usage limit and overload (a working model, owner); the owner's screenshot review; the SSH live matrix; ADR-009: done, P3.10's own pass (d8f538b1..4ba85a3a, PASS) and PR 3's PR-level pass (P3.16), PASS at 525a00ac | 3 |
 | 44 | Services (PTY integrity) | DONE (P3.15; the VM at c11fb360, 0.155.1 and 0.153.4, re-checked under the bundled ConPTY at 7c52a432): a Codex tab is in the Services snapshot exactly as the Claude tab (bytes, gap 0, columns) | Parity | verification: macOS, Linux | 3 |
@@ -178,28 +177,28 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 48 | Conductor MCP transport | DONE | PLAN commits 4 and 5b | verification: a live 0.155.1 tool listing | 2, v4 |
 | 49 | `codex_review` | DONE | PLAN commit 5a (its defaults stand unless the owner overturns them) | verification: a real run on a signed-in account | 2, v4 |
 | 50 | `claude_review` | DONE | PLAN commit 5b, owner decisions 1 to 3 (2026-09-24) | verification: a live wait past 300 s | 2, v4 |
-| 51 | Agent Canvas from Codex | PARTIAL (P4.1, b98bc235 to b4413a24; mocked): built, this computer's sign-in as question 5's default A; was withheld (`src/main/conductor-mcp-server.ts:1106`) because a Codex session had no bound id | Parity: the tools, roots, instruction delivery and the live loop | owner (question 5, section 10); verification: the VM walk, OR4, OR5 | 4 |
-| 52 | Browser and vision tools | PARTIAL (P4.2, 2eb403cf, 04ac6b96; mocked): built, the Auto preset as question 8's default B; was withheld (`conductor-mcp-server.ts:911-913`, `:1042`, a "Claude-only for now" call of 2026-07-02) | Parity; the later owner decisions (the 2.1.1 gate, OD26 P1) end a call worded "for now" (section 10) | owner (question 8, section 10); verification: the VM (vision and the push with the fake model, the per-preset approvals); OR4 | 4 |
-| 53 | Ask Conductor on Codex | PARTIAL (P4.3, 995148ea to b4413a24; mocked): built, the characters outside the BMP as question 6's default A; was pinned to Claude (`src/renderer/lib/askConductor.ts:255`) and blocked with Claude Code off (`askConductorGate.ts`) | Codex only: design section 2 and parity (Ask runs on the provider that is on). Both on: OD27 M4 (option B, canvas "Ask Conductor provider choice" v1): a Settings, General row "Ask Conductor runs on", shown only while both are on, Claude Code by default | owner (question 6, section 10); verification: the VM (the first Ask in a fresh account folder), OR4, OR5 | 4 |
+| 51 | Agent Canvas from Codex | DONE (P4.1, b98bc235 to b4413a24; question 5 answered C on 2026-10-04 and built in c0d79113 and 8a87026a; mocked): built, this computer's sign-in getting the canvas skills copied into its own Codex skills folder, and the Auto preset as question 8 was decided (B); was withheld (`src/main/conductor-mcp-server.ts:1106`) because a Codex session had no bound id | Parity: the tools, roots, instruction delivery and the live loop | verification: the VM walk (question 5's copy and removal on this computer's sign-in among it, and its two HOST QUARANTINE link files on CI and the VM), OR4, OR5 | 4 |
+| 52 | Browser and vision tools | DONE (P4.2, 2eb403cf, 04ac6b96; mocked): built, the Auto preset as the owner decided on 2026-10-04 (question 8: B, kept as built); was withheld (`conductor-mcp-server.ts:911-913`, `:1042`, a "Claude-only for now" call of 2026-07-02) | Parity; the later owner decisions (the 2.1.1 gate, OD26 P1) end a call worded "for now" (section 10) | verification: the VM (vision and the push with the fake model, the per-preset approvals); OR4 | 4 |
+| 53 | Ask Conductor on Codex | DONE (P4.3, 995148ea to b4413a24; mocked): built, the characters outside the BMP as the owner decided on 2026-10-04 (question 6: A, kept as built); was pinned to Claude (`src/renderer/lib/askConductor.ts:255`) and blocked with Claude Code off (`askConductorGate.ts`) | Codex only: design section 2 and parity (Ask runs on the provider that is on). Both on: OD27 M4 (option B, canvas "Ask Conductor provider choice" v1): a Settings, General row "Ask Conductor runs on", shown only while both are on, Claude Code by default | verification: the VM (the first Ask in a fresh account folder), OR4, OR5 | 4 |
 | 54 | App knowledge, tour, tips | PARTIAL: the P2 fixes are done; P4.1 to P4.5's own copy landed with them (c4f1a62c, eecd1b75, 2be770ad); P4.11's sweep and the Beta labels done (31169913 to f1b96edd), the recaptured images waiting for the owner's review | The AGENTS.md surface sweep; recorded 2026-09-26: the Codex "Beta" labels come off in the release where parity lands | verification: the owner's review of the recaptured images; the Mac recapture | 2; 4 |
 | 55 | Memory | PARTIAL (P4.4, 1a12160b to 41638f93; mocked): listing, guard and read built; delete built, hidden and refused in main until the VM check; frontmatter edit does not carry over (recorded) | Parity: each realm's Codex memories on the Memory page | verification: the delete check on the VM (else OR4); OR4: the real file format | 4 |
 | 56 | Codex logs | DONE (P4.4, 1a12160b, 8fb60652; mocked) | Parity: each realm's `log` folder offered where the app offers its own log folder (Settings, Debug Logging) | verification: the VM (each account's folders open, `log_dir` from `config.toml` included) | 4 |
-| 57 | Cloud Agents | PARTIAL (P4.5, 5d0187c6 to d41c4a8b; mocked): built, the skip-permissions choice as question 7's default A; was Claude only (`src/main/cloud-agent-manager.ts:192`) | Parity: background agents run with `codex exec` in the account's realm, as Claude's run its headless CLI; not the experimental `codex cloud` (WP1.41) | owner (question 7, section 10); verification: the VM run, OR4 | 4 |
+| 57 | Cloud Agents | DONE (P4.5, 5d0187c6 to d41c4a8b; mocked): built, the skip-permissions choice as the owner decided on 2026-10-04 (question 7: A, kept as built); was Claude only (`src/main/cloud-agent-manager.ts:192`) | Parity: background agents run with `codex exec` in the account's realm, as Claude's run its headless CLI; not the experimental `codex cloud` (WP1.41) | verification: the VM run, OR4 | 4 |
 | 58 | Web sign-in and artifacts | PARTIAL (P4.6 first half, 27d62537 to 1064dbbf; mocked): a Codex account's own web partition, the orphan warning over both prefixes, Claude's items off a Codex tab's menu and pane | Web session: parity (chatgpt.com is to a Codex account what claude.ai is to a Claude account: the browser pane's account surface). Artifacts: no Codex equivalent is known, so a section 19 record (section 10) | owner (OR2a, then the artifacts record, OR3); implementation (the sign-in window and the pane's account surface, after OR2a) | 4 |
 
 ### E. Everything else
 
 | # | Feature | Status | Settled by | Gap | PR |
 |---|---|---|---|---|---|
-| 59 | PR CI on Linux | OPEN: Windows and macOS only (`.github/workflows/ci.yml`) | OD20 D5 | implementation | 4 |
-| 60 | Real-CLI coverage in CI | OPEN: no workflow installs Codex | OD20 D7; WP1.71 | implementation | 4 |
+| 59 | PR CI on Linux | DONE (P4.8; VERIFIED): `ubuntu-latest` in the test matrix, the whole suite green in CI run 37134624406 (fcfd2ae6, 2026-10-03), after which 2723b1ed made the Linux job blocking; green again in CI run 37156412028 (f073124e) (`docs/wp1/evidence/ci-matrix.md`). Was Windows and macOS only (`.github/workflows/ci.yml`) | OD20 D5 | none | 4 |
+| 60 | Real-CLI coverage in CI | PARTIAL (P4.8): the `codex-conformance` job runs Codex 0.153.4 and 0.155.1 on Windows, macOS and Linux, all six legs green in CI run 37134624406 (fcfd2ae6) with the runner's own Codex home untouched and again in CI run 37156412028 (f073124e), and shown red once by the prove-red dispatch, CI run 37155296304 (dad42d3e). Was: no workflow installed Codex | OD20 D7; WP1.71 | verification: the release-candidate leg, at release (`-f codex_rc_version=<v>`) | 4 |
 | 61 | Compact | DONE (P3.8, 260d4abc; round 1, caef0d42): the strip's Compact on a Codex session types Codex's own /compact only at its ready, empty prompt (otherwise it types nothing and says why) and presses Enter only in the same run; the real TUI submits it that way on 0.153.4 and 0.155.1 (VM) | Parity: Codex's own compact command (evidence first) | verification: round 1 on the VM, done: rounds 1 and 2 PASS on 0.155.1 and 0.153.4 at 525a00ac (PR 3 gate 6, a loopback fake model; P3.16); what a real /compact does to a conversation (a real sign-in, owner) | 3 |
 | 62 | Extra CLI arguments | DONE (P3.11, 28739b19; round 1, 057fa776; mocked): a Codex config has the Extra CLI arguments field (the one field, in the Codex section), saved as `codexOptions.extraArgs`; each word is one launch argument after every flag the app sets; one rule refuses, in any spelling and under every alias the supported CLIs give them, the flags the app sets (the working folder and `--worktree` included), the account, provider and endpoint settings, and a word Codex reads as one of its commands; the dialog says why under the field and Save waits; a saved value that is refused is dropped at launch (logged) and the session starts without it; done: the VM run at 919385af (WINDOWS_1, real Codex 0.153.4 and 0.155.1): all five checks PASS on both versions (extra arguments on the direct and npm `.cmd` routes, through the picker and on a resume by id; a refused value said in the dialog, Save waiting; refused saved values dropped at launch with a log line, the session starting without them; the Claude Code field with the same dialog check and its launch unchanged), e2e 81; the round-1 re-review (spec, code quality) and ADR-009 pass 2 at 919385af PASS, the P3.11 verdict PASS | Parity: the same field and IPC character guard, plus a block-list of the flags the app manages and of any setting that changes the account, provider or endpoint | verification: the owner's screenshot review of the field and its message, both assistants, both themes (gallery `.ccc-canvas/screens/p3.11-919385af/`); the SSH live matrix at PR 3's head (no Codex case: a Codex session over SSH is refused); ADR-009: done, P3.11's pass and PR 3's PR-level pass (P3.16), PASS at 525a00ac | 3 |
-| 63 | Hooks gateway and notification rules | PARTIAL, built as the default pending the owner's decision (P3.10, d8f538b1; mocked): each local Codex launch gets six command hooks running the app's forwarder, which posts each event to the Hooks gateway as a Claude http hook does (loopback, the session's token, the size cap, redaction); Codex asks the user to review them once per account. Notification rules: the one rule on a hook event (Attention Pulse, Claude's idle Notification, filter-only) gets from a Codex idle mark what Claude's idle_prompt gives it (round 1). Round 1 (afae03f7) fixes ADR-009 pass 1 (the forwarder never through an environment proxy; no PowerShell call of a path it reads as a wildcard or cmd.exe expands; the hook folders in the app's own data folder, owner-only, read only at their real path) and gives an npm-installed Codex its hooks from a resources folder with a space (a checked plain-path copy). VM at 6d576634: all six events at the gateway on both versions and routes, the review once per account; the round 1 re-check passed V3 (the plain-path copy through the npm shim from the default resources folder, reused across starts) and S6 (a user's own hooks still run). Round 2 (5b178c7a): both plain-copy folders owner-only, bigint file ids, the root hardened once a run; VM at 6b465aef: both plain-copy folders and the root owner-only (R4), the picker told only of tabs on the same account (R10). Round 3 (18029bb0): a hook folder the app did not make this run is used only once it belongs to the user, and the root is hardened again when made again in the run. VM at the round-3b build: a hook folder from an earlier run used once it is the user's (an admin account). Rounds 3b and 4: the hook wrapper and the picker resolve their helpers from fixed locations; the hook folders are prepared asynchronously and only while Codex is on, by one call of the owner-only rule (on Windows one PowerShell call), used only when read back as this user's alone, and checked again before first use; VM at the round-4 build: the wrapper, the folders' real rights, the app's start with Codex on and off, an early launch that waited and got its hooks. Round 5: any folder name makes the round trip exactly, a name ending in a dot or a space is refused, a failed preparation waits five minutes before the same folders are tried again, and a launch waits only while the Hooks gateway listens (and for the wiring) | Parity: route Codex `notify` and hook events. Codex reviews hooks given at launch, which Claude does not, so the trust step cannot carry over as it is | owner: the default (section 10, question 4); verification: the VM re-run of the rule's real round trip at the final build, done at 525a00ac (PR 3 gate 6, P3.16: `owner-only-folders-real.test.ts` 4 of 4, `hook-wrapper-start-folder.test.ts` 2 of 2, the hook root the user's and SYSTEM's alone with inheritance cut, the six events at the gateway; the real test with the names fixer 9 added, aac1b46e, PASS on the VM at aca63cc7 and d0caf0bd, with `hook-wrapper-start-folder.test.ts`, 6 of 6 each time; in CI at the final head); a hook folder from an earlier run on a standard Windows account (owner); the POSIX hook runner; the SSH live matrix; ADR-009: done, P3.10's own pass (d8f538b1..4ba85a3a, PASS), its rounds 4 and 5 included, and PR 3's PR-level pass (P3.16), PASS at 525a00ac | 3 |
+| 63 | Hooks gateway and notification rules | DONE, as the owner decided on 2026-10-04 (section 10, question 4: A, kept as built; P3.10, d8f538b1; mocked): each local Codex launch gets six command hooks running the app's forwarder, which posts each event to the Hooks gateway as a Claude http hook does (loopback, the session's token, the size cap, redaction); Codex asks the user to review them once per account. Notification rules: the one rule on a hook event (Attention Pulse, Claude's idle Notification, filter-only) gets from a Codex idle mark what Claude's idle_prompt gives it (round 1). Round 1 (afae03f7) fixes ADR-009 pass 1 (the forwarder never through an environment proxy; no PowerShell call of a path it reads as a wildcard or cmd.exe expands; the hook folders in the app's own data folder, owner-only, read only at their real path) and gives an npm-installed Codex its hooks from a resources folder with a space (a checked plain-path copy). VM at 6d576634: all six events at the gateway on both versions and routes, the review once per account; the round 1 re-check passed V3 (the plain-path copy through the npm shim from the default resources folder, reused across starts) and S6 (a user's own hooks still run). Round 2 (5b178c7a): both plain-copy folders owner-only, bigint file ids, the root hardened once a run; VM at 6b465aef: both plain-copy folders and the root owner-only (R4), the picker told only of tabs on the same account (R10). Round 3 (18029bb0): a hook folder the app did not make this run is used only once it belongs to the user, and the root is hardened again when made again in the run. VM at the round-3b build: a hook folder from an earlier run used once it is the user's (an admin account). Rounds 3b and 4: the hook wrapper and the picker resolve their helpers from fixed locations; the hook folders are prepared asynchronously and only while Codex is on, by one call of the owner-only rule (on Windows one PowerShell call), used only when read back as this user's alone, and checked again before first use; VM at the round-4 build: the wrapper, the folders' real rights, the app's start with Codex on and off, an early launch that waited and got its hooks. Round 5: any folder name makes the round trip exactly, a name ending in a dot or a space is refused, a failed preparation waits five minutes before the same folders are tried again, and a launch waits only while the Hooks gateway listens (and for the wiring) | Parity: route Codex `notify` and hook events. Codex reviews hooks given at launch, which Claude does not, so the trust step cannot carry over as it is | verification: the VM re-run of the rule's real round trip at the final build, done at 525a00ac (PR 3 gate 6, P3.16: `owner-only-folders-real.test.ts` 4 of 4, `hook-wrapper-start-folder.test.ts` 2 of 2, the hook root the user's and SYSTEM's alone with inheritance cut, the six events at the gateway; the real test with the names fixer 9 added, aac1b46e, PASS on the VM at aca63cc7 and d0caf0bd, with `hook-wrapper-start-folder.test.ts`, 6 of 6 each time; in CI at the final head); a hook folder from an earlier run on a standard Windows account (owner); the POSIX hook runner; the SSH live matrix; ADR-009: done, P3.10's own pass (d8f538b1..4ba85a3a, PASS), its rounds 4 and 5 included, and PR 3's PR-level pass (P3.16), PASS at 525a00ac | 3 |
 | 64 | Partner terminal wording | DONE | P2 | verification: per OS | 2, v4 |
 | 65 | GitHub session context | DONE (P3.12, d86fd80f and its fixes; mocked; VM at ff7be273 (WINDOWS_1, real Codex 0.155.1 and 0.153.4), and its re-check with the fixes: a Codex session's commands and edited files, nothing before its first turn, the heading naming Codex, PASS): a Codex session reads the rollout its watcher holds, checked again inside its realm, with Claude's bounded tail, for the unchanged reference scanner and file-signal inspector (`src/main/github/session/codex-rollout-loader.ts`), read only from the realm's real day folder (a path check: see P3.12's limits); both assistants: a recent file shown as plain text, relative to the session's folder when inside it, once per file, under a heading that names the session's assistant; after Switch Account the earlier account's rollout is not read | Parity: read the session's realm rollouts | verification: done, the VM re-checks of P3.12's fixes (P3.12's record); ADR-009: done, PR 3's PR-level pass (P3.16), PASS at 525a00ac, which covers P3.12 (quarantined after its own bounded rounds); owed: the owner's screenshot review; the SSH live matrix at PR 3's head (no Codex case: a Codex session over SSH is refused) | 3 |
 | 66 | Packaged smoke | PARTIAL: Windows only, an unsigned candidate on a used VM | OD20 D8; WP1.63 | verification (release level; owner hosts) | 4 |
-| 67 | E2E mode matrix | PARTIAL | WP1.1, WP1.60 | implementation (restart, enable/disable, real launch cases); verification | 2; 4 |
+| 67 | E2E mode matrix | DONE (P4.9, 7f15e2ec, d31d4940, b26079e9; VERIFIED): every cell of WP1.60's matrix has its e2e spec; on the Windows test VM the 26 specs passed 94 of 94, twice at 69c98042 (runs e2e-69c98042 and e2e-69c98042-run2) and at the final head f73f1785 (run e2e-f73f1785), the real launch of 0.153.4 (`codex.cmd`) and 0.155.1 (`codex.exe`) included | WP1.1, WP1.60 | verification: these runs recorded in `docs/wp1/evidence/mode-matrix.md`, where WP1.1 and WP1.60 move to evidenced | 2; 4 |
 | 68 | Insights | OPEN: Claude only; Claude's Insights types Claude Code's own `/insights` in a terminal (`src/main/insights-runner.ts:234-237`) | Parity, recorded 2026-09-26 (the parity reset's "Resolved by parity" list, sessions batch; not one of that day's open questions): a Conductor-native Codex report, run with `codex exec`. A mockup comes before the build (section 10) | implementation | 4 |
 | 69 | Plan mode | DONE (P3.8 round 1, caef0d42; round 2, f1783110): a "Plan mode" permissions choice, as Claude's launch option: the session starts READ-ONLY and Codex's own `/plan` is typed into its first ready prompt only (never the folder-trust prompt, the user's typing or after a turn), within a bounded wait; otherwise a note says Plan mode is not on and the session is read-only. The pill reads "plan" only while Codex's footer shows its Plan mode | Parity: Claude's Plan mode launch option (`src/renderer/lib/claude-cli-options.ts:85`); Codex has `/plan` on both supported versions and no launch flag for it (VM), so no section 19 record | verification: Plan mode on the VM, done: round 3 PASS at c67b1041, and rounds 4 and 5 at 525a00ac (PR 3 gate 6, P3.16): 3 of 3 fresh launches on 0.155.1 and 5 of 5 on 0.153.4, a Restart and a tab switch PASS (no erase was needed in those runs, so the erase after a second read and the start-up row's place are unit-tested only); the attackers' confirmation of the launched answer on `pty:spawn`, done: PASS by ADR-009 lens C in its round 3 on fixer 11 (P3.8); the approval flow with a working model (owner-only) | 3 |
 | 70 | Image paste | DONE (P3.15, bbcb6ef8; the focused key on the VM at c11fb360, both versions): with the terminal focused Alt+V goes to the CLI and Codex attaches the image itself ("[Image #1]"); with focus elsewhere a Codex session's line is ASCII and typed by the Codex typing rule, its notes in the paste hint (mocked: `codex-image-paste.test.ts`, `alt-v-image-route.test.tsx`); the tip and the Tips and Shortcuts card say both | Parity | verification: the wrapped line on the VM (round 1), done: PASS at 525a00ac (PR 3 gate 6, 0.155.1: a line over two composer rows at 91 columns, Enter 302 ms later; P3.16); real Claude Code's own Alt+V, signed in, and the focused key over SSH (owner); macOS, Linux | 3 |
@@ -309,11 +308,12 @@ Per PR:
   changes `pty-manager.ts` and, in P3.2, `statusline-watcher.ts`); the
   screenshot review; the Desktop test gate (#309); posting the ADR-009
   marker and removing the needs-review label; the real-Mac and
-  real-account checks its rows list (gate 6's owner-only list, P3.16);
-  and questions 2 to 4 (section 10).
+  real-account checks its rows list (gate 6's owner-only list, P3.16).
+  Questions 2 to 4 were answered on 2026-10-04 (section 10).
 - **PR 4.** Phases P4.1 to P4.11 (section 9), including row 15, which OD20 D8
   makes a merge blocker. The SSH live matrix is owed (P4.1 and P4.3 edit
-  `pty-manager.ts`; 9.7 gate 5), and questions 5 to 8 (section 10).
+  `pty-manager.ts`; 9.7 gate 5). Questions 5 to 8 were answered on
+  2026-10-04 (section 10).
 
 Package completion is not release completion. A complete PR merges to beta
 only on the owner's word, in the order #625, PR 3, PR 4, and nothing is
@@ -345,7 +345,8 @@ released from it until section 7 holds.
    prompt is open, a session file written while the resume prompt is
    unanswered, a launch needing a dialog while that prompt is open, the
    untracked local Claude spawn) and the Codex statusline's
-   midnight-UTC limitation (row 38) are fixed or each given an explicit owner
+   midnight-UTC limitation (row 38; its VM check passed on 2026-10-04, run
+   cp4-row38) are fixed or each given an explicit owner
    disposition; the one pre-existing e2e failure, reproduced on beta, routed
    privately, is settled through that route (owner rule: no release with known
    bugs). Section 8 names the phase that takes each.
@@ -413,11 +414,21 @@ cf42972b with `WP1_PHASE=candidate`, it refuses:
   `claude/statusline.ts`, `tk-pricing.ts` to `codex/pricing.ts`; 3 with no
   exemption, held by `pty-manager.ts`'s ledger disposition: to
   `claude/ssh-shim.ts`, `claude/spawn.ts` and `claude/ui-detection.ts`): an
-  owner decision on each (section 10);
+  owner decision on each (section 10). Settled by the owner's answers of
+  2026-10-04 and built in PR 4 (d9560e39): all nine are routed through the
+  provider interfaces, reached from the registry (R3 allows a shared module
+  no other route), and the deep-import, cross-package reach and
+  package-orphan allowlists are empty;
 - Claude's `cli.discovery`, `auth.status` and `auth.logout`, declared
   `unknown` ("wired in the Claude adapter slice"): wired in a recorded change,
   or the requirement decided by the owner (section 10). Codex passes on the
-  table it registers;
+  table it registers. Settled by the owner's answers of 2026-10-04 and built
+  in PR 4 (14ac75e8): discovery was already wired and is now declared; the
+  status check and the sign-out reuse the app's `claude auth status` probe
+  and a sign-out beside it, in the account's own profile home; the sign-out
+  is unsupported on macOS only (one keychain sign-in shared by every Claude
+  Code on the Mac, D2). Provider conformance and dependency boundaries pass
+  with `WP1_PHASE=candidate`;
 - the 73 items still `planned`, each moving as its evidence lands (P4.10).
 
 Two consequences, written down before the cut is planned:
@@ -939,8 +950,9 @@ whole, the spawn answers main's reason and whether the launch resumed it from
 a copy already there, and the tab says so once, above its terminal and
 outside its buffer, in the app's muted text, until dismissed, in words true
 for that (`utils/launchNote.ts`, with the app's spoofing-character rule; VM
-findings V1 and V4). Default pending the owner's decision (VM finding V3; a
-Claude switch never asks at launch, so parity cannot settle it): a Switch
+findings V1 and V4). The default, kept by the owner on 2026-10-04 (section
+10, question 3, A; VM finding V3; a Claude switch never asks at launch, so
+parity cannot settle it): a Switch
 whose launch then asks for confirmation and is declined takes the tab back
 to the account it came from, or to the default account when that one can no
 longer launch, and says which.
@@ -961,7 +973,7 @@ went its own way there is left as it is, the session carrying on from it and
 the note saying so.
 Done: the ADR-009 pass (the copy, the leases, the respawn's carry in pty:spawn,
 the pty-manager record; independent attacker sub-agents, bounded rounds: pass 1 at cf8f42d4 FINDINGS (one major, the cross-tab claim), fixed in 62cf7d8b and 31da7fb1; pass 2 at 31da7fb1 PASS; the cleanup at 78f2fcec confirmed by both lenses); the independent spec and quality reviews,
-PASS at 78f2fcec; the VM walk at 1063e3d9 (WINDOWS_1, MOCKED: fake CLI, fictional accounts; e2e 81/81): main's switch logic passed every case, and its findings are fixed: V1, the note was written into the terminal and the new session's first frame on Windows (ConPTY's) cleared it, so it is now shown in the new-account notice's place above the terminal, outside its buffer, until dismissed; V2, a tab that picked a conversation another tab holds on the same account was never recorded on it, so its Switch started a new conversation silently, and it is now recorded (the rollout stays the holder's to read), so its Switch refuses it as in use and says so; V3, Cancel on the confirm-at-launch question after a Switch left the tab on the new account; a Claude switch never asks at launch, so this is the owner's call, and the default pending that decision takes the tab back to the account it came from (or to the default account when that one can no longer launch); V4, the note is the app's muted text, which the token-contrast tests hold in both themes; V5, the claude.ai items in a Codex tab's right-click menu, predates P3.6 (#216) and is P4.6's (row 58, the per-account web session).
+PASS at 78f2fcec; the VM walk at 1063e3d9 (WINDOWS_1, MOCKED: fake CLI, fictional accounts; e2e 81/81): main's switch logic passed every case, and its findings are fixed: V1, the note was written into the terminal and the new session's first frame on Windows (ConPTY's) cleared it, so it is now shown in the new-account notice's place above the terminal, outside its buffer, until dismissed; V2, a tab that picked a conversation another tab holds on the same account was never recorded on it, so its Switch started a new conversation silently, and it is now recorded (the rollout stays the holder's to read), so its Switch refuses it as in use and says so; V3, Cancel on the confirm-at-launch question after a Switch left the tab on the new account; a Claude switch never asks at launch, so this was the owner's call (decided on 2026-10-04: A, as built), and the default takes the tab back to the account it came from (or to the default account when that one can no longer launch); V4, the note is the app's muted text, which the token-contrast tests hold in both themes; V5, the claude.ai items in a Codex tab's right-click menu, predates P3.6 (#216) and is P4.6's (row 58, the per-account web session).
 Done too: the VM re-check at 2cbf27ac (MOCKED; e2e 81/81) passed V1 to V4,
 and its findings are dealt with: W1, the note's dismiss sat under the GitHub
 button that floats over the terminal's top-right corner, so the bar now keeps
@@ -991,8 +1003,8 @@ owed gate-3 review (2026-10-02, P3.16), with a test nit (one re-point test
 also asserts the re-point never ran) fixed in fixer 9 (aac1b46e).
 W1: done, PASS on the VM at 427807fb (P3.7's run, MOCKED) and at 525a00ac
 (PR 3 gate 6, P3.16).
-Owed: the owner's decision on V3 (restore the previous account on a declined
-confirm, the default until then); the owner's review of the screenshots (the strip pill and its menu, the right-click menu,
+Decided on 2026-10-04: V3 as built (question 3, A: restore the previous
+account on a declined confirm). Owed: the owner's review of the screenshots (the strip pill and its menu, the right-click menu,
 the sidebar card's Codex line, the chips' colours, the note, a declined
 confirm after a Switch, and the reworded What's New and accounts pages, both
 themes); the owner's real-account resume (the server half of P3.1 answer
@@ -1265,8 +1277,8 @@ when the composer holds exactly that command; otherwise nothing is typed and
 the strip or the pill says why for a moment (`codex-composer.test.ts`,
 `screen-registry.test.ts`, `session-status-strip-codex-controls.test.tsx`).
 The one strip App renders drops a press's Enter when it is re-pointed at
-another tab. Row 41, built as the default pending the owner's decision
-(section 10, question 2): Codex has no one-line model or effort command
+another tab. Row 41, built as the default and kept by the owner on
+2026-10-04 (section 10, question 2, A): Codex has no one-line model or effort command
 (`/model <slug>` is sent as a message; there is no `/effort`), so on a live
 session the model pill types a bare `/model`, which opens Codex's own
 two-step picker and keeps the conversation, and the strip then shows what
@@ -2314,8 +2326,8 @@ folder from an earlier run on a standard Windows account (owner); the Watchdog o
 owner's live SSH matrix; a real paid-model turn (owner): an approval request
 raising the dot, and the Watchdog on a real usage limit and overload; the POSIX
 hook runner on macOS and Linux; the SSH live matrix at PR 3's head; the owner's
-review of the P3.10 gallery and screenshots, and the owner's answer to
-question 4.
+review of the P3.10 gallery and screenshots. Question 4 was answered on
+2026-10-04: A, kept as built.
 
 **P3.11 Extra CLI arguments.** Claude's field and IPC character guard for
 Codex, rejecting the flags the app manages (model, effort, permissions, MCP,
@@ -4519,13 +4531,16 @@ integration owner (the orchestrating session) integrates the phases one at a
 time; parallel Opus implementers work only on the disjoint lanes of 9.3. Every
 phase is **APPROVED** as the outline recorded; the owner steps are the
 artifacts record (P4.6), the Insights mockup (P4.7), P4.10's owner action, the
-owner-only checks in 9.5, and section 10's questions 5 to 8. The batched VM
+owner-only checks in 9.5, and section 10's questions 5 to 8 (answered on
+2026-10-04). The batched VM
 probe session (9.2) ran on 2026-10-02; each probe settled a technical choice
 inside an approved phase and reopened nothing. Two results cannot be settled
 by parity and became section 10's questions 5 (row 51) and 6 (row 53); a
 third, question 7 (row 57, the Cloud Agent permission mapping), followed from
-PB5 and the plan's own preset matching. Each is built as its stated default
-while the owner decides, and only what an answer would change waits on it. Two
+PB5 and the plan's own preset matching. Each was built as its stated default
+while the owner decided, and only what an answer would change waited on it;
+the answers of 2026-10-04 kept every default but question 5's, answered C
+and built (9.7). Two
 further VM steps, PB8 and PB9, ran the same day before any code: they raised
 no question and settle the Windows reads and the submit primitive's form.
 
@@ -6626,7 +6641,8 @@ Owner: OR1, OR4.
   - *Owed.* The prove-red dispatch, filling `ci-matrix.md`'s "Shown red
     once"; the next CI run with the help asserted on all six legs, and the
     first macOS and Linux runs of the new [host] files; the re-review of the
-    P410b fixes; the owner's decisions in section 10; OR1 and OR4 as above. ADR-009: N (this
+    P410b fixes; OR1 and OR4 as above (the section 10 decisions came on
+    2026-10-04). ADR-009: N (this
     part: tests, CI and evidence; no path on the ADR-009 list).
   - *Status at 072023f4.* The second part's agent-doable half is done, and its
     review fixes are verified (P410b's fix verification at d9ceeeee, and the
@@ -6635,8 +6651,9 @@ Owner: OR1, OR4.
     OS (a real sign-in, status and sign-out, the native keyring smoke, a real
     two-account run, and the packaged smoke of the PR 4 build), OR4 (rows 18
     and 49, and rows 27 and 50 if the fake model cannot make their evidence),
-    the VM rollback run (`rollback.md`), and the owner's decisions in section
-    10 on the stable release's WP1 candidate. At release: the signed packaged
+    the VM rollback run (`rollback.md`); the owner's decisions in section 10 on
+    the stable release's WP1 candidate came on 2026-10-04 and are built
+    (d9560e39, 14ac75e8). At release: the signed packaged
     smoke (row 66, WP1.63), the release-candidate CLI (WP1.71) and the release
     record (WP1.37). Owed on CI or the VM: one run of the quarantined
     `fake-cli.test.ts`; the prove-red dispatch.
@@ -6702,24 +6719,29 @@ Owner: OR1, OR4.
     on its isolation from the operator's own folders, fixed in e9fcaf9a and
     04da46fb, verified spec and quality PASS. The dependency floors: below, in
     9.7.
-  - *Listed, not built (owner calls or follow-ups).* A Cloud Agents card in
-    the Feature Guide. A provider filter for the tips: some tips that need
-    Claude Code are still offered with it off. gpt-5.2 in the Codex model list
-    (the owner's call, section 10's notices). Sonnet 5's fallback price in the
-    registry (3/15, where Anthropic's reference lists 2/10; older than PR 4).
-    The model picker's "Latest Opus (200k context)" hint, while Opus 5 and 5.5
-    run with 1M (older than PR 4). The help folder's Codex skill text, which
-    says "the user's OTHER Codex sessions" although it installs into one
-    account's skills folder. The README's Telemetry row, which leaves out
-    Sentinel's Codex notes read and the Codex usage check (PRIVACY.md has
-    both).
+  - *Listed, not built at this record; settled by the owner's answers of
+    2026-10-04 and built since.* A Cloud Agents card in the Feature Guide, for both
+    assistants with the Codex Auto limit (8fb5714d; its image comes from the
+    recapture). The tips: no provider filter, by the owner's answer; each tip
+    about one assistant carries that assistant's mark (8fb5714d; the dock's
+    tip row in 8a87026a). gpt-5.2 stays in the Codex model list while a
+    supported Codex version lists it (the owner's answer; nothing to build).
+    Sonnet 5's fallback price at Anthropic's reference, 2/10, re-checked on
+    2026-10-04 (66cefbee). The model picker's Opus hint without a context
+    size (66cefbee). The help folder's Codex skill text, which names the
+    account it is installed for (c0d79113). The README's Telemetry row with
+    Sentinel's reads and the Codex usage check, as PRIVACY.md has them
+    (8a87026a).
   - *The images.* Recaptured on the VM at the final-head run (9.7, f73f1785)
     and waiting for the owner's review, image by image; none is committed.
     `step-snap.jpg` is retaken with the tool fixed in 512e6bb4; the `-mac`
     images on the Mac.
   - *Owed.* The owner's review of every recaptured image, and the Mac
-    recapture; the owner's answers to questions 5 to 8, then this sweep's
-    lines checked against them. ADR-009: N (copy, UI, a pricing fallback and
+    recapture; the Cloud Agents card's own image (`step-cloud-agents.jpg`,
+    which the capture script takes since 8a87026a; the card shows
+    `v2-shell-hero.jpg` until it is approved). The owner's answers to
+    questions 5 to 8 came on 2026-10-04, and this sweep's lines were checked
+    against them in that round (9.7). ADR-009: N (copy, UI, a pricing fallback and
     dev tools). SSH radius: N.
 
 ### 9.5 Owner-gated items
@@ -6730,7 +6752,9 @@ Queued now (none blocks the start; each blocks one later step):
   timing; then the owner-run gates on the final build, done before merge (OD20
   D8): real sign-in, status and sign-out per OS (rows 4 and 15), the native
   keyring smoke, a real two-account run (row 6), the packaged smoke of the PR
-  4 build. The keyring smoke needs the store configured: Codex keeps
+  4 build. The owner confirmed the scope on 2026-10-04: rows 4 and 6 on every
+  OS before merge, with row 15's keyring smoke and the packaged smoke per OS
+  at the final build. The keyring smoke needs the store configured: Codex keeps
   credentials in a file in `CODEX_HOME` by default, and uses the keyring only
   when the realm's `config.toml` sets `cli_auth_credentials_store` to
   `keyring` (or `auto` where a keyring is available). The entries to check
@@ -6783,24 +6807,22 @@ Queued now (none blocks the start; each blocks one later step):
   that state, and no agent check uses the VM user's own `~/.codex` (9.2), so
   nothing waits on part 1.
 
-Questions for the owner (section 10): 5 (row 51), 6 (row 53) and 7 (row 57),
-each built as its default A, queued now; and 8 (rows 51, 52), raised by the
-VM checkpoint at 69c98042, built as its default B. PR 4 waits on the owner
-for them before merge is recommended, as PR 3 does for questions 2, 3 and 4; once P4.1,
-P4.3 and P4.5 land, rows 51, 53 and 57 read PARTIAL (and row 52, with
-question 8), built as the default pending the owner's decision, until the answers are in and any change they
-bring is built. The
-answers feed P4.11 (its lines re-checked) and P4.10 (its evidence taken after
-them); 9.3 says what runs again if an answer comes late.
+Questions for the owner (section 10): answered on 2026-10-04. Question 6
+(row 53) and question 7 (row 57): A, kept as built; question 8 (rows 51,
+52): B, kept as built; question 5 (row 51): C, superseding the default A,
+built in PR 4 (c0d79113, 8a87026a). Rows 51, 52, 53 and 57 left PARTIAL
+with them. The answers fed P4.11 (its lines re-checked in that round's
+sweep) and P4.10 (its evidence is taken after them).
 
 Later: the per-phase VM screenshot galleries (section 6, gate 6), reviewed
 image by image; every recaptured image (P4.11), the Mac ones included; the
 ADR-009 PASS markers (self-approval is blocked), the Desktop test gate and the
 word to merge, after #625 and #626.
 
-Not PR 4's, but bearing on it: questions 2, 3 and 4 of section 10 stay open;
-P4.1's live loop depends on question 4's outcome (default A: until an
-account's hooks are trusted, a marker waits on Codex's screen, P4.1).
+Not PR 4's, but bearing on it: questions 2, 3 and 4 of section 10 were
+answered on 2026-10-04 (A each, kept as built); P4.1's live loop rests on
+question 4's A (until an account's hooks are trusted, a marker waits on
+Codex's screen, P4.1).
 
 ### 9.6 Findings the build should know (facts, not decisions)
 
@@ -6917,8 +6939,8 @@ account's hooks are trusted, a marker waits on Codex's screen, P4.1).
 1. **Implemented.** Every row to its record; row 58's artifacts half DONE or
    carrying the signed section 19 record; every declared deviation recorded
    with its probe's evidence; row 15's owner-run gates (OR1) done before merge
-   (OD20 D8); questions 5 to 8 answered and any change they bring built (PR
-   4 waits on the owner for them, as PR 3 does for questions 2, 3 and 4).
+   (OD20 D8); questions 5 to 8 answered and any change they bring built
+   (answered on 2026-10-04; question 5's C built, 9.7's record of that day).
 2. **Tested.** Failing tests first; named host-safe test files only, the header
    grepped for HOST QUARANTINE before every run, never a directory, never
    `-t`; `npm run typecheck` plus a test typecheck (it does not cover
@@ -7051,6 +7073,155 @@ majors (lockfile only; reviewed SPEC PASS, QUALITY PASS). What `npm audit`
 still reports needs a major change, the electron-builder 26 chain and the
 excalidraw build chain, and is left for the owner (section 7, items 4 and 5).
 
+*Record (2026-10-04): the owner's answers, built.* Five lanes built the
+owner's answers of that day on f073124e, and the integration commit 8a87026a
+applied their shared-file changes (section 10 records each answer):
+- Lane A (d9560e39, 14ac75e8, 6895379c): the nine deep imports routed
+  through the provider interfaces, reached from the registry, each operation
+  delegating unchanged; the deep-import, cross-package reach and
+  package-orphan allowlists emptied. An esbuild metafile of
+  `src/main/index.ts` before and after shows the same module set (with the
+  adapter's new file) and no new import cycle, and the modules that reach
+  the authority manifest at start gain only that file, inside the Claude
+  package. The Claude adapter's
+  `cli.discovery`, `auth.status` and `auth.logout` completed, reusing the
+  existing Claude code; the sign-out is unsupported on macOS only, where
+  Claude Code keeps one keychain sign-in a profile home cannot reach.
+  Ownership, recorded: rule R3 lets a shared module reach a provider package
+  only through the registry, so lane A also edited
+  `src/main/providers/types.ts`, `src/main/providers/compose.ts`,
+  `tests/wp1/cross-package-reach-allowlist.json` and
+  `tests/wp1/package-orphans-allowlist.json` (removals only), files no lane
+  row listed; the orchestrator approved it after the fact.
+- Lane B (c0d79113, 1745a9cc): question 5 answered C. For this computer's
+  own sign-in the app copies its three canvas skills into the Codex skills
+  folder of the launch's prepared home, after noting that folder in a record
+  in its data folder; it writes or removes only the skill folders carrying
+  its mark, never through a link and never a same-named skill of the user's,
+  which the canvas page names; the copies are removed when Codex or the
+  built-in tools are turned off and refreshed while both are on. Option A's
+  developer instructions, settings scan and picker record are removed. Codex
+  on Windows is found in PATH order: the first `codex.exe` or `codex.cmd`,
+  PATHEXT order within a folder, with no shell and no process, reading only
+  fully qualified PATH folders (a drive or a share).
+- Lane C (8fb5714d, 66cefbee, 3fede225, 7b1d0804): the tip marks; the Cloud
+  Agents card; Sonnet 5's fallback price; the Opus hint; the Close sessions
+  clear retried at each later save, exit flush and load; the credential
+  delete skipped quietly for an id that cannot hold a stored credential.
+- Lane D (ec89e5a6): the sass override (the dependency record below).
+- Lane E (9dfc220c): the Sentinel chase. On the VM the release notes were
+  read; the wait was the analysis agent, which could not reach its model
+  behind the dead proxy and was tried twice under its 180 s cap. Claude
+  Code's analysis now bounds its own retries, a failure that never reached
+  the service is not tried again and is said as unreachable, naming the
+  account, and a changelog answer other than 200 is never analysed as notes;
+  a Codex analysis stops once Codex says it is waiting for the network (the
+  review.ts half, in 8a87026a). Measured on the VM for Codex alone: 6 min 05 s
+  before, 40.7 s after. Recorded: a network that silently drops packets is
+  not detected early.
+- The integration (8a87026a): lane B's launch, PTY, start-up and copy
+  patches; the picker flag (`viaPicker`) and the discovered version
+  (`cliVersion`) retired, and the launch route port
+  (`SessionProvider.launchRoute`, the Codex package's `launchRoute`,
+  `codexLaunchRoute`) removed, none with a consumer left; lane E's review.ts
+  half with its test and its copy; lane C's README row, Feature Guide copy,
+  capture shot and dock mark; the WP1 ledger (12 new rows, app-knowledge's
+  P04, three claudeTestChanges mappings for baseline files whose case names
+  changed).
+- Owed: the spec and quality reviews of this round and its ADR-009 delta
+  pass; the SSH live matrix at the final head, which covers lane A's
+  `pty-manager.ts` and `statusline-watcher.ts` hunks and lane B's
+  `pty-manager.ts` hunk in the local Codex branch; on the VM, question 5's
+  two HOST QUARANTINE link files, the copy and its removal on this computer's
+  sign-in, a PATH with an npm `codex.cmd` before a `codex.exe`, and the
+  packaged canvas run for the sass override; the Cloud Agents card's image.
+
+*Record (2026-10-04): the CI and VM runs in the rows.*
+- Row 59, DONE: CI run 37134624406 (fcfd2ae6, 2026-10-03) ran the whole
+  suite green on `ubuntu-latest`, the WP2 stack's first green Linux run,
+  after which 2723b1ed made the Linux job blocking; CI run 37156412028
+  (f073124e) was green on every job bar the Desktop test gate, Linux
+  included (`docs/wp1/evidence/ci-matrix.md`).
+- Row 60, PARTIAL: the six `codex-conformance` legs green in both runs, the
+  runner's own Codex home untouched, and the prove-red dispatch, CI run
+  37155296304 (dad42d3e), red on all six legs as designed: on each, 6 of the
+  suite's 9 cases failed (detection in both cases, the model list with both
+  soft checks, the flags, the features and the help), 2 passed and 1 was
+  skipped; recorded in `ci-matrix.md`'s "Shown red once" table. The
+  release-candidate leg runs at release.
+- Row 67, DONE: every cell's e2e spec passed on WINDOWS_1, the 26 specs 94 of
+  94, twice at 69c98042 (runs e2e-69c98042 and e2e-69c98042-run2) and at
+  f73f1785 (run e2e-f73f1785), the real launch of 0.153.4 (`codex.cmd`) and
+  0.155.1 (`codex.exe`) included, the VM user's own Codex and Claude folders
+  unchanged. `docs/wp1/evidence/mode-matrix.md` does not carry these runs
+  yet; WP1.1 and WP1.60 stay `planned` until it does.
+- Row 38: the midnight UTC check passed on the VM on 2026-10-04 (run
+  cp4-row38; real Codex 0.155.1 on the loopback fake model, fictional data;
+  the VM-side logs are kept with the run): the status line followed the tab
+  across 00:00 UTC (381,011, then 763,033, then 1,146,055 input tokens), a
+  Restart ran `codex resume` with the same conversation id and the turn after
+  it updated, and the rollout stayed in its day folder and grew.
+
+*Record (2026-10-04): dependencies, the owner's option 1.* The owner's words:
+keep the Sass override scoped and pinned, verify the dependency tree, run
+the stated checks, and record the remaining HTTP-cache advisory as an
+explicit 2.1.1 exception, not as fixed or universally harmless; no
+downgrade of a main package to clear the audit report.
+- The sass override (ec89e5a6): `"overrides"` gains
+  `"@excalidraw/excalidraw": { "sass": "1.79.4" }`, nested under excalidraw
+  only, an exact version, with no top-level sass override and no direct
+  dependency changed. It clears GHSA-vfj7-8cjw-p6xm (braces, high; every
+  published braces release is affected, so there is no braces fix to take)
+  by moving excalidraw's sass from 1.51.0 to 1.79.4, which uses chokidar 4
+  and so drops braces, in the same sass major; 1.79.4 accepts the immutable 4
+  line the existing top-level override pins and adds no native optional
+  dependency. The lock changes the sass subtree only (14 packages out, 3 in;
+  picomatch and fsevents now dev-only). npm audit: the runtime set 4 high to
+  0, the full tree 12 high to 8, all of them the exception below. Checks:
+  `npm ls` clean; `npm run build` green, with no sass output and the
+  excalidraw CSS and fonts in the build; the 27 canvas and excalidraw unit
+  files, 415 tests, passed; no production package requires a removed package
+  (380 packages scanned). Excalidraw's prebuilt files never load sass, so
+  runtime behaviour is expected to be the same; the packaged canvas run on
+  the VM is the remaining check. npm hoists sass, so vite's optional sass
+  peer is now satisfied by it; the repository has no .scss or .sass file, so
+  nothing uses it.
+- The explicit 2.1.1 exception: GHSA-ch52-4w7c-c8xp (http-cache-semantics,
+  high, CVSS 7.5, CWE-524, max-stale handling that can disclose cross-user
+  cached responses). Not fixed, and not claimed harmless in general.
+  - Path: electron-builder 26.15.3 (a dev dependency), app-builder-lib
+    26.15.3, @electron/get 3.1.0, got 11.8.6, cacheable-request 7.0.4,
+    http-cache-semantics 4.2.0. npm audit counts it 8 times, once per package
+    up that chain; it is one advisory.
+  - Build path only: electron-builder packages production dependencies only,
+    `npm audit --omit=dev` reports 0, and the installed 2.1.1-beta.1
+    app.asar contains none of that chain. It runs only while
+    electron-builder packages the app (the release workflow's runners and a
+    local `npm run package`), where @electron/get downloads the Electron
+    release zip and electron-builder's tool binaries.
+  - Exposure assessment: the advisory needs a shared HTTP cache serving
+    several users. On this path got builds its cache layer, the only user of
+    the library's policy, only for a request that carries got's `cache`
+    option; @electron/get 3.1.0 passes none and this project sets no
+    `electronDownload` options, so the policy never runs. Even if it did,
+    the responses are public release files, the same for every requester,
+    fetched by a single-user build, and the Electron zip is checked against
+    the release's SHASUMS256. Residual: a future build configuration that
+    turned on got caching with a shared cache store; none exists.
+  - Why clearing it needs a major change: every published
+    http-cache-semantics release is affected, so no in-range override clears
+    it; the chain must drop got 11. @electron/get 5 has, but app-builder-lib
+    declares @electron/get ^3 through the newest 26.x, and only electron-builder
+    27 prereleases take @electron/get 5. npm's suggested fix, electron-builder
+    26.5.0, is a downgrade of a direct dependency, which the owner ruled out,
+    and forcing @electron/get 5 under app-builder-lib would be a cross-major
+    override on the signing and release path.
+  - Follow-up, tracked in the planning repo for 2.2: move electron-builder to
+    the first stable release whose app-builder-lib uses @electron/get 5 or
+    later, done when npm audit no longer reports GHSA-ch52-4w7c-c8xp, the
+    release workflow is green on all three OSes, signing and notarisation are
+    unchanged, and the packaged smoke passes per OS.
+
 ## 10. Unresolved UX decisions
 
 ### How each candidate was checked
@@ -7062,15 +7233,15 @@ excalidraw build chain, and is left for the owner (section 7, items 4 and 5).
 | 58 Web sign-in and artifacts | `src/main/account-web/artifacts.ts` opens claude.ai artifacts as an account; `account-pane.ts` gives the browser pane an account surface on claude.ai; the checklist's limits: nothing assumes a CLI sign-in gives ChatGPT browser cookies or an artifacts equivalent | **Web session: settled by parity** (chatgpt.com in the pane's account surface, signed in per Codex account). **Artifacts: not a UX choice.** No Codex equivalent is known (the checklist assumes none), so this is a section 19 record for the owner to sign, with the command lists of 0.153.4 and 0.155.1 as its evidence (P3.1). Should P3.1 find an equivalent, parity settles it instead. |
 | 68 Insights | `insights-runner.ts:234-237` types Claude Code's own `/insights` into a terminal and reads the report it writes; `InsightsPage.tsx:277-296` tells a Codex-only user that Insights come from Claude sessions. The parity reset of 2026-09-26 resolved it in its "Resolved by parity" list (sessions batch): a Conductor-native Codex report, run with `codex exec`; it was not one of that day's open questions | **Settled by parity (2026-09-26).** A one-line notice to the owner, not a question: Insights gets a Codex report the app makes with `codex exec`, shown in the page's existing layout, figures and run history, on the account's own Codex allowance as Claude's report uses Claude's. A mockup goes on the Agent Canvas before the build (P4.7), made from `src/renderer/components/InsightsPage.tsx`, `src/main/insights-runner.ts` and `src/main/insights-cross-account.ts` (ADR-013). |
 | 69 Plan mode | Claude's launch options include "Plan mode" (`claude-cli-options.ts:85`), a launch option only; the Codex form offers permission presets only (`CodexFormFields.tsx:162-170`); the capability leads say Codex documents a plan command | **Decidable by parity.** Codex gets Plan mode as a launch option, as Claude has it (P3.8), once P3.1 confirms the command on the supported versions. If it is absent, that is a section 19 record, not a UX question. **Settled and built (P3.8 round 1, caef0d42; round 2, f1783110):** the VM probe found `/plan` on both versions and no launch flag, so the choice launches READ-ONLY and types `/plan` into Codex's first ready prompt only. **Deviation, recorded** (as P3.5's F7 menu): Claude's Plan mode starts in plan (`--permission-mode plan`) and its accepted plan moves on to the mode the user picks; Codex's accepted plan leaves Plan mode but not read-only, and the user widens what Codex may do with its own `/permissions` ("choose what Codex is allowed to do"; on the VM it opens "Update Model Permissions": Read Only, Ask for approval, Approve for me, Full Access, on both versions). |
-| 22 Switch account: a declined confirm | P3.6 VM finding V3: Cancel on Codex's confirm-at-launch question after a Switch left the tab on the new account. A Claude switch never asks at launch, so there is no Claude behaviour to copy | **Parity cannot settle it.** Built as the default pending the owner's decision: question 3 below. |
-| 63 Codex hook trust | Claude Code runs the app's hooks with no prompt: the app writes them into the per-session settings Claude reads. Codex asks the user to review hooks given at launch, once per account folder, and runs none until they are trusted (VM, evidence addendum 14) | **Parity cannot carry over as it is.** Built as the default pending the owner's decision: question 4 below. |
-| 41 Mid-session model and effort | Claude's pill switches model and effort in one step, live. The VM probe (evidence addendum 13): Codex has no one-line form (`/model <slug>` and `/model <slug> <effort>` are sent as a message; `/effort` is unrecognised); its own route is a two-step picker opened by a bare `/model`, which keeps the conversation | **Parity cannot carry over as it is.** Built as the default pending the owner's decision: question 2 below. |
-| 51 Canvas and vision instructions, this computer's sign-in | PB1 (2026-10-02): no channel adds to Codex's instructions on both launch routes without writing into the user's Codex folder or replacing a setting the user made | **Parity cannot carry over as it is.** Built as the default pending the owner's decision: question 5 below. |
-| 53 Ask on Codex, characters outside the BMP | PB3 and PB4 (2026-10-02): Codex's prompt drops them on both versions; only the direct route's launch argument keeps them | **Parity cannot carry over as it is.** Built as the default pending the owner's decision: question 6 below. |
-| 51, 52 Codex's Auto preset and the app's tools | The VM checkpoint at 69c98042: Codex's Auto starts with `--ask-for-approval never`, so it cannot ask before the app's tools and refuses them; Claude's Auto sends each such call to its own classifier, not a fixed per-tool answer, and the app pre-approves only the canvas snapshot and review for both | **Parity cannot carry over as it is.** Built as the default pending the owner's decision: question 8 below. |
-| 57 Cloud Agents, the skip-permissions choice | Claude's choice runs `--dangerously-skip-permissions` (Bypass, `cloud-agent-manager.ts:305`), which matches Codex's Unrestricted; PB5 (2026-10-02): Unrestricted writes the project's trust entry into the account's `config.toml` on every run | **Parity cannot carry over as it is.** Built as the default pending the owner's decision: question 7 below. |
+| 22 Switch account: a declined confirm | P3.6 VM finding V3: Cancel on Codex's confirm-at-launch question after a Switch left the tab on the new account. A Claude switch never asks at launch, so there is no Claude behaviour to copy | **Parity cannot settle it.** Decided by the owner on 2026-10-04: A, kept as built (question 3 below). |
+| 63 Codex hook trust | Claude Code runs the app's hooks with no prompt: the app writes them into the per-session settings Claude reads. Codex asks the user to review hooks given at launch, once per account folder, and runs none until they are trusted (VM, evidence addendum 14) | **Parity cannot carry over as it is.** Decided by the owner on 2026-10-04: A, kept as built (question 4 below). |
+| 41 Mid-session model and effort | Claude's pill switches model and effort in one step, live. The VM probe (evidence addendum 13): Codex has no one-line form (`/model <slug>` and `/model <slug> <effort>` are sent as a message; `/effort` is unrecognised); its own route is a two-step picker opened by a bare `/model`, which keeps the conversation | **Parity cannot carry over as it is.** Decided by the owner on 2026-10-04: A, kept as built (question 2 below). |
+| 51 Canvas and vision instructions, this computer's sign-in | PB1 (2026-10-02): no channel adds to Codex's instructions on both launch routes without writing into the user's Codex folder or replacing a setting the user made | **Parity cannot carry over as it is.** Decided by the owner on 2026-10-04: C, superseding the default A, and built in PR 4 (question 5 below). |
+| 53 Ask on Codex, characters outside the BMP | PB3 and PB4 (2026-10-02): Codex's prompt drops them on both versions; only the direct route's launch argument keeps them | **Parity cannot carry over as it is.** Decided by the owner on 2026-10-04: A, kept as built (question 6 below). |
+| 51, 52 Codex's Auto preset and the app's tools | The VM checkpoint at 69c98042: Codex's Auto starts with `--ask-for-approval never`, so it cannot ask before the app's tools and refuses them; Claude's Auto sends each such call to its own classifier, not a fixed per-tool answer, and the app pre-approves only the canvas snapshot and review for both | **Parity cannot carry over as it is.** Decided by the owner on 2026-10-04: B, kept as built (question 8 below). |
+| 57 Cloud Agents, the skip-permissions choice | Claude's choice runs `--dangerously-skip-permissions` (Bypass, `cloud-agent-manager.ts:305`), which matches Codex's Unrestricted; PB5 (2026-10-02): Unrestricted writes the project's trust entry into the account's `config.toml` on every run | **Parity cannot carry over as it is.** Decided by the owner on 2026-10-04: A, kept as built (question 7 below). |
 
-Seven decisions are open: question 2 (row 41), question 3 (row 22), question 4 (row 63), question 5 (row 51), question 6 (row 53), question 7 (row 57) and question 8 (rows 51, 52), each built as a default pending the owner's decision. Question 1 below was decided by the owner
+No decision is open. Questions 2 to 8 were decided by the owner on 2026-10-04: questions 2 (row 41), 3 (row 22), 4 (row 63), 6 (row 53) and 7 (row 57) A, and question 8 (rows 51, 52) B, each kept as built; question 5 (row 51) C, superseding the default A, and built in PR 4. Question 1 below was decided by the owner
 on 2026-09-27: option B, approved as drawn (`docs/wp1/owner-decisions-2026-09-27.md`,
 M4; canvas "Ask Conductor provider choice" v1, no notes).
 
@@ -7107,7 +7278,7 @@ Show Ask Conductor switches), `src/renderer/stores/settingsStore.ts:274, 453`
 `src/main/help-workspace.ts` (the help workspace, which Codex would read
 through `AGENTS.md`).
 
-### Question 2 (row 41), open: built as the default, pending the owner's decision. How does a live Codex session change model and effort?
+### Question 2 (row 41), resolved: A. How does a live Codex session change model and effort?
 
 Claude's pill switches model and effort in one step and keeps the
 conversation. Codex offers no one-line form on 0.153.4 or 0.155.1 (evidence
@@ -7129,7 +7300,9 @@ no restart, and it depends on no picker layout. B is the fallback if the owner
 wants the app's own list on a live session. The owner reviews A in the VM
 gallery of round 1.
 
-### Question 3 (row 22), open: built as the default, pending the owner's decision. A Switch whose launch asks for confirmation, declined
+**Decided: A** (owner, 2026-10-04). Kept as built.
+
+### Question 3 (row 22), resolved: A. A Switch whose launch asks for confirmation, declined
 
 A Switch restarts a Codex session on the new account. When that launch asks
 Codex's confirm-at-launch question (the account signed in on this computer)
@@ -7146,7 +7319,9 @@ launch, so parity cannot settle it (P3.6 VM finding V3).
 leaves the session running where it was. The owner reviews it in the P3.6 VM
 gallery (a declined confirm after a Switch).
 
-### Question 4 (row 63), open: built as the default, pending the owner's decision. How do the app's Codex hooks come to be trusted?
+**Decided: A** (owner, 2026-10-04). Kept as built.
+
+### Question 4 (row 63), resolved: A. How do the app's Codex hooks come to be trusted?
 
 Claude Code runs the app's hooks with no prompt. Codex asks the user to review
 hooks given at launch, once per account folder ("Hooks need review": review
@@ -7173,7 +7348,9 @@ attention dot and no exact claim (P3.10's limits).
 depends on no undocumented format. B is the fallback if the owner wants no
 screen at all. The owner reviews the review screen in the P3.10 VM gallery.
 
-### Question 5 (row 51), open: built as the default, pending the owner's decision. How do the Agent Canvas and vision instructions reach a Codex session on this computer's own sign-in?
+**Decided: A** (owner, 2026-10-04). Kept as built.
+
+### Question 5 (row 51), resolved: C. How do the Agent Canvas and vision instructions reach a Codex session on this computer's own sign-in?
 
 Claude Code gets the app's three instruction skills (agent-canvas,
 canvas-plan and conductor-vision) from a plugin the app passes at launch;
@@ -7234,7 +7411,23 @@ sign-in. Waits on the answer: only the delivery to this computer's sign-in
 launched). The canvas page's line and the known-issues entry are worded for
 A and re-checked in P4.11.
 
-### Question 6 (row 53), open: built as the default, pending the owner's decision. Ask Conductor on Codex: characters Codex's prompt cannot take
+**Decided: C** (owner, 2026-10-04), superseding the default A. The owner's
+reason: the canvas is an MCP server the app registers, so while the app is
+not open it is not active, and skills outside the app are no problem. Built
+in PR 4 (c0d79113, wired and integrated in 8a87026a): for this computer's
+own sign-in the app copies its three canvas skills into the Codex skills
+folder of the launch's prepared home (`~/.codex/skills`, or the one in the
+folder `CODEX_HOME` names), after noting that folder in a record in its own
+data folder; it writes or removes only the skill folders carrying its mark,
+never through a link, and never a skill of the user's own with the same
+name, which the canvas page names in one line; the copies are removed when
+Codex or the built-in tools are turned off and kept current while both are
+on. A managed account's skills stay in its own folder, as before. Option A's
+developer instructions, its settings scan, the picker record and the launch
+route port only A used are removed. The known issue, the User Guide and
+PRIVACY.md say where the skills go and when they leave.
+
+### Question 6 (row 53), resolved: A. Ask Conductor on Codex: characters Codex's prompt cannot take
 
 Claude gets Ask's opening question whole: up to 8,000 characters of any
 kind. The VM probe (PB3 and PB4, 2026-10-02, 0.153.4 and 0.155.1) showed:
@@ -7278,7 +7471,10 @@ handling of those characters on the `.cmd` route and for a live tab (B
 changes the same step; C waits with question 5's D; D swaps the removal
 for a refusal).
 
-### Question 7 (row 57), open: built as the default, pending the owner's decision. What does a Codex Cloud Agent's "skip permission prompts" choice run as?
+**Decided: A** (owner, 2026-10-04). Kept as built: the characters Codex's
+prompt drops are removed, and the Ask dock says how many in one line.
+
+### Question 7 (row 57), resolved: A. What does a Codex Cloud Agent's "skip permission prompts" choice run as?
 
 A Claude Cloud Agent's "Skip permission prompts for this run"
 (`NewAgentDialog.tsx:214`) runs `--dangerously-skip-permissions`
@@ -7313,7 +7509,10 @@ of the account's settings), at the cost of the project limit. Mockup: none
 Built meanwhile: all of P4.5, with A. Waits on the answer: only the mapping
 step and the checkbox's wording.
 
-### Question 8 (rows 51, 52), open: built as the default, pending the owner's decision. What should Codex's Auto preset do about the app's own tools?
+**Decided: A** (owner, 2026-10-04). Kept as built: a Codex Cloud Agent's
+skip-prompts tick runs Auto, and `config.toml` is untouched.
+
+### Question 8 (rows 51, 52), resolved: B. What should Codex's Auto preset do about the app's own tools?
 
 The app's MCP tools (the Agent Canvas, Vision, the push to the in-app
 browser, the host screenshot fetch and the Claude review) declare no
@@ -7345,6 +7544,10 @@ by call, rather than run it unchecked. Mockup: none (the known issue's
 wording). Built meanwhile: all of P4.1 and P4.2, with B. Waits on
 the answer: only the Auto preset's keys and the known issue's wording.
 
+**Decided: B** (owner, 2026-10-04). Kept as built: no per-tool keys on
+Auto, those tools refused there, and the Feature Guide points to Standard or
+Unrestricted.
+
 ### One-line notices to the owner (not questions)
 
 - Row 52: Codex sessions get the vision and in-app browser tools in PR 4; the
@@ -7357,7 +7560,8 @@ the answer: only the Auto preset's keys and the known issue's wording.
   `-m gpt-5.2`). The owner may judge otherwise. P3.9's live read
   (`codex debug models`, built in 3a4ed400) resolves it per installed version:
   with 0.155.1 installed, Sentinel says gpt-5.2 is a model that version no
-  longer lists.
+  longer lists. Decided by the owner on 2026-10-04: gpt-5.2 stays while a
+  supported Codex version lists it, as built.
 
 ### Owner actions that are not UX decisions
 
@@ -7378,17 +7582,61 @@ the answer: only the Auto preset's keys and the known issue's wording.
   model, the SSH live matrix, the screenshot review, macOS and Linux, the Desktop test gate).
 - Section 7: a disposition for each C defect not fixed; the security report;
   the desktop attestation; the word to merge each PR.
-- The WP1 candidate at a stable release (section 7, P4.10): for each of the 9
-  deep-import allowlist entries, an `owner-approved` exemption (its decision
-  recorded in `tests/wp1/deep-import-allowlist.json`) or routing through the
-  package entry point in a recorded change; and for Claude's `cli.discovery`,
-  `auth.status` and `auth.logout`, still `unknown`, either wiring them in a
-  recorded change before the stable cut or a decision that changes what the
-  candidate requires of Claude. Until both are settled a stable release's test
-  steps are red by design.
+- The WP1 candidate at a stable release (section 7, P4.10): settled by the
+  owner's answers of 2026-10-04. The 9 deep-import allowlist entries are
+  routed through the provider interfaces (PR 4, d9560e39; the allowlist is
+  empty), and Claude's `cli.discovery`, `auth.status` and `auth.logout` are
+  wired and declared supported, the sign-out unsupported on macOS only (PR 4,
+  14ac75e8). A stable release's test steps stay red only for the traceability
+  items still `planned`.
 - The release order (section 7, item 12): the final `2.1.1` version and
   changelog entry before the signed beta-channel cut whose build carries the
-  WP1.63 smoke, and that tree promoted to stable.
+  WP1.63 smoke, and that tree promoted to stable. Agreed by the owner on
+  2026-10-04.
+
+### The owner's other answers of 2026-10-04
+
+Besides questions 2 to 8, the owner answered every other open PR 4 item on
+2026-10-04. Each is built or recorded where named (9.7's records of that
+day):
+
+- **The WP1 candidate's nine deep imports**: all routed through the provider
+  interfaces in a narrow, behaviour-preserving change, no exemption kept
+  (d9560e39; section 7). The SSH live matrix at the final head covers it.
+- **Claude's `cli.discovery`, `auth.status` and `auth.logout`**: the Claude
+  adapter completed, reusing the existing Claude code; the sign-out is
+  unsupported on macOS only, with its evidence (14ac75e8; section 7).
+- **The release order**: agreed (above).
+- **Dependencies**: option 1, the sass override scoped and pinned, and the
+  HTTP-cache advisory an explicit 2.1.1 exception (ec89e5a6).
+- **Tips**: no provider filter; each tip about one assistant carries that
+  assistant's mark (8fb5714d; the dock's tip row in 8a87026a).
+- **The Feature Guide**: a Cloud Agents card for both assistants, the Codex
+  Auto limit noted (8fb5714d); its image comes from the recapture.
+- **gpt-5.2**: kept while a supported Codex version lists it, as built.
+- **Sonnet 5's fallback price**: Anthropic's reference, re-checked on
+  2026-10-04 (2 and 10 per million, cache reads 0.2, cache writes 2.5),
+  tested on the pricing path Tokenomics uses (66cefbee).
+- **The Opus picker hint**: the context size dropped, since the `opus` alias
+  does not mean one size on every provider (66cefbee).
+- **The help folder's Codex skill text**: it names the account it is
+  installed for (c0d79113).
+- **The README Telemetry row**: Sentinel's reads and Codex's own usage
+  check, as PRIVACY.md has them (8a87026a).
+- **Codex on Windows**: PATH order wins, the first `codex.exe` or
+  `codex.cmd` as a terminal finds it (1745a9cc).
+- **Rows 59, 60 and 67**: rows 59 and 67 VERIFIED with their runs, row 60
+  PARTIAL until the release-candidate leg (section 4).
+- **OR1's scope**: confirmed, rows 4 and 6 on every OS before merge, with row
+  15's keyring smoke and the packaged smoke per OS at the final build (9.5).
+- **PR 3's questions 2, 3 and 4**: A each, kept as built (above).
+- **A Close sessions clear held by a scanner**: retried at each later save,
+  exit flush and load until it succeeds (3fede225).
+- **Sentinel showing analyzing for minutes with its assistant unreachable**:
+  chased on the VM with per-step timestamps and fixed test-first; the panel
+  says so within a minute (9dfc220c, the Codex half in 8a87026a).
+- **The `[credentials] delete refused` warning**: the delete is skipped
+  quietly for an id that cannot hold a stored credential (7b1d0804).
 
 ## 11. Nothing silently deferred
 

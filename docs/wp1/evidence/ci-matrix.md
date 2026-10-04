@@ -4,7 +4,7 @@ This file is evidence for WP1.30 (`docs/wp1/evidence/ci-matrix.md`), and the CI 
 
 WP1.30 says the Windows ACL and Unix mode tests must run on each OS runner, so its evidence is the CI matrix run, not a local run. The real-CLI conformance runs are also row 2's detection evidence per OS (P4.10).
 
-**Status: the first green run of the whole workflow, CI run 37134624406, is recorded below (the test matrix and the six conformance legs), with the help captures reviewed per OS, after which the help is asserted on every leg; the prove-red dispatch is not recorded yet.** The workflow below landed in PR 4 (P4.8). WP1.30 stays `planned` in the traceability manifest until a run at the binding's head is recorded here with its digest (the candidate declaration, made at release).
+**Status: the first green run of the whole workflow, CI run 37134624406, is recorded below (the test matrix and the six conformance legs), with the help captures reviewed per OS, after which the help is asserted on every leg; the prove-red dispatch, CI run 37155296304, is recorded under "Shown red once".** The workflow below landed in PR 4 (P4.8). WP1.30 stays `planned` in the traceability manifest until a run at the binding's head is recorded here with its digest (the candidate declaration, made at release).
 
 ## What runs
 
@@ -78,7 +78,7 @@ Each leg ran its `codex --version` PATH check first (it printed exactly `codex-c
 
 | Run | Commit | Result | Checks that failed, as they must |
 |---|---|---|---|
-| (not recorded yet) | | | |
+| CI run 37155296304 (`workflow_dispatch` with `conformance_prove_red`, attempt 1, 2026-10-03) | dad42d3ebea14c98e7d080785c1a2f7ab8b184e8 | Red, as designed: all six legs failed (minimum: Windows job 111297349544, macOS 111297349528, Linux 111297349568; pinned: Windows 111297349517, macOS 111297349627, Linux 111297349576). The test matrix, the SSH smoke and the Desktop test gate were skipped; Changelog in sync passed | On every leg, 6 of the suite's 9 cases failed, 2 passed and 1 was skipped: detection, both cases (a wrong version); the model list, its case reporting both soft checks; the flags; the features; the help (each fixture with its last line dropped) |
 
 ### Help captures reviewed
 
