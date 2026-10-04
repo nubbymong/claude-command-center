@@ -78,7 +78,7 @@ describe('the provider operations are the package helpers they replaced [host]',
     expect(sameTemp(p.windowsRemoteSetupCommand(sid, setupOpts, nonce))).toBe(sameTemp(shim.getWindowsRemoteSetupCommand(sid, setupOpts, nonce)))
     const launch = { sessionId: sid, envPrefixVars: ['A=1'], extraFlags: '--model x', continueFlag: '' }
     expect(p.windowsLaunchCommand(launch)).toBe(shim.buildWindowsClaudeCommand(launch))
-    for (const chunk of ['user@host:~$ ', '❯ ', 'plain text', '╭────── box']) {
+    for (const chunk of ['user@host:~$ ', String.fromCodePoint(0x276f) + ' ', 'plain text', String.fromCodePoint(0x256d) + String.fromCodePoint(0x2500).repeat(6) + ' box']) {
       expect(p.lastPromptLine(chunk)).toBe(ui.lastPromptLineForClaude(chunk))
       expect(p.looksLikeShellPromptTail(chunk)).toBe(ui.looksLikeShellPromptTail(chunk))
       for (const sent of [true, false]) expect(p.detectUiRunning(chunk, sent)).toBe(ui.detectClaudeUi(chunk, sent))
