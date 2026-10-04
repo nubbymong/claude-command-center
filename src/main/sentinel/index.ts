@@ -754,7 +754,8 @@ export async function sentinelStartupCheck(): Promise<void> {
     if (updates.length) await analyzeUpdates(updates, carried)
     else if (carried.length) state.setAnalyzing(false, carried.join(' '))
   } catch (err) {
-    state?.setAnalyzing(false, (err as Error).message)         // fail-open, always
+    // Polish pass (E-S8): an unexpected error is a failed check (the chip says so).
+    state?.setAnalyzing(false, (err as Error).message, null, null, true)         // fail-open, always
   } finally {
     run?.end()
   }
@@ -905,7 +906,7 @@ export async function sentinelRerun(): Promise<void> {
     // version checked (the user's own act; sentinel-state.ts).
     await analyzeUpdates(updates, problems, { rerun: true })
   } catch (err) {
-    state?.setAnalyzing(false, (err as Error).message)
+    state?.setAnalyzing(false, (err as Error).message, null, null, true)   // a failed check (E-S8)
   } finally {
     run?.end()
   }

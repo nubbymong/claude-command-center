@@ -558,8 +558,8 @@ describe('an analysis that cannot reach its service (PR 4, the Sentinel chase)',
   })
 
   it("a retry backstop of 8 keeps one attempt inside the 3-minute cap when no retry line is printed [host]", () => {
-    // Owner answers review (E-S5): a Claude Code that prints no api_retry line (older than
-    // 2.1.287) still gives its own reason inside the cap: 8 retries back off 0.5 s doubling
+    // Owner answers review (E-S5): a Claude Code that prints no api_retry line (the VM run
+    // checks 2.1.278) still gives its own reason inside the cap: 8 retries back off 0.5 s doubling
     // to 32 s, 95.5 s in all, about 120 s with the CLI's 25% jitter, plus about 3 s for each
     // of 9 refused requests (the VM's 192.7 s for 10 retries implies that).
     expect(CLAUDE_ANALYSIS_ENV.CLAUDE_CODE_MAX_RETRIES).toBe('8')
@@ -628,6 +628,28 @@ describe('the stream of a Claude Code analysis: unanswered retries end it early 
     w.push(unanswered(2))
     for (let i = 3; i < 5; i++) expect(w.push(retry(i, { no_response: { waited_ms: 30000, retry_wait_ms: 30000 } }))).toBe(false)
     expect(w.push(retry(5, { no_response: { waited_ms: 30000, retry_wait_ms: 30000 } }))).toBe(true)
+  })
+
+  // Polish pass (ADR-009 L4): the service can send an error as a stream event after it
+  // answered 200, so the line carries no HTTP status; the pinned CLI labels it by kind
+  // (an overloaded_error body is "overloaded"). Only "unknown", the label of a request
+  // that got no answer at all (a refused connection, the first-byte watchdog), counts.
+  it('an error the service sent after answering (no HTTP status, a named kind) is an answer: it never stops the run, and resets the count [host]', () => {
+    for (const error of ['overloaded', 'rate_limit', 'server_error', 'authentication_failed', 'cloud_credential_error', 'some_new_kind']) {
+      const w = createClaudeRetryWatch()
+      for (let i = 1; i <= 8; i++) expect(w.push(retry(i, { error_status: null, error })), error).toBe(false)
+    }
+    const m = createClaudeRetryWatch()
+    m.push(unanswered(4))
+    m.push(retry(5, { error_status: null, error: 'overloaded' }))
+    m.push(unanswered(4))
+    expect(m.stopped()).toBe(false)
+  })
+
+  it('a no_response retry with no kind named still counts [host]', () => {
+    const w = createClaudeRetryWatch()
+    w.push(unanswered(4))
+    expect(w.push(retry(5, { error: undefined, no_response: { waited_ms: 30000, retry_wait_ms: 30000 } }))).toBe(true)
   })
 
   it('a cloud credential error or a malformed status is not counted [host]', () => {

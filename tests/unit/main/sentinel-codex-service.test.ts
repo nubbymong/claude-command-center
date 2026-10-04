@@ -552,6 +552,16 @@ describe("the title-bar chip's failed-analysis mark (owner answers review, E-S6)
     expect(snap(s).lastAnalysisError).toBe('Codex is off. Turn it on in Settings, Accounts.')
     expect(snap(s).lastAnalysisFailed).toBe(false)
   })
+  it('an unexpected error in the start-up check or a Re-run is a failed check (polish pass, E-S8) [host]', async () => {
+    svc.pref.codex = 'off'
+    fetchChangelog.mockImplementationOnce(async () => { throw new Error('the changelog read broke') })
+    const s = await sentinel({ lastSeenCcVersion: '2.1.290' })
+    await s.sentinelStartupCheck()
+    expect(snap(s)).toMatchObject({ analyzing: false, lastAnalysisError: 'the changelog read broke', lastAnalysisFailed: true })
+    versionThrows.on = true
+    await s.sentinelRerun()
+    expect(snap(s)).toMatchObject({ analyzing: false, lastAnalysisError: 'the version check broke', lastAnalysisFailed: true })
+  })
   it('a problem carried beside an analysis that completed is not a failure [host]', async () => {
     svc.installation = { discoveryState: 'error', compatibility: 'unknown' }
     fetchChangelog.mockImplementationOnce(async () => '## 2.1.300\n- x')

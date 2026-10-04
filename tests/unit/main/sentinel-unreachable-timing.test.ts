@@ -24,7 +24,7 @@
  * each retry, its `error_status` null when no answer came back (the pinned
  * 2.1.288 CLI's `--output-format stream-json --verbose`), so Sentinel ends it
  * after five such retries in a row, and an answered retry keeps its schedule.
- * A Claude Code that prints no retry line (older than 2.1.287) is replayed too:
+ * A Claude Code that prints no retry line (the VM run checks 2.1.278) is replayed too:
  * the analysis's retry backstop (8) makes it give its own reason inside the
  * 180 s deadline, an estimate, as no such run was measured.
  *
@@ -223,7 +223,7 @@ describe('the analysis cannot reach its service: the panel reports within a minu
     expect(report.error).toMatch(/Re-run/)
   })
 
-  it('Claude Code older than 2.1.287 (no retry line): the retry backstop ends it with the CLI\'s own reason inside the deadline, one attempt [host]', async () => {
+  it('a Claude Code that prints no retry line: the retry backstop ends it with the CLI\'s own reason inside the deadline, one attempt [host]', async () => {
     pref.claude = 'on'; pref.codex = 'off'
     claudeMode.analysis = 'silent'
     const { mod, report } = await sentinelSeeded({ lastSeenCcVersion: '2.1.290' })

@@ -79,7 +79,9 @@ export const CLAUDE_ANALYSIS_ENV: Readonly<Record<string, string>> = Object.free
   CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
   CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1',
   // PR 4 (owner answers review): a backstop for a Claude Code that prints no
-  // retry line (older than 2.1.287), where the watch below sees nothing. Its
+  // retry line (the pinned 2.1.287 to 2.1.289 print one; which older versions
+  // do not is unread, and the VM run checks 2.1.278, the managed floor), where
+  // the watch below sees nothing. Its
   // default, 10 retries, outlasts the 3-minute cap when the service cannot be
   // reached (Windows test VM: 192.7 s, then killed and tried again, 6 minutes
   // in all). With 8 it gives its own reason inside the cap, said as
@@ -124,9 +126,13 @@ function streamEvent(raw: string): Record<string, unknown> | null {
 }
 
 /** Reads a Claude Code analysis's stream as it arrives and decides when it
- *  ends early: after `stopAfter` retries in a row that got no answer
- *  (error_status null, a reply that never came `no_response` included; a
- *  cloud credential error is not counted). An answered retry or a model message resets the
+ *  ends early: after `stopAfter` retries in a row that got no answer: no HTTP
+ *  status and the error kind "unknown", the pinned CLI's label for a request
+ *  nothing answered (a refused connection; a reply that never came,
+ *  `no_response`, counts too). The service can also send an error after it
+ *  answered 200 (no HTTP status then): the CLI names its kind (overloaded,
+ *  rate_limit, server_error, ...), and that is an answer. An answered retry,
+ *  of either shape, or a model message resets the
  *  count, and once the result line has come nothing ends the run. Only the
  *  CLI's own top-level lines count: model text rides inside them, escaped.
  *  `push` is true once, when the stop is decided. Memory is bounded by one
@@ -143,8 +149,8 @@ export function createClaudeRetryWatch(stopAfter = CLAUDE_UNANSWERED_RETRIES_STO
     if (e.type === 'result') { done = true; return }
     if (e.type === 'assistant') { unanswered = 0; return }
     if (e.type !== 'system' || e.subtype !== 'api_retry') return
-    if (typeof e.error_status === 'number') { unanswered = 0; return }
-    if (e.error_status === null && e.error !== 'cloud_credential_error') unanswered++
+    if (typeof e.error_status === 'number' || (typeof e.error === 'string' && e.error !== 'unknown')) { unanswered = 0; return }
+    if (e.error_status === null && (e.error === 'unknown' || e.no_response !== undefined)) unanswered++
   }
   return {
     push(chunk: string) {
