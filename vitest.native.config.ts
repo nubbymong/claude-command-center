@@ -16,7 +16,8 @@ export default defineConfig({
     globals: true,
     include: ['tests/unit/**/*.native.test.ts', 'tests/unit/**/*.native.test.tsx'],
     environment: 'node',
-    setupFiles: ['tests/unit/setup.ts'],
+    // home-isolation FIRST: tests never act on a real home (tests/helpers/home-isolation.ts).
+    setupFiles: ['tests/helpers/home-isolation.ts', 'tests/unit/setup.ts'],
     // Forks (not worker threads) play nicest with Electron-as-Node.
     pool: 'forks',
     // Native DB work (FTS over many rows, throughput tests) can exceed a
