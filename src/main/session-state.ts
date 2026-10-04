@@ -73,7 +73,12 @@ export function sessionStateReadFailed(): boolean {
  * time stands at its own modification time (the atomic write made it at the
  * clear), and when even that, or the saved file itself, cannot be read,
  * nothing is removed or offered, and the read-failure latch keeps anything
- * from being written over the file until a later load can tell.
+ * from being written over the file until a later load can tell. A marker
+ * dated in the future cannot be the user's clear (a clock that ran ahead on
+ * another machine, a restored or synced copy): a time later than now, or a
+ * time in its content later than the marker's own modification time, makes
+ * it invalid, and it is dropped with nothing removed. While a clear is owed,
+ * a damaged session file is moved aside, as a load does, never deleted.
  * `clearOwedThisRun` holds the clear for this run, with its time, when the
  * marker could not be written (each retry then tries the write again).
  */
@@ -89,12 +94,24 @@ let clearOwedMarked = false
 /** The read-failure latch was set because an owed clear could not be told
  *  apart from a later save (R-2), not by a read of the file. */
 let latchHeldForOwedClear = false
+/** Room for a file system that keeps modification times to 2 s (FAT): the
+ *  marker's own time may read up to that much before the clear it holds. */
+const MARKER_MTIME_SLACK_MS = 2_000
 
-type ClearOwed = { owed: false } | { owed: true; clearedAt: number | null }
+type ClearOwed = { owed: false; invalid?: true } | { owed: true; clearedAt: number | null }
 
 function readClearOwed(): ClearOwed {
   if (clearOwedThisRun) return { owed: true, clearedAt: clearOwedSince }
   const marker = getSessionStateClearOwedFile()
+  const now = Date.now()
+  /** The marker's own modification time; null when it cannot be read. */
+  const ownTime = (): number | null | 'gone' => {
+    try {
+      return lstatSync(marker).mtimeMs
+    } catch (err) {
+      return (err as NodeJS.ErrnoException)?.code === 'ENOENT' ? 'gone' : null
+    }
+  }
   let text: string | null = null
   try {
     text = readFileSync(marker, 'utf-8')
@@ -102,18 +119,47 @@ function readClearOwed(): ClearOwed {
     if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return { owed: false }
   }
   if (text !== null) {
+    let at: unknown
     try {
       const parsed = JSON.parse(text) as { clearedAt?: unknown } | null
-      const at = parsed && typeof parsed === 'object' ? parsed.clearedAt : undefined
-      if (typeof at === 'number' && Number.isFinite(at)) return { owed: true, clearedAt: at }
+      at = parsed && typeof parsed === 'object' ? parsed.clearedAt : undefined
     } catch { /* not JSON: its own time stands in, below */ }
+    if (typeof at === 'number' && Number.isFinite(at)) {
+      if (at > now) return { owed: false, invalid: true }
+      const own = ownTime()
+      if (own === 'gone') return { owed: false }
+      if (own !== null && at > own + MARKER_MTIME_SLACK_MS) return { owed: false, invalid: true }
+      return { owed: true, clearedAt: at }
+    }
   }
   // Unreadable, not JSON or no time: the marker's own modification time.
+  const own = ownTime()
+  if (own === 'gone') return { owed: false }
+  if (own === null) return { owed: true, clearedAt: null }
+  if (own > now) return { owed: false, invalid: true }
+  return { owed: true, clearedAt: own }
+}
+
+/** Move a damaged session file aside, as a load does, so an owed clear never
+ *  deletes one. True when there is nothing to move or it was moved; false
+ *  when it could not be read or moved (then nothing is removed). */
+function setAsideDamagedFile(): boolean {
+  const file = getSessionStateFile()
+  let text: string
   try {
-    return { owed: true, clearedAt: lstatSync(marker).mtimeMs }
+    text = readFileSync(file, 'utf-8')
   } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return { owed: false }
-    return { owed: true, clearedAt: null }
+    return (err as NodeJS.ErrnoException)?.code === 'ENOENT'
+  }
+  if (parseSessionStateText(text)) return true
+  const aside = `${file}.corrupt-${Date.now()}`
+  try {
+    renameSync(file, aside)
+    logError(`[session-state] the saved sessions file did not parse while a clear was owed; moved aside to ${aside}`)
+    return true
+  } catch (err) {
+    logError(`[session-state] the saved sessions file did not parse and could not be moved aside, so nothing is removed for the clear still owed: ${(err as Error)?.message ?? err}`)
+    return false
   }
 }
 
@@ -189,7 +235,13 @@ function releaseOwedClearLatch(): void {
  */
 function settleOwedClear(): boolean {
   const owed = readClearOwed()
-  if (!owed.owed) return false
+  if (!owed.owed) {
+    if (owed.invalid) {
+      logError('[session-state] the note of a clear still owed is dated in the future, so it is dropped and nothing is removed')
+      dropClearOwed()
+    }
+    return false
+  }
   const when = owed.clearedAt === null ? 'unknown' : savedSinceClear(owed.clearedAt)
   if (when === 'after') {
     dropClearOwed()
@@ -204,6 +256,7 @@ function settleOwedClear(): boolean {
     return true
   }
   releaseOwedClearLatch()
+  if (!setAsideDamagedFile()) return true
   const done = removeSavedCopies()
   if (done.ok && done.bakRemoved) {
     dropClearOwed()

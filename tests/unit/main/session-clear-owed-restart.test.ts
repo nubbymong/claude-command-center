@@ -25,8 +25,9 @@ const h = vi.hoisted(() => ({ resourcesDir: '', logs: [] as string[] }))
 // `mainUnlink`: the session file cannot be removed (EBUSY). `readBusy`: it
 // cannot be read. `mainWrite`: a save cannot write it. `markerUnlink` /
 // `markerRead` / `markerWrite`: the same for the marker; `markerStat`: not
-// even its times can be read. Otherwise the real fs.
-const fault = vi.hoisted(() => ({ mainUnlink: false, readBusy: false, mainWrite: false, markerUnlink: false, markerRead: false, markerWrite: false, markerStat: false }))
+// even its times can be read. `mainRename`: the session file cannot be
+// moved aside. Otherwise the real fs.
+const fault = vi.hoisted(() => ({ mainUnlink: false, readBusy: false, mainWrite: false, markerUnlink: false, markerRead: false, markerWrite: false, markerStat: false, mainRename: false }))
 vi.mock('fs', async (orig) => {
   const real = await orig<typeof import('fs')>()
   const busy = () => Object.assign(new Error('EBUSY: the file is held'), { code: 'EBUSY' })
@@ -56,7 +57,12 @@ vi.mock('fs', async (orig) => {
     if (fault.markerStat && isMarker(p)) throw Object.assign(new Error('EACCES: denied'), { code: 'EACCES' })
     return real.statSync(p, o as never)
   }) as typeof real.statSync
-  const patched = { ...real, unlinkSync, readFileSync, writeFileSync, lstatSync, statSync }
+  const renameSync = ((a: Parameters<typeof real.renameSync>[0], b: Parameters<typeof real.renameSync>[1]) => {
+    // Moving the session file aside (the atomic writer renames onto it, from its staging file).
+    if (fault.mainRename && isMain(a)) throw busy()
+    return real.renameSync(a, b)
+  }) as typeof real.renameSync
+  const patched = { ...real, unlinkSync, readFileSync, writeFileSync, lstatSync, statSync, renameSync }
   return { ...patched, default: patched }
 })
 
@@ -110,7 +116,7 @@ beforeAll(() => {
   h.resourcesDir = tmp
 })
 beforeEach(() => {
-  Object.assign(fault, { mainUnlink: false, readBusy: false, mainWrite: false, markerUnlink: false, markerRead: false, markerWrite: false, markerStat: false })
+  Object.assign(fault, { mainUnlink: false, readBusy: false, mainWrite: false, markerUnlink: false, markerRead: false, markerWrite: false, markerStat: false, mainRename: false })
   h.logs.length = 0
   for (const f of [file(), `${file()}.bak`, marker()]) rmSync(f, { force: true })
 })
@@ -254,7 +260,7 @@ describe('a clear still owed is remembered across a restart (C-S1)', () => {
     const one = await run()
     one.d.saveEnriched(theSet())
     // A clear owed from a later time than that save.
-    writeFileSync(marker(), JSON.stringify({ clearedAt: Date.now() + 60_000 }))
+    writeFileSync(marker(), JSON.stringify({ clearedAt: Date.now() - 1_000 }))
     fault.readBusy = true
     const two = await run()
     expect(two.d.load()).toBeNull()
@@ -282,6 +288,70 @@ describe('a clear still owed is remembered across a restart (C-S1)', () => {
     writeFileSync(marker(), JSON.stringify({ clearedAt: Date.now() - 1_000 }))
     writeFileSync(file(), '{"sessions": [')
     expect(names((await run()).d.load())).toEqual(['Quarry'])
+    expect(existsSync(marker())).toBe(false)
+  })
+
+  // PR 4 ADR-009 L4 (confirmation round): a marker dated in the future cannot
+  // be the user's clear (a clock that ran ahead elsewhere, a restored or
+  // synced copy). It is dropped, and nothing is removed.
+  it('[host] a marker dated in the future is dropped and removes nothing: its time, or its own time when it cannot be read', async () => {
+    const YEAR = 365 * 24 * 3600 * 1000
+    for (const [what, plant] of [
+      ['a time a year ahead', () => writeFileSync(marker(), JSON.stringify({ clearedAt: Date.now() + YEAR }))],
+      ['a time and its own time a year ahead (made on a clock that ran ahead)', () => {
+        const at = Date.now() + YEAR
+        writeFileSync(marker(), JSON.stringify({ clearedAt: at }))
+        utimesSync(marker(), new Date(at), new Date(at))
+      }],
+      ['no time, its own time a year ahead', () => {
+        writeFileSync(marker(), '{ not json')
+        const ahead = new Date(Date.now() + YEAR)
+        utimesSync(marker(), ahead, ahead)
+      }],
+    ] as const) {
+      const one = await run()
+      one.d.saveEnriched({ ...freshSet(), savedAt: Date.now() } as SessionState)
+      plant()
+      const two = await run()
+      expect(two.ss.hasSavedSessionState(), what).toBe(true)
+      expect(names(two.d.load()), what).toEqual(['Quarry'])
+      expect(existsSync(marker()), what).toBe(false)
+      expect(two.ss.sessionStateReadFailed(), what).toBe(false)
+    }
+  })
+
+  it("[host] a marker whose time is later than its own modification time is dropped and removes nothing", async () => {
+    const now = Date.now()
+    const one = await run()
+    one.d.saveEnriched({ ...freshSet(), savedAt: now - 30_000 } as SessionState)
+    // Its content says a clear a second ago, but the file was made a minute ago.
+    writeFileSync(marker(), JSON.stringify({ clearedAt: now - 1_000 }))
+    const made = new Date(now - 60_000)
+    utimesSync(marker(), made, made)
+    expect(names((await run()).d.load())).toEqual(['Quarry'])
+    expect(existsSync(marker())).toBe(false)
+  })
+
+  // PR 4 ADR-009 L4 NIT: while a clear is owed, a damaged session file is
+  // moved aside, as a load does, never deleted.
+  it('[host] a damaged session file with no usable .bak is moved aside while a clear is owed, never deleted', async () => {
+    writeFileSync(marker(), JSON.stringify({ clearedAt: Date.now() - 1_000 }))
+    writeFileSync(file(), '{ damaged')
+    const listAside = () => readdirSync(join(tmp, 'CONFIG')).filter((f) => f.startsWith('session-state.json.corrupt-'))
+    const before = listAside()
+    // Held: it cannot be moved aside, so nothing is removed.
+    fault.mainRename = true
+    const one = await run()
+    expect(one.d.load()).toBeNull()
+    expect(readFileSync(file(), 'utf8')).toBe('{ damaged')
+    expect(existsSync(marker())).toBe(true)
+    fault.mainRename = false
+    // Released: moved aside, its content kept, and the clear is done.
+    expect(one.d.load()).toBeNull()
+    expect(existsSync(file())).toBe(false)
+    const added = listAside().filter((f) => !before.includes(f))
+    expect(added).toHaveLength(1)
+    expect(readFileSync(join(tmp, 'CONFIG', added[0]), 'utf8')).toBe('{ damaged')
     expect(existsSync(marker())).toBe(false)
   })
 
