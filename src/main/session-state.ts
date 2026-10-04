@@ -361,6 +361,35 @@ export function loadSessionState(): SessionState | null {
   }
 }
 
+/**
+ * The saved state as the GitHub sidebar reads it (PR 4 follow-up to review
+ * C-Q2): a pure read with respect to the save guard. It never sets or resets
+ * the read-failure latch, so only the real load (`session:load`) decides
+ * whether saves and clears are allowed; it moves nothing aside, recovers
+ * nothing from the .bak and writes nothing (entries are put in the provider
+ * shape in memory only, and malformed ones dropped, as the load does). Null
+ * when nothing is saved, or while a clear is still owed (C-S1). Throws when
+ * the file is there but cannot be read or does not parse: the caller then
+ * has nothing, and writes nothing.
+ */
+export function peekSessionState(): SessionState | null {
+  if (clearStillOwed()) return null
+  const file = getSessionStateFile()
+  if (!existsSync(file)) return null
+  const state = parseSessionStateText(readFileSync(file, 'utf-8'))
+  if (!state) throw new Error('session-state.json did not parse')
+  const sessions: SavedSession[] = []
+  for (const s of state.sessions as unknown[]) {
+    if (!s || typeof s !== 'object') continue
+    try {
+      sessions.push(migrateConfigToProviderShape(s))
+    } catch {
+      sessions.push(s as SavedSession)
+    }
+  }
+  return { ...state, sessions }
+}
+
 /** What a clear did: `ok`, the saved state is cleared; `bakRemoved`, no
  *  previous-good copy of it (the .bak) is left: false only when one was there
  *  and could not be removed (or the clear was refused or failed). `refused`

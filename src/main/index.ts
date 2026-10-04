@@ -100,7 +100,7 @@ import { killAllAgents, stopBackgroundAgentRuns } from './cloud-agent-manager'
 import { startServiceStatusPoller, stopServiceStatusPoller, registerServiceStatusHandlers, refreshServiceStatus } from './service-status'
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
 import { startUpdateServer, stopUpdateServer } from './update-server'
-import { loadSessionState, hasSavedSessionState, SessionState } from './session-state'
+import { peekSessionState, hasSavedSessionState, SessionState } from './session-state'
 import { createAppSessionDurability } from './app-session-durability'
 import { getConfigDir, snapshotConfig, readConfig, readConfigChecked } from './config-manager'
 import { stopGlobalVision, killSpawnedBrowser, cleanupLegacyVisionMarkers } from './vision-manager'
@@ -769,11 +769,27 @@ if (!gotTheLock) {
     registerGitHubHandlers({
       resourcesDir: getConfigDir(),
       getWindow,
-      loadSessions: async () => loadSessionState()?.sessions ?? [],
+      // PR 4: the sidebar's reads are pure reads (peekSessionState): they never
+      // set or reset the read-failure latch, so only session:load decides
+      // whether saves and clears are allowed. A read that fails gives the
+      // sidebar nothing, and a save whose read fails writes nothing.
+      loadSessions: async () => {
+        try {
+          return peekSessionState()?.sessions ?? []
+        } catch {
+          return []
+        }
+      },
       // P3.12 (row 65): a Codex session's Session Context reads its own rollout.
       codexRolloutFor: codexRolloutForSessionContext,
       saveSessions: async (sessions) => {
-        const existing = loadSessionState()
+        let existing: SessionState | null
+        try {
+          existing = peekSessionState()
+        } catch (err) {
+          logWarn(`[session-state] the GitHub sidebar's change was not saved: the saved sessions could not be read (${(err as Error)?.message ?? err})`)
+          return
+        }
         // Through the durability core, never saveSessionState directly: a
         // direct write leaves the exit-flush cache stale, so the flush on
         // quit would overwrite this very patch with the pre-patch state —

@@ -215,24 +215,100 @@ describe('a clear still owed is remembered across a restart (C-S1)', () => {
 })
 
 describe('the GitHub sidebar reads nothing while a clear is owed (C-Q2)', () => {
-  it('[host] its direct load answers nothing and never sets the read-failure latch, and its save replaces the set', async () => {
+  it('[host] its read answers nothing and never sets the read-failure latch, and its save replaces the set', async () => {
     const one = await run()
     one.d.saveEnriched(theSet())
     fault.mainUnlink = true
     expect(one.d.clear()).toBe(false)
-    // index.ts's loadSessions / saveSessions read through loadSessionState.
+    // session:load answers nothing too; index.ts's loadSessions / saveSessions
+    // read through peekSessionState.
     expect(one.ss.loadSessionState()).toBeNull()
+    expect(one.ss.peekSessionState()).toBeNull()
     fault.readBusy = true
-    expect(one.ss.loadSessionState()).toBeNull()
+    expect(one.ss.peekSessionState()).toBeNull()
     expect(one.ss.sessionStateReadFailed()).toBe(false)
     fault.readBusy = false
-    // A profile removal patches what it read (nothing) and saves it back.
-    const existing = one.ss.loadSessionState()
-    expect(one.d.saveEnriched({ sessions: [], activeSessionId: existing?.activeSessionId ?? null, savedAt: Date.now() })).toBe(true)
+    // A pure read: it never retries the removal, so the set is still there.
     fault.mainUnlink = false
+    expect(one.ss.peekSessionState()).toBeNull()
+    expect(readFileSync(file(), 'utf8')).toMatch(/Orchard/)
+    // A profile removal patches what it read (nothing) and saves it back.
+    const existing = one.ss.peekSessionState()
+    expect(one.d.saveEnriched({ sessions: [], activeSessionId: existing?.activeSessionId ?? null, savedAt: Date.now() })).toBe(true)
     one.d.flushOnExit('before-quit')
     expect(names((await run()).d.load())).toEqual([])
     expect(readFileSync(file(), 'utf8')).not.toMatch(/Orchard/)
+  })
+})
+
+// PR 4 follow-up (the defect the lane C fixer recorded): the GitHub sidebar's
+// session reads used to go through loadSessionState, which sets and resets
+// the read-failure latch. After a start whose load failed, a sidebar read that
+// succeeded reset it, and a later close with no tabs then removed a saved file
+// the window never showed. Its reads are pure reads now: they never set or
+// reset the latch; a read that fails gives the sidebar nothing, and a save
+// whose read fails writes nothing.
+describe("the GitHub sidebar's session reads leave the save guard alone", () => {
+  it('[host] a start whose load failed, then a sidebar read that succeeds: a close with no tabs never removes the file the window never showed', async () => {
+    const one = await run()
+    one.d.saveEnriched(theSet())
+    const two = await run()
+    fault.readBusy = true
+    expect(two.d.load()).toBeNull()
+    expect(two.ss.sessionStateReadFailed()).toBe(true)
+    fault.readBusy = false
+    // The sidebar reads the saved sessions; the latch stays set.
+    expect(names(two.ss.peekSessionState())).toEqual(['Orchard'])
+    expect(two.ss.sessionStateReadFailed()).toBe(true)
+    // The window closed with no tabs: the clear is still refused.
+    expect(two.d.clear()).toBe(false)
+    two.d.flushOnExit('before-quit')
+    expect(readFileSync(file(), 'utf8')).toMatch(/Orchard/)
+    expect(names((await run()).d.load())).toEqual(['Orchard'])
+  })
+
+  it('[host] a sidebar read that fails sets no latch and throws; nothing is moved aside, recovered or written', async () => {
+    const one = await run()
+    one.d.saveEnriched(theSet())
+    const listing = () => readdirSync(join(tmp, 'CONFIG')).sort()
+    const before = listing()
+    fault.readBusy = true
+    expect(() => one.ss.peekSessionState()).toThrow()
+    expect(one.ss.sessionStateReadFailed()).toBe(false)
+    fault.readBusy = false
+    // A damaged file with a good .bak: an error, never the .bak's set, and
+    // the file is left where it is for the real load.
+    writeFileSync(file(), '{"sessions": [')
+    expect(() => one.ss.peekSessionState()).toThrow()
+    expect(one.ss.sessionStateReadFailed()).toBe(false)
+    expect(readFileSync(file(), 'utf8')).toBe('{"sessions": [')
+    expect(listing()).toEqual(before)
+    // No file: nothing saved.
+    rmSync(file())
+    expect(one.ss.peekSessionState()).toBeNull()
+  })
+
+  it('[host] the sidebar read drops malformed entries, as the load does, and writes nothing back', async () => {
+    // (This file's config-manager stand-in leaves each entry's shape as it is.)
+    const raw = JSON.stringify({ sessions: [null, 7, { id: 's3', name: 'Legacy', cwd: 'C:/work/legacy' }], activeSessionId: 's3', savedAt: 5 })
+    const one = await run()
+    writeFileSync(file(), raw)
+    const read = one.ss.peekSessionState()
+    expect(read?.sessions).toHaveLength(1)
+    expect(read?.sessions[0]).toMatchObject({ id: 's3', name: 'Legacy' })
+    expect(read?.activeSessionId).toBe('s3')
+    expect(readFileSync(file(), 'utf8')).toBe(raw)
+    expect(existsSync(`${file()}.bak`)).toBe(false)
+  })
+
+  it('[host] index.ts hands the sidebar the pure read: a failed read gives it nothing and its save writes nothing', () => {
+    const index = readFileSync(join(__dirname, '../../../src/main/index.ts'), 'utf8')
+    expect(index).not.toMatch(/\bloadSessionState\b/)
+    const at = index.indexOf('registerGitHubHandlers({')
+    expect(at).toBeGreaterThan(0)
+    const block = index.slice(at, at + 2500)
+    expect(block).toMatch(/loadSessions: async \(\) => \{\s*try \{\s*return peekSessionState\(\)\?\.sessions \?\? \[\]\s*\} catch \{\s*return \[\]\s*\}/)
+    expect(block).toMatch(/try \{\s*existing = peekSessionState\(\)\s*\} catch \(err\) \{\s*logWarn\([^\n]*\)\s*return\s*\}/)
   })
 })
 
