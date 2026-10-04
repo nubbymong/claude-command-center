@@ -24,6 +24,8 @@
  * No default export (project convention).
  */
 
+import type { WebServiceDescriptor } from '../../shared/account-web-session'
+
 /**
  * A conservative email shape. The load-bearing exclusions are whitespace and
  * `\p{Cc}`/`\p{Cf}` (control + format, i.e. the bidi overrides and zero-width
@@ -61,11 +63,48 @@ interface EmailReadableWebContents {
  * returns null on any failure or a value that fails validation.
  */
 export async function readAccountEmail(wc: EmailReadableWebContents): Promise<string | null> {
+  return readEmailWith(wc, EMAIL_EXPR)
+}
+
+/**
+ * The identity read for a service a WebServiceDescriptor describes (chatgpt.com
+ * for a Codex account, P4.6). The same two properties as Claude's read, plus a
+ * third this service needs:
+ *   1. ISOLATED WORLD, and the origin gate INSIDE the expression: only the
+ *      service's own origin is asked; any other page answers null, unasked.
+ *   2. SHAPE + LENGTH VALIDATION of the answer (sanitizeAccountEmail).
+ *   3. EMAIL ONLY. The identity answer can carry more than the email (an access
+ *      token, for one). The expression walks to the email inside the page's
+ *      isolated world and returns that string or null, so nothing else in the
+ *      answer ever crosses into the main process, is logged or stored, or is
+ *      kept in a variable that outlives the read. It is fetched with
+ *      `cache: 'no-store'`, so the read leaves no copy in the HTTP cache.
+ * Every descriptor value is embedded as a JSON literal, never spliced as code.
+ */
+export function serviceEmailExpression(desc: WebServiceDescriptor): string {
+  const origin = JSON.stringify(desc.origin)
+  const path = JSON.stringify(desc.identityPath)
+  const keys = JSON.stringify(desc.identityEmailPath)
+  return (
+    `(location.origin === ${origin}) ` +
+    `? fetch(${path},{credentials:'include',cache:'no-store'}).then((r)=>r.json())` +
+    `.then((j)=>{let v=j;for(const k of ${keys}){v=(v!==null&&typeof v==='object')?v[k]:undefined}return typeof v==='string'?v:null})` +
+    `.catch(()=>null) ` +
+    `: Promise.resolve(null)`
+  )
+}
+
+/** Read + sanitize the account email for `desc`'s service. Never throws. */
+export async function readServiceAccountEmail(wc: EmailReadableWebContents, desc: WebServiceDescriptor): Promise<string | null> {
+  return readEmailWith(wc, serviceEmailExpression(desc))
+}
+
+async function readEmailWith(wc: EmailReadableWebContents, expr: string): Promise<string | null> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     const run = typeof wc.executeJavaScriptInIsolatedWorld === 'function'
-      ? wc.executeJavaScriptInIsolatedWorld(1, [{ code: EMAIL_EXPR }])
-      : wc.executeJavaScript(EMAIL_EXPR, true)
+      ? wc.executeJavaScriptInIsolatedWorld(1, [{ code: expr }])
+      : wc.executeJavaScript(expr, true)
     const v = await Promise.race([
       Promise.resolve(run),
       // Timer kept + cleared in finally so a resolved read does not leave a

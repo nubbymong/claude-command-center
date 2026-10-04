@@ -277,6 +277,174 @@ export function isWebSessionPartitionDir(name: string): boolean {
   return typeof name === 'string' && WEB_SESSION_PARTITION_DIR_PREFIXES.some((prefix) => name.startsWith(prefix))
 }
 
+/**
+ * The web services an account's web session can be on (P4.6, row 58).
+ * chatgpt.com is to a Codex account what claude.ai is to a Claude account.
+ */
+export type WebSessionService = 'claude' | 'codex'
+
+/**
+ * What the app needs to know about one service's web sign-in, in ONE place.
+ *
+ * Three of these values are NOT verified yet: the session cookie name(s), the
+ * identity read, and the hosts the sign-in methods visit. They come from public
+ * knowledge, not from a recorded sign-in, and the owner's sign-in run confirms
+ * them (completion plan, P4.6). The design makes a wrong guess fail CLOSED:
+ * completion needs the named session cookie AND a valid email from the
+ * identity read, so a wrong cookie name or identity read means the sign-in
+ * never completes and the partition is wiped, never a false "signed in"; and a
+ * wrong host list means a sign-in method is blocked, never that the window may
+ * go anywhere. A run that does not complete logs the cookie NAMES it found and
+ * the off-site hosts it saw (never values, never query strings), so even a
+ * failed owner run yields the right values.
+ */
+export interface WebServiceDescriptor {
+  readonly service: WebSessionService
+  /** The name shown to the user (window title, pane strip). */
+  readonly label: string
+  /** The one origin the identity read trusts. */
+  readonly origin: string
+  /** The service's own hosts (https, default port). */
+  readonly hosts: readonly string[]
+  /** Where the pane's account view starts. */
+  readonly startUrl: string
+  /** Where the sign-in window starts. */
+  readonly signInUrl: string
+  /** The cookie(s) that carry the signed-in session on `origin`. */
+  readonly sessionCookieNames: readonly string[]
+  /** Same-origin path whose JSON answer names the signed-in account. */
+  readonly identityPath: string
+  /** The property path to the email inside that JSON answer. */
+  readonly identityEmailPath: readonly string[]
+  /** The ONLY off-site hosts the sign-in window (and a signed-out pane) may go
+   *  to: the sign-in methods' own hosts. Never "any https host". */
+  readonly signInHosts: readonly string[]
+}
+
+/**
+ * chatgpt.com, for a Codex account's web session.
+ *
+ * Verified by PB7 (a credential-free load in an Electron window): the sign-in
+ * page is https://chatgpt.com/auth/login and its form loads under the app's
+ * Chrome user agent with no challenge. The rest is marked below.
+ */
+export const CODEX_WEB_SERVICE: WebServiceDescriptor = Object.freeze({
+  service: 'codex' as const,
+  label: 'chatgpt.com',
+  origin: 'https://chatgpt.com',
+  hosts: Object.freeze(['chatgpt.com']),
+  startUrl: 'https://chatgpt.com/',
+  signInUrl: 'https://chatgpt.com/auth/login',
+  // UNVERIFIED: the owner's sign-in run confirms the session cookie name (a
+  // large token is split into numbered chunks, the first one ".0").
+  sessionCookieNames: Object.freeze(['__Secure-next-auth.session-token', '__Secure-next-auth.session-token.0']),
+  // UNVERIFIED: the owner's sign-in run confirms the identity endpoint.
+  identityPath: '/api/auth/session',
+  // UNVERIFIED: the owner's sign-in run confirms where the email sits in it.
+  identityEmailPath: Object.freeze(['user', 'email']),
+  // UNVERIFIED: the owner's sign-in run confirms each sign-in method's hosts
+  // (email and phone, Google, Apple: the methods PB7 saw offered).
+  signInHosts: Object.freeze(['auth.openai.com', 'accounts.google.com', 'appleid.apple.com']),
+})
+
+/**
+ * The host of an https URL on its default port: lower-cased, one trailing dot
+ * (the fully-qualified form) removed. Null for anything else, so a caller
+ * that compares hosts can never be handed a host of a non-https or
+ * explicit-port URL.
+ */
+export function httpsDefaultPortHost(url: unknown): string | null {
+  if (typeof url !== 'string') return null
+  let u: URL
+  try { u = new URL(url) } catch { return null }
+  if (u.protocol !== 'https:' || u.port !== '') return null
+  const host = u.hostname.toLowerCase().replace(/\.$/, '')
+  return host || null
+}
+
+/** True for an https URL (default port) on one of the service's own hosts. */
+export function isWebServiceUrl(desc: WebServiceDescriptor, url: unknown): boolean {
+  const host = httpsDefaultPortHost(url)
+  return host !== null && desc.hosts.includes(host)
+}
+
+/** True for an https URL (default port) on one of the listed sign-in hosts, exactly. */
+export function isWebServiceSignInHop(desc: WebServiceDescriptor, url: unknown): boolean {
+  const host = httpsDefaultPortHost(url)
+  return host !== null && desc.signInHosts.includes(host)
+}
+
+/**
+ * PURE: does a partition hold the service's session, from the cookies Electron
+ * reports on its origin. The named cookie is the only signal and its expiry is
+ * the session's lifetime (as Claude's webSessionFromElectronCookies). An exact
+ * name match: a near-miss is not the session cookie.
+ */
+export function webServiceSessionFromCookies(
+  desc: WebServiceDescriptor,
+  cookies: ReadonlyArray<{ name?: unknown; expirationDate?: unknown }> | null | undefined,
+): { hasSessionCookie: boolean; expiresAt: number | null } {
+  const session = (cookies ?? []).find((c) => typeof c?.name === 'string' && desc.sessionCookieNames.includes(c.name))
+  if (!session) return { hasSessionCookie: false, expiresAt: null }
+  const exp = session.expirationDate
+  return { hasSessionCookie: true, expiresAt: typeof exp === 'number' && exp > 0 ? exp * 1000 : null }
+}
+
+/** How a Codex account's chatgpt.com session was signed in: the sign-in
+ *  window, or the pane's account view. Nothing is ever copied in from a
+ *  browser (WP1 design principle 4). */
+export type CodexWebSessionOrigin = 'in-app' | 'in-pane'
+
+/**
+ * The metadata record of a Codex account's chatgpt.com web session. The
+ * cookies themselves never leave the account's partition; this is all that is
+ * written to disk (codex-web-sessions.json).
+ */
+export interface CodexWebSession {
+  /** The registry account id (the `account` class). */
+  accountId: string
+  /** The email the identity read returned, for display. A record is only
+   *  ever made with one (completion fails closed without it). */
+  accountEmail: string
+  /** Epoch ms when the sign-in completed. */
+  acquiredAt: number
+  /** The session cookie's expiry, epoch ms; null for a session cookie. */
+  expiresAt: number | null
+  origin: CodexWebSessionOrigin
+}
+
+export type CodexWebSessionStatus = 'none' | 'active' | 'expired'
+
+/** How a Codex account's web session looks to the UI. */
+export interface CodexWebSessionView extends Partial<CodexWebSession> {
+  accountId: string
+  status: CodexWebSessionStatus
+}
+
+export type CodexWebSignInPhase = 'idle' | 'awaiting-user' | 'done' | 'failed'
+
+/** A Codex account's chatgpt.com sign-in run, as main reports it. */
+export interface CodexWebSignInState {
+  phase: CodexWebSignInPhase
+  accountId: string | null
+  /** Populated on 'failed'. Shown to the user verbatim. */
+  error?: string
+  /** Populated on 'done': metadata only. */
+  session?: CodexWebSession
+}
+
+/**
+ * What main pushes for the browser pane's account strip (account-pane.ts): a
+ * Claude profile's claude.ai surface, or a Codex account's chatgpt.com one.
+ * `authed` is null while the first cookie read is in flight; `email` is the
+ * recorded account email, when one is known.
+ */
+export type AccountPaneStateView =
+  | { sessionId: string; service?: undefined; profileId: string; accountId?: undefined; authed: boolean | null; email: string | null }
+  // `profileId` is declared absent, so a Claude consumer comparing it to a
+  // profile id reads a Codex push as "not this profile".
+  | { sessionId: string; service: 'codex'; accountId: string; profileId?: undefined; authed: boolean | null; email: string | null }
+
 /** Hosts whose cookies are harvested. Nothing else is ever copied out of the browser. */
 export const CLAUDE_COOKIE_HOSTS = ['claude.ai', '.claude.ai'] as const
 

@@ -53,6 +53,9 @@ import { closeInAppSignInWindow, runInAppSignIn } from './in-app-sign-in'
 // keeps its narrow module graph (#439 adversarial A9) — importing session-store
 // / account-pane here would drag their heavy transitive graph in.
 import { notifyPartitionRevoked } from './partition-revocation'
+// One web sign-in at a time ACROSS services: a Codex account's chatgpt.com
+// sign-in (codex-web-session.ts) and this one never run together (P4.6).
+import { registerSignInFlight, signInInFlightElsewhere } from './sign-in-flight'
 
 /** Lazy require so a missing optional dep never crashes boot (mirrors vision-manager). */
 let CDP: any = null
@@ -583,6 +586,7 @@ export interface RunSignInOpts {
 function inFlight(): boolean {
   return current.phase === 'launching' || current.phase === 'awaiting-user' || current.phase === 'harvesting'
 }
+registerSignInFlight('claude', inFlight)
 
 /**
  * Run the whole sign-in. Resolves with the final state; never throws.
@@ -602,7 +606,7 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
   // harvested into the second's partition. That is precisely the cross-account
   // bleed the per-account partition exists to prevent, reachable with no
   // attacker at all: the UI renders one sign-in button per account row.
-  if (inFlight()) {
+  if (inFlight() || signInInFlightElsewhere('claude')) {
     return { phase: 'failed', profileId, error: 'A sign-in is already in progress. Finish or cancel it first.' }
   }
 
