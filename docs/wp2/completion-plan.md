@@ -7307,6 +7307,13 @@ above and in section 10. Recorded with it:
   the PR title and the PR squash-merges, so it is recorded here and not
   rewritten. 14ac75e8's message says `auth.browser` is left undeclared; it
   is declared unknown.
+- Two follow-ups after the integration, each a commit of its own. The WP1
+  managed-launch check (`tests/wp1/managed-launch.test.ts`) failed four
+  cases after 26fb4fcd, because the Claude sign-in check and sign-out built
+  their environment through a helper the check cannot read; 9f3adef4 builds
+  it in the managed-launch shape at each call site, behaviour unchanged, the
+  macOS mutants re-proved. The GitHub sidebar defect below, which the
+  integration step left open, landed in f2ed852e.
 - Known limits, recorded with no change made:
   - For developers only: a dev build and the installed app running together
     share `~/.codex`. Either one's switch-off removes the other's skill
@@ -7343,13 +7350,11 @@ above and in section 10. Recorded with it:
   `tests/unit/main/help-workspace-skill.test.ts` and
   `tests/unit/resources-dir-hardening.test.ts` plant links without a HOST
   QUARANTINE header, so they are not run on the owner's machine.
-- Open, pre-existing (found by the lane C fixer): the GitHub sidebar's
-  session reads (`src/main/index.ts`, through `loadSessionState`) set and
-  reset the read-failure latch, so after a start whose load failed, a
-  sidebar read that succeeds lets a later close with no tabs remove a saved
-  file the window never showed. The fix, the sidebar reading through a read
-  that never touches the latch, needs a new read in `session-state.ts`; it
-  was left out of the integration step and is pending.
+- Closed (f2ed852e): the GitHub sidebar's session reads go through a pure
+  read (`peekSessionState`) that never sets or resets the read-failure
+  latch, so a sidebar read after a start whose load failed no longer lets a
+  close with no tabs remove the unread file; a read that fails gives the
+  sidebar nothing, and a sidebar save whose read fails writes nothing.
 - Owed on CI and the VM: the HOST QUARANTINE files
   `codex-user-skills-links.test.ts`, `codex-user-skills-race-links.test.ts`,
   `codex-realm-skills-links.test.ts`, `codex-realm-skills-race-links.test.ts`,

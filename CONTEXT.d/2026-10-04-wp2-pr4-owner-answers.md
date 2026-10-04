@@ -88,5 +88,6 @@ removal (a held-open copy among them), the Windows PATH order, Sentinel
 behind the dead proxy for both assistants, the Tokenomics chart and the
 packaged canvas run; the Sonnet 5 price's native test in CI; the Cloud
 Agents card's image; on a Mac, the Claude sign-out with the acknowledgement
-(owner). Open: the GitHub sidebar's session reads still reach the
-read-failure latch (pre-existing; its fix is pending).
+(owner). Closed since: the GitHub sidebar's session reads leave the
+read-failure latch alone (f2ed852e), and the Claude auth runs build their
+environment in the managed-launch shape the WP1 check reads (9f3adef4).
