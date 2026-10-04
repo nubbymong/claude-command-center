@@ -18,10 +18,22 @@
 // and junctions are in codex-user-skills-links.test.ts and
 // codex-user-skills-race-links.test.ts (quarantined from the host); the host-safe
 // stand-in for them is codex-user-skills-swap.test.ts.
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
+
+// Every profile and Codex home variable points inside a temporary root before
+// any app module loads, so nothing here can reach this user's own folders even
+// through a default; put back after the file.
+const ENV_ROOT = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-user-skills-env-')))
+const ENV_KEYS = ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR'] as const
+const ENV_SAVED = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]))
+for (const k of ENV_KEYS) process.env[k] = path.join(ENV_ROOT, k.toLowerCase())
+afterAll(() => {
+  for (const k of ENV_KEYS) { if (ENV_SAVED[k] === undefined) delete process.env[k]; else process.env[k] = ENV_SAVED[k] }
+  if (path.basename(ENV_ROOT).startsWith('ccc-user-skills-env-')) fs.rmSync(ENV_ROOT, { recursive: true, force: true })
+})
 
 vi.mock('../../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }))
 // The default record folder: never this machine's real data folder.
@@ -220,6 +232,43 @@ describe('copying into this computer\'s Codex skills folder', () => {
     for (const skill of SKILLS) expect(fs.existsSync(skillDir(other, skill.name))).toBe(false)
     expect(fs.readdirSync(data).filter((n) => n.includes('.damaged'))).toEqual([])
     expect(u.codexUserSkillsHomes(deps)).toEqual([])
+  })
+
+  it('[host] with every kept-aside name taken, a new damaged record replaces the oldest kept-aside record that names no folder, never one that still names a folder, so the passes are never refused for good (ADR-009 delta L1-7)', () => {
+    const other = path.join(tmp, 'other-codex-home')
+    fs.mkdirSync(other)
+    u.stageCodexUserSkills(other, deps)
+    const rf = deps.recordFile()
+    const names = Array.from({ length: 10 }, (_, i) => `${rf}.damaged${i === 0 ? '' : `.${i}`}`)
+    // The oldest names a folder; the next oldest is the oldest that names none.
+    names.forEach((n, i) => {
+      fs.writeFileSync(n, i === 0 ? JSON.stringify({ homes: [other] }) : '{}')
+      const t = new Date(Date.UTC(2026, 0, 1 + i))
+      fs.utimesSync(n, t, t)
+    })
+    fs.writeFileSync(rf, 'damaged again')
+    u.reconcileCodexUserSkills(false, deps)
+    expect(fs.existsSync(rf)).toBe(false)
+    expect(fs.readFileSync(names[1], 'utf8')).toBe('damaged again')
+    expect(JSON.parse(fs.readFileSync(names[0], 'utf8'))).toEqual({ homes: [other] })
+    // The next pass is not refused: it takes the named folder back and removes its copies.
+    u.reconcileCodexUserSkills(false, deps)
+    for (const skill of SKILLS) expect(fs.existsSync(skillDir(other, skill.name))).toBe(false)
+    expect(u.stageCodexUserSkills(home, deps).outcome).toEqual({ staged: true })
+  })
+
+  it('[host] reading the recorded folders writes nothing: no record kept aside, none taken back (review B-Q14)', () => {
+    const other = path.join(tmp, 'other-codex-home')
+    const rf = deps.recordFile()
+    fs.writeFileSync(rf, 'damaged')
+    fs.writeFileSync(`${rf}.damaged`, JSON.stringify({ homes: [other] }))
+    expect(u.codexUserSkillsHomes(deps)).toEqual([])
+    expect(fs.readFileSync(rf, 'utf8')).toBe('damaged')
+    expect(fs.readFileSync(`${rf}.damaged`, 'utf8')).toBe(JSON.stringify({ homes: [other] }))
+    fs.writeFileSync(rf, JSON.stringify({ homes: [home] }))
+    expect(u.codexUserSkillsHomes(deps)).toEqual([home])
+    expect(JSON.parse(fs.readFileSync(rf, 'utf8'))).toEqual({ homes: [home] })
+    expect(fs.existsSync(`${rf}.damaged`)).toBe(true)
   })
 
   it('[host] a record that cannot be read now is refused and kept as it is: nothing copied, nothing removed, no folder let go (review B-Q2)', () => {

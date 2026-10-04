@@ -106,9 +106,11 @@ function sameHome(a: string, b: string, platform: NodeJS.Platform): boolean {
 
 type RecordRead = { ok: true; file: string; homes: string[] } | { ok: false }
 
-/** How many records kept aside are kept at most (`.damaged`, `.damaged.1` ...):
- *  one past them is left in place, and so refused again, rather than
- *  replacing one kept before (ADR-009 delta L1-6). */
+/** How many records kept aside are kept at most (`.damaged`, `.damaged.1` ...).
+ *  With every name taken, a new one replaces the oldest kept-aside record that
+ *  names no folder (ADR-009 delta L1-7), never one that still names a folder;
+ *  only when every one of them still names a folder is it left in place (and
+ *  so refused again). */
 const KEPT_ASIDE_MAX = 10
 
 /** The names a record kept aside may have, in order. */
@@ -121,14 +123,35 @@ function nameIsFree(p: string): boolean {
   try { fs.lstatSync(p); return false } catch (err) { return (err as NodeJS.ErrnoException)?.code === 'ENOENT' }
 }
 
+/** The folders a kept-aside record names, or null when it cannot be told (not
+ *  a plain file, too large, or not readable now). */
+function keptAsideHomes(kept: string, deps: CodexUserSkillsDeps, platform: NodeJS.Platform): { homes: string[]; mtimeMs: number } | null {
+  let st: fs.Stats
+  try { st = fs.lstatSync(kept) } catch { return null }
+  if (!st.isFile() || st.isSymbolicLink() || st.size > RECORD_READ_MAX) return null
+  try {
+    return { homes: homesNamedIn(deps.readFile ? deps.readFile(kept) : fs.readFileSync(kept, 'utf8'), platform), mtimeMs: st.mtimeMs }
+  } catch {
+    return null
+  }
+}
+
 /** A record that does not parse is kept aside, beside it, under the first
- *  name not already taken, so nothing it held is lost without a trace and
- *  no record kept aside before is replaced; the next pass starts a new one.
- *  Left in place (and so refused again) when it cannot be moved. */
-function setAside(file: string): void {
-  const to = keptAsideNames(file).find(nameIsFree)
+ *  name not already taken, so nothing it held is lost without a trace; the
+ *  next pass starts a new one. With every name taken it replaces the oldest
+ *  kept-aside record that names no folder, so a damaged record can always be
+ *  kept aside and no pass is refused for good (ADR-009 delta L1-7); one that
+ *  still names a folder is never replaced. Left in place (and so refused
+ *  again) when it cannot be moved, or when every kept-aside record still
+ *  names a folder (which a pass takes back unless the record is full). */
+function setAside(file: string, deps: CodexUserSkillsDeps, platform: NodeJS.Platform): void {
+  const names = keptAsideNames(file)
+  const to = names.find(nameIsFree) ?? names
+    .map((n) => ({ n, kept: keptAsideHomes(n, deps, platform) }))
+    .filter((x): x is { n: string; kept: { homes: string[]; mtimeMs: number } } => x.kept !== null && x.kept.homes.length === 0)
+    .sort((a, b) => a.kept.mtimeMs - b.kept.mtimeMs)[0]?.n
   if (!to) {
-    logWarn('[codex-skills] the record of this computer\'s Codex folders does not read as the app wrote it, and every name for keeping it aside is taken; it is left as it is')
+    logWarn('[codex-skills] the record of this computer\'s Codex folders does not read as the app wrote it, and every name for keeping it aside holds one that still names a folder; it is left as it is')
     return
   }
   try {
@@ -194,14 +217,17 @@ function takeBackKeptAside(file: string, homes: string[], deps: CodexUserSkillsD
  *  cannot be read now is refused (nothing is copied, nothing removed; asked
  *  again at the next pass). One that does not parse as the app's record is
  *  kept aside and refused for this pass (review B-Q2); the folders any record
- *  kept aside still names are taken back (takeBackKeptAside). */
-function readRecord(deps: CodexUserSkillsDeps): RecordRead {
+ *  kept aside still names are taken back (takeBackKeptAside). : the
+ *  record as it is, writing nothing (review B-Q14): no record is kept aside
+ *  and none taken back. */
+function readRecord(deps: CodexUserSkillsDeps, mode: 'pass' | 'read' = 'pass'): RecordRead {
   const file = recordFileOf(deps)
   const platform = deps.platform ?? process.platform
   if (!file) return { ok: false }
   let st: fs.Stats
   try { st = fs.lstatSync(file) } catch (err) {
-    return (err as NodeJS.ErrnoException)?.code === 'ENOENT' ? { ok: true, file, homes: takeBackKeptAside(file, [], deps, platform) } : { ok: false }
+    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') return { ok: false }
+    return { ok: true, file, homes: mode === 'pass' ? takeBackKeptAside(file, [], deps, platform) : [] }
   }
   if (!st.isFile() || st.isSymbolicLink() || st.size > RECORD_READ_MAX) return { ok: false }
   let text: string
@@ -212,7 +238,7 @@ function readRecord(deps: CodexUserSkillsDeps): RecordRead {
   let parsed: unknown
   try { parsed = JSON.parse(text) } catch { parsed = null }
   if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as { homes?: unknown }).homes)) {
-    setAside(file)
+    if (mode === 'pass') setAside(file, deps, platform)
     return { ok: false }
   }
   const raw = (parsed as { homes: unknown[] }).homes
@@ -221,7 +247,7 @@ function readRecord(deps: CodexUserSkillsDeps): RecordRead {
     if (homes.length >= CODEX_USER_SKILLS_HOMES_MAX) break
     if (fullyQualified(h, platform) && !homes.some((k) => sameHome(k, h, platform))) homes.push(path.resolve(h))
   }
-  return { ok: true, file, homes: takeBackKeptAside(file, homes, deps, platform) }
+  return { ok: true, file, homes: mode === 'pass' ? takeBackKeptAside(file, homes, deps, platform) : homes }
 }
 
 function writeRecord(file: string, homes: readonly string[]): boolean {
@@ -319,9 +345,10 @@ export function reconcileCodexUserSkills(wanted: boolean, deps: CodexUserSkillsD
   }
 }
 
-/** The recorded folders (for the tests and the log). */
+/** The recorded folders (for the tests and the log), read only: nothing is
+ *  written, kept aside or taken back (review B-Q14). */
 export function codexUserSkillsHomes(deps: CodexUserSkillsDeps = {}): string[] {
-  const rec = readRecord(deps)
+  const rec = readRecord(deps, 'read')
   return rec.ok ? rec.homes : []
 }
 
