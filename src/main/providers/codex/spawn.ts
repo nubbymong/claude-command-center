@@ -15,8 +15,52 @@ import { codexHookCommand, codexHookConfigArgs, codexPlainWrapperDir, codexLocal
 import { codexExtraArgsProblem, codexExtraArgWords } from '../../../shared/extra-args'
 import { logWarn } from '../../debug-logger'
 
-export function resolveCodexBinary(): { cmd: string; args: string[] } | null {
-  if (os.platform() !== 'win32') {
+/** The two forms a Codex install puts on PATH on Windows, in the order a
+ *  terminal tries them within one folder: PATHEXT's order (Windows' own
+ *  default when it is unset). A form PATHEXT does not list still counts,
+ *  after the ones it lists, so the lookup never finds less than it did. */
+export function codexWindowsForms(pathExt: string | undefined): string[] {
+  const listed = (pathExt ?? '.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC')
+    .split(';').map((e) => e.trim().toLowerCase())
+  const forms = ['.exe', '.cmd']
+  const known = listed.filter((e, i) => forms.includes(e) && listed.indexOf(e) === i)
+  return [...known, ...forms.filter((f) => !known.includes(f))].map((ext) => `codex${ext}`)
+}
+
+/** PATH's folders as the lookup reads them: `;`-separated, a quoted entry
+ *  without its quotes, and only fully qualified folders (a drive or a share). */
+export function codexWindowsPathFolders(pathVar: string | undefined): string[] {
+  const out: string[] = []
+  for (const raw of (pathVar ?? '').split(';')) {
+    let dir = raw.trim()
+    if (dir.length >= 2 && dir.startsWith('"') && dir.endsWith('"')) dir = dir.slice(1, -1).trim()
+    if (/^[A-Za-z]:[\\/]/.test(dir) || /^[\\/]{2}[^\\/?.][^\\/]*[\\/][^\\/]+/.test(dir)) out.push(dir)
+  }
+  return out
+}
+
+/** A variable from an environment, by Windows's case-insensitive names. */
+function winEnvValue(env: Readonly<Record<string, string | undefined>>, name: string): string | undefined {
+  const key = Object.keys(env).find((k) => k.toUpperCase() === name)
+  return key ? env[key] : undefined
+}
+
+export interface CodexBinaryLookup {
+  /** Default: this machine's. */
+  platform?: NodeJS.Platform
+  /** Default: this process's environment (Windows: its PATH and PATHEXT). */
+  env?: Readonly<Record<string, string | undefined>>
+  /** Whether a regular file is there (default: the disk, links followed as a
+   *  terminal follows them). */
+  isFile?: (p: string) => boolean
+}
+
+const diskIsFile = (p: string): boolean => {
+  try { return fs.statSync(p).isFile() } catch { return false }
+}
+
+export function resolveCodexBinary(lookup: CodexBinaryLookup = {}): { cmd: string; args: string[] } | null {
+  if ((lookup.platform ?? os.platform()) !== 'win32') {
     // Probe through a LOGIN shell and keep the absolute path: a Finder/Dock
     // launched app inherits launchd's minimal PATH (no Homebrew/npm-global),
     // so both a bare `which codex` probe and a later bare-'codex' spawn fail
@@ -34,19 +78,19 @@ export function resolveCodexBinary(): { cmd: string; args: string[] } | null {
       return null
     } catch { return null }
   }
-  for (const bin of ['codex.exe', 'codex.cmd']) {
-    try {
-      // stdio pipe on stderr suppresses the "INFO: Could not find files for
-      // the given pattern(s)." that `where` writes to stderr on a miss --
-      // default execSync inherits stderr, so a normal "try next binary" probe
-      // ends up polluting the parent process's stderr / terminal.
-      const cmdPath = execSync(`where ${bin}`, {
-        encoding: 'utf-8',
-        timeout: 5000,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }).trim().split(/\r?\n/)[0].trim()
-      if (cmdPath) return { cmd: cmdPath, args: [] }
-    } catch { /* try next */ }
+  // Windows (owner, 2026-10-04): PATH order wins, as a terminal finds it.
+  // The first PATH folder holding codex.exe or codex.cmd gives it, and within
+  // one folder PATHEXT's order decides. Read in this process: no shell, no
+  // process started (an `where codex.exe` lookup preferred a codex.exe
+  // anywhere on PATH over an earlier codex.cmd).
+  const env = lookup.env ?? process.env
+  const isFile = lookup.isFile ?? diskIsFile
+  const forms = codexWindowsForms(winEnvValue(env, 'PATHEXT'))
+  for (const dir of codexWindowsPathFolders(winEnvValue(env, 'PATH'))) {
+    for (const name of forms) {
+      const candidate = path.win32.join(dir, name)
+      if (isFile(candidate)) return { cmd: candidate, args: [] }
+    }
   }
   return null
 }
