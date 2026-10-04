@@ -55,6 +55,21 @@ describe('the Cloud Agents card', () => {
     expect(text.join('\n')).toMatch(/runs read-only unless you tick \*\*Auto\*\* for that run/)
   })
 
+  // PR 4 review C-S5: a Codex agent's cost is worked out from the model its
+  // config names (agent-run.ts), so one started from a config with no model
+  // shows tokens and no cost; the card says so rather than promising a cost.
+  it('[host] a cost is promised only where the page shows one: a Codex agent needs a model named in its config', () => {
+    const both = lines(card()!).join('\n')
+    expect(both).toMatch(/a Codex agent shows one only when the config it was started from names a model/)
+    const codexOnly = lines(card(stepsForAssistants(trainingSteps, 'codex'))!).join('\n')
+    expect(codexOnly).toMatch(/\*\*cost\*\* when the config it was started from names a model/)
+    // No line lists a cost among what every agent shows.
+    for (const text of [both, codexOnly]) {
+      expect(text).not.toMatch(/tokens\*\* and \*\*cost\*\*/)
+      expect(text).not.toMatch(/tokens, cost and output/)
+    }
+  })
+
   it('[host] its image is the neutral stand-in until the recapture', () => {
     expect(card()!.screenshotFilename).toBe('v2-shell-hero.jpg')
   })

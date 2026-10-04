@@ -55,7 +55,9 @@ export interface SessionDurability {
    *  saved file is cleared. Never throws. A clear that leaves a copy of the
    *  set on disk is retried at each later save, exit flush and load until it
    *  removes every copy; a save that succeeds ends that (the owner's
-   *  2026-10-04 answer). */
+   *  2026-10-04 answer). session-state remembers it across a restart (PR 4
+   *  review C-S1). A clear the read-failure latch refused is none of this
+   *  (C-Q1): nothing is retried and the load still reads the file. */
   clear: () => boolean
   /** clear()'s internal step, kept on the interface as a test seam (fixer 12):
    *  callers clear through clear(), never this alone. Drop the cache after a
@@ -64,8 +66,10 @@ export interface SessionDurability {
    *  they are written back on their own (P3.7, keepRunningTimes).
    *  `bakRemoved` (fixer 10, ADR-009 C2; required since fixer 11): true only
    *  when no copy of the discarded set is left on disk (the file and its .bak
-   *  both removed). Otherwise nothing is written until the next save, at the
-   *  clear or at any exit flush; anything but true counts as a copy left. */
+   *  both removed). Otherwise nothing is written until a retry of the clear
+   *  removes every copy (then the running times are kept, as here) or the
+   *  next save, at the clear or at any exit flush; anything but true counts
+   *  as a copy left. */
   noteCleared: (bakRemoved: boolean) => void
   /** Test-only: read the cached state. */
   peek: () => SessionState | null
@@ -162,8 +166,10 @@ export function createSessionDurability(deps: DurabilityDeps): SessionDurability
    * logged. Since the owner's 2026-10-04 answer the clear itself is retried
    * at each later save, exit flush and load (retryClear); once it removes
    * every copy, the running times are kept as after a clear that succeeded.
-   * If neither that nor a save comes before the app stops, the running times
-   * are lost, as every clear lost them before fixer 9 (A1); said once, here.
+   * If neither that nor a save comes before the app stops, the clear is
+   * still owed at the next start (session-state, PR 4 review C-S1), but the
+   * running times are lost, as every clear lost them before fixer 9 (A1);
+   * said once, here.
    */
   function noteCleared(bakRemoved: boolean): void {
     last = null
@@ -209,6 +215,16 @@ export function createSessionDurability(deps: DurabilityDeps): SessionDurability
 
   function clear(): boolean {
     const done = runClear('the clear of the saved sessions failed')
+    if (done.refused === true) {
+      // PR 4 review C-Q1: the read-failure latch refused it, so the file was
+      // never read and nothing was tried. That is not a file another program
+      // held: no retry is armed and the load still reads the file (the read
+      // that resets the latch). The user still discarded the set, so the
+      // cache goes (F1).
+      last = null
+      log('[session-state] the clear was refused (the last load of the saved sessions failed), so nothing was removed and nothing is retried; the saved file is kept until a load reads it')
+      return false
+    }
     // Fixer 11 (ADR-009 lens D round 2, finding 4): whatever the clear did,
     // the user discarded the set, so the cache goes; a copy left on disk (the
     // file, or its .bak) means nothing is written until a retry of the clear
@@ -221,6 +237,7 @@ export function createSessionDurability(deps: DurabilityDeps): SessionDurability
     // A clear this run that left the discarded set on disk is retried first;
     // while the set is still there, the load answers as the clear would have
     // (nothing saved) and the file is not read, so the set is not offered.
+    const retried = bakLeft
     const owed = bakLeft && !retryClear('load')
     const state = owed ? null : deps.load ? deps.load() : null
     try {
@@ -228,6 +245,9 @@ export function createSessionDurability(deps: DurabilityDeps): SessionDurability
     } catch (err) {
       log(`[session-state] main's records in the saved state could not be read back: ${(err as Error)?.message ?? err}`)
     }
+    // PR 4 review C-Q4: a retry that removed every copy here keeps the
+    // running times now, as a clear that succeeded does.
+    if (retried && !owed && state === null && cleared && !last) keepRunningTimes('load')
     return state
   }
 

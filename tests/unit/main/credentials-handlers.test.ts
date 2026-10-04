@@ -3,7 +3,9 @@
  * app's own shape (credential-key.ts): an id, or an id with one of the three
  * known suffixes. Anything else is refused before the store is touched. Driven
  * through the real handlers on a fake ipcMain. A delete for an id string the
- * save door refuses has nothing to delete and is skipped without a warning.
+ * save door refuses is skipped without a warning when the store holds nothing
+ * under it, and warned about when it does (PR 4 review C-Q3: an entry stored
+ * before the shape rule existed stays stored, and the log is its only trace).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
@@ -13,8 +15,10 @@ vi.mock('electron', () => ({
 }))
 const saveCredential = vi.fn(() => true)
 const deleteCredential = vi.fn(() => true)
+/** The store as read, read-only (null: the file is there and could not be read). */
+const readCredentialsFile = vi.fn((): Record<string, string> | null => ({}))
 const logWarn = vi.fn()
-vi.mock('../../../src/main/credential-store', () => ({ saveCredential, deleteCredential, loadCredential: vi.fn() }))
+vi.mock('../../../src/main/credential-store', () => ({ saveCredential, deleteCredential, readCredentialsFile, loadCredential: vi.fn() }))
 vi.mock('../../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logWarn, logError: vi.fn() }))
 
 const { registerCredentialHandlers } = await import('../../../src/main/ipc/credentials-handlers')
@@ -23,7 +27,10 @@ registerCredentialHandlers()
 const save = handlers.get('credentials:save')!
 const del = handlers.get('credentials:delete')!
 
-beforeEach(() => { saveCredential.mockClear(); deleteCredential.mockClear(); deleteCredential.mockImplementation(() => true); logWarn.mockClear() })
+beforeEach(() => {
+  saveCredential.mockClear(); deleteCredential.mockClear(); deleteCredential.mockImplementation(() => true); logWarn.mockClear()
+  readCredentialsFile.mockClear(); readCredentialsFile.mockImplementation(() => ({}))
+})
 
 describe('isAllowedCredentialKey', () => {
   it('accepts the four shapes the app writes', () => {
@@ -62,13 +69,15 @@ describe('credentials:save / credentials:delete', () => {
 
 // [host] The owner's 2026-10-04 answer: a delete for an id that cannot hold a
 // stored credential is skipped quietly. "Cannot hold one" is the save door's
-// own rule (credentials:save is the only door that adds an entry, and it takes
-// only keys isAllowedCredentialKey accepts), so the two doors must agree on
-// every key. A refusal that still means something keeps its warning.
+// own rule (in this build credentials:save is the only door that adds an
+// entry, and it takes only keys isAllowedCredentialKey accepts), so the two
+// doors must agree on every key. A refusal that still means something keeps
+// its warning, including an entry an older build stored under an id outside
+// that rule (PR 4 review C-Q3).
 describe('credentials:delete for ids that cannot hold a stored credential', () => {
   const warned = () => logWarn.mock.calls.map((c) => String(c[0]))
 
-  it('[host] skips an id string the save door never accepts, without a warning and without touching the store', async () => {
+  it('[host] skips an id string the save door never accepts, without a warning, when the store holds nothing under it', async () => {
     // Ids from outside the app (imported or seeded configs), with the suffixes
     // the edit-save deletes for, and anything else outside the shape.
     for (const k of ['cfg-ssh-1', 'cfg-ssh-1_sudo', 'cfg-ssh-1_argsecret', 'cfg 1', 'cfg1_token', '', 'a'.repeat(65), 'cfg1; rm']) {
@@ -78,6 +87,35 @@ describe('credentials:delete for ids that cannot hold a stored credential', () =
     expect(warned()).toEqual([])
   })
 
+  // PR 4 review C-Q3: a store from a build older than the shape rule can hold
+  // an entry under an id outside it (an imported config's own id). Such an
+  // entry cannot be deleted through this door, so a delete for it is warned
+  // about; the store is only read, never written.
+  it('[host] an id outside the shape that the store does hold is refused with a warning, and the store is only read', async () => {
+    readCredentialsFile.mockImplementation(() => ({ 'cfg-ssh-1_sudo': 'c2VjcmV0', cfg1: 'b3RoZXI=' }))
+    expect(await del({}, 'cfg-ssh-1_sudo')).toBe(false)
+    expect(warned()).toEqual(['[credentials] delete refused: a credential is stored under an id of an older shape, which the renderer cannot delete'])
+    expect(deleteCredential).not.toHaveBeenCalled()
+    expect(saveCredential).not.toHaveBeenCalled()
+    // One the store does not hold stays quiet.
+    logWarn.mockClear()
+    expect(await del({}, 'cfg-ssh-2_sudo')).toBe(false)
+    expect(warned()).toEqual([])
+  })
+
+  it('[host] an id outside the shape is quiet only when the store can be read and holds nothing under it', async () => {
+    // A store that cannot be read cannot say it holds nothing.
+    readCredentialsFile.mockImplementation(() => null)
+    expect(await del({}, 'cfg-ssh-1')).toBe(false)
+    expect(warned()).toEqual(['[credentials] delete refused: key outside the expected shape, and the credential store could not be read to check it'])
+    // Only the store's own entries count, never what every object inherits.
+    readCredentialsFile.mockImplementation(() => ({}))
+    logWarn.mockClear()
+    for (const k of ['__proto__', '__defineGetter__', '__lookupSetter__']) expect(await del({}, k), k).toBe(false)
+    expect(warned()).toEqual([])
+    expect(deleteCredential).not.toHaveBeenCalled()
+  })
+
   it('[host] a request whose key is not a string at all is still refused with a warning', async () => {
     for (const k of [undefined, null, 42, {}, ['cfg1']]) {
       logWarn.mockClear()
@@ -85,6 +123,7 @@ describe('credentials:delete for ids that cannot hold a stored credential', () =
       expect(warned(), JSON.stringify(k)).toEqual(['[credentials] delete refused: key not of the expected shape'])
     }
     expect(deleteCredential).not.toHaveBeenCalled()
+    expect(readCredentialsFile).not.toHaveBeenCalled()
   })
 
   it('[host] a store that cannot delete a key that could hold a credential says so', async () => {

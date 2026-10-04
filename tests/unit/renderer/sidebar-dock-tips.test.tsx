@@ -28,7 +28,8 @@ const { default: AskConductorDock } = await import('../../../src/renderer/compon
 const { useTipsStore, countUnseenTips } = await import('../../../src/renderer/stores/tipsStore')
 const { useSettingsStore } = await import('../../../src/renderer/stores/settingsStore')
 const { useSessionStore } = await import('../../../src/renderer/stores/sessionStore')
-const { TIPS_LIBRARY } = await import('../../../src/renderer/tips-library')
+const TIPS = await import('../../../src/renderer/tips-library')
+const { TIPS_LIBRARY } = TIPS
 
 /** A tip with no `requires`, so it resolves without any usage history. */
 const FREE_TIPS = TIPS_LIBRARY.filter((t) => !t.requires?.length && !t.excludes?.length)
@@ -150,6 +151,47 @@ describe('sidebar dock -- the tip row', () => {
     useTipsStore.setState({ silencedUntilRestart: true })
     render()
     expect(q('sidebar-tip-pill')).toBeNull()
+  })
+})
+
+// [host] The owner's 2026-10-04 answer (PR 4 review C-S4 / C-Q6): a tip about
+// one assistant alone carries that assistant's mark in the sidebar's tip row
+// too, as on the tip card; a tip about both, or about the app, carries none.
+describe("sidebar dock -- the tip row's assistant mark", () => {
+  const { TIP_PROVIDER_NAMES } = TIPS
+  /** Put this tip on screen and render the dock. */
+  function show(id: string) {
+    useTipsStore.setState({ currentTipId: id, tracking: { ...EMPTY, tipsShown: { [id]: 1 } } })
+    render()
+    expect(q('sidebar-tip-pill'), id).not.toBeNull()
+  }
+  const row = () => q('sidebar-tip-pill')!
+  /** The first tip matching `pick` that the store can put on screen as it is. */
+  function shownTip(pick: (t: (typeof TIPS_LIBRARY)[number]) => boolean) {
+    for (const t of TIPS_LIBRARY.filter(pick)) {
+      useTipsStore.setState({ currentTipId: t.id, tracking: { ...EMPTY, tipsShown: { [t.id]: 1 } } })
+      if (useTipsStore.getState().getCurrentTip()) return t
+    }
+    return undefined
+  }
+
+  for (const provider of ['codex', 'claude'] as const) {
+    it(`[host] a ${provider} tip shows the ${provider} mark, named`, () => {
+      const tip = shownTip((t) => t.provider === provider)
+      expect(tip, `the library has a ${provider} tip`).toBeDefined()
+      show(tip!.id)
+      const marks = row().querySelectorAll('[data-testid^="provider-mark-"]')
+      expect(marks).toHaveLength(1)
+      expect(marks[0].getAttribute('data-testid')).toBe(`provider-mark-${provider}`)
+      expect(marks[0].getAttribute('title')).toBe(TIP_PROVIDER_NAMES[provider])
+    })
+  }
+
+  it('[host] a tip with no assistant shows no mark', () => {
+    const tip = shownTip((t) => !t.provider)
+    expect(tip).toBeDefined()
+    show(tip!.id)
+    expect(row().querySelector('[data-testid^="provider-mark-"]')).toBeNull()
   })
 })
 

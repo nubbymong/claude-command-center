@@ -379,10 +379,10 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '2.1.1',
     section: 'integrations',
     summary:
-      'Hand a task to an agent that runs in the background, on Claude Code or on Codex, and come back for the result. Each run is a headless agent in the project you pick; the Cloud Agents page shows its status, elapsed time, tokens, cost and output while you keep working.',
+      'Hand a task to an agent that runs in the background, on Claude Code or on Codex, and come back for the result. Each run is a headless agent in the project you pick; the Cloud Agents page shows its status, elapsed time, tokens and output while you keep working, and its cost when it is known.',
     highlights: [
       'With Claude Code and Codex both on, **New agent** asks which one runs the agent; a Codex agent runs on the Codex account you pick',
-      'Each agent shows its **status**, **elapsed time**, **tokens** and **cost**, with its **Output** and a **Summary**',
+      'Each agent shows its **status**, **elapsed time** and **tokens**, with its **Output** and a **Summary**, and its **cost** when it is known: a Codex agent shows one only when the config it was started from names a model',
       '**Stop** a running agent; **Retry** or **Remove** one that has finished',
       'A **Claude Code** agent asks before editing files or running commands unless you tick **Skip permission prompts for this run**; a headless run has no one to answer, so it may pause',
       'A **Codex** agent runs read-only unless you tick **Auto** for that run (workspace writes, no prompts). That is Codex\'s Auto preset, not a skip of every prompt: the agent edits files inside its project only, and the Codex account\'s settings (its config.toml) are left as they are',
@@ -396,16 +396,16 @@ export const trainingSteps: TrainingStep[] = [
       'Leave the permission tick off for a first run on a new project: a Claude Code agent then asks before it changes anything, and a Codex agent only reads the project and reports.',
     bullets: [
       '**Background agents** on Claude Code or Codex, one task each',
-      'Status, elapsed time, tokens, cost and output on the **Cloud Agents** page',
+      'Status, elapsed time, tokens, output and, when known, cost on the **Cloud Agents** page',
       'A Codex agent writes only with **Auto** ticked, and then only inside its project',
     ],
     // Codex alone: Cloud Agents runs Codex agents only.
     withoutClaude: {
       summary:
-        'Hand a task to an agent that runs in the background on Codex, and come back for the result. Each run is a headless Codex agent in the project you pick, on the Codex account you choose; the Cloud Agents page shows its status, elapsed time, tokens, cost and output while you keep working.',
+        'Hand a task to an agent that runs in the background on Codex, and come back for the result. Each run is a headless Codex agent in the project you pick, on the Codex account you choose; the Cloud Agents page shows its status, elapsed time, tokens and output while you keep working, and its cost when the config it was started from names a model.',
       highlights: [
         '**New agent** lists your Codex accounts; the agent runs on the one you pick',
-        'Each agent shows its **status**, **elapsed time**, **tokens** and **cost**, with its **Output** and a **Summary**',
+        'Each agent shows its **status**, **elapsed time** and **tokens**, with its **Output** and a **Summary**, and its **cost** when the config it was started from names a model',
         '**Stop** a running agent; **Retry** or **Remove** one that has finished',
         'An agent runs read-only unless you tick **Auto** for that run (workspace writes, no prompts). That is Codex\'s Auto preset, not a skip of every prompt: the agent edits files inside its project only, and the Codex account\'s settings (its config.toml) are left as they are',
         'On Windows, a Codex agent on **Auto** makes no edits until Codex\'s sandbox is set up for its Codex account, and with the non-admin sandbox its commands fail',
@@ -414,7 +414,7 @@ export const trainingSteps: TrainingStep[] = [
         'Leave Auto off for a first run on a new project: the agent then only reads the project and reports.',
       bullets: [
         '**Background agents** on Codex, one task each',
-        'Status, elapsed time, tokens, cost and output on the **Cloud Agents** page',
+        'Status, elapsed time, tokens and output on the **Cloud Agents** page, and cost when the config names a model',
         'An agent writes only with **Auto** ticked, and then only inside its project',
       ],
     },

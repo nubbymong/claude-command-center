@@ -56,6 +56,106 @@ export function sessionStateReadFailed(): boolean {
 }
 
 /**
+ * A clear still owed (the owner's 2026-10-04 answer; PR 4 review C-S1). A
+ * clear the user asked for ("Close sessions", "Don't open", the window closed
+ * with no tabs) that could not remove every copy of the set (the file or its
+ * .bak held by a virus scanner or a sync tool) is remembered in a small
+ * marker beside the file, written atomically, so it outlives the run. While
+ * it is there, a load answers as the clear would have (nothing saved, the
+ * file unread, the read-failure latch untouched) and tries the removal again;
+ * nothing else reads the set back either. The marker goes once every copy is
+ * gone, or once a later save has replaced the set: a save that succeeds
+ * removes it, and a file whose own savedAt is later than the clear the
+ * marker records is that save's, even when the marker could not be removed.
+ * A marker that cannot be read, or holds no time, counts as owed.
+ * `clearOwedThisRun` holds the same for this run when the marker could not
+ * be written.
+ */
+function getSessionStateClearOwedFile(): string {
+  return `${getSessionStateFile()}.clear-owed`
+}
+
+let clearOwedThisRun = false
+
+type ClearOwed = { owed: false } | { owed: true; clearedAt: number | null }
+
+function readClearOwed(): ClearOwed {
+  if (clearOwedThisRun) return { owed: true, clearedAt: null }
+  let text: string
+  try {
+    text = readFileSync(getSessionStateClearOwedFile(), 'utf-8')
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return { owed: false }
+    return { owed: true, clearedAt: null }
+  }
+  try {
+    const parsed = JSON.parse(text) as { clearedAt?: unknown } | null
+    const at = parsed && typeof parsed === 'object' ? parsed.clearedAt : undefined
+    if (typeof at === 'number' && Number.isFinite(at)) return { owed: true, clearedAt: at }
+  } catch { /* not JSON: owed, with no time */ }
+  return { owed: true, clearedAt: null }
+}
+
+/** The file on disk was saved after the clear at `clearedAt` (its own
+ *  savedAt is later). Only reads: no latch, nothing moved aside. */
+function savedAfter(clearedAt: number): boolean {
+  try {
+    const state = parseSessionStateText(readFileSync(getSessionStateFile(), 'utf-8'))
+    return !!state && typeof state.savedAt === 'number' && state.savedAt > clearedAt
+  } catch {
+    return false
+  }
+}
+
+/** Remember, on disk and for this run, that the clear is still owed. */
+function markClearOwed(): void {
+  clearOwedThisRun = true
+  try {
+    atomicWriteFileSync(getSessionStateClearOwedFile(), JSON.stringify({ clearedAt: Date.now() }))
+  } catch (err) {
+    logError(`[session-state] the clear is still owed, but that could not be written down for the next start (this run still holds it): ${(err as Error)?.message ?? err}`)
+  }
+}
+
+/** The clear is no longer owed: every copy is gone, or a save replaced the set. */
+function dropClearOwed(): void {
+  clearOwedThisRun = false
+  try {
+    unlinkSync(getSessionStateClearOwedFile())
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') logError(`[session-state] the note that a clear was owed could not be removed (a file saved after that clear is still loaded): ${(err as Error)?.message ?? err}`)
+  }
+}
+
+/** Whether the file on disk is still a set the user cleared. Only reads. */
+function clearStillOwed(): boolean {
+  const owed = readClearOwed()
+  return owed.owed && (owed.clearedAt === null || !savedAfter(owed.clearedAt))
+}
+
+/**
+ * The load's side of a clear still owed: retry the removal. True while the
+ * set is still on disk (the caller answers nothing). Never reads the set for
+ * the caller and never touches the read-failure latch.
+ */
+function settleOwedClear(): boolean {
+  const owed = readClearOwed()
+  if (!owed.owed) return false
+  if (owed.clearedAt !== null && savedAfter(owed.clearedAt)) {
+    dropClearOwed()
+    return false
+  }
+  const done = removeSavedCopies()
+  if (done.ok && done.bakRemoved) {
+    dropClearOwed()
+    logInfo('[session-state] a clear still owed is done: the cleared sessions are removed from disk')
+    return false
+  }
+  logError('[session-state] a clear is still owed (the cleared sessions are still on disk), so none are offered; the removal is tried again at the next load')
+  return true
+}
+
+/**
  * Atomic write for session-state.json, via the shared helper (#233). A crash
  * mid-write leaves the previous file intact, never a partially-written one.
  *
@@ -81,6 +181,8 @@ function atomicWriteSessionState(filePath: string, state: SessionState): void {
  */
 export function readDetachedRemotesRegistry(): DetachedRemote[] {
   try {
+    // A set the user cleared, still on disk (C-S1): as after the clear, no record.
+    if (clearStillOwed()) return []
     const file = getSessionStateFile()
     if (!existsSync(file)) return []
     const parsed = JSON.parse(readFileSync(file, 'utf-8')) as { detachedRemotes?: unknown } | null
@@ -134,6 +236,8 @@ export function saveSessionState(state: SessionState): boolean {
       }
     }
     logInfo(`[session-state] Saved ${state.sessions.length} sessions`)
+    // The saved state replaces a set the user cleared: no clear is owed (C-S1).
+    dropClearOwed()
     return true
   } catch (err) {
     console.error('[session-state] Failed to save:', err)
@@ -170,9 +274,13 @@ function parseSessionStateText(text: string): SessionState | null {
  * Load saved session state from disk. `null` means "no saved sessions" ONLY
  * when the file is absent or was unparseable-and-moved-aside; a read failure
  * also returns null (the caller's contract is unchanged) but sets the latch
- * that refuses the next save/clear.
+ * that refuses the next save/clear. While a clear is still owed (C-S1, above)
+ * it answers null as that clear would have, after trying the removal again,
+ * with the file unread and the latch untouched: the `session:load` path and
+ * the GitHub sidebar's reads alike.
  */
 export function loadSessionState(): SessionState | null {
+  if (settleOwedClear()) return null
   const file = getSessionStateFile()
   try {
     if (!existsSync(file)) {
@@ -255,23 +363,38 @@ export function loadSessionState(): SessionState | null {
 
 /** What a clear did: `ok`, the saved state is cleared; `bakRemoved`, no
  *  previous-good copy of it (the .bak) is left: false only when one was there
- *  and could not be removed (or the clear was refused or failed). */
+ *  and could not be removed (or the clear was refused or failed). `refused`
+ *  (PR 4 review C-Q1): the read-failure latch refused it, so nothing was
+ *  tried and no clear is owed: the file was never read, and it stays until a
+ *  load reads it. */
 export interface SessionStateCleared {
   ok: boolean
   bakRemoved: boolean
+  refused?: boolean
 }
 
 /**
  * Clear saved session state (called after successful restore). Refused while
  * the last load was a read failure -- never delete what could not be read.
  * Fixer 10 (ADR-009 C2): says whether the .bak was removed, so the caller
- * writes nothing in front of a copy of the set that is still there.
+ * writes nothing in front of a copy of the set that is still there. A clear
+ * that leaves a copy is still owed, remembered across a restart (C-S1); one
+ * that removes every copy ends any clear still owed.
  */
 export function clearSessionState(): SessionStateCleared {
   if (lastLoadFailed) {
     logError('[session-state] refusing to clear: the last load of session-state.json FAILED (not absent)')
-    return { ok: false, bakRemoved: false }
+    return { ok: false, bakRemoved: false, refused: true }
   }
+  const done = removeSavedCopies()
+  if (done.ok && done.bakRemoved) dropClearOwed()
+  else markClearOwed()
+  return done
+}
+
+/** Remove the saved file and then its .bak: what a clear does, and what a
+ *  clear still owed retries. The .bak is left when the file could not go. */
+function removeSavedCopies(): SessionStateCleared {
   try {
     const file = getSessionStateFile()
     if (existsSync(file)) {
@@ -311,6 +434,8 @@ export function hasSavedSessionState(): boolean {
   const restorable = (state: SessionState | null): boolean =>
     !!state && state.sessions.some((s) => !!s && typeof s === 'object')
   try {
+    // A set the user cleared, still on disk (C-S1), is nothing to restore.
+    if (clearStillOwed()) return false
     const file = getSessionStateFile()
     if (!existsSync(file)) return false
     const state = parseSessionStateText(readFileSync(file, 'utf-8'))

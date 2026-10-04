@@ -131,6 +131,48 @@ describe('cost over time: x-axis date labels', () => {
     expectReadable(labels())
   })
 
+  /** A ResizeObserver stand-in that keeps the live observers in `observers`. */
+  const fakeResizeObserver = () => {
+    ;(globalThis as any).ResizeObserver = class {
+      private readonly cb: () => void
+      constructor(cb: () => void) { this.cb = cb; observers.push(cb) }
+      observe() {}
+      unobserve() {}
+      disconnect() { observers = observers.filter((o) => o !== this.cb) }
+    }
+  }
+
+  // PR 4 review T-Q2: the size watch ends with the chart, and a chart whose
+  // data empties (the empty state has no frame to measure) and then returns
+  // is measured afresh, not drawn at the width it last had.
+  it('[host] stops watching its size when it unmounts', () => {
+    fakeResizeObserver()
+    fakeWidth = 900
+    render(days('2026-01-06', 30))
+    expect(observers).toHaveLength(1)
+    act(() => { root.unmount() })
+    expect(observers).toHaveLength(0)
+    root = createRoot(container)
+  })
+
+  it('[host] measures again when its data empties and comes back', () => {
+    fakeResizeObserver()
+    fakeWidth = 900
+    render(days('2026-01-06', 30))
+    expect(viewBox()[2]).toBe(900)
+    act(() => { root.render(createElement(CostOverTimeChart, { data: [] })) })
+    expect(container.querySelector('svg')).toBeNull()
+    expect(observers).toHaveLength(0)
+    fakeWidth = 400
+    act(() => { root.render(createElement(CostOverTimeChart, { data: days('2026-01-06', 30) })) })
+    expect(viewBox()[2]).toBe(400)
+    expect(observers).toHaveLength(1)
+    fakeWidth = 320
+    act(() => { for (const o of observers) o() })
+    expect(viewBox()[2]).toBe(320)
+    expectReadable(labels())
+  })
+
   it('[host] the drawing is never stretched: one SVG unit is one pixel at any width', () => {
     for (const w of [260, 460, 1200]) {
       fakeWidth = w

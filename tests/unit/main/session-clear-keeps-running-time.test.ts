@@ -96,7 +96,7 @@ const freshSet = (): SessionState =>
 
 describe('the durability core: a clear keeps main\'s running times (fixer 9 A1)', () => {
   type Times = Array<{ id: string; ms: number; until: number }>
-  type Cleared = { ok: boolean; bakRemoved: boolean }
+  type Cleared = { ok: boolean; bakRemoved: boolean; refused?: boolean }
   function core(times: () => Times, save: (s: SessionState) => boolean = () => true, clear?: () => Cleared) {
     const saveFn = vi.fn(save)
     const log = vi.fn()
@@ -119,9 +119,10 @@ describe('the durability core: a clear keeps main\'s running times (fixer 9 A1)'
 
   // Fixer 11 (ADR-009 lens D round 2, finding 4; pre-existing): the
   // session:clear path drops the cache whatever the clear did. A clear that
-  // failed (the file could not be removed) or was refused leaves a copy of
-  // the set on disk, so, as for a .bak left, nothing is written until the
-  // next save: before, the exit flush wrote the discarded set back.
+  // failed (the file could not be removed) leaves a copy of the set on disk,
+  // so, as for a .bak left, nothing is written until the next save: before,
+  // the exit flush wrote the discarded set back. (A clear the read-failure
+  // latch refused is its own case, below.)
   for (const [what, report] of [
     ['failed (the file could not be removed)', { ok: false, bakRemoved: false }],
     ['removed the file but not its .bak', { ok: true, bakRemoved: false }],
@@ -405,6 +406,62 @@ describe('the durability core: a clear keeps main\'s running times (fixer 9 A1)'
     d.saveEnriched(freshSet())
     expect(clear).toHaveBeenCalledTimes(1)
   })
+
+  // PR 4 review C-Q4: a retry that removes every copy inside a load keeps
+  // the running times at once, as a clear that succeeded does, rather than
+  // leaving them to the next exit flush.
+  it('[host] a retried clear that succeeds during a load keeps the running times then', () => {
+    const t: Times = [{ id: CONV, ms: 149_000, until: 1_000 }]
+    const clear = clearFailing(1)
+    const load = vi.fn((): SessionState | null => null)
+    const save = vi.fn((_s: SessionState) => true)
+    const d = createSessionDurability({
+      enrichDeps: { getExactResumeTarget: () => null, getLatestTranscriptPath: () => null, isExactBindSourceActive: () => true, resolveResumeTargetFromTranscript: () => null, getConversationRunningTimes: () => t },
+      save,
+      load,
+      clear,
+    })
+    d.saveEnriched(theSet())
+    d.clear()
+    save.mockClear()
+    expect(d.load()).toBeNull()
+    expect(clear).toHaveBeenCalledTimes(2)
+    expect(load).toHaveBeenCalledTimes(1)
+    expect(save).toHaveBeenCalledTimes(1)
+    expect(save.mock.calls[0][0]).toEqual({ sessions: [], activeSessionId: null, savedAt: expect.any(Number), conversationRunningTimes: t })
+  })
+
+  // PR 4 review C-Q1: a clear the read-failure latch refused never read the
+  // file, so it is not a clear a held file blocked. Nothing is retried, the
+  // load still reads the file (the read that resets the latch), and the
+  // discarded cache is still dropped.
+  it('[host] a clear refused by the read-failure latch arms no retry and leaves the load reading the file', () => {
+    const t: Times = [{ id: CONV, ms: 149_000, until: 1_000 }]
+    const clear = vi.fn((): Cleared => ({ ok: false, bakRemoved: false, refused: true }))
+    const load = vi.fn((): SessionState | null => theSet())
+    const save = vi.fn((_s: SessionState) => true)
+    const log = vi.fn()
+    const d = createSessionDurability({
+      enrichDeps: { getExactResumeTarget: () => null, getLatestTranscriptPath: () => null, isExactBindSourceActive: () => true, resolveResumeTargetFromTranscript: () => null, getConversationRunningTimes: () => t },
+      save,
+      load,
+      clear,
+      log,
+    })
+    d.saveEnriched(theSet())
+    save.mockClear()
+    expect(d.clear()).toBe(false)
+    expect(d.peek()).toBeNull()
+    d.flushOnExit('before-quit')
+    expect(save).not.toHaveBeenCalled()
+    expect(d.load()).toMatchObject({ sessions: [{ id: 's1' }] })
+    expect(load).toHaveBeenCalledTimes(1)
+    save.mockImplementation(() => false)
+    d.saveEnriched(freshSet())
+    d.flushOnExit('will-quit')
+    expect(clear).toHaveBeenCalledTimes(1)
+    expect(log.mock.calls.map((c) => String(c[0])).join('\n')).toMatch(/refused/)
+  })
 })
 
 describe('the VM repro as a round trip through the real session file (fixer 9 A1)', () => {
@@ -495,11 +552,14 @@ describe('the VM repro as a round trip through the real session file (fixer 9 A1
       fault.bakLocked = false
     }
     if (existsSync(file())) writeFileSync(file(), '{"sessions": [')
-    const { loaded } = nextRun()
-    expect(loaded?.sessions ?? []).toEqual([])
     // The copy is still there, behind no file: never read without one.
     expect(readFileSync(file() + '.bak', 'utf8')).toMatch(/Orchard/)
     expect(hasSavedSessionState()).toBe(false)
+    const { loaded } = nextRun()
+    expect(loaded?.sessions ?? []).toEqual([])
+    // PR 4 review C-S1: the clear is still owed at the next load, which
+    // removes the copy now that it is no longer held.
+    expect(existsSync(file() + '.bak')).toBe(false)
   })
 
   // Fixer 11 (ADR-009 lens D round 2, finding 2): any error but ENOENT on the
