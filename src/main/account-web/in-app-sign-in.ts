@@ -521,6 +521,10 @@ export interface ServiceSignInArgs {
   handle: SignInWindowHandle
   timeoutMs: number
   pollMs?: number
+  /** The email grace a service with an optional email would allow. A
+   *  descriptor-driven service requires the email, so this changes nothing;
+   *  a test sets it to 0 to prove completion still waits for the email. */
+  emailGraceMs?: number
   shouldCancel: () => boolean
 }
 
@@ -546,6 +550,7 @@ export async function runServiceSignIn(args: ServiceSignInArgs): Promise<Service
     partition: args.partition,
     timeoutMs: args.timeoutMs,
     pollMs: args.pollMs,
+    emailGraceMs: args.emailGraceMs,
     shouldCancel: args.shouldCancel,
     handle: args.handle,
   })

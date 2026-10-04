@@ -334,9 +334,12 @@ describe('[host] the sign-in window', () => {
   it('the session cookie WITHOUT an email never completes (no grace for this service)', async () => {
     jars[PART] = SIGNED_IN_JAR
     page.identity = { user: {} }
-    const res = await runServiceSignIn(RUN({ timeoutMs: 80 }))
+    // Even with no grace at all, the run keeps waiting for the email and then
+    // times out: it neither completes nor gives up early on an email-less session.
+    const res = await runServiceSignIn(RUN({ timeoutMs: 80, emailGraceMs: 0 }))
     expect(res.ok).toBe(false)
     expect(res.error).toMatch(/Timed out/)
+    expect(created[0].destroyed).toBe(true)
   })
 
   it('an identity read off chatgpt.com never counts (the page is elsewhere)', async () => {
