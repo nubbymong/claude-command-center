@@ -18,6 +18,10 @@
 import type { DiscoveryResult } from '../core'
 import type { Compatibility } from '../../../shared/providers'
 import { claudeManagedCliCompatibility } from './managed-launch'
+import { windowsPathHasTrailingDotOrSpace } from '../windows-path-names'
+
+/** Why a Windows path with a dot- or space-ended name is not proved (windowsPathHasTrailingDotOrSpace). */
+const DOT_SPACE_DETAIL = 'the Claude Code CLI is at a path with a name ending in a dot or a space, which this app does not run'
 
 export interface ClaudeExecutableIdentity {
   /** Canonical absolute path. */
@@ -88,6 +92,9 @@ export async function discoverClaude(deps: ClaudeDiscoveryDeps): Promise<ClaudeD
   } catch {
     return { ...base, state: 'invalid', detail: 'the Claude Code CLI could not be read' }
   }
+  // What Windows runs for such a name can be another file than the one read
+  // here: never proved, and nothing is run (WP2 PR 4 review, ADR-009 L3).
+  if (deps.platform === 'win32' && windowsPathHasTrailingDotOrSpace(canonical)) return { ...base, state: 'invalid', detail: DOT_SPACE_DETAIL }
   if (!st.isFile) return { ...base, state: 'invalid', detail: 'the Claude Code CLI is not a file' }
   const identity = identityOf(canonical, st)
   let run: ClaudeVersionRun | { refused: string }
@@ -135,6 +142,7 @@ export async function verifyClaudeExecutable(recorded: ClaudeExecutableIdentity,
   } catch {
     return { ok: false, reason: 'missing', detail: 'the Claude Code CLI can no longer be read' }
   }
+  if (deps.platform === 'win32' && windowsPathHasTrailingDotOrSpace(canonical)) return { ok: false, reason: 'moved', detail: DOT_SPACE_DETAIL }
   const same = deps.platform === 'win32' ? canonical.toLowerCase() === recorded.path.toLowerCase() : canonical === recorded.path
   if (!same) return { ok: false, reason: 'moved', detail: 'a different Claude Code CLI is found now than the one that was checked' }
   if (!st.isFile || !sameIdentity(identityOf(canonical, st), recorded)) return { ok: false, reason: 'replaced', detail: 'the Claude Code CLI was replaced since it was checked' }

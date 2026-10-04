@@ -27,6 +27,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { logInfo, logWarn } from './debug-logger'
 import { probeClaudeCli, type ClaudeCliProbe } from './claude-cli-probe'
+import { windowsFolderAsRun } from './providers/windows-path-names'
 
 /** Extract the semver from `claude --version` output ("2.1.278 (Claude Code)").
  *  Exported for the test: the shape of that line is the CLI's to change. */
@@ -98,8 +99,10 @@ function isWindowsAbsolute(p: string | undefined): p is string {
  *  could not safely run from: the current directory, relative, drive-relative,
  *  unexpanded (`%VAR%`) and device-namespace entries. So the two can differ
  *  there, for a `.bat`, and for a non-ASCII install path, which the launch's
- *  own `where` still mangles (a recorded follow-up). A trailing dot or space is
- *  dropped from an entry, as Windows path normalisation does.
+ *  own `where` still mangles (a recorded follow-up). Each folder of an entry
+ *  is named as Windows names it when it starts the program (windowsFolderAsRun:
+ *  a name ending in one dot loses it, anywhere in the entry), so the walk reads
+ *  the folder a terminal runs from (WP2 PR 4 review, ADR-009 L3).
  *
  *  ASYNC, one stat at a time: a PATH entry on a dead network share can hold a
  *  stat for tens of seconds, which must not be the main process's event loop;
@@ -112,9 +115,10 @@ export async function findClaudeOnWindowsPath(
   statFile: (p: string) => Promise<'file' | 'none' | 'unreachable'>,
 ): Promise<string | null> {
   const dirs = (pathVar ?? '').split(';')
-    // Only after a real name character: `C:\a\..` is the parent, not `C:\a\`.
-    .map((d) => d.trim().replace(/^"(.*)"$/, '$1').replace(/([^\\/.])[. ]+$/, '$1'))
+    .map((d) => d.trim().replace(/^"(.*)"$/, '$1').trim())
     .filter((d) => d !== '' && !d.includes('%') && isWindowsAbsolute(d))
+    // `.` and `..` steps stay (path.win32.join folds them: `C:\a\..` is the parent).
+    .map((d) => windowsFolderAsRun(d))
   const unreachable = new Set<string>()
   for (const name of ['claude.exe', 'claude.cmd', 'claude.bat']) {
     for (const dir of dirs) {
