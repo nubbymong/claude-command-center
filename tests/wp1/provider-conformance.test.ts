@@ -83,8 +83,9 @@ describe.each(cases)('provider conformance: $id', ({ id, create, descriptor, amb
   // supports every WP1-required key; a bare factory table never can, so a
   // candidate that judged it could never pass. WP2 PR 4 (owner answers
   // 2026-10-04): the Claude adapter's discovery, sign-in status and sign-out
-  // are completed, so neither provider has a gap; Claude's sign-out is
-  // unsupported on macOS only, a recorded platform limitation (D2).
+  // are completed, so neither provider has a gap, and no WP1-required key is
+  // switched off on any platform (the review fix pass: Claude's macOS sign-out
+  // runs on the Mac's one sign-in, with the user's acknowledgement).
   it('main package as the composition root registers it: its declaration supports every WP1-required capability', () => {
     const judged = judgedPackage(id)
     expect(packageRegistrationProblem(judged)).toBeNull()
@@ -94,7 +95,7 @@ describe.each(cases)('provider conformance: $id', ({ id, create, descriptor, amb
     for (const k of WP1_REQUIRED_CAPABILITIES) {
       const overrides = judged.capabilities[k].platformOverrides ?? {}
       const off = (Object.entries(overrides) as Array<[string, string]>).filter(([, s]) => s !== 'supported').map(([p]) => `${k}:${p}`)
-      expect(off, `${id}: WP1-required keys switched off on a platform`).toEqual(id === 'claude' && k === 'auth.logout' ? ['auth.logout:darwin'] : [])
+      expect(off, `${id}: WP1-required keys switched off on a platform`).toEqual([])
     }
   })
 

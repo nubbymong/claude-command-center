@@ -113,9 +113,8 @@ export interface ProviderSpawnCommand {
    *  SpawnOptions.codexHooks). */
   hooksInstalled?: boolean
   /** Codex (WP2 PR 4, P4.1): the launch line as the app's log may hold it,
-   *  built by the builder, which knows the long or private values (the
-   *  developer instructions) and names them by length. Absent: main logs no
-   *  argument. */
+   *  built by the builder, which knows which values are long or private and
+   *  names them by length. Absent: main logs no argument. */
   logLine?: string
   /** Codex (WP2 PR 4, P4.3): the launch carries `askPrompt` as its prompt on
    *  argv, after `--` (the direct route's fresh launch, PB4). Otherwise main
@@ -258,9 +257,10 @@ export interface SessionProvider {
    *  started here. */
   prepareSessionHooks?(sessionId: string, port: number, secret: string): { hookFile: string; dispose(): void } | null
   /** Optional -- Codex (P4.1): the skills folder of the provider home a
-   *  launch runs in when the app may stage its skills there (a managed
-   *  account's own folder, by path), else null: the user's own home is never
-   *  written. Path arithmetic only. */
+   *  launch runs in when the app stages its skills there per launch (a
+   *  managed account's own folder, by path), else null (this computer's own
+   *  sign-in, whose copies the app keeps through its own record instead,
+   *  src/main/canvas/codex-user-skills.ts). Path arithmetic only. */
   stagedSkillsDir?(home: string, resourcesDir: string): string | null
   /** Optional -- Codex (P4.1, PB9): main's own reading of each run's screen
    *  and the submit primitive that types into its composer. */
@@ -351,11 +351,22 @@ export interface SshCapableProvider extends SessionProvider {
   /** The last line of `data`, escapes stripped, as a shell-prompt candidate;
    *  '' when it is too long to be one or is the provider's own composer. */
   lastPromptLine(data: string): string
+  /** SessionProvider.detectUiRunning with `commandSent` REQUIRED on the SSH
+   *  surface: before the launch command is written only the strict reading
+   *  applies, so a remote shell prompt that draws the composer glyph or box
+   *  characters is never read as the UI. A call that drops the argument does
+   *  not compile here (WP2 PR 4 review, A1-Q1). */
+  detectUiRunning(data: string, commandSent: boolean): boolean
   /** Whether the end of `data` is a bare shell prompt (the CLI has exited). */
   looksLikeShellPromptTail(data: string): boolean
 }
 
-/** Type guard. */
+/** Type guard. It tells the one SSH-capable provider (Claude) apart from the
+ *  rest by three members only that provider has; it does not vouch for the
+ *  others. Every member is enforced at compile time on the class that
+ *  implements SshCapableProvider (ClaudeProvider), and a registered package's
+ *  session surface is that class; test fakes that drive only the spawn branch
+ *  carry these three. */
 export function isSshCapable(p: SessionProvider): p is SshCapableProvider {
   return 'getSshSettingsPath' in p && 'getSshMcpConfigPath' in p && 'configureRemoteSettings' in p
 }

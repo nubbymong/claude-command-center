@@ -74,6 +74,10 @@ export function createClaudeReviewLaunch(ports: ClaudeReviewPorts): {
   setup: ProviderSetupOperations
   launch: ProviderLaunchOperations
   review: ProviderReviewOperations
+  /** The executable a run starts: the file discovery last proved, checked
+   *  again now (see currentExecutable). The package hands it to its sign-in
+   *  status and sign-out (WP2 PR 4); it is not a package member. */
+  executable(): Promise<{ ok: true; executable: string } | Refusal>
 } {
   const platform = ports.platform ?? process.platform
   const files = ports.fileStat ?? realFileStat()
@@ -133,6 +137,7 @@ export function createClaudeReviewLaunch(ports: ClaudeReviewPorts): {
   }
 
   return {
+    executable: currentExecutable,
     // Nothing to install through the app yet: the capability stays unknown.
     setup: { discover, installRecipes: () => [] },
     launch: {

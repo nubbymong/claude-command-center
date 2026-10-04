@@ -36,7 +36,7 @@ import {
   beginAccountReauth, rebindAccountRealm, releaseReauthAsSetup, settleSupersededRealm, decideReauth, unsettledSupersededRealms, reauthJournalOf,
   earlierManagedRealms,
   resolveCapability, makeOpaqueId, providerRealmKind, isIdentityColourKey,
-  MANAGED_PATH_REF_PREFIX, EXTERNAL_DEFAULT_PATH_REF, SIGN_IN_METHODS, SIGN_IN_CAPABILITY, providerOffMessage, providerStateUnknownMessage,
+  MANAGED_PATH_REF_PREFIX, CLAUDE_PROFILE_PATH_REF_PREFIX, EXTERNAL_DEFAULT_PATH_REF, SIGN_IN_METHODS, SIGN_IN_CAPABILITY, providerOffMessage, providerStateUnknownMessage,
   providerNotSetUpMessage,
 } from '../../../shared/providers'
 import type {
@@ -45,7 +45,7 @@ import type {
   AccountsFailureCode, AccountsResult, AccountView, ProviderInstallationView, CapabilityView, PendingSetupView, ExternalDefaultView,
   SetupIdentityChoice, IdentityPatch, RegistryModeView, InstallRecipeView, CredentialClass,
   ResolveConflictRequest, SetReviewerDefaultRequest, ReviewerChoice, ReviewRefusalView, ReviewReadinessView, ProviderLaunchRefusal,
-  ProviderAccountUsageView, ProviderUsageStreamResult, AuthRealm, SignInAgainResult, SignInPhase,
+  ProviderAccountUsageView, ProviderUsageStreamResult, AuthRealm, SignInAgainResult, SignInPhase, ProviderAccount,
 } from '../../../shared/providers'
 import type { ProviderPackage, DiscoveryResult, AuthCredentialKind, AuthOperationResult, AuthLoginInput, InstallRecipe, ExternalDefaultRealmSpec, RealmRef, UsageReading, UsageReadOutcome, ModelCatalogueResult, ProviderAccountFolders } from './package'
 import type { AccountRegistryStore, StoreResult } from './account-registry-store'
@@ -277,6 +277,17 @@ const EXTERNAL_IDENTITY_COLOUR = 'slate-blue'
 /** Refusals a sign-out gives before its CLI could run: they say nothing
  *  about the realm, which is as it was. */
 const SIGN_OUT_NOT_RUN: ReadonlySet<string> = new Set(['realm-unavailable', 'external-overlap', 'cli-unavailable', 'realm-env-file', 'busy', 'external-ack-required', 'not-started'])
+
+/** A legacy record, live or archived: linked to its provider's own store now,
+ *  or on a home only a legacy record can own (a Claude profile's). The
+ *  registry's own rule (isLegacyRecord, shared/providers/registry.ts), which
+ *  it keeps module-private; restated here from the same two facts. Nothing
+ *  signs such an account out or checks it on the service's own initiative. */
+function legacyRecordOf(doc: ProviderRegistryDoc, account: ProviderAccount): boolean {
+  if (isLegacyLinked(doc, account.id)) return true
+  const ref = findRealm(doc, account.authRealmId)?.pathRef
+  return typeof ref === 'string' && ref.startsWith(CLAUDE_PROFILE_PATH_REF_PREFIX)
+}
 
 /** What a sign-out left, to record: the state it read back; else, once it
  *  may have run, unknown (the account needs a check before it is trusted
@@ -1446,7 +1457,11 @@ export class AccountsService {
   private async settleOldSignIns(store: AccountRegistryStore, p: ProviderPackage, accountId: string, opts: { revalidate: boolean; archiving?: boolean }): Promise<void> {
     if (!p.auth) return
     const doc = store.current()
-    const old = doc ? unsettledSupersededRealms(doc, accountId) : []
+    // A legacy record signs in where it was created: nothing of it is
+    // settled automatically (WP2 PR 4 review, U2.1).
+    const self = doc ? findAccount(doc, accountId) : undefined
+    if (!doc || !self || legacyRecordOf(doc, self)) return
+    const old = unsettledSupersededRealms(doc, accountId)
     if (old.length === 0) return
     const rules = old.map((r) => this.oldSignInRule(p, r, opts.archiving === true))
     if (rules.includes('removable')) await this.ensureDiscovered(p)
@@ -1716,7 +1731,7 @@ export class AccountsService {
   // Accounts (5.3, 11)
   // -------------------------------------------------------------------------
 
-  private accountContext(accountId: string): { store: AccountRegistryStore; doc: ProviderRegistryDoc; p: ProviderPackage | null; external: boolean; legacy: boolean; realmActive: boolean } | AccountsFailure {
+  private accountContext(accountId: string): { store: AccountRegistryStore; doc: ProviderRegistryDoc; p: ProviderPackage | null; external: boolean; legacy: boolean; legacyRecord: boolean; realmActive: boolean } | AccountsFailure {
     const ready = this.ready()
     if ('ok' in ready) return ready
     const a = findAccount(ready.doc, accountId)
@@ -1724,6 +1739,7 @@ export class AccountsService {
     const realm = findRealm(ready.doc, a.authRealmId)
     return {
       ...ready, p: this.pkg(a.providerId), external: realm?.ownership === 'external-default', legacy: isLegacyLinked(ready.doc, accountId),
+      legacyRecord: legacyRecordOf(ready.doc, a),
       realmActive: realm?.lifecycle === 'active' && realm.ownerProviderAccountId === accountId,
     }
   }
@@ -1902,8 +1918,17 @@ export class AccountsService {
         if (changed) return changed
       }
       await this.ensureDiscovered(p)
-      const out = await p.auth!.logout({ authRealmId: a.authRealmId }, ctx.external ? { acknowledgeExternalRealm: true } : {})
+      // The user's acknowledgement goes with the sign-out whenever it was
+      // given (always, for an external home, by the check above): a provider
+      // may hold another account's realm to be this computer's own sign-in
+      // too (a Claude primary profile, and every Claude profile on macOS) and
+      // run its sign-out only with it (WP2 PR 4 review, A2-S1).
+      const acknowledged = input.acknowledgeExternal === true
+      const out = await p.auth!.logout({ authRealmId: a.authRealmId }, acknowledged ? { acknowledgeExternalRealm: true } : {})
         .catch((): AuthOperationResult => ({ ok: false, code: 'not-started' }))
+      if (!out.ok && out.code === 'external-ack-required' && !acknowledged) {
+        return failure('acknowledgement-required', typeof out.message === 'string' && out.message ? out.message : undefined)
+      }
       // What the sign-out left, as far as it is known: a sign-out that may
       // have run but whose result was not read back is not evidence of
       // either state, so the account needs a check (review round 2, L2-1).
@@ -1993,14 +2018,19 @@ export class AccountsService {
       // Re-activation checks the sign-in first (11): a signed-out account
       // comes back needing attention, never as ready -- so a check that
       // cannot run (capability off, provider off) refuses it.
-      if (ctx.p?.auth && !ctx.legacy && a.lifecycle === 'inactive') {
+      // A legacy record (a Claude profile, linked or not) comes back as its
+      // own store says, with no check run on its behalf (WP2 PR 4 review, U2.1).
+      if (ctx.p?.auth && !ctx.legacyRecord && a.lifecycle === 'inactive') {
         const checked = await this.refreshStatus({ accountId: a.id })
         if (!checked.ok) return checked
       }
       return apply()
     }
     if (next === 'archived') {
-      if (ctx.legacy) return apply() // the registry refuses: removed where it was created
+      // A legacy record, linked or not, is never signed out or checked here:
+      // the registry refuses it (removed where it was created) before anything
+      // runs (WP2 PR 4 review, U2.1).
+      if (ctx.legacyRecord) return apply()
       if (ctx.external) {
         // Credentials stay under the other client's control: say so first.
         if (input.acknowledgeExternal !== true) return failure('acknowledgement-required', 'Archiving only forgets this sign-in here; it stays signed in for other apps. Confirm to continue.')
