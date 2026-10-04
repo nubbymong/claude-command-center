@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "e186425e1740f526ae168f47e4a500af0c80773362730bd04126ed90482a41c4",
-  "manifestHead": "d5ddbb2a809eeae7319f3d12877c71349cdeab0c",
+  "manifestPathDigest": "315e26c48e741e5f858b0210d0d8c0b645233704501d244cb816bc83ac859a4e",
+  "manifestHead": "dd23a3bf6de948f9cf0b3ae1dc015deb9afb52f8",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -555,6 +555,26 @@
       "note": ""
     },
     {
+      "path": "src/main/account-web/account-email-read.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "replace",
+      "evidence": "WP2 PR 4 P4.6 second half (row 58; 10fab972): the identity read per service; for a Codex account's chatgpt.com it is origin-gated inside the expression, runs in an isolated world, is fetched uncached and returns ONLY the email (a token in the same answer never crosses into the main process); Claude's claude.ai read unchanged (WP1.68); tests/unit/codex-web-sign-in.test.ts",
+      "note": "newly names Codex in WP2 PR 4 P4.6"
+    },
+    {
+      "path": "src/main/account-web/account-pane.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "replace",
+      "evidence": "WP2 PR 4 P4.6 second half (row 58; 10fab972, 1aac6bf8): the pane's account surface also hosts a Codex account's chatgpt.com view on its own partition; signed out it may go off-site only to the listed sign-in hosts (never any https host), signed in off-site goes to the real browser, unknown blocks; a record is made only with a valid email; Claude's claude.ai surface unchanged (WP1.68); tests/unit/codex-web-pane.test.ts, tests/unit/account-web-pane-view.test.ts",
+      "note": "newly names Codex in WP2 PR 4 P4.6"
+    },
+    {
       "path": "src/main/account-web/claude-cli-auth.ts",
       "predicates": [
         "P14"
@@ -563,6 +583,59 @@
       "disposition": "retain",
       "evidence": "comment-level mention only, no Codex code path; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md) (WP1.33); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the status shape gains notChecked (Claude Code only), set when the CLI is not asked because Claude Code is off; tests/unit/main/probes-provider-off.test.ts; WP2 PR 4 owner answers review fix pass (0d3a9ee1, b85c0f9b): a sign-out of this computer's own sign-in (the primary profile, every profile on macOS) runs only when acknowledged; the sign-out and the provider-neutral status run the executable discovery proved, with no shell, through an injected runner that ends the whole tree at its time limit; the identity copy is removed after a sign-out that ran; probes wait for a sign-out in flight; macOS probes keep the real home (WP1.33); tests/unit/claude-cli-logout.test.ts, tests/unit/claude-cli-auth-read.test.ts, tests/unit/providers/claude-cli-auth-runner.test.ts; WP2 PR 4 follow-up (cb6d06fa): the sign-in check and the sign-out build their environment in one withProfileHome expression with the context named in place, the home variable set off macOS on the same line, behaviour unchanged (WP1.33); tests/wp1/managed-launch.test.ts, tests/unit/claude-cli-logout.test.ts; WP2 PR 4 owner answers review round 2 (5b946c82, ba346a93; this narrows the earlier identity-copy clause): only a sign-out that ran to its end removes the identity copy; a refused project gate and a failed hardening are refusals of their own; the acknowledgement's primary rule is the token sync's (WP1.33); tests/unit/claude-cli-logout.test.ts; WP2 PR 4 (f03d1d3a): the sign-out and status tests follow each platform's sign-in model; no source change (WP1.33); tests/unit/claude-cli-logout.test.ts, tests/unit/claude-cli-auth-read.test.ts",
       "note": "Claude-only; mentions Codex in a comment (corrected in WP2 commit 6g: Codex sign-in is judged by `codex login status`, never by reading the credential file)"
+    },
+    {
+      "path": "src/main/account-web/codex-web-session.ts",
+      "predicates": [
+        "P01",
+        "P05",
+        "P14"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "added",
+      "evidence": "new WP2 PR 4 P4.6 second half (row 58; 10fab972): a Codex account's chatgpt.com sign-in run (fail-closed: the named session cookie AND a valid email), the partition wiped on any run that does not complete, a scoped cancel, its own window handle, one sign-in at a time across services, the clear (a failed wipe throws) and the archive hook (WP1.68); tests/unit/codex-web-sign-in.test.ts",
+      "note": "created by WP2 PR 4 (P4.6)"
+    },
+    {
+      "path": "src/main/account-web/codex-web-store.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "added",
+      "evidence": "new WP2 PR 4 P4.6 second half (row 58; 10fab972): the metadata record of a Codex account's chatgpt.com session in codex-web-sessions.json (account id, email, times, origin only; never a cookie or token; malformed records refused and dropped) (WP1.68); tests/unit/codex-web-pane.test.ts",
+      "note": "created by WP2 PR 4 (P4.6)"
+    },
+    {
+      "path": "src/main/account-web/in-app-sign-in.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "replace",
+      "evidence": "WP2 PR 4 P4.6 second half (row 58; 10fab972, c5d941f7): one poll loop with two policies; the descriptor-driven chatgpt.com window lets the main frame reach chatgpt.com and the listed sign-in hosts only, completes on the named cookie AND a valid email (re-checked, then cancel), logs cookie names and off-site hosts only when it does not complete, and each run owns its window handle; Claude's claude.ai window unchanged (WP1.68); tests/unit/codex-web-sign-in.test.ts, tests/unit/account-web-in-app-sign-in.test.ts",
+      "note": "newly names Codex in WP2 PR 4 P4.6"
+    },
+    {
+      "path": "src/main/account-web/sign-in-flight.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "added",
+      "evidence": "new WP2 PR 4 P4.6 second half (row 58; 10fab972): one web sign-in at a time across Claude's claude.ai sign-in and a Codex account's chatgpt.com sign-in; a probe that throws counts as in flight (WP1.68); tests/unit/codex-web-flight.test.ts, tests/unit/codex-web-sign-in.test.ts",
+      "note": "created by WP2 PR 4 (P4.6)"
+    },
+    {
+      "path": "src/main/account-web/sign-in.ts",
+      "predicates": [
+        "P14"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "replace",
+      "evidence": "WP2 PR 4 P4.6 second half (row 58; 10fab972): Claude's claude.ai sign-in joins the cross-service single flight (refused while a Codex chatgpt.com sign-in runs); its flow is otherwise unchanged (WP1.68); tests/unit/codex-web-flight.test.ts, tests/unit/account-web-sign-in.test.ts",
+      "note": "newly names Codex in WP2 PR 4 P4.6"
     },
     {
       "path": "src/main/app-session-durability.ts",
@@ -925,7 +998,7 @@
       ],
       "category": "LAUNCH",
       "disposition": "replace",
-      "evidence": "composition-root rule tests/wp1/dependency-boundaries.test.ts (WP1.66); boot-wiring suites in docs/wp1/baseline-test-inventory.json stay green (WP1.33); WP2 commit 6g: registerCodexHandlers and its import removed with the codex:* IPC (tests/wp1/legacy-codex-retired.test.ts, WP1.57); WP2 commit 6g round 1: discovers each switched-on provider's CLI once at start, after the account start-up work, in the background (WP1.17; tests/wp1/cli-discovery.test.ts); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the switch-off rule counts provider-in-use.ts and the version probe is handed the launch rule; tests/unit/main/provider-in-use.test.ts; WP2 final fixes: a settings save tells the accounts service in its own try (a failing watchdog update never skips it), and that call looks for the CLI of a provider the save turned on (WP1.17, WP1.60); tests/unit/main/settings-saved-accounts-wiring.test.ts, tests/wp1/cli-discovery.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): the Claude usage gate (D5) is wired to the launch rule before the usage handlers register (WP1.60 enable/disable); tests/unit/account-usage-provider-off.test.ts; WP2 P3 usage track MP3 round-1 review fixes: the usage gate wiring and its order before registerAccountProfilesHandlers are pinned (WP1.60 enable/disable); tests/unit/main/provider-off-startup-wiring.test.ts; WP2 P3 usage track MP4 review fixes: the Claude usage gate is renamed setClaudeAccountDataAllowed, since it gates the credential state as well (WP1.60 enable/disable); tests/unit/main/provider-off-startup-wiring.test.ts; WP2 P3 usage track MP7 round-1 review fixes (the scoped WP1.41 exception; ADR-022): the quit teardown stops fresh usage reads before the pending CLI kill flush (WP1.41); tests/unit/main/window-ipc-registered-once.test.ts; WP2 P3 usage track MP10 (owner decision 2026-09-26, Q1.4: Claude attributed from the session id and the profile recorded at launch, from now on; no manual attribution): the attribution composed beside the transcript binder, fed by both transcript-path sources, logging on or off (WP1.2); tests/unit/main/tokenomics-attribution.test.ts; WP2 P3 usage track MP10 round 1 (review fix: the transcript path decides the account): the attribution is composed from the reporting session being local, the profiles root and the profile id check (WP1.2); tests/unit/main/tokenomics-attribution.test.ts; WP2 P3 usage track MP10 round 1 (spec blocker): the profile layout comes from where profile homes are built (getProfileConfigDir, then .claude/projects), the profiles root is also matched through its real path, and the linked account is found without case on Windows (WP1.2); tests/unit/main/tokenomics-attribution.test.ts; WP2 PR 3 P3.4 (parity row 45): the status poller runs on providerOnNow and is refreshed on a settings save; serviceStatus:get is registered by the poller with the app-window sender check (WP1.2); tests/unit/main/service-status-providers.test.ts; WP2 PR 3 P3.4 ADR-009 pass (lens G): the status poller is given the accounts service's change subscription (WP1.2); tests/unit/main/provider-on-now.test.ts, tests/unit/main/provider-off-startup-wiring.test.ts (the call in index.ts, from fixer 9); WP2 PR 3 P3.5 (row 34): session:save stamps a Codex session with the conversation main keeps for it (WP1.38); tests/unit/main/session-resume-enrich.test.ts; WP2 PR 3 P3.10: a Codex session's hook transcript path goes to its own watch (never Claude's binder), attention knows which sessions are Codex's, and the Watchdog gets the raw PTY writer for a Codex retry (WP1.66); tests/unit/main/pty-codex-hooks.test.ts, tests/unit/main/attention-source-codex.test.ts; WP2 PR 3 P3.10 round 1 (ADR-009 pass 1, spec, quality and VM findings) (WP1.68): a Codex SessionStart hook routed to the refute rule, and the transcript route through pty-manager (B4, B5); the owner-only folder rule handed to the Codex deploy (A5, V3); tests/unit/main/pty-codex-hooks.test.ts; WP2 PR 3 P3.10 rounds 3b and 4 (the hook wrapper and the picker resolve their helpers from fixed locations; the hook folders prepared asynchronously and read back; approval pairing; the Watchdog episode) (WP1.68): the Codex hook folders are wired to be prepared only while Codex is on (codex-hook-folders.ts, owner-only-folders.ts), and again on a settings save; tests/unit/main/codex-hook-folders.test.ts; WP2 PR 3 P3.12 (rows 31, 32, 65; logs and GitHub context; parity) (WP1.68): hands the GitHub handlers the Codex session rollout record; tests/unit/github/codex-rollout-loader.test.ts; WP2 PR 3 fixers 10 and 11 (ADR-009 C2, ADR-009 lens D round 2 finding 4, row 36): session:clear hands the durability core whether the .bak was removed (fixer 10), then (fixer 11) is the core's clear, which drops the cache whatever the clear did (WP1.38); tests/unit/main/session-clear-keeps-running-time.test.ts; WP2 PR 4 P4.4: the account log-folder channels and the memory channels wired to the accounts service and the app window (WP1.68); tests/unit/main/account-log-folders.test.ts, tests/unit/main/memory-account-ipc.test.ts; WP2 PR 4 P4.1 (row 51; 7e83f08a): a Codex session's canvas marker goes through the submit primitive (writeCanvasMarkerLine), and one not delivered is shown on the canvas page; P4.5 (row 57; fac6afb9): at quit a running Codex cloud agent is stopped before the CLI kill flush, which ends its whole tree (comment, integration round 2); P4.6 (row 58; 7c20c204): the dev start's orphan-partition warning covers both web-session prefixes (WP1.68); tests/unit/main/canvas-marker-codex-delivery.test.ts, tests/unit/main/quit-order-agent-runs.test.ts, tests/unit/account-web-codex-session.test.ts; WP2 PR 4 P4.5 re-review (RCEF-1): on macOS and Linux the quit flush ending the whole tree is VM-pending (a quit during a long model command, then the process table), and the quit comment in cli-runner.ts is conditional until it runs (WP1.68); tests/unit/main/quit-order-agent-runs.test.ts; WP2 PR 4 owner answers (2026-10-04) (integration round 3, lane B's patch): the copies in this computer's own Codex skills folder are reconciled once after first paint, at every settings save and at every accounts-service change; unreadable settings do nothing (WP1.68); tests/unit/main/codex-user-skills.test.ts; WP2 PR 4 follow-up (871b6d59): the GitHub sidebar reads sessions through peekSessionState, which leaves the read-failure latch alone (WP1.38); tests/unit/main/session-clear-owed-restart.test.ts",
+      "evidence": "composition-root rule tests/wp1/dependency-boundaries.test.ts (WP1.66); boot-wiring suites in docs/wp1/baseline-test-inventory.json stay green (WP1.33); WP2 commit 6g: registerCodexHandlers and its import removed with the codex:* IPC (tests/wp1/legacy-codex-retired.test.ts, WP1.57); WP2 commit 6g round 1: discovers each switched-on provider's CLI once at start, after the account start-up work, in the background (WP1.17; tests/wp1/cli-discovery.test.ts); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the switch-off rule counts provider-in-use.ts and the version probe is handed the launch rule; tests/unit/main/provider-in-use.test.ts; WP2 final fixes: a settings save tells the accounts service in its own try (a failing watchdog update never skips it), and that call looks for the CLI of a provider the save turned on (WP1.17, WP1.60); tests/unit/main/settings-saved-accounts-wiring.test.ts, tests/wp1/cli-discovery.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): the Claude usage gate (D5) is wired to the launch rule before the usage handlers register (WP1.60 enable/disable); tests/unit/account-usage-provider-off.test.ts; WP2 P3 usage track MP3 round-1 review fixes: the usage gate wiring and its order before registerAccountProfilesHandlers are pinned (WP1.60 enable/disable); tests/unit/main/provider-off-startup-wiring.test.ts; WP2 P3 usage track MP4 review fixes: the Claude usage gate is renamed setClaudeAccountDataAllowed, since it gates the credential state as well (WP1.60 enable/disable); tests/unit/main/provider-off-startup-wiring.test.ts; WP2 P3 usage track MP7 round-1 review fixes (the scoped WP1.41 exception; ADR-022): the quit teardown stops fresh usage reads before the pending CLI kill flush (WP1.41); tests/unit/main/window-ipc-registered-once.test.ts; WP2 P3 usage track MP10 (owner decision 2026-09-26, Q1.4: Claude attributed from the session id and the profile recorded at launch, from now on; no manual attribution): the attribution composed beside the transcript binder, fed by both transcript-path sources, logging on or off (WP1.2); tests/unit/main/tokenomics-attribution.test.ts; WP2 P3 usage track MP10 round 1 (review fix: the transcript path decides the account): the attribution is composed from the reporting session being local, the profiles root and the profile id check (WP1.2); tests/unit/main/tokenomics-attribution.test.ts; WP2 P3 usage track MP10 round 1 (spec blocker): the profile layout comes from where profile homes are built (getProfileConfigDir, then .claude/projects), the profiles root is also matched through its real path, and the linked account is found without case on Windows (WP1.2); tests/unit/main/tokenomics-attribution.test.ts; WP2 PR 3 P3.4 (parity row 45): the status poller runs on providerOnNow and is refreshed on a settings save; serviceStatus:get is registered by the poller with the app-window sender check (WP1.2); tests/unit/main/service-status-providers.test.ts; WP2 PR 3 P3.4 ADR-009 pass (lens G): the status poller is given the accounts service's change subscription (WP1.2); tests/unit/main/provider-on-now.test.ts, tests/unit/main/provider-off-startup-wiring.test.ts (the call in index.ts, from fixer 9); WP2 PR 3 P3.5 (row 34): session:save stamps a Codex session with the conversation main keeps for it (WP1.38); tests/unit/main/session-resume-enrich.test.ts; WP2 PR 3 P3.10: a Codex session's hook transcript path goes to its own watch (never Claude's binder), attention knows which sessions are Codex's, and the Watchdog gets the raw PTY writer for a Codex retry (WP1.66); tests/unit/main/pty-codex-hooks.test.ts, tests/unit/main/attention-source-codex.test.ts; WP2 PR 3 P3.10 round 1 (ADR-009 pass 1, spec, quality and VM findings) (WP1.68): a Codex SessionStart hook routed to the refute rule, and the transcript route through pty-manager (B4, B5); the owner-only folder rule handed to the Codex deploy (A5, V3); tests/unit/main/pty-codex-hooks.test.ts; WP2 PR 3 P3.10 rounds 3b and 4 (the hook wrapper and the picker resolve their helpers from fixed locations; the hook folders prepared asynchronously and read back; approval pairing; the Watchdog episode) (WP1.68): the Codex hook folders are wired to be prepared only while Codex is on (codex-hook-folders.ts, owner-only-folders.ts), and again on a settings save; tests/unit/main/codex-hook-folders.test.ts; WP2 PR 3 P3.12 (rows 31, 32, 65; logs and GitHub context; parity) (WP1.68): hands the GitHub handlers the Codex session rollout record; tests/unit/github/codex-rollout-loader.test.ts; WP2 PR 3 fixers 10 and 11 (ADR-009 C2, ADR-009 lens D round 2 finding 4, row 36): session:clear hands the durability core whether the .bak was removed (fixer 10), then (fixer 11) is the core's clear, which drops the cache whatever the clear did (WP1.38); tests/unit/main/session-clear-keeps-running-time.test.ts; WP2 PR 4 P4.4: the account log-folder channels and the memory channels wired to the accounts service and the app window (WP1.68); tests/unit/main/account-log-folders.test.ts, tests/unit/main/memory-account-ipc.test.ts; WP2 PR 4 P4.1 (row 51; 7e83f08a): a Codex session's canvas marker goes through the submit primitive (writeCanvasMarkerLine), and one not delivered is shown on the canvas page; P4.5 (row 57; fac6afb9): at quit a running Codex cloud agent is stopped before the CLI kill flush, which ends its whole tree (comment, integration round 2); P4.6 (row 58; 7c20c204): the dev start's orphan-partition warning covers both web-session prefixes (WP1.68); tests/unit/main/canvas-marker-codex-delivery.test.ts, tests/unit/main/quit-order-agent-runs.test.ts, tests/unit/account-web-codex-session.test.ts; WP2 PR 4 P4.5 re-review (RCEF-1): on macOS and Linux the quit flush ending the whole tree is VM-pending (a quit during a long model command, then the process table), and the quit comment in cli-runner.ts is conditional until it runs (WP1.68); tests/unit/main/quit-order-agent-runs.test.ts; WP2 PR 4 owner answers (2026-10-04) (integration round 3, lane B's patch): the copies in this computer's own Codex skills folder are reconciled once after first paint, at every settings save and at every accounts-service change; unreadable settings do nothing (WP1.68); tests/unit/main/codex-user-skills.test.ts; WP2 PR 4 follow-up (871b6d59): the GitHub sidebar reads sessions through peekSessionState, which leaves the read-failure latch alone (WP1.38); tests/unit/main/session-clear-owed-restart.test.ts; WP2 PR 4 P4.6 second half (row 58; fdfdfbef): the codexWeb handlers, the record and pane teardown on a cleared chatgpt.com session, and the archive hook registered before the accounts service (WP1.68); tests/unit/codex-web-handlers.test.ts, tests/unit/main/codex-web-archive.test.ts",
       "note": "concrete provider registration and handler registration move to the single main composition root; index.ts calls it"
     },
     {
@@ -994,6 +1067,19 @@
       "disposition": "retain",
       "evidence": "unchanged observable behaviour; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33)",
       "note": "codex_review usage channels are not WP1 scope"
+    },
+    {
+      "path": "src/main/ipc/codex-web-handlers.ts",
+      "predicates": [
+        "P01",
+        "P02",
+        "P05",
+        "P14"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "added",
+      "evidence": "new WP2 PR 4 P4.6 second half (row 58; fdfdfbef, c37c2410): the six codexWeb channels, each behind the trusted sender, the account id class only (even against the registry) and the registry check (known, Codex, not archived, not being archived), a finished sign-in re-checked before its record is saved, no renderer URL (WP1.22, WP1.68); tests/unit/codex-web-handlers.test.ts",
+      "note": "created by WP2 PR 4 (P4.6)"
     },
     {
       "path": "src/main/ipc/github-handlers.ts",
@@ -1680,7 +1766,7 @@
       ],
       "category": "ACCOUNT",
       "disposition": "added",
-      "evidence": "WP2 accounts service, created by WP2 (absent from the baseline); it names Codex only in comments: the unanswered answer that never counts as on, the yes recorded before a sign-in, the read-only check the Set up Codex page asks before it offers Use this sign-in (owner decision 2026-09-26, U2: reserve, ask the status, always drop, keep nothing), and the adoption marker that page reads (WP1.43); tests/wp1/account-lifecycle.test.ts; an unanswered provider never counts as the last one on (U3, WP1.5); tests/unit/main/codex-unanswered-service.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): readAccountUsage and streamAccountUsage, the plan section 3 matrix without the fresh read; nothing read for a provider that is off, not set up or unreadable, asked again before each account (WP1.60 enable/disable); tests/unit/main/provider-account-usage.test.ts; WP2 P3 usage track MP3 round-1 review fixes: the usage stream gives the event loop a turn before each account, and a realm the package refuses is an error with nothing read (WP1.60 enable/disable); tests/unit/main/provider-account-usage.test.ts; WP2 P3 usage track MP3 round-2 review fixes: each account of a usage stream is found again in the registry when its turn comes; archived or removed meanwhile is skipped, made inactive meanwhile reads nothing (WP1.60 enable/disable); tests/unit/main/provider-account-usage.test.ts; WP2 P3 usage track MP8 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): the closed-account fresh read (eligibility, lease, last word before the spawn, pacing, reuse, single-flight, transient cutoff), launch, sign-in again, sign-out and lifecycle changes settle a read first (#49), the plan label recorded (WP1.41, WP1.60 enable/disable); tests/unit/main/codex-usage-read.test.ts; WP2 P3 usage track MP7 round-1 review fixes (the scoped WP1.41 exception; ADR-022): one rule for what runs beside a read, the record asked again right before the spawn, and every read stopped at quit (WP1.41, WP1.60 enable/disable); tests/unit/main/codex-usage-read.test.ts; WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): sessionsRoots names each Codex realm folder's account and whether it is this computer's own home (WP1.2); tests/wp1/tokenomics-realm-discovery.test.ts; WP2 P3 usage track MP8 round 2 (VM walk and review fixes; the scoped WP1.41 exception; ADR-022): reads start only on the page's own ask; a Retry reuses a reading under ten seconds old; a newer ask never joins a stopped read and a stopped read is no failure; the account and realm must be active at the spawn; a lifecycle change names a known account first (WP1.41); tests/unit/main/codex-usage-read.test.ts; WP2 P3 usage track MP10 (owner decision 2026-09-26, Q1.4: Claude attributed from the session id and the profile recorded at launch, from now on; no manual attribution): accountIdForLegacy names the account a launch profile is linked to (WP1.2); tests/unit/main/tokenomics-attribution.test.ts; WP2 P3 usage track MP8 round 3 (VM walk and review fixes; the scoped WP1.41 exception; ADR-022): a settle stops and waits for every read of the account whose chain has not ended, a stopped one still being killed included; a Retry under the floor after a failed read reads nothing new (WP1.41); tests/unit/main/codex-usage-read.test.ts; WP2 P3 usage track MP11 round 1 (review fixes) and the MP9 lens B nits: sessionsRoots answers null while the registry has not been read, so no folders are named too early (WP1.2); tests/wp1/tokenomics-realm-discovery.test.ts; WP2 P3 usage track MP10 round 1 (quality nits): accountIdForLegacy can compare the profile id without case, as the Windows composition asks; a reading clears an earlier failure (WP1.2); tests/unit/main/tokenomics-attribution.test.ts; WP2 P3 usage track MP9 (394b09c7 code-quality review): once the registry load has run, sessionsRoots lists none for a registry missing or left unloaded, so the usage index is not held back for ever; before it has, it still waits (WP1.2); tests/wp1/tokenomics-realm-discovery.test.ts; WP2 PR 3 P3.9 (rows 39, 42): readModelCatalogue runs a package's model list read behind the launch rule, before and after the wait for its CLI proof (WP1.60); tests/unit/providers/codex/model-catalogue.test.ts; WP2 PR 4 P4.4 (rows 55, 56): accountFolders, each live account's own folders with whose they are, null before the registry is read (WP1.2); tests/unit/main/account-folders-service.test.ts; WP2 PR 4 P4.5 (row 57): each launch kind named in its refusal, a remote background run refused (WP1.46); tests/unit/main/codex-background-launch.test.ts; WP2 PR 4 owner answers review fix pass (0d3a9ee1): the user's acknowledgement reaches the provider's sign-out for any account; a refusal for want of it records nothing; a legacy-linked Claude account is never checked or signed out by archive, re-activation or the old sign-in settle (WP1.2); tests/unit/providers/claude/claude-accounts-service.test.ts",
+      "evidence": "WP2 accounts service, created by WP2 (absent from the baseline); it names Codex only in comments: the unanswered answer that never counts as on, the yes recorded before a sign-in, the read-only check the Set up Codex page asks before it offers Use this sign-in (owner decision 2026-09-26, U2: reserve, ask the status, always drop, keep nothing), and the adoption marker that page reads (WP1.43); tests/wp1/account-lifecycle.test.ts; an unanswered provider never counts as the last one on (U3, WP1.5); tests/unit/main/codex-unanswered-service.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): readAccountUsage and streamAccountUsage, the plan section 3 matrix without the fresh read; nothing read for a provider that is off, not set up or unreadable, asked again before each account (WP1.60 enable/disable); tests/unit/main/provider-account-usage.test.ts; WP2 P3 usage track MP3 round-1 review fixes: the usage stream gives the event loop a turn before each account, and a realm the package refuses is an error with nothing read (WP1.60 enable/disable); tests/unit/main/provider-account-usage.test.ts; WP2 P3 usage track MP3 round-2 review fixes: each account of a usage stream is found again in the registry when its turn comes; archived or removed meanwhile is skipped, made inactive meanwhile reads nothing (WP1.60 enable/disable); tests/unit/main/provider-account-usage.test.ts; WP2 P3 usage track MP8 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): the closed-account fresh read (eligibility, lease, last word before the spawn, pacing, reuse, single-flight, transient cutoff), launch, sign-in again, sign-out and lifecycle changes settle a read first (#49), the plan label recorded (WP1.41, WP1.60 enable/disable); tests/unit/main/codex-usage-read.test.ts; WP2 P3 usage track MP7 round-1 review fixes (the scoped WP1.41 exception; ADR-022): one rule for what runs beside a read, the record asked again right before the spawn, and every read stopped at quit (WP1.41, WP1.60 enable/disable); tests/unit/main/codex-usage-read.test.ts; WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): sessionsRoots names each Codex realm folder's account and whether it is this computer's own home (WP1.2); tests/wp1/tokenomics-realm-discovery.test.ts; WP2 P3 usage track MP8 round 2 (VM walk and review fixes; the scoped WP1.41 exception; ADR-022): reads start only on the page's own ask; a Retry reuses a reading under ten seconds old; a newer ask never joins a stopped read and a stopped read is no failure; the account and realm must be active at the spawn; a lifecycle change names a known account first (WP1.41); tests/unit/main/codex-usage-read.test.ts; WP2 P3 usage track MP10 (owner decision 2026-09-26, Q1.4: Claude attributed from the session id and the profile recorded at launch, from now on; no manual attribution): accountIdForLegacy names the account a launch profile is linked to (WP1.2); tests/unit/main/tokenomics-attribution.test.ts; WP2 P3 usage track MP8 round 3 (VM walk and review fixes; the scoped WP1.41 exception; ADR-022): a settle stops and waits for every read of the account whose chain has not ended, a stopped one still being killed included; a Retry under the floor after a failed read reads nothing new (WP1.41); tests/unit/main/codex-usage-read.test.ts; WP2 P3 usage track MP11 round 1 (review fixes) and the MP9 lens B nits: sessionsRoots answers null while the registry has not been read, so no folders are named too early (WP1.2); tests/wp1/tokenomics-realm-discovery.test.ts; WP2 P3 usage track MP10 round 1 (quality nits): accountIdForLegacy can compare the profile id without case, as the Windows composition asks; a reading clears an earlier failure (WP1.2); tests/unit/main/tokenomics-attribution.test.ts; WP2 P3 usage track MP9 (394b09c7 code-quality review): once the registry load has run, sessionsRoots lists none for a registry missing or left unloaded, so the usage index is not held back for ever; before it has, it still waits (WP1.2); tests/wp1/tokenomics-realm-discovery.test.ts; WP2 PR 3 P3.9 (rows 39, 42): readModelCatalogue runs a package's model list read behind the launch rule, before and after the wait for its CLI proof (WP1.60); tests/unit/providers/codex/model-catalogue.test.ts; WP2 PR 4 P4.4 (rows 55, 56): accountFolders, each live account's own folders with whose they are, null before the registry is read (WP1.2); tests/unit/main/account-folders-service.test.ts; WP2 PR 4 P4.5 (row 57): each launch kind named in its refusal, a remote background run refused (WP1.46); tests/unit/main/codex-background-launch.test.ts; WP2 PR 4 owner answers review fix pass (0d3a9ee1): the user's acknowledgement reaches the provider's sign-out for any account; a refusal for want of it records nothing; a legacy-linked Claude account is never checked or signed out by archive, re-activation or the old sign-in settle (WP1.2); tests/unit/providers/claude/claude-accounts-service.test.ts; WP2 PR 4 P4.6 second half (row 58; e5bb0976): an archive runs the provider-neutral archive seam first and is refused when a hook fails (WP1.15, WP1.68); tests/unit/main/codex-web-archive.test.ts",
       "note": "provider-neutral code; the P14 hits are comments"
     },
     {
@@ -2023,7 +2109,7 @@
       ],
       "category": "AUTH",
       "disposition": "replace",
-      "evidence": "tests/wp1/provider-ipc.test.ts crosses preload validation (WP1.22, WP1.57); preload shape suites in docs/wp1/baseline-test-inventory.json stay green; WP2 commit 6g: the codex block (status, login, logout, testConnection) removed from the bridge and its type (tests/wp1/legacy-codex-retired.test.ts, WP1.57); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the typed refusal answers on the launch channels; tests/unit/main/pty-spawn-provider-off.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): providerAccounts.usageStream (a private per-call reply channel) and usageOne, and accountUsage.knownLabels (WP1.22); tests/wp1/provider-ipc.test.ts; WP2 P3 usage track MP8 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): providerAccounts.usageStreamStop (the page closing stops its stream) (WP1.22); tests/wp1/provider-ipc.test.ts; WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): tokenomics.accounts (WP1.22); tests/unit/tokenomics/tokenomics2-handlers.test.ts; WP2 P3 usage track MP8 round 2 (VM walk and review fixes; the scoped WP1.41 exception; ADR-022): the usage streams end at their end marker, and providerAccounts.usageStream and usageOne carry the page's read ask (WP1.22); tests/unit/preload-usage-stream-channel.test.ts, tests/wp1/provider-ipc.test.ts; WP2 PR 3 P3.8 (row 40): type-only, the Codex effort union gains max and ultra (WP1.22); tests/unit/main/codex-effort-allowlist.test.ts; WP2 PR 3 P3.8 round 1 (row 69): type-only, the preset union gains plan (WP1.22); tests/unit/main/codex-effort-allowlist.test.ts; WP2 PR 3 P3.10: WatchdogPublicState gains unavailable (the checks the session's CLI has no patterns for), typing only (WP1.57); tests/unit/renderer/sidebar-context-menus.test.tsx; WP2 PR 3 P3.11 (row 62, extra CLI arguments; parity) (WP1.57): the spawn options' codexOptions gains extraArgs, typing only; tests/unit/renderer/session-dialog-codex-extra-args.test.tsx; WP2 PR 3 P3.13 round 1 (WP1.60): pty.spawn's answer is typed with its own refusal type, typing only; tests/unit/main/pty-spawn-one-at-a-time-rights.test.ts; WP2 PR 3 P3.16a main track round 2 (WP1.68): pty.kill takes an optional 'restart' and sends it only then (Q5); no Codex-specific change; tests/unit/renderer/spawn-end-notice.test.ts; WP2 PR 3 PR-level ADR-009 round 1 (WP1.68): clipboard.saveImage's answer may carry posixShell off Windows, typing only (A1); no Codex-specific change; tests/unit/main/clipboard-save-image-shell.test.ts; WP2 PR 4 S0 and P4.5: the PR 4 bridges, each mapped to its channel, and the Cloud Agent dispatch and retry bridges (WP1.22); tests/unit/pr4-scaffold-bridges.test.ts",
+      "evidence": "tests/wp1/provider-ipc.test.ts crosses preload validation (WP1.22, WP1.57); preload shape suites in docs/wp1/baseline-test-inventory.json stay green; WP2 commit 6g: the codex block (status, login, logout, testConnection) removed from the bridge and its type (tests/wp1/legacy-codex-retired.test.ts, WP1.57); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the typed refusal answers on the launch channels; tests/unit/main/pty-spawn-provider-off.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): providerAccounts.usageStream (a private per-call reply channel) and usageOne, and accountUsage.knownLabels (WP1.22); tests/wp1/provider-ipc.test.ts; WP2 P3 usage track MP8 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): providerAccounts.usageStreamStop (the page closing stops its stream) (WP1.22); tests/wp1/provider-ipc.test.ts; WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): tokenomics.accounts (WP1.22); tests/unit/tokenomics/tokenomics2-handlers.test.ts; WP2 P3 usage track MP8 round 2 (VM walk and review fixes; the scoped WP1.41 exception; ADR-022): the usage streams end at their end marker, and providerAccounts.usageStream and usageOne carry the page's read ask (WP1.22); tests/unit/preload-usage-stream-channel.test.ts, tests/wp1/provider-ipc.test.ts; WP2 PR 3 P3.8 (row 40): type-only, the Codex effort union gains max and ultra (WP1.22); tests/unit/main/codex-effort-allowlist.test.ts; WP2 PR 3 P3.8 round 1 (row 69): type-only, the preset union gains plan (WP1.22); tests/unit/main/codex-effort-allowlist.test.ts; WP2 PR 3 P3.10: WatchdogPublicState gains unavailable (the checks the session's CLI has no patterns for), typing only (WP1.57); tests/unit/renderer/sidebar-context-menus.test.tsx; WP2 PR 3 P3.11 (row 62, extra CLI arguments; parity) (WP1.57): the spawn options' codexOptions gains extraArgs, typing only; tests/unit/renderer/session-dialog-codex-extra-args.test.tsx; WP2 PR 3 P3.13 round 1 (WP1.60): pty.spawn's answer is typed with its own refusal type, typing only; tests/unit/main/pty-spawn-one-at-a-time-rights.test.ts; WP2 PR 3 P3.16a main track round 2 (WP1.68): pty.kill takes an optional 'restart' and sends it only then (Q5); no Codex-specific change; tests/unit/renderer/spawn-end-notice.test.ts; WP2 PR 3 PR-level ADR-009 round 1 (WP1.68): clipboard.saveImage's answer may carry posixShell off Windows, typing only (A1); no Codex-specific change; tests/unit/main/clipboard-save-image-shell.test.ts; WP2 PR 4 S0 and P4.5: the PR 4 bridges, each mapped to its channel, and the Cloud Agent dispatch and retry bridges (WP1.22); tests/unit/pr4-scaffold-bridges.test.ts; WP2 PR 4 P4.6 second half (row 58; fdfdfbef): the codexWeb bridge (six calls, each its channel), and the pane's state push typed for both services (WP1.22); tests/unit/codex-web-handlers.test.ts",
       "note": "codex block replaced by the provider-neutral providers/accounts API; codexReview block retained"
     },
     {
@@ -2373,7 +2459,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "replace",
-      "evidence": "WP2 commit 6f (review round 1): the New config shortcut is held while the Codex introduction covers the shell (its one-time takeover or a replay), as it is while onboarding is due; the sidebar reads settings.codexEnabled and the provider labels through the compatibility shadow as before (WP1.34); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 PR 3 P3.6 (row 22): the right-click Switch Account gets the one Switch account list and the gate for the session's provider (WP1.68); tests/unit/renderer/codex-switch-account.test.tsx; WP2 PR 3 P3.10: passes the session's unavailable Watchdog checks to its menu (WP1.68); tests/unit/renderer/sidebar-context-menus.test.tsx; WP2 PR 4 P4.6 (row 58): the menu's acting Claude account comes from claudeWebActionProfileId, and a Codex row's right-click refreshes no Claude account's status (WP1.68); tests/unit/renderer/sidebar-context-menus.test.tsx; WP2 PR 4 P4.6 review fix (1064dbbf): the right-click prefetch reads claudeWebActionProfileId, the menu's helper (WP1.68); tests/unit/renderer/sidebar-context-menus.test.tsx",
+      "evidence": "WP2 commit 6f (review round 1): the New config shortcut is held while the Codex introduction covers the shell (its one-time takeover or a replay), as it is while onboarding is due; the sidebar reads settings.codexEnabled and the provider labels through the compatibility shadow as before (WP1.34); tests/unit/renderer/hello-codex.acceptance.test.ts; WP2 PR 3 P3.6 (row 22): the right-click Switch Account gets the one Switch account list and the gate for the session's provider (WP1.68); tests/unit/renderer/codex-switch-account.test.tsx; WP2 PR 3 P3.10: passes the session's unavailable Watchdog checks to its menu (WP1.68); tests/unit/renderer/sidebar-context-menus.test.tsx; WP2 PR 4 P4.6 (row 58): the menu's acting Claude account comes from claudeWebActionProfileId, and a Codex row's right-click refreshes no Claude account's status (WP1.68); tests/unit/renderer/sidebar-context-menus.test.tsx; WP2 PR 4 P4.6 review fix (1064dbbf): the right-click prefetch reads claudeWebActionProfileId, the menu's helper (WP1.68); tests/unit/renderer/sidebar-context-menus.test.tsx; WP2 PR 4 P4.6 second half (row 58; 10b510c3): a Codex row's menu signs its own account in to chatgpt.com (codexWebActionAccountId) and prefetches that account's status (WP1.68); tests/unit/renderer/sidebar-context-menus.test.tsx",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
@@ -2420,7 +2506,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "replace",
-      "evidence": "WP2 PR 4 P4.6 (row 58): the pane's claude.ai entry only for a Claude session, never the primary Claude profile on a Codex tab (the #216 fallback, P3.6 V5) (WP1.68); tests/unit/renderer/webview-pane-browser.test.tsx",
+      "evidence": "WP2 PR 4 P4.6 (row 58): the pane's claude.ai entry only for a Claude session, never the primary Claude profile on a Codex tab (the #216 fallback, P3.6 V5) (WP1.68); tests/unit/renderer/webview-pane-browser.test.tsx; WP2 PR 4 P4.6 second half (row 58; 10b510c3): a local Codex session's start page offers chatgpt.com as its own account, opened through the codexWeb channel, and the strip names the service (WP1.68); tests/unit/renderer/webview-pane-browser.test.tsx",
       "note": ""
     },
     {
@@ -2633,11 +2719,12 @@
     {
       "path": "src/renderer/components/settings/accounts/ManagedAccountsSection.tsx",
       "predicates": [
+        "P05",
         "P11"
       ],
       "category": "ACCOUNT",
       "disposition": "added",
-      "evidence": "WP2 commit 6b Accounts surface, one provider-neutral surface (WP1.39); tests/unit/renderer/accounts-surface.test.tsx; WP2 commit 6g: Check sign-in in each account menu, its answer on the row, not on a blocked account (WP1.10); tests/unit/renderer/accounts-surface.test.tsx; WP2 commit 6g round 1: a check's answer goes once the record moves on (sign-in state, block, lifecycle) and on Sign in again or This is still my account; a signed-out or expired row for this computer's own home says to run codex login, then Check sign-in (WP1.10); tests/unit/renderer/accounts-surface.test.tsx; WP2 commit 6g: a check's answer never shows on a blocked row, whichever lands first (WP1.10); tests/unit/renderer/accounts-surface.test.tsx; WP2 reconfirm (owner decision 2026-09-26): Yes, I use Codex only records the answer; this computer's sign-in is offered with honest text and taken in only by its button, which reads Check again after an attempt that could not finish (WP1.39, WP1.43); tests/unit/renderer/accounts-surface.test.tsx; WP2 PR 3 fixer 9 (gate 3, S1 F1, row 11): the Sign in again account card heads with the name as its row shows it (this computer's own sign-in capitalised), and only the dialog's title uses the in-sentence name (WP1.39); tests/unit/renderer/accounts-surface.test.tsx",
+      "evidence": "WP2 commit 6b Accounts surface, one provider-neutral surface (WP1.39); tests/unit/renderer/accounts-surface.test.tsx; WP2 commit 6g: Check sign-in in each account menu, its answer on the row, not on a blocked account (WP1.10); tests/unit/renderer/accounts-surface.test.tsx; WP2 commit 6g round 1: a check's answer goes once the record moves on (sign-in state, block, lifecycle) and on Sign in again or This is still my account; a signed-out or expired row for this computer's own home says to run codex login, then Check sign-in (WP1.10); tests/unit/renderer/accounts-surface.test.tsx; WP2 commit 6g: a check's answer never shows on a blocked row, whichever lands first (WP1.10); tests/unit/renderer/accounts-surface.test.tsx; WP2 reconfirm (owner decision 2026-09-26): Yes, I use Codex only records the answer; this computer's sign-in is offered with honest text and taken in only by its button, which reads Check again after an attempt that could not finish (WP1.39, WP1.43); tests/unit/renderer/accounts-surface.test.tsx; WP2 PR 3 fixer 9 (gate 3, S1 F1, row 11): the Sign in again account card heads with the name as its row shows it (this computer's own sign-in capitalised), and only the dialog's title uses the in-sentence name (WP1.39); tests/unit/renderer/accounts-surface.test.tsx; WP2 PR 4 P4.6 second half (row 58; 10b510c3): a Codex account's row shows its chatgpt.com session and offers Sign in to chatgpt.com and Sign out of chatgpt.com for that account, only for a registry account id of a Codex account that is not archived while the provider is on; the CLI Sign out never clears it (WP1.39, WP1.68); tests/unit/renderer/codex-web-account-row.test.tsx",
       "note": "rows, menu and pending setups for managed (Codex) accounts"
     },
     {
@@ -2734,7 +2821,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "replace",
-      "evidence": "WP2 PR 3 P3.6 (row 22): the right-click Switch Account renders the one Switch account list (utils/switchAccountItems), so a Codex session lists its Codex accounts as a Claude session lists its profiles; Claude's rows read as before (WP1.68); tests/unit/renderer/codex-switch-account.test.tsx; WP2 PR 3 P3.10: a Watchdog check the session's CLI has no patterns for is shown off, disabled, with the reason (WP1.68); tests/unit/renderer/sidebar-context-menus.test.tsx; WP2 PR 4 P4.6 (row 58): Claude's account items are not shown for a Codex session, whatever the caller passes (WP1.68); tests/unit/renderer/sidebar-context-menus.test.tsx",
+      "evidence": "WP2 PR 3 P3.6 (row 22): the right-click Switch Account renders the one Switch account list (utils/switchAccountItems), so a Codex session lists its Codex accounts as a Claude session lists its profiles; Claude's rows read as before (WP1.68); tests/unit/renderer/codex-switch-account.test.tsx; WP2 PR 3 P3.10: a Watchdog check the session's CLI has no patterns for is shown off, disabled, with the reason (WP1.68); tests/unit/renderer/sidebar-context-menus.test.tsx; WP2 PR 4 P4.6 (row 58): Claude's account items are not shown for a Codex session, whatever the caller passes (WP1.68); tests/unit/renderer/sidebar-context-menus.test.tsx; WP2 PR 4 P4.6 second half (row 58; 10b510c3): a Codex row's own chatgpt.com sign-in item, never on a Claude row (WP1.68); tests/unit/renderer/sidebar-context-menus.test.tsx",
       "note": "session/logs/sidebar surface; now a provider check, not comment only"
     },
     {
@@ -2897,7 +2984,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "replace",
-      "evidence": "Claude-session behaviour unchanged; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled (the saved Codex switch, which main also reads as the Codex package's enablement key) and the provider labels; WP2 PR 4 P4.6 (row 58): claudeWebActionProfileId returns none for a Codex session (WP1.68); tests/unit/renderer/claude-web-targets.test.ts",
+      "evidence": "Claude-session behaviour unchanged; baseline suite green at 6bafcc33 (docs/wp1/baseline-2026-09-19.md); runs unchanged in the merge-candidate suite (WP1.33); reads settings.codexEnabled (the saved Codex switch, which main also reads as the Codex package's enablement key) and the provider labels; WP2 PR 4 P4.6 (row 58): claudeWebActionProfileId returns none for a Codex session (WP1.68); tests/unit/renderer/claude-web-targets.test.ts; WP2 PR 4 P4.6 second half (row 58; 10b510c3): codexWebActionAccountId, the Codex account a local Codex session's chatgpt.com actions act on (WP1.68); tests/unit/renderer/claude-web-targets.test.ts",
       "note": "session/logs/sidebar surface (runtime work package); provider conditionals here are outside the WP1 core/shared AST rule scope"
     },
     {
@@ -3314,6 +3401,17 @@
       "note": ""
     },
     {
+      "path": "src/renderer/stores/codexWebStore.ts",
+      "predicates": [
+        "P01",
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "added",
+      "evidence": "new WP2 PR 4 P4.6 second half (row 58; 10b510c3): the renderer's view of each Codex account's chatgpt.com session (status, the run in flight, its error), through the codexWeb bridge, for the session menu and the Settings row (WP1.68); tests/unit/renderer/codex-web-account-row.test.tsx",
+      "note": "created by WP2 PR 4 (P4.6)"
+    },
+    {
       "path": "src/renderer/stores/configStore.ts",
       "predicates": [
         "P07",
@@ -3370,6 +3468,16 @@
       "note": ""
     },
     {
+      "path": "src/renderer/stores/webviewStore.ts",
+      "predicates": [
+        "P11"
+      ],
+      "category": "UI-ONLY",
+      "disposition": "replace",
+      "evidence": "WP2 PR 4 P4.6 second half (row 58; 10b510c3): the pane's account mode also holds a Codex account's chatgpt.com surface, keyed by its registry account id; a push for the other service's surface never matches; Claude's mode unchanged (WP1.68); tests/unit/renderer/webview-pane-browser.test.tsx",
+      "note": "newly names Codex in WP2 PR 4 P4.6"
+    },
+    {
       "path": "src/renderer/styles.css",
       "predicates": [
         "P11"
@@ -3410,7 +3518,7 @@
       ],
       "category": "AUTH",
       "disposition": "replace",
-      "evidence": "type-level; provider API typing exercised by tests/wp1/provider-ipc.test.ts (WP1.57); WP2 commit 6g: the codex API typing removed (tests/wp1/legacy-codex-retired.test.ts, WP1.57); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the typed refusal answers on the launch channels; tests/unit/renderer/terminalview-account-launch.test.tsx; WP2 P3 usage track MP6 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, usage footer settings, D2, Q1.5): the renderer API type carries the provider-neutral usage stream calls the preload has (usage track MP4) and the cached-labels call (MP6) (WP1.39); tests/unit/renderer/account-usage-panel-streaming.test.tsx; tests/unit/renderer/settings-footer-bars.test.tsx; WP2 P3 usage track MP8 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): usageStreamStop (WP1.39); tests/unit/renderer/account-usage-panel-streaming.test.tsx; WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): tokenomics.accounts (WP1.39); tests/unit/tokenomics/tokenomics2-handlers.test.ts; WP2 P3 usage track MP8 round 2 (VM walk and review fixes; the scoped WP1.41 exception; ADR-022): the read ask on providerAccounts.usageStream and usageOne (WP1.39); tests/unit/renderer/account-usage-panel-streaming.test.tsx; WP2 PR 3 P3.8 (row 40): type-only, the Codex effort union gains max and ultra (WP1.22); tests/unit/main/codex-effort-allowlist.test.ts; WP2 PR 3 P3.8 round 1 (row 69): type-only, the preset union gains plan (WP1.22); tests/unit/main/codex-effort-allowlist.test.ts; WP2 PR 3 P3.10: WatchdogPublicState gains unavailable, typing only (WP1.57); tests/unit/renderer/sidebar-context-menus.test.tsx; WP2 PR 3 P3.11 (row 62, extra CLI arguments; parity) (WP1.57): the spawn options' codexOptions gains extraArgs, typing only; tests/unit/renderer/session-dialog-codex-extra-args.test.tsx; WP2 PR 3 P3.13 round 1 (WP1.60): pty.spawn's answer is typed with its own refusal type, typing only; tests/unit/renderer/terminalview-account-launch.test.tsx; WP2 PR 3 P3.16a main track round 2 (WP1.68): pty.kill's optional 'restart', typing only (Q5); tests/unit/renderer/spawn-end-notice.test.ts; WP2 PR 3 PR-level ADR-009 round 1 (WP1.68): clipboard.saveImage's answer may carry posixShell off Windows, typing only (A1); tests/unit/renderer/alt-v-image-route.test.tsx; WP2 PR 4 S0 and P4.5: the renderer mirror of the PR 4 bridges (WP1.22); tests/unit/pr4-scaffold-bridges.test.ts",
+      "evidence": "type-level; provider API typing exercised by tests/wp1/provider-ipc.test.ts (WP1.57); WP2 commit 6g: the codex API typing removed (tests/wp1/legacy-codex-retired.test.ts, WP1.57); WP2 provider-off enforcement (main refuses every launch of a provider that is off; WP1.60 enable/disable): the typed refusal answers on the launch channels; tests/unit/renderer/terminalview-account-launch.test.tsx; WP2 P3 usage track MP6 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md; the approved canvas, usage footer settings, D2, Q1.5): the renderer API type carries the provider-neutral usage stream calls the preload has (usage track MP4) and the cached-labels call (MP6) (WP1.39); tests/unit/renderer/account-usage-panel-streaming.test.tsx; tests/unit/renderer/settings-footer-bars.test.tsx; WP2 P3 usage track MP8 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): usageStreamStop (WP1.39); tests/unit/renderer/account-usage-panel-streaming.test.tsx; WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): tokenomics.accounts (WP1.39); tests/unit/tokenomics/tokenomics2-handlers.test.ts; WP2 P3 usage track MP8 round 2 (VM walk and review fixes; the scoped WP1.41 exception; ADR-022): the read ask on providerAccounts.usageStream and usageOne (WP1.39); tests/unit/renderer/account-usage-panel-streaming.test.tsx; WP2 PR 3 P3.8 (row 40): type-only, the Codex effort union gains max and ultra (WP1.22); tests/unit/main/codex-effort-allowlist.test.ts; WP2 PR 3 P3.8 round 1 (row 69): type-only, the preset union gains plan (WP1.22); tests/unit/main/codex-effort-allowlist.test.ts; WP2 PR 3 P3.10: WatchdogPublicState gains unavailable, typing only (WP1.57); tests/unit/renderer/sidebar-context-menus.test.tsx; WP2 PR 3 P3.11 (row 62, extra CLI arguments; parity) (WP1.57): the spawn options' codexOptions gains extraArgs, typing only; tests/unit/renderer/session-dialog-codex-extra-args.test.tsx; WP2 PR 3 P3.13 round 1 (WP1.60): pty.spawn's answer is typed with its own refusal type, typing only; tests/unit/renderer/terminalview-account-launch.test.tsx; WP2 PR 3 P3.16a main track round 2 (WP1.68): pty.kill's optional 'restart', typing only (Q5); tests/unit/renderer/spawn-end-notice.test.ts; WP2 PR 3 PR-level ADR-009 round 1 (WP1.68): clipboard.saveImage's answer may carry posixShell off Windows, typing only (A1); tests/unit/renderer/alt-v-image-route.test.tsx; WP2 PR 4 S0 and P4.5: the renderer mirror of the PR 4 bridges (WP1.22); tests/unit/pr4-scaffold-bridges.test.ts; WP2 PR 4 P4.6 second half (row 58; fdfdfbef): the codexWeb bridge's types and the pane's state push for both services, typing only (WP1.22); tests/unit/codex-web-handlers.test.ts",
       "note": "codex API typing replaced by the provider-neutral API typing"
     },
     {
@@ -3494,7 +3602,7 @@
       ],
       "category": "ACCOUNT",
       "disposition": "replace",
-      "evidence": "WP2 PR 4 P4.6 (row 58): a Codex account's own web-session partition (webPartitionForCodexAccount, persist:codex-web-<registry account id>, the registry id pattern enforced, a Claude profile id refused) and the on-disk check for both prefixes; Claude's partition, builder and refusals unchanged (WP1.68); tests/unit/account-web-codex-session.test.ts",
+      "evidence": "WP2 PR 4 P4.6 (row 58): a Codex account's own web-session partition (webPartitionForCodexAccount, persist:codex-web-<registry account id>, the registry id pattern enforced, a Claude profile id refused) and the on-disk check for both prefixes; Claude's partition, builder and refusals unchanged (WP1.68); tests/unit/account-web-codex-session.test.ts; WP2 PR 4 P4.6 second half (row 58; 10fab972): the chatgpt.com descriptor (three values marked unverified for the owner's run), its host and predicate helpers, and the Codex web record and view types; the partition builder's comment names the registry-checked caller (dd23a3bf) (WP1.68); tests/unit/codex-web-sign-in.test.ts",
       "note": "newly names Codex in WP2 PR 4 P4.6"
     },
     {
@@ -3601,7 +3709,7 @@
       ],
       "category": "AUTH",
       "disposition": "replace",
-      "evidence": "tests/wp1/legacy-codex-retired.test.ts (WP1.57): no identifier or key is CODEX_STATUS/LOGIN/LOGOUT/TEST_CONNECTION and no string (folded where constant) is one of the four codex:* channels anywhere in the app source (removed in WP2 commit 6g); the tree gate is tests/wp1/legacy-codex-gate.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): provider-neutral PROVIDER_ACCOUNTS_USAGE_STREAM and PROVIDER_ACCOUNTS_USAGE_ONE, and ACCOUNT_USAGE_KNOWN_LABELS (WP1.57); tests/wp1/provider-ipc.test.ts; WP2 P3 usage track MP8 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): PROVIDER_ACCOUNTS_USAGE_STREAM_STOP, provider-neutral (WP1.57); tests/wp1/provider-ipc.test.ts; WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): TOKENOMICS2_ACCOUNTS (WP1.57); tests/unit/tokenomics/tokenomics2-handlers.test.ts; WP2 PR 4 S0: the PR 4 channel names, provider-neutral (WP1.22); tests/unit/pr4-scaffold-bridges.test.ts",
+      "evidence": "tests/wp1/legacy-codex-retired.test.ts (WP1.57): no identifier or key is CODEX_STATUS/LOGIN/LOGOUT/TEST_CONNECTION and no string (folded where constant) is one of the four codex:* channels anywhere in the app source (removed in WP2 commit 6g); the tree gate is tests/wp1/legacy-codex-gate.test.ts; WP2 P3 usage track MP3 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md): provider-neutral PROVIDER_ACCOUNTS_USAGE_STREAM and PROVIDER_ACCOUNTS_USAGE_ONE, and ACCOUNT_USAGE_KNOWN_LABELS (WP1.57); tests/wp1/provider-ipc.test.ts; WP2 P3 usage track MP8 (owner decision 2026-09-27, docs/wp1/owner-decisions-2026-09-27.md, the scoped WP1.41 exception; ADR-022): PROVIDER_ACCOUNTS_USAGE_STREAM_STOP, provider-neutral (WP1.57); tests/wp1/provider-ipc.test.ts; WP2 P3 usage track MP9 (owner decision 2026-09-26, Q1.4 and Q1.10/U3: Codex attributed from the realm folder, ~/.codex as this computer's sign-in): TOKENOMICS2_ACCOUNTS (WP1.57); tests/unit/tokenomics/tokenomics2-handlers.test.ts; WP2 PR 4 S0: the PR 4 channel names, provider-neutral (WP1.22); tests/unit/pr4-scaffold-bridges.test.ts; WP2 PR 4 P4.6 second half (row 58; fdfdfbef): the six codexWeb channels (WP1.22); tests/unit/codex-web-handlers.test.ts",
       "note": "Codex auth channels retired; provider-neutral channels added; codex-review channels retained"
     },
     {
@@ -4929,11 +5037,12 @@
       "path": "tests/unit/account-web-codex-session.test.ts",
       "predicates": [
         "P01",
+        "P02",
         "P13"
       ],
       "category": "TEST",
       "disposition": "added",
-      "evidence": "new WP2 PR 4 P4.6 (row 58) test: the Codex web-session partition's isolation, the orphan-partition warning over both prefixes, and every profile-keyed accountWeb channel refusing an account id (WP1.33); tests/unit/account-web-codex-session.test.ts",
+      "evidence": "new WP2 PR 4 P4.6 (row 58) test: the Codex web-session partition's isolation, the orphan-partition warning over both prefixes, and every profile-keyed accountWeb channel refusing an account id (WP1.33); tests/unit/account-web-codex-session.test.ts; WP2 PR 4 P4.6 second half (row 58; dd23a3bf): Claude's handler registration serves no codexWeb channel (WP1.33); tests/unit/account-web-codex-session.test.ts",
       "note": ""
     },
     {
@@ -4997,6 +5106,51 @@
       "disposition": "added",
       "evidence": "new WP2 PR 3 P3.8 (rows 39, 40) test (tests/unit/codex-model-registry.test.ts): the Codex pickers are the registry's codex family in the CLI's order, never Claude's rows and never in Claude's picker (an overlay cannot move them), each model offers its own levels from Codex's level list, and the registry covers the shipped Codex list exactly (WP1.68); WP2 PR 3 P3.8 round 1 (row 39) added the picker id and provider-membership cases (WP1.68)",
       "note": "created by WP2 PR 3 P3.8; pure"
+    },
+    {
+      "path": "tests/unit/codex-web-flight.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 4 P4.6 second half (row 58; c37c2410) test: Claude's claude.ai sign-in refuses to start while a Codex sign-in is in flight, a throwing probe counts as in flight, and Claude's run reports itself to the Codex side (WP1.33); tests/unit/codex-web-flight.test.ts",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/codex-web-handlers.test.ts",
+      "predicates": [
+        "P01",
+        "P02",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 4 P4.6 second half (row 58; fdfdfbef, c37c2410) test: every codexWeb channel refuses a foreign sender, an id off the account pattern (even one the registry lists), and an unknown, Claude, archived or being-archived account before acting (WP1.33); tests/unit/codex-web-handlers.test.ts",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/codex-web-pane.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 4 P4.6 second half (row 58; 10fab972, 1aac6bf8) test: the Codex pane's tri-state navigation (signed out: the listed sign-in hosts only), its partition and hardening, recording only with a valid email, the record store's metadata-only rule, and teardown kept apart from Claude's (WP1.33); tests/unit/codex-web-pane.test.ts",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/codex-web-sign-in.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 4 P4.6 second half (row 58; 10fab972, c5d941f7) test: the chatgpt.com descriptor, the fail-closed predicate, the email-only identity read against a fixture holding a token, the window's host allowlist, the re-check and cancel races, the names-only diagnostic, each run's own window, the wipe, the clear and the archive hook (WP1.33); tests/unit/codex-web-sign-in.test.ts",
+      "note": ""
     },
     {
       "path": "tests/unit/conductor-secret-rotation.test.ts",
@@ -5797,6 +5951,18 @@
       "category": "TEST",
       "disposition": "added",
       "evidence": "new WP2 PR 4 owner answers (2026-10-04) test (c0d79113): the record before any copy and no copy without it, a bounded plain-file record of fully qualified homes, removal from every recorded folder when off, refresh-only while on, a folder let go only once no copy is left, unreadable settings doing nothing; temporary homes only (WP1.33); tests/unit/main/codex-user-skills.test.ts; WP2 PR 4 owner answers review fix pass (374ab0fb): a changed mark is no longer the user's own (moved to the ownership test); a record that cannot be read refuses, one that does not parse is kept aside; letter case folded on Windows only (WP1.33); tests/unit/main/codex-user-skills.test.ts; WP2 PR 4 owner answers review round 2 (afc5ce7d): a damaged record never replaces one kept aside earlier, and a later pass takes back the folders a kept-aside record names in full (WP1.33); tests/unit/main/codex-user-skills.test.ts; WP2 PR 4 polish (a004e27a): ten kept-aside names taken, the oldest naming a folder kept and an empty one replaced; the listing helper writes nothing; the home variables point into a temporary root before any app module loads (WP1.33); tests/unit/main/codex-user-skills.test.ts",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/main/codex-web-archive.test.ts",
+      "predicates": [
+        "P01",
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 4 P4.6 second half (row 58; e5bb0976) test: the archive seam, and the accounts service running it before anything of a managed or external archive, refusing the archive when the clear fails (WP1.15, WP1.33); tests/unit/main/codex-web-archive.test.ts",
       "note": ""
     },
     {
@@ -7411,7 +7577,7 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "existing test retained, its cases unchanged; WP2 PR 4 P4.6 (row 58): claudeWebActionProfileId cases added, a Codex session has no Claude account to act on (WP1.33); tests/unit/renderer/claude-web-targets.test.ts",
+      "evidence": "existing test retained, its cases unchanged; WP2 PR 4 P4.6 (row 58): claudeWebActionProfileId cases added, a Codex session has no Claude account to act on (WP1.33); tests/unit/renderer/claude-web-targets.test.ts; WP2 PR 4 P4.6 second half (row 58; 10b510c3): codexWebActionAccountId cases (WP1.33); tests/unit/renderer/claude-web-targets.test.ts",
       "note": ""
     },
     {
@@ -7596,6 +7762,18 @@
       "category": "TEST",
       "disposition": "added",
       "evidence": "new WP2 PR 3 P3.6 (row 22) test (tests/unit/renderer/codex-switch-account.test.tsx): the Switch account list and gate for a Codex session, the switch (pin and save, the carry, then Restart), the section 5 fallback note, refusals, the right-click menu (WP1.68)",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/renderer/codex-web-account-row.test.tsx",
+      "predicates": [
+        "P01",
+        "P05",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 4 P4.6 second half (row 58; 10b510c3) test: a Codex account's Settings row shows its chatgpt.com status and offers to sign that account in and out of chatgpt.com, the CLI sign-out never clears it, and an archived account, a provider that is off or a non-registry id get none (WP1.39, WP1.33); tests/unit/renderer/codex-web-account-row.test.tsx",
       "note": ""
     },
     {
@@ -8553,7 +8731,7 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "existing test retained; its cases are unchanged; WP2 PR 3 P3.10 (row 43): one case added, a Watchdog check the session's CLI has no patterns for is shown off, disabled and says why (WP1.33); tests/unit/renderer/sidebar-context-menus.test.tsx; WP2 PR 4 P4.6 (row 58): cases added, a Codex row never gets Claude's account items, a Claude row keeps them, the sidebar's acting-account and prefetch wiring (WP1.33); tests/unit/renderer/sidebar-context-menus.test.tsx; WP2 PR 4 P4.6 review fix (1064dbbf): the right-click prefetch is pinned to the menu's own helper (claudeWebActionProfileId); the replaced pin line was its only P05 hit (WP1.33); tests/unit/renderer/sidebar-context-menus.test.tsx",
+      "evidence": "existing test retained; its cases are unchanged; WP2 PR 3 P3.10 (row 43): one case added, a Watchdog check the session's CLI has no patterns for is shown off, disabled and says why (WP1.33); tests/unit/renderer/sidebar-context-menus.test.tsx; WP2 PR 4 P4.6 (row 58): cases added, a Codex row never gets Claude's account items, a Claude row keeps them, the sidebar's acting-account and prefetch wiring (WP1.33); tests/unit/renderer/sidebar-context-menus.test.tsx; WP2 PR 4 P4.6 review fix (1064dbbf): the right-click prefetch is pinned to the menu's own helper (claudeWebActionProfileId); the replaced pin line was its only P05 hit (WP1.33); tests/unit/renderer/sidebar-context-menus.test.tsx; WP2 PR 4 P4.6 second half (row 58; 10b510c3): a Codex row's own chatgpt.com item, never on a Claude row (WP1.33); tests/unit/renderer/sidebar-context-menus.test.tsx",
       "note": ""
     },
     {
@@ -8765,7 +8943,7 @@
       ],
       "category": "TEST",
       "disposition": "replace",
-      "evidence": "existing test retained; WP2 PR 4 P4.6 (row 58): a local Codex session never carries the claude.ai entry (WP1.33); tests/unit/renderer/webview-pane-browser.test.tsx",
+      "evidence": "existing test retained; WP2 PR 4 P4.6 (row 58): a local Codex session never carries the claude.ai entry (WP1.33); tests/unit/renderer/webview-pane-browser.test.tsx; WP2 PR 4 P4.6 second half (row 58; 10b510c3): the chatgpt.com entry and account surface for a Codex session (WP1.33); tests/unit/renderer/webview-pane-browser.test.tsx",
       "note": ""
     },
     {

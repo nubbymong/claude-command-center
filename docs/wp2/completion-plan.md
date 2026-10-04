@@ -63,7 +63,7 @@ still owes recorded in 4. "2; 3" means partly built in 2, the rest in 3.
 
 - 75 rows: **61 DONE, 12 PARTIAL, 2 OPEN** (recounted after the owner's answers of 2026-10-04, the CI and VM records of 9.7 and the review fix pass: rows 41, 51, 52, 53, 57 and 63 leave PARTIAL with their questions answered and question 5's answer built; rows 59 and 67 are DONE with their runs, and row 60 PARTIAL until its release-candidate leg;
   they agree with the parity checklist). The rule applied: a row leaves PARTIAL once only verification is left. Rows 51, 52, 53 and 57, whose checklist entries named their question as the gap that kept them PARTIAL, and rows 41 and 63, which owed only the decision beyond verification, are DONE; row 22, whose question was answered too, stays PARTIAL, because it also owes the owner's real-account resume after a Switch, the gap that keeps row 35 PARTIAL (the records commit 1f199305 had counted row 22 DONE: 62 DONE, 11 PARTIAL). At the recount after PR 4's P4.1 to P4.6 records and question 8 it was 53 DONE, 18 PARTIAL and 4 OPEN, and after P3.15 52 DONE, 12 PARTIAL and 11 OPEN.
-- The 14 rows not DONE, by gap: **implementation 2, verification 10, owner 2** (rows 14 and 68 under implementation; rows 15 and 58 under owner, an owner action and a record to sign, row 58's sign-in window waiting on OR2a; rows 11, 16, 22, 34, 35, 45, 54, 55, 60 and 66 under verification, row 22 the owner's real-account resume and the rest of its real-CLI walk, row 55 its delete check, row 54 its images' review and row 60 its release-candidate leg). At the recount before the owner's answers of 2026-10-04: implementation 5, verification 8, owner 9 (rows 22, 41, 51, 52, 53, 57 and 63 then under owner, each built as a default pending a question). At the recount after P3.15: implementation 9, verification 6, owner 8. Row 53
+- The 14 rows not DONE, by gap: **implementation 2, verification 10, owner 2** (rows 14 and 68 under implementation; rows 15 and 58 under owner, an owner action and a record to sign, row 58's web half built ahead of the owner's one sign-in run, OR2, which confirms its three unverified values; rows 11, 16, 22, 34, 35, 45, 54, 55, 60 and 66 under verification, row 22 the owner's real-account resume and the rest of its real-CLI walk, row 55 its delete check, row 54 its images' review and row 60 its release-candidate leg). At the recount before the owner's answers of 2026-10-04: implementation 5, verification 8, owner 9 (rows 22, 41, 51, 52, 53, 57 and 63 then under owner, each built as a default pending a question). At the recount after P3.15: implementation 9, verification 6, owner 8. Row 53
   moved from owner to implementation when the owner decided it
   (`docs/wp1/owner-decisions-2026-09-27.md`, M4), and back under owner with question 6 (PB4, 2026-10-02).
 - By PR: **8 in PR 3, 15 in PR 4**. No row changes package. The Ask Conductor
@@ -185,7 +185,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 55 | Memory | PARTIAL (P4.4, 1a12160b to 41638f93; mocked): listing, guard and read built; delete built, hidden and refused in main until the VM check; frontmatter edit does not carry over (recorded) | Parity: each realm's Codex memories on the Memory page | verification: the delete check on the VM (else OR4); OR4: the real file format | 4 |
 | 56 | Codex logs | DONE (P4.4, 1a12160b, 8fb60652; mocked) | Parity: each realm's `log` folder offered where the app offers its own log folder (Settings, Debug Logging) | verification: the VM (each account's folders open, `log_dir` from `config.toml` included) | 4 |
 | 57 | Cloud Agents | DONE (P4.5, 5d0187c6 to d41c4a8b; mocked): built, the skip-permissions choice as the owner decided on 2026-10-04 (question 7: A, kept as built); was Claude only (`src/main/cloud-agent-manager.ts:192`) | Parity: background agents run with `codex exec` in the account's realm, as Claude's run its headless CLI; not the experimental `codex cloud` (WP1.41) | verification: the VM run, OR4 | 4 |
-| 58 | Web sign-in and artifacts | PARTIAL (P4.6 first half, 27d62537 to 1064dbbf; mocked): a Codex account's own web partition, the orphan warning over both prefixes, Claude's items off a Codex tab's menu and pane | Web session: parity (chatgpt.com is to a Codex account what claude.ai is to a Claude account: the browser pane's account surface). Artifacts: no Codex equivalent is known, so a section 19 record (section 10) | owner (OR2a, then the artifacts record, OR3); implementation (the sign-in window and the pane's account surface, after OR2a) | 4 |
+| 58 | Web sign-in and artifacts | PARTIAL (P4.6 first half, 27d62537 to 1064dbbf; second half, 10fab972 to dd23a3bf; mocked): a Codex account's own web partition, the orphan warning over both prefixes, Claude's items off a Codex tab's menu and pane; the chatgpt.com sign-in window (fail-closed), the pane's chatgpt.com account surface, a Codex tab's own menu item, the Settings row's status and items, and archive clearing the session first | Web session: parity (chatgpt.com is to a Codex account what claude.ai is to a Claude account: the browser pane's account surface). Artifacts: no Codex equivalent is known, so a section 19 record (section 10) | owner (OR2, one sign-in run through the built window, which confirms its three unverified values; the artifacts record, OR3) | 4 |
 
 ### E. Everything else
 
@@ -4564,7 +4564,7 @@ are registered at `pty-manager.ts:5617-5653` and `--plugin-dir` is passed at
 | P4.3 Ask Conductor on Codex: a help workspace Codex reads (`AGENTS.md`), the opening question on a Codex launch; with both on, the Settings, General row "Ask Conductor runs on" (Claude Code by default), the dock row's provider type badge, and the provider read again when a closed Ask tab is revived | 53 (and the Ask part of 14) | Y | Y (the carrier passes the question through the Codex branch to `buildCodexSpawn`, and the logged Codex launch line, `pty-manager.ts:5000`, changes) | APPROVED (both on: OD27 M4). Carrier (PB4): argv after `--` on the direct route; the composer through P4.1's primitive on the npm `.cmd` route and for a live tab; characters outside the BMP: question 6, built as its default A |
 | P4.4 Memory and Codex logs | 55, 56 | Y | N | APPROVED |
 | P4.5 Cloud Agents with `codex exec` | 57 | Y | N | APPROVED (the skip-permissions mapping: question 7, from PB5, built as its default A, Auto) |
-| P4.6 Codex web session; the artifacts record | 58 | Y | N | Web session: APPROVED, in the in-app window (PB7: the page loads with its sign-in form, no challenge); the sign-in window follows the owner's run (OR2). Artifacts: the owner signs a section 19 record |
+| P4.6 Codex web session; the artifacts record | 58 | Y | N | Web session: APPROVED, in the in-app window (PB7: the page loads with its sign-in form, no challenge); the sign-in window is built ahead of the owner's run, fail-closed on three unverified values that the run (OR2) confirms. Artifacts: the owner signs a section 19 record |
 | P4.7 Insights for Codex: a Conductor-native report, run with `codex exec`; a mockup on the Agent Canvas before the build | 68 | Y | N | APPROVED (a one-line notice to the owner, section 10); mockup first |
 | P4.8 CI: `ubuntu-latest` in the test matrix; real-CLI conformance at the minimum, pinned and release-candidate versions | 59, 60 | N (a product fix it finds: by its own paths, 9.7 gate 4) | N | APPROVED |
 | P4.9 E2E mode matrix: restart, enable/disable, a real launch | 67 | N | N | APPROVED |
@@ -4656,8 +4656,6 @@ flowchart LR
   P44 --> CP2
   P45 --> CP2
   P46a --> CP2
-  PV --> OR2a
-  OR2a{{"OR2a owner: chatgpt.com sign-in run"}} --> P46w
   OR3{{"OR3 owner: Insights mockup and artifacts record, one render"}} --> P47
   OR3 --> P46A
   P45 --> X45["VM: P4.5's edit case, non-admin sandbox"]
@@ -4676,7 +4674,7 @@ flowchart LR
   OR1{{"OR1 owner: hosts, identities, timing; row 15 gates"}} --> P410
   OR4{{"OR4 owner: real-model checks"}} --> P410
   P410 --> G(["Final head: PR-level ADR-009, SSH live matrix, VM e2e, CI green, owner word"])
-  OR2b{{"OR2b owner: sign-in through the built window"}} --> G
+  P46w --> OR2{{"OR2 owner: one chatgpt.com sign-in run through the built window (confirms its three values)"}} --> G
   OR5{{"OR5 owner: runs the SSH live matrix"}} --> G
 ```
 
@@ -4692,12 +4690,12 @@ Lane A     P4.1 gate/roots/link/approvals/screen ==> skills/instructions ==> pri
 Lane A2    P4.3 setting/dock/revive/gate ======> AGENTS.md ==>
 Lane B     P4.4 memory/logs on PB6's layout ======> [VM delete check, counted only if consolidation runs]
 Lane C     P4.5 record/IPC/gates/lease/runner (cwd = project) ======> [OR3 approved] P4.7 ======>
-Lane D     P4.6 partition/sweep/Claude items off ==> [OR2a] sign-in window ==> [OR3 signed] artifacts ==>
+Lane D     P4.6 partition/sweep/Claude items off ==> sign-in window (fail-closed, ahead of OR2) ==> [OR3 signed] artifacts ==>
 Lane F     P4.10 traceability fix + map; P4.11 inventory ====>     [Q5-Q7 answers] P4.11 ===> [images] P4.10 ===> PR gates
 Checks     |CP1| after P4.2    |CP2| P4.3 + carrier, P4.4, P4.5, P4.6 first half    |final head|
-Owner      asked now: OR1, OR2a, OR4, OR5, questions 5, 6 and 7; OR3 rendered once both drafts are ready;
+Owner      asked now: OR1, OR4, OR5, questions 5, 6 and 7; OR3 rendered once both drafts are ready;
            OR6 part 2 only if P4.5's non-admin edit case fails, part 1 (the VM repair) last;
-           on the final build: OR1's gates, OR2b, OR4, OR5
+           on the final build: OR1's gates, OR2 (one chatgpt.com sign-in run), OR4, OR5
 ```
 
 ### 9.2 Probes before build (run 2026-10-02)
@@ -5027,14 +5025,14 @@ start):**
 **Then, in this order of integration:** P4.1; P4.2; checkpoint 1; P4.3's
 lane A2 half, then its carrier (lane A, after P4.1's primitive and lane A2's
 integration); P4.4; P4.5; P4.6's first half; checkpoint 2; P4.6's sign-in
-window and its Codex menu item (after OR2a); P4.7 (after P4.5 and OR3's
+window and its Codex menu item (built ahead of OR2, 2026-10-04); P4.7 (after P4.5 and OR3's
 approval); P4.6's artifacts half (after OR3's signature); P4.9 integrated after
 the product phases so the final VM run covers them; P4.11; P4.10 last, because
 it records evidence for the final build; the final head. Section 9's numbering
 is kept apart from three moves: P4.8 goes first, P4.3 is split across two
 lanes, and P4.11 comes before P4.10, each for the reason given. Checkpoint 2
 does not wait for an owner answer: the owner-gated halves (P4.6's sign-in
-window and artifacts, P4.7) are covered at the final head. P4.11 re-checks
+window, built ahead of OR2, and its artifacts, P4.7) are covered at the final head. P4.11 re-checks
 its lines against the owner's answers to questions 5 to 8, and if an answer
 brings a change after P4.11 or P4.10 ran, both run again over it before the
 final head.
@@ -6166,8 +6164,8 @@ and lane A2's integration. Probes: PB3, PB4 (both reported).
     a Codex agent's Retry. ADR-009 pass: PASS at 1a51bb66 (four lenses, two
     fix rounds); VM confirmations owed.
 
-**P4.6 Codex web session; the artifacts record (row 58).** Owner: OR2 (the
-sign-in, before and after the build), OR3 (the record). PB7 sized OR2.
+**P4.6 Codex web session; the artifacts record (row 58).** Owner: OR2 (one
+sign-in run through the built window), OR3 (the record). PB7 sized OR2.
 - *Today: Claude's web session.* The partition is
   `persist:claude-web-${profileId}` (`shared/account-web-session.ts:171-176`);
   `PROFILE_ID_RE` (:189) refuses Codex's `acct-<hex>` ids
@@ -6193,14 +6191,21 @@ sign-in, before and after the build), OR3 (the record). PB7 sized OR2.
     covering the new prefix; Claude's two items taken off a Codex tab's menu,
     because both act on another account (the primary Claude profile: #216,
     P3.6 V5).
-  - After OR2a: the in-app sign-in window and the pane's account surface on
-    chatgpt.com, with the completion signal and the identity read OR2a
-    records, using the app's existing Chrome user agent (PB7: the form loads
-    under both, no challenge); a Codex tab's own web-session menu item; sign-out
-    and archive clear the session; the navigation allowlist names exactly the
-    hosts of the sign-in methods OR2a shows complete (PB7 saw email, Google,
-    Apple and phone) (part of the ADR-009 surface).
-  - If OR2a shows the in-app window cannot complete a chatgpt.com sign-in,
+  - Built ahead of the owner's run (2026-10-04: OR2a moved into the owner's
+    single run, OR2): the in-app sign-in window and the pane's account surface
+    on chatgpt.com, using the app's existing Chrome user agent (PB7: the form
+    loads under both, no challenge); a Codex tab's own web-session menu item;
+    the Settings row's status and items; sign-out and archive clear the
+    session (the Codex CLI's own sign-out does not, as Claude's does not). The
+    three values only a real sign-in shows (the session cookie name, the
+    identity read, the sign-in methods' hosts) sit in one descriptor, marked
+    unverified. Completion fails closed (the named cookie AND a valid email),
+    so a wrong value means the run never completes and the partition is
+    wiped, never a false "signed in"; the navigation allowlist names exactly
+    the listed hosts, never any https host (part of the ADR-009 surface); and a
+    run that does not complete logs the cookie names and off-site hosts it saw
+    (never values or query strings), so even a failed owner run yields them.
+  - If OR2 shows the in-app window cannot complete a chatgpt.com sign-in,
     section 9's note applies: the cookie path goes to the owner, and if the
     owner declines it, the web half becomes a section 19 record.
   - `WhatsNewV2Step.tsx:120` ("claude.ai in the app.") is not in section 9's
@@ -6224,8 +6229,11 @@ sign-in, before and after the build), OR3 (the record). PB7 sized OR2.
   partition builder refuses a `profile-` id and Claude's an `acct-` id; a host
   outside the allowlist is blocked in the sign-in window; sign-out and archive
   clear the Codex partition.
-- *VM.* PB7 (no sign-in). The sign-in itself is OR2a, before the window is
-  built, and OR2b, through the built window on the final build.
+- *VM.* PB7 (no sign-in), then PB7b before the owner's run (credential-free:
+  the cookie names after an unauthenticated load, the identity endpoint's
+  unauthenticated answer, and each sign-in method's first off-site host and
+  whether it is a popup or a redirect). The sign-in itself is OR2, one run
+  through the built window on the final build.
 - *Record (2026-10-03; the first half, at b4413a24).*
   - *Built (the start-now half).* 27d62537 (lane D); 7c20c204 (integration:
     the orphan sweep for both web partitions, and no Claude account on a Codex
@@ -6255,11 +6263,40 @@ sign-in, before and after the build), OR3 (the record). PB7 sized OR2.
     any removal (sign-out, archive, clean-up) checks the whole folder name
     against its id class, never the listing warning's prefix match alone; new
     account-keyed channels take strict schemas and trusted-sender checks.
-  - *Owed.* OR2a, then the sign-in window, the pane's account surface and the
-    Codex menu item; OR3, the artifacts record; OR2b on the final build.
+  - *Owed (then; the 2026-10-04 record below supersedes it).* OR2a, then the
+    sign-in window, the pane's account surface and the Codex menu item; OR3, the artifacts record; OR2b on the final build.
     ADR-009 pass: PASS at 1a51bb66 (four lenses, two fix rounds); VM
     confirmations owed. The second half has its own round when it is
     built.
+- *Record (2026-10-04; the second half, 10fab972 to dd23a3bf).*
+  - *Built ahead of the owner's run (lane W58; mocked).* 10fab972 (the window,
+    the session and the pane, behind one descriptor), e5bb0976 (archive clears
+    the web session first), fdfdfbef (the codexWeb channels), 10b510c3 (the
+    Codex tab's menu item, the pane's chatgpt.com entry and the Settings
+    row), c5d941f7, c37c2410, 1aac6bf8 and dd23a3bf (tests), 533c8b6a (a comment).
+  - *The three unverified values* (`CODEX_WEB_SERVICE`,
+    `shared/account-web-session.ts`), public knowledge and not evidence, for
+    OR2 to confirm: the session cookie `__Secure-next-auth.session-token` (or
+    its first chunk, `.0`); the identity read `/api/auth/session`, the email at
+    `user.email`; the sign-in hosts `auth.openai.com`, `accounts.google.com`
+    and `appleid.apple.com`. PB7 verified the sign-in page,
+    `https://chatgpt.com/auth/login`.
+  - *Guards, each mutation-proven (29 mutants, 29 killed).* The codexWeb
+    channels: the trusted sender, the `account` id class only (even against
+    the registry), the registry check (known, Codex, not archived, not being
+    archived) before any partition is made, a finished sign-in re-checked
+    before its record is saved, no URL from the renderer. The window: the main
+    frame to chatgpt.com and the listed hosts only; completion on the named
+    cookie AND a valid email, re-checked, then the cancel flag; popups and
+    permissions denied; an identity read that returns only the email
+    (origin-gated inside the expression, isolated world, uncached). The pane:
+    signed out, the listed hosts only; a record needs the email; the record
+    store keeps metadata only. Each run owns its window; one sign-in at a
+    time across both services; an archive is refused when the clear fails.
+    Claude's suites unchanged and green.
+  - *Owed.* The second half's own ADR-009 round; PB7b on the VM; OR2 on the
+    final build (then a values-only fix and a re-run if a value was wrong);
+    OR3, the artifacts record.
 
 **P4.7 Insights for Codex (row 68).** After P4.5's runner and OR3's approval.
 Probe: PB5 (shared with P4.5).
@@ -6774,15 +6811,23 @@ Queued now (none blocks the start; each blocks one later step):
   Sign-out removes the credential (and on Windows also any Direct entry), but
   the Secrets key entry stays by design, with no credential behind it; the
   residue check looks for both names and expects only that one.
-- **OR2 (P4.6), in two parts.** OR2a, before the sign-in window is built: a
-  real chatgpt.com sign-in in an Electron window on a disposable identity,
-  recording which sign-in methods complete (PB7 saw email, Google, Apple and
-  phone), the completion signal, where the page lands, the cookie names (never
-  values) and what identifies the account (needs real credentials). PB7: the
-  page loads with its sign-in form under both user agents, no challenge. OR2b,
-  on the final build: sign in through the built window on a disposable
-  identity, see the pane's account, sign out and archive, and confirm the
-  session is cleared.
+- **OR2 (P4.6), one run.** The sign-in window is built ahead of it (decided
+  2026-10-04: OR2a, a run before the build, moved into this run), fail-closed
+  on the three values only a real sign-in shows (the session cookie name, the
+  identity read, the sign-in methods' hosts). On the final build, on a
+  disposable identity: open a Codex account's menu in Settings, Accounts,
+  choose Sign in to chatgpt.com and sign in by email (and by Google, Apple or
+  phone where there is a disposable identity for it), noting for each method
+  whether the window closed and the row read signed in as that email; open
+  chatgpt.com in that account's Codex tab's browser pane and confirm it shows
+  signed in; choose Sign out of chatgpt.com, sign in once more, archive the
+  account, confirm the pane and the row read signed out, and review the
+  screenshots. A method that does not complete leaves one log line with the
+  cookie names on chatgpt.com and the off-site hosts the window saw (never
+  values or query strings), so a failed run still yields the values, and a
+  values-only fix and a re-run follow. PB7: the page loads with its sign-in
+  form under both user agents, no challenge; PB7b (credential-free, on the
+  VM) narrows the values first.
 - **OR3 (P4.7, P4.6).** One batched render on the Agent Canvas: the Insights
   mockup (made from the current code) and the artifacts section 19 record.
   Approve the mockup; sign or reject the record.
