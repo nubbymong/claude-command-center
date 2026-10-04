@@ -133,6 +133,17 @@ describe('[host] only a registry account id is accepted', () => {
   })
 })
 
+describe('[host] the id schema holds even against the registry', () => {
+  it.each(CHANNELS)('%s refuses an id off the account pattern even when the registry lists it as Codex', async (ch, arg) => {
+    for (const odd of ['profile-known1', 'ACCT-0123456789ABCDEF', 'acct-0123', `${ACCT}/..`]) {
+      registry.accounts = [...registry.accounts, { id: odd, providerId: 'codex', lifecycle: 'active' }]
+      const r = await call(ch, TRUSTED, arg(odd))
+      expect(r.ok, `${ch} ${odd}`).toBe(false)
+    }
+    nothingActed(ch)
+  })
+})
+
 describe('[host] only a known Codex account, not archived, not being archived', () => {
   it.each(CHANNELS)('%s refuses unknown, Claude, archived and archiving accounts before acting', async (ch, arg) => {
     for (const id of [UNKNOWN, CLAUDE_ACCT, ARCHIVED, BEING_ARCHIVED]) {
