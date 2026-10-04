@@ -81,6 +81,9 @@ vi.mock('../../../src/main/debug-logger', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/main/debug-logger')>()),
   logWarn: (...a: unknown[]) => { h.warns.push(a.map(String).join(' ')) },
 }))
+// [host] The real logger kept above keeps its log inside the test's own folder, never
+// the installed app's (tests/helpers/test-data-dir.ts).
+const TEST_DATA = await vi.hoisted(async () => (await import('../../helpers/test-data-dir')).useTestDataDirectory())
 vi.mock('../../../src/main/logging/logging-service', () => ({ getLogSupervisor: () => null, getTranscriptBinder: () => null }))
 vi.mock('../../../src/main/conductor-mcp-server', () => ({
   getConductorMcpPort: () => 0,
@@ -530,5 +533,12 @@ describe('P3.12 round 2 (Q3): a holder stops', () => {
     killPty(SID)
     expect(source(SID2).recheckShared).toHaveBeenCalledTimes(1)
     expect(source(SID).recheckShared).not.toHaveBeenCalled()
+  })
+})
+
+describe("the test's own log folder", () => {
+  it("[host] the real logger keeps its log inside the test's own folder", async () => {
+    const { getLogDir } = await import('../../../src/main/debug-logger')
+    expect(getLogDir()).toBe(path.join(TEST_DATA, 'debug'))
   })
 })

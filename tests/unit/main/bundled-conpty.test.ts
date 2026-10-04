@@ -16,6 +16,9 @@ vi.mock('../../../src/main/debug-logger', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/main/debug-logger')>()),
   logWarn: (...a: unknown[]) => { h.warns.push(a.map(String).join(' ')) },
 }))
+// [host] The real logger kept above keeps its log inside the test's own folder, never
+// the installed app's (tests/helpers/test-data-dir.ts).
+const TEST_DATA = await vi.hoisted(async () => (await import('../../helpers/test-data-dir')).useTestDataDirectory())
 
 const { chooseConpty, nativeModuleDirs, asarUnpackedPath, bundledConptyChoice, bundledConptyFailed, findNodePtyLibDir, NODE_PTY_MAX_PATH, LOADED_MODULE_PREFIX, namespacedPrefixLength, _resetBundledConptyForTest } = await import('../../../src/main/bundled-conpty')
 
@@ -270,5 +273,12 @@ describe('the dev install (round 1, F6)', () => {
     expect(rebuild).toBeGreaterThan(-1)
     expect(copy).toBeGreaterThan(rebuild)
     expect(post.slice(rebuild, copy)).toMatch(/&&\s*$/)
+  })
+})
+
+describe("the test's own log folder", () => {
+  it("[host] the real logger keeps its log inside the test's own folder", async () => {
+    const { getLogDir } = await import('../../../src/main/debug-logger')
+    expect(getLogDir()).toBe(path.join(TEST_DATA, 'debug'))
   })
 })

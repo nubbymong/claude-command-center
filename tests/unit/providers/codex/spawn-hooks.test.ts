@@ -34,6 +34,9 @@ vi.mock('../../../../src/main/debug-logger', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../../src/main/debug-logger')>()),
   logWarn: (...a: unknown[]) => { warns.push(a.map(String).join(' ')) },
 }))
+// [host] The real logger kept above keeps its log inside the test's own folder, never
+// the installed app's (tests/helpers/test-data-dir.ts).
+const TEST_DATA = await vi.hoisted(async () => (await import('../../../helpers/test-data-dir')).useTestDataDirectory())
 vi.mock('../../../../src/main/config-manager', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../../src/main/config-manager')>()),
   readConfig: () => ({}),
@@ -284,5 +287,12 @@ describe('round 4: hook folders that are not ready, or not this user\'s alone, g
     await new CodexProvider().deployResumePickerScript(res)
     expect(existsSync(join(res, 'codex-hooks'))).toBe(false)
     expect(new CodexProvider().prepareSessionHooks('sess-1', 51234, '0f8b6a2c-1d3e-4f50-9a61-7b2c3d4e5f60')).toBeNull()
+  })
+})
+
+describe("the test's own log folder", () => {
+  it("[host] the real logger keeps its log inside the test's own folder", async () => {
+    const { getLogDir } = await import('../../../../src/main/debug-logger')
+    expect(getLogDir()).toBe(join(TEST_DATA, 'debug'))
   })
 })

@@ -83,6 +83,9 @@ vi.mock('../../../src/main/debug-logger', async (importOriginal) => ({
   logInfo: (...a: unknown[]) => { h.infos.push(a.map(String).join(' ')) },
   logWarn: (...a: unknown[]) => { h.warns.push(a.map(String).join(' ')) },
 }))
+// [host] The real logger kept above keeps its log inside the test's own folder, never
+// the installed app's (tests/helpers/test-data-dir.ts).
+const TEST_DATA = await vi.hoisted(async () => (await import('../../helpers/test-data-dir')).useTestDataDirectory())
 vi.mock('../../../src/main/ipc/setup-handlers', () => ({ getResourcesDirectory: () => os.tmpdir(), getDataDirectory: () => os.tmpdir(), registerSetupHandlers: () => {}, writeCliSetupPty: () => {} }))
 vi.mock('electron', () => ({
   app: { getPath: () => '/mock/userData', getAppPath: () => process.cwd(), on: () => {}, quit: () => {} },
@@ -607,5 +610,12 @@ describe('an EAGAIN on a PTY\'s output (round 5, R1)', () => {
       for (const cb of [...p.exit]) cb({ exitCode: 1 })
       bundledThere()
     }
+  })
+})
+
+describe("the test's own log folder", () => {
+  it("[host] the real logger keeps its log inside the test's own folder", async () => {
+    const { getLogDir } = await import('../../../src/main/debug-logger')
+    expect(getLogDir()).toBe(path.join(TEST_DATA, 'debug'))
   })
 })
