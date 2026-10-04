@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { originalHomeEnv } from '../../helpers/home-guard-core.mjs'
 
 /**
  * BEHAVIOURAL tests for the destructive half of build/installer.nsh.
@@ -62,8 +63,11 @@ const PROBE_MACROS = [
 
 const PROBE_REG_KEY = 'HKCU\\Software\\CccProbe'
 
+// LOCALAPPDATA as the test home guard found it: the guard (tests/helpers/home-isolation.ts)
+// points the variable at an isolated folder, and electron-builder's cache is in the
+// original one. Read only, to locate the compiler; nothing is written there.
 function nsisCacheRoot(): string | null {
-  const local = process.env.LOCALAPPDATA
+  const local = originalHomeEnv().LOCALAPPDATA ?? process.env.LOCALAPPDATA
   return local ? join(local, 'electron-builder', 'Cache', 'nsis') : null
 }
 
@@ -104,6 +108,14 @@ describe('installer.nsh behavioural probe — availability', () => {
       readdirSync(cache).some((n) => n.startsWith('nsis-'))
     if (cachePresent) expect(MAKENSIS).not.toBeNull()
     else expect(true).toBe(true) // nothing to find; the suite below skips
+  })
+
+  it('looks in the LOCALAPPDATA the test home guard found, not the isolated one it points the variable at', () => {
+    // [host][CI] The guard (tests/helpers/home-isolation.ts) points LOCALAPPDATA at an
+    // isolated folder that never holds electron-builder's cache. A locator reading the
+    // variable skipped everything below, and the check above skipped with it.
+    const local = originalHomeEnv().LOCALAPPDATA ?? process.env.LOCALAPPDATA
+    expect(nsisCacheRoot()).toBe(local ? join(local, 'electron-builder', 'Cache', 'nsis') : null)
   })
 })
 
