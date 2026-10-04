@@ -83,7 +83,18 @@ function writeCredFile(id: string, relDir: string) {
 // -- which is precisely the failure these tests exist to catch.
 beforeAll(() => { composeProviders() })
 
+/** The platform the per-profile cases run as: this host's, except on macOS.
+ *  There every profile runs on the Mac's one Claude Code sign-in (D2), so a
+ *  sign-out always asks for the acknowledgement and HOME stays the real home;
+ *  the per-profile cases then run as Linux, the other POSIX model, and the
+ *  macOS cases stub darwin themselves. */
+const HOST_PLATFORM = process.platform
+const PER_PROFILE_PLATFORM: NodeJS.Platform = HOST_PLATFORM === 'darwin' ? 'linux' : HOST_PLATFORM
+let hostPlatformDescriptor: PropertyDescriptor | undefined
+
 beforeEach(async () => {
+  hostPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')
+  Object.defineProperty(process, 'platform', { value: PER_PROFILE_PLATFORM, configurable: true })
   root = fs.mkdtempSync(join(os.tmpdir(), 'ccc-cli-auth-'))
   execFileImpl = (_cmd, _args, _opts, cb) => cb(new Error('no cli'))
   gateSeam.refuse = false
@@ -97,6 +108,7 @@ beforeEach(async () => {
   await gateManagedLaunch(process.cwd())
 })
 afterEach(() => {
+  if (hostPlatformDescriptor) Object.defineProperty(process, 'platform', hostPlatformDescriptor)
   fs.rmSync(root, { recursive: true, force: true })
 })
 

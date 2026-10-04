@@ -49,6 +49,14 @@ const OTHER = 'profile-def-456'
 let sandbox = ''
 let root = ''
 let binDir = ''
+/** The platform the per-profile cases run as: this host's, except on macOS.
+ *  There every profile runs on the Mac's one Claude Code sign-in (D2), so a
+ *  sign-out always asks for the acknowledgement and HOME stays the real home;
+ *  the per-profile cases then run as Linux, the other POSIX model, and the
+ *  macOS cases stub darwin themselves. */
+const HOST_PLATFORM = process.platform
+const PER_PROFILE_PLATFORM: NodeJS.Platform = HOST_PLATFORM === 'darwin' ? 'linux' : HOST_PLATFORM
+let hostPlatformDescriptor: PropertyDescriptor | undefined
 const SANDBOXED_ENV = ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'CLAUDE_CONFIG_DIR'] as const
 let savedEnv: Partial<Record<(typeof SANDBOXED_ENV)[number], string | undefined>> = {}
 
@@ -79,6 +87,10 @@ function plantIdentity(id: string): void {
   fs.writeFileSync(identityCopy(id), '{"claudeAiOauth":{"accessToken":"t","refreshToken":"r"}}')
   fs.writeFileSync(join(root, id, 'identity', '.claude.json'), '{"oauthAccount":{"emailAddress":"a@example.com"}}')
 }
+/** The sign-out's and its status read's own runs, if any went through a
+ *  shell by name. Other launches (the Claude version probe's own lookup, a
+ *  login shell on POSIX) are not this check's business. */
+const authShellRuns = () => execCalls.filter((c) => c.some((a) => /\bauth\b/.test(a)))
 const settle = async (n = 20) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)) }
 async function until(cond: () => boolean, why: string): Promise<void> {
   const deadline = Date.now() + 5000
@@ -90,6 +102,8 @@ async function until(cond: () => boolean, why: string): Promise<void> {
 
 beforeAll(() => { composeProviders() })
 beforeEach(async () => {
+  hostPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')
+  Object.defineProperty(process, 'platform', { value: PER_PROFILE_PLATFORM, configurable: true })
   sandbox = fs.mkdtempSync(join(os.tmpdir(), 'ccc-cli-logout-'))
   savedEnv = {}
   for (const k of SANDBOXED_ENV) {
@@ -112,6 +126,7 @@ beforeEach(async () => {
   await gateManagedLaunch(binDir)
 })
 afterEach(() => {
+  if (hostPlatformDescriptor) Object.defineProperty(process, 'platform', hostPlatformDescriptor)
   for (const k of SANDBOXED_ENV) {
     if (savedEnv[k] === undefined) delete process.env[k]
     else process.env[k] = savedEnv[k]
@@ -144,8 +159,8 @@ describe('logoutClaudeCli: the CLI\'s own sign-out in exactly this profile\'s ho
       expect(c.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST).toBeUndefined()
       expect(JSON.stringify(c.env)).not.toContain(OTHER)
     }
-    // Nothing went through a shell by name.
-    expect(execCalls).toEqual([])
+    // The sign-out and its status read went through the runner, not by name through a shell.
+    expect(authShellRuns()).toEqual([])
   })
 
   it('without an executable discovery proved, or with one the runner cannot start, nothing runs (cli-unavailable)', async () => {
@@ -156,7 +171,7 @@ describe('logoutClaudeCli: the CLI\'s own sign-out in exactly this profile\'s ho
     expect(refused.calls).toHaveLength(1)
     const noSpawn = fakeRunner(() => ({ spawnError: 'ENOENT', exitCode: null, stdout: '', timedOut: false }))
     expect(await logoutClaudeCli(ID, { runner: noSpawn })).toEqual({ ran: false, after: null, refused: 'cli-unavailable' })
-    expect(execCalls).toEqual([])
+    expect(authShellRuns()).toEqual([])
   })
 
   it('is refused, and runs nothing, while the profile is in use (a session or a check holding it)', async () => {
@@ -222,6 +237,7 @@ describe('logoutClaudeCli: the CLI\'s own sign-out in exactly this profile\'s ho
   })
 
   it('macOS: every profile runs on the Mac\'s one sign-in, so every sign-out needs the acknowledgement, and HOME stays the real home', async () => {
+    // Any profile, the primary or not, and whatever the profile list says.
     const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
     Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
     const runner = fakeRunner()
@@ -280,11 +296,11 @@ describe('logoutClaudeCli: the CLI\'s own sign-out in exactly this profile\'s ho
     const probe = readClaudeCliAuth(ID)
     expect(await logoutClaudeCli(ID, { runner: fakeRunner() })).toEqual({ ran: false, after: null, refused: 'in-use' })
     await settle()
-    expect(execCalls, 'the probe ran beside the sign-out').toEqual([])
+    expect(authShellRuns(), 'the probe ran beside the sign-out').toEqual([])
     finishLogout(ok())
     await run
     await probe
-    expect(execCalls).toEqual([['claude', 'auth', 'status']])
+    expect(authShellRuns()).toEqual([['claude', 'auth', 'status']])
   })
 
   it('a sign-out stopped at its time limit: no status read, its process tree ended before it answers, unconfirmed in the log, the identity copy kept', async () => {
