@@ -111,6 +111,9 @@
     "undici": "^7.30.0",
     "node-gyp": {
       "undici": "^6.28.1"
+    },
+    "@excalidraw/excalidraw": {
+      "sass": "1.79.4"
     }
   },
   "build": {
