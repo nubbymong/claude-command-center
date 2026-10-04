@@ -54,6 +54,10 @@ import { LAUNCH_LEASE_KINDS } from './consumer-leases'
 import type { SecretHandleStore } from './secret-handles'
 import { realmEnvForProvider } from './registry'
 import { recipeRunLine } from './recipe-run-line'
+// P4.6 (row 58): what an account holds outside its sign-in is cleared before it
+// is archived, through a provider-neutral, zero-dependency seam (index.ts
+// registers the owners at start).
+import { prepareAccountArchive } from '../../account-archive-hooks'
 
 export interface AccountsServiceDeps {
   /** The registry of the app's CURRENT resources directory, asked afresh
@@ -2034,10 +2038,16 @@ export class AccountsService {
       if (ctx.external) {
         // Credentials stay under the other client's control: say so first.
         if (input.acknowledgeExternal !== true) return failure('acknowledgement-required', 'Archiving only forgets this sign-in here; it stays signed in for other apps. Confirm to continue.')
-        if (!ctx.p?.auth || a.lifecycle !== 'inactive') return apply() // the registry names the rule
+        if (a.lifecycle !== 'inactive') return apply() // the registry names the rule
+        if (!ctx.p?.auth) return this.withArchiveCleared(a, apply)
         const release = await this.exclusiveHold(ctx.store, a.id, a.providerId)
         if (typeof release !== 'function') return release
+        let cleared: (() => void) | null = null
         try {
+          // P4.6: what the account holds outside its sign-in goes first.
+          const c = await this.clearedForArchive(a)
+          if (typeof c !== 'function') return c
+          cleared = c
           // Design 5.5: a home that now holds another sign-in is reconciled
           // first. Archiving changes nothing outside this app, so a check
           // that cannot run (the CLI gone) does not keep the record.
@@ -2049,10 +2059,11 @@ export class AccountsService {
           if (!archived) this.forgetRealms(ctx.p, ctx.store.current() ?? ctx.doc, a.id, a.authRealmId)
           return archived ?? { ok: true }
         } finally {
+          try { cleared?.() } catch { /* a release never fails the archive */ }
           release()
         }
       }
-      if (!ctx.p?.auth) return apply()
+      if (!ctx.p?.auth) return a.lifecycle === 'inactive' ? this.withArchiveCleared(a, apply) : apply()
       // A managed archive leaves a credential-free tombstone: sign out first,
       // and a failed sign-out fails the archive (the account stays inactive).
       if (a.lifecycle !== 'inactive') return apply() // the registry names the rule
@@ -2060,7 +2071,14 @@ export class AccountsService {
       if (refused) return refused
       const release = await this.exclusiveHold(ctx.store, a.id, a.providerId)
       if (typeof release !== 'function') return release
+      let cleared: (() => void) | null = null
       try {
+        // P4.6: what the account holds outside its sign-in (a Codex account's
+        // chatgpt.com web session) is cleared FIRST, before anything of the
+        // archive runs; a clear that fails refuses the archive.
+        const c = await this.clearedForArchive(a)
+        if (typeof c !== 'function') return c
+        cleared = c
         await this.ensureDiscovered(ctx.p)
         // The account's own folder answers first (a status run: the folder in
         // place, no .env): nothing is signed out before the archive is known
@@ -2092,10 +2110,37 @@ export class AccountsService {
         if (!archived) this.forgetRealms(ctx.p, ctx.store.current() ?? ctx.doc, a.id, a.authRealmId)
         return archived ?? { ok: true }
       } finally {
+        try { cleared?.() } catch { /* a release never fails the archive */ }
         release()
       }
     }
     return failure('invalid-request')
+  }
+
+  /** P4.6 (row 58): before an account is archived, what it holds outside its
+   *  sign-in (a Codex account's chatgpt.com web session) is cleared, through
+   *  the provider-neutral archive seam (account-archive-hooks.ts). A clear
+   *  that fails refuses the archive, as Claude's account delete refuses when
+   *  its claude.ai session cannot be cleared. Resolves to the release to run
+   *  once the archive has settled, or the refusal. */
+  private async clearedForArchive(a: { id: string; providerId: ProviderId }): Promise<(() => void) | AccountsFailure> {
+    try {
+      return await prepareAccountArchive(a.id, a.providerId)
+    } catch (err) {
+      this.log(`an archive was refused: the account's web sign-in could not be cleared (${(err as Error)?.message ?? err})`)
+      return failure('lifecycle', 'This account\'s web sign-in could not be cleared, so it was not archived. Try again.')
+    }
+  }
+
+  /** Run an archive step with the account's web state cleared first. */
+  private async withArchiveCleared(a: { id: string; providerId: ProviderId }, run: () => Promise<AccountsResult>): Promise<AccountsResult> {
+    const cleared = await this.clearedForArchive(a)
+    if (typeof cleared !== 'function') return cleared
+    try {
+      return await run()
+    } finally {
+      try { cleared() } catch { /* a release never fails the archive */ }
+    }
   }
 
   /** An account was archived: the provider forgets what it kept about each
