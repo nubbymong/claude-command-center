@@ -110,7 +110,8 @@ export function claudeCliAuthRunner(
     run: async (args, env, timeoutMs) => {
       const cmd = cliCommandLine(executable, args, platform, codexShellEnv(env, platform), 'Claude Code')
       if ('refused' in cmd) return { refused: cmd.refused, exitCode: null, stdout: '', timedOut: false }
-      const r = await run({ ...cmd, cwd }, { env, timeoutMs })
+      // The whole tree: an auth run starts no program of the user's.
+      const r = await run({ ...cmd, cwd }, { env, timeoutMs, killScope: 'tree' })
       return {
         exitCode: r.exitCode,
         stdout: r.stdout,

@@ -23,7 +23,7 @@ describe('claudeCliAuthRunner: the proved executable, no shell, its own folder [
     const r = claudeCliAuthRunner('/opt/claude/bin/claude', 'linux', f.run)
     expect(r.cwd).toBe('/opt/claude/bin')
     const out = await r.run(['auth', 'logout'], { HOME: '/p' }, 30_000)
-    expect(f.calls).toEqual([{ cmd: { file: '/opt/claude/bin/claude', args: ['auth', 'logout'], verbatim: false, cwd: '/opt/claude/bin' }, opts: { env: { HOME: '/p' }, timeoutMs: 30_000 } }])
+    expect(f.calls).toEqual([{ cmd: { file: '/opt/claude/bin/claude', args: ['auth', 'logout'], verbatim: false, cwd: '/opt/claude/bin' }, opts: { env: { HOME: '/p' }, timeoutMs: 30_000, killScope: 'tree' } }])
     expect(out).toEqual({ exitCode: 0, stdout: '{"loggedIn":false}', timedOut: false })
   })
 
