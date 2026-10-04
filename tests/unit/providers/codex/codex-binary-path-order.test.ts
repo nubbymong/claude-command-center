@@ -128,10 +128,19 @@ describe('PATH order wins (owner, 2026-10-04)', () => {
 })
 
 describe('the protections the lookup keeps', () => {
-  it('[host] only fully qualified folders are read', () => {
+  it('[host] only fully qualified PATH folders (a drive or a share) are read', () => {
     const out = resolve({ PATH: ';.;bin;.\\tools;\\rooted;C:relative;C:\\later', PATHEXT: DEFAULT_PATHEXT }, 'codex.cmd', '.\\codex.cmd', 'bin\\codex.cmd', '\\rooted\\codex.cmd', 'C:relative\\codex.cmd', 'C:\\later\\codex.exe')
     expect(out?.cmd).toBe('C:\\later\\codex.exe')
     expect(asked.every((p) => /^[A-Za-z]:\\/.test(p))).toBe(true)
+  })
+
+  // Final nits (L3): the same rule as the Claude walk, from the shared module:
+  // a drive, or a share spelled with two leading slashes. [host]
+  it('[host] reads a drive or a share spelled with two leading slashes, by the shared PATH-folder rule', () => {
+    const out = resolve({ PATH: '\\\\\\srv\\share\\bin;///srv/share/bin;C:\\later', PATHEXT: DEFAULT_PATHEXT }, '\\\\\\srv\\share\\bin\\codex.exe', '///srv/share/bin/codex.exe', 'C:\\later\\codex.exe')
+    expect(out?.cmd).toBe('C:\\later\\codex.exe')
+    expect(asked.every((p) => /^[A-Za-z]:\\/.test(p))).toBe(true)
+    expect(resolve({ PATH: '\\\\srv\\share\\bin', PATHEXT: DEFAULT_PATHEXT }, '\\\\srv\\share\\bin\\codex.exe')?.cmd).toBe('\\\\srv\\share\\bin\\codex.exe')
   })
 
   it.each([

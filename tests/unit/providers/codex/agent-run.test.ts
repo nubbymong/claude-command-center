@@ -431,9 +431,8 @@ describe('the run', () => {
   })
 
   // [host] PR 4 ADR-009 round 1 (L4-1): on the npm `.cmd` route cmd.exe starts
-  // in the project, so the environment alone keeps cmd.exe from taking a
-  // program from the project before PATH: NoDefaultCurrentDirectoryInExePath
-  // set, and no PATH entry relative to the working folder.
+  // in the project, and the environment decides where its programs come from:
+  // NoDefaultCurrentDirectoryInExePath set, and only absolute PATH entries.
   it('on the npm .cmd route cmd.exe starts in the project with NoDefaultCurrentDirectoryInExePath=1 (one spelling, whatever the launch had) and only absolute PATH entries', async () => {
     const { deps, spawned } = fakeDeps()
     const env = { Path: '.;C:\\Windows;rel\\bin;;D:/tools;"C:\\Program Files\\nodejs"', SystemRoot: 'C:\\Windows', nodefaultcurrentdirectoryinexepath: '0', CODEX_HOME: ENV.CODEX_HOME }

@@ -695,9 +695,8 @@ export function makeCodexKillTree(
    *  running; a POSIX tree kill signals the run's group first. */
   const killPids = async (child: ChildProcess, pids: number[], scope: CodexKillScope): Promise<void> => {
     if (platform === 'win32') {
-      // taskkill only from an absolute Windows root, run there, bounded; no
-      // search of the current directory or PATH for a bare name. No /T: the
-      // chain is exactly the pids named.
+      // taskkill by its full path under an absolute Windows root, run there,
+      // bounded. No /T: the chain is exactly the pids named.
       if (!systemRoot || !isWindowsAbsolute(systemRoot)) { killRoot(child); return }
       const taskkill = path.win32.join(systemRoot, 'System32', 'taskkill.exe')
       await new Promise<void>((resolve) => {

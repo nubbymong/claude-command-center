@@ -543,9 +543,9 @@ obligations fall on later slices:
   default has since become.
 - **Departures:**
   - The session's working directory stays the project, not the shim's
-    folder: Codex's workspace is its cwd. `NoDefaultCurrentDirectoryInExePath`
-    keeps cmd.exe from resolving programs from the project folder by itself,
-    and the `/s` cmd.exe line keeps the shim's path whole.
+    folder: Codex's workspace is its cwd.
+    `NoDefaultCurrentDirectoryInExePath=1` has cmd.exe resolve programs from
+    PATH, and the `/s` cmd.exe line keeps the shim's path whole.
   - Claude behaviour change (T18): a Claude spawn that waits for a legacy CLI
     install is now registered with pty-manager for the wait, like a Codex
     preparation. A tab closed during the install therefore starts no PTY;

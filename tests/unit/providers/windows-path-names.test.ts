@@ -2,7 +2,7 @@
 // them when it starts a program, shared by the provider packages' PATH
 // lookups and discovery. [host] Pure functions; no file is read.
 import { describe, it, expect } from 'vitest'
-import { windowsFolderAsRun, windowsPathHasTrailingDotOrSpace } from '../../../src/main/providers/windows-path-names'
+import { windowsFolderAsRun, windowsPathHasTrailingDotOrSpace, windowsPathFolderIsFullyQualified } from '../../../src/main/providers/windows-path-names'
 
 describe('windowsFolderAsRun: a PATH folder named as Windows names it [host]', () => {
   it('drops one trailing dot after another character from each name; keeps a space, two dots, . and .. steps and a share root', () => {
@@ -33,5 +33,31 @@ describe('windowsPathHasTrailingDotOrSpace [host]', () => {
       ['C:\\Program Files\\claude\\claude.exe', false],
     ]
     for (const [p, want] of cases) expect(windowsPathHasTrailingDotOrSpace(p), p).toBe(want)
+  })
+})
+
+// Final nits (L3): one rule for the PATH folders both providers' lookups read. [host]
+describe('windowsPathFolderIsFullyQualified: the PATH folders a lookup reads [host]', () => {
+  it('reads a folder on a drive or on a share, in either slash', () => {
+    const cases: Array<[string, boolean]> = [
+      ['C:\\tools', true],
+      ['C:/tools', true],
+      ['c:\\', true],
+      ['\\\\srv\\share', true],
+      ['//srv/share/bin', true],
+      ['\\\\srv.\\share.\\bin.', true],
+      ['\\\\\\srv\\share\\bin', false],
+      ['///srv/share/bin', false],
+      ['\\\\srv', false],
+      ['\\\\?\\C:\\npm', false],
+      ['\\\\.\\C:\\npm', false],
+      ['//?/C:/npm', false],
+      ['C:tools', false],
+      ['\\tools', false],
+      ['tools', false],
+      ['.', false],
+      ['', false],
+    ]
+    for (const [dir, want] of cases) expect(windowsPathFolderIsFullyQualified(dir), JSON.stringify(dir)).toBe(want)
   })
 })

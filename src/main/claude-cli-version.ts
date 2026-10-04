@@ -27,7 +27,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { logInfo, logWarn } from './debug-logger'
 import { probeClaudeCli, type ClaudeCliProbe } from './claude-cli-probe'
-import { windowsFolderAsRun } from './providers/windows-path-names'
+import { windowsFolderAsRun, windowsPathFolderIsFullyQualified } from './providers/windows-path-names'
 
 /** Extract the semver from `claude --version` output ("2.1.278 (Claude Code)").
  *  Exported for the test: the shape of that line is the CLI's to change. */
@@ -77,11 +77,11 @@ export function peekClaudeCliVersion(): string | null {
   return cached
 }
 
-/** A drive-absolute (`C:\`) or UNC (`\\server\share`) Windows path -- never a
- *  relative, drive-relative (`C:x`) or device-namespace (`\\?\`, `\\.\`, in
- *  either slash, or the bare `\\?` / `\\.` roots) one, none of which cmd.exe
- *  can run from or which resolve against a current directory. One rule for
- *  every path this module runs. */
+/** A fully qualified Windows path: drive-absolute (`C:\`) or UNC
+ *  (`\\server\share`), and not in the device namespace (`\\?\`, `\\.\`, in
+ *  either slash, or the bare `\\?` / `\\.` roots). The rule for the programs
+ *  this module runs (cmd.exe and taskkill); PATH folders follow
+ *  windowsPathFolderIsFullyQualified. */
 function isWindowsAbsolute(p: string | undefined): p is string {
   return !!p && /^([A-Za-z]:[\\/]|\\\\)/.test(p) && !/^[\\/]{2}[?.]([\\/]|$)/.test(p)
 }
@@ -95,10 +95,10 @@ function isWindowsAbsolute(p: string | undefined): p is string {
  *  which the UTF-8 decode turns into U+FFFD (and CJK into `?`), so every
  *  install under a profile name like `José` resolved to a path that does not
  *  exist and the version stayed unknown -- the same permanent finding as the
- *  shim bug below. This also skips what `where` would search and a launch
- *  could not safely run from: the current directory, relative, drive-relative,
- *  unexpanded (`%VAR%`) and device-namespace entries. So the two can differ
- *  there, for a `.bat`, and for a non-ASCII install path, which the launch's
+ *  shim bug below. It reads only fully qualified PATH folders (a drive or a
+ *  share, windowsPathFolderIsFullyQualified) with no unexpanded `%VAR%`, so
+ *  the two can differ for other entries, for a `.bat`, and for a non-ASCII
+ *  install path, which the launch's
  *  own `where` still mangles (a recorded follow-up). Each folder of an entry
  *  is named as Windows names it when it starts the program (windowsFolderAsRun:
  *  a name ending in one dot loses it, anywhere in the entry), so the walk reads
@@ -116,7 +116,7 @@ export async function findClaudeOnWindowsPath(
 ): Promise<string | null> {
   const dirs = (pathVar ?? '').split(';')
     .map((d) => d.trim().replace(/^"(.*)"$/, '$1').trim())
-    .filter((d) => d !== '' && !d.includes('%') && isWindowsAbsolute(d))
+    .filter((d) => d !== '' && !d.includes('%') && windowsPathFolderIsFullyQualified(d))
     // `.` and `..` steps stay (path.win32.join folds them: `C:\a\..` is the parent).
     .map((d) => windowsFolderAsRun(d))
   const unreachable = new Set<string>()

@@ -28,3 +28,11 @@ export function windowsFolderAsRun(dir: string): string {
 export function windowsPathHasTrailingDotOrSpace(p: string): boolean {
   return p.split(/[\\/]/).slice(1).some((seg) => /[. ]$/.test(seg))
 }
+
+/** A PATH folder a lookup reads: a fully qualified folder on a drive
+ *  (`C:\tools`, either slash) or on a share (`\\server\share`, two leading
+ *  slashes of either kind), as a terminal reads it. One rule for both
+ *  providers' PATH walks (WP2 PR 4, final review nits, L3). */
+export function windowsPathFolderIsFullyQualified(dir: string): boolean {
+  return /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/?.][^\\/]*[\\/][^\\/]+)/.test(dir)
+}

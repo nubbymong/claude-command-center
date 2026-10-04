@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-04T10:18:28.177Z",
-  "head": "00216aac2fac90dfe6762c6e48c3766ce976762b",
-  "tree": "699e156697a059b4fe1b8c91d0d2e93141295be8",
+  "generatedAt": "2026-10-04T10:57:49.593Z",
+  "head": "9c72c95f9809785f82c4d1749f344575d35622d6",
+  "tree": "f7e68923d6d9503287243230db3006c232f6253d",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -204,7 +204,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 1176,
+      "lineCount": 1177,
       "truncated": true
     },
     {
@@ -4402,7 +4402,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 177
+      "lineCount": 179
     },
     {
       "path": "tests/unit/main/sentinel-unreachable-timing.test.ts",
@@ -4715,7 +4715,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 59
+      "lineCount": 62
     },
     {
       "path": "tests/unit/providers/codex/codex-discovery-path-names.test.ts",

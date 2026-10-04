@@ -162,7 +162,7 @@ describe('readCodexModelCatalogue: the proven CLI, a fixed command, an empty hom
     expect(r.disposed).toEqual(r.homes)
   })
 
-  it('the environment is the allowlist: no ambient credential, no NODE_OPTIONS, and cmd.exe never searches the current folder', async () => {
+  it('the environment is the allowlist: no ambient credential, no NODE_OPTIONS, and NoDefaultCurrentDirectoryInExePath=1 for cmd.exe', async () => {
     const r = rig()
     await readCodexModelCatalogue(r.deps)
     const env = r.runs[0].opts.env

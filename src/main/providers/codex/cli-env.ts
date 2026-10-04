@@ -13,10 +13,10 @@
 // secrets), BROWSER (an arbitrary command), and everything else.
 //
 // Always SET, whatever the parent had: CODEX_HOME (the realm, last) and, on
-// Windows, NoDefaultCurrentDirectoryInExePath=1 -- npm's codex.cmd runs a
-// bare `node`, and without it cmd.exe looks for node in the current folder
-// before PATH (the same hardening claude-cli-version.ts applies to the
-// Claude shim). The runner must also start the shim from its own folder.
+// Windows, NoDefaultCurrentDirectoryInExePath=1, so the bare `node` npm's
+// codex.cmd runs is resolved from PATH (the same setting claude-cli-version.ts
+// gives the Claude shim). The runner must also start the shim from its own
+// folder.
 //
 // Windows variable names are case-insensitive, so there matching and
 // de-duplication are case-insensitive and the first spelling seen is kept;

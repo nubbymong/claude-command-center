@@ -11,8 +11,7 @@ import { defaultLoginShell } from '../../login-shell'
 const OPEN = '__CCC_CODEX_PATH_BEGIN__'
 const CLOSE = '__CCC_CODEX_PATH_END__'
 
-/** Keep only a PATH made of absolute directories: an empty or relative entry
- *  (`::`, `.`) would search the current folder. */
+/** Keep only a PATH whose every entry is an absolute directory. */
 export function absolutePathEntries(value: string): string | null {
   const kept = value.split(':').filter((p) => p.startsWith('/'))
   return kept.length ? kept.join(':') : null

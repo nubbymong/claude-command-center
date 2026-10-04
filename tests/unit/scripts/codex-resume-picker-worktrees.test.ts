@@ -512,8 +512,8 @@ describe('listWorktrees (thesis 19)', () => {
     expect(out.map((w: { path: string }) => w.path)).toEqual(['F:/repo/demo', 'F:/repo/wt'])
   })
 
-  it('a git in the project folder or a relative PATH entry is never run: with no git on the absolute entries it lists the configured folder alone', () => {
-    // Whatever a relative entry would name "exists": it is still never run.
+  it('git runs only from the absolute PATH entries: with no git there it lists the configured folder alone', () => {
+    // Any path that is not absolute "exists" here; only the absolute entries are read.
     const { out, calls } = run({ status: 0, stdout: 'worktree F:/repo/wt\n' }, { PATH: '.;relative;%CD%' }, 'win32', (p) => !/^[A-Za-z]:[\\/]/.test(p))
     expect(calls).toEqual([])
     expect(out).toEqual(OWN)

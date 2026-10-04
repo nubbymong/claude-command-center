@@ -29,6 +29,7 @@ import * as os from 'os'
 import * as path from 'path'
 import type { SentinelStateSnapshot } from '../../../src/shared/sentinel-types'
 import { sentinelVersionParts, sentinelCompatibleSubject, CLAUDE_ONLY_SCOPE } from '../../../src/renderer/components/sentinel/sentinel-report-text'
+import { deriveDotState } from '../../../src/renderer/components/sentinel/SentinelDot'
 
 vi.mock('electron', () => ({
   ipcMain: { handle: vi.fn(), on: vi.fn() },
@@ -127,13 +128,13 @@ vi.mock('../../../src/main/account-profiles', () => ({
 const claudeRuns: Array<{ cwd: string; listing: string[]; env: Record<string, string> | undefined; transportEnv?: Record<string, string> }> = []
 /** Round 3: the Claude package's transport picker (none unless a case sets it). */
 const transport = vi.hoisted(() => ({ pick: null as null | ((raw: string) => Record<string, string>) }))
-const versionThrows = vi.hoisted(() => ({ on: false }))
+const versionThrows = vi.hoisted(() => ({ on: false, value: undefined as unknown }))
 /** Fixer 10: the Claude Code version installed, and its analysis's reply (none: no findings). */
 /** Fixer 13: `versionCode`, the exit code of `claude --version` (not 0: the version is unavailable). */
 const claude = vi.hoisted(() => ({ version: '2.1.300', answer: null as null | string, versionCode: 0 }))
 const spawnClaudeHeadless = vi.fn(async (args: string[], _t?: number, _stdin?: string, _home?: string | null, _signal?: AbortSignal, opts?: { cwd?: string; env?: Record<string, string>; transportEnv?: Record<string, string> }) => {
   if (args[0] === '--version') {
-    if (versionThrows.on) throw new Error('the version check broke')
+    if (versionThrows.on) throw (versionThrows.value ?? new Error('the version check broke'))
     return { code: claude.versionCode, stdout: claude.versionCode === 0 ? `${claude.version} (Claude Code)` : '', stderr: '' }
   }
   if (opts?.cwd) claudeRuns.push({ cwd: opts.cwd, listing: fs.readdirSync(opts.cwd), env: opts.env, transportEnv: opts.transportEnv })
@@ -180,6 +181,7 @@ beforeEach(() => {
   claudeRuns.length = 0
   transport.pick = null
   versionThrows.on = false
+  versionThrows.value = undefined
   claude.version = '2.1.300'
   claude.answer = null
   claude.versionCode = 0
@@ -561,6 +563,20 @@ describe("the title-bar chip's failed-analysis mark (owner answers review, E-S6)
     versionThrows.on = true
     await s.sentinelRerun()
     expect(snap(s)).toMatchObject({ analyzing: false, lastAnalysisError: 'the version check broke', lastAnalysisFailed: true })
+  })
+  it('a thrown value that is not an Error still marks the check failed with its text, so the chip says it did not complete (final nits, E-Q15) [host]', async () => {
+    svc.pref.codex = 'off'
+    // Not an Error: the reason has no .message, only its own text.
+    fetchChangelog.mockImplementationOnce(async () => { throw 'the changelog read broke, as a plain value' })
+    const s = await sentinel({ lastSeenCcVersion: '2.1.290' })
+    await s.sentinelStartupCheck()
+    expect(snap(s)).toMatchObject({ analyzing: false, lastAnalysisError: 'the changelog read broke, as a plain value', lastAnalysisFailed: true })
+    expect(deriveDotState(true, snap(s))).toBe('incomplete')
+    versionThrows.on = true
+    versionThrows.value = 'the version check broke, as a plain value'
+    await s.sentinelRerun()
+    expect(snap(s)).toMatchObject({ analyzing: false, lastAnalysisError: 'the version check broke, as a plain value', lastAnalysisFailed: true })
+    expect(deriveDotState(true, snap(s))).toBe('incomplete')
   })
   it('a problem carried beside an analysis that completed is not a failure [host]', async () => {
     svc.installation = { discoveryState: 'error', compatibility: 'unknown' }

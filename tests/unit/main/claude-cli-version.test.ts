@@ -197,9 +197,9 @@ describe('findClaudeOnWindowsPath', () => {
     }
   })
 
-  it('never searches the current directory, and skips entries cmd.exe cannot run from', async () => {
-    // relative, drive-relative, root-relative, unexpanded (relative AND absolute),
-    // and the \\?\ and \\.\ device namespaces in either slash
+  it('reads only fully qualified PATH folders (a drive or a share) with nothing unexpanded', async () => {
+    // every spelling below finds nothing: none is such a folder, the \\?\ and
+    // \\.\ device namespaces in either slash among them
     const entries = ['.', 'bin', 'C:bin', '\\bin', '%USERPROFILE%\\bin', 'C:\\Users\\%USERNAME%\\bin', '',
       '\\\\?\\C:\\npm', '\\\\.\\C:\\npm', '\\\\?/C:\\npm', '\\\\./C:\\npm', '\\\\.', '\\\\?', '\\\\. ']
     for (const entry of entries) {
@@ -207,6 +207,17 @@ describe('findClaudeOnWindowsPath', () => {
       expect(await findClaudeOnWindowsPath(entry, anyExe), JSON.stringify(entry)).toBeNull()
     }
     expect(await findClaudeOnWindowsPath('"C:\\Program Files\\claude"', files('C:\\Program Files\\claude\\claude.exe'))).toBe('C:\\Program Files\\claude\\claude.exe')
+    expect(await findClaudeOnWindowsPath('\\\\srv\\share\\bin', files('\\\\srv\\share\\bin\\claude.exe'))).toBe('\\\\srv\\share\\bin\\claude.exe')
+  })
+
+  // Final nits (L3): the walk reads PATH folders by the shared rule
+  // (windows-path-names.ts, windowsPathFolderIsFullyQualified): a drive, or a
+  // share spelled with two leading slashes. [host]
+  it('reads a drive or a share spelled with two leading slashes, by the shared PATH-folder rule', async () => {
+    const anyExe = async (p: string): Promise<'file' | 'none'> => (p.toLowerCase().endsWith('claude.exe') ? 'file' : 'none')
+    expect(await findClaudeOnWindowsPath('\\\\\\srv\\share\\bin', anyExe)).toBeNull()
+    expect(await findClaudeOnWindowsPath('///srv/share/bin', anyExe)).toBeNull()
+    expect(await findClaudeOnWindowsPath('\\\\\\srv\\share\\bin;C:\\later', files('C:\\later\\claude.exe'))).toBe('C:\\later\\claude.exe')
     expect(await findClaudeOnWindowsPath('\\\\srv\\share\\bin', files('\\\\srv\\share\\bin\\claude.exe'))).toBe('\\\\srv\\share\\bin\\claude.exe')
   })
 

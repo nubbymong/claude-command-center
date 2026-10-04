@@ -217,9 +217,9 @@ function takeBackKeptAside(file: string, homes: string[], deps: CodexUserSkillsD
  *  cannot be read now is refused (nothing is copied, nothing removed; asked
  *  again at the next pass). One that does not parse as the app's record is
  *  kept aside and refused for this pass (review B-Q2); the folders any record
- *  kept aside still names are taken back (takeBackKeptAside). : the
- *  record as it is, writing nothing (review B-Q14): no record is kept aside
- *  and none taken back. */
+ *  kept aside still names are taken back (takeBackKeptAside). With mode
+ *  'read' it only reads the record as it is and writes nothing (review
+ *  B-Q14): no record is kept aside and none is taken back. */
 function readRecord(deps: CodexUserSkillsDeps, mode: 'pass' | 'read' = 'pass'): RecordRead {
   const file = recordFileOf(deps)
   const platform = deps.platform ?? process.platform

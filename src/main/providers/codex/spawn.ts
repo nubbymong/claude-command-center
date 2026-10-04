@@ -9,7 +9,7 @@ import { getConductorMcpPort, issueMcpSessionToken } from '../../conductor-mcp-s
 import { CODEX_CONDUCTOR_TOOLS, type ConductorToolSwitches } from './conductor-tools'
 import { readConfig, getConfigDir } from '../../config-manager'
 import { colorFgBgValue } from '../host-color-scheme'
-import { windowsFolderAsRun } from '../windows-path-names'
+import { windowsFolderAsRun, windowsPathFolderIsFullyQualified } from '../windows-path-names'
 import { codexShellEnv, CMD_UNSAFE_PATH_RE } from './cli-runner'
 import { CODEX_CONVERSATION_ID_RE, codexFolderIdentity, resolveCodexResume } from './rollout-lookup'
 import { codexHookCommand, codexHookConfigArgs, codexPlainWrapperDir, codexLocalAppData, verifyPlainCodexHookWrapper, CODEX_HOOK_FILE_ENV, CODEX_HOOK_SCRIPT, CODEX_HOOK_WRAPPER } from './hooks'
@@ -33,12 +33,6 @@ export function codexWindowsForms(pathExt: string | undefined): { listed: string
   }
 }
 
-/** A fully qualified PATH folder: on a drive (`C:\...`) or a share
- *  (`\\server\share\...`, either slash), as a terminal reads them and as the
- *  Claude CLI walk does (claude-cli-version.ts); never a device path
- *  (`\\?\`, `\\.\`). */
-const WIN_PATH_FOLDER_RE = /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/?.][^\\/]*[\\/][^\\/]+)/
-
 /** A folder named as Windows names it when it starts a program from it
  *  (review B-S11): in a path that goes on below it, a name that ends in one
  *  dot after another character loses that dot (`C:\tools.` and
@@ -50,9 +44,9 @@ const WIN_PATH_FOLDER_RE = /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/?.][^\\/]*[\\/][^\\/
 export const codexWindowsFolderAsRun: (dir: string) => string = windowsFolderAsRun
 
 /** PATH's folders as the lookup reads them: `;`-separated, a quoted entry
- *  without its quotes, and only fully qualified folders (WIN_PATH_FOLDER_RE:
- *  a drive or a share, as a terminal reads them; review B-S10), each named as
- *  Windows names it (codexWindowsFolderAsRun).
+ *  without its quotes, and only fully qualified PATH folders (a drive or a
+ *  share, as a terminal reads them; windowsPathFolderIsFullyQualified, review
+ *  B-S10) are read, each named as Windows names it (codexWindowsFolderAsRun).
  *  A folder that does not answer (a share
  *  that is offline) is asked nothing more in a lookup once it has failed
  *  (resolveCodexBinary). */
@@ -61,7 +55,7 @@ export function codexWindowsPathFolders(pathVar: string | undefined): string[] {
   for (const raw of (pathVar ?? '').split(';')) {
     let dir = raw.trim()
     if (dir.length >= 2 && dir.startsWith('"') && dir.endsWith('"')) dir = dir.slice(1, -1).trim()
-    if (WIN_PATH_FOLDER_RE.test(dir)) out.push(codexWindowsFolderAsRun(dir))
+    if (windowsPathFolderIsFullyQualified(dir)) out.push(codexWindowsFolderAsRun(dir))
   }
   return out
 }
@@ -592,7 +586,8 @@ function buildCodexSpawnCommand(opts: SpawnOptions): ProviderSpawnCommand {
   // "shim folder as cwd": Codex's workspace IS its cwd, so any other folder
   // would point it at the wrong files). What that protects against -- a
   // program name resolved from the project folder -- is closed instead by
-  // telling cmd.exe not to search the current directory.
+  // NoDefaultCurrentDirectoryInExePath=1, so cmd.exe resolves a program name
+  // from PATH.
   if (win32) setOwned(env, 'NoDefaultCurrentDirectoryInExePath', '1', win32)
 
   // P3.10 (rows 43, 46, 47, 63): the app's hooks, as a Claude session gets

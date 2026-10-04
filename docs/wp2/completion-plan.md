@@ -7357,6 +7357,14 @@ built" above and in section 10. Recorded with it:
   discovery refuses a path with a name ending in a dot or a space (26e4e3b5;
   the helpers shared with the Codex lookup in 00216aac). Their targeted
   re-review and re-attack are owed.
+- The final review nits, one commit after the polish pass: both PATH lookups
+  read their folders by one shared rule (a drive, or a share spelled with two
+  leading slashes; review L3), so the Claude lookup reads the same folders as
+  the Codex one; a Sentinel check that fails with a thrown value that is not
+  an Error keeps that value's text, so the chip says it did not complete
+  (E-Q15); the What's New line drops a note meant for the VM run (E-Q14); and
+  comments, test names and records about the lookups now say what each one
+  reads. Their targeted re-review is owed with the polish pass's.
 - Known limits, recorded with no change made:
   - For developers only: a dev build and the installed app running together
     share `~/.codex`. Either one's switch-off removes the other's skill
@@ -7391,7 +7399,16 @@ built" above and in section 10. Recorded with it:
     modification time a copy or restore moved past a later save (but not
     past the present). If the marker can be written neither at the clear nor
     at any retry in that run, and no retry removes the set either, the next
-    start offers the set again (Don't open dismisses it).
+    start offers the set again (Don't open dismisses it). With the data
+    folder on a network share whose clock runs behind this computer's, the
+    marker's own time can read as later than its modification time, so it is
+    dropped and the discarded set is offered once more. A damaged copy of a
+    cleared set stays beside the file as `session-state.json.corrupt-<time>`,
+    which nothing reads.
+  - The Claude lookup trims the spaces around a PATH entry, which cmd.exe's
+    own reading of PATH does not do in the same way, so for an entry ending in
+    a space the two can read different folders; the app still runs the exact
+    file it found and checked (review A2-R6).
   - Sentinel on a network that silently drops traffic still runs up to its
     old limit (a known issue). The evidence for Claude Code's early stop
     (fe51f31d): in the pinned 2.1.288 CLI, read as text and never run,
