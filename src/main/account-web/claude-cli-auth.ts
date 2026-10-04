@@ -175,18 +175,16 @@ const STATUS_TIMEOUT_MS = 10_000
  *  Sized as the reviewer's (CLAUDE_REVIEW_HOLD_GRACE_MS). */
 const CLI_HOLD_GRACE_MS = 60_000
 
-/** The environment a CLI auth run gets in a profile's home: withProfileHome's
- *  hardened one, with HOME pointed at the home as well, except on macOS. There
- *  withProfileHome leaves HOME at the real home on purpose (the login keychain
- *  is found through it, #117), so every profile on a Mac runs on the Mac's one
- *  Claude Code sign-in (D2), and a check or a sign-out reads and acts on that
- *  sign-in, as a session on the profile does. */
-function profileCliEnv(home: string, context: { launchId: string; cwd: string; probe: true; projectGate: Awaited<ReturnType<typeof gateManagedLaunch>> }): Record<string, string> {
-  const env = withProfileHome({ ...process.env } as Record<string, string>, home, context)
-  // MUTATED rather than spread into a literal: the realm patch builds the env
-  // with a null prototype (see src/shared/providers/realm-env.ts).
-  return process.platform === 'darwin' ? env : Object.assign(env, { HOME: home })
-}
+// The environment of a CLI auth run in a profile's home, built where the run
+// starts, in one expression: withProfileHome's hardened environment (its
+// context named in place, as at every managed launch), with HOME pointed at
+// the profile home as well, except on macOS. There withProfileHome leaves HOME
+// at the real home on purpose (the login keychain is found through it, #117),
+// so every profile on a Mac runs on the Mac's one Claude Code sign-in (D2), and
+// a check or a sign-out reads and acts on that sign-in, as a session on the
+// profile does. Object.assign MUTATES the result rather than spreading it into
+// a literal: the realm patch builds it with a null prototype (see
+// src/shared/providers/realm-env.ts).
 
 export function readClaudeCliAuth(profileId: string, runner?: ClaudeCliAuthRunner): Promise<ClaudeCliAuthStatus> {
   const existing = authProbesInFlight.get(profileId)
@@ -264,8 +262,8 @@ async function readClaudeCliAuthUncached(profileId: string, runner?: ClaudeCliAu
       // withProfileHome exists to own -- and being the one launch path that
       // built its own env is exactly how it would have kept inheriting an
       // ambient ANTHROPIC_API_KEY and reported the wrong account as signed
-      // in. HOME: see profileCliEnv.
-      const env = profileCliEnv(home, { launchId: 'auth-status', cwd: probeCwd, probe: true, projectGate })
+      // in. For HOME, see the note on the CLI auth environment above.
+      const env = Object.assign(withProfileHome({ ...process.env } as Record<string, string>, home, { launchId: 'auth-status', cwd: probeCwd, probe: true, projectGate }), process.platform === 'darwin' ? {} : { HOME: home })
       if (runner) {
         const r = await runner.run(['auth', 'status'], env, STATUS_TIMEOUT_MS)
         if (r.killSettled instanceof Promise) kill = r.killSettled
@@ -428,7 +426,7 @@ async function runLogout(profileId: string, runner: ClaudeCliAuthRunner): Promis
     if (!existsSync(home)) return refusedLogout('no-home')
     let env: Record<string, string>
     try {
-      env = profileCliEnv(home, { launchId: 'auth-logout', cwd: runner.cwd, probe: true, projectGate })
+      env = Object.assign(withProfileHome({ ...process.env } as Record<string, string>, home, { launchId: 'auth-logout', cwd: runner.cwd, probe: true, projectGate }), process.platform === 'darwin' ? {} : { HOME: home })
     } catch (e) {
       logWarn(`[account-web] profile ${profileId}: the CLI sign-out was refused -- ${(e as Error)?.message ?? String(e)}. Nothing was run.`)
       return refusedLogout('host-control')
