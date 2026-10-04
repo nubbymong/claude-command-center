@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-04T02:28:51.045Z",
-  "head": "8a87026a71cc51a4d146a5be67676ca739f624c4",
-  "tree": "98c4c9cdf84be4d1019e5d23173502980b106a8b",
+  "generatedAt": "2026-10-04T04:51:00.785Z",
+  "head": "c748fa7e8ac35a13d06a2b1794f538f154771e08",
+  "tree": "9c9b8938153d8ca4a4ee34646c1c2fa206110053",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2726,
-  "excludedFileCount": 399,
-  "scannedFileCount": 2327,
+  "trackedFileCount": 2742,
+  "excludedFileCount": 400,
+  "scannedFileCount": 2342,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 782,
-  "pathDigest": "fe24b19eb7b0333340ff75fd6fcef31249534f700420bfa8d0521ca5fd46b12c",
+  "matchedPathCount": 792,
+  "pathDigest": "d8b9bd6001d258b910a590a4ee3d96192017fc8728df9feb7b01924a43aaf984",
   "entries": [
     {
       "path": ".github/workflows/ci.yml",
@@ -190,7 +190,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 150
+      "lineCount": 152
     },
     {
       "path": "docs/dev-alongside-prod.md",
@@ -204,7 +204,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 1162,
+      "lineCount": 1165,
       "truncated": true
     },
     {
@@ -322,7 +322,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 31
+      "lineCount": 28
     },
     {
       "path": "scripts/readme-shots/README.md",
@@ -496,7 +496,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 22
+      "lineCount": 23
     },
     {
       "path": "src/main/canvas/codex-canvas-roots.ts",
@@ -513,7 +513,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 33
+      "lineCount": 34
     },
     {
       "path": "src/main/canvas/codex-realm-skills.ts",
@@ -521,7 +521,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 29
+      "lineCount": 34
     },
     {
       "path": "src/main/canvas/codex-user-skills.ts",
@@ -530,7 +530,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 57
+      "lineCount": 61
     },
     {
       "path": "src/main/channel-emitters.ts",
@@ -650,7 +650,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 36
+      "lineCount": 38
     },
     {
       "path": "src/main/hooks/hooks-gateway.ts",
@@ -1007,7 +1007,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 46
+      "lineCount": 48
     },
     {
       "path": "src/main/providers/codex/enablement.ts",
@@ -1130,7 +1130,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 33
+      "lineCount": 34
     },
     {
       "path": "src/main/providers/codex/rollout-lookup.ts",
@@ -1157,7 +1157,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 130
+      "lineCount": 133
     },
     {
       "path": "src/main/providers/codex/telemetry.ts",
@@ -1191,7 +1191,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 13
+      "lineCount": 15
     },
     {
       "path": "src/main/providers/core/accounts-service.ts",
@@ -1231,7 +1231,7 @@
         "P07",
         "P14"
       ],
-      "lineCount": 36
+      "lineCount": 37
     },
     {
       "path": "src/main/pty-input-guard.ts",
@@ -1273,7 +1273,7 @@
         "P04",
         "P14"
       ],
-      "lineCount": 22
+      "lineCount": 21
     },
     {
       "path": "src/main/sentinel/sentinel-codex-changelog.ts",
@@ -1508,7 +1508,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 38
+      "lineCount": 39
     },
     {
       "path": "src/renderer/components/CommandBar.tsx",
@@ -2358,7 +2358,7 @@
       "predicates": [
         "P11"
       ],
-      "lineCount": 106
+      "lineCount": 107
     },
     {
       "path": "src/renderer/types/electron.d.ts",
@@ -2437,7 +2437,7 @@
         "P12",
         "P14"
       ],
-      "lineCount": 104
+      "lineCount": 106
     },
     {
       "path": "src/shared/ask-conductor-provider.ts",
@@ -3715,7 +3715,7 @@
         "P07",
         "P13"
       ],
-      "lineCount": 52
+      "lineCount": 54
     },
     {
       "path": "tests/unit/main/canvas-codex-roots-spawn.test.ts",
@@ -3823,7 +3823,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 20
+      "lineCount": 35
     },
     {
       "path": "tests/unit/main/codex-ask-carrier.test.ts",
@@ -3888,7 +3888,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 41
+      "lineCount": 46
     },
     {
       "path": "tests/unit/main/codex-hook-folders.test.ts",
@@ -4030,7 +4030,16 @@
         "P01",
         "P13"
       ],
-      "lineCount": 24
+      "lineCount": 27
+    },
+    {
+      "path": "tests/unit/main/codex-user-skills-ownership.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "lineCount": 51
     },
     {
       "path": "tests/unit/main/codex-user-skills-race-links.test.ts",
@@ -4046,7 +4055,15 @@
         "P01",
         "P13"
       ],
-      "lineCount": 29
+      "lineCount": 36
+    },
+    {
+      "path": "tests/unit/main/codex-user-skills-wiring.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 11
     },
     {
       "path": "tests/unit/main/codex-user-skills.test.ts",
@@ -4055,7 +4072,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 87
+      "lineCount": 102
     },
     {
       "path": "tests/unit/main/conductor-mcp-auth.test.ts",
@@ -4071,6 +4088,15 @@
         "P13"
       ],
       "lineCount": 20
+    },
+    {
+      "path": "tests/unit/main/conductor-mcp-codex-heal.test.ts",
+      "predicates": [
+        "P01",
+        "P10",
+        "P13"
+      ],
+      "lineCount": 10
     },
     {
       "path": "tests/unit/main/conductor-mcp-provider-binding.test.ts",
@@ -4355,6 +4381,14 @@
       "lineCount": 48
     },
     {
+      "path": "tests/unit/main/sentinel-analysis-folders-links.test.ts",
+      "predicates": [
+        "P04",
+        "P13"
+      ],
+      "lineCount": 24
+    },
+    {
       "path": "tests/unit/main/sentinel-and-cli-setup-provider-off.test.ts",
       "predicates": [
         "P13"
@@ -4368,7 +4402,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 165
+      "lineCount": 157
     },
     {
       "path": "tests/unit/main/sentinel-unreachable-timing.test.ts",
@@ -4376,7 +4410,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 47
+      "lineCount": 50
     },
     {
       "path": "tests/unit/main/service-status-providers.test.ts",
@@ -4392,6 +4426,13 @@
         "P13"
       ],
       "lineCount": 7
+    },
+    {
+      "path": "tests/unit/main/session-clear-owed-restart.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 3
     },
     {
       "path": "tests/unit/main/session-resume-enrich.test.ts",
@@ -4596,9 +4637,23 @@
       "lineCount": 6
     },
     {
+      "path": "tests/unit/providers/claude-cli-auth-runner.test.ts",
+      "predicates": [
+        "P13"
+      ],
+      "lineCount": 4
+    },
+    {
       "path": "tests/unit/providers/claude/auth-operations.test.ts",
       "predicates": [
         "P13"
+      ],
+      "lineCount": 2
+    },
+    {
+      "path": "tests/unit/providers/claude/claude-accounts-service.test.ts",
+      "predicates": [
+        "P05"
       ],
       "lineCount": 2
     },
@@ -4660,7 +4715,15 @@
         "P07",
         "P13"
       ],
-      "lineCount": 32
+      "lineCount": 45
+    },
+    {
+      "path": "tests/unit/providers/codex/codex-discovery-path-names.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 26
     },
     {
       "path": "tests/unit/providers/codex/conversation-carry-folders.test.ts",
@@ -4687,12 +4750,20 @@
       "lineCount": 6
     },
     {
+      "path": "tests/unit/providers/codex/hooks-links.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 56
+    },
+    {
       "path": "tests/unit/providers/codex/hooks.test.ts",
       "predicates": [
         "P01",
         "P13"
       ],
-      "lineCount": 189
+      "lineCount": 161
     },
     {
       "path": "tests/unit/providers/codex/mcp-config.test.ts",
@@ -5202,7 +5273,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 57
+      "lineCount": 60
     },
     {
       "path": "tests/unit/renderer/codex-composer-screens.ts",
@@ -5369,7 +5440,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 13
+      "lineCount": 19
     },
     {
       "path": "tests/unit/renderer/feature-guide-provider-filter.test.tsx",
@@ -5995,7 +6066,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 2
+      "lineCount": 3
     },
     {
       "path": "tests/unit/renderer/sidebar-nav-usage-rule.test.tsx",
@@ -6183,6 +6254,14 @@
       "lineCount": 37
     },
     {
+      "path": "tests/unit/scripts/codex-resume-picker-flags.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 6
+    },
+    {
       "path": "tests/unit/scripts/codex-resume-picker-names.test.ts",
       "predicates": [
         "P01",
@@ -6205,7 +6284,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 35
+      "lineCount": 26
     },
     {
       "path": "tests/unit/scripts/codex-resume-picker.test.ts",

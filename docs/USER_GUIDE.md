@@ -116,7 +116,7 @@ row per provider:
 - a switch that turns the provider on or off;
 - whether its CLI was found on this computer and which version (on Windows,
   Codex is the first `codex.exe` or `codex.cmd` in `PATH` order, as a terminal
-  finds it), with **Check now** or **Check again** when it has not been looked
+  finds it; a folder on a network share is not looked in), with **Check now** or **Check again** when it has not been looked
   for yet, was not found, or cannot be used as found;
 - when Codex is missing or too old, the commands to install or update it (see
   [Installing or updating Codex](#installing-or-updating-codex));
@@ -405,9 +405,13 @@ Linux may ask for administrator rights; CCC never elevates on its own.
   folder `CODEX_HOME` names), where Codex lists them for every session that
   uses that folder, started in CCC or not. CCC rewrites or removes only the skill
   folders it marked as its own, removes them when you turn Codex or the built-in
-  tools off, and never touches a skill of your own with the same name: the
-  session then uses yours, and the canvas page names it. Rename yours, or run
-  the session on a Codex account you added in Settings, Accounts.
+  tools off, and never touches a skill of your own with the same name, or a
+  link of yours at that name: the session then uses yours, and the canvas page
+  names it. Rename yours, or run the session on a Codex account you added in
+  Settings, Accounts. A Codex skills folder that is itself a link is never
+  written into (the canvas page says the skills could not be put there). The
+  copies stay if you uninstall CCC: turn Codex or the built-in tools off
+  first, or delete the three folders afterwards.
 - **Ask Conductor on Codex cannot pass on emoji typed into Codex's prompt.**
   When the question has to be typed into Codex's prompt, CCC removes the
   characters it cannot take first, and the Ask Conductor row says how many. Say
