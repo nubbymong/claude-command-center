@@ -80,7 +80,8 @@ vi.mock('electron', () => ({
   shell: { openExternal: async (u: string) => { openedExternal.push(u) } },
   session: { fromPartition: (p: string) => fakeSession(p) },
 }))
-vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logError: vi.fn() }))
+const logged: string[] = []
+vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logError: (...a: unknown[]) => { logged.push(a.map(String).join(' ')) } }))
 
 /** One in-memory JSON file per name, so Claude's and Codex's records stay apart. */
 const disk: Record<string, unknown> = {}
@@ -94,7 +95,7 @@ const {
   closeAllAccountPanes, getAccountPaneState, codexPaneNavDecision,
 } = await import('../../src/main/account-web/account-pane')
 const { webPartitionForCodexAccount, webPartitionForProfile, CODEX_WEB_SERVICE } = await import('../../src/shared/account-web-session')
-const { getCodexWebSession } = await import('../../src/main/account-web/codex-web-store')
+const { getCodexWebSession, saveCodexWebSession, removeCodexWebSession, codexWebViewFor } = await import('../../src/main/account-web/codex-web-store')
 
 const ACCT = 'acct-0123456789abcdef'
 const ACCT2 = 'acct-fedcba9876543210'
@@ -109,6 +110,7 @@ beforeEach(() => {
   openedExternal.length = 0
   for (const k of Object.keys(partitions)) delete partitions[k]
   for (const k of Object.keys(disk)) delete disk[k]
+  logged.length = 0
 })
 
 describe('[host] codexPaneNavDecision (pure, tri-state)', () => {
@@ -272,6 +274,9 @@ describe('[host] recording a sign-in made in the Codex pane', () => {
       ses.cookies.listeners[0](null, { name: '__Secure-next-auth.session-token' })
       await vi.advanceTimersByTimeAsync(6000)
       expect(getCodexWebSession(ACCT)).toBeUndefined()
+      // The pane refuses before any write: not even a write the store has to
+      // refuse (the store's own check is a further layer, tested below).
+      expect(logged.some((l) => /could not record/.test(l))).toBe(false)
       closeAccountPane('sess-noemail')
     } finally {
       vi.useRealTimers()
@@ -326,5 +331,41 @@ describe('[host] teardown keeps the two services apart', () => {
     expect(createdViews[1].opts.webPreferences.partition).toBe(webPartitionForCodexAccount(ACCT))
     expect(getAccountPaneState('sess-sw')).toMatchObject({ service: 'codex', accountId: ACCT })
     closeAccountPane('sess-sw')
+  })
+})
+
+describe('[host] the Codex web record: metadata only, in its own file', () => {
+  const VALID = { accountId: ACCT, accountEmail: 'me@example.com', acquiredAt: 1, expiresAt: null, origin: 'in-app' as const }
+
+  it('keeps only the metadata fields, in codex-web-sessions.json, never Claude\'s file', () => {
+    saveCodexWebSession({ ...VALID, accessToken: 'SECRET-TOKEN', cookie: 'SECRET-COOKIE' } as never)
+    expect(getCodexWebSession(ACCT)).toEqual(VALID)
+    expect(JSON.stringify(disk)).not.toContain('SECRET')
+    expect(Object.keys(disk)).toEqual(['codex-web-sessions.json'])
+    expect(codexWebViewFor(ACCT)).toMatchObject({ accountId: ACCT, status: 'active', accountEmail: 'me@example.com' })
+    expect(codexWebViewFor(ACCT2)).toEqual({ accountId: ACCT2, status: 'none' })
+    expect(codexWebViewFor(ACCT, 10).status).toBe('active')
+  })
+
+  it('refuses a record with no valid email or a non-registry id, and drops malformed ones on read', () => {
+    for (const bad of [
+      { ...VALID, accountEmail: null }, { ...VALID, accountEmail: 'not-an-email' }, { ...VALID, accountId: 'profile-p1a' },
+      { ...VALID, origin: 'system-browser' }, { ...VALID, acquiredAt: 'x' },
+    ]) {
+      expect(() => saveCodexWebSession(bad as never), JSON.stringify(bad)).toThrow(/malformed/)
+    }
+    expect(disk['codex-web-sessions.json']).toBeUndefined()
+    disk['codex-web-sessions.json'] = { schemaVersion: 1, sessions: [VALID, { ...VALID, accountId: ACCT2, accountEmail: null }, { accountId: 'x' }] }
+    expect(getCodexWebSession(ACCT)).toEqual(VALID)
+    expect(getCodexWebSession(ACCT2)).toBeUndefined()
+  })
+
+  it('an expired session reads as expired; removing forgets only that account', () => {
+    saveCodexWebSession({ ...VALID, expiresAt: 1000 })
+    saveCodexWebSession({ ...VALID, accountId: ACCT2 })
+    expect(codexWebViewFor(ACCT, 2000).status).toBe('expired')
+    removeCodexWebSession(ACCT)
+    expect(getCodexWebSession(ACCT)).toBeUndefined()
+    expect(getCodexWebSession(ACCT2)).toBeDefined()
   })
 })
