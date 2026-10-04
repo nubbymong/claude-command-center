@@ -497,6 +497,35 @@ export interface ProviderRealmOperations {
   realmEnvPatch(realm: RealmRef): RealmEnvPatch
 }
 
+/** One model's price, per million tokens. `cachedInputPer1M`: null when the
+ *  model has no cached tier. */
+export interface ModelPrice {
+  inputPer1M: number
+  cachedInputPer1M: number | null
+  outputPer1M: number
+}
+
+/** A package's model prices, for Tokenomics (WP2 PR 4: reached through the
+ *  registry, never by deep import). The live list is the part of the shared
+ *  LiteLLM price list the package prices, held by the package; the static
+ *  table ships with it. Pure apart from `setLive`. */
+export interface ProviderPricingOperations {
+  /** Every priced model once: the live list's and the table's. */
+  keys(): string[]
+  /** A model's price: the live list's, else the table's, else null. */
+  price(model: string): ModelPrice | null
+  /** The rate cached input costs: the cached tier, else the full input rate. */
+  cachedInputPer1M(p: ModelPrice): number
+  /** The package's part of a fetched LiteLLM price list, checked. */
+  parseList(all: unknown): ReadonlyMap<string, ModelPrice>
+  /** A saved copy of that part, checked. */
+  parseSaved(saved: unknown): ReadonlyMap<string, ModelPrice>
+  /** That part as it is saved. */
+  serialize(map: ReadonlyMap<string, ModelPrice>): unknown
+  /** Replace the live list (null clears it). */
+  setLive(map: ReadonlyMap<string, ModelPrice> | null): void
+}
+
 /** Managed-launch hardening a provider supplies for launches the APP owns.
  *
  *  Separate from `realms` on purpose. `realmEnvPatch` answers "which identity
@@ -562,6 +591,10 @@ export interface ProviderPackage {
    *  `account.usage` capability's backing): Codex, once the registry's realms
    *  are wired. Absent for a provider whose usage lives elsewhere (Claude). */
   readonly usage?: ProviderUsageOperations
+  /** Present when the package prices its models for Tokenomics (Codex: the
+   *  OpenAI part of the shared price list and its static table). Absent for
+   *  a provider whose prices live elsewhere (Claude's, in tk-pricing). */
+  readonly pricing?: ProviderPricingOperations
   /** Present when the provider's managed accounts each get an app-managed
    *  folder (Codex); absent for providers that keep their own (Claude). */
   readonly realmFolders?: ProviderRealmFolderOperations

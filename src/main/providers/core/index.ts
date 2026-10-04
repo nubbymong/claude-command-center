@@ -7,6 +7,7 @@ export type {
   DiscoveryResult, InstallRecipe, InstalledCli, RealmRef, AuthOperationResult, AuthLoginInput, AuthLogoutOptions, AuthStatusOptions, AuthFailureCode, AuthCredentialKind,
   ModelCatalogueEntry, ModelCatalogueFailureCode, ModelCatalogueResult,
   ProviderUsageOperations, UsageReading, UsageLookup, UsageReadOutcome, UsageReadResult, UsageReadOptions,
+  ProviderPricingOperations, ModelPrice,
 } from './package'
 export {
   registerProvider, getProvider, tryGetProvider,

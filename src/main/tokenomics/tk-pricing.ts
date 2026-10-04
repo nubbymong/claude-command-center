@@ -13,10 +13,7 @@ import * as https from 'https'
 import * as path from 'path'
 import { getConfigDir, ensureConfigDir } from '../config-manager'
 import { logInfo } from '../debug-logger'
-import {
-  codexPricingKeys, priceForModel, codexCachedInputPer1M,
-  parseLiteLlmOpenAiPricing, parseCachedCodexPricing, serializeCodexPricing, setLiveCodexPricing,
-} from '../providers/codex/pricing'
+import { tryGetProviderPackage } from '../providers/core'
 import { isPlainPriceId, checkedPer1M, listPricePer1M, isFreshCopy, isPriceRecord } from './price-checks'
 import { getRegistry } from '../model-registry-service'
 import type { TkPricing } from './tk-types'
@@ -52,6 +49,12 @@ let livePricing: Record<string, ModelPricing> | null = null
  *  (providers/codex/pricing.ts), beside Claude's model-pricing.json. */
 const OPENAI_CACHE_FILE = 'openai-model-pricing.json'
 const CLAUDE_CACHE_FILE = 'model-pricing.json'
+
+/** Codex's prices, through the registered package (WP2 PR 4: no deep import
+ *  into the package); null before the providers are composed. */
+function codexPricing() {
+  return tryGetProviderPackage('codex')?.pricing ?? null
+}
 
 /**
  * The Claude models of a LiteLLM price list, per 1M tokens, read through the
@@ -149,9 +152,10 @@ async function fetchModelPricingOnce(): Promise<void> {
   let openAiFresh = false
   try {
     const text = freshCopy(OPENAI_CACHE_FILE)
-    if (text !== null) {
-      const saved = parseCachedCodexPricing(JSON.parse(text))
-      setLiveCodexPricing(saved)
+    const codex = codexPricing()
+    if (text !== null && codex) {
+      const saved = codex.parseSaved(JSON.parse(text))
+      codex.setLive(saved)
       logInfo(`[tokenomics] Loaded cached OpenAI model pricing (${saved.size} models)`)
       openAiFresh = true
     }
@@ -198,10 +202,13 @@ async function fetchModelPricingOnce(): Promise<void> {
   // Saved even when it holds none, so the day's window holds and the list is
   // not fetched again on every call.
   try {
-    const openAi = parseLiteLlmOpenAiPricing(allModels)
-    setLiveCodexPricing(openAi)
-    saveCopy(OPENAI_CACHE_FILE, serializeCodexPricing(openAi))
-    logInfo(`[tokenomics] Fetched pricing for ${openAi.size} OpenAI models`)
+    const codex = codexPricing()
+    if (codex) {
+      const openAi = codex.parseList(allModels)
+      codex.setLive(openAi)
+      saveCopy(OPENAI_CACHE_FILE, codex.serialize(openAi))
+      logInfo(`[tokenomics] Fetched pricing for ${openAi.size} OpenAI models`)
+    }
   } catch (err: any) {
     logInfo(`[tokenomics] OpenAI pricing not read: ${err?.message}`)
   }
@@ -253,18 +260,21 @@ export function getAllPricing(): Record<string, TkPricing> {
 
   // Codex entries: the live list's and the table's, each at the price the
   // session strip uses (priceForModel), mapped to TkPricing (cacheWrite always 0)
-  for (const key of codexPricingKeys()) {
-    // A Claude model's price is Claude's: a Codex entry of the same name
-    // never replaces it.
-    if (Object.prototype.hasOwnProperty.call(out, key)) continue
-    const p = priceForModel(key)
-    if (!p) continue
-    out[key] = {
-      input: p.inputPer1M,
-      output: p.outputPer1M,
-      // MP11: no cached tier costs the full input rate, as in the strip.
-      cacheRead: codexCachedInputPer1M(p),
-      cacheWrite: 0,
+  const codex = codexPricing()
+  if (codex) {
+    for (const key of codex.keys()) {
+      // A Claude model's price is Claude's: a Codex entry of the same name
+      // never replaces it.
+      if (Object.prototype.hasOwnProperty.call(out, key)) continue
+      const p = codex.price(key)
+      if (!p) continue
+      out[key] = {
+        input: p.inputPer1M,
+        output: p.outputPer1M,
+        // MP11: no cached tier costs the full input rate, as in the strip.
+        cacheRead: codex.cachedInputPer1M(p),
+        cacheWrite: 0,
+      }
     }
   }
 

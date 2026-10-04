@@ -2,6 +2,11 @@ import { describe, it, expect } from 'vitest'
 import { getAllPricing, normalizeModelForPricing, registryFallbackPricing } from '../../../src/main/tokenomics/tk-pricing'
 import { computeCodexCostUsd, priceForModel, codexCachedInputPer1M, codexPricingKeys } from '../../../src/main/providers/codex/pricing'
 import { parseClaudeUsageLine } from '../../../src/main/tokenomics/tk-parse'
+import { registerProviderPackage } from '../../../src/main/providers/core'
+import { createCodexPackage } from '../../../src/main/providers/codex'
+
+// Tokenomics reads Codex's prices through the registered package (WP2 PR 4).
+registerProviderPackage(createCodexPackage())
 
 describe('getAllPricing', () => {
   it('includes claude-fable-5 and opus-4-8 with per-1M rates', () => {

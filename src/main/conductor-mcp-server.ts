@@ -32,7 +32,7 @@ import { logInfo, logError, logDebug, logWarn } from './debug-logger'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { atomicWriteFileSync, isRenameStageFailure } from './atomic-write'
 import { mimeForImage } from './clipboard-file'
-import { removeConductorVisionFromCodexConfig } from './providers/codex/mcp-config'
+import { tryGetProvider } from './providers'
 import { getGlobalManager, startGlobalVision, launchBrowser } from './vision-manager'
 import type { VisionCommand, VisionResult } from './vision-manager'
 // From the owner module itself (vision-manager re-exports it): a caller that
@@ -1633,8 +1633,9 @@ export async function startConductorMcpServer(
   // U6: Codex gets the conductor MCP per-spawn via `-c` overrides
   // (buildCodexSpawn), NOT a global ~/.codex/config.toml write. Heal any stale
   // block a pre-U6 version / crash left behind so plain `codex` outside CCC
-  // doesn't try the dead endpoint.
-  removeConductorVisionFromCodexConfig()
+  // doesn't try the dead endpoint. Done by the Codex package, through the
+  // registry (WP2 PR 4).
+  tryGetProvider('codex')?.removeLegacyMcpServerConfig?.()
   logInfo(`[mcp] Conductor MCP server started on port ${port} (vision: ${getGlobalManager() ? 'connected' : 'idle'})`)
 }
 
@@ -1649,7 +1650,7 @@ export function stopConductorMcpServer(): void {
   if (conductorMcpPort !== 0) {
     stopMcpServer()
     removeMcpSettings()
-    removeConductorVisionFromCodexConfig()
+    tryGetProvider('codex')?.removeLegacyMcpServerConfig?.()
     conductorMcpPort = 0
     logInfo('[mcp] Conductor MCP server stopped')
   }

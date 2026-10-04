@@ -2,8 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { getConductorMcpPort, issueMcpSessionToken } from '../conductor-mcp-server'
-import { buildStatuslineSetting } from '../providers/claude/statusline-command'
-import { statusPostUrl } from '../providers/claude/ssh-shim'
+import { getProvider } from '../providers'
 import { atomicWriteSecure, mkdirSecure, hardenCredentialDir } from '../account-profiles'
 import { logWarn } from '../debug-logger'
 
@@ -139,9 +138,12 @@ export function writeLocalSessionSettings(sessionId: string, opts: WriteSessionS
   // command carries no argv[3] at all and the bridge degrades to the status-file
   // delivery — never a fallback that would put the URL back on the command line.
   if (opts.resourcesDir) {
+    // The Claude package's statusline helpers, through the registered
+    // provider (WP2 PR 4: no deep import into the package).
+    const claude = getProvider('claude')
     let statusUrl = ''
     try {
-      statusUrl = statusPostUrl(sessionId, undefined, getConductorMcpPort(), true)
+      statusUrl = claude.statusPostUrl?.(sessionId, undefined, getConductorMcpPort(), true) ?? ''
     } catch {
       statusUrl = ''
     }
@@ -151,7 +153,8 @@ export function writeLocalSessionSettings(sessionId: string, opts: WriteSessionS
     } else {
       removeLocalSessionStatusUrl(sessionId)
     }
-    sesCfg.statusLine = buildStatuslineSetting(opts.resourcesDir, sessionId, urlFile || undefined)
+    const statusLine = claude.statuslineSetting?.(opts.resourcesDir, sessionId, urlFile || undefined)
+    if (statusLine) sesCfg.statusLine = statusLine
   }
 
   // Union the canvas tools into permissions.allow, preserving everything the

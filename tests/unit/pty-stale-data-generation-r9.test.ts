@@ -47,13 +47,19 @@ const { spawnPty, killPty } = await import('../../src/main/pty-manager')
 const { registerProvider } = await import('../../src/main/providers')
 type SessionProvider = import('../../src/main/providers/types').SessionProvider
 
-const fakeProvider = {
+const { ClaudeProvider } = await import('../../src/main/providers/claude')
+
+// Layered over a real ClaudeProvider (WP2 PR 4): the SSH flow reaches the
+// Claude screen readers and remote-command helpers through the provider, so
+// the real ones answer, as they did when pty-manager imported them. Only the
+// spawn surface is faked.
+const fakeProvider = Object.assign(Object.create(ClaudeProvider.prototype) as object, {
   id: 'claude', displayName: 'Claude', resolveBinary: () => null,
-  buildSpawnCommand: () => ({ cmd: '', args: [], env: {} }), detectUiRunning: () => false,
+  buildSpawnCommand: () => ({ cmd: '', args: [], env: {} }),
   ingestSessionTelemetry: () => ({ stop() {} }), listHistorySessions: async () => [],
   resumeCommand: () => ({ cmd: '', args: [] }), configureMcpServer: async () => {},
   getSshSettingsPath: () => '', getSshMcpConfigPath: () => '', configureRemoteSettings: () => '',
-} as unknown as SessionProvider
+}) as unknown as SessionProvider
 
 const sent: Array<[string, unknown]> = []
 const win = { webContents: { send: (ch: string, payload: unknown) => { sent.push([ch, payload]) } }, isDestroyed: () => false } as never

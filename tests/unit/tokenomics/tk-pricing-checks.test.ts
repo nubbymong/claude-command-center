@@ -80,6 +80,10 @@ async function load() {
   vi.resetModules()
   const tk = await import('../../../src/main/tokenomics/tk-pricing')
   const cx = await import('../../../src/main/providers/codex/pricing')
+  // Tokenomics reads Codex's prices through the registered package (WP2 PR 4).
+  const { registerProviderPackage } = await import('../../../src/main/providers/core')
+  const { createCodexPackage } = await import('../../../src/main/providers/codex')
+  registerProviderPackage(createCodexPackage())
   return { tk, cx }
 }
 

@@ -2,14 +2,19 @@
 // outside this directory imports from here; the dependency-boundary test
 // ratchets the remaining deep imports down to zero.
 import type { SshCapableProvider, SpawnOptions, TelemetrySource, HistorySession } from '../types'
-import type { LegacyVersion, StatuslineData } from '../../../shared/types'
+import type { LegacyVersion, SshRuntime, StatuslineData } from '../../../shared/types'
 import type { ProviderCapabilities } from '../../../shared/providers'
 import type { ProviderPackage } from '../core'
 import { resolveClaudeBinary, buildClaudeLocalSpawn } from './spawn'
-import { getRemoteSetupCommand, remoteSessionSettingsPath, remoteSessionMcpConfigPath } from './ssh-shim'
-import { detectClaudeUi } from './ui-detection'
-import { deployClaudeStatuslineScript, deployClaudeResumePickerScript } from './statusline'
-import { watchClaudeStatuslineFile, listClaudeResumableSessions } from './telemetry'
+import {
+  getRemoteSetupCommand, remoteSessionSettingsPath, remoteSessionMcpConfigPath,
+  buildRemoteSessionCleanupCommand, buildTmuxBinPatchCommand, buildRemoteTmuxKillCommand, buildContainerKillCommand,
+  parseEndSudoSentinel, getWindowsRemoteSetupCommand, buildWindowsClaudeCommand, statusPostUrl,
+} from './ssh-shim'
+import { detectClaudeUi, lastPromptLineForClaude, looksLikeShellPromptTail } from './ui-detection'
+import { deployClaudeStatuslineScript, deployClaudeResumePickerScript, healGlobalStatusline } from './statusline'
+import { buildStatuslineSetting } from './statusline-command'
+import { watchClaudeStatuslineFile, listClaudeResumableSessions, notifyClaudeTelemetry } from './telemetry'
 import {
   claudeAuthorityEnvVariables, CLAUDE_MIN_MANAGED_CLI_VERSION,
   sanitizeClaudeManagedSettings, claudeAuthoritySettingsKeys, claudeManagedLaunchPreflight, claudeTransportSettingsEnv,
@@ -69,8 +74,8 @@ export class ClaudeProvider implements SshCapableProvider {
     if (opts.ssh) throw new Error('SSH spawn handled by configureRemoteSettings -- see P0.5')
     return buildClaudeLocalSpawn(opts)
   }
-  detectUiRunning(data: string): boolean {
-    return detectClaudeUi(data, true)  // post-spawn convenience: assume claudeSent
+  detectUiRunning(data: string, commandSent = true): boolean {
+    return detectClaudeUi(data, commandSent)  // post-spawn convenience: assume claudeSent
   }
   ingestSessionTelemetry(
     sessionId: string,
@@ -122,6 +127,53 @@ export class ClaudeProvider implements SshCapableProvider {
  *  the existing profile-home mechanism (owner decision D1); it is not
  *  available on macOS, where the login keychain is located through $HOME
  *  (D2, WP1 only). No tested CLI version range is declared yet: the range is
+
+  // WP2 PR 4: what the PTY manager, the per-session settings writer and the
+  // statusline dispatcher used to deep-import, offered through the
+  // registered provider. Each delegates unchanged.
+  healGlobalStatusline(): void {
+    healGlobalStatusline()
+  }
+  deliverStatusline(data: StatuslineData): void {
+    notifyClaudeTelemetry(data)
+  }
+  statuslineSetting(resourcesDir: string, sessionId?: string, statusUrlFile?: string): { type: 'command'; command: string } {
+    return buildStatuslineSetting(resourcesDir, sessionId, statusUrlFile)
+  }
+  statusPostUrl(sessionId: string, remoteMcpPort: number | undefined, mcpPort: number, includeConductorMcp: boolean): string {
+    return statusPostUrl(sessionId, remoteMcpPort, mcpPort, includeConductorMcp)
+  }
+  remoteSessionCleanupCommand(sessionId: string): string {
+    return buildRemoteSessionCleanupCommand(sessionId)
+  }
+  tmuxBinPatchCommand(sessionId: string): string {
+    return buildTmuxBinPatchCommand(sessionId)
+  }
+  remoteTmuxKillCommand(sessionId: string): string {
+    return buildRemoteTmuxKillCommand(sessionId)
+  }
+  containerKillCommand(sessionId: string, runtime: SshRuntime | undefined, opts?: { hasSudoPassword?: boolean; sudoProbeNonce?: string }): string {
+    return buildContainerKillCommand(sessionId, runtime, opts)
+  }
+  parseEndSudoSentinel(output: string, nonce: string): boolean {
+    return parseEndSudoSentinel(output, nonce)
+  }
+  windowsRemoteSetupCommand(
+    sessionId: string,
+    opts: { includeStatusLine?: boolean; includeConductorMcp?: boolean; remoteMcpPort?: number } | undefined,
+    nonce: string,
+  ): string {
+    return getWindowsRemoteSetupCommand(sessionId, opts, nonce)
+  }
+  windowsLaunchCommand(input: { sessionId: string; envPrefixVars: string[]; extraFlags: string; continueFlag: string }): string {
+    return buildWindowsClaudeCommand(input)
+  }
+  lastPromptLine(data: string): string {
+    return lastPromptLineForClaude(data)
+  }
+  looksLikeShellPromptTail(data: string): boolean {
+    return looksLikeShellPromptTail(data)
+  }
  *  established by the D7 conformance evidence (dev host: Claude Code 2.1.278). */
 export const claudeCapabilities: ProviderCapabilities = {
   'cli.discovery': { state: 'unknown', note: 'wired in the Claude adapter slice' },

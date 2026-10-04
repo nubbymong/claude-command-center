@@ -92,6 +92,7 @@ vi.mock('../../../src/main/conductor-mcp-server', () => ({
 }))
 vi.mock('../../../src/main/providers', () => ({
   getProvider: (id: string) => ({
+    resolveBinary: () => ({ cmd: 'claude', source: 'system' }), // WP2 PR 4: the local launch resolves Claude through the provider
     buildSpawnCommand: (opts: Record<string, any>) => {
       if (opts.provider !== 'codex') return { cmd: 'pwsh', args: [], env: {} }
       h.built.push(opts)

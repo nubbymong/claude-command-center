@@ -106,6 +106,7 @@ const tick = (ms = 0): Promise<void> => new Promise((r) => setTimeout(r, ms))
 /** A registered Codex provider whose builder carries the question on argv only when told. */
 function fakeProvider(): Record<string, unknown> {
   return {
+    resolveBinary: () => ({ cmd: 'claude', source: 'system' }), // WP2 PR 4: the local launch resolves Claude through the provider
     buildSpawnCommand: (opts: Record<string, unknown>) => {
       h.built.push(opts)
       return h.carried

@@ -22,10 +22,9 @@
  * settings); the OSC sentinel path (pty-manager.ts:extractSshOscSentinels →
  * dispatchSSHStatuslineUpdate) is the SSH fallback for tunnel-less sessions.
  *
- * Provider-specific deploy/configure logic lives in providers/claude/statusline.ts.
- * The legacy deployStatuslineScript() / configureClaudeSettings() symbols are
- * re-exported below for backward compatibility, but new code should go through
- * the provider: getProvider('claude').deployStatuslineScript?.(resourcesDir).
+ * Provider-specific deploy/configure logic lives in providers/claude/statusline.ts
+ * and is reached through the registered provider only (WP2 PR 4: no deep import
+ * into the package): getProvider('claude').deployStatuslineScript?.(resourcesDir).
  */
 import { BrowserWindow } from 'electron'
 import * as fs from 'fs'
@@ -33,7 +32,7 @@ import * as path from 'path'
 
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { decorateStatuslineWithColour } from './account-color'
-import { notifyClaudeTelemetry } from './providers/claude/telemetry'
+import { getProvider, tryGetProvider } from './providers'
 import { sentinelObserve } from './sentinel/index'
 import { isBackgroundContext } from './background-context'
 import { logWarn } from './debug-logger'
@@ -43,9 +42,12 @@ import { sanitiseTranscriptPath } from './logging/transcript-discovery'
 export type { StatuslineData } from '../shared/types'
 import type { StatuslineData } from '../shared/types'
 
-// Backwards-compatible re-exports of the lifted Claude-specific helpers.
-// New callers should use getProvider('claude').deployStatuslineScript?.(...).
-export { deployClaudeStatuslineScript as deployStatuslineScript, healGlobalStatusline } from './providers/claude/statusline'
+/** The boot heal of a legacy global statusLine stanza, kept here for its boot
+ *  caller and done by the Claude package through the registry. Throws while
+ *  the package is not registered (the caller catches and warns). */
+export function healGlobalStatusline(): void {
+  getProvider('claude').healGlobalStatusline?.()
+}
 
 // Lazy-initialized: can't call getResourcesDirectory() at module load time
 let STATUS_DIR: string | null = null
@@ -114,7 +116,7 @@ function fanOutStatusline(data: StatuslineData, getWindow: (() => BrowserWindow 
       win.webContents.send('statusline:update', forDisplay)
     }
   }
-  notifyClaudeTelemetry(forDisplay)
+  tryGetProvider('claude')?.deliverStatusline?.(forDisplay)
   // Logs v2 (Task 8): forward the live transcript path to the binder (continuous,
   // exact discovery source). Guarded — the sink may not be registered yet (and
   // isn't in unit tests). A throw here must not break the statusline pipeline.

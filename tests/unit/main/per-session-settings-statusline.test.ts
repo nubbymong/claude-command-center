@@ -27,6 +27,12 @@ vi.mock('../../../src/main/conductor-mcp-server', () => ({
 }))
 
 import { writeLocalSessionSettings } from '../../../src/main/hooks/per-session-settings'
+import { registerProvider } from '../../../src/main/providers'
+import { ClaudeProvider } from '../../../src/main/providers/claude'
+
+// The writer reaches the Claude statusline helpers through the registered
+// provider (WP2 PR 4): the real one, as the app registers it.
+registerProvider(new ClaudeProvider())
 
 describe('writeLocalSessionSettings -- per-session statusLine', () => {
   let fakeHome = ''

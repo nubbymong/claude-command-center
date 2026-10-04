@@ -62,7 +62,8 @@ const canvasLink = await import('../../src/main/canvas/canvas-session-link')
 // pre-seed it (PATH dedupe, inherited CCC_SESSION_WORKTREE).
 let providerEnv: Record<string, string> = {}
 const fakeClaude = {
-  id: 'claude', displayName: 'Claude', resolveBinary: () => null,
+  // The local launch resolves Claude through the provider (WP2 PR 4).
+  id: 'claude', displayName: 'Claude', resolveBinary: () => ({ cmd: 'claude', args: [] }),
   buildSpawnCommand: () => ({ cmd: 'fake-shell', args: [], env: { ...providerEnv } }),
   detectUiRunning: () => false, ingestSessionTelemetry: () => ({ stop() {} }), listHistorySessions: async () => [],
   resumeCommand: () => ({ cmd: '', args: [] }), configureMcpServer: async () => {},

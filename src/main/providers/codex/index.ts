@@ -5,7 +5,7 @@ import type { SessionProvider, SessionRunScreen, SpawnOptions, TelemetrySource, 
 import type { LegacyVersion, StatuslineData } from '../../../shared/types'
 import type { AllowanceReading } from '../../../shared/usage-types'
 import type { ProviderCapabilities, AuthRealm, RealmUse } from '../../../shared/providers'
-import type { ProviderPackage, RealmRef } from '../core'
+import type { ProviderPackage, ProviderPricingOperations, RealmRef } from '../core'
 import { CODEX_ENABLEMENT } from './enablement'
 import { resolveCodexBinary, buildCodexSpawn, codexHookDataDir, codexLaunchRoute } from './spawn'
 import { openCodexScreen, feedCodexScreen, resizeCodexScreen, closeCodexScreen, hasCodexScreen, submitCodexText } from './session-screen'
@@ -33,6 +33,11 @@ import { codexExternalDefaultHome, codexHomeDisplay, codexManagedRealmSkillsDir 
 import { createCodexLiveUsage, createCodexUsageOperations, createCodexCarryMarks, codexRolloutIdFromName, newestCarriedStamp, realCodexUsageFsPort } from './usage'
 import type { CodexLiveUsage, CodexUsageFsPort, CodexCarryMarks, CodexCarryMarksPort } from './usage'
 import type { CodexFolderLookup, CodexFsEntry, CodexRealmFsPort, CodexRealmFolderLimits } from './realm-folders'
+import { removeConductorVisionFromCodexConfig } from './mcp-config'
+import {
+  codexPricingKeys, priceForModel, codexCachedInputPer1M,
+  parseLiteLlmOpenAiPricing, parseCachedCodexPricing, serializeCodexPricing, setLiveCodexPricing,
+} from './pricing'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -123,6 +128,18 @@ const CODEX_RUN_SCREEN: SessionRunScreen = {
   submit: (sessionId, text, opts) => submitCodexText(sessionId, text, opts),
 }
 
+/** WP2 PR 4: Codex's model prices (pricing.ts), offered to Tokenomics through
+ *  the registered package rather than by deep import. */
+const CODEX_PRICING: ProviderPricingOperations = {
+  keys: () => codexPricingKeys(),
+  price: (model) => priceForModel(model),
+  cachedInputPer1M: (p) => codexCachedInputPer1M(p),
+  parseList: (all) => parseLiteLlmOpenAiPricing(all),
+  parseSaved: (saved) => parseCachedCodexPricing(saved),
+  serialize: (map) => serializeCodexPricing(map),
+  setLive: (map) => setLiveCodexPricing(map),
+}
+
 export class CodexProvider implements SessionProvider {
   readonly id = 'codex' as const
   readonly displayName = 'Codex'
@@ -203,6 +220,13 @@ export class CodexProvider implements SessionProvider {
   async configureMcpServer(_cfg: { name: string; url: string }): Promise<void> {
     // No-op: a Codex session is handed the conductor MCP server per spawn
     // (buildCodexSpawn), never through a config file.
+  }
+
+  /** The conductor block an older build wrote into the user's own
+   *  config.toml, removed (mcp-config.ts); the MCP server asks at start and
+   *  stop. */
+  removeLegacyMcpServerConfig(): void {
+    removeConductorVisionFromCodexConfig()
   }
 
   async deployResumePickerScript(resourcesDir: string): Promise<void> {
@@ -494,6 +518,8 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
     // WP2 PR 4, P4.5 (row 57): a Cloud Agent's headless `codex exec`, run
     // from a launch the accounts service prepared (kind `background`).
     background: createCodexBackgroundOperations(),
+    // WP2 PR 4: the model prices Tokenomics reads, through the registry.
+    pricing: CODEX_PRICING,
     ...(source && realmFs ? {
       ...withRealms(
         createCodexAuthOperations({ ...realAuthDeps({ lookupRealm, takeSecret: deps.auth?.takeSecret }, realmFs), ...testAuthPorts(deps.authPorts), locks, proven: () => proven }),

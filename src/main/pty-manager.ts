@@ -45,17 +45,15 @@ import { bundledConptyChoice, bundledConptyFailed, SYSTEM_CONPTY_OPTIONS, BUNDLE
 import { guardPtyIo, type PtyIoSide } from './pty-input-guard'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { TMUX_WHEEL_EXIT_KEY } from '../shared/tmux-wheel'
-import { buildRemoteSessionCleanupCommand, buildTmuxBinPatchCommand, buildRemoteTmuxKillCommand, buildContainerKillCommand, parseEndSudoSentinel, getWindowsRemoteSetupCommand, buildWindowsClaudeCommand } from './providers/claude/ssh-shim'
 import { isGlobalVisionRunning, getGlobalVisionConfig, teardownVisionSession } from './vision-manager'
 import { getConductorMcpPort, issueMcpSessionToken } from './conductor-mcp-server'
 import { buildSshArgs, buildSshExecArgs } from './ssh-args'
 import { getRemoteMcpPort } from './ssh-remote-port'
-import { resolveClaudeBinary, resolveHostColorScheme, colorFgBgEnvToken } from './providers/claude/spawn'
+import { resolveHostColorScheme, colorFgBgEnvToken } from './providers/host-color-scheme'
 import { legacyCliPin } from './legacy-version-manager'
-import { detectClaudeUi, lastPromptLineForClaude, looksLikeShellPromptTail } from './providers/claude/ui-detection'
 import { getProvider } from './providers'
 import { isSshCapable } from './providers/types'
-import type { TelemetrySource, SessionRunScreen, SpawnOptions } from './providers/types'
+import type { TelemetrySource, SessionRunScreen, SpawnOptions, SshCapableProvider } from './providers/types'
 import { resolveCwd, isHomeOrAncestor } from './path-utils'
 import { buildTerminalLaunchLine } from './terminal-launch-line'
 import { dispatchSSHStatuslineUpdate, cleanupStatusFile } from './statusline-watcher'
@@ -1441,6 +1439,17 @@ const END_REMOTE_SUDO_PROMPT_RE = /^password:\s*$/
 const END_REMOTE_SSH_PROMPT_RE = /password[:?]\s*$/i
 /** Output kept for the sudo sentinel: the End exec prints a handful of lines. */
 const END_REMOTE_OUTPUT_CAP = 64 * 1024
+
+/** The Claude package's SSH surface, from the registry: the dependency
+ *  boundary lets this module reach the package only that way (WP2 PR 4).
+ *  Throws while it is not registered or not SSH-capable, as the SSH spawn
+ *  path does. */
+function claudeSshSurface(): SshCapableProvider {
+  const provider = getProvider('claude')
+  if (!isSshCapable(provider)) throw new Error('Claude provider must be SSH-capable')
+  return provider
+}
+
 export function endSshRemote(sessionId: string, fallbackTarget?: SshEndTarget): Promise<SshEndRemoteOutcome> {
   return endSshRemoteDetailed(sessionId, fallbackTarget).then((r) => r.outcome)
 }
@@ -1464,12 +1473,13 @@ export function endSshRemoteDetailed(sessionId: string, fallbackTarget?: SshEndT
   // A rootful container with no saved sudo password: the kill segment probes
   // sudo and prints this End's sentinel when it cannot elevate (see above).
   const sudoProbeNonce = target.runtime?.sudo && !hasSudoPassword ? randomId() : undefined
-  const containerKill = buildContainerKillCommand(sessionId, target.runtime, { hasSudoPassword, sudoProbeNonce })
+  const claudeSsh = claudeSshSurface()
+  const containerKill = claudeSsh.containerKillCommand(sessionId, target.runtime, { hasSudoPassword, sudoProbeNonce })
   const probing = Boolean(containerKill && sudoProbeNonce)
   /** The result for a finished exec: its own outcome, unless this End's sudo
    *  sentinel is in what it printed. */
   const settle = (outcome: 'completed' | 'failed', output: string): SshEndRemoteResult => {
-    if (probing && target.runtime && parseEndSudoSentinel(output, sudoProbeNonce!)) {
+    if (probing && target.runtime && claudeSsh.parseEndSudoSentinel(output, sudoProbeNonce!)) {
       logWarn(`[ssh] ${sessionId}: end-remote may not have stopped Claude inside the container: sudo needs a password and End holds none for this session`)
       return {
         outcome: 'container-needs-sudo',
@@ -1480,8 +1490,8 @@ export function endSshRemoteDetailed(sessionId: string, fallbackTarget?: SshEndT
   }
   // Container kill FIRST, then the host tmux kill + sidecar cleanup.
   const remoteCommand = containerKill
-    ? `${containerKill}; ${buildRemoteTmuxKillCommand(sessionId)}`
-    : buildRemoteTmuxKillCommand(sessionId)
+    ? `${containerKill}; ${claudeSsh.remoteTmuxKillCommand(sessionId)}`
+    : claudeSsh.remoteTmuxKillCommand(sessionId)
   // A rootful container whose sudo password we hold is the ONLY case that adds
   // a second prompt; `sudo -n` (no saved password) never prompts at all.
   const needsSudoPrompt = Boolean(containerKill && target.runtime?.sudo && hasSudoPassword)
@@ -1795,7 +1805,12 @@ function extractSshOscSentinels(sessionId: string, chunk: string): string {
  * Otherwise checks for native CLI (claude.exe) first, then npm wrapper (claude.cmd).
  */
 export function resolveClaudeForPty(legacyVersion?: { enabled: boolean; version: string }): { cmd: string; args: string[] } {
-  return resolveClaudeBinary(legacyVersion)
+  // Through the registered provider (WP2 PR 4), whose resolveBinary is
+  // resolveClaudeBinary and never answers null; a provider that did would be
+  // a defect, said here rather than passed on as a missing command.
+  const resolved = getProvider('claude').resolveBinary(legacyVersion)
+  if (!resolved) throw new Error('the Claude provider resolved no executable')
+  return resolved
 }
 
 /**
@@ -3080,7 +3095,7 @@ function spawnPtyResolved(
           // or claude crashed) — surface it as failed instead of latching
           // claude-running. Conservative detector: never mis-flags a running
           // claude (whose UI uses ❯/box drawing, not a bare $/#).
-          if (looksLikeShellPromptTail(recentSshTail)) {
+          if (claudeProvider.looksLikeShellPromptTail(recentSshTail)) {
             logError(`[ssh] ${sessionId}: idle after claudeCmd but pane is a bare shell → claude exited (not latching claude-running)`)
             setFlowState('failed', 'claude exited to shell')
             return
@@ -3176,7 +3191,7 @@ function spawnPtyResolved(
     const claudeCmd = isWindowsRemote
       // item 3: cmd.exe launch (set X=Y&& claude --settings "%USERPROFILE%\.claude\..."). No
       // tmux wrap ever (Windows has none); writeClaudeCmd appends --continue on reconnect.
-      ? buildWindowsClaudeCommand({ sessionId, envPrefixVars: claudeEnvVars, extraFlags: claudeCommonFlags, continueFlag: '' })
+      ? claudeProvider.windowsLaunchCommand({ sessionId, envPrefixVars: claudeEnvVars, extraFlags: claudeCommonFlags, continueFlag: '' })
       : [claudeEnvPrefix, 'claude', claudeFlags].filter(Boolean).join(' ')
     const password = ssh.password
     // Item e (structured Runtime): the app composes the container command from
@@ -3320,7 +3335,7 @@ function spawnPtyResolved(
           // item 3: Windows uses the PowerShell-delivered setup (no POSIX
           // base64/stty, no tmux); auto/unix keep the POSIX path unchanged.
           const setupCmd = isWindowsRemote
-            ? getWindowsRemoteSetupCommand(sessionId, setupOpts, sshNonce)
+            ? claudeProvider.windowsRemoteSetupCommand(sessionId, setupOpts, sshNonce)
             : claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, setupOpts, sshNonce)
           ptyProcess.write(setupCmd + '\r')
         } catch (err) {
@@ -3515,7 +3530,7 @@ function spawnPtyResolved(
           // item 3: Windows uses the PowerShell-delivered setup (no POSIX
           // base64/stty, no tmux); auto/unix keep the POSIX path unchanged.
           const setupCmd = isWindowsRemote
-            ? getWindowsRemoteSetupCommand(sessionId, setupOpts, sshNonce)
+            ? claudeProvider.windowsRemoteSetupCommand(sessionId, setupOpts, sshNonce)
             : claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, setupOpts, sshNonce)
           ptyProcess.write(setupCmd + '\r')
         } catch (err) {
@@ -3739,7 +3754,7 @@ function spawnPtyResolved(
       // reattach the transcript's own text used to be judged before the UI that
       // accompanied it. Any chunk carrying claude's UI closes the window for
       // good.
-      if (detectClaudeUi(data, claudeSent)) { tmuxLaunchWatchUntil = 0; return }
+      if (claudeProvider.detectUiRunning(data, claudeSent)) { tmuxLaunchWatchUntil = 0; return }
       const m = data.match(TMUX_LAUNCH_FAILED_UNAMBIGUOUS_RE) ?? data.match(TMUX_LAUNCH_FAILED_GENERIC_RE)
       if (!m) return
       tmuxLaunchFellBack = true
@@ -4478,7 +4493,7 @@ function spawnPtyResolved(
       //   prompt (which would have already triggered state advance
       //   earlier).
       if (!claudeRunning) {
-        if (detectClaudeUi(data, claudeSent)) {
+        if (claudeProvider.detectUiRunning(data, claudeSent)) {
           claudeRunning = true
           if (setupTimeoutHandle) {
             clearTimeout(setupTimeoutHandle)
@@ -4632,7 +4647,7 @@ function spawnPtyResolved(
             // launch that follows -- the statusline degrading is strictly
             // better than the session never launching at all.
             try {
-              ptyProcess.write(buildTmuxBinPatchCommand(sessionId) + '\r')
+              ptyProcess.write(claudeProvider.tmuxBinPatchCommand(sessionId) + '\r')
             } catch (err) {
               logError(`[ssh] ${sessionId}: tmux CCC_TMUX_BIN settings patch failed to send (statusline may not reflect tmux): ${(err as Error)?.message ?? err}`)
             }
@@ -4679,7 +4694,7 @@ function spawnPtyResolved(
             // #242 finding F3: same CCC_TMUX_BIN patch as the tier-3 ok
             // branch above -- see that branch's comment.
             try {
-              ptyProcess.write(buildTmuxBinPatchCommand(sessionId) + '\r')
+              ptyProcess.write(claudeProvider.tmuxBinPatchCommand(sessionId) + '\r')
             } catch (err) {
               logError(`[ssh] ${sessionId}: tmux CCC_TMUX_BIN settings patch failed to send (statusline may not reflect tmux): ${(err as Error)?.message ?? err}`)
             }
@@ -4698,7 +4713,7 @@ function spawnPtyResolved(
       // guard; a chunk whose last line strips to '' (a bare \r\n ack, a pure
       // control-sequence repaint) does not clear it — the prompt is still on
       // screen through those.
-      const promptLineNow = lastPromptLineForClaude(data)
+      const promptLineNow = claudeProvider.lastPromptLine(data)
       if (promptLineNow !== '') lastPromptLineSeen = promptLineNow
       // rc.14 review F1 round 2: remember the HOST shell's prompt while we are
       // still on the host, so the entry watch below can recognise it coming
@@ -6971,7 +6986,7 @@ function endLiveRun(sessionId: string, opts: KillPtyOptions = {}): void {
       // them) or be removed by the End-remote exec (which does its own rm). So we
       // write nothing and just detach (adversarial review, 2026-08-18).
       const proc = entry.ptyProcess
-      try { proc.write(buildRemoteSessionCleanupCommand(sessionId)) } catch { /* best-effort */ }
+      try { proc.write(claudeSshSurface().remoteSessionCleanupCommand(sessionId)) } catch { /* best-effort */ }
       setTimeout(() => { try { proc.kill() } catch { /* already gone */ } }, REMOTE_CLEANUP_GRACE_MS)
     } else {
       // Non-SSH, or a tmux-persistent SSH session (killing the local PTY detaches

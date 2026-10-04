@@ -103,6 +103,7 @@ vi.mock('../../../src/main/conductor-mcp-server', () => ({
 }))
 vi.mock('../../../src/main/providers', () => ({
   getProvider: () => ({
+    resolveBinary: () => ({ cmd: 'claude', source: 'system' }), // WP2 PR 4: the local launch resolves Claude through the provider
     buildSpawnCommand: (opts: Record<string, any>) => {
       // Only a Codex launch carries its realm (the Claude branch asks for its shell).
       if (!opts.realmLaunch) return { cmd: 'pwsh', args: [], env: {} }

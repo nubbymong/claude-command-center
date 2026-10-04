@@ -47,11 +47,16 @@ vi.mock('electron', () => ({
 const { spawnPty, killPty, PTY_IO_FAILED_GRACE_MS } = await import('../../../src/main/pty-manager')
 const { registerProvider } = await import('../../../src/main/providers')
 
-const sshProvider = {
+const { ClaudeProvider } = await import('../../../src/main/providers/claude')
+
+// Layered over a real ClaudeProvider (WP2 PR 4): the SSH flow and its
+// teardown reach the Claude screen readers and remote-command helpers through
+// the provider, so the real ones answer, as they did when pty-manager
+// imported them. Only the spawn surface is faked.
+const sshProvider = Object.assign(Object.create(ClaudeProvider.prototype) as object, {
   id: 'claude', displayName: 'Claude',
   resolveBinary: () => null,
   buildSpawnCommand: () => ({ cmd: '', args: [], env: {} }),
-  detectUiRunning: () => false,
   ingestSessionTelemetry: () => ({ stop() {} }),
   listHistorySessions: async () => [],
   resumeCommand: () => ({ cmd: '', args: [] }),
@@ -59,7 +64,7 @@ const sshProvider = {
   getSshSettingsPath: () => '',
   getSshMcpConfigPath: () => '',
   configureRemoteSettings: () => '',
-}
+})
 const fakeWin = { webContents: { send: (ch: string, d: unknown) => { h.sent.push([ch, d]) } }, isDestroyed: () => false } as never
 const failure = (code: string) => Object.assign(new Error(`io ${code}`), { code })
 let n = 0

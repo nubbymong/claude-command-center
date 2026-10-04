@@ -1,4 +1,4 @@
-import type { CodexOptions, LegacyVersion, ProviderId, SshConfig, StatuslineData, SubmitTextResult } from '../../shared/types'
+import type { CodexOptions, LegacyVersion, ProviderId, SshConfig, SshRuntime, StatuslineData, SubmitTextResult } from '../../shared/types'
 
 export interface SpawnOptions {
   sessionId: string
@@ -218,10 +218,33 @@ export interface SessionProvider {
   resolveBinary(legacyVersion?: LegacyVersion): { cmd: string; args: string[] } | null
   /** See ProviderSpawnCommand. */
   buildSpawnCommand(opts: SpawnOptions): ProviderSpawnCommand
-  detectUiRunning(data: string): boolean
+  /** Whether `data` shows the provider's UI running. `commandSent`: whether
+   *  the launch command has been written yet (Claude reads more of the screen
+   *  as its UI once it has; absent = it has). */
+  detectUiRunning(data: string, commandSent?: boolean): boolean
 
   /** Optional -- Claude only; Codex has no statusline shim. */
   deployStatuslineScript?(resourcesDir: string): Promise<void>
+  /** Optional -- Claude only (WP2 PR 4: offered here so no module outside the
+   *  package imports its statusline code). Strip the global statusLine stanza
+   *  and planted script an older build left in the user's own settings; the
+   *  boot heal, best-effort. */
+  healGlobalStatusline?(): void
+  /** Optional -- Claude only: hand one parsed statusline payload to the
+   *  session's telemetry subscribers (ingestSessionTelemetry). The app's
+   *  statusline dispatcher calls it for every payload. */
+  deliverStatusline?(data: StatuslineData): void
+  /** Optional -- Claude only: the `statusLine` value of a local session's
+   *  settings file, running the bundled bridge script with the session id and
+   *  the path of its status-URL file. */
+  statuslineSetting?(resourcesDir: string, sessionId?: string, statusUrlFile?: string): { type: 'command'; command: string }
+  /** Optional -- Claude only: the session's statusline POST URL on the
+   *  conductor MCP server ('' while the server is not bound or the MCP is off;
+   *  throws rather than build a URL that fails its charset guard). */
+  statusPostUrl?(sessionId: string, remoteMcpPort: number | undefined, mcpPort: number, includeConductorMcp: boolean): string
+  /** Optional -- Codex: remove the conductor block an older build wrote into
+   *  the user's own provider config; the MCP server asks at start and stop. */
+  removeLegacyMcpServerConfig?(): void
   /**
    * Optional -- copy the provider's resume-picker script into
    * `<resourcesDir>/scripts/`. Both providers implement this in P4. The
@@ -319,6 +342,33 @@ export interface SshCapableProvider extends SessionProvider {
     opts: { includeStatusLine?: boolean; includeConductorMcp?: boolean; remoteMcpPort?: number } | undefined,
     nonce: string,
   ): string
+  /** configureRemoteSettings for a Windows remote (cmd.exe), same contract. */
+  windowsRemoteSetupCommand(
+    sessionId: string,
+    opts: { includeStatusLine?: boolean; includeConductorMcp?: boolean; remoteMcpPort?: number } | undefined,
+    nonce: string,
+  ): string
+  /** The launch line on a Windows remote, every variable set cmd.exe's way. */
+  windowsLaunchCommand(input: { sessionId: string; envPrefixVars: string[]; extraFlags: string; continueFlag: string }): string
+  /** The line written down a non-persistent session's own PTY at teardown
+   *  that removes the per-session files it planted on the remote. */
+  remoteSessionCleanupCommand(sessionId: string): string
+  /** The line a persistent (tmux) session writes before its launch to point
+   *  the remote statusline at the staged tmux binary. */
+  tmuxBinPatchCommand(sessionId: string): string
+  /** End remote: kills exactly this session's tmux session and removes its
+   *  per-session files (run over its own ssh exec). */
+  remoteTmuxKillCommand(sessionId: string): string
+  /** End remote: the in-container kill for a container runtime, '' for none.
+   *  `sudoProbeNonce`: printed in a sentinel when sudo cannot elevate. */
+  containerKillCommand(sessionId: string, runtime: SshRuntime | undefined, opts?: { hasSudoPassword?: boolean; sudoProbeNonce?: string }): string
+  /** End remote: whether `output` carries this End's sudo sentinel. */
+  parseEndSudoSentinel(output: string, nonce: string): boolean
+  /** The last line of `data`, escapes stripped, as a shell-prompt candidate;
+   *  '' when it is too long to be one or is the provider's own composer. */
+  lastPromptLine(data: string): string
+  /** Whether the end of `data` is a bare shell prompt (the CLI has exited). */
+  looksLikeShellPromptTail(data: string): boolean
 }
 
 /** Type guard. */
