@@ -61,30 +61,127 @@ export const CLAUDE_ANALYSIS_DENIED_TOOLS = [
  *  - `--strict-mcp-config` with no --mcp-config loads no MCP server;
  *  - the denied names are a second layer;
  *  - `--no-session-persistence` (round 3) keeps no transcript of the run in
- *    the account's projects folder.
+ *    the account's projects folder;
+ *  - `--output-format stream-json` with `--verbose` (the CLI takes the stream
+ *    only with both; owner answers review): the run's events as they come,
+ *    read while it runs (createClaudeRetryWatch); its last result line is the
+ *    envelope the json format prints alone (claudeResultLine).
  *  The run's working folder is an empty one of its own (sentinel/index.ts). */
 export const CLAUDE_ANALYSIS_ARGS: readonly string[] = [
-  '-p', '--model', 'sonnet', '--output-format', 'json', '--no-session-persistence', '--strict-mcp-config', '--setting-sources=', '--tools=', '--disallowedTools', CLAUDE_ANALYSIS_DENIED_TOOLS,
+  '-p', '--model', 'sonnet', '--output-format', 'stream-json', '--verbose', '--no-session-persistence', '--strict-mcp-config', '--setting-sources=', '--tools=', '--disallowedTools', CLAUDE_ANALYSIS_DENIED_TOOLS,
 ]
 
 /** Claude Code's own switches for the analysis run: no CLAUDE.md or memory
  *  file of any scope, no auto memory, and no git status or git instructions
- *  in its context. */
+ *  in its context. No retry setting (owner answers review): Claude Code's one
+ *  retry setting covers answered retries too (an overloaded or failing
+ *  service), so the run keeps its own schedule and ends early only on
+ *  retries that got no answer (CLAUDE_UNANSWERED_RETRIES_STOP). */
 export const CLAUDE_ANALYSIS_ENV: Readonly<Record<string, string>> = Object.freeze({
   CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
   CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
   CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1',
-  // PR 4 (owner answers): how often Claude Code retries a failed request. Its
-  // default, 10, outlasts the 3-minute cap when the service cannot be reached
-  // (Windows test VM, every proxy a dead port: it gave up after 192.7 s, so the
-  // run was killed and tried again, 6 minutes in all); with 5 it gives its own
-  // reason after 23 s. The one setting also covers answers Claude Code retries
-  // (an overloaded or failing service, 408, 409, 429, 5xx, 529): with 5, an
-  // attempt rides out about 15 s of such answers instead of about 160 s, and
-  // runAnalysis's second attempt is kept for them. A healthy service is
-  // unchanged.
-  CLAUDE_CODE_MAX_RETRIES: '5',
 })
+
+/** PR 4 (owner answers review): how many retries in a row that got no answer
+ *  from its service end a Claude Code analysis early. Claude Code prints one
+ *  `api_retry` line before each retry (the stream format, the pinned 2.1.288),
+ *  its `error_status` the HTTP status the service answered with, or null when
+ *  no answer came back. With its default 10 retries it gave up only after
+ *  192.7 s, past the 3-minute cap (Windows test VM, every proxy a dead port:
+ *  the run was killed and tried again, 6 minutes in all); its first failed
+ *  request is reported about 6 s in and its backoff doubles from 0.5 s, so the
+ *  fifth comes about 13 s in. An answered retry (408, 409, 429, 5xx, 529)
+ *  keeps Claude Code's own schedule, inside the 3-minute cap. */
+export const CLAUDE_UNANSWERED_RETRIES_STOP = 5
+
+/** The reason a Claude Code analysis ended that way gives. It carries
+ *  ANALYSIS_UNREACHABLE_WORDS, so Sentinel says it as unreachable and does
+ *  not try again. */
+export const CLAUDE_UNREACHABLE_TEXT = `Claude Code ${ANALYSIS_UNREACHABLE_WORDS} its service (no answer to ${CLAUDE_UNANSWERED_RETRIES_STOP} tries in a row)`
+
+/** The longest stream line kept while it arrives; a longer one is skipped. */
+const STREAM_LINE_MAX = 1024 * 1024
+
+/** One top-level stream line as an object, or null. */
+function streamEvent(raw: string): Record<string, unknown> | null {
+  const l = raw.trim()
+  if (!l.startsWith('{')) return null
+  try {
+    const ev: unknown = JSON.parse(l)
+    return ev && typeof ev === 'object' && !Array.isArray(ev) ? ev as Record<string, unknown> : null
+  } catch { return null }
+}
+
+/** Reads a Claude Code analysis's stream as it arrives and decides when it
+ *  ends early: after `stopAfter` retries in a row that got no answer
+ *  (error_status null; a retry that waited on a reply, or a cloud credential
+ *  error, is not counted). An answered retry or a model message resets the
+ *  count, and once the result line has come nothing ends the run. Only the
+ *  CLI's own top-level lines count: model text rides inside them, escaped.
+ *  `push` is true once, when the stop is decided. Memory is bounded by one
+ *  line. */
+export function createClaudeRetryWatch(stopAfter = CLAUDE_UNANSWERED_RETRIES_STOP): { push(chunk: string): boolean; stopped(): boolean } {
+  let partial = ''
+  let skipping = false
+  let unanswered = 0
+  let done = false
+  let stopped = false
+  const line = (raw: string) => {
+    const e = streamEvent(raw)
+    if (!e) return
+    if (e.type === 'result') { done = true; return }
+    if (e.type === 'assistant') { unanswered = 0; return }
+    if (e.type !== 'system' || e.subtype !== 'api_retry') return
+    if (typeof e.error_status === 'number') { unanswered = 0; return }
+    if (e.error_status === null && e.no_response === undefined && e.error !== 'cloud_credential_error') unanswered++
+  }
+  return {
+    push(chunk: string) {
+      let start = 0
+      for (let nl = chunk.indexOf('\n'); nl >= 0; nl = chunk.indexOf('\n', start)) {
+        if (skipping) skipping = false
+        else line(partial + chunk.slice(start, nl))
+        partial = ''
+        start = nl + 1
+      }
+      if (!skipping) {
+        partial += chunk.slice(start)
+        if (partial.length > STREAM_LINE_MAX) { partial = ''; skipping = true }
+      }
+      if (stopped || done || unanswered < stopAfter) return false
+      stopped = true
+      return true
+    },
+    stopped: () => stopped,
+  }
+}
+
+/** The last top-level `result` line of a Claude Code stream (the envelope the
+ *  json format prints alone), or null when the run printed none. */
+export function claudeResultLine(stdout: string): string | null {
+  const lines = stdout.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (streamEvent(lines[i])?.type === 'result') return lines[i].trim()
+  }
+  return null
+}
+
+/** What a Claude Code analysis run hands runAnalysis: its result line as the
+ *  stdout, as the json format printed it; or, for a run its watch ended after
+ *  unanswered retries (createClaudeRetryWatch), an error envelope carrying
+ *  CLAUDE_UNREACHABLE_TEXT. A run Sentinel cancelled itself is cut off before
+ *  its watch decides anything, so it reads as the plain failure it is (and
+ *  Sentinel drops a cancelled analysis's result). */
+export function claudeAnalysisOutcome(
+  res: { code: number; stdout: string; stderr: string },
+  stoppedUnanswered: boolean,
+): { code: number; stdout: string; stderr: string } {
+  if (stoppedUnanswered) {
+    return { code: 1, stdout: JSON.stringify({ type: 'result', subtype: 'success', is_error: true, result: CLAUDE_UNREACHABLE_TEXT }), stderr: res.stderr }
+  }
+  return { code: res.code, stdout: claudeResultLine(res.stdout) ?? res.stdout, stderr: res.stderr }
+}
 
 /** How many fresh markers are tried before the notes are refused (round 2). */
 export const ANALYSIS_MARK_TRIES = 8
@@ -295,7 +392,8 @@ export function envelopeError(stdout: string): { rateLimited: boolean; unreachab
  *  the way). Claude Code says "Connection refused ... (ECONNREFUSED)" or
  *  "Connection error"; a runner that stopped such a run itself says
  *  ANALYSIS_UNREACHABLE_WORDS (plain words: Codex's reviewer, once Codex is
- *  waiting for the network). */
+ *  waiting for the network; Sentinel's Claude Code runner, after retries
+ *  that got no answer, CLAUDE_UNREACHABLE_TEXT). */
 const UNREACHABLE_REASON = new RegExp(String.raw`\b(?:ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH)\b|\bconnection (?:refused|error)\b|\b${ANALYSIS_UNREACHABLE_WORDS}\b|\bwaiting for network\b`, 'i')
 
 /** The message a JSON error body carries, if it has one. */

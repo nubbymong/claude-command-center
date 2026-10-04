@@ -90,6 +90,11 @@ export interface HeadlessSpawnOptions {
    *  case names; values with no NUL, CR or LF, at most 4096 characters. Set
    *  after the account's environment and before `env`. */
   transportEnv?: Readonly<Record<string, string>>
+  /** PR 4 (owner answers review): the run's stdout, each chunk as it
+   *  arrives, for a caller that reads the stream while the run goes on
+   *  (Sentinel's analysis). The result still carries the whole stdout; a
+   *  callback that throws never breaks the run. */
+  onStdout?: (chunk: string) => void
 }
 
 const HEADLESS_ENV_NAME = /^CLAUDE_CODE_[A-Z0-9_]+$/
@@ -112,6 +117,9 @@ export function assertHeadlessOptions(opts: HeadlessSpawnOptions): void {
     if (!TRANSPORT_ENV_NAME.test(k) || typeof v !== 'string' || v.length > 4096 || /[\0\r\n]/.test(v)) {
       throw new Error(`[claude-headless] transport variable ${JSON.stringify(k)} is not one a headless run takes`)
     }
+  }
+  if (opts.onStdout !== undefined && typeof opts.onStdout !== 'function') {
+    throw new Error('[claude-headless] the stdout callback must be a function')
   }
 }
 
@@ -172,8 +180,8 @@ export function spawnClaudeHeadless(
   const pending = profileId ? pendingProfileRefresh(profileId) : null
   const cachedGate = profileId ? peekGateVerdict(cwd) : null
   const p = pending || (profileId && cachedGate === undefined)
-    ? Promise.resolve(pending).then(() => cachedGate ?? gateManagedLaunch(cwd)).then((gate) => spawnNow(args, timeoutMs, stdinData, home, signal, cwd, gate, extraEnv))
-    : spawnNow(args, timeoutMs, stdinData, home, signal, cwd, cachedGate ?? null, extraEnv)
+    ? Promise.resolve(pending).then(() => cachedGate ?? gateManagedLaunch(cwd)).then((gate) => spawnNow(args, timeoutMs, stdinData, home, signal, cwd, gate, extraEnv, opts.onStdout))
+    : spawnNow(args, timeoutMs, stdinData, home, signal, cwd, cachedGate ?? null, extraEnv, opts.onStdout)
   if (release) p.then(release, release)
   return p
 }
@@ -187,6 +195,7 @@ function spawnNow(
   cwd: string,
   projectGate: ProjectGateResult | null,
   extraEnv: Record<string, string> = {},
+  onStdout?: (chunk: string) => void,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   // The environment is composed OUTSIDE the promise executor. withProfileHome
   // THROWS to refuse a managed launch (the project gate found an authority key
@@ -253,7 +262,11 @@ function spawnNow(
     if (signal?.aborted) onAbort()
     else signal?.addEventListener('abort', onAbort, { once: true })
 
-    proc.stdout?.on('data', (data) => { stdout += data.toString() })
+    proc.stdout?.on('data', (data) => {
+      const chunk = data.toString()
+      stdout += chunk
+      if (onStdout) { try { onStdout(chunk) } catch { /* a callback never breaks the run */ } }
+    })
     proc.stderr?.on('data', (data) => { stderr += data.toString() })
 
     proc.on('error', (err) => {

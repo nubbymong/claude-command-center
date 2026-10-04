@@ -299,7 +299,7 @@ describe("the analysis of a Codex update, on the provider that is on (row 42; OD
     expect(path.dirname(run.cwd)).toBe(path.resolve(runsDir()))
     expect(path.basename(run.cwd)).toMatch(/^ccc-sentinel-claude-/)
     expect(run.listing).toEqual([])
-    expect(run.env).toEqual({ CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1', CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1', CLAUDE_CODE_MAX_RETRIES: '5' })
+    expect(run.env).toEqual({ CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1', CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1' })
     expect(fs.existsSync(run.cwd)).toBe(false)
     // The version check is not an analysis: it runs as before.
     expect(spawnClaudeHeadless).toHaveBeenCalledWith(['--version'], 15000, undefined, null)

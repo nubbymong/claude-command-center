@@ -19,7 +19,7 @@ import { makeObserver, type Observation } from './sentinel-observe'
 import { parseClaudeVersion, minVersionFindings, type ManifestEntry } from './sentinel-version'
 import { fetchChangelog, sliceChangelog } from './sentinel-changelog'
 import { fetchCodexReleaseNotes } from './sentinel-codex-changelog'
-import { runAnalysis, CLAUDE_ANALYSIS_ENV, type HeadlessRunner } from './sentinel-analysis'
+import { runAnalysis, CLAUDE_ANALYSIS_ENV, createClaudeRetryWatch, claudeAnalysisOutcome, type HeadlessRunner } from './sentinel-analysis'
 import { validateProposal } from './sentinel-apply'
 import { modelCoverageFindings, modelCheckFailedFinding, EXPECTED_MODEL_SET, codexModelCoverageFindings, CODEX_EXPECTED_MODEL_SET, type CodexLiveModelList } from './sentinel-models'
 import { codexVersionFindings, type SupportedVersions } from './sentinel-codex'
@@ -310,7 +310,10 @@ interface AnalysisRunner { run: HeadlessRunner; accountLabel: string | null; end
  *  home, counted as Claude Code in use while it runs. Round 2: in a fresh
  *  empty folder of its own in Sentinel's runs folder (never the app's own
  *  folder), with Claude Code's switches for the analysis
- *  (CLAUDE_ANALYSIS_ENV), the folder removed after. */
+ *  (CLAUDE_ANALYSIS_ENV), the folder removed after. PR 4 (owner answers
+ *  review): its stream is read as it arrives, and a run whose retries got no
+ *  answer from the service, CLAUDE_UNANSWERED_RETRIES_STOP in a row, is
+ *  stopped then (its tree, as a cancel) and said as unreachable. */
 async function claudeAnalysisRunner(signal: AbortSignal): Promise<AnalysisRunner | { refused: string }> {
   const begun = await beginRun('claude', { probe: false })
   if ('refused' in begun) return begun
@@ -329,7 +332,14 @@ async function claudeAnalysisRunner(signal: AbortSignal): Promise<AnalysisRunner
     }
     handedOver = true
     return {
-      run: (args, t, stdin) => spawnClaudeHeadless(args, t, stdin, home, signal, { cwd, env: CLAUDE_ANALYSIS_ENV, transportEnv }),
+      run: async (args, t, stdin) => {
+        const watch = createClaudeRetryWatch()
+        const stop = new AbortController()
+        const res = await spawnClaudeHeadless(args, t, stdin, home, AbortSignal.any([signal, stop.signal]), {
+          cwd, env: CLAUDE_ANALYSIS_ENV, transportEnv, onStdout: (chunk) => { if (watch.push(chunk)) stop.abort() },
+        })
+        return claudeAnalysisOutcome(res, watch.stopped())
+      },
       accountLabel,
       end: () => {
         // Only the folder this run made: its own prefix, in the runs folder.

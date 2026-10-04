@@ -13,12 +13,17 @@
  *    180 s deadline, twice: 6 min 05 s.
  *  - Claude Code: `claude -p` retries 10 times and gives up after 192.7 s,
  *    past the 180 s deadline, so it too was killed and tried again: 6 min.
- *    With CLAUDE_CODE_MAX_RETRIES=5 it gives its own reason after 23.0 s.
+ *    Its first failed request is reported 5.8 s in; with 3 retries it gave
+ *    up after 9.9 s and with 5 after 23.0 s (its backoff doubles from 0.5 s).
  * The fakes below replay those measurements on a virtual clock (each fake
  * adds the time the real step took), so a test reads how long the panel
  * waited without waiting itself. The Codex reviewer is replayed as the
  * handed reviewer change makes it: it ends an analysis run once Codex says
- * it is waiting for the network.
+ * it is waiting for the network. The Claude Code run is replayed as the
+ * stream the analysis reads (owner answers review): an `api_retry` line before
+ * each retry, its `error_status` null when no answer came back (the pinned
+ * 2.1.288 CLI's `--output-format stream-json --verbose`), so Sentinel ends it
+ * after five such retries in a row, and an answered retry keeps its schedule.
  *
  * The owner's bar: the panel reports within a minute, with what happened.
  */
@@ -91,22 +96,45 @@ vi.mock('../../../src/main/account-profiles', () => ({
 }))
 
 /** VM: `claude -p` with Sentinel's argv against a service it cannot reach,
- *  by the retries it was allowed: the seconds until it gave its reason. */
-const CLAUDE_GIVES_UP_S: Record<string, number> = { default: 192.7, '5': 23.0, '3': 9.9, '0': 5.8 }
-/** The reason it gave, each time (the CLI's own words). */
+ *  with its default 10 retries: the seconds until it gave its reason. */
+const CLAUDE_GIVES_UP_S = 192.7
+/** When it reports each failed request, in seconds after the run started:
+ *  the first at 5.8 s, then its backoff doubling from 0.5 s. */
+const CLAUDE_RETRY_REPORT_S = [5.8, 6.3, 7.3, 9.3, 13.3, 21.3, 37.3, 69.3, 101.3, 133.3]
+/** The reason it gives once its retries run out (the CLI's own words). */
 const CLAUDE_UNREACHABLE = 'API Error: Connection refused \u2014 a firewall or proxy may be blocking it (ECONNREFUSED)'
-const claudeMode = vi.hoisted(() => ({ analysis: 'unreachable' as 'unreachable' | 'ok' }))
-const claudeAnalyses: Array<{ env?: Record<string, string> }> = []
-const spawnClaudeHeadless = vi.fn(async (args: string[], timeoutMs?: number, _stdin?: string, _home?: string | null, _signal?: AbortSignal, opts?: { env?: Record<string, string> }) => {
+const claudeMode = vi.hoisted(() => ({ analysis: 'unreachable' as 'unreachable' | 'ok' | 'overloaded' }))
+const claudeAnalyses: Array<{ args: string[]; env?: Record<string, string>; stopped: boolean; retries: number }> = []
+type HeadlessOpts = { env?: Record<string, string>; onStdout?: (chunk: string) => void }
+const spawnClaudeHeadless = vi.fn(async (args: string[], timeoutMs?: number, _stdin?: string, _home?: string | null, signal?: AbortSignal, opts?: HeadlessOpts) => {
   if (args[0] === '--version') { clock.t += 5.8; return { code: 0, stdout: '2.1.300 (Claude Code)', stderr: '' } }
-  claudeAnalyses.push({ env: opts?.env })
-  if (claudeMode.analysis === 'ok') { clock.t += 15; return { code: 0, stdout: JSON.stringify({ type: 'result', result: JSON.stringify({ breakingChanges: [] }) }), stderr: '' } }
-  const retries = opts?.env?.CLAUDE_CODE_MAX_RETRIES ?? 'default'
-  const givesUp = CLAUDE_GIVES_UP_S[retries] ?? CLAUDE_GIVES_UP_S.default
+  const run = { args, env: opts?.env, stopped: false, retries: 0 }
+  claudeAnalyses.push(run)
+  const start = clock.t
+  let stdout = ''
+  const emit = (ev: Record<string, unknown>) => { const l = JSON.stringify(ev) + '\n'; stdout += l; opts?.onStdout?.(l) }
+  const reply = () => {
+    emit({ type: 'assistant', message: { content: [{ type: 'text', text: JSON.stringify({ breakingChanges: [] }) }] } })
+    emit({ type: 'result', subtype: 'success', is_error: false, result: JSON.stringify({ breakingChanges: [] }) })
+    return { code: 0, stdout, stderr: '' }
+  }
+  emit({ type: 'system', subtype: 'init', tools: [], mcp_servers: [] })
+  if (claudeMode.analysis === 'ok') { clock.t += 15; return reply() }
   const deadline = (timeoutMs ?? 180000) / 1000
-  if (givesUp > deadline) { clock.t += deadline; return { code: 1, stdout: '', stderr: `\nTimed out after ${deadline}s` } }
-  clock.t += givesUp
-  return { code: 1, stdout: JSON.stringify({ type: 'result', subtype: 'success', is_error: true, result: CLAUDE_UNREACHABLE }), stderr: '' }
+  const answered = claudeMode.analysis === 'overloaded'
+  // An overloaded service answers 529 three times (about 9 s of backoff), then serves the reply.
+  for (const [i, at] of CLAUDE_RETRY_REPORT_S.slice(0, answered ? 4 : undefined).entries()) {
+    if (at > deadline) break
+    clock.t = start + at
+    if (answered && i === 3) return reply()
+    emit({ type: 'system', subtype: 'api_retry', attempt: i + 1, max_retries: 10, retry_delay_ms: 500 * 2 ** i, error_status: answered ? 529 : null, error: answered ? 'overloaded' : 'unknown' })
+    run.retries++
+    if (signal?.aborted) { run.stopped = true; return { code: 1, stdout, stderr: '\nAborted' } }
+  }
+  if (CLAUDE_GIVES_UP_S > deadline) { clock.t = start + deadline; return { code: 1, stdout, stderr: `\nTimed out after ${deadline}s` } }
+  clock.t = start + CLAUDE_GIVES_UP_S
+  emit({ type: 'result', subtype: 'success', is_error: true, result: CLAUDE_UNREACHABLE })
+  return { code: 1, stdout, stderr: '' }
 })
 vi.mock('../../../src/main/claude-headless', () => ({ spawnClaudeHeadless: (...a: unknown[]) => spawnClaudeHeadless(...(a as [string[], number, string])) }))
 vi.mock('../../../src/main/sentinel/sentinel-model-article', () => ({ fetchArticleModelIds: async () => { clock.t += 0.6; return null } }))
@@ -170,17 +198,30 @@ async function sentinelSeeded(seed: Record<string, unknown>) {
 const MINUTE = 60
 
 describe('the analysis cannot reach its service: the panel reports within a minute, saying so', () => {
-  it('Claude Code: one bounded attempt with the CLI\'s own reason (VM: 6 min before, two 180 s deadlines) [host]', async () => {
+  it('Claude Code: the run ends after five retries in a row with no answer, and is not tried again (VM: 6 min before, two 180 s deadlines) [host]', async () => {
     pref.claude = 'on'; pref.codex = 'off'
     const { mod, report } = await sentinelSeeded({ lastSeenCcVersion: '2.1.290' })
     await mod.sentinelStartupCheck()
     expect(report.at).not.toBeNull()
     expect(report.at!).toBeLessThanOrEqual(MINUTE)
     expect(claudeAnalyses).toHaveLength(1)
-    expect(claudeAnalyses[0].env?.CLAUDE_CODE_MAX_RETRIES).toBe('5')
-    expect(report.error).toMatch(/could not reach/i)
-    expect(report.error).toContain('ECONNREFUSED')
+    expect(claudeAnalyses[0]).toMatchObject({ stopped: true, retries: 5 })
+    expect(claudeAnalyses[0].args).toEqual(expect.arrayContaining(['--output-format', 'stream-json', '--verbose']))
+    expect(Object.keys(claudeAnalyses[0].env ?? {}).some((k) => /RETRIES/.test(k))).toBe(false)
+    expect(report.error).toMatch(/could not reach its service/i)
+    expect(report.error).toMatch(/no answer/)
     expect(report.error).toMatch(/Re-run/)
+  })
+
+  it('Claude Code: an overloaded service that answers keeps Claude Code\'s own retries, and the analysis completes [host]', async () => {
+    pref.claude = 'on'; pref.codex = 'off'
+    claudeMode.analysis = 'overloaded'
+    const { mod, report } = await sentinelSeeded({ lastSeenCcVersion: '2.1.290' })
+    await mod.sentinelStartupCheck()
+    expect(claudeAnalyses).toHaveLength(1)
+    expect(claudeAnalyses[0]).toMatchObject({ stopped: false, retries: 3 })
+    expect(report.error).toBeNull()
+    expect(mod.getSentinelState()!.snapshot().lastSeenCcVersion).toBe('2.1.300')
   })
 
   it('Codex: the run ends when Codex waits for the network, and is not tried again (VM: 6 min 05 s before) [host]', async () => {
