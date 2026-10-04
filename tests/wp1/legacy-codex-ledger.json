@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "59f2817e1f81c56d9a2634b153d82306e99d91150707f8e780c65895c9dc2349",
-  "manifestHead": "14e4140ffdaf6e5c69e68c9c9bee6a2f1c6491bc",
+  "manifestPathDigest": "e186425e1740f526ae168f47e4a500af0c80773362730bd04126ed90482a41c4",
+  "manifestHead": "d5ddbb2a809eeae7319f3d12877c71349cdeab0c",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -4809,6 +4809,17 @@
       "note": "its Codex mentions are the released types' own"
     },
     {
+      "path": "tests/helpers/home-guard-core.mjs",
+      "predicates": [
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 4 lane ISO (2026-10-04) test helper (d5ddbb2a): the home guard every vitest run loads first; it names CODEX_HOME and .codex only to capture the real ones as protected roots and to point the variable at an isolated folder; tests never act on a real home (WP1.33); tests/unit/test-isolation/home-guard.test.ts",
+      "note": "created by WP2 PR 4 (lane ISO): enforced test isolation"
+    },
+    {
       "path": "tests/integration/codex-cli-compat-env.test.ts",
       "predicates": [
         "P01",
@@ -9024,6 +9035,17 @@
       "disposition": "replace",
       "evidence": "existing test retained unchanged; WP2 PR 4 P4.4 (row 55): account memories kept apart from Claude's store, found by id for the drawer, never given a frontmatter write (WP1.33); tests/unit/stores/memoryStore.test.ts",
       "note": "baseline file"
+    },
+    {
+      "path": "tests/unit/test-isolation/home-guard.test.ts",
+      "predicates": [
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 4 lane ISO (2026-10-04) test (d5ddbb2a): the six home variables (CODEX_HOME included) point at an isolated folder, and an fs mutation or spawn aimed at a real home or its .codex / .claude throws TEST_ISOLATION_VIOLATION; every real-home target is harmless without the guard (WP1.33); tests/unit/test-isolation/home-guard.test.ts",
+      "note": "created by WP2 PR 4 (lane ISO): enforced test isolation"
     },
     {
       "path": "tests/unit/tokenomics/tk-parse.test.ts",

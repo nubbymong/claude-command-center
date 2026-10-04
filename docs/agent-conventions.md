@@ -46,6 +46,24 @@ npm run test:e2e     # Playwright
   must be a no-op when packaged. New long-lived ports must be split dev/prod (see
   `resolveHooksPort` / `resolveConductorMcpPort` / `resolveCdpPort`). See ADR-001.
 
+## Tests and probes never act on a real home
+
+- **Every vitest run is home-isolated.** `tests/helpers/home-isolation.ts` is the
+  first setup file of `vitest.config.ts` and `vitest.native.config.ts`: the home
+  variables (HOME, USERPROFILE, APPDATA, LOCALAPPDATA and both CLI config-folder
+  overrides) point at a fresh folder per worker, re-asserted before every test,
+  and any fs mutation or spawn aimed at a real home throws
+  `TEST_ISOLATION_VIOLATION`, even when the code under test catches it. Never
+  loosen the guard to make a test pass: use `os.homedir()` / `os.tmpdir()`
+  (already isolated) or mock the code that reaches the real location.
+  `originalHomeEnv()` is for locating tools, never for writing.
+- **Probes and fake CLIs outside vitest** start with
+  `node --import <file URL of tests/helpers/probe-guard.mjs>` and an env from
+  `isolatedProbeEnv(root)` (a fresh env with every home variable inside `root`),
+  never the inherited `process.env`. On Windows `--import` needs a `file:` URL or
+  a `./relative` path.
+- `vitest.live.config.ts` is deliberately not covered (real ssh, real keys).
+
 ## Session isolation (parallel agents)
 
 - **One session = one worktree = one branch.** Several agents run against this
