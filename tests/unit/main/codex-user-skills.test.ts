@@ -191,6 +191,35 @@ describe('copying into this computer\'s Codex skills folder', () => {
     expect(fs.existsSync(deps.recordFile())).toBe(false)
     expect(u.stageCodexUserSkills(home, deps).outcome).toEqual({ staged: true })
     expect(u.codexUserSkillsHomes(deps)).toEqual([home])
+    // Nothing the app can read in it: it stays kept aside, as it is.
+    expect(fs.readFileSync(`${deps.recordFile()}.damaged`, 'utf8')).toBe(text)
+  })
+
+  it('[host] a record that does not parse never replaces one kept aside earlier: each is kept under its own name (ADR-009 delta L1-6)', () => {
+    fs.writeFileSync(deps.recordFile(), '{ first damage')
+    expect(u.stageCodexUserSkills(home, deps).outcome.staged).toBe(false)
+    fs.writeFileSync(deps.recordFile(), '{ second damage')
+    expect(u.stageCodexUserSkills(home, deps).outcome.staged).toBe(false)
+    const kept = fs.readdirSync(data).filter((n) => n.startsWith(`${u.CODEX_USER_SKILLS_RECORD}.damaged`)).sort()
+    expect(kept).toHaveLength(2)
+    expect(kept.map((n) => fs.readFileSync(path.join(data, n), 'utf8')).sort()).toEqual(['{ first damage', '{ second damage'])
+  })
+
+  it('[host] a later pass takes back the folders a kept-aside record still names in full, and lets that record go once they are recorded again; the switch-off then reaches them (ADR-009 delta L1-6)', () => {
+    const other = path.join(tmp, 'other-codex-home')
+    fs.mkdirSync(other)
+    u.stageCodexUserSkills(other, deps)
+    u.stageCodexUserSkills(home, deps)
+    const whole = fs.readFileSync(deps.recordFile(), 'utf8')
+    // Cut off in the middle of the second folder's path: the first is still whole.
+    fs.writeFileSync(deps.recordFile(), whole.slice(0, whole.lastIndexOf(JSON.stringify(home).slice(0, 8))))
+    u.reconcileCodexUserSkills(false, deps)
+    expect(isCopied(other, 'agent-canvas')).toBe(true)
+    // The next pass reads the folder back from the kept-aside record and removes its copies.
+    u.reconcileCodexUserSkills(false, deps)
+    for (const skill of SKILLS) expect(fs.existsSync(skillDir(other, skill.name))).toBe(false)
+    expect(fs.readdirSync(data).filter((n) => n.includes('.damaged'))).toEqual([])
+    expect(u.codexUserSkillsHomes(deps)).toEqual([])
   })
 
   it('[host] a record that cannot be read now is refused and kept as it is: nothing copied, nothing removed, no folder let go (review B-Q2)', () => {

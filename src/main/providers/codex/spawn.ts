@@ -14,7 +14,6 @@ import { CODEX_CONVERSATION_ID_RE, codexFolderIdentity, resolveCodexResume } fro
 import { codexHookCommand, codexHookConfigArgs, codexPlainWrapperDir, codexLocalAppData, verifyPlainCodexHookWrapper, CODEX_HOOK_FILE_ENV, CODEX_HOOK_SCRIPT, CODEX_HOOK_WRAPPER } from './hooks'
 import { codexExtraArgsProblem, codexExtraArgWords } from '../../../shared/extra-args'
 import { logWarn } from '../../debug-logger'
-import { windowsPathHasTrailingDotOrSpace } from './discovery'
 
 /** The two forms a Codex install puts on PATH on Windows: `listed`, the ones
  *  PATHEXT lists, in its order (Windows' own default when it is unset), as a
@@ -33,19 +32,40 @@ export function codexWindowsForms(pathExt: string | undefined): { listed: string
   }
 }
 
+/** A fully qualified PATH folder: on a drive (`C:\...`) or a share
+ *  (`\\server\share\...`, either slash), as a terminal reads them and as the
+ *  Claude CLI walk does (claude-cli-version.ts); never a device path
+ *  (`\\?\`, `\\.\`). */
+const WIN_PATH_FOLDER_RE = /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/?.][^\\/]*[\\/][^\\/]+)/
+
+/** A folder named as Windows names it when it starts a program from it
+ *  (review B-S11): in a path that goes on below it, a name that ends in one
+ *  dot after another character loses that dot (`C:\tools.` and
+ *  `C:\tools.\bin` are `C:\tools` and `C:\tools\bin`), while a name ending in
+ *  a space, or in two dots, is kept as it is spelled; a share's own two names
+ *  are kept. `.` and `..` steps are folded when the candidate is joined
+ *  (path.win32). Node reads every name as it is spelled, so without this the
+ *  lookup would read another folder than the one a terminal runs from. */
+export function codexWindowsFolderAsRun(dir: string): string {
+  const parts = dir.split(/([\\/])/)
+  // A share keeps `\\server\share` as it is: parts '', sep, '', sep, server, sep, share.
+  const root = /^[\\/]{2}/.test(dir) ? 7 : 1
+  return parts.map((part, i) => (i < root || i % 2 === 1 ? part : part.replace(/([^.])\.$/, '$1'))).join('')
+}
+
 /** PATH's folders as the lookup reads them: `;`-separated, a quoted entry
- *  without its quotes, and only a fully qualified folder on a drive
- *  (`C:\...`) whose every name Node and Windows read alike (none ends in a
- *  dot or a space: windowsPathHasTrailingDotOrSpace; review L3). A network
- *  share (`\\server\share`) is not read: a read there cannot be time-limited
- *  in this lookup, which runs on the main process (review B-S3; a recorded
- *  limit). */
+ *  without its quotes, and only fully qualified folders (WIN_PATH_FOLDER_RE:
+ *  a drive or a share, as a terminal reads them; review B-S10), each named as
+ *  Windows names it (codexWindowsFolderAsRun).
+ *  A folder that does not answer (a share
+ *  that is offline) is asked nothing more in a lookup once it has failed
+ *  (resolveCodexBinary). */
 export function codexWindowsPathFolders(pathVar: string | undefined): string[] {
   const out: string[] = []
   for (const raw of (pathVar ?? '').split(';')) {
     let dir = raw.trim()
     if (dir.length >= 2 && dir.startsWith('"') && dir.endsWith('"')) dir = dir.slice(1, -1).trim()
-    if (/^[A-Za-z]:[\\/]/.test(dir) && !windowsPathHasTrailingDotOrSpace(dir)) out.push(dir)
+    if (WIN_PATH_FOLDER_RE.test(dir)) out.push(codexWindowsFolderAsRun(dir))
   }
   return out
 }

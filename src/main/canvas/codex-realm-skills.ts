@@ -22,7 +22,8 @@
 // stays its own to rebuild or remove, whatever was done to the mark). The app
 // rebuilds or removes only its own folders, whole, and never a same-named
 // folder without the mark (in the user's own Codex folder, the user's own
-// skill of that name: left as it is, and reported by name).
+// skill of that name: left as it is, and reported by name), nor one whose
+// mark it cannot read (left as it is, and reported as not put in place).
 //
 // A folder of the app's leaves its place in one rename, into a fresh staging
 // folder, before anything in it is deleted, and is deleted with its mark
@@ -160,13 +161,28 @@ function fileIsExactly(io: RealmSkillsIo, file: string, expected: Buffer): boole
   try { return io.readFile(file).equals(expected) } catch { return false }
 }
 
-/** The folder is the app's: a real folder (never reached through a link)
- *  that carries the app's mark in any state (exact, changed, or anything at
- *  that name; review B-Q1, L1-1). One that cannot be read counts as carrying
- *  it, so the app never reports it as the user's or lets it go. */
-function carriesMark(io: RealmSkillsIo, dir: string): boolean {
+/** What a folder's mark says about whose it is: `present` -- a real folder
+ *  (never reached through a link) whose mark the app sees there, in any state
+ *  (exact, changed, or anything at that name; review B-Q1, L1-1); `absent`
+ *  -- certainly no mark there, or not a real folder (a link, a file);
+ *  `unknown` -- the folder or its mark cannot be read now. Only `present`
+ *  lets the app rebuild or remove the folder: one it cannot see into is never
+ *  moved (round 2, reviews B-S12, B-Q9), is reported as not put in place
+ *  (never as the user's), and keeps its home recorded. */
+type MarkState = 'present' | 'absent' | 'unknown'
+
+function markState(io: RealmSkillsIo, dir: string): MarkState {
   const st = io.lstat(dir)
-  return !!st && st.dir && !st.link && !isAbsent(io, path.join(dir, STAGED_SKILL_MARK))
+  if (!st) return isAbsent(io, dir) ? 'absent' : 'unknown'
+  if (!st.dir || st.link) return 'absent'
+  const mark = path.join(dir, STAGED_SKILL_MARK)
+  if (io.lstat(mark)) return 'present'
+  return isAbsent(io, mark) ? 'absent' : 'unknown'
+}
+
+/** The folder is the app's, as markState sees it. */
+function carriesMark(io: RealmSkillsIo, dir: string): boolean {
+  return markState(io, dir) === 'present'
 }
 
 /** The app's folder holds exactly its two files, byte for byte. */
@@ -255,12 +271,44 @@ function takeOut(io: RealmSkillsIo, skillsDir: string, dir: string, name: string
   }
   if (folderId(io, moved) !== id) {
     // Not the folder checked: back where it was, untouched. One that cannot
-    // be put back stays in the staging folder, which is then left as it is.
-    io.rename(moved, dir)
+    // be put back is set where no sweep takes it (keepAside).
+    try {
+      io.rename(moved, dir)
+    } catch (err) {
+      keepAside(io, skillsDir, staging, where)
+      throw err
+    }
     removeStaging(io, staging, stagingId, where)
     throw new Error('the folder changed before it was taken out')
   }
   return { staging, stagingId }
+}
+
+/** The name a staging folder is given when it holds a folder that is not the
+ *  app's and could not be put back (ADR-009 delta L1-5): no staging sweep
+ *  takes a name that does not start with STAGING_PREFIX. */
+export const KEPT_ASIDE_PREFIX = '.ccc-kept-'
+/** Left in a staging folder that could not be renamed either: a name that is
+ *  no skill's, so stagingIsOurs never counts that folder as the app's. */
+export const NOT_THE_APPS_FILE = '.ccc-not-the-apps'
+
+/** A staging folder holding a folder that is not the app's, which could not
+ *  be put back: renamed to a name no sweep takes, or, when that is refused
+ *  too, given a file that keeps every sweep away; the folder it holds is
+ *  never deleted. Never throws. */
+function keepAside(io: RealmSkillsIo, skillsDir: string, staging: string, where: string): void {
+  const kept = path.join(skillsDir, KEPT_ASIDE_PREFIX + path.basename(staging).slice(STAGING_PREFIX.length))
+  try {
+    io.rename(staging, kept)
+    logWarn(`[codex-skills] a folder put in place of one of the app's skills in ${where} could not be put back; it is kept, as it is, in ${path.basename(kept)}`)
+    return
+  } catch { /* marked below instead */ }
+  try {
+    io.writeFile(path.join(staging, NOT_THE_APPS_FILE), Buffer.from('Not the app\'s: a folder put in place of one of its skills, which it could not put back. The app never removes this folder.\n', 'utf8'))
+    logWarn(`[codex-skills] a folder put in place of one of the app's skills in ${where} could not be put back; it is kept, as it is, in ${path.basename(staging)}`)
+  } catch (err) {
+    logWarn(`[codex-skills] a folder put in place of one of the app's skills in ${where} could not be put back or kept aside: ${(err as Error)?.message ?? err}`)
+  }
 }
 
 /** A temporary file the app's atomic write leaves while writing one of the
@@ -397,7 +445,13 @@ export function stageCanvasSkillsIn(home: string, skillsDir: string | null, opts
           skip(skill.name, 'link')
           continue
         }
-        if (st && !carriesMark(io, dir)) {
+        const mark = markState(io, dir)
+        if (mark === 'unknown') {
+          logWarn(`[codex-skills] the ${skill.name} skill folder in ${where} cannot be read; left alone, the skill not staged`)
+          skip(skill.name, 'failed')
+          continue
+        }
+        if (st && mark === 'absent') {
           logInfo(`[codex-skills] a ${skill.name} skill folder the app did not stage is in ${where}; left alone`)
           skip(skill.name, 'not-ours')
           continue
@@ -424,9 +478,10 @@ export function stageCanvasSkillsIn(home: string, skillsDir: string | null, opts
         const now = io.lstat(dir)
         let old: { staging: string; stagingId: string } | null = null
         if (now) {
-          if (now.link || !carriesMark(io, dir)) {
+          const markNow = now.link ? 'absent' : markState(io, dir)
+          if (markNow !== 'present') {
             logWarn(`[codex-skills] the ${skill.name} skill folder changed while the skill was built; left alone, the skill not staged`)
-            skip(skill.name, now.link ? 'link' : 'not-ours')
+            skip(skill.name, now.link ? 'link' : markNow === 'unknown' ? 'failed' : 'not-ours')
             continue
           }
           old = takeOut(io, dirOf, dir, skill.name, now.id, where)
@@ -476,12 +531,9 @@ export function canvasSkillsLeft(home: string, skillsDir: string | null, place: 
     if (!skillsSt) return isAbsent(io, skillsDir) ? 'none' : 'unknown'
     if (skillsSt.link || !skillsSt.dir) return 'none'
     for (const skill of canvasSkillFiles()) {
-      const dir = path.join(skillsDir, skill.name)
-      if (!io.lstat(dir)) {
-        if (!isAbsent(io, dir)) return 'unknown'
-        continue
-      }
-      if (carriesMark(io, dir)) return 'some'
+      const mark = markState(io, path.join(skillsDir, skill.name))
+      if (mark === 'present') return 'some'
+      if (mark === 'unknown') return 'unknown'
     }
     let names: string[]
     try { names = io.readdir(skillsDir) } catch { return 'unknown' }

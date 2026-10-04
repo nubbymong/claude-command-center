@@ -11,7 +11,11 @@
 //    app's: rebuilt at a launch, removed whole when Codex or the built-in
 //    tools are turned off, never reported as a skill of the user's own;
 //  - the record lets a folder go only when it is really gone (nothing there,
-//    its parent present) or provably holds none of the app's copies.
+//    its parent present) or provably holds none of the app's copies;
+//  - a same-named folder whose mark the app cannot read is never moved or
+//    replaced (round 2, reviews B-S12, B-Q9), and a folder the app moved
+//    that turns out not to be its own and cannot be put back is set where no
+//    sweep removes it (ADR-009 delta L1-5).
 // The failures are made in an injected file system over a real temporary
 // folder (RealmSkillsIo); nothing here reads or writes this user's own
 // ~/.codex, and no link is made.
@@ -253,5 +257,112 @@ describe('the record lets a folder go only when it holds none of the app\'s copi
     u.reconcileCodexUserSkills(false, deps())
     expect(leftovers()).toEqual([])
     expect(recorded()).toEqual([])
+  })
+})
+
+describe('a same-named folder whose mark cannot be read is left alone (round 2, reviews B-S12, B-Q9)', () => {
+  /** The real file system, with everything inside `folder` unreadable as the
+   *  shape says: lstat of anything in it fails with `code` (so it is neither
+   *  seen nor known to be missing), and listing it fails too. The folder itself
+   *  still lists in its parent, and renaming it is not prevented, so a move by
+   *  the app would show. */
+  /** `from`: when the unreadability starts (default: at once); `stagings`
+   *  counts the staging folders the app makes. */
+  function unreadableInside(folder: string, code: 'EACCES' | 'EPERM', from: { on: boolean } = { on: true }): RealmSkillsIo & { stagings: number } {
+    const inside = (p: string): boolean => from.on && path.resolve(p).startsWith(folder + path.sep)
+    const denied = (): Error => Object.assign(new Error(`${code}: permission denied`), { code })
+    const io = {
+      ...realRealmSkillsIo,
+      stagings: 0,
+      lstat: (p: string) => (inside(p) ? null : realRealmSkillsIo.lstat(p)),
+      absent: (p: string) => !inside(p) && realRealmSkillsIo.absent!(p),
+      readdir: (p: string) => { if (from.on && (path.resolve(p) === folder || inside(p))) throw denied(); return realRealmSkillsIo.readdir(p) },
+      readFile: (p: string) => { if (inside(p)) throw denied(); return realRealmSkillsIo.readFile(p) },
+      mkdtemp: (prefix: string) => { io.stagings += 1; return realRealmSkillsIo.mkdtemp(prefix) },
+    }
+    return io
+  }
+
+  it.each([
+    ['a POSIX folder of mode 0644 (no search bit: EACCES inside)', 'EACCES' as const],
+    ['a Windows folder whose ACL denies listing and reading it (EPERM inside)', 'EPERM' as const],
+  ])('[host] %s: never moved, replaced or removed; reported as not put in place (never as the user\'s); the folder stays recorded', (_name, code) => {
+    fs.mkdirSync(skillDir(FIRST), { recursive: true })
+    fs.writeFileSync(path.join(skillDir(FIRST), 'SKILL.md'), 'the user\'s own skill')
+    const io = unreadableInside(skillDir(FIRST), code)
+    const out = u.stageCodexUserSkills(home, deps(io))
+    expect(out.skipped).toEqual([{ name: FIRST, reason: 'failed' }])
+    // Nothing is even built for it: staging folders for the other two only.
+    expect(io.stagings).toBe(SKILLS.length - 1)
+    expect(g.codexGuidanceFromStaging(out)).toEqual({ guidance: 'tools-only', reason: 'skills-not-staged', skills: [FIRST] })
+    expect(fs.readFileSync(path.join(skillDir(FIRST), 'SKILL.md'), 'utf8')).toBe('the user\'s own skill')
+    expect(leftovers()).toEqual([])
+    u.reconcileCodexUserSkills(false, deps(io))
+    u.removeCodexUserSkills(home, deps(io))
+    expect(fs.readFileSync(path.join(skillDir(FIRST), 'SKILL.md'), 'utf8')).toBe('the user\'s own skill')
+    expect(fs.readdirSync(skillDir(FIRST))).toEqual(['SKILL.md'])
+    expect(leftovers()).toEqual([])
+    expect(recorded()).toEqual([home])
+  })
+
+  it('[host] a copy of the app\'s that turns unreadable while its replacement is built is not taken out: left in place, reported as not put in place', () => {
+    u.stageCodexUserSkills(home, deps())
+    fs.writeFileSync(path.join(skillDir(FIRST), 'SKILL.md'), 'an older version of the skill')
+    const from = { on: false }
+    const io = unreadableInside(skillDir(FIRST), 'EACCES', from)
+    // It turns unreadable as the first staging folder is made (the first skill's).
+    const mk = io.mkdtemp
+    io.mkdtemp = (prefix: string) => { from.on = true; return mk(prefix) }
+    const out = u.stageCodexUserSkills(home, deps(io))
+    expect(out.skipped).toEqual([{ name: FIRST, reason: 'failed' }])
+    from.on = false
+    expect(fs.readFileSync(path.join(skillDir(FIRST), 'SKILL.md'), 'utf8')).toBe('an older version of the skill')
+    expect(fs.existsSync(path.join(skillDir(FIRST), STAGED_SKILL_MARK))).toBe(true)
+    expect(leftovers()).toEqual([])
+  })
+})
+
+describe('a folder taken out that is not the app\'s and cannot be put back (ADR-009 delta L1-5)', () => {
+  /** An outside writer swaps the app's copy for a folder of its own (SKILL.md
+   *  only) just before the take-out; the put-back rename is then refused, and
+   *  so are the later ones when `refuseLater` says so. */
+  function swapThenRefuse(refuseLater: boolean): RealmSkillsIo {
+    const parked = path.join(tmp, 'parked-app-copy')
+    let renames = 0
+    return {
+      ...realRealmSkillsIo,
+      rename: (from, to) => {
+        renames += 1
+        if (renames === 1 && path.resolve(from) === skillDir(FIRST)) {
+          fs.renameSync(skillDir(FIRST), parked)
+          fs.mkdirSync(skillDir(FIRST))
+          fs.writeFileSync(path.join(skillDir(FIRST), 'SKILL.md'), 'NOT THE APP\'S')
+        }
+        if (renames === 2 || (refuseLater && renames > 2)) throw Object.assign(new Error('EPERM: refused'), { code: 'EPERM' })
+        realRealmSkillsIo.rename(from, to)
+      },
+    }
+  }
+  const holding = (): string[] => fs.readdirSync(skills).filter((n) => fs.existsSync(path.join(skills, n, FIRST, 'SKILL.md')) && fs.readFileSync(path.join(skills, n, FIRST, 'SKILL.md'), 'utf8') === 'NOT THE APP\'S')
+
+  it('[host] its folder is renamed to a name no sweep takes, and a later pass leaves it whole', () => {
+    u.stageCodexUserSkills(home, deps())
+    u.removeCodexUserSkills(home, deps(swapThenRefuse(false)))
+    const held = holding()
+    expect(held).toHaveLength(1)
+    expect(held[0].startsWith(STAGING_PREFIX)).toBe(false)
+    u.removeCodexUserSkills(home, deps())
+    u.reconcileCodexUserSkills(false, deps())
+    expect(holding()).toEqual(held)
+  })
+
+  it('[host] when that rename is refused too, the staging folder is marked so no sweep takes it, and a later pass leaves it whole', () => {
+    u.stageCodexUserSkills(home, deps())
+    u.removeCodexUserSkills(home, deps(swapThenRefuse(true)))
+    const held = holding()
+    expect(held).toHaveLength(1)
+    u.removeCodexUserSkills(home, deps())
+    u.reconcileCodexUserSkills(false, deps())
+    expect(holding()).toEqual(held)
   })
 })

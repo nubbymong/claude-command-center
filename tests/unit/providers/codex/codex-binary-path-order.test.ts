@@ -4,10 +4,11 @@
 // decides (src/main/providers/codex/spawn.ts resolveCodexBinary). A form
 // PATHEXT does not list is looked for only after no entry held a listed one,
 // so it never wins over a listed form later in PATH, and nothing found before
-// is lost. The lookup reads only fully qualified local folders whose names
-// Node and Windows read alike, asks a folder that could not be read nothing
-// more, and starts no process and no shell. The file system is a fixed set of
-// paths, so nothing on this machine is looked up.
+// is lost. The lookup reads only fully qualified folders (a drive or a share,
+// as a terminal does), names each folder as Windows does when it runs a
+// program, asks a folder that could not be read nothing more, and starts no
+// process and no shell. The file system is a fixed set of paths, so nothing
+// on this machine is looked up.
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 vi.mock('os', async (importOriginal) => {
@@ -96,9 +97,20 @@ describe('PATH order wins (owner, 2026-10-04)', () => {
     expect(resolve({ PATH: '"C:\\Program Files\\codex cli";C:\\later\\', PATHEXT: DEFAULT_PATHEXT }, 'C:\\Program Files\\codex cli\\codex.cmd', 'C:\\later\\codex.exe')?.cmd).toBe('C:\\Program Files\\codex cli\\codex.cmd')
   })
 
-  it('[host] a network share entry is not read (a read there cannot be time-limited; a recorded limit): a local folder after it is', () => {
-    expect(resolve({ PATH: '\\\\server\\tools;//server/tools;C:\\later', PATHEXT: DEFAULT_PATHEXT }, '\\\\server\\tools\\codex.cmd', '//server/tools/codex.cmd', 'C:\\later\\codex.exe')?.cmd).toBe('C:\\later\\codex.exe')
-    expect(asked.every((p) => /^[A-Za-z]:\\/.test(p))).toBe(true)
+  it('[host] a network share folder is read as a terminal reads it (review B-S10): npm\'s folder on a redirected profile', () => {
+    expect(resolve({ PATH: '\\\\fs01\\profiles\\riley\\AppData\\Roaming\\npm;C:\\later', PATHEXT: DEFAULT_PATHEXT }, '\\\\fs01\\profiles\\riley\\AppData\\Roaming\\npm\\codex.cmd', 'C:\\later\\codex.exe')?.cmd).toBe('\\\\fs01\\profiles\\riley\\AppData\\Roaming\\npm\\codex.cmd')
+    expect(resolve({ PATH: '//fs01/tools;C:\\later', PATHEXT: DEFAULT_PATHEXT }, '\\\\fs01\\tools\\codex.exe', 'C:\\later\\codex.exe')?.cmd).toBe('\\\\fs01\\tools\\codex.exe')
+  })
+
+  it('[host] a device path is never a PATH folder the lookup reads (\\\\?\\ and \\\\.\\, either slash)', () => {
+    asked = []
+    expect(resolve({ PATH: '\\\\?\\C:\\dev;\\\\.\\C:\\dev;//?/C:/dev;C:\\later', PATHEXT: DEFAULT_PATHEXT }, '\\\\?\\C:\\dev\\codex.exe', '\\\\.\\C:\\dev\\codex.exe', 'C:\\later\\codex.cmd')?.cmd).toBe('C:\\later\\codex.cmd')
+    expect(asked.map((p) => p.toLowerCase())).toEqual(['c:\\later\\codex.exe', 'c:\\later\\codex.cmd'])
+  })
+
+  it('[host] a share that does not answer is asked once in a lookup, then passed over (the same memo as any folder)', () => {
+    expect(resolveWith({ PATH: '\\\\dead\\share;C:\\later', PATHEXT: '.EXE' }, ['\\\\dead\\share'], 'C:\\later\\codex.cmd')?.cmd).toBe('C:\\later\\codex.cmd')
+    expect(asked).toEqual(['\\\\dead\\share\\codex.exe', 'C:\\later\\codex.exe', 'C:\\later\\codex.cmd'])
   })
 
   it('[host] a folder that could not be read is asked nothing more in that lookup (review B-S3): neither its other form nor in the second pass', () => {
@@ -122,10 +134,24 @@ describe('the protections the lookup keeps', () => {
     expect(asked.every((p) => /^[A-Za-z]:\\/.test(p))).toBe(true)
   })
 
-  it('[host] a folder with a name ending in a dot or a space is not read (Node and Windows read such a name differently; review L3), nor a "." or ".." step', () => {
-    const out = resolve({ PATH: 'C:\\T.;C:\\tools \\bin;C:\\a\\.\\b;C:\\a\\..\\b;"C:\\x. ";C:\\later', PATHEXT: DEFAULT_PATHEXT }, 'C:\\T.\\codex.exe', 'C:\\tools \\bin\\codex.exe', 'C:\\a\\.\\b\\codex.exe', 'C:\\a\\..\\b\\codex.exe', 'C:\\later\\codex.cmd')
-    expect(out?.cmd).toBe('C:\\later\\codex.cmd')
-    expect(asked.map((p) => p.toLowerCase())).toEqual(['c:\\later\\codex.exe', 'c:\\later\\codex.cmd'])
+  it.each([
+    ['a folder name ending in one dot loses it', 'C:\\T.', 'C:\\T\\codex.exe'],
+    ['a folder name ending in one dot, mid-path', 'C:\\x.\\bin', 'C:\\x\\bin\\codex.exe'],
+    ['a space before that dot stays', 'C:\\t .', 'C:\\t \\codex.exe'],
+    ['two dots stay', 'C:\\t..', 'C:\\t..\\codex.exe'],
+    ['a trailing space mid-path stays', 'C:\\tools \\bin', 'C:\\tools \\bin\\codex.exe'],
+    ['a "." step is folded', 'C:\\a\\.\\b', 'C:\\a\\b\\codex.exe'],
+    ['a ".." step is folded', 'C:\\a\\..\\b', 'C:\\b\\codex.exe'],
+    ['a quoted entry with a trailing dot', '"C:\\q."', 'C:\\q\\codex.exe'],
+    ['a share\'s own name keeps its dot', '\\\\srv\\share.\\npm', '\\\\srv\\share.\\npm\\codex.exe'],
+    ['a folder below a share loses its dot', '\\\\srv\\share\\npm.', '\\\\srv\\share\\npm\\codex.exe'],
+  ])('[host] a PATH folder is named as Windows names it when it runs a program (review B-S11): %s', (_name, entry, want) => {
+    expect(resolve({ PATH: entry, PATHEXT: DEFAULT_PATHEXT }, want)?.cmd).toBe(want)
+  })
+
+  it('[host] the folder Windows would not run from is never read in its place: a literal "T." folder\'s codex is not taken for "C:\\T."', () => {
+    expect(resolve({ PATH: 'C:\\T.;C:\\later', PATHEXT: DEFAULT_PATHEXT }, 'C:\\T.\\codex.exe', 'C:\\later\\codex.cmd')?.cmd).toBe('C:\\later\\codex.cmd')
+    expect(asked.some((p) => p.includes('T.'))).toBe(false)
   })
 
   it('[host] no shell and no process: nothing is started to look Codex up on Windows', () => {

@@ -57,12 +57,13 @@ export interface CodexDiscoveryDeps {
 export type CodexDiscovery = DiscoveryResult & { identity?: CodexExecutableIdentity }
 
 /** A Windows path with a folder or file name that ends in a dot or a space
- *  (`C:\tools.\codex.exe`), or a `.` or `..` step. Node
- *  reads such a name as it is spelled, while Windows' own path handling,
- *  which starts the program, drops the dot or space and reaches another
- *  file, so a proof of one would not be a proof of the other. Such a path is
- *  never proved or run (review L3; the resources folder follows the same
- *  rule, realm-folders.ts). */
+ *  (`C:\tools.\codex.exe`), or a `.` or `..` step. Node reads such a name as
+ *  it is spelled, while Windows' own path handling, which starts the program,
+ *  can drop that dot or space (a folder name's last dot; a file name's
+ *  trailing dots and spaces) and reach another file, so a proof of one would
+ *  not be a proof of the other. A resolved path with any such name is never
+ *  proved or run (review L3; the resources folder follows the same rule,
+ *  realm-folders.ts). */
 export function windowsPathHasTrailingDotOrSpace(p: string): boolean {
   return p.split(/[\\/]/).slice(1).some((seg) => /[. ]$/.test(seg))
 }
@@ -163,7 +164,7 @@ export function verifyCodexExecutable(recorded: CodexExecutableIdentity, deps: P
     return { ok: false, reason: 'missing', detail: 'the Codex CLI on PATH can no longer be read' }
   }
   if (deps.platform === 'win32' && windowsPathHasTrailingDotOrSpace(canonical)) return { ok: false, reason: 'moved', detail: DOT_SPACE_DETAIL }
-  const same =deps.platform === 'win32' ? canonical.toLowerCase() === recorded.path.toLowerCase() : canonical === recorded.path
+  const same = deps.platform === 'win32' ? canonical.toLowerCase() === recorded.path.toLowerCase() : canonical === recorded.path
   if (!same) return { ok: false, reason: 'moved', detail: 'PATH now resolves a different Codex CLI than the one setup checked' }
   if (!st.isFile || !sameIdentity(identityOf(canonical, st), recorded)) return { ok: false, reason: 'replaced', detail: 'the Codex CLI was replaced since setup checked it' }
   return { ok: true, executable: canonical }

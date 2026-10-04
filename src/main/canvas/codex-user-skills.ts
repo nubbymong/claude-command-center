@@ -16,8 +16,12 @@
 // in the app's own data folder) BEFORE anything is copied there, so a switch
 // turned off later, in this run or another, finds every folder the app may
 // have written to. No record, no copy. A record that cannot be read refuses
-// both copying and removing until it can; one that does not parse is kept
-// aside and never taken as empty (that would let every folder in it go).
+// both copying and removing until it can. One that does not parse is kept
+// aside under a name of its own (never replacing one kept aside before) and
+// refused for that pass; the next pass starts a new record and takes back
+// every folder a kept-aside record still names in full, letting the
+// kept-aside file go once they are all recorded again (a folder whose name
+// the damage cut is no longer tracked until a launch records it again).
 // A folder leaves the record only once none of the app's copies is left in
 // it, or it is really gone (nothing there, its parent present): one that
 // cannot be read now (an offline share, a denied folder) stays recorded.
@@ -102,29 +106,102 @@ function sameHome(a: string, b: string, platform: NodeJS.Platform): boolean {
 
 type RecordRead = { ok: true; file: string; homes: string[] } | { ok: false }
 
-/** A record that does not parse is kept aside, beside it, so nothing it held
- *  is lost without a trace; the next pass starts a new one. Left in place
- *  (and so refused again) when it cannot be moved. */
+/** How many records kept aside are kept at most (`.damaged`, `.damaged.1` ...):
+ *  one past them is left in place, and so refused again, rather than
+ *  replacing one kept before (ADR-009 delta L1-6). */
+const KEPT_ASIDE_MAX = 10
+
+/** The names a record kept aside may have, in order. */
+function keptAsideNames(file: string): string[] {
+  return Array.from({ length: KEPT_ASIDE_MAX }, (_, i) => `${file}${CODEX_USER_SKILLS_DAMAGED_SUFFIX}${i === 0 ? '' : `.${i}`}`)
+}
+
+/** Nothing at all at `p` (a file, folder or link there all count). */
+function nameIsFree(p: string): boolean {
+  try { fs.lstatSync(p); return false } catch (err) { return (err as NodeJS.ErrnoException)?.code === 'ENOENT' }
+}
+
+/** A record that does not parse is kept aside, beside it, under the first
+ *  name not already taken, so nothing it held is lost without a trace and
+ *  no record kept aside before is replaced; the next pass starts a new one.
+ *  Left in place (and so refused again) when it cannot be moved. */
 function setAside(file: string): void {
+  const to = keptAsideNames(file).find(nameIsFree)
+  if (!to) {
+    logWarn('[codex-skills] the record of this computer\'s Codex folders does not read as the app wrote it, and every name for keeping it aside is taken; it is left as it is')
+    return
+  }
   try {
-    fs.renameSync(file, `${file}${CODEX_USER_SKILLS_DAMAGED_SUFFIX}`)
+    fs.renameSync(file, to)
     logWarn('[codex-skills] the record of this computer\'s Codex folders does not read as the app wrote it; it is kept aside and a new one is started at the next pass')
   } catch (err) {
     logWarn(`[codex-skills] the record of this computer's Codex folders does not read as the app wrote it, and could not be kept aside: ${(err as Error)?.message ?? err}`)
   }
 }
 
+/** The folders a record's text names: its `homes` list when it parses as the
+ *  app's record, else every whole JSON string in it (a record cut off part-way
+ *  still names its earlier folders in full); only fully qualified ones. */
+function homesNamedIn(text: string, platform: NodeJS.Platform): string[] {
+  let names: unknown[] = []
+  try {
+    const parsed = JSON.parse(text) as { homes?: unknown }
+    if (parsed && typeof parsed === 'object' && Array.isArray(parsed.homes)) names = parsed.homes
+  } catch {
+    for (const m of text.matchAll(/"((?:[^"\\\r\n]|\\.)*)"/g)) {
+      try { names.push(JSON.parse(`"${m[1]}"`)) } catch { /* not a whole string */ }
+    }
+  }
+  return names.filter((h): h is string => fullyQualified(h, platform))
+}
+
+/** ADR-009 delta L1-6: the folders the records kept aside still name are taken
+ *  back into the record (`homes`, the record as read), so a switch turned off
+ *  finds them again; a kept-aside file goes once every folder it names is in
+ *  the record (written first). One the app reads no folder from stays as it
+ *  is, for a person to read. Returns the record's folders, the taken-back ones
+ *  included. */
+function takeBackKeptAside(file: string, homes: string[], deps: CodexUserSkillsDeps, platform: NodeJS.Platform): string[] {
+  const merged = [...homes]
+  const done: string[] = []
+  for (const kept of keptAsideNames(file)) {
+    let st: fs.Stats
+    try { st = fs.lstatSync(kept) } catch { continue }
+    if (!st.isFile() || st.isSymbolicLink() || st.size > RECORD_READ_MAX) continue
+    let text: string
+    try { text = deps.readFile ? deps.readFile(kept) : fs.readFileSync(kept, 'utf8') } catch { continue }
+    const named = homesNamedIn(text, platform)
+    if (named.length === 0) continue
+    let all = true
+    for (const h of named) {
+      if (merged.some((k) => sameHome(k, h, platform))) continue
+      if (merged.length >= CODEX_USER_SKILLS_HOMES_MAX) { all = false; continue }
+      merged.push(path.resolve(h))
+    }
+    if (all) done.push(kept)
+  }
+  if (merged.length > homes.length && !writeRecord(file, merged)) return merged
+  for (const kept of done) {
+    try {
+      fs.unlinkSync(kept)
+      logInfo('[codex-skills] the folders a record kept aside named are recorded again; the kept-aside record is let go')
+    } catch { /* kept; asked again next time */ }
+  }
+  return merged
+}
+
 /** The record: absent is empty. One that is not a plain file, too large, or
  *  cannot be read now is refused (nothing is copied, nothing removed; asked
  *  again at the next pass). One that does not parse as the app's record is
- *  kept aside and refused this time, never taken as empty (review B-Q2). */
+ *  kept aside and refused for this pass (review B-Q2); the folders any record
+ *  kept aside still names are taken back (takeBackKeptAside). */
 function readRecord(deps: CodexUserSkillsDeps): RecordRead {
   const file = recordFileOf(deps)
   const platform = deps.platform ?? process.platform
   if (!file) return { ok: false }
   let st: fs.Stats
   try { st = fs.lstatSync(file) } catch (err) {
-    return (err as NodeJS.ErrnoException)?.code === 'ENOENT' ? { ok: true, file, homes: [] } : { ok: false }
+    return (err as NodeJS.ErrnoException)?.code === 'ENOENT' ? { ok: true, file, homes: takeBackKeptAside(file, [], deps, platform) } : { ok: false }
   }
   if (!st.isFile() || st.isSymbolicLink() || st.size > RECORD_READ_MAX) return { ok: false }
   let text: string
@@ -144,7 +221,7 @@ function readRecord(deps: CodexUserSkillsDeps): RecordRead {
     if (homes.length >= CODEX_USER_SKILLS_HOMES_MAX) break
     if (fullyQualified(h, platform) && !homes.some((k) => sameHome(k, h, platform))) homes.push(path.resolve(h))
   }
-  return { ok: true, file, homes }
+  return { ok: true, file, homes: takeBackKeptAside(file, homes, deps, platform) }
 }
 
 function writeRecord(file: string, homes: readonly string[]): boolean {
