@@ -36,8 +36,8 @@ import {
   isCodexWebClearing,
   runCodexWebSignIn,
 } from '../account-web/codex-web-session'
-import { codexWebViewFor, removeCodexWebSession, saveCodexWebSession } from '../account-web/codex-web-store'
-import { closeCodexAccountPanes, openCodexAccountPane } from '../account-web/account-pane'
+import { codexWebViewFor, saveCodexWebSession } from '../account-web/codex-web-store'
+import { openCodexAccountPane } from '../account-web/account-pane'
 import { closeWebview } from '../webview-manager'
 
 type Err = { ok: false; error: string }
@@ -179,13 +179,12 @@ export function registerCodexWebHandlers(getWindow: () => BrowserWindow | null, 
     try {
       const el = eligible(accountId)
       if (!el.ok) return el
-      // As Claude's sign-out: the panes holding the session close FIRST, then
-      // the partition is wiped (a failure throws and keeps the record, so the
-      // account can be signed out again), then the record goes; a record that
-      // cannot be removed is reported, never "signed out".
-      closeCodexAccountPanes(el.id)
+      // As Claude's sign-out, all inside the clear: the panes holding the
+      // session close FIRST, then the partition is wiped (a failure throws and
+      // keeps the record, so the account can be signed out again), then the
+      // record goes; a record that cannot be removed throws too, so it is
+      // reported, never "signed out".
       await clearCodexWebSession(el.id)
-      if (removeCodexWebSession(el.id) === false) return { ok: false, error: 'The chatgpt.com sign-in was cleared, but its record could not be removed. Try again.' }
       return { ok: true }
     } catch (err) {
       return fail('signOut', err)

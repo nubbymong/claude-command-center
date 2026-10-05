@@ -67,7 +67,7 @@ export function codexWebViewFor(accountId: string, now: number = Date.now()): Co
 }
 
 /** Insert or replace one account's record. Refuses a malformed one (throws);
- *  true once the record is on disk, false when the write failed. */
+ *  true once the record is on disk, false when the write failed or threw. */
 export function saveCodexWebSession(s: CodexWebSession): boolean {
   if (!validRecord(s)) throw new Error('refusing to save a malformed chatgpt.com session record')
   const record: CodexWebSession = {
@@ -79,7 +79,7 @@ export function saveCodexWebSession(s: CodexWebSession): boolean {
   }
   const f = read()
   f.sessions = [...f.sessions.filter((x) => x.accountId !== s.accountId), record]
-  return writeJsonFile(FILE, f)
+  return writeSafely(f)
 }
 
 /** Forget the record. The caller clears the partition separately. True when
@@ -89,5 +89,15 @@ export function removeCodexWebSession(accountId: string): boolean {
   const f = read()
   const next = f.sessions.filter((s) => s.accountId !== accountId)
   if (next.length === f.sessions.length) return true
-  return writeJsonFile(FILE, { ...f, sessions: next })
+  return writeSafely({ ...f, sessions: next })
+}
+
+/** A write that throws (its folder could not be made, say) is a write that
+ *  failed: the callers act on false, never on an exception. */
+function writeSafely(f: unknown): boolean {
+  try {
+    return writeJsonFile(FILE, f) === true
+  } catch {
+    return false
+  }
 }

@@ -213,13 +213,11 @@ describe('[host] what each channel does for an eligible account', () => {
     expect(acted.cancelCodexWebSignIn).toHaveBeenCalledWith(ACCT)
   })
 
-  it('sign-out closes the panes, clears the session, then forgets the record', async () => {
-    const order: string[] = []
-    acted.closeCodexAccountPanes.mockImplementationOnce(() => { order.push('panes') })
-    acted.clearCodexWebSession.mockImplementationOnce(async () => { order.push('clear') })
-    acted.removeCodexWebSession.mockImplementationOnce(() => { order.push('record') })
+  it('sign-out acts through the clear alone (which closes the panes first and forgets the record after)', async () => {
     expect((await call(IPC.CODEX_WEB_SIGN_OUT, TRUSTED, ACCT)).ok).toBe(true)
-    expect(order).toEqual(['panes', 'clear', 'record'])
+    expect(acted.clearCodexWebSession).toHaveBeenCalledWith(ACCT)
+    expect(acted.closeCodexAccountPanes).not.toHaveBeenCalled()
+    expect(acted.removeCodexWebSession).not.toHaveBeenCalled()
   })
 
   it('a sign-out whose clear fails reports it and keeps the record', async () => {
@@ -301,7 +299,7 @@ describe('[host] a record that is not written never reads as done or signed out'
   })
 
   it('a sign-out whose record cannot be removed reports it', async () => {
-    acted.removeCodexWebSession.mockImplementationOnce(() => false)
+    acted.clearCodexWebSession.mockImplementationOnce(async () => { throw new Error('The chatgpt.com sign-in was cleared, but its record could not be removed. Try again.') })
     const r = await call(IPC.CODEX_WEB_SIGN_OUT, TRUSTED, ACCT)
     expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/record could not be removed/) })
   })

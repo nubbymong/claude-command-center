@@ -867,12 +867,15 @@ describe('[host] clearing: nothing holding the session stays open through the wi
     let release!: () => void
     clearGate = new Promise<void>((r) => { release = r })
     const clearing = clearCodexWebSession(ACCT)
-    await tick(5)
-    expect(isCodexWebClearing(ACCT)).toBe(true)
-    expect((await runCodexWebSignIn({ accountId: ACCT, pollMs: 5 })).error).toMatch(/being cleared/)
-    expect(created).toHaveLength(0)
-    release()
-    await clearing
+    try {
+      await tick(5)
+      expect(isCodexWebClearing(ACCT)).toBe(true)
+      expect((await runCodexWebSignIn({ accountId: ACCT, pollMs: 5 })).error).toMatch(/being cleared/)
+      expect(created).toHaveLength(0)
+    } finally {
+      release()
+      await clearing
+    }
     expect(isCodexWebClearing(ACCT)).toBe(false)
   })
 

@@ -62,8 +62,23 @@ let cancelled = false
 const signInWindow = createSignInWindowHandle()
 /** Accounts an archive is clearing: no sign-in starts on them until it settles. */
 const archiving = new Set<string>()
-/** Accounts whose web session is being cleared now (sign-out or archive). */
-const clearing = new Set<string>()
+/** Accounts whose web session is being wiped now (a sign-out, an archive, an
+ *  unfinished sign-in), counted: overlapping wipes of one account keep the
+ *  bar up until the last one ends. */
+const clearing = new Map<string, number>()
+
+/** Bar the account for one wipe; the returned release lifts this wipe's share. */
+function barWhileClearing(accountId: string): () => void {
+  clearing.set(accountId, (clearing.get(accountId) ?? 0) + 1)
+  let done = false
+  return () => {
+    if (done) return
+    done = true
+    const n = (clearing.get(accountId) ?? 1) - 1
+    if (n > 0) clearing.set(accountId, n)
+    else clearing.delete(accountId)
+  }
+}
 /** Told BEFORE a wipe: close everything that holds the session (the panes). */
 const closingHandlers = new Set<(accountId: string) => void>()
 /** Told AFTER a wipe that succeeded: forget the record. `false` = it could not. */
@@ -83,9 +98,9 @@ export function isCodexWebArchiving(accountId: string): boolean {
   return archiving.has(accountId)
 }
 
-/** True while this account's web session is being cleared (sign-out or archive). */
+/** True while any wipe of this account's web session runs. */
 export function isCodexWebClearing(accountId: string): boolean {
-  return clearing.has(accountId)
+  return (clearing.get(accountId) ?? 0) > 0
 }
 
 /** Subscribe to "this account's web session is about to be wiped": close
@@ -133,7 +148,7 @@ export async function runCodexWebSignIn(opts: { accountId: string; timeoutMs?: n
   if (archiving.has(accountId)) {
     return { phase: 'failed', accountId, error: 'This account is being archived.' }
   }
-  if (clearing.has(accountId)) {
+  if (isCodexWebClearing(accountId)) {
     return { phase: 'failed', accountId, error: 'This account\'s chatgpt.com sign-in is being cleared. Try again in a moment.' }
   }
   let partition: string
@@ -186,14 +201,20 @@ export async function runCodexWebSignIn(opts: { accountId: string; timeoutMs?: n
 /** The panes close first, then the wipe; the record is forgotten only after a
  *  wipe that succeeded (a failed one leaves it, so Sign out stays offered). */
 async function wipeAfterIncompleteRun(accountId: string, partition: string): Promise<void> {
-  notifyClosing(accountId)
+  // Barred like any clear: no pane opens on the partition while it is wiped.
+  const unbar = barWhileClearing(accountId)
   try {
-    await bounded(Promise.resolve(electronSession.fromPartition(partition).clearStorageData()), 'clearStorageData')
-  } catch (err) {
-    logError(`[codex-web] could not clear an incomplete sign-in for ${accountId}: ${(err as Error)?.message ?? err}`)
-    return
+    notifyClosing(accountId)
+    try {
+      await bounded(Promise.resolve(electronSession.fromPartition(partition).clearStorageData()), 'clearStorageData')
+    } catch (err) {
+      logError(`[codex-web] could not clear an incomplete sign-in for ${accountId}: ${(err as Error)?.message ?? err}`)
+      return
+    }
+    if (!notifyCleared(accountId)) logError(`[codex-web] could not forget the chatgpt.com record of ${accountId} after an incomplete sign-in`)
+  } finally {
+    unbar()
   }
-  if (!notifyCleared(accountId)) logError(`[codex-web] could not forget the chatgpt.com record of ${accountId} after an incomplete sign-in`)
 }
 
 /**
@@ -235,7 +256,7 @@ export function discardCodexWebRun(accountId: string, error: string): void {
  */
 export async function clearCodexWebSession(accountId: string): Promise<void> {
   const partition = webPartitionForCodexAccount(accountId)
-  clearing.add(accountId)
+  const unbar = barWhileClearing(accountId)
   try {
     // CANCEL FIRST: a sign-in for this account may be mid-poll and would
     // otherwise write a fresh session into the partition being cleared.
@@ -253,7 +274,7 @@ export async function clearCodexWebSession(accountId: string): Promise<void> {
     if (!notifyCleared(accountId)) throw new Error('The chatgpt.com sign-in was cleared, but its record could not be removed. Try again.')
     logInfo(`[codex-web] cleared the chatgpt.com web session for ${accountId}`)
   } finally {
-    clearing.delete(accountId)
+    unbar()
   }
 }
 

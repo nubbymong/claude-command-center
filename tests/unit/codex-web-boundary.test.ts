@@ -17,11 +17,11 @@ const S = vi.hoisted(() => {
   const views: any[] = []
   const windows: any[] = []
   const trail: string[] = []
-  const gates: { storage: null | Promise<void> } = { storage: null }
+  const gates: { storage: null | Promise<void>; queue: Array<Promise<void>>; waiting: number } = { storage: null, queue: [], waiting: 0 }
   const reg = { accounts: [] as Array<{ id: string; providerId: string; lifecycle: string }> }
   const holding: Record<string, string[]> = {}
   const disk: Record<string, unknown> = {}
-  const flags = { writeFails: false }
+  const flags = { writeFails: false, writeThrows: false }
   function fakeSession(partition: string) {
     minted.push(partition)
     if (sessions[partition]) return sessions[partition]
@@ -42,6 +42,8 @@ const S = vi.hoisted(() => {
       clearStorageData: async () => {
         trail.push(`wipe ${partition} (open views on it: ${views.filter((v) => v.opts.webPreferences.partition === partition && !v.webContents.destroyed).length}, listeners: ${ses.cookies.listeners.length})`)
         if (gates.storage) await gates.storage
+        const queued = gates.queue.shift()
+        if (queued) { gates.waiting++; try { await queued } finally { gates.waiting-- } }
         ses.jar = []
       },
       clearCache: async () => {},
@@ -128,6 +130,7 @@ vi.mock('../../src/main/provider-account-registry', () => ({
 vi.mock('../../src/main/channel-storage', () => ({
   readJsonFile: (n: string, seed: () => unknown) => (S.disk[n] !== undefined ? JSON.parse(JSON.stringify(S.disk[n])) : seed()),
   writeJsonFile: (n: string, v: unknown) => {
+    if (S.flags.writeThrows) throw new Error('simulated folder failure before the write')
     if (S.flags.writeFails) return false
     S.disk[n] = JSON.parse(JSON.stringify(v))
     return true
@@ -167,7 +170,9 @@ beforeEach(() => {
   for (const k of Object.keys(S.holding)) delete S.holding[k]
   S.minted.length = 0; S.views.length = 0; S.windows.length = 0; S.trail.length = 0
   S.gates.storage = null
+  S.gates.queue.length = 0
   S.flags.writeFails = false
+  S.flags.writeThrows = false
   S.reg.accounts = [{ id: ACCT, providerId: 'codex', lifecycle: 'inactive' }]
   S.holding[ACCT] = ['s1']
   // As index.ts wires them.
@@ -274,6 +279,70 @@ describe('[host] a record that cannot be written or removed never reads as done 
     S.flags.writeFails = true
     await expect(CWS.prepareCodexWebArchive(ACCT, 'codex')).rejects.toThrow(/record could not be removed/)
     S.flags.writeFails = false
+    expect(STORE.getCodexWebSession(ACCT)).toBeDefined()
+  })
+})
+
+describe('[host] the clearing bar holds for every clear, overlapping or after an unfinished run', () => {
+  const until = async (pred: () => boolean) => { const end = Date.now() + 8000; while (!pred()) { if (Date.now() > end) throw new Error('timed out'); await sleep(5) } }
+
+  it('two overlapping clears of one account: the bar stays until the last one ends', async () => {
+    let openFirst!: () => void
+    let openSecond!: () => void
+    S.gates.queue.push(new Promise<void>((r) => { openFirst = r }), new Promise<void>((r) => { openSecond = r }))
+    const first = CWS.clearCodexWebSession(ACCT)
+    await until(() => S.gates.waiting === 1)
+    const second = CWS.clearCodexWebSession(ACCT)
+    await until(() => S.gates.waiting === 2)
+    try {
+      openSecond()
+      await second
+      expect(CWS.isCodexWebClearing(ACCT)).toBe(true)
+      expect((await call(IPC.CODEX_WEB_PANE_OPEN, TRUSTED, { sessionId: 's1', accountId: ACCT, bounds: BOUNDS })).error).toMatch(/being cleared/)
+    } finally {
+      openFirst(); openSecond()
+      await first
+    }
+    expect(CWS.isCodexWebClearing(ACCT)).toBe(false)
+  })
+
+  it('the wipe after an unfinished sign-in bars a pane until it ends', async () => {
+    let open!: () => void
+    S.gates.queue.push(new Promise<void>((r) => { open = r }))
+    const run = call(IPC.CODEX_WEB_SIGN_IN, TRUSTED, ACCT)
+    await until(() => S.windows.length === 1)
+    try {
+      // The user closes the window: the run ends unfinished and wipes.
+      S.windows[0].destroy()
+      await until(() => S.gates.waiting === 1)
+      expect(CWS.isCodexWebClearing(ACCT)).toBe(true)
+      expect((await call(IPC.CODEX_WEB_PANE_OPEN, TRUSTED, { sessionId: 's1', accountId: ACCT, bounds: BOUNDS })).error).toMatch(/being cleared/)
+      expect(S.views).toHaveLength(0)
+    } finally {
+      open()
+    }
+    expect((await run).state.phase).toBe('failed')
+    expect(CWS.isCodexWebClearing(ACCT)).toBe(false)
+  })
+})
+
+describe('[host] a record write that throws reads as not written', () => {
+  const REC = { accountId: ACCT, accountEmail: 'owner@example.com', acquiredAt: 1, expiresAt: null, origin: 'in-app' as const }
+  it('save and remove answer false, never throw', () => {
+    S.flags.writeThrows = true
+    expect(STORE.saveCodexWebSession(REC)).toBe(false)
+    S.flags.writeThrows = false
+    STORE.saveCodexWebSession(REC)
+    S.flags.writeThrows = true
+    expect(STORE.removeCodexWebSession(ACCT)).toBe(false)
+  })
+
+  it('sign-out over a record that cannot be removed (the write throws) reports it', async () => {
+    STORE.saveCodexWebSession(REC)
+    S.flags.writeThrows = true
+    const r = await call(IPC.CODEX_WEB_SIGN_OUT, TRUSTED, ACCT)
+    S.flags.writeThrows = false
+    expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/record could not be removed/) })
     expect(STORE.getCodexWebSession(ACCT)).toBeDefined()
   })
 })
