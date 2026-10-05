@@ -1591,10 +1591,10 @@ describe('the pure checker (simulated roots, any host)', () => {
     // /home/u/out/../x as /tmp/x, but the home spelling stays refused.
     expect(c.classify('/home/u/out/../x')).not.toBeNull()
     // A link loop through `..` ends within the shared link budget (40 links per resolution),
-    // instead of recursing without end.
+    // instead of recursing without end, and the path it never resolves is refused.
     readlinks = 0
-    expect(c.classify('/tmp/loop/x')).toBeNull()
-    expect(c.classify('/tmp/loop/../x')).toBeNull()
+    expect(c.classify('/tmp/loop/x')).not.toBeNull()
+    expect(c.classify('/tmp/loop/../x')).not.toBeNull()
     expect(readlinks, 'links read for two loop paths').toBeLessThan(LOOP_READLINK_LIMIT)
     // Windows resolves `..` by name before it follows a link, so the guard does too.
     const w = createHomeChecker({
@@ -1606,6 +1606,56 @@ describe('the pure checker (simulated roots, any host)', () => {
     })
     expect(w.classify('C:\\T\\plink\\..\\x')).toBeNull()
     expect(w.classify('C:\\T\\plink\\x')).not.toBeNull()
+  })
+
+  it('a link chain the guard cannot follow to its end (budget spent, or a loop the OS reports as ELOOP) is refused, not walked past', () => {
+    // Dangling chains C:\T\c0 -> c1 -> ... -> the last target. Windows follows up to 63
+    // reparse points, more than the guard's 40.
+    const chain = (name: string, n: number, end: string): Record<string, string> => {
+      const out: Record<string, string> = {}
+      for (let i = 0; i < n; i++) out[`C:\\T\\${name}${i}`] = i === n - 1 ? end : `C:\\T\\${name}${i + 1}`
+      return out
+    }
+    const c = createHomeChecker({
+      platform: 'win32',
+      realRoots: ['C:\\Users\\alice'],
+      allowedRoots: [{ path: 'C:\\T', kind: 'tmp' }],
+      fsImpl: fakeFs(['C:\\', 'C:\\T', 'C:\\Users', 'C:\\Users\\alice'], {
+        ...chain('short', 30, 'C:\\Users\\alice\\.claude\\new'),
+        ...chain('long', 45, 'C:\\Users\\alice\\.claude\\new'),
+        ...chain('shortTmp', 30, 'C:\\T\\end'),
+        ...chain('longTmp', 45, 'C:\\T\\end'),
+      }),
+      cwd: () => 'C:\\T',
+    })
+    for (const op of ['classify', 'classifyEntry'] as const) {
+      expect(c[op]('C:\\T\\short0\\x'), op).not.toBeNull() // resolved: into the home
+      expect(c[op]('C:\\T\\long0\\x'), op).not.toBeNull() // not resolved: refused
+      expect(c[op]('C:\\T\\longTmp0\\x'), op).not.toBeNull() // not resolved, wherever it ends
+      expect(c[op]('C:\\T\\shortTmp0\\x'), op).toBeNull() // resolved: inside the temp folder
+    }
+    expect(c.argHit('C:\\T\\long0\\x', 'C:\\T')).not.toBeNull()
+    // A loop the OS reports as ELOOP (realpath fails on both links).
+    const fail = (code: string): never => {
+      throw Object.assign(new Error(code), { code })
+    }
+    // And a link whose target cannot be read (EACCES): no walking past it either.
+    const loops: Record<string, string> = { '/tmp/a': '/tmp/b', '/tmp/b': '/tmp/a' }
+    const isLink = (q: string) => q in loops || q === '/tmp/locked'
+    const p = createHomeChecker({
+      platform: 'linux',
+      realRoots: ['/home/u'],
+      allowedRoots: [{ path: '/tmp', kind: 'tmp' }],
+      fsImpl: {
+        lstatSync: (q: string) => (isLink(q) ? { isSymbolicLink: () => true, isDirectory: () => false } : ['/', '/tmp', '/home', '/home/u'].includes(q) ? { isSymbolicLink: () => false, isDirectory: () => true } : undefined),
+        realpathSync: (q: string) => (q === '/tmp/locked' ? fail('EACCES') : isLink(q) || q.startsWith('/tmp/a/') || q.startsWith('/tmp/b/') ? fail('ELOOP') : ['/', '/tmp', '/home', '/home/u'].includes(q) ? q : fail('ENOENT')),
+        readlinkSync: (q: string) => (q === '/tmp/locked' ? fail('EACCES') : (loops[q] ?? fail('EINVAL'))),
+      },
+      cwd: () => '/tmp',
+    })
+    expect(p.classify('/tmp/a/x')).not.toBeNull()
+    expect(p.classify('/tmp/locked/x')).not.toBeNull()
+    expect(p.classify('/tmp/plain/x')).toBeNull()
   })
 
   it('on POSIX a trailing slash names the target of a folder link: an rm of it is checked the full way', () => {

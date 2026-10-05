@@ -53,10 +53,12 @@
 // URLs and URL-like objects, Buffers, and the real path of the nearest existing
 // ancestor (a link out of an allowed folder is followed; a volume-GUID path is
 // mapped to its drive). UNC paths other than `\\.\pipe\` and unmappable device
-// paths fail closed. An operation on the folder entry itself (unlink, rm, rmdir,
-// rename, lchmod, lchown, lutimes) does not follow a link that is the last component,
-// written without a trailing separator: it removes, moves or touches the link, never
-// what it points at. Any other entry is checked by its real path as well.
+// paths fail closed, and so does a link chain the guard cannot follow to its end (a
+// loop, an unreadable link, or more than 40 links in one path). An operation on the
+// folder entry itself (unlink, rm, rmdir, rename, lchmod, lchown, lutimes) does not
+// follow a link that is the last component, written without a trailing separator: it
+// removes, moves or touches the link, never what it points at. Any other entry is
+// checked by its real path as well.
 //
 // NOT covered: native addons (better-sqlite3 and node-pty write natively); a child
 // that is not node beyond its environment, working folder and arguments (a native
@@ -276,7 +278,12 @@ function resolveReal(abs, fsImpl, platform, budget = { left: LINK_BUDGET }) {
         real = undefined
       }
       if (typeof real === 'string') return withTail(real)
-      if (st.isSymbolicLink() && budget.left > 0) {
+      if (st.isSymbolicLink()) {
+        // A link the OS cannot resolve (dangling, or a loop it reports as ELOOP) is
+        // followed through its target, within the budget. One the guard cannot follow to
+        // its end (the budget spent, or no readable target) is unmappable: null, which
+        // callers refuse. Never walk past it: the OS may follow more links than the guard.
+        if (budget.left <= 0) return null
         budget.left--
         let target
         try {
@@ -284,14 +291,11 @@ function resolveReal(abs, fsImpl, platform, budget = { left: LINK_BUDGET }) {
         } catch {
           target = undefined
         }
-        if (typeof target === 'string') {
-          const lf = lexicalFormsFs(target, P.dirname(cur), platform, fsImpl, { budget })
-          if (lf.device) return null
-          if (lf.forms.length > 0) {
-            const r = resolveReal(lf.forms[0], fsImpl, platform, budget)
-            return r === null ? null : withTail(r)
-          }
-        }
+        if (typeof target !== 'string') return null
+        const lf = lexicalFormsFs(target, P.dirname(cur), platform, fsImpl, { budget })
+        if (lf.device || lf.forms.length === 0) return null
+        const r = resolveReal(lf.forms[0], fsImpl, platform, budget)
+        return r === null ? null : withTail(r)
       }
     }
     const parent = P.dirname(cur)
@@ -330,10 +334,10 @@ function mapVolume(volume, fsImpl) {
  * POSIX resolves `..` physically: after a link, `..` is the parent of the link's TARGET
  * (`/tmp/link/../x` with link -> /home/u/sub is /home/u/x). The path with each `..`
  * applied to the real path of what precedes it; null when it has no `..`, or more than
- * `maxDotDots` of them (an argument scan keeps those lexical), or the walk leads where
- * the guard cannot map. Windows resolves `..` lexically, as lexicalForms does.
+ * `maxDotDots` of them (an argument scan keeps those lexical); false when the walk leads
+ * where the guard cannot map (refused). Windows resolves `..` lexically, as lexicalForms does.
  * @param {string} str @param {string} base @param {string} platform @param {FsImpl} fsImpl
- * @param {{ left: number }} budget @param {number} maxDotDots @returns {string | null}
+ * @param {{ left: number }} budget @param {number} maxDotDots @returns {string | null | false}
  */
 function physicalDotDot(str, base, platform, fsImpl, budget, maxDotDots) {
   const P = pathApi(platform)
@@ -348,7 +352,7 @@ function physicalDotDot(str, base, platform, fsImpl, budget, maxDotDots) {
       continue
     }
     const real = resolveReal(cur, fsImpl, platform, budget)
-    if (real === null) return null
+    if (real === null) return false
     cur = P.dirname(real)
   }
   return cur
@@ -364,6 +368,7 @@ function lexicalFormsFs(str, base, platform, fsImpl, opts = {}) {
   if (platform !== 'win32') {
     const lexical = pathApi(platform).resolve(base, str)
     const physical = physicalDotDot(str, base, platform, fsImpl, opts.budget ?? { left: LINK_BUDGET }, opts.maxDotDots ?? Infinity)
+    if (physical === false) return { forms: [], device: true }
     return { forms: physical !== null && physical !== lexical ? [lexical, physical] : [lexical], device: false }
   }
   const lf = lexicalForms(str, base, platform)
@@ -595,7 +600,7 @@ export function createHomeChecker(opts) {
     const b = base ?? cwd()
     for (const s of pathStrings(input, platform)) {
       const f = formsOf(s, b, ctx)
-      if (f.device) return { root: '(UNC or device path)', form: s, reason: 'is a UNC or device path the guard cannot map', device: true }
+      if (f.device) return { root: '(unmappable path)', form: s, reason: 'is a UNC or device path, or a link chain, the guard cannot map', device: true }
       for (const form of f.forms) {
         const root = protectedBy(keyOf(form, platform))
         if (root) return { root, form }
@@ -623,7 +628,7 @@ export function createHomeChecker(opts) {
         continue
       }
       const lf = lexicalFormsFs(s, b, platform, fsImpl)
-      if (lf.device) return { root: '(UNC or device path)', form: s, reason: 'is a UNC or device path the guard cannot map', device: true }
+      if (lf.device) return { root: '(unmappable path)', form: s, reason: 'is a UNC or device path, or a link chain, the guard cannot map', device: true }
       for (const form of lf.forms) {
         // Only an entry that IS a link (or junction) is left unfollowed. Any other entry,
         // or a missing one, is checked by its real path too, as classify does: an 8.3
@@ -643,7 +648,7 @@ export function createHomeChecker(opts) {
         /** @type {string[]} */ const candidates = [form]
         if (parent !== form) {
           const up = formsOf(parent, b)
-          if (up.device) return { root: '(UNC or device path)', form: s, reason: 'is a UNC or device path the guard cannot map', device: true }
+          if (up.device) return { root: '(unmappable path)', form: s, reason: 'is a UNC or device path, or a link chain, the guard cannot map', device: true }
           for (const p of up.forms) candidates.push(P.join(p, P.basename(form)))
         }
         for (const c of candidates) {

@@ -81,8 +81,10 @@ deliberately out of scope.
   reads it, from a link's target; both readings are checked), separators, case
   (win32, darwin), trailing dots and spaces, stream suffixes, `\\?\`, `\\.\` and `\??\` prefixes,
   file: URLs and URL-like objects, Buffers, and the real path of the nearest
-  existing ancestor. Every UNC path except a named pipe, and every device path the
-  guard cannot map, fails closed. An operation on the folder entry itself (unlink,
+  existing ancestor. Every UNC path except a named pipe, every device path the
+  guard cannot map, and every link chain it cannot follow to its end (a loop, an
+  unreadable link, or more than 40 links in one path; Windows follows up to 63) fails
+  closed. An operation on the folder entry itself (unlink,
   rm, rmdir, rename, lchmod, lchown, lutimes) does not follow a link that is the last
   component, written without a trailing separator: it removes, moves or touches the
   link, never what it points at (Node's recursive rm of a CLI home holding a link to
