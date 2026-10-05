@@ -510,10 +510,11 @@ describe('[host] the sign-in window', () => {
     page.identity = {
       user: { id: 'u', mail: 'me@example.com' },
       byId: { '123e4567-e89b-12d3-a456-426614174000': 1, 'sk-AbCdEf0123456789xyz': 2, [HEX64]: 3, '9876543210': 4, user_4f9a8b7c6d5e: 5, plan: 6 },
+      byEmail: { 'me@example.com': 'other@example.com' },
     }
     await runServiceSignIn(RUN({ timeoutMs: 60 }))
     const line = logs.find((l) => /did not complete/.test(l))!
-    expect(line).toContain('JSON keys user, user.id, user.mail, byId, byId.plan (and 5 not shown); an email-shaped value at user.mail.')
+    expect(line).toContain('JSON keys user, user.id, user.mail, byId, byId.plan, byEmail (and 6 not shown); an email-shaped value at user.mail.')
     for (const k of ['123e4567', 'sk-AbCdEf', HEX64.slice(0, 16), '9876543210', '4f9a8b7c6d5e', 'me@example.com']) expect(line, k).not.toContain(k)
   })
 
@@ -522,9 +523,12 @@ describe('[host] the sign-in window', () => {
     // The cookie is set while the page is still on the sign-in host.
     page.origin = 'https://auth.openai.com'
     page.identity = { user: { id: 'u', mail: 'me@example.com' } }
-    const p = runServiceSignIn(RUN({ timeoutMs: 150 }))
+    const p = runServiceSignIn(RUN({ timeoutMs: 200 }))
     await tick(40)
     page.origin = 'https://chatgpt.com'
+    await tick(40)
+    // Off again before the close: only a look taken while it was on answers.
+    page.origin = 'https://auth.openai.com'
     await p
     const line = logs.find((l) => /did not complete/.test(l))!
     expect(line).toContain('Identity answer: HTTP 200, JSON keys user, user.id, user.mail; an email-shaped value at user.mail.')
@@ -919,5 +923,29 @@ describe('[host] the sign-in window lets embedded local frames load', () => {
     // Never in the main frame: there the service and its sign-in hosts only.
     for (const url of ['about:blank', 'data:text/html,x', 'blob:https://chatgpt.com/x']) expect(signInNavAllowed(CODEX_WEB_SERVICE, url, true), url).toBe(false)
     await p
+  })
+})
+
+describe('[host] the identity answer is looked at spaced and bounded while a run polls', () => {
+  it('at most every 20 s, at most 15 times, and once more before the window closes', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      jars[PART] = SIGNED_OUT_JAR
+      // A page that answers, but never with keys: the looks go on, bounded.
+      page.identity = 'not json'
+      page.status = 404
+      const p = runServiceSignIn(RUN({ timeoutMs: 10 * 60_000, pollMs: 1000 }))
+      await vi.advanceTimersByTimeAsync(65_000)
+      const early = page.fetched.length
+      expect(early).toBeGreaterThanOrEqual(3)
+      expect(early).toBeLessThanOrEqual(4)
+      await vi.advanceTimersByTimeAsync(10 * 60_000)
+      await p
+      expect(page.fetched).toHaveLength(15 + 1)
+      const line = logs.find((l) => /did not complete/.test(l))!
+      expect(line).toContain('Identity answer: HTTP 404, not a JSON object.')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

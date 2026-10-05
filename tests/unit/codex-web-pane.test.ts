@@ -93,7 +93,7 @@ vi.mock('../../src/main/channel-storage', () => ({
 }))
 
 const {
-  openAccountPane, openCodexAccountPane, closeAccountPane, closeAccountPanesForProfile, closeCodexAccountPanes,
+  openAccountPane, openCodexAccountPane, closeAccountPane, closeAccountPanesForProfile, closeCodexAccountPanes, closeCodexAccountPanesWhere,
   closeAllAccountPanes, getAccountPaneState, codexPaneNavDecision,
 } = await import('../../src/main/account-web/account-pane')
 const { webPartitionForCodexAccount, webPartitionForProfile, CODEX_WEB_SERVICE } = await import('../../src/shared/account-web-session')
@@ -527,4 +527,26 @@ describe('[host] embedded local frames load in both panes; a sub-frame elsewhere
       closeAccountPane('sess-fr')
     })
   }
+})
+
+describe('[host] closing the Codex panes a lease change names never touches a Claude pane', () => {
+  it('only chatgpt.com panes are asked about, and only those it names close', async () => {
+    const win = new FakeParentWindow()
+    openAccountPane(win as never, 'sess-claude', 'profile-p1a', BOUNDS)
+    openCodexAccountPane(win as never, 'sess-codex-a', ACCT, BOUNDS)
+    openCodexAccountPane(win as never, 'sess-codex-b', ACCT2, BOUNDS)
+    await flush()
+    const asked: Array<[string, string]> = []
+    const n = closeCodexAccountPanesWhere((sid, acct) => { asked.push([sid, acct]); return acct === ACCT })
+    expect(n).toBe(1)
+    expect(asked.map(([s]) => s).sort()).toEqual(['sess-codex-a', 'sess-codex-b'])
+    expect(createdViews[0].view.webContents.destroyed).toBe(false)
+    expect(createdViews[1].view.webContents.destroyed).toBe(true)
+    expect(createdViews[2].view.webContents.destroyed).toBe(false)
+    // A predicate that throws closes (fail closed).
+    expect(closeCodexAccountPanesWhere(() => { throw new Error('lookup failed') })).toBe(1)
+    expect(createdViews[2].view.webContents.destroyed).toBe(true)
+    expect(createdViews[0].view.webContents.destroyed).toBe(false)
+    closeAccountPane('sess-claude')
+  })
 })
