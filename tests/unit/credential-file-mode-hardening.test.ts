@@ -125,8 +125,18 @@ describe('(D) insights kpis.json', () => {
     expect(src).not.toMatch(/[^c]writeFileSync\(\s*join\(archiveDir, 'kpis\.json'\)/)
   })
 
-  it('writes kpis.json through the atomic helper with mode 0600 (both sites)', () => {
+  it('writes kpis.json through the atomic helper with mode 0600 (every site)', () => {
     const matches = src.match(/atomicWriteFileSync\(\s*join\(archiveDir, 'kpis\.json'\),[\s\S]*?\{ mode: 0o600 \}\)/g) ?? []
-    expect(matches.length).toBe(2)
+    // Claude's run, Claude's roll-up, and (WP2 PR 4, P4.7) a Codex report and a
+    // roll-up whose written analysis ran on Codex.
+    expect(matches.length).toBe(4)
+    expect((src.match(/join\(archiveDir, 'kpis\.json'\)/g) ?? []).length).toBe(matches.length)
+  })
+
+  it("P4.7: a Codex report's report.json goes through the atomic helper with mode 0600 too", () => {
+    const sites = src.match(/join\(archiveDir, 'report\.json'\)/g) ?? []
+    const atomic = src.match(/atomicWriteFileSync\(\s*join\(archiveDir, 'report\.json'\),[\s\S]*?\{ mode: 0o600 \}\)/g) ?? []
+    expect(sites.length).toBe(1)
+    expect(atomic.length).toBe(1)
   })
 })

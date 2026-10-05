@@ -39,7 +39,7 @@ import { spawn as nodeSpawn, execFile, execFileSync } from 'node:child_process'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import { logInfo } from '../../debug-logger'
 
-export type CodexCliOperation = 'version' | 'status' | 'logout' | 'login-browser' | 'login-device' | 'login-api-key' | 'review' | 'app-server' | 'models' | 'analysis'
+export type CodexCliOperation = 'version' | 'status' | 'logout' | 'login-browser' | 'login-device' | 'login-api-key' | 'review' | 'app-server' | 'models' | 'analysis' | 'insights'
 
 const ARGS: Readonly<Record<CodexCliOperation, readonly string[]>> = {
   'version': ['--version'],
@@ -84,6 +84,19 @@ const ARGS: Readonly<Record<CodexCliOperation, readonly string[]>> = {
   // (off) in both, so they are not named.
   'analysis': [
     'exec', '--json', '--ephemeral', '--skip-git-repo-check', '--ignore-user-config', '--ignore-rules', '--sandbox', 'read-only',
+    '--disable', 'shell_tool', '--disable', 'unified_exec', '--disable', 'apps', '--disable', 'plugins', '--disable', 'browser_use',
+    '--disable', 'computer_use', '--disable', 'image_generation', '--disable', 'view_image', '--disable', 'multi_agent', '--disable', 'hooks',
+    '--disable', 'code_mode', '--disable', 'code_mode_host',
+    '-c', 'web_search=disabled', '-c', 'project_doc_max_bytes=0', '-c', 'project_root_markers=[]', '-',
+  ],
+  // WP2 PR 4, P4.7 (row 68): a Codex Insights report's one model run, in the
+  // analysis form above with one change: no --ephemeral (mockup D13, approved
+  // 2026-10-05). The run is kept, as Claude's report runs keep their
+  // transcripts and Codex cloud agents keep theirs, so its cost reaches
+  // Tokenomics on the account; the next report knows it by its working
+  // folder and leaves it out (insights-codex.ts).
+  'insights': [
+    'exec', '--json', '--skip-git-repo-check', '--ignore-user-config', '--ignore-rules', '--sandbox', 'read-only',
     '--disable', 'shell_tool', '--disable', 'unified_exec', '--disable', 'apps', '--disable', 'plugins', '--disable', 'browser_use',
     '--disable', 'computer_use', '--disable', 'image_generation', '--disable', 'view_image', '--disable', 'multi_agent', '--disable', 'hooks',
     '--disable', 'code_mode', '--disable', 'code_mode_host',

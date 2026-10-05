@@ -31,6 +31,7 @@ import type {
   KpiMetric
 } from '../shared/types'
 import { formatMetricValue, spanDaysFromPeriod, windowsAreComparable } from '../shared/kpi-format'
+import type { ProviderId } from '../shared/providers'
 
 /** A member account that produced KPIs and so takes part in the roll-up. */
 export interface CrossAccountMember {
@@ -41,6 +42,8 @@ export interface CrossAccountMember {
   accountEmail?: string
   label: string
   kpis: InsightsData
+  /** P4.7: the assistant whose account this is; absent means Claude Code. */
+  provider?: ProviderId
 }
 
 /** Concurrent member runs. Each one is a full interactive `claude` PTY plus a
@@ -407,6 +410,17 @@ Rules:
 
 `
 
+/** P4.7 (mockup C1 A): a roll-up that includes Codex accounts says so in its
+ *  first line; a Claude Code one keeps its head as it was, word for word. */
+export function crossAccountPromptHead(assistants?: ReadonlySet<ProviderId>): string {
+  if (!assistants || !assistants.has('codex')) return CROSS_ACCOUNT_PROMPT_HEAD
+  const which = assistants.has('claude') ? 'Claude Code and Codex' : 'Codex'
+  return CROSS_ACCOUNT_PROMPT_HEAD.replace(
+    'You are comparing Claude Code usage across several accounts belonging to ONE person.',
+    `You are comparing ${which} usage across several accounts belonging to ONE person (a Codex account's label ends in "(Codex)").`
+  )
+}
+
 function metricCell(value: number, format?: string): string {
   return formatMetricValue(value, format)
 }
@@ -506,7 +520,7 @@ export function buildCrossAccountPrompt(members: CrossAccountMember[]): string {
 
 /** Prompt body for an already-assembled roll-up. Split out so the prompt is
  *  testable against a fixed CrossAccountInsights without re-deriving it. */
-export function buildCrossAccountPromptFrom(data: CrossAccountInsights): string {
+export function buildCrossAccountPromptFrom(data: CrossAccountInsights, assistants?: ReadonlySet<ProviderId>): string {
   const blocks = [
     renderAccountsBlock(data),
     renderSharedBlock(data),
@@ -514,7 +528,7 @@ export function buildCrossAccountPromptFrom(data: CrossAccountInsights): string 
     renderUniqueBlock(data),
     renderTopListsBlock(data)
   ].filter((b) => b.length > 0)
-  return CROSS_ACCOUNT_PROMPT_HEAD + blocks.join('\n\n') + '\n'
+  return crossAccountPromptHead(assistants) + blocks.join('\n\n') + '\n'
 }
 
 /**
