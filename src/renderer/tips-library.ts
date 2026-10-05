@@ -1099,7 +1099,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Sign a Codex account in to chatgpt.com, in the app',
         title: 'chatgpt.com for a Codex Account',
-        body: 'A Codex account can be signed in to **chatgpt.com** inside the app, as a Claude account can be to claude.ai:\n\n\u2022 **Sign in to chatgpt.com**, in the account\'s menu in **Settings, Accounts** or in a Codex session\'s right-click menu, opens a sign-in window on that account\'s own browser storage\n\u2022 The window closes once the sign-in and your email are confirmed, and the row says who is signed in\n\u2022 The browser pane\'s start page in that account\'s Codex sessions then offers **chatgpt.com**\n\u2022 **Sign out of chatgpt.com** clears it, and archiving the account clears it first. The Codex command-line tool\'s own **Sign out** leaves it alone',
+        body: 'A Codex account can be signed in to **chatgpt.com** inside the app, as a Claude account can be to claude.ai:\n\n\u2022 **Sign in to chatgpt.com**, in the account\'s menu in **Settings, Accounts** or in a Codex session\'s right-click menu, opens a sign-in window on that account\'s own browser storage\n\u2022 The window closes once the sign-in and your email are confirmed, and the row says who is signed in\n\u2022 The browser pane\'s start page in that account\'s Codex sessions offers **chatgpt.com**, and you can sign in there too\n\u2022 **Sign out of chatgpt.com** clears it, and archiving the account clears it first. The Codex command-line tool\'s own **Sign out** leaves it alone',
         actionLabel: 'Open Settings',
         actionTarget: 'settings',
         focusHint: 'Settings, Accounts -- the menu on a Codex account row',

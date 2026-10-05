@@ -6248,7 +6248,8 @@ sign-in run through the built window), OR3 (the record). PB7 sized OR2.
     proposal, applied in 7c20c204, pinned in 0992e6de). The start-now list
     names only the menu; this is the same #216 fallback on the pane, it only
     removes a wrong-account offer, and it adds no Codex surface (the
-    chatgpt.com surface stays after OR2a).
+    chatgpt.com surface stayed for the second half: then after OR2a, since
+    folded into OR2).
   - *Reviews.* The P4.6 review (27d62537, 7c20c204, 0992e6de): spec PASS,
     quality PASS (D-1 a records item, D-2 to D-6 nits). The fix 1064dbbf: the
     right-click prefetch resolves its account through
@@ -6257,7 +6258,8 @@ sign-in run through the built window), OR3 (the record). PB7 sized OR2.
     wording in 6890deed. Its re-review: spec PASS, quality PASS. Not done,
     optional: a source pin on the dev start's orphan-warning call in
     `index.ts`.
-  - *For the second half (after OR2a).* `webPartitionForCodexAccount` checks
+  - *For the second half (then after OR2a, since folded into OR2).*
+    `webPartitionForCodexAccount` checks
     the id's form only, so each caller that makes a Codex web partition first
     confirms from the provider registry that the account is a Codex account;
     any removal (sign-out, archive, clean-up) checks the whole folder name
@@ -6294,9 +6296,32 @@ sign-in run through the built window), OR3 (the record). PB7 sized OR2.
     store keeps metadata only. Each run owns its window; one sign-in at a
     time across both services; an archive is refused when the clear fails.
     Claude's suites unchanged and green.
-  - *Owed.* The second half's own ADR-009 round; PB7b on the VM; OR2 on the
-    final build (then a values-only fix and a re-run if a value was wrong);
-    OR3, the artifacts record.
+  - *Reviews, round 1 (at dd23a3bf).* Spec review PASS (five minors); quality
+    review FAIL (one major, eight minors); the second half's ADR-009 round, four
+    lenses. Findings fixed in cbb2b58d to 5e2d5a8d (lane W58; mocked).
+  - *Round 1 fixes (2026-10-05; cbb2b58d to 5e2d5a8d).* An archive commits
+    only through a path that cleared the web session first, decided under the
+    registry lock, and the clear runs after the archive's read-only checks;
+    the archive seam is in provider core (`providers/core/archive-hooks.ts`).
+    Before any wipe the run's window and the account's panes close, and the
+    record goes only after a wipe that succeeded; a record that cannot be
+    written or removed is reported. No sign-in or pane starts on an account
+    while its clear runs; a pane opens only for a Codex session holding the
+    account's launch lease.
+    The window and the pane block downloads, hold a sub-frame's own navigations
+    to https, and log hosts only. A sign-in that does not complete also logs
+    whether the session cookie was seen, the identity reads, and the identity
+    answer's HTTP status and key names, never a value, so one failed owner run
+    shows the right values. A pane records an email that answers late, a
+    bounded number of times. The Settings row keeps its own sign-in line,
+    follows one already running, and reads its status afresh after an archive.
+    The start-up wiring is pinned (`main/codex-web-wiring.test.ts`), and the
+    real modules are tested together (`codex-web-boundary.test.ts`). 69
+    mutants, 69 killed.
+  - *Owed.* The spec and quality re-reviews of the round 1 fixes; the ADR-009
+    re-attack (round 2); PB7b on the VM; OR2 on the final build (then a
+    values-only fix and a re-run if a value was wrong); OR3, the artifacts
+    record.
 
 **P4.7 Insights for Codex (row 68).** After P4.5's runner and OR3's approval.
 Probe: PB5 (shared with P4.5).

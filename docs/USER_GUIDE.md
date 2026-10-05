@@ -326,8 +326,8 @@ Claude account can be to claude.ai:
   closes once the sign-in and your email are confirmed, and the row then
   reads chatgpt.com: signed in as that email. A sign-in that does not finish
   (the window closed, Cancel, or five minutes with no sign-in) is cleared.
-- A Codex session's browser pane then offers **chatgpt.com** on its start
-  page, as the account the session runs under.
+- A Codex session's browser pane offers **chatgpt.com** on its start page,
+  as the account the session runs under; you can sign in there too.
 - **Sign out of chatgpt.com** in the account's menu clears that storage.
   Archiving the account clears it first; if that clear fails, the archive
   is refused and the account stays. The Codex command-line tool's own

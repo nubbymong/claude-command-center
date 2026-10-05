@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "315e26c48e741e5f858b0210d0d8c0b645233704501d244cb816bc83ac859a4e",
-  "manifestHead": "dd23a3bf6de948f9cf0b3ae1dc015deb9afb52f8",
+  "manifestPathDigest": "af9c1dbc83ed52229d25ede641305bd86f233caf7b5580053a2837cfdb2ff192",
+  "manifestHead": "e26a29a7d8b07c6d990ab4ec76b3f77d72351e92",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -5108,6 +5108,30 @@
       "note": "created by WP2 PR 3 P3.8; pure"
     },
     {
+      "path": "tests/unit/codex-web-boundary.test.ts",
+      "predicates": [
+        "P01",
+        "P02",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 4 P4.6 second half (row 58, round 1 fixes; 1c23d939, 5e2d5a8d) test: the real codexWeb handlers, session, pane and record modules wired as main's start-up wires them: an archive or sign-out closes the account's panes before its partition is wiped, no sign-in or pane starts while a clear runs, a pane opens only for a session holding the account, the shared pane channels act on a Codex pane, and a record that cannot be written or removed is reported (WP1.33); tests/unit/codex-web-boundary.test.ts",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/codex-web-copy.test.ts",
+      "predicates": [
+        "P01",
+        "P04",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 4 P4.6 second half (row 58, round 1 fixes; 44ab37ab) test: the user-facing copy about a Codex account's chatgpt.com sign-in (the tip, the Feature Guide and Ask Conductor knowledge, the changelog) names no sign-in method (WP1.33); tests/unit/codex-web-copy.test.ts",
+      "note": ""
+    },
+    {
       "path": "tests/unit/codex-web-flight.test.ts",
       "predicates": [
         "P01",
@@ -5963,6 +5987,17 @@
       "category": "TEST",
       "disposition": "added",
       "evidence": "new WP2 PR 4 P4.6 second half (row 58; e5bb0976) test: the archive seam, and the accounts service running it before anything of a managed or external archive, refusing the archive when the clear fails (WP1.15, WP1.33); tests/unit/main/codex-web-archive.test.ts",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/main/codex-web-wiring.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 4 P4.6 second half (row 58, round 1 fixes; 1c23d939) test: main's start-up wiring of a Codex account's chatgpt.com web session: the archive hook registered before the accounts service, the panes closed before a wipe and the record forgotten after it, and a pane bound to a Codex session holding the account's lease (WP1.15, WP1.33); tests/unit/main/codex-web-wiring.test.ts",
       "note": ""
     },
     {
