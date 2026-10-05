@@ -27,6 +27,7 @@ const api = {
   },
   tokenomics: { summary: vi.fn(async () => null) },
   accountProfiles: { authInfo: vi.fn(async () => []) },
+  providerAccounts: { refreshStatus: vi.fn(async () => ({ ok: true, state: 'expired' })) },
 }
 ;(globalThis as any).window.electronAPI = { ...(globalThis as any).window.electronAPI, ...api }
 
@@ -152,6 +153,34 @@ describe('New run on a Codex account', () => {
     await act(async () => { (byTest('insights-codex-ack') as HTMLInputElement).click() })
     await act(async () => { (byTest('insights-codex-confirm-run') as HTMLButtonElement).click() })
     expect(api.insights.run).toHaveBeenCalledWith({ profileId: EXT, provider: 'codex', acknowledgeRealmOnly: true })
+  })
+
+  it('the confirmation closes when the account changes, or when a run starts; its Run is off while one runs (review F4, F6c) [host]', async () => {
+    await render()
+    await pick(`codex:${EXT}`)
+    await act(async () => { byTest('insights-run-now')!.click() })
+    expect(byTest('insights-codex-confirm')).not.toBeNull()
+    await pick(`codex:${ACCT}`)
+    expect(byTest('insights-codex-confirm')).toBeNull()
+    await pick(`codex:${EXT}`)
+    await act(async () => { byTest('insights-run-now')!.click() })
+    expect(byTest('insights-codex-confirm')).not.toBeNull()
+    // A roll-up starts elsewhere (Run all): the confirmation closes and runs nothing.
+    await act(async () => { useInsightsStore.setState({ batchActive: true }) })
+    expect(byTest('insights-codex-confirm')).toBeNull()
+    expect(api.insights.run).not.toHaveBeenCalled()
+  })
+
+  it('the confirmation closes on Escape and on a click outside, and its tick box takes focus [host]', async () => {
+    await render()
+    await pick(`codex:${EXT}`)
+    await act(async () => { byTest('insights-run-now')!.click() })
+    expect(document.activeElement).toBe(byTest('insights-codex-ack'))
+    await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })) })
+    expect(byTest('insights-codex-confirm')).toBeNull()
+    await act(async () => { byTest('insights-run-now')!.click() })
+    await act(async () => { document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })) })
+    expect(byTest('insights-codex-confirm')).toBeNull()
   })
 
   it("an unverified account's confirmation uses the agent's other wording [host]", async () => {
@@ -299,6 +328,11 @@ describe('a lapsed Codex sign-in (screen 7, D10)', () => {
     window.removeEventListener('app:openSettings', onOpen)
     expect(byTest('insights-reauth-codex')!.textContent).toBe('Sign in: Reviewer (Codex)')
     expect(opened).toEqual([{ tab: 'accounts' }])
+    // Re-check sign-ins asks Codex about the Codex account it names (Check sign-in).
+    const recheck = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'Re-check sign-ins')!
+    await act(async () => { recheck.click() })
+    expect(api.providerAccounts.refreshStatus).toHaveBeenCalledWith(ACCT2)
+    expect(api.providerAccounts.refreshStatus).not.toHaveBeenCalledWith(ACCT)
   })
 
   it("a Codex account whose latest run failed to sign in, and has not signed in since, is named too [host]", async () => {

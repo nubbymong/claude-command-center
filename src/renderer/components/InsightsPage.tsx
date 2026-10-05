@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useInsightsStore } from '../stores/insightsStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSettingsStore } from '../stores/settingsStore'
-import { useProviderAccountsStore, accountDisplayName } from '../stores/providerAccountsStore'
+import { useProviderAccountsStore, accountDisplayName, providerAccountActions } from '../stores/providerAccountsStore'
+import { useClickOutside } from '../hooks/useClickOutside'
 import { useReauthAccount } from '../hooks/useReauthAccount'
 import { authFailureStillApplies, describeAuthWindow, type ProfileAuthInfo } from '../../shared/account-auth'
 import { isAccountActive } from '../../shared/account-types'
@@ -120,20 +121,27 @@ function AuthBanner({
 
 /** P4.7 (mockup D12): a run on an account marked "confirm at launch" asks the
  *  per-run confirmation a Codex cloud agent asks, in its words. Nothing is
- *  kept: the tick counts for this run and this account only. */
+ *  kept: the tick counts for this run and this account only. A run that
+ *  starts closes it (the page's own Run buttons are off while one runs);
+ *  Escape or a click outside closes it, and the tick box takes focus. */
 function CodexRunConfirm({ choice, onRun, onCancel }: { choice: InsightsAccountChoice; onRun: () => void; onCancel: () => void }) {
   const [ticked, setTicked] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  const box = useRef<HTMLInputElement>(null)
+  useClickOutside(ref, onCancel)
+  useEffect(() => { box.current?.focus() }, [])
   return (
     <div
+      ref={ref}
       role="dialog"
       aria-label="Confirm this report"
       data-testid="insights-codex-confirm"
-      onKeyDown={(e) => { if (e.key === 'Escape') onCancel() }}
       className="absolute right-0 top-full mt-1 z-30 w-[320px] rounded-lg border p-3 text-left shadow-lg"
       style={{ background: 'var(--surface-overlay)', borderColor: 'var(--border-strong)' }}
     >
       <label className="flex items-start gap-2 text-[11.5px] leading-snug cursor-pointer" style={{ color: 'var(--text-primary)' }}>
         <input
+          ref={box}
           type="checkbox"
           checked={ticked}
           onChange={(e) => setTicked(e.target.checked)}
@@ -220,8 +228,10 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
     loadCatalogue()
   }, [])
 
-  // A changed account choice closes an open confirmation: it named the other one.
+  // A changed account choice closes an open confirmation: it named the other
+  // one. So does a run starting, from this page or a roll-up.
   useEffect(() => { setConfirming(false) }, [selected.value])
+  useEffect(() => { if (status === 'running' || status === 'extracting_kpis' || batchActive) setConfirming(false) }, [status, batchActive])
 
   useEffect(() => {
     if (!selectedRunId) {
@@ -394,7 +404,12 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
       accounts={accountsNeedingReauth}
       checking={checkingAuth}
       onReauth={handleReauth}
-      onRecheck={() => void recheckAuth()}
+      onRecheck={() => {
+        void recheckAuth()
+        // A Codex account's sign-in is asked of Codex (Check sign-in); the
+        // pushed snapshot then updates the banner.
+        for (const a of accountsNeedingReauth) if (a.provider === 'codex') void providerAccountActions.checkSignIn(a.id)
+      }}
     />
   )
 
