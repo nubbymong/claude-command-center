@@ -68,8 +68,9 @@ deliberately out of scope.
   `account-profiles` folder above one of them. Allowed roots: the isolated root,
   the temp folder (on Windows it sits under LOCALAPPDATA), a CI runner's
   `RUNNER_TEMP` when it is named like a temp folder and holds no trusted real home
-  (GitHub keeps it under HOME on Linux and macOS), and the project root (CI runners
-  keep the checkout under HOME). The more specific root wins; only the
+  (GitHub keeps it under HOME on Linux and macOS; a child whose environment was
+  rebuilt without it, such as a CLI the app runs, learns it from the marker), and the
+  project root (CI runners keep the checkout under HOME). The more specific root wins; only the
   isolated root wins a tie.
 - Paths are compared after resolving `..`, separators, case (win32, darwin),
   trailing dots and spaces, stream suffixes, `\\?\`, `\\.\` and `\??\` prefixes,
@@ -82,7 +83,8 @@ deliberately out of scope.
   checked, so it is not refused.
 - A guard marker handed to a child can add real roots but cannot widen the allowed
   area: a temp root it names must hold the child's own temp folder, be named like a
-  temp folder and hold no trusted real home.
+  temp folder and hold no trusted real home; a runner temp folder it names gets the
+  same rule as RUNNER_TEMP itself (absolute, temp-named, holding no trusted real home).
 - `npm_config_*` and `GIT_CONFIG_GLOBAL` values that name a real home (npm sets
   them for every script it runs) are pointed into the isolated home in each worker,
   so the children inherit safe ones.

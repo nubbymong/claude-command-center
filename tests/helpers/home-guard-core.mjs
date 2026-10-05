@@ -888,7 +888,7 @@ function parseMarker(raw) {
     const m = JSON.parse(raw)
     if (!m || m.v !== 1) return null
     const list = (/** @type {unknown} */ x) => (Array.isArray(x) ? x.filter(nonEmpty) : [])
-    return { real: list(m.real), tmp: list(m.tmp), inst: list(m.inst), isolated: nonEmpty(m.isolated) ? m.isolated : undefined }
+    return { real: list(m.real), tmp: list(m.tmp), inst: list(m.inst), runner: list(m.runner), isolated: nonEmpty(m.isolated) ? m.isolated : undefined }
   } catch {
     return null
   }
@@ -965,10 +965,12 @@ function buildConfig(opts = {}) {
   const holdsOwnTmp = (/** @type {string} */ t) => createHomeChecker({ realRoots: [t], platform }).isProtected(ownTmp)
   // A CI runner's per-job temp folder (GitHub Actions' RUNNER_TEMP, _temp under HOME on
   // its Linux and macOS runners) is a temp area too, when it is temp-named and holds no
-  // trusted real home.
-  const runnerTemp = envValue(env, 'RUNNER_TEMP')
+  // trusted real home (the filter below). It comes from this process's RUNNER_TEMP or from
+  // the marker (a child whose environment was rebuilt from an allowlist no longer has the
+  // variable), under the same rule either way.
+  const runnerTemps = abs([envValue(env, 'RUNNER_TEMP') ?? '', ...(marker ? marker.runner : [])].filter((t) => path.isAbsolute(t))).filter(tempNamed)
   const tmpRoots = abs([
-    ...abs([...(opts.extraTmpRoots ?? []), ownTmp, runnerTemp && path.isAbsolute(runnerTemp) && tempNamed(runnerTemp) ? runnerTemp : '']),
+    ...abs([...(opts.extraTmpRoots ?? []), ownTmp, ...runnerTemps]),
     ...abs(marker ? marker.tmp : []).filter((t) => tempNamed(t) && holdsOwnTmp(t)),
   ]).filter((t) => !containsTrusted(t))
 
@@ -1006,7 +1008,7 @@ function buildConfig(opts = {}) {
   const userNames = [osUserName() ?? '', ...realRaw.map((r) => path.basename(r))]
   const allowedRoots = isolated ? [{ path: isolated, kind: /** @type {'isolated'} */ ('isolated') }, ...base] : base
   const checker = createHomeChecker({ realRoots: realRaw, allowedRoots, installRoots, userNames, executables: [process.execPath], platform })
-  return { platform, realRaw, tmpRoots, installRoots, isolated, checker, originalEnv, markerRaw }
+  return { platform, realRaw, tmpRoots, runnerTemps, installRoots, isolated, checker, originalEnv, markerRaw }
 }
 
 /**
@@ -1022,9 +1024,9 @@ function getState() {
   return /** @type {any} */ (process)[STATE_KEY]
 }
 
-/** @param {{ realRaw: string[], tmpRoots: string[], installRoots: string[] }} c @param {string | undefined} isolated */
+/** @param {{ realRaw: string[], tmpRoots: string[], runnerTemps: string[], installRoots: string[] }} c @param {string | undefined} isolated */
 function markerValue(c, isolated) {
-  return JSON.stringify({ v: 1, real: c.realRaw, tmp: c.tmpRoots, inst: c.installRoots, isolated })
+  return JSON.stringify({ v: 1, real: c.realRaw, tmp: c.tmpRoots, runner: c.runnerTemps, inst: c.installRoots, isolated })
 }
 
 /** @param {GuardState} state @param {string} op @param {unknown} target @param {Hit} hit */
@@ -1408,6 +1410,7 @@ function childEnv(state, op, src, cwdAbs) {
       v: 1,
       real: [...new Set([...(given ? given.real : []), ...state.realRaw])],
       tmp: given ? given.tmp : state.tmpRoots,
+      runner: given ? given.runner : state.runnerTemps,
       inst: [...new Set([...(given ? given.inst : []), ...state.installRoots])],
       isolated: given ? given.isolated : state.isolated,
     }),

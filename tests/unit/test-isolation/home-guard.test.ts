@@ -175,9 +175,9 @@ function childScript(name: string, body: string, targets: Record<string, unknown
   return file
 }
 /** Run a child script; return its parsed stdout, status and stderr. */
-function runChild(file: string, opts: { env?: Record<string, string>; preload?: boolean } = {}) {
+function runChild(file: string, opts: { env?: Record<string, string>; preload?: boolean; cwd?: string } = {}) {
   const args = opts.preload === false ? [file] : ['--import', PROBE_GUARD_URL, file]
-  const r = spawnSync(process.execPath, args, { env: opts.env ?? { ...MIN_ENV }, cwd: path.dirname(file), encoding: 'utf8', timeout: 60_000 })
+  const r = spawnSync(process.execPath, args, { env: opts.env ?? { ...MIN_ENV }, cwd: opts.cwd ?? path.dirname(file), encoding: 'utf8', timeout: 60_000 })
   let out: Record<string, unknown> = {}
   try {
     out = JSON.parse(r.stdout || '{}') as Record<string, unknown>
@@ -1008,25 +1008,57 @@ describe('the guard in a plain-node child (probe-guard.mjs)', () => {
     const named = path.join(home, 'work', '_temp')
     const unnamed = path.join(home, 'work', 'cache')
     for (const d of [tmp, named, unnamed]) mkdirSync(d, { recursive: true })
+    // The grandchild gets an environment rebuilt from an allowlist (no RUNNER_TEMP), as the
+    // app's CLI runner builds one: it learns the runner's temp folder from the marker.
+    const inner: Record<string, string> = { ...MIN_ENV, HOME: tmp, USERPROFILE: tmp, APPDATA: tmp, LOCALAPPDATA: tmp, TEMP: tmp, TMP: tmp, TMPDIR: tmp }
+    if (WIN) Object.assign(inner, { HOMEDRIVE: tmp.slice(0, 2), HOMEPATH: tmp.slice(2) })
     const body = [
       'const g = await import(t.guardUrl)',
       ATTEMPT,
+      "const { spawnSync } = await import('node:child_process')",
       'await attempt("inRunnerTemp", () => fs.mkdirSync(t.target))',
       'await attempt("inHome", () => fs.rmSync(t.canary))',
+      'const mk = (target, env) => () => { const r = spawnSync(process.execPath, ["-e", "require(\'node:fs\').mkdirSync(process.argv[1])", target], { env, cwd: t.tmp, encoding: "utf8" }); if (r.status !== 0) throw Object.assign(new Error(r.stderr), { code: r.stderr.includes(t.code) ? t.code : "exit " + r.status }) }',
+      'await attempt("grandchild", mk(t.target2, t.inner))',
+      // A probe environment carries it in its marker too.
+      'await attempt("probe", () => mk(t.target3, g.isolatedProbeEnv(t.probeRoot))())',
       'g.drainViolations()',
       'process.stdout.write(JSON.stringify(out))',
     ].join('\n')
-    const run = (runnerTemp: string) =>
-      runChild(childScript('runner-temp', body, { target: path.join(runnerTemp, `x-${TAG}`), canary: path.join(home, `.ccc-iso-canary-${TAG}`) }), {
-        env: { ...MIN_ENV, HOME: home, USERPROFILE: home, TEMP: tmp, TMP: tmp, TMPDIR: tmp, RUNNER_TEMP: runnerTemp, [MARKER_ENV]: JSON.stringify({ v: 1, real: [], tmp: [tmp], inst: [] }) },
-      })
-    const a = run(named)
+    let n = 0
+    const run = (opts: { env?: string; marker?: string[]; real?: string[]; cwd?: string; at?: string }) => {
+      const at = opts.at ?? opts.env ?? (opts.marker ?? [])[0] ?? tmp
+      n++
+      const marker = JSON.stringify({ v: 1, real: opts.real ?? [], tmp: [tmp], inst: [], ...(opts.marker ? { runner: opts.marker } : {}) })
+      const env: Record<string, string> = { ...MIN_ENV, HOME: home, USERPROFILE: home, TEMP: tmp, TMP: tmp, TMPDIR: tmp, [MARKER_ENV]: marker }
+      if (opts.env) env.RUNNER_TEMP = opts.env
+      const targets = { target: path.join(at, `x${n}-${TAG}`), target2: path.join(at, `y${n}-${TAG}`), target3: path.join(at, `z${n}-${TAG}`), probeRoot: path.join(tmp, `probe${n}`), canary: path.join(home, `.ccc-iso-canary-${TAG}`), inner, tmp, code: VIOLATION_CODE }
+      return runChild(childScript('runner-temp', body, targets), { env, cwd: opts.cwd })
+    }
+    const a = run({ env: named })
     expect(a.status, a.stderr).toBe(0)
-    expect(a.out).toEqual({ inRunnerTemp: 'no refusal', inHome: VIOLATION_CODE })
-    const b = run(unnamed)
+    expect(a.out).toEqual({ inRunnerTemp: 'no refusal', inHome: VIOLATION_CODE, grandchild: 'no refusal', probe: 'no refusal' })
+    const b = run({ env: unnamed })
     expect(b.status, b.stderr).toBe(0)
-    expect(b.out).toEqual({ inRunnerTemp: VIOLATION_CODE, inHome: VIOLATION_CODE })
-    expect(existsSync(path.join(unnamed, `x-${TAG}`))).toBe(false)
+    expect(b.out).toEqual({ inRunnerTemp: VIOLATION_CODE, inHome: VIOLATION_CODE, grandchild: VIOLATION_CODE, probe: VIOLATION_CODE })
+    // Handed over in the marker only: the same rule applies.
+    const c = run({ marker: [named] })
+    expect(c.status, c.stderr).toBe(0)
+    expect(c.out).toEqual({ inRunnerTemp: 'no refusal', inHome: VIOLATION_CODE, grandchild: 'no refusal', probe: 'no refusal' })
+    const d = run({ marker: [unnamed] })
+    expect(d.status, d.stderr).toBe(0)
+    expect(d.out).toEqual({ inRunnerTemp: VIOLATION_CODE, inHome: VIOLATION_CODE, grandchild: VIOLATION_CODE, probe: VIOLATION_CODE })
+    // One that holds a real home (here a parent's real root) is no temp area.
+    const holding = path.join(home, 'work2', '_temp')
+    mkdirSync(holding, { recursive: true })
+    const e = run({ marker: [holding], real: [path.join(holding, 'keep')] })
+    expect(e.status, e.stderr).toBe(0)
+    expect(e.out).toEqual({ inRunnerTemp: VIOLATION_CODE, inHome: VIOLATION_CODE, grandchild: VIOLATION_CODE, probe: VIOLATION_CODE })
+    // A relative value is ignored, never read against the working folder.
+    const f = run({ env: '_temp', cwd: path.dirname(named), at: named })
+    expect(f.status, f.stderr).toBe(0)
+    expect(f.out).toEqual({ inRunnerTemp: VIOLATION_CODE, inHome: VIOLATION_CODE, grandchild: VIOLATION_CODE, probe: VIOLATION_CODE })
+    for (const k of [2, 4]) for (const p of ['x', 'y', 'z']) expect(existsSync(path.join(unnamed, `${p}${k}-${TAG}`))).toBe(false)
   })
 
   it("a toolchain worker runs guarded: esbuild's worker refuses to start its service in a real home", () => {
@@ -1058,9 +1090,10 @@ describe('the guard in a plain-node child (probe-guard.mjs)', () => {
   })
 
   it('the running node binary named in an argument is no refusal when it sits in a real home; the rest of that home is', () => {
-    // The child's "real" home is the folder holding this node binary (macOS runners keep
-    // node under HOME, and a test hands it to a git hook). The grandchild only runs
-    // `node -e 0` with the argument: nothing reads or writes it.
+    // The folder holding this node binary is a real home for the child, handed over in the
+    // marker as a parent's real roots are (macOS runners keep node under HOME, and a test
+    // hands it to a git hook). The grandchild only runs `node -e 0` with the argument:
+    // nothing reads or writes it.
     const binDir = path.dirname(process.execPath)
     const sim = mkdtempSync(path.join(SCRATCH, 'execsim-'))
     const tmp = path.join(sim, 'tmp')
@@ -1078,8 +1111,8 @@ describe('the guard in a plain-node child (probe-guard.mjs)', () => {
       'process.stdout.write(JSON.stringify(out))',
     ].join('\n')
     const file = childScript('exec-arg', body, { inner, tmp })
-    const marker = JSON.stringify({ v: 1, real: [], tmp: [tmp], inst: [] })
-    const r = runChild(file, { env: { ...MIN_ENV, HOME: binDir, USERPROFILE: binDir, TEMP: tmp, TMP: tmp, TMPDIR: tmp, [MARKER_ENV]: marker } })
+    const marker = JSON.stringify({ v: 1, real: [binDir], tmp: [tmp], inst: [] })
+    const r = runChild(file, { env: { ...MIN_ENV, HOME: tmp, USERPROFILE: tmp, TEMP: tmp, TMP: tmp, TMPDIR: tmp, [MARKER_ENV]: marker } })
     expect(r.status, r.stderr).toBe(0)
     expect(r.out).toEqual({ hook: 'no refusal', sibling: VIOLATION_CODE })
   })
@@ -1122,8 +1155,9 @@ describe('the isolated home looks like a real one', () => {
     expect(r.status, r.stderr).toBe(0)
     const out = r.out as { root: string; local: string; home: string }
     for (const v of [out.root, out.local, out.home]) expect(v, v).not.toContain('~')
-    // The long form of the short TEMP (the child removed the folder when it exited).
-    expect(norm(out.root).startsWith(norm(sim) + path.sep)).toBe(true)
+    // The long form of the short TEMP (the child removed the folder when it exited). On a
+    // runner the scratch folder itself sits under a short TEMP, so compare long forms.
+    expect(norm(out.root).startsWith(norm(fsNs.realpathSync.native(sim)) + path.sep)).toBe(true)
   })
 })
 
