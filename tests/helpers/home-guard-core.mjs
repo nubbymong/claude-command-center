@@ -14,9 +14,9 @@
 // HOMEDRIVE+HOMEPATH, os.homedir(), os.userInfo().homedir (which ignores the
 // environment), and any account-profiles folder above one of them. A path is inside
 // a real home when it is under one of them and not under a more specific allowed
-// root: the isolated root, the temp folder (on Windows it sits under LOCALAPPDATA),
-// or the project root (CI runners keep the checkout under HOME). Only the isolated
-// root wins a tie.
+// root: the isolated root, the temp folder (on Windows it sits under LOCALAPPDATA), a
+// CI runner's RUNNER_TEMP, or the project root (CI runners keep the checkout under
+// HOME). Only the isolated root wins a tie.
 //
 // Covered (each throws TEST_ISOLATION_VIOLATION and is recorded, so a refusal the
 // caller swallows still fails the test, or the probe's exit code):
@@ -35,10 +35,14 @@
 //     `pwsh|powershell -c|-Command`) a `cd` / `chdir` / `pushd` (glued forms such as
 //     `cd/d`, `cd\`, `cd..` included) or `Set-Location` / `sl` / `Push-Location` into
 //     or above a real home, a filesystem root that holds one included. The executable
-//     itself is not refused, nor a node script, or the command word (that position
-//     only) of a `cmd /c` / `sh -c` line, inside a real home's npm or nvm folder;
-//   - worker_threads Workers, process.execve and
-//     process.binding('fs' | 'fs_dir' | 'spawn_sync' | 'process_wrap').
+//     itself is not refused, nor the running node binary named in an argument (a git
+//     hook command), nor a node script, or the command word (that position only) of a
+//     `cmd /c` / `sh -c` line, inside a real home's npm or nvm folder. A child env
+//     that omits a home or temp variable gets it filled in;
+//   - worker_threads Workers: one whose script is in this project's node_modules (a
+//     toolchain worker such as esbuild's) starts guarded, every other one is refused;
+//     process.execve and process.binding('fs' | 'fs_dir' | 'spawn_sync' |
+//     'process_wrap') are refused.
 // Paths are compared after resolving `..`, separators, case (win32, darwin),
 // trailing dots and spaces, stream suffixes, `\\?\` `\\.\` `\??\` prefixes, file:
 // URLs and URL-like objects, Buffers, and the real path of the nearest existing
@@ -53,7 +57,8 @@
 // entry points; shell re-assembly of an argument: quotes or carets inside a word,
 // `%VAR%` / `$VAR` expansion, a PowerShell `-EncodedCommand`, and a relative path after
 // a `cd` the scanner did not see are NOT read the way the shell will read them; a
-// recursive delete is left to Node, which does not follow links.
+// recursive delete is left to Node, which does not follow links; a refusal inside a
+// toolchain worker fails that worker's call but is not recorded in the test's thread.
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -372,7 +377,9 @@ const GLOB_CHARS = /[*?[{]/
  * A pure checker over explicit roots. The installed guard is one of these; tests
  * build their own with simulated roots and a fake fs.
  * @param {{ realRoots: string[], allowedRoots?: AllowedRoot[], installRoots?: string[], userNames?: string[],
- *   platform?: string, fsImpl?: FsImpl, cwd?: () => string }} opts
+ *   executables?: string[], platform?: string, fsImpl?: FsImpl, cwd?: () => string }} opts
+ *   `executables`: binaries an argument may name even inside a real home (the running
+ *   node, which macOS runners keep under HOME and tests hand to git hooks)
  */
 export function createHomeChecker(opts) {
   const platform = opts.platform ?? process.platform
@@ -476,6 +483,7 @@ export function createHomeChecker(opts) {
 
   const realKeys = keysOf(opts.realRoots)
   const installKeys = keysOf(opts.installRoots ?? [])
+  const execKeys = new Set(keysOf(opts.executables ?? []))
   /** @type {{ key: string, kind: string }[]} */
   const allowed = []
   for (const a of opts.allowedRoots ?? []) {
@@ -682,6 +690,12 @@ export function createHomeChecker(opts) {
     const check = (/** @type {string} */ c) => {
       if (!c || seen.has(c)) return null
       seen.add(c)
+      // The running node binary named as an argument (a git hook command) is the same
+      // binary the executable exemption already lets run: that exact file only.
+      if (execKeys.size > 0) {
+        const keys = formsOf(c, base, ctx).forms.map((f) => keyOf(f, platform))
+        if (keys.length > 0 && keys.every((k) => execKeys.has(k))) return null
+      }
       ctx.lexOnly = /** @type {number} */ (ctx.full) >= FULL_CHECKS_PER_ARG
       if (!ctx.lexOnly) ctx.full = /** @type {number} */ (ctx.full) + 1
       return argCandidate(c, base, ctx)
@@ -949,8 +963,12 @@ function buildConfig(opts = {}) {
   const ownTmp = os.tmpdir()
   const tempNamed = (/** @type {string} */ t) => /^(?:_?te?mp|t|ccc-vitest-.+)$/i.test(path.basename(t))
   const holdsOwnTmp = (/** @type {string} */ t) => createHomeChecker({ realRoots: [t], platform }).isProtected(ownTmp)
+  // A CI runner's per-job temp folder (GitHub Actions' RUNNER_TEMP, _temp under HOME on
+  // its Linux and macOS runners) is a temp area too, when it is temp-named and holds no
+  // trusted real home.
+  const runnerTemp = envValue(env, 'RUNNER_TEMP')
   const tmpRoots = abs([
-    ...abs([...(opts.extraTmpRoots ?? []), ownTmp]),
+    ...abs([...(opts.extraTmpRoots ?? []), ownTmp, runnerTemp && path.isAbsolute(runnerTemp) && tempNamed(runnerTemp) ? runnerTemp : '']),
     ...abs(marker ? marker.tmp : []).filter((t) => tempNamed(t) && holdsOwnTmp(t)),
   ]).filter((t) => !containsTrusted(t))
 
@@ -987,7 +1005,7 @@ function buildConfig(opts = {}) {
   ])
   const userNames = [osUserName() ?? '', ...realRaw.map((r) => path.basename(r))]
   const allowedRoots = isolated ? [{ path: isolated, kind: /** @type {'isolated'} */ ('isolated') }, ...base] : base
-  const checker = createHomeChecker({ realRoots: realRaw, allowedRoots, installRoots, userNames, platform })
+  const checker = createHomeChecker({ realRoots: realRaw, allowedRoots, installRoots, userNames, executables: [process.execPath], platform })
   return { platform, realRaw, tmpRoots, installRoots, isolated, checker, originalEnv, markerRaw }
 }
 
@@ -1345,6 +1363,14 @@ function childEnv(state, op, src, cwdAbs) {
     const value = fillFrom && fillFrom[name]
     if (get(name) === undefined && value) set(name, value)
   }
+  // The temp folder carries over too (POSIX does not copy it in; a child that fell back
+  // to /tmp would take the temp home it was given for a real one). On Windows libuv
+  // copies TEMP in itself; that live value is checked below.
+  for (const name of TEMP_VARS) {
+    if (LIBUV_REQUIRED.includes(name)) continue
+    const value = envValue(/** @type {any} */ (process.env), name)
+    if (get(name) === undefined && value) set(name, value)
+  }
   // What libuv will add on Windows, from the live process environment.
   const live = (/** @type {string} */ name) => get(name) ?? (LIBUV_REQUIRED.includes(name) ? envValue(/** @type {any} */ (process.env), name) : undefined)
   for (const name of [...HOME_VARS, ...XDG_VARS, ...TEMP_VARS]) {
@@ -1577,16 +1603,40 @@ function patchNodePty(state) {
   return true
 }
 
-/** Workers get fresh, unpatched builtins: refuse them. @param {GuardState} state */
+/** Workers get fresh, unpatched builtins: start a toolchain worker guarded, refuse the rest. @param {GuardState} state */
 function patchWorkers(state) {
   const wt = /** @type {any} */ (workerThreads)
   const Orig = wt.Worker
   if (typeof Orig !== 'function') return
-  const Guarded = function Worker(/** @type {unknown} */ filename) {
+  // A toolchain worker (a script inside this project's own node_modules, such as
+  // esbuild's sync service) starts GUARDED: a preamble loads probe-guard in the worker
+  // before the script, and the worker gets the guard marker in its environment. Any
+  // other Worker (eval code, a test's own script) is refused.
+  const toolchain = createHomeChecker({ realRoots: [path.join(PROJECT_ROOT, 'node_modules')], platform: process.platform })
+  const Guarded = function Worker(/** @type {unknown} */ filename, /** @type {any} */ options) {
+    const o = options && typeof options === 'object' ? options : {}
+    /** @type {string | undefined} */ let file
+    if (!o.eval) {
+      try {
+        // A string is a path (Node takes no URL string); a URL object must be file: (a
+        // data: URL throws here and is refused).
+        file = filename instanceof URL ? fileURLToPath(filename) : typeof filename === 'string' ? path.resolve(filename) : undefined
+      } catch {
+        file = undefined
+      }
+    }
+    if (file !== undefined && toolchain.isProtected(file)) {
+      const src = o.env === undefined || o.env === wt.SHARE_ENV ? process.env : o.env
+      const env = { ...src, [MARKER_ENV]: markerValue(state, state.isolated) }
+      // The guard first, then the script (import() loads CommonJS and ES modules alike).
+      // A failure is an unhandled rejection, which ends the worker with an error.
+      const code = `import(${JSON.stringify(PROBE_GUARD_URL)}).then(() => import(${JSON.stringify(pathToFileURL(file).href)}))`
+      return new Orig(code, { ...o, eval: true, env })
+    }
     throw violation(state, 'worker_threads.Worker', String(filename).slice(0, 120), {
       root: '(worker thread)',
       form: 'Worker',
-      reason: 'would run with unguarded builtins',
+      reason: 'would run with unguarded builtins (only a script in this project\'s node_modules starts, guarded)',
     })
   }
   Guarded.prototype = Orig.prototype
@@ -1627,7 +1677,17 @@ function makeIsolated(state, /** @type {string[] | undefined} */ extraTmpRoots) 
   const origTmp = (extraTmpRoots ?? []).find(nonEmpty) ?? os.tmpdir()
   // A sibling of the per-worker temp root, never inside it: some code treats a home
   // below os.tmpdir() differently. The `ccc-vitest-` prefix lets global-setup sweep it.
-  const root = fs.mkdtempSync(path.join(origTmp, 'ccc-vitest-home-'))
+  let root = fs.mkdtempSync(path.join(origTmp, 'ccc-vitest-home-'))
+  // On Windows, the long form: a runner's TEMP carries 8.3 short names (RUNNER~1), which
+  // a real profile path never has, and code that wants a plain path would read the
+  // isolated home differently from a real one.
+  if (IS_WIN) {
+    try {
+      root = fs.realpathSync.native(root)
+    } catch {
+      /* keep the path as made */
+    }
+  }
   // The marker this process started with is gone from its env by now; the state kept it.
   const { originalEnv: _orig, ...config } = buildConfig({ extraTmpRoots, isolated: root, markerRaw: state.markerRaw })
   Object.assign(state, config, { isolatedEnv: config.isolated ? isolatedHomeVars(config.isolated, config.platform) : null, safeArea: undefined })

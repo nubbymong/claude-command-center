@@ -279,9 +279,14 @@ describe('fs writes and creates aimed at a real home throw', () => {
     ['fs.openSync', () => fsNs.openSync(inMissing(), 'x')],
     ['fs.open', () => fsNs.open(inMissing(), 'r+', noop)],
     ['fs.createWriteStream', () => fsNs.createWriteStream(inMissing())],
-    ['fs.mkdtempDisposableSync', () => (fsNs as unknown as { mkdtempDisposableSync: (p: string) => unknown }).mkdtempDisposableSync(inMissing() + '-')],
   ]
   it.each(cases)('%s', (op, run) => expectRefused(run, op))
+
+  // Node 24+ only (absent on Node 20, where the guard simply has nothing to wrap).
+  const disposableSync = (fsNs as unknown as { mkdtempDisposableSync?: (p: string) => unknown }).mkdtempDisposableSync
+  it.runIf(typeof disposableSync === 'function')('fs.mkdtempDisposableSync (where this Node has it)', () => {
+    expectRefused(() => (disposableSync as (p: string) => unknown)(inMissing() + '-'), 'fs.mkdtempDisposableSync')
+  })
 
   it('a read-only open is not a mutation and is not refused', () => {
     let code: string | undefined
@@ -296,7 +301,12 @@ describe('fs writes and creates aimed at a real home throw', () => {
 
   it('read-only flags are an allow-list', () => {
     for (const f of [undefined, 'r', 'rs', 'sr', 0]) expect(isReadOnlyFlag(f), String(f)).toBe(true)
-    for (const f of ['w', 'r+', 'a', 'as', 'wx', 'R', 'rw', 0x40, 1, 2, 0x100, 0x200, 8, {}, 1.5]) expect(isReadOnlyFlag(f), String(f)).toBe(false)
+    // Numeric flags from this platform's own constants (their values differ per OS).
+    const C = fsNs.constants as unknown as Record<string, number | undefined>
+    const writeBits = ['O_WRONLY', 'O_RDWR', 'O_CREAT', 'O_TRUNC', 'O_APPEND', 'O_EXCL'].map((n) => C[n]).filter((n): n is number => typeof n === 'number' && n > 0)
+    expect(writeBits.length).toBeGreaterThan(4)
+    // 0x40 is _O_TEMPORARY (delete on close) on Windows.
+    for (const f of ['w', 'r+', 'a', 'as', 'wx', 'R', 'rw', ...writeBits, ...(WIN ? [0x40] : []), {}, 1.5]) expect(isReadOnlyFlag(f), String(f)).toBe(false)
   })
 })
 
@@ -310,8 +320,9 @@ describe('reads with a write flag, and the other entry points, aimed at a real h
   ])('%s', (op, run) => expectRefused(run, op))
 
   it('fs.promises.readFile with a write flag', () => expectRejected(() => fsp.readFile(inMissing(), { flag: 'w' }), 'fs.promises.readFile'))
-  it('fs.promises.mkdtempDisposable', () =>
-    expectRejected(() => (fsp as unknown as { mkdtempDisposable: (p: string) => Promise<unknown> }).mkdtempDisposable(inMissing() + '-'), 'fs.promises.mkdtempDisposable'))
+  const disposable = (fsp as unknown as { mkdtempDisposable?: (p: string) => Promise<unknown> }).mkdtempDisposable
+  it.runIf(typeof disposable === 'function')('fs.promises.mkdtempDisposable (where this Node has it)', () =>
+    expectRejected(() => (disposable as (p: string) => Promise<unknown>)(inMissing() + '-'), 'fs.promises.mkdtempDisposable'))
 
   it('a URL-like object is read the way fs reads it (hostname + pathname), not by its href', () => {
     const target = new URL(pathToFileURL(inMissing()).href)
@@ -325,6 +336,27 @@ describe('reads with a write flag, and the other entry points, aimed at a real h
 
   it('a worker_threads Worker is refused (its builtins would be unguarded)', () => {
     expectRefused(() => new Worker('0', { eval: true }), 'worker_threads.Worker')
+  })
+
+  it("a toolchain worker (a script in this project's node_modules: esbuild's sync service) starts", async () => {
+    const esbuild = requireCjs('esbuild') as { transformSync: (c: string, o: object) => { code: string } }
+    expect(esbuild.transformSync('let x: number = 1', { loader: 'ts' }).code).toContain('let x = 1')
+    // Named by a file: URL too (loaded without esbuild's worker data it only loads, then exits).
+    const w = new Worker(pathToFileURL(requireCjs.resolve('esbuild')))
+    expect(await new Promise((res, rej) => { w.once('exit', res); w.once('error', rej) })).toBe(0)
+    expect(drainViolations()).toEqual([])
+  })
+
+  it('a worker script outside node_modules is refused, however it is named', () => {
+    const file = path.join(SCRATCH, 'own-worker.cjs')
+    writeFileSync(file, '')
+    expectRefused(() => new Worker(file), 'worker_threads.Worker')
+    expectRefused(() => new Worker(pathToFileURL(file)), 'worker_threads.Worker')
+    // Out of node_modules again through '..', and a data: URL.
+    expectRefused(() => new Worker(path.join(PROJECT_ROOT, 'node_modules') + path.sep + '..' + path.sep + 'own-worker.cjs'), 'worker_threads.Worker')
+    expectRefused(() => new Worker(new URL('data:text/javascript,0')), 'worker_threads.Worker')
+    // eval code is refused even when it reads like a path into node_modules.
+    expectRefused(() => new Worker(path.join(PROJECT_ROOT, 'node_modules', 'x.js'), { eval: true }), 'worker_threads.Worker')
   })
 
   it('so is the original Worker reached through Worker.prototype.constructor', () => {
@@ -655,6 +687,17 @@ describe('a node child gets the guard, and the isolated home, never the real one
     expect(child[MARKER_ENV]).toBeUndefined()
   })
 
+  it("an explicit env that omits the temp variables gets this process's (POSIX does not copy them in)", () => {
+    const out = path.join(isolatedRoot() ?? SCRATCH, `env-${TAG}-temp.json`)
+    const r = runChild(childScript('print-temp', PRINT, { out }), { preload: false })
+    expect(r.status, r.stderr).toBe(0)
+    const child = upperKeys((JSON.parse(readFileSync(out, 'utf8')) as { env: Record<string, string> }).env)
+    for (const name of ['TEMP', 'TMP', 'TMPDIR']) {
+      expect(process.env[name], name).toBeTruthy()
+      expect(norm(child[name]), name).toBe(norm(process.env[name] ?? ''))
+    }
+  })
+
   it("a child handed its own home gets the other folders under that home, not the isolated ones", () => {
     const own = mkdtempSync(path.join(SCRATCH, 'own-child-home-'))
     const out = path.join(isolatedRoot() ?? SCRATCH, `env-${TAG}-own-home.json`)
@@ -956,6 +999,91 @@ describe('the guard in a plain-node child (probe-guard.mjs)', () => {
     expect(r.out).toEqual({ installed: 'no refusal', elsewhere: VIOLATION_CODE })
   })
 
+  it("a CI runner's RUNNER_TEMP inside the home is a temp area when it is temp-named; the rest of the home is not", () => {
+    // As on GitHub's Linux and macOS runners: HOME holds work/_temp. Only the folder made
+    // here is ever created; the canary is never created.
+    const sim = mkdtempSync(path.join(SCRATCH, 'runner-'))
+    const home = path.join(sim, 'home')
+    const tmp = path.join(sim, 'tmp')
+    const named = path.join(home, 'work', '_temp')
+    const unnamed = path.join(home, 'work', 'cache')
+    for (const d of [tmp, named, unnamed]) mkdirSync(d, { recursive: true })
+    const body = [
+      'const g = await import(t.guardUrl)',
+      ATTEMPT,
+      'await attempt("inRunnerTemp", () => fs.mkdirSync(t.target))',
+      'await attempt("inHome", () => fs.rmSync(t.canary))',
+      'g.drainViolations()',
+      'process.stdout.write(JSON.stringify(out))',
+    ].join('\n')
+    const run = (runnerTemp: string) =>
+      runChild(childScript('runner-temp', body, { target: path.join(runnerTemp, `x-${TAG}`), canary: path.join(home, `.ccc-iso-canary-${TAG}`) }), {
+        env: { ...MIN_ENV, HOME: home, USERPROFILE: home, TEMP: tmp, TMP: tmp, TMPDIR: tmp, RUNNER_TEMP: runnerTemp, [MARKER_ENV]: JSON.stringify({ v: 1, real: [], tmp: [tmp], inst: [] }) },
+      })
+    const a = run(named)
+    expect(a.status, a.stderr).toBe(0)
+    expect(a.out).toEqual({ inRunnerTemp: 'no refusal', inHome: VIOLATION_CODE })
+    const b = run(unnamed)
+    expect(b.status, b.stderr).toBe(0)
+    expect(b.out).toEqual({ inRunnerTemp: VIOLATION_CODE, inHome: VIOLATION_CODE })
+    expect(existsSync(path.join(unnamed, `x-${TAG}`))).toBe(false)
+  })
+
+  it("a toolchain worker runs guarded: esbuild's worker refuses to start its service in a real home", () => {
+    // The child's "real" home is a scratch folder known only through the marker (as a
+    // parent's real roots are), and the child works in it. The worker starts (it is not
+    // refused), and inside it the guard refuses to start esbuild's service there; an
+    // unguarded worker, or one not handed the marker, would start it.
+    const sim = mkdtempSync(path.join(SCRATCH, 'wsim-'))
+    const home = path.join(sim, 'home')
+    const tmp = path.join(sim, 'tmp')
+    const tmpHome = path.join(tmp, 'h')
+    mkdirSync(home)
+    mkdirSync(tmpHome, { recursive: true })
+    const body = [
+      'const g = await import(t.guardUrl)',
+      ATTEMPT,
+      "const { createRequire } = await import('node:module')",
+      'process.chdir(t.home)',
+      'const esbuild = createRequire(t.projectFile)("esbuild")',
+      'try { esbuild.transformSync("let x: number = 1", { loader: "ts" }); out.worker = "no refusal" } catch (e) { const m = String(e && e.message); out.worker = !m.includes(t.code) ? "other: " + m.slice(0, 300) : m.includes("worker_threads.Worker") ? "worker refused" : t.code }',
+      'g.drainViolations()',
+      'process.stdout.write(JSON.stringify(out))',
+    ].join('\n')
+    const file = childScript('toolchain-worker', body, { home, projectFile: path.join(PROJECT_ROOT, 'package.json'), code: VIOLATION_CODE })
+    const marker = JSON.stringify({ v: 1, real: [home], tmp: [tmp], inst: [] })
+    const r = runChild(file, { env: { ...MIN_ENV, HOME: tmpHome, USERPROFILE: tmpHome, TEMP: tmp, TMP: tmp, TMPDIR: tmp, [MARKER_ENV]: marker } })
+    expect(r.status, r.stderr).toBe(0)
+    expect(r.out).toEqual({ worker: VIOLATION_CODE })
+  })
+
+  it('the running node binary named in an argument is no refusal when it sits in a real home; the rest of that home is', () => {
+    // The child's "real" home is the folder holding this node binary (macOS runners keep
+    // node under HOME, and a test hands it to a git hook). The grandchild only runs
+    // `node -e 0` with the argument: nothing reads or writes it.
+    const binDir = path.dirname(process.execPath)
+    const sim = mkdtempSync(path.join(SCRATCH, 'execsim-'))
+    const tmp = path.join(sim, 'tmp')
+    mkdirSync(tmp)
+    const inner: Record<string, string> = { ...MIN_ENV, HOME: tmp, USERPROFILE: tmp, APPDATA: tmp, LOCALAPPDATA: tmp, TEMP: tmp, TMP: tmp, TMPDIR: tmp }
+    if (WIN) Object.assign(inner, { HOMEDRIVE: tmp.slice(0, 2), HOMEPATH: tmp.slice(2) })
+    const body = [
+      'const g = await import(t.guardUrl)',
+      ATTEMPT,
+      "const { spawnSync } = await import('node:child_process')",
+      'const run = (arg) => () => { const r = spawnSync(process.execPath, ["-e", "0", arg], { env: t.inner, cwd: t.tmp }); if (r.status !== 0) throw new Error("exit " + r.status) }',
+      'await attempt("hook", run(`"${process.execPath}" "${t.tmp}/mark.js" fsmonitor`))',
+      'await attempt("sibling", run(`"${process.execPath}x" fsmonitor`))',
+      'g.drainViolations()',
+      'process.stdout.write(JSON.stringify(out))',
+    ].join('\n')
+    const file = childScript('exec-arg', body, { inner, tmp })
+    const marker = JSON.stringify({ v: 1, real: [], tmp: [tmp], inst: [] })
+    const r = runChild(file, { env: { ...MIN_ENV, HOME: binDir, USERPROFILE: binDir, TEMP: tmp, TMP: tmp, TMPDIR: tmp, [MARKER_ENV]: marker } })
+    expect(r.status, r.stderr).toBe(0)
+    expect(r.out).toEqual({ hook: 'no refusal', sibling: VIOLATION_CODE })
+  })
+
   it('upgrades a probe-entry guard when the vitest entry loads later in the same process', () => {
     const body = [
       'const g = await import(t.coreUrl)',
@@ -970,6 +1098,32 @@ describe('the guard in a plain-node child (probe-guard.mjs)', () => {
     const r = runChild(childScript('upgrade', body, {}), { env: { ...MIN_ENV, [MARKER_ENV]: JSON.stringify({ v: 1, real: [], tmp: [], inst: [] }) } })
     expect(r.status, r.stderr).toBe(0)
     expect(r.out).toEqual({ before: 'probe', unisolated: 'threw', after: 'vitest', isolated: 'ok', homeInside: true })
+  })
+})
+
+describe('the isolated home looks like a real one', () => {
+  // The 8.3 short form of a folder (Windows; empty when the volume makes no short names).
+  const shortForm = (dir: string): string => {
+    const r = spawnSync('cmd.exe', ['/d', '/s', '/c', `for %I in ("${dir}") do @echo %~sI`], { encoding: 'utf8', windowsVerbatimArguments: true })
+    const s = (r.stdout ?? '').trim()
+    return s.includes('~') ? s : ''
+  }
+  const sim = WIN ? mkdtempSync(path.join(SCRATCH, 'short-name-folder-')) : ''
+  const short = WIN ? shortForm(sim) : ''
+
+  // Windows runners' TEMP carries 8.3 short names (RUNNER~1); a real profile path never does.
+  it.runIf(WIN && short !== '')('on Windows it has no 8.3 short names, even when TEMP is written with them', () => {
+    const body = [
+      'const g = await import(t.coreUrl)',
+      'g.installHomeGuard({ entry: "vitest", isolate: true })',
+      'process.stdout.write(JSON.stringify({ root: g.isolatedRoot(), local: process.env.LOCALAPPDATA, home: process.env.USERPROFILE }))',
+    ].join('\n')
+    const r = runChild(childScript('short-temp', body, {}), { env: { ...MIN_ENV, TEMP: short, TMP: short, [MARKER_ENV]: JSON.stringify({ v: 1, real: [], tmp: [], inst: [] }) } })
+    expect(r.status, r.stderr).toBe(0)
+    const out = r.out as { root: string; local: string; home: string }
+    for (const v of [out.root, out.local, out.home]) expect(v, v).not.toContain('~')
+    // The long form of the short TEMP (the child removed the folder when it exited).
+    expect(norm(out.root).startsWith(norm(sim) + path.sep)).toBe(true)
   })
 })
 
@@ -1290,6 +1444,28 @@ describe('the pure checker (simulated roots, any host)', () => {
     expect(createHomeChecker({ ...roots, platform: 'darwin' }).isProtected('/HOME/bob/x')).toBe(true)
     for (const a of ['/home/bob/.claude', '~bob/.claude', 'PATH=/bin:/home/bob/.codex', '/home/bob', '/home/*', '../../.claude']) expect(linux.argHit(a, '/home/bob/work/repo'), a).not.toBeNull()
     for (const a of ['/home/bob/work/repo/tests/x', '/tmp/x', '/usr/bin/git', 'a / b', 'http://x/y', '~/.claude']) expect(linux.argHit(a, '/home/bob/work/repo'), a).toBeNull()
+  })
+
+  it('a binary named in executables may appear in an argument; nothing else in its folder may, nor bare words', () => {
+    const none = { lstatSync: () => undefined, realpathSync: () => { throw new Error('ENOENT') }, readlinkSync: () => { throw new Error('EINVAL') } }
+    const node = '/Users/bob/toolcache/node/20/bin/node'
+    const base = '/private/var/T'
+    const roots = { realRoots: ['/Users/bob'], userNames: ['bob'], allowedRoots: [{ path: base, kind: 'tmp' as const }], fsImpl: none, cwd: () => base, platform: 'darwin' }
+    const mac = createHomeChecker({ ...roots, executables: [node] })
+    const hook = `"${node}" "${base}/x/mark.js" fsmonitor`
+    for (const a of [hook, `core.fsmonitor=${hook}`, node, node.toUpperCase(), 'fsmonitor', 'bob']) expect(mac.argHit(a, base), a).toBeNull()
+    for (const a of [`"${node}" /Users/bob/.claude/x`, `${node}-other`, '/Users/bob/toolcache/node/20/bin/npm', `${node}/../../.ssh`, '~bob/x']) expect(mac.argHit(a, base), a).not.toBeNull()
+    expect(createHomeChecker(roots).argHit(hook, base)).not.toBeNull()
+    // A link in the home that leads to the binary is still a path in the home.
+    const viaLink = createHomeChecker({
+      platform: 'win32',
+      realRoots: ['C:\\Users\\alice'],
+      executables: ['C:\\nodejs\\node.exe'],
+      fsImpl: fakeFs(['C:\\nodejs\\node.exe', 'C:\\Users\\alice\\bin'], { 'C:\\Users\\alice\\bin\\node.exe': 'C:\\nodejs\\node.exe' }),
+      cwd: () => 'C:\\work',
+    })
+    expect(viaLink.argHit('C:\\nodejs\\node.exe', 'C:\\work')).toBeNull()
+    expect(viaLink.argHit('C:\\Users\\alice\\bin\\node.exe', 'C:\\work')).not.toBeNull()
   })
 
   it('an account-profiles folder above a real root is a real root too', () => {

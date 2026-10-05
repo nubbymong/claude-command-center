@@ -31,12 +31,17 @@ for:
   `pushd` (glued `cd/d`, `cd\`, `cd..` included) or `Set-Location` / `sl` /
   `Push-Location` into or above a real home, a root that holds one included, is
   refused. A child environment that omits a home variable gets it under the home
-  the caller gave, or else the isolated one. The executable itself, a node script,
-  and the command word (that position only) of a `cmd /c` / `sh -c` line in a real
-  home's npm or nvm folder are not refused; an install folder handed to a child must
-  be an npm or nvm folder holding no real home;
-- `worker_threads` Workers (also through `Worker.prototype.constructor`),
-  `process.execve` and `process.binding('fs')` (they would bypass it).
+  the caller gave, or else the isolated one; one that omits TEMP, TMP or TMPDIR gets
+  this process's (POSIX does not copy them in). The executable itself, the running
+  node binary named in an argument (a git hook command; macOS runners keep node
+  under HOME), a node script, and the command word (that position only) of a
+  `cmd /c` / `sh -c` line in a real home's npm or nvm folder are not refused; an
+  install folder handed to a child must be an npm or nvm folder holding no real home;
+- `worker_threads` Workers (also through `Worker.prototype.constructor`) other
+  than a toolchain worker, `process.execve` and `process.binding('fs')` (they
+  would bypass it). A toolchain worker, one whose script is in the project's own
+  `node_modules` (esbuild's sync service), starts with the guard loaded first and
+  the guard marker in its environment; eval code and any other script are refused.
 
 Node children load the same guard: every spawn adds it to the child's
 `NODE_OPTIONS`, and the child removes it from its own view. A refusal the code
@@ -52,8 +57,8 @@ profile through the OS rather than the environment, for example to expand `~`,
 reaches the real one); shell re-assembly of an argument: quotes or carets inside a
 word, `%VAR%` / `$VAR` expansion, a PowerShell `-EncodedCommand`, and a relative
 path after a `cd` the guard did not see are not read the way the shell will read
-them; anything started outside these
-entry points. `vitest.live.config.ts` (real ssh, real keys) and Playwright are
+them; anything started outside these entry points. A refusal inside a toolchain
+worker fails that worker's call but is not recorded in the test's own thread. `vitest.live.config.ts` (real ssh, real keys) and Playwright are
 deliberately out of scope.
 
 **Decisions.**
@@ -61,8 +66,10 @@ deliberately out of scope.
 - Real roots: the original home variables, HOMEDRIVE+HOMEPATH, `os.homedir()`,
   `os.userInfo().homedir` (which ignores the environment), and any
   `account-profiles` folder above one of them. Allowed roots: the isolated root,
-  the temp folder (on Windows it sits under LOCALAPPDATA) and the project root (CI
-  runners keep the checkout under HOME). The more specific root wins; only the
+  the temp folder (on Windows it sits under LOCALAPPDATA), a CI runner's
+  `RUNNER_TEMP` when it is named like a temp folder and holds no trusted real home
+  (GitHub keeps it under HOME on Linux and macOS), and the project root (CI runners
+  keep the checkout under HOME). The more specific root wins; only the
   isolated root wins a tie.
 - Paths are compared after resolving `..`, separators, case (win32, darwin),
   trailing dots and spaces, stream suffixes, `\\?\`, `\\.\` and `\??\` prefixes,
@@ -84,6 +91,8 @@ deliberately out of scope.
 - CLAUDE_CONFIG_DIR is not filled into a child env that omits it (the managed
   launch strips it, and a real child proves it stays unset); unset it falls back
   to the filled, isolated HOME.
+- On Windows the isolated home is the long form of its path: a runner's TEMP carries
+  8.3 short names (`RUNNER~1`), which a real profile path never has.
 - No escape hatch.
 
 **Tests.** `tests/unit/test-isolation/home-guard.test.ts` [host] covers each
@@ -91,7 +100,8 @@ operation family, each import form, the path and argument spellings, spawns
 (working folder, explicit, inherited, prototype and coerced env, the Windows
 variables libuv copies in, arguments, node-pty), node children, env fill-in, the
 per-test reset, recording, markers, the npm-folder exception, the pure checker on
-simulated roots, and plain-node probes under `probe-guard.mjs`. Every real-home
-target in it is harmless without the guard. `home-guard-links.test.ts` [CI] [VM]
+simulated roots, plain-node probes under `probe-guard.mjs`, and toolchain workers. A case whose fs
+API this Node lacks is skipped and says so. Every real-home target in it is
+harmless without the guard. `home-guard-links.test.ts` [CI] [VM]
 (HOST QUARANTINE) follows real links and junctions. Each check was removed in turn
 and its tests went red.
