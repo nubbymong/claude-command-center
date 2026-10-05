@@ -36,6 +36,7 @@ const { useInsightsStore } = await import('../../../src/renderer/stores/insights
 const { useAccountProfilesStore } = await import('../../../src/renderer/stores/accountProfilesStore')
 const { useProviderAccountsStore } = await import('../../../src/renderer/stores/providerAccountsStore')
 const { default: InsightsPage } = await import('../../../src/renderer/components/InsightsPage')
+const { insightsAccountKey } = await import('../../../src/renderer/components/insights/insightsAccounts')
 
 const account = (id: string, identityId: string, over: Record<string, unknown> = {}) => ({
   id, providerId: 'codex', identityId, lifecycle: 'active', isProviderDefault: false, isReviewerDefault: false, authMethod: 'chatgpt',
@@ -129,17 +130,32 @@ describe('the account picker (screen 2, D7)', () => {
   })
 })
 
+describe("the page's account keys (P4.7 fix pass 1, WP1.57)", () => {
+  it("are the assistant, a '|', then the id: never a `<provider>:` name; the picker's values are those keys [host]", async () => {
+    expect(insightsAccountKey('codex', ACCT)).toBe(`codex|${ACCT}`)
+    expect(insightsAccountKey('claude', 'profile-work')).toBe('claude|profile-work')
+    expect(insightsAccountKey('claude', '')).toBe('claude|')
+    await render()
+    const values = Array.from(byTest('insights-account-picker')!.querySelectorAll('option')).map((o) => o.value)
+    expect(values).toEqual([
+      insightsAccountKey('claude', 'profile-work'), insightsAccountKey('claude', 'profile-personal'),
+      insightsAccountKey('codex', ACCT), insightsAccountKey('codex', ACCT2), insightsAccountKey('codex', EXT),
+    ])
+    expect(values.some((v) => /^(codex|claude):/.test(v))).toBe(false)
+  })
+})
+
 describe('New run on a Codex account', () => {
   it('runs a report on it, in the S0 shape, with no confirmation [host]', async () => {
     await render()
-    await pick(`codex:${ACCT}`)
+    await pick(insightsAccountKey('codex', ACCT))
     await act(async () => { byTest('insights-run-now')!.click() })
     expect(api.insights.run).toHaveBeenCalledWith({ profileId: ACCT, provider: 'codex' })
   })
 
   it("an account marked 'confirm at launch' asks the cloud agent's confirmation first; Run only once ticked; Cancel runs nothing (screen 4, D12) [host]", async () => {
     await render()
-    await pick(`codex:${EXT}`)
+    await pick(insightsAccountKey('codex', EXT))
     await act(async () => { byTest('insights-run-now')!.click() })
     expect(api.insights.run).not.toHaveBeenCalled()
     const confirm = byTest('insights-codex-confirm')!
@@ -157,12 +173,12 @@ describe('New run on a Codex account', () => {
 
   it('the confirmation closes when the account changes, or when a run starts; its Run is off while one runs (review F4, F6c) [host]', async () => {
     await render()
-    await pick(`codex:${EXT}`)
+    await pick(insightsAccountKey('codex', EXT))
     await act(async () => { byTest('insights-run-now')!.click() })
     expect(byTest('insights-codex-confirm')).not.toBeNull()
-    await pick(`codex:${ACCT}`)
+    await pick(insightsAccountKey('codex', ACCT))
     expect(byTest('insights-codex-confirm')).toBeNull()
-    await pick(`codex:${EXT}`)
+    await pick(insightsAccountKey('codex', EXT))
     await act(async () => { byTest('insights-run-now')!.click() })
     expect(byTest('insights-codex-confirm')).not.toBeNull()
     // A roll-up starts elsewhere (Run all): the confirmation closes and runs nothing.
@@ -173,7 +189,7 @@ describe('New run on a Codex account', () => {
 
   it('the confirmation closes on Escape and on a click outside, and its tick box takes focus [host]', async () => {
     await render()
-    await pick(`codex:${EXT}`)
+    await pick(insightsAccountKey('codex', EXT))
     await act(async () => { byTest('insights-run-now')!.click() })
     expect(document.activeElement).toBe(byTest('insights-codex-ack'))
     await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })) })
@@ -187,7 +203,7 @@ describe('New run on a Codex account', () => {
     useProviderAccountsStore.setState({ snapshot: snapshot([account(ACCT, 'work', { isProviderDefault: true, unverified: true })]), loaded: true })
     profiles(1)
     await render()
-    await pick(`codex:${ACCT}`)
+    await pick(insightsAccountKey('codex', ACCT))
     await act(async () => { byTest('insights-run-now')!.click() })
     expect(byTest('insights-codex-confirm')!.textContent).toContain('Run this report with this account although its sign-in is not verified')
   })
@@ -197,10 +213,10 @@ describe('an assistant switched off (screen 6, D8)', () => {
   it('Claude Code off: a Codex account is picked and runs; only a Claude account picked is disabled, with the reason [host]', async () => {
     settings({ claudeEnabled: false })
     await render()
-    expect((byTest('insights-account-picker') as HTMLSelectElement).value).toBe(`codex:${ACCT}`)
+    expect((byTest('insights-account-picker') as HTMLSelectElement).value).toBe(insightsAccountKey('codex', ACCT))
     expect((byTest('insights-run-now') as HTMLButtonElement).disabled).toBe(false)
     expect(byTest('insights-claude-off')).toBeNull()
-    await pick('claude:profile-personal')
+    await pick(insightsAccountKey('claude', 'profile-personal'))
     expect((byTest('insights-run-now') as HTMLButtonElement).disabled).toBe(true)
     expect(byTest('insights-claude-off')!.textContent).toBe('Claude Code is off. Turn it on in Settings, Accounts.')
   })

@@ -21,10 +21,19 @@ import type { AccountsSnapshot, AccountView } from '../../../shared/providers'
 import { accountDisplayName } from '../../stores/providerAccountsStore'
 import { sessionAccountOptions, launchNeedsAcknowledgement, accountEmail } from '../../utils/launchAccount'
 
+/** The key an account goes by on the Insights page: the picker's value and
+ *  the key of the page's latest run per account. The assistant, a '|', then
+ *  the profile id or the Codex account id ('' for Claude Code's own sign-in
+ *  when there are no profiles). The '|' keeps a key from reading as a
+ *  `<provider>:` channel name (WP1.57). Held in the page's memory only; never
+ *  saved. */
+export function insightsAccountKey(provider: 'claude' | 'codex', id: string): string {
+  return `${provider}|${id}`
+}
+
 /** One account the page can run a report on. */
 export interface InsightsAccountChoice {
-  /** The picker's value: `claude:<profile id>` (`claude:` for Claude Code's
-   *  own sign-in when there are no profiles) or `codex:<account id>`. */
+  /** The picker's value: insightsAccountKey(provider, id). */
   value: string
   provider: 'claude' | 'codex'
   /** The profile id or the Codex account id; '' for Claude Code's own sign-in. */
@@ -56,7 +65,7 @@ export function codexAccountChoices(snapshot: AccountsSnapshot | null, codexUsab
     if (needsAck) label += ' - confirm at launch'
     if (o.disabled) label += ' (Needs attention)'
     const email = accountEmail(a)
-    return { value: `codex:${o.id}`, provider: 'codex', id: o.id, label, disabled: o.disabled, needsAck, external: !!a?.external, ...(email ? { email } : {}) }
+    return { value: insightsAccountKey('codex', o.id), provider: 'codex', id: o.id, label, disabled: o.disabled, needsAck, external: !!a?.external, ...(email ? { email } : {}) }
   })
 }
 
@@ -70,9 +79,9 @@ export function claudeAccountChoices(
   claudeOn: boolean,
 ): InsightsAccountChoice[] {
   if (profiles.length === 0) {
-    return claudeOn ? [{ value: 'claude:', provider: 'claude', id: '', label: 'Claude Code', disabled: false, needsAck: false, external: false }] : []
+    return claudeOn ? [{ value: insightsAccountKey('claude', ''), provider: 'claude', id: '', label: 'Claude Code', disabled: false, needsAck: false, external: false }] : []
   }
-  return profiles.map((p) => ({ value: `claude:${p.id}`, provider: 'claude', id: p.id, label: labelForProfile(p), disabled: false, needsAck: false, external: false }))
+  return profiles.map((p) => ({ value: insightsAccountKey('claude', p.id), provider: 'claude', id: p.id, label: labelForProfile(p), disabled: false, needsAck: false, external: false }))
 }
 
 /** The choice a new page starts on: Claude Code's primary while Claude Code

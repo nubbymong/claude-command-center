@@ -2344,7 +2344,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "replace",
-      "evidence": "WP2 commit 6e review fix: every Run button is disabled with the reason while Claude Code is off, and the store refuses as well (WP1.2); tests/unit/renderer/claude-off-headless.test.tsx; WP2 PR 4 P4.7 (row 68; d99a553b, f76f694c, daf4083e, be3026f2, 664931b0): Codex accounts in the account picker under their own heading, the per-run confirmation for an account marked confirm at launch, a Codex report drawn as text with Codex's mark and a help line, the Codex-only message replaced by the page's own empty state, a lapsed Codex sign-in in the banner, and a Claude account's run alone disabled while Claude Code is off (WP1.60, WP1.12); tests/unit/renderer/insights-codex-page.test.tsx, tests/unit/renderer/insights-codex-empty.test.ts",
+      "evidence": "WP2 commit 6e review fix: every Run button is disabled with the reason while Claude Code is off, and the store refuses as well (WP1.2); tests/unit/renderer/claude-off-headless.test.tsx; WP2 PR 4 P4.7 (row 68; d99a553b, f76f694c, daf4083e, be3026f2, 664931b0): Codex accounts in the account picker under their own heading, the per-run confirmation for an account marked confirm at launch, a Codex report drawn as text with Codex's mark and a help line, the Codex-only message replaced by the page's own empty state, a lapsed Codex sign-in in the banner, and a Claude account's run alone disabled while Claude Code is off (WP1.60, WP1.12); tests/unit/renderer/insights-codex-page.test.tsx, tests/unit/renderer/insights-codex-empty.test.ts; WP2 PR 4 P4.7 fix pass 1: the latest-run map and the fallback choice use insightsAccountKey, so no key reads as a codex: channel (WP1.57); tests/unit/renderer/insights-codex-page.test.tsx, tests/wp1/legacy-codex-retired.test.ts",
       "note": "the P04 match was a providerPresence.codex field the Codex-only message used; that message is gone"
     },
     {
@@ -2706,7 +2706,7 @@
       ],
       "category": "UI-ONLY",
       "disposition": "added",
-      "evidence": "new WP2 PR 4 P4.7 (row 68) module (d99a553b, f76f694c, daf4083e, be3026f2, 664931b0): the accounts Insights offers a run on, from the account profiles and the New session dialog's Codex list, their labels, the default choice and Run all's count (WP1.60, WP1.12); tests/unit/renderer/insights-codex-page.test.tsx",
+      "evidence": "new WP2 PR 4 P4.7 (row 68) module (d99a553b, f76f694c, daf4083e, be3026f2, 664931b0): the accounts Insights offers a run on, from the account profiles and the New session dialog's Codex list, their labels, the default choice and Run all's count (WP1.60, WP1.12); tests/unit/renderer/insights-codex-page.test.tsx; WP2 PR 4 P4.7 fix pass 1: insightsAccountKey, the page's account key (the assistant, a |, then the id), so no picker value reads as a codex: channel (WP1.57); tests/unit/renderer/insights-codex-page.test.tsx, tests/wp1/legacy-codex-retired.test.ts",
       "note": ""
     },
     {

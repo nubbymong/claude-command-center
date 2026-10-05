@@ -23,6 +23,7 @@ import {
   codexAccountLabel,
   codexRunAccountName,
   defaultInsightsChoice,
+  insightsAccountKey,
   runAllCount,
   type InsightsAccountChoice,
 } from './insights/insightsAccounts'
@@ -216,7 +217,7 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
   const allChoices = [...claudeChoices, ...codexChoices]
   const showPicker = allChoices.length >= 2
   const [runChoice, setRunChoice] = useState<string>('')
-  const fallbackChoice: InsightsAccountChoice = { value: 'claude:', provider: 'claude', id: '', label: 'Claude Code', disabled: false, needsAck: false, external: false }
+  const fallbackChoice: InsightsAccountChoice = { value: insightsAccountKey('claude', ''), provider: 'claude', id: '', label: 'Claude Code', disabled: false, needsAck: false, external: false }
   const selected: InsightsAccountChoice =
     allChoices.find((c) => c.value === runChoice && !c.disabled) ??
     defaultInsightsChoice(claudeChoices, codexChoices, !claudeOff, defaultProfileId) ??
@@ -334,7 +335,7 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
     const latestRunByAccount = new Map<string, { timestamp: number; authFailed?: boolean; authFailedRefreshExpiry?: number; error?: string; accountEmail?: string }>()
     for (const run of catalogue?.runs ?? []) {
       if (!run.profileId || run.kind === 'aggregate') continue
-      const key = `${run.provider ?? 'claude'}:${run.profileId}`
+      const key = insightsAccountKey(run.provider ?? 'claude', run.profileId)
       const current = latestRunByAccount.get(key)
       if (!current || run.timestamp > current.timestamp) latestRunByAccount.set(key, run)
     }
@@ -358,7 +359,7 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
       }
       // 2. A past auth failure counts only while the credentials have NOT been
       //    rewritten since it happened.
-      const run = latestRunByAccount.get(`claude:${info.profileId}`)
+      const run = latestRunByAccount.get(insightsAccountKey('claude', info.profileId))
       if (run?.authFailed && authFailureStillApplies(run.timestamp, info, run.authFailedRefreshExpiry)) {
         out.push({ provider: 'claude', id: info.profileId, name, error: run.error })
       }
@@ -374,7 +375,7 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
           out.push({ provider: 'codex', id: a.id, name, error: a.lastKnownAuthState === 'expired' ? 'Sign-in expired' : 'Signed out' })
           continue
         }
-        const run = latestRunByAccount.get(`codex:${a.id}`)
+        const run = latestRunByAccount.get(insightsAccountKey('codex', a.id))
         if (run?.authFailed && !(typeof a.lastAuthenticatedAt === 'number' && a.lastAuthenticatedAt > run.timestamp)) {
           out.push({ provider: 'codex', id: a.id, name, error: run.error })
         }
