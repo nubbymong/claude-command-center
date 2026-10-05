@@ -1045,6 +1045,21 @@ describe('[host] the start sweep of Codex web sessions with no record', () => {
     failClear = null
   })
 
+  it('bars the account while it wipes: no sign-in starts on it meanwhile', async () => {
+    let release!: () => void
+    clearGate = new Promise<void>((r) => { release = r })
+    const sweep = sweepUnrecordedCodexWebSessions([ACCT], () => false)
+    try {
+      await tick(5)
+      expect(isCodexWebClearing(ACCT)).toBe(true)
+      expect((await runCodexWebSignIn({ accountId: ACCT, pollMs: 5 })).error).toMatch(/being cleared/)
+    } finally {
+      release()
+      await sweep
+    }
+    expect(isCodexWebClearing(ACCT)).toBe(false)
+  })
+
   it('never wipes the account of a sign-in in flight', async () => {
     jars[PART] = SIGNED_OUT_JAR
     const run = runCodexWebSignIn({ accountId: ACCT, timeoutMs: 400, pollMs: 5 })
