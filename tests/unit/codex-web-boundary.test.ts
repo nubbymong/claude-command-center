@@ -21,6 +21,7 @@ const S = vi.hoisted(() => {
   const reg = { accounts: [] as Array<{ id: string; providerId: string; lifecycle: string }> }
   const holding: Record<string, string[]> = {}
   const disk: Record<string, unknown> = {}
+  const flags = { writeFails: false }
   function fakeSession(partition: string) {
     minted.push(partition)
     if (sessions[partition]) return sessions[partition]
@@ -109,7 +110,7 @@ const S = vi.hoisted(() => {
     }
     setBounds(b: any) { this.bounds = b }
   }
-  return { handlers, minted, sessions, views, windows, trail, gates, reg, holding, disk, fakeSession, mainWin, MAIN_FRAME, FakeWin, FakeView }
+  return { handlers, minted, sessions, views, windows, trail, gates, reg, holding, disk, flags, fakeSession, mainWin, MAIN_FRAME, FakeWin, FakeView }
 })
 
 vi.mock('electron', () => ({
@@ -126,7 +127,11 @@ vi.mock('../../src/main/provider-account-registry', () => ({
 }))
 vi.mock('../../src/main/channel-storage', () => ({
   readJsonFile: (n: string, seed: () => unknown) => (S.disk[n] !== undefined ? JSON.parse(JSON.stringify(S.disk[n])) : seed()),
-  writeJsonFile: (n: string, v: unknown) => { S.disk[n] = JSON.parse(JSON.stringify(v)); return true },
+  writeJsonFile: (n: string, v: unknown) => {
+    if (S.flags.writeFails) return false
+    S.disk[n] = JSON.parse(JSON.stringify(v))
+    return true
+  },
 }))
 vi.mock('../../src/main/webview-manager', () => ({ closeWebview: () => false }))
 vi.mock('../../src/main/account-web/sign-in', () => ({
@@ -162,6 +167,7 @@ beforeEach(() => {
   for (const k of Object.keys(S.holding)) delete S.holding[k]
   S.minted.length = 0; S.views.length = 0; S.windows.length = 0; S.trail.length = 0
   S.gates.storage = null
+  S.flags.writeFails = false
   S.reg.accounts = [{ id: ACCT, providerId: 'codex', lifecycle: 'inactive' }]
   S.holding[ACCT] = ['s1']
   // As index.ts wires them.
@@ -239,5 +245,35 @@ describe('[host] the shared session-keyed pane channels act on a Codex pane', ()
     expect(new Set(S.minted)).toEqual(minted)
     expect(await call(IPC.ACCOUNT_WEB_PANE_CLOSE, TRUSTED, 's1')).toEqual({ ok: true, closed: true })
     expect(view.webContents.destroyed).toBe(true)
+  })
+})
+
+describe('[host] a record that cannot be written or removed never reads as done or signed out', () => {
+  const REC = { accountId: ACCT, accountEmail: 'owner@example.com', acquiredAt: 1, expiresAt: null, origin: 'in-app' as const }
+
+  it('the store says so when a write fails', () => {
+    S.flags.writeFails = true
+    expect(STORE.saveCodexWebSession(REC)).toBe(false)
+    S.flags.writeFails = false
+    expect(STORE.saveCodexWebSession(REC)).toBe(true)
+    S.flags.writeFails = true
+    expect(STORE.removeCodexWebSession(ACCT)).toBe(false)
+  })
+
+  it('sign-out reports a record it could not remove, and the record stays', async () => {
+    STORE.saveCodexWebSession(REC)
+    S.flags.writeFails = true
+    const r = await call(IPC.CODEX_WEB_SIGN_OUT, TRUSTED, ACCT)
+    S.flags.writeFails = false
+    expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/record could not be removed/) })
+    expect(STORE.getCodexWebSession(ACCT)).toMatchObject({ accountEmail: 'owner@example.com' })
+  })
+
+  it('the archive hook rejects (so the archive is refused) when the record could not be removed', async () => {
+    STORE.saveCodexWebSession(REC)
+    S.flags.writeFails = true
+    await expect(CWS.prepareCodexWebArchive(ACCT, 'codex')).rejects.toThrow(/record could not be removed/)
+    S.flags.writeFails = false
+    expect(STORE.getCodexWebSession(ACCT)).toBeDefined()
   })
 })

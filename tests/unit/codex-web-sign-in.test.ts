@@ -483,6 +483,38 @@ describe('[host] the sign-in window', () => {
     expect(line).not.toMatch(/SECRET|me@example\.com/)
   })
 
+  it('a key name that is not a plain name (an email used as a key, say) is dropped, never logged', async () => {
+    jars[PART] = SIGNED_IN_JAR
+    page.identity = { accounts: { 'me@example.com': { plan: 'x' }, 'two words': 1, ok_key: 2 } }
+    await runServiceSignIn(RUN({ timeoutMs: 60 }))
+    const line = logs.find((l) => /did not complete/.test(l))!
+    expect(line).toContain('JSON keys accounts, accounts.ok_key.')
+    expect(line).not.toMatch(/me@example\.com|two words/)
+  })
+
+  it('the shape is read at the first identity read that finds no email, while the page is still the one that answered', async () => {
+    jars[PART] = SIGNED_IN_JAR
+    page.identity = { user: { id: 'u', mail: 'me@example.com' } }
+    const p = runServiceSignIn(RUN({ timeoutMs: 120 }))
+    await tick(40)
+    // The page then moves on (a sign-in hop): it no longer answers.
+    page.origin = 'https://auth.openai.com'
+    await p
+    const line = logs.find((l) => /did not complete/.test(l))!
+    expect(line).toContain('Identity answer: HTTP 200, JSON keys user, user.id, user.mail.')
+  })
+
+  it('a status that is not an HTTP status reads as no answer', async () => {
+    jars[PART] = SIGNED_IN_JAR
+    // No email where the descriptor looks, so the run does not complete.
+    page.identity = { user: { id: 'u' } }
+    page.status = 0
+    await runServiceSignIn(RUN({ timeoutMs: 60 }))
+    const line = logs.find((l) => /did not complete/.test(l))!
+    expect(line).toContain('Identity answer: no answer from the page.')
+    expect(line).not.toContain('HTTP 0')
+  })
+
   it('an identity answer from a page off chatgpt.com is never read, and the line says so', async () => {
     jars[PART] = SIGNED_IN_JAR
     page.identity = IDENTITY
@@ -496,7 +528,11 @@ describe('[host] the sign-in window', () => {
     const expr = serviceIdentityShapeExpression(CODEX_WEB_SERVICE)
     expect(expr).not.toMatch(/accessToken|console|localStorage|window\./)
     page.identity = IDENTITY
+    page.fetched.length = 0
     const out = await evalInPage(expr) as { status: number; json: boolean; keys: string[] }
+    // Uncached, as the email read: the answer leaves no copy in the HTTP cache.
+    expect(page.fetched).toHaveLength(1)
+    expect(page.fetched[0].opts).toMatchObject({ credentials: 'include', cache: 'no-store' })
     expect(JSON.parse(JSON.stringify(out))).toEqual({ status: 200, json: true, keys: ['user', 'user.id', 'user.name', 'user.email', 'user.image', 'expires', 'accessToken', 'authProvider'] })
     expect(JSON.stringify(out)).not.toMatch(/me@example|SECRET|user-abc/)
     page.origin = 'https://evil.example'
@@ -691,10 +727,15 @@ describe('[host] the sign-in window holds downloads, sub-frames and its own tear
     const httpsSub = { preventDefault: vi.fn(), isMainFrame: false, url: 'https://challenges.cloudflare.com/x' }
     frameNav(httpsSub)
     expect(httpsSub.preventDefault).not.toHaveBeenCalled()
-    const main = { preventDefault: vi.fn(), isMainFrame: true, url: 'https://evil.example/' }
+    // The main frame is will-navigate's to decide (and to count): this
+    // listener neither blocks it nor notes it as a sub-frame.
+    const main = { preventDefault: vi.fn(), isMainFrame: true, url: 'http://main.example/' }
     frameNav(main)
     expect(main.preventDefault).not.toHaveBeenCalled()
     await p
+    const line = logs.find((l) => /did not complete/.test(l))!
+    expect(line).toContain('ads.example (sub-frame blocked)')
+    expect(line).not.toContain('main.example')
   })
 
   it('a failure after the window exists still destroys the window and reports', async () => {

@@ -11,6 +11,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { harness, addCodexAccount, EXT_HOME } from '../../wp1/accounts-harness'
 import { onBeforeAccountArchive, prepareAccountArchive, _resetAccountArchiveHooksForTest } from '../../../src/main/providers/core'
+import { setAccountLifecycle } from '../../../src/shared/providers/registry'
 
 beforeEach(() => _resetAccountArchiveHooksForTest())
 
@@ -166,6 +167,97 @@ describe('[host] an archive commits only through a path that ran the hook', () =
     onBeforeAccountArchive(async () => { ran++ })
     await h.service.setLifecycle({ accountId: a, lifecycle: 'inactive' })
     expect(await h.service.setLifecycle({ accountId: a, lifecycle: 'archived' })).toEqual({ ok: true })
+    expect(ran).toBe(1)
+  })
+})
+
+describe('[host] a lifecycle change that lands before the archive takes its hold is read again under it', () => {
+  /** Hold the registry lock, queue a change behind it, start the archive (it
+   *  reads the account before the change commits, and queues its hold after
+   *  it), then let the lock go. */
+  async function raced(h: Awaited<ReturnType<typeof harness>>, id: string, archive: () => Promise<{ ok: boolean }>) {
+    let open!: () => void
+    const held = h.store.exclusive(() => new Promise<void>((r) => { open = r }))
+    const change = h.store.mutate((d, t) => setAccountLifecycle(d, id, 'archived', { consumers: 0 }, t))
+    const result = archive()
+    await new Promise((r) => setTimeout(r, 20))
+    open()
+    await held
+    expect((await change).ok).toBe(true)
+    return result
+  }
+
+  it('managed: the archive is refused and its hook never runs', async () => {
+    const h = await harness()
+    const a = await addCodexAccount(h, 'A')
+    await h.service.setLifecycle({ accountId: a, lifecycle: 'inactive' })
+    let ran = 0
+    onBeforeAccountArchive(async () => { ran++ })
+    const before = h.runs.length
+    const r = await raced(h, a, () => h.service.setLifecycle({ accountId: a, lifecycle: 'archived' }))
+    expect(r).toMatchObject({ ok: false, code: 'lifecycle' })
+    expect(ran).toBe(0)
+    expect(h.args().slice(before)).toEqual([])
+  })
+
+  it('external: the archive is refused and its hook never runs', async () => {
+    const h = await harness()
+    h.signedIn.set(EXT_HOME.toLowerCase(), 'chatgpt')
+    expect((await h.service.adoptExternalDefault({ providerId: 'codex' })).ok).toBe(true)
+    const ext = h.doc().accounts.find((x) => x.providerId === 'codex')!.id
+    await h.service.setLifecycle({ accountId: ext, lifecycle: 'inactive' })
+    let ran = 0
+    onBeforeAccountArchive(async () => { ran++ })
+    const r = await raced(h, ext, () => h.service.setLifecycle({ accountId: ext, lifecycle: 'archived', acknowledgeExternal: true }))
+    expect(r).toMatchObject({ ok: false, code: 'lifecycle' })
+    expect(ran).toBe(0)
+  })
+})
+
+describe('[host] an external archive clears only after its home is known to hold the same sign-in', () => {
+  it('a home that now holds another sign-in refuses the archive before the hook runs', async () => {
+    const h = await harness()
+    h.signedIn.set(EXT_HOME.toLowerCase(), 'chatgpt')
+    expect((await h.service.adoptExternalDefault({ providerId: 'codex' })).ok).toBe(true)
+    const ext = h.doc().accounts.find((x) => x.providerId === 'codex')!.id
+    await h.service.setLifecycle({ accountId: ext, lifecycle: 'inactive' })
+    h.signedIn.set(EXT_HOME.toLowerCase(), 'api-key')
+    let ran = 0
+    onBeforeAccountArchive(async () => { ran++ })
+    const r = await h.service.setLifecycle({ accountId: ext, lifecycle: 'archived', acknowledgeExternal: true })
+    expect(r.ok).toBe(false)
+    expect(ran).toBe(0)
+    expect(h.doc().accounts.find((x) => x.id === ext)).toMatchObject({ lifecycle: 'inactive' })
+  })
+})
+
+describe('[host] a provider without sign-in operations archives through the hook too', () => {
+  // The same disk restarted with the provider's sign-in operations absent:
+  // the archive takes the path that has no sign-out to run.
+  const noAuth = { authWrap: () => undefined as never }
+
+  it('managed: archived, the hook ran once', async () => {
+    const h1 = await harness()
+    const a = await addCodexAccount(h1, 'A')
+    await h1.service.setLifecycle({ accountId: a, lifecycle: 'inactive' })
+    const h = await harness({ port: h1.port, folders: h1.folders, ...noAuth })
+    let ran = 0
+    onBeforeAccountArchive(async () => { ran++ })
+    expect(await h.service.setLifecycle({ accountId: a, lifecycle: 'archived' })).toEqual({ ok: true })
+    expect(ran).toBe(1)
+    expect(h.doc().accounts.find((x) => x.id === a)).toMatchObject({ lifecycle: 'archived' })
+  })
+
+  it('external: archived (acknowledged), the hook ran once', async () => {
+    const h1 = await harness()
+    h1.signedIn.set(EXT_HOME.toLowerCase(), 'chatgpt')
+    expect((await h1.service.adoptExternalDefault({ providerId: 'codex' })).ok).toBe(true)
+    const ext = h1.doc().accounts.find((x) => x.providerId === 'codex')!.id
+    await h1.service.setLifecycle({ accountId: ext, lifecycle: 'inactive' })
+    const h = await harness({ port: h1.port, folders: h1.folders, ...noAuth })
+    let ran = 0
+    onBeforeAccountArchive(async () => { ran++ })
+    expect(await h.service.setLifecycle({ accountId: ext, lifecycle: 'archived', acknowledgeExternal: true })).toEqual({ ok: true })
     expect(ran).toBe(1)
   })
 })
