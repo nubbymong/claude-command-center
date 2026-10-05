@@ -663,6 +663,10 @@ describe('[host] the sign-in window', () => {
       [{ domains: { example: { owner: 'n@example.com' } } }, 'an email-shaped value at domains.*.*', ['example', 'owner']],
       [{ accounts: { 'user-4821930': { email: 'n@example.com' } } }, 'an email-shaped value at accounts.*.email', ['4821930']],
       [{ profile: { primaryEmail: 'n@example.com' } }, 'an email-shaped value at profile.primaryEmail', []],
+      // A name that says mail but is shaped like an id is still a star.
+      [{ byMail: { mail_9876543210: 'n@example.com' } }, 'an email-shaped value at byMail.*.', ['9876543210']],
+      // Many users: the one path once.
+      [{ users: { ann: { email: 'a@example.com' }, bob: { email: 'b@example.com' } } }, 'an email-shaped value at users.*.email.', ['ann', 'bob']],
     ]
     for (const [identity, where, never] of cases) {
       logs.length = 0

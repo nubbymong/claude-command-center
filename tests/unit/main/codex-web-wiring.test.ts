@@ -163,6 +163,13 @@ describe('[host] the session wiring', () => {
     expect(typeof W.swept[0].partitionExists).toBe('function')
   })
 
+  it('a folder check the caller hands in is the one the sweep uses', () => {
+    const mine = (id: string) => id === A
+    wireCodexWebSession({ getWindow: () => null, isCodexPtySession: () => false, leases: () => new ConsumerLeaseRegistry(), partitionExists: mine })
+    expect(W.swept).toHaveLength(1)
+    expect(W.swept[0].partitionExists).toBe(mine)
+  })
+
   it('the partition folder an account would use: under the session data folder, named for its partition', () => {
     const seen: string[] = []
     const exists = codexPartitionFolderExists(() => 'SD', (p) => { seen.push(p); return p.endsWith(A) })
