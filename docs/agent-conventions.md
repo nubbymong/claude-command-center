@@ -66,12 +66,13 @@ npm run test:e2e     # Playwright
   real home, a drive or filesystem root that holds one included, in a shell line
   (exec, `shell: true`, `cmd /c`, `sh -c`, `pwsh -Command`); worker_threads
   Workers other than a toolchain worker (a script in the project's own
-  `node_modules`, such as esbuild's, which starts with the guard loaded first);
-  `process.execve`; and `process.binding('fs')`. The executable itself is allowed,
-  and so are the running node binary named in an argument (a git hook command), a
-  node script and the command word (that position only) of a `cmd /c` / `sh -c`
-  line inside the real npm or nvm folder. The temp folder, a CI runner's
-  `RUNNER_TEMP` and the checkout are not real homes. Node children load the same
+  `node_modules`, such as esbuild's, which starts with the guard loaded first and
+  no preload in its execArgv); `process.execve`; and `process.binding('fs')`. The
+  executable itself is allowed, and so are the running node binary as the command
+  word of a hook command written in an argument (never as an operand), a node
+  script and the command word (that position only) of a `cmd /c` / `sh -c` line
+  inside the real npm or nvm folder. The temp folder, a CI runner's `RUNNER_TEMP`
+  (only `<work>/_temp` beside the checkout) and the checkout are not real homes. Node children load the same
   guard through NODE_OPTIONS, and a child env that omits a home or temp variable
   gets it filled in.
 - **Not covered:** native addons (they write natively); a non-node child beyond

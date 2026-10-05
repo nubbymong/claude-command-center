@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-05T08:58:51.411Z",
-  "head": "6991680e679ff68fa9aed80ea472cdf0b4d04d80",
-  "tree": "c0f39c27be286a18f321bda69d295475cbffa24f",
+  "generatedAt": "2026-10-05T11:03:44.625Z",
+  "head": "ac81bec539a29a6e5c0c6454e5c56fe6e1088b6a",
+  "tree": "6b6f28d0e221c10e3e1cf0b3cf4fc63f0dfe3559",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -204,7 +204,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 1200,
+      "lineCount": 1202,
       "truncated": true
     },
     {
@@ -454,7 +454,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 25
+      "lineCount": 26
     },
     {
       "path": "src/main/account-web/codex-web-wiring.ts",
@@ -3468,7 +3468,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 13
+      "lineCount": 15
     },
     {
       "path": "tests/integration/codex-cli-compat-env.test.ts",
@@ -3659,7 +3659,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 8
+      "lineCount": 13
     },
     {
       "path": "tests/unit/conductor-secret-rotation.test.ts",
@@ -6573,7 +6573,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 39
+      "lineCount": 44
     },
     {
       "path": "tests/unit/tokenomics/tk-parse.test.ts",
