@@ -17,6 +17,7 @@ const F = vi.hoisted(() => ({
   readFails: new Set<string>(),
   statFails: new Set<string>(),
   listFails: false,
+  listMissing: false,
   renamed: [] as Array<[string, string]>,
   minted: [] as string[],
   wiped: [] as string[],
@@ -47,6 +48,7 @@ vi.mock('fs', async (orig) => {
     unlinkSync: (p: string) => { F.files.delete(p) },
     readdirSync: (dir: string) => {
       if (F.listFails) throw Object.assign(new Error('EACCES: permission denied, scandir'), { code: 'EACCES' })
+      if (F.listMissing) throw Object.assign(new Error('ENOENT: no such file or directory, scandir'), { code: 'ENOENT' })
       const prefix = dir.endsWith('/') ? dir : dir + '/'
       return [...F.files.keys()].filter((p) => p.startsWith(prefix) && !p.slice(prefix.length).includes('/')).map((p) => p.slice(prefix.length))
     },
@@ -87,7 +89,7 @@ const record = (id: string) => ({ accountId: id, accountEmail: 'owner@example.co
 const everyFolder = () => true
 
 beforeEach(() => {
-  F.files.clear(); F.dirs.clear(); F.readFails.clear(); F.statFails.clear(); F.listFails = false
+  F.files.clear(); F.dirs.clear(); F.readFails.clear(); F.statFails.clear(); F.listFails = false; F.listMissing = false
   F.renamed.length = 0; F.minted.length = 0; F.wiped.length = 0; F.logs.length = 0
   CWS._resetCodexWebForTest()
 })
@@ -105,6 +107,11 @@ describe('[host] the start sweep reads the record store once, without side effec
 
   it('an absent store means no records: each unrecorded account is wiped', async () => {
     expect(await sweep([A, B])).toEqual([A, B])
+  })
+
+  it('no channels folder yet (a first start): no quarantined copy, so the sweep runs', async () => {
+    F.listMissing = true
+    expect(await sweep([A])).toEqual([A])
   })
 
   it('a record with a bad field still counts as a record: its account is never wiped', async () => {
