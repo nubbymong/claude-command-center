@@ -15,8 +15,9 @@
 // environment), and any account-profiles folder above one of them. A path is inside
 // a real home when it is under one of them and not under a more specific allowed
 // root: the isolated root, the temp folder (on Windows it sits under LOCALAPPDATA), a
-// CI runner's RUNNER_TEMP, or the project root (CI runners keep the checkout under
-// HOME). Only the isolated root wins a tie.
+// CI runner's RUNNER_TEMP in the runner layout (<work>/_temp beside the checkout), or
+// the project root (CI runners keep the checkout under HOME). Only the isolated root
+// wins a tie.
 //
 // Covered (each throws TEST_ISOLATION_VIOLATION and is recorded, so a refusal the
 // caller swallows still fails the test, or the probe's exit code):
@@ -34,13 +35,16 @@
 //     (exec, shell:true, `cmd /c|/k`, `sh|bash|dash|zsh|ksh -c`, and
 //     `pwsh|powershell -c|-Command`) a `cd` / `chdir` / `pushd` (glued forms such as
 //     `cd/d`, `cd\`, `cd..` included) or `Set-Location` / `sl` / `Push-Location` into
-//     or above a real home, a filesystem root that holds one included. The executable
-//     itself is not refused, nor the running node binary named in an argument (a git
-//     hook command), nor a node script, or the command word (that position only) of a
-//     `cmd /c` / `sh -c` line, inside a real home's npm or nvm folder. A child env
-//     that omits a home or temp variable gets it filled in;
+//     or above a real home, a filesystem root that holds one included. Not refused: the
+//     executable itself; the running node binary (that exact spelling) as the command
+//     word of a command line written in an argument or of a shell line (a git hook
+//     command), never as an operand; and a node script, or the command word (that
+//     position only) of a `cmd /c` / `sh -c` line, inside a real home's npm or nvm
+//     folder. A child env that omits a home or temp variable gets it filled in, and a
+//     RUNNER_TEMP a caller sets in it is checked like TEMP;
 //   - worker_threads Workers: one whose script is in this project's node_modules (a
-//     toolchain worker such as esbuild's) starts guarded, every other one is refused;
+//     toolchain worker such as esbuild's) starts guarded, without preloads in its
+//     execArgv (one the caller names is refused), every other one is refused;
 //     process.execve and process.binding('fs' | 'fs_dir' | 'spawn_sync' |
 //     'process_wrap') are refused.
 // Paths are compared after resolving `..`, separators, case (win32, darwin),
@@ -378,8 +382,9 @@ const GLOB_CHARS = /[*?[{]/
  * build their own with simulated roots and a fake fs.
  * @param {{ realRoots: string[], allowedRoots?: AllowedRoot[], installRoots?: string[], userNames?: string[],
  *   executables?: string[], platform?: string, fsImpl?: FsImpl, cwd?: () => string }} opts
- *   `executables`: binaries an argument may name even inside a real home (the running
- *   node, which macOS runners keep under HOME and tests hand to git hooks)
+ *   `executables`: binaries that may be the command word of a command line written in an
+ *   argument even inside a real home (the running node, which macOS runners keep under
+ *   HOME and tests hand to git hooks): that exact spelling, in that position only
  */
 export function createHomeChecker(opts) {
   const platform = opts.platform ?? process.platform
@@ -483,7 +488,38 @@ export function createHomeChecker(opts) {
 
   const realKeys = keysOf(opts.realRoots)
   const installKeys = keysOf(opts.installRoots ?? [])
-  const execKeys = new Set(keysOf(opts.executables ?? []))
+  // Exact spellings (on Windows also with forward slashes): never a normalised key, so a
+  // stream suffix, a trailing dot or space, or a link is not the binary.
+  const execSpell = (opts.executables ?? []).filter(nonEmpty).flatMap((e) => (platform === 'win32' ? [e, e.replace(/\\/g, '/')] : [e]))
+  const sameSpell = (/** @type {string} */ a, /** @type {string} */ b) => (foldsCase(platform) ? a.toLowerCase() === b.toLowerCase() : a === b)
+  const isExecWord = (/** @type {string} */ w) => execSpell.some((e) => sameSpell(e, w))
+  /**
+   * An argument with the running node binary blanked where it is the command word of a
+   * command line: at the start of the argument, or of a value after `=` (a git hook such
+   * as core.fsmonitor="<node>" "<script>" args), quoted or not, exactly that spelling and
+   * followed by at least one more word. Anywhere else (an operand, a copy destination)
+   * it is checked like any other path.
+   * @param {string} el
+   */
+  const blankExecWords = (el) => {
+    if (execSpell.length === 0) return el
+    let out = el
+    const starts = [0]
+    for (let at = el.indexOf('='); at >= 0; at = el.indexOf('=', at + 1)) starts.push(at + 1)
+    for (const s of starts) {
+      const q = el[s] === '"' || el[s] === "'" ? el[s] : ''
+      const from = s + q.length
+      for (const e of execSpell) {
+        const end = from + e.length
+        if (!sameSpell(el.slice(from, end), e)) continue
+        const after = q ? (el[end] === q ? end + 1 : -1) : end
+        if (after < 0 || !/^\s+\S/.test(el.slice(after))) continue
+        out = out.slice(0, from) + ' '.repeat(e.length) + out.slice(end)
+        break
+      }
+    }
+    return out
+  }
   /** @type {{ key: string, kind: string }[]} */
   const allowed = []
   for (const a of opts.allowedRoots ?? []) {
@@ -682,20 +718,15 @@ export function createHomeChecker(opts) {
    * and real-root spellings. Linear in the argument; the first FULL_CHECKS_PER_ARG
    * distinct candidates get the full realpath walk, the rest are resolved through their
    * (memoised) folder.
-   * @param {string} el @param {string} base @returns {Hit | null}
+   * @param {string} whole @param {string} base @returns {Hit | null}
    */
-  const argHit = (el, base) => {
+  const argHit = (whole, base) => {
+    const el = blankExecWords(whole)
     /** @type {ScanCtx} */ const ctx = { memo: new Map(), full: 0 }
     const seen = new Set()
     const check = (/** @type {string} */ c) => {
       if (!c || seen.has(c)) return null
       seen.add(c)
-      // The running node binary named as an argument (a git hook command) is the same
-      // binary the executable exemption already lets run: that exact file only.
-      if (execKeys.size > 0) {
-        const keys = formsOf(c, base, ctx).forms.map((f) => keyOf(f, platform))
-        if (keys.length > 0 && keys.every((k) => execKeys.has(k))) return null
-      }
       ctx.lexOnly = /** @type {number} */ (ctx.full) >= FULL_CHECKS_PER_ARG
       if (!ctx.lexOnly) ctx.full = /** @type {number} */ (ctx.full) + 1
       return argCandidate(c, base, ctx)
@@ -741,13 +772,14 @@ export function createHomeChecker(opts) {
 
   /**
    * A shell line with its command word blanked out when that word is a program in a
-   * real home's npm or nvm folder (an npm shim); otherwise the line unchanged. Only
-   * that position is exempt: the same path anywhere else in the line is still checked.
+   * real home's npm or nvm folder (an npm shim) or the running node binary (exact
+   * spelling); otherwise the line unchanged. Only that position is exempt: the same path
+   * anywhere else in the line is still checked.
    * @param {string} line @param {string} base
    */
   const stripCommandWord = (line, base) => {
     const { word, start, end } = commandWord(line)
-    if (!word || !inInstallRoot(word, base)) return line
+    if (!word || !(inInstallRoot(word, base) || isExecWord(word))) return line
     return line.slice(0, start) + ' '.repeat(end - start) + line.slice(end)
   }
 
@@ -939,6 +971,33 @@ function installRootsFrom(env) {
 }
 
 /**
+ * The runner temp folders that count as temp areas: GitHub Actions' layout only, where
+ * RUNNER_TEMP is `<work>/_temp` and `<work>` holds the checkout (`<work>/<repo>/<repo>`
+ * on every runner). A value must be absolute, named exactly `_temp`, sit in a folder
+ * that holds the project root, and hold none of `homes`.
+ * @param {string[]} candidates
+ * @param {{ projectRoot: string, homes: string[], platform?: string, fsImpl?: FsImpl }} opts
+ * @returns {string[]}
+ */
+export function runnerTempsFrom(candidates, opts) {
+  const platform = opts.platform ?? process.platform
+  const P = pathApi(platform)
+  const checkerFor = (/** @type {string} */ root) => createHomeChecker({ realRoots: [root], platform, fsImpl: opts.fsImpl, cwd: () => P.parse(root).root })
+  /** @type {string[]} */ const out = []
+  for (const c of candidates) {
+    if (!nonEmpty(c) || !P.isAbsolute(c)) continue
+    const t = P.resolve(c)
+    const name = P.basename(t)
+    if ((foldsCase(platform) ? name.toLowerCase() : name) !== '_temp') continue
+    if (!checkerFor(P.dirname(t)).isProtected(opts.projectRoot)) continue
+    const holds = checkerFor(t)
+    if (opts.homes.some((h) => nonEmpty(h) && holds.isProtected(h))) continue
+    if (!out.includes(t)) out.push(t)
+  }
+  return out
+}
+
+/**
  * Real roots, temp roots, install roots and the isolated root for this process.
  * Order matters: trusted real roots (the OS profile, a parent's real roots) are
  * fixed first; a temp root that contains one is refused; an environment home inside
@@ -963,12 +1022,19 @@ function buildConfig(opts = {}) {
   const ownTmp = os.tmpdir()
   const tempNamed = (/** @type {string} */ t) => /^(?:_?te?mp|t|ccc-vitest-.+)$/i.test(path.basename(t))
   const holdsOwnTmp = (/** @type {string} */ t) => createHomeChecker({ realRoots: [t], platform }).isProtected(ownTmp)
-  // A CI runner's per-job temp folder (GitHub Actions' RUNNER_TEMP, _temp under HOME on
-  // its Linux and macOS runners) is a temp area too, when it is temp-named and holds no
-  // trusted real home (the filter below). It comes from this process's RUNNER_TEMP or from
-  // the marker (a child whose environment was rebuilt from an allowlist no longer has the
-  // variable), under the same rule either way.
-  const runnerTemps = abs([envValue(env, 'RUNNER_TEMP') ?? '', ...(marker ? marker.runner : [])].filter((t) => path.isAbsolute(t))).filter(tempNamed)
+  // Every home this process can name: the trusted ones and the ones only its environment
+  // names (a profile USERPROFILE, CODEX_HOME, ...).
+  const envHomes = abs([...[...HOME_VARS, ...XDG_VARS, ...CONFIG_HOME_VARS].map((n) => envValue(env, n) ?? ''), envHomeDrivePath(env) ?? '', osHome() ?? ''])
+  // A CI runner's per-job temp folder (GitHub Actions' RUNNER_TEMP, under HOME on its
+  // Linux and macOS runners) is a temp area too, in the runner layout only (see
+  // runnerTempsFrom). It comes from this process's RUNNER_TEMP or from the marker (a
+  // child whose environment was rebuilt from an allowlist no longer has the variable),
+  // under the same rule either way.
+  const runnerTemps = runnerTempsFrom([envValue(env, 'RUNNER_TEMP') ?? '', ...(marker ? marker.runner : [])], {
+    projectRoot: PROJECT_ROOT,
+    homes: [...trustedReal, ...envHomes],
+    platform,
+  })
   const tmpRoots = abs([
     ...abs([...(opts.extraTmpRoots ?? []), ownTmp, ...runnerTemps]),
     ...abs(marker ? marker.tmp : []).filter((t) => tempNamed(t) && holdsOwnTmp(t)),
@@ -976,13 +1042,11 @@ function buildConfig(opts = {}) {
 
   /** @type {Record<string, string | undefined>} */
   const originalEnv = {}
-  for (const name of [...HOME_VARS, ...XDG_VARS, ...CONFIG_HOME_VARS, 'HOMEDRIVE', 'HOMEPATH', 'NVM_HOME', 'NVM_SYMLINK', 'NVM_DIR', 'npm_config_prefix']) {
+  for (const name of [...HOME_VARS, ...XDG_VARS, ...CONFIG_HOME_VARS, 'HOMEDRIVE', 'HOMEPATH', 'NVM_HOME', 'NVM_SYMLINK', 'NVM_DIR', 'npm_config_prefix', 'RUNNER_TEMP']) {
     originalEnv[name] = envValue(env, name)
   }
   const inTmp = createHomeChecker({ realRoots: tmpRoots, platform })
-  let captured = abs([...[...HOME_VARS, ...XDG_VARS, ...CONFIG_HOME_VARS].map((n) => envValue(env, n) ?? ''), envHomeDrivePath(env) ?? '', osHome() ?? '']).filter(
-    (v) => !inTmp.isProtected(v),
-  )
+  let captured = envHomes.filter((v) => !inTmp.isProtected(v))
 
   const base = [...tmpRoots.map((p) => /** @type {AllowedRoot} */ ({ path: p, kind: 'tmp' })), { path: PROJECT_ROOT, kind: /** @type {'project'} */ ('project') }]
   let isolated = opts.isolated ?? marker?.isolated
@@ -1381,6 +1445,14 @@ function childEnv(state, op, src, cwdAbs) {
     const hit = state.checker.classify(v, cwdAbs)
     if (hit) throw violation(state, `${op} env ${name}`, v, hit)
   }
+  // A RUNNER_TEMP other than this process's own (one a caller set) is checked like TEMP:
+  // the child would take it for a temp area. The runner's own value passes through; the
+  // child applies the runner layout rule to it itself.
+  const runnerTemp = get('RUNNER_TEMP')
+  if (runnerTemp && runnerTemp !== state.originalEnv.RUNNER_TEMP) {
+    const hit = state.checker.classify(runnerTemp, cwdAbs)
+    if (hit) throw violation(state, `${op} env RUNNER_TEMP`, runnerTemp, hit)
+  }
   // Variables that point git or npm at a config, cache or prefix folder.
   for (const k of Object.keys(out)) {
     if (!CONFIG_REDIRECT.test(k)) continue
@@ -1606,6 +1678,24 @@ function patchNodePty(state) {
   return true
 }
 
+// Node options that load code before a script: in a toolchain worker they would run ahead
+// of the guard preamble.
+const PRELOAD_FLAG = /^(?:-r|--require|--import|--loader|--experimental-loader)(?:=|$)/
+
+/** execArgv without its preload options (and their values). @param {string[]} args */
+function withoutPreloads(args) {
+  /** @type {string[]} */ const out = []
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]
+    if (PRELOAD_FLAG.test(a)) {
+      if (!a.includes('=')) i++
+      continue
+    }
+    out.push(a)
+  }
+  return out
+}
+
 /** Workers get fresh, unpatched builtins: start a toolchain worker guarded, refuse the rest. @param {GuardState} state */
 function patchWorkers(state) {
   const wt = /** @type {any} */ (workerThreads)
@@ -1629,12 +1719,23 @@ function patchWorkers(state) {
       }
     }
     if (file !== undefined && toolchain.isProtected(file)) {
+      // A preload in the worker's execArgv would run before the guard preamble: refuse one
+      // the caller names, and drop the ones a worker would inherit from this thread.
+      /** @type {unknown[] | undefined} */ const given = Array.isArray(o.execArgv) ? o.execArgv : undefined
+      if (given && given.some((a) => typeof a === 'string' && PRELOAD_FLAG.test(a))) {
+        throw violation(state, 'worker_threads.Worker execArgv', given.join(' ').slice(0, 120), {
+          root: '(worker thread)',
+          form: 'execArgv',
+          reason: 'would run a preload before the guard',
+        })
+      }
+      const execArgv = given ?? withoutPreloads(process.execArgv)
       const src = o.env === undefined || o.env === wt.SHARE_ENV ? process.env : o.env
       const env = { ...src, [MARKER_ENV]: markerValue(state, state.isolated) }
       // The guard first, then the script (import() loads CommonJS and ES modules alike).
       // A failure is an unhandled rejection, which ends the worker with an error.
       const code = `import(${JSON.stringify(PROBE_GUARD_URL)}).then(() => import(${JSON.stringify(pathToFileURL(file).href)}))`
-      return new Orig(code, { ...o, eval: true, env })
+      return new Orig(code, { ...o, eval: true, env, execArgv })
     }
     throw violation(state, 'worker_threads.Worker', String(filename).slice(0, 120), {
       root: '(worker thread)',

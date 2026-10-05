@@ -32,16 +32,19 @@ for:
   `Push-Location` into or above a real home, a root that holds one included, is
   refused. A child environment that omits a home variable gets it under the home
   the caller gave, or else the isolated one; one that omits TEMP, TMP or TMPDIR gets
-  this process's (POSIX does not copy them in). The executable itself, the running
-  node binary named in an argument (a git hook command; macOS runners keep node
-  under HOME), a node script, and the command word (that position only) of a
+  this process's (POSIX does not copy them in); a RUNNER_TEMP a caller sets in it
+  is checked like TEMP. The executable itself, the running node binary (that exact
+  spelling) as the command word of a command line written in an argument or of a
+  shell line (a git hook command; macOS runners keep node under HOME), never as an
+  operand, a node script, and the command word (that position only) of a
   `cmd /c` / `sh -c` line in a real home's npm or nvm folder are not refused; an
   install folder handed to a child must be an npm or nvm folder holding no real home;
 - `worker_threads` Workers (also through `Worker.prototype.constructor`) other
   than a toolchain worker, `process.execve` and `process.binding('fs')` (they
   would bypass it). A toolchain worker, one whose script is in the project's own
-  `node_modules` (esbuild's sync service), starts with the guard loaded first and
-  the guard marker in its environment; eval code and any other script are refused.
+  `node_modules` (esbuild's sync service), starts with the guard loaded first, the
+  guard marker in its environment and no preload in its execArgv (one the caller
+  names is refused); eval code and any other script are refused.
 
 Node children load the same guard: every spawn adds it to the child's
 `NODE_OPTIONS`, and the child removes it from its own view. A refusal the code
@@ -67,10 +70,11 @@ deliberately out of scope.
   `os.userInfo().homedir` (which ignores the environment), and any
   `account-profiles` folder above one of them. Allowed roots: the isolated root,
   the temp folder (on Windows it sits under LOCALAPPDATA), a CI runner's
-  `RUNNER_TEMP` when it is named like a temp folder and holds no trusted real home
-  (GitHub keeps it under HOME on Linux and macOS; a child whose environment was
-  rebuilt without it, such as a CLI the app runs, learns it from the marker), and the
-  project root (CI runners keep the checkout under HOME). The more specific root wins; only the
+  `RUNNER_TEMP` in GitHub's layout only (`<work>/_temp` where `<work>` holds the
+  checkout) and holding no home this process can name (GitHub keeps it under HOME on
+  Linux and macOS; a child whose environment was rebuilt without it, such as a CLI
+  the app runs, learns it from the marker), and the project root (CI runners keep the
+  checkout under HOME). The more specific root wins; only the
   isolated root wins a tie.
 - Paths are compared after resolving `..`, separators, case (win32, darwin),
   trailing dots and spaces, stream suffixes, `\\?\`, `\\.\` and `\??\` prefixes,
@@ -84,7 +88,8 @@ deliberately out of scope.
 - A guard marker handed to a child can add real roots but cannot widen the allowed
   area: a temp root it names must hold the child's own temp folder, be named like a
   temp folder and hold no trusted real home; a runner temp folder it names gets the
-  same rule as RUNNER_TEMP itself (absolute, temp-named, holding no trusted real home).
+  same rule as RUNNER_TEMP itself (absolute, `<work>/_temp` beside the checkout,
+  holding no home).
 - `npm_config_*` and `GIT_CONFIG_GLOBAL` values that name a real home (npm sets
   them for every script it runs) are pointed into the isolated home in each worker,
   so the children inherit safe ones.
