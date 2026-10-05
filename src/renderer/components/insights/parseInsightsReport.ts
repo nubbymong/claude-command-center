@@ -2,6 +2,7 @@
 // Parse insights-job HTML into a structured tree the renderer can map onto V2
 // React components. Uses DOMParser (available in jsdom + renderer). Each known
 // section type maps to a discriminated shape; unknown sections are dropped.
+import { parseCodexStoredReport } from '../../../shared/insights-codex-report'
 
 export type InsightsSection =
   | { kind: 'at-a-glance'; title: string; body: string }
@@ -78,4 +79,13 @@ export function parseInsightsReport(html: string): ParsedInsights {
   })
 
   return { title, subtitle, sections }
+}
+
+// WP2 PR 4, P4.7 (row 68): a Codex report is kept as data (report.json), never
+// markup. It is checked by the one rule main wrote it with
+// (shared/insights-codex-report.ts) and drawn by the same components as
+// Claude's cards, as text; anything that does not check is no report.
+export function parseCodexInsightsReport(text: string | null | undefined): ParsedInsights | null {
+  const report = parseCodexStoredReport(text)
+  return report ? { title: report.title, subtitle: report.subtitle, sections: report.sections } : null
 }

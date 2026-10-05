@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest'
-import { parseInsightsReport } from '../../../src/renderer/components/insights/parseInsightsReport'
+import { parseInsightsReport, parseCodexInsightsReport } from '../../../src/renderer/components/insights/parseInsightsReport'
 
 const SAMPLE = `<!DOCTYPE html><html><body>
   <h1>Title</h1>
@@ -31,5 +31,24 @@ describe('parseInsightsReport (U3.1)', () => {
     const r = parseInsightsReport('<html><body></body></html>')
     expect(r.title).toBe('')
     expect(r.sections).toEqual([])
+  })
+})
+
+// [host] WP2 PR 4, P4.7 (row 68): a Codex report is data (report.json), read
+// by the one rule main wrote it with; never parsed as HTML.
+describe('parseCodexInsightsReport', () => {
+  const stored = (sections: unknown[]) => JSON.stringify({ version: 1, title: 'Codex Insights', subtitle: '3 turns across 2 sessions', sections })
+  const GLANCE = { kind: 'at-a-glance', title: 'At a glance', body: "What's working: a" }
+  const NARRATIVE = { kind: 'narrative', title: 'How you use Codex', paragraphs: ['p'] }
+
+  it("reads a stored report into the same cards as Claude's [host]", () => {
+    const r = parseCodexInsightsReport(stored([GLANCE, NARRATIVE]))
+    expect(r).toEqual({ title: 'Codex Insights', subtitle: '3 turns across 2 sessions', sections: [GLANCE, NARRATIVE] })
+  })
+
+  it('HTML, a card kind it does not know, or nothing, is no report [host]', () => {
+    expect(parseCodexInsightsReport('<html><h1>Codex Insights</h1></html>')).toBeNull()
+    expect(parseCodexInsightsReport(stored([GLANCE, NARRATIVE, { kind: 'raw', html: '<b>' }]))).toBeNull()
+    expect(parseCodexInsightsReport(null)).toBeNull()
   })
 })

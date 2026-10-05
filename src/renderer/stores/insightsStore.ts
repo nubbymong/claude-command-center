@@ -1,7 +1,23 @@
 import { create } from 'zustand'
 import type { InsightsCatalogue, InsightsRun } from '../types/electron'
 import { CLAUDE_OFF, isClaudeOff } from '../lib/claudeOff'
-import { launchRefusalOf } from '../../shared/providers'
+import { launchRefusalOf, providerOffMessage, providerNotSetUpMessage } from '../../shared/providers'
+import { useSettingsStore } from './settingsStore'
+import { codexPreference } from '../onboarding/provider-choice'
+
+/** P4.7: why a Codex report does not start from this page: Codex is off, or
+ *  not set up yet (main's own sentences; main refuses the same). Null while
+ *  Codex is on. */
+export function codexOffReason(settings: { codexEnabled?: boolean } = useSettingsStore.getState().settings): string | null {
+  const pref = codexPreference(settings)
+  return pref === 'on' ? null : pref === 'off' ? providerOffMessage('Codex') : providerNotSetUpMessage('Codex')
+}
+
+/** P4.7: a request main did not take (not from the app window, or not a
+ *  request it reads), as main words it; null for any other answer. */
+export function insightsRejectionOf(v: unknown): string | null {
+  return v && typeof v === 'object' && typeof (v as { rejected?: unknown }).rejected === 'string' ? (v as { rejected: string }).rejected : null
+}
 
 type InsightsStatus = 'idle' | 'running' | 'extracting_kpis' | 'complete' | 'failed'
 
@@ -23,6 +39,10 @@ interface InsightsState {
   batchRunId: string | null
 
   startInsights: (profileId?: string) => Promise<void>
+  /** P4.7: a Codex account's report. `acknowledged`: the user ticked this
+   *  run's confirmation for exactly this account (mockup D12); it is sent
+   *  with the account it names, never kept. */
+  startCodexInsights: (accountId: string, acknowledged?: boolean) => Promise<void>
   startCrossAccount: (profileIds?: string[]) => Promise<void>
   loadCatalogue: () => Promise<void>
   selectRun: (runId: string) => void
@@ -62,6 +82,30 @@ export const useInsightsStore = create<InsightsState>((set, get) => ({
       // it was, and the page says why.
       const refusal = launchRefusalOf(runId)
       if (refusal) { set({ status: before, error: refusal.message }); return }
+      const rejected = insightsRejectionOf(runId)
+      if (rejected) { set({ status: before, error: rejected }); return }
+      if (typeof runId === 'string') set({ currentRunId: runId })
+    } catch (err: any) {
+      set({ status: 'failed', error: err.message || 'Failed to start insights' })
+    }
+  },
+
+  startCodexInsights: async (accountId: string, acknowledged?: boolean) => {
+    // The backstop for a Codex report: none starts while Codex is off or not
+    // set up. Claude Code being off does not stop it (mockup D8).
+    const off = codexOffReason()
+    if (off) { set({ error: off }); return }
+    const before = get().status
+    try {
+      set({ status: 'running', error: null })
+      // The S0 shape, { profileId, provider }, plus this run's confirmation,
+      // which counts only with the account it names (main checks it).
+      const request = { profileId: accountId, provider: 'codex' as const, ...(acknowledged === true ? { acknowledgeRealmOnly: true as const } : {}) }
+      const runId = await window.electronAPI.insights.run(request)
+      const refusal = launchRefusalOf(runId)
+      if (refusal) { set({ status: before, error: refusal.message }); return }
+      const rejected = insightsRejectionOf(runId)
+      if (rejected) { set({ status: before, error: rejected }); return }
       if (typeof runId === 'string') set({ currentRunId: runId })
     } catch (err: any) {
       set({ status: 'failed', error: err.message || 'Failed to start insights' })
@@ -69,8 +113,9 @@ export const useInsightsStore = create<InsightsState>((set, get) => ({
   },
 
   startCrossAccount: async (profileIds?: string[]) => {
-    // The same backstop: every account's run, and the synthesis, run Claude.
-    if (isClaudeOff()) { set({ error: CLAUDE_OFF }); return }
+    // The same backstop: a roll-up runs Claude Code's accounts and, while
+    // Codex is on, Codex's (mockup C1 A); with neither on, none starts.
+    if (isClaudeOff() && codexOffReason() !== null) { set({ error: CLAUDE_OFF }); return }
     const before = { status: get().status, statusMessage: get().statusMessage }
     try {
       set({
@@ -87,6 +132,8 @@ export const useInsightsStore = create<InsightsState>((set, get) => ({
       )
       const refusal = launchRefusalOf(runId)
       if (refusal) { set({ ...before, error: refusal.message, batchActive: false, batchRunId: null }); return }
+      const rejected = insightsRejectionOf(runId)
+      if (rejected) { set({ ...before, error: rejected, batchActive: false, batchRunId: null }); return }
       if (typeof runId === 'string') set({ currentRunId: runId })
     } catch (err: any) {
       // Rejects only on refusal (too few accounts, or a roll-up already running)
