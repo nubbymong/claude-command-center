@@ -33,9 +33,11 @@ killed).
 **Start sweep and a newer record store.** At start, a Codex account's
 chatgpt.com session with no record is wiped, but only when the record store
 reads cleanly and the account's partition folder already exists. A record
-store written by a newer version of the app is never rewritten: Sign in to
-chatgpt.com is refused with that reason, and Sign out of chatgpt.com still
-clears the session.
+store written by a newer version of the app is never rewritten, and while it
+is there the chatgpt.com surface is inert: Sign in to chatgpt.com and the
+browser pane's chatgpt.com are refused with that reason, and Sign out of
+chatgpt.com and archive still clear the session (the newer store keeps its
+record). Both apply to the Codex record store only.
 
 **Owed.** The second half's own ADR-009 round; PB7b on the VM (unauthenticated
 cookie names, each sign-in method's first hop); OR2 on the final build; OR3,

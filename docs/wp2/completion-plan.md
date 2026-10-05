@@ -185,7 +185,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 55 | Memory | PARTIAL (P4.4, 1a12160b to 41638f93; mocked): listing, guard and read built; delete built, hidden and refused in main until the VM check; frontmatter edit does not carry over (recorded) | Parity: each realm's Codex memories on the Memory page | verification: the delete check on the VM (else OR4); OR4: the real file format | 4 |
 | 56 | Codex logs | DONE (P4.4, 1a12160b, 8fb60652; mocked) | Parity: each realm's `log` folder offered where the app offers its own log folder (Settings, Debug Logging) | verification: the VM (each account's folders open, `log_dir` from `config.toml` included) | 4 |
 | 57 | Cloud Agents | DONE (P4.5, 5d0187c6 to d41c4a8b; mocked): built, the skip-permissions choice as the owner decided on 2026-10-04 (question 7: A, kept as built); was Claude only (`src/main/cloud-agent-manager.ts:192`) | Parity: background agents run with `codex exec` in the account's realm, as Claude's run its headless CLI; not the experimental `codex cloud` (WP1.41) | verification: the VM run, OR4 | 4 |
-| 58 | Web sign-in and artifacts | PARTIAL (P4.6 first half, 27d62537 to 1064dbbf; second half, 10fab972 to dd23a3bf, its review fixes cbb2b58d to 39894579; mocked): a Codex account's own web partition, the orphan warning over both prefixes, Claude's items off a Codex tab's menu and pane; the chatgpt.com sign-in window (fail-closed), the pane's chatgpt.com account surface, a Codex tab's own menu item, the Settings row's status and items, and archive clearing the session first | Web session: parity (chatgpt.com is to a Codex account what claude.ai is to a Claude account: the browser pane's account surface). Artifacts: no Codex equivalent is known, so a section 19 record (section 10) | owner (OR2, one sign-in run through the built window, which confirms its three unverified values; the artifacts record, OR3) | 4 |
+| 58 | Web sign-in and artifacts | PARTIAL (P4.6 first half, 27d62537 to 1064dbbf; second half, 10fab972 to dd23a3bf, its review fixes cbb2b58d to 1daf5faa; mocked): a Codex account's own web partition, the orphan warning over both prefixes, Claude's items off a Codex tab's menu and pane; the chatgpt.com sign-in window (fail-closed), the pane's chatgpt.com account surface, a Codex tab's own menu item, the Settings row's status and items, and archive clearing the session first | Web session: parity (chatgpt.com is to a Codex account what claude.ai is to a Claude account: the browser pane's account surface). Artifacts: no Codex equivalent is known, so a section 19 record (section 10) | owner (OR2, one sign-in run through the built window, which confirms its three unverified values; the artifacts record, OR3) | 4 |
 
 ### E. Everything else
 
@@ -6397,8 +6397,8 @@ sign-in run through the built window), OR3 (the record). PB7 sized OR2.
     fixtures use made-up names. 11 of 11 mutants killed.
   - *Reviews, round 6 (at 2bf6089e).* Lenses A and C PASS; spec PASS;
     quality FAIL (one latent major, the newer-store rule). Every item fixed
-    in 39894579 to 39894579 (lane W58; mocked).
-  - *Round 6 fixes (2026-10-05; 39894579 to 39894579).* A record store written by a
+    in 39894579 (lane W58; mocked).
+  - *Round 6 fixes (2026-10-05; 39894579).* A record store written by a
     newer build (a downgrade) is one rule, and the file is never rewritten:
     Sign in to chatgpt.com is refused up front with the reason ("This
     account's chatgpt.com records were written by a newer version of the
@@ -6409,7 +6409,24 @@ sign-in run through the built window), OR3 (the record). PB7 sized OR2.
     pane whose record cannot be saved, for any reason, is cleared, as the
     window's is. The start sweep's stand-down line names the quarantined
     copy by file name. 11 of 11 mutants killed.
-  - *Owed.* The reviews of the round 6 fixes; PB7b on the VM; OR2 on the
+  - *Reviews, round 7 (at f421ac68).* Spec PASS, lens C PASS; quality one
+    latent major (opening the pane over a newer store could clear a live
+    sign-in). Fixed in 1daf5faa (lane W58; mocked).
+  - *Round 7 fixes (2026-10-05; 1daf5faa).* While the record store was
+    written by a newer build, the Codex web surface is inert for every
+    account: sign-in and the account view are refused up front with the
+    reason, so no partition is touched and nothing is recorded or cleared,
+    and the Settings row, the session menu and the browser pane's start page
+    show the reason instead of Sign in and chatgpt.com. Sign out of
+    chatgpt.com and archive still wipe and succeed; the newer store keeps
+    its record for the newer build, the accepted behaviour (this build never
+    rewrites a file it cannot read whole). A pane whose record cannot be
+    written for any other reason still clears its session. 8 of 8
+    mutants killed.
+  - *Codex record store only.* The start sweep and the newer-store rule
+    belong to the Codex record store (`codex-web-store.ts`), added in this
+    release.
+  - *Owed.* The reviews of the round 7 fixes; PB7b on the VM; OR2 on the
     final build (then a values-only fix and a re-run if a value was wrong);
     OR3, the artifacts record.
 

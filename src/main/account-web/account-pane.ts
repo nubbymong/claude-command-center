@@ -180,7 +180,7 @@ interface PaneService {
   remove: (ownerId: string) => boolean | void
   /** A session the pane saw signed in whose record could not be saved: clear
    *  it, as the sign-in window's path does, so nothing stays signed in with no
-   *  record (and no Sign out). Absent: the session stays (Claude's). */
+   *  record (and no Sign out). */
   recordFailed?: (ownerId: string) => void
   stateOf: (sessionId: string, ownerId: string, authed: boolean | null, email: string | null) => AccountPaneState
 }

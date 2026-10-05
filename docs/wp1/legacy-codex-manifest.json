@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-05T11:29:01.895Z",
-  "head": "39894579bfd1df972aaf8fcdf8e7b8f76b74ec45",
-  "tree": "91562dde1c9eba7519f9d258d3e7d83ee68eb82b",
+  "generatedAt": "2026-10-05T11:43:25.011Z",
+  "head": "1daf5faa94517a7be2e5670f71d1639f69418651",
+  "tree": "09664efbbdc2676e4ec6b877141355d9002f6da8",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -204,7 +204,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 1203,
+      "lineCount": 1206,
       "truncated": true
     },
     {
@@ -782,7 +782,7 @@
         "P05",
         "P14"
       ],
-      "lineCount": 53
+      "lineCount": 54
     },
     {
       "path": "src/main/ipc/github-handlers.ts",
@@ -1751,7 +1751,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 18
+      "lineCount": 19
     },
     {
       "path": "src/renderer/components/TerminalView.tsx",
@@ -1776,7 +1776,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 41
+      "lineCount": 49
     },
     {
       "path": "src/renderer/components/agent-hub/AgentHubOnboarding.tsx",
@@ -1989,7 +1989,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 21
+      "lineCount": 25
     },
     {
       "path": "src/renderer/components/sidebar/SessionRow.tsx",
@@ -3609,7 +3609,7 @@
         "P02",
         "P13"
       ],
-      "lineCount": 92
+      "lineCount": 94
     },
     {
       "path": "tests/unit/codex-web-copy.test.ts",
@@ -3635,7 +3635,7 @@
         "P02",
         "P13"
       ],
-      "lineCount": 120
+      "lineCount": 122
     },
     {
       "path": "tests/unit/codex-web-pane.test.ts",
@@ -3643,7 +3643,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 103
+      "lineCount": 104
     },
     {
       "path": "tests/unit/codex-web-sign-in.test.ts",
@@ -6240,7 +6240,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 31
+      "lineCount": 34
     },
     {
       "path": "tests/unit/renderer/sidebar-dock-tips.test.tsx",
@@ -6392,7 +6392,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 39
+      "lineCount": 44
     },
     {
       "path": "tests/unit/renderer/whatsnew-showcase.test.tsx",
