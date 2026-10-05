@@ -17,6 +17,7 @@
 //
 // Not loaded by vitest.live.config.ts (the live SSH pack runs real ssh with the
 // user's real keys) or by Playwright.
+import * as fs from 'fs'
 import * as path from 'path'
 import { afterAll, afterEach, beforeEach } from 'vitest'
 // Redirects TEMP/TMP/TMPDIR to the per-worker root; its parent is the original temp folder.
@@ -25,8 +26,18 @@ import { assertNoViolations, installHomeGuard, reassertHomeEnv } from './home-gu
 
 installHomeGuard({ entry: 'vitest', isolate: true, extraTmpRoots: [path.dirname(TEST_TMP_ROOT)] })
 
+// The app's data folder (src/main/data-paths.ts) is the installed app's, under the real
+// LOCALAPPDATA, unless CCC_E2E_DATA_DIR names one: pin it once per worker to a folder
+// under the worker's temp root, so a test that keeps the real logger writes there. A
+// test of data-paths itself deletes it locally (tests/unit/main/data-paths-dev.test.ts).
+export const TEST_DATA_DIR_ENV = 'CCC_E2E_DATA_DIR'
+const TEST_DATA_DIR = path.join(TEST_TMP_ROOT, 'app-data')
+fs.mkdirSync(TEST_DATA_DIR, { recursive: true })
+if (!process.env[TEST_DATA_DIR_ENV]) process.env[TEST_DATA_DIR_ENV] = TEST_DATA_DIR
+
 beforeEach(() => {
   reassertHomeEnv()
+  if (!process.env[TEST_DATA_DIR_ENV]) process.env[TEST_DATA_DIR_ENV] = TEST_DATA_DIR
 })
 
 afterEach(() => {

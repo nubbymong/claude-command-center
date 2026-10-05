@@ -7,22 +7,29 @@ real home folder, so the guarantee is now enforced by the test harness itself.
 forks) loads `tests/helpers/home-isolation.ts` as its FIRST setup file. It points
 HOME, USERPROFILE, APPDATA, LOCALAPPDATA, CLAUDE_CONFIG_DIR and CODEX_HOME (plus
 HOMEDRIVE/HOMEPATH on Windows and the XDG folders elsewhere) at a fresh folder per
-worker, re-asserts them before every test, fails loudly if `os.homedir()` does not
-follow, and installs the guard in `tests/helpers/home-guard-core.mjs`. The guard
-throws `TEST_ISOLATION_VIOLATION` for:
+worker, re-asserts them before every test, pins the app's data folder
+(`CCC_E2E_DATA_DIR`) under the worker's temp folder, fails loudly if
+`os.homedir()` does not follow, and installs the guard in
+`tests/helpers/home-guard-core.mjs`. The guard throws `TEST_ISOLATION_VIOLATION`
+for:
 
 - the wrapped fs calls (deletes, moves, writes, creates, opens and reads whose
-  flags are not read-only, fd and FileHandle metadata calls on a real-home file
-  opened read-only, a recursive copy into a folder holding a link into a real home)
-  aimed at a real home, in sync, callback and `fs.promises` form and every import
-  form;
-- `child_process` and `node-pty` spawns whose working folder, child environment
-  (built exactly as Node and libuv build it: inherited keys, coerced values, the
-  variables Windows copies in) or any argument path, in any spelling, is in a real
-  home. A child environment that omits a home variable gets the isolated value.
-  The executable itself, and a node script in a real home's npm or nvm folder, are
-  not refused;
-- `worker_threads` Workers and `process.binding('fs')` (both would bypass it).
+  flags are not read-only, fd and FileHandle calls on a real-home file opened
+  read-only, through the prototype too, a recursive copy into a folder holding a
+  link into a real home) aimed at a real home, in sync, callback and `fs.promises`
+  form and every import form;
+- `child_process`, `ChildProcess.prototype.spawn` and `node-pty` spawns whose
+  working folder, child environment (built exactly as Node and libuv build it:
+  inherited keys, coerced values, the variables Windows copies in; home, temp, XDG,
+  `GIT_CONFIG_GLOBAL` and `npm_config_*` values) or a path written in an argument
+  (drive, UNC, MSYS, Cygwin, WSL, `~user`, globs, after `=`, embedded, at any
+  length, checked in linear time) is in a real home, or whose shell line does a
+  `cd` / `pushd` into or above one. A child environment that omits a home variable
+  gets it under the home the caller gave, or else the isolated one. The executable
+  itself, and a node script or a `cmd /c` / `sh -c` command word in a real home's
+  npm or nvm folder, are not refused;
+- `worker_threads` Workers (also through `Worker.prototype.constructor`),
+  `process.execve` and `process.binding('fs')` (they would bypass it).
 
 Node children load the same guard: every spawn adds it to the child's
 `NODE_OPTIONS`, and the child removes it from its own view. A refusal the code
@@ -33,9 +40,13 @@ a probe that swallows one exits non-zero. Probes and fake CLIs outside vitest us
 the caller's real roots and the guard preload.
 
 **Not covered.** Native addons (they write natively); a child that is not node,
-beyond its environment, working folder and arguments; anything started outside
-these entry points. `vitest.live.config.ts` (real ssh, real keys) and Playwright
-are deliberately out of scope.
+beyond its environment, working folder and arguments (a native tool that finds the
+profile through the OS rather than the environment, for example to expand `~`,
+reaches the real one); shell re-assembly of an argument: quotes or carets inside a
+word, `%VAR%` / `$VAR` expansion, and a relative path after a `cd` the guard did not
+see are not read the way the shell will read them; anything started outside these
+entry points. `vitest.live.config.ts` (real ssh, real keys) and Playwright are
+deliberately out of scope.
 
 **Decisions.**
 
@@ -55,8 +66,11 @@ are deliberately out of scope.
   length. A bare `~` expands from the child's HOME, which the guard has already
   checked, so it is not refused.
 - A guard marker handed to a child can add real roots but cannot widen the allowed
-  area: a temp root it names must be named like a temp folder and hold no trusted
-  real home.
+  area: a temp root it names must hold the child's own temp folder, be named like a
+  temp folder and hold no trusted real home.
+- `npm_config_*` and `GIT_CONFIG_GLOBAL` values that name a real home (npm sets
+  them for every script it runs) are pointed into the isolated home in each worker,
+  so the children inherit safe ones.
 - The per-test reset puts back a home variable that is unset or points outside the
   isolated or temp area; a temp home a test file chose for itself is kept.
 - CLAUDE_CONFIG_DIR is not filled into a child env that omits it (the managed

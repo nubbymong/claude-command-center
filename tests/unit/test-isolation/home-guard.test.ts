@@ -47,6 +47,7 @@ import {
   reassertHomeEnv,
 } from '../../helpers/home-guard-core.mjs'
 
+const DATA_DIR_AT_LOAD = process.env.CCC_E2E_DATA_DIR
 const WIN = process.platform === 'win32'
 const FOLDS = WIN || process.platform === 'darwin'
 const PROJECT_ROOT = path.resolve(__dirname, '../../..')
@@ -196,6 +197,12 @@ describe('the home variables point at an isolated folder', () => {
     expect(inside(os.homedir(), iso)).toBe(true)
   })
 
+  it("pins the app's data folder (CCC_E2E_DATA_DIR) inside the worker's temp folder, before any test module loads", () => {
+    // Read when this file loaded, before any hook ran: what data-paths sees at import.
+    expect(inside(DATA_DIR_AT_LOAD, os.tmpdir()), String(DATA_DIR_AT_LOAD)).toBe(true)
+    expect(isDir(DATA_DIR_AT_LOAD ?? '')).toBe(true)
+  })
+
   it.runIf(!WIN)('points the XDG folders inside the isolated root too', () => {
     for (const name of XDG_VARS) expect(inside(process.env[name], isolatedRoot()), `${name}=${process.env[name]}`).toBe(true)
   })
@@ -316,6 +323,15 @@ describe('reads with a write flag, and the other entry points, aimed at a real h
 
   it('a worker_threads Worker is refused (its builtins would be unguarded)', () => {
     expectRefused(() => new Worker('0', { eval: true }), 'worker_threads.Worker')
+  })
+
+  it('so is the original Worker reached through Worker.prototype.constructor', () => {
+    const Ctor = (Worker.prototype as unknown as { constructor: new (code: string, o: object) => unknown }).constructor
+    expectRefused(() => new Ctor('0', { eval: true }), 'worker_threads.Worker')
+  })
+
+  it.runIf(typeof (process as unknown as { execve?: unknown }).execve === 'function')('process.execve is refused (it would replace the process)', () => {
+    expectRefused(() => (process as unknown as { execve: (f: string, a: string[], e: object) => void }).execve(process.execPath, [process.execPath, '-e', '0'], {}), 'process.execve')
   })
 })
 
@@ -461,6 +477,59 @@ describe('spawns that would act on a real home throw', () => {
     }
   })
 
+  it.each([['GIT_CONFIG_GLOBAL'], ['npm_config_cache'], ['npm_config_userconfig']])('an explicit env whose %s is in a real home', (name) => {
+    expectRefused(
+      () => spawnSync(process.execPath, ['-e', '0'], { env: { ...MIN_ENV, [name]: path.join(missing(), 'x') }, stdio: 'ignore' }),
+      `child_process.spawnSync env ${name}`,
+    )
+  })
+
+  it('a git or npm config variable that names a real home is pointed into the isolated home for this process', () => {
+    const real = path.join(missing(), 'npm-cache')
+    process.env.npm_config_cache = real
+    try {
+      reassertHomeEnv()
+      expect(inside(process.env.npm_config_cache, isolatedRoot()), String(process.env.npm_config_cache)).toBe(true)
+    } finally {
+      delete process.env.npm_config_cache
+    }
+  })
+
+  it('a direct ChildProcess.prototype.spawn is checked like a spawn (cwd, env)', () => {
+    const run = (opts: Record<string, unknown>) => () => {
+      const c = new cpNs.ChildProcess()
+      c.on('error', noop)
+      ;(c as unknown as { spawn: (o: object) => unknown }).spawn({ file: process.execPath, args: [process.execPath, '-e', '0'], envPairs: [], stdio: 'ignore', ...opts })
+      return c
+    }
+    expectRefused(run({ cwd: missing() }), 'ChildProcess.spawn cwd')
+    expectRefused(run({ cwd: SCRATCH, envPairs: [`HOME=${missing()}`, `PATH=${MIN_ENV.PATH}`] }), 'ChildProcess.spawn env HOME')
+  })
+
+  it('a cd or pushd into a real home, or into the folder above one, in a shell line', () => {
+    const parent = path.dirname(REAL)
+    expectRefused(() => execSync(`cd "${parent}" && "${process.execPath}" -e 0`, { stdio: 'ignore' }), 'child_process.execSync argv')
+    expectRefused(() => execSync(`cd "${missing()}" && "${process.execPath}" -e 0`, { stdio: 'ignore' }), 'child_process.execSync argv')
+    if (WIN) {
+      expectRefused(
+        () => spawnSync('cmd.exe', ['/d', '/s', '/c', `cd /d "${parent}" && "${process.execPath}" -e 0`], { stdio: 'ignore', windowsVerbatimArguments: true }),
+        'child_process.spawnSync argv',
+      )
+    } else {
+      expectRefused(() => spawnSync('sh', ['-c', `cd "${parent}" && true`], { stdio: 'ignore' }), 'child_process.spawnSync argv')
+    }
+  })
+
+  it.runIf(WIN)('a child env without TEMP gets the live TEMP libuv copies in, which is checked', () => {
+    const saved = process.env.TEMP
+    process.env.TEMP = missing()
+    try {
+      expectRefused(() => spawnSync(process.execPath, ['-e', '0'], { env: { ...MIN_ENV }, stdio: 'ignore' }), 'child_process.spawnSync env TEMP')
+    } finally {
+      process.env.TEMP = saved
+    }
+  })
+
   it('an inherited env whose HOME a test pointed at a real home', () => {
     const saved = process.env.HOME
     process.env.HOME = REAL
@@ -544,6 +613,17 @@ describe('a node child gets the guard, and the isolated home, never the real one
     expect(res.entry).toBe('probe')
     expect(child.NODE_OPTIONS).toBeUndefined()
     expect(child[MARKER_ENV]).toBeUndefined()
+  })
+
+  it("a child handed its own home gets the other folders under that home, not the isolated ones", () => {
+    const own = mkdtempSync(path.join(SCRATCH, 'own-child-home-'))
+    const out = path.join(isolatedRoot() ?? SCRATCH, `env-${TAG}-own-home.json`)
+    const r = runChild(childScript('print-own', PRINT, { out }), { preload: false, env: { ...MIN_ENV, HOME: own, USERPROFILE: own } })
+    expect(r.status, r.stderr).toBe(0)
+    const child = upperKeys((JSON.parse(readFileSync(out, 'utf8')) as { env: Record<string, string> }).env)
+    expect(norm(child.CODEX_HOME)).toBe(norm(path.join(own, '.codex')))
+    if (WIN) expect(norm(child.APPDATA)).toBe(norm(path.join(own, 'AppData', 'Roaming')))
+    else expect(norm(child.XDG_CONFIG_HOME)).toBe(norm(path.join(own, '.config')))
   })
 
   it('an inherited env carries the isolated values', () => {
@@ -640,6 +720,9 @@ describe('the guard in a plain-node child (probe-guard.mjs)', () => {
       'const fh = await fs.promises.open(t.homeFile, "r")',
       'await attempt("fhChmod", () => fh.chmod(0o644))',
       'await attempt("fhUtimes", () => fh.utimes(new Date(), new Date()))',
+      // Through the prototype, not the instance.
+      'await attempt("protoChmod", () => Object.getPrototypeOf(fh).chmod.call(fh, 0o644))',
+      'await attempt("protoWrite", () => Object.getPrototypeOf(fh).write.call(fh, Buffer.from("x")))',
       'await fh.close()',
       'const fd2 = fs.openSync(t.tmpFile, "w")',
       'await attempt("control", () => fs.futimesSync(fd2, new Date(), new Date()))',
@@ -659,9 +742,43 @@ describe('the guard in a plain-node child (probe-guard.mjs)', () => {
       reused: 'no refusal',
       fhChmod: VIOLATION_CODE,
       fhUtimes: VIOLATION_CODE,
+      protoChmod: VIOLATION_CODE,
+      protoWrite: VIOLATION_CODE,
       control: 'no refusal',
-      recorded: 6,
+      recorded: 8,
     })
+  })
+
+  it("a program in a real home's npm folder run through cmd /c or sh -c may run; one elsewhere in that home may not", () => {
+    const sim = mkdtempSync(path.join(SCRATCH, 'shimsim-'))
+    const home = path.join(sim, 'home')
+    const tmp = path.join(sim, 'tmp')
+    const npm = path.join(home, 'npm')
+    mkdirSync(npm, { recursive: true })
+    mkdirSync(tmp)
+    const ext = WIN ? '.cmd' : '.sh'
+    const ok = path.join(npm, `ok${ext}`)
+    const other = path.join(home, `other${ext}`)
+    for (const f of [ok, other]) writeFileSync(f, WIN ? '@exit /b 0\r\n' : '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+    const inner: Record<string, string> = { ...MIN_ENV, HOME: tmp, USERPROFILE: tmp, APPDATA: tmp, LOCALAPPDATA: tmp, TEMP: tmp, TMP: tmp, TMPDIR: tmp }
+    if (WIN) Object.assign(inner, { HOMEDRIVE: tmp.slice(0, 2), HOMEPATH: tmp.slice(2) })
+    const body = [
+      'const g = await import(t.guardUrl)',
+      ATTEMPT,
+      "const { spawnSync } = await import('node:child_process')",
+      'const run = (p) => t.win',
+      '  ? spawnSync("cmd.exe", ["/d", "/s", "/c", `""${p}" --version"`], { env: t.inner, cwd: t.tmp, windowsVerbatimArguments: true, encoding: "utf8" })',
+      '  : spawnSync("sh", ["-c", `"${p}" --version`], { env: t.inner, cwd: t.tmp, encoding: "utf8" })',
+      'await attempt("installed", () => { const r = run(t.ok); if (r.status !== 0) throw new Error("exit " + r.status + " " + r.stderr) })',
+      'await attempt("elsewhere", () => run(t.other))',
+      'g.drainViolations()',
+      'process.stdout.write(JSON.stringify(out))',
+    ].join('\n')
+    const file = childScript('shim', body, { ok, other, inner, tmp, win: WIN })
+    const marker = JSON.stringify({ v: 1, real: [], tmp: [tmp], inst: [npm] })
+    const r = runChild(file, { env: { ...MIN_ENV, HOME: home, USERPROFILE: home, TEMP: tmp, TMP: tmp, TMPDIR: tmp, [MARKER_ENV]: marker } })
+    expect(r.status, r.stderr).toBe(0)
+    expect(r.out).toEqual({ installed: 'no refusal', elsewhere: VIOLATION_CODE })
   })
 
   it('isolating fails loudly when os.homedir() does not follow the redirect', () => {
@@ -688,15 +805,29 @@ describe('the guard in a plain-node child (probe-guard.mjs)', () => {
       'await attempt("home", () => fs.rmSync(t.del))',
       'await attempt("tmpInHome", () => fs.rmSync(t.delSub))',
       'await attempt("isolatedInHome", () => fs.rmSync(t.delIso))',
+      'await attempt("tmpNamedInHome", () => fs.rmSync(t.delTmpNamed))',
+      'if (t.delAncestor) await attempt("tmpAncestorInHome", () => fs.rmSync(t.delAncestor))',
       'g.drainViolations()',
       'process.stdout.write(JSON.stringify(out))',
     ].join('\n')
-    const file = childScript('forged', body, { del: missing(), delSub: path.join(sub, 'c'), delIso: path.join(iso, 'c') })
+    // Named like a temp folder, holds no real home, but does not hold the child's own temp folder.
+    const tmpNamed = path.join(sub, 'tmp')
+    // A folder in the real home that holds the temp folder (AppData on Windows) but is not named like one.
+    const rel = path.relative(REAL, os.tmpdir())
+    const ancestor = rel && !rel.startsWith('..') && !path.isAbsolute(rel) && rel.split(path.sep).length > 1 ? path.join(REAL, rel.split(path.sep)[0]) : undefined
+    const delAncestor = ancestor ? path.join(ancestor, `.ccc-iso-forged-anc-${TAG}`, 'c') : undefined
+    const file = childScript('forged', body, { del: missing(), delSub: path.join(sub, 'c'), delIso: path.join(iso, 'c'), delTmpNamed: path.join(tmpNamed, 'c'), delAncestor })
     for (const isolated of [REAL, iso]) {
-      const marker = JSON.stringify({ v: 1, real: [], tmp: [REAL, sub], inst: [], isolated })
+      const marker = JSON.stringify({ v: 1, real: [], tmp: [REAL, sub, tmpNamed, ...(ancestor ? [ancestor] : [])], inst: [], isolated })
       const r = runChild(file, { env: { ...MIN_ENV, [MARKER_ENV]: marker } })
       expect(r.status, r.stderr).toBe(0)
-      expect(r.out, isolated).toEqual({ home: VIOLATION_CODE, tmpInHome: VIOLATION_CODE, isolatedInHome: VIOLATION_CODE })
+      expect(r.out, isolated).toEqual({
+        home: VIOLATION_CODE,
+        tmpInHome: VIOLATION_CODE,
+        isolatedInHome: VIOLATION_CODE,
+        tmpNamedInHome: VIOLATION_CODE,
+        ...(ancestor ? { tmpAncestorInHome: VIOLATION_CODE } : {}),
+      })
     }
     expect(existsSync(sub) || existsSync(iso)).toBe(false)
   })
@@ -712,23 +843,25 @@ describe('the guard in a plain-node child (probe-guard.mjs)', () => {
     for (const root of realHomeRoots()) expect(got, root).toContain(norm(root))
   })
 
-  it('with no isolated home to fill: a child env without HOME is refused, and on Windows a missing USERPROFILE takes the live value libuv copies in, which is checked', () => {
+  it('with no isolated home to fill and no home given, a child env without HOME is refused; one given a home gets the rest under it', () => {
     const tmpHome = mkdtempSync(path.join(SCRATCH, 'tmphome-'))
-    const drive = WIN ? { HOMEDRIVE: tmpHome.slice(0, 2), HOMEPATH: tmpHome.slice(2) } : {}
     const body = [
       'const g = await import(t.guardUrl)',
       ATTEMPT,
       "const { spawnSync } = await import('node:child_process')",
       'const base = { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot }',
-      'await attempt("noHome", () => spawnSync(process.execPath, ["-e", "0"], { cwd: t.tmpHome, env: { ...base, ...t.drive, USERPROFILE: t.tmpHome, APPDATA: t.tmpHome, LOCALAPPDATA: t.tmpHome } }))',
-      'await attempt("noProfile", () => spawnSync(process.execPath, ["-e", "0"], { cwd: t.tmpHome, env: { ...base, ...t.drive, HOME: t.tmpHome, APPDATA: t.tmpHome, LOCALAPPDATA: t.tmpHome } }))',
+      'await attempt("noHome", () => spawnSync(process.execPath, ["-e", "0"], { cwd: t.tmpHome, env: { ...base } }))',
+      'await attempt("givenHome", () => { const r = spawnSync(process.execPath, ["-e", "0"], { cwd: t.tmpHome, env: { ...base, HOME: t.tmpHome } }); if (r.status !== 0) throw new Error("exit " + r.status) })',
       'g.drainViolations()',
       'process.stdout.write(JSON.stringify(out))',
     ].join('\n')
-    // A marker naming no isolated root: the child has no isolated home to fill in.
-    const r = runChild(childScript('fallback', body, { tmpHome, drive }), { env: { ...MIN_ENV, [MARKER_ENV]: JSON.stringify({ v: 1, real: [], tmp: [], inst: [] }) } })
+    // A marker naming no isolated root: the child has no isolated home to fill in. Its
+    // own home is a temp folder, so the values libuv copies in on Windows are safe.
+    const r = runChild(childScript('fallback', body, { tmpHome }), {
+      env: { ...MIN_ENV, HOME: tmpHome, USERPROFILE: tmpHome, [MARKER_ENV]: JSON.stringify({ v: 1, real: [], tmp: [], inst: [] }) },
+    })
     expect(r.status, r.stderr).toBe(0)
-    expect(r.out).toEqual({ noHome: VIOLATION_CODE, noProfile: WIN ? VIOLATION_CODE : 'no refusal' })
+    expect(r.out).toEqual({ noHome: VIOLATION_CODE, givenHome: 'no refusal' })
   })
 
   it("a node script in a real home's npm folder may run; a script elsewhere in that home may not", () => {
@@ -932,6 +1065,63 @@ describe('the pure checker (simulated roots, any host)', () => {
     })
     expect(c.argHit('/v', 'C:\\work')).toBeNull()
     expect(c.argHit('V:\\x', 'C:\\work')).not.toBeNull()
+  })
+
+  it('a volume-GUID path is mapped to its drive before the device rule; an unmapped one still fails closed', () => {
+    const vol = '\\\\?\\Volume{01234567-89ab-cdef-0123-456789abcdef}'
+    const c = createHomeChecker({
+      platform: 'win32',
+      realRoots: ['C:\\Users\\alice'],
+      allowedRoots: [{ path: 'C:\\T', kind: 'tmp' }],
+      fsImpl: fakeFs(['C:\\', 'C:\\Users', 'C:\\Users\\alice', 'C:\\T'], { [vol]: 'C:\\' }),
+      cwd: () => 'C:\\T',
+    })
+    expect(c.isProtected(vol + '\\Users\\alice\\x')).toBe(true)
+    expect(c.isProtected(vol + '\\T\\x')).toBe(false)
+    expect(c.isProtected('\\\\?\\Volume{fedcba98-7654-3210-fedc-ba9876543210}\\T\\x')).toBe(true)
+  })
+
+  it('a cd / pushd / Set-Location into a real home, or above one, in a shell line', () => {
+    for (const line of ['cd /d "C:\\Users\\alice" && del x', 'cd C:\\Users && rmdir /s alice', 'pushd C:\\Users\\alice\\.claude', 'Set-Location C:\\Users; rm -r alice', 'cd /c/Users/alice && rm x']) {
+      expect(win.cdHit(line, 'C:\\work'), line).not.toBeNull()
+    }
+    for (const line of ['cd /d "C:\\Users\\alice\\AppData\\Local\\Temp\\x" && del y', 'cd .. && dir', 'cd C:\\ && dir', 'echo cd', 'cd /v']) {
+      expect(win.cdHit(line, 'C:\\work'), line).toBeNull()
+    }
+  })
+
+  it('the command word of a cmd /c or sh -c line', () => {
+    expect(win.commandWord('""C:\\Users\\alice\\AppData\\Roaming\\npm\\claude.cmd" --version"')).toBe('C:\\Users\\alice\\AppData\\Roaming\\npm\\claude.cmd')
+    expect(win.commandWord('"C:\\Program Files\\x.cmd" a b')).toBe('C:\\Program Files\\x.cmd')
+    expect(win.commandWord("  '/home/u/.npm-global/bin/codex' --version")).toBe('/home/u/.npm-global/bin/codex')
+    expect(win.commandWord('tool.exe --x')).toBe('tool.exe')
+    expect(win.argHit('""C:\\Users\\alice\\AppData\\Roaming\\npm\\claude.cmd" --version"', 'C:\\work')).not.toBeNull()
+    const exempt = win.exemptKeysFor('C:\\Users\\alice\\AppData\\Roaming\\npm\\claude.cmd', 'C:\\work')
+    expect(exempt).toBeDefined()
+    expect(win.argHit('""C:\\Users\\alice\\AppData\\Roaming\\npm\\claude.cmd" --version"', 'C:\\work', exempt)).toBeNull()
+    expect(win.argHit('""C:\\Users\\alice\\AppData\\Roaming\\npm\\claude.cmd" C:\\Users\\alice\\.claude"', 'C:\\work', exempt)).not.toBeNull()
+    expect(win.exemptKeysFor('C:\\Users\\alice\\bin\\claude.cmd', 'C:\\work')).toBeUndefined()
+  })
+
+  it('checking a 64 KB argument stays linear: well under 250 ms with the real filesystem', { timeout: 20_000 }, () => {
+    const root = path.parse(PROJECT_ROOT).root
+    const c = createHomeChecker({
+      realRoots: [path.join(root, `ccc-iso-perf-${TAG}`, 'home')],
+      allowedRoots: [{ path: os.tmpdir(), kind: 'tmp' }, { path: PROJECT_ROOT, kind: 'project' }],
+    })
+    const abs = (i: number): string => (WIN ? `C:\\ccc-iso-perf-${TAG}\\p${i}\\q` : `/ccc-iso-perf-${TAG}/p${i}/q`)
+    // Many `=` with path-like values, many distinct absolute paths, and one long token full of separators.
+    const big = Array.from({ length: 1800 }, (_, i) => `k${i}=./x/${i} ${abs(i)}`).join(' ')
+    const deep = 'ab/c'.repeat(8192)
+    expect(big.length).toBeGreaterThan(64 * 1024)
+    let best = Infinity
+    for (let n = 0; n < 3; n++) {
+      const t0 = performance.now()
+      expect(c.argHit(big, PROJECT_ROOT)).toBeNull()
+      expect(c.argHit(deep, PROJECT_ROOT)).toBeNull()
+      best = Math.min(best, performance.now() - t0)
+    }
+    expect(best).toBeLessThan(250)
   })
 
   it('a script in a real home counts as installed only inside its npm or nvm folder', () => {
