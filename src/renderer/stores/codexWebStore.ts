@@ -89,6 +89,8 @@ export const useCodexWebStore = create<CodexWebState>((set, get) => ({
         if (!r?.ok) break
         const st = r.state
         if (st.phase !== 'awaiting-user' || !st.accountId) break
+        // Another account's run is in flight now: the one followed has ended.
+        if (followed !== null && st.accountId !== followed) break
         if (followed === null) {
           if (get().signingIn !== null) break // this renderer is already following a run
           followed = st.accountId

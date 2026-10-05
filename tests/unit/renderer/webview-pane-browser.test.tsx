@@ -610,6 +610,27 @@ describe('the account surface for a Codex session: chatgpt.com as its own accoun
     }
   })
 
+  it('a refused open (the session no longer runs under the account) says why on the start page', async () => {
+    codexSession()
+    codexPaneOpen.mockImplementationOnce(() => Promise.resolve({ ok: false, error: 'This session does not run under that account.' }))
+    open()
+    render()
+    await flush()
+    act(() => { byTest<HTMLButtonElement>('browser-start-chatgpt')!.click() })
+    await flush()
+    await flush()
+    expect(byTest('account-pane-service')).toBeNull()
+    expect(byTest('browser-start-chatgpt')).not.toBeNull()
+    const note = byTest('browser-start-chatgpt-error')
+    expect(note).not.toBeNull()
+    expect(note!.textContent).toContain('This session does not run under that account.')
+    expect(note!.getAttribute('role')).toBe('alert')
+    // A later open that works clears it.
+    act(() => { byTest<HTMLButtonElement>('browser-start-chatgpt')!.click() })
+    await flush()
+    expect(codexPaneOpen).toHaveBeenCalledTimes(2)
+  })
+
   it('opening it opens the view through the Codex channel as the registry account, and the strip names chatgpt.com', async () => {
     codexSession()
     open()

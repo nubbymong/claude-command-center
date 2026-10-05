@@ -120,6 +120,9 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
   const [address, setAddress] = useState('')
   const [addressEditing, setAddressEditing] = useState(false)
   const [addressError, setAddressError] = useState<string | null>(null)
+  /** P4.6 (row 58): why main refused the chatgpt.com view (the session no
+   *  longer runs under that account, say), shown on the start page. */
+  const [codexOpenError, setCodexOpenError] = useState<string | null>(null)
 
   const currentUrl = state?.currentUrl ?? null
   const page = state?.page ?? null
@@ -341,10 +344,16 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
               if (!cancelled && s.ok && s.state) setAccountPaneState(s.state)
             }).catch(() => { /* strip stays pending */ })
           } else {
+            if (accountModeCodex) setCodexOpenError(typeof r.error === 'string' && r.error ? r.error : 'chatgpt.com could not open for this session.')
             closeAccountPaneStore(sessionId)
           }
         })
-        .catch(() => { inFlight = false; if (!cancelled) closeAccountPaneStore(sessionId) })
+        .catch(() => {
+          inFlight = false
+          if (cancelled) return
+          if (accountModeCodex) setCodexOpenError('chatgpt.com could not open for this session.')
+          closeAccountPaneStore(sessionId)
+        })
     }
     accountTryOpenRef.current = tryOpenAccount
     tryOpenAccount()
@@ -711,7 +720,8 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
           accountLabel={paneAccountId ? paneAccountLabel : null}
           onOpenAccount={paneAccountId ? () => openAccountPane(sessionId, paneAccountId) : undefined}
           codexAccountLabel={codexPaneAccountId ? codexPaneAccountLabel : null}
-          onOpenCodexAccount={codexPaneAccountId ? () => openCodexAccountPane(sessionId, codexPaneAccountId) : undefined}
+          onOpenCodexAccount={codexPaneAccountId ? () => { setCodexOpenError(null); openCodexAccountPane(sessionId, codexPaneAccountId) } : undefined}
+          codexError={codexPaneAccountId ? codexOpenError : null}
         />
       )}
 
@@ -758,6 +768,8 @@ function StartPage(props: {
   codexAccountLabel?: string | null
   /** P4.6: open the Codex account's chatgpt.com surface. Absent hides the entry. */
   onOpenCodexAccount?: () => void
+  /** P4.6: why the last open was refused, shown under the entry. */
+  codexError?: string | null
 }) {
   const [value, setValue] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -838,6 +850,9 @@ function StartPage(props: {
             </span>
             <span className="ml-auto text-[10px] text-[var(--text-muted)] shrink-0">pinned</span>
           </button>
+        )}
+        {props.onOpenCodexAccount && props.codexError && (
+          <p className="mt-1 text-[11px] text-[var(--status-danger)]" role="alert" data-testid="browser-start-chatgpt-error">{props.codexError}</p>
         )}
 
         {props.home && (

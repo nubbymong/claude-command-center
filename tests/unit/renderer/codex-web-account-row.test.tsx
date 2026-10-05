@@ -226,3 +226,23 @@ describe('[host] the row follows a sign-in it did not start, and reads afresh af
     expect(codexWeb.status.mock.calls.filter((c) => c[0] === P).length).toBeGreaterThan(before)
   })
 })
+
+describe('[host] a restored sign-in line follows only the run it found', () => {
+  it("when another account's run is the one in flight at the next look, the first account's line goes", async () => {
+    let next = { phase: 'awaiting-user', accountId: A }
+    codexWeb.signInState.mockImplementation(() => Promise.resolve({ ok: true, state: next }))
+    try {
+      await render(snapshot())
+      await flush()
+      expect(q(`account-web-cancel-${A}`)).not.toBeNull()
+      // A's run ended and P's started within one poll.
+      next = { phase: 'awaiting-user', accountId: P }
+      await act(async () => { await new Promise((r) => setTimeout(r, 1700)) })
+      await flush()
+      expect(q(`account-web-cancel-${A}`)).toBeNull()
+      expect(useCodexWebStore.getState().signingIn).not.toBe(A)
+    } finally {
+      codexWeb.signInState.mockImplementation(() => Promise.resolve({ ok: true, state: { phase: 'idle', accountId: null } }))
+    }
+  })
+})
