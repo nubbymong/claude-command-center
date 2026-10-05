@@ -227,11 +227,15 @@ describe('[host] nothing holding the session is open while it is wiped', () => {
     let open!: () => void
     S.gates.storage = new Promise<void>((r) => { open = r })
     const out = call(IPC.CODEX_WEB_SIGN_OUT, TRUSTED, ACCT)
-    await sleep(20)
-    expect((await call(IPC.CODEX_WEB_PANE_OPEN, TRUSTED, { sessionId: 's1', accountId: ACCT, bounds: BOUNDS })).ok).toBe(false)
-    expect((await call(IPC.CODEX_WEB_SIGN_IN, TRUSTED, ACCT)).ok).toBe(false)
-    expect(S.windows).toHaveLength(0)
-    open(); S.gates.storage = null
+    try {
+      await sleep(20)
+      expect((await call(IPC.CODEX_WEB_PANE_OPEN, TRUSTED, { sessionId: 's1', accountId: ACCT, bounds: BOUNDS })).ok).toBe(false)
+      expect((await call(IPC.CODEX_WEB_SIGN_IN, TRUSTED, ACCT)).ok).toBe(false)
+      expect(S.windows).toHaveLength(0)
+    } finally {
+      // Released whatever happened above, so a failure never leaves the clear hanging.
+      open(); S.gates.storage = null
+    }
     expect((await out).ok).toBe(true)
     // After the clear the account is usable again.
     expect((await call(IPC.CODEX_WEB_PANE_OPEN, TRUSTED, { sessionId: 's1', accountId: ACCT, bounds: BOUNDS })).ok).toBe(true)

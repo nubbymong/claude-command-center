@@ -219,14 +219,19 @@ async function wipeAfterIncompleteRun(accountId: string, partition: string): Pro
 
 /**
  * Cancel the in-flight Codex sign-in (the user's Cancel). SCOPED: with an
- * account id, only that account's run is cancelled. The run sees it at its
- * next poll, takes one last look at the identity answer for the diagnostic,
- * and closes its own window (this module's only).
+ * account id, only that account's run is cancelled. The window is hidden at
+ * once; the run sees the cancel at its next poll, takes one last look at the
+ * identity answer for the diagnostic (bounded), and destroys its own window
+ * (this module's only).
  */
 export function cancelCodexWebSignIn(accountId?: string): void {
   if (accountId && current.accountId && current.accountId !== accountId) return
   if (!inFlight()) return
   cancelled = true
+  try {
+    const w = signInWindow.window
+    if (w && !w.isDestroyed() && typeof w.hide === 'function') w.hide()
+  } catch { /* the window is going anyway */ }
 }
 
 /** Stop the in-flight run AND close its window now: a clear, where nothing

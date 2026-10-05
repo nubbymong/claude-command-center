@@ -101,6 +101,8 @@ class FakeWin {
   }
   loadURL = vi.fn(async () => {})
   isDestroyed() { return this.destroyed }
+  hidden = false
+  hide() { this.hidden = true }
   destroy() { if (!this.destroyed) events.push('window destroyed'); this.destroyed = true; this.closedCb?.() }
   on(ev: string, fn: () => void) { if (ev === 'closed') this.closedCb = fn }
   userClose() { this.destroyed = true; this.closedCb?.() }
@@ -557,6 +559,9 @@ describe('[host] the sign-in window', () => {
     // The page reaches chatgpt.com and the user cancels at once.
     page.origin = 'https://chatgpt.com'
     cancelCodexWebSignIn(ACCT)
+    // Hidden the moment Cancel lands; destroyed after the last look.
+    expect(created[0].hidden).toBe(true)
+    expect(created[0].destroyed).toBe(false)
     expect((await run).phase).toBe('failed')
     const line = logs.find((l) => /did not complete/.test(l))!
     expect(line).toContain('Identity answer: HTTP 200, JSON keys user (and 1 not shown); an email-shaped value at user.mail.')
@@ -754,6 +759,21 @@ describe('[host] the Codex sign-in run', () => {
     cancelCodexWebSignIn(ACCT)
     expect((await run).error).toMatch(/cancelled/i)
     expect(created[0].destroyed).toBe(true)
+  })
+})
+
+describe('[host] a clear stops only its own account\'s run', () => {
+  it('clearing another account leaves this account\'s run and its window alone', async () => {
+    jars[PART] = SIGNED_OUT_JAR
+    const run = runCodexWebSignIn({ accountId: ACCT, timeoutMs: 400, pollMs: 5 })
+    await tick(10)
+    await clearCodexWebSession(OTHER)
+    await tick(20)
+    expect(created[0].destroyed).toBe(false)
+    expect(created[0].hidden).toBe(false)
+    expect(getCodexWebSignInState()).toMatchObject({ phase: 'awaiting-user', accountId: ACCT })
+    cancelCodexWebSignIn(ACCT)
+    expect((await run).phase).toBe('failed')
   })
 })
 
