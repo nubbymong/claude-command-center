@@ -7,7 +7,10 @@
 // it. The roll-up's own rules are unchanged.
 //
 // The REAL runner and launch gate; Claude Code's PTY and headless runs, the
-// accounts service and the Codex model run are fakes, so nothing runs.
+// accounts service and the Codex model run are fakes, so nothing runs. The
+// Codex model run is a fake Insights port on the registered Codex package
+// (the runner reaches it through the registry, P4.7 fix pass 1); the module
+// behind the real port is a tripwire.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
@@ -31,6 +34,7 @@ const h = vi.hoisted(() => ({
   claudePrompts: [] as string[],
   codexInUseDuringExec: [] as number[],
   claudeInUseDuringExec: [] as number[],
+  deepCalls: 0,
 }))
 
 vi.mock('../../../src/main/ipc/setup-handlers', () => ({ getResourcesDirectory: () => h.resourcesDir, registerSetupHandlers: () => {} }))
@@ -67,16 +71,26 @@ const REPORT_REPLY = JSON.stringify({
 })
 vi.mock('../../../src/main/providers/codex/insights-exec', () => ({
   CODEX_INSIGHTS_TIMEOUT_MS: 600_000,
-  runCodexInsightsExec: async (input: { prompt: string }) => {
-    const r = await import('../../../src/main/insights-runner')
-    h.execPrompts.push(input.prompt)
-    h.codexInUseDuringExec.push(r.countCodexInsightsRunsUnleased())
-    h.claudeInUseDuringExec.push(r.countInsightsRunsInFlight())
-    if (input.prompt.startsWith('You are comparing')) {
-      return { ok: true, text: JSON.stringify({ summary: { improvements: ['both fine'] }, accounts: [], crossAccount: { observations: ['Codex wrote this'] } }) }
-    }
-    return { ok: true, text: REPORT_REPLY }
-  },
+  runCodexInsightsExec: async () => { h.deepCalls++; return { ok: false, code: 'not-started', message: 'reached past the package entry point' } },
+  createCodexInsightsOperations: () => ({ run: async () => { h.deepCalls++; return { ok: false, code: 'not-started', message: 'reached past the package entry point' } } }),
+}))
+vi.mock('../../../src/main/providers/core', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/main/providers/core')>()),
+  tryGetProviderPackage: (id: string) => (id === 'codex' ? {
+    displayName: 'Codex',
+    insights: {
+      run: async (input: { prompt: string }) => {
+        const r = await import('../../../src/main/insights-runner')
+        h.execPrompts.push(input.prompt)
+        h.codexInUseDuringExec.push(r.countCodexInsightsRunsUnleased())
+        h.claudeInUseDuringExec.push(r.countInsightsRunsInFlight())
+        if (input.prompt.startsWith('You are comparing')) {
+          return { ok: true, text: JSON.stringify({ summary: { improvements: ['both fine'] }, accounts: [], crossAccount: { observations: ['Codex wrote this'] } }) }
+        }
+        return { ok: true, text: REPORT_REPLY }
+      },
+    },
+  } : undefined),
 }))
 const codexAccount = (id: string, identityId: string, over: Record<string, unknown> = {}) => ({
   id, providerId: 'codex', identityId, lifecycle: 'active', isProviderDefault: false, providerLabel: `${identityId}@example.com`,
@@ -143,6 +157,7 @@ beforeEach(() => {
   h.claudePrompts = []
   h.codexInUseDuringExec = []
   h.claudeInUseDuringExec = []
+  h.deepCalls = 0
 })
 afterEach(() => { try { rmSync(tmpRoot, { recursive: true, force: true }) } catch { /* ignore */ } })
 
@@ -218,6 +233,9 @@ describe('Run all over both assistants (C1 A)', () => {
     expect((getInsightsKpis(id) as any).crossAccount.observations).toEqual(['Codex wrote this'])
     // The analysis ran on a Codex account's own launch.
     expect(h.prepareCalls.filter((c) => String(c.ownerId).endsWith(':synthesis'))).toHaveLength(1)
+    // Every Codex model run, the analysis included, went through the
+    // registered package's Insights port (P4.7 fix pass 1).
+    expect(h.deepCalls).toBe(0)
   })
 
   it('a roll-up that runs Codex is Codex in use for its length; one without Claude Code is never Claude Code in use [host]', async () => {

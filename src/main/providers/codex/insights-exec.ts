@@ -21,7 +21,7 @@ import { reviewerEnv, redactFailure as redact, redactHead, clip, WINDOW, MARGIN,
 import { codexCommandLine, codexShellEnv, runCodexCli } from './cli-runner'
 import type { CodexRunDeps } from './cli-runner'
 import { createCodexExecEventReader, codexWaitingForNetwork, CODEX_EXEC_EXIT_SETTLE_MS } from './review'
-import type { ReviewUsage } from '../core'
+import type { ReviewUsage, ProviderInsightsOperations } from '../core'
 
 /** A report run's deadline, as Claude's report steps have (10 minutes). */
 export const CODEX_INSIGHTS_TIMEOUT_MS = 600_000
@@ -102,5 +102,14 @@ export async function runCodexInsightsExec(input: CodexInsightsExecInput, deps: 
     return { ok: true, text: out.text, ...usage }
   } catch {
     return { ok: false, code: 'not-started', message: 'Codex could not be started.' }
+  }
+}
+
+/** The package's Insights port (P4.7): the report run above, under its own
+ *  deadline (CODEX_INSIGHTS_TIMEOUT_MS). The runner reaches it through the
+ *  registered package, never by importing this module. */
+export function createCodexInsightsOperations(deps: { platform?: NodeJS.Platform; runDeps?: () => CodexRunDeps } = {}): ProviderInsightsOperations {
+  return {
+    run: (input) => runCodexInsightsExec({ executable: input.executable, env: input.env, cwd: input.cwd, prompt: input.prompt, ...(input.signal ? { signal: input.signal } : {}) }, deps),
   }
 }

@@ -39,9 +39,20 @@ vi.mock('../../../src/main/ipc/setup-handlers', () => ({ getResourcesDirectory: 
 vi.mock('../../../src/main/update-watcher', () => ({ getInstallPath: () => '', getProjectRootPath: () => '' }))
 vi.mock('../../../src/main/pty-manager', () => ({ resolveClaudeForPty: () => ({ cmd: 'claude' }), withProfileHome: (env: unknown) => env }))
 vi.mock('node-pty', () => ({ spawn: () => { throw new Error('no PTY') } }))
+// The model run is the registered Codex package's Insights port (P4.7 fix
+// pass 1); the module behind the real port is mocked too, so neither starts
+// a process. Either one called counts as a model run.
 vi.mock('../../../src/main/providers/codex/insights-exec', () => ({
   CODEX_INSIGHTS_TIMEOUT_MS: 600_000,
   runCodexInsightsExec: async () => { h.execCalls++; return { ok: false, code: 'failed', message: 'not expected to run' } },
+  createCodexInsightsOperations: () => ({ run: async () => { h.execCalls++; return { ok: false, code: 'failed', message: 'not expected to run' } } }),
+}))
+vi.mock('../../../src/main/providers/core', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/main/providers/core')>()),
+  tryGetProviderPackage: (id: string) => (id === 'codex' ? {
+    displayName: 'Codex',
+    insights: { run: async () => { h.execCalls++; return { ok: false, code: 'failed', message: 'not expected to run' } } },
+  } : undefined),
 }))
 vi.mock('../../../src/main/provider-accounts', () => ({
   getAccountsService: () => ({

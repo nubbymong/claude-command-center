@@ -8,7 +8,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { codexCommandLine } from '../../../../src/main/providers/codex/cli-runner'
 import type { CodexRunDeps } from '../../../../src/main/providers/codex/cli-runner'
-import { runCodexInsightsExec } from '../../../../src/main/providers/codex/insights-exec'
+import { runCodexInsightsExec, createCodexInsightsOperations } from '../../../../src/main/providers/codex/insights-exec'
 
 class FakeChild extends EventEmitter {
   pid = 4343
@@ -103,5 +103,43 @@ describe('runCodexInsightsExec', () => {
     const r = await runCodexInsightsExec({ executable: 'codex', env: ENV, cwd: '/r/x', prompt: 'p' }, { platform: 'linux', runDeps: () => deps })
     expect(r).toMatchObject({ ok: false, code: 'not-started' })
     expect(spawned).toHaveLength(0)
+  })
+})
+
+describe("the package's Insights port (createCodexInsightsOperations, P4.7 fix pass 1)", () => {
+  it('is this run: the same command in the folder it is given, the prompt on stdin, the reply returned [host]', async () => {
+    const { deps, spawned } = fakeDeps()
+    const port = createCodexInsightsOperations({ platform: 'linux', runDeps: () => deps })
+    const p = port.run({ executable: '/usr/bin/codex', env: ENV, cwd: '/res/insights/.insights-codex-runs/ccc-insights-codex-cd', prompt: 'PORT PROMPT' })
+    await Promise.resolve()
+    expect(spawned).toHaveLength(1)
+    const direct = codexCommandLine('/usr/bin/codex', 'insights', 'linux', {})
+    expect(spawned[0].args).toEqual('refused' in direct ? [] : direct.args)
+    expect(spawned[0].opts.cwd).toBe('/res/insights/.insights-codex-runs/ccc-insights-codex-cd')
+    spawned[0].child.stdout.emit('data', jsonl({ type: 'item.completed', item: { id: 'a', type: 'agent_message', text: 'the reply' } }))
+    spawned[0].child.emit('close', 0)
+    expect(await p).toMatchObject({ ok: true, text: 'the reply' })
+    expect(spawned[0].child.stdin.end).toHaveBeenCalledWith('PORT PROMPT')
+  })
+
+  it("runs under the report's own deadline (10 minutes), not one the caller picks [host]", async () => {
+    vi.useFakeTimers()
+    try {
+      const { deps, spawned } = fakeDeps()
+      const port = createCodexInsightsOperations({ platform: 'linux', runDeps: () => deps })
+      const p = port.run({ executable: '/usr/bin/codex', env: ENV, cwd: '/r/x', prompt: 'p' })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(spawned).toHaveLength(1)
+      await vi.advanceTimersByTimeAsync(599_000)
+      let settled = false
+      void p.then(() => { settled = true })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(settled).toBe(false)
+      await vi.advanceTimersByTimeAsync(60_000)
+      const r = await p
+      expect(r).toMatchObject({ ok: false, code: 'timed-out', message: 'Codex did not finish the report within 600s.' })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

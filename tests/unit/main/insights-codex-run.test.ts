@@ -4,8 +4,11 @@
 //
 // The REAL runner and the REAL launch gate; the accounts service is scripted
 // (its launch rule is proven in its own suites), and the model run is a fake
-// (runCodexInsightsExec), so nothing runs. The account's sessions are real
-// rollout files in a temp folder.
+// Insights port on the registered Codex package (the runner reaches it
+// through the registry, P4.7 fix pass 1), so nothing runs. The module behind
+// the real port is a tripwire: a runner that imported it again would fail
+// here rather than start a process. The account's sessions are real rollout
+// files in a temp folder.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readdirSync, statSync } from 'fs'
 import { tmpdir } from 'os'
@@ -28,6 +31,9 @@ const h = vi.hoisted(() => ({
   execHold: null as null | Promise<void>,
   execAnswer: null as null | Record<string, unknown>,
   reply: '',
+  /** The registered Codex package has no Insights port. */
+  noInsightsPort: false,
+  deepCalls: 0,
 }))
 
 vi.mock('../../../src/main/ipc/setup-handlers', () => ({ getResourcesDirectory: () => h.resourcesDir, registerSetupHandlers: () => {} }))
@@ -38,12 +44,24 @@ vi.mock('node-pty', () => ({ spawn: () => { throw new Error('no Claude PTY in a 
 vi.mock('../../../src/main/claude-headless', () => ({ spawnClaudeHeadless: async () => { throw new Error('no Claude run in a Codex run') } }))
 vi.mock('../../../src/main/providers/codex/insights-exec', () => ({
   CODEX_INSIGHTS_TIMEOUT_MS: 600_000,
-  runCodexInsightsExec: async (input: { cwd: string; prompt: string; env: Record<string, string> }) => {
-    const { existsSync: ex, readdirSync: rd } = await import('fs')
-    h.execCalls.push({ cwd: input.cwd, prompt: input.prompt, env: input.env, folderExisted: ex(input.cwd), folderEntries: ex(input.cwd) ? rd(input.cwd) : [] })
-    if (h.execHold) await h.execHold
-    return h.execAnswer ?? { ok: true, text: h.reply }
-  },
+  runCodexInsightsExec: async () => { h.deepCalls++; return { ok: false, code: 'not-started', message: 'reached past the package entry point' } },
+  createCodexInsightsOperations: () => ({ run: async () => { h.deepCalls++; return { ok: false, code: 'not-started', message: 'reached past the package entry point' } } }),
+}))
+vi.mock('../../../src/main/providers/core', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/main/providers/core')>()),
+  tryGetProviderPackage: (id: string) => (id === 'codex' ? {
+    displayName: 'Codex',
+    ...(h.noInsightsPort ? {} : {
+      insights: {
+        run: async (input: { cwd: string; prompt: string; env: Record<string, string> }) => {
+          const { existsSync: ex, readdirSync: rd } = await import('fs')
+          h.execCalls.push({ cwd: input.cwd, prompt: input.prompt, env: input.env, folderExisted: ex(input.cwd), folderEntries: ex(input.cwd) ? rd(input.cwd) : [] })
+          if (h.execHold) await h.execHold
+          return h.execAnswer ?? { ok: true, text: h.reply }
+        },
+      },
+    }),
+  } : undefined),
 }))
 vi.mock('../../../src/main/provider-accounts', () => ({
   getAccountsService: () => ({
@@ -119,6 +137,8 @@ beforeEach(() => {
   h.execHold = null
   h.execAnswer = null
   h.reply = REPLY
+  h.noInsightsPort = false
+  h.deepCalls = 0
   putSession('a', join(tmpRoot, 'projects', 'one'))
   putSession('b', join(tmpRoot, 'projects', 'two'))
 })
@@ -209,6 +229,25 @@ describe('a Codex report that completes', () => {
     // Another Codex account's run is not this one's previous run.
     await runCodexInsights(win, { accountId: ACCT2 })
     expect(h.execCalls[2].prompt).toContain('There is no previous run to compare against.')
+  })
+})
+
+describe("the report's model run is the registered Codex package's Insights port (P4.7 fix pass 1)", () => {
+  it('a completed run went through the port, never the module behind it [host]', async () => {
+    const id = await runCodexInsights(win, { accountId: ACCT }) as string
+    expect(runOf(id).status).toBe('complete')
+    expect(h.execCalls).toHaveLength(1)
+    expect(h.deepCalls).toBe(0)
+  })
+
+  it('a Codex package with no Insights port: failed, saying so; no model run, no folder left, the lease let go [host]', async () => {
+    h.noInsightsPort = true
+    const id = await runCodexInsights(win, { accountId: ACCT }) as string
+    expect(runOf(id)).toMatchObject({ status: 'failed', error: 'This report could not be written: Codex does not write Insights reports in this version of the app.' })
+    expect(h.execCalls).toEqual([])
+    expect(h.deepCalls).toBe(0)
+    expect(existsSync(runsParent()) ? readdirSync(runsParent()) : []).toEqual([])
+    expect(h.released).toBe(1)
   })
 })
 

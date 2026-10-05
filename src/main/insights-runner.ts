@@ -40,7 +40,7 @@ import { getAccountsService } from './provider-accounts'
 import { sweepStaleFolders } from './stale-folder-sweep'
 import { isOpaqueId } from '../shared/providers'
 import type { AccountsSnapshot, ProviderId } from '../shared/providers'
-import { runCodexInsightsExec, CODEX_INSIGHTS_TIMEOUT_MS } from './providers/codex/insights-exec'
+import { tryGetProviderPackage } from './providers/core'
 import {
   CODEX_INSIGHTS_RUNS_DIRNAME,
   CODEX_INSIGHTS_RUN_PREFIX,
@@ -1217,8 +1217,12 @@ async function withCodexLaunch<T>(
   }
 }
 
-/** One Codex model run in a fresh folder under `parent`; the folder goes after. */
+/** One Codex model run in a fresh folder under `parent`; the folder goes after.
+ *  The run is the Codex package's Insights port, reached through the
+ *  registered package (as a Cloud Agent's run is), never by import. */
 async function codexModelRun(launch: { executable: string; env: Record<string, string> }, parent: string | null, prompt: string): Promise<{ ok: true; text: string } | { ok: false; message: string }> {
+  const insights = tryGetProviderPackage('codex')?.insights
+  if (!insights || typeof insights.run !== 'function') return { ok: false, message: 'Codex does not write Insights reports in this version of the app.' }
   if (!parent) return { ok: false, message: 'no empty folder could be made for it.' }
   let folder: string
   try { folder = makeCodexRunFolder(parent) } catch { return { ok: false, message: 'no empty folder could be made for it.' } }
@@ -1226,7 +1230,7 @@ async function codexModelRun(launch: { executable: string; env: Record<string, s
     // A text-only run: any git the CLI runs stops at the runs folder, never
     // prompts, and takes no optional lock (Sentinel's analysis, round 2).
     const env = { ...launch.env, GIT_CEILING_DIRECTORIES: parent, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' }
-    const out = await runCodexInsightsExec({ executable: launch.executable, env, cwd: folder, prompt, timeoutMs: CODEX_INSIGHTS_TIMEOUT_MS })
+    const out = await insights.run({ executable: launch.executable, env, cwd: folder, prompt })
     if (!out.ok && out.killSettled instanceof Promise) await out.killSettled
     return out.ok ? { ok: true, text: out.text } : { ok: false, message: out.message }
   } finally {

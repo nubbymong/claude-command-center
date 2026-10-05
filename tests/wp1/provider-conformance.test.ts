@@ -234,6 +234,9 @@ describe('Codex declares what it implements (WP1.17, WP1.18)', () => {
     // WP2 PR 4, P4.5 (row 57): a Cloud Agent's run is a launch of its own kind.
     expect(wired.launch?.kinds).toEqual(['session', 'review', 'background'])
     expect(typeof wired.background?.run).toBe('function')
+    // WP2 PR 4, P4.7 (row 68) fix pass 1: an Insights report's model run is
+    // the package's own port, which the runner reaches through the registry.
+    for (const pkg of [bare, wired]) expect(typeof pkg.insights?.run).toBe('function')
   })
 
   it('account usage is supported exactly when the usage port exists (usage track MP3); Claude keeps its own and declares unknown', () => {

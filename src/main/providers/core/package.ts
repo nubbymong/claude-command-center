@@ -428,6 +428,32 @@ export interface ProviderBackgroundOperations {
   run(input: BackgroundRunInput): Promise<BackgroundRunResult>
 }
 
+/** WP2 PR 4, P4.7 (row 68): the one text-only model run of an Insights
+ *  report the app makes from an account's own sessions, from a launch the
+ *  accounts service prepared (kind `background`). */
+export interface InsightsRunInput {
+  /** From the prepared launch: the executable setup proved. */
+  executable: string
+  /** From the prepared launch: the realm's environment. */
+  env: Readonly<Record<string, string>>
+  /** The empty folder the caller made for this run, never a project. */
+  cwd: string
+  /** The instructions and the material, handed over on stdin, never argv. */
+  prompt: string
+  signal?: AbortSignal
+}
+
+/** `killSettled`: as BackgroundRunResult's; the caller holding the account's
+ *  lease lets go only once it has settled. */
+export type InsightsRunResult =
+  | { ok: true; text: string; usage?: ReviewUsage }
+  | { ok: false; code: 'not-started' | 'failed' | 'timed-out' | 'cancelled' | 'no-output'; message: string; usage?: ReviewUsage; killSettled?: Promise<void> }
+
+/** The package's report run, under its own deadline. Never rejects. */
+export interface ProviderInsightsOperations {
+  run(input: InsightsRunInput): Promise<InsightsRunResult>
+}
+
 /** An account's allowance as a package reports it: provider-neutral buckets
  *  (the package keys and labels them), when they were reported, the plan's
  *  display name, and, when the provider reports them, the account's credits
@@ -586,6 +612,11 @@ export interface ProviderPackage {
    *  a provider whose agents keep their own path (Claude Code's `claude -p`,
    *  cloud-agent-manager.ts). */
   readonly background?: ProviderBackgroundOperations
+  /** Present when the app writes the provider's Insights report itself, from
+   *  an account's own sessions (WP2 PR 4, P4.7): the report's model run.
+   *  Absent for a provider whose own CLI writes its report (Claude Code's
+   *  /insights, insights-runner.ts). */
+  readonly insights?: ProviderInsightsOperations
   readonly realms?: ProviderRealmOperations
   /** Present when the package reports its accounts' allowances (the
    *  `account.usage` capability's backing): Codex, once the registry's realms

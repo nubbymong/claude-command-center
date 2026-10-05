@@ -25,6 +25,7 @@ import type { CodexCatalogueDeps } from './model-catalogue'
 import { createCodexAuthOperations } from './auth-operations'
 import { createCodexReviewOperations } from './review'
 import { createCodexBackgroundOperations } from './agent-run'
+import { createCodexInsightsOperations } from './insights-exec'
 import type { CodexAuthDeps, CodexAuthOperations } from './auth-operations'
 import { createCodexRealmFolders, createCodexRealmLocks, resolveCodexRealmRoots } from './realm-folders'
 import { carryCodexRollout } from './conversation-carry'
@@ -65,6 +66,8 @@ export {
   createCodexBackgroundOperations, codexAgentArgs, codexAgentCommandLine, codexAgentSandbox, CODEX_AGENT_EFFORTS, CODEX_AGENT_TIMEOUT_MS,
 } from './agent-run'
 export type { CodexAgentSandbox } from './agent-run'
+// WP2 PR 4, P4.7 (row 68): an Insights report's model run.
+export { createCodexInsightsOperations, CODEX_INSIGHTS_TIMEOUT_MS } from './insights-exec'
 export type { CodexDiscovery, CodexDiscoveryDeps, CodexExecutableIdentity, CodexExecutableCheck, CodexFileStat } from './discovery'
 export { codexLoginShellPath, codexOperationBaseEnv, extractMarkedPath, absolutePathEntries } from './process-env'
 export {
@@ -513,6 +516,10 @@ export function createCodexPackage(deps: CodexPackageDeps = {}): ProviderPackage
     // WP2 PR 4, P4.5 (row 57): a Cloud Agent's headless `codex exec`, run
     // from a launch the accounts service prepared (kind `background`).
     background: createCodexBackgroundOperations(),
+    // WP2 PR 4, P4.7 (row 68): an Insights report's text-only `codex exec`,
+    // run from a launch the accounts service prepared (kind `background`);
+    // the Insights runner reaches it through the registry.
+    insights: createCodexInsightsOperations(),
     // WP2 PR 4: the model prices Tokenomics reads, through the registry.
     pricing: CODEX_PRICING,
     ...(source && realmFs ? {
