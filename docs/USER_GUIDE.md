@@ -155,7 +155,7 @@ for Codex and says why.
 - At least one provider always stays on.
 - A provider cannot be turned off while anything of it is running: its
   sessions, its cloud agents, a code review, a sign-in in progress, a Sentinel
-  check or analysis, and for Claude Code also Insights. The row says so (for example
+  check or analysis, or an Insights report. The row says so (for example
   *"Codex is in use (2)."*); close those and switch it off again.
 - Once a provider is off, nothing of it starts anywhere. Its saved configs say
   why instead of launching (*"Codex is off. Turn it on in Settings, Accounts to
@@ -163,7 +163,7 @@ for Codex and says why.
   *"Not started. Codex is off. Turn it on in Settings, Accounts, then Restart
   this tab."* The tab and its conversation are kept: turn the provider back
   on, then Restart the tab.
-- With Claude Code off, Insights is unavailable and says so, Ask Conductor runs on
+- With Claude Code off, Insights runs for Codex accounts only, Ask Conductor runs on
   Codex, and Cloud Agents runs Codex agents only. **Terminal only** configs still
   run.
 

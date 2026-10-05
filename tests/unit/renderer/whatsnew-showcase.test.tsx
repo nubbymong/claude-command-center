@@ -112,7 +112,8 @@ describe('showcase-pages — the curated set', () => {
     // an SSH session runs in this release is Claude Code, so both go with the
     // remote resume page.
     const REMOTE_ITEMS = ['SSH Persistent.', 'Remote Resumable.']
-    const CLAUDE_ONLY_ITEMS = ['claude.ai in the app.', 'Insights.', ...REMOTE_ITEMS]
+    // P4.7 lifted the Insights line (Insights runs for Codex accounts too).
+    const CLAUDE_ONLY_ITEMS = ['claude.ai in the app.', ...REMOTE_ITEMS]
     // Claude Code on: everything, as before.
     render()
     expect(container.textContent).toContain('Working with Claude')
@@ -219,9 +220,9 @@ describe('showcase-pages — the curated set', () => {
     const page = SHOWCASES_21.find((p: { id: string }) => p.id === 'accounts')!
     expect(page.needsClaude).toBeUndefined()
     expect(`${page.heading} ${page.tagline} ${page.where.pre}${page.where.em}${page.where.post}`).not.toMatch(/claude|insights/i)
-    // Its Claude-only point is marked, and the page keeps three or more without it.
+    // P4.7 lifted its Insights point: no point of it is Claude Code's now.
     for (const pt of page.points) {
-      const claudeOnly = /insights|claude/i.test(`${pt.lead} ${pt.rest}`)
+      const claudeOnly = /claude/i.test(`${pt.lead} ${pt.rest}`)
       expect(pt.needsClaude, pt.lead).toBe(claudeOnly ? true : undefined)
     }
     expect(page.points.filter((pt: { needsClaude?: boolean }) => !pt.needsClaude).length).toBeGreaterThanOrEqual(3)
@@ -231,7 +232,8 @@ describe('showcase-pages — the curated set', () => {
     click(q('see-accounts'))
     expect(q('showcase-heading')!.textContent).toBe('Every account, one app')
     expect(q('showcase-points')!.textContent).toContain('Switch mid-session.')
-    expect(q('showcase-points')!.textContent).not.toMatch(/insights/i)
+    // P4.7: Run all covers Codex accounts too, so the Insights point shows.
+    expect(q('showcase-points')!.textContent).toContain('Insights across accounts.')
     act(() => root.unmount())
     root = createRoot(container)
     // Claude Code on: the Insights point is there.

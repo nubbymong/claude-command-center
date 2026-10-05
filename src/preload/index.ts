@@ -748,9 +748,12 @@ export interface ElectronAPI {
     killCliSetup: () => Promise<boolean>
   }
   insights: {
-    /** `provider` (WP2 PR 4, P4.7): the assistant the run reports on; absent means Claude Code. */
-    run: (opts?: { profileId?: string; provider?: ProviderId }) => Promise<string | import('../shared/providers').ProviderLaunchRefused>
-    runAll: (opts?: { profileIds?: string[] }) => Promise<string | import('../shared/providers').ProviderLaunchRefused>
+    /** `provider` (WP2 PR 4, P4.7): the assistant the run reports on; absent means Claude Code.
+     *  A Codex run names its Codex account in `profileId`, and `acknowledgeRealmOnly` is that
+     *  run's own confirmation for exactly that account (mockup D12). A request main does not
+     *  take is answered `{ rejected }` (not the app window, or not a request it reads). */
+    run: (opts?: { profileId?: string; provider?: ProviderId; acknowledgeRealmOnly?: true }) => Promise<string | import('../shared/providers').ProviderLaunchRefused | import('../shared/types').CloudAgentRequestRejected>
+    runAll: (opts?: { profileIds?: string[] }) => Promise<string | import('../shared/providers').ProviderLaunchRefused | import('../shared/types').CloudAgentRequestRejected>
     getCatalogue: () => Promise<import('../shared/types').InsightsCatalogue>
     getReport: (runId: string) => Promise<string | null>
     getKpis: (runId: string) => Promise<import('../shared/types').KpiData | null>
@@ -1302,7 +1305,7 @@ const electronAPI: ElectronAPI = {
     gracefulExit: () => ipcRenderer.invoke(IPC.SESSION_GRACEFUL_EXIT)
   },
   insights: {
-    run: (opts?: { profileId?: string; provider?: ProviderId }) => ipcRenderer.invoke(IPC.INSIGHTS_RUN, opts),
+    run: (opts?: { profileId?: string; provider?: ProviderId; acknowledgeRealmOnly?: true }) => ipcRenderer.invoke(IPC.INSIGHTS_RUN, opts),
     runAll: (opts?: { profileIds?: string[] }) => ipcRenderer.invoke(IPC.INSIGHTS_RUN_ALL, opts),
     getCatalogue: () => ipcRenderer.invoke(IPC.INSIGHTS_GET_CATALOGUE),
     getReport: (runId: string) => ipcRenderer.invoke(IPC.INSIGHTS_GET_REPORT, runId),

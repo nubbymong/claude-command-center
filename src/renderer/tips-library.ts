@@ -466,7 +466,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Open your account artifacts from the command bar',
         title: 'The Artifacts Button',
-        body: 'Next to **Browser** in the command bar, the **Artifacts** button opens this account\'s artifacts on claude.ai in one click -- no digging through the sidebar menu.\n\n• Shows for a local session signed into an account; a terminal-only session hides it.\n• Uses the session\'s account (or your primary), so each account opens its own artifacts.\n• Right-click it to open artifacts or hide the button, like the other core tools.',
+        body: 'Next to **Browser** in the command bar, the **Artifacts** button opens this account\'s artifacts on claude.ai in one click -- no digging through the sidebar menu.\n\n• Shows for a local session signed into an account; a terminal-only session hides it.\n• Uses the session\'s account (or your primary), so each account opens its own artifacts.\n• Right-click it to open artifacts or hide the button, like the other core tools.\n\nCodex has no artifacts of its own: in a Codex session, Codex\'s `/export` saves the conversation as Markdown.',
       },
     },
   },
@@ -529,12 +529,11 @@ export const TIPS_LIBRARY: Tip[] = [
     category: 'advanced',
     complexity: 'advanced',
     priority: 25,
-    provider: 'claude',
     variants: {
       primary: {
-        shortText: 'AI-powered analysis of your Claude usage',
+        shortText: 'AI-powered analysis of your sessions',
         title: 'Insights',
-        body: '**Insights** runs a Claude-powered analysis of your session history to find big wins, friction points, and regressions over time.\n\nClick the **pulse icon** in the sidebar. You\'ll get KPI trends (sessions/day, avg cost, lines changed) plus qualitative analysis of what\'s working and what\'s not in your Claude usage patterns.\n\nReports are saved to `resources/insights/` so you can look back at past runs.',
+        body: '**Insights** analyses your session history, Claude Code\'s or Codex\'s, one account at a time, to find big wins, friction points, and regressions over time.\n\nClick the **pulse icon** in the sidebar and pick the account. You\'ll get KPI trends plus qualitative analysis of what\'s working and what\'s not. With two or more accounts, **Run all** compares every account of both assistants in one report.\n\nReports are saved to `resources/insights/` so you can look back at past runs.',
         actionLabel: 'Open Insights',
         actionTarget: 'insights',
       },

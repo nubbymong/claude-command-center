@@ -78,7 +78,14 @@ checklist):
   cards for the assistants in use, and the PR 4 user-facing sweep with the
   2.1.1 changelog lines, built on the defaults of questions 5 to 8; seven
   listed items are owner calls (the plan's P4.11 record).
-- Not started: P4.7 (Insights, after OR3's mockup).
+- P4.7 (row 68, DONE, mocked; d99a553b to 664931b0): Insights for a Codex
+  account as the OR3 mockup drew it, approved on the canvas 2026-10-05 (C1 =
+  A): one read-only `codex exec` under the account's lease reads that
+  account's own sessions and fills the page's layout, figures and history as
+  text; Run all rolls up the accounts of both assistants; `insights:run`
+  answers the app window only and checks the provider and id class. Row 58's
+  artifacts record is signed (67f44333). The ADR-009 pass, the VM run and OR4
+  (a real report's content) are owed.
 
 **Why this way.** The parity rule (OD26 P1): Claude's behaviour in the code
 is the spec. Where it carries over it decides, as when the re-review sent

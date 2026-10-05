@@ -7,7 +7,7 @@
  *
  * The classification below was made against the code as it is (PR 4): Codex
  * runs on this computer only (no SSH, no SSH Persistent, no container
- * runtime), Insights and the Artifacts button are Claude Code's, the Multiple
+ * runtime), the Artifacts button is Claude Code's (Insights is both since P4.7), the Multiple
  * Accounts card is Claude's in the Feature Guide (needsClaude), and the tips
  * named for Codex are about Codex alone. Tips that need both assistants (Ask
  * Conductor runs on, Code review both ways) are about both, so unmarked.
@@ -27,7 +27,7 @@ const { useTipsStore, countUnseenTips } = await import('../../../src/renderer/st
 const { TIPS_LIBRARY, TIP_PROVIDER_NAMES } = await import('../../../src/renderer/tips-library')
 
 const CLAUDE_ONLY = [
-  'tip.effort-level', 'tip.ssh-config', 'tip.ssh-account-tools', 'tip.artifacts-button', 'tip.insights',
+  'tip.effort-level', 'tip.ssh-config', 'tip.ssh-account-tools', 'tip.artifacts-button',
   'tip.transparency.statusline-injection', 'tip.dynamic-workflows', 'tip.ssh-persistence', 'tip.remote-resumable',
   'tip.container-runtime', 'tip.multi-account', 'tip.config-edit-guard',
 ]

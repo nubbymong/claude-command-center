@@ -607,7 +607,7 @@ describe('the PR 4 user-facing sweep (P4.11)', () => {
   const privacy = fs.readFileSync(path.join(root, 'PRIVACY.md'), 'utf8').replace(/\s+/g, ' ')
 
   it('the Feature Guide filter is said where Ask Conductor reads it (review P411C-10, P411-2)', () => {
-    expect(body('providers')).toMatch(/The Feature Guide and its tour show the cards for the assistants you use: with Codex alone, the cards for features that need Claude Code \(Dynamic Workflows, Multiple Accounts and Insights\) and Code review are not shown, and with Claude Code alone, Code review is not shown, since it needs both\./)
+    expect(body('providers')).toMatch(/The Feature Guide and its tour show the cards for the assistants you use: with Codex alone, the cards for features that need Claude Code \(Dynamic Workflows and Multiple Accounts\) and Code review are not shown, and with Claude Code alone, Code review is not shown, since it needs both\./)
   })
 
   it('Artifacts: shown for an SSH Claude session signed in as a local account too, not only a local one', () => {
@@ -628,7 +628,8 @@ describe('the PR 4 user-facing sweep (P4.11)', () => {
 
   it('the README says what PR 3 and PR 4 made true', () => {
     expect(readme).not.toMatch(/Ask Conductor, Cloud Agents and Insights are unavailable/)
-    expect(readme).toMatch(/With Claude Code off, Insights is unavailable and says so, Ask Conductor runs on Codex, Cloud Agents runs Codex agents only/)
+    expect(readme).toMatch(/With Claude Code off, Insights runs for Codex accounts only, Ask Conductor runs on Codex, Cloud Agents runs Codex agents only/)
+    expect(readme).not.toMatch(/Insights is unavailable/)
     expect(readme).toMatch(/Ask Conductor opens a real session, on Claude Code or Codex,/)
     expect(readme).not.toMatch(/review what Claude built|giving Claude eighteen|dispatch headless Claude|notices when Claude Code updates|straight into Claude|sends a prompt to Claude|driven by Claude's own hooks/)
     expect(readme).toMatch(/notices when Claude Code or Codex updates/)
@@ -638,7 +639,8 @@ describe('the PR 4 user-facing sweep (P4.11)', () => {
 
   it('the user guide: what runs with Claude Code off, and the Codex known issues PR 4 ships with', () => {
     expect(guide).not.toMatch(/Ask Conductor, Cloud Agents and Insights are\s+unavailable/)
-    expect(guide).toMatch(/With Claude Code off, Insights is unavailable and says so, Ask Conductor runs on\s+Codex, and Cloud Agents runs Codex agents only/)
+    expect(guide).toMatch(/With Claude Code off, Insights runs for Codex accounts only, Ask Conductor runs on\s+Codex, and Cloud Agents runs Codex agents only/)
+    expect(guide).not.toMatch(/for Claude Code also Insights|Insights is unavailable/)
     expect(guide).not.toMatch(/for Claude Code also cloud agents and Insights/)
     // The guide wraps its lines, so a phrase is matched across a line break.
     const known = guide.slice(guide.indexOf('## Known issues with Codex'), guide.indexOf('## Logs & transcript viewer')).replace(/\s+/g, ' ')
@@ -729,5 +731,37 @@ describe('the P4.11 review: images, privacy and the first-launch session', () =>
     expect(k).toMatch(/The first Codex session in a new folder may not stay read-only\. In the session in which Codex asks its first-launch questions \(whether you trust the folder, and on Windows how to set up its sandbox\), Codex runs as on the Standard preset even when the session was started on Read-only: it can edit files in the folder, and commands you approve can run outside its sandbox\. This is Codex's own behaviour, and later sessions keep the preset you chose\. The workaround: once you have answered those questions, Restart the session before relying on Read-only\./)
     const guide = read('docs', 'USER_GUIDE.md').replace(/\s+/g, ' ')
     expect(guide).toMatch(/\*\*The first Codex session in a new folder may not stay read-only\.\*\*/)
+  })
+})
+
+// [host] WP2 PR 4, P4.7 (row 68): what the app says about Insights for Codex,
+// and row 58's signed artifacts record (decision A, item 4).
+describe('Insights for Codex, said where Ask Conductor reads it (P4.7)', () => {
+  const privacy = fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'PRIVACY.md'), 'utf8').replace(/\s+/g, ' ')
+  const sec = (id: string) => APP_KNOWLEDGE_SECTIONS.find((s) => s.id === id)!.body
+  const tipOf = (id: string) => TIPS_LIBRARY.find((t) => t.id === id)!
+  it('the pages section says how a Codex report is made, and what Run all covers', () => {
+    expect(sec('pages')).toMatch(/Insights builds a qualitative digest of how your Claude Code and Codex sessions have been going/)
+    expect(sec('pages')).toMatch(/for a Codex account the app makes the report itself: it counts that account's own Codex sessions, then asks Codex to write the cards, read-only and with no tools, on that account's own allowance/)
+    expect(sec('pages')).toMatch(/every account of both assistants in one roll-up/)
+    expect(sec('pages')).not.toMatch(/how your Claude sessions have been going/)
+  })
+  it('an Insights report keeps either assistant in use, and runs for Codex with Claude Code off', () => {
+    expect(sec('providers')).toMatch(/a sign-in, a Sentinel check or analysis, or an Insights report\./)
+    expect(sec('providers')).toMatch(/With Claude Code off, Insights runs for Codex accounts only/)
+    expect(sec('providers')).not.toMatch(/for Claude Code also Insights|Insights is unavailable/)
+  })
+  it("the Insights tip is no longer Claude Code's alone", () => {
+    expect(tipOf('tip.insights').provider).toBeUndefined()
+    expect(tipOf('tip.insights').variants.primary.body).toMatch(/Claude Code's or Codex's/)
+    expect(tipOf('tip.insights').variants.primary.body).not.toMatch(/Claude-powered|Claude usage/)
+  })
+  it("row 58's signed record: the Feature Guide and the artifacts tip name Codex's /export", () => {
+    expect(sec('draw')).toMatch(/Codex has no artifacts of its own: in a Codex session, Codex's \/export saves the conversation as Markdown/)
+    expect(tipOf('tip.artifacts-button').variants.primary.body).toMatch(/in a Codex session, Codex's `\/export` saves the conversation as Markdown/)
+  })
+  it('the privacy policy says what a Codex report reads and sends', () => {
+    expect(privacy).toMatch(/A report on a Codex account reads that account's own conversation files \(its sessions folder\) on this computer/)
+    expect(privacy).toMatch(/to Codex's model, as one read-only run of the Codex command-line tool with no tools, on that account's own sign-in and allowance/)
   })
 })

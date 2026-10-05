@@ -144,6 +144,19 @@ The Tokenomics cost index is separate and is not affected by that switch.
   installed runs it against a new, empty folder, never your own, and so does
   Sentinel's read of the models the installed Codex offers (`codex debug
   models --bundled`, the list built into Codex, with no sign-in).
+- **Insights for a Codex account.** A report on a Codex account reads that
+  account's own conversation files (its sessions folder) on this computer, counts
+  its sessions itself, and sends a summary of them (the figures, and for each
+  recent session the start of your requests and of Codex's replies, with known
+  secret formats removed) to Codex's model, as one read-only run of the Codex
+  command-line tool with no tools, on that account's own sign-in and allowance,
+  in an empty folder the app makes for it and removes after. Codex keeps that
+  run's conversation in the account's folder, as it keeps any session's, so its
+  cost shows in Tokenomics; the next report leaves it out. The report and its
+  figures are saved in the app's data folder (`insights/`), as a Claude Code
+  report is. When Run all's written analysis runs on a Codex account, Codex is
+  sent the comparison the app computed from the accounts' figures, each
+  account named by its name or email, and no conversation text, the same way.
 - **The Agent Canvas and Vision guidance.** For a Codex account you added, the
   app writes its three instruction files (the canvas review loop, canvas plans
   and the Conductor browser) into that account's own folder, under `skills/`,

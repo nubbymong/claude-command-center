@@ -6,7 +6,7 @@
  *
  * Verifies:
  *   - a card about something only Claude Code has in this release (Dynamic
- *     Workflows, Multiple Accounts, Insights until P4.7, and Code review, which
+ *     Workflows, Multiple Accounts (Insights until P4.7 lifted it), and Code review, which
  *     needs both) is not shown while Codex is the only assistant in use; with
  *     Claude Code alone only Code review goes, and the Codex card stays, as
  *     What's New shows its Codex lines (P4.11 review, P411-2); with both on
@@ -58,8 +58,8 @@ describe('stepsForAssistants', () => {
 
   it('Codex alone: the Claude-only cards go, the Codex card stays', () => {
     const shown = ids(shownFor(CODEX_ONLY))
-    for (const id of ['dynamic-workflows', 'multi-account', 'insights', 'code-review']) expect(shown, id).not.toContain(id)
-    for (const id of ['codex-provider', 'provider-accounts', 'ask-conductor', 'vision', 'agent-canvas', 'excalidraw', 'snap', 'memory-visualiser', 'settings']) expect(shown, id).toContain(id)
+    for (const id of ['dynamic-workflows', 'multi-account', 'code-review']) expect(shown, id).not.toContain(id)
+    for (const id of ['codex-provider', 'provider-accounts', 'ask-conductor', 'vision', 'agent-canvas', 'excalidraw', 'snap', 'memory-visualiser', 'settings', 'insights']) expect(shown, id).toContain(id)
   })
 
   it('Claude Code alone: only Code review goes (it needs both); the Codex card stays, as before', () => {
@@ -146,11 +146,11 @@ describe('the Feature Guide page', () => {
     expect(container.querySelector('[data-ux-id="content"]')!.textContent).not.toMatch(/Claude/)
   })
 
-  it('Codex alone: Admin shows no Insights card; Getting started no Multiple Accounts card', async () => {
+  it('Codex alone: Admin shows the Insights card (P4.7); Getting started no Multiple Accounts card', async () => {
     setProviders(CODEX_ONLY)
     await guide()
     await open('admin')
-    expect(cardShown('insights')).toBe(false)
+    expect(cardShown('insights')).toBe(true)
     expect(cardShown('memory-visualiser')).toBe(true)
     await open('getting-started')
     expect(cardShown('multi-account')).toBe(false)

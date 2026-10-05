@@ -63,7 +63,7 @@ export interface ShowcasePage {
    *  this release (Claude sessions only), so it is not shown while Claude
    *  Code is off. The phase that brings the feature to Codex lifts it (named
    *  in that phase's entry of docs/wp2/completion-plan.md: askConductor
-   *  P4.3; P3.6 lifted it from accounts, whose Insights point keeps it, P3.10
+   *  P4.3; P3.6 lifted it from accounts (P4.7 from its Insights point), P3.10
    *  from watchdog, and P4.1 from canvas); remoteResume keeps it, since Codex
    *  over SSH is outside this release. */
   needsClaude?: boolean
@@ -150,7 +150,8 @@ export const SHOWCASES_21: ShowcasePage[] = [
   {
     // P3.6 (row 22): Claude Code and Codex alike switch mid-session, keeping
     // the conversation, so the page reads for both and shows with Claude
-    // Code off; only its Insights point is Claude Code's in this release.
+    // Code off; P4.7 (row 68) lifted its Insights point too: Run all makes one
+    // report over every account of both assistants.
     id: 'accounts',
     heading: 'Every account, one app',
     tagline: 'Sign in to more than one account and switch mid-session. Usage and costs follow each account separately.',
@@ -158,7 +159,7 @@ export const SHOWCASES_21: ShowcasePage[] = [
       { lead: 'Switch mid-session.', rest: 'The session restarts under the new account and resumes the same conversation.' },
       { lead: 'Usage at a glance.', rest: "The footer meters each account's window while you work." },
       { lead: 'Named and coloured.', rest: 'Give each account a name and a colour in Settings, Accounts; its sessions show them on the status strip and in the sidebar.' },
-      { lead: 'Insights across accounts.', rest: 'With two or more signed in, reports read them all at once.', needsClaude: true },
+      { lead: 'Insights across accounts.', rest: 'With two or more signed in, reports read them all at once.' },
     ],
     where: { pre: 'Where: the ', em: 'account pill', post: ' at the left of the session strip switches it; add a second account and the footer meters each one.' },
     art: 'accounts',

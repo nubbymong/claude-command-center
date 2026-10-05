@@ -697,10 +697,13 @@ export interface ElectronAPI {
     gracefulExit: () => Promise<boolean>
   }
   insights: {
-    /** `provider` (WP2 PR 4, P4.7): the assistant the run reports on; absent means Claude Code. */
-    run: (opts?: { profileId?: string; provider?: ProviderId }) => Promise<string | import('../../shared/providers').ProviderLaunchRefused>
-    /** Cross-account roll-up: runs every targeted account, then synthesizes one report. */
-    runAll: (opts?: { profileIds?: string[] }) => Promise<string | import('../../shared/providers').ProviderLaunchRefused>
+    /** `provider` (WP2 PR 4, P4.7): the assistant the run reports on; absent means Claude Code.
+     *  A Codex run names its Codex account in `profileId`, and `acknowledgeRealmOnly` is that
+     *  run's own confirmation for exactly that account (mockup D12). A request main does not
+     *  take is answered `{ rejected }` (not the app window, or not a request it reads). */
+    run: (opts?: { profileId?: string; provider?: ProviderId; acknowledgeRealmOnly?: true }) => Promise<string | import('../../shared/providers').ProviderLaunchRefused | import('../../shared/types').CloudAgentRequestRejected>
+    /** Cross-account roll-up: runs every targeted account (both assistants', mockup C1 A), then synthesizes one report. */
+    runAll: (opts?: { profileIds?: string[] }) => Promise<string | import('../../shared/providers').ProviderLaunchRefused | import('../../shared/types').CloudAgentRequestRejected>
     getCatalogue: () => Promise<InsightsCatalogue>
     getReport: (runId: string) => Promise<string | null>
     getKpis: (runId: string) => Promise<KpiData | null>

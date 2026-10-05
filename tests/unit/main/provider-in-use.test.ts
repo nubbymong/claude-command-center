@@ -36,13 +36,16 @@ vi.mock('../../../src/main/provider-account-registry', async () => {
     initAccountRegistry: vi.fn(), reconcileLegacyAccountStore: vi.fn(async () => {}), reconcileLegacyAccountStores: vi.fn(async () => {}), sameDirectory: () => false,
   }
 })
-const n = vi.hoisted(() => ({ sessions: { claude: 0, codex: 0 } as Record<string, number>, agents: 0, codexAgents: 0, insights: 0, sentinel: 0, sentinelCodex: 0, ssh: 0, setup: 0, throws: false, codexThrows: false }))
+const n = vi.hoisted(() => ({ sessions: { claude: 0, codex: 0 } as Record<string, number>, agents: 0, codexAgents: 0, insights: 0, codexInsights: 0, sentinel: 0, sentinelCodex: 0, ssh: 0, setup: 0, throws: false, codexThrows: false, codexInsightsThrows: false }))
 vi.mock('../../../src/main/pty-manager', () => ({ countUnleasedAgentSessions: (id: string) => n.sessions[id] ?? 0 }))
 vi.mock('../../../src/main/cloud-agent-manager', () => ({
   countClaudeAgentsInUse: () => { if (n.throws) throw new Error('boom'); return n.agents },
   countCodexAgentsInUse: () => { if (n.codexThrows) throw new Error('boom'); return n.codexAgents },
 }))
-vi.mock('../../../src/main/insights-runner', () => ({ countInsightsRunsInFlight: () => n.insights }))
+vi.mock('../../../src/main/insights-runner', () => ({
+  countInsightsRunsInFlight: () => n.insights,
+  countCodexInsightsRunsUnleased: () => { if (n.codexInsightsThrows) throw new Error('boom'); return n.codexInsights },
+}))
 vi.mock('../../../src/main/sentinel/index', () => ({ sentinelClaudeRunsInFlight: () => n.sentinel, sentinelCodexRunsInFlight: () => n.sentinelCodex }))
 vi.mock('../../../src/main/ipc/pty-handlers', () => ({ countSshClaudeLaunches: () => n.ssh }))
 vi.mock('../../../src/main/ipc/setup-handlers', () => ({ countCliSetupInUse: () => n.setup }))
@@ -52,7 +55,7 @@ const { initProviderAccounts, _resetProviderAccountsForTest } = await import('..
 
 beforeEach(() => {
   _resetProviderAccountsForTest()
-  Object.assign(n, { sessions: { claude: 0, codex: 0 }, agents: 0, codexAgents: 0, insights: 0, sentinel: 0, sentinelCodex: 0, ssh: 0, setup: 0, throws: false, codexThrows: false })
+  Object.assign(n, { sessions: { claude: 0, codex: 0 }, agents: 0, codexAgents: 0, insights: 0, codexInsights: 0, sentinel: 0, sentinelCodex: 0, ssh: 0, setup: 0, throws: false, codexThrows: false, codexInsightsThrows: false })
 })
 
 // What main composes at start (index.ts).
@@ -135,6 +138,32 @@ describe('Codex cloud agents, for the switch-off rule (P4.5)', () => {
 
   it('a Codex agent counter that cannot answer counts as in use (fail closed)', () => {
     n.codexThrows = true
+    expect(providerUseWithoutLease('codex')).toBe(1)
+  })
+})
+
+// [host] WP2 PR 4, P4.7 (row 68): an Insights report on a Codex account is
+// Codex in use from its launch check until its account's lease is held
+// (then the lease counts it), and a roll-up that runs Codex for its length;
+// never Claude Code's (mockup screen 8, D11).
+describe('Codex Insights reports, for the switch-off rule (P4.7)', () => {
+  it('a Codex report before its lease, or a roll-up running Codex: switching Codex off is refused, as in use', async () => {
+    n.codexInsights = 1
+    expect(providerUseWithoutLease('codex')).toBe(1)
+    expect(await service().setProviderEnabled('codex', false)).toMatchObject({ ok: false, code: 'consumers', consumers: 1 })
+  })
+
+  it('a Codex report does not hold Claude Code, and a Claude Code report does not hold Codex', async () => {
+    n.codexInsights = 2
+    expect(providerUseWithoutLease('claude')).toBe(0)
+    expect(await service().setProviderEnabled('claude', false)).toEqual({ ok: true })
+    n.codexInsights = 0
+    n.insights = 3
+    expect(providerUseWithoutLease('codex')).toBe(0)
+  })
+
+  it('a Codex report counter that cannot answer counts as in use (fail closed)', () => {
+    n.codexInsightsThrows = true
     expect(providerUseWithoutLease('codex')).toBe(1)
   })
 })

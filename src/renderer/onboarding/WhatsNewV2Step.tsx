@@ -31,7 +31,7 @@ export interface WhatsNewItem {
    *  hides a line from a fresh install). The phase that brings the feature
    *  to Codex lifts it (named in that phase's entry of
    *  docs/wp2/completion-plan.md: Agent Canvas P4.1, Ask Conductor and the
-   *  guide line P4.3, Insights P4.7; P3.6 lifted it from Switch mid-session,
+   *  guide line P4.3; P4.7 lifted it from Insights; P3.6 lifted it from Switch mid-session,
    *  P3.10 from Session Watchdog). SSH Persistent and Remote Resumable keep it, as the
    *  remote resume page does: the persistent remote session wraps the
    *  remote claude command, and the only agent an SSH session runs in
@@ -122,7 +122,7 @@ const SECTIONS_21: WhatsNewSection[] = [
       // conversation; the claude.ai sign-in the line also named stays Claude's.
       { title: 'Switch mid-session.', desc: 'Change a running session\'s account without losing the conversation.', seeIt: 'accounts' },
       { title: 'claude.ai in the app.', desc: 'Sign in to claude.ai in-app, for each account.', needsClaude: true },
-      { title: 'Insights.', desc: 'Usage reports across every account at once, not one at a time.', needsClaude: true },
+      { title: 'Insights.', desc: 'Usage reports across every account at once, not one at a time.' },
     ],
   },
   {
