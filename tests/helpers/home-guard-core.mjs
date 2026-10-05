@@ -27,12 +27,16 @@
 //   - child_process spawn/spawnSync/exec/execSync/execFile/execFileSync/fork,
 //     ChildProcess.prototype.spawn and node-pty spawn: the working folder, the
 //     child environment exactly as Node and libuv build it (home, temp, XDG,
-//     GIT_CONFIG_GLOBAL and npm_config_* values), and the paths written literally in
-//     the arguments (drive, UNC, MSYS, Cygwin and WSL spellings, `~user`, globs,
-//     values after `=`, embedded in longer strings), plus a `cd`/`pushd` into or
-//     above a real home in a shell line. The executable itself is not refused, nor
-//     a node script or a `cmd /c` / `sh -c` command word inside a real home's npm
-//     or nvm folder;
+//     GIT_CONFIG_GLOBAL, npm_config_* and the Claude / Codex / app config-folder
+//     values in CONFIG_HOME_VARS), and the paths written literally in the arguments
+//     (drive, UNC, MSYS, Cygwin incl. /proc/cygdrive, and WSL spellings, `~user`,
+//     globs, values after `=`, embedded in longer strings); and in a shell line
+//     (exec, shell:true, `cmd /c|/k`, `sh|bash|dash|zsh|ksh -c`, and
+//     `pwsh|powershell -c|-Command`) a `cd` / `chdir` / `pushd` (glued forms such as
+//     `cd/d`, `cd\`, `cd..` included) or `Set-Location` / `sl` / `Push-Location` into
+//     or above a real home, a filesystem root that holds one included. The executable
+//     itself is not refused, nor a node script, or the command word (that position
+//     only) of a `cmd /c` / `sh -c` line, inside a real home's npm or nvm folder;
 //   - worker_threads Workers, process.execve and
 //     process.binding('fs' | 'fs_dir' | 'spawn_sync' | 'process_wrap').
 // Paths are compared after resolving `..`, separators, case (win32, darwin),
@@ -47,9 +51,9 @@
 // tool that finds the profile through the OS rather than the environment, e.g. to
 // expand `~`, reaches the real one); a process started without going through these
 // entry points; shell re-assembly of an argument: quotes or carets inside a word,
-// `%VAR%` / `$VAR` expansion, and a relative path after a `cd` the scanner did not
-// see are NOT read the way the shell will read them; a recursive delete is left to
-// Node, which does not follow links.
+// `%VAR%` / `$VAR` expansion, a PowerShell `-EncodedCommand`, and a relative path after
+// a `cd` the scanner did not see are NOT read the way the shell will read them; a
+// recursive delete is left to Node, which does not follow links.
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -89,7 +93,15 @@ const TREE_LIMIT = 20000
 // Variables that send git or npm to a config, cache or prefix folder: checked in a child
 // environment, and in the vitest entry pointed into the isolated home when they name a
 // real one (npm puts its npm_config_* into every script it runs).
-const CONFIG_REDIRECT = /^(?:GIT_CONFIG_GLOBAL|npm_config_.+)$/i
+// Folders the app, Claude or Codex read their configuration, credentials or caches from
+// (src/main/account-profiles.ts and the providers set them for a launch): their
+// original values are real roots too, and like the git/npm ones they are checked in a
+// child environment and pointed into the isolated home in each worker.
+export const CONFIG_HOME_VARS = Object.freeze([
+  'ANTHROPIC_CONFIG_DIR', 'CLAUDE_SECURESTORAGE_CONFIG_DIR', 'CLAUDE_CODE_PLUGIN_CACHE_DIR',
+  'CLAUDE_CODE_FEDERATION_CACHE_DIR', 'CODEX_SQLITE_HOME', 'CCC_CONFIG_DIR',
+])
+const CONFIG_REDIRECT = new RegExp(`^(?:GIT_CONFIG_GLOBAL|npm_config_.+|${CONFIG_HOME_VARS.join('|')})$`, 'i')
 // Bounds for checking arguments: path depth that is resolved through the filesystem,
 // and candidate paths per argument that get the full (realpath) check; the rest get
 // the lexical check only.
@@ -231,9 +243,6 @@ function resolveReal(abs, fsImpl, platform, hops = 0) {
   const P = pathApi(platform)
   /** @type {string[]} */ const tail = []
   const withTail = (/** @type {string} */ head) => (tail.length ? P.join(head, ...[...tail].reverse()) : head)
-  // No real folder is this deep: past the cap the lexical form stands (bounds the cost
-  // of a long argument full of separators).
-  if (abs.split(/[\\/]/).length > MAX_REAL_DEPTH) return abs
   let cur = abs
   for (;;) {
     let st
@@ -376,9 +385,10 @@ export function createHomeChecker(opts) {
   const TERM = win ? TERM_WIN : TERM_POSIX
 
   /**
-   * @typedef {{ memo?: Map<string, { device: boolean, forms: string[] }>, lexOnly?: boolean, full?: number }} ScanCtx
-   *   one argument scan: forms are memoised, and past the full-check cap only the
-   *   lexical form is used
+   * @typedef {{ memo?: Map<string, { device: boolean, forms: string[] }>, lexOnly?: boolean, full?: number,
+   *   dirs?: Map<string, { exists: boolean, real: string | null }> }} ScanCtx
+   *   one argument scan: forms are memoised, and past the full-check cap a candidate is
+   *   resolved through its (memoised) folder instead of its own full walk
    */
   /** @param {string} s @param {string} base @param {ScanCtx} [ctx] @returns {{ device: boolean, forms: string[] }} */
   const formsOf = (s, base, ctx) => {
@@ -389,13 +399,18 @@ export function createHomeChecker(opts) {
     }
     /** @type {{ device: boolean, forms: string[] }} */ let result
     const lf = lexicalFormsFs(s, base, platform, fsImpl)
+    // In an argument scan, a candidate deeper than any real folder keeps its lexical
+    // form (bounds the cost of a long token full of separators); past the candidate cap
+    // its folder is resolved through the scan's folder memo (links in every folder above
+    // it are still followed). fs calls always get the full walk.
+    const deep = !!ctx && lf.forms.some((f) => f.split(/[\\/]/).length > MAX_REAL_DEPTH)
     if (lf.device) result = { device: true, forms: [] }
-    else if (ctx && ctx.lexOnly) result = { device: false, forms: lf.forms }
+    else if (deep) result = { device: false, forms: lf.forms }
     else {
       const out = new Set(lf.forms)
       result = { device: false, forms: [] }
       for (const f of lf.forms) {
-        const r = resolveReal(f, fsImpl, platform)
+        const r = ctx && ctx.lexOnly ? realByFolder(f, ctx) : resolveReal(f, fsImpl, platform)
         const again = r === null ? null : lexicalFormsFs(r, base, platform, fsImpl)
         if (again === null || again.device) {
           result = { device: true, forms: [] }
@@ -407,6 +422,50 @@ export function createHomeChecker(opts) {
     }
     if (memoKey !== undefined) /** @type {Map<string, any>} */ (ctx?.memo).set(memoKey, result)
     return result
+  }
+  /**
+   * The real path of a folder, memoised per argument scan: an existing folder is
+   * realpath'd (a link is followed), a missing one is its parent's real path plus its
+   * name, and everything below a missing folder is missing without a syscall. null when
+   * a link leads somewhere the guard cannot map.
+   * @param {string} dir @param {ScanCtx} ctx @returns {{ exists: boolean, real: string | null }}
+   */
+  const realFolder = (dir, ctx) => {
+    const memo = (ctx.dirs ??= new Map())
+    const known = memo.get(dir)
+    if (known) return known
+    /** @type {{ exists: boolean, real: string | null }} */ let res
+    const parent = P.dirname(dir)
+    const up = parent === dir ? null : realFolder(parent, ctx)
+    if (up && (!up.exists || up.real === null)) res = { exists: false, real: up.real === null ? null : P.join(up.real, P.basename(dir)) }
+    else {
+      let st
+      try {
+        st = fsImpl.lstatSync(dir, { throwIfNoEntry: false })
+      } catch {
+        st = undefined
+      }
+      if (!st) res = { exists: false, real: up ? P.join(/** @type {string} */ (up.real), P.basename(dir)) : dir }
+      else if (st.isSymbolicLink()) res = { exists: true, real: resolveReal(dir, fsImpl, platform) }
+      else {
+        let real
+        try {
+          real = fsImpl.realpathSync(dir)
+        } catch {
+          real = undefined
+        }
+        res = { exists: true, real: typeof real === 'string' ? real : dir }
+      }
+    }
+    memo.set(dir, res)
+    return res
+  }
+  /** A candidate's real path through its folder (the candidate itself is not lstat'ed). @param {string} f @param {ScanCtx} ctx */
+  const realByFolder = (f, ctx) => {
+    const parent = P.dirname(f)
+    if (parent === f) return f
+    const up = realFolder(parent, ctx)
+    return up.real === null ? null : P.join(up.real, P.basename(f))
   }
   /** @param {string[]} list */
   const keysOf = (list) => {
@@ -452,13 +511,17 @@ export function createHomeChecker(opts) {
     return null
   }
 
-  /** Is `p` (not a filesystem root) the parent, or an ancestor, of a real root? @param {string} p @param {string} base @param {ScanCtx} [ctx] */
-  const coversReal = (p, base, ctx) => {
+  /**
+   * Is `p` the parent, or an ancestor, of a real root? A filesystem root counts only
+   * with `roots` (a `cd` to it), not for a glob (`/*` in a script is no path).
+   * @param {string} p @param {string} base @param {ScanCtx} [ctx] @param {boolean} [roots]
+   */
+  const coversReal = (p, base, ctx, roots = false) => {
     for (const s of pathStrings(p, platform)) {
       const f = formsOf(s, base, ctx)
       for (const form of f.forms) {
         const k = keyOf(form, platform)
-        if (k === keyOf(P.parse(form).root, platform)) continue
+        if (!roots && k === keyOf(P.parse(form).root, platform)) continue
         if (realKeys.some((r) => within(r, k, sep))) return true
       }
     }
@@ -473,10 +536,10 @@ export function createHomeChecker(opts) {
     return f.forms.every((form) => installKeys.some((r) => within(keyOf(form, platform), r, sep)))
   }
 
-  /** The drive spellings of an MSYS, Cygwin or WSL path (`/c/x`, `/cygdrive/c/x`, `/mnt/c/x`). @param {string} c */
+  /** The drive spellings of an MSYS, Cygwin or WSL path (`/c/x`, `/cygdrive/c/x`, `/proc/cygdrive/c/x`, `/mnt/c/x`). @param {string} c */
   const msysForms = (c) => {
     if (!win) return []
-    const m = /^[\\/](?:cygdrive[\\/]|mnt[\\/])?([a-z])(?=[\\/]|$)(.*)$/i.exec(c)
+    const m = /^[\\/](?:(?:proc[\\/])?cygdrive[\\/]|mnt[\\/])?([a-z])(?=[\\/]|$)(.*)$/i.exec(c)
     return m ? [`${m[1]}:\\${m[2].replace(/^[\\/]+/, '')}`] : []
   }
 
@@ -538,7 +601,7 @@ export function createHomeChecker(opts) {
           new RegExp(`(?<![A-Za-z0-9])[A-Za-z]:[\\\\/]${body}`, 'g'),
           // A UNC path starts a word (an escaped `C:\\Users\\x` in a script is no share).
           new RegExp(`(?<![^${T}])(?:\\\\\\\\|//)[^\\\\/${T}]+[\\\\/]${body}`, 'g'),
-          new RegExp(`(?<![A-Za-z0-9_.~\\\\/-])/(?:cygdrive/|mnt/)?[A-Za-z](?=/|$|[${T}])${body}`, 'g'),
+          new RegExp(`(?<![A-Za-z0-9_.~\\\\/-])/(?:(?:proc/)?cygdrive/|mnt/)?[A-Za-z](?=/|$|[${T}])${body}`, 'g'),
         ]
       : [new RegExp(`(?<![A-Za-z0-9_.~-])/${body}`, 'g')]
     res.push(new RegExp(`(?<![^${T}])~[A-Za-z0-9._-]*(?=[\\\\/]|$|[${T}])${body}`, 'g'))
@@ -560,6 +623,7 @@ export function createHomeChecker(opts) {
       { v: n, kind: 'path' },
       { v: `/${d}${rest}`, kind: 'msys' },
       { v: `/cygdrive/${d}${rest}`, kind: 'msys' },
+      { v: `/proc/cygdrive/${d}${rest}`, kind: 'msys' },
       { v: `/mnt/${d}${rest}`, kind: 'msys' },
       { v: rest, kind: 'unc' },
     ]
@@ -608,20 +672,16 @@ export function createHomeChecker(opts) {
    * Every path written in an argument, checked: the argument itself when it is one
    * word, each value after any `=` that starts like a path, paths embedded anywhere,
    * and real-root spellings. Linear in the argument; the first FULL_CHECKS_PER_ARG
-   * distinct candidates get the realpath check, the rest the lexical one. `exempt`:
-   * keys of a command word allowed to sit in a real home's npm or nvm folder.
-   * @param {string} el @param {string} base @param {Set<string>} [exempt] @returns {Hit | null}
+   * distinct candidates get the full realpath walk, the rest are resolved through their
+   * (memoised) folder.
+   * @param {string} el @param {string} base @returns {Hit | null}
    */
-  const argHit = (el, base, exempt) => {
+  const argHit = (el, base) => {
     /** @type {ScanCtx} */ const ctx = { memo: new Map(), full: 0 }
     const seen = new Set()
     const check = (/** @type {string} */ c) => {
       if (!c || seen.has(c)) return null
       seen.add(c)
-      if (exempt && exempt.size > 0) {
-        const keys = lexicalForms(c, base, platform).forms.map((f) => keyOf(f, platform))
-        if (keys.length > 0 && keys.every((k) => exempt.has(k))) return null
-      }
       ctx.lexOnly = /** @type {number} */ (ctx.full) >= FULL_CHECKS_PER_ARG
       if (!ctx.lexOnly) ctx.full = /** @type {number} */ (ctx.full) + 1
       return argCandidate(c, base, ctx)
@@ -646,45 +706,59 @@ export function createHomeChecker(opts) {
   }
 
   /**
-   * The command word of a shell line (`cmd /c <line>`, `sh -c <line>`): a quoted
-   * word ends at its closing quote, cmd's `""<path>" args"` included.
-   * @param {string} line
+   * The command word of a shell line (`cmd /c <line>`, `sh -c <line>`) and where it
+   * sits in the line: a quoted word ends at its closing quote (cmd's `""<path>" args"`
+   * included), an unquoted one at whitespace or shell punctuation (; & | < > ( )).
+   * @param {string} line @returns {{ word: string, start: number, end: number }}
    */
   const commandWord = (line) => {
-    const t = line.trimStart()
-    const q = /^["']+/.exec(t)
+    const lead = /^\s*/.exec(line)?.[0].length ?? 0
+    const q = /^(["'])\1*/.exec(line.slice(lead))
     if (q) {
-      const rest = t.slice(q[0].length)
-      const end = rest.indexOf(q[0][0])
-      return end < 0 ? rest : rest.slice(0, end)
+      const start = lead + q[0].length
+      const close = line.indexOf(q[1], start)
+      const end = close < 0 ? line.length : close
+      return { word: line.slice(start, end), start, end }
     }
-    return /^\S*/.exec(t)?.[0] ?? ''
-  }
-
-  /** Keys that exempt a command word from the scan when it sits in a real home's npm or nvm folder. @param {string} word @param {string} base */
-  const exemptKeysFor = (word, base) => {
-    if (!word || !inInstallRoot(word, base)) return undefined
-    return new Set(lexicalForms(word, base, platform).forms.map((f) => keyOf(f, platform)))
+    const m = /^[^\s;&|<>()]*/.exec(line.slice(lead))
+    const end = lead + (m ? m[0].length : 0)
+    return { word: line.slice(lead, end), start: lead, end }
   }
 
   /**
-   * A `cd` / `pushd` / `chdir` / `Set-Location` in a shell line into a real home, or
-   * into a folder above one (the relative paths after it would then reach it).
+   * A shell line with its command word blanked out when that word is a program in a
+   * real home's npm or nvm folder (an npm shim); otherwise the line unchanged. Only
+   * that position is exempt: the same path anywhere else in the line is still checked.
+   * @param {string} line @param {string} base
+   */
+  const stripCommandWord = (line, base) => {
+    const { word, start, end } = commandWord(line)
+    if (!word || !inInstallRoot(word, base)) return line
+    return line.slice(0, start) + ' '.repeat(end - start) + line.slice(end)
+  }
+
+  /**
+   * A `cd` / `chdir` / `pushd` (cmd, POSIX shells; also glued: `cd/d`, `cd\`, `cd..`)
+   * or `Set-Location` / `sl` / `Push-Location` (PowerShell) in a shell line into a real
+   * home, or into a folder above one, a filesystem root that holds one included (the
+   * relative paths after it would then reach it).
    * @param {string} line @param {string} base @returns {Hit | null}
    */
   const cdHit = (line, base) => {
     const words = shellWords(line)
     for (let i = 0; i < words.length; i++) {
-      if (!/^(?:cd|pushd|chdir|set-location|sl)$/i.test(words[i])) continue
-      let j = i + 1
-      while (j < words.length && /^(?:\/[a-z]|-[a-z-]+)$/i.test(words[j])) j++
-      const target = words[j]
+      const m = /^(cd|chdir|pushd|set-location|sl|push-location)([\\/.].*)?$/i.exec(words[i])
+      if (!m) continue
+      /** @type {string[]} */ const rest = m[2] ? [m[2], ...words.slice(i + 1)] : words.slice(i + 1)
+      let j = 0
+      while (j < rest.length && /^(?:\/[a-z]|-[a-z-]+)$/i.test(rest[j])) j++
+      const target = rest[j]
       if (!target) continue
       const ctx = { memo: new Map() }
       for (const f of [target, ...msysForms(target)]) {
         const hit = classify(f, base, ctx)
         if (hit && (f === target || !hit.device)) return { ...hit, reason: 'is a cd into a real home' }
-        if (coversReal(f, base, ctx)) return { root: f, form: target, reason: 'is a cd into a folder above a real home' }
+        if (coversReal(f, base, ctx, true)) return { root: f, form: target, reason: 'is a cd into a folder above a real home' }
       }
     }
     return null
@@ -732,7 +806,7 @@ export function createHomeChecker(opts) {
     argHit,
     treeHit,
     commandWord,
-    exemptKeysFor,
+    stripCommandWord,
     cdHit,
     /** @param {unknown} p */
     isProtected: (p) => classify(p) !== null,
@@ -882,11 +956,11 @@ function buildConfig(opts = {}) {
 
   /** @type {Record<string, string | undefined>} */
   const originalEnv = {}
-  for (const name of [...HOME_VARS, ...XDG_VARS, 'HOMEDRIVE', 'HOMEPATH', 'NVM_HOME', 'NVM_SYMLINK', 'NVM_DIR', 'npm_config_prefix']) {
+  for (const name of [...HOME_VARS, ...XDG_VARS, ...CONFIG_HOME_VARS, 'HOMEDRIVE', 'HOMEPATH', 'NVM_HOME', 'NVM_SYMLINK', 'NVM_DIR', 'npm_config_prefix']) {
     originalEnv[name] = envValue(env, name)
   }
   const inTmp = createHomeChecker({ realRoots: tmpRoots, platform })
-  let captured = abs([...[...HOME_VARS, ...XDG_VARS].map((n) => envValue(env, n) ?? ''), envHomeDrivePath(env) ?? '', osHome() ?? '']).filter(
+  let captured = abs([...[...HOME_VARS, ...XDG_VARS, ...CONFIG_HOME_VARS].map((n) => envValue(env, n) ?? ''), envHomeDrivePath(env) ?? '', osHome() ?? '']).filter(
     (v) => !inTmp.isProtected(v),
   )
 
@@ -902,7 +976,15 @@ function buildConfig(opts = {}) {
   }
   const realRaw = abs([...trustedReal, ...captured])
   for (const d of deriveAccountProfilesRoots(realRaw, platform)) if (!realRaw.includes(d)) realRaw.push(d)
-  const installRoots = abs([...(marker ? marker.inst : []), ...installRootsFrom(originalEnv)])
+  // This process works out its own install folders. One handed over in a marker counts
+  // only if it is an npm or nvm folder by name (npm, nvm, .nvm, .npm-global, nodejs)
+  // and holds no real home: a marker cannot make a home, or a folder in it, exempt.
+  const holdsReal = (/** @type {string} */ t) => realRaw.some((r) => createHomeChecker({ realRoots: [t], platform }).isProtected(r))
+  const npmNamed = (/** @type {string} */ t) => /^(?:npm|nvm|\.nvm|\.npm-global|nodejs)$/i.test(path.basename(t))
+  const installRoots = abs([
+    ...abs(marker ? marker.inst : []).filter((t) => npmNamed(t) && !holdsReal(t)),
+    ...installRootsFrom(originalEnv).filter((t) => !holdsReal(t)),
+  ])
   const userNames = [osUserName() ?? '', ...realRaw.map((r) => path.basename(r))]
   const allowedRoots = isolated ? [{ path: isolated, kind: /** @type {'isolated'} */ ('isolated') }, ...base] : base
   const checker = createHomeChecker({ realRoots: realRaw, allowedRoots, installRoots, userNames, platform })
@@ -1324,7 +1406,6 @@ function checkSpawn(state, op, call) {
   /** @type {string[]} */ let elements
   let script = call.script ?? -1
   /** @type {string[]} */ const shellLines = []
-  /** @type {Map<number, Set<string>>} */ const exemptAt = new Map()
   if (call.line !== undefined) {
     const words = shellWords(call.line)
     elements = words.slice(1)
@@ -1335,16 +1416,21 @@ function checkSpawn(state, op, call) {
     if (call.script === undefined) script = isNodeExecutable(call.exe) ? nodeScriptIndex(elements) : -1
     // A command line handed to cmd.exe (`/c`, `/k`) or a POSIX shell (`-c`): its
     // command word may be a program in a real home's npm or nvm folder (an npm shim),
-    // as narrowly as a node script; nothing else in the line is exempt.
+    // as narrowly as a node script: that word's own position is blanked before the
+    // scan; the same path anywhere else in the line is still checked. A PowerShell
+    // `-Command` line gets the cd rule only.
     const exeName = path.basename(String(call.exe ?? '')).toLowerCase()
     let from = -1
     if (/^cmd(?:\.exe)?$/.test(exeName)) from = elements.findIndex((a) => /^\/[ck]$/i.test(a)) + 1
     else if (/^(?:sh|bash|dash|zsh|ksh)(?:\.exe)?$/.test(exeName)) from = elements.findIndex((a) => /^-[a-z]*c[a-z]*$/i.test(a)) + 1
     if (from > 0 && from < elements.length) {
-      const line = /^cmd/.test(exeName) ? elements.slice(from).join(' ') : elements[from]
-      shellLines.push(line)
-      const exempt = state.checker.exemptKeysFor(state.checker.commandWord(line), cwdAbs)
-      if (exempt) for (let i = from; i < (/^cmd/.test(exeName) ? elements.length : from + 1); i++) exemptAt.set(i, exempt)
+      shellLines.push(/^cmd/.test(exeName) ? elements.slice(from).join(' ') : elements[from])
+      elements = [...elements]
+      elements[from] = state.checker.stripCommandWord(elements[from], cwdAbs)
+    }
+    if (/^(?:pwsh|powershell)(?:\.exe)?$/.test(exeName)) {
+      const ci = elements.findIndex((a) => /^-(?:c|command)$/i.test(a))
+      if (ci >= 0 && ci + 1 < elements.length) shellLines.push(elements.slice(ci + 1).join(' '))
     }
   }
   for (const line of shellLines) {
@@ -1356,7 +1442,7 @@ function checkSpawn(state, op, call) {
   for (let i = 0; i < all.length; i++) {
     // The script node runs may live in a real home's npm or nvm folder; nothing else there.
     if (i === script && state.checker.inInstallRoot(all[i], cwdAbs)) continue
-    const hit = state.checker.argHit(all[i], cwdAbs, exemptAt.get(i))
+    const hit = state.checker.argHit(all[i], cwdAbs)
     if (hit) throw violation(state, op + ' argv', all[i], hit)
   }
 
@@ -1632,13 +1718,31 @@ export function reassertHomeEnv() {
   if (st) applyIsolatedEnv(st, false)
 }
 
+/** Is `v` a path inside the isolated or temp area (and no real home)? @param {GuardState} st @param {string | undefined} v */
+function inSafeArea(st, v) {
+  if (!nonEmpty(v)) return false
+  // A checker whose "real" roots are the isolated and temp folders, built once.
+  const safe = (st.safeArea ??= createHomeChecker({ realRoots: [st.isolated ?? '', ...st.tmpRoots].filter(nonEmpty), platform: st.platform }))
+  return safe.isProtected(v) && !st.checker.isProtected(v)
+}
+
+/**
+ * Point `envName` at `dir` unless it already names a folder inside the isolated or temp
+ * area (an inherited value from a harness shell elsewhere is replaced). Returns the
+ * value in force.
+ * @param {string} envName @param {string} dir
+ */
+export function pinDataDirectory(envName, dir) {
+  const st = getState()
+  if (!st || !inSafeArea(st, process.env[envName])) process.env[envName] = dir
+  return process.env[envName]
+}
+
 /** @param {GuardState} st @param {boolean} force set every variable (the first redirect) */
 function applyIsolatedEnv(st, force) {
   const iso = st.isolatedEnv
   if (!iso || !st.isolated) return
-  // "Inside the isolated or temp area", built once: a checker whose roots are those.
-  const safe = (st.safeArea ??= createHomeChecker({ realRoots: [st.isolated, ...st.tmpRoots], platform: st.platform }))
-  const ok = (/** @type {string | undefined} */ v) => !force && nonEmpty(v) && safe.isProtected(v) && !st.checker.isProtected(v)
+  const ok = (/** @type {string | undefined} */ v) => !force && inSafeArea(st, v)
   for (const name of [...HOME_VARS, ...XDG_VARS]) {
     if (iso[name] && !ok(process.env[name])) process.env[name] = iso[name]
   }
@@ -1652,7 +1756,9 @@ function applyIsolatedEnv(st, force) {
     if (!CONFIG_REDIRECT.test(k)) continue
     const v = process.env[k]
     if (nonEmpty(v) && st.checker.isProtected(v)) {
-      process.env[k] = /^GIT_CONFIG_GLOBAL$/i.test(k) ? path.join(iso.HOME, '.gitconfig') : path.join(iso.HOME, '.npm-redirect', k.toLowerCase())
+      process.env[k] = /^GIT_CONFIG_GLOBAL$/i.test(k)
+        ? path.join(iso.HOME, '.gitconfig')
+        : path.join(iso.HOME, /^npm_config_/i.test(k) ? '.npm-redirect' : '.config-redirect', k.toLowerCase())
     }
   }
   for (const name of [...HOME_VARS, ...XDG_VARS]) if (iso[name]) fs.mkdirSync(iso[name], { recursive: true })

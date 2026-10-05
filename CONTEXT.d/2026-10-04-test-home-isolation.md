@@ -8,7 +8,8 @@ forks) loads `tests/helpers/home-isolation.ts` as its FIRST setup file. It point
 HOME, USERPROFILE, APPDATA, LOCALAPPDATA, CLAUDE_CONFIG_DIR and CODEX_HOME (plus
 HOMEDRIVE/HOMEPATH on Windows and the XDG folders elsewhere) at a fresh folder per
 worker, re-asserts them before every test, pins the app's data folder
-(`CCC_E2E_DATA_DIR`) under the worker's temp folder, fails loudly if
+(`CCC_E2E_DATA_DIR`) per test file under the worker's temp folder (an inherited
+value is kept only if it is already inside the temp area), fails loudly if
 `os.homedir()` does not follow, and installs the guard in
 `tests/helpers/home-guard-core.mjs`. The guard throws `TEST_ISOLATION_VIOLATION`
 for:
@@ -21,13 +22,19 @@ for:
 - `child_process`, `ChildProcess.prototype.spawn` and `node-pty` spawns whose
   working folder, child environment (built exactly as Node and libuv build it:
   inherited keys, coerced values, the variables Windows copies in; home, temp, XDG,
-  `GIT_CONFIG_GLOBAL` and `npm_config_*` values) or a path written in an argument
-  (drive, UNC, MSYS, Cygwin, WSL, `~user`, globs, after `=`, embedded, at any
-  length, checked in linear time) is in a real home, or whose shell line does a
-  `cd` / `pushd` into or above one. A child environment that omits a home variable
-  gets it under the home the caller gave, or else the isolated one. The executable
-  itself, and a node script or a `cmd /c` / `sh -c` command word in a real home's
-  npm or nvm folder, are not refused;
+  `GIT_CONFIG_GLOBAL`, `npm_config_*` and the CLI and app config-folder variables
+  such as `ANTHROPIC_CONFIG_DIR`, `CLAUDE_SECURESTORAGE_CONFIG_DIR` and
+  `CCC_CONFIG_DIR`) or a path written in an argument (drive, UNC, MSYS, Cygwin incl.
+  `/proc/cygdrive`, WSL, `~user`, globs, after `=`, embedded, at any length, checked
+  in linear time, links followed past every cap) is in a real home. In a shell line
+  (exec, `shell: true`, `cmd /c`, `sh -c`, `pwsh -Command`) a `cd` / `chdir` /
+  `pushd` (glued `cd/d`, `cd\`, `cd..` included) or `Set-Location` / `sl` /
+  `Push-Location` into or above a real home, a root that holds one included, is
+  refused. A child environment that omits a home variable gets it under the home
+  the caller gave, or else the isolated one. The executable itself, a node script,
+  and the command word (that position only) of a `cmd /c` / `sh -c` line in a real
+  home's npm or nvm folder are not refused; an install folder handed to a child must
+  be an npm or nvm folder holding no real home;
 - `worker_threads` Workers (also through `Worker.prototype.constructor`),
   `process.execve` and `process.binding('fs')` (they would bypass it).
 
@@ -43,8 +50,9 @@ the caller's real roots and the guard preload.
 beyond its environment, working folder and arguments (a native tool that finds the
 profile through the OS rather than the environment, for example to expand `~`,
 reaches the real one); shell re-assembly of an argument: quotes or carets inside a
-word, `%VAR%` / `$VAR` expansion, and a relative path after a `cd` the guard did not
-see are not read the way the shell will read them; anything started outside these
+word, `%VAR%` / `$VAR` expansion, a PowerShell `-EncodedCommand`, and a relative
+path after a `cd` the guard did not see are not read the way the shell will read
+them; anything started outside these
 entry points. `vitest.live.config.ts` (real ssh, real keys) and Playwright are
 deliberately out of scope.
 
