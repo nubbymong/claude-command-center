@@ -71,16 +71,20 @@ deliberately out of scope.
   `account-profiles` folder above one of them. Allowed roots: the isolated root,
   the temp folder (on Windows it sits under LOCALAPPDATA), a CI runner's
   `RUNNER_TEMP` in GitHub's layout only (`<work>/_temp` where `<work>` holds the
-  checkout) and holding no home this process can name (GitHub keeps it under HOME on
-  Linux and macOS; a child whose environment was rebuilt without it, such as a CLI
-  the app runs, learns it from the marker), and the project root (CI runners keep the
-  checkout under HOME). The more specific root wins; only the
-  isolated root wins a tie.
+  checkout) and holding no trusted home (GitHub keeps it under HOME on Linux and
+  macOS; a child whose environment was rebuilt without it, such as a CLI the app
+  runs, learns it from the marker), and the project root (CI runners keep the
+  checkout under HOME). A home only the environment names inside the runner temp
+  folder (a CI step's own CLI home) stays a real home. The more specific root wins;
+  only the isolated root wins a tie.
 - Paths are compared after resolving `..`, separators, case (win32, darwin),
   trailing dots and spaces, stream suffixes, `\\?\`, `\\.\` and `\??\` prefixes,
   file: URLs and URL-like objects, Buffers, and the real path of the nearest
   existing ancestor. Every UNC path except a named pipe, and every device path the
-  guard cannot map, fails closed.
+  guard cannot map, fails closed. An operation on the folder entry itself (unlink,
+  rm, rmdir, rename, lchmod, lchown, lutimes) does not follow a link in the last
+  component: it removes, moves or touches the link, never what it points at (Node's
+  recursive rm of a CLI home holding a link to the CLI's own binary is no refusal).
 - Arguments are scanned for drive, UNC, MSYS, Cygwin and WSL spellings, `~user`,
   globs that reach a real home, values after any `=` and inside brackets, at any
   length. A bare `~` expands from the child's HOME, which the guard has already

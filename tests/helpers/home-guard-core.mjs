@@ -52,7 +52,9 @@
 // URLs and URL-like objects, Buffers, and the real path of the nearest existing
 // ancestor (a link out of an allowed folder is followed; a volume-GUID path is
 // mapped to its drive). UNC paths other than `\\.\pipe\` and unmappable device
-// paths fail closed.
+// paths fail closed. An operation on the folder entry itself (unlink, rm, rmdir,
+// rename, lchmod, lchown, lutimes) does not follow a link in the last component: it
+// removes, moves or touches the link, never what it points at.
 //
 // NOT covered: native addons (better-sqlite3 and node-pty write natively); a child
 // that is not node beyond its environment, working folder and arguments (a native
@@ -556,6 +558,35 @@ export function createHomeChecker(opts) {
   }
 
   /**
+   * Like classify, for an operation on the folder entry itself (unlink, rm, rmdir,
+   * rename, lchmod, lchown, lutimes): the last component is not followed, because the
+   * operation removes, moves or touches a link, never what it points at. Its folder is
+   * resolved in full, so a path through a link into a real home is still caught.
+   * @param {unknown} input @param {string} [base] @returns {Hit | null}
+   */
+  const classifyEntry = (input, base) => {
+    const b = base ?? cwd()
+    for (const s of pathStrings(input, platform)) {
+      const lf = lexicalFormsFs(s, b, platform, fsImpl)
+      if (lf.device) return { root: '(UNC or device path)', form: s, reason: 'is a UNC or device path the guard cannot map', device: true }
+      for (const form of lf.forms) {
+        const parent = P.dirname(form)
+        /** @type {string[]} */ const candidates = [form]
+        if (parent !== form) {
+          const up = formsOf(parent, b)
+          if (up.device) return { root: '(UNC or device path)', form: s, reason: 'is a UNC or device path the guard cannot map', device: true }
+          for (const p of up.forms) candidates.push(P.join(p, P.basename(form)))
+        }
+        for (const c of candidates) {
+          const root = protectedBy(keyOf(c, platform))
+          if (root) return { root, form: c }
+        }
+      }
+    }
+    return null
+  }
+
+  /**
    * Is `p` the parent, or an ancestor, of a real root? A filesystem root counts only
    * with `roots` (a `cd` to it), not for a glob (`/*` in a script is no path).
    * @param {string} p @param {string} base @param {ScanCtx} [ctx] @param {boolean} [roots]
@@ -849,6 +880,8 @@ export function createHomeChecker(opts) {
     platform,
     /** @param {unknown} input @param {string} [base] */
     classify: (input, base) => classify(input, base),
+    /** @param {unknown} input @param {string} [base] */
+    classifyEntry: (input, base) => classifyEntry(input, base),
     argHit,
     treeHit,
     commandWord,
@@ -1022,30 +1055,34 @@ function buildConfig(opts = {}) {
   const ownTmp = os.tmpdir()
   const tempNamed = (/** @type {string} */ t) => /^(?:_?te?mp|t|ccc-vitest-.+)$/i.test(path.basename(t))
   const holdsOwnTmp = (/** @type {string} */ t) => createHomeChecker({ realRoots: [t], platform }).isProtected(ownTmp)
-  // Every home this process can name: the trusted ones and the ones only its environment
-  // names (a profile USERPROFILE, CODEX_HOME, ...).
+  // The homes only this process's environment names (a profile USERPROFILE, a CLI's
+  // config folder, ...).
   const envHomes = abs([...[...HOME_VARS, ...XDG_VARS, ...CONFIG_HOME_VARS].map((n) => envValue(env, n) ?? ''), envHomeDrivePath(env) ?? '', osHome() ?? ''])
   // A CI runner's per-job temp folder (GitHub Actions' RUNNER_TEMP, under HOME on its
   // Linux and macOS runners) is a temp area too, in the runner layout only (see
   // runnerTempsFrom). It comes from this process's RUNNER_TEMP or from the marker (a
   // child whose environment was rebuilt from an allowlist no longer has the variable),
-  // under the same rule either way.
+  // under the same rule either way. A home the environment names inside it stays a real
+  // home: the more specific root wins (as a CI step's own CODEX_HOME under RUNNER_TEMP).
   const runnerTemps = runnerTempsFrom([envValue(env, 'RUNNER_TEMP') ?? '', ...(marker ? marker.runner : [])], {
     projectRoot: PROJECT_ROOT,
-    homes: [...trustedReal, ...envHomes],
+    homes: trustedReal,
     platform,
   })
-  const tmpRoots = abs([
-    ...abs([...(opts.extraTmpRoots ?? []), ownTmp, ...runnerTemps]),
+  const ownTmpRoots = abs([
+    ...abs([...(opts.extraTmpRoots ?? []), ownTmp]),
     ...abs(marker ? marker.tmp : []).filter((t) => tempNamed(t) && holdsOwnTmp(t)),
   ]).filter((t) => !containsTrusted(t))
+  const tmpRoots = abs([...ownTmpRoots, ...runnerTemps])
 
   /** @type {Record<string, string | undefined>} */
   const originalEnv = {}
   for (const name of [...HOME_VARS, ...XDG_VARS, ...CONFIG_HOME_VARS, 'HOMEDRIVE', 'HOMEPATH', 'NVM_HOME', 'NVM_SYMLINK', 'NVM_DIR', 'npm_config_prefix', 'RUNNER_TEMP']) {
     originalEnv[name] = envValue(env, name)
   }
-  const inTmp = createHomeChecker({ realRoots: tmpRoots, platform })
+  // A home inside this process's own temp area is a temporary home; one inside a runner
+  // temp folder is not (see above).
+  const inTmp = createHomeChecker({ realRoots: ownTmpRoots, platform })
   let captured = envHomes.filter((v) => !inTmp.isProtected(v))
 
   const base = [...tmpRoots.map((p) => /** @type {AllowedRoot} */ ({ path: p, kind: 'tmp' })), { path: PROJECT_ROOT, kind: /** @type {'project'} */ ('project') }]
@@ -1095,7 +1132,8 @@ function markerValue(c, isolated) {
 
 /** @param {GuardState} state @param {string} op @param {unknown} target @param {Hit} hit */
 function violation(state, op, target, hit) {
-  const shown = typeof target === 'string' ? target : hit.form
+  // A Buffer or URL argument is shown as the path it names (Node's recursive rm passes Buffers).
+  const shown = typeof target === 'string' ? target : (pathStrings(target, process.platform)[0] ?? hit.form)
   const err = new TestIsolationViolation(op, shown, hit.root, hit.reason)
   state.violations.push({ op, target: shown, root: hit.root })
   if (state.entry === 'probe') {
@@ -1139,6 +1177,8 @@ const FS_PROMISES = [
   ['truncate', [0]], ['chmod', [0]], ['lchmod', [0]], ['chown', [0]], ['lchown', [0]],
   ['utimes', [0]], ['lutimes', [0]], ['open', 'open'], ['readFile', 'read'],
 ]
+// Operations on a folder entry itself (a link is removed, moved or touched, not followed).
+const ENTRY_OPS = new Set(['rm', 'rmSync', 'rmdir', 'rmdirSync', 'unlink', 'unlinkSync', 'rename', 'renameSync', 'lchmod', 'lchmodSync', 'lchown', 'lchownSync', 'lutimes', 'lutimesSync'])
 const FILEHANDLE_MUTATORS = ['chmod', 'chown', 'utimes', 'truncate', 'write', 'writev', 'writeFile', 'appendFile', 'createWriteStream']
 
 const SAFE_READ_BITS = ['O_RDONLY', 'O_NOFOLLOW', 'O_DIRECTORY', 'O_NOATIME', 'O_NONBLOCK', 'O_SYNC', 'O_DSYNC', 'O_NOCTTY', 'UV_FS_O_FILEMAP'].reduce(
@@ -1198,9 +1238,18 @@ function checkFsCall(state, op, spec, args) {
       }
       return undefined
     }
-    default:
-      for (const i of spec) check(args[i], op)
+    default: {
+      // An operation on the folder entry itself does not follow a link in the last component.
+      const entry = ENTRY_OPS.has(op.slice(op.lastIndexOf('.') + 1))
+      for (const i of spec) {
+        if (!entry) check(args[i], op)
+        else {
+          const hit = state.checker.classifyEntry(args[i])
+          if (hit) throw violation(state, op, args[i], hit)
+        }
+      }
       return undefined
+    }
   }
 }
 

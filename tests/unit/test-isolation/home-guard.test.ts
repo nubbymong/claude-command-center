@@ -751,6 +751,22 @@ describe('refusals are recorded', () => {
     expect(recorded.map((v) => v.op)).toEqual(['fs.writeFileSync'])
   })
 
+  it("a refusal of a Buffer or file: URL path names that path (Node's recursive rm passes Buffers)", () => {
+    const target = missing()
+    // Spelled with a `..`, so the path as given differs from the form the guard resolved.
+    const given = path.dirname(target) + path.sep + 'x' + path.sep + '..' + path.sep + path.basename(target)
+    for (const arg of [Buffer.from(given), pathToFileURL(given)]) {
+      try {
+        fsNs.unlinkSync(arg)
+      } catch {
+        /* caught on purpose */
+      }
+    }
+    const recorded = drainViolations() as Recorded[]
+    // The URL parser itself drops the `..`.
+    expect(recorded.map((v) => [v.op, v.target])).toEqual([['fs.unlinkSync', given], ['fs.unlinkSync', target]])
+  })
+
   it.fails('a refusal the code under test swallows still fails its test (shared afterEach)', () => {
     try {
       rmSync(missing())
@@ -1046,14 +1062,16 @@ describe('the guard in a plain-node child (probe-guard.mjs)', () => {
       'await attempt("viaProbe", () => mk(t.good + t.sep + "z", g.isolatedProbeEnv(t.probeRoot))())',
       'await attempt("viaEnvOnly", mk(t.good + t.sep + "w", { ...t.inner, RUNNER_TEMP: t.good, CCC_HOME_GUARD: t.forged }))',
       'await attempt("envChecked", mk(t.tmp + t.sep + "q1", { ...t.inner, RUNNER_TEMP: t.bad }))',
-      // A grandchild whose own environment names a home inside it does not take it.
-      'await attempt("holdsEnvHome", mk(t.good + t.sep + "v", { ...t.inner, CODEX_HOME: t.good + t.sep + "h" }))',
+      // A grandchild whose own environment names a home inside it (a CI step's CODEX_HOME
+      // under RUNNER_TEMP) keeps the folder as a temp area and that home as a real one.
+      'await attempt("besideEnvHome", mk(t.good + t.sep + "v", { ...t.inner, CODEX_HOME: t.good + t.sep + "h" }))',
+      'await attempt("inEnvHome", mk(t.good + t.sep + "h" + t.sep + "x", { ...t.inner, CODEX_HOME: t.good + t.sep + "h" }))',
       'g.drainViolations()',
       'process.stdout.write(JSON.stringify(out))',
     ].join('\n')
     const a = runChild(childScript('runner-layout', one, targets), { env: { ...base, HOME: tmp, USERPROFILE: tmp, [MARKER_ENV]: marker({ real: [work], runner: [good, bad] }) } })
     expect(a.status, a.stderr).toBe(0)
-    expect(a.out).toEqual({ inMarker: 'ENOENT', notLayout: VIOLATION_CODE, viaMarker: 'ENOENT', viaProbe: 'ENOENT', viaEnvOnly: 'ENOENT', envChecked: VIOLATION_CODE, holdsEnvHome: VIOLATION_CODE })
+    expect(a.out).toEqual({ inMarker: 'ENOENT', notLayout: VIOLATION_CODE, viaMarker: 'ENOENT', viaProbe: 'ENOENT', viaEnvOnly: 'ENOENT', envChecked: VIOLATION_CODE, besideEnvHome: 'ENOENT', inEnvHome: VIOLATION_CODE })
 
     // 2. A temp-named folder in the home that is not the layout (<home>\x\_temp), as this
     //    process's own RUNNER_TEMP: not a temp area; handing that same value on is no refusal.
@@ -1475,6 +1493,30 @@ describe('the pure checker (simulated roots, any host)', () => {
     expect(c.isProtected('C:\\T\\plain\\f')).toBe(false)
   })
 
+  it('an operation on the entry itself (unlink, rm, rename) does not follow a link in the last component; its folder is followed', () => {
+    const c = createHomeChecker({
+      platform: 'win32',
+      realRoots: ['C:\\Users\\alice'],
+      allowedRoots: [{ path: 'C:\\T', kind: 'tmp' }],
+      fsImpl: fakeFs(['C:\\', 'C:\\Users', 'C:\\Users\\alice', 'C:\\Users\\alice\\bin', 'C:\\T', 'C:\\T\\arg0'], {
+        // A CLI's helper link to its own binary, made under the CLI's home's tmp folder.
+        'C:\\T\\arg0\\apply_patch': 'C:\\Users\\alice\\bin\\cli.exe',
+        'C:\\T\\dirlink': 'C:\\Users\\alice',
+      }),
+      cwd: () => 'C:\\T',
+    })
+    expect(c.classify('C:\\T\\arg0\\apply_patch')).not.toBeNull()
+    expect(c.classifyEntry('C:\\T\\arg0\\apply_patch')).toBeNull()
+    expect(c.classifyEntry(Buffer.from('C:\\T\\arg0\\apply_patch'))).toBeNull()
+    expect(c.classifyEntry('C:\\T\\dirlink')).toBeNull()
+    // Through a link in the folder part, and a real-home path as written: still refused.
+    expect(c.classifyEntry('C:\\T\\dirlink\\.claude')).not.toBeNull()
+    expect(c.classifyEntry('C:\\T\\dirlink\\bin\\cli.exe')).not.toBeNull()
+    expect(c.classifyEntry('C:\\Users\\alice\\.claude')).not.toBeNull()
+    expect(c.classifyEntry('C:\\T\\..\\Users\\alice\\x')).not.toBeNull()
+    expect(c.classifyEntry('\\\\server\\share\\x')).not.toBeNull()
+  })
+
   it('a recursive copy destination holding a link into a real home is caught', () => {
     const fake = fakeFs(['C:\\', 'C:\\Users', 'C:\\Users\\alice', 'C:\\T', 'C:\\T\\dest', 'C:\\T\\dest\\sub', 'C:\\T\\clean', 'C:\\T\\clean\\sub'], {
       'C:\\T\\dest\\sub\\lnk': 'C:\\Users\\alice',
@@ -1582,7 +1624,8 @@ describe('the pure checker (simulated roots, any host)', () => {
     ]) expect(posix([c]), c).toEqual([])
     // Relative: never read against the working folder.
     expect(runnerTempsFrom(['../_temp', '_temp'], { projectRoot: process.cwd(), homes: [], platform: process.platform, fsImpl: none })).toEqual([])
-    // One that holds a home, one only the environment names included.
+    // One that holds a home it is given (the guard passes the trusted ones; a home only the
+    // environment names inside a runner temp folder stays a real home instead).
     expect(posix(['/home/r/work/_temp'], ['/home/r', '/home/r/work/_temp/codex-home'])).toEqual([])
     // The Windows runner shape (D:\a\_temp beside D:\a\<repo>\<repo>), case folded.
     const win = (c: string) => runnerTempsFrom([c], { projectRoot: 'D:\\a\\repo\\repo', homes: ['C:\\Users\\u'], platform: 'win32', fsImpl: fakeFs([]) })

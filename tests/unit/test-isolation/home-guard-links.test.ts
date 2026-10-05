@@ -5,10 +5,11 @@
 // in for the real home, so nothing here points at one. The host-safe stand-in is the
 // fake-filesystem case in home-guard.test.ts.
 import { afterAll, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { createHomeChecker } from '../../helpers/home-guard-core.mjs'
+import { MARKER_ENV, PROBE_GUARD_URL, createHomeChecker } from '../../helpers/home-guard-core.mjs'
 
 const base = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'ccc-iso-links-')))
 const fakeHome = path.join(base, 'fake-home')
@@ -49,5 +50,52 @@ describe('[CI] [VM] a real link out of an allowed folder is followed', () => {
     const t = createHomeChecker({ realRoots: [fakeHome], allowedRoots: [{ path: base, kind: 'tmp' }] })
     expect(t.treeHit(dest)).not.toBeNull()
     expect(t.treeHit(plain)).toBeNull()
+  })
+})
+
+describe('[CI] [VM] the guard removes or moves a link into a home, never what it points at', () => {
+  it('rm and rename of a link, and a recursive rm of a folder holding one, are no refusal; a path through the link is', () => {
+    // A plain-node child whose real home is `home2` (its HOME, and named in the marker);
+    // its temp folder holds junctions (symbolic links off Windows) into that home.
+    const home2 = path.join(base, 'home2')
+    const tmp2 = path.join(base, 'tmp2')
+    const work = path.join(tmp2, 'work')
+    const nested = path.join(work, 'nested')
+    mkdirSync(home2)
+    mkdirSync(nested, { recursive: true })
+    writeFileSync(path.join(home2, 'keep.txt'), 'x')
+    for (const l of [path.join(work, 'j1'), path.join(work, 'j2'), path.join(nested, 'j3')]) symlinkSync(home2, l, 'junction')
+    const child = path.join(tmp2, 'child.mjs')
+    writeFileSync(
+      child,
+      [
+        "import fs from 'node:fs'",
+        "import path from 'node:path'",
+        `const g = await import(${JSON.stringify(PROBE_GUARD_URL)})`,
+        `const work = ${JSON.stringify(work)}`,
+        'const out = {}',
+        'const attempt = (name, fn) => { try { fn(); out[name] = "no refusal" } catch (e) { out[name] = e && e.code } }',
+        'attempt("rmLink", () => fs.rmSync(path.join(work, "j1")))',
+        'attempt("renameLink", () => fs.renameSync(path.join(work, "j2"), path.join(work, "j2b")))',
+        // Node's recursive rm walks the folder with Buffer paths and unlinks each entry.
+        'attempt("rmTree", () => fs.rmSync(path.join(work, "nested"), { recursive: true }))',
+        'attempt("throughLink", () => fs.rmSync(path.join(work, "j2b", "keep.txt")))',
+        'attempt("writeThrough", () => fs.writeFileSync(path.join(work, "j2b", "new.txt"), "x"))',
+        'g.drainViolations()',
+        'process.stdout.write(JSON.stringify(out))',
+      ].join('\n'),
+    )
+    const r = spawnSync(process.execPath, [child], {
+      // The marker names home2 a real home and tmp2 the only temp area handed over.
+      env: { PATH: process.env.PATH ?? '', SystemRoot: process.env.SystemRoot ?? '', HOME: home2, USERPROFILE: home2, TEMP: tmp2, TMP: tmp2, TMPDIR: tmp2, [MARKER_ENV]: JSON.stringify({ v: 1, real: [home2], tmp: [tmp2], inst: [] }) },
+      cwd: tmp2,
+      encoding: 'utf8',
+      timeout: 60_000,
+    })
+    expect(r.status, r.stderr).toBe(0)
+    expect(JSON.parse(r.stdout)).toEqual({ rmLink: 'no refusal', renameLink: 'no refusal', rmTree: 'no refusal', throughLink: 'TEST_ISOLATION_VIOLATION', writeThrough: 'TEST_ISOLATION_VIOLATION' })
+    expect(existsSync(path.join(home2, 'keep.txt'))).toBe(true)
+    expect(existsSync(path.join(home2, 'new.txt'))).toBe(false)
+    expect(existsSync(path.join(work, 'nested'))).toBe(false)
   })
 })
