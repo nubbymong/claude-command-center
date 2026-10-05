@@ -82,9 +82,12 @@ deliberately out of scope.
   file: URLs and URL-like objects, Buffers, and the real path of the nearest
   existing ancestor. Every UNC path except a named pipe, and every device path the
   guard cannot map, fails closed. An operation on the folder entry itself (unlink,
-  rm, rmdir, rename, lchmod, lchown, lutimes) does not follow a link in the last
-  component: it removes, moves or touches the link, never what it points at (Node's
-  recursive rm of a CLI home holding a link to the CLI's own binary is no refusal).
+  rm, rmdir, rename, lchmod, lchown, lutimes) does not follow a link that is the last
+  component, written without a trailing separator: it removes, moves or touches the
+  link, never what it points at (Node's recursive rm of a CLI home holding a link to
+  the CLI's own binary is no refusal). Any other entry is checked by its real path as
+  well, so an 8.3 alias of a home, or a subst or mapped drive root that is one, stays a
+  home; with a trailing separator, `.` or `..` the path is checked the full way.
 - Arguments are scanned for drive, UNC, MSYS, Cygwin and WSL spellings, `~user`,
   globs that reach a real home, values after any `=` and inside brackets, at any
   length. A bare `~` expands from the child's HOME, which the guard has already

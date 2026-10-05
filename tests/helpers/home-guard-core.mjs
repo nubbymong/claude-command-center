@@ -53,8 +53,9 @@
 // ancestor (a link out of an allowed folder is followed; a volume-GUID path is
 // mapped to its drive). UNC paths other than `\\.\pipe\` and unmappable device
 // paths fail closed. An operation on the folder entry itself (unlink, rm, rmdir,
-// rename, lchmod, lchown, lutimes) does not follow a link in the last component: it
-// removes, moves or touches the link, never what it points at.
+// rename, lchmod, lchown, lutimes) does not follow a link that is the last component,
+// written without a trailing separator: it removes, moves or touches the link, never
+// what it points at. Any other entry is checked by its real path as well.
 //
 // NOT covered: native addons (better-sqlite3 and node-pty write natively); a child
 // that is not node beyond its environment, working folder and arguments (a native
@@ -559,17 +560,39 @@ export function createHomeChecker(opts) {
 
   /**
    * Like classify, for an operation on the folder entry itself (unlink, rm, rmdir,
-   * rename, lchmod, lchown, lutimes): the last component is not followed, because the
-   * operation removes, moves or touches a link, never what it points at. Its folder is
-   * resolved in full, so a path through a link into a real home is still caught.
+   * rename, lchmod, lchown, lutimes): when the entry is a link, written without a
+   * trailing separator, it is not followed, because the operation removes, moves or
+   * touches the link, never what it points at. Its folder is resolved in full, so a path
+   * through a link into a real home is still caught.
    * @param {unknown} input @param {string} [base] @returns {Hit | null}
    */
   const classifyEntry = (input, base) => {
     const b = base ?? cwd()
     for (const s of pathStrings(input, platform)) {
+      // Written with a trailing separator, or ending in `.` or `..`, the path names what a
+      // link points at (POSIX reads `link/` as `link/.`): check it the full way.
+      if (/(?:^|[\\/])\.{1,2}$/.test(s) || (win ? /[\\/]$/ : /\/$/).test(s)) {
+        const hit = classify(s, b)
+        if (hit) return hit
+        continue
+      }
       const lf = lexicalFormsFs(s, b, platform, fsImpl)
       if (lf.device) return { root: '(UNC or device path)', form: s, reason: 'is a UNC or device path the guard cannot map', device: true }
       for (const form of lf.forms) {
+        // Only an entry that IS a link (or junction) is left unfollowed. Any other entry,
+        // or a missing one, is checked by its real path too, as classify does: an 8.3
+        // alias of a home, or a subst or mapped drive root that is one, stays a home.
+        let st
+        try {
+          st = fsImpl.lstatSync(form, { throwIfNoEntry: false })
+        } catch {
+          st = undefined
+        }
+        if (!st || !st.isSymbolicLink()) {
+          const hit = classify(form, b)
+          if (hit) return hit
+          continue
+        }
         const parent = P.dirname(form)
         /** @type {string[]} */ const candidates = [form]
         if (parent !== form) {

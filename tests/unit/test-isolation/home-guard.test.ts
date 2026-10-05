@@ -1494,15 +1494,19 @@ describe('the pure checker (simulated roots, any host)', () => {
   })
 
   it('an operation on the entry itself (unlink, rm, rename) does not follow a link in the last component; its folder is followed', () => {
+    // A link inside the home (C:\Users\alice\lnk), reached through dirlink: the fake fs
+    // only knows links by their own path, so this one is told apart here.
+    const linkInHome = (p: string) => p.toLowerCase() === 'c:\\t\\dirlink\\lnk'
+    const ff = fakeFs(['C:\\', 'C:\\Users', 'C:\\Users\\alice', 'C:\\Users\\alice\\bin', 'C:\\T', 'C:\\T\\arg0'], {
+        // A CLI's helper link to its own binary, made under the CLI's home's tmp folder.
+        'C:\\T\\arg0\\apply_patch': 'C:\\Users\\alice\\bin\\cli.exe',
+        'C:\\T\\dirlink': 'C:\\Users\\alice',
+      })
     const c = createHomeChecker({
       platform: 'win32',
       realRoots: ['C:\\Users\\alice'],
       allowedRoots: [{ path: 'C:\\T', kind: 'tmp' }],
-      fsImpl: fakeFs(['C:\\', 'C:\\Users', 'C:\\Users\\alice', 'C:\\Users\\alice\\bin', 'C:\\T', 'C:\\T\\arg0'], {
-        // A CLI's helper link to its own binary, made under the CLI's home's tmp folder.
-        'C:\\T\\arg0\\apply_patch': 'C:\\Users\\alice\\bin\\cli.exe',
-        'C:\\T\\dirlink': 'C:\\Users\\alice',
-      }),
+      fsImpl: { ...ff, lstatSync: (p: string) => (linkInHome(p) ? { isSymbolicLink: () => true, isDirectory: () => false } : ff.lstatSync(p)) },
       cwd: () => 'C:\\T',
     })
     expect(c.classify('C:\\T\\arg0\\apply_patch')).not.toBeNull()
@@ -1512,9 +1516,62 @@ describe('the pure checker (simulated roots, any host)', () => {
     // Through a link in the folder part, and a real-home path as written: still refused.
     expect(c.classifyEntry('C:\\T\\dirlink\\.claude')).not.toBeNull()
     expect(c.classifyEntry('C:\\T\\dirlink\\bin\\cli.exe')).not.toBeNull()
+    // A link that is the last component, inside the home through a folder link: its folder
+    // is followed, so it is the home's entry.
+    expect(c.classifyEntry('C:\\T\\dirlink\\lnk')).not.toBeNull()
     expect(c.classifyEntry('C:\\Users\\alice\\.claude')).not.toBeNull()
     expect(c.classifyEntry('C:\\T\\..\\Users\\alice\\x')).not.toBeNull()
     expect(c.classifyEntry('\\\\server\\share\\x')).not.toBeNull()
+    // Written with a trailing separator, or ending in `.`, the path names the link's target
+    // (POSIX reads `link/` as `link/.`): checked the full way.
+    for (const p of ['C:\\T\\dirlink\\', 'C:\\T\\dirlink/', 'C:\\T\\dirlink\\.']) expect(c.classifyEntry(p), p).not.toBeNull()
+    expect(c.classifyEntry('C:\\T\\arg0\\')).toBeNull()
+  })
+
+  it('an entry that is not a link is checked by its real path: an 8.3 alias of a home, a subst or mapped drive root', () => {
+    const base = fakeFs(['C:\\', 'C:\\Users', 'C:\\Users\\alice', 'C:\\T'], { 'C:\\T\\link': 'C:\\Users\\alice' })
+    // Not links: names the filesystem resolves to the home (lstat sees a plain folder).
+    const aliases: [string, string][] = [['c:\\users\\alicel~1', 'C:\\Users\\alice'], ['y:', 'C:\\Users\\alice'], ['x:', '\\\\server\\home']]
+    const real = (p: string): string => {
+      for (const [a, to] of aliases) if (p.toLowerCase() === a || p.toLowerCase().startsWith(a + '\\')) return to + p.slice(a.length)
+      return p
+    }
+    const fsImpl = {
+      ...base,
+      lstatSync: (p: string) => (real(p) !== p ? { isSymbolicLink: () => false, isDirectory: () => true } : base.lstatSync(p)),
+      realpathSync: (p: string) => (real(p) !== p ? real(p) : base.realpathSync(p)),
+    }
+    const c = createHomeChecker({ platform: 'win32', realRoots: ['C:\\Users\\alice'], allowedRoots: [{ path: 'C:\\T', kind: 'tmp' }], fsImpl, cwd: () => 'C:\\T' })
+    for (const p of ['C:\\Users\\ALICEL~1', 'C:\\Users\\ALICEL~1\\.claude', 'Y:\\', 'Y:\\.claude', 'X:\\']) expect(c.classifyEntry(p), p).not.toBeNull()
+    // The link itself is still only a link.
+    expect(c.classifyEntry('C:\\T\\link')).toBeNull()
+  })
+
+  it('on POSIX a trailing slash names the target of a folder link: an rm of it is checked the full way', () => {
+    const c = createHomeChecker({
+      platform: 'linux',
+      realRoots: ['/home/bob'],
+      allowedRoots: [{ path: '/tmp', kind: 'tmp' }],
+      fsImpl: {
+        lstatSync: (p: string) => (p === '/tmp/link' || p === '/tmp/odd\\' ? { isSymbolicLink: () => true, isDirectory: () => false } : ['/', '/tmp', '/home', '/home/bob'].includes(p) ? { isSymbolicLink: () => false, isDirectory: () => true } : undefined),
+        realpathSync: (p: string) => {
+          if (p === '/tmp/link' || p === '/tmp/odd\\') return '/home/bob'
+          if (['/', '/tmp', '/home', '/home/bob'].includes(p)) return p
+          throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+        },
+        readlinkSync: (p: string) => {
+          if (p === '/tmp/link' || p === '/tmp/odd\\') return '/home/bob'
+          throw Object.assign(new Error('EINVAL'), { code: 'EINVAL' })
+        },
+      },
+      cwd: () => '/tmp',
+    })
+    expect(c.classifyEntry('/tmp/link')).toBeNull()
+    for (const p of ['/tmp/link/', '/tmp/link/.', '/tmp/link//']) expect(c.classifyEntry(p), p).not.toBeNull()
+    // A backslash is a name character there, not a separator: a link whose name ends in
+    // one is still only a link.
+    expect(c.classifyEntry('/tmp/link\\')).toBeNull()
+    expect(c.classifyEntry('/tmp/odd\\')).toBeNull()
   })
 
   it('a recursive copy destination holding a link into a real home is caught', () => {

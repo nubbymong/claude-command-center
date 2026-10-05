@@ -64,7 +64,7 @@ describe('[CI] [VM] the guard removes or moves a link into a home, never what it
     mkdirSync(home2)
     mkdirSync(nested, { recursive: true })
     writeFileSync(path.join(home2, 'keep.txt'), 'x')
-    for (const l of [path.join(work, 'j1'), path.join(work, 'j2'), path.join(nested, 'j3')]) symlinkSync(home2, l, 'junction')
+    for (const l of [path.join(work, 'j1'), path.join(work, 'j2'), path.join(nested, 'j3'), path.join(work, 'j4')]) symlinkSync(home2, l, 'junction')
     const child = path.join(tmp2, 'child.mjs')
     writeFileSync(
       child,
@@ -81,6 +81,8 @@ describe('[CI] [VM] the guard removes or moves a link into a home, never what it
         'attempt("rmTree", () => fs.rmSync(path.join(work, "nested"), { recursive: true }))',
         'attempt("throughLink", () => fs.rmSync(path.join(work, "j2b", "keep.txt")))',
         'attempt("writeThrough", () => fs.writeFileSync(path.join(work, "j2b", "new.txt"), "x"))',
+        // With a trailing separator the path names the link's target (POSIX reads link/ as link/.).
+        'attempt("rmTrailing", () => fs.rmSync(path.join(work, "j4") + path.sep, { recursive: true, force: true }))',
         'g.drainViolations()',
         'process.stdout.write(JSON.stringify(out))',
       ].join('\n'),
@@ -93,9 +95,25 @@ describe('[CI] [VM] the guard removes or moves a link into a home, never what it
       timeout: 60_000,
     })
     expect(r.status, r.stderr).toBe(0)
-    expect(JSON.parse(r.stdout)).toEqual({ rmLink: 'no refusal', renameLink: 'no refusal', rmTree: 'no refusal', throughLink: 'TEST_ISOLATION_VIOLATION', writeThrough: 'TEST_ISOLATION_VIOLATION' })
+    expect(JSON.parse(r.stdout)).toEqual({ rmLink: 'no refusal', renameLink: 'no refusal', rmTree: 'no refusal', throughLink: 'TEST_ISOLATION_VIOLATION', writeThrough: 'TEST_ISOLATION_VIOLATION', rmTrailing: 'TEST_ISOLATION_VIOLATION' })
     expect(existsSync(path.join(home2, 'keep.txt'))).toBe(true)
     expect(existsSync(path.join(home2, 'new.txt'))).toBe(false)
     expect(existsSync(path.join(work, 'nested'))).toBe(false)
+  })
+
+  it("Node's own synchronous recursive rm of a temp folder holding a link into a home leaves the home untouched", () => {
+    // Unguarded on purpose here (the canary is no real home of this process): this shows
+    // whether the running Node's rm (JS rimraf on Node 20, native on newer Node) descends
+    // into a junction or folder link. The guard only sees the top-level call.
+    const canary = path.join(base, 'canary-home')
+    const tree = path.join(base, 'rm-tree')
+    mkdirSync(canary)
+    writeFileSync(path.join(canary, 'keep.txt'), 'x')
+    mkdirSync(path.join(tree, 'sub'), { recursive: true })
+    symlinkSync(canary, path.join(tree, 'j'), 'junction')
+    symlinkSync(canary, path.join(tree, 'sub', 'j'), 'junction')
+    rmSync(tree, { recursive: true, force: true })
+    expect(existsSync(tree)).toBe(false)
+    expect(existsSync(path.join(canary, 'keep.txt'))).toBe(true)
   })
 })
