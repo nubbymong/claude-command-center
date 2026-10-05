@@ -202,7 +202,7 @@ function ManagedAccountRow({ account, provider, snapshot, onAddAccount }: {
         label: web?.status === 'active' ? 'Sign in to chatgpt.com again' : 'Sign in to chatgpt.com',
         onSelect: () => { void useCodexWebStore.getState().signIn(id) },
       }]
-      if (web?.status === 'active' || web?.status === 'expired') {
+      if (web?.status === 'active' || web?.status === 'expired' || web?.unavailable) {
         webItems.push({ key: 'chatgpt-sign-out', label: 'Sign out of chatgpt.com', onSelect: () => { void useCodexWebStore.getState().signOut(id) } })
       }
       if (items.length) webItems[0] = { ...webItems[0], separated: true }
@@ -292,6 +292,9 @@ function ManagedAccountRow({ account, provider, snapshot, onAddAccount }: {
           )}
           {webApplies && !webSigningIn && web?.status === 'active' && (
             <MutedLine testId={`account-web-${id}`}>{web.accountEmail ? `chatgpt.com: signed in as ${web.accountEmail}` : 'chatgpt.com: signed in'}</MutedLine>
+          )}
+          {webApplies && !webSigningIn && web?.unavailable && (
+            <MutedLine testId={`account-web-${id}`}>{`chatgpt.com: ${web.unavailable}`}</MutedLine>
           )}
           {webApplies && !webSigningIn && web?.status === 'expired' && (
             <MutedLine testId={`account-web-${id}`}>chatgpt.com: the sign-in has expired. Sign in again.</MutedLine>

@@ -38,7 +38,7 @@ import {
   isCodexWebClearing,
   runCodexWebSignIn,
 } from '../account-web/codex-web-session'
-import { codexWebViewFor, saveCodexWebSession } from '../account-web/codex-web-store'
+import { codexWebStoreIsNewer, codexWebViewFor, NEWER_STORE_REASON, saveCodexWebSession } from '../account-web/codex-web-store'
 import { openCodexAccountPane } from '../account-web/account-pane'
 import { closeWebview } from '../webview-manager'
 
@@ -124,6 +124,9 @@ export function registerCodexWebHandlers(getWindow: () => BrowserWindow | null, 
     try {
       const el = eligible(accountId)
       if (!el.ok) return el
+      // A record store written by a newer build cannot take this sign-in's
+      // record: refused up front, with the reason, before any window opens.
+      if (codexWebStoreIsNewer()) return { ok: false, error: NEWER_STORE_REASON }
       const state = await runCodexWebSignIn({ accountId: el.id })
       if (state.phase === 'done' && state.session) {
         // RE-CHECKED after the human-paced run: an archive (or removal) that

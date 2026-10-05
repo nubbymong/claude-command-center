@@ -246,3 +246,18 @@ describe('[host] a restored sign-in line follows only the run it found', () => {
     }
   })
 })
+
+describe('[host] a row over a record store it cannot account for', () => {
+  it('says why instead of a plain none, and still offers Sign out of chatgpt.com', async () => {
+    webStatus[A] = { accountId: A, status: 'none', unavailable: "This account's chatgpt.com records were written by a newer version of the app." }
+    try {
+      await render(snapshot())
+      await flush()
+      expect(q(`account-web-${A}`)!.textContent).toBe("chatgpt.com: This account's chatgpt.com records were written by a newer version of the app.")
+      await menu(A)
+      expect(q(`account-menu-chatgpt-sign-out-${A}`)).not.toBeNull()
+    } finally {
+      delete webStatus[A]
+    }
+  })
+})

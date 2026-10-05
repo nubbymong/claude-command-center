@@ -18,7 +18,7 @@ import {
   type CodexWebSessionView,
 } from '../../shared/account-web-session'
 import { sanitizeAccountEmail } from './account-email-read'
-import { hasQuarantinedCopy, peekJsonFile, readJsonFile, writeJsonFile } from '../channel-storage'
+import { peekJsonFile, quarantinedCopyOf, readJsonFile, writeJsonFile } from '../channel-storage'
 import { logError } from '../debug-logger'
 
 const FILE = 'codex-web-sessions.json'
@@ -50,29 +50,33 @@ function read(): CodexWebSessionsFile {
   return { schemaVersion: SCHEMA_VERSION, sessions: f.sessions.filter(validRecord) }
 }
 
+/** What a row, a refused sign-in and the status say while the record store
+ *  was written by a newer build. */
+export const NEWER_STORE_REASON = "This account's chatgpt.com records were written by a newer version of the app."
+
 /**
- * A store written by a newer build (a higher schema version) is never
- * overwritten: this build cannot know what rewriting it would drop. A save or a
- * removal is refused (false), so the caller fails closed: a finished sign-in
- * is cleared rather than left live without a record, and a sign-out or an
- * archive reports that its record could not be removed.
+ * Whether the record store was written by a newer build (a higher schema
+ * version: a downgrade). Such a store is never overwritten, since this build
+ * cannot know what rewriting it would drop, and it is handled as one rule:
+ *   - sign-in is refused up front with NEWER_STORE_REASON (the channels), and
+ *     a save is refused, so a sign-in finished in a pane is cleared;
+ *   - a removal counts as done (it runs after a wipe that succeeded): a
+ *     sign-out or an archive is never refused for a record this build cannot
+ *     write, nor left with a "Try again" that can never work;
+ *   - the status carries the reason, never a plain "none".
  */
-function storeIsNewer(): boolean {
+export function codexWebStoreIsNewer(): boolean {
   const p = peekJsonFile(FILE)
   if (p.kind !== 'ok') return false
   const v = (p.value as { schemaVersion?: unknown } | null)?.schemaVersion
-  if (typeof v === 'number' && v > SCHEMA_VERSION) {
-    logError('[codex-web] the chatgpt.com record store was written by a newer version of the app; it is left as it is')
-    return true
-  }
-  return false
+  return typeof v === 'number' && v > SCHEMA_VERSION
 }
 
 /** The record store as the start sweep sees it: the accounts it holds a
  *  record for, or why it cannot be trusted. */
 export type CodexWebRecordsForSweep =
   | { ok: true; accounts: ReadonlySet<string> }
-  | { ok: false; why: 'unreadable' | 'malformed' | 'other-schema' | 'quarantined' }
+  | { ok: false; why: 'unreadable' | 'malformed' | 'other-schema' | 'quarantined'; file?: string }
 
 /**
  * Read the store ONCE for the start sweep, without side effects (a bad file is
@@ -87,9 +91,9 @@ export function readCodexWebRecordsForSweep(): CodexWebRecordsForSweep {
   // A quarantined copy (an earlier read could not parse the store and moved
   // it aside) may hold the records the fresh store lacks: stand down while it
   // is there, not just for one start.
-  const quarantined = hasQuarantinedCopy(FILE)
+  const quarantined = quarantinedCopyOf(FILE)
   if (quarantined === 'unknown') return { ok: false, why: 'unreadable' }
-  if (quarantined) return { ok: false, why: 'quarantined' }
+  if (quarantined) return { ok: false, why: 'quarantined', file: quarantined }
   const peek = peekJsonFile(FILE)
   if (peek.kind === 'absent') return { ok: true, accounts: new Set() }
   if (peek.kind === 'unreadable') return { ok: false, why: 'unreadable' }
@@ -119,6 +123,7 @@ export function codexWebStatusOf(s: CodexWebSession | undefined, now: number): C
 }
 
 export function codexWebViewFor(accountId: string, now: number = Date.now()): CodexWebSessionView {
+  if (codexWebStoreIsNewer()) return { accountId, status: 'none', unavailable: NEWER_STORE_REASON }
   const s = getCodexWebSession(accountId)
   return { ...(s ?? {}), accountId, status: codexWebStatusOf(s, now) }
 }
@@ -127,7 +132,10 @@ export function codexWebViewFor(accountId: string, now: number = Date.now()): Co
  *  true once the record is on disk, false when the write failed or threw. */
 export function saveCodexWebSession(s: CodexWebSession): boolean {
   if (!validRecord(s)) throw new Error('refusing to save a malformed chatgpt.com session record')
-  if (storeIsNewer()) return false
+  if (codexWebStoreIsNewer()) {
+    logError('[codex-web] the chatgpt.com record store was written by a newer version of the app; it is left as it is')
+    return false
+  }
   const record: CodexWebSession = {
     accountId: s.accountId,
     accountEmail: s.accountEmail,
@@ -144,7 +152,9 @@ export function saveCodexWebSession(s: CodexWebSession): boolean {
  *  there is no record left (none, or removed); false when the write failed,
  *  so a caller never reports "signed out" over a record still on disk. */
 export function removeCodexWebSession(accountId: string): boolean {
-  if (storeIsNewer()) return false
+  // A newer store is left as it is; the removal counts as done, since it runs
+  // after a wipe that succeeded (codexWebStoreIsNewer).
+  if (codexWebStoreIsNewer()) return true
   const f = read()
   const next = f.sessions.filter((s) => s.accountId !== accountId)
   if (next.length === f.sessions.length) return true

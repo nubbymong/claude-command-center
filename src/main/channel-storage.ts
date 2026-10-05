@@ -74,16 +74,16 @@ export function peekJsonFile(name: string): JsonPeek {
   try { return { kind: 'ok', value: JSON.parse(text) as unknown } } catch { return { kind: 'malformed' } }
 }
 
-/** Whether a quarantined copy of a channel file (`<name>.corrupt-*`, left by
- *  readJsonFile when it could not read the file) sits beside it: its records
- *  may be in that copy. 'unknown' when the folder cannot be listed. Never
- *  throws. */
-export function hasQuarantinedCopy(name: string): boolean | 'unknown' {
+/** The file name of a quarantined copy of a channel file (`<name>.corrupt-*`,
+ *  left by readJsonFile when it could not read the file) beside it, or null:
+ *  its records may be in that copy. 'unknown' when the folder cannot be
+ *  listed. A base name only, never a path. Never throws. */
+export function quarantinedCopyOf(name: string): string | null | 'unknown' {
   try {
     const prefix = `${name}.corrupt-`
-    return readdirSync(channelsDir()).some((n) => String(n).startsWith(prefix))
+    return readdirSync(channelsDir()).map(String).find((n) => n.startsWith(prefix)) ?? null
   } catch (err) {
-    return (err as NodeJS.ErrnoException)?.code === 'ENOENT' ? false : 'unknown'
+    return (err as NodeJS.ErrnoException)?.code === 'ENOENT' ? null : 'unknown'
   }
 }
 

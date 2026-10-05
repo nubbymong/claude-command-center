@@ -51,7 +51,11 @@ vi.mock('../../src/main/account-web/codex-web-session', () => ({
 }))
 vi.mock('../../src/main/account-web/codex-web-store', () => ({
   codexWebViewFor: acted.codexWebViewFor, saveCodexWebSession: acted.saveCodexWebSession, removeCodexWebSession: acted.removeCodexWebSession,
+  codexWebStoreIsNewer: () => newerStore.on,
+  NEWER_STORE_REASON: "This account's chatgpt.com records were written by a newer version of the app.",
 }))
+/** Whether the record store was written by a newer build (a downgrade). */
+const newerStore = { on: false }
 vi.mock('../../src/main/account-web/account-pane', () => ({
   openCodexAccountPane: acted.openCodexAccountPane, closeCodexAccountPanes: acted.closeCodexAccountPanes,
 }))
@@ -309,5 +313,28 @@ describe('[host] a record that is not written never reads as done or signed out'
     acted.clearCodexWebSession.mockImplementationOnce(async () => { throw new Error('The chatgpt.com sign-in was cleared, but its record could not be removed. Try again.') })
     const r = await call(IPC.CODEX_WEB_SIGN_OUT, TRUSTED, ACCT)
     expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/record could not be removed/) })
+  })
+})
+
+describe('[host] a record store written by a newer build', () => {
+  it('sign-in is refused up front with the plain reason, before any window opens', async () => {
+    newerStore.on = true
+    try {
+      const r = await call(IPC.CODEX_WEB_SIGN_IN, TRUSTED, ACCT)
+      expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/written by a newer version of the app/) })
+      expect(acted.runCodexWebSignIn).not.toHaveBeenCalled()
+    } finally {
+      newerStore.on = false
+    }
+  })
+
+  it('sign-out still wipes and reports success when the wipe succeeded', async () => {
+    newerStore.on = true
+    try {
+      expect(await call(IPC.CODEX_WEB_SIGN_OUT, TRUSTED, ACCT)).toEqual({ ok: true })
+      expect(acted.clearCodexWebSession).toHaveBeenCalledWith(ACCT)
+    } finally {
+      newerStore.on = false
+    }
   })
 })

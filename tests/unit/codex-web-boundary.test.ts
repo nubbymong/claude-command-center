@@ -132,7 +132,7 @@ vi.mock('../../src/main/provider-account-registry', () => ({
 vi.mock('../../src/main/channel-storage', () => ({
   readJsonFile: (n: string, seed: () => unknown) => (S.disk[n] !== undefined ? JSON.parse(JSON.stringify(S.disk[n])) : seed()),
   peekJsonFile: (n: string) => (S.disk[n] !== undefined ? { kind: 'ok', value: JSON.parse(JSON.stringify(S.disk[n])) } : { kind: 'absent' }),
-  hasQuarantinedCopy: () => false,
+  quarantinedCopyOf: () => null,
   writeJsonFile: (n: string, v: unknown) => {
     if (S.flags.writeThrows) throw new Error('simulated folder failure before the write')
     if (S.flags.writeFails) return false
@@ -437,5 +437,21 @@ describe('[host] at start, a Codex web session with no record is wiped', () => {
     expect(wipes[0]).toContain(PART)
     expect(STORE.getCodexWebSession(OTHER)).toBeDefined()
     expect(CWS.isCodexWebClearing(ACCT)).toBe(false)
+  })
+})
+
+describe('[host] sign-out and archive over a store written by a newer build', () => {
+  it('sign-out wipes and succeeds, and the archive hook resolves, leaving the newer file as it was', async () => {
+    S.disk['codex-web-sessions.json'] = { schemaVersion: 2, sessions: [] }
+    try {
+      expect(await call(IPC.CODEX_WEB_SIGN_OUT, TRUSTED, ACCT)).toEqual({ ok: true })
+      expect(S.trail.some((t) => t.startsWith('wipe '))).toBe(true)
+      const release = await CWS.prepareCodexWebArchive(ACCT, 'codex')
+      release()
+      expect(S.disk['codex-web-sessions.json']).toEqual({ schemaVersion: 2, sessions: [] })
+      expect(await call(IPC.CODEX_WEB_STATUS, TRUSTED, ACCT)).toMatchObject({ ok: true, web: { status: 'none', unavailable: expect.stringMatching(/newer version/) } })
+    } finally {
+      delete S.disk['codex-web-sessions.json']
+    }
   })
 })

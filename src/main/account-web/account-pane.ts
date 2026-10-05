@@ -62,6 +62,7 @@ import { shell } from 'electron'
 import type { WebviewNavState } from '../../shared/browser-url'
 import { webSessionFromElectronCookies } from './cookie-harvest'
 import { blockPartitionDownloads, diagHost, subFrameNavAllowed, toChromeUserAgent } from './in-app-sign-in'
+import { clearCodexWebSession } from './codex-web-session'
 import { readAccountEmail, readServiceAccountEmail } from './account-email-read'
 import { getWebSession, saveWebSession, removeWebSession } from './session-store'
 import { getCodexWebSession, saveCodexWebSession, removeCodexWebSession } from './codex-web-store'
@@ -177,6 +178,10 @@ interface PaneService {
   /** Write the record; `false` means it was not written. */
   save: (ownerId: string, email: string | null, expiresAt: number | null, prior: StoredRecord | undefined) => boolean | void
   remove: (ownerId: string) => boolean | void
+  /** A session the pane saw signed in whose record could not be saved: clear
+   *  it, as the sign-in window's path does, so nothing stays signed in with no
+   *  record (and no Sign out). Absent: the session stays (Claude's). */
+  recordFailed?: (ownerId: string) => void
   stateOf: (sessionId: string, ownerId: string, authed: boolean | null, email: string | null) => AccountPaneState
 }
 
@@ -220,6 +225,11 @@ const CODEX_PANE: PaneService = {
     return saveCodexWebSession({ accountId: id, accountEmail: email, acquiredAt: prior?.acquiredAt ?? Date.now(), expiresAt, origin: 'in-pane' })
   },
   remove: (id) => removeCodexWebSession(id),
+  recordFailed: (id) => {
+    void clearCodexWebSession(id).catch((err) => {
+      logError(`[account-pane] could not clear the unrecorded chatgpt.com session of ${id}: ${(err as Error)?.message ?? err}`)
+    })
+  },
   stateOf: (sessionId, id, authed, email) => ({ sessionId, service: 'codex', accountId: id, authed, email }),
 }
 
@@ -390,6 +400,7 @@ async function recordSession(entry: PaneEntry, expiresAt: number | null): Promis
     if (email === null && prior && prior.accountEmail) { entry.backfilled = true; return }
     if (entry.svc.save(entry.ownerId, email, expiresAt, prior) === false) {
       logError(`[account-pane] the ${entry.svc.label} record for ${entry.ownerId} could not be written`)
+      try { entry.svc.recordFailed?.(entry.ownerId) } catch { /* the clear reports its own failure */ }
       return
     }
     // Bound the null-email backfill: a full grace attempt has now run for this

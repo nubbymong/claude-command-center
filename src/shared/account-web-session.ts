@@ -427,6 +427,9 @@ export type CodexWebSessionStatus = 'none' | 'active' | 'expired'
 export interface CodexWebSessionView extends Partial<CodexWebSession> {
   accountId: string
   status: CodexWebSessionStatus
+  /** Why the status cannot be known (the record store was written by a newer
+   *  version of the app): shown instead of a plain "none". */
+  unavailable?: string
 }
 
 export type CodexWebSignInPhase = 'idle' | 'awaiting-user' | 'done' | 'failed'

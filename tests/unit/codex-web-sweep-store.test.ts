@@ -126,8 +126,8 @@ describe('[host] the start sweep reads the record store once, without side effec
     ['a store that cannot be read', 'unreadable', () => { F.files.set(FILE, '{}'); F.readFails.add(FILE) }],
     ['a store whose presence cannot be checked (the stat throws; existsSync would call it missing)', 'unreadable', () => { F.files.set(FILE, JSON.stringify({ schemaVersion: 1, sessions: [record(B)] })); F.statFails.add(FILE) }],
     ['a store that is a folder', 'unreadable', () => { F.dirs.add(FILE) }],
-    ['a quarantined copy of the store (an earlier corrupt read moved it aside)', 'quarantined', () => { F.files.set(`${FILE}.corrupt-1700000000000-ab12cd34`, '{ not json') }],
-    ['a quarantined copy beside a store that reads cleanly', 'quarantined', () => { F.files.set(FILE, JSON.stringify({ schemaVersion: 1, sessions: [] })); F.files.set(`${FILE}.corrupt-1700000000000-ab12cd34`, '{}') }],
+    ['a quarantined copy of the store (an earlier corrupt read moved it aside)', 'quarantined: codex-web-sessions.json.corrupt-1700000000000-ab12cd34', () => { F.files.set(`${FILE}.corrupt-1700000000000-ab12cd34`, '{ not json') }],
+    ['a quarantined copy beside a store that reads cleanly', 'quarantined: codex-web-sessions.json.corrupt-1700000000000-ab12cd34', () => { F.files.set(FILE, JSON.stringify({ schemaVersion: 1, sessions: [] })); F.files.set(`${FILE}.corrupt-1700000000000-ab12cd34`, '{}') }],
     ['a folder that cannot be listed (a quarantined copy cannot be ruled out)', 'unreadable', () => { F.files.set(FILE, JSON.stringify({ schemaVersion: 1, sessions: [] })); F.listFails = true }],
   ] as const) {
     it(`${label}: the whole sweep is skipped, one line is logged, and the file stays where and as it was`, async () => {
@@ -160,7 +160,7 @@ describe('[host] the start sweep never makes a partition', () => {
   })
 })
 
-describe('[host] a store written by a newer build is never overwritten', () => {
+describe('[host] a store written by a newer build: never overwritten, and said so', () => {
   const NEWER = JSON.stringify({ schemaVersion: 2, sessions: [record(B)], somethingNew: true })
 
   it('a save is refused (so a finished sign-in is cleared, failing closed), and the file stays as it was', () => {
@@ -170,11 +170,22 @@ describe('[host] a store written by a newer build is never overwritten', () => {
     expect(F.renamed).toEqual([])
   })
 
-  it('a removal is refused (a sign-out or an archive reports it), and the file stays as it was', () => {
+  it('a removal (after a wipe that succeeded) counts as done, for an account it records or not, and the file stays as it was', () => {
     F.files.set(FILE, NEWER)
-    expect(STORE.removeCodexWebSession(B)).toBe(false)
-    expect(STORE.removeCodexWebSession(A)).toBe(false)
+    expect(STORE.removeCodexWebSession(B)).toBe(true)
+    expect(STORE.removeCodexWebSession(A)).toBe(true)
     expect(F.files.get(FILE)).toBe(NEWER)
+    expect(F.renamed).toEqual([])
+  })
+
+  it('the status says why, never a plain none', () => {
+    F.files.set(FILE, NEWER)
+    expect(STORE.codexWebStoreIsNewer()).toBe(true)
+    expect(STORE.codexWebViewFor(A)).toEqual({ accountId: A, status: 'none', unavailable: STORE.NEWER_STORE_REASON })
+    expect(STORE.NEWER_STORE_REASON).toMatch(/written by a newer version of the app/)
+    F.files.set(FILE, JSON.stringify({ schemaVersion: 1, sessions: [] }))
+    expect(STORE.codexWebStoreIsNewer()).toBe(false)
+    expect(STORE.codexWebViewFor(A)).toEqual({ accountId: A, status: 'none' })
   })
 
   it("this build's own store is written as before", () => {

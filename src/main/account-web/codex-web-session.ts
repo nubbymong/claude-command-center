@@ -240,7 +240,7 @@ export async function sweepUnrecordedCodexWebSessions(
   partitionExists: (accountId: string) => boolean,
 ): Promise<string[]> {
   if (!records.ok) {
-    logInfo(`[codex-web] start sweep skipped: the chatgpt.com record store did not read cleanly (${records.why})`)
+    logInfo(`[codex-web] start sweep skipped: the chatgpt.com record store did not read cleanly (${records.why}${records.file ? `: ${records.file}` : ''})`)
     return []
   }
   const wiped: string[] = []

@@ -89,11 +89,15 @@ vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logError: (...
 
 /** One in-memory JSON file per name, so Claude's and Codex's records stay apart. */
 const disk: Record<string, unknown> = {}
+const cleared = vi.hoisted(() => [] as string[])
+vi.mock('../../src/main/account-web/codex-web-session', () => ({
+  clearCodexWebSession: async (id: string) => { cleared.push(id) },
+}))
 vi.mock('../../src/main/channel-storage', () => ({
   readJsonFile: (n: string, seed: () => unknown) => (disk[n] ?? seed()),
   writeJsonFile: (n: string, v: unknown) => { disk[n] = JSON.parse(JSON.stringify(v)) },
   peekJsonFile: (n: string) => (disk[n] !== undefined ? { kind: 'ok', value: disk[n] } : { kind: 'absent' }),
-  hasQuarantinedCopy: () => false,
+  quarantinedCopyOf: () => null,
 }))
 
 const {
@@ -567,5 +571,28 @@ describe('[host] a load that throws at once is caught and logged by host and cod
     expect(line).toContain('ERR_FAILED -2')
     expect(line).not.toMatch(/SECRET|\?/)
     closeAccountPane('sess-sync')
+  })
+})
+
+describe('[host] a sign-in in the pane whose record cannot be saved is cleared, as the window does', () => {
+  it('a store written by a newer build refuses the record: the session is cleared, never left live without one', async () => {
+    cleared.length = 0
+    disk['codex-web-sessions.json'] = { schemaVersion: 2, sessions: [] }
+    try {
+      const win = new FakeParentWindow()
+      openCodexAccountPane(win as never, 'sess-norec', ACCT, BOUNDS)
+      const ses = partitions[webPartitionForCodexAccount(ACCT)]
+      const wc = createdViews[0].view.webContents
+      await flush()
+      wc.executeJavaScriptInIsolatedWorld.mockResolvedValue('me@example.com')
+      ses.cookies.get.mockResolvedValue(TOKEN_COOKIE)
+      ses.cookies.listeners[0](null, { name: '__Secure-next-auth.session-token' })
+      await flush(); await flush(); await flush()
+      expect(cleared).toEqual([ACCT])
+      expect(logged.some((l) => /could not be written/.test(l))).toBe(true)
+      closeAccountPane('sess-norec')
+    } finally {
+      delete disk['codex-web-sessions.json']
+    }
   })
 })
