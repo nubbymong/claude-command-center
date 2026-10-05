@@ -463,7 +463,7 @@ describe('[host] the sign-in window', () => {
     const line = logs.find((l) => /did not complete/.test(l))!
     expect(line).toContain('Session cookie seen: yes.')
     expect(line).toMatch(/Identity reads: [1-9]\d*, none gave an email\./)
-    expect(line).toContain('Identity answer: HTTP 200, JSON keys user, user.id, user.name, user.mail, accessToken, expires.')
+    expect(line).toContain('Identity answer: HTTP 200, JSON keys user, user.id, user.name, user.mail, accessToken, expires; an email-shaped value at user.mail.')
     expect(line).toContain(SESSION_TOKEN)
     for (const value of ['me@example.com', 'user-abc', 'SECRET', '2030-01-01', 'Me,']) expect(line, value).not.toContain(value)
     for (const l of logs) expect(l).not.toMatch(/SECRET|me@example\.com/)
@@ -478,7 +478,7 @@ describe('[host] the sign-in window', () => {
     const line = logs.find((l) => /did not complete/.test(l))!
     expect(line).toContain('Session cookie seen: no.')
     expect(line).toContain('Identity reads: none (the session cookie was never seen).')
-    expect(line).toContain('JSON keys user, user.id, user.name, user.email, user.image, expires, accessToken, authProvider.')
+    expect(line).toContain('JSON keys user, user.id, user.name, user.email, user.image, expires, accessToken, authProvider; an email-shaped value at user.email.')
     expect(line).toContain('session-under-another-name')
     expect(line).not.toMatch(/SECRET|me@example\.com/)
   })
@@ -488,7 +488,7 @@ describe('[host] the sign-in window', () => {
     page.identity = { accounts: { 'me@example.com': { plan: 'x' }, 'two words': 1, ok_key: 2 } }
     await runServiceSignIn(RUN({ timeoutMs: 60 }))
     const line = logs.find((l) => /did not complete/.test(l))!
-    expect(line).toContain('JSON keys accounts, accounts.ok_key.')
+    expect(line).toContain('JSON keys accounts, accounts.ok_key (and 2 not shown); no email-shaped value.')
     expect(line).not.toMatch(/me@example\.com|two words/)
   })
 
@@ -501,7 +501,59 @@ describe('[host] the sign-in window', () => {
     page.origin = 'https://auth.openai.com'
     await p
     const line = logs.find((l) => /did not complete/.test(l))!
-    expect(line).toContain('Identity answer: HTTP 200, JSON keys user, user.id, user.mail.')
+    expect(line).toContain('Identity answer: HTTP 200, JSON keys user, user.id, user.mail; an email-shaped value at user.mail.')
+  })
+
+  it('a key that looks like an id or a secret is dropped and counted, never logged', async () => {
+    jars[PART] = SIGNED_IN_JAR
+    const HEX64 = 'ab'.repeat(32)
+    page.identity = {
+      user: { id: 'u', mail: 'me@example.com' },
+      byId: { '123e4567-e89b-12d3-a456-426614174000': 1, 'sk-AbCdEf0123456789xyz': 2, [HEX64]: 3, '9876543210': 4, user_4f9a8b7c6d5e: 5, plan: 6 },
+    }
+    await runServiceSignIn(RUN({ timeoutMs: 60 }))
+    const line = logs.find((l) => /did not complete/.test(l))!
+    expect(line).toContain('JSON keys user, user.id, user.mail, byId, byId.plan (and 5 not shown); an email-shaped value at user.mail.')
+    for (const k of ['123e4567', 'sk-AbCdEf', HEX64.slice(0, 16), '9876543210', '4f9a8b7c6d5e', 'me@example.com']) expect(line, k).not.toContain(k)
+  })
+
+  it('a first read while the page is off chatgpt.com is not the last: a later read on it answers', async () => {
+    jars[PART] = SIGNED_IN_JAR
+    // The cookie is set while the page is still on the sign-in host.
+    page.origin = 'https://auth.openai.com'
+    page.identity = { user: { id: 'u', mail: 'me@example.com' } }
+    const p = runServiceSignIn(RUN({ timeoutMs: 150 }))
+    await tick(40)
+    page.origin = 'https://chatgpt.com'
+    await p
+    const line = logs.find((l) => /did not complete/.test(l))!
+    expect(line).toContain('Identity answer: HTTP 200, JSON keys user, user.id, user.mail; an email-shaped value at user.mail.')
+  })
+
+  it('an answer from a signed-out page is not the last word: the read before the close takes a newer one', async () => {
+    jars[PART] = SIGNED_OUT_JAR
+    page.identity = {}
+    const p = runServiceSignIn(RUN({ timeoutMs: 120 }))
+    await tick(40)
+    page.identity = { user: { id: 'u', mail: 'me@example.com' } }
+    await p
+    const line = logs.find((l) => /did not complete/.test(l))!
+    expect(line).toContain('Identity answer: HTTP 200, JSON keys user, user.id, user.mail; an email-shaped value at user.mail.')
+  })
+
+  it('Cancel reads the identity answer before its window closes', async () => {
+    jars[PART] = SIGNED_OUT_JAR
+    page.origin = 'https://auth.openai.com'
+    page.identity = { user: { id: 'u', mail: 'me@example.com' } }
+    const run = runCodexWebSignIn({ accountId: ACCT, timeoutMs: 5_000, pollMs: 5 })
+    await tick(30)
+    // The page reaches chatgpt.com and the user cancels at once.
+    page.origin = 'https://chatgpt.com'
+    cancelCodexWebSignIn(ACCT)
+    expect((await run).phase).toBe('failed')
+    const line = logs.find((l) => /did not complete/.test(l))!
+    expect(line).toContain('Identity answer: HTTP 200, JSON keys user, user.id, user.mail; an email-shaped value at user.mail.')
+    expect(created[0].destroyed).toBe(true)
   })
 
   it('a status that is not an HTTP status reads as no answer', async () => {
@@ -521,7 +573,7 @@ describe('[host] the sign-in window', () => {
     page.origin = 'https://auth.openai.com'
     await runServiceSignIn(RUN({ timeoutMs: 60 }))
     expect(page.fetched).toHaveLength(0)
-    expect(logs.find((l) => /did not complete/.test(l))).toContain('Identity answer: no answer from the page.')
+    expect(logs.find((l) => /did not complete/.test(l))).toContain('Identity answer: not read; the page was not on https://chatgpt.com when asked.')
   })
 
   it('the shape read is origin-gated, returns only the status and key names, and leaves nothing global', async () => {
@@ -533,10 +585,11 @@ describe('[host] the sign-in window', () => {
     // Uncached, as the email read: the answer leaves no copy in the HTTP cache.
     expect(page.fetched).toHaveLength(1)
     expect(page.fetched[0].opts).toMatchObject({ credentials: 'include', cache: 'no-store' })
-    expect(JSON.parse(JSON.stringify(out))).toEqual({ status: 200, json: true, keys: ['user', 'user.id', 'user.name', 'user.email', 'user.image', 'expires', 'accessToken', 'authProvider'] })
+    expect(JSON.parse(JSON.stringify(out))).toEqual({ status: 200, json: true, keys: ['user', 'user.id', 'user.name', 'user.email', 'user.image', 'expires', 'accessToken', 'authProvider'], emailAt: ['user.email'] })
     expect(JSON.stringify(out)).not.toMatch(/me@example|SECRET|user-abc/)
+    // Off the service: a constant, so the caller can tell "elsewhere" from "no answer".
     page.origin = 'https://evil.example'
-    expect(await evalInPage(expr)).toBeNull()
+    expect(await evalInPage(expr)).toBe('off-origin')
   })
 
   it('a completed run logs no diagnostic and never logs a value', async () => {
@@ -578,6 +631,8 @@ describe('[host] each run owns its own window', () => {
     await tick(10)
     const claudeWin2 = created.filter((w) => w.opts.webPreferences.partition === 'persist:claude-web-profile-web1')[1]
     cancelCodexWebSignIn(ACCT)
+    // The Codex run closes its own window at its next poll, after one last look.
+    await tick(20)
     expect(codexWin.destroyed).toBe(true)
     expect(claudeWin2.destroyed).toBe(false)
     closeInAppSignInWindow()
@@ -637,10 +692,11 @@ describe('[host] the Codex sign-in run', () => {
     const run = runCodexWebSignIn({ accountId: ACCT, timeoutMs: 120, pollMs: 5 })
     await tick(5)
     cancelCodexWebSignIn(OTHER)
+    await tick(20)
     expect(created[0].destroyed).toBe(false)
     cancelCodexWebSignIn(ACCT)
-    expect(created[0].destroyed).toBe(true)
     expect((await run).error).toMatch(/cancelled/i)
+    expect(created[0].destroyed).toBe(true)
   })
 })
 

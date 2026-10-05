@@ -197,11 +197,21 @@ async function wipeAfterIncompleteRun(accountId: string, partition: string): Pro
 }
 
 /**
- * Cancel the in-flight Codex sign-in. SCOPED: with an account id, only that
- * account's run is cancelled. Closes this module's window only.
+ * Cancel the in-flight Codex sign-in (the user's Cancel). SCOPED: with an
+ * account id, only that account's run is cancelled. The run sees it at its
+ * next poll, takes one last look at the identity answer for the diagnostic,
+ * and closes its own window (this module's only).
  */
 export function cancelCodexWebSignIn(accountId?: string): void {
   if (accountId && current.accountId && current.accountId !== accountId) return
+  if (!inFlight()) return
+  cancelled = true
+}
+
+/** Stop the in-flight run AND close its window now: a clear, where nothing
+ *  may hold the session while it is wiped. */
+function stopCodexWebRun(accountId: string): void {
+  if (current.accountId && current.accountId !== accountId) return
   if (!inFlight()) return
   cancelled = true
   closeInAppSignInWindow(signInWindow)
@@ -229,7 +239,7 @@ export async function clearCodexWebSession(accountId: string): Promise<void> {
   try {
     // CANCEL FIRST: a sign-in for this account may be mid-poll and would
     // otherwise write a fresh session into the partition being cleared.
-    cancelCodexWebSignIn(accountId)
+    stopCodexWebRun(accountId)
     // THEN CLOSE what holds the session: a pane left open could write a
     // response's cookies back after the wipe.
     notifyClosing(accountId)

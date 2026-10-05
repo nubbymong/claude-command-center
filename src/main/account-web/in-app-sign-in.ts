@@ -49,9 +49,11 @@
  *     and a valid email (fail closed: no grace without the email).
  *   - A Codex run that does not complete logs one line: whether the session
  *     cookie was seen, how many identity reads ran, the identity answer's HTTP
- *     status and key NAMES (two levels, from a separate origin-gated read), the
- *     cookie NAMES on chatgpt.com and the off-site hosts the window saw. Never a
- *     value and never a query string.
+ *     status, key NAMES (two levels; id- or secret-shaped names dropped and
+ *     counted) and the key path to an email-shaped value (from a separate
+ *     origin-gated read, retried until it says something and once more before a
+ *     timed-out or cancelled window closes), the cookie NAMES on chatgpt.com and
+ *     the off-site hosts the window saw. Never a value and never a query string.
  *
  * No default export (project convention).
  */
@@ -67,7 +69,7 @@ import {
   type WebServiceDescriptor,
 } from '../../shared/account-web-session'
 import { webSessionFromElectronCookies, type ElectronReadCookie } from './cookie-harvest'
-import { readAccountEmail, readServiceAccountEmail, readServiceIdentityShape, type IdentityAnswerShape } from './account-email-read'
+import { readAccountEmail, readServiceAccountEmail, readServiceIdentityShape, type IdentityAnswerShape, type IdentityShapeRead } from './account-email-read'
 
 /** Upper bound on any single Electron call here, mirroring sign-in.ts. */
 const IO_CALL_TIMEOUT_MS = 10_000
@@ -217,11 +219,12 @@ interface WindowPolicy {
   emailOptional: boolean
   /** Install the navigation guard and the popup handler. */
   guard: (win: BrowserWindow) => void
-  /** Told each poll whether the session cookie was there (diagnostic). */
-  onSessionRead?: (hasSessionCookie: boolean) => void
+  /** Told each poll whether the session cookie was there (diagnostic). Never throws. */
+  onSessionRead?: (hasSessionCookie: boolean, win: BrowserWindow) => Promise<void> | void
   /** Told after each identity read (diagnostic). Never throws. */
   onEmailRead?: (email: string | null, win: BrowserWindow) => Promise<void>
-  /** A run that timed out, while its window is still open (diagnostic). */
+  /** A run that timed out or was cancelled, while its window is still open
+   *  (diagnostic): the window closes once this settles. */
   beforeIncompleteClose?: (win: BrowserWindow) => Promise<void>
   /** A run that did not complete (names-only diagnostic). Never throws. */
   onIncomplete?: (ses: PartitionSession) => Promise<void>
@@ -294,6 +297,12 @@ async function driveSignInWindow(policy: WindowPolicy, a: DriveArgs): Promise<Dr
 
     let windowClosed = false
     win.on('closed', () => { windowClosed = true; if (handle.window === win) handle.window = null })
+    /** One last look while the window is still up (a cancel or a timeout), then it closes. */
+    const lastLook = async (): Promise<void> => {
+      if (!policy.beforeIncompleteClose || windowClosed || win.isDestroyed()) return
+      try { await policy.beforeIncompleteClose(win) } catch { /* a diagnostic never changes the outcome */ }
+    }
+    const cancelledAfterLastLook = async (): Promise<DriveResult> => { await lastLook(); return cancelledResult() }
 
     // loadURL can reject when the login page immediately 3xx-redirects (normal),
     // and it must not HANG: a captive portal that accepts the connection then
@@ -316,17 +325,19 @@ async function driveSignInWindow(policy: WindowPolicy, a: DriveArgs): Promise<Dr
     })
 
     while (Date.now() < deadline) {
-      if (a.shouldCancel()) return incomplete(s, cancelledResult())
+      if (a.shouldCancel()) return incomplete(s, await cancelledAfterLastLook())
       if (windowClosed) return incomplete(s, closedResult())
       await sleep(pollMs)
-      if (a.shouldCancel()) return incomplete(s, cancelledResult())
+      if (a.shouldCancel()) return incomplete(s, await cancelledAfterLastLook())
       if (windowClosed) return incomplete(s, closedResult())
 
       let state: { hasSessionCookie: boolean; expiresAt: number | null }
       try {
         state = await policy.readSession(s)
       } catch { continue }
-      policy.onSessionRead?.(state.hasSessionCookie)
+      if (policy.onSessionRead) {
+        try { await policy.onSessionRead(state.hasSessionCookie, win) } catch { /* a diagnostic never changes the outcome */ }
+      }
       if (!state.hasSessionCookie) { sessionSeenAt = 0; continue }
       if (!sessionSeenAt) sessionSeenAt = Date.now()
 
@@ -344,7 +355,7 @@ async function driveSignInWindow(policy: WindowPolicy, a: DriveArgs): Promise<Dr
       // RE-CHECK the cookie is still present: a sign-out could have cleared the
       // partition during the email read, and reporting done then would save a
       // record over an empty partition (every request under it would 401).
-      if (a.shouldCancel()) return incomplete(s, cancelledResult())
+      if (a.shouldCancel()) return incomplete(s, await cancelledAfterLastLook())
       let still = false
       try { still = await policy.recheckSession(s) } catch { still = false }
       if (!still) { sessionSeenAt = 0; continue }
@@ -355,15 +366,13 @@ async function driveSignInWindow(policy: WindowPolicy, a: DriveArgs): Promise<Dr
       // present — without this, done would be recorded over a partition about to
       // be emptied. The system-browser path guards the same window after its
       // teardown (adversarial review).
-      if (a.shouldCancel()) return incomplete(s, cancelledResult())
+      if (a.shouldCancel()) return incomplete(s, await cancelledAfterLastLook())
 
       closeInAppSignInWindow(handle)
       return { ok: true, email, expiresAt: state.expiresAt }
     }
 
-    if (policy.beforeIncompleteClose && !windowClosed && !win.isDestroyed()) {
-      try { await policy.beforeIncompleteClose(win) } catch { /* a diagnostic never changes the outcome */ }
-    }
+    await lastLook()
     closeInAppSignInWindow(handle)
     logError(`[account-web] in-app sign-in for ${ownerId} timed out`)
     return incomplete(s, { ok: false, error: 'Timed out waiting for sign-in to complete.' })
@@ -454,6 +463,10 @@ export async function runInAppSignIn(args: InAppSignInArgs): Promise<InAppSignIn
 const DIAG_MAX_NAMES = 40
 const DIAG_MAX_HOSTS = 20
 const DIAG_MAX_KEYS = 40
+/** The identity answer's shape is looked at no more often than this while a
+ *  run polls, and at most SHAPE_MAX_TRIES times (a 5-minute run's worth). */
+const SHAPE_SPACING_MS = 20_000
+const SHAPE_MAX_TRIES = 15
 
 /** A cookie NAME fit for a log line, or null (dropped, and counted). */
 function diagCookieName(name: unknown): string | null {
@@ -478,7 +491,8 @@ export function diagHost(url: string): string {
  * What one descriptor-driven run saw, for the line a run that does not
  * complete logs: off-site hosts (first-seen order), whether the session cookie
  * was ever there, how many identity reads ran and that none gave an email, and
- * the identity answer's HTTP status and key NAMES. Never a value.
+ * the identity answer's HTTP status, key NAMES and the key path to an
+ * email-shaped value. Never a value.
  */
 class SignInDiagnostic {
   private readonly seen = new Set<string>()
@@ -487,8 +501,19 @@ class SignInDiagnostic {
   cookieSeen = false
   identityReads = 0
   identityShape: IdentityAnswerShape | null = null
+  /** A shape read ran with the page on the service (answered or not). */
   shapeTried = false
+  /** A shape read found the page elsewhere (not counted as a try). */
+  shapeOffOrigin = false
+  shapeTries = 0
+  shapeAt = 0
   constructor(private readonly desc: WebServiceDescriptor) {}
+  /** The answer says something: a JSON object with keys (a signed-out page's
+   *  empty answer does not, so the reads go on). */
+  shapeInformative(): boolean {
+    const s = this.identityShape
+    return !!s && s.json && s.keys.length > 0
+  }
   private note(entry: string): void {
     if (this.seen.has(entry)) return
     if (this.entries.length >= DIAG_MAX_HOSTS) { this.dropped++; return }
@@ -514,9 +539,20 @@ class SignInDiagnostic {
       ? 'Identity reads: none (the session cookie was never seen).'
       : `Identity reads: ${this.identityReads}, none gave an email.`
     const shape = this.identityShape
-    const answer = shape
-      ? `Identity answer: HTTP ${shape.status}, ${shape.json ? `JSON keys ${shape.keys.slice(0, DIAG_MAX_KEYS).join(', ') || '(none)'}` : 'not a JSON object'}.`
-      : `Identity answer: ${this.shapeTried ? 'no answer from the page' : 'not read'}.`
+    let answer: string
+    if (shape) {
+      const notShown = shape.keysDropped + Math.max(0, shape.keys.length - DIAG_MAX_KEYS)
+      const where = shape.emailAt.length ? `an email-shaped value at ${shape.emailAt.join(', ')}` : 'no email-shaped value'
+      answer = shape.json
+        ? `Identity answer: HTTP ${shape.status}, JSON keys ${shape.keys.slice(0, DIAG_MAX_KEYS).join(', ') || '(none)'}${notShown ? ` (and ${notShown} not shown)` : ''}; ${where}.`
+        : `Identity answer: HTTP ${shape.status}, not a JSON object.`
+    } else if (this.shapeTried) {
+      answer = 'Identity answer: no answer from the page.'
+    } else if (this.shapeOffOrigin) {
+      answer = `Identity answer: not read; the page was not on ${this.desc.origin} when asked.`
+    } else {
+      answer = 'Identity answer: not read.'
+    }
     return `Session cookie seen: ${this.cookieSeen ? 'yes' : 'no'}. ${reads} ${answer}`
   }
 }
@@ -525,15 +561,28 @@ function serviceWindowPolicy(desc: WebServiceDescriptor, ownerId: string): Windo
   const diag = new SignInDiagnostic(desc)
   const readJar = async (ses: PartitionSession, what: string) =>
     bounded(Promise.resolve(ses.cookies.get({ url: desc.origin })), what)
-  /** One look at the identity answer's shape, while the window is still up. */
-  const readShape = async (win: BrowserWindow): Promise<void> => {
-    if (diag.shapeTried || win.isDestroyed()) return
-    diag.shapeTried = true
+  /**
+   * Look at the identity answer's shape until one says something: while the
+   * run polls, at most every SHAPE_SPACING_MS and SHAPE_MAX_TRIES times, and
+   * once more (outside both bounds) just before an incomplete run's window
+   * closes. A look while the page is elsewhere (the redirect gap, a sign-in
+   * host) does not count, so a later look on the service still answers.
+   */
+  const readShape = async (win: BrowserWindow, last: boolean): Promise<void> => {
+    if (diag.shapeInformative() || win.isDestroyed()) return
+    if (!last && (diag.shapeTries >= SHAPE_MAX_TRIES || (diag.shapeAt > 0 && Date.now() - diag.shapeAt < SHAPE_SPACING_MS))) return
+    let r: IdentityShapeRead = null
     try {
-      diag.identityShape = await bounded(readServiceIdentityShape(win.webContents, desc), 'identity shape')
+      r = await bounded(readServiceIdentityShape(win.webContents, desc), 'identity shape')
     } catch {
-      diag.identityShape = null
+      r = null
     }
+    if (r === 'off-origin') { diag.shapeOffOrigin = true; return }
+    diag.shapeTries++
+    diag.shapeAt = Date.now()
+    diag.shapeTried = true
+    // The newest answer stands; a failed look keeps the last one it had.
+    if (r) diag.identityShape = r
   }
   return {
     title: `Sign in to ${desc.label}`,
@@ -574,20 +623,23 @@ function serviceWindowPolicy(desc: WebServiceDescriptor, ownerId: string): Windo
         return { action: 'deny' }
       })
     },
-    onSessionRead: (hasSessionCookie) => {
+    onSessionRead: async (hasSessionCookie, win) => {
       if (hasSessionCookie) diag.cookieSeen = true
+      // The session cookie may never match (its name could be wrong): the
+      // answer's shape is looked at as the run goes, so a window the user
+      // closes still leaves what the page answered.
+      await readShape(win, false)
     },
     onEmailRead: async (email, win) => {
       diag.identityReads++
-      // The first identity read that finds no email while the session cookie
-      // is there is the moment the answer's shape says why.
-      if (email === null) await readShape(win)
+      // An identity read that finds no email while the session cookie is
+      // there is the moment the answer's shape says why.
+      if (email === null) await readShape(win, false)
     },
     beforeIncompleteClose: async (win) => {
-      // The session cookie may never have matched (its name could be wrong):
-      // one look at the identity answer before the window goes still says
-      // whether the page holds a signed-in account and where its email sits.
-      await readShape(win)
+      // A timeout or a cancel: one more look before the window closes, so a
+      // run that never got an answer (or only a signed-out one) still tries.
+      await readShape(win, true)
     },
     onIncomplete: async (ses) => {
       let names: string[] = []

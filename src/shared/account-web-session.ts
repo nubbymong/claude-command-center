@@ -298,10 +298,13 @@ export type WebSessionService = 'claude' | 'codex'
  * go anywhere. A run that does not complete logs one line (never a value,
  * never a query string): the cookie NAMES on the service's origin, whether the
  * named session cookie was seen, how many identity reads ran, the identity
- * answer's HTTP status and key NAMES two levels deep (read while the window was
- * still on the service), and the off-site hosts the window saw. A failed run
- * that got as far as signing in therefore shows the cookie name and where the
- * email sits; a method blocked on the way shows its host.
+ * answer's HTTP status, its key NAMES two levels deep (a name shaped like an id
+ * or a secret dropped and counted) and the key path to an email-shaped value
+ * (read on the service, again until one says something, and once more before
+ * the window closes on a timeout or a cancel), and the off-site hosts the
+ * window saw. A failed run that got as far as signing in therefore shows the
+ * cookie names and where the email sits; a method blocked on the way shows its
+ * host. The owner's run leaves the window open until it closes by itself.
  */
 export interface WebServiceDescriptor {
   readonly service: WebSessionService

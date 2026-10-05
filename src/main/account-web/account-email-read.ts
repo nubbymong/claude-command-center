@@ -128,20 +128,30 @@ async function evaluateIsolated(wc: EmailReadableWebContents, expr: string): Pro
 }
 
 /** The SHAPE of a service's identity answer: its HTTP status, whether it was a
- *  JSON object, and its key NAMES two levels deep. Never a value. */
+ *  JSON object, its key NAMES two levels deep, and the key paths (up to three
+ *  levels) whose value is shaped like an email. Never a value. */
 export interface IdentityAnswerShape {
   status: number
   json: boolean
   keys: string[]
+  /** Key names not shown: off the plain-name pattern, or shaped like an id or
+   *  a secret (a map keyed by ids or tokens would otherwise log them). */
+  keysDropped: number
+  emailAt: string[]
 }
+
+/** What a shape read gives: the shape, the page was elsewhere, or nothing. */
+export type IdentityShapeRead = IdentityAnswerShape | 'off-origin' | null
 
 /**
  * For a sign-in that does not complete (the names-only diagnostic): the same
  * origin-gated request as the identity read, in an isolated world, returning
- * only the HTTP status and the answer's key NAMES (top level and one level
- * below, as `a` and `a.b`), never a value. It lets one failed run show where
- * the email actually sits, or that the endpoint is wrong, without anything the
- * answer holds (a token included) crossing into the main process.
+ * only the HTTP status, the answer's key NAMES (top level and one level below,
+ * as `a` and `a.b`) and the key paths whose value is shaped like an email,
+ * never a value. It lets one failed run show where the email actually sits, or
+ * that the endpoint is wrong, without anything the answer holds (a token
+ * included) crossing into the main process. A page elsewhere answers the
+ * constant 'off-origin', unasked, so a caller can try again once it is back.
  */
 export function serviceIdentityShapeExpression(desc: WebServiceDescriptor): string {
   const origin = JSON.stringify(desc.origin)
@@ -150,25 +160,47 @@ export function serviceIdentityShapeExpression(desc: WebServiceDescriptor): stri
     `(location.origin === ${origin}) ` +
     `? fetch(${path},{credentials:'include',cache:'no-store'}).then((r)=>r.text().then((t)=>{` +
     `let j=null;try{j=JSON.parse(t)}catch(e){j=null}` +
-    `const o=(v)=>v!==null&&typeof v==='object'&&!Array.isArray(v);const keys=[];` +
-    `if(o(j)){for(const k of Object.keys(j).slice(0,40)){keys.push(k);const v=j[k];` +
-    `if(o(v)){for(const k2 of Object.keys(v).slice(0,40)){keys.push(k+'.'+k2)}}}}` +
-    `return {status:r.status,json:o(j),keys:keys}}))` +
+    `const o=(v)=>v!==null&&typeof v==='object'&&!Array.isArray(v);` +
+    `const em=(v)=>typeof v==='string'&&/^[^\\s@]{1,128}@[^\\s@]{1,128}\\.[^\\s@]{1,64}$/.test(v);` +
+    `const keys=[];const at=[];` +
+    `if(o(j)){for(const k of Object.keys(j).slice(0,40)){keys.push(k);const v=j[k];if(em(v))at.push(k);` +
+    `if(o(v)){for(const k2 of Object.keys(v).slice(0,40)){keys.push(k+'.'+k2);const w=v[k2];if(em(w))at.push(k+'.'+k2);` +
+    `if(o(w)){for(const k3 of Object.keys(w).slice(0,40)){if(em(w[k3]))at.push(k+'.'+k2+'.'+k3)}}}}}}` +
+    `return {status:r.status,json:o(j),keys:keys,emailAt:at.slice(0,5)}}))` +
     `.catch(()=>null) ` +
-    `: Promise.resolve(null)`
+    `: Promise.resolve('off-origin')`
   )
 }
 
-const SHAPE_KEY_RE = /^[A-Za-z0-9_$-]{1,64}(\.[A-Za-z0-9_$-]{1,64})?$/
+/** One key name fit for a log line: a plain name (a letter, `_` or `$` first,
+ *  at most 32 characters) that does not look like an id or a secret (a run of
+ *  five digits, twelve hex digits, or a long name with three or more digits). */
+function shapeKeyName(seg: string): boolean {
+  if (!/^[A-Za-z_$][A-Za-z0-9_$-]{0,31}$/.test(seg)) return false
+  if (/\d{5,}/.test(seg) || /[0-9a-f]{12,}/i.test(seg)) return false
+  if (seg.length >= 16 && (seg.match(/\d/g)?.length ?? 0) >= 3) return false
+  return true
+}
 
-/** Read and validate the identity answer's shape. Never throws; null when the
- *  page is elsewhere, the request failed, or the answer is not that shape.
- *  Key names off a conservative pattern are dropped, not shown. */
-export async function readServiceIdentityShape(wc: EmailReadableWebContents, desc: WebServiceDescriptor): Promise<IdentityAnswerShape | null> {
-  const v = await evaluateIsolated(wc, serviceIdentityShapeExpression(desc)) as Partial<IdentityAnswerShape> | null
+/** A key path (`a`, `a.b`, `a.b.c`) whose every name is fit for a log line. */
+function shapeKeyPath(p: unknown, depth: number): p is string {
+  if (typeof p !== 'string' || p.length > 3 * 33) return false
+  const segs = p.split('.')
+  return segs.length >= 1 && segs.length <= depth && segs.every(shapeKeyName)
+}
+
+/** Read and validate the identity answer's shape. Never throws: the shape,
+ *  'off-origin' when the page is elsewhere, or null when the request failed or
+ *  the answer is not that shape. Key names off the pattern are dropped (and
+ *  counted), not shown. */
+export async function readServiceIdentityShape(wc: EmailReadableWebContents, desc: WebServiceDescriptor): Promise<IdentityShapeRead> {
+  const v = await evaluateIsolated(wc, serviceIdentityShapeExpression(desc)) as Partial<IdentityAnswerShape> | 'off-origin' | null
+  if (v === 'off-origin') return 'off-origin'
   if (!v || typeof v !== 'object') return null
   const status = v.status
   if (typeof status !== 'number' || !Number.isInteger(status) || status < 100 || status > 599) return null
-  const keys = Array.isArray(v.keys) ? v.keys.filter((k): k is string => typeof k === 'string' && SHAPE_KEY_RE.test(k)).slice(0, 60) : []
-  return { status, json: v.json === true, keys }
+  const raw = Array.isArray(v.keys) ? v.keys.slice(0, 1640) : []
+  const keys = raw.filter((k) => shapeKeyPath(k, 2)).slice(0, 60) as string[]
+  const emailAt = Array.isArray(v.emailAt) ? v.emailAt.filter((k) => shapeKeyPath(k, 3)).slice(0, 5) as string[] : []
+  return { status, json: v.json === true, keys, keysDropped: raw.length - keys.length, emailAt }
 }
