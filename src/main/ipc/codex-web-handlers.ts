@@ -200,6 +200,10 @@ export function registerCodexWebHandlers(getWindow: () => BrowserWindow | null, 
       const { sessionId, accountId, bounds } = parsed.data
       const el = eligible(accountId)
       if (!el.ok) return el
+      // A record store written by a newer build: the surface is inert, refused
+      // up front with the reason (no partition touched, nothing recorded or
+      // cleared), so opening the view can never cost a live sign-in.
+      if (codexWebStoreIsNewer()) return { ok: false, error: NEWER_STORE_REASON }
       // The view is the session's own account's: a session that does not run
       // under the account gets no view of it.
       if (!runsUnder(sessionId, el.id)) return { ok: false, error: 'This session does not run under that account.' }

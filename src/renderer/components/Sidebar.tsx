@@ -1705,6 +1705,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
             // sign-in (codexWebActionAccountId: the account it runs under).
             onCodexWebSignIn={codexWebId ? () => { void useCodexWebStore.getState().signIn(codexWebId) } : undefined}
             codexWebSignedIn={!!codexWebId && codexWebByAccount[codexWebId]?.status === 'active'}
+            codexWebUnavailable={codexWebId ? codexWebByAccount[codexWebId]?.unavailable ?? null : null}
           />
         )
       })()}

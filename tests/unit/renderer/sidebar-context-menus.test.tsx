@@ -199,6 +199,11 @@ describe('sidebar context menus — Quick Start + running lock', () => {
     expect(codexItem()!.title).not.toMatch(/replace/i)
     // Never Claude's items beside it.
     expect(accountItemTexts()).toEqual([])
+    // While the account's records were written by a newer version of the app,
+    // the item is a line that says so instead of a sign-in.
+    renderSessionMenu({ session: { ...session, provider: 'codex' }, onCodexWebSignIn, codexWebUnavailable: "This account's chatgpt.com records were written by a newer version of the app." })
+    expect(codexItem()).toBeNull()
+    expect(container.querySelector('[data-testid="session-ctx-codex-web-unavailable"]')!.textContent).toBe("chatgpt.com: This account's chatgpt.com records were written by a newer version of the app.")
   })
 
   it('session menu: a Claude row never gets the Codex item, even when the callback is passed', () => {

@@ -564,6 +564,7 @@ describe('the account surface for a Codex session: chatgpt.com as its own accoun
     useAccountProfilesStore.setState({ profiles: [{ id: 'profile-aaa111', isPrimary: true, name: 'Work', accountEmail: 'w@x.y' } as never] })
     codexPaneOpen = vi.fn(() => Promise.resolve({ ok: true }))
     ;(window as any).electronAPI.codexWeb = { paneOpen: codexPaneOpen }
+    ;(await import('../../../src/renderer/stores/codexWebStore')).useCodexWebStore.setState({ byAccount: {} })
   })
   afterEach(() => {
     delete (window as any).electronAPI.codexWeb
@@ -608,6 +609,21 @@ describe('the account surface for a Codex session: chatgpt.com as its own accoun
       await flush()
       expect(byTest('browser-start-chatgpt'), JSON.stringify([sess, acc])).toBeNull()
     }
+  })
+
+  it('while the account\'s records were written by a newer version of the app, the start page shows the reason instead of the entry', async () => {
+    ;(window as any).electronAPI.codexWeb = {
+      paneOpen: codexPaneOpen,
+      status: vi.fn(() => Promise.resolve({ ok: true, web: { accountId: ACCT, status: 'none', unavailable: "This account's chatgpt.com records were written by a newer version of the app." } })),
+    }
+    codexSession()
+    open()
+    render()
+    await flush()
+    await flush()
+    expect(byTest('browser-start-chatgpt')).toBeNull()
+    expect(byTest('browser-start-chatgpt-unavailable')!.textContent).toBe("chatgpt.com: This account's chatgpt.com records were written by a newer version of the app.")
+    expect(codexPaneOpen).not.toHaveBeenCalled()
   })
 
   it('a refused open (the session no longer runs under the account) says why on the start page', async () => {

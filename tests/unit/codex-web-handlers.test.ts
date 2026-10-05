@@ -328,6 +328,17 @@ describe('[host] a record store written by a newer build', () => {
     }
   })
 
+  it('the pane is refused up front with the reason: no view, no partition, no recording', async () => {
+    newerStore.on = true
+    try {
+      const r = await call(IPC.CODEX_WEB_PANE_OPEN, TRUSTED, { sessionId: 's1', accountId: ACCT, bounds: BOUNDS })
+      expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/written by a newer version of the app/) })
+      nothingActed('pane open over a newer store')
+    } finally {
+      newerStore.on = false
+    }
+  })
+
   it('sign-out still wipes and reports success when the wipe succeeded', async () => {
     newerStore.on = true
     try {

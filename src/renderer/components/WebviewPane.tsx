@@ -6,6 +6,7 @@ import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useNativePanesOccluded } from '../stores/paneOcclusionStore'
 import { useProviderAccountsStore, accountDisplayName } from '../stores/providerAccountsStore'
 import { codexWebActionAccountId } from '../lib/claude-web-targets'
+import { useCodexWebStore } from '../stores/codexWebStore'
 import { normaliseBrowserInput, shortUrlLabel } from '../../shared/browser-url'
 import heroUrl from '../assets/aicc-browser-http.svg'
 
@@ -100,6 +101,12 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
   )
   const codexPaneAccount = codexPaneAccountId ? accountsSnapshot?.accounts.find((a) => a.id === codexPaneAccountId) : undefined
   const codexPaneAccountLabel = codexPaneAccount ? accountDisplayName(accountsSnapshot, codexPaneAccount) : null
+  // While the account's chatgpt.com records were written by a newer version of
+  // the app the entry is inert: the start page shows why instead.
+  const codexPaneUnavailable = useCodexWebStore((s) => (codexPaneAccountId ? s.byAccount[codexPaneAccountId]?.unavailable ?? null : null))
+  useEffect(() => {
+    if (codexPaneAccountId) void useCodexWebStore.getState().refresh(codexPaneAccountId)
+  }, [codexPaneAccountId])
   const openAccountPane = useWebviewStore((s) => s.openAccountPane)
   const openCodexAccountPane = useWebviewStore((s) => s.openCodexAccountPane)
   const closeAccountPaneStore = useWebviewStore((s) => s.closeAccountPane)
@@ -724,8 +731,9 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
           accountLabel={paneAccountId ? paneAccountLabel : null}
           onOpenAccount={paneAccountId ? () => openAccountPane(sessionId, paneAccountId) : undefined}
           codexAccountLabel={codexPaneAccountId ? codexPaneAccountLabel : null}
-          onOpenCodexAccount={codexPaneAccountId ? () => { setCodexOpenError(null); openCodexAccountPane(sessionId, codexPaneAccountId) } : undefined}
+          onOpenCodexAccount={codexPaneAccountId && !codexPaneUnavailable ? () => { setCodexOpenError(null); openCodexAccountPane(sessionId, codexPaneAccountId) } : undefined}
           codexError={codexPaneAccountId ? codexOpenError : null}
+          codexUnavailable={codexPaneAccountId ? codexPaneUnavailable : null}
         />
       )}
 
@@ -774,6 +782,9 @@ function StartPage(props: {
   onOpenCodexAccount?: () => void
   /** P4.6: why the last open was refused, shown under the entry. */
   codexError?: string | null
+  /** P4.6: why the chatgpt.com entry is not offered (the account's records were
+   *  written by a newer version of the app), shown in its place. */
+  codexUnavailable?: string | null
 }) {
   const [value, setValue] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -854,6 +865,9 @@ function StartPage(props: {
             </span>
             <span className="ml-auto text-[10px] text-[var(--text-muted)] shrink-0">pinned</span>
           </button>
+        )}
+        {props.codexUnavailable && (
+          <p className="mt-4 text-[11px] text-[var(--text-muted)]" data-testid="browser-start-chatgpt-unavailable">{`chatgpt.com: ${props.codexUnavailable}`}</p>
         )}
         {props.onOpenCodexAccount && props.codexError && (
           <p className="mt-1 text-[11px] text-[var(--status-danger)]" role="alert" data-testid="browser-start-chatgpt-error">{props.codexError}</p>

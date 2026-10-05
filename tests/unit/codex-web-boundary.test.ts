@@ -450,6 +450,12 @@ describe('[host] sign-out and archive over a store written by a newer build', ()
       release()
       expect(S.disk['codex-web-sessions.json']).toEqual({ schemaVersion: 2, sessions: [] })
       expect(await call(IPC.CODEX_WEB_STATUS, TRUSTED, ACCT)).toMatchObject({ ok: true, web: { status: 'none', unavailable: expect.stringMatching(/newer version/) } })
+      // The pane is inert: refused up front, no partition made, nothing recorded or cleared.
+      S.minted.length = 0; S.trail.length = 0
+      expect(await call(IPC.CODEX_WEB_PANE_OPEN, TRUSTED, { sessionId: 's1', accountId: ACCT, bounds: BOUNDS })).toMatchObject({ ok: false, error: expect.stringMatching(/newer version/) })
+      expect(S.minted).toEqual([])
+      expect(S.views).toHaveLength(0)
+      expect(S.trail).toEqual([])
     } finally {
       delete S.disk['codex-web-sessions.json']
     }

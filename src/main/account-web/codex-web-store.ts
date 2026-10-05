@@ -58,8 +58,10 @@ export const NEWER_STORE_REASON = "This account's chatgpt.com records were writt
  * Whether the record store was written by a newer build (a higher schema
  * version: a downgrade). Such a store is never overwritten, since this build
  * cannot know what rewriting it would drop, and it is handled as one rule:
- *   - sign-in is refused up front with NEWER_STORE_REASON (the channels), and
- *     a save is refused, so a sign-in finished in a pane is cleared;
+ *   - the surface is inert: sign-in and the pane are refused up front with
+ *     NEWER_STORE_REASON (the channels), and the row, the session menu and the
+ *     pane's start page show the reason instead of Sign in and chatgpt.com; a
+ *     save is refused;
  *   - a removal counts as done (it runs after a wipe that succeeded): a
  *     sign-out or an archive is never refused for a record this build cannot
  *     write, nor left with a "Try again" that can never work;

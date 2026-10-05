@@ -248,14 +248,16 @@ describe('[host] a restored sign-in line follows only the run it found', () => {
 })
 
 describe('[host] a row over a record store it cannot account for', () => {
-  it('says why instead of a plain none, and still offers Sign out of chatgpt.com', async () => {
+  it('says why instead of a plain none, offers Sign out of chatgpt.com, and hides Sign in', async () => {
     webStatus[A] = { accountId: A, status: 'none', unavailable: "This account's chatgpt.com records were written by a newer version of the app." }
     try {
       await render(snapshot())
       await flush()
       expect(q(`account-web-${A}`)!.textContent).toBe("chatgpt.com: This account's chatgpt.com records were written by a newer version of the app.")
-      await menu(A)
-      expect(q(`account-menu-chatgpt-sign-out-${A}`)).not.toBeNull()
+      const items = await menu(A)
+      expect(items['chatgpt-sign-out']).toBe('Sign out of chatgpt.com')
+      // Sign in is hidden: the surface is inert while the store is newer.
+      expect(items['chatgpt-sign-in']).toBeUndefined()
     } finally {
       delete webStatus[A]
     }

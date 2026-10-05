@@ -90,12 +90,13 @@ vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logError: (...
 /** One in-memory JSON file per name, so Claude's and Codex's records stay apart. */
 const disk: Record<string, unknown> = {}
 const cleared = vi.hoisted(() => [] as string[])
+const writeFails = vi.hoisted(() => ({ on: false }))
 vi.mock('../../src/main/account-web/codex-web-session', () => ({
   clearCodexWebSession: async (id: string) => { cleared.push(id) },
 }))
 vi.mock('../../src/main/channel-storage', () => ({
   readJsonFile: (n: string, seed: () => unknown) => (disk[n] ?? seed()),
-  writeJsonFile: (n: string, v: unknown) => { disk[n] = JSON.parse(JSON.stringify(v)) },
+  writeJsonFile: (n: string, v: unknown) => { if (writeFails.on) return false; disk[n] = JSON.parse(JSON.stringify(v)); return true },
   peekJsonFile: (n: string) => (disk[n] !== undefined ? { kind: 'ok', value: disk[n] } : { kind: 'absent' }),
   quarantinedCopyOf: () => null,
 }))
@@ -575,9 +576,9 @@ describe('[host] a load that throws at once is caught and logged by host and cod
 })
 
 describe('[host] a sign-in in the pane whose record cannot be saved is cleared, as the window does', () => {
-  it('a store written by a newer build refuses the record: the session is cleared, never left live without one', async () => {
+  it('a record that cannot be written: the session is cleared, never left live without one', async () => {
     cleared.length = 0
-    disk['codex-web-sessions.json'] = { schemaVersion: 2, sessions: [] }
+    writeFails.on = true
     try {
       const win = new FakeParentWindow()
       openCodexAccountPane(win as never, 'sess-norec', ACCT, BOUNDS)
@@ -592,7 +593,23 @@ describe('[host] a sign-in in the pane whose record cannot be saved is cleared, 
       expect(logged.some((l) => /could not be written/.test(l))).toBe(true)
       closeAccountPane('sess-norec')
     } finally {
-      delete disk['codex-web-sessions.json']
+      writeFails.on = false
     }
+  })
+
+  it('a record that is written leaves the session alone', async () => {
+    cleared.length = 0
+    const win = new FakeParentWindow()
+    openCodexAccountPane(win as never, 'sess-rec', ACCT, BOUNDS)
+    const ses = partitions[webPartitionForCodexAccount(ACCT)]
+    const wc = createdViews[0].view.webContents
+    await flush()
+    wc.executeJavaScriptInIsolatedWorld.mockResolvedValue('me@example.com')
+    ses.cookies.get.mockResolvedValue(TOKEN_COOKIE)
+    ses.cookies.listeners[0](null, { name: '__Secure-next-auth.session-token' })
+    await flush(); await flush(); await flush()
+    expect(getCodexWebSession(ACCT)).toMatchObject({ accountEmail: 'me@example.com' })
+    expect(cleared).toEqual([])
+    closeAccountPane('sess-rec')
   })
 })

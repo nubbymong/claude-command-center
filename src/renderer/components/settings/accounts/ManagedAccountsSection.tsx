@@ -197,15 +197,20 @@ function ManagedAccountRow({ account, provider, snapshot, onAddAccount }: {
     }
     // P4.6: the account's chatgpt.com web session (the sign-in window).
     if (webApplies) {
-      const webItems: MenuItem[] = [{
-        key: 'chatgpt-sign-in',
-        label: web?.status === 'active' ? 'Sign in to chatgpt.com again' : 'Sign in to chatgpt.com',
-        onSelect: () => { void useCodexWebStore.getState().signIn(id) },
-      }]
+      const webItems: MenuItem[] = []
+      // While the records were written by a newer version of the app the
+      // surface is inert: no Sign in (the row says why); Sign out stays.
+      if (!web?.unavailable) {
+        webItems.push({
+          key: 'chatgpt-sign-in',
+          label: web?.status === 'active' ? 'Sign in to chatgpt.com again' : 'Sign in to chatgpt.com',
+          onSelect: () => { void useCodexWebStore.getState().signIn(id) },
+        })
+      }
       if (web?.status === 'active' || web?.status === 'expired' || web?.unavailable) {
         webItems.push({ key: 'chatgpt-sign-out', label: 'Sign out of chatgpt.com', onSelect: () => { void useCodexWebStore.getState().signOut(id) } })
       }
-      if (items.length) webItems[0] = { ...webItems[0], separated: true }
+      if (items.length && webItems.length) webItems[0] = { ...webItems[0], separated: true }
       items.push(...webItems)
     }
     const lifecycle: MenuItem[] = []

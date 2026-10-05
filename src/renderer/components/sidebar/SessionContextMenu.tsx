@@ -61,6 +61,9 @@ interface SessionContextMenuProps {
   onCodexWebSignIn?: () => void
   /** True when that account already holds a chatgpt.com web session. */
   codexWebSignedIn?: boolean
+  /** Why the account's chatgpt.com sign-in is unavailable (its records were
+   *  written by a newer version of the app): shown instead of the item. */
+  codexWebUnavailable?: string | null
 }
 
 export default function SessionContextMenu({
@@ -69,7 +72,7 @@ export default function SessionContextMenu({
   canSwitchAccount, switchItems, onSwitchAccount,
   onOpenArtifacts, onAuthenticateWeb, onSignInCode, hasWebSession, codeSignedIn, codeNotChecked,
   watchdogChecks, onToggleWatchdogCheck, watchdogUnavailable,
-  onCodexWebSignIn, codexWebSignedIn,
+  onCodexWebSignIn, codexWebSignedIn, codexWebUnavailable,
 }: SessionContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
   useClickOutside(menuRef, onDismiss)
@@ -304,7 +307,15 @@ export default function SessionContextMenu({
         </>
       )}
 
-      {codexWebItem && (
+      {codexWebItem && codexWebUnavailable && (
+        <>
+          <div className="my-1 border-t" style={{ borderColor: 'var(--border-subtle)' }} />
+          <div className="px-3 py-1.5 text-xs" style={{ color: 'var(--text-muted)' }} data-testid="session-ctx-codex-web-unavailable">
+            {`chatgpt.com: ${codexWebUnavailable}`}
+          </div>
+        </>
+      )}
+      {codexWebItem && !codexWebUnavailable && (
         <>
           <div className="my-1 border-t" style={{ borderColor: 'var(--border-subtle)' }} />
           <button
