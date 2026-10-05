@@ -100,7 +100,7 @@ function putSession(name: string, cwd: string): void {
   mkdirSync(day, { recursive: true })
   writeFileSync(join(day, `rollout-${name}.jsonl`), rolloutLines(cwd, now.toISOString()))
 }
-const runsParent = () => join(h.resourcesDir, 'insights', '.codex-runs')
+const runsParent = () => join(h.resourcesDir, 'insights', '.insights-codex-runs')
 const runOf = (id: string) => getCatalogue().runs.find((r) => r.id === id)!
 
 beforeEach(() => {

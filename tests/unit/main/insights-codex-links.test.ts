@@ -5,7 +5,7 @@
  * neither may be steered elsewhere by a link:
  *  - the sessions walk never follows a link or junction (a folder or a file),
  *    and a sessions folder that is itself one reads as no sessions;
- *  - a runs folder (`<insights>/.codex-runs`) that is a link, or became one
+ *  - a runs folder (`<insights>/.insights-codex-runs`) that is a link, or became one
  *    between the check and the make, is refused: no model run, nothing
  *    written through it.
  * The REAL reader and runner; the accounts service and the model run are
@@ -106,7 +106,7 @@ describe('the runs folder is never a link [CI] [VM]', () => {
     const outside = path.join(tmpRoot, 'outside')
     fs.mkdirSync(outside, { recursive: true })
     fs.mkdirSync(path.join(h.resourcesDir, 'insights'), { recursive: true })
-    fs.symlinkSync(outside, path.join(h.resourcesDir, 'insights', '.codex-runs'), LINK_TYPE)
+    fs.symlinkSync(outside, path.join(h.resourcesDir, 'insights', '.insights-codex-runs'), LINK_TYPE)
     const id = await runCodexInsights(win, { accountId: ACCT }) as string
     expect(getCatalogue().runs.find((r) => r.id === id)).toMatchObject({ status: 'failed', error: 'This report could not be written: no empty folder could be made for it.' })
     expect(h.execCalls).toBe(0)

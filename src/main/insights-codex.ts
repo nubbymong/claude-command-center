@@ -44,7 +44,7 @@ import {
 /** The folder every Codex report run's working folder is made in, inside
  *  the insights folder. Not a run id (a run id has no dot), so no run's
  *  files can ever be read from it. */
-export const CODEX_INSIGHTS_RUNS_DIRNAME = '.codex-runs'
+export const CODEX_INSIGHTS_RUNS_DIRNAME = '.insights-codex-runs'
 /** The name every Codex report run's working folder starts with. */
 export const CODEX_INSIGHTS_RUN_PREFIX = 'ccc-insights-codex-'
 

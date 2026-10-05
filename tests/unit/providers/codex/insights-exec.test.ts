@@ -61,10 +61,10 @@ describe("the report's argv (cli-runner, `insights`)", () => {
 describe('runCodexInsightsExec', () => {
   it('runs in the folder it is given, the prompt on stdin, and returns the last agent message [host]', async () => {
     const { deps, spawned } = fakeDeps()
-    const p = runCodexInsightsExec({ executable: '/usr/bin/codex', env: ENV, cwd: '/res/insights/.codex-runs/ccc-insights-codex-ab', prompt: 'THE PROMPT' }, { platform: 'linux', runDeps: () => deps })
+    const p = runCodexInsightsExec({ executable: '/usr/bin/codex', env: ENV, cwd: '/res/insights/.insights-codex-runs/ccc-insights-codex-ab', prompt: 'THE PROMPT' }, { platform: 'linux', runDeps: () => deps })
     await Promise.resolve()
     expect(spawned).toHaveLength(1)
-    expect(spawned[0].opts.cwd).toBe('/res/insights/.codex-runs/ccc-insights-codex-ab')
+    expect(spawned[0].opts.cwd).toBe('/res/insights/.insights-codex-runs/ccc-insights-codex-ab')
     expect(spawned[0].args).not.toContain('THE PROMPT')
     spawned[0].child.stdout.emit('data', jsonl(
       { type: 'item.completed', item: { id: 'a', type: 'agent_message', text: 'first' } },

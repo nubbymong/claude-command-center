@@ -1098,7 +1098,7 @@ function samePath(a: string, b: string): boolean {
 }
 
 /** The parent of every Codex report run's working folder: the insights
- *  folder's `.codex-runs`, each a real folder (never a link) and, on POSIX,
+ *  folder's `.insights-codex-runs`, each a real folder (never a link) and, on POSIX,
  *  this user's. Null when it cannot be. */
 function codexRunsParent(): string | null {
   const insights = getInsightsDir()
@@ -1118,7 +1118,7 @@ function codexRunsParent(): string | null {
 
 /** A fresh, empty working folder for one Codex report run, as Sentinel makes
  *  its analysis folder: leftovers of earlier runs go first; once made, its
- *  real path must be `<resources>/insights/.codex-runs/<it>` under the
+ *  real path must be `<resources>/insights/.insights-codex-runs/<it>` under the
  *  resources folder's own real path, so neither `insights` nor the runs
  *  folder became a link between the check and the make (one that did is
  *  removed, it is empty, and refused); an empty `.git` file makes it a
@@ -1415,12 +1415,12 @@ export async function runCrossAccountInsights(
   // An explicit list naming no Claude Code account names none (an empty list
   // would otherwise read as "all of them").
   const claudeTargets = refused || (ids && ids.length > 0 && claudeIds!.length === 0) ? [] : resolveCrossAccountTargets(claudeIds)
-  const codex = codexOff || (ids && ids.length > 0 && codexIds!.length === 0) ? { run: [], leftOut: [] } : resolveCodexCrossAccountTargets(codexIds)
-  if (refused && codex.run.length === 0 && codex.leftOut.length === 0) return { refused }
+  const codexTargets = codexOff || (ids && ids.length > 0 && codexIds!.length === 0) ? { run: [], leftOut: [] } : resolveCodexCrossAccountTargets(codexIds)
+  if (refused && codexTargets.run.length === 0 && codexTargets.leftOut.length === 0) return { refused }
   type Target = { provider: ProviderId; id: string; accountEmail?: string; label: string }
   const targets: Target[] = [
     ...claudeTargets.map((t): Target => ({ provider: 'claude', id: t.id, accountEmail: t.accountEmail, label: crossAccountLabel(t) })),
-    ...codex.run.map((t): Target => ({ provider: 'codex', id: t.id, accountEmail: t.accountEmail, label: t.label })),
+    ...codexTargets.run.map((t): Target => ({ provider: 'codex', id: t.id, accountEmail: t.accountEmail, label: t.label })),
   ]
   if (targets.length < CROSS_ACCOUNT_MIN_ACCOUNTS) {
     throw new Error(
@@ -1449,7 +1449,7 @@ export async function runCrossAccountInsights(
         status: 'running'
       })),
       // Named, never run: each needs its own per-run confirmation (D12).
-      ...codex.leftOut.map<InsightsRunMember>(t => ({
+      ...codexTargets.leftOut.map<InsightsRunMember>(t => ({
         profileId: t.id,
         accountEmail: t.accountEmail,
         label: t.label,

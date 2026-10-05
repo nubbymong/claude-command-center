@@ -136,7 +136,7 @@ describe('reading a session (the rollout line reader the Logs page uses)', () =>
   it("a session with no session_meta is not a session; the first session_meta is the file's own [host]", () => {
     expect(codexSessionFromLines(rollout().slice(1), never)).toBeNull()
     const sub = rollout()
-    sub.splice(1, 0, JSON.stringify({ type: 'session_meta', payload: { cwd: 'D:\\x\\.codex-runs\\ccc-insights-codex-1' } }))
+    sub.splice(1, 0, JSON.stringify({ type: 'session_meta', payload: { cwd: 'D:\\x\\.insights-codex-runs\\ccc-insights-codex-1' } }))
     expect(codexSessionFromLines(sub, (cwd) => isCodexInsightsRunFolder(cwd, null, 'win32'))).not.toBeNull()
   })
 
@@ -156,16 +156,16 @@ describe('reading a session (the rollout line reader the Logs page uses)', () =>
 
 describe("the report's own runs are left out (mockup D13: kept, so known by their working folder)", () => {
   it('a folder under the runs folder, or one named like it, is a report run; a project is not [host]', () => {
-    const parent = 'C:\\Res\\insights\\.codex-runs'
-    expect(isCodexInsightsRunFolder('c:\\res\\INSIGHTS\\.codex-runs\\ccc-insights-codex-ab12', parent, 'win32')).toBe(true)
+    const parent = 'C:\\Res\\insights\\.insights-codex-runs'
+    expect(isCodexInsightsRunFolder('c:\\res\\INSIGHTS\\.insights-codex-runs\\ccc-insights-codex-ab12', parent, 'win32')).toBe(true)
     // Under the runs folder, as Windows compares paths (case-insensitively), whatever the folder's own name.
-    expect(isCodexInsightsRunFolder('c:\\RES\\insights\\.CODEX-RUNS\\other', parent, 'win32')).toBe(true)
-    expect(isCodexInsightsRunFolder('/res/insights/.CODEX-RUNS/other', '/res/insights/.codex-runs', 'linux')).toBe(false)
-    expect(isCodexInsightsRunFolder('E:\\old\\insights\\.codex-runs\\ccc-insights-codex-zz', parent, 'win32')).toBe(true)
+    expect(isCodexInsightsRunFolder('c:\\RES\\insights\\.INSIGHTS-CODEX-RUNS\\other', parent, 'win32')).toBe(true)
+    expect(isCodexInsightsRunFolder('/res/insights/.INSIGHTS-CODEX-RUNS/other', '/res/insights/.insights-codex-runs', 'linux')).toBe(false)
+    expect(isCodexInsightsRunFolder('E:\\old\\insights\\.insights-codex-runs\\ccc-insights-codex-zz', parent, 'win32')).toBe(true)
     expect(isCodexInsightsRunFolder('C:\\Users\\alex\\projects\\demo', parent, 'win32')).toBe(false)
-    expect(isCodexInsightsRunFolder('C:\\Res\\insights\\.codex-runs-other\\x', parent, 'win32')).toBe(false)
-    expect(isCodexInsightsRunFolder('/home/a/proj/ccc-insights-codex-1', '/res/insights/.codex-runs', 'linux')).toBe(false)
-    expect(isCodexInsightsRunFolder('/res/insights/.codex-runs/ccc-insights-codex-1', '/res/insights/.codex-runs', 'linux')).toBe(true)
+    expect(isCodexInsightsRunFolder('C:\\Res\\insights\\.insights-codex-runs-other\\x', parent, 'win32')).toBe(false)
+    expect(isCodexInsightsRunFolder('/home/a/proj/ccc-insights-codex-1', '/res/insights/.insights-codex-runs', 'linux')).toBe(false)
+    expect(isCodexInsightsRunFolder('/res/insights/.insights-codex-runs/ccc-insights-codex-1', '/res/insights/.insights-codex-runs', 'linux')).toBe(true)
   })
 })
 
