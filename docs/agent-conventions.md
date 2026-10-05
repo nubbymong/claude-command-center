@@ -72,9 +72,11 @@ npm run test:e2e     # Playwright
   word of a hook command written in an argument (never as an operand), a node
   script and the command word (that position only) of a `cmd /c` / `sh -c` line
   inside the real npm or nvm folder. The temp folder, a CI runner's `RUNNER_TEMP`
-  (only `<work>/_temp` beside the checkout) and the checkout are not real homes. Node children load the same
-  guard through NODE_OPTIONS, and a child env that omits a home or temp variable
-  gets it filled in.
+  (only `<work>/_temp` beside the checkout; a CI step's own home inside it stays
+  protected) and the checkout are not real homes. An unlink, rm or rename acts on a
+  link itself, so a link into a home as the last component is not refused there.
+  Node children load the same guard through NODE_OPTIONS, and a child env that omits
+  a home or temp variable gets it filled in.
 - **Not covered:** native addons (they write natively); a non-node child beyond
   its environment, working folder and arguments (a native tool that finds the
   profile through the OS, e.g. to expand `~`, reaches the real one); shell
