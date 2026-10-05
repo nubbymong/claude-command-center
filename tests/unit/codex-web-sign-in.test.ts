@@ -524,6 +524,21 @@ describe('[host] the sign-in window', () => {
     for (const k of ['123e4567', 'sk-AbCdEf', HEX64.slice(0, 16), '9876543210', '4f9a8b7c6d5e', 'me@example.com', 'acct12345', 'deadbeefcafe', 'token_x1y2z3w4v5u']) expect(line, k).not.toContain(k)
   })
 
+  it('a top-level name or an email-path name shaped like an id or a secret is counted, never shown', async () => {
+    jars[PART] = SIGNED_IN_JAR
+    // One top-level key per rule, each caught by that rule alone, and an email
+    // whose only path runs through an id-shaped key.
+    page.identity = {
+      user: { mail: 'me@example.com' },
+      acct12345: 1, deadbeefcafe: 2, token_x1y2z3w4v5u: 3, 'two words': 4,
+      byId: { acct98765: 'other@example.com' },
+    }
+    await runServiceSignIn(RUN({ timeoutMs: 60 }))
+    const line = logs.find((l) => /did not complete/.test(l))!
+    expect(line).toContain('JSON keys user, byId (and 5 not shown); an email-shaped value at user.mail.')
+    for (const k of ['acct12345', 'deadbeefcafe', 'token_x1y2z3w4v5u', 'two words', 'acct98765']) expect(line, k).not.toContain(k)
+  })
+
   it('a first read while the page is off chatgpt.com is not the last: a later read on it answers', async () => {
     jars[PART] = SIGNED_IN_JAR
     // The cookie is set while the page is still on the sign-in host.
