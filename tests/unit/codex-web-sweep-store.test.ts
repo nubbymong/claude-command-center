@@ -119,16 +119,16 @@ describe('[host] the start sweep reads the record store once, without side effec
     expect(await sweep([A, B])).toEqual([A])
   })
 
-  for (const [label, setUp] of [
-    ['a corrupt store', () => { F.files.set(FILE, '{ not json') }],
-    ['a store of another schema version (a downgrade)', () => { F.files.set(FILE, JSON.stringify({ schemaVersion: 2, sessions: [] })) }],
-    ['a store whose sessions are not a list', () => { F.files.set(FILE, JSON.stringify({ schemaVersion: 1, sessions: {} })) }],
-    ['a store that cannot be read', () => { F.files.set(FILE, '{}'); F.readFails.add(FILE) }],
-    ['a store whose presence cannot be checked (the stat throws; existsSync would call it missing)', () => { F.files.set(FILE, JSON.stringify({ schemaVersion: 1, sessions: [record(B)] })); F.statFails.add(FILE) }],
-    ['a store that is a folder', () => { F.dirs.add(FILE) }],
-    ['a quarantined copy of the store (an earlier corrupt read moved it aside)', () => { F.files.set(`${FILE}.corrupt-1700000000000-ab12cd34`, '{ not json') }],
-    ['a quarantined copy beside a store that reads cleanly', () => { F.files.set(FILE, JSON.stringify({ schemaVersion: 1, sessions: [] })); F.files.set(`${FILE}.corrupt-1700000000000-ab12cd34`, '{}') }],
-    ['a folder that cannot be listed (a quarantined copy cannot be ruled out)', () => { F.files.set(FILE, JSON.stringify({ schemaVersion: 1, sessions: [] })); F.listFails = true }],
+  for (const [label, why, setUp] of [
+    ['a corrupt store', 'malformed', () => { F.files.set(FILE, '{ not json') }],
+    ['a store of another schema version (a downgrade)', 'other-schema', () => { F.files.set(FILE, JSON.stringify({ schemaVersion: 2, sessions: [] })) }],
+    ['a store whose sessions are not a list', 'malformed', () => { F.files.set(FILE, JSON.stringify({ schemaVersion: 1, sessions: {} })) }],
+    ['a store that cannot be read', 'unreadable', () => { F.files.set(FILE, '{}'); F.readFails.add(FILE) }],
+    ['a store whose presence cannot be checked (the stat throws; existsSync would call it missing)', 'unreadable', () => { F.files.set(FILE, JSON.stringify({ schemaVersion: 1, sessions: [record(B)] })); F.statFails.add(FILE) }],
+    ['a store that is a folder', 'unreadable', () => { F.dirs.add(FILE) }],
+    ['a quarantined copy of the store (an earlier corrupt read moved it aside)', 'quarantined', () => { F.files.set(`${FILE}.corrupt-1700000000000-ab12cd34`, '{ not json') }],
+    ['a quarantined copy beside a store that reads cleanly', 'quarantined', () => { F.files.set(FILE, JSON.stringify({ schemaVersion: 1, sessions: [] })); F.files.set(`${FILE}.corrupt-1700000000000-ab12cd34`, '{}') }],
+    ['a folder that cannot be listed (a quarantined copy cannot be ruled out)', 'unreadable', () => { F.files.set(FILE, JSON.stringify({ schemaVersion: 1, sessions: [] })); F.listFails = true }],
   ] as const) {
     it(`${label}: the whole sweep is skipped, one line is logged, and the file stays where and as it was`, async () => {
       setUp()
@@ -142,6 +142,7 @@ describe('[host] the start sweep reads the record store once, without side effec
       expect(F.files.get(FILE)).toBe(before)
       const lines = F.logs.filter((l) => /start sweep/.test(l))
       expect(lines).toHaveLength(1)
+      expect(lines[0]).toContain(`(${why})`)
       expect(lines[0]).not.toMatch(/acct-|owner@|res\//)
     })
   }
