@@ -369,3 +369,95 @@ describe('[host] the Codex web record: metadata only, in its own file', () => {
     expect(getCodexWebSession(ACCT2)).toBeDefined()
   })
 })
+
+describe('[host] the account view logs hosts only, and holds sub-frames to https', () => {
+  it('a blocked navigation, a non-https sub-frame and a blocked download log the host, never the path, query or fragment', async () => {
+    const win = new FakeParentWindow()
+    openCodexAccountPane(win as never, 'sess-log', ACCT, BOUNDS)
+    const wc = createdViews[0].view.webContents
+    await flush()
+    wc.handlers['will-navigate']({ preventDefault: vi.fn(), isMainFrame: true }, 'https://evil.example/cb?code=OAUTH-SECRET#state=OAUTH-SECRET')
+    wc.handlers['will-redirect']({ preventDefault: vi.fn(), isMainFrame: false }, 'http://frames.example/x?token=FRAME-SECRET')
+    const ses = partitions[webPartitionForCodexAccount(ACCT)]
+    ses.sessionEvents['will-download']({ preventDefault: vi.fn() }, { getURL: () => 'https://files.example/f.zip?sig=DL-SECRET' })
+    const joined = logged.join('\n')
+    expect(joined).toContain('evil.example')
+    expect(joined).toContain('frames.example')
+    expect(joined).toContain('files.example')
+    expect(joined).not.toMatch(/SECRET|\/cb|f\.zip|\?|#/)
+    closeAccountPane('sess-log')
+  })
+
+  it("holds a sub-frame's own navigation to https, never hands it to the OS, and leaves the main frame alone", async () => {
+    const win = new FakeParentWindow()
+    openCodexAccountPane(win as never, 'sess-frame', ACCT, BOUNDS)
+    const ses = partitions[webPartitionForCodexAccount(ACCT)]
+    const wc = createdViews[0].view.webContents
+    ses.cookies.get.mockResolvedValue(TOKEN_COOKIE)
+    ses.cookies.listeners[0](null, { name: '__Secure-next-auth.session-token' })
+    await flush(); await flush()
+    const frameNav = wc.handlers['will-frame-navigate']
+    expect(typeof frameNav).toBe('function')
+    const http = { preventDefault: vi.fn(), isMainFrame: false, url: 'http://frames.example/x' }
+    frameNav(http)
+    expect(http.preventDefault).toHaveBeenCalled()
+    const https = { preventDefault: vi.fn(), isMainFrame: false, url: 'https://challenges.cloudflare.com/x' }
+    frameNav(https)
+    expect(https.preventDefault).not.toHaveBeenCalled()
+    const main = { preventDefault: vi.fn(), isMainFrame: true, url: 'https://example.com/paper' }
+    frameNav(main)
+    expect(main.preventDefault).not.toHaveBeenCalled()
+    expect(openedExternal).toEqual([])
+    closeAccountPane('sess-frame')
+  })
+})
+
+describe('[host] an email that arrives after the grace is still recorded, a bounded number of times', () => {
+  it('a later refresh records the session once the email answers', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const win = new FakeParentWindow()
+      openCodexAccountPane(win as never, 'sess-late', ACCT, BOUNDS)
+      const ses = partitions[webPartitionForCodexAccount(ACCT)]
+      const wc = createdViews[0].view.webContents
+      await vi.advanceTimersByTimeAsync(1)
+      ses.cookies.get.mockResolvedValue(TOKEN_COOKIE)
+      ses.cookies.listeners[0](null, { name: '__Secure-next-auth.session-token' })
+      await vi.advanceTimersByTimeAsync(6000)
+      expect(getCodexWebSession(ACCT)).toBeUndefined()
+      wc.executeJavaScriptInIsolatedWorld.mockResolvedValue('me@example.com')
+      wc.handlers['did-navigate']()
+      await vi.advanceTimersByTimeAsync(6000)
+      expect(getCodexWebSession(ACCT)).toMatchObject({ accountEmail: 'me@example.com', origin: 'in-pane' })
+      closeAccountPane('sess-late')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stops trying after its bound when the email never answers', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const win = new FakeParentWindow()
+      openCodexAccountPane(win as never, 'sess-never', ACCT, BOUNDS)
+      const ses = partitions[webPartitionForCodexAccount(ACCT)]
+      const wc = createdViews[0].view.webContents
+      await vi.advanceTimersByTimeAsync(1)
+      ses.cookies.get.mockResolvedValue(TOKEN_COOKIE)
+      ses.cookies.listeners[0](null, { name: '__Secure-next-auth.session-token' })
+      await vi.advanceTimersByTimeAsync(6000)
+      for (let i = 0; i < 8; i++) {
+        wc.handlers['did-navigate']()
+        await vi.advanceTimersByTimeAsync(6000)
+      }
+      const reads = wc.executeJavaScriptInIsolatedWorld.mock.calls.length
+      wc.handlers['did-navigate']()
+      await vi.advanceTimersByTimeAsync(6000)
+      expect(wc.executeJavaScriptInIsolatedWorld.mock.calls.length).toBe(reads)
+      expect(getCodexWebSession(ACCT)).toBeUndefined()
+      closeAccountPane('sess-never')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})

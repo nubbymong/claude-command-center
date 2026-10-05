@@ -100,12 +100,18 @@ export async function readServiceAccountEmail(wc: EmailReadableWebContents, desc
 }
 
 async function readEmailWith(wc: EmailReadableWebContents, expr: string): Promise<string | null> {
+  return sanitizeAccountEmail(await evaluateIsolated(wc, expr))
+}
+
+/** Run an expression in an isolated world (a fallback for older environments),
+ *  bounded in time. Never throws; null on any failure. */
+async function evaluateIsolated(wc: EmailReadableWebContents, expr: string): Promise<unknown> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     const run = typeof wc.executeJavaScriptInIsolatedWorld === 'function'
       ? wc.executeJavaScriptInIsolatedWorld(1, [{ code: expr }])
       : wc.executeJavaScript(expr, true)
-    const v = await Promise.race([
+    return await Promise.race([
       Promise.resolve(run),
       // Timer kept + cleared in finally so a resolved read does not leave a
       // 10 s handle alive (the poll fires this up to ~250 times over a sign-in).
@@ -114,10 +120,55 @@ async function readEmailWith(wc: EmailReadableWebContents, expr: string): Promis
         if (typeof (timer as { unref?: () => void }).unref === 'function') (timer as { unref: () => void }).unref()
       }),
     ])
-    return sanitizeAccountEmail(v)
   } catch {
     return null
   } finally {
     if (timer) clearTimeout(timer)
   }
+}
+
+/** The SHAPE of a service's identity answer: its HTTP status, whether it was a
+ *  JSON object, and its key NAMES two levels deep. Never a value. */
+export interface IdentityAnswerShape {
+  status: number
+  json: boolean
+  keys: string[]
+}
+
+/**
+ * For a sign-in that does not complete (the names-only diagnostic): the same
+ * origin-gated request as the identity read, in an isolated world, returning
+ * only the HTTP status and the answer's key NAMES (top level and one level
+ * below, as `a` and `a.b`), never a value. It lets one failed run show where
+ * the email actually sits, or that the endpoint is wrong, without anything the
+ * answer holds (a token included) crossing into the main process.
+ */
+export function serviceIdentityShapeExpression(desc: WebServiceDescriptor): string {
+  const origin = JSON.stringify(desc.origin)
+  const path = JSON.stringify(desc.identityPath)
+  return (
+    `(location.origin === ${origin}) ` +
+    `? fetch(${path},{credentials:'include',cache:'no-store'}).then((r)=>r.text().then((t)=>{` +
+    `let j=null;try{j=JSON.parse(t)}catch(e){j=null}` +
+    `const o=(v)=>v!==null&&typeof v==='object'&&!Array.isArray(v);const keys=[];` +
+    `if(o(j)){for(const k of Object.keys(j).slice(0,40)){keys.push(k);const v=j[k];` +
+    `if(o(v)){for(const k2 of Object.keys(v).slice(0,40)){keys.push(k+'.'+k2)}}}}` +
+    `return {status:r.status,json:o(j),keys:keys}}))` +
+    `.catch(()=>null) ` +
+    `: Promise.resolve(null)`
+  )
+}
+
+const SHAPE_KEY_RE = /^[A-Za-z0-9_$-]{1,64}(\.[A-Za-z0-9_$-]{1,64})?$/
+
+/** Read and validate the identity answer's shape. Never throws; null when the
+ *  page is elsewhere, the request failed, or the answer is not that shape.
+ *  Key names off a conservative pattern are dropped, not shown. */
+export async function readServiceIdentityShape(wc: EmailReadableWebContents, desc: WebServiceDescriptor): Promise<IdentityAnswerShape | null> {
+  const v = await evaluateIsolated(wc, serviceIdentityShapeExpression(desc)) as Partial<IdentityAnswerShape> | null
+  if (!v || typeof v !== 'object') return null
+  const status = v.status
+  if (typeof status !== 'number' || !Number.isInteger(status) || status < 100 || status > 599) return null
+  const keys = Array.isArray(v.keys) ? v.keys.filter((k): k is string => typeof k === 'string' && SHAPE_KEY_RE.test(k)).slice(0, 60) : []
+  return { status, json: v.json === true, keys }
 }

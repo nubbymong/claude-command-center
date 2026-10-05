@@ -55,9 +55,9 @@ import type { SecretHandleStore } from './secret-handles'
 import { realmEnvForProvider } from './registry'
 import { recipeRunLine } from './recipe-run-line'
 // P4.6 (row 58): what an account holds outside its sign-in is cleared before it
-// is archived, through a provider-neutral, zero-dependency seam (index.ts
-// registers the owners at start).
-import { prepareAccountArchive } from '../../account-archive-hooks'
+// is archived, through a provider-neutral seam inside core (index.ts registers
+// the owners at start through core's entry point).
+import { prepareAccountArchive } from './archive-hooks'
 
 export interface AccountsServiceDeps {
   /** The registry of the app's CURRENT resources directory, asked afresh
@@ -1983,18 +1983,28 @@ export class AccountsService {
       const r = await ctx.store.mutate((d, t) => restoreArchivedAccount(d, a.id, t))
       return this.fromStore(r) ?? { ok: true }
     }
-    const apply = async (): Promise<AccountsResult> => {
+    const apply = async (opts: { archiveCleared?: boolean } = {}): Promise<AccountsResult> => {
       let consumers = 0
       let sessions: string[] = []
       let unnamed = 0
       let held = false
       let inUse = false
       let noop = false
+      let changedMeanwhile = false
       const r = await ctx.store.mutate((d, t) => {
         noop = findAccount(d, a.id)?.lifecycle === next
         // Under the lock that applies it: a sign-out, archive or abandon
         // holding the account is never overtaken by a lifecycle change.
         if (this.deps.leases.isHeld(a.id)) { held = true; return { ok: false, code: 'blocked-by-consumers', message: 'held' } }
+        // P4.6: an archive commits only through a path that ran the archive
+        // hook first. A path chosen before this lock (the account then not
+        // inactive, so the registry was to name the rule) whose account has
+        // since become archivable is refused here, under the lock, and asked
+        // again.
+        if (next === 'archived' && !opts.archiveCleared && !ctx.legacyRecord && findAccount(d, a.id)?.lifecycle === 'inactive') {
+          changedMeanwhile = true
+          return { ok: false, code: 'blocked-by-consumers', message: 'changed' }
+        }
         // A mirrored account's own record held by a session that takes no
         // lease (a Claude profile): refused here as on the provider's own
         // surface, whichever channel asks. Checked at the moment of the
@@ -2009,6 +2019,7 @@ export class AccountsService {
       })
       if (held) return failure('busy')
       if (inUse) return failure('in-use')
+      if (changedMeanwhile) return failure('lifecycle', 'This account changed while it was being archived. Try again.')
       const bad = this.fromStore(r, consumers, sessions, unnamed)
       if (bad) return bad
       // A mirrored account's lifecycle is the provider's own list's too:
@@ -2039,20 +2050,25 @@ export class AccountsService {
         // Credentials stay under the other client's control: say so first.
         if (input.acknowledgeExternal !== true) return failure('acknowledgement-required', 'Archiving only forgets this sign-in here; it stays signed in for other apps. Confirm to continue.')
         if (a.lifecycle !== 'inactive') return apply() // the registry names the rule
-        if (!ctx.p?.auth) return this.withArchiveCleared(a, apply)
+        if (!ctx.p?.auth) return this.withArchiveCleared(a, () => apply({ archiveCleared: true }))
         const release = await this.exclusiveHold(ctx.store, a.id, a.providerId)
         if (typeof release !== 'function') return release
         let cleared: (() => void) | null = null
         try {
-          // P4.6: what the account holds outside its sign-in goes first.
-          const c = await this.clearedForArchive(a)
-          if (typeof c !== 'function') return c
-          cleared = c
+          // Held from here: no lifecycle change can land. The lifecycle read
+          // above came before the hold, so it is read again under it.
+          if (this.lifecycleNow(ctx, a.id) !== 'inactive') return failure('lifecycle', 'This account changed while it was being archived. Try again.')
           // Design 5.5: a home that now holds another sign-in is reconciled
           // first. Archiving changes nothing outside this app, so a check
           // that cannot run (the CLI gone) does not keep the record.
           const changed = await this.externalStillMatches(ctx.store, ctx.p, a.id, a.authRealmId, { unansweredBlocks: false })
           if (changed) return changed
+          // P4.6: what the account holds outside its sign-in is cleared after
+          // the read-only check and before anything changes; a clear that
+          // fails refuses the archive.
+          const c = await this.clearedForArchive(a)
+          if (typeof c !== 'function') return c
+          cleared = c
           // Held: the count is 0 and nothing new could start.
           const r = await ctx.store.mutate((d, t) => setAccountLifecycle(d, a.id, 'archived', { consumers: this.deps.leases.count(a.id) }, t))
           const archived = this.fromStore(r)
@@ -2063,7 +2079,7 @@ export class AccountsService {
           release()
         }
       }
-      if (!ctx.p?.auth) return a.lifecycle === 'inactive' ? this.withArchiveCleared(a, apply) : apply()
+      if (!ctx.p?.auth) return a.lifecycle === 'inactive' ? this.withArchiveCleared(a, () => apply({ archiveCleared: true })) : apply()
       // A managed archive leaves a credential-free tombstone: sign out first,
       // and a failed sign-out fails the archive (the account stays inactive).
       if (a.lifecycle !== 'inactive') return apply() // the registry names the rule
@@ -2073,18 +2089,22 @@ export class AccountsService {
       if (typeof release !== 'function') return release
       let cleared: (() => void) | null = null
       try {
-        // P4.6: what the account holds outside its sign-in (a Codex account's
-        // chatgpt.com web session) is cleared FIRST, before anything of the
-        // archive runs; a clear that fails refuses the archive.
-        const c = await this.clearedForArchive(a)
-        if (typeof c !== 'function') return c
-        cleared = c
+        // Held from here: no lifecycle change can land. The lifecycle read
+        // above came before the hold, so it is read again under it.
+        if (this.lifecycleNow(ctx, a.id) !== 'inactive') return failure('lifecycle', 'This account changed while it was being archived. Try again.')
         await this.ensureDiscovered(ctx.p)
         // The account's own folder answers first (a status run: the folder in
         // place, no .env): nothing is signed out before the archive is known
         // to be able to finish (review round 2, L2-3).
         const status = await ctx.p.auth.status({ authRealmId: a.authRealmId }).catch((): AuthOperationResult & { state: KnownAuthState } => ({ ok: false, code: 'not-started', state: 'error' }))
         if (!status.ok) return this.fromAuth(status)
+        // P4.6: what the account holds outside its sign-in (a Codex account's
+        // chatgpt.com web session) is cleared after the read-only check and
+        // before anything is signed out or removed; a clear that fails
+        // refuses the archive.
+        const c = await this.clearedForArchive(a)
+        if (typeof c !== 'function') return c
+        cleared = c
         // Then an old sign-in a sign in again left: an archived account keeps
         // none. One that still cannot be removed refuses the archive before
         // this account's own sign-in is touched.
@@ -2117,9 +2137,14 @@ export class AccountsService {
     return failure('invalid-request')
   }
 
+  /** The account's lifecycle in the registry as it stands now. */
+  private lifecycleNow(ctx: { store: AccountRegistryStore; doc: ProviderRegistryDoc }, accountId: string): AccountLifecycle | undefined {
+    return findAccount(ctx.store.current() ?? ctx.doc, accountId)?.lifecycle
+  }
+
   /** P4.6 (row 58): before an account is archived, what it holds outside its
    *  sign-in (a Codex account's chatgpt.com web session) is cleared, through
-   *  the provider-neutral archive seam (account-archive-hooks.ts). A clear
+   *  the provider-neutral archive seam (archive-hooks.ts). A clear
    *  that fails refuses the archive, as Claude's account delete refuses when
    *  its claude.ai session cannot be cleared. Resolves to the release to run
    *  once the archive has settled, or the refusal. */

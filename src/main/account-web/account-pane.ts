@@ -61,7 +61,7 @@ import { safeExternalHttpsHref } from '../../shared/safe-url'
 import { shell } from 'electron'
 import type { WebviewNavState } from '../../shared/browser-url'
 import { webSessionFromElectronCookies } from './cookie-harvest'
-import { toChromeUserAgent } from './in-app-sign-in'
+import { blockPartitionDownloads, diagHost, toChromeUserAgent } from './in-app-sign-in'
 import { readAccountEmail, readServiceAccountEmail } from './account-email-read'
 import { getWebSession, saveWebSession, removeWebSession } from './session-store'
 import { getCodexWebSession, saveCodexWebSession, removeCodexWebSession } from './codex-web-store'
@@ -174,8 +174,9 @@ interface PaneService {
   /** A record is only made with a valid email (Codex: fail closed). */
   emailRequired: boolean
   stored: (ownerId: string) => StoredRecord | undefined
-  save: (ownerId: string, email: string | null, expiresAt: number | null, prior: StoredRecord | undefined) => void
-  remove: (ownerId: string) => void
+  /** Write the record; `false` means it was not written. */
+  save: (ownerId: string, email: string | null, expiresAt: number | null, prior: StoredRecord | undefined) => boolean | void
+  remove: (ownerId: string) => boolean | void
   stateOf: (sessionId: string, ownerId: string, authed: boolean | null, email: string | null) => AccountPaneState
 }
 
@@ -215,8 +216,8 @@ const CODEX_PANE: PaneService = {
   emailRequired: true,
   stored: (id) => getCodexWebSession(id),
   save: (id, email, expiresAt, prior) => {
-    if (email === null) return
-    saveCodexWebSession({ accountId: id, accountEmail: email, acquiredAt: prior?.acquiredAt ?? Date.now(), expiresAt, origin: 'in-pane' })
+    if (email === null) return false
+    return saveCodexWebSession({ accountId: id, accountEmail: email, acquiredAt: prior?.acquiredAt ?? Date.now(), expiresAt, origin: 'in-pane' })
   },
   remove: (id) => removeCodexWebSession(id),
   stateOf: (sessionId, id, authed, email) => ({ sessionId, service: 'codex', accountId: id, authed, email }),
@@ -240,6 +241,9 @@ interface PaneEntry {
   /** The null-email backfill has run once for this pane — don't re-poll
    *  the identity read on every navigation for an account that never yields one. */
   backfilled: boolean
+  /** Where the email is required (Codex): recording attempts that found the
+   *  session but no email yet. Later refreshes retry, up to a bound. */
+  emailRetries: number
   /** Monotonic token for the async cookie read: a slower earlier read that
    *  resolves after a newer one must not overwrite the newer result (A8). */
   authSeq: number
@@ -304,6 +308,9 @@ function viewIsOnService(entry: PaneEntry): boolean {
  *  the origin-gated read answers null until it is. */
 const EMAIL_GRACE_MS = 4_000
 const EMAIL_POLL_MS = 800
+/** Where the email is required: recording attempts per pane before it stops
+ *  trying (each attempt reads within one email grace). */
+const MAX_EMAIL_RETRIES = 5
 
 /**
  * The partition just transitioned to signed-in while the pane was open (or was
@@ -351,8 +358,18 @@ async function recordSession(entry: PaneEntry, expiresAt: number | null): Promis
     // captured the email) with a null-email one; and where the email is
     // required (Codex), never record without one at all.
     const prior = entry.svc.stored(entry.ownerId)
-    if (email === null && (entry.svc.emailRequired || (prior && prior.accountEmail))) { entry.backfilled = true; return }
-    entry.svc.save(entry.ownerId, email, expiresAt, prior)
+    if (email === null && entry.svc.emailRequired) {
+      // No email yet where one is required: nothing is recorded, and a later
+      // refresh of this pane tries again (bounded per pane), since the email
+      // can arrive after this attempt's grace.
+      entry.emailRetries++
+      return
+    }
+    if (email === null && prior && prior.accountEmail) { entry.backfilled = true; return }
+    if (entry.svc.save(entry.ownerId, email, expiresAt, prior) === false) {
+      logError(`[account-pane] the ${entry.svc.label} record for ${entry.ownerId} could not be written`)
+      return
+    }
     // Bound the null-email backfill: a full grace attempt has now run for this
     // pane, so don't re-poll the identity read on every future navigation for
     // an account whose identity never yields an email (A5). A real email
@@ -436,7 +453,11 @@ async function refreshAuthed(sessionId: string): Promise<void> {
       // (backfilled) so an account whose identity never yields an email does
       // not re-poll on every navigation. Only our own pane records - the window
       // flows manage their own.
-      (stored?.origin === 'in-pane' && stored.accountEmail === null && !entry.backfilled))
+      (stored?.origin === 'in-pane' && stored.accountEmail === null && !entry.backfilled) ||
+      // Where the email is required (Codex) and an earlier attempt found the
+      // session but no email yet: retry on a later refresh, a bounded number
+      // of times per pane, so an email that arrives late is still recorded.
+      (entry.svc.emailRequired && !stored && entry.emailRetries > 0 && entry.emailRetries < MAX_EMAIL_RETRIES))
   ) {
     void recordSession(entry, expiresAt).then(() => sendState(entry, sessionId))
   }
@@ -444,7 +465,7 @@ async function refreshAuthed(sessionId: string): Promise<void> {
   // record: an in-page logout clears the cookie, and leaving a stored
   // "active" session behind would show a green dot for a session that 401s.
   if (before === true && !hasSessionCookie && entry.svc.stored(entry.ownerId)) {
-    entry.svc.remove(entry.ownerId)
+    if (entry.svc.remove(entry.ownerId) === false) logError(`[account-pane] the ${entry.svc.label} record for ${entry.ownerId} could not be removed`)
   }
   if (before !== entry.authed) sendState(entry, sessionId)
 }
@@ -534,18 +555,13 @@ function openPane(
     // Device permissions (WebUSB/serial/HID) default-deny with no handler.
     // Block downloads (the one hardening step the account partition otherwise
     // lacked): a session-bearing view must not hand the OS an unmediated
-    // Save-As. Guarded so the shared session gets exactly one listener.
+    // Save-As. Shared with the sign-in window, so the shared session gets
+    // exactly one listener; it logs the host only (a signed download URL
+    // carries its credential in the query).
     try {
       ses.setPermissionRequestHandler((_wc, _perm, cb) => cb(false))
-      const flagged = ses as typeof ses & { __cccAccountDownloadsBlocked?: boolean }
-      if (!flagged.__cccAccountDownloadsBlocked) {
-        flagged.__cccAccountDownloadsBlocked = true
-        ses.on('will-download', (event, item) => {
-          event.preventDefault()
-          logError(`[account-pane] blocked download: ${String(item?.getURL?.() ?? '').slice(0, 200)}`)
-        })
-      }
     } catch { /* harden best-effort; the webPreferences below still hold */ }
+    blockPartitionDownloads(ses, 'account-pane')
 
     const view = new WebContentsView({
       webPreferences: {
@@ -569,6 +585,7 @@ function openPane(
       recording: false,
       recordDirty: false,
       backfilled: false,
+      emailRetries: 0,
       authSeq: 0,
       refreshTimer: null,
       closed: false,
@@ -583,8 +600,8 @@ function openPane(
     // frame's URL to the OS browser (external) - an un-gestured tab-bomb any page
     // could fire by creating an iframe. So sub-frames are left to same-origin
     // policy, and the guard acts only when the event is confirmed NOT a
-    // sub-frame. This matches the sibling artifacts/sign-in windows, which carry
-    // no frame guard.
+    // sub-frame (a sub-frame's own navigations, through will-frame-navigate
+    // below, are held to https only).
     const guard = (label: string) => (event: { preventDefault: () => void; isMainFrame?: boolean }, target: string): void => {
       if (event.isMainFrame === false) {
         // Sub-frame: left to same-origin policy (never blocked for being
@@ -593,7 +610,7 @@ function openPane(
         // filter, at zero risk of the iframe tab-bomb.
         let https = false
         try { https = new URL(target).protocol === 'https:' } catch { https = false }
-        if (!https) { event.preventDefault(); logError(`[account-pane] blocked non-https sub-frame: ${String(target).slice(0, 200)}`) }
+        if (!https) { event.preventDefault(); logError(`[account-pane] blocked a non-https sub-frame (${diagHost(String(target))})`) }
         return
       }
       const decision = svc.navDecision(target, entry.authed)
@@ -604,11 +621,20 @@ function openPane(
         if (href) void shell.openExternal(href)
         else logError('[account-pane] refused to hand a non-https URL to the OS')
       } else {
-        logError(`[account-pane] blocked ${label}: ${String(target).slice(0, 200)}`)
+        // The host only: a blocked URL can carry an OAuth code or state in
+        // its query or fragment.
+        logError(`[account-pane] blocked ${label} to ${diagHost(String(target))}`)
       }
     }
     view.webContents.on('will-navigate', guard('will-navigate'))
     view.webContents.on('will-redirect', guard('will-redirect'))
+    // will-navigate is the main frame's only: a sub-frame's own navigation
+    // comes through will-frame-navigate, held to the same sub-frame rule
+    // (https only, never handed to the OS browser).
+    view.webContents.on('will-frame-navigate', (event: { preventDefault: () => void; isMainFrame?: boolean; url?: string }) => {
+      if (event?.isMainFrame !== false) return
+      guard('will-frame-navigate')(event, String(event?.url ?? ''))
+    })
     view.webContents.on('will-prevent-unload', (event) => { event.preventDefault() })
     view.webContents.setWindowOpenHandler(({ url }) => {
       // A popup is only ever followed into THIS view when it is the service's

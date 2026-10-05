@@ -66,8 +66,9 @@ export function codexWebViewFor(accountId: string, now: number = Date.now()): Co
   return { ...(s ?? {}), accountId, status: codexWebStatusOf(s, now) }
 }
 
-/** Insert or replace one account's record. Refuses a malformed one. */
-export function saveCodexWebSession(s: CodexWebSession): void {
+/** Insert or replace one account's record. Refuses a malformed one (throws);
+ *  true once the record is on disk, false when the write failed. */
+export function saveCodexWebSession(s: CodexWebSession): boolean {
   if (!validRecord(s)) throw new Error('refusing to save a malformed chatgpt.com session record')
   const record: CodexWebSession = {
     accountId: s.accountId,
@@ -78,13 +79,15 @@ export function saveCodexWebSession(s: CodexWebSession): void {
   }
   const f = read()
   f.sessions = [...f.sessions.filter((x) => x.accountId !== s.accountId), record]
-  writeJsonFile(FILE, f)
+  return writeJsonFile(FILE, f)
 }
 
-/** Forget the record. The caller clears the partition separately. */
-export function removeCodexWebSession(accountId: string): void {
+/** Forget the record. The caller clears the partition separately. True when
+ *  there is no record left (none, or removed); false when the write failed,
+ *  so a caller never reports "signed out" over a record still on disk. */
+export function removeCodexWebSession(accountId: string): boolean {
   const f = read()
   const next = f.sessions.filter((s) => s.accountId !== accountId)
-  if (next.length === f.sessions.length) return
-  writeJsonFile(FILE, { ...f, sessions: next })
+  if (next.length === f.sessions.length) return true
+  return writeJsonFile(FILE, { ...f, sessions: next })
 }

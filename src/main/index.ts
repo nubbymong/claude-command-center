@@ -27,7 +27,7 @@ import { startStatuslineWatcher, setTranscriptPathSink, setStatuslineUsageSink, 
 import { recordLiveUsageForSession, setClaudeAccountDataAllowed, setLiveUsageTranscriptProfile } from './usage/account-usage'
 import { getProvider } from './providers'
 import { composeProviders, flushPendingProviderCliKills } from './providers/compose'
-import { initAccountRegistry, reconcileLegacyAccountStores } from './provider-account-registry'
+import { initAccountRegistry, reconcileLegacyAccountStores, getConsumerLeases } from './provider-account-registry'
 import { initProviderAccounts, getAccountsService, runStartupProviderMigrations, followResourcesDirectory, discoverProvidersAtStart, providerOnNow } from './provider-accounts'
 import { probeClaudeCliVersion, setClaudeCliProbeAllowed } from './claude-cli-version'
 import { providerProbeRefusal } from './provider-launch-gate'
@@ -51,9 +51,9 @@ import { onPartitionRevoked } from './account-web/partition-revocation'
 import { removeWebSession } from './account-web/session-store'
 // WP2 PR 4, P4.6 (row 58): a Codex account's chatgpt.com web session.
 import { registerCodexWebHandlers } from './ipc/codex-web-handlers'
-import { onCodexWebSessionCleared, prepareCodexWebArchive } from './account-web/codex-web-session'
+import { onCodexWebSessionCleared, onCodexWebSessionClosing, prepareCodexWebArchive } from './account-web/codex-web-session'
 import { removeCodexWebSession } from './account-web/codex-web-store'
-import { onBeforeAccountArchive } from './account-archive-hooks'
+import { onBeforeAccountArchive } from './providers/core'
 import { registerInsightsHandlers } from './ipc/insights-handlers'
 import { registerNotesHandlers } from './ipc/notes-handlers'
 import { registerVisionHandlers } from './ipc/vision-handlers'
@@ -663,12 +663,15 @@ if (!gotTheLock) {
     onPartitionRevoked(removeWebSession)
     onPartitionRevoked(closeAccountPanesForProfile)
     // P4.6 (row 58): the same for a Codex account's chatgpt.com session: its
-    // own channels (the app window only, the registry checked), and when its
-    // partition is wiped (sign-out, archive, an incomplete sign-in) its record
-    // and its panes go with it.
-    registerCodexWebHandlers(getWindow)
+    // own channels (the app window only, the registry checked; a pane only for
+    // a Codex session that holds the account's launch lease). Before its
+    // partition is wiped (sign-out, archive, an incomplete sign-in) its panes
+    // close, so nothing writes the session back; after the wipe its record goes.
+    registerCodexWebHandlers(getWindow, {
+      sessionRunsUnder: (sessionId, accountId) => isCodexPtySession(sessionId) && getConsumerLeases().sessionsHolding(accountId).includes(sessionId),
+    })
+    onCodexWebSessionClosing(closeCodexAccountPanes)
     onCodexWebSessionCleared(removeCodexWebSession)
-    onCodexWebSessionCleared(closeCodexAccountPanes)
     // #216: a crash or forced quit can leave a sign-in browser profile behind, and
     // each one holds a live claude.ai session. Sweep them at boot.
     try { sweepAbandonedProfiles(getDataDirectory()) } catch { /* best effort */ }

@@ -26,12 +26,14 @@ import { IPC } from '../../shared/ipc-channels'
 import { isWebSessionAccountId } from '../../shared/account-web-session'
 import { logError } from '../debug-logger'
 import { appWindowSender } from './trusted-sender'
-import { getAccountRegistry } from '../provider-account-registry'
+import { getAccountRegistry, getConsumerLeases } from '../provider-account-registry'
 import {
   cancelCodexWebSignIn,
   clearCodexWebSession,
+  discardCodexWebRun,
   getCodexWebSignInState,
   isCodexWebArchiving,
+  isCodexWebClearing,
   runCodexWebSignIn,
 } from '../account-web/codex-web-session'
 import { codexWebViewFor, removeCodexWebSession, saveCodexWebSession } from '../account-web/codex-web-store'
@@ -59,7 +61,8 @@ const paneOpenSchema = z.object({ sessionId: sessionIdSchema, accountId: account
 /**
  * Why this account may not have a chatgpt.com web session made or used now,
  * or null when it may: known to the registry, a Codex account, not archived,
- * not being archived. No registry (or one that cannot be read) refuses.
+ * not being archived, and its web session not being cleared. No registry (or
+ * one that cannot be read) refuses.
  */
 export function codexWebAccountRefusal(accountId: string): string | null {
   let accounts: ReadonlyArray<{ id: string; providerId: string; lifecycle: string }> | undefined
@@ -74,6 +77,7 @@ export function codexWebAccountRefusal(accountId: string): string | null {
   if (a.providerId !== 'codex') return 'not a Codex account'
   if (a.lifecycle === 'archived') return 'This account is archived.'
   if (isCodexWebArchiving(accountId)) return 'This account is being archived.'
+  if (isCodexWebClearing(accountId)) return "This account's chatgpt.com sign-in is being cleared. Try again in a moment."
   return null
 }
 
@@ -87,8 +91,24 @@ function eligible(raw: unknown): { ok: true; id: string } | Err {
 
 const FOREIGN: Err = { ok: false, error: 'refused: not the app window' }
 
-export function registerCodexWebHandlers(getWindow: () => BrowserWindow | null): void {
+/** The default binding: the session holds a lease on the account (its launch
+ *  took one under that session's id). */
+function sessionHoldsAccount(sessionId: string, accountId: string): boolean {
+  return getConsumerLeases().sessionsHolding(accountId).includes(sessionId)
+}
+
+export interface CodexWebHandlerOptions {
+  /** Whether the app session runs under the account. The composition root
+   *  hands in the strict form (a Codex session holding the account's launch
+   *  lease); a throw refuses. */
+  sessionRunsUnder?: (sessionId: string, accountId: string) => boolean
+}
+
+export function registerCodexWebHandlers(getWindow: () => BrowserWindow | null, opts: CodexWebHandlerOptions = {}): void {
   const trusted = appWindowSender(getWindow)
+  const runsUnder = (sessionId: string, accountId: string): boolean => {
+    try { return (opts.sessionRunsUnder ?? sessionHoldsAccount)(sessionId, accountId) === true } catch { return false }
+  }
 
   ipcMain.handle(IPC.CODEX_WEB_STATUS, async (e, accountId: unknown) => {
     if (!trusted(e)) return FOREIGN
@@ -111,10 +131,19 @@ export function registerCodexWebHandlers(getWindow: () => BrowserWindow | null):
         // RE-CHECKED after the human-paced run: an archive (or removal) that
         // landed meanwhile must not get a record, and what the run made goes.
         if (codexWebAccountRefusal(el.id) !== null) {
+          const error = 'The account changed during the sign-in, so the session was discarded.'
+          discardCodexWebRun(el.id, error)
           try { await clearCodexWebSession(el.id) } catch (err) { logError(`[codex-web] could not clear a discarded sign-in for ${el.id}: ${(err as Error)?.message ?? err}`) }
-          return { ok: true, state: { phase: 'failed', accountId: el.id, error: 'The account changed during the sign-in, so the session was discarded.' } }
+          return { ok: true, state: { phase: 'failed', accountId: el.id, error } }
         }
-        saveCodexWebSession(state.session)
+        // A session with no record would read signed out with nothing to sign
+        // out of: a record that cannot be written clears the session too.
+        if (saveCodexWebSession(state.session) === false) {
+          const error = 'The sign-in finished, but it could not be recorded, so it was cleared. Try again.'
+          discardCodexWebRun(el.id, error)
+          try { await clearCodexWebSession(el.id) } catch (err) { logError(`[codex-web] could not clear an unrecorded sign-in for ${el.id}: ${(err as Error)?.message ?? err}`) }
+          return { ok: true, state: { phase: 'failed', accountId: el.id, error } }
+        }
       }
       return { ok: true, state }
     } catch (err) {
@@ -152,10 +181,11 @@ export function registerCodexWebHandlers(getWindow: () => BrowserWindow | null):
       if (!el.ok) return el
       // As Claude's sign-out: the panes holding the session close FIRST, then
       // the partition is wiped (a failure throws and keeps the record, so the
-      // account can be signed out again), then the record goes.
+      // account can be signed out again), then the record goes; a record that
+      // cannot be removed is reported, never "signed out".
       closeCodexAccountPanes(el.id)
       await clearCodexWebSession(el.id)
-      removeCodexWebSession(el.id)
+      if (removeCodexWebSession(el.id) === false) return { ok: false, error: 'The chatgpt.com sign-in was cleared, but its record could not be removed. Try again.' }
       return { ok: true }
     } catch (err) {
       return fail('signOut', err)
@@ -170,6 +200,9 @@ export function registerCodexWebHandlers(getWindow: () => BrowserWindow | null):
       const { sessionId, accountId, bounds } = parsed.data
       const el = eligible(accountId)
       if (!el.ok) return el
+      // The view is the session's own account's: a session that does not run
+      // under the account gets no view of it.
+      if (!runsUnder(sessionId, el.id)) return { ok: false, error: 'This session does not run under that account.' }
       const win = getWindow()
       if (!win) return { ok: false, error: 'no window' }
       // MUTUAL EXCLUSION: the ordinary pane view and the account view share one

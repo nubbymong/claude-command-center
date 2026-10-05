@@ -27,9 +27,15 @@ const cookieGets: Array<{ partition: string; filter: Record<string, unknown> }> 
 let onCookiesGet: ((n: number, partition: string) => void) | null = null
 const clears: Array<{ partition: string; what: 'storage' | 'cache' }> = []
 let failClear: string | null = null
+/** One ordered trail of what happened, for the order guarantees. */
+const events: string[] = []
+/** Holds clearStorageData open until released (a wipe in flight). */
+let clearGate: Promise<void> | null = null
+const sessionEvents: Record<string, Record<string, Function>> = {}
 const fromPartition = vi.fn((partition: string) => ({
   getUserAgent: () => uaValue,
   setUserAgent: (v: string) => { uaValue = v },
+  on: (ev: string, fn: Function) => { (sessionEvents[partition] ??= {})[ev] = fn },
   cookies: {
     get: vi.fn(async (filter: Record<string, unknown>) => {
       cookieGets.push({ partition, filter })
@@ -39,6 +45,8 @@ const fromPartition = vi.fn((partition: string) => ({
     }),
   },
   clearStorageData: vi.fn(async () => {
+    events.push('clear storage')
+    if (clearGate) await clearGate
     if (failClear === partition) throw new Error('simulated wipe failure')
     clears.push({ partition, what: 'storage' })
   }),
@@ -51,6 +59,7 @@ const page = {
   identity: null as unknown,
   fetched: [] as Array<{ url: string; opts: unknown }>,
   onFetch: null as null | (() => void),
+  status: 200,
 }
 function evalInPage(code: string): unknown {
   const ctx = vm.createContext({
@@ -58,13 +67,15 @@ function evalInPage(code: string): unknown {
     fetch: (url: string, opts: unknown) => {
       page.fetched.push({ url, opts })
       page.onFetch?.()
-      return Promise.resolve({ json: () => Promise.resolve(page.identity) })
+      const body = page.identity
+      return Promise.resolve({ status: page.status, json: () => Promise.resolve(body), text: () => Promise.resolve(typeof body === 'string' ? body : JSON.stringify(body)) })
     },
   })
   return vm.runInContext(code, ctx)
 }
 
 const created: FakeWin[] = []
+let throwOnPermission = false
 class FakeWin {
   opts: Record<string, any>
   destroyed = false
@@ -78,7 +89,7 @@ class FakeWin {
     this.webContents = {
       on: (ev: string, fn: Function) => { this.handlers[ev] = fn },
       setWindowOpenHandler: (fn: Function) => { this.handlers.__open = fn },
-      session: { setPermissionRequestHandler: (fn: Function) => { this.permHandlers.push(fn) } },
+      session: { setPermissionRequestHandler: (fn: Function) => { if (throwOnPermission) throw new Error('simulated Electron failure after the window'); this.permHandlers.push(fn) } },
       executeJavaScriptInIsolatedWorld: async (world: number, scripts: Array<{ code: string }>) => {
         this.isolatedWorlds.push(world)
         return evalInPage(scripts[0].code)
@@ -90,7 +101,7 @@ class FakeWin {
   }
   loadURL = vi.fn(async () => {})
   isDestroyed() { return this.destroyed }
-  destroy() { this.destroyed = true; this.closedCb?.() }
+  destroy() { if (!this.destroyed) events.push('window destroyed'); this.destroyed = true; this.closedCb?.() }
   on(ev: string, fn: () => void) { if (ev === 'closed') this.closedCb = fn }
   userClose() { this.destroyed = true; this.closedCb?.() }
 }
@@ -106,13 +117,14 @@ const {
   CODEX_WEB_SERVICE, webPartitionForCodexAccount, httpsDefaultPortHost, isWebServiceUrl, isWebServiceSignInHop,
   webServiceSessionFromCookies,
 } = await import('../../src/shared/account-web-session')
-const { serviceEmailExpression, readServiceAccountEmail } = await import('../../src/main/account-web/account-email-read')
+const { serviceEmailExpression, readServiceAccountEmail, serviceIdentityShapeExpression } = await import('../../src/main/account-web/account-email-read')
 const {
   runServiceSignIn, runInAppSignIn, closeInAppSignInWindow, createSignInWindowHandle, signInNavAllowed,
 } = await import('../../src/main/account-web/in-app-sign-in')
 const {
   runCodexWebSignIn, cancelCodexWebSignIn, clearCodexWebSession, getCodexWebSignInState, onCodexWebSessionCleared,
-  prepareCodexWebArchive, isCodexWebArchiving, _resetCodexWebForTest,
+  onCodexWebSessionClosing, prepareCodexWebArchive, isCodexWebArchiving, isCodexWebClearing, discardCodexWebRun,
+  _resetCodexWebForTest,
 } = await import('../../src/main/account-web/codex-web-session')
 const { registerSignInFlight, signInInFlightElsewhere } = await import('../../src/main/account-web/sign-in-flight')
 
@@ -146,6 +158,11 @@ beforeEach(() => {
   page.identity = null
   page.fetched.length = 0
   page.onFetch = null
+  page.status = 200
+  events.length = 0
+  clearGate = null
+  throwOnPermission = false
+  for (const k of Object.keys(sessionEvents)) delete sessionEvents[k]
   fromPartition.mockClear()
   claudeBusy = false
   registerSignInFlight('claude', () => claudeBusy)
@@ -183,8 +200,13 @@ describe('[host] the chatgpt.com descriptor', () => {
 
   it('a service URL is chatgpt.com exactly; a sign-in hop is a listed host exactly', () => {
     expect(isWebServiceUrl(CODEX_WEB_SERVICE, 'https://chatgpt.com/auth/login')).toBe(true)
-    for (const bad of ['https://chatgpt.com.evil.example/', 'https://evil.example/?next=https://chatgpt.com', 'https://sub.chatgpt.com.evil/', 'http://chatgpt.com/']) {
+    for (const bad of [
+      'https://chatgpt.com.evil.example/', 'https://evil.example/?next=https://chatgpt.com', 'https://sub.chatgpt.com.evil/', 'http://chatgpt.com/',
+      // Exact host: neither a name ending in it nor a subdomain of it.
+      'https://evilchatgpt.com/', 'https://x.chatgpt.com/', 'https://www.chatgpt.com/',
+    ]) {
       expect(isWebServiceUrl(CODEX_WEB_SERVICE, bad), bad).toBe(false)
+      expect(signInNavAllowed(CODEX_WEB_SERVICE, bad, true), bad).toBe(false)
     }
     for (const host of CODEX_WEB_SERVICE.signInHosts) {
       expect(isWebServiceSignInHop(CODEX_WEB_SERVICE, `https://${host}/x?y=1`), host).toBe(true)
@@ -332,14 +354,23 @@ describe('[host] the sign-in window', () => {
   })
 
   it('the session cookie WITHOUT an email never completes (no grace for this service)', async () => {
-    jars[PART] = SIGNED_IN_JAR
-    page.identity = { user: {} }
-    // Even with no grace at all, the run keeps waiting for the email and then
-    // times out: it neither completes nor gives up early on an email-less session.
-    const res = await runServiceSignIn(RUN({ timeoutMs: 80, emailGraceMs: 0 }))
-    expect(res.ok).toBe(false)
-    expect(res.error).toMatch(/Timed out/)
-    expect(created[0].destroyed).toBe(true)
+    vi.useFakeTimers()
+    try {
+      jars[PART] = SIGNED_IN_JAR
+      page.identity = { user: {} }
+      let settled: { ok: boolean; error?: string } | null = null
+      void runServiceSignIn(RUN({ timeoutMs: 10_000, pollMs: 50 })).then((r) => { settled = r })
+      // Well past the 4 s grace a service with an optional email allows: the
+      // run keeps waiting for the email, neither completing nor giving up.
+      await vi.advanceTimersByTimeAsync(6_000)
+      expect(settled).toBeNull()
+      expect(created[0].destroyed).toBe(false)
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(settled).toMatchObject({ ok: false, error: expect.stringMatching(/Timed out/) })
+      expect(created[0].destroyed).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('an identity read off chatgpt.com never counts (the page is elsewhere)', async () => {
@@ -420,6 +451,56 @@ describe('[host] the sign-in window', () => {
     expect(line).not.toContain('\u0007')
     // Every log line of the run, not just the diagnostic, is clean.
     for (const l of logs) expect(l).not.toMatch(/SECRET/)
+  })
+
+  it('a run whose identity read finds no email logs the answer\'s HTTP status and key NAMES, never a value', async () => {
+    jars[PART] = SIGNED_IN_JAR
+    // The email sits somewhere else than the descriptor says: the line must
+    // show where, without showing it.
+    page.identity = { user: { id: 'user-abc', name: 'Me', mail: 'me@example.com' }, accessToken: 'eyJ.SECRET-ACCESS-TOKEN.sig', expires: '2030-01-01' }
+    const res = await runServiceSignIn(RUN({ timeoutMs: 80 }))
+    expect(res.ok).toBe(false)
+    const line = logs.find((l) => /did not complete/.test(l))!
+    expect(line).toContain('Session cookie seen: yes.')
+    expect(line).toMatch(/Identity reads: [1-9]\d*, none gave an email\./)
+    expect(line).toContain('Identity answer: HTTP 200, JSON keys user, user.id, user.name, user.mail, accessToken, expires.')
+    expect(line).toContain(SESSION_TOKEN)
+    for (const value of ['me@example.com', 'user-abc', 'SECRET', '2030-01-01', 'Me,']) expect(line, value).not.toContain(value)
+    for (const l of logs) expect(l).not.toMatch(/SECRET|me@example\.com/)
+  })
+
+  it('a run whose session cookie never matched still reads the identity answer\'s shape before the window closes', async () => {
+    jars[PART] = [...SIGNED_OUT_JAR, { name: 'session-under-another-name', value: 'SECRET' }]
+    page.identity = IDENTITY
+    page.status = 200
+    const res = await runServiceSignIn(RUN({ timeoutMs: 60 }))
+    expect(res.ok).toBe(false)
+    const line = logs.find((l) => /did not complete/.test(l))!
+    expect(line).toContain('Session cookie seen: no.')
+    expect(line).toContain('Identity reads: none (the session cookie was never seen).')
+    expect(line).toContain('JSON keys user, user.id, user.name, user.email, user.image, expires, accessToken, authProvider.')
+    expect(line).toContain('session-under-another-name')
+    expect(line).not.toMatch(/SECRET|me@example\.com/)
+  })
+
+  it('an identity answer from a page off chatgpt.com is never read, and the line says so', async () => {
+    jars[PART] = SIGNED_IN_JAR
+    page.identity = IDENTITY
+    page.origin = 'https://auth.openai.com'
+    await runServiceSignIn(RUN({ timeoutMs: 60 }))
+    expect(page.fetched).toHaveLength(0)
+    expect(logs.find((l) => /did not complete/.test(l))).toContain('Identity answer: no answer from the page.')
+  })
+
+  it('the shape read is origin-gated, returns only the status and key names, and leaves nothing global', async () => {
+    const expr = serviceIdentityShapeExpression(CODEX_WEB_SERVICE)
+    expect(expr).not.toMatch(/accessToken|console|localStorage|window\./)
+    page.identity = IDENTITY
+    const out = await evalInPage(expr) as { status: number; json: boolean; keys: string[] }
+    expect(JSON.parse(JSON.stringify(out))).toEqual({ status: 200, json: true, keys: ['user', 'user.id', 'user.name', 'user.email', 'user.image', 'expires', 'accessToken', 'authProvider'] })
+    expect(JSON.stringify(out)).not.toMatch(/me@example|SECRET|user-abc/)
+    page.origin = 'https://evil.example'
+    expect(await evalInPage(expr)).toBeNull()
   })
 
   it('a completed run logs no diagnostic and never logs a value', async () => {
@@ -579,5 +660,141 @@ describe('[host] the archive hook', () => {
     await expect(prepareCodexWebArchive(ACCT, 'codex')).rejects.toThrow()
     expect(isCodexWebArchiving(ACCT)).toBe(false)
     await flush()
+  })
+})
+
+describe('[host] the sign-in window holds downloads, sub-frames and its own teardown', () => {
+  it('blocks every download on the partition and logs the host only, never the path or query', async () => {
+    jars[PART] = SIGNED_OUT_JAR
+    const p = runServiceSignIn(RUN({ timeoutMs: 60 }))
+    await tick(5)
+    const dl = sessionEvents[PART]?.['will-download']
+    expect(typeof dl).toBe('function')
+    const ev = { preventDefault: vi.fn() }
+    dl(ev, { getURL: () => 'https://files.example/a/b.exe?sig=QUERY-SECRET#frag' })
+    expect(ev.preventDefault).toHaveBeenCalled()
+    await p
+    const line = logs.find((l) => /blocked a download/.test(l))!
+    expect(line).toContain('files.example')
+    expect(line).not.toMatch(/SECRET|\?|#|b\.exe/)
+  })
+
+  it("holds a sub-frame's own navigation to https, and leaves the main frame to will-navigate", async () => {
+    jars[PART] = SIGNED_OUT_JAR
+    const p = runServiceSignIn(RUN({ timeoutMs: 60 }))
+    await tick(5)
+    const frameNav = created[0].handlers['will-frame-navigate']
+    expect(typeof frameNav).toBe('function')
+    const httpSub = { preventDefault: vi.fn(), isMainFrame: false, url: 'http://ads.example/x' }
+    frameNav(httpSub)
+    expect(httpSub.preventDefault).toHaveBeenCalled()
+    const httpsSub = { preventDefault: vi.fn(), isMainFrame: false, url: 'https://challenges.cloudflare.com/x' }
+    frameNav(httpsSub)
+    expect(httpsSub.preventDefault).not.toHaveBeenCalled()
+    const main = { preventDefault: vi.fn(), isMainFrame: true, url: 'https://evil.example/' }
+    frameNav(main)
+    expect(main.preventDefault).not.toHaveBeenCalled()
+    await p
+  })
+
+  it('a failure after the window exists still destroys the window and reports', async () => {
+    throwOnPermission = true
+    const res = await runServiceSignIn(RUN())
+    expect(res).toMatchObject({ ok: false, error: expect.stringMatching(/after the window/) })
+    expect(created).toHaveLength(1)
+    expect(created[0].destroyed).toBe(true)
+  })
+})
+
+describe('[host] a run that does not complete is wiped, panes first, the record last', () => {
+  it('Cancel wipes the partition and forgets the record', async () => {
+    jars[PART] = SIGNED_OUT_JAR
+    const order: string[] = []
+    onCodexWebSessionClosing((id) => order.push(`panes ${id}`))
+    onCodexWebSessionCleared((id) => { order.push(`record ${id}`) })
+    const run = runCodexWebSignIn({ accountId: ACCT, timeoutMs: 400, pollMs: 5 })
+    await tick(5)
+    cancelCodexWebSignIn(ACCT)
+    expect((await run).phase).toBe('failed')
+    expect(clears).toContainEqual({ partition: PART, what: 'storage' })
+    expect(order).toEqual([`panes ${ACCT}`, `record ${ACCT}`])
+    expect(events.indexOf('window destroyed')).toBeLessThan(events.indexOf('clear storage'))
+  })
+
+  it('closing the window wipes the partition and forgets the record', async () => {
+    jars[PART] = SIGNED_OUT_JAR
+    const cleared = vi.fn()
+    onCodexWebSessionCleared(cleared)
+    const run = runCodexWebSignIn({ accountId: ACCT, timeoutMs: 400, pollMs: 5 })
+    await tick(5)
+    created[0].userClose()
+    expect((await run).error).toMatch(/closed/)
+    expect(clears).toContainEqual({ partition: PART, what: 'storage' })
+    expect(cleared).toHaveBeenCalledWith(ACCT)
+  })
+
+  it('a wipe that fails keeps the record (Sign out stays offered); the panes still closed first', async () => {
+    jars[PART] = SIGNED_OUT_JAR
+    failClear = PART
+    const closing = vi.fn()
+    const cleared = vi.fn()
+    onCodexWebSessionClosing(closing)
+    onCodexWebSessionCleared(cleared)
+    const st = await runCodexWebSignIn({ accountId: ACCT, timeoutMs: 40, pollMs: 5 })
+    expect(st.phase).toBe('failed')
+    expect(closing).toHaveBeenCalledWith(ACCT)
+    expect(cleared).not.toHaveBeenCalled()
+  })
+})
+
+describe('[host] clearing: nothing holding the session stays open through the wipe', () => {
+  it('cancels the run (its window closes), closes the panes, THEN wipes, THEN forgets the record', async () => {
+    jars[PART] = SIGNED_OUT_JAR
+    onCodexWebSessionClosing(() => { events.push('panes closed') })
+    onCodexWebSessionCleared(() => { events.push('record forgotten') })
+    const run = runCodexWebSignIn({ accountId: ACCT, timeoutMs: 400, pollMs: 5 })
+    await tick(5)
+    await clearCodexWebSession(ACCT)
+    const first = events.indexOf('clear storage')
+    expect(events.slice(0, 3)).toEqual(['window destroyed', 'panes closed', 'clear storage'])
+    expect(events.indexOf('record forgotten')).toBeGreaterThan(first)
+    await run
+  })
+
+  it('a record that cannot be removed fails the clear (never "signed out" over a record on disk)', async () => {
+    onCodexWebSessionCleared(() => false)
+    await expect(clearCodexWebSession(ACCT)).rejects.toThrow(/record could not be removed/)
+  })
+
+  it('bars a new sign-in for the whole clear, and lifts the bar after it', async () => {
+    let release!: () => void
+    clearGate = new Promise<void>((r) => { release = r })
+    const clearing = clearCodexWebSession(ACCT)
+    await tick(5)
+    expect(isCodexWebClearing(ACCT)).toBe(true)
+    expect((await runCodexWebSignIn({ accountId: ACCT, pollMs: 5 })).error).toMatch(/being cleared/)
+    expect(created).toHaveLength(0)
+    release()
+    await clearing
+    expect(isCodexWebClearing(ACCT)).toBe(false)
+  })
+
+  it('a clear that fails lifts its bar too', async () => {
+    failClear = PART
+    await expect(clearCodexWebSession(ACCT)).rejects.toThrow()
+    expect(isCodexWebClearing(ACCT)).toBe(false)
+  })
+})
+
+describe('[host] a finished run the IPC layer discards reads failed', () => {
+  it('discardCodexWebRun turns that account\'s done state into failed, and nobody else\'s', async () => {
+    jars[PART] = SIGNED_IN_JAR
+    page.identity = IDENTITY
+    expect((await runCodexWebSignIn({ accountId: ACCT, pollMs: 5 })).phase).toBe('done')
+    discardCodexWebRun(OTHER, 'no')
+    expect(getCodexWebSignInState().phase).toBe('done')
+    discardCodexWebRun(ACCT, 'The account changed during the sign-in, so the session was discarded.')
+    expect(getCodexWebSignInState()).toMatchObject({ phase: 'failed', accountId: ACCT })
+    expect(JSON.stringify(getCodexWebSignInState())).not.toContain('me@example.com')
   })
 })

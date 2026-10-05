@@ -40,14 +40,18 @@
  *     navigation (claude.ai may hop to an identity provider and back); non-https
  *     is blocked. A Codex window allows the main frame ONLY chatgpt.com and the
  *     descriptor's listed sign-in hosts (never "any https host"); a sub-frame
- *     needs https. Popups are denied for both.
+ *     (its own will-frame-navigate) needs https. Popups are denied for both,
+ *     and so are downloads.
  *   - The identity read runs page script ONLY after the session cookie exists and
  *     ONLY when the frame's own origin is the service's - the origin gate is
  *     inside the expression, so a captive-portal / IdP page cannot answer as the
  *     account. A Codex sign-in completes only with BOTH the named session cookie
  *     and a valid email (fail closed: no grace without the email).
- *   - A Codex run that does not complete logs the cookie NAMES on chatgpt.com and
- *     the off-site hosts the window saw, never a value and never a query string.
+ *   - A Codex run that does not complete logs one line: whether the session
+ *     cookie was seen, how many identity reads ran, the identity answer's HTTP
+ *     status and key NAMES (two levels, from a separate origin-gated read), the
+ *     cookie NAMES on chatgpt.com and the off-site hosts the window saw. Never a
+ *     value and never a query string.
  *
  * No default export (project convention).
  */
@@ -63,7 +67,7 @@ import {
   type WebServiceDescriptor,
 } from '../../shared/account-web-session'
 import { webSessionFromElectronCookies, type ElectronReadCookie } from './cookie-harvest'
-import { readAccountEmail, readServiceAccountEmail } from './account-email-read'
+import { readAccountEmail, readServiceAccountEmail, readServiceIdentityShape, type IdentityAnswerShape } from './account-email-read'
 
 /** Upper bound on any single Electron call here, mirroring sign-in.ts. */
 const IO_CALL_TIMEOUT_MS = 10_000
@@ -145,8 +149,9 @@ function sleep(ms: number): Promise<void> {
   })
 }
 
-/** Bound any promise in time — nothing over IPC/IO is allowed to hang the poll. */
-function bounded<T>(p: Promise<T>, what: string): Promise<T> {
+/** Bound any promise in time: nothing over IPC/IO is allowed to hang the poll.
+ *  Rejects on timeout. Shared with codex-web-session.ts. */
+export function bounded<T>(p: Promise<T>, what: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   return Promise.race([
     p,
@@ -175,6 +180,29 @@ export function signInNavAllowed(desc: WebServiceDescriptor, url: string, isMain
 
 type PartitionSession = ReturnType<typeof electronSession.fromPartition>
 type NavEvent = { preventDefault: () => void; isMainFrame?: boolean }
+type FrameNavEvent = { preventDefault: () => void; isMainFrame?: boolean; url?: string }
+
+/**
+ * Block downloads on an account partition: a session-bearing surface (the
+ * sign-in window, the pane's account view) never hands the OS an unmediated
+ * Save-As. One listener per partition session, whichever surface comes first.
+ * The log names the host only, never a path or a query string (a signed
+ * download URL carries its credential there). Best effort: the surface's own
+ * webPreferences still hold if the session cannot take the listener.
+ */
+export function blockPartitionDownloads(ses: PartitionSession, label: string): void {
+  try {
+    const flagged = ses as PartitionSession & { __cccAccountDownloadsBlocked?: boolean }
+    if (flagged.__cccAccountDownloadsBlocked || typeof flagged.on !== 'function') return
+    flagged.on('will-download', (event, item) => {
+      event.preventDefault()
+      let url = ''
+      try { url = String(item?.getURL?.() ?? '') } catch { url = '' }
+      logError(`[${label}] blocked a download from ${diagHost(url)}`)
+    })
+    flagged.__cccAccountDownloadsBlocked = true
+  } catch { /* best effort */ }
+}
 
 /** What differs between the two services' windows. */
 interface WindowPolicy {
@@ -189,6 +217,12 @@ interface WindowPolicy {
   emailOptional: boolean
   /** Install the navigation guard and the popup handler. */
   guard: (win: BrowserWindow) => void
+  /** Told each poll whether the session cookie was there (diagnostic). */
+  onSessionRead?: (hasSessionCookie: boolean) => void
+  /** Told after each identity read (diagnostic). Never throws. */
+  onEmailRead?: (email: string | null, win: BrowserWindow) => Promise<void>
+  /** A run that timed out, while its window is still open (diagnostic). */
+  beforeIncompleteClose?: (win: BrowserWindow) => Promise<void>
   /** A run that did not complete (names-only diagnostic). Never throws. */
   onIncomplete?: (ses: PartitionSession) => Promise<void>
 }
@@ -255,6 +289,8 @@ async function driveSignInWindow(policy: WindowPolicy, a: DriveArgs): Promise<Dr
     policy.guard(win)
     // A page has no business reaching a camera/mic/clipboard on its own say-so.
     win.webContents.session.setPermissionRequestHandler((_wc, _perm, cb) => cb(false))
+    // Nor any download: this window holds an emerging session.
+    blockPartitionDownloads(s, 'account-web')
 
     let windowClosed = false
     win.on('closed', () => { windowClosed = true; if (handle.window === win) handle.window = null })
@@ -290,10 +326,14 @@ async function driveSignInWindow(policy: WindowPolicy, a: DriveArgs): Promise<Dr
       try {
         state = await policy.readSession(s)
       } catch { continue }
+      policy.onSessionRead?.(state.hasSessionCookie)
       if (!state.hasSessionCookie) { sessionSeenAt = 0; continue }
       if (!sessionSeenAt) sessionSeenAt = Date.now()
 
       const email = await policy.readEmail(win)
+      if (policy.onEmailRead) {
+        try { await policy.onEmailRead(email, win) } catch { /* a diagnostic never changes the outcome */ }
+      }
       if (email === null) {
         // FAIL CLOSED where the email is required (Codex): a session cookie
         // without a valid identity answer is never "signed in".
@@ -321,6 +361,9 @@ async function driveSignInWindow(policy: WindowPolicy, a: DriveArgs): Promise<Dr
       return { ok: true, email, expiresAt: state.expiresAt }
     }
 
+    if (policy.beforeIncompleteClose && !windowClosed && !win.isDestroyed()) {
+      try { await policy.beforeIncompleteClose(win) } catch { /* a diagnostic never changes the outcome */ }
+    }
     closeInAppSignInWindow(handle)
     logError(`[account-web] in-app sign-in for ${ownerId} timed out`)
     return incomplete(s, { ok: false, error: 'Timed out waiting for sign-in to complete.' })
@@ -407,17 +450,19 @@ export async function runInAppSignIn(args: InAppSignInArgs): Promise<InAppSignIn
 
 // ---- a descriptor-driven sign-in (chatgpt.com for a Codex account) --------
 
-/** At most this many cookie names and off-site hosts go into one diagnostic line. */
+/** At most this many cookie names, off-site hosts and key names go into one diagnostic line. */
 const DIAG_MAX_NAMES = 40
 const DIAG_MAX_HOSTS = 20
+const DIAG_MAX_KEYS = 40
 
 /** A cookie NAME fit for a log line, or null (dropped, and counted). */
 function diagCookieName(name: unknown): string | null {
   return typeof name === 'string' && /^[A-Za-z0-9_.-]{1,80}$/.test(name) ? name : null
 }
 
-/** The host of a URL fit for a log line (never a path, query or fragment). */
-function diagHost(url: string): string {
+/** The host of a URL fit for a log line: never a path, a query or a fragment.
+ *  Shared with the pane's account view (account-pane.ts). */
+export function diagHost(url: string): string {
   try {
     const u = new URL(url)
     const host = u.hostname.toLowerCase()
@@ -429,11 +474,20 @@ function diagHost(url: string): string {
   }
 }
 
-/** What one descriptor-driven run saw: off-site hosts only, in first-seen order. */
+/**
+ * What one descriptor-driven run saw, for the line a run that does not
+ * complete logs: off-site hosts (first-seen order), whether the session cookie
+ * was ever there, how many identity reads ran and that none gave an email, and
+ * the identity answer's HTTP status and key NAMES. Never a value.
+ */
 class SignInDiagnostic {
   private readonly seen = new Set<string>()
   private readonly entries: string[] = []
   private dropped = 0
+  cookieSeen = false
+  identityReads = 0
+  identityShape: IdentityAnswerShape | null = null
+  shapeTried = false
   constructor(private readonly desc: WebServiceDescriptor) {}
   private note(entry: string): void {
     if (this.seen.has(entry)) return
@@ -445,6 +499,9 @@ class SignInDiagnostic {
     if (isWebServiceUrl(this.desc, url)) return
     this.note(`${diagHost(url)} (${allowed ? 'allowed' : 'blocked'})`)
   }
+  frame(url: string): void {
+    this.note(`${diagHost(url)} (sub-frame blocked)`)
+  }
   popup(url: string): void {
     this.note(`${diagHost(url)} (popup denied)`)
   }
@@ -452,12 +509,32 @@ class SignInDiagnostic {
     if (!this.entries.length) return 'none'
     return this.entries.join(', ') + (this.dropped ? `, and ${this.dropped} more` : '')
   }
+  identity(): string {
+    const reads = this.identityReads === 0
+      ? 'Identity reads: none (the session cookie was never seen).'
+      : `Identity reads: ${this.identityReads}, none gave an email.`
+    const shape = this.identityShape
+    const answer = shape
+      ? `Identity answer: HTTP ${shape.status}, ${shape.json ? `JSON keys ${shape.keys.slice(0, DIAG_MAX_KEYS).join(', ') || '(none)'}` : 'not a JSON object'}.`
+      : `Identity answer: ${this.shapeTried ? 'no answer from the page' : 'not read'}.`
+    return `Session cookie seen: ${this.cookieSeen ? 'yes' : 'no'}. ${reads} ${answer}`
+  }
 }
 
 function serviceWindowPolicy(desc: WebServiceDescriptor, ownerId: string): WindowPolicy {
   const diag = new SignInDiagnostic(desc)
   const readJar = async (ses: PartitionSession, what: string) =>
     bounded(Promise.resolve(ses.cookies.get({ url: desc.origin })), what)
+  /** One look at the identity answer's shape, while the window is still up. */
+  const readShape = async (win: BrowserWindow): Promise<void> => {
+    if (diag.shapeTried || win.isDestroyed()) return
+    diag.shapeTried = true
+    try {
+      diag.identityShape = await bounded(readServiceIdentityShape(win.webContents, desc), 'identity shape')
+    } catch {
+      diag.identityShape = null
+    }
+  }
   return {
     title: `Sign in to ${desc.label}`,
     signInUrl: desc.signInUrl,
@@ -480,12 +557,37 @@ function serviceWindowPolicy(desc: WebServiceDescriptor, ownerId: string): Windo
       }
       win.webContents.on('will-navigate', onNav)
       win.webContents.on('will-redirect', onNav)
+      // will-navigate is the main frame's only: a sub-frame's own navigation
+      // comes through here, and is held to the sub-frame rule (https only).
+      win.webContents.on('will-frame-navigate', (e: FrameNavEvent) => {
+        if (e?.isMainFrame !== false) return
+        const url = String(e?.url ?? '')
+        if (!signInNavAllowed(desc, url, false)) {
+          diag.frame(url)
+          e.preventDefault()
+        }
+      })
       // Popups denied. If the owner's run shows a sign-in method needs one, it
       // gets a scoped allowance of its own (and its own adversarial pass).
       win.webContents.setWindowOpenHandler(({ url }) => {
         diag.popup(url)
         return { action: 'deny' }
       })
+    },
+    onSessionRead: (hasSessionCookie) => {
+      if (hasSessionCookie) diag.cookieSeen = true
+    },
+    onEmailRead: async (email, win) => {
+      diag.identityReads++
+      // The first identity read that finds no email while the session cookie
+      // is there is the moment the answer's shape says why.
+      if (email === null) await readShape(win)
+    },
+    beforeIncompleteClose: async (win) => {
+      // The session cookie may never have matched (its name could be wrong):
+      // one look at the identity answer before the window goes still says
+      // whether the page holds a signed-in account and where its email sits.
+      await readShape(win)
     },
     onIncomplete: async (ses) => {
       let names: string[] = []
@@ -503,7 +605,7 @@ function serviceWindowPolicy(desc: WebServiceDescriptor, ownerId: string): Windo
       const shown = names.slice(0, DIAG_MAX_NAMES)
       const more = names.length - shown.length + unprintable
       logInfo(
-        `[codex-web] sign-in for ${ownerId} did not complete. Cookie names on ${desc.origin}: `
+        `[codex-web] sign-in for ${ownerId} did not complete. ${diag.identity()} Cookie names on ${desc.origin}: `
         + `${shown.length ? shown.join(', ') : 'none'}${more ? ` (and ${more} not shown)` : ''}. `
         + `Off-site hosts: ${diag.hosts()}.`,
       )
@@ -521,10 +623,6 @@ export interface ServiceSignInArgs {
   handle: SignInWindowHandle
   timeoutMs: number
   pollMs?: number
-  /** The email grace a service with an optional email would allow. A
-   *  descriptor-driven service requires the email, so this changes nothing;
-   *  a test sets it to 0 to prove completion still waits for the email. */
-  emailGraceMs?: number
   shouldCancel: () => boolean
 }
 
@@ -541,7 +639,7 @@ export interface ServiceSignInResult {
 /**
  * Drive a descriptor-driven sign-in window (chatgpt.com for a Codex account) to
  * completion: the named session cookie AND a valid email, re-checked, then the
- * cancel flag. Never throws. A run that does not complete logs a names-only
+ * cancel flag. Never throws. A run that does not complete logs the names-only
  * diagnostic; the caller wipes the partition.
  */
 export async function runServiceSignIn(args: ServiceSignInArgs): Promise<ServiceSignInResult> {
@@ -550,7 +648,6 @@ export async function runServiceSignIn(args: ServiceSignInArgs): Promise<Service
     partition: args.partition,
     timeoutMs: args.timeoutMs,
     pollMs: args.pollMs,
-    emailGraceMs: args.emailGraceMs,
     shouldCancel: args.shouldCancel,
     handle: args.handle,
   })

@@ -295,9 +295,13 @@ export type WebSessionService = 'claude' | 'codex'
  * identity read, so a wrong cookie name or identity read means the sign-in
  * never completes and the partition is wiped, never a false "signed in"; and a
  * wrong host list means a sign-in method is blocked, never that the window may
- * go anywhere. A run that does not complete logs the cookie NAMES it found and
- * the off-site hosts it saw (never values, never query strings), so even a
- * failed owner run yields the right values.
+ * go anywhere. A run that does not complete logs one line (never a value,
+ * never a query string): the cookie NAMES on the service's origin, whether the
+ * named session cookie was seen, how many identity reads ran, the identity
+ * answer's HTTP status and key NAMES two levels deep (read while the window was
+ * still on the service), and the off-site hosts the window saw. A failed run
+ * that got as far as signing in therefore shows the cookie name and where the
+ * email sits; a method blocked on the way shows its host.
  */
 export interface WebServiceDescriptor {
   readonly service: WebSessionService

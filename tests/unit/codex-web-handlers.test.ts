@@ -16,8 +16,11 @@ vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logError: vi.f
 
 type Acc = { id: string; providerId: string; lifecycle: string }
 const registry = { accounts: [] as Acc[], missing: false }
+/** Which app sessions hold a lease on which account (the default binding). */
+const holding: Record<string, string[]> = {}
 vi.mock('../../src/main/provider-account-registry', () => ({
   getAccountRegistry: () => (registry.missing ? null : { current: () => ({ accounts: registry.accounts }) }),
+  getConsumerLeases: () => ({ sessionsHolding: (id: string) => holding[id] ?? [] }),
 }))
 
 const acted = {
@@ -26,19 +29,23 @@ const acted = {
   clearCodexWebSession: vi.fn(async () => {}),
   getCodexWebSignInState: vi.fn(() => ({ phase: 'idle', accountId: null })),
   codexWebViewFor: vi.fn((id: string) => ({ accountId: id, status: 'none' })),
-  saveCodexWebSession: vi.fn(),
-  removeCodexWebSession: vi.fn(),
+  saveCodexWebSession: vi.fn((): boolean => true),
+  removeCodexWebSession: vi.fn((): boolean => true),
+  discardCodexWebRun: vi.fn(),
   openCodexAccountPane: vi.fn(() => ({ ok: true })),
   closeCodexAccountPanes: vi.fn(),
   closeWebview: vi.fn(),
 }
 const archiving = new Set<string>()
+const clearing = new Set<string>()
 vi.mock('../../src/main/account-web/codex-web-session', () => ({
   runCodexWebSignIn: acted.runCodexWebSignIn,
   cancelCodexWebSignIn: acted.cancelCodexWebSignIn,
   clearCodexWebSession: acted.clearCodexWebSession,
   getCodexWebSignInState: acted.getCodexWebSignInState,
+  discardCodexWebRun: acted.discardCodexWebRun,
   isCodexWebArchiving: (id: string) => archiving.has(id),
+  isCodexWebClearing: (id: string) => clearing.has(id),
 }))
 vi.mock('../../src/main/account-web/codex-web-store', () => ({
   codexWebViewFor: acted.codexWebViewFor, saveCodexWebSession: acted.saveCodexWebSession, removeCodexWebSession: acted.removeCodexWebSession,
@@ -74,6 +81,9 @@ beforeEach(() => {
   ]
   archiving.clear()
   archiving.add(BEING_ARCHIVED)
+  clearing.clear()
+  for (const k of Object.keys(holding)) delete holding[k]
+  holding[ACCT] = ['s1']
   registerCodexWebHandlers(() => mainWin as never)
 })
 
@@ -239,5 +249,60 @@ describe('[host] what each channel does for an eligible account', () => {
       expect((await call(IPC.CODEX_WEB_PANE_OPEN, TRUSTED, bad)).ok, JSON.stringify(bad)).toBe(false)
     }
     nothingActed('pane open')
+  })
+})
+
+describe('[host] a clear in progress bars every channel for that account', () => {
+  it.each(CHANNELS)('%s refuses an account whose chatgpt.com sign-in is being cleared', async (ch, arg) => {
+    clearing.add(ACCT)
+    const r = await call(ch, TRUSTED, arg(ACCT))
+    expect(r.ok).toBe(false)
+    expect(r.error).toMatch(/being cleared/)
+    nothingActed(ch)
+  })
+})
+
+describe('[host] a pane opens only for a session that runs under the account', () => {
+  it('a session holding no lease on the account gets no view of it', async () => {
+    const r = await call(IPC.CODEX_WEB_PANE_OPEN, TRUSTED, { sessionId: 'claude-session-7', accountId: ACCT, bounds: BOUNDS })
+    expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/does not run under that account/) })
+    nothingActed('pane open for another session')
+  })
+
+  it('the composition root can hand in a stricter binding; a binding that throws refuses', async () => {
+    for (const k of Object.keys(handlers)) delete handlers[k]
+    const seen: Array<[string, string]> = []
+    registerCodexWebHandlers(() => mainWin as never, { sessionRunsUnder: (sid, acct) => { seen.push([sid, acct]); return false } })
+    expect((await call(IPC.CODEX_WEB_PANE_OPEN, TRUSTED, { sessionId: 's1', accountId: ACCT, bounds: BOUNDS })).ok).toBe(false)
+    expect(seen).toEqual([['s1', ACCT]])
+    for (const k of Object.keys(handlers)) delete handlers[k]
+    registerCodexWebHandlers(() => mainWin as never, { sessionRunsUnder: () => { throw new Error('lookup failed') } })
+    expect((await call(IPC.CODEX_WEB_PANE_OPEN, TRUSTED, { sessionId: 's1', accountId: ACCT, bounds: BOUNDS })).ok).toBe(false)
+    nothingActed('binding')
+  })
+})
+
+describe('[host] a record that is not written never reads as done or signed out', () => {
+  it('a sign-in whose record cannot be written is cleared and reads failed', async () => {
+    acted.saveCodexWebSession.mockImplementationOnce(() => false)
+    const r = await call(IPC.CODEX_WEB_SIGN_IN, TRUSTED, ACCT)
+    expect((r as any).state).toMatchObject({ phase: 'failed', error: expect.stringMatching(/could not be recorded/) })
+    expect(acted.clearCodexWebSession).toHaveBeenCalledWith(ACCT)
+    expect(acted.discardCodexWebRun).toHaveBeenCalledWith(ACCT, expect.any(String))
+  })
+
+  it('a sign-in discarded because the account changed meanwhile marks the run failed too', async () => {
+    acted.runCodexWebSignIn.mockImplementationOnce(async (o: { accountId: string }) => {
+      registry.accounts = registry.accounts.map((a) => (a.id === o.accountId ? { ...a, lifecycle: 'archived' } : a))
+      return { phase: 'done', accountId: o.accountId, session: { accountId: o.accountId, accountEmail: 'me@example.com', acquiredAt: 1, expiresAt: null, origin: 'in-app' } }
+    })
+    await call(IPC.CODEX_WEB_SIGN_IN, TRUSTED, ACCT)
+    expect(acted.discardCodexWebRun).toHaveBeenCalledWith(ACCT, expect.stringMatching(/discarded/))
+  })
+
+  it('a sign-out whose record cannot be removed reports it', async () => {
+    acted.removeCodexWebSession.mockImplementationOnce(() => false)
+    const r = await call(IPC.CODEX_WEB_SIGN_OUT, TRUSTED, ACCT)
+    expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/record could not be removed/) })
   })
 })

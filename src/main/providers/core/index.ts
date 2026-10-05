@@ -35,3 +35,6 @@ export { AccountsService, USAGE_READ_GAP_MS, USAGE_READ_REUSE_MS, USAGE_READ_TRA
 export type { AccountsServiceDeps, LaunchLeaseResult, PreparedLaunchResult } from './accounts-service'
 // WP2 commit 6e: the shell line a terminal tab types for a recipe main allows to run.
 export { recipeRunLine } from './recipe-run-line'
+// WP2 PR 4, P4.6: work registered at start that runs before an account is archived.
+export { onBeforeAccountArchive, prepareAccountArchive, _resetAccountArchiveHooksForTest } from './archive-hooks'
+export type { BeforeAccountArchive } from './archive-hooks'
