@@ -25,8 +25,10 @@ interface FakeCookie { name: string; value?: string; expirationDate?: number; se
 const jars: Record<string, FakeCookie[]> = {}
 const cookieGets: Array<{ partition: string; filter: Record<string, unknown> }> = []
 let onCookiesGet: ((n: number, partition: string) => void) | null = null
-const clears: Array<{ partition: string; what: 'storage' | 'cache' }> = []
+const clears: Array<{ partition: string; what: 'storage' | 'cache' | 'code-cache' }> = []
 let failClear: string | null = null
+/** When set, the code-cache clear of that partition fails (the wipe still holds). */
+let failCodeCache: string | null = null
 /** One ordered trail of what happened, for the order guarantees. */
 const events: string[] = []
 /** Holds clearStorageData open until released (a wipe in flight). */
@@ -51,6 +53,11 @@ const fromPartition = vi.fn((partition: string) => ({
     clears.push({ partition, what: 'storage' })
   }),
   clearCache: vi.fn(async () => { clears.push({ partition, what: 'cache' }) }),
+  clearCodeCaches: vi.fn(async (opts: unknown) => {
+    if (failCodeCache === partition) throw new Error('simulated code-cache failure')
+    clears.push({ partition, what: 'code-cache' })
+    void opts
+  }),
 }))
 
 /** What the page answers: its origin and its identity endpoint's JSON. */
@@ -586,8 +593,9 @@ describe('[host] the sign-in window', () => {
 
   it('a signed-out answer with keys is not the last word: the look on the poll the cookie first appears answers', async () => {
     jars[PART] = SIGNED_OUT_JAR
-    // The signed-out page's own answer has a key, and no email.
-    page.identity = { authProvider: 'none' }
+    // The signed-out page's own answer has a key, and no email: the shape the
+    // VM saw for chatgpt.com's signed-out /api/auth/session (one key, a banner).
+    page.identity = { WARNING_BANNER: 'A banner the signed-out page shows.' }
     const p = runServiceSignIn(RUN({ timeoutMs: 200 }))
     await tick(40)
     // Signed in: the cookie appears, under the name the descriptor expects, and
@@ -596,10 +604,20 @@ describe('[host] the sign-in window', () => {
     page.identity = { user: { id: 'u', mail: 'me@example.com' } }
     await tick(40)
     // Signed-out again before the close: only the look taken when the cookie appeared answers.
-    page.identity = { authProvider: 'none' }
+    page.identity = { WARNING_BANNER: 'A banner the signed-out page shows.' }
     await p
     const line = logs.find((l) => /did not complete/.test(l))!
     expect(line).toContain('Identity answer: HTTP 200, JSON keys user (and 1 not shown); an email-shaped value at user.mail.')
+    expect(line).not.toContain('banner the signed-out')
+  })
+
+  it('a run that only ever sees the signed-out answer logs its one key name, never the banner', async () => {
+    jars[PART] = SIGNED_OUT_JAR
+    page.identity = { WARNING_BANNER: 'A banner the signed-out page shows.' }
+    await runServiceSignIn(RUN({ timeoutMs: 60 }))
+    const line = logs.find((l) => /did not complete/.test(l))!
+    expect(line).toContain('Identity answer: HTTP 200, JSON keys WARNING_BANNER; no email-shaped value.')
+    expect(line).not.toContain('banner the signed-out')
   })
 
   it('a later look that fails or answers worse never erases an earlier, better answer', async () => {
@@ -1143,5 +1161,51 @@ describe('[host] the start sweep of Codex web sessions with no record', () => {
     expect(clears.some((c) => c.partition === PART)).toBe(false)
     cancelCodexWebSignIn(ACCT)
     await run
+  })
+})
+
+describe('[host] every Codex web wipe clears storage, the HTTP cache and the code caches', () => {
+  const allThree = (partition: string) => {
+    for (const what of ['storage', 'cache', 'code-cache'] as const) expect(clears, what).toContainEqual({ partition, what })
+  }
+
+  it('the wipe after an unfinished sign-in (Cancel)', async () => {
+    jars[PART] = SIGNED_OUT_JAR
+    const run = runCodexWebSignIn({ accountId: ACCT, timeoutMs: 400, pollMs: 5 })
+    await tick(5)
+    cancelCodexWebSignIn(ACCT)
+    expect((await run).phase).toBe('failed')
+    allThree(PART)
+  })
+
+  it('a sign-out (the clear)', async () => {
+    await clearCodexWebSession(ACCT)
+    allThree(PART)
+  })
+
+  it('an archive (its hook)', async () => {
+    const release = await prepareCodexWebArchive(ACCT, 'codex')
+    release()
+    allThree(PART)
+  })
+
+  it('the start sweep', async () => {
+    expect(await sweepUnrecordedCodexWebSessions([ACCT], { ok: true as const, accounts: new Set<string>() }, () => true)).toEqual([ACCT])
+    allThree(PART)
+  })
+
+  it('a code-cache clear that fails is logged and the wipe still holds (the record goes, the clear resolves)', async () => {
+    failCodeCache = PART
+    try {
+      const cleared = vi.fn()
+      onCodexWebSessionCleared(cleared)
+      await clearCodexWebSession(ACCT)
+      expect(clears).toContainEqual({ partition: PART, what: 'storage' })
+      expect(clears).toContainEqual({ partition: PART, what: 'cache' })
+      expect(cleared).toHaveBeenCalledWith(ACCT)
+      expect(logs.some((l) => /code cache/i.test(l))).toBe(true)
+    } finally {
+      failCodeCache = null
+    }
   })
 })

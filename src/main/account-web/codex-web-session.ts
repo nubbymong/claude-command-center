@@ -199,6 +199,29 @@ export async function runCodexWebSignIn(opts: { accountId: string; timeoutMs?: n
   }
 }
 
+/**
+ * Wipe one Codex account's partition, the same on every path (an unfinished
+ * sign-in, a sign-out, an archive, the start sweep): its stored data (cookies,
+ * local and session storage, IndexedDB and the rest), then its HTTP cache,
+ * then its code caches, each bounded. The stored data holds the session, so a
+ * failure there throws and the caller keeps the record (fail closed); a cache
+ * that cannot be cleared is logged, the session being gone already.
+ */
+async function wipeCodexPartition(partition: string, accountId: string): Promise<void> {
+  const store = electronSession.fromPartition(partition)
+  await bounded(Promise.resolve(store.clearStorageData()), 'clearStorageData')
+  try {
+    await bounded(Promise.resolve(store.clearCache()), 'clearCache')
+  } catch (err) {
+    logError(`[codex-web] could not clear the HTTP cache for ${accountId}: ${(err as Error)?.message ?? err}`)
+  }
+  try {
+    await bounded(Promise.resolve(store.clearCodeCaches({})), 'clearCodeCaches')
+  } catch (err) {
+    logError(`[codex-web] could not clear the code cache for ${accountId}: ${(err as Error)?.message ?? err}`)
+  }
+}
+
 /** The panes close first, then the wipe; the record is forgotten only after a
  *  wipe that succeeded (a failed one leaves it, so Sign out stays offered). */
 async function wipeAfterIncompleteRun(accountId: string, partition: string): Promise<void> {
@@ -207,7 +230,7 @@ async function wipeAfterIncompleteRun(accountId: string, partition: string): Pro
   try {
     notifyClosing(accountId)
     try {
-      await bounded(Promise.resolve(electronSession.fromPartition(partition).clearStorageData()), 'clearStorageData')
+      await wipeCodexPartition(partition, accountId)
     } catch (err) {
       logError(`[codex-web] could not clear an incomplete sign-in for ${accountId}: ${(err as Error)?.message ?? err}`)
       return
@@ -254,9 +277,7 @@ export async function sweepUnrecordedCodexWebSessions(
     const unbar = barWhileClearing(accountId)
     try {
       notifyClosing(accountId)
-      const store = electronSession.fromPartition(webPartitionForCodexAccount(accountId))
-      await bounded(Promise.resolve(store.clearStorageData()), 'clearStorageData')
-      try { await bounded(Promise.resolve(store.clearCache()), 'clearCache') } catch { /* the storage is what holds the session */ }
+      await wipeCodexPartition(webPartitionForCodexAccount(accountId), accountId)
       wiped.push(accountId)
     } catch (err) {
       logError(`[codex-web] could not clear an unrecorded chatgpt.com session for ${accountId} at start: ${(err as Error)?.message ?? err}`)
@@ -320,13 +341,7 @@ export async function clearCodexWebSession(accountId: string): Promise<void> {
     // THEN CLOSE what holds the session: a pane left open could write a
     // response's cookies back after the wipe.
     notifyClosing(accountId)
-    const store = electronSession.fromPartition(partition)
-    await bounded(Promise.resolve(store.clearStorageData()), 'clearStorageData')
-    try {
-      await bounded(Promise.resolve(store.clearCache()), 'clearCache')
-    } catch (err) {
-      logError(`[codex-web] could not clear the HTTP cache for ${accountId}: ${(err as Error)?.message ?? err}`)
-    }
+    await wipeCodexPartition(partition, accountId)
     if (!notifyCleared(accountId)) throw new Error('The chatgpt.com sign-in was cleared, but its record could not be removed. Try again.')
     logInfo(`[codex-web] cleared the chatgpt.com web session for ${accountId}`)
   } finally {

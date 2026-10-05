@@ -21,6 +21,8 @@ const F = vi.hoisted(() => ({
   renamed: [] as Array<[string, string]>,
   minted: [] as string[],
   wiped: [] as string[],
+  caches: [] as string[],
+  codeCaches: [] as string[],
   logs: [] as string[],
 }))
 vi.mock('fs', async (orig) => {
@@ -72,7 +74,7 @@ vi.mock('electron', () => ({
   session: {
     fromPartition: (p: string) => {
       F.minted.push(p)
-      return { clearStorageData: async () => { F.wiped.push(p) }, clearCache: async () => {} }
+      return { clearStorageData: async () => { F.wiped.push(p) }, clearCache: async () => { F.caches.push(p) }, clearCodeCaches: async () => { F.codeCaches.push(p) } }
     },
   },
 }))
@@ -90,7 +92,7 @@ const everyFolder = () => true
 
 beforeEach(() => {
   F.files.clear(); F.dirs.clear(); F.readFails.clear(); F.statFails.clear(); F.listFails = false; F.listMissing = false
-  F.renamed.length = 0; F.minted.length = 0; F.wiped.length = 0; F.logs.length = 0
+  F.renamed.length = 0; F.minted.length = 0; F.wiped.length = 0; F.logs.length = 0; F.caches.length = 0; F.codeCaches.length = 0
   CWS._resetCodexWebForTest()
 })
 
@@ -103,6 +105,8 @@ describe('[host] the start sweep reads the record store once, without side effec
     F.files.set(FILE, JSON.stringify({ schemaVersion: 1, sessions: [record(B)] }))
     expect(await sweep([A, B])).toEqual([A])
     expect(F.wiped).toEqual([`persist:codex-web-${A}`])
+    expect(F.caches).toEqual([`persist:codex-web-${A}`])
+    expect(F.codeCaches).toEqual([`persist:codex-web-${A}`])
   })
 
   it('an absent store means no records: each unrecorded account is wiped', async () => {
