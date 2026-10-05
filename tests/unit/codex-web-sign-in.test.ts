@@ -463,7 +463,7 @@ describe('[host] the sign-in window', () => {
     const line = logs.find((l) => /did not complete/.test(l))!
     expect(line).toContain('Session cookie seen: yes.')
     expect(line).toMatch(/Identity reads: [1-9]\d*, none gave an email\./)
-    expect(line).toContain('Identity answer: HTTP 200, JSON keys user, user.id, user.name, user.mail, accessToken, expires; an email-shaped value at user.mail.')
+    expect(line).toContain('Identity answer: HTTP 200, JSON keys user, accessToken, expires (and 2 not shown); an email-shaped value at user.mail.')
     expect(line).toContain(SESSION_TOKEN)
     for (const value of ['me@example.com', 'user-abc', 'SECRET', '2030-01-01', 'Me,']) expect(line, value).not.toContain(value)
     for (const l of logs) expect(l).not.toMatch(/SECRET|me@example\.com/)
@@ -478,7 +478,7 @@ describe('[host] the sign-in window', () => {
     const line = logs.find((l) => /did not complete/.test(l))!
     expect(line).toContain('Session cookie seen: no.')
     expect(line).toContain('Identity reads: none (the session cookie was never seen).')
-    expect(line).toContain('JSON keys user, user.id, user.name, user.email, user.image, expires, accessToken, authProvider; an email-shaped value at user.email.')
+    expect(line).toContain('JSON keys user, expires, accessToken, authProvider (and 3 not shown); an email-shaped value at user.email.')
     expect(line).toContain('session-under-another-name')
     expect(line).not.toMatch(/SECRET|me@example\.com/)
   })
@@ -488,7 +488,7 @@ describe('[host] the sign-in window', () => {
     page.identity = { accounts: { 'me@example.com': { plan: 'x' }, 'two words': 1, ok_key: 2 } }
     await runServiceSignIn(RUN({ timeoutMs: 60 }))
     const line = logs.find((l) => /did not complete/.test(l))!
-    expect(line).toContain('JSON keys accounts, accounts.ok_key (and 2 not shown); no email-shaped value.')
+    expect(line).toContain('JSON keys accounts (and 4 not shown); no email-shaped value.')
     expect(line).not.toMatch(/me@example\.com|two words/)
   })
 
@@ -501,7 +501,7 @@ describe('[host] the sign-in window', () => {
     page.origin = 'https://auth.openai.com'
     await p
     const line = logs.find((l) => /did not complete/.test(l))!
-    expect(line).toContain('Identity answer: HTTP 200, JSON keys user, user.id, user.mail; an email-shaped value at user.mail.')
+    expect(line).toContain('Identity answer: HTTP 200, JSON keys user (and 1 not shown); an email-shaped value at user.mail.')
   })
 
   it('a key that looks like an id or a secret is dropped and counted, never logged', async () => {
@@ -517,7 +517,7 @@ describe('[host] the sign-in window', () => {
     }
     await runServiceSignIn(RUN({ timeoutMs: 60 }))
     const line = logs.find((l) => /did not complete/.test(l))!
-    expect(line).toContain('JSON keys user, user.id, user.mail, byId, byId.plan, oneRule, byEmail (and 9 not shown); an email-shaped value at user.mail.')
+    expect(line).toContain('JSON keys user, byId, oneRule, byEmail (and 11 not shown); an email-shaped value at user.mail.')
     for (const k of ['123e4567', 'sk-AbCdEf', HEX64.slice(0, 16), '9876543210', '4f9a8b7c6d5e', 'me@example.com', 'acct12345', 'deadbeefcafe', 'token_x1y2z3w4v5u']) expect(line, k).not.toContain(k)
   })
 
@@ -534,7 +534,7 @@ describe('[host] the sign-in window', () => {
     page.origin = 'https://auth.openai.com'
     await p
     const line = logs.find((l) => /did not complete/.test(l))!
-    expect(line).toContain('Identity answer: HTTP 200, JSON keys user, user.id, user.mail; an email-shaped value at user.mail.')
+    expect(line).toContain('Identity answer: HTTP 200, JSON keys user (and 1 not shown); an email-shaped value at user.mail.')
   })
 
   it('an answer from a signed-out page is not the last word: the read before the close takes a newer one', async () => {
@@ -545,7 +545,7 @@ describe('[host] the sign-in window', () => {
     page.identity = { user: { id: 'u', mail: 'me@example.com' } }
     await p
     const line = logs.find((l) => /did not complete/.test(l))!
-    expect(line).toContain('Identity answer: HTTP 200, JSON keys user, user.id, user.mail; an email-shaped value at user.mail.')
+    expect(line).toContain('Identity answer: HTTP 200, JSON keys user (and 1 not shown); an email-shaped value at user.mail.')
   })
 
   it('Cancel reads the identity answer before its window closes', async () => {
@@ -559,8 +559,58 @@ describe('[host] the sign-in window', () => {
     cancelCodexWebSignIn(ACCT)
     expect((await run).phase).toBe('failed')
     const line = logs.find((l) => /did not complete/.test(l))!
-    expect(line).toContain('Identity answer: HTTP 200, JSON keys user, user.id, user.mail; an email-shaped value at user.mail.')
+    expect(line).toContain('Identity answer: HTTP 200, JSON keys user (and 1 not shown); an email-shaped value at user.mail.')
     expect(created[0].destroyed).toBe(true)
+  })
+
+  it('a signed-out answer with keys is not the last word: the look on the poll the cookie first appears answers', async () => {
+    jars[PART] = SIGNED_OUT_JAR
+    // The signed-out page's own answer has a key, and no email.
+    page.identity = { authProvider: 'none' }
+    const p = runServiceSignIn(RUN({ timeoutMs: 200 }))
+    await tick(40)
+    // Signed in: the cookie appears, under the name the descriptor expects, and
+    // the email sits elsewhere than the descriptor says.
+    jars[PART] = SIGNED_IN_JAR
+    page.identity = { user: { id: 'u', mail: 'me@example.com' } }
+    await tick(40)
+    // Signed-out again before the close: only the look taken when the cookie appeared answers.
+    page.identity = { authProvider: 'none' }
+    await p
+    const line = logs.find((l) => /did not complete/.test(l))!
+    expect(line).toContain('Identity answer: HTTP 200, JSON keys user (and 1 not shown); an email-shaped value at user.mail.')
+  })
+
+  it('a later look that fails or answers worse never erases an earlier, better answer', async () => {
+    jars[PART] = SIGNED_OUT_JAR
+    page.identity = { plan: 'free' }
+    const p = runServiceSignIn(RUN({ timeoutMs: 120 }))
+    await tick(40)
+    // The last look before the close gets an error page.
+    page.status = 500
+    page.identity = 'Internal error'
+    await p
+    expect(logs.find((l) => /did not complete/.test(l))).toContain('Identity answer: HTTP 200, JSON keys plan; no email-shaped value.')
+  })
+
+  it('a later look whose request fails never erases an earlier answer', async () => {
+    jars[PART] = SIGNED_OUT_JAR
+    page.identity = { plan: 'free' }
+    const p = runServiceSignIn(RUN({ timeoutMs: 120 }))
+    await tick(40)
+    page.onFetch = () => { throw new Error('network gone') }
+    await p
+    page.onFetch = null
+    expect(logs.find((l) => /did not complete/.test(l))).toContain('Identity answer: HTTP 200, JSON keys plan; no email-shaped value.')
+  })
+
+  it('an email at the top level is named by its key, and no part of it enters a key path', async () => {
+    jars[PART] = SIGNED_IN_JAR
+    page.identity = { mail: 'first.last@example.com', 'first.last': 'first.last@example.com', name: 'First' }
+    await runServiceSignIn(RUN({ timeoutMs: 60 }))
+    const line = logs.find((l) => /did not complete/.test(l))!
+    expect(line).toContain('Identity answer: HTTP 200, JSON keys mail, name (and 1 not shown); an email-shaped value at mail.')
+    expect(line).not.toMatch(/first|last|example/i)
   })
 
   it('a status that is not an HTTP status reads as no answer', async () => {
@@ -592,7 +642,7 @@ describe('[host] the sign-in window', () => {
     // Uncached, as the email read: the answer leaves no copy in the HTTP cache.
     expect(page.fetched).toHaveLength(1)
     expect(page.fetched[0].opts).toMatchObject({ credentials: 'include', cache: 'no-store' })
-    expect(JSON.parse(JSON.stringify(out))).toEqual({ status: 200, json: true, keys: ['user', 'user.id', 'user.name', 'user.email', 'user.image', 'expires', 'accessToken', 'authProvider'], emailAt: ['user.email'] })
+    expect(JSON.parse(JSON.stringify(out))).toEqual({ status: 200, json: true, top: ['user', 'expires', 'accessToken', 'authProvider'], emailAt: [['user', 'email']], seen: 8 })
     expect(JSON.stringify(out)).not.toMatch(/me@example|SECRET|user-abc/)
     // Off the service: a constant, so the caller can tell "elsewhere" from "no answer".
     page.origin = 'https://evil.example'

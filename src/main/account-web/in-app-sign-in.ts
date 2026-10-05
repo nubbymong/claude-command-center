@@ -40,8 +40,10 @@
  *     navigation (claude.ai may hop to an identity provider and back); non-https
  *     is blocked. A Codex window allows the main frame ONLY chatgpt.com and the
  *     descriptor's listed sign-in hosts (never "any https host"); a sub-frame
- *     (its own will-frame-navigate) needs https. Popups are denied for both,
- *     and so are downloads.
+ *     (its own will-frame-navigate) may load https or an embedded local
+ *     document (about:blank, about:srcdoc, blob:, data:), never http:, file:
+ *     or a custom scheme (subFrameNavAllowed). Popups are denied for both, and
+ *     so are downloads.
  *   - The identity read runs page script ONLY after the session cookie exists and
  *     ONLY when the frame's own origin is the service's - the origin gate is
  *     inside the expression, so a captive-portal / IdP page cannot answer as the
@@ -49,11 +51,12 @@
  *     and a valid email (fail closed: no grace without the email).
  *   - A Codex run that does not complete logs one line: whether the session
  *     cookie was seen, how many identity reads ran, the identity answer's HTTP
- *     status, key NAMES (two levels; id- or secret-shaped names dropped and
- *     counted) and the key path to an email-shaped value (from a separate
- *     origin-gated read, retried until it says something and once more before a
- *     timed-out or cancelled window closes), the cookie NAMES on chatgpt.com and
- *     the off-site hosts the window saw. Never a value and never a query string.
+ *     status, its TOP-LEVEL key NAMES and the key path to an email-shaped value
+ *     (every other name counted, not shown; from a separate origin-gated read,
+ *     looked at as the run goes, at once when the session cookie first appears,
+ *     until one shows where an email sits, and once more before a timed-out or
+ *     cancelled window closes), the cookie NAMES on chatgpt.com and the
+ *     off-site hosts the window saw. Never a value and never a query string.
  *
  * No default export (project convention).
  */
@@ -523,11 +526,18 @@ class SignInDiagnostic {
   shapeTries = 0
   shapeAt = 0
   constructor(private readonly desc: WebServiceDescriptor) {}
-  /** The answer says something: a JSON object with keys (a signed-out page's
-   *  empty answer does not, so the reads go on). */
-  shapeInformative(): boolean {
-    const s = this.identityShape
-    return !!s && s.json && s.keys.length > 0
+  /** The looking is done: an answer shows where an email sits. A signed-out
+   *  page's answer (empty, or with keys of its own) does not, so it goes on. */
+  shapeFoundEmail(): boolean {
+    return (this.identityShape?.emailAt.length ?? 0) > 0
+  }
+  /** Keep the better answer: one naming an email path, then a JSON answer with
+   *  keys, then any JSON answer, then anything. A later look that fails or
+   *  answers worse (an error page) never replaces a better one. */
+  offerShape(s: IdentityAnswerShape): void {
+    const rank = (x: IdentityAnswerShape | null): number =>
+      !x ? -1 : x.emailAt.length > 0 ? 3 : x.json && x.keys.length > 0 ? 2 : x.json ? 1 : 0
+    if (rank(s) >= rank(this.identityShape)) this.identityShape = s
   }
   private note(entry: string): void {
     if (this.seen.has(entry)) return
@@ -556,7 +566,7 @@ class SignInDiagnostic {
     const shape = this.identityShape
     let answer: string
     if (shape) {
-      const notShown = shape.keysDropped + Math.max(0, shape.keys.length - DIAG_MAX_KEYS)
+      const notShown = shape.notShown + Math.max(0, shape.keys.length - DIAG_MAX_KEYS)
       const where = shape.emailAt.length ? `an email-shaped value at ${shape.emailAt.join(', ')}` : 'no email-shaped value'
       answer = shape.json
         ? `Identity answer: HTTP ${shape.status}, JSON keys ${shape.keys.slice(0, DIAG_MAX_KEYS).join(', ') || '(none)'}${notShown ? ` (and ${notShown} not shown)` : ''}; ${where}.`
@@ -577,15 +587,17 @@ function serviceWindowPolicy(desc: WebServiceDescriptor, ownerId: string): Windo
   const readJar = async (ses: PartitionSession, what: string) =>
     bounded(Promise.resolve(ses.cookies.get({ url: desc.origin })), what)
   /**
-   * Look at the identity answer's shape until one says something: while the
-   * run polls, at most every SHAPE_SPACING_MS and SHAPE_MAX_TRIES times, and
-   * once more (outside both bounds) just before an incomplete run's window
-   * closes. A look while the page is elsewhere (the redirect gap, a sign-in
-   * host) does not count, so a later look on the service still answers.
+   * Look at the identity answer's shape until one shows where an email sits:
+   * while the run polls, at most every SHAPE_SPACING_MS and SHAPE_MAX_TRIES
+   * times; at once on the poll where the session cookie first appears (the
+   * signed-in answer, not the sign-in page's); and once more just before an
+   * incomplete run's window closes. A look while the page is elsewhere (the
+   * redirect gap, a sign-in host) does not count, so a later look on the
+   * service still answers.
    */
-  const readShape = async (win: BrowserWindow, last: boolean): Promise<void> => {
-    if (diag.shapeInformative() || win.isDestroyed()) return
-    if (!last && (diag.shapeTries >= SHAPE_MAX_TRIES || (diag.shapeAt > 0 && Date.now() - diag.shapeAt < SHAPE_SPACING_MS))) return
+  const readShape = async (win: BrowserWindow, when: 'poll' | 'now'): Promise<void> => {
+    if (diag.shapeFoundEmail() || win.isDestroyed()) return
+    if (when === 'poll' && (diag.shapeTries >= SHAPE_MAX_TRIES || (diag.shapeAt > 0 && Date.now() - diag.shapeAt < SHAPE_SPACING_MS))) return
     let r: IdentityShapeRead = null
     try {
       r = await bounded(readServiceIdentityShape(win.webContents, desc), 'identity shape')
@@ -596,8 +608,8 @@ function serviceWindowPolicy(desc: WebServiceDescriptor, ownerId: string): Windo
     diag.shapeTries++
     diag.shapeAt = Date.now()
     diag.shapeTried = true
-    // The newest answer stands; a failed look keeps the last one it had.
-    if (r) diag.identityShape = r
+    // A failed look keeps what it had; a worse answer never replaces a better one.
+    if (r) diag.offerShape(r)
   }
   return {
     title: `Sign in to ${desc.label}`,
@@ -622,7 +634,8 @@ function serviceWindowPolicy(desc: WebServiceDescriptor, ownerId: string): Windo
       win.webContents.on('will-navigate', onNav)
       win.webContents.on('will-redirect', onNav)
       // will-navigate is the main frame's only: a sub-frame's own navigation
-      // comes through here, and is held to the sub-frame rule (https only).
+      // comes through here, and is held to the sub-frame rule (https or an
+      // embedded local document; subFrameNavAllowed).
       win.webContents.on('will-frame-navigate', (e: FrameNavEvent) => {
         if (e?.isMainFrame !== false) return
         const url = String(e?.url ?? '')
@@ -639,11 +652,13 @@ function serviceWindowPolicy(desc: WebServiceDescriptor, ownerId: string): Windo
       })
     },
     onSessionRead: async (hasSessionCookie, win) => {
+      const firstCookie = hasSessionCookie && !diag.cookieSeen
       if (hasSessionCookie) diag.cookieSeen = true
       // The session cookie may never match (its name could be wrong): the
       // answer's shape is looked at as the run goes, so a window the user
-      // closes still leaves what the page answered.
-      await readShape(win, false)
+      // closes still leaves what the page answered. The poll where the cookie
+      // first appears looks at once: that answer is the signed-in one.
+      await readShape(win, firstCookie ? 'now' : 'poll')
     },
     onEmailRead: async () => {
       // Counted only: the poll's own look at the answer's shape (above, in
@@ -653,7 +668,7 @@ function serviceWindowPolicy(desc: WebServiceDescriptor, ownerId: string): Windo
     beforeIncompleteClose: async (win) => {
       // A timeout or a cancel: one more look before the window closes, so a
       // run that never got an answer (or only a signed-out one) still tries.
-      await readShape(win, true)
+      await readShape(win, 'now')
     },
     onIncomplete: async (ses) => {
       let names: string[] = []
