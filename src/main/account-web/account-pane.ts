@@ -623,7 +623,7 @@ function openPane(
     // could fire by creating an iframe. So sub-frames are left to same-origin
     // policy, and the guard acts only when the event is confirmed NOT a
     // sub-frame (a sub-frame's own navigations, through will-frame-navigate
-    // below, are held to https only).
+    // below, are held to https or an embedded local document).
     const guard = (label: string) => (event: { preventDefault: () => void; isMainFrame?: boolean }, target: string): void => {
       if (event.isMainFrame === false) {
         // Sub-frame: left to same-origin policy (never blocked for being
@@ -651,7 +651,8 @@ function openPane(
     view.webContents.on('will-redirect', guard('will-redirect'))
     // will-navigate is the main frame's only: a sub-frame's own navigation
     // comes through will-frame-navigate, held to the same sub-frame rule
-    // (https only, never handed to the OS browser).
+    // (https or an embedded local document - about:blank, about:srcdoc, blob:,
+    // data: - never handed to the OS browser).
     view.webContents.on('will-frame-navigate', (event: { preventDefault: () => void; isMainFrame?: boolean; url?: string }) => {
       if (event?.isMainFrame !== false) return
       guard('will-frame-navigate')(event, String(event?.url ?? ''))

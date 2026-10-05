@@ -12,6 +12,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const createdViews: { opts: any; view: any }[] = []
 /** When set, every view's loadURL rejects with it (as Electron's does, the URL in the message). */
 let loadFails: (Error & { code?: string; errno?: number }) | null = null
+/** When set, loadURL throws it at once, before any promise. */
+let loadThrowsNow: (Error & { code?: string; errno?: number }) | null = null
 const openedExternal: string[] = []
 const partitions: Record<string, any> = {}
 
@@ -48,7 +50,7 @@ class FakeWebContentsView {
       destroyed: false,
       on: (ev: string, fn: Function) => { handlers[ev] = fn },
       setWindowOpenHandler: (fn: Function) => { handlers.__open = fn },
-      loadURL: vi.fn(async () => { if (loadFails) throw loadFails }),
+      loadURL: vi.fn((): Promise<void> => { if (loadThrowsNow) throw loadThrowsNow; return loadFails ? Promise.reject(loadFails) : Promise.resolve() }),
       close() { this.destroyed = true },
       isDestroyed() { return this.destroyed },
       executeJavaScriptInIsolatedWorld: vi.fn(async () => null),
@@ -114,6 +116,7 @@ beforeEach(() => {
   for (const k of Object.keys(disk)) delete disk[k]
   logged.length = 0
   loadFails = null
+  loadThrowsNow = null
 })
 
 describe('[host] codexPaneNavDecision (pure, tri-state)', () => {
@@ -548,5 +551,19 @@ describe('[host] closing the Codex panes a lease change names never touches a Cl
     expect(createdViews[2].view.webContents.destroyed).toBe(true)
     expect(createdViews[0].view.webContents.destroyed).toBe(false)
     closeAccountPane('sess-claude')
+  })
+})
+
+describe('[host] a load that throws at once is caught and logged by host and code too', () => {
+  it('the view still opens, and the line names the host and the code, never the URL', async () => {
+    loadThrowsNow = Object.assign(new Error("ERR_FAILED loading 'https://chatgpt.com/?code=SECRET'"), { code: 'ERR_FAILED', errno: -2 })
+    const win = new FakeParentWindow()
+    expect(openCodexAccountPane(win as never, 'sess-sync', ACCT, BOUNDS)).toEqual({ ok: true })
+    await flush()
+    const line = logged.find((l) => /could not load/.test(l))!
+    expect(line).toContain('chatgpt.com')
+    expect(line).toContain('ERR_FAILED -2')
+    expect(line).not.toMatch(/SECRET|\?/)
+    closeAccountPane('sess-sync')
   })
 })
