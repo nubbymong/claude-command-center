@@ -657,18 +657,26 @@ describe('[host] the sign-in window', () => {
     expect(line).toContain('Identity answer: HTTP 200, JSON keys user (and 1 not shown); an email-shaped value at user.mail.')
   })
 
-  it('on an email path, a name after the first is shown only when it says mail; any other is a star', async () => {
+  it('on an email path, a name after the first is shown only when it is an email field name; any other is a star', async () => {
     const cases: Array<[unknown, string, string[]]> = [
-      [{ users: { nicholas_moger: { email: 'n@example.com' } } }, 'an email-shaped value at users.*.email', ['nicholas_moger']],
-      [{ accounts: { 'user-AbCdEfGhIjKl': { email: 'n@example.com' } } }, 'an email-shaped value at accounts.*.email', ['AbCdEf']],
-      [{ byLocal: { nicholas: 'nicholas@example.com' } }, 'an email-shaped value at byLocal.*', ['nicholas']],
-      [{ domains: { example: { owner: 'n@example.com' } } }, 'an email-shaped value at domains.*.*', ['example', 'owner']],
-      [{ accounts: { 'user-4821930': { email: 'n@example.com' } } }, 'an email-shaped value at accounts.*.email', ['4821930']],
-      [{ profile: { primaryEmail: 'n@example.com' } }, 'an email-shaped value at profile.primaryEmail', []],
+      [{ users: { alice_example: { email: 'a@example.com' } } }, 'an email-shaped value at users.*.email', ['alice_example']],
+      [{ accounts: { 'user-AbCdEfGhIjKl': { email: 'a@example.com' } } }, 'an email-shaped value at accounts.*.email', ['AbCdEf']],
+      [{ byLocal: { alice: 'alice@example.com' } }, 'an email-shaped value at byLocal.*', ['alice']],
+      [{ domains: { example: { owner: 'a@example.com' } } }, 'an email-shaped value at domains.*.*', ['example', 'owner']],
+      [{ accounts: { 'user-4821930': { email: 'a@example.com' } } }, 'an email-shaped value at accounts.*.email', ['4821930']],
+      [{ profile: { primaryEmail: 'a@example.com' } }, 'an email-shaped value at profile.primaryEmail', []],
+      [{ profile: { email_address: 'a@example.com' } }, 'an email-shaped value at profile.email_address', []],
+      [{ profile: { Mail: 'a@example.com' } }, 'an email-shaped value at profile.Mail', []],
       // A name that says mail but is shaped like an id is still a star.
-      [{ byMail: { mail_9876543210: 'n@example.com' } }, 'an email-shaped value at byMail.*.', ['9876543210']],
+      [{ byMail: { mail_9876543210: 'a@example.com' } }, 'an email-shaped value at byMail.*.', ['9876543210']],
       // Many users: the one path once.
       [{ users: { ann: { email: 'a@example.com' }, bob: { email: 'b@example.com' } } }, 'an email-shaped value at users.*.email.', ['ann', 'bob']],
+      // Names that only contain "mail" carry data (a mailbox, a provider, a person): stars.
+      [{ users: { mailbox_alice: 'a@example.com' } }, 'an email-shaped value at users.*.', ['mailbox', 'alice']],
+      [{ users: { alice_mail: 'a@example.com' } }, 'an email-shaped value at users.*.', ['alice']],
+      [{ providers: { gmail: 'a@example.com' } }, 'an email-shaped value at providers.*.', ['gmail']],
+      [{ a: { mailAliceExample: { email: 'a@example.com' } } }, 'an email-shaped value at a.*.email.', ['Alice']],
+      [{ u: { a: 'x@example.com', b: 'x@example.com', mailX: 'x@example.com' } }, 'an email-shaped value at u.*.', ['mailX']],
     ]
     for (const [identity, where, never] of cases) {
       logs.length = 0

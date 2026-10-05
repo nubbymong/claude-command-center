@@ -18,7 +18,8 @@ import {
   type CodexWebSessionView,
 } from '../../shared/account-web-session'
 import { sanitizeAccountEmail } from './account-email-read'
-import { peekJsonFile, readJsonFile, writeJsonFile } from '../channel-storage'
+import { hasQuarantinedCopy, peekJsonFile, readJsonFile, writeJsonFile } from '../channel-storage'
+import { logError } from '../debug-logger'
 
 const FILE = 'codex-web-sessions.json'
 const SCHEMA_VERSION = 1
@@ -49,11 +50,29 @@ function read(): CodexWebSessionsFile {
   return { schemaVersion: SCHEMA_VERSION, sessions: f.sessions.filter(validRecord) }
 }
 
+/**
+ * A store written by a newer build (a higher schema version) is never
+ * overwritten: this build cannot know what rewriting it would drop. A save or a
+ * removal is refused (false), so the caller fails closed: a finished sign-in
+ * is cleared rather than left live without a record, and a sign-out or an
+ * archive reports that its record could not be removed.
+ */
+function storeIsNewer(): boolean {
+  const p = peekJsonFile(FILE)
+  if (p.kind !== 'ok') return false
+  const v = (p.value as { schemaVersion?: unknown } | null)?.schemaVersion
+  if (typeof v === 'number' && v > SCHEMA_VERSION) {
+    logError('[codex-web] the chatgpt.com record store was written by a newer version of the app; it is left as it is')
+    return true
+  }
+  return false
+}
+
 /** The record store as the start sweep sees it: the accounts it holds a
  *  record for, or why it cannot be trusted. */
 export type CodexWebRecordsForSweep =
   | { ok: true; accounts: ReadonlySet<string> }
-  | { ok: false; why: 'unreadable' | 'malformed' | 'other-schema' }
+  | { ok: false; why: 'unreadable' | 'malformed' | 'other-schema' | 'quarantined' }
 
 /**
  * Read the store ONCE for the start sweep, without side effects (a bad file is
@@ -65,6 +84,12 @@ export type CodexWebRecordsForSweep =
  * a record it merely could not use.
  */
 export function readCodexWebRecordsForSweep(): CodexWebRecordsForSweep {
+  // A quarantined copy (an earlier read could not parse the store and moved
+  // it aside) may hold the records the fresh store lacks: stand down while it
+  // is there, not just for one start.
+  const quarantined = hasQuarantinedCopy(FILE)
+  if (quarantined === 'unknown') return { ok: false, why: 'unreadable' }
+  if (quarantined) return { ok: false, why: 'quarantined' }
   const peek = peekJsonFile(FILE)
   if (peek.kind === 'absent') return { ok: true, accounts: new Set() }
   if (peek.kind === 'unreadable') return { ok: false, why: 'unreadable' }
@@ -102,6 +127,7 @@ export function codexWebViewFor(accountId: string, now: number = Date.now()): Co
  *  true once the record is on disk, false when the write failed or threw. */
 export function saveCodexWebSession(s: CodexWebSession): boolean {
   if (!validRecord(s)) throw new Error('refusing to save a malformed chatgpt.com session record')
+  if (storeIsNewer()) return false
   const record: CodexWebSession = {
     accountId: s.accountId,
     accountEmail: s.accountEmail,
@@ -118,6 +144,7 @@ export function saveCodexWebSession(s: CodexWebSession): boolean {
  *  there is no record left (none, or removed); false when the write failed,
  *  so a caller never reports "signed out" over a record still on disk. */
 export function removeCodexWebSession(accountId: string): boolean {
+  if (storeIsNewer()) return false
   const f = read()
   const next = f.sessions.filter((s) => s.accountId !== accountId)
   if (next.length === f.sessions.length) return true

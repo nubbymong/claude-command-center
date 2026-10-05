@@ -188,6 +188,11 @@ function shapeKeyName(seg: string): boolean {
   return true
 }
 
+/** The names that say they hold an email address, and nothing else: mail,
+ *  email, email_address, primary_email (any case). A name that merely
+ *  contains "mail" (mailbox_x, gmail, x_mail) can carry data. */
+const EMAIL_FIELD = /^(e?mail|email_?address|primary_?email)$/i
+
 /** What the page's expression returns, before it is checked. */
 interface RawShape { status?: unknown; json?: unknown; top?: unknown; emailAt?: unknown; seen?: unknown }
 
@@ -196,8 +201,8 @@ interface RawShape { status?: unknown; json?: unknown; top?: unknown; emailAt?: 
  *  the answer is not that shape. A name off the pattern is not shown (it is
  *  counted); an email path is kept only when it starts at a top-level key the
  *  answer listed and no name on it holds a dot, and a name after the first is
- *  shown only when it contains "mail" and is fit for a log line (any other is
- *  `*`: users.*.email, byLocal.*). */
+ *  shown only when it is an email field name (any other is `*`:
+ *  users.*.email, byLocal.*). */
 export async function readServiceIdentityShape(wc: EmailReadableWebContents, desc: WebServiceDescriptor): Promise<IdentityShapeRead> {
   const v = await evaluateIsolated(wc, serviceIdentityShapeExpression(desc)) as RawShape | 'off-origin' | null
   if (v === 'off-origin') return 'off-origin'
@@ -213,10 +218,10 @@ export async function readServiceIdentityShape(wc: EmailReadableWebContents, des
     if (!path.every((n) => typeof n === 'string' && n.length > 0 && !n.includes('.'))) continue
     const [first, ...rest] = path as string[]
     if (!shapeKeyName(first) || !keys.includes(first)) continue
-    // A name after the first is shown only when it says it holds the email
-    // (it contains "mail"); any other (a username, a local part, an id of a
-    // map keyed by account) is a star.
-    const after = rest.map((n) => (/mail/i.test(n) && shapeKeyName(n) ? n : '*'))
+    // A name after the first is shown only when it is an email FIELD name
+    // (EMAIL_FIELD); any other (a username, a mailbox, a provider, a local
+    // part, an id of a map keyed by account) is a star.
+    const after = rest.map((n) => (EMAIL_FIELD.test(n) ? n : '*'))
     const shown = [first, ...after].join('.')
     if (emailAt.includes(shown)) continue
     emailAt.push(shown)

@@ -132,6 +132,7 @@ vi.mock('../../src/main/provider-account-registry', () => ({
 vi.mock('../../src/main/channel-storage', () => ({
   readJsonFile: (n: string, seed: () => unknown) => (S.disk[n] !== undefined ? JSON.parse(JSON.stringify(S.disk[n])) : seed()),
   peekJsonFile: (n: string) => (S.disk[n] !== undefined ? { kind: 'ok', value: JSON.parse(JSON.stringify(S.disk[n])) } : { kind: 'absent' }),
+  hasQuarantinedCopy: () => false,
   writeJsonFile: (n: string, v: unknown) => {
     if (S.flags.writeThrows) throw new Error('simulated folder failure before the write')
     if (S.flags.writeFails) return false

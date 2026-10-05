@@ -1,5 +1,5 @@
 // src/main/channel-storage.ts
-import { existsSync, readFileSync, appendFileSync, mkdirSync, renameSync, unlinkSync, readdirSync } from 'fs'
+import { existsSync, readFileSync, appendFileSync, mkdirSync, renameSync, unlinkSync, readdirSync, statSync } from 'fs'
 import { join } from 'path'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError } from './debug-logger'
@@ -62,14 +62,29 @@ export type JsonPeek = { kind: 'absent' } | { kind: 'ok'; value: unknown } | { k
 export function peekJsonFile(name: string): JsonPeek {
   let fp: string
   try { fp = filePath(name) } catch { return { kind: 'unreadable' } }
-  try {
-    if (!existsSync(fp)) return { kind: 'absent' }
-  } catch {
-    return { kind: 'unreadable' }
-  }
+  // "Absent" only when the stat says there is no entry: existsSync would also
+  // answer false for a file it cannot stat (EACCES, say), and that is not
+  // absent. A stat that throws, or a folder in the file's place, is unreadable.
+  let st: ReturnType<typeof statSync> | undefined
+  try { st = statSync(fp, { throwIfNoEntry: false }) } catch { return { kind: 'unreadable' } }
+  if (!st) return { kind: 'absent' }
+  if (st.isDirectory()) return { kind: 'unreadable' }
   let text: string
   try { text = readFileSync(fp, 'utf-8') } catch { return { kind: 'unreadable' } }
   try { return { kind: 'ok', value: JSON.parse(text) as unknown } } catch { return { kind: 'malformed' } }
+}
+
+/** Whether a quarantined copy of a channel file (`<name>.corrupt-*`, left by
+ *  readJsonFile when it could not read the file) sits beside it: its records
+ *  may be in that copy. 'unknown' when the folder cannot be listed. Never
+ *  throws. */
+export function hasQuarantinedCopy(name: string): boolean | 'unknown' {
+  try {
+    const prefix = `${name}.corrupt-`
+    return readdirSync(channelsDir()).some((n) => String(n).startsWith(prefix))
+  } catch (err) {
+    return (err as NodeJS.ErrnoException)?.code === 'ENOENT' ? false : 'unknown'
+  }
 }
 
 // Append one line to a daily JSONL file. Used by the ledger (Task P2.4).

@@ -92,6 +92,8 @@ const disk: Record<string, unknown> = {}
 vi.mock('../../src/main/channel-storage', () => ({
   readJsonFile: (n: string, seed: () => unknown) => (disk[n] ?? seed()),
   writeJsonFile: (n: string, v: unknown) => { disk[n] = JSON.parse(JSON.stringify(v)) },
+  peekJsonFile: (n: string) => (disk[n] !== undefined ? { kind: 'ok', value: disk[n] } : { kind: 'absent' }),
+  hasQuarantinedCopy: () => false,
 }))
 
 const {

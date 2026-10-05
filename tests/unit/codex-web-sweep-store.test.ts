@@ -15,6 +15,8 @@ const F = vi.hoisted(() => ({
   files: new Map<string, string>(),
   dirs: new Set<string>(),
   readFails: new Set<string>(),
+  statFails: new Set<string>(),
+  listFails: false,
   renamed: [] as Array<[string, string]>,
   minted: [] as string[],
   wiped: [] as string[],
@@ -24,18 +26,30 @@ vi.mock('fs', async (orig) => {
   const real = await orig<typeof import('fs')>()
   const fs = {
     ...real,
-    existsSync: (p: string) => F.files.has(p) || F.dirs.has(p),
+    // As Node's: a path whose stat fails (EACCES) reads as missing.
+    existsSync: (p: string) => !F.statFails.has(p) && (F.files.has(p) || F.dirs.has(p)),
     readFileSync: (p: string) => {
       if (F.readFails.has(p)) throw Object.assign(new Error(`EISDIR: illegal operation on a directory, read '${p}'`), { code: 'EISDIR' })
       if (!F.files.has(p)) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
       return F.files.get(p)!
+    },
+    statSync: (p: string, opts?: { throwIfNoEntry?: boolean }) => {
+      if (F.statFails.has(p)) throw Object.assign(new Error(`EACCES: permission denied, stat '${p}'`), { code: 'EACCES' })
+      if (F.files.has(p)) return { isDirectory: () => false, isFile: () => true }
+      if (F.dirs.has(p)) return { isDirectory: () => true, isFile: () => false }
+      if (opts?.throwIfNoEntry === false) return undefined
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
     },
     writeFileSync: (p: string, d: string) => { F.files.set(p, d) },
     mkdirSync: () => {},
     renameSync: (a: string, b: string) => { F.renamed.push([a, b]); F.files.set(b, F.files.get(a)!); F.files.delete(a) },
     copyFileSync: (a: string, b: string) => { F.files.set(b, F.files.get(a)!) },
     unlinkSync: (p: string) => { F.files.delete(p) },
-    readdirSync: () => [] as string[],
+    readdirSync: (dir: string) => {
+      if (F.listFails) throw Object.assign(new Error('EACCES: permission denied, scandir'), { code: 'EACCES' })
+      const prefix = dir.endsWith('/') ? dir : dir + '/'
+      return [...F.files.keys()].filter((p) => p.startsWith(prefix) && !p.slice(prefix.length).includes('/')).map((p) => p.slice(prefix.length))
+    },
     appendFileSync: () => {},
   }
   return { ...fs, default: fs }
@@ -73,7 +87,7 @@ const record = (id: string) => ({ accountId: id, accountEmail: 'owner@example.co
 const everyFolder = () => true
 
 beforeEach(() => {
-  F.files.clear(); F.dirs.clear(); F.readFails.clear()
+  F.files.clear(); F.dirs.clear(); F.readFails.clear(); F.statFails.clear(); F.listFails = false
   F.renamed.length = 0; F.minted.length = 0; F.wiped.length = 0; F.logs.length = 0
   CWS._resetCodexWebForTest()
 })
@@ -103,11 +117,18 @@ describe('[host] the start sweep reads the record store once, without side effec
     ['a store of another schema version (a downgrade)', () => { F.files.set(FILE, JSON.stringify({ schemaVersion: 2, sessions: [] })) }],
     ['a store whose sessions are not a list', () => { F.files.set(FILE, JSON.stringify({ schemaVersion: 1, sessions: {} })) }],
     ['a store that cannot be read', () => { F.files.set(FILE, '{}'); F.readFails.add(FILE) }],
+    ['a store whose presence cannot be checked (the stat throws; existsSync would call it missing)', () => { F.files.set(FILE, JSON.stringify({ schemaVersion: 1, sessions: [record(B)] })); F.statFails.add(FILE) }],
+    ['a store that is a folder', () => { F.dirs.add(FILE) }],
+    ['a quarantined copy of the store (an earlier corrupt read moved it aside)', () => { F.files.set(`${FILE}.corrupt-1700000000000-ab12cd34`, '{ not json') }],
+    ['a quarantined copy beside a store that reads cleanly', () => { F.files.set(FILE, JSON.stringify({ schemaVersion: 1, sessions: [] })); F.files.set(`${FILE}.corrupt-1700000000000-ab12cd34`, '{}') }],
+    ['a folder that cannot be listed (a quarantined copy cannot be ruled out)', () => { F.files.set(FILE, JSON.stringify({ schemaVersion: 1, sessions: [] })); F.listFails = true }],
   ] as const) {
     it(`${label}: the whole sweep is skipped, one line is logged, and the file stays where and as it was`, async () => {
       setUp()
       const before = F.files.get(FILE)
+      const filesBefore = [...F.files.keys()].sort()
       expect(await sweep([A, B, C])).toEqual([])
+      expect([...F.files.keys()].sort()).toEqual(filesBefore)
       expect(F.minted).toEqual([])
       expect(F.wiped).toEqual([])
       expect(F.renamed).toEqual([])
@@ -128,5 +149,30 @@ describe('[host] the start sweep never makes a partition', () => {
   it('a folder check that throws skips that account', async () => {
     expect(await sweep([A], () => { throw new Error('stat failed') })).toEqual([])
     expect(F.minted).toEqual([])
+  })
+})
+
+describe('[host] a store written by a newer build is never overwritten', () => {
+  const NEWER = JSON.stringify({ schemaVersion: 2, sessions: [record(B)], somethingNew: true })
+
+  it('a save is refused (so a finished sign-in is cleared, failing closed), and the file stays as it was', () => {
+    F.files.set(FILE, NEWER)
+    expect(STORE.saveCodexWebSession(record(A) as never)).toBe(false)
+    expect(F.files.get(FILE)).toBe(NEWER)
+    expect(F.renamed).toEqual([])
+  })
+
+  it('a removal is refused (a sign-out or an archive reports it), and the file stays as it was', () => {
+    F.files.set(FILE, NEWER)
+    expect(STORE.removeCodexWebSession(B)).toBe(false)
+    expect(STORE.removeCodexWebSession(A)).toBe(false)
+    expect(F.files.get(FILE)).toBe(NEWER)
+  })
+
+  it("this build's own store is written as before", () => {
+    F.files.set(FILE, JSON.stringify({ schemaVersion: 1, sessions: [] }))
+    expect(STORE.saveCodexWebSession(record(A) as never)).toBe(true)
+    expect(JSON.parse(F.files.get(FILE)!).sessions.map((r: { accountId: string }) => r.accountId)).toEqual([A])
+    expect(STORE.removeCodexWebSession(A)).toBe(true)
   })
 })
