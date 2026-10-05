@@ -193,6 +193,10 @@ describe('sidebar context menus — Quick Start + running lock', () => {
     expect(onDismiss).toHaveBeenCalledTimes(1)
     renderSessionMenu({ session: { ...session, provider: 'codex' }, onCodexWebSignIn, codexWebSignedIn: true })
     expect(codexItem()!.textContent).toBe('Sign in to chatgpt.com again...')
+    // Signing in again on a live session keeps that session: the tooltip says
+    // how to use a different one instead of promising a replacement.
+    expect(codexItem()!.title).toMatch(/sign out of chatgpt\.com first/)
+    expect(codexItem()!.title).not.toMatch(/replace/i)
     // Never Claude's items beside it.
     expect(accountItemTexts()).toEqual([])
   })

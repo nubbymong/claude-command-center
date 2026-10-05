@@ -12,7 +12,7 @@ import type { CodexWebSessionView } from '../../shared/account-web-session'
 interface CodexWebState {
   /** The last status main reported, by registry account id. */
   byAccount: Record<string, CodexWebSessionView>
-  /** The account whose sign-in this renderer started and is waiting on. */
+  /** The account whose sign-in is running now (one at a time app-wide). */
   signingIn: string | null
   /** The last failure to show for an account, verbatim from main. */
   errors: Record<string, string | null>
@@ -20,10 +20,17 @@ interface CodexWebState {
   signIn: (accountId: string) => Promise<void>
   cancel: (accountId: string) => Promise<void>
   signOut: (accountId: string) => Promise<void>
+  /** Pick up a sign-in main is running (after a renderer reload) and follow
+   *  it to its end. */
+  restore: () => Promise<void>
 }
+
+const RESTORE_POLL_MS = 1500
 
 const setError = (accountId: string, error: string | null) =>
   useCodexWebStore.setState((s) => ({ errors: { ...s.errors, [accountId]: error } }))
+
+let restoring = false
 
 export const useCodexWebStore = create<CodexWebState>((set, get) => ({
   byAccount: {},
@@ -38,7 +45,10 @@ export const useCodexWebStore = create<CodexWebState>((set, get) => ({
   signIn: async (accountId) => {
     const api = window.electronAPI.codexWeb
     if (typeof api?.signIn !== 'function') return
-    set({ signingIn: accountId })
+    // The slot belongs to the run that took it: a second sign-in main refuses
+    // (one at a time) never takes over, or clears, the running one's slot.
+    const claimed = get().signingIn === null
+    if (claimed) set({ signingIn: accountId })
     setError(accountId, null)
     try {
       const r = await api.signIn(accountId)
@@ -47,7 +57,7 @@ export const useCodexWebStore = create<CodexWebState>((set, get) => ({
     } catch {
       setError(accountId, 'The sign-in could not start. Try again.')
     } finally {
-      if (get().signingIn === accountId) set({ signingIn: null })
+      if (claimed && get().signingIn === accountId) set({ signingIn: null })
       await get().refresh(accountId)
     }
   },
@@ -65,6 +75,33 @@ export const useCodexWebStore = create<CodexWebState>((set, get) => ({
       setError(accountId, 'The sign-out did not finish. Try again.')
     } finally {
       await get().refresh(accountId)
+    }
+  },
+  restore: async () => {
+    const api = window.electronAPI.codexWeb
+    if (restoring || typeof api?.signInState !== 'function') return
+    restoring = true
+    let followed: string | null = null
+    try {
+      for (;;) {
+        let r
+        try { r = await api.signInState() } catch { break }
+        if (!r?.ok) break
+        const st = r.state
+        if (st.phase !== 'awaiting-user' || !st.accountId) break
+        if (followed === null) {
+          if (get().signingIn !== null) break // this renderer is already following a run
+          followed = st.accountId
+          set({ signingIn: followed })
+        }
+        await new Promise((res) => setTimeout(res, RESTORE_POLL_MS))
+      }
+    } finally {
+      restoring = false
+      if (followed !== null) {
+        if (get().signingIn === followed) set({ signingIn: null })
+        await get().refresh(followed)
+      }
     }
   },
 }))

@@ -124,9 +124,13 @@ function ManagedAccountRow({ account, provider, snapshot, onAddAccount }: {
     } catch {
       setBusy(false)
       setError('That did not work; try again.')
+      if (verb === 'archived' && webApplies) void useCodexWebStore.getState().refresh(id)
       return
     }
     setBusy(false)
+    // An archive clears the chatgpt.com sign-in before it changes anything, and
+    // may still be refused after that: the row reads the web status afresh.
+    if (verb === 'archived' && webApplies) void useCodexWebStore.getState().refresh(id)
     if (r.ok) return
     const holding = verb && r.code === 'consumers' ? blockerSessions(useSessionStore.getState().sessions, r.sessions) : []
     if (holding.length) {
@@ -496,6 +500,11 @@ function ExternalAdoptionBlock({ providerId, provider }: { providerId: ProviderI
 export function ManagedAccountsSection({ providerId }: { providerId: ProviderId }) {
   const snapshot = useProviderAccountsStore((s) => s.snapshot)
   const [dialog, setDialog] = useState<AddAccountDialogState | null>(null)
+  // P4.6: a chatgpt.com sign-in main is running (this page reopened, or the
+  // window reloaded) shows on its row again, with its Cancel.
+  useEffect(() => {
+    if (providerId === 'codex') void useCodexWebStore.getState().restore()
+  }, [providerId])
   const provider = providerView(snapshot, providerId)
   if (!snapshot || !provider || !provider.managedAccounts) return null
 

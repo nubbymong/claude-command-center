@@ -33,6 +33,7 @@ const providerAccounts = {
   snapshot: vi.fn(() => Promise.resolve(null)),
   onChanged: vi.fn(() => () => {}),
   logout: vi.fn(() => Promise.resolve({ ok: true, state: 'signed-out' })),
+  setLifecycle: vi.fn(() => Promise.resolve({ ok: false, code: 'lifecycle', message: 'refused' })),
 }
 
 const { useProviderAccountsStore } = await import('../../../src/renderer/stores/providerAccountsStore')
@@ -178,5 +179,50 @@ describe('[host] a Codex account row: its chatgpt.com web session', () => {
     await render(snapshot({ ids: ['acc-work', 'acc-parked', 'acc-gone'] }))
     expect(codexWeb.status).not.toHaveBeenCalled()
     expect((await menu('acc-work'))['chatgpt-sign-in']).toBeUndefined()
+  })
+})
+
+describe('[host] the row follows a sign-in it did not start, and reads afresh after an archive', () => {
+  it("a second sign-in main refuses never takes over the running one's line and Cancel", async () => {
+    let finishA: (v: unknown) => void = () => {}
+    codexWeb.signIn.mockImplementationOnce(() => new Promise((r) => { finishA = r }))
+    codexWeb.signIn.mockImplementationOnce((id: string) => Promise.resolve({ ok: true, state: { phase: 'failed', accountId: id, error: 'A sign-in is already in progress. Finish or cancel it first.' } }))
+    await render(snapshot())
+    await menu(A)
+    await click(`account-menu-chatgpt-sign-in-${A}`)
+    expect(q(`account-web-cancel-${A}`)).not.toBeNull()
+    await act(async () => { await useCodexWebStore.getState().signIn(P) })
+    await flush()
+    // A's run still owns the line and its Cancel.
+    expect(useCodexWebStore.getState().signingIn).toBe(A)
+    expect(q(`account-web-cancel-${A}`)).not.toBeNull()
+    await act(async () => { finishA({ ok: true, state: { phase: 'done', accountId: A } }) })
+    await flush()
+    expect(useCodexWebStore.getState().signingIn).toBeNull()
+  })
+
+  it('a sign-in main is already running shows on its row again when the page opens', async () => {
+    codexWeb.signInState.mockImplementation(() => Promise.resolve({ ok: true, state: { phase: 'awaiting-user', accountId: A } }))
+    try {
+      await render(snapshot())
+      await flush()
+      expect(q(`account-web-cancel-${A}`)).not.toBeNull()
+      codexWeb.signInState.mockImplementation(() => Promise.resolve({ ok: true, state: { phase: 'failed', accountId: A, error: 'Sign-in cancelled.' } }))
+      await act(async () => { await new Promise((r) => setTimeout(r, 1700)) })
+      await flush()
+      expect(q(`account-web-cancel-${A}`)).toBeNull()
+      expect(useCodexWebStore.getState().signingIn).toBeNull()
+    } finally {
+      codexWeb.signInState.mockImplementation(() => Promise.resolve({ ok: true, state: { phase: 'idle', accountId: null } }))
+    }
+  })
+
+  it('an archive attempt, refused or not, reads the chatgpt.com status afresh', async () => {
+    await render(snapshot())
+    const before = codexWeb.status.mock.calls.filter((c) => c[0] === P).length
+    await menu(P)
+    await click(`account-menu-archive-${P}`)
+    expect(providerAccounts.setLifecycle).toHaveBeenCalled()
+    expect(codexWeb.status.mock.calls.filter((c) => c[0] === P).length).toBeGreaterThan(before)
   })
 })

@@ -309,7 +309,7 @@ export default function SessionContextMenu({
           <div className="my-1 border-t" style={{ borderColor: 'var(--border-subtle)' }} />
           <button
             onClick={() => { codexWebItem(); onDismiss() }}
-            title={codexWebSignedIn ? 'This account is signed in to chatgpt.com. Sign in again to replace that sign-in' : 'Sign this account in to chatgpt.com, in a sign-in window'}
+            title={codexWebSignedIn ? 'This account is signed in to chatgpt.com. To use a different chatgpt.com sign-in, sign out of chatgpt.com first (Settings, Accounts)' : 'Sign this account in to chatgpt.com, in a sign-in window'}
             className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
             style={{ color: 'var(--text-primary)' }}
             data-testid="session-ctx-codex-web"
