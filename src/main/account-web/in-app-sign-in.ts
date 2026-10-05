@@ -645,11 +645,10 @@ function serviceWindowPolicy(desc: WebServiceDescriptor, ownerId: string): Windo
       // closes still leaves what the page answered.
       await readShape(win, false)
     },
-    onEmailRead: async (email, win) => {
+    onEmailRead: async () => {
+      // Counted only: the poll's own look at the answer's shape (above, in
+      // onSessionRead) already covers an identity read that finds no email.
       diag.identityReads++
-      // An identity read that finds no email while the session cookie is
-      // there is the moment the answer's shape says why.
-      if (email === null) await readShape(win, false)
     },
     beforeIncompleteClose: async (win) => {
       // A timeout or a cancel: one more look before the window closes, so a

@@ -510,12 +510,15 @@ describe('[host] the sign-in window', () => {
     page.identity = {
       user: { id: 'u', mail: 'me@example.com' },
       byId: { '123e4567-e89b-12d3-a456-426614174000': 1, 'sk-AbCdEf0123456789xyz': 2, [HEX64]: 3, '9876543210': 4, user_4f9a8b7c6d5e: 5, plan: 6 },
+      // One key per rule, each caught by that rule alone: a five-digit run,
+      // a twelve-hex-digit run, a long name with three digits.
+      oneRule: { acct12345: 1, deadbeefcafe: 2, token_x1y2z3w4v5u: 3 },
       byEmail: { 'me@example.com': 'other@example.com' },
     }
     await runServiceSignIn(RUN({ timeoutMs: 60 }))
     const line = logs.find((l) => /did not complete/.test(l))!
-    expect(line).toContain('JSON keys user, user.id, user.mail, byId, byId.plan, byEmail (and 6 not shown); an email-shaped value at user.mail.')
-    for (const k of ['123e4567', 'sk-AbCdEf', HEX64.slice(0, 16), '9876543210', '4f9a8b7c6d5e', 'me@example.com']) expect(line, k).not.toContain(k)
+    expect(line).toContain('JSON keys user, user.id, user.mail, byId, byId.plan, oneRule, byEmail (and 9 not shown); an email-shaped value at user.mail.')
+    for (const k of ['123e4567', 'sk-AbCdEf', HEX64.slice(0, 16), '9876543210', '4f9a8b7c6d5e', 'me@example.com', 'acct12345', 'deadbeefcafe', 'token_x1y2z3w4v5u']) expect(line, k).not.toContain(k)
   })
 
   it('a first read while the page is off chatgpt.com is not the last: a later read on it answers', async () => {
