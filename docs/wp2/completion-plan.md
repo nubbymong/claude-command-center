@@ -185,7 +185,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 55 | Memory | PARTIAL (P4.4, 1a12160b to 41638f93; mocked): listing, guard and read built; delete built, hidden and refused in main until the VM check; frontmatter edit does not carry over (recorded) | Parity: each realm's Codex memories on the Memory page | verification: the delete check on the VM (else OR4); OR4: the real file format | 4 |
 | 56 | Codex logs | DONE (P4.4, 1a12160b, 8fb60652; mocked) | Parity: each realm's `log` folder offered where the app offers its own log folder (Settings, Debug Logging) | verification: the VM (each account's folders open, `log_dir` from `config.toml` included) | 4 |
 | 57 | Cloud Agents | DONE (P4.5, 5d0187c6 to d41c4a8b; mocked): built, the skip-permissions choice as the owner decided on 2026-10-04 (question 7: A, kept as built); was Claude only (`src/main/cloud-agent-manager.ts:192`) | Parity: background agents run with `codex exec` in the account's realm, as Claude's run its headless CLI; not the experimental `codex cloud` (WP1.41) | verification: the VM run, OR4 | 4 |
-| 58 | Web sign-in and artifacts | PARTIAL (P4.6 first half, 27d62537 to 1064dbbf; second half, 10fab972 to dd23a3bf, its review fixes cbb2b58d to 29b3c7cd; mocked): a Codex account's own web partition, the orphan warning over both prefixes, Claude's items off a Codex tab's menu and pane; the chatgpt.com sign-in window (fail-closed), the pane's chatgpt.com account surface, a Codex tab's own menu item, the Settings row's status and items, and archive clearing the session first | Web session: parity (chatgpt.com is to a Codex account what claude.ai is to a Claude account: the browser pane's account surface). Artifacts: no Codex equivalent is known, so a section 19 record (section 10) | owner (OR2, one sign-in run through the built window, which confirms its three unverified values; the artifacts record, OR3) | 4 |
+| 58 | Web sign-in and artifacts | PARTIAL (P4.6 first half, 27d62537 to 1064dbbf; second half, 10fab972 to dd23a3bf, its review fixes cbb2b58d to 7dc099b5; mocked): a Codex account's own web partition, the orphan warning over both prefixes, Claude's items off a Codex tab's menu and pane; the chatgpt.com sign-in window (fail-closed), the pane's chatgpt.com account surface, a Codex tab's own menu item, the Settings row's status and items, and archive clearing the session first | Web session: parity (chatgpt.com is to a Codex account what claude.ai is to a Claude account: the browser pane's account surface). Artifacts: no Codex equivalent is known, so a section 19 record (section 10) | owner (OR2, one sign-in run through the built window, which confirms its three unverified values; the artifacts record, OR3) | 4 |
 
 ### E. Everything else
 
@@ -6325,7 +6325,8 @@ sign-in run through the built window), OR3 (the record). PB7 sized OR2.
     (one major). Every item fixed in b8b66839 to 29b3c7cd (lane W58; mocked).
   - *Round 2 fixes (2026-10-05; b8b66839 to 29b3c7cd).* The identity answer is read on the
     service as the run goes, spaced and bounded, until it is a JSON answer
-    with keys; a look while the page is elsewhere does not count, and a
+    with keys (round 3: until one shows an email path); a look while the
+    page is elsewhere does not count, and a
     timed-out or cancelled run looks once more before its window closes (a
     Cancel lets the run close its own window after that look). The line
     names the key path to an email-shaped value, and drops (and counts) key
@@ -6340,7 +6341,24 @@ sign-in run through the built window), OR3 (the record). PB7 sized OR2.
     account views and the Codex sign-in window; http, file and custom schemes
     stay refused. A failed page load in an account view is logged by host and
     error code. 47 of 47 mutants killed.
-  - *Owed.* The reviews of the round 2 fixes; PB7b on the VM; OR2 on the
+  - *Reviews, round 3 (at 3536c4f0).* ADR-009, lenses A to D: PASS
+    (minors); spec PASS (one minor); quality FAIL (one major). Every item
+    fixed in df0b00c0 to 7dc099b5 (lane W58; mocked).
+  - *Round 3 fixes (2026-10-05; df0b00c0 to 7dc099b5).* The identity answer is looked at
+    until one shows where an email sits, and at once on the poll where the
+    session cookie first appears, so the sign-in page's own answer is never
+    the last word; a later look that fails or answers worse keeps the
+    earlier, better answer. The line lists the top-level key names and the
+    key path to an email-shaped value, and counts every other name; a key
+    holding a dot is never a path name. Cancel hides the window at once,
+    then the bounded last look, then the window goes. A pane closed because
+    its session no longer runs under the account says why on the start
+    page. At start, each Codex account's web session with no record is
+    wiped, so a sign-in cut short by a quit never leaves a session that
+    offers no Sign out. A lease check that throws closes the pane, and the
+    wiring test checks the calls in index.ts sit at the top level of their
+    blocks. 31 of 31 mutants killed.
+  - *Owed.* The reviews of the round 3 fixes; PB7b on the VM; OR2 on the
     final build (then a values-only fix and a re-run if a value was wrong);
     OR3, the artifacts record.
 
