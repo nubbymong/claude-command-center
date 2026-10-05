@@ -16,8 +16,11 @@ the design fails closed: completion needs the named cookie AND a valid email,
 so a wrong value means "never completes" and a wiped partition, never a false
 "signed in"; the window and a signed-out pane may go off-site only to the
 listed hosts, never any https host (Claude's own policy is unchanged). A run
-that does not complete logs the cookie names and off-site hosts it saw, never
-values or query strings, so a failed owner run still yields the values.
+that does not complete logs names only: the cookie names, whether the named
+one matched, how many identity reads ran, the identity answer's HTTP status
+and the key path to an email-shaped value, and the off-site hosts it saw,
+never values or query strings. The owner's run leaves the window open until
+it closes by itself.
 
 **Guards.** The codexWeb channels answer the app window only, take the
 `account` id class only, and act only for a known, non-archived Codex account

@@ -53,23 +53,29 @@ npm run test:e2e     # Playwright
   in forks): the home variables (HOME, USERPROFILE, APPDATA, LOCALAPPDATA, both CLI
   config-folder overrides, and the XDG folders off Windows) point at a fresh
   folder per worker, re-asserted before every test, and the app's data folder
-  (`CCC_E2E_DATA_DIR`) is pinned under the worker's temp folder. The guard in
-  `tests/helpers/home-guard-core.mjs` then throws `TEST_ISOLATION_VIOLATION`, even
-  when the code under test catches it, for: the wrapped fs calls (deletes, moves,
-  writes, creates, write-flag opens and reads, fd and FileHandle calls on a
-  real-home file) aimed at a real home; child_process, ChildProcess and node-pty
-  spawns whose working folder, child environment (home, temp, XDG, git and npm
-  config variables) or a path written in an argument is in a real home, or whose
-  shell line does a `cd` into or above one (the executable itself, and a node
-  script or `cmd /c` / `sh -c` command in the real npm or nvm folder, are
-  allowed); worker_threads Workers; `process.execve`; and `process.binding('fs')`.
-  Node children load the same guard through NODE_OPTIONS.
+  (`CCC_E2E_DATA_DIR`) is pinned per test file under the worker's temp folder. The
+  guard in `tests/helpers/home-guard-core.mjs` then throws
+  `TEST_ISOLATION_VIOLATION`, even when the code under test catches it, for: the
+  wrapped fs calls (deletes, moves, writes, creates, write-flag opens and reads, fd
+  and FileHandle calls on a real-home file) aimed at a real home; child_process,
+  ChildProcess and node-pty spawns whose working folder, child environment (home,
+  temp, XDG, git and npm config variables, and the CLI and app
+  config-folder variables) or a path written in an argument is in a real home; a
+  `cd` / `chdir` / `pushd` (glued forms such as `cd/d`, `cd\` and `cd..`
+  included) or PowerShell `Set-Location` / `sl` / `Push-Location` into or above a
+  real home, a drive or filesystem root that holds one included, in a shell line
+  (exec, `shell: true`, `cmd /c`, `sh -c`, `pwsh -Command`); worker_threads
+  Workers; `process.execve`; and `process.binding('fs')`. The executable itself is
+  allowed, and so are a node script and the command word (that position only) of a
+  `cmd /c` / `sh -c` line inside the real npm or nvm folder. Node children load the
+  same guard through NODE_OPTIONS.
 - **Not covered:** native addons (they write natively); a non-node child beyond
   its environment, working folder and arguments (a native tool that finds the
   profile through the OS, e.g. to expand `~`, reaches the real one); shell
-  re-assembly of an argument (quotes or carets inside a word, `%VAR%` / `$VAR`,
-  a relative path after a `cd` the guard did not see); anything started outside
-  these entry points. Keep those on temporary folders yourself.
+  re-assembly of an argument (quotes or carets inside a word, `%VAR%` / `$VAR`, a
+  PowerShell `-EncodedCommand`, a relative path after a `cd` the guard did not
+  see); anything started outside these entry points. Keep those on temporary
+  folders yourself.
 - Never loosen the guard to make a test pass: use `os.homedir()` / `os.tmpdir()`
   (already isolated) or mock the code that reaches the real location.
   `originalHomeEnv()` is for locating tools, never for writing.

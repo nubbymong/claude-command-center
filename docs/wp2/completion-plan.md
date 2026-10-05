@@ -185,7 +185,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 55 | Memory | PARTIAL (P4.4, 1a12160b to 41638f93; mocked): listing, guard and read built; delete built, hidden and refused in main until the VM check; frontmatter edit does not carry over (recorded) | Parity: each realm's Codex memories on the Memory page | verification: the delete check on the VM (else OR4); OR4: the real file format | 4 |
 | 56 | Codex logs | DONE (P4.4, 1a12160b, 8fb60652; mocked) | Parity: each realm's `log` folder offered where the app offers its own log folder (Settings, Debug Logging) | verification: the VM (each account's folders open, `log_dir` from `config.toml` included) | 4 |
 | 57 | Cloud Agents | DONE (P4.5, 5d0187c6 to d41c4a8b; mocked): built, the skip-permissions choice as the owner decided on 2026-10-04 (question 7: A, kept as built); was Claude only (`src/main/cloud-agent-manager.ts:192`) | Parity: background agents run with `codex exec` in the account's realm, as Claude's run its headless CLI; not the experimental `codex cloud` (WP1.41) | verification: the VM run, OR4 | 4 |
-| 58 | Web sign-in and artifacts | PARTIAL (P4.6 first half, 27d62537 to 1064dbbf; second half, 10fab972 to dd23a3bf; mocked): a Codex account's own web partition, the orphan warning over both prefixes, Claude's items off a Codex tab's menu and pane; the chatgpt.com sign-in window (fail-closed), the pane's chatgpt.com account surface, a Codex tab's own menu item, the Settings row's status and items, and archive clearing the session first | Web session: parity (chatgpt.com is to a Codex account what claude.ai is to a Claude account: the browser pane's account surface). Artifacts: no Codex equivalent is known, so a section 19 record (section 10) | owner (OR2, one sign-in run through the built window, which confirms its three unverified values; the artifacts record, OR3) | 4 |
+| 58 | Web sign-in and artifacts | PARTIAL (P4.6 first half, 27d62537 to 1064dbbf; second half, 10fab972 to dd23a3bf, its review fixes cbb2b58d to 29b3c7cd; mocked): a Codex account's own web partition, the orphan warning over both prefixes, Claude's items off a Codex tab's menu and pane; the chatgpt.com sign-in window (fail-closed), the pane's chatgpt.com account surface, a Codex tab's own menu item, the Settings row's status and items, and archive clearing the session first | Web session: parity (chatgpt.com is to a Codex account what claude.ai is to a Claude account: the browser pane's account surface). Artifacts: no Codex equivalent is known, so a section 19 record (section 10) | owner (OR2, one sign-in run through the built window, which confirms its three unverified values; the artifacts record, OR3) | 4 |
 
 ### E. Everything else
 
@@ -6203,8 +6203,10 @@ sign-in run through the built window), OR3 (the record). PB7 sized OR2.
     so a wrong value means the run never completes and the partition is
     wiped, never a false "signed in"; the navigation allowlist names exactly
     the listed hosts, never any https host (part of the ADR-009 surface); and a
-    run that does not complete logs the cookie names and off-site hosts it saw
-    (never values or query strings), so even a failed owner run yields them.
+    run that does not complete logs names only: the cookie names, whether the
+    named one matched, how many identity reads ran, the identity answer's HTTP
+    status and the key path to an email-shaped value, and the off-site hosts
+    it saw (never values or query strings).
   - If OR2 shows the in-app window cannot complete a chatgpt.com sign-in,
     section 9's note applies: the cookie path goes to the owner, and if the
     owner declines it, the web half becomes a section 19 record.
@@ -6311,17 +6313,36 @@ sign-in run through the built window), OR3 (the record). PB7 sized OR2.
     The window and the pane block downloads, hold a sub-frame's own navigations
     to https, and log hosts only. A sign-in that does not complete also logs
     whether the session cookie was seen, the identity reads, and the identity
-    answer's HTTP status and key names, never a value, so one failed owner run
-    shows the right values. A pane records an email that answers late, a
+    answer's HTTP status and key names, never a value. A pane records an email
+    that answers late, a
     bounded number of times. The Settings row keeps its own sign-in line,
     follows one already running, and reads its status afresh after an archive.
     The start-up wiring is pinned (`main/codex-web-wiring.test.ts`), and the
     real modules are tested together (`codex-web-boundary.test.ts`). 69
     mutants, 69 killed.
-  - *Owed.* The spec and quality re-reviews of the round 1 fixes; the ADR-009
-    re-attack (round 2); PB7b on the VM; OR2 on the final build (then a
-    values-only fix and a re-run if a value was wrong); OR3, the artifacts
-    record.
+  - *Reviews, round 2 (at e59cbd80).* ADR-009 re-attack, lenses A to D:
+    PASS (minors); spec re-review PASS (three minors); quality re-review FAIL
+    (one major). Every item fixed in b8b66839 to 29b3c7cd (lane W58; mocked).
+  - *Round 2 fixes (2026-10-05; b8b66839 to 29b3c7cd).* The identity answer is read on the
+    service as the run goes, spaced and bounded, until it is a JSON answer
+    with keys; a look while the page is elsewhere does not count, and a
+    timed-out or cancelled run looks once more before its window closes (a
+    Cancel lets the run close its own window after that look). The line
+    names the key path to an email-shaped value, and drops (and counts) key
+    names shaped like an id or a secret. Every wipe of an account's session,
+    the one after an unfinished sign-in included, holds a counted bar, so no
+    pane opens mid-wipe; a record write that throws reads as not written. A
+    pane opens only for a Codex session whose current launch lease is on the
+    account, and closes when that launch ends or switches account; a refused
+    open says why on the start page. The wiring is two functions index.ts
+    calls and its test calls (`account-web/codex-web-wiring.ts`). Embedded
+    about:blank, about:srcdoc, blob and data frames load in both services'
+    account views and the Codex sign-in window; http, file and custom schemes
+    stay refused. A failed page load in an account view is logged by host and
+    error code. 47 of 47 mutants killed.
+  - *Owed.* The reviews of the round 2 fixes; PB7b on the VM; OR2 on the
+    final build (then a values-only fix and a re-run if a value was wrong);
+    OR3, the artifacts record.
 
 **P4.7 Insights for Codex (row 68).** After P4.5's runner and OR3's approval.
 Probe: PB5 (shared with P4.5).
@@ -6842,15 +6863,19 @@ Queued now (none blocks the start; each blocks one later step):
   identity read, the sign-in methods' hosts). On the final build, on a
   disposable identity: open a Codex account's menu in Settings, Accounts,
   choose Sign in to chatgpt.com and sign in by email (and by Google, Apple or
-  phone where there is a disposable identity for it), noting for each method
+  phone where there is a disposable identity for it), leaving the window open
+  until it closes by itself (once the sign-in and the email are confirmed, or
+  after five minutes; closing it by hand can cut its log line short), noting
+  for each method
   whether the window closed and the row read signed in as that email; open
   chatgpt.com in that account's Codex tab's browser pane and confirm it shows
   signed in; choose Sign out of chatgpt.com, sign in once more, archive the
   account, confirm the pane and the row read signed out, and review the
   screenshots. A method that does not complete leaves one log line with the
-  cookie names on chatgpt.com and the off-site hosts the window saw (never
-  values or query strings), so a failed run still yields the values, and a
-  values-only fix and a re-run follow. PB7: the page loads with its sign-in
+  cookie names on chatgpt.com, whether the named one matched, how many
+  identity reads ran, the identity answer's HTTP status and the key path to
+  an email-shaped value, and the off-site hosts the window saw (never values
+  or query strings); a values-only fix and a re-run follow from it. PB7: the page loads with its sign-in
   form under both user agents, no challenge; PB7b (credential-free, on the
   VM) narrows the values first.
 - **OR3 (P4.7, P4.6).** One batched render on the Agent Canvas: the Insights

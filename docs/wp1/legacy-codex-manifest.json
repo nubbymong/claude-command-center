@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-05T01:44:21.514Z",
-  "head": "e26a29a7d8b07c6d990ab4ec76b3f77d72351e92",
-  "tree": "95843ca9bfd91f4fcb878507c98060c5bf57520b",
+  "generatedAt": "2026-10-05T05:48:36.340Z",
+  "head": "982da8ce7e904b959dc778152f1eb70c2ed3defe",
+  "tree": "117902208fe96f091afa8b9f79e6cdae863767d8",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2771,
+  "trackedFileCount": 2772,
   "excludedFileCount": 402,
-  "scannedFileCount": 2369,
+  "scannedFileCount": 2370,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 814,
-  "pathDigest": "af9c1dbc83ed52229d25ede641305bd86f233caf7b5580053a2837cfdb2ff192",
+  "matchedPathCount": 815,
+  "pathDigest": "f42064e45d52a29b5144577c292a4126227bd005b905be4e947048cb764bc965",
   "entries": [
     {
       "path": ".github/workflows/ci.yml",
@@ -204,7 +204,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 1196,
+      "lineCount": 1199,
       "truncated": true
     },
     {
@@ -430,7 +430,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 39
+      "lineCount": 41
     },
     {
       "path": "src/main/account-web/claude-cli-auth.ts",
@@ -446,10 +446,18 @@
         "P05",
         "P14"
       ],
-      "lineCount": 44
+      "lineCount": 46
     },
     {
       "path": "src/main/account-web/codex-web-store.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "lineCount": 22
+    },
+    {
+      "path": "src/main/account-web/codex-web-wiring.ts",
       "predicates": [
         "P01",
         "P14"
@@ -724,7 +732,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 51
+      "lineCount": 46
     },
     {
       "path": "src/main/install-secret.ts",
@@ -1767,7 +1775,7 @@
         "P05",
         "P11"
       ],
-      "lineCount": 33
+      "lineCount": 40
     },
     {
       "path": "src/renderer/components/agent-hub/AgentHubOnboarding.tsx",
@@ -3459,7 +3467,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 10
+      "lineCount": 13
     },
     {
       "path": "tests/integration/codex-cli-compat-env.test.ts",
@@ -3600,7 +3608,7 @@
         "P02",
         "P13"
       ],
-      "lineCount": 41
+      "lineCount": 71
     },
     {
       "path": "tests/unit/codex-web-copy.test.ts",
@@ -3626,7 +3634,7 @@
         "P02",
         "P13"
       ],
-      "lineCount": 111
+      "lineCount": 113
     },
     {
       "path": "tests/unit/codex-web-pane.test.ts",
@@ -3634,7 +3642,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 86
+      "lineCount": 96
     },
     {
       "path": "tests/unit/codex-web-sign-in.test.ts",
@@ -3642,7 +3650,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 114
+      "lineCount": 119
     },
     {
       "path": "tests/unit/conductor-secret-rotation.test.ts",
@@ -4227,7 +4235,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 15
+      "lineCount": 34
     },
     {
       "path": "tests/unit/main/conductor-mcp-auth.test.ts",
@@ -5529,7 +5537,7 @@
         "P05",
         "P13"
       ],
-      "lineCount": 40
+      "lineCount": 43
     },
     {
       "path": "tests/unit/renderer/command-bar-layout.test.ts",
@@ -6375,7 +6383,7 @@
       "predicates": [
         "P13"
       ],
-      "lineCount": 35
+      "lineCount": 38
     },
     {
       "path": "tests/unit/renderer/whatsnew-showcase.test.tsx",
@@ -6556,7 +6564,7 @@
         "P04",
         "P13"
       ],
-      "lineCount": 38
+      "lineCount": 39
     },
     {
       "path": "tests/unit/tokenomics/tk-parse.test.ts",

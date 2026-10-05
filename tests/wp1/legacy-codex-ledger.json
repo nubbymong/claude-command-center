@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "af9c1dbc83ed52229d25ede641305bd86f233caf7b5580053a2837cfdb2ff192",
-  "manifestHead": "e26a29a7d8b07c6d990ab4ec76b3f77d72351e92",
+  "manifestPathDigest": "f42064e45d52a29b5144577c292a4126227bd005b905be4e947048cb764bc965",
+  "manifestHead": "982da8ce7e904b959dc778152f1eb70c2ed3defe",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -605,6 +605,17 @@
       "category": "ACCOUNT",
       "disposition": "added",
       "evidence": "new WP2 PR 4 P4.6 second half (row 58; 10fab972): the metadata record of a Codex account's chatgpt.com session in codex-web-sessions.json (account id, email, times, origin only; never a cookie or token; malformed records refused and dropped) (WP1.68); tests/unit/codex-web-pane.test.ts",
+      "note": "created by WP2 PR 4 (P4.6)"
+    },
+    {
+      "path": "src/main/account-web/codex-web-wiring.ts",
+      "predicates": [
+        "P01",
+        "P14"
+      ],
+      "category": "ACCOUNT",
+      "disposition": "added",
+      "evidence": "new WP2 PR 4 P4.6 second half (row 58, round 2 fixes; 4474a72f): main's start-up wiring of a Codex account's chatgpt.com web session as two functions index.ts calls: the archive hook, and the codexWeb channels with the panes closed before a wipe, the record forgotten after it, and a pane bound to a Codex PTY session whose current launch lease is on the account, closed when that launch ends or switches (WP1.68); tests/unit/main/codex-web-wiring.test.ts",
       "note": "created by WP2 PR 4 (P4.6)"
     },
     {
