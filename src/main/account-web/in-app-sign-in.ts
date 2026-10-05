@@ -523,6 +523,9 @@ class SignInDiagnostic {
   shapeTried = false
   /** A shape read found the page elsewhere (not counted as a try). */
   shapeOffOrigin = false
+  /** The session cookie has appeared and no look has answered from the
+   *  service since: each poll looks at once until one does. */
+  cookieLookPending = false
   shapeTries = 0
   shapeAt = 0
   constructor(private readonly desc: WebServiceDescriptor) {}
@@ -605,6 +608,8 @@ function serviceWindowPolicy(desc: WebServiceDescriptor, ownerId: string): Windo
       r = null
     }
     if (r === 'off-origin') { diag.shapeOffOrigin = true; return }
+    // A look on the service: the first-cookie look is no longer pending.
+    diag.cookieLookPending = false
     diag.shapeTries++
     diag.shapeAt = Date.now()
     diag.shapeTried = true
@@ -652,13 +657,14 @@ function serviceWindowPolicy(desc: WebServiceDescriptor, ownerId: string): Windo
       })
     },
     onSessionRead: async (hasSessionCookie, win) => {
-      const firstCookie = hasSessionCookie && !diag.cookieSeen
+      if (hasSessionCookie && !diag.cookieSeen) diag.cookieLookPending = true
       if (hasSessionCookie) diag.cookieSeen = true
       // The session cookie may never match (its name could be wrong): the
       // answer's shape is looked at as the run goes, so a window the user
-      // closes still leaves what the page answered. The poll where the cookie
-      // first appears looks at once: that answer is the signed-in one.
-      await readShape(win, firstCookie ? 'now' : 'poll')
+      // closes still leaves what the page answered. From the poll where the
+      // cookie first appears, each poll looks at once until a look answers
+      // from the service: that answer is the signed-in one.
+      await readShape(win, diag.cookieLookPending ? 'now' : 'poll')
     },
     onEmailRead: async () => {
       // Counted only: the poll's own look at the answer's shape (above, in

@@ -10,7 +10,9 @@
  *   3. The registry check: the account is known, is a Codex account, is not
  *      archived, and is not being archived. A Codex partition (the sign-in
  *      window's or the pane's) is only ever made after this check: an unknown
- *      id would otherwise mint a partition no UI can see or clear.
+ *      id would otherwise mint a partition no UI can see or clear. The start
+ *      sweep (codex-web-wiring.ts) makes none either: it touches only an
+ *      account whose partition folder already exists.
  * The renderer never supplies a URL, a host or a partition name: the pane
  * opens the descriptor's start page, and the window its sign-in page.
  *

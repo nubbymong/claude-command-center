@@ -194,8 +194,10 @@ interface RawShape { status?: unknown; json?: unknown; top?: unknown; emailAt?: 
 /** Read and validate the identity answer's shape. Never throws: the shape,
  *  'off-origin' when the page is elsewhere, or null when the request failed or
  *  the answer is not that shape. A name off the pattern is not shown (it is
- *  counted); an email path is kept only when every name on it is fit for a log
- *  line and it starts at a top-level key the answer listed. */
+ *  counted); an email path is kept only when it starts at a top-level key the
+ *  answer listed and no name on it holds a dot, and a name after the first is
+ *  shown only when it contains "mail" and is fit for a log line (any other is
+ *  `*`: users.*.email, byLocal.*). */
 export async function readServiceIdentityShape(wc: EmailReadableWebContents, desc: WebServiceDescriptor): Promise<IdentityShapeRead> {
   const v = await evaluateIsolated(wc, serviceIdentityShapeExpression(desc)) as RawShape | 'off-origin' | null
   if (v === 'off-origin') return 'off-origin'
@@ -208,10 +210,17 @@ export async function readServiceIdentityShape(wc: EmailReadableWebContents, des
   let along = 0
   for (const path of Array.isArray(v.emailAt) ? v.emailAt.slice(0, 5) : []) {
     if (!Array.isArray(path) || path.length < 1 || path.length > 3) continue
-    if (!path.every((n) => typeof n === 'string' && shapeKeyName(n))) continue
-    if (!keys.includes(path[0] as string)) continue
-    emailAt.push(path.join('.'))
-    along += path.length - 1
+    if (!path.every((n) => typeof n === 'string' && n.length > 0 && !n.includes('.'))) continue
+    const [first, ...rest] = path as string[]
+    if (!shapeKeyName(first) || !keys.includes(first)) continue
+    // A name after the first is shown only when it says it holds the email
+    // (it contains "mail"); any other (a username, a local part, an id of a
+    // map keyed by account) is a star.
+    const after = rest.map((n) => (/mail/i.test(n) && shapeKeyName(n) ? n : '*'))
+    const shown = [first, ...after].join('.')
+    if (emailAt.includes(shown)) continue
+    emailAt.push(shown)
+    along += after.filter((n) => n !== '*').length
   }
   const seen = typeof v.seen === 'number' && Number.isInteger(v.seen) && v.seen >= 0 ? Math.min(v.seen, 64_000) : top.length
   return { status, json: v.json === true, keys, notShown: Math.max(0, seen - keys.length - along), emailAt }

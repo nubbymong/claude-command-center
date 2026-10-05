@@ -24,7 +24,8 @@ const W = vi.hoisted(() => ({
   registered: [] as Array<{ getWindow: unknown; opts: { sessionRunsUnder: (s: string, a: string) => boolean } }>,
   closedWhere: [] as Array<(sessionId: string, accountId: string) => boolean>,
   closedReason: [] as Array<string | undefined>,
-  swept: [] as Array<{ ids: string[]; hasRecord: (id: string) => boolean }>,
+  swept: [] as Array<{ ids: string[]; records: unknown; partitionExists: (id: string) => boolean }>,
+  recordsRead: 0,
   accounts: [] as Array<{ id: string; providerId: string }>,
   records: new Set<string>(),
 }))
@@ -36,7 +37,7 @@ vi.mock('../../../src/main/account-web/codex-web-session', () => ({
   prepareCodexWebArchive: function prepareCodexWebArchive() {},
   onCodexWebSessionClosing: (fn: unknown) => { W.closing.push(fn) },
   onCodexWebSessionCleared: (fn: unknown) => { W.cleared.push(fn) },
-  sweepUnrecordedCodexWebSessions: async (ids: string[], hasRecord: (id: string) => boolean) => { W.swept.push({ ids, hasRecord }); return [] },
+  sweepUnrecordedCodexWebSessions: async (ids: string[], records: unknown, partitionExists: (id: string) => boolean) => { W.swept.push({ ids, records, partitionExists }); return [] },
 }))
 vi.mock('../../../src/main/provider-account-registry', () => ({
   getAccountRegistry: () => ({ current: () => ({ accounts: W.accounts }) }),
@@ -47,13 +48,13 @@ vi.mock('../../../src/main/account-web/account-pane', () => ({
 }))
 vi.mock('../../../src/main/account-web/codex-web-store', () => ({
   removeCodexWebSession: function removeCodexWebSession() {},
-  getCodexWebSession: (id: string) => (W.records.has(id) ? { accountId: id } : undefined),
+  readCodexWebRecordsForSweep: () => { W.recordsRead++; return { ok: true, accounts: new Set(W.records) } },
 }))
 vi.mock('../../../src/main/ipc/codex-web-handlers', () => ({
   registerCodexWebHandlers: (getWindow: unknown, opts: never) => { W.registered.push({ getWindow, opts }) },
 }))
 
-const { wireCodexWebArchive, wireCodexWebSession } = await import('../../../src/main/account-web/codex-web-wiring')
+const { wireCodexWebArchive, wireCodexWebSession, codexPartitionFolderExists } = await import('../../../src/main/account-web/codex-web-wiring')
 const SESSION = await import('../../../src/main/account-web/codex-web-session')
 const PANE = await import('../../../src/main/account-web/account-pane')
 const STORE = await import('../../../src/main/account-web/codex-web-store')
@@ -64,7 +65,7 @@ const B = 'acct-fedcba9876543210'
 
 beforeEach(() => {
   W.hooks.length = 0; W.closing.length = 0; W.cleared.length = 0; W.registered.length = 0; W.closedWhere.length = 0
-  W.closedReason.length = 0; W.swept.length = 0; W.accounts = []; W.records.clear()
+  W.closedReason.length = 0; W.swept.length = 0; W.accounts = []; W.records.clear(); W.recordsRead = 0
 })
 
 function wired(opts: { ptyThrows?: () => boolean } = {}) {
@@ -151,14 +152,26 @@ describe('[host] the session wiring', () => {
     expect(shouldClose('s1', A)).toBe(true)
   })
 
-  it('at start, sweeps the Codex accounts in the registry, with the record store as the record check', () => {
+  it('at start, sweeps the Codex accounts in the registry against one read of the record store', () => {
     W.accounts = [{ id: A, providerId: 'codex' }, { id: B, providerId: 'codex' }, { id: 'profile-x', providerId: 'claude' }]
     W.records.add(B)
     wired()
     expect(W.swept).toHaveLength(1)
     expect(W.swept[0].ids).toEqual([A, B])
-    expect(W.swept[0].hasRecord(A)).toBe(false)
-    expect(W.swept[0].hasRecord(B)).toBe(true)
+    expect(W.recordsRead).toBe(1)
+    expect(W.swept[0].records).toEqual({ ok: true, accounts: new Set([B]) })
+    expect(typeof W.swept[0].partitionExists).toBe('function')
+  })
+
+  it('the partition folder an account would use: under the session data folder, named for its partition', () => {
+    const seen: string[] = []
+    const exists = codexPartitionFolderExists(() => 'SD', (p) => { seen.push(p); return p.endsWith(A) })
+    expect(exists(A)).toBe(true)
+    expect(exists(B)).toBe(false)
+    expect(seen[0].replace(/\\/g, '/')).toBe(`SD/Partitions/codex-web-${A}`)
+    // Unknown (no session data folder, a stat that throws): skipped.
+    expect(codexPartitionFolderExists(() => { throw new Error('no app') }, () => true)(A)).toBe(false)
+    expect(codexPartitionFolderExists(() => 'SD', () => { throw new Error('EACCES') })(A)).toBe(false)
   })
 })
 

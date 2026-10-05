@@ -18,7 +18,7 @@ import {
   type CodexWebSessionView,
 } from '../../shared/account-web-session'
 import { sanitizeAccountEmail } from './account-email-read'
-import { readJsonFile, writeJsonFile } from '../channel-storage'
+import { peekJsonFile, readJsonFile, writeJsonFile } from '../channel-storage'
 
 const FILE = 'codex-web-sessions.json'
 const SCHEMA_VERSION = 1
@@ -47,6 +47,38 @@ function read(): CodexWebSessionsFile {
   const f = readJsonFile<CodexWebSessionsFile>(FILE, seed)
   if (!f || f.schemaVersion !== SCHEMA_VERSION || !Array.isArray(f.sessions)) return seed()
   return { schemaVersion: SCHEMA_VERSION, sessions: f.sessions.filter(validRecord) }
+}
+
+/** The record store as the start sweep sees it: the accounts it holds a
+ *  record for, or why it cannot be trusted. */
+export type CodexWebRecordsForSweep =
+  | { ok: true; accounts: ReadonlySet<string> }
+  | { ok: false; why: 'unreadable' | 'malformed' | 'other-schema' }
+
+/**
+ * Read the store ONCE for the start sweep, without side effects (a bad file is
+ * never renamed on this path). Absent means no records. Any other doubt (the
+ * file cannot be read or parsed, another schema version such as a downgrade,
+ * sessions that are not a list) is reported, so the sweep can stand down
+ * rather than wipe a session the store does hold a record for. A record with
+ * a malformed field still counts for its account id: the sweep never wipes on
+ * a record it merely could not use.
+ */
+export function readCodexWebRecordsForSweep(): CodexWebRecordsForSweep {
+  const peek = peekJsonFile(FILE)
+  if (peek.kind === 'absent') return { ok: true, accounts: new Set() }
+  if (peek.kind === 'unreadable') return { ok: false, why: 'unreadable' }
+  if (peek.kind === 'malformed') return { ok: false, why: 'malformed' }
+  const f = peek.value as Partial<CodexWebSessionsFile> | null
+  if (!f || typeof f !== 'object') return { ok: false, why: 'malformed' }
+  if (f.schemaVersion !== SCHEMA_VERSION) return { ok: false, why: 'other-schema' }
+  if (!Array.isArray(f.sessions)) return { ok: false, why: 'malformed' }
+  const accounts = new Set<string>()
+  for (const r of f.sessions) {
+    const id = (r as { accountId?: unknown } | null)?.accountId
+    if (isWebSessionAccountId(id)) accounts.add(id)
+  }
+  return { ok: true, accounts }
 }
 
 export function getCodexWebSession(accountId: string): CodexWebSession | undefined {

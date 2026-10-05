@@ -15,12 +15,15 @@
  * No default export (project convention).
  */
 
-import type { BrowserWindow } from 'electron'
+import { app, type BrowserWindow } from 'electron'
+import { existsSync } from 'fs'
+import { join } from 'path'
 import { onBeforeAccountArchive } from '../providers/core'
 import type { ConsumerLeaseRegistry } from '../providers/core'
 import { onCodexWebSessionCleared, onCodexWebSessionClosing, prepareCodexWebArchive, sweepUnrecordedCodexWebSessions } from './codex-web-session'
 import { closeCodexAccountPanes, closeCodexAccountPanesWhere } from './account-pane'
-import { getCodexWebSession, removeCodexWebSession } from './codex-web-store'
+import { readCodexWebRecordsForSweep, removeCodexWebSession } from './codex-web-store'
+import { webPartitionForCodexAccount } from '../../shared/account-web-session'
 import { registerCodexWebHandlers } from '../ipc/codex-web-handlers'
 import { getAccountRegistry } from '../provider-account-registry'
 
@@ -37,6 +40,21 @@ function registryCodexAccountIds(): string[] {
   }
 }
 
+/** Whether a Codex account's own partition folder already exists, under the
+ *  session data folder's Partitions: the start sweep touches only those, so it
+ *  never makes a partition. Anything unknown (no session data folder, a check
+ *  that throws) answers false. */
+export function codexPartitionFolderExists(sessionDataDir: () => string, exists: (path: string) => boolean = existsSync): (accountId: string) => boolean {
+  return (accountId) => {
+    try {
+      const folder = webPartitionForCodexAccount(accountId).replace(/^persist:/, '')
+      return exists(join(sessionDataDir(), 'Partitions', folder)) === true
+    } catch {
+      return false
+    }
+  }
+}
+
 /** Register the archive hook: an archive clears the account's web session
  *  first, and a clear that fails refuses the archive. */
 export function wireCodexWebArchive(): void {
@@ -49,6 +67,9 @@ export interface CodexWebWiringDeps {
   isCodexPtySession: (sessionId: string) => boolean
   /** The one consumer lease registry. */
   leases: () => Pick<ConsumerLeaseRegistry, 'sessionLaunchAccount' | 'subscribe'>
+  /** Whether an account's partition folder exists (the start sweep). Absent:
+   *  the folder under Electron's session data folder. */
+  partitionExists?: (accountId: string) => boolean
 }
 
 export function wireCodexWebSession(deps: CodexWebWiringDeps): void {
@@ -68,5 +89,6 @@ export function wireCodexWebSession(deps: CodexWebWiringDeps): void {
     }, UNBOUND_REASON)
   })
   // At start, nothing stays signed in under an account with no record.
-  void sweepUnrecordedCodexWebSessions(registryCodexAccountIds(), (accountId) => getCodexWebSession(accountId) !== undefined)
+  const partitionExists = deps.partitionExists ?? codexPartitionFolderExists(() => app.getPath('sessionData'))
+  void sweepUnrecordedCodexWebSessions(registryCodexAccountIds(), readCodexWebRecordsForSweep(), partitionExists)
 }

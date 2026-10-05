@@ -51,6 +51,27 @@ export function readJsonFile<T>(name: string, seedDefaults: () => T): T {
   }
 }
 
+/** What a side-effect-free read found: no file, the parsed JSON, or a file
+ *  that could not be read or parsed (left exactly where and as it is). */
+export type JsonPeek = { kind: 'absent' } | { kind: 'ok'; value: unknown } | { kind: 'unreadable' } | { kind: 'malformed' }
+
+/** Read a channel file WITHOUT side effects: unlike readJsonFile, a file that
+ *  cannot be read or parsed is NOT renamed or replaced, and no defaults are
+ *  seeded. For a caller that must tell "absent" from "unreadable" before it
+ *  acts on what the file says. Never throws. */
+export function peekJsonFile(name: string): JsonPeek {
+  let fp: string
+  try { fp = filePath(name) } catch { return { kind: 'unreadable' } }
+  try {
+    if (!existsSync(fp)) return { kind: 'absent' }
+  } catch {
+    return { kind: 'unreadable' }
+  }
+  let text: string
+  try { text = readFileSync(fp, 'utf-8') } catch { return { kind: 'unreadable' } }
+  try { return { kind: 'ok', value: JSON.parse(text) as unknown } } catch { return { kind: 'malformed' } }
+}
+
 // Append one line to a daily JSONL file. Used by the ledger (Task P2.4).
 // True O(1) append (no read+rewrite of the whole day-file): the JSONL format is
 // newline-delimited records, so appending one line preserves it and stays back-

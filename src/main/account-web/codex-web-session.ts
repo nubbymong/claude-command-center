@@ -49,6 +49,7 @@ import {
   type CodexWebSignInState,
 } from '../../shared/account-web-session'
 import { bounded, closeInAppSignInWindow, createSignInWindowHandle, runServiceSignIn } from './in-app-sign-in'
+import type { CodexWebRecordsForSweep } from './codex-web-store'
 import { registerSignInFlight, signInInFlightElsewhere } from './sign-in-flight'
 
 export type { CodexWebSignInPhase, CodexWebSignInState } from '../../shared/account-web-session'
@@ -221,19 +222,35 @@ async function wipeAfterIncompleteRun(accountId: string, partition: string): Pro
  * At start: wipe each listed Codex account's web session that has NO record.
  * A sign-in cut short (a quit between its Cancel and its window closing, say)
  * can leave a session in the partition with no record, and with no record no
- * Sign out is offered, so nothing may stay signed in under it. Each wipe holds
- * the clearing bar and closes the account's panes first, is bounded, and never
- * throws; a record check that throws leaves that account alone, and the
- * account of a sign-in in flight is skipped. Returns the accounts wiped.
+ * Sign out is offered, so nothing may stay signed in under it.
+ *   - The record store is read ONCE by the caller, without side effects; unless
+ *     it read cleanly (or is absent) the whole sweep stands down with one log
+ *     line, so a corrupt, downgraded or unreadable store never wipes a session
+ *     it may hold a record for.
+ *   - Only an account whose own partition folder already exists is touched, so
+ *     no partition is made at start for a never-used or archived account; a
+ *     folder check that throws skips it.
+ *   - Each wipe holds the clearing bar and closes the account's panes first, is
+ *     bounded, and never throws; the account of a sign-in in flight is skipped.
+ * Returns the accounts wiped.
  */
-export async function sweepUnrecordedCodexWebSessions(accountIds: readonly string[], hasRecord: (accountId: string) => boolean): Promise<string[]> {
+export async function sweepUnrecordedCodexWebSessions(
+  accountIds: readonly string[],
+  records: CodexWebRecordsForSweep,
+  partitionExists: (accountId: string) => boolean,
+): Promise<string[]> {
+  if (!records.ok) {
+    logInfo(`[codex-web] start sweep skipped: the chatgpt.com record store did not read cleanly (${records.why})`)
+    return []
+  }
   const wiped: string[] = []
   for (const accountId of accountIds) {
     if (!isWebSessionAccountId(accountId)) continue
-    let recorded = true
-    try { recorded = hasRecord(accountId) !== false } catch { recorded = true }
-    if (recorded) continue
+    if (records.accounts.has(accountId)) continue
     if (current.accountId === accountId && inFlight()) continue
+    let exists = false
+    try { exists = partitionExists(accountId) === true } catch { exists = false }
+    if (!exists) continue
     const unbar = barWhileClearing(accountId)
     try {
       notifyClosing(accountId)

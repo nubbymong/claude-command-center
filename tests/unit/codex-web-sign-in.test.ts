@@ -535,7 +535,7 @@ describe('[host] the sign-in window', () => {
     }
     await runServiceSignIn(RUN({ timeoutMs: 60 }))
     const line = logs.find((l) => /did not complete/.test(l))!
-    expect(line).toContain('JSON keys user, byId (and 5 not shown); an email-shaped value at user.mail.')
+    expect(line).toContain('JSON keys user, byId (and 5 not shown); an email-shaped value at user.mail, byId.*.')
     for (const k of ['acct12345', 'deadbeefcafe', 'token_x1y2z3w4v5u', 'two words', 'acct98765']) expect(line, k).not.toContain(k)
   })
 
@@ -632,6 +632,48 @@ describe('[host] the sign-in window', () => {
     const line = logs.find((l) => /did not complete/.test(l))!
     expect(line).toContain('Identity answer: HTTP 200, JSON keys mail, name (and 1 not shown); an email-shaped value at mail.')
     expect(line).not.toMatch(/first|last|example/i)
+  })
+
+  it('the first-cookie look stays pending until one answers from chatgpt.com (no 20 s wait after a look elsewhere)', async () => {
+    jars[PART] = SIGNED_OUT_JAR
+    page.identity = { authProvider: 'none' }
+    const p = runServiceSignIn(RUN({ timeoutMs: 250 }))
+    // A signed-out look on chatgpt.com first: the spacing clock starts.
+    await tick(30)
+    // The cookie appears while the page is on the sign-in host: that look finds it elsewhere.
+    page.origin = 'https://auth.openai.com'
+    jars[PART] = SIGNED_IN_JAR
+    await tick(30)
+    // Back on chatgpt.com, signed in: the pending look answers at once.
+    page.origin = 'https://chatgpt.com'
+    page.identity = { user: { id: 'u', mail: 'me@example.com' } }
+    await tick(30)
+    // Signed out again before the close: only that look answers.
+    page.identity = { authProvider: 'none' }
+    await p
+    const line = logs.find((l) => /did not complete/.test(l))!
+    expect(line).toContain('Identity answer: HTTP 200, JSON keys user (and 1 not shown); an email-shaped value at user.mail.')
+  })
+
+  it('on an email path, a name after the first is shown only when it says mail; any other is a star', async () => {
+    const cases: Array<[unknown, string, string[]]> = [
+      [{ users: { nicholas_moger: { email: 'n@example.com' } } }, 'an email-shaped value at users.*.email', ['nicholas_moger']],
+      [{ accounts: { 'user-AbCdEfGhIjKl': { email: 'n@example.com' } } }, 'an email-shaped value at accounts.*.email', ['AbCdEf']],
+      [{ byLocal: { nicholas: 'nicholas@example.com' } }, 'an email-shaped value at byLocal.*', ['nicholas']],
+      [{ domains: { example: { owner: 'n@example.com' } } }, 'an email-shaped value at domains.*.*', ['example', 'owner']],
+      [{ accounts: { 'user-4821930': { email: 'n@example.com' } } }, 'an email-shaped value at accounts.*.email', ['4821930']],
+      [{ profile: { primaryEmail: 'n@example.com' } }, 'an email-shaped value at profile.primaryEmail', []],
+    ]
+    for (const [identity, where, never] of cases) {
+      logs.length = 0
+      _resetCodexWebForTest()
+      jars[PART] = SIGNED_IN_JAR
+      page.identity = identity
+      await runServiceSignIn(RUN({ timeoutMs: 60 }))
+      const line = logs.find((l) => /did not complete/.test(l))!
+      expect(line, JSON.stringify(identity)).toContain(where)
+      for (const n of never) expect(line, n).not.toContain(n)
+    }
   })
 
   it('a status that is not an HTTP status reads as no answer', async () => {
@@ -1039,31 +1081,35 @@ describe('[host] the identity answer is looked at spaced and bounded while a run
   })
 })
 
+/** A clean record store holding these accounts; every partition folder exists. */
+const RECORDS = (...ids: string[]) => ({ ok: true as const, accounts: new Set(ids) })
+const ALL_FOLDERS = () => true
+
 describe('[host] the start sweep of Codex web sessions with no record', () => {
   it('wipes each unrecorded account (panes closed first), skips recorded, malformed and running ones, and never throws', async () => {
     const closing = vi.fn()
     onCodexWebSessionClosing(closing)
     const OTHER_PART = webPartitionForCodexAccount(OTHER)
-    const wiped = await sweepUnrecordedCodexWebSessions([ACCT, OTHER, 'profile-web1', '../x'], (id) => id === OTHER)
+    const wiped = await sweepUnrecordedCodexWebSessions([ACCT, OTHER, 'profile-web1', '../x'], RECORDS(OTHER), ALL_FOLDERS)
     expect(wiped).toEqual([ACCT])
     expect(clears).toContainEqual({ partition: PART, what: 'storage' })
     expect(clears.some((c) => c.partition === OTHER_PART)).toBe(false)
     expect(closing).toHaveBeenCalledWith(ACCT)
     expect(isCodexWebClearing(ACCT)).toBe(false)
-    // A record check that throws leaves that account alone.
+    // A store that did not read cleanly skips the whole sweep.
     clears.length = 0
-    expect(await sweepUnrecordedCodexWebSessions([ACCT], () => { throw new Error('unreadable') })).toEqual([])
+    expect(await sweepUnrecordedCodexWebSessions([ACCT], { ok: false, why: 'malformed' }, ALL_FOLDERS)).toEqual([])
     expect(clears).toEqual([])
     // A wipe that fails is logged, not thrown.
     failClear = PART
-    expect(await sweepUnrecordedCodexWebSessions([ACCT], () => false)).toEqual([])
+    expect(await sweepUnrecordedCodexWebSessions([ACCT], RECORDS(), ALL_FOLDERS)).toEqual([])
     failClear = null
   })
 
   it('bars the account while it wipes: no sign-in starts on it meanwhile', async () => {
     let release!: () => void
     clearGate = new Promise<void>((r) => { release = r })
-    const sweep = sweepUnrecordedCodexWebSessions([ACCT], () => false)
+    const sweep = sweepUnrecordedCodexWebSessions([ACCT], RECORDS(), ALL_FOLDERS)
     try {
       await tick(5)
       expect(isCodexWebClearing(ACCT)).toBe(true)
@@ -1079,7 +1125,7 @@ describe('[host] the start sweep of Codex web sessions with no record', () => {
     jars[PART] = SIGNED_OUT_JAR
     const run = runCodexWebSignIn({ accountId: ACCT, timeoutMs: 400, pollMs: 5 })
     await tick(10)
-    expect(await sweepUnrecordedCodexWebSessions([ACCT], () => false)).toEqual([])
+    expect(await sweepUnrecordedCodexWebSessions([ACCT], RECORDS(), ALL_FOLDERS)).toEqual([])
     expect(clears.some((c) => c.partition === PART)).toBe(false)
     cancelCodexWebSignIn(ACCT)
     await run

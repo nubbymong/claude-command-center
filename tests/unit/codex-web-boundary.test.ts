@@ -131,6 +131,7 @@ vi.mock('../../src/main/provider-account-registry', () => ({
 }))
 vi.mock('../../src/main/channel-storage', () => ({
   readJsonFile: (n: string, seed: () => unknown) => (S.disk[n] !== undefined ? JSON.parse(JSON.stringify(S.disk[n])) : seed()),
+  peekJsonFile: (n: string) => (S.disk[n] !== undefined ? { kind: 'ok', value: JSON.parse(JSON.stringify(S.disk[n])) } : { kind: 'absent' }),
   writeJsonFile: (n: string, v: unknown) => {
     if (S.flags.writeThrows) throw new Error('simulated folder failure before the write')
     if (S.flags.writeFails) return false
@@ -426,7 +427,7 @@ describe('[host] at start, a Codex web session with no record is wiped', () => {
       { id: 'profile-known1', providerId: 'claude', lifecycle: 'active' },
     ]
     S.trail.length = 0
-    wireCodexWebSession({ getWindow: () => S.mainWin, isCodexPtySession, leases: () => S.L.leases })
+    wireCodexWebSession({ getWindow: () => S.mainWin, isCodexPtySession, leases: () => S.L.leases, partitionExists: () => true })
     const end = Date.now() + 5000
     while (!S.trail.some((t) => t.startsWith('wipe ')) && Date.now() < end) await sleep(5)
     await sleep(20)
