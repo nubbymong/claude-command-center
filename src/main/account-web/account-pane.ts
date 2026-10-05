@@ -293,9 +293,9 @@ function loadQuietly(wc: { loadURL: (url: string) => Promise<void> }, url: strin
 /** Tell the renderer the account surface is gone (main force-closed it —
  *  sign-out, account delete, a crash). The renderer leaves account mode; without
  *  this the strip would keep painting "signed in as …" over an empty rectangle. */
-function notifyPaneClosed(parent: BrowserWindow, sessionId: string): void {
+function notifyPaneClosed(parent: BrowserWindow, sessionId: string, reason?: string): void {
   try {
-    if (!parent.isDestroyed()) parent.webContents.send(IPC.ACCOUNT_WEB_PANE_CLOSED, { sessionId })
+    if (!parent.isDestroyed()) parent.webContents.send(IPC.ACCOUNT_WEB_PANE_CLOSED, reason ? { sessionId, reason } : { sessionId })
   } catch { /* window gone */ }
 }
 
@@ -740,7 +740,9 @@ function openPane(
   }
 }
 
-export function closeAccountPane(sessionId: string): boolean {
+/** Close a session's account view. A `reason` (main closed it for the user's
+ *  sake, not on their request) goes to the renderer, which shows it. */
+export function closeAccountPane(sessionId: string, reason?: string): boolean {
   const entry = panes.get(sessionId)
   if (!entry) return false
   // Before anything else: an in-flight recordSession must see the close and
@@ -760,7 +762,7 @@ export function closeAccountPane(sessionId: string): boolean {
   // initiated the close (its store guard makes the second leave a no-op); the
   // point is the main-initiated closes — sign-out, account delete — where the
   // renderer would otherwise keep the strip up over nothing.
-  notifyPaneClosed(parent, sessionId)
+  notifyPaneClosed(parent, sessionId, reason)
   return true
 }
 
@@ -820,13 +822,13 @@ export function closeCodexAccountPanes(accountId: string): void {
  *  account: the session no longer runs under that account (its launch ended,
  *  or switched to another account). A predicate that throws closes. Returns
  *  how many closed. */
-export function closeCodexAccountPanesWhere(shouldClose: (sessionId: string, accountId: string) => boolean): number {
+export function closeCodexAccountPanesWhere(shouldClose: (sessionId: string, accountId: string) => boolean, reason?: string): number {
   let n = 0
   for (const [sessionId, entry] of [...panes.entries()]) {
     if (entry.svc !== CODEX_PANE) continue
     let close = true
     try { close = shouldClose(sessionId, entry.ownerId) !== false } catch { close = true }
-    if (close && closeAccountPane(sessionId)) n++
+    if (close && closeAccountPane(sessionId, reason)) n++
   }
   return n
 }

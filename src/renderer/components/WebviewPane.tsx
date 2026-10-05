@@ -385,11 +385,15 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
     })
   }, [sessionId, setAccountPaneState])
 
-  // Main force-closed the surface (sign-out, account delete, a crash): leave
-  // account mode so the strip does not keep painting "signed in" over nothing.
+  // Main force-closed the surface (sign-out, account delete, a crash, or the
+  // session no longer runs under the account): leave account mode so the strip
+  // does not keep painting "signed in" over nothing, and show main's reason,
+  // when it gave one, on the start page.
   useEffect(() => {
     return window.electronAPI.accountWeb?.onPaneClosed?.((e) => {
-      if (e.sessionId === sessionId) closeAccountPaneStore(sessionId)
+      if (e.sessionId !== sessionId) return
+      if (typeof e.reason === 'string' && e.reason) setCodexOpenError(e.reason.slice(0, 300))
+      closeAccountPaneStore(sessionId)
     })
   }, [sessionId, closeAccountPaneStore])
 

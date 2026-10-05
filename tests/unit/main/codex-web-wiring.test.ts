@@ -23,6 +23,10 @@ const W = vi.hoisted(() => ({
   cleared: [] as unknown[],
   registered: [] as Array<{ getWindow: unknown; opts: { sessionRunsUnder: (s: string, a: string) => boolean } }>,
   closedWhere: [] as Array<(sessionId: string, accountId: string) => boolean>,
+  closedReason: [] as Array<string | undefined>,
+  swept: [] as Array<{ ids: string[]; hasRecord: (id: string) => boolean }>,
+  accounts: [] as Array<{ id: string; providerId: string }>,
+  records: new Set<string>(),
 }))
 vi.mock('../../../src/main/providers/core', async (orig) => ({
   ...(await orig<object>()),
@@ -32,13 +36,18 @@ vi.mock('../../../src/main/account-web/codex-web-session', () => ({
   prepareCodexWebArchive: function prepareCodexWebArchive() {},
   onCodexWebSessionClosing: (fn: unknown) => { W.closing.push(fn) },
   onCodexWebSessionCleared: (fn: unknown) => { W.cleared.push(fn) },
+  sweepUnrecordedCodexWebSessions: async (ids: string[], hasRecord: (id: string) => boolean) => { W.swept.push({ ids, hasRecord }); return [] },
+}))
+vi.mock('../../../src/main/provider-account-registry', () => ({
+  getAccountRegistry: () => ({ current: () => ({ accounts: W.accounts }) }),
 }))
 vi.mock('../../../src/main/account-web/account-pane', () => ({
   closeCodexAccountPanes: function closeCodexAccountPanes() {},
-  closeCodexAccountPanesWhere: (shouldClose: (s: string, a: string) => boolean) => { W.closedWhere.push(shouldClose) },
+  closeCodexAccountPanesWhere: (shouldClose: (s: string, a: string) => boolean, reason?: string) => { W.closedWhere.push(shouldClose); W.closedReason.push(reason) },
 }))
 vi.mock('../../../src/main/account-web/codex-web-store', () => ({
   removeCodexWebSession: function removeCodexWebSession() {},
+  getCodexWebSession: (id: string) => (W.records.has(id) ? { accountId: id } : undefined),
 }))
 vi.mock('../../../src/main/ipc/codex-web-handlers', () => ({
   registerCodexWebHandlers: (getWindow: unknown, opts: never) => { W.registered.push({ getWindow, opts }) },
@@ -55,13 +64,18 @@ const B = 'acct-fedcba9876543210'
 
 beforeEach(() => {
   W.hooks.length = 0; W.closing.length = 0; W.cleared.length = 0; W.registered.length = 0; W.closedWhere.length = 0
+  W.closedReason.length = 0; W.swept.length = 0; W.accounts = []; W.records.clear()
 })
 
-function wired() {
+function wired(opts: { ptyThrows?: () => boolean } = {}) {
   const leases = new ConsumerLeaseRegistry()
   const codexPty = new Set<string>()
   const getWindow = () => null
-  wireCodexWebSession({ getWindow, isCodexPtySession: (sid) => codexPty.has(sid), leases: () => leases })
+  const isPty = (sid: string): boolean => {
+    if (opts.ptyThrows?.()) throw new Error('simulated PTY lookup failure')
+    return codexPty.has(sid)
+  }
+  wireCodexWebSession({ getWindow, isCodexPtySession: isPty, leases: () => leases })
   expect(W.registered).toHaveLength(1)
   const runsUnder = W.registered[0].opts.sessionRunsUnder
   const launch = (sid: string, acct: string, kind: 'session' | 'review' = 'session', seq = 1) => {
@@ -122,6 +136,29 @@ describe('[host] the session wiring', () => {
     const after = W.closedWhere[W.closedWhere.length - 1]
     expect(after('s2', A)).toBe(true)
     expect(after('s2', B)).toBe(false)
+    // The renderer is told why.
+    expect(W.closedReason[W.closedReason.length - 1]).toMatch(/no longer runs under/)
+  })
+
+  it('a check that throws closes the pane (fail closed)', () => {
+    let throws = false
+    const w = wired({ ptyThrows: () => throws })
+    w.launch('s1', A)
+    W.closedWhere.length = 0
+    throws = true
+    w.launch('s2', A)
+    const shouldClose = W.closedWhere[W.closedWhere.length - 1]
+    expect(shouldClose('s1', A)).toBe(true)
+  })
+
+  it('at start, sweeps the Codex accounts in the registry, with the record store as the record check', () => {
+    W.accounts = [{ id: A, providerId: 'codex' }, { id: B, providerId: 'codex' }, { id: 'profile-x', providerId: 'claude' }]
+    W.records.add(B)
+    wired()
+    expect(W.swept).toHaveLength(1)
+    expect(W.swept[0].ids).toEqual([A, B])
+    expect(W.swept[0].hasRecord(A)).toBe(false)
+    expect(W.swept[0].hasRecord(B)).toBe(true)
   })
 })
 
@@ -135,8 +172,37 @@ function code(src: string): string {
     .join('\n')
 }
 
+/** The brace depth at a position: a call wrapped in a block sits one deeper
+ *  than a statement beside it. */
+function depthAt(src: string, at: number): number {
+  let d = 0
+  for (let i = 0; i < at; i++) {
+    if (src[i] === '{') d++
+    else if (src[i] === '}') d--
+  }
+  return d
+}
+
 describe('[host] main\'s start-up calls the wiring', () => {
   const SRC = code(indexSource)
+
+  it('each call is a plain statement at the top level of its block, never under a condition', () => {
+    const archive = SRC.search(/^\s*wireCodexWebArchive\(\)\s*$/m)
+    const session = SRC.search(/^\s*wireCodexWebSession\(\{/m)
+    // The same block as a known sibling statement: the try that makes the
+    // accounts service, and the app-window getter the session wiring is handed.
+    const tryAfter = SRC.indexOf('try {', archive)
+    const getter = SRC.indexOf('const getWindow = () => mainWindow')
+    expect(archive).toBeGreaterThan(0)
+    expect(session).toBeGreaterThan(getter)
+    expect(depthAt(SRC, archive)).toBe(depthAt(SRC, tryAfter))
+    expect(depthAt(SRC, session)).toBe(depthAt(SRC, getter))
+    // Not the body of a brace-less if, else, for or while either.
+    for (const at of [archive, session]) {
+      const before = SRC.slice(0, at).split('\n').map((l) => l.trim()).filter(Boolean).pop() ?? ''
+      expect(before, before).not.toMatch(/^(\}\s*)?(if|else|for|while)\b/)
+    }
+  })
 
   it('the archive hook before the accounts service is made', () => {
     const hook = SRC.search(/^\s*wireCodexWebArchive\(\)\s*$/m)

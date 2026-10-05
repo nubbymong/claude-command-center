@@ -114,7 +114,7 @@ const S = vi.hoisted(() => {
     }
     setBounds(b: any) { this.bounds = b }
   }
-  return { handlers, minted, sessions, views, windows, trail, gates, reg, L, codexPty, sent, disk, flags, fakeSession, mainWin, MAIN_FRAME, FakeWin, FakeView }
+  return { handlers, minted, sessions, views, windows, trail, gates, reg, L, codexPty, sent, disk, flags, ptyThrows: false as boolean, fakeSession, mainWin, MAIN_FRAME, FakeWin, FakeView }
 })
 
 vi.mock('electron', () => ({
@@ -163,6 +163,11 @@ const BOUNDS = { x: 0, y: 0, width: 100, height: 100 }
 const TRUSTED = { sender: S.mainWin.webContents, senderFrame: S.MAIN_FRAME }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const OTHER = 'acct-fedcba9876543210'
+/** The PTY check index.ts hands the wiring; a test can make it throw. */
+const isCodexPtySession = (sid: string): boolean => {
+  if (S.ptyThrows) throw new Error('simulated PTY lookup failure')
+  return S.codexPty.has(sid)
+}
 /** A Codex PTY session's launch takes a lease: owner `<session>:<seq>` (a review: `review:<session>:<seq>`). */
 function launch(sid: string, acct: string, kind: 'session' | 'review' = 'session', seq = 1) {
   S.codexPty.add(sid)
@@ -186,12 +191,14 @@ beforeEach(() => {
   S.gates.queue.length = 0
   S.flags.writeFails = false
   S.flags.writeThrows = false
-  S.reg.accounts = [{ id: ACCT, providerId: 'codex', lifecycle: 'inactive' }, { id: OTHER, providerId: 'codex', lifecycle: 'active' }]
+  S.reg.accounts = []
+  S.ptyThrows = false
   S.L.first = launch('s1', ACCT)
   // As index.ts wires them.
   // Through the wiring index.ts calls, with this test's PTY sessions and leases.
-  wireCodexWebSession({ getWindow: () => S.mainWin, isCodexPtySession: (sid) => S.codexPty.has(sid), leases: () => S.L.leases })
+  wireCodexWebSession({ getWindow: () => S.mainWin, isCodexPtySession, leases: () => S.L.leases })
   registerAccountWebHandlers()
+  S.reg.accounts = [{ id: ACCT, providerId: 'codex', lifecycle: 'inactive' }, { id: OTHER, providerId: 'codex', lifecycle: 'active' }]
 })
 
 async function openPane(sessionId = 's1') {
@@ -381,7 +388,7 @@ describe('[host] a pane is bound to its session\'s current launch, for as long a
     expect(S.L.first.ownerId).toBe('s1:1')
     S.L.first.release()
     expect(view.webContents.destroyed).toBe(true)
-    expect(S.sent).toContainEqual([IPC.ACCOUNT_WEB_PANE_CLOSED, { sessionId: 's1' }])
+    expect(S.sent).toContainEqual([IPC.ACCOUNT_WEB_PANE_CLOSED, { sessionId: 's1', reason: expect.stringMatching(/no longer runs under/) }])
   })
 
   it('a switch of account closes the old account\'s pane', async () => {
@@ -395,5 +402,38 @@ describe('[host] a pane is bound to its session\'s current launch, for as long a
     launch('s2', ACCT)
     launch('s3', OTHER)
     expect(view.webContents.destroyed).toBe(false)
+  })
+})
+
+describe('[host] a lease check that throws closes the pane (fail closed)', () => {
+  it('a PTY check that throws refuses the open, and the next lease change closes the open pane', async () => {
+    const view = await openPane('s1')
+    S.ptyThrows = true
+    expect((await call(IPC.CODEX_WEB_PANE_OPEN, TRUSTED, { sessionId: 's1', accountId: ACCT, bounds: BOUNDS })).ok).toBe(false)
+    // Any lease change re-checks; the add itself is never broken by it.
+    const r = S.L.leases.add(OTHER, 'codex', { kind: 'operation', ownerId: 'op-2' })
+    expect(r.ok).toBe(true)
+    expect(view.webContents.destroyed).toBe(true)
+  })
+})
+
+describe('[host] at start, a Codex web session with no record is wiped', () => {
+  it('the wiring sweeps each Codex account with no record, and leaves a recorded one alone', async () => {
+    STORE.saveCodexWebSession({ accountId: OTHER, accountEmail: 'owner@example.com', acquiredAt: 1, expiresAt: null, origin: 'in-app' })
+    S.reg.accounts = [
+      { id: ACCT, providerId: 'codex', lifecycle: 'inactive' },
+      { id: OTHER, providerId: 'codex', lifecycle: 'active' },
+      { id: 'profile-known1', providerId: 'claude', lifecycle: 'active' },
+    ]
+    S.trail.length = 0
+    wireCodexWebSession({ getWindow: () => S.mainWin, isCodexPtySession, leases: () => S.L.leases })
+    const end = Date.now() + 5000
+    while (!S.trail.some((t) => t.startsWith('wipe ')) && Date.now() < end) await sleep(5)
+    await sleep(20)
+    const wipes = S.trail.filter((t) => t.startsWith('wipe '))
+    expect(wipes).toHaveLength(1)
+    expect(wipes[0]).toContain(PART)
+    expect(STORE.getCodexWebSession(OTHER)).toBeDefined()
+    expect(CWS.isCodexWebClearing(ACCT)).toBe(false)
   })
 })

@@ -8,7 +8,9 @@
  *   - wireCodexWebSession(): the codexWeb channels on the app window; before a
  *     wipe the account's panes close and after it the record goes; a pane
  *     opens only for a Codex session whose CURRENT launch lease is on that
- *     account, and closes when that launch ends or switches account.
+ *     account, and closes (telling the renderer why) when that launch ends or
+ *     switches account; at start, a Codex account's web session that has no
+ *     record is wiped.
  *
  * No default export (project convention).
  */
@@ -16,10 +18,24 @@
 import type { BrowserWindow } from 'electron'
 import { onBeforeAccountArchive } from '../providers/core'
 import type { ConsumerLeaseRegistry } from '../providers/core'
-import { onCodexWebSessionCleared, onCodexWebSessionClosing, prepareCodexWebArchive } from './codex-web-session'
+import { onCodexWebSessionCleared, onCodexWebSessionClosing, prepareCodexWebArchive, sweepUnrecordedCodexWebSessions } from './codex-web-session'
 import { closeCodexAccountPanes, closeCodexAccountPanesWhere } from './account-pane'
-import { removeCodexWebSession } from './codex-web-store'
+import { getCodexWebSession, removeCodexWebSession } from './codex-web-store'
 import { registerCodexWebHandlers } from '../ipc/codex-web-handlers'
+import { getAccountRegistry } from '../provider-account-registry'
+
+/** What the renderer shows when a pane closes because its session no longer
+ *  runs under the account. */
+const UNBOUND_REASON = 'This session no longer runs under that account (its Codex CLI ended, or it switched account), so its chatgpt.com view closed.'
+
+/** The Codex accounts the registry lists (any lifecycle). */
+function registryCodexAccountIds(): string[] {
+  try {
+    return (getAccountRegistry()?.current()?.accounts ?? []).filter((a) => a.providerId === 'codex').map((a) => a.id)
+  } catch {
+    return []
+  }
+}
 
 /** Register the archive hook: an archive clears the account's web session
  *  first, and a clear that fails refuses the archive. */
@@ -49,6 +65,8 @@ export function wireCodexWebSession(deps: CodexWebWiringDeps): void {
   deps.leases().subscribe(() => {
     closeCodexAccountPanesWhere((sessionId, accountId) => {
       try { return !runsUnder(sessionId, accountId) } catch { return true }
-    })
+    }, UNBOUND_REASON)
   })
+  // At start, nothing stays signed in under an account with no record.
+  void sweepUnrecordedCodexWebSessions(registryCodexAccountIds(), (accountId) => getCodexWebSession(accountId) !== undefined)
 }

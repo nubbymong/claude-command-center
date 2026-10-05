@@ -400,7 +400,7 @@ export interface ElectronAPI {
     paneReload: (sessionId: string) => Promise<{ ok: boolean }>
     paneGetState: (sessionId: string) => Promise<{ ok: true; state: AccountPaneStateView | null } | { ok: false; error: string }>
     onPaneState: (cb: (state: AccountPaneStateView) => void) => () => void
-    onPaneClosed: (cb: (e: { sessionId: string }) => void) => () => void
+    onPaneClosed: (cb: (e: { sessionId: string; reason?: string }) => void) => () => void
   }
   /** A Codex account's chatgpt.com web session (WP2 PR 4, P4.6), keyed by its
    *  registry account id. The pane's other controls are accountWeb's. */
@@ -1135,7 +1135,7 @@ const electronAPI: ElectronAPI = {
     paneGetState: (sessionId) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_PANE_GET_STATE, sessionId),
     onPaneState: (cb: (state: AccountPaneStateView) => void) =>
       onChannel(IPC.ACCOUNT_WEB_PANE_STATE, cb),
-    onPaneClosed: (cb: (e: { sessionId: string }) => void) =>
+    onPaneClosed: (cb: (e: { sessionId: string; reason?: string }) => void) =>
       onChannel(IPC.ACCOUNT_WEB_PANE_CLOSED, cb),
   },
   codexWeb: {

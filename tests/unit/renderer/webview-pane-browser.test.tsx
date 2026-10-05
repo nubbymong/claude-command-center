@@ -631,6 +631,26 @@ describe('the account surface for a Codex session: chatgpt.com as its own accoun
     expect(codexPaneOpen).toHaveBeenCalledTimes(2)
   })
 
+  it('a view main closed with a reason (the session no longer runs under the account) says why on the start page', async () => {
+    let closed: ((e: { sessionId: string; reason?: string }) => void) | null = null
+    acct.onPaneClosed.mockImplementation((h: (e: { sessionId: string; reason?: string }) => void) => { closed = h; return () => {} })
+    try {
+      codexSession()
+      open()
+      render()
+      await flush()
+      act(() => { byTest<HTMLButtonElement>('browser-start-chatgpt')!.click() })
+      await flush()
+      expect(byTest('account-pane-service')!.textContent).toBe('chatgpt.com')
+      act(() => { closed!({ sessionId: 's1', reason: 'This session no longer runs under that account, so its chatgpt.com view closed.' }) })
+      await flush()
+      expect(byTest('account-pane-service')).toBeNull()
+      expect(byTest('browser-start-chatgpt-error')!.textContent).toContain('no longer runs under that account')
+    } finally {
+      acct.onPaneClosed.mockImplementation(() => () => {})
+    }
+  })
+
   it('opening it opens the view through the Codex channel as the registry account, and the strip names chatgpt.com', async () => {
     codexSession()
     open()

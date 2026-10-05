@@ -218,6 +218,40 @@ async function wipeAfterIncompleteRun(accountId: string, partition: string): Pro
 }
 
 /**
+ * At start: wipe each listed Codex account's web session that has NO record.
+ * A sign-in cut short (a quit between its Cancel and its window closing, say)
+ * can leave a session in the partition with no record, and with no record no
+ * Sign out is offered, so nothing may stay signed in under it. Each wipe holds
+ * the clearing bar and closes the account's panes first, is bounded, and never
+ * throws; a record check that throws leaves that account alone, and the
+ * account of a sign-in in flight is skipped. Returns the accounts wiped.
+ */
+export async function sweepUnrecordedCodexWebSessions(accountIds: readonly string[], hasRecord: (accountId: string) => boolean): Promise<string[]> {
+  const wiped: string[] = []
+  for (const accountId of accountIds) {
+    if (!isWebSessionAccountId(accountId)) continue
+    let recorded = true
+    try { recorded = hasRecord(accountId) !== false } catch { recorded = true }
+    if (recorded) continue
+    if (current.accountId === accountId && inFlight()) continue
+    const unbar = barWhileClearing(accountId)
+    try {
+      notifyClosing(accountId)
+      const store = electronSession.fromPartition(webPartitionForCodexAccount(accountId))
+      await bounded(Promise.resolve(store.clearStorageData()), 'clearStorageData')
+      try { await bounded(Promise.resolve(store.clearCache()), 'clearCache') } catch { /* the storage is what holds the session */ }
+      wiped.push(accountId)
+    } catch (err) {
+      logError(`[codex-web] could not clear an unrecorded chatgpt.com session for ${accountId} at start: ${(err as Error)?.message ?? err}`)
+    } finally {
+      unbar()
+    }
+  }
+  if (wiped.length) logInfo(`[codex-web] cleared ${wiped.length} chatgpt.com session(s) with no record at start`)
+  return wiped
+}
+
+/**
  * Cancel the in-flight Codex sign-in (the user's Cancel). SCOPED: with an
  * account id, only that account's run is cancelled. The window is hidden at
  * once; the run sees the cancel at its next poll, takes one last look at the

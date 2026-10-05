@@ -126,6 +126,7 @@ const {
 const {
   runCodexWebSignIn, cancelCodexWebSignIn, clearCodexWebSession, getCodexWebSignInState, onCodexWebSessionCleared,
   onCodexWebSessionClosing, prepareCodexWebArchive, isCodexWebArchiving, isCodexWebClearing, discardCodexWebRun,
+  sweepUnrecordedCodexWebSessions,
   _resetCodexWebForTest,
 } = await import('../../src/main/account-web/codex-web-session')
 const { registerSignInFlight, signInInFlightElsewhere } = await import('../../src/main/account-web/sign-in-flight')
@@ -1020,5 +1021,37 @@ describe('[host] the identity answer is looked at spaced and bounded while a run
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('[host] the start sweep of Codex web sessions with no record', () => {
+  it('wipes each unrecorded account (panes closed first), skips recorded, malformed and running ones, and never throws', async () => {
+    const closing = vi.fn()
+    onCodexWebSessionClosing(closing)
+    const OTHER_PART = webPartitionForCodexAccount(OTHER)
+    const wiped = await sweepUnrecordedCodexWebSessions([ACCT, OTHER, 'profile-web1', '../x'], (id) => id === OTHER)
+    expect(wiped).toEqual([ACCT])
+    expect(clears).toContainEqual({ partition: PART, what: 'storage' })
+    expect(clears.some((c) => c.partition === OTHER_PART)).toBe(false)
+    expect(closing).toHaveBeenCalledWith(ACCT)
+    expect(isCodexWebClearing(ACCT)).toBe(false)
+    // A record check that throws leaves that account alone.
+    clears.length = 0
+    expect(await sweepUnrecordedCodexWebSessions([ACCT], () => { throw new Error('unreadable') })).toEqual([])
+    expect(clears).toEqual([])
+    // A wipe that fails is logged, not thrown.
+    failClear = PART
+    expect(await sweepUnrecordedCodexWebSessions([ACCT], () => false)).toEqual([])
+    failClear = null
+  })
+
+  it('never wipes the account of a sign-in in flight', async () => {
+    jars[PART] = SIGNED_OUT_JAR
+    const run = runCodexWebSignIn({ accountId: ACCT, timeoutMs: 400, pollMs: 5 })
+    await tick(10)
+    expect(await sweepUnrecordedCodexWebSessions([ACCT], () => false)).toEqual([])
+    expect(clears.some((c) => c.partition === PART)).toBe(false)
+    cancelCodexWebSignIn(ACCT)
+    await run
   })
 })
