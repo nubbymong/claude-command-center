@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-05T08:21:21.137Z",
-  "head": "7dc099b5640c72003dde0e632b31094177adba75",
-  "tree": "178992a6f0e20dca12bf569dae8ed94a5b2b78e7",
+  "generatedAt": "2026-10-05T08:58:51.411Z",
+  "head": "6991680e679ff68fa9aed80ea472cdf0b4d04d80",
+  "tree": "c0f39c27be286a18f321bda69d295475cbffa24f",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -116,9 +116,9 @@
     "\\.(png|jpg|jpeg|gif|ico|icns|webp|svg|woff2?|ttf|otf|mp4|zip|asar|node|exe|dll|dylib|so|pdf)$",
     "^package-lock\\.json$"
   ],
-  "trackedFileCount": 2772,
+  "trackedFileCount": 2773,
   "excludedFileCount": 402,
-  "scannedFileCount": 2370,
+  "scannedFileCount": 2371,
   "unscopedFileCount": 15,
   "unscoped": [
     ".claude/settings.json",
@@ -139,8 +139,8 @@
   ],
   "unscopedMentions": [],
   "unreadable": [],
-  "matchedPathCount": 815,
-  "pathDigest": "b5f5ba6e3fedd18d47b766ff8f0d7957667740e5002625edbb392fbd9c000127",
+  "matchedPathCount": 816,
+  "pathDigest": "200c087b645c17a96782a730869c16485e2c1f2ce1dcb26fc8f6cec91477bffc",
   "entries": [
     {
       "path": ".github/workflows/ci.yml",
@@ -446,7 +446,7 @@
         "P05",
         "P14"
       ],
-      "lineCount": 51
+      "lineCount": 54
     },
     {
       "path": "src/main/account-web/codex-web-store.ts",
@@ -454,7 +454,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 22
+      "lineCount": 25
     },
     {
       "path": "src/main/account-web/codex-web-wiring.ts",
@@ -463,7 +463,7 @@
         "P05",
         "P14"
       ],
-      "lineCount": 29
+      "lineCount": 34
     },
     {
       "path": "src/main/account-web/in-app-sign-in.ts",
@@ -782,7 +782,7 @@
         "P05",
         "P14"
       ],
-      "lineCount": 51
+      "lineCount": 52
     },
     {
       "path": "src/main/ipc/github-handlers.ts",
@@ -3651,7 +3651,15 @@
         "P01",
         "P13"
       ],
-      "lineCount": 138
+      "lineCount": 139
+    },
+    {
+      "path": "tests/unit/codex-web-sweep-store.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "lineCount": 8
     },
     {
       "path": "tests/unit/conductor-secret-rotation.test.ts",
@@ -4236,7 +4244,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 41
+      "lineCount": 46
     },
     {
       "path": "tests/unit/main/conductor-mcp-auth.test.ts",

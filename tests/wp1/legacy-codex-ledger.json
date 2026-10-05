@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-ledger/2",
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
-  "manifestPathDigest": "b5f5ba6e3fedd18d47b766ff8f0d7957667740e5002625edbb392fbd9c000127",
-  "manifestHead": "7dc099b5640c72003dde0e632b31094177adba75",
+  "manifestPathDigest": "200c087b645c17a96782a730869c16485e2c1f2ce1dcb26fc8f6cec91477bffc",
+  "manifestHead": "6991680e679ff68fa9aed80ea472cdf0b4d04d80",
   "dispositions": {
     "retain": "unchanged observable behaviour, characterization proof",
     "move": "moved behind a package boundary and/or adapted at the call site, regression proof (newPath when relocated)",
@@ -5186,6 +5186,17 @@
       "category": "TEST",
       "disposition": "added",
       "evidence": "new WP2 PR 4 P4.6 second half (row 58; 10fab972, c5d941f7) test: the chatgpt.com descriptor, the fail-closed predicate, the email-only identity read against a fixture holding a token, the window's host allowlist, the re-check and cancel races, the names-only diagnostic, each run's own window, the wipe, the clear and the archive hook (WP1.33); tests/unit/codex-web-sign-in.test.ts",
+      "note": ""
+    },
+    {
+      "path": "tests/unit/codex-web-sweep-store.test.ts",
+      "predicates": [
+        "P01",
+        "P13"
+      ],
+      "category": "TEST",
+      "disposition": "added",
+      "evidence": "new WP2 PR 4 P4.6 second half (row 58, round 4 fixes; fd5ee73c) test: the start sweep of Codex chatgpt.com web sessions over the real channel storage and record store (in-memory files): an absent store means no records, a corrupt, downgraded or unreadable store stands the whole sweep down and is left where and as it was, a record with a bad field still counts, and an account whose partition folder does not exist is never opened (WP1.68); tests/unit/codex-web-sweep-store.test.ts",
       "note": ""
     },
     {

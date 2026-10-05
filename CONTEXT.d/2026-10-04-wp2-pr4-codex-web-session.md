@@ -24,9 +24,11 @@ it closes by itself.
 
 **Guards.** The codexWeb channels answer the app window only, take the
 `account` id class only, and act only for a known, non-archived Codex account
-(a Codex partition is made only after that check). The identity read returns
-only the email. Each run owns its window; one sign-in at a time across both
-services. Each guard mutation-proven (29 mutants killed).
+(a Codex partition is made only after that check, and the start sweep makes
+none: it touches only an account whose partition folder already exists). The
+identity read returns only the email. Each run owns its window; one sign-in
+at a time across both services. Each guard mutation-proven (29 mutants
+killed).
 
 **Owed.** The second half's own ADR-009 round; PB7b on the VM (unauthenticated
 cookie names, each sign-in method's first hop); OR2 on the final build; OR3,

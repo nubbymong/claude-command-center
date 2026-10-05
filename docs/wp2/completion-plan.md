@@ -185,7 +185,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 55 | Memory | PARTIAL (P4.4, 1a12160b to 41638f93; mocked): listing, guard and read built; delete built, hidden and refused in main until the VM check; frontmatter edit does not carry over (recorded) | Parity: each realm's Codex memories on the Memory page | verification: the delete check on the VM (else OR4); OR4: the real file format | 4 |
 | 56 | Codex logs | DONE (P4.4, 1a12160b, 8fb60652; mocked) | Parity: each realm's `log` folder offered where the app offers its own log folder (Settings, Debug Logging) | verification: the VM (each account's folders open, `log_dir` from `config.toml` included) | 4 |
 | 57 | Cloud Agents | DONE (P4.5, 5d0187c6 to d41c4a8b; mocked): built, the skip-permissions choice as the owner decided on 2026-10-04 (question 7: A, kept as built); was Claude only (`src/main/cloud-agent-manager.ts:192`) | Parity: background agents run with `codex exec` in the account's realm, as Claude's run its headless CLI; not the experimental `codex cloud` (WP1.41) | verification: the VM run, OR4 | 4 |
-| 58 | Web sign-in and artifacts | PARTIAL (P4.6 first half, 27d62537 to 1064dbbf; second half, 10fab972 to dd23a3bf, its review fixes cbb2b58d to 7dc099b5; mocked): a Codex account's own web partition, the orphan warning over both prefixes, Claude's items off a Codex tab's menu and pane; the chatgpt.com sign-in window (fail-closed), the pane's chatgpt.com account surface, a Codex tab's own menu item, the Settings row's status and items, and archive clearing the session first | Web session: parity (chatgpt.com is to a Codex account what claude.ai is to a Claude account: the browser pane's account surface). Artifacts: no Codex equivalent is known, so a section 19 record (section 10) | owner (OR2, one sign-in run through the built window, which confirms its three unverified values; the artifacts record, OR3) | 4 |
+| 58 | Web sign-in and artifacts | PARTIAL (P4.6 first half, 27d62537 to 1064dbbf; second half, 10fab972 to dd23a3bf, its review fixes cbb2b58d to 6991680e; mocked): a Codex account's own web partition, the orphan warning over both prefixes, Claude's items off a Codex tab's menu and pane; the chatgpt.com sign-in window (fail-closed), the pane's chatgpt.com account surface, a Codex tab's own menu item, the Settings row's status and items, and archive clearing the session first | Web session: parity (chatgpt.com is to a Codex account what claude.ai is to a Claude account: the browser pane's account surface). Artifacts: no Codex equivalent is known, so a section 19 record (section 10) | owner (OR2, one sign-in run through the built window, which confirms its three unverified values; the artifacts record, OR3) | 4 |
 
 ### E. Everything else
 
@@ -6354,11 +6354,26 @@ sign-in run through the built window), OR3 (the record). PB7 sized OR2.
     then the bounded last look, then the window goes. A pane closed because
     its session no longer runs under the account says why on the start
     page. At start, each Codex account's web session with no record is
-    wiped, so a sign-in cut short by a quit never leaves a session that
+    wiped (round 4: only when the record store read cleanly, and only an
+    account whose partition folder exists), so a sign-in cut short by a
+    quit never leaves a session that
     offers no Sign out. A lease check that throws closes the pane, and the
     wiring test checks the calls in index.ts sit at the top level of their
     blocks. 31 of 31 mutants killed.
-  - *Owed.* The reviews of the round 3 fixes; PB7b on the VM; OR2 on the
+  - *Reviews, round 4 (at 564575c3).* ADR-009 lenses A and C: PASS;
+    quality FAIL (one major). Every item fixed in fd5ee73c to 6991680e (lane W58;
+    mocked).
+  - *Round 4 fixes (2026-10-05; fd5ee73c to 6991680e).* The start sweep reads the record
+    store once, without side effects: unless it read cleanly with the
+    expected schema, or is absent, the whole sweep stands down with one line
+    and the file stays where and as it was; a record with a bad field still
+    counts for its account. It touches only an account whose own partition
+    folder already exists, so no partition is made at start for a
+    never-used or archived account. The first-cookie look at the identity
+    answer stays pending until a look answers from chatgpt.com. On an email
+    path a name after the first is shown only when it says mail; any other
+    is a star (users.*.email, byLocal.*). 23 of 23 mutants killed.
+  - *Owed.* The reviews of the round 4 fixes; PB7b on the VM; OR2 on the
     final build (then a values-only fix and a re-run if a value was wrong);
     OR3, the artifacts record.
 
