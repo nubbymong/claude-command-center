@@ -47,8 +47,9 @@
 //     execArgv (one the caller names is refused), every other one is refused;
 //     process.execve and process.binding('fs' | 'fs_dir' | 'spawn_sync' |
 //     'process_wrap') are refused.
-// Paths are compared after resolving `..`, separators, case (win32, darwin),
-// trailing dots and spaces, stream suffixes, `\\?\` `\\.\` `\??\` prefixes, file:
+// Paths are compared after resolving `..` (on POSIX also physically, from a link's
+// target, as the kernel reads it; both readings are checked), separators, case
+// (win32, darwin), trailing dots and spaces, stream suffixes, `\\?\` `\\.\` `\??\` prefixes, file:
 // URLs and URL-like objects, Buffers, and the real path of the nearest existing
 // ancestor (a link out of an allowed folder is followed; a volume-GUID path is
 // mapped to its drive). UNC paths other than `\\.\pipe\` and unmappable device
@@ -118,6 +119,8 @@ const CONFIG_REDIRECT = new RegExp(`^(?:GIT_CONFIG_GLOBAL|npm_config_.+|${CONFIG
 // and candidate paths per argument that get the full (realpath) check; the rest get
 // the lexical check only.
 const MAX_REAL_DEPTH = 64
+// Links one path resolution may follow in all (Linux allows 40 in one lookup).
+const LINK_BUDGET = 40
 const FULL_CHECKS_PER_ARG = 256
 
 export class TestIsolationViolation extends Error {
@@ -248,10 +251,12 @@ function lexicalForms(str, base, platform) {
  * The real path of `abs`: the realpath of its nearest existing ancestor with the
  * missing tail appended; a dangling link is followed through its target. Returns
  * null when a link leads somewhere the guard cannot map.
- * @param {string} abs @param {FsImpl} fsImpl @param {string} platform @param {number} [hops]
+ * Every link followed in one resolution (a dangling link's target, the physical `..` walk
+ * on POSIX) draws on one shared budget, so a link loop costs at most LINK_BUDGET steps.
+ * @param {string} abs @param {FsImpl} fsImpl @param {string} platform @param {{ left: number }} [budget]
  * @returns {string | null}
  */
-function resolveReal(abs, fsImpl, platform, hops = 0) {
+function resolveReal(abs, fsImpl, platform, budget = { left: LINK_BUDGET }) {
   const P = pathApi(platform)
   /** @type {string[]} */ const tail = []
   const withTail = (/** @type {string} */ head) => (tail.length ? P.join(head, ...[...tail].reverse()) : head)
@@ -271,7 +276,8 @@ function resolveReal(abs, fsImpl, platform, hops = 0) {
         real = undefined
       }
       if (typeof real === 'string') return withTail(real)
-      if (st.isSymbolicLink() && hops < 40) {
+      if (st.isSymbolicLink() && budget.left > 0) {
+        budget.left--
         let target
         try {
           target = fsImpl.readlinkSync(cur)
@@ -279,10 +285,10 @@ function resolveReal(abs, fsImpl, platform, hops = 0) {
           target = undefined
         }
         if (typeof target === 'string') {
-          const lf = lexicalFormsFs(target, P.dirname(cur), platform, fsImpl)
+          const lf = lexicalFormsFs(target, P.dirname(cur), platform, fsImpl, { budget })
           if (lf.device) return null
           if (lf.forms.length > 0) {
-            const r = resolveReal(lf.forms[0], fsImpl, platform, hops + 1)
+            const r = resolveReal(lf.forms[0], fsImpl, platform, budget)
             return r === null ? null : withTail(r)
           }
         }
@@ -320,8 +326,46 @@ function mapVolume(volume, fsImpl) {
   return null
 }
 
-/** lexicalForms, with a volume-GUID path mapped to its drive first. @param {string} str @param {string} base @param {string} platform @param {FsImpl} fsImpl */
-function lexicalFormsFs(str, base, platform, fsImpl) {
+/**
+ * POSIX resolves `..` physically: after a link, `..` is the parent of the link's TARGET
+ * (`/tmp/link/../x` with link -> /home/u/sub is /home/u/x). The path with each `..`
+ * applied to the real path of what precedes it; null when it has no `..`, or more than
+ * `maxDotDots` of them (an argument scan keeps those lexical), or the walk leads where
+ * the guard cannot map. Windows resolves `..` lexically, as lexicalForms does.
+ * @param {string} str @param {string} base @param {string} platform @param {FsImpl} fsImpl
+ * @param {{ left: number }} budget @param {number} maxDotDots @returns {string | null}
+ */
+function physicalDotDot(str, base, platform, fsImpl, budget, maxDotDots) {
+  const P = pathApi(platform)
+  const comps = (str.startsWith('/') ? str : `${base}/${str}`).split('/')
+  const dotDots = comps.filter((c) => c === '..').length
+  if (dotDots === 0 || dotDots > maxDotDots) return null
+  let cur = '/'
+  for (const c of comps) {
+    if (!c || c === '.') continue
+    if (c !== '..') {
+      cur = P.join(cur, c)
+      continue
+    }
+    const real = resolveReal(cur, fsImpl, platform, budget)
+    if (real === null) return null
+    cur = P.dirname(real)
+  }
+  return cur
+}
+
+/**
+ * lexicalForms, with a volume-GUID path mapped to its drive first; on POSIX also the
+ * physical reading of `..` (both forms are checked, so the stricter one wins).
+ * @param {string} str @param {string} base @param {string} platform @param {FsImpl} fsImpl
+ * @param {{ budget?: { left: number }, maxDotDots?: number }} [opts]
+ */
+function lexicalFormsFs(str, base, platform, fsImpl, opts = {}) {
+  if (platform !== 'win32') {
+    const lexical = pathApi(platform).resolve(base, str)
+    const physical = physicalDotDot(str, base, platform, fsImpl, opts.budget ?? { left: LINK_BUDGET }, opts.maxDotDots ?? Infinity)
+    return { forms: physical !== null && physical !== lexical ? [lexical, physical] : [lexical], device: false }
+  }
   const lf = lexicalForms(str, base, platform)
   if (!lf.volume) return lf
   const mapped = mapVolume(lf.volume, fsImpl)
@@ -413,7 +457,9 @@ export function createHomeChecker(opts) {
       if (hit) return hit
     }
     /** @type {{ device: boolean, forms: string[] }} */ let result
-    const lf = lexicalFormsFs(s, base, platform, fsImpl)
+    // In an argument scan, past the full-check cap or with more `..` than any real depth,
+    // `..` stays lexical (bounds the cost); fs calls always read it physically on POSIX.
+    const lf = lexicalFormsFs(s, base, platform, fsImpl, ctx ? { maxDotDots: ctx.lexOnly ? 0 : MAX_REAL_DEPTH } : {})
     // In an argument scan, a candidate deeper than any real folder keeps its lexical
     // form (bounds the cost of a long token full of separators); past the candidate cap
     // its folder is resolved through the scan's folder memo (links in every folder above

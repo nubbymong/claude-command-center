@@ -1547,6 +1547,67 @@ describe('the pure checker (simulated roots, any host)', () => {
     expect(c.classifyEntry('C:\\T\\link')).toBeNull()
   })
 
+  // Measured: the two loop paths below read links 80 times with one shared budget per
+  // resolution; a budget that restarts at each link grows without bound.
+  const LOOP_READLINK_LIMIT = 200
+  it('on POSIX a `..` after a link goes up from the link target, as the kernel reads it; Windows reads `..` by name, as it does', () => {
+    const dirs = ['/', '/tmp', '/tmp/dir', '/home', '/home/u', '/home/u/sub']
+    const links: [string, string][] = [['/tmp/plink', '/home/u/sub'], ['/home/u/out', '/tmp/dir']]
+    const real = (p: string): string => {
+      for (const [l, to] of links) if (p === l || p.startsWith(l + '/')) return to + p.slice(l.length)
+      return p
+    }
+    let readlinks = 0
+    const fail = (code: string): never => {
+      throw Object.assign(new Error(code), { code })
+    }
+    const c = createHomeChecker({
+      platform: 'linux',
+      realRoots: ['/home/u'],
+      allowedRoots: [{ path: '/tmp', kind: 'tmp' }],
+      fsImpl: {
+        lstatSync: (p: string) =>
+          links.some(([l]) => l === p) || p === '/tmp/loop' ? { isSymbolicLink: () => true, isDirectory: () => false } : dirs.includes(real(p)) ? { isSymbolicLink: () => false, isDirectory: () => true } : undefined,
+        realpathSync: (p: string) => (p === '/tmp/loop' || p.startsWith('/tmp/loop/') ? fail('ELOOP') : dirs.includes(real(p)) ? real(p) : fail('ENOENT')),
+        // A link to itself through `..`: the walk must end, not recurse. Counted, and cut off
+        // well past any sane cost, so a walk that grows without bound fails instead of hanging.
+        readlinkSync: (p: string) => {
+          if (++readlinks > 5000) fail('ELOOP')
+          return p === '/tmp/loop' ? 'loop/../loop' : (links.find(([l]) => l === p)?.[1] ?? fail('EINVAL'))
+        },
+      },
+      cwd: () => '/tmp',
+    })
+    // /tmp/plink -> /home/u/sub, so /tmp/plink/../x is /home/u/x.
+    for (const p of ['/tmp/plink/../x', '/tmp/plink/../sub/../.ssh', 'plink/../x', '/tmp/plink/./../x']) {
+      expect(c.classify(p), p).not.toBeNull()
+      expect(c.classifyEntry(p), p).not.toBeNull()
+    }
+    expect(c.argHit('/tmp/plink/../x', '/tmp')).not.toBeNull()
+    // A plain folder: `..` is its parent either way.
+    expect(c.classify('/tmp/dir/../x')).toBeNull()
+    expect(c.classifyEntry('/tmp/dir/../x')).toBeNull()
+    // Both readings are checked (fails closed): /home/u/out -> /tmp/dir, so the kernel reads
+    // /home/u/out/../x as /tmp/x, but the home spelling stays refused.
+    expect(c.classify('/home/u/out/../x')).not.toBeNull()
+    // A link loop through `..` ends within the shared link budget (40 links per resolution),
+    // instead of recursing without end.
+    readlinks = 0
+    expect(c.classify('/tmp/loop/x')).toBeNull()
+    expect(c.classify('/tmp/loop/../x')).toBeNull()
+    expect(readlinks, 'links read for two loop paths').toBeLessThan(LOOP_READLINK_LIMIT)
+    // Windows resolves `..` by name before it follows a link, so the guard does too.
+    const w = createHomeChecker({
+      platform: 'win32',
+      realRoots: ['C:\\Users\\alice'],
+      allowedRoots: [{ path: 'C:\\T', kind: 'tmp' }],
+      fsImpl: fakeFs(['C:\\', 'C:\\T', 'C:\\Users', 'C:\\Users\\alice', 'C:\\Users\\alice\\sub'], { 'C:\\T\\plink': 'C:\\Users\\alice\\sub' }),
+      cwd: () => 'C:\\T',
+    })
+    expect(w.classify('C:\\T\\plink\\..\\x')).toBeNull()
+    expect(w.classify('C:\\T\\plink\\x')).not.toBeNull()
+  })
+
   it('on POSIX a trailing slash names the target of a folder link: an rm of it is checked the full way', () => {
     const c = createHomeChecker({
       platform: 'linux',

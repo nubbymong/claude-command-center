@@ -77,8 +77,9 @@ deliberately out of scope.
   checkout under HOME). A home only the environment names inside the runner temp
   folder (a CI step's own CLI home) stays a real home. The more specific root wins;
   only the isolated root wins a tie.
-- Paths are compared after resolving `..`, separators, case (win32, darwin),
-  trailing dots and spaces, stream suffixes, `\\?\`, `\\.\` and `\??\` prefixes,
+- Paths are compared after resolving `..` (on Linux and macOS also the way the kernel
+  reads it, from a link's target; both readings are checked), separators, case
+  (win32, darwin), trailing dots and spaces, stream suffixes, `\\?\`, `\\.\` and `\??\` prefixes,
   file: URLs and URL-like objects, Buffers, and the real path of the nearest
   existing ancestor. Every UNC path except a named pipe, and every device path the
   guard cannot map, fails closed. An operation on the folder entry itself (unlink,

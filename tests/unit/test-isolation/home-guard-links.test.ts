@@ -37,6 +37,13 @@ describe('[CI] [VM] a real link out of an allowed folder is followed', () => {
     expect(c.isProtected(path.join(allowed, 'dangling', 'f'))).toBe(true)
   })
 
+  it('a `..` after a link: POSIX goes up from the link target (into the home), Windows by name', () => {
+    mkdirSync(path.join(fakeHome, 'sub'), { recursive: true })
+    symlinkSync(path.join(fakeHome, 'sub'), path.join(allowed, 'plink'), 'junction')
+    const p = path.join(allowed, 'plink') + path.sep + '..' + path.sep + 'x'
+    expect(c.isProtected(p)).toBe(process.platform !== 'win32')
+  })
+
   it('but not into a plain folder beside it', () => {
     expect(c.isProtected(path.join(allowed, 'plain', 'f'))).toBe(false)
   })
