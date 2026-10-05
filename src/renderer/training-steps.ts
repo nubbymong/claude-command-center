@@ -690,7 +690,6 @@ export const trainingSteps: TrainingStep[] = [
     highlights: [
       'Native render -- no iframe, no theme flicker, faster paint (v1.5.10)',
       'Big wins, friction points, and key insight callouts surfaced from real sessions',
-      'Per-project area breakdown -- which folders take the most time and cost',
       'KPI sidebar with trend deltas vs your previous report (per account)',
       'Distinct from Tokenomics: qualitative ("what" / "why"), not quantitative',
     ],
@@ -703,7 +702,7 @@ export const trainingSteps: TrainingStep[] = [
       'Run an Insights report after a long working week -- the friction list often surfaces patterns (unclear instructions, retries, dead-ends) you can fix with one tweak to your CLAUDE.md, or for Codex your AGENTS.md.',
     bullets: [
       '**Qualitative analysis** of how Claude Code and Codex are performing in your sessions',
-      'Surfaces **big wins**, **friction points**, and per-area breakdowns',
+      'Surfaces **big wins**, **friction points**, features to try, and recurring patterns',
       'A **KPI sidebar** with trend deltas vs your previous report',
       'Distinct from Tokenomics -- focused on patterns, not raw cost',
     ],

@@ -259,7 +259,8 @@ export function WhatsNewV2Step({
   // authored for a line this collapses to exactly the old single-page step —
   // no dots, no skip, the harness CTA — so nothing regresses.
   // P3.6: a page that shows with Claude Code off leaves out its points that
-  // need it (the accounts page's Insights point).
+  // need it. No point needs it in this release: P4.7 lifted the last one,
+  // the accounts page's Insights point, as Insights runs for Codex too.
   const showcases = showcasesFor(LINE_SOURCE)
     .filter((p) => withClaude || !p.needsClaude)
     .map((p) => (withClaude ? p : { ...p, points: p.points.filter((pt) => !pt.needsClaude) }))
