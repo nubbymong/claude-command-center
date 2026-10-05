@@ -61,7 +61,7 @@ import { safeExternalHttpsHref } from '../../shared/safe-url'
 import { shell } from 'electron'
 import type { WebviewNavState } from '../../shared/browser-url'
 import { webSessionFromElectronCookies } from './cookie-harvest'
-import { blockPartitionDownloads, diagHost, toChromeUserAgent } from './in-app-sign-in'
+import { blockPartitionDownloads, diagHost, subFrameNavAllowed, toChromeUserAgent } from './in-app-sign-in'
 import { readAccountEmail, readServiceAccountEmail } from './account-email-read'
 import { getWebSession, saveWebSession, removeWebSession } from './session-store'
 import { getCodexWebSession, saveCodexWebSession, removeCodexWebSession } from './codex-web-store'
@@ -268,6 +268,28 @@ function sendState(entry: PaneEntry, sessionId: string): void {
   } catch { /* window gone */ }
 }
 
+/** An Electron load error's code (`ERR_ABORTED -3`), never its message: that
+ *  carries the whole URL, and a URL's query can hold an OAuth code. */
+function loadErrorCode(err: unknown): string {
+  const code = (err as { code?: unknown })?.code
+  const errno = (err as { errno?: unknown })?.errno
+  const c = typeof code === 'string' && /^[A-Z0-9_]{1,40}$/.test(code) ? code : 'error'
+  return typeof errno === 'number' && Number.isInteger(errno) ? `${c} ${errno}` : c
+}
+
+/** Load a URL into a view. A failure is logged by host and error code, never
+ *  the URL, and never rejects unhandled. */
+function loadQuietly(wc: { loadURL: (url: string) => Promise<void> }, url: string, what: string): void {
+  const report = (err: unknown): void => {
+    logError(`[account-pane] ${what} could not load ${diagHost(url)} (${loadErrorCode(err)})`)
+  }
+  try {
+    Promise.resolve(wc.loadURL(url)).catch(report)
+  } catch (err) {
+    report(err)
+  }
+}
+
 /** Tell the renderer the account surface is gone (main force-closed it —
  *  sign-out, account delete, a crash). The renderer leaves account mode; without
  *  this the strip would keep painting "signed in as …" over an empty rectangle. */
@@ -440,7 +462,7 @@ async function refreshAuthed(sessionId: string): Promise<void> {
   // the later commit. `!viewIsOnService` alone terminates (once back on the
   // service it stops firing), so there is no loop.
   if (hasSessionCookie && !viewIsOnService(entry)) {
-    try { void entry.view.webContents.loadURL(entry.svc.startUrl) } catch { /* view gone */ }
+    loadQuietly(entry.view.webContents, entry.svc.startUrl, 'the return to the start page')
   }
   const stored = entry.svc.stored(entry.ownerId)
   if (
@@ -605,12 +627,11 @@ function openPane(
     const guard = (label: string) => (event: { preventDefault: () => void; isMainFrame?: boolean }, target: string): void => {
       if (event.isMainFrame === false) {
         // Sub-frame: left to same-origin policy (never blocked for being
-        // third-party, never handed to the OS browser), but a non-https target
-        // is still refused — parity with the throwaway browser pane's scheme
-        // filter, at zero risk of the iframe tab-bomb.
-        let https = false
-        try { https = new URL(target).protocol === 'https:' } catch { https = false }
-        if (!https) { event.preventDefault(); logError(`[account-pane] blocked a non-https sub-frame (${diagHost(String(target))})`) }
+        // third-party, never handed to the OS browser), but only https or an
+        // embedded local document (about:blank, about:srcdoc, blob:, data:)
+        // loads: http:, file: and custom schemes are refused, at zero risk of
+        // the iframe tab-bomb.
+        if (!subFrameNavAllowed(String(target))) { event.preventDefault(); logError(`[account-pane] blocked a sub-frame (${diagHost(String(target))})`) }
         return
       }
       const decision = svc.navDecision(target, entry.authed)
@@ -644,7 +665,9 @@ function openPane(
       // and does NOT trust the pre-auth allowance (which a stale authed could
       // widen).
       if (svc.isServiceUrl(url)) {
-        try { view.webContents.loadURL(new URL(url).href) } catch { /* view gone */ }
+        let href: string | null = null
+        try { href = new URL(url).href } catch { href = null }
+        if (href) loadQuietly(view.webContents, href, 'a service popup')
       } else if (svc.navDecision(url, entry.authed) === 'external') {
         const href = safeExternalHttpsHref(url)
         if (href) void shell.openExternal(href)
@@ -701,9 +724,8 @@ function openPane(
     // browser view this window holds (and vice versa), so the two can never
     // stack on one rectangle.
     attachPaneView(parent, view)
-    void wc.loadURL(svc.startUrl).catch((err) => {
-      logError(`[account-pane] loadURL failed: ${(err as Error)?.message ?? err} — view stays open with the error page`)
-    })
+    // A failure leaves the view open on its error page.
+    loadQuietly(wc, svc.startUrl, 'the account view')
     panes.set(sessionId, entry)
     void refreshAuthed(sessionId)
     logInfo(`[account-pane] opened for session ${sessionId} as ${ownerId}`)

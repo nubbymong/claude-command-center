@@ -898,3 +898,26 @@ describe('[host] a finished run the IPC layer discards reads failed', () => {
     expect(JSON.stringify(getCodexWebSignInState())).not.toContain('me@example.com')
   })
 })
+
+describe('[host] the sign-in window lets embedded local frames load', () => {
+  it('about:blank, about:srcdoc, blob: and data: load in a sub-frame; http, file and custom schemes do not', async () => {
+    jars[PART] = SIGNED_OUT_JAR
+    const p = runServiceSignIn(RUN({ timeoutMs: 60 }))
+    await tick(5)
+    const frameNav = created[0].handlers['will-frame-navigate']
+    for (const url of ['about:blank', 'about:srcdoc', 'blob:https://chatgpt.com/3f2c9a1e-0000-4000-8000-000000000000', 'data:text/html,<p>hi</p>']) {
+      const e = { preventDefault: vi.fn(), isMainFrame: false, url }
+      frameNav(e)
+      expect(e.preventDefault, url).not.toHaveBeenCalled()
+      expect(signInNavAllowed(CODEX_WEB_SERVICE, url, false), url).toBe(true)
+    }
+    for (const url of ['http://frames.example/x', 'file:///C:/Windows/win.ini', 'ms-settings:privacy', 'javascript:alert(1)', 'about:config']) {
+      const e = { preventDefault: vi.fn(), isMainFrame: false, url }
+      frameNav(e)
+      expect(e.preventDefault, url).toHaveBeenCalled()
+    }
+    // Never in the main frame: there the service and its sign-in hosts only.
+    for (const url of ['about:blank', 'data:text/html,x', 'blob:https://chatgpt.com/x']) expect(signInNavAllowed(CODEX_WEB_SERVICE, url, true), url).toBe(false)
+    await p
+  })
+})

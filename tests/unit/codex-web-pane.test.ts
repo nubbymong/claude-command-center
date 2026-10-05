@@ -10,6 +10,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const createdViews: { opts: any; view: any }[] = []
+/** When set, every view's loadURL rejects with it (as Electron's does, the URL in the message). */
+let loadFails: (Error & { code?: string; errno?: number }) | null = null
 const openedExternal: string[] = []
 const partitions: Record<string, any> = {}
 
@@ -46,7 +48,7 @@ class FakeWebContentsView {
       destroyed: false,
       on: (ev: string, fn: Function) => { handlers[ev] = fn },
       setWindowOpenHandler: (fn: Function) => { handlers.__open = fn },
-      loadURL: vi.fn(async () => {}),
+      loadURL: vi.fn(async () => { if (loadFails) throw loadFails }),
       close() { this.destroyed = true },
       isDestroyed() { return this.destroyed },
       executeJavaScriptInIsolatedWorld: vi.fn(async () => null),
@@ -111,6 +113,7 @@ beforeEach(() => {
   for (const k of Object.keys(partitions)) delete partitions[k]
   for (const k of Object.keys(disk)) delete disk[k]
   logged.length = 0
+  loadFails = null
 })
 
 describe('[host] codexPaneNavDecision (pure, tri-state)', () => {
@@ -460,4 +463,68 @@ describe('[host] an email that arrives after the grace is still recorded, a boun
       vi.useRealTimers()
     }
   })
+})
+
+describe('[host] a page load that fails is logged by host and code, and never rejects unhandled', () => {
+  const failure = () => Object.assign(new Error("ERR_ABORTED (-3) loading 'https://chatgpt.com/?code=OAUTH-SECRET#state=SECRET'"), { code: 'ERR_ABORTED', errno: -3 })
+  const unhandled: unknown[] = []
+  const onUnhandled = (r: unknown) => { unhandled.push(r) }
+
+  it('the open, the return to the start page and a service popup', async () => {
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      loadFails = failure()
+      const win = new FakeParentWindow()
+      openCodexAccountPane(win as never, 'sess-load', ACCT, BOUNDS)
+      const wc = createdViews[0].view.webContents
+      await flush(); await flush()
+      // Signed in while the view is off the service: it is sent back to the start page.
+      wc.currentUrl = 'https://elsewhere.example/'
+      const ses = partitions[webPartitionForCodexAccount(ACCT)]
+      ses.cookies.get.mockResolvedValue(TOKEN_COOKIE)
+      ses.cookies.listeners[0](null, { name: '__Secure-next-auth.session-token' })
+      await flush(); await flush()
+      // A popup to the service's own URL is followed in this view.
+      wc.handlers.__open({ url: 'https://chatgpt.com/c/2?q=SECRET' })
+      await new Promise((r) => setTimeout(r, 20))
+      expect(wc.loadURL.mock.calls.length).toBeGreaterThanOrEqual(3)
+      const lines = logged.filter((l) => /could not load/.test(l))
+      expect(lines.length).toBeGreaterThanOrEqual(3)
+      for (const l of lines) {
+        expect(l).toContain('chatgpt.com')
+        expect(l).toContain('ERR_ABORTED -3')
+        expect(l).not.toMatch(/SECRET|\?|#|loading '/)
+      }
+      expect(unhandled).toEqual([])
+      closeAccountPane('sess-load')
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
+  })
+})
+
+describe('[host] embedded local frames load in both panes; a sub-frame elsewhere is held to https', () => {
+  const LOCAL = ['about:blank', 'about:srcdoc', 'blob:https://chatgpt.com/3f2c9a1e-0000-4000-8000-000000000000', 'data:text/html,<p>hi</p>']
+  const BLOCKED = ['http://frames.example/x', 'file:///C:/Windows/win.ini', 'ms-settings:privacy', 'javascript:alert(1)', 'about:config']
+  for (const kind of ['Claude', 'Codex'] as const) {
+    it(`${kind}'s pane`, async () => {
+      const win = new FakeParentWindow()
+      if (kind === 'Codex') openCodexAccountPane(win as never, 'sess-fr', ACCT, BOUNDS)
+      else openAccountPane(win as never, 'sess-fr', 'profile-p1a', BOUNDS)
+      const wc = createdViews[0].view.webContents
+      await flush()
+      for (const url of LOCAL) {
+        const e = { preventDefault: vi.fn(), isMainFrame: false, url }
+        wc.handlers['will-frame-navigate'](e)
+        expect(e.preventDefault, url).not.toHaveBeenCalled()
+      }
+      for (const url of BLOCKED) {
+        const e = { preventDefault: vi.fn(), isMainFrame: false, url }
+        wc.handlers['will-frame-navigate'](e)
+        expect(e.preventDefault, url).toHaveBeenCalled()
+      }
+      expect(openedExternal).toEqual([])
+      closeAccountPane('sess-fr')
+    })
+  }
 })

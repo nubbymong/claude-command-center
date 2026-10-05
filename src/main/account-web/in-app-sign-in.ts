@@ -170,13 +170,28 @@ function isHttps(url: string): boolean {
 }
 
 /**
+ * PURE: may an EMBEDDED frame (never the main frame) navigate here? https, and
+ * the browser's own local documents a page builds in a frame: about:blank,
+ * about:srcdoc, blob: and data:, which the browser's same-origin rules govern
+ * as before. Never http:, file:, another about: page or a custom scheme.
+ * Shared by the sign-in window and the pane's account view (both services).
+ */
+export function subFrameNavAllowed(url: string): boolean {
+  let u: URL
+  try { u = new URL(url) } catch { return false }
+  if (u.protocol === 'https:' || u.protocol === 'blob:' || u.protocol === 'data:') return true
+  return u.protocol === 'about:' && (u.pathname === 'blank' || u.pathname === 'srcdoc')
+}
+
+/**
  * PURE: may a descriptor-driven (Codex) sign-in window follow this navigation?
  * The main frame: only the service's own hosts and the listed sign-in hosts,
  * https on the default port. A sub-frame (only when the event SAYS it is one):
- * left to same-origin policy, but https only. Exported for a unit test.
+ * left to same-origin policy, but https or an embedded local document only
+ * (subFrameNavAllowed). Exported for a unit test.
  */
 export function signInNavAllowed(desc: WebServiceDescriptor, url: string, isMainFrame?: boolean): boolean {
-  if (isMainFrame === false) return isHttps(url)
+  if (isMainFrame === false) return subFrameNavAllowed(url)
   return isWebServiceUrl(desc, url) || isWebServiceSignInHop(desc, url)
 }
 
