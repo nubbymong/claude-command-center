@@ -627,11 +627,13 @@ describe('[host] the sign-in window', () => {
 
   it('an email at the top level is named by its key, and no part of it enters a key path', async () => {
     jars[PART] = SIGNED_IN_JAR
-    page.identity = { mail: 'first.last@example.com', 'first.last': 'first.last@example.com', name: 'First' }
+    // The local part says "mail" too, so a value turned into a path name would
+    // not even be starred: the path must be the key alone.
+    page.identity = { mail: 'mailbox.first@example.com', 'first.last': 'first.last@example.com', name: 'First' }
     await runServiceSignIn(RUN({ timeoutMs: 60 }))
     const line = logs.find((l) => /did not complete/.test(l))!
-    expect(line).toContain('Identity answer: HTTP 200, JSON keys mail, name (and 1 not shown); an email-shaped value at mail.')
-    expect(line).not.toMatch(/first|last|example/i)
+    expect(line).toMatch(/Identity answer: HTTP 200, JSON keys mail, name \(and 1 not shown\); an email-shaped value at mail\. Cookie names/)
+    expect(line).not.toMatch(/mailbox|first|last|example/i)
   })
 
   it('the first-cookie look stays pending until one answers from chatgpt.com (no 20 s wait after a look elsewhere)', async () => {
