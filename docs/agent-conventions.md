@@ -65,17 +65,23 @@ npm run test:e2e     # Playwright
   included) or PowerShell `Set-Location` / `sl` / `Push-Location` into or above a
   real home, a drive or filesystem root that holds one included, in a shell line
   (exec, `shell: true`, `cmd /c`, `sh -c`, `pwsh -Command`); worker_threads
-  Workers; `process.execve`; and `process.binding('fs')`. The executable itself is
-  allowed, and so are a node script and the command word (that position only) of a
-  `cmd /c` / `sh -c` line inside the real npm or nvm folder. Node children load the
-  same guard through NODE_OPTIONS.
+  Workers other than a toolchain worker (a script in the project's own
+  `node_modules`, such as esbuild's, which starts with the guard loaded first);
+  `process.execve`; and `process.binding('fs')`. The executable itself is allowed,
+  and so are the running node binary named in an argument (a git hook command), a
+  node script and the command word (that position only) of a `cmd /c` / `sh -c`
+  line inside the real npm or nvm folder. The temp folder, a CI runner's
+  `RUNNER_TEMP` and the checkout are not real homes. Node children load the same
+  guard through NODE_OPTIONS, and a child env that omits a home or temp variable
+  gets it filled in.
 - **Not covered:** native addons (they write natively); a non-node child beyond
   its environment, working folder and arguments (a native tool that finds the
   profile through the OS, e.g. to expand `~`, reaches the real one); shell
   re-assembly of an argument (quotes or carets inside a word, `%VAR%` / `$VAR`, a
   PowerShell `-EncodedCommand`, a relative path after a `cd` the guard did not
-  see); anything started outside these entry points. Keep those on temporary
-  folders yourself.
+  see); anything started outside these entry points; a refusal inside a toolchain
+  worker fails that worker's call but is not recorded in the test. Keep those on
+  temporary folders yourself.
 - Never loosen the guard to make a test pass: use `os.homedir()` / `os.tmpdir()`
   (already isolated) or mock the code that reaches the real location.
   `originalHomeEnv()` is for locating tools, never for writing.
