@@ -22,6 +22,8 @@ const h = vi.hoisted(() => ({
   sessionsDir: '',
   claude: 'on' as 'on' | 'off',
   codex: 'on' as 'on' | 'off',
+  /** Claude Code's KPI pass fails, so its members produce no figures. */
+  claudeKpiFails: false,
   profileDir: {} as Record<string, string>,
   profiles: [] as Array<{ id: string; accountEmail: string; isPrimary?: boolean; name?: string }>,
   prepareCalls: [] as Array<Record<string, unknown>>,
@@ -51,7 +53,7 @@ const CLAUDE_KPIS = JSON.stringify({
 })
 vi.mock('../../../src/main/claude-headless', () => ({
   spawnClaudeHeadless: async (args: string[], _t: number, prompt: string) => {
-    if (args.includes('--allowedTools')) return { code: 0, stdout: CLAUDE_KPIS, stderr: '' }
+    if (args.includes('--allowedTools')) return h.claudeKpiFails ? { code: 1, stdout: '', stderr: 'boom' } : { code: 0, stdout: CLAUDE_KPIS, stderr: '' }
     h.claudePrompts.push(prompt)
     return { code: 0, stdout: JSON.stringify({ summary: { improvements: ['steady'] }, accounts: [], crossAccount: { observations: ['Claude wrote this'] } }), stderr: '' }
   },
@@ -133,6 +135,7 @@ beforeEach(() => {
   ].map((l) => JSON.stringify(l)).join('\n') + '\n')
   h.claude = 'on'
   h.codex = 'on'
+  h.claudeKpiFails = false
   h.profileDir = {}
   h.profiles = []
   h.prepareCalls = []
@@ -176,6 +179,20 @@ describe('Run all over both assistants (C1 A)', () => {
     expect(h.claudePrompts[0].startsWith('You are comparing Claude Code and Codex usage across several accounts belonging to ONE person')).toBe(true)
     expect(h.execPrompts.filter((p) => p.startsWith('You are comparing'))).toEqual([])
     expect((getInsightsKpis(id) as any).crossAccount.observations).toEqual(['Claude wrote this'])
+    // A roll-up that runs Claude Code is Claude Code in use while its Codex members run too (review F6b).
+    expect(h.claudeInUseDuringExec.length).toBeGreaterThan(0)
+    expect(h.claudeInUseDuringExec.every((n) => n >= 1)).toBe(true)
+  })
+
+  it("the prompt names the assistants of the members that produced figures: Claude Code's all failed, so Codex alone (review F8) [host]", async () => {
+    seedClaude('work', true)
+    seedClaude('personal')
+    h.claudeKpiFails = true
+    const id = await runCrossAccountInsights(win) as string
+    expect(getCatalogue().runs.find((r) => r.id === id)!.status).toBe('complete')
+    const synth = h.execPrompts.filter((p) => p.startsWith('You are comparing'))
+    expect(synth).toHaveLength(1)
+    expect(synth[0].startsWith('You are comparing Codex usage across several accounts')).toBe(true)
   })
 
   it('a Claude Code roll-up alone keeps its prompt word for word [host]', async () => {
@@ -227,6 +244,11 @@ describe('Run all over both assistants (C1 A)', () => {
     seedClaude('personal')
     await expect(runCrossAccountInsights(win)).resolves.toEqual({ refused: { code: 'provider-off', providerId: 'claude', message: 'Claude Code is off. Turn it on in Settings, Accounts.' } })
     expect(getCatalogue().runs).toEqual([])
+  })
+
+  it("Claude Code off and no Codex account that can run without its own confirmation: Claude Code's refusal (review F11) [host]", async () => {
+    h.claude = 'off'
+    await expect(runCrossAccountInsights(win, { profileIds: [EXT] })).resolves.toEqual({ refused: { code: 'provider-off', providerId: 'claude', message: 'Claude Code is off. Turn it on in Settings, Accounts.' } })
   })
 
   it('fewer than two accounts that can run: refused as before, the count says how many [host]', async () => {

@@ -1136,7 +1136,12 @@ function makeCodexRunFolder(parent: string): string {
     try { rmdirSync(dir) } catch { /* not empty, or gone: leave it */ }
     throw new Error('the report folder is not where it was made')
   }
-  writeFileSync(join(dir, '.git'), '', { flag: 'wx' })
+  try {
+    writeFileSync(join(dir, '.git'), '', { flag: 'wx' })
+  } catch (err) {
+    try { rmSync(dir, { recursive: true, force: true }) } catch { /* a leftover is swept by a later run */ }
+    throw err
+  }
   return dir
 }
 
@@ -1281,11 +1286,19 @@ export async function runCodexInsights(
     logInfo(`[insights] Codex run ${id} account=${accountId}`)
     const launched = await withCodexLaunch(accountId, `insights:${id}`, opts.acknowledgeRealmOnly === true, () => { codexUnleased.delete(accountId) }, async (launch, parent): Promise<{ failed: string } | { stored: CodexStoredReport; kpis: InsightsData }> => {
       const read = await readCodexSessions(launch.sessionsDir, { runsParent: parent })
-      if (read.sessions.length === 0) return { failed: 'This account has no Codex sessions from the last 30 days to report on.' }
+      if (read.sessions.length === 0) {
+        // A link is never followed (a moved sessions folder): say so, rather
+        // than that the account has no sessions (review F5).
+        return {
+          failed: read.folderIsLink || read.linksSkipped > 0
+            ? "This account has no Codex sessions from the last 30 days that the app can read: its sessions folder, or a folder in it, is a link, which the app does not follow."
+            : 'This account has no Codex sessions from the last 30 days to report on.',
+        }
+      }
       const counts = countCodexSessions(read.sessions)
       const digest = buildCodexDigest(read.sessions)
-      const prompt = buildCodexInsightsPrompt(counts, digest, loadPreviousKpis(id))
-      logInfo(`[insights] Codex run ${id}: ${counts.sessions} sessions (${read.filesFound} files${read.cut ? ', cut at the byte limit' : ''}), digest ${digest.included} sessions, prompt ${prompt.length} chars`)
+      const prompt = buildCodexInsightsPrompt(counts, digest, loadPreviousKpis(id), read)
+      logInfo(`[insights] Codex run ${id}: ${counts.sessions} sessions (${read.filesFound} files, ${read.filesNotRead} not read at the byte limit, ${read.skippedLines} oversized lines skipped), digest ${digest.included} sessions, prompt ${prompt.length} chars`)
       run.statusMessage = 'Step 2/3: Writing the report...'
       publish()
       // The launch rule once more, right before Codex starts: switched off
@@ -1416,7 +1429,9 @@ export async function runCrossAccountInsights(
   // would otherwise read as "all of them").
   const claudeTargets = refused || (ids && ids.length > 0 && claudeIds!.length === 0) ? [] : resolveCrossAccountTargets(claudeIds)
   const codexTargets = codexOff || (ids && ids.length > 0 && codexIds!.length === 0) ? { run: [], leftOut: [] } : resolveCodexCrossAccountTargets(codexIds)
-  if (refused && codexTargets.run.length === 0 && codexTargets.leftOut.length === 0) return { refused }
+  // With Claude Code off and no Codex account that can run, there is no
+  // roll-up to make: the answer is Claude Code's refusal, as it always was.
+  if (refused && codexTargets.run.length === 0) return { refused }
   type Target = { provider: ProviderId; id: string; accountEmail?: string; label: string }
   const targets: Target[] = [
     ...claudeTargets.map((t): Target => ({ provider: 'claude', id: t.id, accountEmail: t.accountEmail, label: crossAccountLabel(t) })),
@@ -1572,7 +1587,9 @@ export async function runCrossAccountInsights(
     // member's raw kpis.json also cuts this prompt by ~88% (measured on real
     // archives: 30,477 -> 3,619 bytes for two accounts).
     const baseline = assembleCrossAccount(members, null)
-    const prompt = buildCrossAccountPromptFrom(baseline, crossAccountProviders)
+    // The assistants of the members that produced figures (a roll-up whose
+    // Claude Code members all failed compares Codex accounts only).
+    const prompt = buildCrossAccountPromptFrom(baseline, new Set(members.map((m) => m.provider ?? 'claude')))
     logInfo(
       `[insights] Cross-account synthesis payload: ${prompt.length} chars, ` +
       `${baseline.comparison.length} shared / ${baseline.uniqueMetrics.length} unique metrics, ` +

@@ -92,6 +92,15 @@ describe('the sessions walk never follows a link [CI] [VM]', () => {
     expect(await listCodexRolloutFiles(linked, 0)).toEqual([])
   })
 
+  it("a report on an account whose sessions folder is a link says so, never that it has no sessions (review F5) [CI] [VM]", async () => {
+    const real = path.join(tmpRoot, 'moved-sessions')
+    fs.renameSync(h.sessionsDir, real)
+    fs.symlinkSync(real, h.sessionsDir, LINK_TYPE)
+    const id = await runCodexInsights(win, { accountId: ACCT }) as string
+    expect(getCatalogue().runs.find((r) => r.id === id)!.error).toBe("This account has no Codex sessions from the last 30 days that the app can read: its sessions folder, or a folder in it, is a link, which the app does not follow.")
+    expect(h.execCalls).toBe(0)
+  })
+
   it('a rollout file that is a symbolic link is not listed (where file links can be made) [CI] [VM]', async (ctx) => {
     const target = path.join(tmpRoot, 'secret.jsonl')
     fs.writeFileSync(target, ROLLOUT())
