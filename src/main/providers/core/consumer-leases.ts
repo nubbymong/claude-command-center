@@ -131,6 +131,19 @@ export class ConsumerLeaseRegistry {
     return [...out]
   }
 
+  /** The account a session's CURRENT launch runs under: its newest
+   *  session-kind lease (a switch of account takes a new one before the old
+   *  launch has wound down), or null when it holds none. A review or a
+   *  background run the session started is not its launch. */
+  sessionLaunchAccount(sessionId: string): string | null {
+    let newest: AccountLease | null = null
+    for (const e of this.byKey.values()) {
+      if (e.lease.kind !== 'session' || e.sessionId !== sessionId) continue
+      if (!newest || e.lease.id > newest.id) newest = e.lease
+    }
+    return newest ? newest.accountId : null
+  }
+
   /** How many leases on the account belong to no named session: sign-ins,
    *  operations, and a session or review that names none. A session and its
    *  own review are both named, so they add nothing here. */

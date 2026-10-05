@@ -794,6 +794,21 @@ export function closeCodexAccountPanes(accountId: string): void {
   }
 }
 
+/** Close every chatgpt.com account pane `shouldClose` names, by its session and
+ *  account: the session no longer runs under that account (its launch ended,
+ *  or switched to another account). A predicate that throws closes. Returns
+ *  how many closed. */
+export function closeCodexAccountPanesWhere(shouldClose: (sessionId: string, accountId: string) => boolean): number {
+  let n = 0
+  for (const [sessionId, entry] of [...panes.entries()]) {
+    if (entry.svc !== CODEX_PANE) continue
+    let close = true
+    try { close = shouldClose(sessionId, entry.ownerId) !== false } catch { close = true }
+    if (close && closeAccountPane(sessionId)) n++
+  }
+  return n
+}
+
 /** Tear down all account panes — app quit. */
 export function closeAllAccountPanes(): void {
   for (const sessionId of [...panes.keys()]) closeAccountPane(sessionId)

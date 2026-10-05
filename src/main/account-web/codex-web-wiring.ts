@@ -1,0 +1,54 @@
+/**
+ * codex-web-wiring.ts - WP2 PR 4, P4.6 (row 58): how main's start-up wires a
+ * Codex account's chatgpt.com web session. Two small functions, so the wiring
+ * is tested by calling it (tests/unit/main/codex-web-wiring.test.ts), not only
+ * by reading index.ts:
+ *   - wireCodexWebArchive(): the archive hook. Called before the accounts
+ *     service exists, so no archive runs without clearing the web session.
+ *   - wireCodexWebSession(): the codexWeb channels on the app window; before a
+ *     wipe the account's panes close and after it the record goes; a pane
+ *     opens only for a Codex session whose CURRENT launch lease is on that
+ *     account, and closes when that launch ends or switches account.
+ *
+ * No default export (project convention).
+ */
+
+import type { BrowserWindow } from 'electron'
+import { onBeforeAccountArchive } from '../providers/core'
+import type { ConsumerLeaseRegistry } from '../providers/core'
+import { onCodexWebSessionCleared, onCodexWebSessionClosing, prepareCodexWebArchive } from './codex-web-session'
+import { closeCodexAccountPanes, closeCodexAccountPanesWhere } from './account-pane'
+import { removeCodexWebSession } from './codex-web-store'
+import { registerCodexWebHandlers } from '../ipc/codex-web-handlers'
+
+/** Register the archive hook: an archive clears the account's web session
+ *  first, and a clear that fails refuses the archive. */
+export function wireCodexWebArchive(): void {
+  onBeforeAccountArchive(prepareCodexWebArchive)
+}
+
+export interface CodexWebWiringDeps {
+  getWindow: () => BrowserWindow | null
+  /** Whether a session id is a live Codex PTY session. */
+  isCodexPtySession: (sessionId: string) => boolean
+  /** The one consumer lease registry. */
+  leases: () => Pick<ConsumerLeaseRegistry, 'sessionLaunchAccount' | 'subscribe'>
+}
+
+export function wireCodexWebSession(deps: CodexWebWiringDeps): void {
+  /** A session runs under an account when it is a Codex PTY session whose
+   *  current launch (its newest session lease) is on that account. */
+  const runsUnder = (sessionId: string, accountId: string): boolean =>
+    deps.isCodexPtySession(sessionId) && deps.leases().sessionLaunchAccount(sessionId) === accountId
+  registerCodexWebHandlers(deps.getWindow, { sessionRunsUnder: runsUnder })
+  onCodexWebSessionClosing(closeCodexAccountPanes)
+  onCodexWebSessionCleared(removeCodexWebSession)
+  // Bound for as long as the launch lasts: any lease change (a session ended,
+  // an account switched) closes each pane whose session no longer runs under
+  // its account. The renderer is told, and leaves account mode.
+  deps.leases().subscribe(() => {
+    closeCodexAccountPanesWhere((sessionId, accountId) => {
+      try { return !runsUnder(sessionId, accountId) } catch { return true }
+    })
+  })
+}

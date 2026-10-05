@@ -18,6 +18,8 @@ type Acc = { id: string; providerId: string; lifecycle: string }
 const registry = { accounts: [] as Acc[], missing: false }
 /** Which app sessions hold a lease on which account (the default binding). */
 const holding: Record<string, string[]> = {}
+/** The binding these tests hand in: a session the test says runs under the account. */
+const BINDING = (sid: string, acct: string): boolean => (holding[acct] ?? []).includes(sid)
 vi.mock('../../src/main/provider-account-registry', () => ({
   getAccountRegistry: () => (registry.missing ? null : { current: () => ({ accounts: registry.accounts }) }),
   getConsumerLeases: () => ({ sessionsHolding: (id: string) => holding[id] ?? [] }),
@@ -84,7 +86,7 @@ beforeEach(() => {
   clearing.clear()
   for (const k of Object.keys(holding)) delete holding[k]
   holding[ACCT] = ['s1']
-  registerCodexWebHandlers(() => mainWin as never)
+  registerCodexWebHandlers(() => mainWin as never, { sessionRunsUnder: BINDING })
 })
 
 const CHANNELS: Array<[string, (id: unknown) => unknown]> = [
@@ -127,7 +129,7 @@ describe('[host] a foreign sender is refused on every channel', () => {
 
   it('no window at all refuses too', async () => {
     for (const k of Object.keys(handlers)) delete handlers[k]
-    registerCodexWebHandlers(() => null)
+    registerCodexWebHandlers(() => null, { sessionRunsUnder: BINDING })
     expect((await call(IPC.CODEX_WEB_SIGN_IN, TRUSTED, ACCT)).ok).toBe(false)
     nothingActed('no window')
   })
@@ -261,6 +263,11 @@ describe('[host] a clear in progress bars every channel for that account', () =>
 })
 
 describe('[host] a pane opens only for a session that runs under the account', () => {
+  it('the channels are never registered without a session binding', () => {
+    expect(() => registerCodexWebHandlers(() => mainWin as never, undefined as never)).toThrow(/binding/)
+    expect(() => registerCodexWebHandlers(() => mainWin as never, {} as never)).toThrow(/binding/)
+  })
+
   it('a session holding no lease on the account gets no view of it', async () => {
     const r = await call(IPC.CODEX_WEB_PANE_OPEN, TRUSTED, { sessionId: 'claude-session-7', accountId: ACCT, bounds: BOUNDS })
     expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/does not run under that account/) })

@@ -26,7 +26,7 @@ import { IPC } from '../../shared/ipc-channels'
 import { isWebSessionAccountId } from '../../shared/account-web-session'
 import { logError } from '../debug-logger'
 import { appWindowSender } from './trusted-sender'
-import { getAccountRegistry, getConsumerLeases } from '../provider-account-registry'
+import { getAccountRegistry } from '../provider-account-registry'
 import {
   cancelCodexWebSignIn,
   clearCodexWebSession,
@@ -91,23 +91,19 @@ function eligible(raw: unknown): { ok: true; id: string } | Err {
 
 const FOREIGN: Err = { ok: false, error: 'refused: not the app window' }
 
-/** The default binding: the session holds a lease on the account (its launch
- *  took one under that session's id). */
-function sessionHoldsAccount(sessionId: string, accountId: string): boolean {
-  return getConsumerLeases().sessionsHolding(accountId).includes(sessionId)
-}
-
 export interface CodexWebHandlerOptions {
-  /** Whether the app session runs under the account. The composition root
-   *  hands in the strict form (a Codex session holding the account's launch
-   *  lease); a throw refuses. */
-  sessionRunsUnder?: (sessionId: string, accountId: string) => boolean
+  /** Whether the app session runs under the account: REQUIRED, there is no
+   *  default. The composition root hands in a Codex PTY session whose current
+   *  launch lease is on the account (codex-web-wiring.ts); a throw refuses. */
+  sessionRunsUnder: (sessionId: string, accountId: string) => boolean
 }
 
-export function registerCodexWebHandlers(getWindow: () => BrowserWindow | null, opts: CodexWebHandlerOptions = {}): void {
+export function registerCodexWebHandlers(getWindow: () => BrowserWindow | null, opts: CodexWebHandlerOptions): void {
+  const binding = opts?.sessionRunsUnder
+  if (typeof binding !== 'function') throw new Error('the codexWeb channels need a session binding')
   const trusted = appWindowSender(getWindow)
   const runsUnder = (sessionId: string, accountId: string): boolean => {
-    try { return (opts.sessionRunsUnder ?? sessionHoldsAccount)(sessionId, accountId) === true } catch { return false }
+    try { return binding(sessionId, accountId) === true } catch { return false }
   }
 
   ipcMain.handle(IPC.CODEX_WEB_STATUS, async (e, accountId: unknown) => {

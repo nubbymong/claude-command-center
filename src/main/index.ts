@@ -46,14 +46,11 @@ import { registerScreenshotHandlers } from './ipc/screenshot-handlers'
 import { registerDiagnosticsHandlers } from './ipc/diagnostics-handlers'
 import { registerWebviewHandlers } from './ipc/webview-handlers'
 import { closeAllWebviews } from './webview-manager'
-import { closeAllAccountPanes, closeAccountPanesForProfile, closeCodexAccountPanes } from './account-web/account-pane'
+import { closeAllAccountPanes, closeAccountPanesForProfile } from './account-web/account-pane'
 import { onPartitionRevoked } from './account-web/partition-revocation'
 import { removeWebSession } from './account-web/session-store'
 // WP2 PR 4, P4.6 (row 58): a Codex account's chatgpt.com web session.
-import { registerCodexWebHandlers } from './ipc/codex-web-handlers'
-import { onCodexWebSessionCleared, onCodexWebSessionClosing, prepareCodexWebArchive } from './account-web/codex-web-session'
-import { removeCodexWebSession } from './account-web/codex-web-store'
-import { onBeforeAccountArchive } from './providers/core'
+import { wireCodexWebArchive, wireCodexWebSession } from './account-web/codex-web-wiring'
 import { registerInsightsHandlers } from './ipc/insights-handlers'
 import { registerNotesHandlers } from './ipc/notes-handlers'
 import { registerVisionHandlers } from './ipc/vision-handlers'
@@ -498,7 +495,7 @@ if (!gotTheLock) {
     // P4.6 (row 58): an archive clears what the account holds outside its
     // sign-in FIRST, and a clear that fails refuses the archive. Registered
     // before the service exists, so no archive can run without it.
-    onBeforeAccountArchive(prepareCodexWebArchive)
+    wireCodexWebArchive()
     try {
       // A switch-off is refused while any of the provider runs: its sessions,
       // and (WP2) for Claude Code its cloud agents, Insights runs, Sentinel
@@ -664,14 +661,11 @@ if (!gotTheLock) {
     onPartitionRevoked(closeAccountPanesForProfile)
     // P4.6 (row 58): the same for a Codex account's chatgpt.com session: its
     // own channels (the app window only, the registry checked; a pane only for
-    // a Codex session that holds the account's launch lease). Before its
-    // partition is wiped (sign-out, archive, an incomplete sign-in) its panes
-    // close, so nothing writes the session back; after the wipe its record goes.
-    registerCodexWebHandlers(getWindow, {
-      sessionRunsUnder: (sessionId, accountId) => isCodexPtySession(sessionId) && getConsumerLeases().sessionsHolding(accountId).includes(sessionId),
-    })
-    onCodexWebSessionClosing(closeCodexAccountPanes)
-    onCodexWebSessionCleared(removeCodexWebSession)
+    // a Codex session whose current launch is on the account, for as long as
+    // that launch lasts). Before its partition is wiped (sign-out, archive, an
+    // incomplete sign-in) its panes close, so nothing writes the session back;
+    // after the wipe its record goes (account-web/codex-web-wiring.ts).
+    wireCodexWebSession({ getWindow, isCodexPtySession, leases: getConsumerLeases })
     // #216: a crash or forced quit can leave a sign-in browser profile behind, and
     // each one holds a live claude.ai session. Sweep them at boot.
     try { sweepAbandonedProfiles(getDataDirectory()) } catch { /* best effort */ }

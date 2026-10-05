@@ -19,7 +19,9 @@ const S = vi.hoisted(() => {
   const trail: string[] = []
   const gates: { storage: null | Promise<void>; queue: Array<Promise<void>>; waiting: number } = { storage: null, queue: [], waiting: 0 }
   const reg = { accounts: [] as Array<{ id: string; providerId: string; lifecycle: string }> }
-  const holding: Record<string, string[]> = {}
+  const L: { leases: any; first: any } = { leases: null, first: null }
+  const codexPty = new Set<string>()
+  const sent: Array<[string, unknown]> = []
   const disk: Record<string, unknown> = {}
   const flags = { writeFails: false, writeThrows: false }
   function fakeSession(partition: string) {
@@ -54,7 +56,7 @@ const S = vi.hoisted(() => {
   const MAIN_FRAME = { kind: 'app-main-frame' }
   const mainWin: any = {
     isDestroyed() { return false },
-    webContents: { mainFrame: MAIN_FRAME, send() {} },
+    webContents: { mainFrame: MAIN_FRAME, send(ch: string, p: unknown) { sent.push([ch, p]) } },
     contentView: {
       children: [] as any[],
       addChildView(v: any) { this.children.push(v) },
@@ -112,7 +114,7 @@ const S = vi.hoisted(() => {
     }
     setBounds(b: any) { this.bounds = b }
   }
-  return { handlers, minted, sessions, views, windows, trail, gates, reg, holding, disk, flags, fakeSession, mainWin, MAIN_FRAME, FakeWin, FakeView }
+  return { handlers, minted, sessions, views, windows, trail, gates, reg, L, codexPty, sent, disk, flags, fakeSession, mainWin, MAIN_FRAME, FakeWin, FakeView }
 })
 
 vi.mock('electron', () => ({
@@ -125,7 +127,7 @@ vi.mock('electron', () => ({
 vi.mock('../../src/main/debug-logger', () => ({ logInfo: () => {}, logError: () => {}, logWarn: () => {} }))
 vi.mock('../../src/main/provider-account-registry', () => ({
   getAccountRegistry: () => ({ current: () => ({ accounts: S.reg.accounts }) }),
-  getConsumerLeases: () => ({ sessionsHolding: (id: string) => S.holding[id] ?? [] }),
+  getConsumerLeases: () => S.L.leases,
 }))
 vi.mock('../../src/main/channel-storage', () => ({
   readJsonFile: (n: string, seed: () => unknown) => (S.disk[n] !== undefined ? JSON.parse(JSON.stringify(S.disk[n])) : seed()),
@@ -147,7 +149,8 @@ vi.mock('../../src/main/account-web/artifacts', () => ({ closeArtifacts: () => {
 vi.mock('../../src/main/account-profiles', () => ({ listProfiles: () => [{ id: 'profile-known1' }] }))
 vi.mock('../../src/main/data-paths', () => ({ getDataDirectory: () => 'Z:/test-nonexistent' }))
 
-const { registerCodexWebHandlers } = await import('../../src/main/ipc/codex-web-handlers')
+const { wireCodexWebSession } = await import('../../src/main/account-web/codex-web-wiring')
+const { ConsumerLeaseRegistry } = await import('../../src/main/providers/core/consumer-leases')
 const { registerAccountWebHandlers } = await import('../../src/main/ipc/account-web-handlers')
 const { IPC } = await import('../../src/shared/ipc-channels')
 const CWS = await import('../../src/main/account-web/codex-web-session')
@@ -159,6 +162,14 @@ const PART = `persist:codex-web-${ACCT}`
 const BOUNDS = { x: 0, y: 0, width: 100, height: 100 }
 const TRUSTED = { sender: S.mainWin.webContents, senderFrame: S.MAIN_FRAME }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+const OTHER = 'acct-fedcba9876543210'
+/** A Codex PTY session's launch takes a lease: owner `<session>:<seq>` (a review: `review:<session>:<seq>`). */
+function launch(sid: string, acct: string, kind: 'session' | 'review' = 'session', seq = 1) {
+  S.codexPty.add(sid)
+  const r = S.L.leases.add(acct, 'codex', { kind, ownerId: kind === 'session' ? `${sid}:${seq}` : `review:${sid}:${seq}`, sessionId: sid })
+  if (!r.ok) throw new Error(r.code)
+  return r.lease
+}
 const call = (ch: string, e: unknown, ...args: unknown[]) => S.handlers[ch](e, ...args) as Promise<any>
 
 beforeEach(() => {
@@ -167,19 +178,20 @@ beforeEach(() => {
   for (const k of Object.keys(S.handlers)) delete S.handlers[k]
   for (const k of Object.keys(S.sessions)) delete S.sessions[k]
   for (const k of Object.keys(S.disk)) delete S.disk[k]
-  for (const k of Object.keys(S.holding)) delete S.holding[k]
+  S.codexPty.clear()
+  S.sent.length = 0
+  S.L.leases = new ConsumerLeaseRegistry()
   S.minted.length = 0; S.views.length = 0; S.windows.length = 0; S.trail.length = 0
   S.gates.storage = null
   S.gates.queue.length = 0
   S.flags.writeFails = false
   S.flags.writeThrows = false
-  S.reg.accounts = [{ id: ACCT, providerId: 'codex', lifecycle: 'inactive' }]
-  S.holding[ACCT] = ['s1']
+  S.reg.accounts = [{ id: ACCT, providerId: 'codex', lifecycle: 'inactive' }, { id: OTHER, providerId: 'codex', lifecycle: 'active' }]
+  S.L.first = launch('s1', ACCT)
   // As index.ts wires them.
-  registerCodexWebHandlers(() => S.mainWin, { sessionRunsUnder: (sid, acct) => (S.holding[acct] ?? []).includes(sid) })
+  // Through the wiring index.ts calls, with this test's PTY sessions and leases.
+  wireCodexWebSession({ getWindow: () => S.mainWin, isCodexPtySession: (sid) => S.codexPty.has(sid), leases: () => S.L.leases })
   registerAccountWebHandlers()
-  CWS.onCodexWebSessionClosing(PANE.closeCodexAccountPanes)
-  CWS.onCodexWebSessionCleared(STORE.removeCodexWebSession)
 })
 
 async function openPane(sessionId = 's1') {
@@ -344,5 +356,40 @@ describe('[host] a record write that throws reads as not written', () => {
     S.flags.writeThrows = false
     expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/record could not be removed/) })
     expect(STORE.getCodexWebSession(ACCT)).toBeDefined()
+  })
+})
+
+describe('[host] a pane is bound to its session\'s current launch, for as long as it lasts', () => {
+  it('a review the session runs on another account opens no view of that account', async () => {
+    launch('s1', OTHER, 'review')
+    expect((await call(IPC.CODEX_WEB_PANE_OPEN, TRUSTED, { sessionId: 's1', accountId: OTHER, bounds: BOUNDS })).error).toMatch(/does not run under/)
+    expect(S.minted).not.toContain(`persist:codex-web-${OTHER}`)
+  })
+
+  it('after a switch of account the old account no longer opens, the new one does', async () => {
+    launch('s1', OTHER, 'session', 2)
+    expect((await call(IPC.CODEX_WEB_PANE_OPEN, TRUSTED, { sessionId: 's1', accountId: ACCT, bounds: BOUNDS })).error).toMatch(/does not run under/)
+    expect((await call(IPC.CODEX_WEB_PANE_OPEN, TRUSTED, { sessionId: 's1', accountId: OTHER, bounds: BOUNDS })).ok).toBe(true)
+  })
+
+  it('the session\'s launch lease released (the CLI exited) closes its pane and tells the renderer', async () => {
+    const view = await openPane('s1')
+    expect(S.L.first.ownerId).toBe('s1:1')
+    S.L.first.release()
+    expect(view.webContents.destroyed).toBe(true)
+    expect(S.sent).toContainEqual([IPC.ACCOUNT_WEB_PANE_CLOSED, { sessionId: 's1' }])
+  })
+
+  it('a switch of account closes the old account\'s pane', async () => {
+    const view = await openPane('s1')
+    launch('s1', OTHER, 'session', 2)
+    expect(view.webContents.destroyed).toBe(true)
+  })
+
+  it('a lease change elsewhere leaves a bound pane open', async () => {
+    const view = await openPane('s1')
+    launch('s2', ACCT)
+    launch('s3', OTHER)
+    expect(view.webContents.destroyed).toBe(false)
   })
 })
