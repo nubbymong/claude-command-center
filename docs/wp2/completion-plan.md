@@ -185,7 +185,7 @@ The draft (a local checkpoint, 2026-09-27) is superseded by this file.
 | 55 | Memory | PARTIAL (P4.4, 1a12160b to 41638f93; mocked): listing, guard and read built; delete built, hidden and refused in main until the VM check; frontmatter edit does not carry over (recorded) | Parity: each realm's Codex memories on the Memory page | verification: the delete check on the VM (else OR4); OR4: the real file format | 4 |
 | 56 | Codex logs | DONE (P4.4, 1a12160b, 8fb60652; mocked) | Parity: each realm's `log` folder offered where the app offers its own log folder (Settings, Debug Logging) | verification: the VM (each account's folders open, `log_dir` from `config.toml` included) | 4 |
 | 57 | Cloud Agents | DONE (P4.5, 5d0187c6 to d41c4a8b; mocked): built, the skip-permissions choice as the owner decided on 2026-10-04 (question 7: A, kept as built); was Claude only (`src/main/cloud-agent-manager.ts:192`) | Parity: background agents run with `codex exec` in the account's realm, as Claude's run its headless CLI; not the experimental `codex cloud` (WP1.41) | verification: the VM run, OR4 | 4 |
-| 58 | Web sign-in and artifacts | PARTIAL (P4.6 first half, 27d62537 to 1064dbbf; second half, 10fab972 to dd23a3bf, its review fixes cbb2b58d to fdaec572; mocked): a Codex account's own web partition, the orphan warning over both prefixes, Claude's items off a Codex tab's menu and pane; the chatgpt.com sign-in window (fail-closed), the pane's chatgpt.com account surface, a Codex tab's own menu item, the Settings row's status and items, and archive clearing the session first | Web session: parity (chatgpt.com is to a Codex account what claude.ai is to a Claude account: the browser pane's account surface). Artifacts: no Codex equivalent is known, so a section 19 record (section 10) | owner (OR2, one sign-in run through the built window, which confirms its three unverified values; the artifacts record, OR3) | 4 |
+| 58 | Web sign-in and artifacts | PARTIAL (P4.6 first half, 27d62537 to 1064dbbf; second half, 10fab972 to dd23a3bf, its review fixes cbb2b58d to 39894579; mocked): a Codex account's own web partition, the orphan warning over both prefixes, Claude's items off a Codex tab's menu and pane; the chatgpt.com sign-in window (fail-closed), the pane's chatgpt.com account surface, a Codex tab's own menu item, the Settings row's status and items, and archive clearing the session first | Web session: parity (chatgpt.com is to a Codex account what claude.ai is to a Claude account: the browser pane's account surface). Artifacts: no Codex equivalent is known, so a section 19 record (section 10) | owner (OR2, one sign-in run through the built window, which confirms its three unverified values; the artifacts record, OR3) | 4 |
 
 ### E. Everything else
 
@@ -6389,11 +6389,27 @@ sign-in run through the built window), OR3 (the record). PB7 sized OR2.
     store written by a newer build (a downgrade) is never overwritten: a
     save or a removal is refused, so a finished sign-in fails closed (it is
     cleared, "could not be recorded") and a sign-out or an archive reports
-    that its record could not be removed. On an email path a name after the
+    that its record could not be removed (round 6: sign-in is refused up
+    front, and a removal counts as done once the wipe has). On an email
+    path a name after the
     first is shown only when it is an email field name (mail, email,
     email_address, primary_email; any case); any other is a star. Test
     fixtures use made-up names. 11 of 11 mutants killed.
-  - *Owed.* The reviews of the round 5 fixes; PB7b on the VM; OR2 on the
+  - *Reviews, round 6 (at 2bf6089e).* Lenses A and C PASS; spec PASS;
+    quality FAIL (one latent major, the newer-store rule). Every item fixed
+    in 39894579 to 39894579 (lane W58; mocked).
+  - *Round 6 fixes (2026-10-05; 39894579 to 39894579).* A record store written by a
+    newer build (a downgrade) is one rule, and the file is never rewritten:
+    Sign in to chatgpt.com is refused up front with the reason ("This
+    account's chatgpt.com records were written by a newer version of the
+    app.") before any window opens; the row shows that reason instead of a
+    plain not signed in, and still offers Sign out of chatgpt.com; a
+    sign-out wipes and succeeds once the wipe has; an archive is never
+    refused for a record this build cannot write. A sign-in made in a Codex
+    pane whose record cannot be saved, for any reason, is cleared, as the
+    window's is. The start sweep's stand-down line names the quarantined
+    copy by file name. 11 of 11 mutants killed.
+  - *Owed.* The reviews of the round 6 fixes; PB7b on the VM; OR2 on the
     final build (then a values-only fix and a re-run if a value was wrong);
     OR3, the artifacts record.
 

@@ -1,8 +1,8 @@
 {
   "schema": "wp1-legacy-codex-manifest/3",
-  "generatedAt": "2026-10-05T11:03:44.625Z",
-  "head": "ac81bec539a29a6e5c0c6454e5c56fe6e1088b6a",
-  "tree": "6b6f28d0e221c10e3e1cf0b3cf4fc63f0dfe3559",
+  "generatedAt": "2026-10-05T11:29:01.895Z",
+  "head": "39894579bfd1df972aaf8fcdf8e7b8f76b74ec45",
+  "tree": "91562dde1c9eba7519f9d258d3e7d83ee68eb82b",
   "scannedWorkingTree": true,
   "predicateDigest": "53fe7e5238cde4df748b1908c567dfcc9f825c901c109678028d383ec4dfef35",
   "predicates": [
@@ -204,7 +204,7 @@
       "predicates": [
         "P12"
       ],
-      "lineCount": 1202,
+      "lineCount": 1203,
       "truncated": true
     },
     {
@@ -430,7 +430,7 @@
       "predicates": [
         "P14"
       ],
-      "lineCount": 41
+      "lineCount": 43
     },
     {
       "path": "src/main/account-web/claude-cli-auth.ts",
@@ -454,7 +454,7 @@
         "P01",
         "P14"
       ],
-      "lineCount": 26
+      "lineCount": 31
     },
     {
       "path": "src/main/account-web/codex-web-wiring.ts",
@@ -782,7 +782,7 @@
         "P05",
         "P14"
       ],
-      "lineCount": 52
+      "lineCount": 53
     },
     {
       "path": "src/main/ipc/github-handlers.ts",
@@ -2524,7 +2524,7 @@
         "P12",
         "P14"
       ],
-      "lineCount": 108
+      "lineCount": 110
     },
     {
       "path": "src/shared/ask-conductor-provider.ts",
@@ -3609,7 +3609,7 @@
         "P02",
         "P13"
       ],
-      "lineCount": 84
+      "lineCount": 92
     },
     {
       "path": "tests/unit/codex-web-copy.test.ts",
@@ -3635,7 +3635,7 @@
         "P02",
         "P13"
       ],
-      "lineCount": 113
+      "lineCount": 120
     },
     {
       "path": "tests/unit/codex-web-pane.test.ts",
@@ -3643,7 +3643,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 97
+      "lineCount": 103
     },
     {
       "path": "tests/unit/codex-web-sign-in.test.ts",
@@ -3659,7 +3659,7 @@
         "P01",
         "P13"
       ],
-      "lineCount": 13
+      "lineCount": 19
     },
     {
       "path": "tests/unit/conductor-secret-rotation.test.ts",

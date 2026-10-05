@@ -30,6 +30,13 @@ identity read returns only the email. Each run owns its window; one sign-in
 at a time across both services. Each guard mutation-proven (29 mutants
 killed).
 
+**Start sweep and a newer record store.** At start, a Codex account's
+chatgpt.com session with no record is wiped, but only when the record store
+reads cleanly and the account's partition folder already exists. A record
+store written by a newer version of the app is never rewritten: Sign in to
+chatgpt.com is refused with that reason, and Sign out of chatgpt.com still
+clears the session.
+
 **Owed.** The second half's own ADR-009 round; PB7b on the VM (unauthenticated
 cookie names, each sign-in method's first hop); OR2 on the final build; OR3,
 the artifacts record. Completion plan P4.6 and OR2; parity checklist row 58.
