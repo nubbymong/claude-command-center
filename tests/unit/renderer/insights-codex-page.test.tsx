@@ -199,6 +199,39 @@ describe('New run on a Codex account', () => {
     expect(byTest('insights-codex-confirm')).toBeNull()
   })
 
+  it('Escape and Cancel give focus back to the Run button that opened it, on the empty page and over a report; its controls show focus (fix pass 9) [host]', async () => {
+    await render()
+    await pick(insightsAccountKey('codex', EXT))
+    const runNow = byTest('insights-run-now')!
+    await act(async () => { runNow.click() })
+    for (const id of ['insights-codex-ack', 'insights-codex-confirm-run', 'insights-codex-confirm-cancel']) {
+      expect(byTest(id)!.classList.contains('focus-ring'), id).toBe(true)
+    }
+    await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })) })
+    expect(byTest('insights-codex-confirm')).toBeNull()
+    expect(document.activeElement).toBe(runNow)
+    await act(async () => { runNow.click() })
+    expect(document.activeElement).toBe(byTest('insights-codex-ack'))
+    await act(async () => { byTest('insights-codex-confirm-cancel')!.click() })
+    expect(byTest('insights-codex-confirm')).toBeNull()
+    expect(document.activeElement).toBe(runNow)
+    act(() => { root.unmount() })
+
+    // Over a report, the header's New run.
+    root = createRoot(container)
+    files.report['r-codex'] = STORED()
+    useInsightsStore.setState({ catalogue: { runs: [{ id: 'r-codex', timestamp: Date.UTC(2026, 9, 3, 10, 2), status: 'complete', provider: 'codex', profileId: ACCT }] } as never, selectedRunId: 'r-codex' })
+    await render()
+    await pick(insightsAccountKey('codex', EXT))
+    const newRun = byTest('insights-new-run')!
+    await act(async () => { newRun.click() })
+    expect(document.activeElement).toBe(byTest('insights-codex-ack'))
+    await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })) })
+    expect(byTest('insights-codex-confirm')).toBeNull()
+    expect(document.activeElement).toBe(newRun)
+    expect(api.insights.run).not.toHaveBeenCalled()
+  })
+
   it("an unverified account's confirmation uses the agent's other wording [host]", async () => {
     useProviderAccountsStore.setState({ snapshot: snapshot([account(ACCT, 'work', { isProviderDefault: true, unverified: true })]), loaded: true })
     profiles(1)

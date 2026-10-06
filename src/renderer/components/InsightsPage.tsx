@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useInsightsStore } from '../stores/insightsStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSettingsStore } from '../stores/settingsStore'
@@ -143,6 +143,10 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
   const [loading, setLoading] = useState(false)
   const [helpOpen, setHelpOpen] = useState(false)
   const [confirming, setConfirming] = useState(false)
+  /** The Run button the confirmation opens under (one is drawn at a time:
+   *  Run Insights Now on the empty page, New run over a report); Escape and
+   *  Cancel give it focus back. */
+  const runButtonRef = useRef<HTMLButtonElement>(null)
 
   // Account selection: which account a new run executes under (mockup D7).
   const profiles = useAccountProfilesStore((s) => s.profiles)
@@ -378,6 +382,7 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
       choice={selected}
       onRun={() => { setConfirming(false); void startCodexInsights(selected.id, true) }}
       onCancel={() => setConfirming(false)}
+      trigger={runButtonRef}
     />
   ) : null
 
@@ -460,6 +465,7 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
                 <div className="flex items-center justify-center gap-2">
                   <span className="relative">
                     <button
+                      ref={runButtonRef}
                       onClick={runSelected}
                       disabled={runDisabled}
                       title={selectedClaudeOff ? CLAUDE_OFF : undefined}
@@ -537,6 +543,7 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
       )}
       <span className="relative">
         <button
+          ref={runButtonRef}
           onClick={runSelected}
           disabled={runDisabled}
           title={selectedClaudeOff ? CLAUDE_OFF : undefined}

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useClickOutside } from '../../hooks/useClickOutside'
 import type { InsightsAccountChoice } from './insightsAccounts'
 
@@ -10,6 +10,8 @@ export interface CodexRunConfirmProps {
   onRun: () => void
   /** Cancel, Escape or a click outside: nothing runs. */
   onCancel: () => void
+  /** The Run button that opened it: Escape and Cancel give it focus back. */
+  trigger: React.RefObject<HTMLButtonElement | null>
 }
 
 /**
@@ -17,7 +19,9 @@ export interface CodexRunConfirmProps {
  * per-run confirmation a Codex cloud agent asks, in its words. Nothing is
  * kept: the tick counts for this run and this account only. A run that
  * starts closes it (the page's own Run buttons are off while one runs);
- * Escape or a click outside closes it, and the tick box takes focus.
+ * Escape or a click outside closes it, and the tick box takes focus. Escape
+ * and Cancel give focus back to the Run button that opened it; a click
+ * outside leaves focus where that click put it.
  *
  * Anchored under the Run button that opened it (the caller wraps that button
  * in a `relative` span), the way MultiSpawnPopover anchors to its control: a
@@ -25,11 +29,15 @@ export interface CodexRunConfirmProps {
  * page around it is not read as a dialog, and on the dialog palette (#360):
  * tokens only. The run tint is the app teal, --accent.
  */
-export default function CodexRunConfirm({ choice, onRun, onCancel }: CodexRunConfirmProps) {
+export default function CodexRunConfirm({ choice, onRun, onCancel, trigger }: CodexRunConfirmProps) {
   const [ticked, setTicked] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const box = useRef<HTMLInputElement>(null)
-  useClickOutside(ref, onCancel)
+  const dismiss = useCallback(() => {
+    onCancel()
+    trigger.current?.focus()
+  }, [onCancel, trigger])
+  useClickOutside(ref, onCancel, dismiss)
   useEffect(() => { box.current?.focus() }, [])
   return (
     <div
@@ -46,7 +54,7 @@ export default function CodexRunConfirm({ choice, onRun, onCancel }: CodexRunCon
           type="checkbox"
           checked={ticked}
           onChange={(e) => setTicked(e.target.checked)}
-          className="mt-0.5 shrink-0 rounded"
+          className="mt-0.5 shrink-0 rounded focus-ring"
           data-testid="insights-codex-ack"
         />
         <span>
@@ -60,14 +68,14 @@ export default function CodexRunConfirm({ choice, onRun, onCancel }: CodexRunCon
           onClick={onRun}
           disabled={!ticked}
           data-testid="insights-codex-confirm-run"
-          className="text-xs px-2.5 py-0.5 rounded border font-medium bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] border-[color-mix(in_srgb,var(--accent)_30%,transparent)] text-[var(--accent)] hover:bg-[color-mix(in_srgb,var(--accent)_20%,transparent)] disabled:bg-[var(--surface-raised)] disabled:border-[var(--border-strong)] disabled:text-[var(--text-muted)] disabled:cursor-not-allowed"
+          className="text-xs px-2.5 py-0.5 rounded border font-medium bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] border-[color-mix(in_srgb,var(--accent)_30%,transparent)] text-[var(--accent)] hover:bg-[color-mix(in_srgb,var(--accent)_20%,transparent)] disabled:bg-[var(--surface-raised)] disabled:border-[var(--border-strong)] disabled:text-[var(--text-muted)] disabled:cursor-not-allowed focus-ring"
         >
           Run
         </button>
         <button
-          onClick={onCancel}
+          onClick={dismiss}
           data-testid="insights-codex-confirm-cancel"
-          className="text-xs px-2.5 py-0.5 rounded border border-[var(--border-strong)] bg-[var(--surface-raised)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+          className="text-xs px-2.5 py-0.5 rounded border border-[var(--border-strong)] bg-[var(--surface-raised)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] focus-ring"
         >
           Cancel
         </button>
