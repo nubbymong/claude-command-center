@@ -293,7 +293,7 @@ describe('attributing a transcript to its profile\'s account (MP10)', () => {
 
 describe('the supervisor hands attributions to the worker (MP10)', () => {
   const baseOpts = () => ({ dbPath: ':memory:', pricing: {}, configs: [], claudeProjectsDir: '/c', codexSessionsDir: '/x', emit: () => {} })
-  function fake(o: { ready?: boolean } = {}) {
+  function fake(o: { ready?: boolean; maxRestarts?: number } = {}) {
     const t = new FakeTkWorkerTransport()
     const seen: ToTkWorker[] = []
     let exit: () => void = () => {}
@@ -301,10 +301,83 @@ describe('the supervisor hands attributions to the worker (MP10)', () => {
       seen.push(m)
       if (m.type === 'open' && o.ready !== false) t.emitToMain({ type: 'ready', firstIndexComplete: false, eventsTotal: 0 })
     })
-    const sup = new TokenomicsSupervisor({ forkChild: (() => ({ transport: t, kill: () => {}, onExit: (cb: () => void) => { exit = cb } })) as any, ...baseOpts() })
+    const sup = new TokenomicsSupervisor({ forkChild: (() => ({ transport: t, kill: () => {}, onExit: (cb: () => void) => { exit = cb } })) as any, ...baseOpts(), ...(o.maxRestarts === undefined ? {} : { maxRestarts: o.maxRestarts }) })
     const sent = () => seen.filter((m) => m.type === 'set-session-account')
     return { t, sup, seen, sent, exit: () => exit() }
   }
+  /** Attribution messages waiting for a worker, and the attributions kept. */
+  const queued = (sup: TokenomicsSupervisor) => (sup as unknown as { buffer: ToTkWorker[] }).buffer.filter((m) => m.type === 'set-session-account').length
+  const kept = (sup: TokenomicsSupervisor) => (sup as unknown as { sessionAccounts: Map<string, string> }).sessionAccounts
+  const READY = { type: 'ready', firstIndexComplete: false, eventsTotal: 0 } as const
+  const KEY_B = 'claude:acct-' + 'b'.repeat(32)
+
+  // [host] While no worker listens (not ready yet, an open that never reports
+  // ready, or a supervisor out of restarts), attributions never pile up: only
+  // the latest per session is kept, within the bound, and the next ready
+  // sends exactly those.
+  it('while no worker listens, only the latest attribution per session is kept, and a ready sends exactly that', () => {
+    const f = fake({ ready: false })
+    f.sup.start()
+    for (let i = 0; i < 100_000; i++) f.sup.setSessionAccount(U1, i % 2 ? `claude:${ACCT}` : KEY_B)
+    expect(queued(f.sup)).toBe(0)
+    expect(kept(f.sup).size).toBe(1)
+    expect(f.sent()).toEqual([])
+    f.t.emitToMain(READY)
+    expect(f.sent()).toEqual([{ type: 'set-session-account', sessionId: U1, accountKey: `claude:${ACCT}` }])
+    f.sup.shutdown()
+  })
+
+  it('while no worker listens, many sessions keep no more than the bound, and a ready sends only those', () => {
+    const f = fake({ ready: false })
+    f.sup.start()
+    const id = (i: number) => `${String(i).padStart(8, '0')}-0000-4000-8000-000000000000`
+    for (let i = 0; i < 20_000; i++) f.sup.setSessionAccount(id(i), `claude:${ACCT}`)
+    expect(queued(f.sup)).toBe(0)
+    expect(kept(f.sup).size).toBe(4096)
+    f.t.emitToMain(READY)
+    const sent = f.sent() as Array<{ sessionId: string }>
+    expect(sent).toHaveLength(4096)
+    expect(sent[0].sessionId).toBe(id(20_000 - 4096))
+    expect(sent.at(-1)!.sessionId).toBe(id(19_999))
+    f.sup.shutdown()
+  })
+
+  it('a supervisor out of restarts keeps no attribution messages either', () => {
+    const f = fake({ ready: false, maxRestarts: 0 })
+    f.sup.start()
+    f.exit()
+    expect((f.sup as unknown as { degraded: boolean }).degraded).toBe(true)
+    for (let i = 0; i < 50_000; i++) f.sup.setSessionAccount(U1, i % 2 ? `claude:${ACCT}` : KEY_B)
+    expect(queued(f.sup)).toBe(0)
+    expect(kept(f.sup).size).toBe(1)
+    f.sup.shutdown()
+  })
+
+  it('reports from two sessions on one conversation while no worker listens leave nothing queued', () => {
+    const f = fake({ ready: false })
+    f.sup.start()
+    const ROOT = 'C:\\res\\account-profiles'
+    const launch: Record<string, string> = { 'app-1': 'profile-a1', 'app-2': 'profile-b2' }
+    const links: Record<string, string> = { 'profile-a1': ACCT, 'profile-b2': 'acct-' + 'b'.repeat(32) }
+    const attribute = createTranscriptAttribution({
+      launchProfile: (id) => launch[id],
+      profilesRoot: () => ROOT,
+      isProfileId: (n) => isValidProfileId(n),
+      projectsDirOf: (id) => path.win32.join(ROOT, id, '.claude', 'projects'),
+      accountOf: (p) => links[p] ?? null,
+      record: (s, k) => { f.sup.setSessionAccount(s, k); return true },
+      platform: 'win32',
+    })
+    for (let i = 0; i < 20_000; i++) {
+      const app = i % 2 ? 'app-1' : 'app-2'
+      attribute(app, path.win32.join(ROOT, launch[app], '.claude', 'projects', 'F--x', `${U1}.jsonl`))
+    }
+    expect(queued(f.sup)).toBe(0)
+    expect(kept(f.sup).size).toBe(1)
+    f.t.emitToMain(READY)
+    expect(f.sent()).toEqual([{ type: 'set-session-account', sessionId: U1, accountKey: `claude:${ACCT}` }])
+    f.sup.shutdown()
+  })
 
   it('sends a well-formed attribution once while it stays; anything else is dropped', () => {
     const f = fake()
@@ -337,7 +410,7 @@ describe('the supervisor hands attributions to the worker (MP10)', () => {
     f.sup.shutdown()
   })
 
-  it('buffers until the worker is ready, then sends it once', () => {
+  it('keeps it until the worker is ready, then sends it once', () => {
     const f = fake({ ready: false })
     f.sup.start()
     f.sup.setSessionAccount(U1, `claude:${ACCT}`)
