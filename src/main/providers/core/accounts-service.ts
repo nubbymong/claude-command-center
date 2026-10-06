@@ -54,6 +54,7 @@ import { LAUNCH_LEASE_KINDS } from './consumer-leases'
 import type { SecretHandleStore } from './secret-handles'
 import { realmEnvForProvider } from './registry'
 import { recipeRunLine } from './recipe-run-line'
+import { lowerAsciiLetters } from '../../../shared/profile-id'
 // P4.6 (row 58): what an account holds outside its sign-in is cleared before it
 // is archived, through a provider-neutral seam inside core (index.ts registers
 // the owners at start through core's entry point).
@@ -3168,10 +3169,16 @@ export class AccountsService {
   accountIdForLegacy(providerId: ProviderId, legacyId: string, opts: { ignoreCase?: boolean } = {}): string | null {
     const ready = this.ready()
     if ('ok' in ready) return null
-    // Without case where the file system ignores it (Windows): a profile id
-    // read back from a path may differ in case from the one on record.
-    const same = (a: string) => a === legacyId || (opts.ignoreCase === true && typeof legacyId === 'string' && a.toLowerCase() === legacyId.toLowerCase())
-    const link = ready.doc.legacyLinks.find((l) => l.providerId === providerId && same(l.legacyId))
+    const links = ready.doc.legacyLinks.filter((l) => l.providerId === providerId)
+    // A link spelled exactly as asked comes first. Then, without case where
+    // the file system ignores it (Windows): a profile id read back from a
+    // path may differ in case from the one on record. Only ASCII letters
+    // fold, as a profile id is ASCII.
+    let link = links.find((l) => l.legacyId === legacyId)
+    if (!link && opts.ignoreCase === true && typeof legacyId === 'string') {
+      const want = lowerAsciiLetters(legacyId)
+      link = links.find((l) => typeof l.legacyId === 'string' && lowerAsciiLetters(l.legacyId) === want)
+    }
     return link && findAccount(ready.doc, link.accountId) ? link.accountId : null
   }
 

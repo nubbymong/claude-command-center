@@ -12,14 +12,19 @@
 // from then on; what was already attributed keeps its account.
 //
 // Nothing is attributed by hand. Only a local session's report counts (one
-// with a launch profile recorded at spawn): an SSH session's transcript is on
-// the remote host and never in the index here. A transcript outside the
-// profiles root (the default home) has no account to name. Older sessions
-// and sessions run outside the app stay "not recorded".
+// with a launch profile recorded at its latest spawn), and only for a
+// transcript in that profile's own projects folder: a session attributes
+// usage to the account it runs under now, never to another. An SSH session's
+// transcript is on the remote host and never in the index here. A transcript
+// outside the profiles root (the default home) has no account to name. Older
+// sessions and sessions run outside the app stay "not recorded" until one is
+// resumed in the app under a profile; then its rows with no account take that
+// profile's account too (tk-db setSessionAccount).
 
 import * as path from 'node:path'
 import type { TkAccountKey } from './tk-types'
 import { tkAccountKey, TK_ACCOUNT_NOT_RECORDED } from './tk-types'
+import { lowerAsciiLetters } from '../../shared/profile-id'
 
 /** The file name a Claude transcript has, exactly: `<session uuid>.jsonl`. */
 const TRANSCRIPT_NAME = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/
@@ -31,9 +36,11 @@ const MAX_PATH = 4096
 export const TK_ATTRIBUTION_REMEMBERED = 4096
 
 export interface TkAttributionDeps {
-  /** Whether the reporting app session is local (it has a launch profile
-   *  recorded at spawn); an SSH session is not. */
-  isLocal(appSessionId: string): boolean
+  /** The profile the reporting app session runs under now (recorded at its
+   *  latest spawn, so a session restarted on another profile names that
+   *  one), or undefined: an SSH session, or one on the default home. Asked on
+   *  every report. */
+  launchProfile(appSessionId: string): string | undefined
   /** The folder the app's Claude profile homes live in (`<root>/<profile
    *  id>`). Null when not known. */
   profilesRoot(): string | null
@@ -99,9 +106,10 @@ export function transcriptProfile(
     if (!rel) continue
     // Windows compares paths without case, and a profile id is lower case:
     // the folder name is lowered before it is checked, or a path reported
-    // in other case would never reach the case-free account lookup.
+    // in other case would never reach the case-free account lookup. Only
+    // ASCII letters are lowered: a profile id is ASCII.
     const segment = rel.split(p.sep)[0]
-    const id = platform === 'win32' ? segment.toLowerCase() : segment
+    const id = platform === 'win32' ? lowerAsciiLetters(segment) : segment
     if (!isProfileId(id)) continue
     // Where this profile's transcripts go, relative to the root.
     const layout = inside(p, root, p.resolve(projectsDirOf(id)))
@@ -129,8 +137,16 @@ export function profileOfTranscript(folders: TkProfileFolders, transcriptPath: s
   }
 }
 
+/** Two profile ids the same, as the platform compares folder names (ASCII
+ *  letters without case on Windows, exactly elsewhere). */
+function sameProfile(a: string, b: string, platform: NodeJS.Platform): boolean {
+  return platform === 'win32' ? lowerAsciiLetters(a) === lowerAsciiLetters(b) : a === b
+}
+
 /** The sink composed beside the transcript binder's: called with an app
- *  session id and the transcript path it reported. Never throws. */
+ *  session id and the transcript path it reported. A report counts only when
+ *  the transcript lies in the folder of the profile that app session runs
+ *  under now. Never throws. */
 export function createTranscriptAttribution(deps: TkAttributionDeps): (appSessionId: string, transcriptPath: string) => void {
   const cap = Math.max(1, Math.floor(deps.remember ?? TK_ATTRIBUTION_REMEMBERED))
   // Insertion ordered by the last change: the first entry is the oldest.
@@ -139,9 +155,11 @@ export function createTranscriptAttribution(deps: TkAttributionDeps): (appSessio
     try {
       const sessionId = transcriptSessionId(transcriptPath)
       if (!sessionId) return
-      if (typeof appSessionId !== 'string' || appSessionId.length === 0 || deps.isLocal(appSessionId) !== true) return
+      if (typeof appSessionId !== 'string' || appSessionId.length === 0) return
+      const launched = deps.launchProfile(appSessionId)
+      if (typeof launched !== 'string' || launched.length === 0) return
       const profileId = profileOfTranscript(deps, transcriptPath)
-      if (!profileId) return
+      if (!profileId || !sameProfile(profileId, launched, deps.platform ?? process.platform)) return
       const accountKey = tkAccountKey('claude', deps.accountOf(profileId))
       if (accountKey === TK_ACCOUNT_NOT_RECORDED || sent.get(sessionId) === accountKey) return
       if (deps.record(sessionId, accountKey) !== true) return

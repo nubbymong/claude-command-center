@@ -844,8 +844,10 @@ if (!gotTheLock) {
     // Usage track MP10: the same live transcript paths attribute each local
     // Claude session's usage to an account, for Tokenomics: the profile whose
     // config folder holds the transcript (the path decides) names it through
-    // its registry link. Independent of the binder, so it works with logging
-    // off; the profiles root and the usage index are resolved lazily too.
+    // its registry link, when that is the profile the reporting session runs
+    // under now (captured at its latest spawn). Independent of the binder,
+    // so it works with logging off; the profiles root and the usage index are
+    // resolved lazily too.
     // Where the profiles keep their transcripts: shared with the live usage
     // recorder, which files a session's figure under a profile only when its
     // transcript lies in that profile's folder (P3.2).
@@ -858,7 +860,7 @@ if (!gotTheLock) {
     }
     setLiveUsageTranscriptProfile((path) => profileOfTranscript(profileFolders, path))
     const attributeTranscript = createTranscriptAttribution({
-      isLocal: (sessionId) => getClaudeProfileId(sessionId) !== undefined,
+      launchProfile: (sessionId) => getClaudeProfileId(sessionId),
       ...profileFolders,
       accountOf: (profileId) => getAccountsService()?.accountIdForLegacy('claude', profileId, { ignoreCase: process.platform === 'win32' }) ?? null,
       record: (sessionId, accountKey) => {
