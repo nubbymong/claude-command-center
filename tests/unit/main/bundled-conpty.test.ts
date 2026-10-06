@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
+import { fakeNativeTree, recordingRunner, postInstallPath, rebuildCliPath } from '../../helpers/postinstall-native-tree'
 
 const h = vi.hoisted(() => ({ warns: [] as string[] }))
 vi.mock('../../../src/main/debug-logger', async (importOriginal) => ({
@@ -263,16 +264,29 @@ describe('bundledConptyFailed (round 1, F1)', () => {
 
 // Round 1 (F6): a dev install that builds node-pty from source (electron-
 // rebuild) leaves build/Release/conpty.node, which node-pty loads first, with
-// no conpty folder beside it; node-pty's own post-install puts it there.
+// no conpty folder beside it; node-pty's own post-install puts it there. The
+// install's postinstall is scripts/postinstall-native.mjs: its main() runs on
+// fake package trees here (tests/helpers/postinstall-native-tree.ts).
 describe('the dev install (round 1, F6)', () => {
-  it('runs node-pty\'s post-install after electron-rebuild', () => {
+  it('runs node-pty\'s post-install after any rebuild (scripts/postinstall-native.mjs)', async () => {
     const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'package.json'), 'utf8')) as { scripts: Record<string, string> }
-    const post = pkg.scripts.postinstall
-    const rebuild = post.indexOf('electron-rebuild --only=node-pty')
-    const copy = post.indexOf('node node_modules/node-pty/scripts/post-install.js')
-    expect(rebuild).toBeGreaterThan(-1)
-    expect(copy).toBeGreaterThan(rebuild)
-    expect(post.slice(rebuild, copy)).toMatch(/&&\s*$/)
+    expect(pkg.scripts.postinstall).toBe('node scripts/postinstall-native.mjs')
+    const { main } = await import('../../../scripts/postinstall-native.mjs')
+    const ptyPrebuild = ['conpty.node', 'conpty_console_list.node', 'conpty/conpty.dll', 'conpty/OpenConsole.exe']
+      .map((f) => `node_modules/node-pty/prebuilds/win32-x64/${f}`)
+    const cases: Array<[NodeJS.Platform, string[], string]> = [
+      ['win32', [], 'node-pty,better-sqlite3'],
+      ['win32', ['node_modules/better-sqlite3/prebuilds/win32-x64.node'], 'node-pty'],
+      ['win32', ptyPrebuild, 'better-sqlite3'],
+      ['darwin', [], 'node-pty,better-sqlite3'],
+      ['linux', [], 'node-pty,better-sqlite3'],
+    ]
+    for (const [platform, present, only] of cases) {
+      const root = fakeNativeTree(present)
+      const { run, calls } = recordingRunner()
+      expect(main({ platform, arch: 'x64', root, run }), `${platform} ${only}`).toBe(0)
+      expect(calls.map((c) => c.args), `${platform} ${only}`).toEqual([[rebuildCliPath(root), `--only=${only}`], [postInstallPath(root)]])
+    }
   })
 })
 

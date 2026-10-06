@@ -25,7 +25,7 @@ This starts the app in development mode with hot module reloading. Changes to re
 
 The install's `postinstall` (`scripts/postinstall-native.mjs`) gets node-pty and better-sqlite3 ready for Electron:
 
-- **Windows:** it uses the prebuilt binaries both packages ship, as CI and the release build do, so no C++ toolchain is needed. A module with no prebuild for your architecture is built from source. Building from source (`npm run rebuild`) needs Visual Studio 2022 with the Desktop development with C++ workload and the Spectre-mitigated libraries for its MSVC version; without them node-pty's build stops at MSB8040.
+- **Windows:** it uses the prebuilt binaries both packages ship, as CI and the release build do, so no C++ toolchain is needed. A module with no prebuild for your architecture is built from source. Building from source (`npm run rebuild`) needs Visual Studio 2022 with the Desktop development with C++ workload and the Spectre-mitigated libraries for its MSVC version; without them node-pty's build stops at MSB8040. After `npm run rebuild`, run `node node_modules/node-pty/scripts/post-install.js`: it puts node-pty's bundled ConPTY beside the from-source build, which loads ahead of the prebuilds (the install's own postinstall runs it for you).
 - **macOS and Linux:** it rebuilds both against Electron, as CI and the release build do there, so you need Xcode's command line tools, or a C++ compiler, make and Python.
 
 `npm run package` (and `package:win`, `package:store`) packages those binaries as they are installed (`--config.npmRebuild=false`, as `release.yml` does), then `npm run verify:package` checks them in `dist/`.

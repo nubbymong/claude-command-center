@@ -6,23 +6,29 @@
 // On Windows, CI and the release build use those prebuilds as shipped: they
 // install with `npm ci --ignore-scripts` (so this script never runs there) and
 // package with `--config.npmRebuild=false`. The install does the same: a module
-// whose prebuild for this Windows architecture is present is not rebuilt. That
-// runs the binaries that ship, and keeps a Windows machine without Visual
+// whose prebuild for this Windows architecture is present is not rebuilt. On a
+// clean install (`npm ci`) that runs the binaries that ship (node-pty loads a
+// build/Release folder first, so one left by an earlier source build still
+// wins until it is removed), and it keeps a Windows machine without Visual
 // Studio's Spectre-mitigated libraries (node-pty's source build needs them and
 // stops at MSB8040 without them) installing cleanly. A module with no prebuild
 // for this machine is still rebuilt from source. On macOS and Linux both are
 // rebuilt against Electron, as CI and the release build do there. Then
-// node-pty's own post-install step runs, as before (on Windows it puts the
-// bundled ConPTY beside a from-source build).
+// node-pty's own post-install step runs, after any rebuild, as before (on
+// Windows it puts the bundled ConPTY beside a from-source build). A rebuild or
+// post-install that fails fails the install.
 //
-// `npm run rebuild` still rebuilds everything from source on demand.
+// `npm run rebuild` still rebuilds everything from source on demand; run
+// `node node_modules/node-pty/scripts/post-install.js` after it on Windows
+// (CONTRIBUTING.md).
 
 import { spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const SCRIPT = fileURLToPath(import.meta.url)
+const ROOT = path.resolve(path.dirname(SCRIPT), '..')
 
 export const NATIVE_MODULES = ['node-pty', 'better-sqlite3']
 
@@ -48,20 +54,48 @@ export function modulesToRebuild({ platform, arch, exists }) {
   return NATIVE_MODULES.filter((m) => !prebuildFiles(m, platform, arch).every((f) => exists(path.join('node_modules', m, f))))
 }
 
-export function main({ platform = process.platform, arch = process.env.npm_config_arch || process.arch } = {}) {
-  const rebuild = modulesToRebuild({ platform, arch, exists: (p) => existsSync(path.join(ROOT, p)) })
+/**
+ * Prepare the native modules of the package tree at `root`: rebuild those
+ * modulesToRebuild names with @electron/rebuild, then run node-pty's own
+ * post-install step (after any rebuild, and when nothing was rebuilt). Returns
+ * the exit status: a rebuild or post-install that fails, or cannot start,
+ * fails the install. `run` starts a process (spawnSync's signature).
+ *
+ * @param {{ platform?: string, arch?: string, root?: string, run?: (command: string, args: string[], options: { cwd: string, stdio: 'inherit' }) => { status: number|null } }} [options]
+ * @returns {number}
+ */
+export function main({ platform = process.platform, arch = process.env.npm_config_arch || process.arch, root = ROOT, run = spawnSync } = {}) {
+  const rebuild = modulesToRebuild({ platform, arch, exists: (p) => existsSync(path.join(root, p)) })
   const prebuilt = NATIVE_MODULES.filter((m) => !rebuild.includes(m))
   if (prebuilt.length) {
     console.log(`[postinstall] ${prebuilt.join(' and ')}: using the prebuilt binaries shipped for ${platform}-${arch}, as CI and the release build do`)
   }
   if (rebuild.length) {
-    const cli = path.join(ROOT, 'node_modules', '@electron', 'rebuild', 'lib', 'cli.js')
-    const r = spawnSync(process.execPath, [cli, `--only=${rebuild.join(',')}`], { cwd: ROOT, stdio: 'inherit' })
+    const cli = path.join(root, 'node_modules', '@electron', 'rebuild', 'lib', 'cli.js')
+    const r = run(process.execPath, [cli, `--only=${rebuild.join(',')}`], { cwd: root, stdio: 'inherit' })
     if (r.status !== 0) return r.status ?? 1
   }
-  const post = spawnSync(process.execPath, [path.join(ROOT, 'node_modules', 'node-pty', 'scripts', 'post-install.js')], { cwd: ROOT, stdio: 'inherit' })
+  const post = run(process.execPath, [path.join(root, 'node_modules', 'node-pty', 'scripts', 'post-install.js')], { cwd: root, stdio: 'inherit' })
   return post.status ?? 1
 }
 
-const invokedDirectly = process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
-if (invokedDirectly) process.exitCode = main()
+/**
+ * True when `argv1` (what node was asked to run) is this script, compared by
+ * real path, so a checkout reached through a junction or a symlink runs it
+ * just as its real path does.
+ *
+ * @param {unknown} argv1
+ * @param {string} [scriptPath]
+ * @param {(p: string) => string} [realpath]
+ * @returns {boolean}
+ */
+export function isThisScript(argv1, scriptPath = SCRIPT, realpath = realpathSync) {
+  if (typeof argv1 !== 'string' || argv1.length === 0) return false
+  try {
+    return realpath(path.resolve(argv1)) === realpath(scriptPath)
+  } catch {
+    return false
+  }
+}
+
+if (isThisScript(process.argv[1])) process.exitCode = main()
