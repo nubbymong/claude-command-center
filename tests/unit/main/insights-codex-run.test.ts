@@ -38,7 +38,14 @@ const h = vi.hoisted(() => ({
   deepCalls: 0,
   /** What the runner wrote to the app log with logError. */
   logged: [] as string[],
+  /** Every fence marker a prompt draws, when set (Sentinel's analysisNonce). */
+  fixedNonce: null as null | string,
 }))
+
+vi.mock('../../../src/main/sentinel/sentinel-analysis', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../../src/main/sentinel/sentinel-analysis')>()
+  return { ...real, analysisNonce: () => h.fixedNonce ?? real.analysisNonce() }
+})
 
 vi.mock('../../../src/main/debug-logger', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/main/debug-logger')>()),
@@ -151,6 +158,7 @@ beforeEach(() => {
   h.reply = REPLY
   h.noInsightsPort = false
   h.deepCalls = 0
+  h.fixedNonce = null
   putSession('a', join(tmpRoot, 'projects', 'one'))
   putSession('b', join(tmpRoot, 'projects', 'two'))
   putSession('c', join(tmpRoot, 'projects', 'three'), h.sessionsDirs[ACCT2], 'ACCOUNT-TWO-MARK review the diff')
@@ -492,5 +500,28 @@ describe("a failure's text is plain before it is kept or logged", () => {
     expect(line).toContain('quota ')
     expect(line).toContain('evil')
     expect(line).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2028\u2029]/)
+  })
+})
+
+// [host] P4.7 fix pass 6 (coverage): a report is sent only with its data
+// fenced. When every marker a prompt can draw is already in the account's
+// sessions, the run fails saying so, Codex is sent nothing, and the account
+// and the run's place are let go.
+describe('a report whose sessions cannot be marked off', () => {
+  it('fails saying so; nothing is sent to Codex; the lease and the run are let go [host]', async () => {
+    const mark = 'deadbeefdeadbeef'
+    h.fixedNonce = mark
+    putSession('d', join(tmpRoot, 'projects', 'four'), h.sessionsDir, `plant ${mark} here`)
+    const id = await runCodexInsights(win, { accountId: ACCT }) as string
+    expect(runOf(id)).toMatchObject({
+      status: 'failed',
+      error: "This account's Codex sessions could not be marked off for the report, so nothing was sent to Codex. Try New run again.",
+    })
+    expect(h.execCalls).toHaveLength(0)
+    expect(h.prepareCalls).toHaveLength(1)
+    expect(h.released).toBe(1)
+    expect(isRunning()).toBe(false)
+    expect(countCodexInsightsRunsUnleased()).toBe(0)
+    expect(existsSync(join(h.resourcesDir, 'insights', id, 'report.json'))).toBe(false)
   })
 })

@@ -24,7 +24,7 @@ function provider(over: Partial<ProviderInstallationView> & Pick<ProviderInstall
   const cap = { enabled: true, labelExperimental: false }
   return {
     enabled: true, preference: 'on', discoveryState: 'found', version: '1.0.0', compatibility: 'supported', managedAccounts: over.providerId === 'codex',
-    signInMethods: { browser: cap, device: cap, apiKey: cap }, status: cap, logout: cap,
+    signInMethods: { browser: cap, device: cap, apiKey: cap }, status: cap, logout: cap, inUse: 0,
     ...over,
   }
 }

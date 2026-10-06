@@ -63,7 +63,16 @@ const h = vi.hoisted(() => ({
   codexSynthFails: null as null | string,
   /** What the runner wrote to the app log with logError. */
   logged: [] as string[],
+  /** Leases let go (each Codex launch's). */
+  released: 0,
+  /** Every fence marker a prompt draws, when set (Sentinel's analysisNonce). */
+  fixedNonce: null as null | string,
 }))
+
+vi.mock('../../../src/main/sentinel/sentinel-analysis', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../../src/main/sentinel/sentinel-analysis')>()
+  return { ...real, analysisNonce: () => h.fixedNonce ?? real.analysisNonce() }
+})
 
 vi.mock('../../../src/main/debug-logger', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/main/debug-logger')>()),
@@ -159,7 +168,7 @@ vi.mock('../../../src/main/provider-accounts', () => ({
       const id = String(input.providerAccountId)
       const home = join(h.resourcesDir, '..', 'realms', id)
       return {
-        ok: true, lease: { release: () => {} }, binding: { providerAccountId: id }, realmOnly: false,
+        ok: true, lease: { release: () => { h.released++ } }, binding: { providerAccountId: id }, realmOnly: false,
         home, executable: '/usr/bin/codex', env: { PATH: '/usr/bin', CODEX_HOME: home }, sessionsDir: join(home, 'sessions'),
       }
     },
@@ -221,6 +230,8 @@ beforeEach(() => {
   h.claudeTransport = null
   h.codexSynthFails = null
   h.logged = []
+  h.released = 0
+  h.fixedNonce = null
 })
 afterEach(() => { try { rmSync(tmpRoot, { recursive: true, force: true }) } catch { /* ignore */ } })
 
@@ -521,5 +532,47 @@ describe('the written analysis holds no tools and reads what it is sent as data 
     expect(data.summary.improvements[0]).toContain('evil')
     expect(all.length).toBeGreaterThan(2)
     expect(all.join(' ')).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2028\u2029]/)
+  })
+})
+
+// [host] P4.7 fix pass 6 (coverage): the comparison is sent only fenced.
+// When every marker a prompt can draw is already in it, the roll-up finishes
+// with its figures only and says why, no written analysis starts on either
+// assistant, every lease it took is let go, and the next roll-up starts.
+describe('a roll-up whose comparison cannot be marked off', () => {
+  const UNFENCED = 'No written analysis: the comparison could not be marked off for it, so it was not sent.'
+  const writtenAnalyses = () => h.execPrompts.filter((p) => p.startsWith('You are comparing')).length + h.claudeSynth.length
+
+  it('finishes as numbers only, saying why, on Claude Code and on Codex; nothing is sent for a written analysis; every lease let go [host]', async () => {
+    const mark = 'deadbeefdeadbeef'
+    seedClaude('work', true, 'Work')
+    seedClaude('personal', false, 'Personal')
+    h.goals = { [ACCT2]: `goal ${mark}` }
+    h.fixedNonce = mark
+    // The primary produced figures: the written analysis would run on Claude Code.
+    const onClaude = await runCrossAccountInsights(win) as string
+    expect(getCatalogue().runs.find((r) => r.id === onClaude)).toMatchObject({ status: 'complete', error: UNFENCED })
+    expect((getInsightsKpis(onClaude) as any).synthesis).toBe('deterministic')
+    expect(writtenAnalyses()).toBe(0)
+    expect(h.prepareCalls.length).toBeGreaterThan(0)
+    expect(h.released).toBe(h.prepareCalls.length)
+    expect(countInsightsRunsInFlight()).toBe(0)
+    expect(countCodexInsightsRunsUnleased()).toBe(0)
+    // Claude Code off: the written analysis would run on Codex.
+    h.claude = 'off'
+    h.prepareCalls = []
+    h.released = 0
+    const onCodex = await runCrossAccountInsights(win) as string
+    expect(getCatalogue().runs.find((r) => r.id === onCodex)).toMatchObject({ status: 'complete', error: UNFENCED })
+    expect((getInsightsKpis(onCodex) as any).synthesis).toBe('deterministic')
+    expect(writtenAnalyses()).toBe(0)
+    expect(h.prepareCalls.filter((c) => String(c.ownerId).endsWith(':synthesis'))).toEqual([])
+    expect(h.released).toBe(h.prepareCalls.length)
+    expect(countCodexInsightsRunsUnleased()).toBe(0)
+    // Nothing is left held: the next roll-up starts and writes its analysis.
+    h.fixedNonce = null
+    const next = await runCrossAccountInsights(win) as string
+    expect(getCatalogue().runs.find((r) => r.id === next)!.status).toBe('complete')
+    expect((getInsightsKpis(next) as any).synthesis).toBe('ai')
   })
 })
