@@ -43,14 +43,16 @@
 //      a pickable Codex model the list no longer names = WARNING; an empty or
 //      missing list fails closed. Only an id the Codex picker offers covers
 //      one, and an id the registry lists twice covers nothing and FAILs.
-//   4. MACOS FLOOR  The Electron in package.json decides the oldest macOS the
-//      build opens on (Electron 44 needs macOS 13). The tag being cut must
-//      carry at least that floor in resources/macos-release-floors.json, which
-//      the updater reads: otherwise it would offer the release to Macs that
-//      cannot open it (a rolling re-release of an earlier tag, or a version
-//      below the table's first entry). A tag no updater offers (a dev cut)
-//      is not held to it. A missing or empty table, or an Electron version
-//      that cannot be read, FAILs (fail closed).
+//   4. MACOS FLOOR  The Electron the build installs (the exact version
+//      package-lock.json resolves, never package.json's range) decides the
+//      oldest macOS the build opens on (Electron 44 needs macOS 13). The tag
+//      being cut must carry at least that floor in
+//      resources/macos-release-floors.json, which the updater reads: otherwise
+//      it would offer the release to Macs that cannot open it (a rolling
+//      re-release of an earlier tag, or a version below the table's first
+//      entry). A tag no updater offers (a dev cut) is not held to it. A
+//      missing or empty table, an entry it cannot read, or an Electron version
+//      that is not an exact one, FAILs (fail closed).
 //
 // Usage
 //   node scripts/release-gate.mjs                      # version from package.json
@@ -102,6 +104,9 @@ export const DEFAULT_EXPECTED_PATH = path.join(ROOT, 'resources', 'claude-code-m
 export const DEFAULT_CODEX_EXPECTED_PATH = path.join(ROOT, 'resources', 'codex-model-catalogue.json')
 // The macOS floor table (check 4); the updater imports the same file.
 export const DEFAULT_MACOS_FLOORS_PATH = path.join(ROOT, 'resources', 'macos-release-floors.json')
+// The lock file, which names the exact Electron version the build installs
+// (check 4); it is tracked, so it is there before `npm ci`.
+export const DEFAULT_LOCK_PATH = path.join(ROOT, 'package-lock.json')
 /** The registry family whose models Codex sessions run (familyProvider in
  *  src/shared/model-registry.ts). */
 export const CODEX_FAMILY = 'codex'
@@ -120,6 +125,10 @@ function labelNames(labels) {
   return (labels || []).map((l) => (typeof l === 'string' ? l : l && l.name)).filter(Boolean)
 }
 
+/** @typedef {{ ok: boolean, reason: string|null, milestone: {number:number,title:string,state?:string}|null, blocking: Array<{number:number,title:string,labels:string[]}>, excluded: Array<{number:number,title:string}>, shipped: Array<{number:number,title:string}> }} MilestoneVerdict */
+/** @typedef {{ ok: boolean, reason: string|null, missing: Array<{id:string,label?:string}>, extra: Array<{id:string,label?:string}>, covered: Array<{id:string,by:string}>, duplicates?: string[] }} ModelsVerdict */
+/** @typedef {{ ok: boolean, reason: string|null, tag: string, offered: boolean, electronMajor: number|null, needed: number|null, floor: number|null }} MacosVerdict */
+
 /**
  * Milestone verdict for one version.
  *
@@ -131,7 +140,7 @@ function labelNames(labels) {
  * @param {string} [input.excludedLabel]
  * @param {string} [input.inBetaLabel]
  * @param {string} [input.inReleaseLabel]
- * @returns {{ ok: boolean, reason: string|null, milestone: object|null, blocking: Array<{number:number,title:string,labels:string[]}>, excluded: Array<{number:number,title:string}>, shipped: Array<{number:number,title:string}> }}
+ * @returns {MilestoneVerdict}
  */
 export function evaluateMilestone({ version, milestones, issues, excludedLabel = EXCLUDED_LABEL, inBetaLabel = IN_BETA_LABEL, inReleaseLabel = IN_RELEASE_LABEL }) {
   const title = String(version || '').trim()
@@ -180,8 +189,8 @@ export function registryIdCovers(registryId, expectedId) {
  *
  * @param {object} input
  * @param {{models:Array<{id:string,family?:string,label?:string}>}} input.registry   resources/model-registry.json
- * @param {{models:Array<{id:string,label?:string}>,source?:string,fetchedAt?:string}} input.expected   the fixture
- * @returns {{ ok: boolean, reason: string|null, missing: Array<{id:string,label?:string}>, extra: Array<{id:string,label?:string}>, covered: Array<{id:string,by:string}> }}
+ * @param {{models?:Array<{id:string,label?:string}>,source?:string,fetchedAt?:string}|null|undefined} input.expected   the fixture (missing or empty fails closed)
+ * @returns {ModelsVerdict}
  */
 export function evaluateModels({ registry, expected }) {
   const registryModels = (registry && registry.models) || []
@@ -233,7 +242,7 @@ export function evaluateModels({ registry, expected }) {
  * @param {object} input
  * @param {{models:Array<{id:string,family?:string,label?:string,pickable?:boolean,provenance?:object}>}} input.registry
  * @param {{models:Array<{id:string,label?:string}>,cliVersions?:string[],fetchedAt?:string}|null|undefined} input.expected
- * @returns {{ ok: boolean, reason: string|null, missing: Array<{id:string,label?:string}>, extra: Array<{id:string,label?:string}>, covered: Array<{id:string,by:string}> }}
+ * @returns {ModelsVerdict}
  */
 export function evaluateCodexModels({ registry, expected }) {
   const usable = (m) => !!m && typeof m.id === 'string' && m.id.length > 0
@@ -320,31 +329,65 @@ export function macosFloorForTag(tag, floors) {
   return floor
 }
 
-/** The Electron version package.json builds with. */
-export function electronVersionOf(pkg) {
-  return (pkg && pkg.devDependencies && pkg.devDependencies.electron) || (pkg && pkg.dependencies && pkg.dependencies.electron) || undefined
+/**
+ * The Electron version the build installs: package-lock.json's resolved
+ * `packages["node_modules/electron"].version`, an exact version, never the
+ * range package.json allows. Undefined when the lock names none.
+ *
+ * @param {{packages?: Record<string, any>}|null|undefined} lock   package-lock.json
+ * @returns {string|undefined}
+ */
+export function electronVersionOf(lock) {
+  const entry = lock && lock.packages && lock.packages['node_modules/electron']
+  return entry && typeof entry.version === 'string' ? entry.version : undefined
 }
 
 /**
- * The macOS floor verdict for cutting `version` (the tag without its `v`) with
- * `electronVersion`: the floor its Electron needs (the highest `macosMajor` of
- * the entries at or below its major) against the floor the updater gives the
- * tag. Only a stable, beta or rc tag is offered by an updater; any other is not
- * held to a floor.
+ * The Electron version main hands check 4: read from the lock file at
+ * `lockPath` (electronVersionOf); undefined when it cannot be read, which the
+ * check refuses (fail closed).
  *
- * @returns {{ ok: boolean, reason: string|null, tag: string, offered: boolean, electronMajor: number|null, needed: number|null, floor: number|null }}
+ * @param {string} [lockPath]
+ * @returns {string|undefined}
+ */
+export function readElectronVersion(lockPath = DEFAULT_LOCK_PATH) {
+  try { return electronVersionOf(JSON.parse(fs.readFileSync(lockPath, 'utf-8'))) } catch { return undefined }
+}
+
+/** An exact version (`44.5.1`, `45.0.0-beta.3`), never a range; group 1 is its major. */
+const EXACT_VERSION = /^(\d+)\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
+
+/**
+ * The macOS floor verdict for cutting `version` (the tag without its `v`) with
+ * `electronVersion` (the exact version package-lock.json resolves): the floor
+ * its Electron needs (the highest `macosMajor` of the entries at or below its
+ * major) against the floor the updater gives the tag. Only a stable, beta or
+ * rc tag is offered by an updater; any other is not held to a floor. Every
+ * entry of `floors` must be readable (a release tag, an Electron major and a
+ * macOS major) and the version must be exact; anything else is refused (fail
+ * closed).
+ *
+ * @param {object} input
+ * @param {string} input.version
+ * @param {string|null} [input.electronVersion]
+ * @param {unknown} [input.floors]   resources/macos-release-floors.json
+ * @returns {MacosVerdict}
  */
 export function evaluateMacosFloor({ version, electronVersion, floors }) {
   const tag = `v${version}`
-  const list = (floors && Array.isArray(floors.floors) ? floors.floors : []).filter((f) => f
-    && typeof f.fromTag === 'string' && Number.isInteger(f.electronMajor) && Number.isInteger(f.macosMajor))
+  const list = floors && typeof floors === 'object' && Array.isArray(floors.floors) ? floors.floors : []
   const base = { tag, offered: true, electronMajor: null, needed: null, floor: null }
   if (list.length === 0) {
     return { ...base, ok: false, reason: 'resources/macos-release-floors.json lists no floors, so the release cannot be checked (fail closed)' }
   }
-  const m = /^[^\d]*(\d+)(?:\.|$)/.exec(String(electronVersion ?? ''))
+  const bad = list.findIndex((f) => !(f && typeof f.fromTag === 'string' && parseReleaseTag(f.fromTag)
+    && Number.isInteger(f.electronMajor) && f.electronMajor > 0 && Number.isInteger(f.macosMajor) && f.macosMajor > 0))
+  if (bad >= 0) {
+    return { ...base, ok: false, reason: `resources/macos-release-floors.json entry ${bad + 1} cannot be read (${JSON.stringify(list[bad] ?? null)}), so the release cannot be checked (fail closed)` }
+  }
+  const m = EXACT_VERSION.exec(String(electronVersion ?? ''))
   if (!m) {
-    return { ...base, ok: false, reason: `cannot read the Electron version from package.json (${JSON.stringify(electronVersion ?? null)}), so the release cannot be checked (fail closed)` }
+    return { ...base, ok: false, reason: `cannot read the Electron version package-lock.json resolves (${JSON.stringify(electronVersion ?? null)}), so the release cannot be checked (fail closed)` }
   }
   const electronMajor = parseInt(m[1], 10)
   const needed = Math.max(0, ...list.filter((f) => f.electronMajor <= electronMajor).map((f) => f.macosMajor))
@@ -359,7 +402,20 @@ export function evaluateMacosFloor({ version, electronVersion, floors }) {
   }
 }
 
-/** Render the verdicts as the lines the gate prints. */
+/**
+ * Render the verdicts as the lines the gate prints; a verdict left out prints nothing.
+ *
+ * @param {object} input
+ * @param {string} input.version
+ * @param {string|null} [input.repo]
+ * @param {MilestoneVerdict|null} [input.milestoneResult]
+ * @param {ModelsVerdict|null} [input.modelsResult]
+ * @param {{source?:string,fetchedAt?:string}|null} [input.expectedMeta]
+ * @param {ModelsVerdict|null} [input.codexResult]
+ * @param {{cliVersions?:string[],fetchedAt?:string}|null} [input.codexMeta]
+ * @param {MacosVerdict|null} [input.macosResult]
+ * @returns {string[]}
+ */
 export function formatReport({ version, repo, milestoneResult, modelsResult, expectedMeta, codexResult, codexMeta, macosResult }) {
   const out = []
   out.push(`Release gate for v${version}${repo ? ` (${repo})` : ''}`)
@@ -433,7 +489,13 @@ export function resolveToken(env = process.env, runGh = (args) => execFileSync('
   try { return String(runGh(['auth', 'token'])).trim() || null } catch { return null }
 }
 
-/** Minimal paginated GET against api.github.com. Throws on non-2xx. */
+/**
+ * Minimal paginated GET against api.github.com. Throws on non-2xx.
+ *
+ * @param {string} pathAndQuery
+ * @param {{ token?: string|null, fetchImpl?: typeof fetch, perPage?: number, maxPages?: number }} [options]
+ * @returns {Promise<any[]>}
+ */
 export async function githubListAll(pathAndQuery, { token, fetchImpl = globalThis.fetch, perPage = 100, maxPages = 20 } = {}) {
   const all = []
   for (let page = 1; page <= maxPages; page++) {
@@ -474,11 +536,22 @@ export function repoFromGitRemote(runGit = (args) => execFileSync('git', args, {
  * testable with no network: `listAll(path)` must return the parsed JSON array
  * for a GitHub REST list endpoint. `codexExpected` is the Codex half's list
  * (resources/codex-model-catalogue.json); a caller that leaves it out is
- * refused, as an empty list is (fail closed). `electronVersion` (package.json's)
- * and `macosFloors` (resources/macos-release-floors.json) feed the macOS floor
- * check; a caller that leaves either out is refused too.
+ * refused, as an empty list is (fail closed). `electronVersion` (the exact
+ * version package-lock.json resolves) and `macosFloors`
+ * (resources/macos-release-floors.json) feed the macOS floor check; a caller
+ * that leaves either out is refused too.
  *
- * @returns {Promise<{ exitCode: number, lines: string[], milestoneResult: object|null, modelsResult: object|null, codexResult: object|null, macosResult: object|null }>}
+ * @param {object} [input]
+ * @param {string} [input.version]          the milestone title, e.g. "2.1.0-beta.17"
+ * @param {string|null} [input.repo]        `owner/name`
+ * @param {(path: string) => Promise<any[]>} [input.listAll]   a GitHub REST list call
+ * @param {object|null} [input.registry]    resources/model-registry.json
+ * @param {object|null} [input.expected]    resources/claude-code-model-configuration.json
+ * @param {object|null} [input.codexExpected]   resources/codex-model-catalogue.json
+ * @param {string} [input.electronVersion]
+ * @param {unknown} [input.macosFloors]     resources/macos-release-floors.json
+ * @param {(line: string) => void} [input.log]
+ * @returns {Promise<{ exitCode: number, lines: string[], milestoneResult: MilestoneVerdict|null, modelsResult: ModelsVerdict|null, codexResult: ModelsVerdict|null, macosResult: MacosVerdict|null }>}
  */
 export async function runGate({
   version,
@@ -568,7 +641,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   const token = resolveToken(env)
   if (!token) console.error('Release gate: no GITHUB_TOKEN/GH_TOKEN and `gh auth token` gave nothing — trying unauthenticated (public repo, rate-limited)')
   const listAll = (p) => githubListAll(p, { token })
-  const { exitCode } = await runGate({ version, repo, listAll, registry, expected, codexExpected, electronVersion: electronVersionOf(pkg), macosFloors })
+  const { exitCode } = await runGate({ version, repo, listAll, registry, expected, codexExpected, electronVersion: readElectronVersion(), macosFloors })
   return exitCode
 }
 

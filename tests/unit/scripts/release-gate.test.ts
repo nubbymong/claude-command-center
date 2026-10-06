@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'fs'
-import { resolve } from 'path'
+import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'fs'
+import { tmpdir } from 'os'
+import { join, resolve } from 'path'
 
 // release-gate.mjs is plain ESM and guards main() behind an argv[1] check, so
 // importing it here pulls in the pure verdict logic without touching GitHub.
@@ -26,6 +27,8 @@ import {
   DEFAULT_MACOS_FLOORS_PATH,
   evaluateMacosFloor,
   electronVersionOf,
+  readElectronVersion,
+  DEFAULT_LOCK_PATH,
 } from '../../../scripts/release-gate.mjs'
 
 type Issue = { number: number; title: string; labels?: Array<{ name: string } | string>; pull_request?: object; state?: string }
@@ -319,7 +322,7 @@ describe('release-gate Codex models', () => {
     expect(text).toMatch(/OK\s+model registry covers all 3/)
     expect(text).toMatch(/FAIL\s+Codex models: 1 model\(s\) the Codex CLI lists are not in the registry/)
     expect(text).toMatch(/- gpt-6-astra\s+\(GPT-6-Astra\)/)
-    expect(r.codexResult.missing.map((m: { id: string }) => m.id)).toEqual(['gpt-6-astra'])
+    expect(r.codexResult?.missing.map((m: { id: string }) => m.id)).toEqual(['gpt-6-astra'])
   })
 
   it('a Codex model the list no longer names is a WARNING, not a refusal', async () => {
@@ -414,7 +417,7 @@ describe('release-gate macOS floor', () => {
   })
 
   it('FAILS CLOSED when the floors file or the Electron version cannot be read', () => {
-    for (const floors of [undefined, null, {}, { floors: [] }, { floors: 'x' }, { floors: [{ fromTag: 'v1.0.0' }] }]) {
+    for (const floors of [undefined, null, {}, { floors: [] }, { floors: 'x' }]) {
       const r = evaluateMacosFloor({ version: '2.1.1-beta.2', electronVersion: '44.5.1', floors })
       expect(r.ok, JSON.stringify(floors)).toBe(false)
       expect(r.reason).toMatch(/resources\/macos-release-floors\.json lists no floors/)
@@ -425,6 +428,40 @@ describe('release-gate macOS floor', () => {
       expect(r.reason).toMatch(/cannot read the Electron version/)
     }
   })
+
+  it('a floors entry it cannot read is refused with a FAIL line, never left out', async () => {
+    const good = FLOORS.floors[0]
+    const unreadable: unknown[] = [
+      { fromTag: 'v1.0.0' },
+      { fromTag: 'garbage', electronMajor: 44, macosMajor: 13 },
+      { fromTag: 'v2.1.1-beta.2', electronMajor: '44', macosMajor: 13 },
+      { fromTag: 'v2.1.1-beta.2', electronMajor: 44, macosMajor: 13.5 },
+      { fromTag: 'v2.1.1-beta.2', electronMajor: 44, macosMajor: 0 },
+      null,
+      'v2.1.1-beta.2',
+    ]
+    for (const entry of unreadable) {
+      for (const floors of [{ floors: [entry] }, { floors: [good, entry] }]) {
+        const r = gate('2.1.1-beta.2', '44.5.1', floors)
+        expect(r.ok, JSON.stringify(floors)).toBe(false)
+        expect(r.reason, JSON.stringify(floors)).toMatch(/resources\/macos-release-floors\.json entry \d+ cannot be read/)
+      }
+    }
+    const gh = fakeGitHub([{ number: 7, title: '2.1.1-beta.2' }], { 7: [] })
+    const run = await runGate({ version: '2.1.1-beta.2', repo: 'o/r', listAll: gh.listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected: CODEX_EXPECTED, electronVersion: '44.5.1', macosFloors: { floors: [good, { fromTag: 'v3.0.0' }] }, log: silent })
+    expect(run.exitCode).toBe(EXIT_REFUSED)
+    expect(run.lines.join('\n')).toMatch(/FAIL\s+macOS floor: resources\/macos-release-floors\.json entry 2 cannot be read/)
+  })
+
+  it('the Electron version must be exact: a range (what package.json may hold) is refused, never read as its lower bound', () => {
+    for (const range of ['>=43.0.0', '43.x || 44.x', '^43.7.1', '~43.7.1', '43', '43.x', '43.7', 'v43.7.1', '43.7.1 || 44.5.1']) {
+      const r = gate('2.1.0', range)
+      expect(r.ok, range).toBe(false)
+      expect(r.reason, range).toMatch(/cannot read the Electron version package-lock\.json resolves/)
+    }
+    for (const exact of ['43.7.1', '44.5.1', '45.0.0-beta.3', '44.5.1+build.7']) expect(gate('2.1.1-beta.2', exact).ok, exact).toBe(true)
+  })
+
 
   it('runGate refuses the cut, with a FAIL line, even when everything else is clean', async () => {
     const r = await runGate({ version: '2.1.0-beta.17', repo: 'o/r', listAll: clean().listAll, registry: REGISTRY_OK, expected: EXPECTED, codexExpected: CODEX_EXPECTED, electronVersion: '44.5.1', macosFloors: FLOORS, log: silent })
@@ -444,17 +481,42 @@ describe('release-gate macOS floor', () => {
     expect(left.exitCode).toBe(EXIT_REFUSED)
   })
 
-  it('main reads the Electron version from package.json and the floors from the shipped file', () => {
+  it('main reads the Electron version package-lock.json resolves, and the floors from the shipped file', () => {
     expect(resolve(DEFAULT_MACOS_FLOORS_PATH)).toMatch(/resources[\\/]macos-release-floors\.json$/)
-    expect(electronVersionOf({ devDependencies: { electron: '44.5.1' } })).toBe('44.5.1')
-    expect(electronVersionOf({ dependencies: { electron: '^45.0.0' } })).toBe('^45.0.0')
-    expect(electronVersionOf({})).toBeUndefined()
+    expect(resolve(DEFAULT_LOCK_PATH)).toBe(resolve(__dirname, '../../../package-lock.json'))
+    expect(electronVersionOf({ packages: { '': { devDependencies: { electron: '>=43.0.0' } }, 'node_modules/electron': { version: '44.5.1' } } })).toBe('44.5.1')
+    for (const lock of [{}, null, undefined, { packages: {} }, { packages: { 'node_modules/electron': {} } }, { packages: { 'node_modules/electron': { version: 44 } } }]) {
+      expect(electronVersionOf(lock as never), JSON.stringify(lock)).toBeUndefined()
+    }
+    // package.json's own shape is never read for it
+    expect(electronVersionOf({ devDependencies: { electron: '44.5.1' } } as never)).toBeUndefined()
   })
 
-  it('with the real package.json and floors file: this Electron cannot be cut as 2.1.1-beta.1, and can as 2.1.1-beta.2, 2.1.1-beta and 2.1.1', () => {
-    const pkg = JSON.parse(readFileSync(resolve(__dirname, '../../../package.json'), 'utf-8'))
+  it('a package.json range with a lock that resolves Electron 44: the lock decides, so an earlier tag is refused', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gate-lock-'))
+    try {
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({ devDependencies: { electron: '>=43.0.0' } }))
+      writeFileSync(join(dir, 'package-lock.json'), JSON.stringify({ packages: { '': { devDependencies: { electron: '>=43.0.0' } }, 'node_modules/electron': { version: '44.5.1' } } }))
+      const electronVersion = readElectronVersion(join(dir, 'package-lock.json'))
+      expect(electronVersion).toBe('44.5.1')
+      const r = gate('2.1.0', electronVersion)
+      expect(r.ok).toBe(false)
+      expect(r.reason).toMatch(/Electron 44 needs macOS 13, but v2\.1\.0 has no macOS floor/)
+      writeFileSync(join(dir, 'broken-lock.json'), '{ "packages": ')
+      for (const p of [join(dir, 'no-such-lock.json'), join(dir, 'broken-lock.json')]) {
+        expect(readElectronVersion(p), p).toBeUndefined()
+        expect(gate('2.1.1-beta.2', readElectronVersion(p)).ok, p).toBe(false)
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('with the real lock and floors file: this Electron cannot be cut as 2.1.1-beta.1, and can as 2.1.1-beta.2, 2.1.1-beta and 2.1.1', () => {
     const floors = JSON.parse(readFileSync(DEFAULT_MACOS_FLOORS_PATH, 'utf-8'))
-    const electronVersion = electronVersionOf(pkg)
+    const electronVersion = readElectronVersion()
+    const installed = JSON.parse(readFileSync(resolve(__dirname, '../../../node_modules/electron/package.json'), 'utf-8')).version
+    expect(electronVersion).toBe(installed)
     expect(parseInt(String(electronVersion), 10)).toBeGreaterThanOrEqual(44)
     expect(evaluateMacosFloor({ version: '2.1.1-beta.1', electronVersion, floors }).ok).toBe(false)
     for (const v of ['2.1.1-beta.2', '2.1.1-beta', '2.1.1']) expect(evaluateMacosFloor({ version: v, electronVersion, floors }).ok, v).toBe(true)
