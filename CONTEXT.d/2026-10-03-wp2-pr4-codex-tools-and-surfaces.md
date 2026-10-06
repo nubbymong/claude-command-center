@@ -99,7 +99,8 @@ checklist):
   PASS: 0 blocker, 0 major) and the fix pass 4 reviews (8 mutants, 8
   killed); fix pass 7 (23176b9c; 4 mutants, 4 killed) answers the one
   minor of ADR-009 round 4 over fix pass 6 (two lenses, PASS: 0 blocker, 0
-  major). The spec and quality reviews of fix passes 4 and 6 PASS. Row
+  major); fix pass 8 puts the Codex run confirmation in its own file on the
+  dialog palette, for the #360 guard CI failed on. The spec and quality reviews of fix passes 4 and 6 PASS. Row
   58's artifacts record is signed (67f44333). The confirmation of fix
   pass 7, the VM run at the final head, the pre-push batch, CI and OR4 (a
   real report's content) are owed.

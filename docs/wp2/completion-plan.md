@@ -6658,6 +6658,12 @@ Probe: PB5 (shared with P4.5).
     look, which lets it go if nothing holds it then and follows its count
     again if something does, so whichever snapshot is built first the last
     count published is 0 and no timer is left.
+  - *Fix pass 8* (this commit), for CI run 37434087671 (the #360 dialog
+    palette guard, red on all three systems): the Codex run confirmation is
+    its own file, `insights/CodexRunConfirm.tsx`, on the dialog tokens, so
+    `InsightsPage.tsx` holds no `role="dialog"`; its wording, focus, Escape,
+    click outside, buttons and closing when a run starts are unchanged. Red
+    first at d1a126a3 (1 of the guard's 15 tests), green after.
   - *Deviations, recorded.* D10: the banner's Sign in button for a Codex
     account opens Settings, Accounts, where that account's Sign in again is
     (the Usage page's way, `AccountUsagePanel.tsx:277`), rather than starting

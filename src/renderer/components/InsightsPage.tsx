@@ -1,9 +1,8 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useInsightsStore } from '../stores/insightsStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useProviderAccountsStore, accountDisplayName, providerAccountActions } from '../stores/providerAccountsStore'
-import { useClickOutside } from '../hooks/useClickOutside'
 import { useReauthAccount } from '../hooks/useReauthAccount'
 import { authFailureStillApplies, describeAuthWindow, type ProfileAuthInfo } from '../../shared/account-auth'
 import { isAccountActive } from '../../shared/account-types'
@@ -14,6 +13,7 @@ import PageFrame from './PageFrame'
 import { parseInsightsReport, parseCodexInsightsReport, type ParsedInsights } from './insights/parseInsightsReport'
 import { InsightsSections } from './insights/InsightsSections'
 import CrossAccountReport from './insights/CrossAccountReport'
+import CodexRunConfirm from './insights/CodexRunConfirm'
 import { CLAUDE_OFF, useClaudeOff } from '../lib/claudeOff'
 import { providerOffForLaunch } from '../utils/launchAccount'
 import { ProviderMark } from './sidebar/Badges'
@@ -115,62 +115,6 @@ function AuthBanner({
             </button>
           </div>
         </div>
-      </div>
-    </div>
-  )
-}
-
-/** P4.7 (mockup D12): a run on an account marked "confirm at launch" asks the
- *  per-run confirmation a Codex cloud agent asks, in its words. Nothing is
- *  kept: the tick counts for this run and this account only. A run that
- *  starts closes it (the page's own Run buttons are off while one runs);
- *  Escape or a click outside closes it, and the tick box takes focus. */
-function CodexRunConfirm({ choice, onRun, onCancel }: { choice: InsightsAccountChoice; onRun: () => void; onCancel: () => void }) {
-  const [ticked, setTicked] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-  const box = useRef<HTMLInputElement>(null)
-  useClickOutside(ref, onCancel)
-  useEffect(() => { box.current?.focus() }, [])
-  return (
-    <div
-      ref={ref}
-      role="dialog"
-      aria-label="Confirm this report"
-      data-testid="insights-codex-confirm"
-      className="absolute right-0 top-full mt-1 z-30 w-[320px] rounded-lg border p-3 text-left shadow-lg"
-      style={{ background: 'var(--surface-overlay)', borderColor: 'var(--border-strong)' }}
-    >
-      <label className="flex items-start gap-2 text-[11.5px] leading-snug cursor-pointer" style={{ color: 'var(--text-primary)' }}>
-        <input
-          ref={box}
-          type="checkbox"
-          checked={ticked}
-          onChange={(e) => setTicked(e.target.checked)}
-          className="mt-0.5 shrink-0 rounded"
-          data-testid="insights-codex-ack"
-        />
-        <span>
-          {choice.external
-            ? `Run this report with the Codex sign-in already on this computer${choice.email ? ` (${choice.email})` : ''}`
-            : 'Run this report with this account although its sign-in is not verified'}
-        </span>
-      </label>
-      <div className="flex justify-end gap-1.5 mt-2.5">
-        <button
-          onClick={onRun}
-          disabled={!ticked}
-          data-testid="insights-codex-confirm-run"
-          className="text-xs px-2.5 py-0.5 rounded border font-medium bg-teal/10 border-teal/30 text-teal hover:bg-teal/20 disabled:bg-surface0 disabled:border-surface1 disabled:text-overlay0 disabled:cursor-not-allowed"
-        >
-          Run
-        </button>
-        <button
-          onClick={onCancel}
-          data-testid="insights-codex-confirm-cancel"
-          className="text-xs px-2.5 py-0.5 rounded border border-surface1 bg-surface0 text-subtext1 hover:text-text"
-        >
-          Cancel
-        </button>
       </div>
     </div>
   )
